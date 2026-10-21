@@ -1,0 +1,9 @@
+import std.console
+
+type Point = { x: Int }
+
+fn main() {
+    _ = console.println("{Point { x: 1 }}")
+}
+
+// expect-error: E1105

@@ -1,0 +1,7 @@
+type Point = { x: Int }
+
+fn main() {
+    let p = Point { x: 1, z: 2 }
+}
+
+// expect-error: E1102

@@ -26,6 +26,39 @@ pub struct Import {
 #[derive(Debug)]
 pub enum Item {
     Fn(FnDecl),
+    Type(TypeDecl),
+    Alias(AliasDecl),
+}
+
+/// `type Name = { fields }` (record) or `type Name = T` (newtype).
+#[derive(Debug)]
+pub struct TypeDecl {
+    pub public: bool,
+    pub name: Ident,
+    pub body: TypeBody,
+    pub span: Span,
+}
+
+#[derive(Debug)]
+pub enum TypeBody {
+    Record(Vec<FieldDecl>),
+    Newtype(TypeExpr),
+}
+
+#[derive(Debug)]
+pub struct FieldDecl {
+    pub private: bool,
+    pub name: Ident,
+    pub ty: TypeExpr,
+}
+
+/// `alias Name = T`: a transparent name for `T`.
+#[derive(Debug)]
+pub struct AliasDecl {
+    pub public: bool,
+    pub name: Ident,
+    pub target: TypeExpr,
+    pub span: Span,
 }
 
 #[derive(Debug)]
@@ -140,6 +173,17 @@ pub enum ExprKind {
     /// `a.b.c` before resolution decides between module members and fields.
     Path(Vec<Ident>),
     Field(Box<Expr>, Ident),
+    TupleSlot(Box<Expr>, u32),
+    /// `Path { field: value, shorthand }`
+    Record {
+        path: Vec<Ident>,
+        fields: Vec<FieldInit>,
+    },
+    /// `base with { field: value }`
+    With {
+        base: Box<Expr>,
+        updates: Vec<FieldInit>,
+    },
     Call {
         callee: Box<Expr>,
         args: Vec<Arg>,
@@ -156,6 +200,13 @@ pub enum ExprKind {
     Try(Box<Expr>),
     /// Placeholder after a reported syntax error.
     Error,
+}
+
+#[derive(Debug)]
+pub struct FieldInit {
+    pub name: Ident,
+    /// `None` for the shorthand `name`, which reads the binding `name`.
+    pub value: Option<Expr>,
 }
 
 #[derive(Debug)]

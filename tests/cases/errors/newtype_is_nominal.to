@@ -1,0 +1,7 @@
+type UserId = Int
+
+fn main() {
+    let id: UserId = 42
+}
+
+// expect-error: E1102

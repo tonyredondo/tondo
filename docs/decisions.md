@@ -58,3 +58,14 @@ remain usable as variable names, which programmers and LLMs coming from Go use
 constantly. `none` stays reserved because a binding named `none` in a pattern
 would silently match everything. `Some`/`None`/`Ok`/`Err` produce errors that
 name the canonical form. See language spec 5.5.
+
+## 2026-10-21 — Aggregates live in memory
+
+Tuples and records have a C-like layout in declaration order. Locals of
+aggregate type get stack slots; aggregate parameters are passed as pointers to
+the caller's memory (parameters are immutable and borrowed), and aggregate
+results are written through a pointer the caller passes first. Newtypes share
+the representation of their value. MIR addresses fields through places
+(`local` plus a field path); retain and release recurse through the counted
+components of a type. This keeps code generation direct; scalar replacement of
+small aggregates is a possible later optimization.

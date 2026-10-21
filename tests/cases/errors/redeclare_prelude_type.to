@@ -1,0 +1,5 @@
+type String = { bytes: Int }
+
+fn main() {}
+
+// expect-error: E1005

@@ -2,8 +2,9 @@
 //!
 //! Ownership of reference-counted values follows three rules:
 //! - parameters are borrowed: the caller keeps them alive during the call;
-//! - results of calls and string construction are owned temporaries,
-//!   released when the enclosing statement ends unless moved into a binding;
+//! - results of calls, string construction and aggregates are owned
+//!   temporaries, released when the enclosing statement ends unless moved
+//!   into a binding or another aggregate;
 //! - bindings own their value and release it when their scope ends, and on
 //!   every early exit (`return`, `break`, `continue`) that leaves the scope.
 //!
@@ -15,14 +16,10 @@ use crate::ast::BinOp;
 use crate::hir::{self, LocalId};
 use crate::mir::*;
 use crate::source::Span;
-use crate::types::Ty;
+use crate::types::{Ty, Types};
 
 pub fn lower(program: &hir::Program) -> Vec<Body> {
-    program.functions.iter().map(lower_function).collect()
-}
-
-fn is_managed(ty: Ty) -> bool {
-    ty == Ty::STRING
+    program.functions.iter().map(|f| lower_function(&program.types, f)).collect()
 }
 
 struct LoopCx {
@@ -33,6 +30,7 @@ struct LoopCx {
 }
 
 struct Builder<'a> {
+    types: &'a Types,
     function: &'a hir::Function,
     locals: Vec<Ty>,
     blocks: Vec<(Vec<Statement>, Option<Terminator>)>,
@@ -46,8 +44,9 @@ struct Builder<'a> {
     ret: Option<Local>,
 }
 
-fn lower_function(function: &hir::Function) -> Body {
+fn lower_function(types: &Types, function: &hir::Function) -> Body {
     let mut b = Builder {
+        types,
         function,
         locals: Vec::new(),
         blocks: Vec::new(),
@@ -72,10 +71,20 @@ fn lower_function(function: &hir::Function) -> Body {
         .into_iter()
         .map(|(stmts, terminator)| BlockData { stmts, terminator: terminator.unwrap_or(Terminator::Unreachable) })
         .collect();
-    Body { name: function.name.clone(), locals: b.locals, params, result: function.result, blocks }
+    Body { name: function.name.clone(), locals: b.locals, params, ret: b.ret, result: function.result, blocks }
 }
 
 impl Builder<'_> {
+    fn needs_drop(&self, ty: Ty) -> bool {
+        self.types.needs_drop(ty)
+    }
+
+    fn place_ty(&self, place: &Place) -> Ty {
+        place.path.iter().fold(self.locals[place.local.0 as usize], |ty, &index| {
+            self.types.components(ty).expect("field path")[index as usize]
+        })
+    }
+
     fn new_local(&mut self, ty: Ty) -> Local {
         self.locals.push(ty);
         Local(self.locals.len() as u32 - 1)
@@ -114,43 +123,74 @@ impl Builder<'_> {
         self.terminate(Terminator::Goto(target));
     }
 
-    fn assign(&mut self, local: Local, rvalue: Rvalue, span: Span) {
-        self.push(Statement::Assign(local, rvalue, span));
+    fn assign(&mut self, place: Place, rvalue: Rvalue, span: Span) {
+        self.push(Statement::Assign(place, rvalue, span));
     }
 
-    /// Evaluates `rvalue` into a new temporary. Owned results join the
-    /// current frame.
+    fn own(&mut self, local: Local) {
+        if self.needs_drop(self.locals[local.0 as usize]) {
+            self.frames.last_mut().unwrap().push(local);
+        }
+    }
+
+    /// Evaluates `rvalue` into a new temporary; owned results join the frame.
     fn temp(&mut self, ty: Ty, rvalue: Rvalue, span: Span) -> Operand {
         let owned = matches!(rvalue, Rvalue::Call(..) | Rvalue::Concat(_));
         let local = self.new_local(ty);
-        self.assign(local, rvalue, span);
-        if owned && is_managed(ty) {
-            self.frames.last_mut().unwrap().push(local);
+        self.assign(Place::local(local), rvalue, span);
+        if owned {
+            self.own(local);
         }
-        Operand::Copy(local)
+        Operand::local(local)
+    }
+
+    /// Whether `value` is a whole temporary owned by the current frame, which
+    /// can then be moved instead of retained. Removes it from the frame.
+    fn take_temporary(&mut self, value: &Operand) -> bool {
+        let Operand::Copy(Place { local, path }) = value else { return false };
+        if !path.is_empty() {
+            return false;
+        }
+        let frame = self.frames.last_mut().unwrap();
+        let index = frame.iter().position(|l| l == local);
+        index.map(|i| frame.remove(i)).is_some()
     }
 
     /// Stores `value` into `dst`, taking ownership: a temporary of the
     /// current frame is moved, anything else is retained.
-    fn store(&mut self, dst: Local, value: Operand, span: Span) {
-        self.assign(dst, Rvalue::Use(value.clone()), span);
-        if !is_managed(self.locals[dst.0 as usize]) {
-            return;
+    fn store(&mut self, dst: Place, value: Operand, span: Span) {
+        let counted = self.needs_drop(self.place_ty(&dst));
+        let moved = counted && self.take_temporary(&value);
+        let copied = matches!(value, Operand::Copy(_));
+        self.assign(dst.clone(), Rvalue::Use(value), span);
+        if counted && copied && !moved {
+            self.push(Statement::Retain(dst));
         }
-        if let Operand::Copy(src) = value {
-            let frame = self.frames.last_mut().unwrap();
-            match frame.iter().position(|&l| l == src) {
-                Some(index) => {
-                    frame.remove(index);
-                }
-                None => self.push(Statement::Retain(dst)),
+    }
+
+    /// Builds an aggregate into a new owned temporary. Each component is
+    /// moved if it is a temporary of the frame, and retained otherwise.
+    fn aggregate(&mut self, ty: Ty, components: Vec<Operand>, span: Span) -> Operand {
+        let types = self.types.components(ty).expect("aggregate type");
+        let mut retains = Vec::new();
+        for ((index, component), &component_ty) in components.iter().enumerate().zip(&types) {
+            let copied = matches!(component, Operand::Copy(_));
+            if self.needs_drop(component_ty) && copied && !self.take_temporary(component) {
+                retains.push(index as u32);
             }
         }
+        let local = self.new_local(ty);
+        self.assign(Place::local(local), Rvalue::Aggregate(components), span);
+        for index in retains {
+            self.push(Statement::Retain(Place::local(local).field(index)));
+        }
+        self.own(local);
+        Operand::local(local)
     }
 
     fn release_all(&mut self, locals: Vec<Local>) {
         for local in locals.into_iter().rev() {
-            self.push(Statement::Release(local));
+            self.push(Statement::Release(Place::local(local)));
         }
     }
 
@@ -162,15 +202,15 @@ impl Builder<'_> {
         let scopes: Vec<Local> =
             self.scopes[scope_depth..].iter().rev().flat_map(|s| s.iter().rev().copied()).collect();
         for local in frames.into_iter().chain(scopes) {
-            self.push(Statement::Release(local));
+            self.push(Statement::Release(Place::local(local)));
         }
     }
 
     fn emit_return(&mut self, value: Operand) {
         let operand = match self.ret {
             Some(ret) => {
-                self.store(ret, value, Span::default());
-                Operand::Copy(ret)
+                self.store(Place::local(ret), value, Span::default());
+                Operand::local(ret)
             }
             None => Operand::Const(Const::Unit),
         };
@@ -198,17 +238,17 @@ impl Builder<'_> {
             Some(tail) => self.expr(tail),
             None => Operand::Const(Const::Unit),
         };
-        // A binding of this scope cannot outlive it; hand its value over to a
-        // temporary of the enclosing frame first.
-        if let Operand::Copy(local) = value
-            && is_managed(block.ty)
-            && self.scopes.last().unwrap().contains(&local)
+        // A binding of this scope cannot outlive it; hand its value (or the
+        // part of it the block yields) to a temporary of the enclosing frame.
+        if let Operand::Copy(place) = &value
+            && self.needs_drop(block.ty)
+            && self.scopes.last().unwrap().contains(&place.local)
         {
             let copy = self.new_local(block.ty);
-            self.assign(copy, Rvalue::Use(value), Span::default());
-            self.push(Statement::Retain(copy));
+            self.assign(Place::local(copy), Rvalue::Use(value), Span::default());
+            self.push(Statement::Retain(Place::local(copy)));
             self.frames.last_mut().unwrap().push(copy);
-            value = Operand::Copy(copy);
+            value = Operand::local(copy);
         }
         let scope = self.scopes.pop().unwrap();
         self.release_all(scope);
@@ -220,23 +260,26 @@ impl Builder<'_> {
             hir::Stmt::Let(id, value) => {
                 let value = self.expr(value);
                 let local = self.bind(*id);
-                self.store(local, value, Span::default());
-                if is_managed(self.locals[local.0 as usize]) {
+                self.store(Place::local(local), value, Span::default());
+                if self.needs_drop(self.locals[local.0 as usize]) {
                     self.scopes.last_mut().unwrap().push(local);
                 }
             }
-            hir::Stmt::Assign { local, op, value, span } => {
-                let local = self.bind(*local);
+            hir::Stmt::Assign { local, path, op, value, span } => {
+                let place = Place { local: self.bind(*local), path: path.clone() };
                 let value = self.expr(value);
+                let ty = self.place_ty(&place);
                 match op {
-                    Some(op) => self.assign(local, Rvalue::Binary(*op, Operand::Copy(local), value), *span),
-                    None if is_managed(self.locals[local.0 as usize]) => {
-                        let old = self.new_local(self.locals[local.0 as usize]);
-                        self.assign(old, Rvalue::Use(Operand::Copy(local)), *span);
-                        self.store(local, value, *span);
-                        self.push(Statement::Release(old));
+                    Some(op) => self.assign(place.clone(), Rvalue::Binary(*op, Operand::Copy(place), value), *span),
+                    None if self.needs_drop(ty) => {
+                        // Keep the old value until the new one is stored, so
+                        // `x = x` and `x = f(x.field)` stay valid.
+                        let old = self.new_local(ty);
+                        self.assign(Place::local(old), Rvalue::Use(Operand::Copy(place.clone())), *span);
+                        self.store(place, value, *span);
+                        self.push(Statement::Release(Place::local(old)));
                     }
-                    None => self.assign(local, Rvalue::Use(value), *span),
+                    None => self.assign(place, Rvalue::Use(value), *span),
                 }
             }
             hir::Stmt::Expr(value) => {
@@ -275,9 +318,9 @@ impl Builder<'_> {
                 let start = self.expr(start);
                 let end = self.expr(end);
                 let cursor = self.new_local(ty);
-                self.assign(cursor, Rvalue::Use(start), Span::default());
+                self.assign(Place::local(cursor), Rvalue::Use(start), Span::default());
                 let last = self.new_local(ty);
-                self.assign(last, Rvalue::Use(end), Span::default());
+                self.assign(Place::local(last), Rvalue::Use(end), Span::default());
                 let (head, body_block, step, exit) =
                     (self.new_block(), self.new_block(), self.new_block(), self.new_block());
                 self.goto(head);
@@ -285,13 +328,13 @@ impl Builder<'_> {
                 let compare = if *inclusive { BinOp::Le } else { BinOp::Lt };
                 let more = self.temp(
                     Ty::BOOL,
-                    Rvalue::Binary(compare, Operand::Copy(cursor), Operand::Copy(last)),
+                    Rvalue::Binary(compare, Operand::local(cursor), Operand::local(last)),
                     Span::default(),
                 );
                 self.terminate(Terminator::Branch(more, body_block, exit));
                 self.switch_to(body_block);
                 let binding = self.bind(*local);
-                self.assign(binding, Rvalue::Use(Operand::Copy(cursor)), Span::default());
+                self.assign(Place::local(binding), Rvalue::Use(Operand::local(cursor)), Span::default());
                 self.loop_body(body, exit, step);
                 // The successor is only computed while `cursor < last`, so the
                 // increment cannot overflow even at the type's maximum.
@@ -299,14 +342,14 @@ impl Builder<'_> {
                 if *inclusive {
                     let done = self.temp(
                         Ty::BOOL,
-                        Rvalue::Binary(BinOp::Eq, Operand::Copy(cursor), Operand::Copy(last)),
+                        Rvalue::Binary(BinOp::Eq, Operand::local(cursor), Operand::local(last)),
                         Span::default(),
                     );
                     let next = self.new_block();
                     self.terminate(Terminator::Branch(done, exit, next));
                     self.switch_to(next);
                 }
-                self.assign(cursor, Rvalue::Increment(Operand::Copy(cursor)), Span::default());
+                self.assign(Place::local(cursor), Rvalue::Increment(Operand::local(cursor)), Span::default());
                 self.goto(head);
                 self.switch_to(exit);
             }
@@ -334,8 +377,35 @@ impl Builder<'_> {
             hir::ExprKind::Str(text) => Operand::Const(Const::Str(text.clone())),
             hir::ExprKind::Unit => Operand::Const(Const::Unit),
             hir::ExprKind::Local(id) => {
-                Operand::Copy(self.hir_locals[id.0 as usize].expect("local lowered before use"))
+                Operand::local(self.hir_locals[id.0 as usize].expect("local lowered before use"))
             }
+            hir::ExprKind::Aggregate(items) => {
+                let components = items.iter().map(|item| self.expr(item)).collect();
+                self.aggregate(e.ty, components, e.span)
+            }
+            hir::ExprKind::Record(values) => {
+                // Evaluate in source order, then place in declaration order.
+                let mut components = vec![Operand::Const(Const::Unit); values.len()];
+                for (index, value) in values {
+                    components[*index as usize] = self.expr(value);
+                }
+                self.aggregate(e.ty, components, e.span)
+            }
+            hir::ExprKind::With(base, updates) => {
+                let Operand::Copy(base) = self.expr(base) else { unreachable!("records are places") };
+                let count = self.types.components(e.ty).expect("record").len() as u32;
+                let mut components: Vec<Operand> = (0..count).map(|i| Operand::Copy(base.field(i))).collect();
+                for (index, value) in updates {
+                    components[*index as usize] = self.expr(value);
+                }
+                self.aggregate(e.ty, components, e.span)
+            }
+            hir::ExprKind::Field(base, index) => match self.expr(base) {
+                Operand::Copy(place) => Operand::Copy(place.field(*index)),
+                Operand::Const(_) => unreachable!("aggregates are places"),
+            },
+            // Newtypes share their value's representation.
+            hir::ExprKind::Retype(inner) => self.expr(inner),
             hir::ExprKind::Call(callee, args) => {
                 let args = args.iter().map(|a| self.expr(a)).collect();
                 let result = self.temp(e.ty, Rvalue::Call(*callee, args), e.span);
@@ -359,16 +429,17 @@ impl Builder<'_> {
                 };
                 self.terminate(branch);
                 self.switch_to(short);
-                self.assign(result, Rvalue::Use(Operand::Const(Const::Bool(*op == BinOp::Or))), e.span);
+                let short_value = Rvalue::Use(Operand::Const(Const::Bool(*op == BinOp::Or)));
+                self.assign(Place::local(result), short_value, e.span);
                 self.goto(join);
                 self.switch_to(rhs);
                 self.in_frame(|b| {
                     let right = b.expr(right);
-                    b.assign(result, Rvalue::Use(right), e.span);
+                    b.assign(Place::local(result), Rvalue::Use(right), e.span);
                 });
                 self.goto(join);
                 self.switch_to(join);
-                Operand::Copy(result)
+                Operand::local(result)
             }
             hir::ExprKind::Binary(op, left, right) => {
                 let left = self.expr(left);
@@ -429,7 +500,7 @@ impl Builder<'_> {
         self.in_frame(|b| {
             let value = b.block(then);
             if let Some(result) = result.filter(|_| then.ty != Ty::NEVER) {
-                b.store(result, value, e.span);
+                b.store(Place::local(result), value, e.span);
             }
         });
         self.goto(join);
@@ -439,7 +510,7 @@ impl Builder<'_> {
             self.in_frame(|b| {
                 let value = b.expr(otherwise);
                 if let Some(result) = result.filter(|_| otherwise.ty != Ty::NEVER) {
-                    b.store(result, value, e.span);
+                    b.store(Place::local(result), value, e.span);
                 }
             });
         }
@@ -448,10 +519,8 @@ impl Builder<'_> {
         self.switch_to(join);
         match result {
             Some(result) => {
-                if is_managed(e.ty) {
-                    self.frames.last_mut().unwrap().push(result);
-                }
-                Operand::Copy(result)
+                self.own(result);
+                Operand::local(result)
             }
             None => Operand::Const(Const::Unit),
         }

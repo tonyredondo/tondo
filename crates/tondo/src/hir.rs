@@ -37,8 +37,10 @@ pub struct Block {
 
 pub enum Stmt {
     Let(LocalId, Expr),
+    /// Assignment to a binding or to a field path inside it.
     Assign {
         local: LocalId,
+        path: Vec<u32>,
         op: Option<BinOp>,
         value: Expr,
         span: Span,
@@ -75,6 +77,17 @@ pub enum ExprKind {
     Str(String),
     Unit,
     Local(LocalId),
+    /// Tuple elements or record fields in declaration order.
+    Aggregate(Vec<Expr>),
+    /// A record literal: `(field index, value)` in source order, which is
+    /// also the evaluation order (5.12).
+    Record(Vec<(u32, Expr)>),
+    /// A tuple element or record field.
+    Field(Box<Expr>, u32),
+    /// `base with { ... }`: updates in source order.
+    With(Box<Expr>, Vec<(u32, Expr)>),
+    /// Newtype construction or `.value`: same representation, new type.
+    Retype(Box<Expr>),
     Call(Callee, Vec<Expr>),
     Unary(UnaryOp, Box<Expr>),
     /// Arithmetic, bitwise and comparison operators; `and`/`or` short-circuit.

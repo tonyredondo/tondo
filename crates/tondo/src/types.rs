@@ -84,13 +84,37 @@ pub enum TyKind {
     Bool,
     String,
     Int(IntTy),
+    /// Two or more elements; the empty tuple is `Unit`.
+    Tuple(Vec<Ty>),
+    /// A nominal record or newtype declared in the program.
+    Adt(AdtId),
     Result(Ty, Ty),
     Std(StdType),
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AdtId(pub u32);
+
+pub struct AdtDef {
+    pub name: String,
+    pub kind: AdtKind,
+}
+
+pub enum AdtKind {
+    Record(Vec<Field>),
+    /// `type Name = T`: a nominal wrapper with the same representation as `T`.
+    Newtype(Ty),
+}
+
+pub struct Field {
+    pub name: String,
+    pub ty: Ty,
 }
 
 pub struct Types {
     kinds: Vec<TyKind>,
     map: HashMap<TyKind, Ty>,
+    adts: Vec<AdtDef>,
 }
 
 impl Ty {
@@ -108,7 +132,7 @@ impl Ty {
 
 impl Default for Types {
     fn default() -> Types {
-        let mut types = Types { kinds: Vec::new(), map: HashMap::new() };
+        let mut types = Types { kinds: Vec::new(), map: HashMap::new(), adts: Vec::new() };
         for kind in [TyKind::Error, TyKind::Unit, TyKind::Never, TyKind::Bool, TyKind::String] {
             types.intern(kind);
         }
@@ -134,6 +158,64 @@ impl Types {
         &self.kinds[ty.0 as usize]
     }
 
+    /// Declares a nominal type; its definition is filled in by `define_adt`.
+    pub fn declare_adt(&mut self, name: String) -> (AdtId, Ty) {
+        let id = AdtId(self.adts.len() as u32);
+        self.adts.push(AdtDef { name, kind: AdtKind::Record(Vec::new()) });
+        (id, self.intern(TyKind::Adt(id)))
+    }
+
+    pub fn define_adt(&mut self, id: AdtId, kind: AdtKind) {
+        self.adts[id.0 as usize].kind = kind;
+    }
+
+    pub fn adt(&self, id: AdtId) -> &AdtDef {
+        &self.adts[id.0 as usize]
+    }
+
+    pub fn adt_count(&self) -> usize {
+        self.adts.len()
+    }
+
+    /// Strips newtypes: they share the representation of their value.
+    pub fn repr(&self, mut ty: Ty) -> Ty {
+        while let TyKind::Adt(id) = self.kind(ty) {
+            match &self.adt(*id).kind {
+                AdtKind::Newtype(inner) => ty = *inner,
+                AdtKind::Record(_) => break,
+            }
+        }
+        ty
+    }
+
+    /// Component types of a tuple or record, in declaration order.
+    pub fn components(&self, ty: Ty) -> Option<Vec<Ty>> {
+        match self.kind(self.repr(ty)) {
+            TyKind::Tuple(items) => Some(items.clone()),
+            TyKind::Adt(id) => match &self.adt(*id).kind {
+                AdtKind::Record(fields) => Some(fields.iter().map(|f| f.ty).collect()),
+                AdtKind::Newtype(_) => unreachable!("repr strips newtypes"),
+            },
+            _ => None,
+        }
+    }
+
+    /// Whether values of this type own reference-counted storage.
+    pub fn needs_drop(&self, ty: Ty) -> bool {
+        match self.kind(self.repr(ty)) {
+            TyKind::String => true,
+            _ => self.components(ty).is_some_and(|items| items.iter().any(|&t| self.needs_drop(t))),
+        }
+    }
+
+    /// The closed `Equatable` capability (8.11), for the types implemented so far.
+    pub fn is_equatable(&self, ty: Ty) -> bool {
+        match self.kind(self.repr(ty)) {
+            TyKind::Int(_) | TyKind::Bool | TyKind::String | TyKind::Unit | TyKind::Never | TyKind::Error => true,
+            _ => self.components(ty).is_some_and(|items| items.iter().all(|&t| self.is_equatable(t))),
+        }
+    }
+
     pub fn as_int(&self, ty: Ty) -> Option<IntTy> {
         match self.kind(ty) {
             TyKind::Int(int) => Some(*int),
@@ -149,6 +231,11 @@ impl Types {
             TyKind::Bool => "Bool".into(),
             TyKind::String => "String".into(),
             TyKind::Int(int) => int.name().into(),
+            TyKind::Tuple(items) => {
+                let items: Vec<String> = items.iter().map(|&t| self.display(t)).collect();
+                format!("({})", items.join(", "))
+            }
+            TyKind::Adt(id) => self.adt(*id).name.clone(),
             TyKind::Result(ok, err) if *ok == Ty::UNIT => format!("!{}", self.display(*err)),
             TyKind::Result(ok, err) => format!("{} ! {}", self.display(*ok), self.display(*err)),
             TyKind::Std(StdType::ConsoleError) => "console.ConsoleError".into(),

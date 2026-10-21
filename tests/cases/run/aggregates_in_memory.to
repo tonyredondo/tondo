@@ -1,0 +1,56 @@
+import std.console
+
+type Big = {
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+    e: Int
+    f: Int
+    g: Int
+    h: Int
+    name: String
+    i: Int
+}
+
+type Empty = {}
+
+type Event = {
+    type: String
+    at: Int
+}
+
+fn identity(b: Big): Big {
+    b
+}
+
+fn pick(flag: Bool, x: Big, y: Big): Big {
+    if flag { x } else { y }
+}
+
+fn build(n: Int): Big {
+    let local = Big { a: n, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, name: "big{n}", i: 9 }
+    local
+}
+
+fn main() {
+    let x = build(1)
+    let y = identity(build(2))
+    let z = pick(false, x, y)
+    let w = { let inner = build(3)
+        inner }
+    let e = Empty {}
+    let ev = Event { type: "click", at: 3 }
+    _ = console.println("{x.name} {y.name} {z.name} {w.name} {w.i} {e == Empty {}} {ev.type}")
+    var total = 0
+    for k in 0..1000 {
+        let item = build(k)
+        total += item.a
+    }
+    _ = console.println("{total}")
+}
+
+// Records larger than 64 bytes are copied with memcpy; empty records have no
+// storage; keyword field names are allowed (5.4).
+// expect-stdout: big1 big2 big2 big3 9 true click
+// expect-stdout: 499500

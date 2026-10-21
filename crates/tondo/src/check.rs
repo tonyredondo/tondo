@@ -8,13 +8,73 @@ use crate::diag::Diagnostics;
 use crate::hir::{self, Callee, FnId, LocalId, StdFn};
 use crate::parser::CONTEXTUAL_CONSTRUCTORS;
 use crate::source::{SourceMap, Span};
-use crate::types::{IntTy, StdType, Ty, TyKind, Types};
-use std::collections::HashMap;
+use crate::types::{AdtKind, Field, IntTy, StdType, Ty, TyKind, Types};
+use std::collections::{HashMap, HashSet};
 
 pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics) -> Option<hir::Program> {
-    let mut checker =
-        Checker { types: Types::default(), diags, sources, names: HashMap::new(), signatures: Vec::new() };
+    let mut checker = Checker {
+        types: Types::default(),
+        diags,
+        sources,
+        names: HashMap::new(),
+        type_names: HashMap::new(),
+        aliases: Vec::new(),
+        signatures: Vec::new(),
+    };
     checker.program(module)
+}
+
+/// Prelude type names (26.3); they cannot be redeclared unqualified.
+const PRELUDE_TYPES: [&str; 37] = [
+    "Bool",
+    "Int",
+    "Float",
+    "Byte",
+    "Char",
+    "String",
+    "Unit",
+    "Never",
+    "Int8",
+    "Int16",
+    "Int32",
+    "Int64",
+    "UInt8",
+    "UInt16",
+    "UInt32",
+    "UInt64",
+    "Float32",
+    "Float64",
+    "Option",
+    "Result",
+    "Array",
+    "Map",
+    "Set",
+    "Range",
+    "Iterator",
+    "Ref",
+    "Pointer",
+    "Join",
+    "Command",
+    "Pipeline",
+    "Copy",
+    "Discard",
+    "Equatable",
+    "Key",
+    "Send",
+    "Share",
+    "Display",
+];
+
+enum TypeName {
+    Nominal(Ty),
+    Alias(usize),
+}
+
+struct AliasEntry {
+    target: ast::TypeExpr,
+    span: Span,
+    resolved: Option<Ty>,
+    resolving: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -26,6 +86,14 @@ enum StdModule {
 enum ModuleName {
     Fn(FnId),
     Module(StdModule),
+    /// The constructor `Name(value)` of a newtype (8.8).
+    Newtype(Ty),
+}
+
+#[derive(Copy, Clone)]
+enum FieldRef<'a> {
+    Name(&'a str),
+    Slot(u32),
 }
 
 struct Signature {
@@ -40,6 +108,8 @@ struct Checker<'a> {
     diags: &'a mut Diagnostics,
     sources: &'a SourceMap,
     names: HashMap<String, ModuleName>,
+    type_names: HashMap<String, TypeName>,
+    aliases: Vec<AliasEntry>,
     signatures: Vec<Signature>,
 }
 
@@ -62,7 +132,15 @@ impl Checker<'_> {
             self.import(import);
         }
 
-        let fns: Vec<&ast::FnDecl> = module.items.iter().map(|ast::Item::Fn(f)| f).collect();
+        self.declare_types(&module.items);
+        let fns: Vec<&ast::FnDecl> = module
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ast::Item::Fn(f) => Some(f),
+                _ => None,
+            })
+            .collect();
         for (index, f) in fns.iter().enumerate() {
             let signature = self.signature(f);
             self.signatures.push(signature);
@@ -131,6 +209,118 @@ impl Checker<'_> {
         }
     }
 
+    fn declare_type_name(&mut self, name: &ast::Ident, value: TypeName) {
+        if PRELUDE_TYPES.contains(&name.name.as_str()) {
+            let message = format!("`{}` is a prelude type and cannot be redeclared", name.name);
+            self.diags.error("E1005", name.span, message);
+        } else if self.type_names.insert(name.name.clone(), value).is_some() {
+            let message = format!("type `{}` is declared more than once", name.name);
+            self.diags.error("E1002", name.span, message);
+        }
+    }
+
+    /// Declares every nominal type and alias, then resolves their definitions,
+    /// so declarations may refer to each other in any order (7.11).
+    fn declare_types(&mut self, items: &[ast::Item]) {
+        let mut declared = Vec::new();
+        for item in items {
+            match item {
+                ast::Item::Type(decl) => {
+                    let (id, ty) = self.types.declare_adt(decl.name.name.clone());
+                    self.declare_type_name(&decl.name, TypeName::Nominal(ty));
+                    if let ast::TypeBody::Newtype(_) = decl.body {
+                        self.declare_module_name(&decl.name, ModuleName::Newtype(ty));
+                    }
+                    declared.push((decl, id, ty));
+                }
+                ast::Item::Alias(decl) => {
+                    let entry = AliasEntry {
+                        target: decl.target.clone(),
+                        span: decl.name.span,
+                        resolved: None,
+                        resolving: false,
+                    };
+                    self.aliases.push(entry);
+                    self.declare_type_name(&decl.name, TypeName::Alias(self.aliases.len() - 1));
+                }
+                ast::Item::Fn(_) => {}
+            }
+        }
+        for &(decl, id, _) in &declared {
+            let kind = match &decl.body {
+                ast::TypeBody::Newtype(inner) => AdtKind::Newtype(self.resolve_type(inner)),
+                ast::TypeBody::Record(fields) => {
+                    let mut seen = HashSet::new();
+                    let mut resolved = Vec::new();
+                    for field in fields {
+                        if !seen.insert(field.name.name.as_str()) {
+                            let message = format!("field `{}` is declared more than once", field.name.name);
+                            self.diags.error("E1002", field.name.span, message);
+                        }
+                        resolved.push(Field { name: field.name.name.clone(), ty: self.resolve_type(&field.ty) });
+                    }
+                    AdtKind::Record(resolved)
+                }
+            };
+            self.types.define_adt(id, kind);
+        }
+        for index in 0..self.aliases.len() {
+            self.resolve_alias(index);
+        }
+        // Productivity (9.10): every nominal type is stored inline for now,
+        // so any type that contains itself has no finite value.
+        for &(decl, id, ty) in &declared {
+            let mut visited = HashSet::new();
+            let components = match &self.types.adt(id).kind {
+                AdtKind::Newtype(inner) => vec![*inner],
+                AdtKind::Record(fields) => fields.iter().map(|f| f.ty).collect(),
+            };
+            if components.iter().any(|&c| self.reaches(c, ty, &mut visited)) {
+                let message = format!("type `{}` contains itself and has no finite value", decl.name.name);
+                self.diags.error("E1107", decl.name.span, message);
+                self.types.define_adt(id, AdtKind::Newtype(Ty::ERROR));
+            }
+        }
+    }
+
+    fn reaches(&self, ty: Ty, target: Ty, visited: &mut HashSet<Ty>) -> bool {
+        if ty == target {
+            return true;
+        }
+        if !visited.insert(ty) {
+            return false;
+        }
+        match self.types.kind(ty) {
+            TyKind::Tuple(items) => items.clone().iter().any(|&t| self.reaches(t, target, visited)),
+            TyKind::Adt(id) => match &self.types.adt(*id).kind {
+                AdtKind::Newtype(inner) => self.reaches(*inner, target, visited),
+                AdtKind::Record(fields) => {
+                    let fields: Vec<Ty> = fields.iter().map(|f| f.ty).collect();
+                    fields.iter().any(|&t| self.reaches(t, target, visited))
+                }
+            },
+            _ => false,
+        }
+    }
+
+    fn resolve_alias(&mut self, index: usize) -> Ty {
+        let entry = &self.aliases[index];
+        if let Some(ty) = entry.resolved {
+            return ty;
+        }
+        if entry.resolving {
+            let span = entry.span;
+            self.diags.error("E1106", span, "transparent aliases form a cycle");
+            self.aliases[index].resolved = Some(Ty::ERROR);
+            return Ty::ERROR;
+        }
+        self.aliases[index].resolving = true;
+        let target = self.aliases[index].target.clone();
+        let ty = self.resolve_type(&target);
+        self.aliases[index].resolved.get_or_insert(ty);
+        self.aliases[index].resolved.unwrap()
+    }
+
     fn signature(&mut self, f: &ast::FnDecl) -> Signature {
         if let Some(owner) = &f.owner {
             self.diags.unsupported(owner.span, "methods");
@@ -195,6 +385,10 @@ impl Checker<'_> {
                         self.diags.unsupported(t.span, &what);
                         Ty::ERROR
                     }
+                    [single] if self.type_names.contains_key(*single) => match self.type_names[*single] {
+                        TypeName::Nominal(ty) => ty,
+                        TypeName::Alias(index) => self.resolve_alias(index),
+                    },
                     _ => {
                         let message = format!("unknown type `{}`", names.join("."));
                         self.diags.error("E1001", t.span, message);
@@ -209,7 +403,10 @@ impl Checker<'_> {
             }
             ast::TypeKind::Optional(_) => self.unsupported_type(t.span, "optional types"),
             ast::TypeKind::Union(_) => self.unsupported_type(t.span, "union types"),
-            ast::TypeKind::Tuple(_) => self.unsupported_type(t.span, "tuple types"),
+            ast::TypeKind::Tuple(items) => {
+                let items = items.iter().map(|item| self.resolve_type(item)).collect();
+                self.types.intern(TyKind::Tuple(items))
+            }
             ast::TypeKind::Fn => self.unsupported_type(t.span, "function types"),
         }
     }
@@ -410,30 +607,7 @@ impl Checker<'_> {
         value: &ast::Expr,
         span: Span,
     ) -> Option<hir::Stmt> {
-        let ast::ExprKind::Path(segments) = &target.kind else {
-            self.diags.unsupported(target.span, "this assignment target");
-            return None;
-        };
-        if segments.len() != 1 {
-            self.diags.unsupported(target.span, "field assignment");
-            return None;
-        }
-        let name = &segments[0];
-        let Some(local) = self.lookup(cx, &name.name) else {
-            let message = if self.names.contains_key(&name.name) {
-                format!("`{}` is not a mutable binding", name.name)
-            } else {
-                format!("unknown name `{}`", name.name)
-            };
-            let code = if self.names.contains_key(&name.name) { "E1411" } else { "E1001" };
-            self.diags.error(code, name.span, message);
-            return None;
-        };
-        if !cx.mutable[local.0 as usize] {
-            let message = format!("cannot assign to `{}`: it is not declared with `var`", name.name);
-            self.diags.error("E1411", name.span, message);
-        }
-        let ty = cx.locals[local.0 as usize].ty;
+        let (local, path, ty) = self.place(cx, target)?;
         let value = match op {
             Some(BinOp::Shl | BinOp::Shr) => {
                 if self.types.as_int(ty).is_none() && ty != Ty::ERROR {
@@ -459,7 +633,73 @@ impl Checker<'_> {
             }
         };
         cx.diverged |= value.ty == Ty::NEVER;
-        Some(hir::Stmt::Assign { local, op, value, span })
+        Some(hir::Stmt::Assign { local, path, op, value, span })
+    }
+
+    /// Resolves an assignment target to a `var` binding and a field path.
+    fn place(&mut self, cx: &FnCx, target: &ast::Expr) -> Option<(LocalId, Vec<u32>, Ty)> {
+        let (base, field) = match &target.kind {
+            ast::ExprKind::Path(segments) => {
+                let root = &segments[0];
+                let Some(local) = self.lookup(cx, &root.name) else {
+                    let known = self.names.contains_key(&root.name);
+                    let (code, message) = if known {
+                        ("E1411", format!("`{}` is not a mutable binding", root.name))
+                    } else {
+                        ("E1001", format!("unknown name `{}`", root.name))
+                    };
+                    self.diags.error(code, root.span, message);
+                    return None;
+                };
+                if !cx.mutable[local.0 as usize] {
+                    let message = format!("cannot assign to `{}`: it is not declared with `var`", root.name);
+                    self.diags.error("E1411", root.span, message);
+                }
+                let mut ty = cx.locals[local.0 as usize].ty;
+                let mut path = Vec::new();
+                for segment in &segments[1..] {
+                    let (index, field_ty) = self.field_of(ty, FieldRef::Name(&segment.name), segment.span)?;
+                    path.extend(index);
+                    ty = field_ty;
+                }
+                return Some((local, path, ty));
+            }
+            ast::ExprKind::Field(base, name) => (base, (FieldRef::Name(&name.name), name.span)),
+            ast::ExprKind::TupleSlot(base, slot) => (base, (FieldRef::Slot(*slot), target.span)),
+            _ => {
+                self.diags.error("E1411", target.span, "this expression cannot be assigned to");
+                return None;
+            }
+        };
+        let (local, mut path, ty) = self.place(cx, base)?;
+        let (index, field_ty) = self.field_of(ty, field.0, field.1)?;
+        path.extend(index);
+        Some((local, path, field_ty))
+    }
+
+    /// The position and type of a field. The position is `None` for a
+    /// newtype's `.value`, which shares the newtype's representation.
+    fn field_of(&mut self, ty: Ty, field: FieldRef, span: Span) -> Option<(Option<u32>, Ty)> {
+        let found = match (self.types.kind(ty), field) {
+            (TyKind::Error, _) => return None,
+            (TyKind::Tuple(items), FieldRef::Slot(slot)) => items.get(slot as usize).map(|&t| (Some(slot), t)),
+            (TyKind::Adt(id), FieldRef::Name(name)) => match &self.types.adt(*id).kind {
+                AdtKind::Record(fields) => {
+                    fields.iter().position(|f| f.name == name).map(|i| (Some(i as u32), fields[i].ty))
+                }
+                AdtKind::Newtype(inner) => (name == "value").then_some((None, *inner)),
+            },
+            _ => None,
+        };
+        if found.is_none() {
+            let what = match field {
+                FieldRef::Name(name) => format!("field `{name}`"),
+                FieldRef::Slot(slot) => format!("element {slot}"),
+            };
+            let message = format!("{} has no {what}", self.display(ty));
+            self.diags.error("E1102", span, message);
+        }
+        found
     }
 
     fn for_loop(&mut self, cx: &mut FnCx, header: &ast::ForHeader, body: &ast::Block) -> Option<hir::Stmt> {
@@ -545,11 +785,154 @@ impl Checker<'_> {
             }
             ast::ExprKind::Float { .. } => self.unsupported_expr(span, "floating-point values"),
             ast::ExprKind::Char(_) => self.unsupported_expr(span, "`Char` values"),
-            ast::ExprKind::Field(..) => self.unsupported_expr(span, "field access"),
-            ast::ExprKind::Tuple(_) => self.unsupported_expr(span, "tuples"),
+            ast::ExprKind::Field(base, name) => {
+                let base = self.expr(cx, base, None);
+                self.field_access(base, FieldRef::Name(&name.name), name.span, span)
+            }
+            ast::ExprKind::TupleSlot(base, slot) => {
+                let base = self.expr(cx, base, None);
+                self.field_access(base, FieldRef::Slot(*slot), span, span)
+            }
+            ast::ExprKind::Tuple(items) => self.tuple(cx, items, expected, span),
+            ast::ExprKind::Record { path, fields } => self.record_literal(cx, path, fields, span),
+            ast::ExprKind::With { base, updates } => self.with_expr(cx, base, updates, span),
             ast::ExprKind::Try(_) => self.unsupported_expr(span, "`?` propagation"),
             ast::ExprKind::Error => Self::error_expr(span),
         }
+    }
+
+    fn field_access(&mut self, base: hir::Expr, field: FieldRef, field_span: Span, span: Span) -> hir::Expr {
+        let Some((index, ty)) = self.field_of(base.ty, field, field_span) else {
+            return Self::error_expr(span);
+        };
+        let kind = match index {
+            Some(index) => hir::ExprKind::Field(Box::new(base), index),
+            None => hir::ExprKind::Retype(Box::new(base)),
+        };
+        Self::mk(kind, ty, span)
+    }
+
+    fn tuple(&mut self, cx: &mut FnCx, items: &[ast::Expr], expected: Option<Ty>, span: Span) -> hir::Expr {
+        let expected_items = match expected.map(|t| self.types.kind(t)) {
+            Some(TyKind::Tuple(types)) if types.len() == items.len() => types.clone(),
+            _ => Vec::new(),
+        };
+        let items: Vec<hir::Expr> = items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| {
+                let expected = expected_items.get(i).copied();
+                let value = self.expr(cx, item, expected);
+                match expected {
+                    Some(expected) => self.coerce(value, expected),
+                    None => value,
+                }
+            })
+            .collect();
+        let ty = self.types.intern(TyKind::Tuple(items.iter().map(|i| i.ty).collect()));
+        Self::mk(hir::ExprKind::Aggregate(items), ty, span)
+    }
+
+    /// The fields of a record type, or an error at `span`.
+    fn record_fields(&mut self, ty: Ty, span: Span) -> Option<Vec<(String, Ty)>> {
+        if let TyKind::Adt(id) = self.types.kind(ty)
+            && let AdtKind::Record(fields) = &self.types.adt(*id).kind
+        {
+            return Some(fields.iter().map(|f| (f.name.clone(), f.ty)).collect());
+        }
+        if ty != Ty::ERROR {
+            let message = format!("{} is not a record type", self.display(ty));
+            self.diags.error("E1102", span, message);
+        }
+        None
+    }
+
+    /// Checks field initializers against `fields`, in source order.
+    fn field_values(
+        &mut self,
+        cx: &mut FnCx,
+        record: Ty,
+        fields: &[(String, Ty)],
+        inits: &[ast::FieldInit],
+        allow_shorthand: bool,
+    ) -> (Vec<(u32, hir::Expr)>, Vec<bool>) {
+        let mut seen = vec![false; fields.len()];
+        let mut values = Vec::new();
+        for init in inits {
+            let index = fields.iter().position(|(name, _)| *name == init.name.name);
+            let expected = index.map(|i| fields[i].1);
+            let value = match &init.value {
+                Some(value) => self.expr(cx, value, expected),
+                None if allow_shorthand && crate::lexer::Kw::lookup(&init.name.name).is_none() => {
+                    self.path(cx, std::slice::from_ref(&init.name), init.name.span)
+                }
+                None => {
+                    let message =
+                        format!("field `{}` needs an explicit value: `{}: value`", init.name.name, init.name.name);
+                    self.diags.error("E1102", init.name.span, message);
+                    Self::error_expr(init.name.span)
+                }
+            };
+            let Some(index) = index else {
+                let message = format!("{} has no field `{}`", self.display(record), init.name.name);
+                self.diags.error("E1102", init.name.span, message);
+                continue;
+            };
+            if std::mem::replace(&mut seen[index], true) {
+                let message = format!("field `{}` is initialized more than once", init.name.name);
+                self.diags.error("E1102", init.name.span, message);
+            }
+            let value = self.coerce(value, fields[index].1);
+            values.push((index as u32, value));
+        }
+        (values, seen)
+    }
+
+    fn record_literal(
+        &mut self,
+        cx: &mut FnCx,
+        path: &[ast::Ident],
+        inits: &[ast::FieldInit],
+        span: Span,
+    ) -> hir::Expr {
+        let [name] = path else {
+            return self.unsupported_expr(span, "qualified record literals");
+        };
+        let ty = match self.type_names.get(&name.name) {
+            Some(TypeName::Nominal(ty)) => *ty,
+            Some(TypeName::Alias(index)) => {
+                let index = *index;
+                self.resolve_alias(index)
+            }
+            None => {
+                let message = format!("unknown type `{}`", name.name);
+                self.diags.error("E1001", name.span, message);
+                return Self::error_expr(span);
+            }
+        };
+        let Some(fields) = self.record_fields(ty, name.span) else {
+            return Self::error_expr(span);
+        };
+        let (values, seen) = self.field_values(cx, ty, &fields, inits, true);
+        let missing: Vec<&str> = fields.iter().zip(&seen).filter(|(_, s)| !**s).map(|((n, _), _)| n.as_str()).collect();
+        if !missing.is_empty() {
+            let message = format!("record construction is missing fields: {}", missing.join(", "));
+            self.diags.error("E1102", span, message);
+        }
+        Self::mk(hir::ExprKind::Record(values), ty, span)
+    }
+
+    fn with_expr(&mut self, cx: &mut FnCx, base: &ast::Expr, updates: &[ast::FieldInit], span: Span) -> hir::Expr {
+        let base = self.expr(cx, base, None);
+        let ty = base.ty;
+        let Some(fields) = self.record_fields(ty, base.span) else {
+            return Self::error_expr(span);
+        };
+        if updates.is_empty() {
+            self.diags.error("E1102", span, "`with` must update at least one field");
+        }
+        let (values, _) = self.field_values(cx, ty, &fields, updates, false);
+        Self::mk(hir::ExprKind::With(Box::new(base), values), ty, span)
     }
 
     fn unsupported_expr(&mut self, span: Span, what: &str) -> hir::Expr {
@@ -597,14 +980,21 @@ impl Checker<'_> {
     fn path(&mut self, cx: &mut FnCx, segments: &[ast::Ident], span: Span) -> hir::Expr {
         let first = &segments[0];
         if let Some(local) = self.lookup(cx, &first.name) {
-            if segments.len() > 1 {
-                return self.unsupported_expr(span, "field access");
-            }
             let ty = cx.locals[local.0 as usize].ty;
-            return Self::mk(hir::ExprKind::Local(local), ty, span);
+            let mut value = Self::mk(hir::ExprKind::Local(local), ty, first.span);
+            for segment in &segments[1..] {
+                let span = value.span.to(segment.span);
+                value = self.field_access(value, FieldRef::Name(&segment.name), segment.span, span);
+            }
+            return value;
         }
         match self.names.get(&first.name) {
             Some(ModuleName::Fn(_)) => self.unsupported_expr(span, "function values"),
+            Some(ModuleName::Newtype(_)) => {
+                let message = format!("`{}` constructs a value: write `{}(value)`", first.name, first.name);
+                self.diags.error("E1102", span, message);
+                Self::error_expr(span)
+            }
             Some(ModuleName::Module(_)) => {
                 let message = format!(
                     "`{}` is a module, not a value",
@@ -665,6 +1055,16 @@ impl Checker<'_> {
                     })
                     .collect();
                 Self::mk(hir::ExprKind::Assert { condition, parts, source }, Ty::UNIT, span)
+            }
+            ([_], Some(ModuleName::Newtype(ty))) => {
+                let [arg] = args else {
+                    return self.arity_error(span, 1, args.len());
+                };
+                let TyKind::Adt(id) = self.types.kind(ty) else { unreachable!() };
+                let AdtKind::Newtype(inner) = self.types.adt(*id).kind else { unreachable!() };
+                let value = self.expr(cx, &arg.value, Some(inner));
+                let value = self.coerce(value, inner);
+                Self::mk(hir::ExprKind::Retype(Box::new(value)), ty, span)
             }
             ([_], Some(ModuleName::Fn(id))) => {
                 let params = self.signatures[id.0 as usize].params.clone();
@@ -844,11 +1244,7 @@ impl Checker<'_> {
             }
             BinOp::Eq | BinOp::Ne => {
                 let (left, right) = self.operands(cx, left, right, None);
-                let comparable = matches!(
-                    self.types.kind(left.ty),
-                    TyKind::Int(_) | TyKind::Bool | TyKind::String | TyKind::Unit | TyKind::Error | TyKind::Never
-                );
-                if !comparable {
+                if !self.types.is_equatable(left.ty) {
                     operator_error(self, left.ty);
                 }
                 (left, right, Ty::BOOL)

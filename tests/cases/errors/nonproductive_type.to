@@ -1,0 +1,8 @@
+type Node = {
+    value: Int
+    next: Node
+}
+
+fn main() {}
+
+// expect-error: E1107

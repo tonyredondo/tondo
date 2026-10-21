@@ -1,0 +1,40 @@
+import std.console
+
+type UserId = Int
+
+type User = {
+    id: UserId
+    name: String
+    tags: (String, Int)
+}
+
+alias Pair = (Int, String)
+
+fn make(id: Int, name: String): User {
+    User { id: UserId(id), name, tags: ("t{id}", id * 10) }
+}
+
+fn swap(p: Pair): (String, Int) {
+    (p.1, p.0)
+}
+
+fn main() {
+    var user = make(7, "Ada")
+    let copy = user
+    user.name = "Grace"
+    user.tags.1 += 1
+    let renamed = copy with { name: "Lin", id: UserId(8) }
+    _ = console.println("{user.id.value} {user.name} {user.tags.0} {user.tags.1}")
+    _ = console.println("{copy.id.value} {copy.name} {copy.tags.1}")
+    _ = console.println("{renamed.id.value} {renamed.name} {renamed.tags.0}")
+    let s = swap((1, "uno"))
+    _ = console.println("{s.0} {s.1} {s == ("uno", 1)} {user == copy} {copy == copy}")
+    let nested = ((1, 2), (3, (4, 5)))
+    _ = console.println("{nested.1.1.0} {nested.0.1}")
+}
+
+// expect-stdout: 7 Grace t7 71
+// expect-stdout: 7 Ada 70
+// expect-stdout: 8 Lin t7
+// expect-stdout: uno 1 true false true
+// expect-stdout: 4 2

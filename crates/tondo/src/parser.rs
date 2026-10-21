@@ -214,12 +214,107 @@ impl Parser<'_> {
         let public = self.eat_kw(Kw::Pub);
         match self.tok() {
             Tok::Kw(Kw::Fn) => Ok(Some(Item::Fn(self.function(public, start)?))),
+            Tok::Kw(Kw::Type) => Ok(Some(Item::Type(self.type_declaration(public, start)?))),
+            Tok::Kw(Kw::Alias) => {
+                self.bump();
+                let name = self.ident()?;
+                self.no_generics()?;
+                self.expect(Tok::Eq)?;
+                let target = self.type_expr()?;
+                let span = start.to(target.span);
+                self.end_of_statement()?;
+                Ok(Some(Item::Alias(AliasDecl { public, name, target, span })))
+            }
             Tok::Kw(kw) => {
                 let what = format!("`{}` declarations", kw.as_str());
                 self.diags.unsupported(start, &what);
                 Err(())
             }
             _ => self.expected("declaration"),
+        }
+    }
+
+    fn no_generics(&mut self) -> PResult<()> {
+        if self.at(&Tok::LBracket) {
+            self.diags.unsupported(self.span(), "generic declarations");
+            return Err(());
+        }
+        Ok(())
+    }
+
+    fn type_declaration(&mut self, public: bool, start: Span) -> PResult<TypeDecl> {
+        self.bump();
+        let name = self.ident()?;
+        self.no_generics()?;
+        self.expect(Tok::Eq)?;
+        let body = if self.at(&Tok::LBrace) {
+            TypeBody::Record(self.record_body()?)
+        } else {
+            TypeBody::Newtype(self.type_expr()?)
+        };
+        let span = start.to(self.prev_span());
+        self.end_of_statement()?;
+        Ok(TypeDecl { public, name, body, span })
+    }
+
+    /// `{ [priv] name: Type, ... }` separated by commas or newlines.
+    fn record_body(&mut self) -> PResult<Vec<FieldDecl>> {
+        self.expect(Tok::LBrace)?;
+        let mut fields = Vec::new();
+        loop {
+            self.skip_newlines();
+            if self.eat(&Tok::RBrace) {
+                return Ok(fields);
+            }
+            // `priv` is a modifier only when another field name follows (23.10).
+            let private = self.at_kw(Kw::Priv) && self.nth(1) != &Tok::Colon;
+            if private {
+                self.bump();
+            }
+            let name = self.field_name()?;
+            self.expect(Tok::Colon)?;
+            let ty = self.type_expr()?;
+            fields.push(FieldDecl { private, name, ty });
+            self.field_separator()?;
+        }
+    }
+
+    /// A field name may be a keyword (5.4).
+    fn field_name(&mut self) -> PResult<Ident> {
+        match self.tok().clone() {
+            Tok::Ident(name) => Ok(Ident { name, span: self.bump().span }),
+            Tok::Kw(kw) => Ok(Ident { name: kw.as_str().into(), span: self.bump().span }),
+            _ => self.expected("field name"),
+        }
+    }
+
+    /// `,` and/or newlines between fields; nothing is needed before `}`.
+    fn field_separator(&mut self) -> PResult<()> {
+        let comma = self.eat(&Tok::Comma);
+        let newline = self.at(&Tok::Newline);
+        self.skip_newlines();
+        if comma || newline || self.at(&Tok::RBrace) { Ok(()) } else { self.expected("`,` or a new line") }
+    }
+
+    fn field_inits(&mut self) -> PResult<Vec<FieldInit>> {
+        let no_brace = std::mem::replace(&mut self.no_brace, false);
+        let result = self.field_inits_inner();
+        self.no_brace = no_brace;
+        result
+    }
+
+    fn field_inits_inner(&mut self) -> PResult<Vec<FieldInit>> {
+        self.expect(Tok::LBrace)?;
+        let mut fields = Vec::new();
+        loop {
+            self.skip_newlines();
+            if self.eat(&Tok::RBrace) {
+                return Ok(fields);
+            }
+            let name = self.field_name()?;
+            let value = if self.eat(&Tok::Colon) { Some(self.expression()?) } else { None };
+            fields.push(FieldInit { name, value });
+            self.field_separator()?;
         }
     }
 
@@ -510,10 +605,11 @@ impl Parser<'_> {
                 Err(())
             }
             _ => {
-                let expr = self.binary(0)?;
-                if self.at_kw(Kw::With) {
-                    self.diags.unsupported(self.span(), "record `with` updates");
-                    return Err(());
+                let mut expr = self.binary(0)?;
+                while self.eat_kw(Kw::With) {
+                    let updates = self.field_inits()?;
+                    let span = expr.span.to(self.prev_span());
+                    expr = Expr { kind: ExprKind::With { base: Box::new(expr), updates }, span };
                 }
                 Ok(expr)
             }
@@ -630,9 +726,23 @@ impl Parser<'_> {
                     let field = match self.tok().clone() {
                         Tok::Ident(name) => Ident { name, span: self.bump().span },
                         Tok::Kw(kw) => Ident { name: kw.as_str().into(), span: self.bump().span },
-                        Tok::Int { .. } | Tok::Float { .. } => {
-                            self.diags.unsupported(self.span(), "tuple slot access");
-                            return Err(());
+                        Tok::Int { value, suffix: None } => {
+                            let span = expr.span.to(self.bump().span);
+                            expr = Expr { kind: ExprKind::TupleSlot(Box::new(expr), value as u32), span };
+                            continue;
+                        }
+                        // `pair.0.1` lexes `0.1` as one number.
+                        Tok::Float { text, suffix: None }
+                            if text.split('.').all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())) =>
+                        {
+                            let span = expr.span.to(self.bump().span);
+                            for slot in text.split('.') {
+                                expr = Expr {
+                                    kind: ExprKind::TupleSlot(Box::new(expr), slot.parse().unwrap_or(u32::MAX)),
+                                    span,
+                                };
+                            }
+                            continue;
                         }
                         _ => return self.expected("field or method name"),
                     };
@@ -653,6 +763,12 @@ impl Parser<'_> {
                 Tok::LBracket => {
                     self.diags.unsupported(self.span(), "indexing and generic arguments");
                     return Err(());
+                }
+                Tok::LBrace if !self.no_brace && matches!(expr.kind, ExprKind::Path(_)) => {
+                    let ExprKind::Path(path) = expr.kind else { unreachable!() };
+                    let fields = self.field_inits()?;
+                    let span = expr.span.to(self.prev_span());
+                    expr = Expr { kind: ExprKind::Record { path, fields }, span };
                 }
                 _ => return Ok(expr),
             }

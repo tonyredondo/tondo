@@ -1,0 +1,6 @@
+alias First = Second
+alias Second = First
+
+fn main() {}
+
+// expect-error: E1106

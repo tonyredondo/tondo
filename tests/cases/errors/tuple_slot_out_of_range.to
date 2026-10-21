@@ -1,0 +1,6 @@
+fn main() {
+    let pair = (1, 2)
+    let x = pair.2
+}
+
+// expect-error: E1102
