@@ -26,6 +26,7 @@ pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics)
         methods: HashMap::new(),
         type_params: Vec::new(),
         self_type: None,
+        implementing: None,
         traits: Vec::new(),
         trait_names: HashMap::new(),
         impls: Vec::new(),
@@ -198,6 +199,9 @@ struct ImplDef {
 struct FnScope {
     types: Vec<(String, Ty)>,
     self_type: Option<Ty>,
+    /// Inside an `impl`: the trait it implements, whose methods are
+    /// available by dot-call on values of type `Self` (11.5).
+    implementing: Option<(TraitId, Vec<Ty>)>,
 }
 
 #[derive(Clone)]
@@ -241,6 +245,8 @@ struct Checker<'a> {
     type_params: Vec<(String, Ty)>,
     /// What `Self` names here, inside a trait, an impl or a method.
     self_type: Option<Ty>,
+    /// The trait the `impl` being checked implements, if any.
+    implementing: Option<(TraitId, Vec<Ty>)>,
     traits: Vec<TraitDef>,
     trait_names: HashMap<String, TraitId>,
     impls: Vec<ImplDef>,
@@ -922,7 +928,11 @@ impl Checker<'_> {
             Some(result) => self.result_type(result, f, all_generics),
             None => Ty::UNIT,
         };
-        let scope = FnScope { types: self.type_params.clone(), self_type: self.self_type };
+        let scope = FnScope {
+            types: self.type_params.clone(),
+            self_type: self.self_type,
+            implementing: outer.implementing.clone(),
+        };
         self.leave_generics(&f.generics);
         self.leave_generics(&f.owner_generics);
         self.type_params.truncate(self.type_params.len() - outer_count);
@@ -975,7 +985,7 @@ impl Checker<'_> {
             let def = &self.traits[id.0 as usize];
             let mut types = vec![("Self".to_string(), def.self_param)];
             types.extend(decl.generics.iter().map(|g| g.name.name.clone()).zip(def.params.iter().copied()));
-            let scope = FnScope { types, self_type: Some(def.self_param) };
+            let scope = FnScope { types, self_type: Some(def.self_param), implementing: None };
             let mut seen = HashSet::new();
             for f in &decl.methods {
                 if !seen.insert(f.name.name.as_str()) {
@@ -1100,7 +1110,7 @@ impl Checker<'_> {
         let mut types: Vec<(String, Ty)> =
             decl.generics.iter().map(|g| g.name.name.clone()).zip(binders.iter().copied()).collect();
         types.dedup();
-        let scope = FnScope { types, self_type: Some(target) };
+        let scope = FnScope { types, self_type: Some(target), implementing: Some((trait_id, trait_args.clone())) };
         let mut methods = vec![None; declared.len()];
         for f in &decl.methods {
             let Some(index) = declared.iter().position(|(name, ..)| *name == f.name.name) else {
@@ -1768,6 +1778,7 @@ impl Checker<'_> {
         let scope = self.fn_scopes[id.0 as usize].clone();
         let outer_types = std::mem::replace(&mut self.type_params, scope.types);
         let outer_self = std::mem::replace(&mut self.self_type, scope.self_type);
+        let outer_implementing = std::mem::replace(&mut self.implementing, scope.implementing);
         // An opaque result's witness is inferred from the body (12.8).
         let opaque = match self.types.kind(signature.result) {
             TyKind::Opaque(..) => Some(signature.result),
@@ -1802,6 +1813,7 @@ impl Checker<'_> {
         }
         self.type_params = outer_types;
         self.self_type = outer_self;
+        self.implementing = outer_implementing;
         hir::Function {
             name: signature.name,
             generics: signature.generics,
@@ -3794,12 +3806,7 @@ impl Checker<'_> {
                 .collect();
             return match found.as_slice() {
                 [(trait_id, trait_args, index)] => {
-                    let def = &self.traits[trait_id.0 as usize];
-                    let signature = def.methods[*index].signature.clone();
-                    let mut prebound = HashMap::from([(def.self_param, ty)]);
-                    prebound.extend(def.params.iter().copied().zip(trait_args.iter().copied()));
-                    let callee = Callee::Trait(*trait_id, *index as u32);
-                    self.dot_call(cx, callee, signature, prebound, value, method, args, span)
+                    self.trait_dot_call(cx, *trait_id, trait_args.clone(), *index, value, method, args, span)
                 }
                 [] => self.no_method(ty, method, span),
                 _ => {
@@ -3813,6 +3820,20 @@ impl Checker<'_> {
                     Self::error_expr(span)
                 }
             };
+        }
+        // Inside an `impl`, the implemented trait's methods on `Self` (11.5).
+        if let Some((trait_id, trait_args)) = self.implementing.clone()
+            && Some(ty) == self.self_type
+            && let Some(index) = self.traits[trait_id.0 as usize].methods.iter().position(|m| m.name == method.name)
+        {
+            return self.trait_dot_call(cx, trait_id, trait_args, index, value, method, args, span);
+        }
+        // `Iterator`'s methods on any type implementing it (11.5).
+        if !self.is_abstract(ty)
+            && let Some(index) = self.traits[ITERATOR.0 as usize].methods.iter().position(|m| m.name == method.name)
+            && let Some(element) = self.iterator_element(ty)
+        {
+            return self.trait_dot_call(cx, ITERATOR, vec![element], index, value, method, args, span);
         }
         if matches!(self.types.kind(ty), TyKind::Adt(_)) {
             // A field holding a function is called (11.5).
@@ -4099,6 +4120,28 @@ impl Checker<'_> {
             }
             _ => false,
         }
+    }
+
+    /// `value.method(args)` for method `index` of a trait with `Self` set to
+    /// the receiver's type.
+    #[allow(clippy::too_many_arguments)]
+    fn trait_dot_call(
+        &mut self,
+        cx: &mut FnCx,
+        trait_id: TraitId,
+        trait_args: Vec<Ty>,
+        index: usize,
+        value: hir::Expr,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> hir::Expr {
+        let def = &self.traits[trait_id.0 as usize];
+        let signature = def.methods[index].signature.clone();
+        let mut prebound = HashMap::from([(def.self_param, value.ty)]);
+        prebound.extend(def.params.iter().copied().zip(trait_args));
+        let callee = Callee::Trait(trait_id, index as u32);
+        self.dot_call(cx, callee, signature, prebound, value, method, args, span)
     }
 
     /// `Trait.method(...)`, with `Self` given first in `explicit` or taken

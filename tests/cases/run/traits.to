@@ -61,7 +61,7 @@ impl[T: Summary] Summary for Box[T] {
     }
 
     fn headline(self): String {
-        "<{Summary.summarize(self)}>"
+        "<{self.summarize()}>"
     }
 }
 

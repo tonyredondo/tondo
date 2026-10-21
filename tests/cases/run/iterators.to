@@ -60,9 +60,9 @@ fn main() {
     let ages = ["ana": 32, "leo": 28]
     console.println("{collect(ages.entries()).length()} {collect(ages.keys())} {collect(ages.values())}")
     var keys = ages.keys()
-    let first = Iterator.next(mut keys)
+    let first = keys.next()
     let second = Iterator.next(mut keys)
-    let third = Iterator.next(mut keys)
+    let third = keys.next()
     console.println("{first == some("ana")} {second == some("leo")} {third == none}")
     for (name, age) in ages.entries() {
         if age > 30 {
