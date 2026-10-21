@@ -16,7 +16,10 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 /// is one atomic operation on `state`; a task that finds it taken spins a
 /// little and then parks in `waiting`. Releasing it wakes one waiter, which
 /// tries again, so a task that is running can take it first instead of
-/// waiting for the woken one to be scheduled. `rc` counts the handles.
+/// waiting for the woken one to be scheduled. A woken task that still loses
+/// after waiting `STARVATION` turns the lock to starving: then nobody takes
+/// it ahead of the queue, and releasing it hands it to the first waiter.
+/// `rc` counts the handles.
 #[repr(C)]
 pub struct SyncObject {
     rc: AtomicUsize,
@@ -24,7 +27,8 @@ pub struct SyncObject {
     state: AtomicUsize,
     /// Guards `waiting` and `changes`.
     queue: AtomicBool,
-    waiting: VecDeque<*const Wait>,
+    /// Tasks waiting to take it, and whether to change it.
+    waiting: VecDeque<(*const Wait, bool)>,
     /// Tasks in `updateWhen` waiting for the value to change.
     changes: Vec<*const Wait>,
     value: *mut u8,
@@ -36,7 +40,14 @@ pub struct SyncObject {
 const WRITER: usize = 1;
 /// Some task waits in `waiting` or `changes`.
 const PARKED: usize = 2;
-const READER: usize = 4;
+/// Releases hand the lock over in order; nobody takes it ahead.
+const STARVING: usize = 4;
+const READER: usize = 8;
+
+/// How long a woken task may lose to others before the lock starves.
+const STARVATION: std::time::Duration = std::time::Duration::from_millis(1);
+/// The index a wait is claimed with when the lock was handed to its task.
+const HANDED: usize = 1;
 
 const SHARED: u8 = 0;
 const TRY: u8 = 2;
@@ -83,7 +94,7 @@ fn try_take(o: &SyncObject, exclusive: bool) -> bool {
             }
             state | WRITER
         } else {
-            if state & WRITER != 0 {
+            if state & (WRITER | STARVING) != 0 {
                 return false;
             }
             state + READER
@@ -118,6 +129,8 @@ pub unsafe extern "C" fn tondo_rt_sync_lock(object: *mut SyncObject, mode: u8, l
     let guard = address | (!exclusive) as usize;
     let o = unsafe { &mut *object };
     let mut spins = 0;
+    let mut since = None;
+    let mut woken = false;
     loop {
         if try_take(o, exclusive) {
             held().push((address, exclusive));
@@ -142,34 +155,102 @@ pub unsafe extern "C" fn tondo_rt_sync_lock(object: *mut SyncObject, mode: u8, l
             held().push((address, exclusive));
             return guard;
         }
-        o.waiting.push_back(Arc::as_ptr(&wait));
-        unlock(&o.queue);
-        if wait.block() == CANCELLED {
-            lock(&o.queue);
-            o.waiting.retain(|&w| w != Arc::as_ptr(&wait));
-            unlock(&o.queue);
-            return 0;
+        // A task woken before goes first, and starves the lock once it
+        // has lost for too long.
+        let since = *since.get_or_insert_with(std::time::Instant::now);
+        if woken {
+            o.waiting.push_front((Arc::as_ptr(&wait), exclusive));
+            if since.elapsed() > STARVATION {
+                o.state.fetch_or(STARVING, Ordering::AcqRel);
+            }
+        } else {
+            o.waiting.push_back((Arc::as_ptr(&wait), exclusive));
         }
-        spins = 0;
+        unlock(&o.queue);
+        match wait.block() {
+            CANCELLED => {
+                lock(&o.queue);
+                o.waiting.retain(|&(w, _)| w != Arc::as_ptr(&wait));
+                unlock(&o.queue);
+                return 0;
+            }
+            HANDED => {
+                held().push((address, exclusive));
+                return guard;
+            }
+            _ => {
+                woken = true;
+                spins = 0;
+            }
+        }
     }
 }
 
-/// Wakes one task waiting for the lock and, after a change, every task
-/// waiting in `updateWhen`; with the queue locked. Returns the tasks.
-unsafe fn wake(o: &mut SyncObject, changed: bool) -> Vec<*mut Task> {
+/// Takes the lock for a waiter it is handed to, if it is free for it.
+fn grant(o: &SyncObject, exclusive: bool) -> bool {
+    let mut state = o.state.load(Ordering::Relaxed);
+    loop {
+        let next = if exclusive {
+            if state & WRITER != 0 || state >= READER {
+                return false;
+            }
+            state | WRITER
+        } else {
+            if state & WRITER != 0 {
+                return false;
+            }
+            state + READER
+        };
+        match o.state.compare_exchange_weak(state, next, Ordering::Acquire, Ordering::Relaxed) {
+            Ok(_) => return true,
+            Err(seen) => state = seen,
+        }
+    }
+}
+
+fn ungrant(o: &SyncObject, exclusive: bool) {
+    if exclusive {
+        o.state.fetch_and(!WRITER, Ordering::Release);
+    } else {
+        o.state.fetch_sub(READER, Ordering::Release);
+    }
+}
+
+/// With the queue locked: the tasks waiting in `updateWhen`, after a change.
+unsafe fn wake_changes(o: &mut SyncObject) -> Vec<*mut Task> {
+    o.changes.drain(..).filter(|&w| unsafe { (*w).claim(0) }).map(|w| unsafe { (*w).task }).collect()
+}
+
+/// With the queue locked, after a release: wakes one task waiting for the
+/// lock or, when it starves, hands the lock to the first writer or to every
+/// reader in a row at the head of the queue. Returns the tasks.
+unsafe fn wake_lockers(o: &mut SyncObject) -> Vec<*mut Task> {
     let mut woken = Vec::new();
     unsafe {
-        if changed {
-            for wait in o.changes.drain(..) {
-                if (*wait).claim(0) {
+        if o.state.load(Ordering::Acquire) & STARVING != 0 {
+            while let Some(&(wait, exclusive)) = o.waiting.front() {
+                if !grant(o, exclusive) {
+                    break;
+                }
+                o.waiting.pop_front();
+                if (*wait).claim(HANDED) {
                     woken.push((*wait).task);
+                    if exclusive {
+                        break;
+                    }
+                } else {
+                    ungrant(o, exclusive);
                 }
             }
-        }
-        while let Some(wait) = o.waiting.pop_front() {
-            if (*wait).claim(0) {
-                woken.push((*wait).task);
-                break;
+            if o.waiting.is_empty() {
+                o.state.fetch_and(!STARVING, Ordering::AcqRel);
+            }
+        } else {
+            while let Some((wait, _)) = o.waiting.pop_front() {
+                if (*wait).claim(0) {
+                    woken.push((*wait).task);
+                    break;
+                }
             }
         }
     }
@@ -200,7 +281,8 @@ pub unsafe extern "C" fn tondo_rt_sync_unlock(guard: usize) {
         };
         if before & PARKED != 0 {
             lock(&o.queue);
-            let woken = wake(o, exclusive);
+            let mut woken = if exclusive { wake_changes(o) } else { Vec::new() };
+            woken.extend(wake_lockers(o));
             unlock(&o.queue);
             woken.into_iter().for_each(notify);
         }
@@ -216,12 +298,14 @@ pub unsafe extern "C" fn tondo_rt_sync_await(guard: usize) -> usize {
         let object = object(guard);
         let o = &mut *object;
         let wait = Wait::new();
-        // Registering and releasing happen together, so no change is missed.
+        // This task changed the value, and is registered before it releases
+        // the lock, so no later change is missed.
         lock(&o.queue);
-        let woken = wake(o, true);
+        let mut woken = wake_changes(o);
         o.changes.push(Arc::as_ptr(&wait));
         o.state.fetch_or(PARKED, Ordering::AcqRel);
         o.state.fetch_and(!WRITER, Ordering::Release);
+        woken.extend(wake_lockers(o));
         unlock(&o.queue);
         let holds = held();
         if let Some(index) = holds.iter().position(|&(h, _)| h == object as usize) {

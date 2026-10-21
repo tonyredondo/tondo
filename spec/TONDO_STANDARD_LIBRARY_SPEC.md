@@ -2259,6 +2259,10 @@ let id = requests.add(1)
   otros lenguajes hace una variable de condición, sin `notify` ni wakeups
   espurios visibles. `get` devuelve una copia del valor y `set` lo reemplaza.
 - `RwLock` admite varios `read` a la vez y un único `update`.
+- Ninguna tarea espera indefinidamente un lock disputado: si una tarea lleva
+  más de un milisegundo perdiéndolo frente a otras, el lock pasa a entregarse
+  en orden de llegada hasta vaciar la cola, también a un escritor frente a
+  lectores continuos.
 - `Semaphore(n)` reparte `n` permisos. `acquire` espera uno libre. Un `Permit`
   no es `Copy` y cumple `Discard`: el permiso vuelve con `release()` o al
   abandonarse el `Permit`, también al moverlo a una tarea que termina, de modo

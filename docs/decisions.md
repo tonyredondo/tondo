@@ -428,3 +428,14 @@ run concurrently. Atomics of integers, `Bool`, `Char` and `Byte` use
 hardware instructions. The task lock was also reworked: one compare-and-
 swap when free, a short spin, then parking, and releasing lets a running
 task take it ahead of the woken one, which avoids lock convoys.
+
+## 2026-10-22 — Locks starve nobody
+
+Letting a running task take a released lock ahead of the woken one avoids
+convoys, but it can leave one task losing indefinitely, and with readers
+always present a writer of an `RwLock` might never get in. As in Go's
+`sync.Mutex`, a woken task that keeps losing for more than a millisecond
+turns the lock to starving: nobody may take it ahead of the queue, and each
+release hands it to the first waiter, or to every reader in a row. The lock
+returns to normal when the queue empties. With eight readers that never
+stop, a writer now waits 4 ms instead of up to a second.
