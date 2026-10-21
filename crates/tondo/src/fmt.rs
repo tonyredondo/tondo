@@ -970,6 +970,7 @@ impl Formatter<'_> {
             }
             ExprKind::Construct(name, value) => concat(vec![text(format!("{name}(")), self.expr(value), text(")")]),
             ExprKind::Spawn(call) => concat(vec![text("spawn "), self.expr(call)]),
+            ExprKind::SyncLiteral(path, literal) => concat(vec![text(path_text(path)), self.expr(literal)]),
         }
     }
 

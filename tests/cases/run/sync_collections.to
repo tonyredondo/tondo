@@ -1,0 +1,117 @@
+import std.console
+import std.sync
+
+fn orZero(found: Int?): Int {
+    match found {
+        some(value) => value
+        none => 0
+    }
+}
+
+// Retries until its own change wins.
+fn record(visits: sync.Map[String, Int], page: String) {
+    for _ in 0..100 {
+        for {
+            let seen = visits.get(page)
+            match visits.compareExchange(page, seen, some(orZero(seen) + 1)) {
+                sync.CompareExchange.Exchanged(_) => break
+                sync.CompareExchange.Mismatch(_) => continue
+            }
+        }
+    }
+}
+
+fn main() {
+    let slots = sync.Array[10, 20, 30]
+    let cache = sync.Map["one": 1, "two": 2]
+    let visited = sync.Set["home", "settings"]
+    let undo = sync.Stack["a", "b", "c"]
+    let jobs = sync.Queue["first", "second"]
+    let empty: sync.Map[String, Int] = sync.Map[:]
+    let made = sync.Queue.new[Int]()
+    let fixed = sync.Array([0, 0, 0])
+    console.println(
+        "{slots.snapshot()} {cache.length()} {visited.contains("home")} {undo.length()} {jobs.length()}",
+    )
+    console.println("{empty.isEmpty()} {made.isEmpty()} {fixed.length()}")
+
+    match undo.pop() {
+        some(top) => console.println("top {top}")
+        none => console.println("empty")
+    }
+    console.println(
+        "{undo.snapshot()} {visited.insert("home")} {visited.insert("about")} {visited.remove("settings")}",
+    )
+    for name in visited {
+        console.println("visited {name}")
+    }
+    match jobs.popFront() {
+        some(job) => console.println("job {job}, {jobs.length()} left")
+        none => console.println("no job")
+    }
+    jobs.push("third")
+    console.println("{jobs.snapshot()}")
+
+    match cache.compareExchange("one", some(1), some(100)) {
+        sync.CompareExchange.Exchanged(_) => console.println("one became 100")
+        sync.CompareExchange.Mismatch(_) => console.println("one changed")
+    }
+    match cache.compareExchange("three", none, some(3)) {
+        sync.CompareExchange.Exchanged(_) => console.println("added three")
+        sync.CompareExchange.Mismatch(_) => console.println("three exists")
+    }
+    match cache.compareExchange("two", some(5), none) {
+        sync.CompareExchange.Exchanged(_) => console.println("removed two")
+        sync.CompareExchange.Mismatch(_) => console.println("two is not 5")
+    }
+    console.println(
+        "{cache.snapshot()} {orZero(cache.get("three"))} {orZero(cache.remove("three"))}",
+    )
+
+    match slots.compareExchange(0, 10, 11) {
+        ok(sync.CompareExchange.Exchanged(previous)) => console.println("slot was {previous}")
+        ok(sync.CompareExchange.Mismatch(observed)) => console.println("slot is {observed}")
+        err(_) => console.println("no slot")
+    }
+    match fixed.set(-1, 7) {
+        ok(old) => console.println("last was {old}, now {orZero(fixed.get(-1))}")
+        err(_) => console.println("bad index")
+    }
+    match fixed.set(3, 1) {
+        ok(_) => console.println("set 3")
+        err(_) => console.println("index 3 is out of range")
+    }
+
+    // Each update is linearizable.
+    let visits = sync.Map.new[String, Int]()
+    var group = Group.new[Unit]()
+    for _ in 0..4 {
+        group.add(spawn record(visits, "home"))
+    }
+    _ = group.wait()
+    console.println("home {orZero(visits.get("home"))}")
+
+    // A loop sees the snapshot taken when it starts.
+    for (key, value) in cache {
+        _ = cache.insert("{key}+", value)
+    }
+    console.println("{cache.length()}")
+}
+
+// expect-stdout: [10, 20, 30] 2 true 3 2
+// expect-stdout: true true 3
+// expect-stdout: top c
+// expect-stdout: [a, b] false true true
+// expect-stdout: visited home
+// expect-stdout: visited about
+// expect-stdout: job first, 1 left
+// expect-stdout: [second, third]
+// expect-stdout: one became 100
+// expect-stdout: added three
+// expect-stdout: two is not 5
+// expect-stdout: [one: 100, two: 2, three: 3] 3 3
+// expect-stdout: slot was 10
+// expect-stdout: last was 0, now 7
+// expect-stdout: index 3 is out of range
+// expect-stdout: home 400
+// expect-stdout: 4

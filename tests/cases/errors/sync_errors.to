@@ -1,0 +1,30 @@
+import std.sync
+
+fn main() {
+    let counter = sync.Mutex(0)
+    counter.update((n: Int) { n + 1 })
+    let ratio = sync.Atomic(1.5)
+    _ = ratio.add(1.0)
+    let cache = sync.Map["a": 1]
+    for ref entry in cache {
+        _ = entry
+    }
+    let wrong = sync.Queue(5)
+    let once = sync.Once("x")
+    let missing = counter.length()
+    let flag = sync.Mutex(true)
+    _ = flag.updateWhen(
+        (f) { 1 },
+        (f) {
+            f = false
+        },
+    )
+}
+
+// expect-error: E1102 this function receives the state as a `var` loan: write `(value) { ... }`, or `(value: var Int) { ... }`
+// expect-error: E1102 `add` counts in integers, but this atomic holds `Float`
+// expect-error: E1206 another task may change a shared collection, so a `for` over it binds values
+// expect-error: E1102 `sync.Queue` takes an array, found `Int`
+// expect-error: E1102 `sync.Once` starts empty: `sync.Once.new[T]()`
+// expect-error: E1001 `sync.Mutex[Int]` has no method `length`
+// expect-error: E1102 `updateWhen` waits until its first function gives `true`, but it gives `Int`

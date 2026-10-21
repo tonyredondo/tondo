@@ -115,6 +115,8 @@ pub enum Statement {
     /// Zeroes a binding whose value moved away, so that releasing it at
     /// the end of its scope releases nothing.
     Clear(Local),
+    /// Makes the local the address of the state a `std.sync` guard locks.
+    LendAt(Local, Operand),
 }
 
 #[derive(Clone, Debug)]

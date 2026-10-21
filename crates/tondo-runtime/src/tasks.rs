@@ -208,7 +208,7 @@ const PARKING: u8 = 1;
 const PARKED: u8 = 2;
 const NOTIFIED: u8 = 3;
 
-struct Task {
+pub(crate) struct Task {
     /// The stack pointer saved when the task is not running.
     sp: *mut u8,
     stack: Option<Stack>,
@@ -298,7 +298,7 @@ thread_local! {
 // A task may resume on another thread, so these never inline: a caller
 // must not keep a thread-local address across a switch.
 #[inline(never)]
-fn current() -> *mut Task {
+pub(crate) fn current() -> *mut Task {
     CURRENT.with(|c| c.get())
 }
 
@@ -336,7 +336,7 @@ fn notify_with(task: *mut Task, run: impl FnOnce(*mut Task)) {
     }
 }
 
-fn notify(task: *mut Task) {
+pub(crate) fn notify(task: *mut Task) {
     notify_with(task, schedule);
 }
 
@@ -588,13 +588,13 @@ pub fn run_cleanups() {
 
 const NONE: usize = usize::MAX;
 /// The index a cancellation claims a wait with.
-const CANCELLED: usize = usize::MAX - 1;
+pub(crate) const CANCELLED: usize = usize::MAX - 1;
 
 /// A task's wait for the first of one or more operations. The objects it
 /// waits on point to it until the task removes itself, and timers hold it,
 /// since they outlive it.
-struct Wait {
-    task: *mut Task,
+pub(crate) struct Wait {
+    pub(crate) task: *mut Task,
     fired: AtomicUsize,
 }
 
@@ -603,19 +603,19 @@ unsafe impl Send for Wait {}
 unsafe impl Sync for Wait {}
 
 impl Wait {
-    fn new() -> Arc<Wait> {
+    pub(crate) fn new() -> Arc<Wait> {
         Arc::new(Wait { task: current(), fired: AtomicUsize::new(NONE) })
     }
 
     /// Claims the wait for operation `index`; false when another operation
     /// did first. Whoever claims it notifies the task afterwards.
-    fn claim(&self, index: usize) -> bool {
+    pub(crate) fn claim(&self, index: usize) -> bool {
         self.fired.compare_exchange(NONE, index, Ordering::AcqRel, Ordering::Acquire).is_ok()
     }
 
     /// Parks until the operation that claimed the wait notifies the task;
     /// returns its index, or `CANCELLED` if the task is cancelled first.
-    fn block(&self) -> usize {
+    pub(crate) fn block(&self) -> usize {
         let task = unsafe { &mut *self.task };
         lock(&task.waiting_lock);
         if task.cancelled.load(Ordering::Acquire) && self.claim(CANCELLED) {
@@ -645,7 +645,7 @@ impl Wait {
 }
 
 /// Whether the current task is cancelled.
-fn cancelled() -> bool {
+pub(crate) fn cancelled() -> bool {
     let task = current();
     !task.is_null() && unsafe { (*task).cancelled.load(Ordering::Acquire) }
 }
@@ -672,13 +672,13 @@ unsafe fn cancel_task(task: *mut Task) {
 }
 
 /// A short spin lock over one object's state.
-fn lock(flag: &AtomicBool) {
+pub(crate) fn lock(flag: &AtomicBool) {
     while flag.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
         std::hint::spin_loop();
     }
 }
 
-fn unlock(flag: &AtomicBool) {
+pub(crate) fn unlock(flag: &AtomicBool) {
     flag.store(false, Ordering::Release);
 }
 

@@ -12,6 +12,7 @@ use std::io::Write;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering, fence};
 
+mod sync;
 mod tasks;
 
 // ---------------------------------------------------------------------------
@@ -1686,6 +1687,7 @@ fn panic_name(code: u32) -> &'static str {
         11 => "invalid-repeat-count",
         12 => "closed-channel",
         13 => "deadlock",
+        14 => "reentrant-lock",
         _ => "unknown",
     }
 }

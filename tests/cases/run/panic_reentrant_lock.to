@@ -1,0 +1,13 @@
+import std.sync
+
+// Locking again from inside `update` would wait forever.
+fn main() {
+    let counter = sync.Mutex(0)
+    counter.update(
+        (n) {
+            n += counter.get()
+        },
+    )
+}
+
+// expect-panic: P0014

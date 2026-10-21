@@ -37,6 +37,10 @@ type PResult<T> = Result<T, ()>;
 /// `(`; elsewhere they are ordinary names (spec 5.5).
 pub const CONTEXTUAL_CONSTRUCTORS: [&str; 3] = ["ok", "err", "some"];
 
+/// The shared collections of `std.sync`, whose qualified names take a
+/// literal: `sync.Queue[a, b]` (5.11).
+const SYNC_COLLECTIONS: [&str; 5] = ["Array", "Map", "Set", "Stack", "Queue"];
+
 impl Parser<'_> {
     // ---- token helpers ----------------------------------------------------
 
@@ -1266,6 +1270,16 @@ impl Parser<'_> {
                     let span = expr.span.to(self.prev_span());
                     expr = Expr { kind: ExprKind::Try(Box::new(expr)), span };
                 }
+                Tok::LBracket
+                    if matches!(&expr.kind, ExprKind::Path(path)
+                        if path.len() == 2 && SYNC_COLLECTIONS.contains(&path[1].name.as_str())) =>
+                {
+                    // `sync.Map["one": 1]`: a literal of a shared collection.
+                    let ExprKind::Path(path) = expr.kind else { unreachable!() };
+                    let literal = self.bracket_literal()?;
+                    let span = expr.span.to(self.prev_span());
+                    expr = Expr { kind: ExprKind::SyncLiteral(path, Box::new(literal)), span };
+                }
                 Tok::LBracket if matches!(&expr.kind, ExprKind::Path(path) if path.len() == 1 && path[0].name == "Set") =>
                 {
                     // `Set[...]` in expression position is a set literal (23.24).
@@ -1453,6 +1467,15 @@ impl Parser<'_> {
     }
 
     fn call_arguments(&mut self) -> PResult<Vec<Arg>> {
+        // Inside the parentheses a block or closure is unambiguous, even in a
+        // header such as `match` or `for` (23.17).
+        let no_brace = std::mem::replace(&mut self.no_brace, false);
+        let args = self.call_arguments_inner();
+        self.no_brace = no_brace;
+        args
+    }
+
+    fn call_arguments_inner(&mut self) -> PResult<Vec<Arg>> {
         let mut args = Vec::new();
         loop {
             self.skip_newlines();

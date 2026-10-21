@@ -391,3 +391,21 @@ function that may wait), so code that never waits pays nothing. Waiting
 operations end at once in a cancelled task and leave zeros where a result
 would go; zeroed values release safely. Releasing a `Join` or a `Group`
 from a cancelled task cancels those tasks too and waits for them.
+
+## 2026-10-21 — `std.sync` hands its state to closures
+
+`std.sync` keeps the classic toolbox — `Mutex`, `RwLock`, `Semaphore`,
+`Once`, `Barrier`, `Atomic` and five shared collections — because shared
+state should not have to go through channels. Tondo has no references to
+return, so a lock never hands out a guard to its value: `update` and `read`
+run a closure with the state lent as `var` or by value, and the lock is
+released when the closure returns, whatever happens. `updateWhen` replaces
+condition variables: it waits until a predicate holds, checked again after
+each change, so there is no `notify` to forget. Only `Permit` is a value
+of its own, so that moving it into a task bounds concurrency. Atomics have
+no memory orderings, and a `for` over a shared collection walks a
+snapshot. Each value is a lock plus an ordinary copy-on-write value, so
+snapshots cost O(1); the checker turns every operation into a block that
+takes the lock and runs the ordinary operation on a loan of the state.
+Taking a lock the task already holds panics with `P0014` instead of
+hanging.

@@ -142,6 +142,8 @@ impl Mono<'_> {
                 self.expr(call, map);
             }
             Stmt::Lend { place, .. } => self.place(place, map),
+            Stmt::LockSync { handle, .. } => self.expr(handle, map),
+            Stmt::AwaitChange(..) => {}
             Stmt::Destructure(pattern, value) => {
                 self.pattern(pattern, map);
                 self.expr(value, map);

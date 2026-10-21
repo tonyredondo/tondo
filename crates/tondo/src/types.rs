@@ -127,6 +127,24 @@ pub enum Handle {
     Group,
     Sender,
     Receiver,
+    /// The `std.sync` values that hold shared state (14.4.4); the type is
+    /// that of the state: `T`, `T?` for `Once`, or the value collection.
+    Mutex,
+    RwLock,
+    Atomic,
+    Once,
+    SyncArray,
+    SyncMap,
+    SyncSet,
+    SyncStack,
+    SyncQueue,
+    /// `std.sync` values without state; their type is `Unit`.
+    Semaphore,
+    Permit,
+    Barrier,
+    /// A lock taken on shared state, released when dropped; only lowering
+    /// sees it.
+    Guard,
 }
 
 impl Handle {
@@ -136,7 +154,47 @@ impl Handle {
             Handle::Group => "Group",
             Handle::Sender => "Sender",
             Handle::Receiver => "Receiver",
+            Handle::Mutex => "sync.Mutex",
+            Handle::RwLock => "sync.RwLock",
+            Handle::Atomic => "sync.Atomic",
+            Handle::Once => "sync.Once",
+            Handle::SyncArray => "sync.Array",
+            Handle::SyncMap => "sync.Map",
+            Handle::SyncSet => "sync.Set",
+            Handle::SyncStack => "sync.Stack",
+            Handle::SyncQueue => "sync.Queue",
+            Handle::Semaphore => "sync.Semaphore",
+            Handle::Permit => "sync.Permit",
+            Handle::Barrier => "sync.Barrier",
+            Handle::Guard => "lock",
         }
+    }
+
+    /// A handle to state shared by all its copies: a `std.sync` value
+    /// other than `Permit`, or a `Receiver`.
+    pub fn shared(self) -> bool {
+        !matches!(self, Handle::Join | Handle::Group | Handle::Sender | Handle::Permit | Handle::Guard)
+    }
+
+    /// One of the five shared collections of `std.sync`.
+    pub fn collection(self) -> bool {
+        matches!(self, Handle::SyncArray | Handle::SyncMap | Handle::SyncSet | Handle::SyncStack | Handle::SyncQueue)
+    }
+
+    /// Whether its state lives in a lockable `std.sync` cell.
+    pub fn locked(self) -> bool {
+        matches!(
+            self,
+            Handle::Mutex
+                | Handle::RwLock
+                | Handle::Atomic
+                | Handle::Once
+                | Handle::SyncArray
+                | Handle::SyncMap
+                | Handle::SyncSet
+                | Handle::SyncStack
+                | Handle::SyncQueue
+        )
     }
 }
 
@@ -1066,8 +1124,8 @@ impl Types {
                 let param = &self.params[*index as usize];
                 return param.copy || !copy && param.discard;
             }
-            TyKind::Handle(Handle::Receiver, _) => Vec::new(),
-            TyKind::Handle(Handle::Sender, _) if !copy => Vec::new(),
+            TyKind::Handle(handle, _) if handle.shared() => Vec::new(),
+            TyKind::Handle(Handle::Sender | Handle::Permit | Handle::Guard, _) if !copy => Vec::new(),
             TyKind::Handle(..) if copy => {
                 visiting.pop();
                 return false;
@@ -1187,7 +1245,22 @@ impl Types {
             TyKind::Deque(element) => format!("Deque[{}]", self.display(*element)),
             TyKind::Map(key, value) => format!("Map[{}, {}]", self.display(*key), self.display(*value)),
             TyKind::Set(element) => format!("Set[{}]", self.display(*element)),
-            TyKind::Handle(handle, element) => format!("{}[{}]", handle.name(), self.display(*element)),
+            TyKind::Handle(handle, state) => {
+                let shown = match (handle, self.kind(*state)) {
+                    (Handle::Semaphore | Handle::Permit | Handle::Barrier | Handle::Guard, _) => {
+                        return handle.name().to_string();
+                    }
+                    (Handle::SyncMap, TyKind::Map(key, value)) => {
+                        format!("{}, {}", self.display(*key), self.display(*value))
+                    }
+                    (
+                        Handle::Once | Handle::SyncArray | Handle::SyncSet | Handle::SyncStack | Handle::SyncQueue,
+                        TyKind::Option(t) | TyKind::Array(t) | TyKind::Set(t) | TyKind::Deque(t),
+                    ) => self.display(*t),
+                    _ => self.display(*state),
+                };
+                format!("{}[{shown}]", handle.name())
+            }
             TyKind::Result(ok, err) => {
                 // A union in either position is grouped (15.1).
                 let grouped = |t: Ty| match self.kind(t) {

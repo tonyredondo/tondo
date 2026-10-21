@@ -783,6 +783,25 @@ impl Builder<'_> {
                 let local = self.bind(*local);
                 self.push(Statement::Lend(local, place));
             }
+            hir::Stmt::LockSync { guard, inner, handle, mode, span } => {
+                let handle = self.expr(handle);
+                let guard = self.bind(*guard);
+                let lock = Rvalue::TaskOp(hir::TaskOp::Lock(*mode), vec![handle], vec![false], *span);
+                self.assign(Place::local(guard), lock, *span);
+                // A cancelled task gets an empty guard, which releases nothing.
+                self.scopes.last_mut().unwrap().push(Exit::Release(guard));
+                if *mode != hir::LockMode::Try {
+                    self.cancellation_point(*span);
+                }
+                let inner = self.bind(*inner);
+                self.push(Statement::LendAt(inner, Operand::local(guard)));
+            }
+            hir::Stmt::AwaitChange(guard, span) => {
+                let guard = self.bind(*guard);
+                let wait = Rvalue::TaskOp(hir::TaskOp::SyncAwait, vec![Operand::local(guard)], vec![false], *span);
+                self.assign(Place::local(guard), wait, *span);
+                self.cancellation_point(*span);
+            }
             hir::Stmt::Destructure(pattern, value) => {
                 let value = self.expr(value);
                 let place = self.place_of(value, pattern.ty);
@@ -1301,9 +1320,14 @@ impl Builder<'_> {
             hir::ExprKind::TaskOp(op, operands) => {
                 let types: Vec<Ty> = operands.iter().map(|o| o.ty).collect();
                 let values: Vec<Operand> = operands.iter().map(|o| self.expr(o)).collect();
-                // A join moves into a group, and a value into a channel.
+                // A join moves into a group, a value into a channel, and a
+                // state into its cell.
                 let moves: Vec<bool> = (0..values.len())
-                    .map(|i| matches!(op, hir::TaskOp::GroupAdd | hir::TaskOp::Send) && i == 1)
+                    .map(|i| match op {
+                        hir::TaskOp::GroupAdd | hir::TaskOp::Send => i == 1,
+                        hir::TaskOp::SyncNew => i == 0,
+                        _ => false,
+                    })
                     .collect();
                 let flags = self.move_flags(&values, &moves, &types);
                 let result = self.temp(e.ty, Rvalue::TaskOp(*op, values, flags, e.span), e.span);

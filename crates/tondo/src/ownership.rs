@@ -240,6 +240,9 @@ impl Checker<'_> {
                 self.use_local(place.local, Span::default(), &flow);
                 Some(flow)
             }
+            // The state stays in the shared cell; `inner` is a loan of it.
+            Stmt::LockSync { handle, .. } => self.consume(handle, flow),
+            Stmt::AwaitChange(..) => Some(flow),
             Stmt::Expr(value) => self.consume(value, flow),
             Stmt::Return(value) => {
                 let flow = match value {

@@ -881,7 +881,9 @@ visible que el resultado posee identidad compartida y sincronización interior.
 Los elementos y entradas se evalúan primero de izquierda a derecha y la
 colección no se publica hasta quedar completamente construida. Los vacíos
 `sync.Array[]`, `sync.Set[]`, `sync.Stack[]` y `sync.Queue[]` requieren tipo
-esperado; `sync.Map[:]` identifica el map concurrente vacío.
+esperado; `sync.Map[:]` identifica el map concurrente vacío. Sin tipo esperado
+se escriben `sync.Queue.new[Job]()` o `sync.Map.new[String, Int]()`
+(14.4.4 de la especificación de la librería estándar).
 
 ### 5.12 Orden de evaluación
 
@@ -2993,10 +2995,8 @@ El protocolo solo exige que `next` reciba un préstamo exclusivo y devuelva
 - Strings por sus valores `Char`.
 - Cualquier valor concreto `I` para el que exista `I: Iterator[T]`.
 
-Las cinco identidades cerradas `std.sync.Array/Map/Set/Stack/Queue` son además
-fuentes asíncronas especiales de `for` bajo las reglas de 10.18 y 16.14. No se
-convierten en colecciones intrínsecas locales ni adquieren por ello una
-implementación síncrona de `Iterator[T]`.
+Las cinco colecciones compartidas `std.sync.Array/Map/Set/Stack/Queue` son
+también fuentes de `for`: el bucle recorre su `snapshot()` (10.18).
 
 Para las cinco fuentes intrínsecas, el compilador construye un tipo de cursor
 concreto definido por el lenguaje. Para cualquier otra fuente, la propia
@@ -3064,9 +3064,9 @@ de ese drenaje continúa exigiendo un cleanup reservado.
 En un header ordinario sin bindings `ref`, `mut` ni `var`, evaluar una colección
 `Copy` para un `for` crea una copia lógica y deja disponible el origen. Evaluar
 una colección no `Copy` mueve la colección completa al cursor y produce sus
-elementos por movimiento; el binding original deja de estar disponible. Los
-owners cerrados de `std.sync` son la excepción: copian solo el handle hacia un
-`cursor[sync,C]` y nunca copian lógicamente el contenido. Un cursor concreto se
+elementos por movimiento; el binding original deja de estar disponible. Las
+colecciones compartidas de `std.sync` recorren en cambio su `snapshot()`. Un
+cursor concreto se
 copia o mueve al iniciar el bucle según sus propias capacidades y mediante la
 transferencia confirmada de 8.10. Un guard terminal registrado sobre la
 colección o cursor se retargetea al propietario interno sin duplicar ownership.
@@ -3093,17 +3093,11 @@ también puede hacerlo: no existe un protocolo asíncrono aparte ni una forma
 `for await`. `for value in receiver` recorre un canal (11.13) y espera cada valor
 hasta que el canal se cierra y se vacía.
 
-Los owners cerrados `std.sync.Array/Map/Set/Stack/Queue` se recorren con un
-`cursor[sync,C]` opaco que el compilador construye con una copia del handle, una
-posición y un horizonte estructural O(1); no copia el contenido ni mueve el
-owner original. El cursor cumple `Discard`, conserva `Send` cuando su estado lo
-permite y no cumple `Copy`, `Share`, `Equatable` ni `Key`. Los patrones con
-bindings `ref`, `mut` o `var` se rechazan porque una colección compartida no
-puede publicar préstamos estables a almacenamiento que otro thread puede
-reemplazar o retirar. `sync.Stack[T]` y `sync.Queue[T]` solo son iterables
-cuando `T: Copy + Send + Share`; el recorrido es observacional y no ejecuta `pop`
-ni `popFront`. La consistencia débil, el orden y la diferencia con `snapshot()`
-se definen en 16.14.
+Las colecciones compartidas `std.sync.Array/Map/Set/Stack/Queue` se recorren
+por su `snapshot()`, tomado al empezar el bucle: el recorrido ve el estado de un
+único instante, no los cambios posteriores, y no mantiene ningún lock durante el
+cuerpo. Solo admite bindings por valor, porque otra tarea puede cambiar el
+almacenamiento compartido (16.14).
 
 ### 10.19 Colecciones heterogéneas
 
@@ -4451,8 +4445,8 @@ for (_, var value) in map {
 El modo del cursor se deriva del patrón completo y no requiere otra keyword en
 la fuente:
 
-- Sin bindings de préstamo se utiliza `cursor[own,C]`, salvo para las cinco
-  fuentes cerradas de `std.sync`, que utilizan `cursor[sync,C]`.
+- Sin bindings de préstamo se utiliza `cursor[own,C]`; las cinco colecciones
+  compartidas de `std.sync` recorren su `snapshot()` (10.18).
 - Con uno o más bindings `ref`, y ninguno exclusivo, se utiliza
   `cursor[ref,C]`.
 - Si aparece cualquier binding `mut` o `var`, se utiliza `cursor[mut,C]`.
@@ -4462,12 +4456,9 @@ Los modos de cada binding continúan siendo exactos aunque el cursor sea común:
 componente raíz y `var` permite reemplazar ese componente. Los modos pueden
 mezclarse dentro de un patrón cuando las regiones son disjuntas.
 
-Una fuente `std.sync.Array/Map/Set/Stack/Queue` admite únicamente el primer
-header, sin ningún binding prestado. Copiar su handle hacia `cursor[sync,C]` no
-presta la raíz: el cuerpo puede llamar operaciones concurrentes sobre el owner
-original u otro alias sin invalidar el cursor ni mantener un lock durante el
-cuerpo. Esas mutaciones quedan sujetas a la consistencia débil y al horizonte
-finito de 16.14.
+Una colección compartida de `std.sync` admite únicamente el primer header, sin
+ningún binding prestado; el cuerpo puede cambiarla, pero el recorrido sigue su
+`snapshot()`.
 
 Todo header prestado cumple estas reglas:
 
@@ -6118,58 +6109,18 @@ sistema operativo, uno por núcleo, y una tarea puede cambiar de thread cada vez
 que espera. El programa no puede depender de una correspondencia entre tarea y
 thread ni crea threads directamente.
 
-Entre tareas, los resultados viajan por `Join` y `Group`, y los flujos de datos
-por canales (11.13). El estado compartido usa las primitivas de `std.sync`:
-`Mutex[T]`, atomics y las colecciones concurrentes descritas a continuación.
-Ninguna espera de esas primitivas bloquea el thread: detiene la tarea, igual que
-`wait` o `receive`.
-
-En la futura librería estándar, el mismo módulo posee las identidades compartidas
+Entre tareas, los resultados viajan por `Join` y `Group`, los flujos de datos
+por canales (11.13) y el estado compartido por `std.sync`: `Mutex`, `RwLock`,
+`Semaphore`, `Once`, `Barrier`, `Atomic` y las colecciones compartidas
 `sync.Array[T]`, `sync.Map[K, V]`, `sync.Set[K]`, `sync.Stack[T]` y
-`sync.Queue[T]`. No son aliases
-de las colecciones de valor: copiarlas copia un handle hacia el mismo estado
-sincronizado. Cada operación individual es linealizable. Las operaciones sobre
-claves distintas o slots distintos pueden progresar en paralelo y una
-implementación no puede serializar todas las lecturas mediante un único lock
-exclusivo. `sync.Array` tiene longitud fija e índices estables; por ello no
-publica `push`, `pop`, inserción ni borrado estructural. La pila es LIFO y la
-cola MPMC es FIFO. `popFront` y `pop` devuelven `none` inmediatamente cuando no
-hay elemento: esperar, aplicar backpressure o seleccionar readiness pertenece a
-los canales, no a una segunda modalidad de queue.
-
-Un `for` directo sobre estos owners crea el `cursor[sync,C]` de 10.18
-y realiza un recorrido observacional, finito y débilmente consistente. Crear el
-cursor captura en O(1) una frontera estructural, no los contenidos: una
-inserción, reinserción o `push` posterior a crear el cursor queda
-fuera del recorrido;
-una retirada anterior a la observación de su entrada puede hacer que se omita;
-y un reemplazo o escritura sobre una entrada todavía pendiente puede aportar
-su valor anterior o posterior según el punto de linearización de ese `next`.
-Cada `next` exitoso es linearizable y una misma generación estructural no se
-entrega dos veces, aunque dos entradas diferentes puedan contener valores
-iguales. El cursor no mantiene ningún lock durante el cuerpo ni asigna memoria
-proporcional a la cardinalidad, y debe terminar aunque otros threads continúen
-insertando.
-
-El orden del recorrido directo es índice ascendente para `sync.Array`, orden
-linealizado de inserción para map/set, cima a base para stack y frente a fondo
-para queue, siempre restringido al horizonte capturado. Array visita cada índice
-exactamente una vez y obtiene su valor en el punto de linearización de ese
-`next`. Map produce `(K, V)`, set produce `K`, y stack/queue producen una copia
-de `T` sin retirar el elemento. El header solo admite bindings por valor;
-`for ref`, `for mut` y `for var` son errores estáticos. Stack y queue requieren
-`T: Copy + Send + Share` para esta observación.
-
-Este recorrido no representa un estado global coherente. Cuando igualdad,
-agregación exacta, serialización o lógica de decisión necesiten que todos los
-elementos pertenezcan al mismo instante, `snapshot()` es la frontera explícita,
-coherente hacia `Array`, `Map` o `Set` de valor. El orden de un
-snapshot es índice para array, inserción para map/set, cima a base para stack y
-frente a fondo para queue. Inserciones concurrentes sin relación previa pueden
-linearizarse en cualquier orden, pero el snapshot conserva un estado compatible
-con un único punto de linearización. La aritmética de colecciones y la igualdad
-por contenido continúan disponibles solo sobre ese snapshot, nunca directamente
-sobre el owner compartido.
+`sync.Queue[T]` (14.4.4 de la especificación de la librería estándar). No son
+aliases de las colecciones de valor: copiarlas copia un handle hacia el mismo
+estado sincronizado, y cada operación es linealizable. Ninguna espera de esas
+primitivas bloquea el thread: detiene la tarea, igual que `wait` o `receive`.
+`pop` y `popFront` devuelven `none` al instante cuando no hay elementos:
+esperar, aplicar backpressure o seleccionar readiness pertenece a los canales.
+Un `for` sobre una colección compartida recorre su `snapshot()`, que fija el
+estado de un único instante.
 
 #### Garantía de progreso cooperativo
 
@@ -7869,6 +7820,7 @@ oculten un diagnóstico independiente.
 | `P0011` | `invalid-repeat-count` | `Array.repeat` recibe un conteo negativo. |
 | `P0012` | `closed-channel` | `send` sobre un canal cerrado. |
 | `P0013` | `deadlock` | Todas las tareas esperan y ninguna puede avanzar. |
+| `P0014` | `reentrant-lock` | Una tarea vuelve a tomar un lock de `std.sync` que ya tiene. |
 | `P2001` | `test-skip-during-cleanup` | `testing.skip` intenta omitir un nodo durante cleanup, unwind o teardown. |
 | `P2002` | `test-tag-conflict` | `testing.tags` intenta cambiar el valor ya asociado a una key en el mismo envelope. |
 | `P2003` | `test-virtual-time-deadlock` | Un dominio temporal virtual queda quiescente sin timer ni evento interno capaz de progresar. |
@@ -8797,9 +8749,8 @@ Resolución:
 - Si aparece `in` al nivel del header: iteración.
 - En otro caso: la expresión debe ser `Bool`.
 - `for pattern in expression` usa `Iterator[T]`, cuyo `next` puede esperar; así
-  se recorre un canal (11.13). Las cinco identidades cerradas
-  `std.sync.Array/Map/Set/Stack/Queue` se adaptan al `cursor[sync,C]`
-  exclusivamente por valor de 10.18.
+  se recorre un canal (11.13). Las colecciones compartidas de `std.sync` se
+  recorren por su `snapshot()` (10.18).
 
 ### 23.17 Expresiones condicionales, `match` y `select`
 

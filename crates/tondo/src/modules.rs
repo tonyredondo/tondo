@@ -537,6 +537,7 @@ impl Linker<'_> {
                     }
                 }
             }
+            ExprKind::SyncLiteral(_, literal) => self.expr(literal),
             ExprKind::Select(arms) => {
                 for arm in arms {
                     if let Some(pattern) = &mut arm.pattern {

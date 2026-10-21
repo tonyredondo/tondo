@@ -1,0 +1,196 @@
+import std.console
+import std.sync
+import std.time
+
+type Stats = {
+    hits: Int
+    misses: Int
+}
+
+fn hit(stats: sync.Mutex[Stats], counter: sync.Atomic[Int]) {
+    for _ in 0..1000 {
+        stats.update(
+            (s) {
+                s.hits += 1
+            },
+        )
+        _ = counter.add(1)
+    }
+}
+
+// A permit moved into the task returns when the task ends.
+fn fetch(id: Int, permit: sync.Permit, active: sync.Atomic[Int], peak: sync.Atomic[Int]): Int {
+    let now = active.add(1)
+    var best = peak.load()
+    for now > best {
+        match peak.compareExchange(best, now) {
+            sync.CompareExchange.Exchanged(_) => {
+                best = now
+            }
+            sync.CompareExchange.Mismatch(seen) => {
+                best = seen
+            }
+        }
+    }
+    time.sleep(time.milliseconds(2))
+    _ = active.add(-1)
+    id
+}
+
+fn produce(items: sync.Mutex[Array[Int]], count: Int) {
+    for i in 0..count {
+        items.update((list) { list.push(i) })
+    }
+}
+
+fn arrive(barrier: sync.Barrier, arrivals: sync.Atomic[Int]): Bool {
+    _ = arrivals.add(1)
+    barrier.wait()
+}
+
+fn load(attempts: sync.Atomic[Int]): String ! String {
+    if attempts.add(1) == 1 {
+        fail "the first attempt fails"
+    }
+    "loaded"
+}
+
+fn holdLock(state: sync.Mutex[Int], done: Receiver[Unit]) {
+    state.update(
+        (n) {
+            _ = done.receive()
+            n += 1
+        },
+    )
+}
+
+fn readLock(state: sync.Mutex[Int]): Int {
+    state.get()
+}
+
+fn main() {
+    let stats = sync.Mutex(Stats { hits: 0, misses: 0 })
+    let counter = sync.Atomic(0)
+    var group = Group.new[Unit]()
+    for _ in 0..8 {
+        group.add(spawn hit(stats, counter))
+    }
+    _ = group.wait()
+    console.println("hits {stats.get().hits} counter {counter.load()}")
+    let doubled = stats.update(
+        (s) {
+            s.misses = s.hits * 2
+            s.misses
+        },
+    )
+    console.println("doubled {doubled}")
+    stats.set(Stats { hits: 1, misses: 1 })
+    console.println("reset {stats.get().hits}")
+    match counter.compareExchange(8000, 1) {
+        sync.CompareExchange.Exchanged(previous) => console.println("exchanged {previous}")
+        sync.CompareExchange.Mismatch(observed) => console.println("mismatch {observed}")
+    }
+    console.println("swap {counter.swap(5)} now {counter.load()}")
+
+    let limit = sync.Semaphore(3)
+    let active = sync.Atomic(0)
+    let peak = sync.Atomic(0)
+    var fetches = Group.new[Int]()
+    for id in 0..12 {
+        fetches.add(spawn fetch(id, limit.acquire(), active, peak))
+    }
+    var total = 0
+    for value in fetches.wait() {
+        total += value
+    }
+    console.println("total {total}, at most 3 at once: {peak.load() <= 3}")
+    match limit.tryAcquire() {
+        some(permit) => {
+            console.println("a permit is free")
+            permit.release()
+        }
+        none => console.println("no permit")
+    }
+
+    // `updateWhen` waits until the producer has pushed everything.
+    let items = sync.Mutex(Array.new[Int]())
+    spawn produce(items, 5)
+    let taken = items.updateWhen(
+        (list) { list.length() >= 5 },
+        (list) {
+            let count = list.length()
+            list.clear()
+            count
+        },
+    )
+    console.println("taken {taken}")
+    match items.tryUpdate((list) { list.length() }) {
+        some(count) => console.println("try {count}")
+        none => console.println("busy")
+    }
+
+    let table = sync.RwLock(["a": 1])
+    let size = table.read((t) { t.length() })
+    table.update(
+        (t) {
+            _ = t.insert("b", 2)
+        },
+    )
+    console.println("sizes {size} {table.get().length()}")
+
+    let barrier = sync.Barrier(3)
+    let arrivals = sync.Atomic(0)
+    var parties = Group.new[Bool]()
+    for _ in 0..3 {
+        parties.add(spawn arrive(barrier, arrivals))
+    }
+    var leaders = 0
+    for leader in parties.wait() {
+        if leader {
+            leaders += 1
+        }
+    }
+    console.println("leaders {leaders} arrivals {arrivals.load()}")
+
+    let attempts = sync.Atomic(0)
+    let config = sync.Once.new[String]()
+    console.println("ready {config.isReady()}")
+    for _ in 0..2 {
+        match config.getOrInit(() { load(attempts) }) {
+            ok(value) => console.println("config {value}")
+            err(error) => console.println("failed: {error}")
+        }
+    }
+    let name = sync.Once.new[String]()
+    console.println(
+        "{name.getOrInit(() { "first" })} {name.getOrInit(() { "second" })} {name.isReady()}",
+    )
+
+    // A task waiting for a lock can be cancelled.
+    let state = sync.Mutex(0)
+    let (release, done) = channel[Unit]()
+    let holder = spawn holdLock(state, done)
+    time.sleep(time.milliseconds(2))
+    let waiter = spawn readLock(state)
+    waiter.cancel()
+    release.send(())
+    holder.wait()
+    console.println("state {state.get()}")
+}
+
+// expect-stdout: hits 8000 counter 8000
+// expect-stdout: doubled 16000
+// expect-stdout: reset 1
+// expect-stdout: exchanged 8000
+// expect-stdout: swap 1 now 5
+// expect-stdout: total 66, at most 3 at once: true
+// expect-stdout: a permit is free
+// expect-stdout: taken 5
+// expect-stdout: try 0
+// expect-stdout: sizes 1 2
+// expect-stdout: leaders 1 arrivals 3
+// expect-stdout: ready false
+// expect-stdout: failed: the first attempt fails
+// expect-stdout: config loaded
+// expect-stdout: first first true
+// expect-stdout: state 1

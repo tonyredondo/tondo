@@ -2183,216 +2183,56 @@ sección describe los módulos que los complementan para el estado compartido.
 
 #### 14.4.4 Sincronización compartida
 
-`std.sync` proporciona `Mutex[T]`, `RwLock[T]`, guards afines, variables de
-condición, `Semaphore`/`Permit`, `Once[T, E]`, `Barrier` y atomics tipados con orden de
-memoria explícito. Un lock o permiso contendido detiene la tarea; no bloquea un
-worker cooperativo. Guards y permits liberan exactamente una vez por consumo,
-`defer`, cancelación o unwind.
+`std.sync` reúne el estado compartido entre tareas: primitivas de
+sincronización y colecciones compartidas. Cada valor de sus tipos es un handle
+hacia un estado compartido: copiarlo copia el handle, no el contenido, y todos
+cumplen `Copy`, `Discard`, `Send` y `Share` salvo `Permit`. Ninguno cumple
+`Equatable` ni `Key`. Cada operación es linealizable. Un lock, permiso o barrera
+disputado detiene la tarea, no el thread, y la espera termina al cancelar la
+tarea (11.15 de la especificación del lenguaje). Ninguna de estas operaciones es
+un brazo de `select`: esperar un valor, limitar capacidad o elegir entre fuentes
+pertenece a los canales.
 
-El contrato machine-readable cerrado por `STD-SYNC-001` está en
-[`testing/stdlib-sync.json`](./testing/stdlib-sync.json) y su explicación
-normativa está en [`docs/contracts/stdlib-sync.md`](./docs/contracts/stdlib-sync.md).
-La matriz independiente de modelo, runtime, fuzz y límites de sanitización de
-`STD-SYNC-TEST-001` está en
-[`testing/stdlib-sync-test.json`](./testing/stdlib-sync-test.json).
-El presupuesto reproducible de rendimiento de `STD-SYNC-PERF-001` está en
-[`testing/stdlib-sync-performance.json`](./testing/stdlib-sync-performance.json)
-y [`docs/contracts/stdlib-sync-performance.md`](./docs/contracts/stdlib-sync-performance.md).
-El frontend de los cinco literales cualificados tiene un contrato separado en
-[`testing/stdlib-sync-collection-frontend.json`](./testing/stdlib-sync-collection-frontend.json)
-y [`docs/contracts/stdlib-sync-collection-frontend.md`](./docs/contracts/stdlib-sync-collection-frontend.md).
-La implementación de handles, operaciones y reclamación para hosted y el ABI
-nativo privado está registrada por separado en
-[`testing/stdlib-sync-collection.json`](./testing/stdlib-sync-collection.json) y
-[`docs/contracts/stdlib-sync-collection.md`](./docs/contracts/stdlib-sync-collection.md).
-La iteración directa por valor, su horizonte finito y las generaciones de cursor
-están cerrados en
-[`testing/stdlib-sync-collection-iter.json`](./testing/stdlib-sync-collection-iter.json) y
-[`docs/contracts/stdlib-sync-collection-iter.md`](./docs/contracts/stdlib-sync-collection-iter.md).
-El modelo secuencial, las histories de linearización y el fuzz acotado se
-registran en [`testing/stdlib-sync-collection-test.json`](./testing/stdlib-sync-collection-test.json)
-y [`docs/contracts/stdlib-sync-collection-test.md`](./docs/contracts/stdlib-sync-collection-test.md);
-esta evidencia no introduce otra representación pública.
-La campaña target-qualified de rendimiento de los cinco owners se registra en
-[`testing/stdlib-sync-collection-performance.json`](./testing/stdlib-sync-collection-performance.json)
-y [`docs/contracts/stdlib-sync-collection-performance.md`](./docs/contracts/stdlib-sync-collection-performance.md).
-La equivalencia observable entre la VM hosted y el ABI nativo privado se cierra
-con `STD-SYNC-COLLECTION-CONF-001` en
-[`testing/stdlib-sync-collection-conformance.json`](./testing/stdlib-sync-collection-conformance.json)
-y [`docs/contracts/stdlib-sync-collection-conformance.md`](./docs/contracts/stdlib-sync-collection-conformance.md).
-La conformance global de `std.sync` se cierra con `STD-SYNC-CONF-001` en
-[`testing/stdlib-sync-conformance.json`](./testing/stdlib-sync-conformance.json)
-y [`docs/contracts/stdlib-sync-conformance.md`](./docs/contracts/stdlib-sync-conformance.md).
-La guía de uso y los ejemplos ejecutables de `std.sync` se cierran con
-`STD-SYNC-DOC-001` en
-[`testing/stdlib-sync.json`](./testing/stdlib-sync.json) y
-[`docs/contracts/stdlib-sync.md`](./docs/contracts/stdlib-sync.md). El siguiente
-bloque de implementación es `STD-CHANNEL-ASYNC-ITER-001`.
-El fixture VM ejecuta Mutex, RwLock, Condition, Semaphore, Once, Barrier,
-atomics y un consumidor de colecciones; la sonda nativa prueba únicamente el
-puente ABI privado de atomics, parking, workers y handles. La ausencia de
-`threads` se rechaza estáticamente con E1008. El contrato consume la
-conformance hija de colecciones, no afirma locks nativos públicos ni lowering
-AOT genérico y no constituye un release.
-Mide la línea base real de la VM hosted por cardinalidad y unidades lógicas,
-incluidos fast path 1:1, lecturas y escrituras independientes, hot key/slot,
-MPMC determinista, cursor directo, snapshot y resize. Los contadores de
-allocations, memoria lógica, retries, wakeups y parking son explícitos; el
-informe no mezcla targets ni presenta la VM single-worker como evidencia de
-contención nativa. El cursor conserva la invariante
-`direct-next-has-no-content-materialization-or-visited-table` y no retiene
-locks durante el cuerpo. La estrategia hosted queda seleccionada como línea
-base hasta disponer de una campaña concurrente comparable; los fast paths
-algorítmicos nativos y lowering AOT siguen sin reclamarse.
-Estos artefactos fijan la superficie y sus negativos. La superficie de
-compilador, el parking cooperativo hosted y el puente ABI nativo de
-atomics/señales ya están implementados y verificados por
-`STD-SYNC-HOST-001`. El puente nativo mantiene handles opacos, órdenes de
-memoria explícitos y una señal epoch; solo bloquea workers nativos, nunca el
-executor cooperativo. `STD-SYNC-TEST-001` verifica además que el closure de
-`Once.getOrInit` se ejecute mediante una continuación de VM, que la publicación
-sea posterior al retorno y que error, pánico o cancelación limpien y permitan
-reintentar sin waiters detached.
+El valor protegido nunca sale como préstamo: se observa o cambia dentro de un
+cierre que se ejecuta con el lock tomado, y el lock se libera siempre al volver
+el cierre, también si la tarea se cancela. Volver a tomar desde la misma tarea
+un lock que ya tiene produce el pánico `P0014`.
 
-La sintaxis `sync.Array[...]`, `sync.Map[...]`, `sync.Set[...]`,
-`sync.Stack[...]` y `sync.Queue[...]` ya está implementada en el frontend:
-aliases se resuelven por identidad de declaración, la posición de tipo no se
-confunde con la posición de expresión, los vacíos y `sync.Map[:]` reciben
-diagnósticos contextuales y el formatter conserva un round-trip lossless. El
-HIR emite el marcador interno `std.sync.collectionLiteral`; el lowering MIR lo
-entrega al host y el bloque `STD-SYNC-COLLECTION-IMPL-001` verifica su ejecución
-en el modelo hosted y en el ABI nativo privado. Esto no promociona una API
-pública ni afirma lowering genérico AOT; la iteración directa queda cerrada por
-`STD-SYNC-COLLECTION-ITER-001`, cuya ejecución hosted y ABI nativa privada ya
-está verificada en el contrato enlazado. `STD-SYNC-COLLECTION-TEST-001` cierra
-además el modelo secuencial independiente, la búsqueda acotada de histories de
-linearización, las invariantes de cursor/alias/cleanup y el smoke fuzz
-determinista de 128 ejecuciones; esta evidencia sigue siendo una frontera de
-fiabilidad y regresión, no una afirmación de fast paths, API pública o lowering
-AOT genérico.
-La conformance global usa ocho casos comunes y líneas VM ordenadas, y exige
-cleanup con cero objetos vivos en cada proceso nativo. Su alcance nativo
-permanece target-qualified hasta que exista lowering AOT; la ejecución
-cooperativa sigue sin bloquear workers.
-
-La conformance de colecciones ejecuta ocho casos con las mismas líneas
-observables en VM y nativo: aliases y bounds, outcomes CAS, orden de
-linearización, `for` finito, snapshots, LIFO/FIFO, límites, cleanup y la
-capability `threads`. El ABI nativo y sus workers sirven como evidencia del
-runtime host-target; el lowering AOT genérico y cualquier API pública de cursor
-continúan sin reclamarse.
-
-Tondo no utiliza poisoning implícito: un pánico ejecuta cleanup y libera el
-guard, mientras que los invariantes recuperables pertenecen al tipo protegido y
-a sus errores nominales. Tampoco existe `WaitGroup`: `Group[Unit]` expresa la
-vida de los hijos sin un contador separado. Los
-atomics exigen seleccionar el memory ordering en la operación; la API no oculta
-un orden débil como default. La guía `STD-SYNC-DOC-001` convierte estas reglas
-en ejemplos ejecutables: ordenación explícita para evitar deadlocks, cleanup y
-cancelación sin poisoning, los cinco literales cualificados, CAS fuerte, `for`
-directo débil frente a `snapshot()` coherente y la elección visible entre una
-queue no bloqueante y un canal con espera y backpressure.
-
-Los tipos compartidos publican `Send`/`Share` solo cuando sus parámetros y la
-implementación interior lo demuestran. `threads` es necesario para semántica
-cross-thread real; un target que no la ofrezca rechaza esa operación en vez de
-simularla con ejecución single-thread.
-
-##### 14.4.4.0 Superficie de sincronización
-
-La superficie canónica de las primitivas es:
+##### 14.4.4.1 Primitivas
 
 ~~~tondo pseudocode
-pub enum SyncError {
-    InvalidCapacity
-    InvalidParties
-    ResourceLimit
-    ReentrantLock
-    ReentrantInitialization
-    Broken
-}
+pub fn sync.Mutex(value: T): sync.Mutex[T]
+pub fn sync.Mutex.update(self, change: fn(var T): R): R
+pub fn sync.Mutex.tryUpdate(self, change: fn(var T): R): R?
+pub fn sync.Mutex.updateWhen(self, ready: fn(T): Bool, change: fn(var T): R): R
+pub fn sync.Mutex.get(self): T
+pub fn sync.Mutex.set(self, value: T)
 
-pub type Mutex[T]
-pub type MutexGuard[T]
-pub type RwLock[T]
-pub type ReadGuard[T]
-pub type WriteGuard[T]
-pub type Condition
-pub type Semaphore
-pub type Permit
-pub type Once[T, E]
-pub type Barrier
+pub fn sync.RwLock(value: T): sync.RwLock[T]
+pub fn sync.RwLock.read(self, observe: fn(T): R): R
+pub fn sync.RwLock.update(self, change: fn(var T): R): R
+pub fn sync.RwLock.get(self): T
+pub fn sync.RwLock.set(self, value: T)
 
-pub enum BarrierRole { Leader Follower }
-pub enum MemoryOrder { Relaxed Acquire Release AcqRel SeqCst }
-pub enum CompareExchange[T] { Exchanged(T) Mismatch(T) }
-pub type Atomic[T]
+pub fn sync.Semaphore(permits: Int): sync.Semaphore
+pub fn sync.Semaphore.acquire(self): sync.Permit
+pub fn sync.Semaphore.tryAcquire(self): sync.Permit?
+pub fn sync.Permit.release(self)
 
-pub fn mutex[T: Send](value: T): Mutex[T] ! SyncError
-pub fn Mutex.lock(ref self): MutexGuard[T] ! SyncError
-pub fn Mutex.tryLock(ref self): MutexGuard[T]?
-pub fn MutexGuard.get(ref self): ref T
-pub fn MutexGuard.getMut(mut self): mut T
-pub fn MutexGuard.unlock(self): Unit
+pub fn sync.Once.new[T](): sync.Once[T]
+pub fn sync.Once.getOrInit(self, init: fn(): T): T        // T ! E con init: fn(): T ! E
+pub fn sync.Once.get(self): T?
+pub fn sync.Once.isReady(self): Bool
 
-pub fn rwLock[T: Send](value: T): RwLock[T] ! SyncError
-pub fn RwLock.read(ref self): ReadGuard[T] ! SyncError
-pub fn RwLock.tryRead(ref self): ReadGuard[T]?
-pub fn ReadGuard.get(ref self): ref T
-pub fn ReadGuard.unlock(self): Unit
-pub fn RwLock.write(ref self): WriteGuard[T] ! SyncError
-pub fn RwLock.tryWrite(ref self): WriteGuard[T]?
-pub fn WriteGuard.get(ref self): ref T
-pub fn WriteGuard.getMut(mut self): mut T
-pub fn WriteGuard.unlock(self): Unit
+pub fn sync.Barrier(parties: Int): sync.Barrier
+pub fn sync.Barrier.wait(self): Bool
 
-pub fn condition(): Condition ! SyncError
-pub fn Condition.wait[T](ref self, var guard: MutexGuard[T]): MutexGuard[T]
-pub fn Condition.notifyOne(ref self): Unit
-pub fn Condition.notifyAll(ref self): Unit
-
-pub fn semaphore(capacity: Int): Semaphore ! SyncError
-pub fn Semaphore.acquire(ref self): Permit
-pub fn Semaphore.tryAcquire(ref self): Permit?
-pub fn Permit.release(self): Unit
-
-pub fn once[T, E](): Once[T, E]
-pub fn Once.get(ref self): ref T?
-pub fn Once.getOrInit(ref self, init: fn(): T ! E): ref T ! E
-pub fn Once.isReady(ref self): Bool
-
-pub fn barrier(parties: Int): Barrier ! SyncError
-pub fn Barrier.wait(ref self): BarrierRole ! SyncError
-
-pub fn atomic[T: Copy + Equatable + Send + Share](value: T): Atomic[T]
-pub fn Atomic.load(ref self, order: MemoryOrder): T
-pub fn Atomic.store(ref self, value: T, order: MemoryOrder): Unit
-pub fn Atomic.swap(ref self, value: T, order: MemoryOrder): T
-pub fn Atomic.compareExchange(ref self, expected: T, desired: T, success: MemoryOrder, failure: MemoryOrder): CompareExchange[T]
-~~~
-
-Los guards y permits son afines, no `Copy` ni `Clone`, y satisfacen `Discard`
-para liberar exactamente una vez mediante `unlock`/`release`, `defer`,
-cancelación o unwind. No hay poisoning implícito. `Mutex` no es reentrante:
-una adquisición recursiva devuelve `SyncError.ReentrantLock`. `RwLock` no publica
-upgrade/downgrade. `Condition.wait` libera y registra atómicamente, y vuelve a
-adquirir el mismo guard antes de retornar; las wakeups espurias se ocultan y el
-caller mantiene su bucle de predicado. `semaphore` exige capacidad positiva,
-`Once` resetea a `uninitialized` tras error/cancelación/pánico del initializer y
-`Barrier` rompe la generación ante cancelación. Los atomics exigen un
-`MemoryOrder` constante de compilación, CAS fuerte sin fallo espurio y ningún
-orden por defecto. Ninguna de estas operaciones es un brazo de `select`.
-
-##### 14.4.4.1 Colecciones compartidas
-
-El módulo publica cinco identidades compartidas calificadas:
-
-~~~tondo pseudocode
-pub type sync.Array[T: Copy + Send + Share]
-pub type sync.Map[K: Key + Send + Share, V: Copy + Send + Share]
-pub type sync.Set[K: Key + Send + Share]
-pub type sync.Stack[T: Send + Discard]
-pub type sync.Queue[T: Send + Discard]
+pub fn sync.Atomic(value: T): sync.Atomic[T]             // T: Equatable
+pub fn sync.Atomic.load(self): T
+pub fn sync.Atomic.store(self, value: T)
+pub fn sync.Atomic.swap(self, value: T): T
+pub fn sync.Atomic.compareExchange(self, expected: T, desired: T): sync.CompareExchange[T]
+pub fn sync.Atomic.add(self, delta: T): T                 // T entero
 
 pub enum sync.CompareExchange[T] {
     Exchanged(T)
@@ -2400,234 +2240,110 @@ pub enum sync.CompareExchange[T] {
 }
 ~~~
 
-Cada valor de esos tipos es un handle `Copy + Discard + Send + Share`; copiarlo
-conserva la misma identidad. No cumple `Equatable` ni `Key`: igualdad de handles
-no sustituye igualdad de contenido. El último handle puede liberar valores
-pendientes, por lo que `Stack` y `Queue` exigen `T: Discard`. Los tres owners de
-lectura por copia exigen además `Copy + Send + Share`. Para compartir una
-identidad de usuario se almacena un `Ref[T]` que satisfaga esos bounds; no se
-relajan copiando direcciones raw.
-
-Las operaciones reutilizan el `CollectionError` canónico de `std.collections`:
-`InvalidIndex` para slots inválidos y `ResourceLimit` cuando no pueden completar
-una reserva o snapshot. `std.sync` no publica un error de colección paralelo.
-
-Las operaciones individuales son linealizables. Una operación puede completar
-por un fast path o detener la tarea bajo contención sin bloquear el thread.
-Ninguna de estas operaciones es un brazo de `select`: readiness y backpressure
-pertenecen a los canales y a `select`.
-
-##### 14.4.4.2 Array, map y set compartidos
-
-La superficie mínima es:
-
-~~~tondo pseudocode
-pub fn sync.Array.length(ref self): Int
-pub fn sync.Array.isEmpty(ref self): Bool
-pub fn sync.Array.get(ref self, index: Int): T?
-pub fn sync.Array.set(ref self, index: Int, value: T): T ! CollectionError
-pub fn sync.Array[T: Copy + Equatable + Send + Share].compareExchange(
-    ref self,
-    index: Int,
-    expected: T,
-    desired: T,
-): sync.CompareExchange[T] ! CollectionError
-pub fn sync.Array.snapshot(ref self): Array[T] ! CollectionError
-
-pub fn sync.Map.length(ref self): Int
-pub fn sync.Map.isEmpty(ref self): Bool
-pub fn sync.Map.get(ref self, key: K): V?
-pub fn sync.Map.contains(ref self, key: K): Bool
-pub fn sync.Map.insert(ref self, key: K, value: V): V? ! CollectionError
-pub fn sync.Map.remove(ref self, key: K): V?
-pub fn sync.Map[
-    K: Key + Send + Share,
-    V: Copy + Equatable + Send + Share,
-].compareExchange(
-    ref self,
-    key: K,
-    expected: V?,
-    desired: V?,
-): sync.CompareExchange[V?] ! CollectionError
-pub fn sync.Map.snapshot(ref self): Map[K, V] ! CollectionError
-
-pub fn sync.Set.length(ref self): Int
-pub fn sync.Set.isEmpty(ref self): Bool
-pub fn sync.Set.contains(ref self, key: K): Bool
-pub fn sync.Set.insert(ref self, key: K): Bool ! CollectionError
-pub fn sync.Set.remove(ref self, key: K): Bool
-pub fn sync.Set.snapshot(ref self): Set[K] ! CollectionError
-~~~
-
-`sync.Array` tiene longitud fija desde su construcción. Cada slot mantiene un
-índice estable, `get` devuelve `none` fuera de rango y `set` devuelve el valor
-reemplazado. No existen `push`, `pop`, inserción, borrado ni resize estructural;
-la mutación de tamaño se expresa con `sync.Stack`, `sync.Queue`, map o set.
-`compareExchange` nunca falla de forma espuria: `Exchanged(previous)` significa
-que el estado coincidía y se reemplazó; `Mismatch(observed)` devuelve el estado
-que impidió el cambio. En map, `desired = none` elimina y `expected = none`
-compara contra ausencia, sin flattening cuando `V` ya es opcional.
-
-`sync.Map` y `sync.Set` conservan orden de inserción definido por el orden de
-linearización. Reemplazar una key no la mueve; eliminarla y reinsertarla la
-coloca al final. Dos inserciones realmente concurrentes pueden adoptar cualquier
-orden compatible con su linearización. Operaciones sobre keys distintas y slots
-distintos pueden progresar en paralelo: la implementación no serializa todas las
-lecturas mediante un único lock exclusivo.
-
-##### 14.4.4.3 Stack y queue compartidos
-
-`sync.Stack` es LIFO y `sync.Queue` es una cola FIFO multi-productor,
-multi-consumidor. Usan los mismos nombres que `Deque` (10.2.3): `push` añade al
-final, `pop` retira del final, `popFront` retira del frente y `get` observa una
-posición sin retirarla (`get(-1)` la cima de la pila, `get(0)` el frente de la
-cola). Su superficie deliberadamente pequeña es:
-
-~~~tondo pseudocode
-pub fn sync.Stack.length(ref self): Int
-pub fn sync.Stack.isEmpty(ref self): Bool
-pub fn sync.Stack.push(ref self, value: T)
-pub fn sync.Stack.pop(ref self): T?
-pub fn sync.Stack[T: Copy + Send + Share].get(ref self, index: Int): T?
-pub fn sync.Stack[T: Copy + Send + Share].snapshot(
-    ref self,
-): Array[T] ! CollectionError
-
-pub fn sync.Queue.length(ref self): Int
-pub fn sync.Queue.isEmpty(ref self): Bool
-pub fn sync.Queue.push(ref self, value: T)
-pub fn sync.Queue.popFront(ref self): T?
-pub fn sync.Queue[T: Copy + Send + Share].get(ref self, index: Int): T?
-pub fn sync.Queue[T: Copy + Send + Share].snapshot(
-    ref self,
-): Array[T] ! CollectionError
-~~~
-
-`push` no es fallible, igual que en `Deque`: no poder reservar memoria es
-agotamiento de recursos. `pop` y `popFront` transfieren ownership únicamente al
-caller ganador y devuelven `none` inmediatamente cuando la estructura está
-vacía. No hay `waitPop`, `waitPopFront`, sufijos `Async` ni una queue con
-backpressure oculta. Esperar un productor, limitar capacidad o seleccionar entre
-fuentes utiliza un canal. `get` y `snapshot` dejan el elemento en la
-estructura y por eso solo existen cuando copiarlo y observarlo concurrentemente
-es seguro; `get` devuelve `none` fuera de rango y los índices negativos cuentan
-desde el final, como en `Deque`.
-
-##### 14.4.4.4 Literales, iteración, snapshots y orden
-
-La construcción corta canónica reutiliza corchetes detrás del módulo:
-
-~~~tondo pseudocode
+~~~tondo
 import std.sync
 
-let slots = sync.Array[1, 2, 3]
-let cache = sync.Map["one": 1, "two": 2]
-let visited = sync.Set["home", "settings"]
-let undo = sync.Stack[first, second, third]
-let jobs = sync.Queue[first, second, third]
+let stats = sync.Mutex(Stats { hits: 0, misses: 0 })
+stats.update((s) { s.hits += 1 })
+let current = stats.get()
+
+let requests = sync.Atomic(0)
+let id = requests.add(1)
 ~~~
 
-El módulo puede importarse con alias; la resolución utiliza la identidad del
-tipo estándar. No existen aliases globales `SArray`, `SMap` o `SSet`. Los
-literales vacíos salvo map requieren tipo esperado y el map vacío se escribe
-`sync.Map[:]`. La construcción evalúa todos los operandos de izquierda a derecha
-antes de publicar el handle. Las duplicaciones de map/set siguen exactamente las
-reglas de los literales de valor equivalentes.
+- `Mutex.update` ejecuta el cierre con acceso exclusivo al valor y devuelve su
+  resultado; `tryUpdate` devuelve `none` sin esperar si otro lo tiene.
+  `updateWhen` espera a que `ready` sea cierto, comprobándolo cada vez que el
+  valor cambia, y entonces aplica `change` bajo el mismo lock: cubre lo que en
+  otros lenguajes hace una variable de condición, sin `notify` ni wakeups
+  espurios visibles. `get` devuelve una copia del valor y `set` lo reemplaza.
+- `RwLock` admite varios `read` a la vez y un único `update`.
+- `Semaphore(n)` reparte `n` permisos. `acquire` espera uno libre. Un `Permit`
+  no es `Copy` y cumple `Discard`: el permiso vuelve con `release()` o al
+  abandonarse el `Permit`, también al moverlo a una tarea que termina, de modo
+  que `spawn fetch(url, limit.acquire())` limita la concurrencia.
+- `Once` inicializa su valor una sola vez. Mientras una tarea ejecuta `init`,
+  las demás esperan; si `init` falla, se cancela o produce pánico, el `Once`
+  sigue vacío y la siguiente llamada lo reintenta.
+- `Barrier(n).wait()` espera a que lleguen `n` tareas y devuelve `true` en
+  exactamente una de ellas por ronda; después la barrera se reutiliza.
+- `Atomic` no expone un orden de memoria: todas sus operaciones son
+  secuencialmente consistentes. `compareExchange` nunca falla de forma espuria:
+  `Exchanged(previous)` si el valor coincidía y se reemplazó, y
+  `Mismatch(observed)` si no. `add` devuelve el valor nuevo y produce `P0005`
+  si no cabe.
+- `Semaphore` y `Barrier` exigen un número positivo; otro produce el pánico
+  `P0001`.
 
-En `sync.Stack[a, b, c]`, `c` es la cima y el primer `pop` devuelve `c`. En
-`sync.Queue[a, b, c]`, `a` está al frente y el primer `popFront` devuelve `a`.
-
-Los cinco owners son fuentes directas de `for` mediante el cursor asíncrono
-cerrado `cursor[sync,C]` del lenguaje:
+##### 14.4.4.2 Colecciones compartidas
 
 ~~~tondo pseudocode
-for value in slots {
-    inspect(value)
-}
+pub type sync.Array[T]
+pub type sync.Map[K: Key, V]
+pub type sync.Set[K: Key]
+pub type sync.Stack[T]
+pub type sync.Queue[T]
 
-for (key, value) in cache {
-    inspectEntry(key, value)
-}
+pub fn sync.Array.length(self): Int
+pub fn sync.Array.isEmpty(self): Bool
+pub fn sync.Array.get(self, index: Int): T?
+pub fn sync.Array.set(self, index: Int, value: T): T ! CollectionError
+pub fn sync.Array.compareExchange(self, index: Int, expected: T, desired: T): sync.CompareExchange[T] ! CollectionError
+pub fn sync.Array.snapshot(self): Array[T]
 
-for job in jobs {
-    inspect(job)
-}
+pub fn sync.Map.length(self): Int
+pub fn sync.Map.isEmpty(self): Bool
+pub fn sync.Map.get(self, key: K): V?
+pub fn sync.Map.contains(self, key: K): Bool
+pub fn sync.Map.insert(self, key: K, value: V): V?
+pub fn sync.Map.remove(self, key: K): V?
+pub fn sync.Map.compareExchange(self, key: K, expected: V?, desired: V?): sync.CompareExchange[V?]
+pub fn sync.Map.snapshot(self): Map[K, V]
 
-let coherent = cache.snapshot()?
-for (key, value) in coherent {
-    decide(key, value)
-}
+pub fn sync.Set.length(self): Int
+pub fn sync.Set.isEmpty(self): Bool
+pub fn sync.Set.contains(self, key: K): Bool
+pub fn sync.Set.insert(self, key: K): Bool
+pub fn sync.Set.remove(self, key: K): Bool
+pub fn sync.Set.snapshot(self): Set[K]
+
+pub fn sync.Stack.length(self): Int
+pub fn sync.Stack.isEmpty(self): Bool
+pub fn sync.Stack.push(self, value: T)
+pub fn sync.Stack.pop(self): T?
+pub fn sync.Stack.get(self, index: Int): T?
+pub fn sync.Stack.snapshot(self): Array[T]
+
+pub fn sync.Queue.length(self): Int
+pub fn sync.Queue.isEmpty(self): Bool
+pub fn sync.Queue.push(self, value: T)
+pub fn sync.Queue.popFront(self): T?
+pub fn sync.Queue.get(self, index: Int): T?
+pub fn sync.Queue.snapshot(self): Deque[T]
 ~~~
 
-El recorrido es observacional, finito y débilmente consistente. Crear el cursor
-captura en O(1) un horizonte estructural, no los contenidos: inserciones,
-reinserciones y `push` posteriores a crearlo quedan fuera; una
-retirada anterior a observar la entrada puede omitirla; y una escritura pendiente
-se observa en el valor que determine el punto de linearización de ese `next`.
-Cada generación estructural se entrega como máximo una vez, el cursor no
-mantiene locks durante el cuerpo, no asigna memoria proporcional a la
-cardinalidad y termina aunque continúen las inserciones. `sync.Array` recorre
-cada índice una vez; map produce `(K, V)`; set produce `K`; stack y queue
-producen copias sin ejecutar `pop` ni `popFront`.
+Se construyen con los literales calificados de 5.11 de la especificación del
+lenguaje (`sync.Map["one": 1]`), vacías con `sync.Queue.new[Job]()` o
+`sync.Map.new[String, Int]()`, o a partir de una colección de valor con
+`sync.Array(values)`, `sync.Map(entries)`, `sync.Set(keys)`, `sync.Stack(values)`
+o `sync.Queue(values)`. Las operaciones usan los nombres de las colecciones de
+valor (10.2.3): `sync.Array` tiene longitud fija y no cambia de tamaño;
+`sync.Stack` es LIFO, con la cima al final, y `sync.Queue` es FIFO con varios
+productores y consumidores. `pop` y `popFront` devuelven `none` al instante si
+no hay elementos. Un índice negativo cuenta desde el final. `sync.Array.set` y
+`compareExchange` devuelven `CollectionError.InvalidIndex` fuera de rango. En
+`sync.Map.compareExchange`, `expected = none` compara con la ausencia y
+`desired = none` elimina la entrada.
 
-Solo se permiten bindings por valor. `for ref`, `for mut` y `for var` se
-rechazan porque el almacenamiento puede cambiar concurrentemente. La iteración
-de stack y queue existe únicamente bajo `T: Copy + Send + Share`. Cada `next`
-puede detener la tarea bajo contención, como cualquier `next` (10.18 de la
-especificación del lenguaje). Salir pronto o cancelar libera cualquier protección de reclamación
-sin bloquear posteriores writers.
+`snapshot()` devuelve en O(1) una colección de valor con el estado de un único
+instante, en el orden de la colección: índice, inserción, o de la base a la cima
+de la pila y del frente al fondo de la cola. `for value in shared` recorre el
+`snapshot()` tomado al empezar el bucle y no ve los cambios posteriores; solo
+admite bindings por valor.
 
-El orden directo es índice ascendente para array, inserción linearizada para
-map/set, cima a base para stack y frente a fondo para queue, restringido al
-horizonte capturado. No es una vista global coherente. `snapshot()` establece en
-cambio un único punto de linearización y materializa una colección ordinaria
-independiente con esos mismos órdenes. Igualdad, agregaciones exactas,
-serialización, aritmética de colecciones y cualquier decisión que necesite un
-solo instante se realizan sobre el snapshot, no directamente sobre el owner.
-`sync.Stack` es LIFO y `sync.Queue` es FIFO-MPMC; `pop`/`popFront` devuelven
-`none` sin esperar. La espera, el rendezvous y el backpressure pertenecen a
-los canales (`channel[T](0)`, `channel[T](n)` o `channel[T]()`), elegidos de forma
-explícita, no a una queue oculta.
-
-##### 14.4.4.5 Estrategia de implementación y progreso
-
-La semántica no fija un layout. El cierre de
-`STD-SYNC-COLLECTION-IMPL-001` usa un carrier correcto con valores hosted y
-celdas `RwLock`/`Mutex` por identidad en el ABI nativo, con parking epoch por
-colección y sin mantener el lock de la tabla global durante la espera. Esta es
-una evidencia de runtime y reclamación, no una afirmación de que los fast paths
-algorítmicos ni el lowering genérico AOT estén terminados. La siguiente lista
-describe las obligaciones de rendimiento target-qualified que se medirán en
-`STD-SYNC-COLLECTION-PERF-001`:
-
-`STD-SYNC-COLLECTION-ITER-001` consume esa frontera con
-`IteratorAdapter::Sync` en hosted y con los símbolos privados
-`tondo_rt_sync_cursor_start`/`next`/`key` en el runtime nativo. Ambas rutas
-conservan la frontera estructural y las generaciones sin materializar contenido;
-el lowering AOT genérico sigue sin declararse implementado.
-
-- `sync.Array` usa slots atómicos o nodos versionados y evita un lock global.
-- `sync.Stack` tiene un fast path CAS de estilo Treiber.
-- `sync.Queue` tiene un fast path FIFO CAS de estilo Michael-Scott.
-- `sync.Map` y `sync.Set` combinan lecturas sin lock global con CAS, sharding o
-  locks finos para escritura y resize; keys independientes no comparten una
-  exclusión global innecesaria.
-- Los cursores directos se crean con memoria auxiliar O(1), avanzan en O(1)
-  esperado amortizado por candidato y no usan una tabla de visitados ni una
-  copia encubierta. Resize, retirada y reclamación conservan el horizonte y
-  evitan duplicar una generación.
-- Reclamation coopera con el GC y protege ABA, use-after-free y doble drop. Una
-  implementación nativa alternativa debe demostrar el mismo ownership.
-- Tras contención repetida se aplica backoff, yield o parking acotado de la
-  tarea; nunca spin ilimitado ni bloqueo inadvertido de un thread.
-
-El algoritmo concreto puede cambiar por target cuando los benchmarks lo
-justifiquen, pero no la linearización, el orden, los outcomes ni los efectos
-públicos. `snapshot` puede bloquear writers internamente en orden canónico o
-usar versionado y retry; no puede devolver una mezcla que jamás existió. Los
-gates de `std.sync` miden fast path, contención, escalado por cores, tail latency,
-allocations y memoria, además de probar progreso, ABA y reclamación bajo
-schedulers adversarios.
+La implementación actual protege cada colección con un lock y guarda una
+colección de valor con copy-on-write; los algoritmos pueden cambiar sin cambiar
+la linealización, el orden ni los resultados observables.
 
 #### 14.4.5 Executors, pools y actores
 

@@ -120,6 +120,19 @@ pub enum Stmt {
         local: LocalId,
         place: Place,
     },
+    /// Takes the lock of a `std.sync` value for the rest of the block:
+    /// `guard` holds it and is released when the block ends, and `inner`
+    /// is a loan of the state it protects (14.4.4).
+    LockSync {
+        guard: LocalId,
+        inner: LocalId,
+        handle: Expr,
+        mode: LockMode,
+        span: Span,
+    },
+    /// In `updateWhen`: gives the lock `guard` holds up until the state
+    /// changes, then takes it again.
+    AwaitChange(LocalId, Span),
     /// An evaluated expression whose value is dropped (`_ =` or a `Unit` statement).
     Expr(Expr),
     Return(Option<Expr>),
@@ -304,6 +317,15 @@ pub enum ArrayOp {
     Contains,
 }
 
+/// How `LockSync` takes a lock.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum LockMode {
+    Shared,
+    Exclusive,
+    /// Exclusive if it is free; otherwise the guard holds nothing.
+    Try,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TaskOp {
     /// `job.wait()`
@@ -344,6 +366,26 @@ pub enum TaskOp {
     Cancel,
     /// `group.cancel()`
     GroupCancel,
+    /// A new `std.sync` value holding its state; the state comes first.
+    SyncNew,
+    /// Used by `LockSync`: takes the lock and gives the guard.
+    Lock(LockMode),
+    /// Used by `AwaitChange`: gives the guard back once the state changed.
+    SyncAwait,
+    /// Whether a guard holds its lock, after `LockMode::Try`.
+    GuardHeld,
+    /// `sync.Semaphore(permits)`
+    SemaphoreNew,
+    /// `semaphore.acquire()`
+    Acquire,
+    /// `semaphore.tryAcquire()`: `Permit?`
+    TryAcquire,
+    /// `permit.release()`, which only consumes the permit.
+    PermitRelease,
+    /// `sync.Barrier(parties)`
+    BarrierNew,
+    /// `barrier.wait()`
+    BarrierWait,
 }
 
 impl TaskOp {
@@ -351,7 +393,12 @@ impl TaskOp {
     /// reading it: a consumed handle or a value moved into it.
     pub fn takes(self, index: usize) -> bool {
         match self {
-            TaskOp::Wait | TaskOp::WaitTimeout | TaskOp::Cancel | TaskOp::GroupCancel => index == 0,
+            TaskOp::Wait
+            | TaskOp::WaitTimeout
+            | TaskOp::Cancel
+            | TaskOp::GroupCancel
+            | TaskOp::SyncNew
+            | TaskOp::PermitRelease => index == 0,
             TaskOp::GroupWait | TaskOp::Channel => true,
             TaskOp::GroupAdd | TaskOp::Send => index == 1,
             _ => false,
@@ -370,6 +417,10 @@ impl TaskOp {
                 | TaskOp::Send
                 | TaskOp::Receive
                 | TaskOp::ReceiveTimeout
+                | TaskOp::Lock(LockMode::Shared | LockMode::Exclusive)
+                | TaskOp::SyncAwait
+                | TaskOp::Acquire
+                | TaskOp::BarrierWait
         )
     }
 }

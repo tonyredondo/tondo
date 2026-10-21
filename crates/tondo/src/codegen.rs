@@ -15,7 +15,7 @@
 //! last reference to a box goes away.
 
 use crate::ast::{BinOp, UnaryOp};
-use crate::hir::{ArrayOp, Callee, FnId, MapOp, Mutation, Program, StdFn, StrOp, TaskOp};
+use crate::hir::{ArrayOp, Callee, FnId, LockMode, MapOp, Mutation, Program, StdFn, StrOp, TaskOp};
 use crate::mir::{
     Body, Const, Local, Operand, Overlap, Piece, Place, Proj, Rvalue, SelectCase, Statement, Terminator, project,
 };
@@ -147,6 +147,19 @@ enum Rt {
     JoinWaitTimeout,
     JoinCancel,
     GroupCancel,
+    SyncNew,
+    SyncValue,
+    SyncLock,
+    SyncUnlock,
+    SyncAwait,
+    SyncRelease,
+    SemaphoreNew,
+    SemaphoreAcquire,
+    SemaphoreRelease,
+    PermitRelease,
+    BarrierNew,
+    BarrierWait,
+    BarrierRelease,
 }
 
 impl Rt {
@@ -258,6 +271,19 @@ impl Rt {
             Rt::JoinWaitTimeout => ("tondo_rt_join_wait_timeout", &[I64, I64, I64], &[I8]),
             Rt::JoinCancel => ("tondo_rt_join_cancel", &[I64], &[]),
             Rt::GroupCancel => ("tondo_rt_group_cancel", &[I64], &[]),
+            Rt::SyncNew => ("tondo_rt_sync_new", &[I64, I64, I64], &[I64]),
+            Rt::SyncValue => ("tondo_rt_sync_value", &[I64], &[I64]),
+            Rt::SyncLock => ("tondo_rt_sync_lock", &[I64, I8, I64], &[I64]),
+            Rt::SyncUnlock => ("tondo_rt_sync_unlock", &[I64], &[]),
+            Rt::SyncAwait => ("tondo_rt_sync_await", &[I64], &[I64]),
+            Rt::SyncRelease => ("tondo_rt_sync_release", &[I64], &[]),
+            Rt::SemaphoreNew => ("tondo_rt_semaphore_new", &[I64, I64], &[I64]),
+            Rt::SemaphoreAcquire => ("tondo_rt_semaphore_acquire", &[I64, I8], &[I64]),
+            Rt::SemaphoreRelease => ("tondo_rt_semaphore_release", &[I64], &[]),
+            Rt::PermitRelease => ("tondo_rt_permit_release", &[I64], &[]),
+            Rt::BarrierNew => ("tondo_rt_barrier_new", &[I64, I64], &[I64]),
+            Rt::BarrierWait => ("tondo_rt_barrier_wait", &[I64], &[I8]),
+            Rt::BarrierRelease => ("tondo_rt_barrier_release", &[I64], &[]),
         }
     }
 }
@@ -1139,9 +1165,16 @@ impl Emit<'_, '_> {
                         Handle::Group => Rt::GroupRelease,
                         Handle::Sender => Rt::SenderRelease,
                         Handle::Receiver => Rt::ReceiverRelease,
+                        Handle::Semaphore => Rt::SemaphoreRelease,
+                        Handle::Permit => Rt::PermitRelease,
+                        Handle::Barrier => Rt::BarrierRelease,
+                        Handle::Guard => Rt::SyncUnlock,
+                        _ => Rt::SyncRelease,
                     };
                     self.call_rt(rt, &[pointer]);
                 }
+                // A guard is held once and never copied.
+                TyKind::Handle(Handle::Guard, _) => {}
                 TyKind::Handle(..) => {
                     self.call_rt(Rt::HandleRetain, &[pointer]);
                 }
@@ -1407,7 +1440,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             .iter()
             .flat_map(|b| &b.stmts)
             .filter_map(|s| match s {
-                Statement::Lend(local, _) => Some(*local),
+                Statement::Lend(local, _) | Statement::LendAt(local, _) => Some(*local),
                 _ => None,
             })
             .collect();
@@ -1857,6 +1890,13 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Statement::Lend(local, place) => {
                 if let Storage::Pointer(var) = self.storage[local.0 as usize] {
                     let address = self.pointer_to(place, true);
+                    self.e.fb.def_var(var, address);
+                }
+            }
+            Statement::LendAt(local, guard) => {
+                if let Storage::Pointer(var) = self.storage[local.0 as usize] {
+                    let guard = self.scalar(guard);
+                    let address = self.e.call_rt(Rt::SyncValue, &[guard]).unwrap();
                     self.e.fb.def_var(var, address);
                 }
             }
@@ -2397,7 +2437,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let item = handle_ty.map(|t| self.e.cg.types.handle_result(t));
         // Handles and indices are scalars; the value `send` moves is read
         // where it is used.
-        let scalars = if op == TaskOp::Send { &operands[..1] } else { operands };
+        let scalars = match op {
+            TaskOp::Send => &operands[..1],
+            TaskOp::SyncNew => &operands[..0],
+            _ => operands,
+        };
         let values: Vec<ir::Value> = scalars.iter().map(|o| self.scalar(o)).collect();
         match op {
             TaskOp::Wait => {
@@ -2483,6 +2527,55 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.call_rt(Rt::GroupCancel, &[values[0]]);
                 None
             }
+            TaskOp::SyncNew => {
+                // The state moves into the new cell.
+                let state = self.e.cg.types.handle_result(ty);
+                let value = self.operand(&operands[0]);
+                if retain[0] {
+                    self.e.refcount(state, value, false);
+                }
+                let layout = self.e.cg.layout(state);
+                let size = self.e.fb.ins().iconst(POINTER, layout.size as i64);
+                let align = self.e.fb.ins().iconst(POINTER, layout.align as i64);
+                let release = self.e.glue_or_null(Glue::Release, state);
+                let cell = self.e.call_rt(Rt::SyncNew, &[size, align, release]).unwrap();
+                let address = self.e.call_rt(Rt::SyncValue, &[cell]).unwrap();
+                self.e.store_val(address, state, value);
+                Some(Val::Scalar(cell))
+            }
+            TaskOp::Lock(mode) => {
+                let mode = match mode {
+                    LockMode::Shared => 0,
+                    LockMode::Exclusive => 1,
+                    LockMode::Try => 2,
+                };
+                let mode = self.e.fb.ins().iconst(types::I8, mode);
+                let location = self.location(span);
+                Some(Val::Scalar(self.e.call_rt(Rt::SyncLock, &[values[0], mode, location]).unwrap()))
+            }
+            TaskOp::SyncAwait => Some(Val::Scalar(self.e.call_rt(Rt::SyncAwait, &[values[0]]).unwrap())),
+            TaskOp::GuardHeld => Some(Val::Scalar(self.e.fb.ins().icmp_imm_s(IntCC::NotEqual, values[0], 0))),
+            TaskOp::SemaphoreNew | TaskOp::BarrierNew => {
+                let location = self.location(span);
+                let rt = if op == TaskOp::SemaphoreNew { Rt::SemaphoreNew } else { Rt::BarrierNew };
+                Some(Val::Scalar(self.e.call_rt(rt, &[values[0], location]).unwrap()))
+            }
+            TaskOp::Acquire => {
+                let wait = self.e.fb.ins().iconst(types::I8, 0);
+                Some(Val::Scalar(self.e.call_rt(Rt::SemaphoreAcquire, &[values[0], wait]).unwrap()))
+            }
+            TaskOp::TryAcquire => {
+                let only = self.e.fb.ins().iconst(types::I8, 1);
+                let permit = self.e.call_rt(Rt::SemaphoreAcquire, &[values[0], only]).unwrap();
+                let permit_ty = self.e.cg.types.lookup(&TyKind::Handle(Handle::Permit, Ty::UNIT)).unwrap();
+                let out = self.scratch(permit_ty);
+                self.e.fb.ins().store(flags(), permit, out, 0);
+                let found = self.e.fb.ins().icmp_imm_s(IntCC::NotEqual, permit, 0);
+                self.removal_result(place, ty, permit_ty, out, found)
+            }
+            // The permit moved into a temporary, whose release gives it back.
+            TaskOp::PermitRelease => None,
+            TaskOp::BarrierWait => Some(Val::Scalar(self.e.call_rt(Rt::BarrierWait, &[values[0]]).unwrap())),
             TaskOp::Close => {
                 self.e.call_rt(Rt::ChannelClose, &[values[0]]);
                 None

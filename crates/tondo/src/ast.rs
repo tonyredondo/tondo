@@ -396,6 +396,9 @@ pub enum ExprKind {
     },
     /// `select { ... }` (11.14).
     Select(Vec<SelectArm>),
+    /// `sync.Map["one": 1]` and the other literals of shared collections
+    /// (5.11): the qualified type path and the literal of its contents.
+    SyncLiteral(Vec<Ident>, Box<Expr>),
     Tuple(Vec<Expr>),
     /// `[a, b, c]`
     Array(Vec<Expr>),
