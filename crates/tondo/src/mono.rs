@@ -271,6 +271,12 @@ impl Mono<'_> {
                 }
             }
             ExprKind::Loan(place) | ExprKind::CursorNext(place, _) => self.place(place, map),
+            ExprKind::Region(place, parts) => {
+                self.place(place, map);
+                for part in parts.iter_mut().flatten() {
+                    self.expr(part, map);
+                }
+            }
             ExprKind::Mutate(_, place, values) => {
                 self.place(place, map);
                 self.exprs(values, map);

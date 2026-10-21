@@ -1,0 +1,20 @@
+fn pair(left: mut Array[Int], right: mut Array[Int]) {}
+fn grow(values: var Array[Int]) {}
+fn one(values: mut Array[Int], value: mut Int) {}
+
+fn look(values: ref Array[Int]) {
+    pair(mut values[0:1], mut values[1:2])
+}
+
+fn main() {
+    var ints = [1, 2, 3]
+    pair(mut ints, mut ints[1:2])
+    grow(var ints[0:1])
+    let fixed = [1]
+    pair(mut fixed[0:1], mut ints)
+}
+
+// expect-error: E1411 lending a region of it as `mut` changes `values`, which is a `ref` loan; take it as `values: mut Array[Int]`
+// expect-error: E1403 two exclusive loans of one call overlap
+// expect-error: E1411 a `var` loan takes a whole place, and a region keeps its length: take the parameter as `mut Array[Int]`
+// expect-error: E1411 lending a region of it as `mut` changes `fixed`, which is not declared with `var`

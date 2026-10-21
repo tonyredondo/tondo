@@ -134,6 +134,13 @@ pub enum Const {
     Unit,
 }
 
+/// What else a call lends of an array a region of it is lent from.
+#[derive(Clone, Debug)]
+pub enum Overlap {
+    Region([Option<Operand>; 3]),
+    Index(Operand),
+}
+
 pub enum Rvalue {
     Use(Operand),
     Unary(UnaryOp, Operand),
@@ -171,6 +178,10 @@ pub enum Rvalue {
     /// Replaces the elements a slice of the array at the place selects with
     /// those of an array of the same length.
     AssignSlice(Place, [Option<Operand>; 3], Operand, Span),
+    /// Panics with `P0004` when a region of the array, lent by a call,
+    /// shares an element with another region or with the element at an
+    /// index lent by the same call (16.4).
+    CheckRegion(Operand, [Option<Operand>; 3], Overlap, Span),
     /// The number of elements of any collection, or of scalars of a string.
     Length(Operand),
     /// An intrinsic string operation, string first.

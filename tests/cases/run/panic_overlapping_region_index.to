@@ -1,0 +1,9 @@
+fn one(values: mut Array[Int], value: mut Int) {}
+
+fn main() {
+    var ints = [1, 2, 3, 4]
+    one(mut ints[:2], mut ints[2])
+    one(mut ints[::-1], mut ints[-3])
+}
+
+// expect-panic: P0004

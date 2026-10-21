@@ -175,6 +175,10 @@ pub enum ExprKind {
     ArrayOp(ArrayOp, Vec<Expr>),
     /// A `mut` or `var` loan of a place, passed to a loan parameter.
     Loan(Place),
+    /// `mut values[start:end:step]` passed to a `mut Array[T]` parameter:
+    /// the callee changes the selected elements of the array in place
+    /// (16.4).
+    Region(Place, [Option<Box<Expr>>; 3]),
     /// The number of elements of any collection, or of scalars of a string.
     Length(Box<Expr>),
     /// An intrinsic string operation; the string comes first.

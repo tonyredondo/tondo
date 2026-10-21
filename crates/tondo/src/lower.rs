@@ -15,6 +15,9 @@
 use crate::ast::BinOp;
 use crate::hir::{self, LocalId};
 use crate::mir::*;
+
+/// A place a call lends, with the region of it when it lends one.
+type Lent = (Place, Option<[Option<Operand>; 3]>);
 use crate::source::Span;
 use crate::types::{CursorKind, ERR, NONE, OK, SOME, Ty, TyKind, Types};
 use std::rc::Rc;
@@ -522,16 +525,52 @@ impl Builder<'_> {
         Operand::local(local)
     }
 
+    /// The place with its indices copied, so that later changes to the
+    /// bindings that held them do not move it.
+    fn frozen(&mut self, place: Place, span: Span) -> Place {
+        let mut path = Vec::new();
+        for step in place.path {
+            path.push(match step {
+                Proj::Index(index, at) => {
+                    let copy = self.new_local(Ty::INT);
+                    self.assign(Place::local(copy), Rvalue::Use(Operand::local(index)), span);
+                    Proj::Index(copy, at)
+                }
+                step => step,
+            });
+        }
+        Place { local: place.local, path }
+    }
+
     /// Exclusive loans of one call that select elements of the same array
-    /// by run-time indices must reach different elements (`P0004`). The
-    /// checker already rejected loans that overlap for sure.
-    fn check_disjoint(&mut self, loans: &[Place], span: Span) {
-        for (index, first) in loans.iter().enumerate() {
-            for second in &loans[index + 1..] {
+    /// by run-time indices or regions must reach different elements
+    /// (`P0004`). The checker already rejected loans that overlap for sure.
+    fn check_disjoint(&mut self, loans: &[Lent], span: Span) {
+        for (index, (first, first_region)) in loans.iter().enumerate() {
+            for (second, second_region) in &loans[index + 1..] {
                 if first.local != second.local {
                     continue;
                 }
                 let shared = first.path.iter().zip(&second.path).take_while(|(a, b)| a == b).count();
+                let (region, other, array) = match (first.path.get(shared), second.path.get(shared)) {
+                    (Some(Proj::Index(..)), Some(Proj::Index(..))) => (None, None, None),
+                    (None, None) => match (first_region, second_region) {
+                        (Some(a), Some(b)) => (Some(a), Some(Overlap::Region(b.clone())), Some(first)),
+                        _ => continue,
+                    },
+                    (None, Some(Proj::Index(b, _))) if first_region.is_some() => {
+                        (first_region.as_ref(), Some(Overlap::Index(Operand::local(*b))), Some(first))
+                    }
+                    (Some(Proj::Index(a, _)), None) if second_region.is_some() => {
+                        (second_region.as_ref(), Some(Overlap::Index(Operand::local(*a))), Some(second))
+                    }
+                    _ => continue,
+                };
+                if let (Some(region), Some(other), Some(array)) = (region, other, array) {
+                    let check = Rvalue::CheckRegion(Operand::Copy(array.clone()), region.clone(), other, span);
+                    self.temp(Ty::UNIT, check, span);
+                    continue;
+                }
                 let (Some(Proj::Index(a, _)), Some(Proj::Index(b, _))) =
                     (first.path.get(shared), second.path.get(shared))
                 else {
@@ -971,6 +1010,7 @@ impl Builder<'_> {
             }
             // The callee receives the place's address (see `Body::loans`).
             hir::ExprKind::Loan(place) => Operand::Copy(self.place(place.local, &place.path)),
+            hir::ExprKind::Region(..) => unreachable!("a region is only lent to a call"),
             hir::ExprKind::Length(collection) => {
                 let collection = self.expr(collection);
                 self.temp(e.ty, Rvalue::Length(collection), e.span)
@@ -1063,33 +1103,58 @@ impl Builder<'_> {
                 let lent: Vec<hir::LocalId> = args
                     .iter()
                     .filter_map(|a| match &a.kind {
-                        hir::ExprKind::Loan(place) => Some(place.local),
+                        hir::ExprKind::Loan(place) | hir::ExprKind::Region(place, _) => Some(place.local),
                         _ => None,
                     })
                     .collect();
                 let mut operands = Vec::new();
+                let mut loans: Vec<Lent> = Vec::new();
+                let mut regions = Vec::new();
                 for arg in args {
+                    if let hir::ExprKind::Region(place, bounds) = &arg.kind {
+                        // The place and bounds are fixed now, for the copy
+                        // back after the call.
+                        let place = self.place(place.local, &place.path);
+                        let place = self.frozen(place, arg.span);
+                        let bounds = bounds.each_ref().map(|b| {
+                            b.as_ref().map(|b| match self.expr(b) {
+                                read @ Operand::Copy(_) => self.copy_operand(read, Ty::INT, b.span),
+                                constant => constant,
+                            })
+                        });
+                        loans.push((place.clone(), Some(bounds.clone())));
+                        regions.push((operands.len(), place, bounds, arg.ty, arg.span));
+                        operands.push(Operand::Const(Const::Unit));
+                        continue;
+                    }
                     let operand = self.expr(arg);
                     // A value read from a lent place is copied now, so the
                     // callee's changes through the loan cannot reach it.
-                    let reads_lent = !matches!(arg.kind, hir::ExprKind::Loan(_))
+                    let loan = matches!(arg.kind, hir::ExprKind::Loan(_));
+                    let reads_lent = !loan
                         && matches!(&operand, Operand::Copy(place)
                             if lent.iter().any(|&l| self.hir_locals[l.0 as usize] == Some(place.local)));
+                    if let (true, Operand::Copy(place)) = (loan, &operand) {
+                        loans.push((place.clone(), None));
+                    }
                     operands.push(if reads_lent { self.copy_operand(operand, arg.ty, arg.span) } else { operand });
                 }
-                let loans: Vec<Place> = args
-                    .iter()
-                    .zip(&operands)
-                    .filter(|(a, _)| matches!(a.kind, hir::ExprKind::Loan(_)))
-                    .filter_map(|(_, o)| match o {
-                        Operand::Copy(place) => Some(place.clone()),
-                        Operand::Const(_) => None,
-                    })
-                    .collect();
                 self.check_disjoint(&loans, e.span);
+                // A region is lent as a copy of its elements, which the
+                // callee changes but cannot resize and which go back in
+                // place after the call (16.4).
+                for (index, place, bounds, ty, span) in &regions {
+                    let copy = Rvalue::Slice(Operand::Copy(place.clone()), bounds.clone(), *span);
+                    operands[*index] = self.temp(*ty, copy, *span);
+                }
+                let copies: Vec<Operand> = regions.iter().map(|r| operands[r.0].clone()).collect();
                 let result = self.temp(e.ty, Rvalue::Call(*callee, operands), e.span);
                 if e.ty == Ty::NEVER {
                     self.terminate(Terminator::Unreachable);
+                    return result;
+                }
+                for ((_, place, bounds, _, span), copy) in regions.into_iter().zip(copies) {
+                    self.temp(Ty::UNIT, Rvalue::AssignSlice(place, bounds, copy, span), span);
                 }
                 result
             }

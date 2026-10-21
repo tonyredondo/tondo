@@ -396,6 +396,14 @@ impl Checker<'_> {
                 let flow = self.observe(base, flow)?;
                 self.consume(index, flow)
             }
+            // A `ref` region (16.4) is observed where it is.
+            ExprKind::Slice(base, bounds) => {
+                let mut flow = self.observe(base, flow)?;
+                for bound in bounds.iter().flatten() {
+                    flow = self.consume(bound, flow)?;
+                }
+                Some(flow)
+            }
             _ => self.consume(expr, flow),
         }
     }
@@ -579,6 +587,14 @@ impl Checker<'_> {
             }
             ExprKind::Loan(place) | ExprKind::CursorNext(place, _) => {
                 let flow = self.indices(&place.path, flow)?;
+                self.use_local(place.local, expr.span, &flow);
+                Some(flow)
+            }
+            ExprKind::Region(place, bounds) => {
+                let mut flow = self.indices(&place.path, flow)?;
+                for bound in bounds.iter().flatten() {
+                    flow = self.consume(bound, flow)?;
+                }
                 self.use_local(place.local, expr.span, &flow);
                 Some(flow)
             }

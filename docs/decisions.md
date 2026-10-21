@@ -241,3 +241,15 @@ parameters and a trait's `Self` and parameters assume nothing, so data can
 hold anything and each function says what it needs. One relaxation keeps
 the syntax small: `~Copy + Discard` covers values that may be dropped but
 not copied.
+
+## 2026-10-21 — A region loan is a copy that goes back in place
+
+`mut values[start:end:step]` (16.4) lends the callee a temporary array with
+the selected elements and assigns them back to the same region after the
+call. The loan is exclusive and `mut` keeps the length, so nothing can
+observe the difference from a view into the original storage, and arrays
+keep one representation everywhere. Bounds and indices are evaluated once,
+in the order written; then the call checks that its exclusive loans of one
+array share no element (`P0004`), and lending a whole place together with
+part of it is rejected statically (`E1403`). `ref values[start:end]` passes
+the slice as a read-only value.

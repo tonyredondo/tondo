@@ -16,7 +16,7 @@
 
 use crate::ast::{BinOp, UnaryOp};
 use crate::hir::{ArrayOp, Callee, FnId, MapOp, Mutation, Program, StdFn, StrOp};
-use crate::mir::{Body, Const, Local, Operand, Piece, Place, Proj, Rvalue, Statement, Terminator, project};
+use crate::mir::{Body, Const, Local, Operand, Overlap, Piece, Place, Proj, Rvalue, Statement, Terminator, project};
 use crate::source::{SourceMap, Span};
 use crate::types::{AdtKind, ERR, FloatTy, IntTy, OK, SOME, Ty, TyKind, Types};
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
@@ -91,6 +91,7 @@ enum Rt {
     ArrayEq,
     ArrayContains,
     ArrayAssignSlice,
+    ArrayCheckRegion,
     ArrayArith,
     ArrayInsert,
     ArrayRemoveAt,
@@ -170,6 +171,9 @@ impl Rt {
             Rt::ArrayContains => ("tondo_rt_array_contains", &[I64, I64, I64, I64], &[I8]),
             Rt::ArrayAssignSlice => {
                 ("tondo_rt_array_assign_slice", &[I64, I64, I8, I64, I8, I64, I64, I64, I64, I64, I64], &[])
+            }
+            Rt::ArrayCheckRegion => {
+                ("tondo_rt_array_check_region", &[I64, I64, I8, I64, I8, I64, I8, I64, I8, I64, I8, I64, I64], &[])
             }
             Rt::ArrayArith => ("tondo_rt_array_arith", &[I64, I32, I64, I32, I32, I32, I64], &[I64]),
             Rt::ArrayInsert => ("tondo_rt_array_insert", &[I64, I64, I64, I64, I64, I64, I64], &[]),
@@ -1528,6 +1532,26 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         }
     }
 
+    /// Two loans of one call that select elements of the same array (16.4).
+    fn check_region(&mut self, array: &Operand, region: &[Option<Operand>; 3], other: &Overlap, span: Span) {
+        let array = self.scalar(array);
+        let len = self.e.fb.ins().load(types::I64, flags(), array, 8);
+        let [start, has_start, end, has_end, step, location] = self.slice_range(region, span);
+        let (index, second) = match other {
+            Overlap::Region(parts) => (0, self.slice_range(parts, span)),
+            Overlap::Index(at) => {
+                let at = self.scalar(at);
+                let (zero, none) = (self.e.fb.ins().iconst(types::I64, 0), self.e.fb.ins().iconst(types::I8, 0));
+                (1, [at, none, zero, none, zero, location])
+            }
+        };
+        let index = self.e.fb.ins().iconst(types::I8, index);
+        let [start2, has_start2, end2, has_end2, step2, _] = second;
+        let args =
+            [len, start, has_start, end, has_end, step, index, start2, has_start2, end2, has_end2, step2, location];
+        self.e.call_rt(Rt::ArrayCheckRegion, &args);
+    }
+
     /// Lifted arithmetic over arrays (10.6), done by the runtime.
     fn array_arithmetic(&mut self, op: BinOp, left: &Operand, right: &Operand, span: Span) -> ir::Value {
         let mut args = Vec::new();
@@ -1733,6 +1757,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     self.mutate(*mutation, target, operands, retain, place, *span);
                 }
                 Rvalue::AssignSlice(target, bounds, value, span) => self.assign_slice(target, bounds, value, *span),
+                Rvalue::CheckRegion(array, region, other, span) => self.check_region(array, region, other, *span),
                 _ => {}
             }
             return;
@@ -1929,6 +1954,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
             }
             Rvalue::AssignSlice(..) => unreachable!("a slice assignment produces `Unit`"),
+            Rvalue::CheckRegion(..) => unreachable!("a region check produces `Unit`"),
             Rvalue::CallIndirect(callee, args) => {
                 let result = if class == Class::Memory { Some(self.pointer_to(place, true)) } else { None };
                 match self.call_indirect(callee, args, result) {

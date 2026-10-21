@@ -768,6 +768,55 @@ unsafe fn slice_range(
     (first as i64, count as usize)
 }
 
+/// Two loans of one call must not share an element (16.4): a region
+/// `[start:end:step]` of an array of `len` elements, and either another
+/// region or, when `index` is set, the element at `start2`. Panics with
+/// `P0004` when they do.
+#[allow(clippy::too_many_arguments)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_array_check_region(
+    len: usize,
+    start: i64,
+    has_start: u8,
+    end: i64,
+    has_end: u8,
+    step: i64,
+    index: u8,
+    start2: i64,
+    has_start2: u8,
+    end2: i64,
+    has_end2: u8,
+    step2: i64,
+    location: *const Str,
+) {
+    unsafe {
+        let (first, count) = slice_range(len, start, has_start, end, has_end, step, location);
+        let (first2, count2, step2) = if index != 0 {
+            let at = normalize(start2, len);
+            if at < 0 || at as usize >= len {
+                return;
+            }
+            (at, 1, 1)
+        } else {
+            let (first2, count2) = slice_range(len, start2, has_start2, end2, has_end2, step2, location);
+            (first2, count2, step2)
+        };
+        // Walk the shorter progression and test membership in the other.
+        let ((a, na, sa), (b, nb, sb)) = if count <= count2 {
+            ((first, count, step), (first2, count2, step2))
+        } else {
+            ((first2, count2, step2), (first, count, step))
+        };
+        let (b, sb) = (b as i128, sb as i128);
+        for k in 0..na {
+            let offset = (a as i128 + k as i128 * sa as i128) - b;
+            if offset % sb == 0 && (0..nb as i128).contains(&(offset / sb)) {
+                tondo_rt_panic(4, std::ptr::null(), location);
+            }
+        }
+    }
+}
+
 /// `values[start:end:step]` (10.4).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_array_slice(

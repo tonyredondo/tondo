@@ -2716,33 +2716,37 @@ impl Checker<'_> {
     /// provable overlap is `E1403`; indices known only at run time are
     /// checked then (`P0004`).
     fn check_loan_overlap<'e>(&mut self, args: impl Iterator<Item = &'e hir::Expr>, span: Span) {
-        let loans: Vec<&hir::Place> = args
+        // Each exclusive loan, and whether it lends a region of its place.
+        let loans: Vec<(&hir::Place, bool)> = args
             .filter_map(|a| match &a.kind {
-                hir::ExprKind::Loan(place) => Some(place),
+                hir::ExprKind::Loan(place) => Some((place, false)),
+                hir::ExprKind::Region(place, _) => Some((place, true)),
                 _ => None,
             })
             .collect();
-        for (index, first) in loans.iter().enumerate() {
-            for second in &loans[index + 1..] {
+        for (index, &(first, first_region)) in loans.iter().enumerate() {
+            for &(second, second_region) in &loans[index + 1..] {
                 if first.local != second.local {
                     continue;
                 }
-                let mut overlap = true;
-                for (a, b) in first.path.iter().zip(&second.path) {
-                    match (a, b) {
-                        (hir::PlaceStep::Field(x), hir::PlaceStep::Field(y)) if x != y => overlap = false,
-                        (hir::PlaceStep::Index(x), hir::PlaceStep::Index(y)) => match (&x.kind, &y.kind) {
-                            (hir::ExprKind::Int(i), hir::ExprKind::Int(j)) if i != j && *i >= 0 && *j >= 0 => {
-                                overlap = false
-                            }
-                            (hir::ExprKind::Int(i), hir::ExprKind::Int(j)) if i == j => continue,
-                            // Decided when the call runs.
-                            _ => overlap = false,
-                        },
-                        _ => continue,
-                    }
-                    break;
-                }
+                // The first step where the places part, if any, tells them
+                // apart: different fields, or indices that are checked when
+                // the call runs unless they are the same constant.
+                let parted = first.path.iter().zip(&second.path).find_map(|steps| match steps {
+                    (hir::PlaceStep::Field(x), hir::PlaceStep::Field(y)) => (x != y).then_some(false),
+                    (hir::PlaceStep::Index(x), hir::PlaceStep::Index(y)) => match (&x.kind, &y.kind) {
+                        (hir::ExprKind::Int(i), hir::ExprKind::Int(j)) if i == j => None,
+                        _ => Some(false),
+                    },
+                    _ => None,
+                });
+                // Otherwise one place holds the other, which only a region
+                // may leave disjoint, decided when the call runs.
+                let overlap = parted.unwrap_or(match first.path.len().cmp(&second.path.len()) {
+                    std::cmp::Ordering::Equal => !(first_region && second_region),
+                    std::cmp::Ordering::Less => !first_region,
+                    std::cmp::Ordering::Greater => !second_region,
+                });
                 if overlap {
                     let message = "two exclusive loans of one call overlap; lend disjoint parts, or one at a time";
                     self.diags.error("E1403", span, message);
@@ -5512,20 +5516,27 @@ impl Checker<'_> {
             let args = ordered.into_iter().map(|(_, value)| value).collect();
             return Self::mk(hir::ExprKind::Call(callee, type_args, args), result, span);
         }
-        let mut written: Vec<(usize, LocalId)> = Vec::new();
         let mut stmts = Vec::new();
         let mut args = Vec::new();
         for (index, value) in &mut ordered {
-            if let Some(index) = index
-                && !matches!(value.kind, hir::ExprKind::Loan(_))
-            {
-                let local = self.hidden_local(cx, value.ty);
-                written.push((*index, local));
-                let value = std::mem::replace(value, Self::error_expr(span));
-                args.push(Self::mk(hir::ExprKind::Local(local), value.ty, value.span));
-                stmts.push((*index, hir::Stmt::Let(local, value)));
-            } else {
-                args.push(std::mem::replace(value, Self::error_expr(span)));
+            let mut value = std::mem::replace(value, Self::error_expr(span));
+            match (index, &mut value.kind) {
+                (Some(index), hir::ExprKind::Region(_, bounds)) => {
+                    // A region is lent where the call is; its bounds are
+                    // evaluated where they are written.
+                    for bound in bounds.iter_mut().flatten() {
+                        let local = self.hidden_local(cx, bound.ty);
+                        let read = Self::mk(hir::ExprKind::Local(local), bound.ty, bound.span);
+                        stmts.push((*index, hir::Stmt::Let(local, std::mem::replace(&mut **bound, read))));
+                    }
+                    args.push(value);
+                }
+                (Some(index), kind) if !matches!(kind, hir::ExprKind::Loan(_)) => {
+                    let local = self.hidden_local(cx, value.ty);
+                    args.push(Self::mk(hir::ExprKind::Local(local), value.ty, value.span));
+                    stmts.push((*index, hir::Stmt::Let(local, value)));
+                }
+                _ => args.push(value),
             }
         }
         stmts.sort_by_key(|(index, _)| *index);
@@ -5572,10 +5583,37 @@ impl Checker<'_> {
         if !matches!(mode, ast::Mode::Mut | ast::Mode::Var) || matches!(value.kind, hir::ExprKind::Loan(_)) {
             return value;
         }
+        if let hir::ExprKind::Slice(..) = value.kind {
+            return self.region(cx, value, mode);
+        }
         let span = value.span;
         let operation = format!("passing it as `{}`", mode.keyword());
         match self.loan_place(cx, value, &operation, mode == ast::Mode::Var) {
             Some(place) => Self::mk(hir::ExprKind::Loan(place), ty, span),
+            None => Self::error_expr(span),
+        }
+    }
+
+    /// `mut values[start:end:step]`: a region of an array lent to a `mut`
+    /// parameter, which changes its elements but not its length (16.4).
+    fn region(&mut self, cx: &mut FnCx, value: hir::Expr, mode: ast::Mode) -> hir::Expr {
+        let (span, ty) = (value.span, value.ty);
+        let hir::ExprKind::Slice(base, bounds) = value.kind else { unreachable!("called on a slice") };
+        if !matches!(self.types.kind(base.ty), TyKind::Array(_)) {
+            let message = format!("only a region of an array can be lent, not of {}", self.display(base.ty));
+            self.diags.error("E1411", span, message);
+            return Self::error_expr(span);
+        }
+        if mode == ast::Mode::Var {
+            let message = format!(
+                "a `var` loan takes a whole place, and a region keeps its length: take the parameter as `mut {}`",
+                self.types.display(ty)
+            );
+            self.diags.error("E1411", span, message);
+            return Self::error_expr(span);
+        }
+        match self.loan_place(cx, *base, "lending a region of it as `mut`", false) {
+            Some(place) => Self::mk(hir::ExprKind::Region(place, bounds), ty, span),
             None => Self::error_expr(span),
         }
     }
