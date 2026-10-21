@@ -74,6 +74,22 @@ fn forward[T: ~Copy](value: T): T {
 
 type Holder[T: ~Copy] = { value: T }
 
+fn later[T: ~Copy + Discard](value: T): fn(): Int {
+    (): Int {
+        let taken = value
+        1
+    }
+}
+
+fn unused[T: ~Copy](value: T) {
+    let f = (item: T) {}
+    f(value)
+}
+
+fn drain[T, I: ~Copy + Iterator[T]](cursor: I) {
+    for item in cursor {}
+}
+
 fn main() {}
 
 // expect-error: E1401 `value` was moved before this use, since its type `T` is not `Copy`; use it before passing it on, or remove `~Copy` from its type parameter
@@ -91,3 +107,6 @@ fn main() {}
 // expect-error: E1406 `value` is a loan, so its value of type `T` cannot be moved out of it
 // expect-error: E1105 `T` does not implement `Copy` (type parameters are `Copy` unless declared `~Copy`), which `copies` requires of `T`
 // expect-error: E1115 `~Copy` drops the `Copy` that parameters of functions, methods and impls assume; remove it here
+// expect-error: E1406 the closure cannot give away its capture `value` of type `T`, since it may be called again
+// expect-error: E1409 `item` still holds its value when the function ends
+// expect-error: E1409 the loop drops the cursor when it ends, but its type `I` may need to be consumed

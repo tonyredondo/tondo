@@ -210,7 +210,7 @@ pub struct Param {
 
 /// How a parameter or argument is passed: by value, or as a `ref`, `mut` or
 /// `var` loan (11.3, 16.3). A plain `self` receiver is a `ref` loan.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Mode {
     Value,
     Ref,
@@ -253,9 +253,11 @@ pub enum TypeKind {
     Opaque(Vec<TypeExpr>),
     /// `~Copy` in a list of bounds: drops the implicit `Copy` (12.1).
     NotCopy,
-    /// `fn(A, B): R`, the uniform function type (11.7).
+    /// `fn(A, mut B): R`, the uniform function type (11.7), with how each
+    /// parameter is passed.
     Fn {
         params: Vec<TypeExpr>,
+        modes: Vec<Mode>,
         variadic: bool,
         result: Option<Box<TypeExpr>>,
     },
@@ -411,8 +413,10 @@ pub struct Closure {
 #[derive(Debug)]
 pub struct ClosureParam {
     pub name: Ident,
-    /// May be omitted when an expected function type gives it.
+    /// May be omitted, with its mode, when an expected function type gives
+    /// them.
     pub ty: Option<TypeExpr>,
+    pub mode: Mode,
     pub variadic: bool,
 }
 

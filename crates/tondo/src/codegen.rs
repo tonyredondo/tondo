@@ -18,7 +18,7 @@ use crate::ast::{BinOp, UnaryOp};
 use crate::hir::{ArrayOp, Callee, FnId, MapOp, Mutation, Program, StdFn, StrOp};
 use crate::mir::{Body, Const, Local, Operand, Overlap, Piece, Place, Proj, Rvalue, Statement, Terminator, project};
 use crate::source::{SourceMap, Span};
-use crate::types::{AdtKind, ERR, FloatTy, IntTy, OK, SOME, Ty, TyKind, Types};
+use crate::types::{AdtKind, ERR, FloatTy, IntTy, Mode, OK, SOME, Ty, TyKind, Types};
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{
     self, AbiParam, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, TrapCode, UserFuncName, types,
@@ -501,14 +501,15 @@ impl Codegen<'_> {
     /// The calling convention of a `fn(...)` value: the result slot when
     /// the result lives in memory, the captures' address, then the
     /// parameters. Closure bodies and thunks follow it.
-    fn uniform_signature(&mut self, params: &[Ty], result: Ty) -> ir::Signature {
+    fn uniform_signature(&mut self, params: &[Ty], loans: &[bool], result: Ty) -> ir::Signature {
         let mut signature = self.module.make_signature();
         if self.class(result) == Class::Memory {
             signature.params.push(AbiParam::new(POINTER));
         }
         signature.params.push(AbiParam::new(POINTER));
-        for &param in params {
+        for (&param, &loan) in params.iter().zip(loans) {
             match self.class(param) {
+                _ if loan => signature.params.push(AbiParam::new(POINTER)),
                 Class::Zero => {}
                 Class::Scalar(ty) => signature.params.push(AbiParam::new(ty)),
                 Class::Memory => signature.params.push(AbiParam::new(POINTER)),
@@ -526,7 +527,7 @@ impl Codegen<'_> {
             return data;
         }
         let params: Vec<Ty> = body.params.iter().map(|p| body.locals[p.0 as usize]).collect();
-        let signature = self.uniform_signature(&params, body.result);
+        let signature = self.uniform_signature(&params, &body.loans, body.result);
         let name = format!("tondo_thunk{}", id.0);
         let thunk = self.module.declare_function(&name, Linkage::Local, &signature).expect("thunk declaration");
         let data =
@@ -2499,24 +2500,35 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// A call through a `fn(...)` value: its code receives the captures'
     /// address first (see `Codegen::uniform_signature`).
     fn call_indirect(&mut self, callee: &Operand, args: &[Operand], result: Option<ir::Value>) -> Option<ir::Value> {
-        let TyKind::Fn(params, result_ty, _) = self.e.cg.types.kind(self.operand_ty(callee)).clone() else {
+        let TyKind::Fn(params, result_ty, _, modes) = self.e.cg.types.kind(self.operand_ty(callee)).clone() else {
             unreachable!("an indirect call goes through a `fn(...)` value")
         };
+        let loans: Vec<bool> = modes.iter().map(|m| matches!(m, Mode::Mut | Mode::Var)).collect();
         let object = self.scalar(callee);
         let code = self.e.fb.ins().load(POINTER, flags(), object, 16);
         let captures = self.e.fb.ins().iadd_imm_s(object, FN_HEADER);
         let mut values: Vec<ir::Value> = result.into_iter().collect();
         values.push(captures);
-        for arg in args {
+        let mut spilled = Vec::new();
+        for (arg, &loan) in args.iter().zip(&loans) {
+            if loan {
+                let Operand::Copy(place) = arg else { unreachable!("a loan is a place") };
+                values.push(self.loan_address(place, &mut spilled));
+                continue;
+            }
             match self.operand(arg) {
                 Val::Scalar(value) | Val::Memory(value) => values.push(value),
                 Val::Zero => {}
             }
         }
-        let signature = self.e.cg.uniform_signature(&params, result_ty);
+        let signature = self.e.cg.uniform_signature(&params, &loans, result_ty);
         let signature = self.e.fb.import_signature(signature);
         let call = self.e.fb.ins().call_indirect(signature, code, &values);
-        self.e.fb.inst_results(call).first().copied()
+        let result = self.e.fb.inst_results(call).first().copied();
+        for (var, slot) in spilled {
+            self.unspill(var, slot);
+        }
+        result
     }
 
     /// The address a loan of `place` passes; a local held in a variable is

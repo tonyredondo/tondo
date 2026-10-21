@@ -1,0 +1,65 @@
+import std.console
+
+type Counter = { count: Int }
+
+fn Counter.bump(mut self) {
+    self.count += 1
+}
+
+fn scale(values: mut Array[Float], factor: Float) {
+    values *= factor
+}
+
+fn total(values: ref Array[Int]): Int {
+    var sum = 0
+    for value in values {
+        sum += value
+    }
+    sum
+}
+
+fn apply(values: mut Array[Float], operation: fn(mut Array[Float], Float)) {
+    operation(mut values, 2.0)
+}
+
+fn each[F: CallMut[fn(mut Int)]](values: mut Array[Int], step: F) {
+    var call = step
+    for mut value in values {
+        call(mut value)
+    }
+}
+
+fn main() {
+    var numbers = [1.0, 2.0, 3.0]
+    apply(mut numbers, scale)
+    let op: fn(mut Array[Float], Float) = scale
+    op(mut numbers[0:2], 10.0)
+    console.println("{numbers}")
+    let sum: fn(ref Array[Int]): Int = total
+    let ints = [1, 2, 3]
+    console.println("{sum(ref ints)}")
+    var counter = Counter { count: 0 }
+    let bump = (target: mut Counter) { target.bump() }
+    bump(mut counter)
+    bump(mut counter)
+    console.println("{counter.count}")
+    let push = (items: var Array[Int], item: Int) { items.push(item) }
+    var list = [1]
+    push(var list, 2)
+    let erased: fn(var Array[Int], Int) = push
+    erased(var list, 3)
+    console.println("{list}")
+    var data = [1, 2, 3]
+    var seen = 0
+    each(mut data, (value) {
+        seen += value
+        value *= 100
+    })
+    console.println("{data} {seen}")
+}
+
+// expect-stdout: [20.0, 40.0, 6.0]
+// expect-stdout: 6
+// expect-stdout: 2
+// expect-stdout: [1, 2, 3]
+// expect-stdout: [100, 200, 300] 0

@@ -16,6 +16,7 @@ use crate::hir::{
 };
 use crate::source::Span;
 use crate::types::{Ty, TyKind, Types};
+use std::collections::HashMap as Map;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Copy, Clone, PartialEq)]
@@ -60,21 +61,25 @@ struct Loop {
     continues: Option<Flow>,
 }
 
-/// Checks the moves and obligations of `function`. `params` tells, per
-/// local, how a parameter is passed, and `modes` the parameter modes of a
-/// callee.
-pub fn check(
-    types: &Types,
-    function: &Function,
-    params: &[Option<Mode>],
-    modes: &dyn Fn(Callee) -> Vec<Mode>,
-    diags: &mut Diagnostics,
-) {
+/// What the analysis needs to know besides the function.
+pub struct Context<'a> {
+    /// Per local: how a parameter is passed, or how a binding borrows.
+    pub params: &'a [Option<Mode>],
+    /// The parameter modes of a callee.
+    pub modes: &'a dyn Fn(Callee) -> Vec<Mode>,
+    /// The parameter modes of the type parameters with a call bound.
+    pub bound_modes: &'a Map<Ty, Vec<Mode>>,
+}
+
+/// Checks the moves and obligations of `function`.
+pub fn check(types: &mut Types, function: &Function, context: Context, diags: &mut Diagnostics) {
+    let Context { params, modes, bound_modes } = context;
     let mut checker = Checker {
         types,
         function,
         params,
         modes,
+        bound_modes,
         diags,
         scopes: Vec::new(),
         loops: Vec::new(),
@@ -89,10 +94,11 @@ pub fn check(
 }
 
 struct Checker<'a> {
-    types: &'a Types,
+    types: &'a mut Types,
     function: &'a Function,
     params: &'a [Option<Mode>],
     modes: &'a dyn Fn(Callee) -> Vec<Mode>,
+    bound_modes: &'a Map<Ty, Vec<Mode>>,
     diags: &'a mut Diagnostics,
     /// The owned bindings of each scope.
     scopes: Vec<Vec<LocalId>>,
@@ -401,6 +407,20 @@ impl Checker<'_> {
         }
     }
 
+    /// The name of the capture that `base.field` reads in a closure body,
+    /// whose first parameter is the closure itself.
+    fn capture_name(&self, base: &Expr, index: u32) -> Option<String> {
+        let ExprKind::Local(local) = base.kind else { return None };
+        if self.function.name != "closure" || self.function.params.first() != Some(&local) {
+            return None;
+        }
+        let TyKind::Adt(id) = self.types.kind(base.ty) else { return None };
+        match &self.types.adt(*id).kind {
+            crate::types::AdtKind::Record(fields) => Some(fields[index as usize].name.clone()),
+            _ => None,
+        }
+    }
+
     /// The binding a place expression reads.
     fn root(expr: &Expr) -> Option<LocalId> {
         match &expr.kind {
@@ -483,9 +503,14 @@ impl Checker<'_> {
                 }
                 Some(flow)
             }
-            ExprKind::Field(base, _) if !copy && Self::root(base).is_some() => {
+            ExprKind::Field(base, index) if !copy && Self::root(base).is_some() => {
                 let root = Self::root(base).expect("checked above");
-                let message = if self.params[root.0 as usize].is_some_and(|m| m != Mode::Value) {
+                let message = if let Some(capture) = self.capture_name(base, *index) {
+                    format!(
+                        "the closure cannot give away its capture `{capture}` of type {}, since it may be called again; remove `~Copy` from its type parameter",
+                        self.display(expr.ty)
+                    )
+                } else if self.params[root.0 as usize].is_some_and(|m| m != Mode::Value) {
                     format!(
                         "`{}` is a loan, so its part of type {} cannot be moved out of it",
                         self.local(root).name,
@@ -616,8 +641,15 @@ impl Checker<'_> {
                 Some(flow)
             }
             ExprKind::CallValue(callee, args) => {
-                let flow = self.observe(callee, flow)?;
-                self.all(args, flow, true)
+                let modes = self.value_modes(callee.ty);
+                let mut flow = self.observe(callee, flow)?;
+                for (index, arg) in args.iter().enumerate() {
+                    flow = match modes.get(index) {
+                        Some(Mode::Value) | None => self.consume(arg, flow)?,
+                        Some(_) => self.observe(arg, flow)?,
+                    };
+                }
+                Some(flow)
             }
             ExprKind::Loan(place) | ExprKind::CursorNext(place, _) => {
                 let flow = self.indices(&place.path, flow)?;
@@ -675,6 +707,17 @@ impl Checker<'_> {
             }
         };
         flow.filter(|_| expr.ty != Ty::NEVER)
+    }
+
+    /// The parameter modes of a callable value of type `ty`.
+    fn value_modes(&mut self, ty: Ty) -> Vec<Mode> {
+        if let TyKind::Fn(_, _, _, modes) = self.types.kind(ty) {
+            return modes.clone();
+        }
+        match self.types.closure(ty) {
+            Some((_, _, info)) => info.modes,
+            None => self.bound_modes.get(&ty).cloned().unwrap_or_default(),
+        }
     }
 
     fn all(&mut self, values: &[Expr], flow: Flow, take: bool) -> Option<Flow> {

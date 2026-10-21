@@ -1,0 +1,21 @@
+fn scale(values: mut Array[Float], factor: Float) {
+    values *= factor
+}
+
+fn main() {
+    var numbers = [1.0]
+    let op: fn(mut Array[Float], Float) = scale
+    op(numbers, 2.0)
+    let plain: fn(Array[Float], Float) = scale
+    let grow = (values: mut Array[Int]) { values.push(1) }
+    let keep = (values: mut Array[Int]) {
+        let inner = () { values.length() }
+    }
+    op(mut numbers, mut numbers[0])
+}
+
+// expect-error: E1102 this parameter is a `mut` loan: write `mut numbers`
+// expect-error: E1102 expected `fn(Array[Float], Float)`, found `fn(mut Array[Float], Float)`
+// expect-error: E1411 `push` can change the length of `values`, a `mut` loan that keeps its extent
+// expect-error: E1402 a closure cannot capture `values`, a loan
+// expect-error: E1102 this parameter takes a value: remove `mut`

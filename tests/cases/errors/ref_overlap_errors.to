@@ -1,0 +1,19 @@
+fn both(seen: ref Array[Int], changed: mut Array[Int]) {}
+fn element(seen: ref Int, changed: mut Array[Int]) {}
+fn parts(seen: ref Array[Int], changed: mut Int) {}
+
+type Pair = { left: Array[Int], right: Array[Int] }
+
+fn main() {
+    var xs = [1, 2, 3]
+    both(ref xs, mut xs)
+    element(ref xs[0], mut xs)
+    both(ref xs[0:2], mut xs)
+    var pair = Pair { left: [1], right: [2] }
+    both(ref pair.left, mut pair.right)
+    parts(ref xs[0:1], mut xs[2])
+    let copy = xs
+    both(ref copy, mut xs)
+}
+
+// expect-error: E1403 a `ref` loan overlaps an exclusive loan of the same call; copy the value it observes into a binding first

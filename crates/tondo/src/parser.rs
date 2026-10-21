@@ -584,16 +584,13 @@ impl Parser<'_> {
             Tok::Kw(Kw::Fn) => {
                 self.bump();
                 self.expect(Tok::LParen)?;
-                let (mut params, mut variadic) = (Vec::new(), false);
+                let (mut params, mut modes, mut variadic) = (Vec::new(), Vec::new(), false);
                 loop {
                     self.skip_newlines();
                     if self.at(&Tok::RParen) {
                         break;
                     }
-                    if matches!(self.tok(), Tok::Kw(Kw::Ref | Kw::Mut | Kw::Var)) {
-                        self.diags.unsupported(self.span(), "loan parameters in function types");
-                        return Err(());
-                    }
+                    modes.push(self.mode());
                     variadic = self.eat(&Tok::Ellipsis);
                     params.push(self.type_expr()?);
                     if !self.eat(&Tok::Comma) {
@@ -603,7 +600,10 @@ impl Parser<'_> {
                 self.skip_newlines();
                 self.expect(Tok::RParen)?;
                 let result = if self.eat(&Tok::Colon) { Some(Box::new(self.result_type()?)) } else { None };
-                Ok(TypeExpr { kind: TypeKind::Fn { params, variadic, result }, span: start.to(self.prev_span()) })
+                Ok(TypeExpr {
+                    kind: TypeKind::Fn { params, modes, variadic, result },
+                    span: start.to(self.prev_span()),
+                })
             }
             Tok::Kw(Kw::Unsafe) => {
                 self.diags.unsupported(start, "unsafe function types");
@@ -1022,7 +1022,7 @@ impl Parser<'_> {
                 PatternKind::Array { items, rest }
             }
             Tok::Kw(Kw::Ref | Kw::Mut | Kw::Var) => {
-                let mode = self.loan_mode();
+                let mode = self.mode();
                 if matches!(self.tok(), Tok::Ident(name) if name == "_") {
                     let message = format!("`{} _` borrows nothing; `_` alone ignores the part", mode.keyword());
                     self.diags.error("E1202", start.to(self.span()), message);
@@ -1032,17 +1032,6 @@ impl Parser<'_> {
             _ => return self.expected("pattern"),
         };
         Ok(Pattern { kind, span: start.to(self.prev_span()) })
-    }
-
-    /// The `ref`, `mut` or `var` keyword of a loan pattern.
-    fn loan_mode(&mut self) -> Mode {
-        let mode = match self.tok() {
-            Tok::Kw(Kw::Ref) => Mode::Ref,
-            Tok::Kw(Kw::Mut) => Mode::Mut,
-            _ => Mode::Var,
-        };
-        self.bump();
-        mode
     }
 
     fn field_patterns(&mut self) -> PResult<(Vec<FieldPattern>, bool)> {
@@ -1059,7 +1048,7 @@ impl Parser<'_> {
             } else if matches!(self.tok(), Tok::Kw(Kw::Ref | Kw::Mut | Kw::Var)) {
                 // `ref field` abbreviates `field: ref field`.
                 let start = self.span();
-                let mode = self.loan_mode();
+                let mode = self.mode();
                 let name = self.field_name()?;
                 let kind = PatternKind::Loan(mode, name.clone());
                 let pattern = Pattern { kind, span: start.to(name.span) };
@@ -1273,13 +1262,14 @@ impl Parser<'_> {
                     break;
                 }
                 let name = self.ident()?;
-                let (ty, variadic) = if self.eat(&Tok::Colon) {
-                    let variadic = self.eat(&Tok::Ellipsis);
-                    (Some(self.type_expr()?), variadic)
+                let (ty, mode, variadic) = if self.eat(&Tok::Colon) {
+                    let mode = self.mode();
+                    let variadic = mode == Mode::Value && self.eat(&Tok::Ellipsis);
+                    (Some(self.type_expr()?), mode, variadic)
                 } else {
-                    (None, false)
+                    (None, Mode::Value, false)
                 };
-                params.push(ClosureParam { name, ty, variadic });
+                params.push(ClosureParam { name, ty, mode, variadic });
                 if !self.eat(&Tok::Comma) {
                     break;
                 }

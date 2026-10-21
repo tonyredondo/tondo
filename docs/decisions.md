@@ -264,3 +264,11 @@ snapshot. The collection cannot be used directly or resized while the loop
 runs (`E1403`), which keeps those addresses valid. With only `ref`
 bindings the loop reads the elements like any other `for`, and the
 collection cannot change inside it.
+
+## 2026-10-21 — Loan modes are part of function types
+
+`fn(mut Array[Float], Float)` and `fn(Array[Float], Float)` are different
+types (16.3): a call through a function value lends `mut` and `var`
+arguments by address, as a direct call does, and a closure declares the
+mode of each parameter or takes it from the expected type. Terminal resources and their unwind actions move to H6, where
+the first types that need them (files, processes) arrive.

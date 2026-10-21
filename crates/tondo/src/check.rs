@@ -375,6 +375,17 @@ struct FnCx {
     loan_bindings: HashSet<LocalId>,
 }
 
+/// How a callable value is called (11.7, 11.8): its parameters and their
+/// modes, its result, whether the last parameter is variadic, and whether
+/// calling it may change it.
+struct Callable {
+    params: Vec<Ty>,
+    result: Ty,
+    variadic: bool,
+    mutates: bool,
+    modes: Vec<ast::Mode>,
+}
+
 /// A binding a closure captures: read from `source` in the enclosing
 /// context when the closure is created.
 struct Capture {
@@ -1341,7 +1352,7 @@ impl Checker<'_> {
             TyKind::Tuple(items) | TyKind::Union(items) | TyKind::Opaque(_, items) => items.clone(),
             TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) => vec![*t],
             TyKind::Result(a, b) | TyKind::Map(a, b) => vec![*a, *b],
-            TyKind::Fn(params, result, _) => params.iter().copied().chain([*result]).collect(),
+            TyKind::Fn(params, result, ..) => params.iter().copied().chain([*result]).collect(),
             TyKind::Adt(_) => self.types.instance_of(whole).map_or(Vec::new(), |(_, args)| args.to_vec()),
             _ => Vec::new(),
         };
@@ -1524,10 +1535,10 @@ impl Checker<'_> {
     /// so far. An unknown result is left to the closure (`{error}`).
     fn call_expectation(&mut self, inference: &Inference, ty: Ty) -> Option<Ty> {
         let &(_, bound) = self.call_bounds.get(&ty)?;
-        let TyKind::Fn(params, result, variadic) = self.types.kind(bound).clone() else { return None };
+        let TyKind::Fn(params, result, variadic, modes) = self.types.kind(bound).clone() else { return None };
         let params = params.into_iter().map(|p| self.inferred(inference, p)).collect::<Option<Vec<Ty>>>()?;
         let result = self.inferred(inference, result).unwrap_or(Ty::ERROR);
-        Some(self.types.intern(TyKind::Fn(params, result, variadic)))
+        Some(self.types.intern(TyKind::Fn(params, result, variadic, modes)))
     }
 
     /// Why `ty` cannot be called as `signature` with the protocol a call
@@ -1535,8 +1546,8 @@ impl Checker<'_> {
     fn callable_as(&mut self, ty: Ty, mutable: bool, signature: Ty) -> Option<String> {
         let wanted = format!("`{}[{}]`", if mutable { "CallMut" } else { "Call" }, self.types.display(signature));
         match self.callable(ty) {
-            Some((params, result, variadic, mutates)) => {
-                let found = self.types.intern(TyKind::Fn(params, result, variadic));
+            Some(Callable { params, result, variadic, mutates, modes }) => {
+                let found = self.types.intern(TyKind::Fn(params, result, variadic, modes));
                 if found != signature {
                     Some(format!("{wanted} (its signature is `{}`)", self.types.display(found)))
                 } else if mutates && !mutable {
@@ -1550,18 +1561,25 @@ impl Checker<'_> {
         }
     }
 
-    /// How a value of `ty` is called: parameters, result, whether the last
-    /// parameter is variadic and whether calling may change it.
-    fn callable(&mut self, ty: Ty) -> Option<(Vec<Ty>, Ty, bool, bool)> {
-        if let TyKind::Fn(params, result, variadic) = self.types.kind(ty).clone() {
-            return Some((params, result, variadic, false));
+    /// How a value of `ty` is called, if it can be.
+    fn callable(&mut self, ty: Ty) -> Option<Callable> {
+        if let TyKind::Fn(params, result, variadic, modes) = self.types.kind(ty).clone() {
+            return Some(Callable { params, result, variadic, mutates: false, modes });
         }
         if let Some((mutable, signature)) = self.call_bound_of(ty) {
-            let TyKind::Fn(params, result, variadic) = self.types.kind(signature).clone() else { unreachable!() };
-            return Some((params, result, variadic, mutable));
+            let TyKind::Fn(params, result, variadic, modes) = self.types.kind(signature).clone() else {
+                unreachable!()
+            };
+            return Some(Callable { params, result, variadic, mutates: mutable, modes });
         }
         let (_, _, info) = self.types.closure(ty)?;
-        Some((info.params, info.result, info.variadic, info.mutates))
+        Some(Callable {
+            params: info.params,
+            result: info.result,
+            variadic: info.variadic,
+            mutates: info.mutates,
+            modes: info.modes,
+        })
     }
 
     /// A function's result type, where `impl A + B` (12.8) declares an
@@ -1936,13 +1954,13 @@ impl Checker<'_> {
                 self.diags.error("E0004", t.span, "`~Copy` only appears in a list of bounds");
                 Ty::ERROR
             }
-            ast::TypeKind::Fn { params, variadic, result } => {
+            ast::TypeKind::Fn { params, modes, variadic, result } => {
                 let mut types: Vec<Ty> = params.iter().map(|p| self.resolve_type(p)).collect();
                 if *variadic && let Some(last) = types.last_mut() {
                     *last = self.types.intern(TyKind::Array(*last));
                 }
                 let result = result.as_ref().map_or(Ty::UNIT, |r| self.resolve_type(r));
-                self.types.intern(TyKind::Fn(types, result, *variadic))
+                self.types.intern(TyKind::Fn(types, result, *variadic, modes.clone()))
             }
         }
     }
@@ -2066,7 +2084,17 @@ impl Checker<'_> {
             Callee::Trait(id, index) => traits[id.0 as usize].methods[index as usize].signature.modes.clone(),
             Callee::Std(_) => Vec::new(),
         };
-        crate::ownership::check(&self.types, function, params, &modes, self.diags);
+        // The parameter modes of the type parameters bound by `Call...`.
+        let bound_modes: HashMap<Ty, Vec<ast::Mode>> = self
+            .call_bounds
+            .iter()
+            .filter_map(|(&param, &(_, signature))| match self.types.kind(signature) {
+                TyKind::Fn(_, _, _, modes) => Some((param, modes.clone())),
+                _ => None,
+            })
+            .collect();
+        let context = crate::ownership::Context { params, modes: &modes, bound_modes: &bound_modes };
+        crate::ownership::check(&mut self.types, function, context, self.diags);
     }
 
     /// The implicit `main` of a root script (spec 20.3). Its error type is
@@ -2191,11 +2219,18 @@ impl Checker<'_> {
         deferred: bool,
         span: Span,
     ) -> hir::Expr {
-        let expected =
-            expected.and_then(|t| self.callable(t)).map(|(params, result, variadic, _)| (params, result, variadic));
+        let expected = expected.and_then(|t| self.callable(t));
         let mut params = Vec::new();
+        let mut modes = Vec::new();
         let mut variadic = false;
         for (index, param) in closure_params.iter().enumerate() {
+            // A parameter without a type takes its mode from the expected
+            // signature too.
+            let mode = match (&param.ty, &expected) {
+                (None, Some(callable)) => callable.modes.get(index).copied().unwrap_or(ast::Mode::Value),
+                _ => param.mode,
+            };
+            modes.push(mode);
             let ty = match (&param.ty, &expected) {
                 (Some(ty), _) => {
                     let ty = self.resolve_type(ty);
@@ -2206,9 +2241,9 @@ impl Checker<'_> {
                         ty
                     }
                 }
-                (None, Some((types, _, expected_variadic))) if index < types.len() => {
-                    variadic = *expected_variadic && index + 1 == types.len();
-                    types[index]
+                (None, Some(callable)) if index < callable.params.len() => {
+                    variadic = callable.variadic && index + 1 == callable.params.len();
+                    callable.params[index]
                 }
                 (None, _) => {
                     let message =
@@ -2219,8 +2254,9 @@ impl Checker<'_> {
             };
             params.push(ty);
         }
-        let declared =
-            closure_result.map(|t| self.resolve_type(t)).or(expected.as_ref().map(|e| e.1).filter(|&r| r != Ty::ERROR));
+        let declared = closure_result
+            .map(|t| self.resolve_type(t))
+            .or(expected.as_ref().map(|e| e.result).filter(|&r| r != Ty::ERROR));
         let generics: Vec<Ty> = self.type_params.iter().map(|&(_, t)| t).collect();
         let template = self.types.declare_template("closure".into(), generics.clone());
         let env_ty = self.types.instantiate(template, generics.clone());
@@ -2232,6 +2268,7 @@ impl Checker<'_> {
             params: params.clone(),
             result: declared.unwrap_or(Ty::ERROR),
             variadic,
+            modes: modes.clone(),
             mutates: false,
         };
         self.types.declare_closure(template, info);
@@ -2246,8 +2283,11 @@ impl Checker<'_> {
         cx.mutable[env.0 as usize] = true;
         cx.env = Some(env);
         let mut locals = vec![env];
-        for (param, &ty) in closure_params.iter().zip(&params) {
-            locals.push(self.declare(cx, &param.name, ty, false));
+        for ((param, &ty), &mode) in closure_params.iter().zip(&params).zip(&modes) {
+            let loan = matches!(mode, ast::Mode::Mut | ast::Mode::Var);
+            let local = self.declare(cx, &param.name, ty, loan);
+            cx.params[local.0 as usize] = Some(mode);
+            locals.push(local);
         }
         let success = (!cx.infer_result).then_some(cx.result);
         let body = self.block(cx, closure_body, success);
@@ -2264,9 +2304,12 @@ impl Checker<'_> {
         let info = self.types.closure_info_mut(template);
         info.result = result;
         info.mutates = inner.mutates;
-        let mut loans = vec![false; locals.len()];
-        loans[0] = true;
-        self.closure_functions[index] = Some(hir::Function {
+        // The closure itself and its `mut` and `var` parameters are loans.
+        let loans =
+            [true].into_iter().chain(modes.iter().map(|m| matches!(m, ast::Mode::Mut | ast::Mode::Var))).collect();
+        let mut params = inner.params;
+        params[locals[0].0 as usize] = Some(ast::Mode::Mut);
+        let function = hir::Function {
             name: "closure".into(),
             generics,
             params: locals,
@@ -2274,7 +2317,12 @@ impl Checker<'_> {
             locals: inner.locals,
             result,
             body,
-        });
+        };
+        // A cleanup runs once, so it may give its captures away.
+        if !deferred {
+            self.ownership(&function, &params);
+        }
+        self.closure_functions[index] = Some(function);
         // The closure value holds the captured values, read now.
         let values = inner.captures.into_iter().enumerate().map(|(i, c)| (i as u32, c.source)).collect();
         Self::mk(hir::ExprKind::Record(values), env_ty, span)
@@ -2347,8 +2395,14 @@ impl Checker<'_> {
         let env_ty = self.types.instantiate(template, generics.clone());
         let index = self.closure_functions.len();
         let body_id = FnId(self.closure_base + index as u32);
-        let info =
-            ClosureInfo { body: body_id.0, params: Vec::new(), result: Ty::UNIT, variadic: false, mutates: false };
+        let info = ClosureInfo {
+            body: body_id.0,
+            params: Vec::new(),
+            result: Ty::UNIT,
+            variadic: false,
+            modes: Vec::new(),
+            mutates: false,
+        };
         self.types.declare_closure(template, info);
         let env = Self::mk(hir::ExprKind::Local(LocalId(0)), env_ty, span);
         let fields: Vec<hir::Expr> = args
@@ -2746,21 +2800,26 @@ impl Checker<'_> {
         Some((local, path, field_ty))
     }
 
-    /// Exclusive loans of one call must not overlap each other (16.3): a
-    /// provable overlap is `E1403`; indices known only at run time are
-    /// checked then (`P0004`).
-    fn check_loan_overlap<'e>(&mut self, args: impl Iterator<Item = &'e hir::Expr>, span: Span) {
-        // Each exclusive loan, and whether it lends a region of its place.
-        let loans: Vec<(&hir::Place, bool)> = args
-            .filter_map(|a| match &a.kind {
-                hir::ExprKind::Loan(place) => Some((place, false)),
-                hir::ExprKind::Region(place, _) => Some((place, true)),
+    /// An exclusive loan of a call must not overlap its other loans (16.3,
+    /// 16.4): a provable overlap is `E1403`; indices and regions known only
+    /// at run time are checked then (`P0004`) between exclusive loans.
+    /// `args` tells which arguments are shared `ref` loans.
+    fn check_loan_overlap<'e>(&mut self, args: impl Iterator<Item = (&'e hir::Expr, bool)>, span: Span) {
+        // Each loan, whether it lends a region of its place, and whether it
+        // is exclusive.
+        let loans: Vec<(hir::Place, bool, bool)> = args
+            .filter_map(|(a, shared)| match &a.kind {
+                hir::ExprKind::Loan(place) => Some((place.clone(), false, true)),
+                hir::ExprKind::Region(place, _) => Some((place.clone(), true, true)),
+                hir::ExprKind::Slice(base, _) if shared => Some((hir::Place::of((**base).clone())?, true, false)),
+                _ if shared => Some((hir::Place::of(a.clone())?, false, false)),
                 _ => None,
             })
             .collect();
-        for (index, &(first, first_region)) in loans.iter().enumerate() {
-            for &(second, second_region) in &loans[index + 1..] {
-                if first.local != second.local {
+        for (index, (first, first_region, first_exclusive)) in loans.iter().enumerate() {
+            for (second, second_region, second_exclusive) in &loans[index + 1..] {
+                let (first_region, second_region) = (*first_region, *second_region);
+                if first.local != second.local || !first_exclusive && !second_exclusive {
                     continue;
                 }
                 // The first step where the places part, if any, tells them
@@ -2782,7 +2841,11 @@ impl Checker<'_> {
                     std::cmp::Ordering::Greater => !second_region,
                 });
                 if overlap {
-                    let message = "two exclusive loans of one call overlap; lend disjoint parts, or one at a time";
+                    let message = if *first_exclusive && *second_exclusive {
+                        "two exclusive loans of one call overlap; lend disjoint parts, or one at a time"
+                    } else {
+                        "a `ref` loan overlaps an exclusive loan of the same call; copy the value it observes into a binding first"
+                    };
                     self.diags.error("E1403", span, message);
                     return;
                 }
@@ -3264,7 +3327,7 @@ impl Checker<'_> {
         if let TyKind::Fn(..) = self.types.kind(expected)
             && let Some((body, _, info)) = self.types.closure(value.ty)
         {
-            let found = self.types.intern(TyKind::Fn(info.params, info.result, info.variadic));
+            let found = self.types.intern(TyKind::Fn(info.params, info.result, info.variadic, info.modes));
             if found == expected && !info.mutates {
                 let span = value.span;
                 return Self::mk(hir::ExprKind::Erase(Box::new(value), FnId(body)), expected, span);
@@ -3567,7 +3630,7 @@ impl Checker<'_> {
                 self.unify(inference, a, c);
                 self.unify(inference, b, d);
             }
-            (TyKind::Fn(params, result, _), TyKind::Fn(values, value, _)) if params.len() == values.len() => {
+            (TyKind::Fn(params, result, ..), TyKind::Fn(values, value, ..)) if params.len() == values.len() => {
                 for (param, value) in params.into_iter().zip(values) {
                     self.unify(inference, param, value);
                 }
@@ -4851,7 +4914,12 @@ impl Checker<'_> {
             }
             inference.map.extend(signature.generics.iter().copied().zip(explicit));
         }
-        let generic = self.types.intern(TyKind::Fn(signature.params.clone(), signature.result, signature.variadic));
+        let generic = self.types.intern(TyKind::Fn(
+            signature.params.clone(),
+            signature.result,
+            signature.variadic,
+            signature.modes.clone(),
+        ));
         if let Some(expected) = expected {
             self.unify(&mut inference, generic, expected);
         }
@@ -4880,7 +4948,7 @@ impl Checker<'_> {
         if callee.ty == Ty::ERROR {
             return Self::error_expr(span);
         }
-        let Some((params, result, variadic, mutates)) = self.callable(callee.ty) else {
+        let Some(Callable { params, result, variadic, mutates, modes }) = self.callable(callee.ty) else {
             let message = format!("{} cannot be called", self.display(callee.ty));
             self.diags.error("E1102", callee.span, message);
             return Self::error_expr(span);
@@ -4890,7 +4958,6 @@ impl Checker<'_> {
             return Self::error_expr(span);
         }
         let names = (0..params.len()).map(|i| format!("argument{}", i + 1)).collect();
-        let modes = vec![ast::Mode::Value; params.len()];
         let signature = Signature {
             params,
             names,
@@ -5007,6 +5074,13 @@ impl Checker<'_> {
         body: &ast::Block,
     ) -> hir::Stmt {
         let (ty, span) = (source.ty, source.span);
+        if !self.types.is_discard(ty) && !self.types.has_error(ty) {
+            let message = format!(
+                "the loop drops the cursor when it ends, but its type {} may need to be consumed; add `Discard` to its type parameter",
+                self.display(ty)
+            );
+            self.diags.error("E1409", span, message);
+        }
         let cursor = self.hidden_local(cx, ty);
         cx.mutable[cursor.0 as usize] = true;
         let option = self.types.intern(TyKind::Option(element));
@@ -5767,9 +5841,9 @@ impl Checker<'_> {
                 self.unify(&mut inference, ty, value.ty);
                 // A callable bound to `F: Call[fn(A): B]` also fixes `A` and `B`.
                 if let Some(&(_, bound)) = self.call_bounds.get(&ty)
-                    && let Some((params, result, variadic, _)) = self.callable(value.ty)
+                    && let Some(Callable { params, result, variadic, modes, .. }) = self.callable(value.ty)
                 {
-                    let found = self.types.intern(TyKind::Fn(params, result, variadic));
+                    let found = self.types.intern(TyKind::Fn(params, result, variadic, modes));
                     self.unify(&mut inference, bound, found);
                 }
                 values[index] = Some(value);
@@ -5798,7 +5872,11 @@ impl Checker<'_> {
             let raw = value.take().unwrap();
             *value = Some(self.finish_argument(cx, raw, ty, mode_of(index)));
         }
-        self.check_loan_overlap(values.iter().flatten().chain(receiver.iter()), span);
+        // Arguments with whether they are shared `ref` loans; a plain
+        // `self` receiver is one.
+        let lent = values.iter().enumerate().filter_map(|(i, v)| v.as_ref().map(|v| (v, mode_of(i) == ast::Mode::Ref)));
+        let receiver_shared = signature.modes.first() == Some(&ast::Mode::Ref);
+        self.check_loan_overlap(lent.chain(receiver.iter().map(|r| (r, receiver_shared))), span);
         let type_args: Vec<Ty> = signature.generics.iter().map(|g| inference.map[g]).collect();
         // The arguments must meet the bounds of the parameters they replace.
         for (&param, &actual) in signature.generics.iter().zip(&type_args) {

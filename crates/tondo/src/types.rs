@@ -1,5 +1,6 @@
 //! Interned semantic types.
 
+pub use crate::ast::Mode;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
@@ -107,9 +108,10 @@ pub enum TyKind {
     /// A type parameter of a generic declaration (12.1). Generic code is
     /// checked once with parameters and monomorphized before lowering.
     Param(u32),
-    /// `fn(A, B): R`: a uniform function value (11.7), with whether its
-    /// last parameter is variadic. Values are reference-counted callables.
-    Fn(Vec<Ty>, Ty, bool),
+    /// `fn(A, mut B): R`: a uniform function value (11.7), with whether its
+    /// last parameter is variadic and how each parameter is passed (16.3).
+    /// Values are reference-counted callables.
+    Fn(Vec<Ty>, Ty, bool, Vec<Mode>),
     /// The result `impl Bound` of a function (12.8) applied to the
     /// function's type arguments. Callers only know its bounds;
     /// monomorphization replaces it with the witness its body returns.
@@ -171,6 +173,8 @@ pub struct ClosureInfo {
     pub params: Vec<Ty>,
     pub result: Ty,
     pub variadic: bool,
+    /// How each parameter is passed (16.3).
+    pub modes: Vec<Mode>,
     /// Whether the body changes a capture, so calls need a `var` closure
     /// (`CallMut`) and it cannot become a `fn(...)` value.
     pub mutates: bool,
@@ -457,7 +461,7 @@ impl Types {
         match self.kind(ty) {
             TyKind::Opaque(..) => out.push(ty),
             TyKind::Tuple(items) | TyKind::Union(items) => items.iter().for_each(|&t| self.opaques_in(t, out)),
-            TyKind::Fn(params, result, _) => {
+            TyKind::Fn(params, result, ..) => {
                 params.iter().for_each(|&t| self.opaques_in(t, out));
                 self.opaques_in(*result, out);
             }
@@ -491,10 +495,10 @@ impl Types {
                 let items = each(self, &items);
                 self.union(&items)
             }
-            TyKind::Fn(params, result, variadic) => {
+            TyKind::Fn(params, result, variadic, modes) => {
                 let params = each(self, &params);
                 let result = self.replace(result, map);
-                self.intern(TyKind::Fn(params, result, variadic))
+                self.intern(TyKind::Fn(params, result, variadic, modes))
             }
             TyKind::Option(t) => {
                 let t = self.replace(t, map);
@@ -667,10 +671,10 @@ impl Types {
                 let members = each(self, &members);
                 self.union(&members)
             }
-            TyKind::Fn(params, result, variadic) => {
+            TyKind::Fn(params, result, variadic, modes) => {
                 let params = each(self, &params);
                 let result = self.subst(result, map);
-                self.intern(TyKind::Fn(params, result, variadic))
+                self.intern(TyKind::Fn(params, result, variadic, modes))
             }
             TyKind::Opaque(id, args) => {
                 let args = each(self, &args);
@@ -737,7 +741,7 @@ impl Types {
                 x.iter().zip(y).all(|(&p, &q)| each(self, p, q))
             }
             (TyKind::Opaque(i, x), TyKind::Opaque(j, y)) if i == j => x.iter().zip(y).all(|(&p, &q)| each(self, p, q)),
-            (TyKind::Fn(x, r, v), TyKind::Fn(y, s, w)) if x.len() == y.len() && v == w => {
+            (TyKind::Fn(x, r, v, m), TyKind::Fn(y, s, w, n)) if x.len() == y.len() && v == w && m == n => {
                 let (r, s) = (*r, *s);
                 x.iter().zip(y).all(|(&p, &q)| each(self, p, q)) && each(self, r, s)
             }
@@ -767,7 +771,7 @@ impl Types {
             TyKind::Tuple(items) | TyKind::Union(items) | TyKind::Opaque(_, items) => {
                 items.iter().for_each(|&t| self.params_in(t, out))
             }
-            TyKind::Fn(params, result, _) => {
+            TyKind::Fn(params, result, ..) => {
                 params.iter().for_each(|&t| self.params_in(t, out));
                 self.params_in(*result, out);
             }
@@ -792,7 +796,7 @@ impl Types {
             TyKind::Tuple(items) | TyKind::Union(items) | TyKind::Opaque(_, items) => {
                 items.iter().any(|&t| self.has_params(t))
             }
-            TyKind::Fn(params, result, _) => params.iter().any(|&t| self.has_params(t)) || self.has_params(*result),
+            TyKind::Fn(params, result, ..) => params.iter().any(|&t| self.has_params(t)) || self.has_params(*result),
             TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) => self.has_params(*t),
             TyKind::Result(a, b) | TyKind::Map(a, b) => self.has_params(*a) || self.has_params(*b),
             TyKind::Adt(id) => self.adts[id.0 as usize]
@@ -1063,7 +1067,7 @@ impl Types {
             TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) => self.has_error(*element),
             TyKind::Map(key, value) => self.has_error(*key) || self.has_error(*value),
             TyKind::Union(members) => members.iter().any(|&t| self.has_error(t)),
-            TyKind::Fn(params, result, _) => params.iter().any(|&t| self.has_error(t)) || self.has_error(*result),
+            TyKind::Fn(params, result, ..) => params.iter().any(|&t| self.has_error(t)) || self.has_error(*result),
             _ => false,
         }
     }
@@ -1095,7 +1099,7 @@ impl Types {
                 // A closure is shown by its signature.
                 Some((template, _)) if self.closures.contains_key(template) => {
                     let info = &self.closures[template];
-                    let signature = TyKind::Fn(info.params.clone(), info.result, info.variadic);
+                    let signature = TyKind::Fn(info.params.clone(), info.result, info.variadic, info.modes.clone());
                     match self.map.get(&signature) {
                         Some(&ty) => format!("closure {}", self.display(ty)),
                         None => "closure".into(),
@@ -1126,8 +1130,15 @@ impl Types {
             TyKind::Union(members) => members.iter().map(|&t| self.display(t)).collect::<Vec<_>>().join(" | "),
             TyKind::Param(index) => self.params[*index as usize].name.clone(),
             TyKind::Opaque(id, _) => self.opaques[*id as usize].name.clone(),
-            TyKind::Fn(params, result, variadic) => {
-                let mut shown: Vec<String> = params.iter().map(|&t| self.display(t)).collect();
+            TyKind::Fn(params, result, variadic, modes) => {
+                let mut shown: Vec<String> = params
+                    .iter()
+                    .zip(modes)
+                    .map(|(&t, mode)| match mode {
+                        Mode::Value => self.display(t),
+                        mode => format!("{} {}", mode.keyword(), self.display(t)),
+                    })
+                    .collect();
                 if *variadic && let Some(last) = shown.last_mut() {
                     let element = match self.kind(*params.last().unwrap()) {
                         TyKind::Array(element) => self.display(*element),

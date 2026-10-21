@@ -18,6 +18,17 @@ use crate::mir::*;
 
 /// A place a call lends, with the region of it when it lends one.
 type Lent = (Place, Option<[Option<Operand>; 3]>);
+
+/// A region a call borrows: the argument it is, the array place and bounds
+/// it selects, and the copy the callee changes.
+struct RegionCopy {
+    index: usize,
+    place: Place,
+    bounds: [Option<Operand>; 3],
+    ty: Ty,
+    span: Span,
+    copy: Option<Operand>,
+}
 use crate::source::Span;
 use crate::types::{CursorKind, ERR, NONE, OK, SOME, Ty, TyKind, Types};
 use std::rc::Rc;
@@ -936,6 +947,77 @@ impl Builder<'_> {
 
     // ---- expressions -------------------------------------------------------
 
+    /// The operands of a call's arguments, in order. Values read from a
+    /// place the call lends are copied first, so the callee's changes
+    /// through the loan cannot reach them; a region is lent as a copy of its
+    /// elements, which the callee changes but cannot resize and which go
+    /// back in place after the call (16.4).
+    fn call_operands(&mut self, args: &[hir::Expr], span: Span) -> (Vec<Operand>, Vec<RegionCopy>) {
+        let lent: Vec<hir::LocalId> = args
+            .iter()
+            .filter_map(|a| match &a.kind {
+                hir::ExprKind::Loan(place) | hir::ExprKind::Region(place, _) => Some(place.local),
+                _ => None,
+            })
+            .collect();
+        let mut operands = Vec::new();
+        let mut loans: Vec<Lent> = Vec::new();
+        let mut regions = Vec::new();
+        for arg in args {
+            if let hir::ExprKind::Region(place, bounds) = &arg.kind {
+                // The place and bounds are fixed now, for the copy back.
+                let place = self.place(place.local, &place.path);
+                let place = self.frozen(place, arg.span);
+                let bounds = bounds.each_ref().map(|b| {
+                    b.as_ref().map(|b| match self.expr(b) {
+                        read @ Operand::Copy(_) => self.copy_operand(read, Ty::INT, b.span),
+                        constant => constant,
+                    })
+                });
+                loans.push((place.clone(), Some(bounds.clone())));
+                regions.push(RegionCopy {
+                    index: operands.len(),
+                    place,
+                    bounds,
+                    ty: arg.ty,
+                    span: arg.span,
+                    copy: None,
+                });
+                operands.push(Operand::Const(Const::Unit));
+                continue;
+            }
+            let operand = self.expr(arg);
+            let loan = matches!(arg.kind, hir::ExprKind::Loan(_));
+            let reads_lent = !loan
+                && matches!(&operand, Operand::Copy(place)
+                    if lent.iter().any(|&l| self.hir_locals[l.0 as usize] == Some(place.local)));
+            if let (true, Operand::Copy(place)) = (loan, &operand) {
+                loans.push((place.clone(), None));
+            }
+            operands.push(if reads_lent { self.copy_operand(operand, arg.ty, arg.span) } else { operand });
+        }
+        self.check_disjoint(&loans, span);
+        for region in &mut regions {
+            let copy = Rvalue::Slice(Operand::Copy(region.place.clone()), region.bounds.clone(), region.span);
+            operands[region.index] = self.temp(region.ty, copy, region.span);
+            region.copy = Some(operands[region.index].clone());
+        }
+        (operands, regions)
+    }
+
+    /// After a call: nothing follows a call that never returns; otherwise
+    /// the regions it borrowed go back in place.
+    fn finish_call(&mut self, ty: Ty, regions: Vec<RegionCopy>) {
+        if ty == Ty::NEVER {
+            self.terminate(Terminator::Unreachable);
+            return;
+        }
+        for region in regions {
+            let copy = region.copy.expect("made before the call");
+            self.temp(Ty::UNIT, Rvalue::AssignSlice(region.place, region.bounds, copy, region.span), region.span);
+        }
+    }
+
     fn expr(&mut self, e: &hir::Expr) -> Operand {
         match &e.kind {
             hir::ExprKind::Int(value) => Operand::Const(Const::Int(*value, e.ty)),
@@ -1090,11 +1172,9 @@ impl Builder<'_> {
             hir::ExprKind::CursorNext(cursor, kind) => self.cursor_next(cursor, *kind, e),
             hir::ExprKind::CallValue(callee, args) => {
                 let callee = self.expr(callee);
-                let args = args.iter().map(|a| self.expr(a)).collect();
-                let result = self.temp(e.ty, Rvalue::CallIndirect(callee, args), e.span);
-                if e.ty == Ty::NEVER {
-                    self.terminate(Terminator::Unreachable);
-                }
+                let (operands, regions) = self.call_operands(args, e.span);
+                let result = self.temp(e.ty, Rvalue::CallIndirect(callee, operands), e.span);
+                self.finish_call(e.ty, regions);
                 result
             }
             hir::ExprKind::Erase(closure, body) => {
@@ -1104,63 +1184,9 @@ impl Builder<'_> {
                 self.temp(e.ty, Rvalue::Erase(value, *body, retain), e.span)
             }
             hir::ExprKind::Call(callee, _, args) => {
-                // Places this call lends exclusively (16.3).
-                let lent: Vec<hir::LocalId> = args
-                    .iter()
-                    .filter_map(|a| match &a.kind {
-                        hir::ExprKind::Loan(place) | hir::ExprKind::Region(place, _) => Some(place.local),
-                        _ => None,
-                    })
-                    .collect();
-                let mut operands = Vec::new();
-                let mut loans: Vec<Lent> = Vec::new();
-                let mut regions = Vec::new();
-                for arg in args {
-                    if let hir::ExprKind::Region(place, bounds) = &arg.kind {
-                        // The place and bounds are fixed now, for the copy
-                        // back after the call.
-                        let place = self.place(place.local, &place.path);
-                        let place = self.frozen(place, arg.span);
-                        let bounds = bounds.each_ref().map(|b| {
-                            b.as_ref().map(|b| match self.expr(b) {
-                                read @ Operand::Copy(_) => self.copy_operand(read, Ty::INT, b.span),
-                                constant => constant,
-                            })
-                        });
-                        loans.push((place.clone(), Some(bounds.clone())));
-                        regions.push((operands.len(), place, bounds, arg.ty, arg.span));
-                        operands.push(Operand::Const(Const::Unit));
-                        continue;
-                    }
-                    let operand = self.expr(arg);
-                    // A value read from a lent place is copied now, so the
-                    // callee's changes through the loan cannot reach it.
-                    let loan = matches!(arg.kind, hir::ExprKind::Loan(_));
-                    let reads_lent = !loan
-                        && matches!(&operand, Operand::Copy(place)
-                            if lent.iter().any(|&l| self.hir_locals[l.0 as usize] == Some(place.local)));
-                    if let (true, Operand::Copy(place)) = (loan, &operand) {
-                        loans.push((place.clone(), None));
-                    }
-                    operands.push(if reads_lent { self.copy_operand(operand, arg.ty, arg.span) } else { operand });
-                }
-                self.check_disjoint(&loans, e.span);
-                // A region is lent as a copy of its elements, which the
-                // callee changes but cannot resize and which go back in
-                // place after the call (16.4).
-                for (index, place, bounds, ty, span) in &regions {
-                    let copy = Rvalue::Slice(Operand::Copy(place.clone()), bounds.clone(), *span);
-                    operands[*index] = self.temp(*ty, copy, *span);
-                }
-                let copies: Vec<Operand> = regions.iter().map(|r| operands[r.0].clone()).collect();
+                let (operands, regions) = self.call_operands(args, e.span);
                 let result = self.temp(e.ty, Rvalue::Call(*callee, operands), e.span);
-                if e.ty == Ty::NEVER {
-                    self.terminate(Terminator::Unreachable);
-                    return result;
-                }
-                for ((_, place, bounds, _, span), copy) in regions.into_iter().zip(copies) {
-                    self.temp(Ty::UNIT, Rvalue::AssignSlice(place, bounds, copy, span), span);
-                }
+                self.finish_call(e.ty, regions);
                 result
             }
             hir::ExprKind::Unary(op, operand) => {
