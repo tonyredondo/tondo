@@ -12,6 +12,7 @@ use std::io::Write;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering, fence};
 
+mod fs;
 mod shared;
 mod sync;
 mod tasks;

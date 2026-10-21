@@ -504,6 +504,10 @@ pub enum StrOp {
     Decode,
     /// The byte offset after the scalar at a byte offset; used by iteration.
     Next,
+    /// `text.bytes()`: its UTF-8 bytes.
+    Bytes,
+    /// `String.fromBytes(bytes)` as `String?`: `none` when not UTF-8.
+    FromBytes,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -625,4 +629,57 @@ pub enum StdFn {
     ConsoleFlush,
     /// `time.sleep(delay)`: waits without blocking the thread (14.3.3).
     TimeSleep,
+    /// An operation of `std.fs` (standard library 10.5).
+    Fs(FsFn),
+    /// An operation of `std.path` (10.4).
+    Path(PathFn),
+}
+
+/// The operations of `std.fs`; those of `File` take it first.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum FsFn {
+    ReadText,
+    ReadBytes,
+    WriteText,
+    WriteBytes,
+    AppendText,
+    Exists,
+    Metadata,
+    List,
+    CreateDirectory,
+    Rename,
+    Copy,
+    Remove,
+    RemoveAll,
+    Open,
+    ReadLine,
+    Read,
+    ReadRest,
+    Write,
+    WriteBytesTo,
+    Flush,
+    Close,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum PathFn {
+    Join,
+    Parent,
+    FileName,
+    Extension,
+    IsAbsolute,
+}
+
+impl StdFn {
+    /// How each argument is passed: the methods of a `File` change it
+    /// through a `var` loan, except `close`, which takes it.
+    pub fn modes(self) -> Vec<crate::ast::Mode> {
+        use crate::ast::Mode;
+        match self {
+            StdFn::Fs(
+                FsFn::ReadLine | FsFn::Read | FsFn::ReadRest | FsFn::Write | FsFn::WriteBytesTo | FsFn::Flush,
+            ) => vec![Mode::Var, Mode::Value],
+            _ => Vec::new(),
+        }
+    }
 }

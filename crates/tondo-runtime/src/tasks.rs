@@ -288,6 +288,9 @@ static READY: Condvar = Condvar::new();
 static STARTED: AtomicBool = AtomicBool::new(false);
 static MAIN_STATUS: AtomicUsize = AtomicUsize::new(0);
 static MAIN_DONE: AtomicBool = AtomicBool::new(false);
+/// Host operations in progress for parked tasks: while any runs, idle
+/// workers are not a deadlock.
+pub(crate) static HOST_WORK: AtomicUsize = AtomicUsize::new(0);
 
 thread_local! {
     static CURRENT: Cell<*mut Task> = const { Cell::new(std::ptr::null_mut()) };
@@ -409,7 +412,11 @@ fn work(main: bool) -> i32 {
                 }
                 queue.idle += 1;
                 let next = queue.timers.peek().map(|t| t.at);
-                if next.is_none() && queue.idle == queue.workers && !MAIN_DONE.load(Ordering::SeqCst) {
+                if next.is_none()
+                    && queue.idle == queue.workers
+                    && HOST_WORK.load(Ordering::SeqCst) == 0
+                    && !MAIN_DONE.load(Ordering::SeqCst)
+                {
                     // Every worker waits, no task can run and no timer is due.
                     drop(queue);
                     deadlock();
@@ -636,7 +643,7 @@ impl Wait {
 
     /// Parks until the operation that claimed the wait notifies the task,
     /// even if it is cancelled: how a release waits for a task.
-    fn block_fully(&self) -> usize {
+    pub(crate) fn block_fully(&self) -> usize {
         loop {
             park();
             let fired = self.fired.load(Ordering::Acquire);

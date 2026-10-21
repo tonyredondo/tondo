@@ -39,6 +39,7 @@ pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics)
         console_error: None,
         duration: None,
         compare_exchange: None,
+        fs: None,
         module: 0,
         owners: HashMap::new(),
         method_visibility: HashMap::new(),
@@ -118,6 +119,18 @@ enum StdModule {
     Text,
     Time,
     Sync,
+    Fs,
+    Path,
+}
+
+/// The types `std.fs` declares when imported.
+#[derive(Copy, Clone)]
+struct FsTypes {
+    error: Ty,
+    kind: Ty,
+    metadata: Ty,
+    mode: Ty,
+    file: Ty,
 }
 
 #[derive(Copy, Clone)]
@@ -288,7 +301,7 @@ struct Signature {
 impl Signature {
     /// The signature of a standard function taking `params` by value.
     fn simple(params: Vec<Ty>, result: Ty) -> Signature {
-        let names = (0..params.len()).map(|i| format!("argument{i}")).collect();
+        let names = vec![String::new(); params.len()];
         let modes = vec![ast::Mode::Value; params.len()];
         Signature {
             params,
@@ -304,6 +317,32 @@ impl Signature {
 }
 
 const INTRINSICS: [&str; 3] = ["panic", "assert", "channel"];
+
+/// The function other languages' names for a standard operation mean.
+fn std_alias(module: &str, member: &str) -> String {
+    let function = match (module, member) {
+        ("fs", "readFile" | "readAllText" | "readToString") => "readText",
+        ("fs", "writeFile" | "writeAllText") => "writeText",
+        ("fs", "readAllBytes") => "readBytes",
+        ("fs", "writeAllBytes") => "writeBytes",
+        ("fs", "appendFile" | "appendAllText") => "appendText",
+        ("fs", "mkdir" | "mkdirAll" | "createDir" | "createDirAll" | "makeDirs" | "createDirectories") => {
+            "createDirectory"
+        }
+        ("fs", "delete" | "unlink" | "removeFile" | "rmdir" | "removeDir") => "remove",
+        ("fs", "rmrf" | "removeDirAll" | "deleteAll" | "removeTree") => "removeAll",
+        ("fs", "readDir" | "readdir" | "listDir" | "listDirectory" | "entries") => "list",
+        ("fs", "move" | "mv") => "rename",
+        ("fs", "stat" | "isFile" | "isDir" | "isDirectory") => "metadata",
+        ("fs", "openFile" | "create") => "open",
+        ("path", "combine" | "resolve") => "join",
+        ("path", "dirname" | "dirName" | "directoryName") => "parent",
+        ("path", "basename" | "baseName") => "fileName",
+        ("path", "ext" | "extname") => "extension",
+        _ => return String::new(),
+    };
+    format!("; use `{module}.{function}`")
+}
 
 struct Checker<'a> {
     types: Types,
@@ -346,6 +385,8 @@ struct Checker<'a> {
     /// `sync.CompareExchange`, once `std.sync` is imported: the template
     /// and its instance with its own parameter.
     compare_exchange: Option<(TemplateId, Ty)>,
+    /// The types of `std.fs`, once imported.
+    fs: Option<FsTypes>,
     /// The module whose declaration or code is being checked (7.5).
     module: u32,
     /// Who declares each nominal type, by name.
@@ -668,7 +709,7 @@ impl Checker<'_> {
         self.types.define_adt(id, AdtKind::Enum(variants));
         self.collection_error = ty;
         let (id, ty) = self.types.declare_adt("text.TextError".into());
-        let variants = ["InvalidIndex", "InvalidBoundary", "ResourceLimit"]
+        let variants = ["InvalidIndex", "InvalidBoundary", "ResourceLimit", "InvalidData"]
             .map(|name| Variant { name: name.into(), payload: Payload::Unit })
             .to_vec();
         self.types.define_adt(id, AdtKind::Enum(variants));
@@ -719,6 +760,8 @@ impl Checker<'_> {
             ["std", "text"] => StdModule::Text,
             ["std", "time"] => StdModule::Time,
             ["std", "sync"] => StdModule::Sync,
+            ["std", "fs"] => StdModule::Fs,
+            ["std", "path"] => StdModule::Path,
             ["std", ..] => {
                 let what = format!("module `{}`", path.join("."));
                 self.diags.unsupported(import.span, &what);
@@ -756,6 +799,39 @@ impl Checker<'_> {
                 self.types.intern(TyKind::Option(ty));
             }
         }
+        if module == StdModule::Fs && self.fs.is_none() {
+            let unit = |name: &str| Variant { name: name.into(), payload: Payload::Unit };
+            let declare_enum = |this: &mut Self, ty: &str, variants: &[&str]| {
+                let (id, ty) = this.types.declare_adt(format!("{}.{ty}", name.name));
+                this.types.define_adt(id, AdtKind::Enum(variants.iter().map(|v| unit(v)).collect()));
+                ty
+            };
+            let errors = [
+                "NotFound",
+                "PermissionDenied",
+                "AlreadyExists",
+                "NotADirectory",
+                "IsADirectory",
+                "InvalidData",
+                "InvalidName",
+                "Host",
+            ];
+            let error = declare_enum(self, "FsError", &errors);
+            let kind = declare_enum(self, "FileKind", &["File", "Directory", "Symlink", "Other"]);
+            let mode = declare_enum(self, "OpenMode", &["Read", "Write", "Append", "CreateNew", "ReadWrite"]);
+            let (id, metadata) = self.types.declare_adt(format!("{}.Metadata", name.name));
+            let fields = vec![
+                Field { name: "kind".into(), ty: kind },
+                Field { name: "size".into(), ty: Ty::INT },
+                Field { name: "readOnly".into(), ty: Ty::BOOL },
+            ];
+            self.types.define_adt(id, AdtKind::Record(fields));
+            let file = self.types.handle(Handle::File, Ty::UNIT);
+            for ty in [Ty::STRING, self.types.intern(TyKind::Array(Ty::BYTE))] {
+                self.types.intern(TyKind::Option(ty));
+            }
+            self.fs = Some(FsTypes { error, kind, metadata, mode, file });
+        }
         if module == StdModule::Time && self.duration.is_none() {
             let (id, ty) = self.types.declare_adt(format!("{}.Duration", name.name));
             self.types.define_adt(id, AdtKind::Newtype(Ty::INT));
@@ -771,6 +847,17 @@ impl Checker<'_> {
             (Some(ModuleName::Module(StdModule::Text)), "TextError") => Some(self.text_error),
             (Some(ModuleName::Module(StdModule::Time)), "Duration") => self.duration,
             (Some(ModuleName::Module(StdModule::Sync)), "CompareExchange") => self.compare_exchange.map(|(_, g)| g),
+            (Some(ModuleName::Module(StdModule::Fs)), name) => {
+                let fs = self.fs?;
+                match name {
+                    "FsError" => Some(fs.error),
+                    "FileKind" => Some(fs.kind),
+                    "Metadata" => Some(fs.metadata),
+                    "OpenMode" => Some(fs.mode),
+                    "File" => Some(fs.file),
+                    _ => None,
+                }
+            }
             (Some(ModuleName::Module(StdModule::Sync)), name) => {
                 let handle = match name {
                     "Semaphore" => Handle::Semaphore,
@@ -1572,6 +1659,11 @@ impl Checker<'_> {
             if let Some(parts) = parts {
                 return parts.into_iter().all(|part| self.satisfies_depth(part, DISPLAY, &[], depth + 1));
             }
+            // The standard library's error enums display a human description (7.4).
+            let fs_error = self.fs.as_ref().map(|fs| fs.error);
+            if [self.conversion_error, self.collection_error, self.text_error].contains(&ty) || fs_error == Some(ty) {
+                return true;
+            }
         }
         let candidates: Vec<usize> = (0..self.impls.len()).filter(|&i| self.impls[i].trait_id == trait_id).collect();
         for index in candidates {
@@ -2231,7 +2323,7 @@ impl Checker<'_> {
         let modes = |callee: Callee| match callee {
             Callee::Fn(id) => signatures.get(id.0 as usize).map(|s| s.modes.clone()).unwrap_or_default(),
             Callee::Trait(id, index) => traits[id.0 as usize].methods[index as usize].signature.modes.clone(),
-            Callee::Std(_) => Vec::new(),
+            Callee::Std(function) => function.modes(),
         };
         // The parameter modes of the type parameters bound by `Call...`.
         let bound_modes: HashMap<Ty, Vec<ast::Mode>> = self
@@ -2714,6 +2806,57 @@ impl Checker<'_> {
                 Ty::ERROR
             }
         }
+    }
+
+    /// The methods of `fs.File` (standard library 10.5): a `var` loan of the
+    /// file, except `close`, which takes it.
+    fn file_method(
+        &mut self,
+        cx: &mut FnCx,
+        receiver: hir::Expr,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> hir::Expr {
+        let fs = self.fs.expect("declared with the module");
+        let failing = |this: &mut Self, ty: Ty| this.types.intern(TyKind::Result(ty, fs.error));
+        let bytes = self.types.intern(TyKind::Array(Ty::BYTE));
+        use hir::FsFn as F;
+        let (function, params, result) = match method.name.as_str() {
+            "readLine" => {
+                let line = self.types.intern(TyKind::Option(Ty::STRING));
+                (F::ReadLine, vec![], failing(self, line))
+            }
+            "read" => {
+                let chunk = self.types.intern(TyKind::Option(bytes));
+                (F::Read, vec![Ty::INT], failing(self, chunk))
+            }
+            "readText" => (F::ReadRest, vec![], failing(self, Ty::STRING)),
+            "write" => (F::Write, vec![Ty::STRING], failing(self, Ty::UNIT)),
+            "writeBytes" => (F::WriteBytesTo, vec![bytes], failing(self, Ty::UNIT)),
+            "flush" => (F::Flush, vec![], failing(self, Ty::UNIT)),
+            "close" => (F::Close, vec![], failing(self, Ty::UNIT)),
+            _ => return self.no_method(receiver.ty, method, span),
+        };
+        if args.len() != params.len() {
+            return self.arity_error(span, params.len(), args.len());
+        }
+        let receiver = if function == F::Close {
+            receiver
+        } else {
+            let (ty, receiver_span) = (receiver.ty, receiver.span);
+            let operation = format!("`{}`", method.name);
+            let Some(place) = self.loan_place(cx, receiver, &operation, true) else {
+                return Self::error_expr(span);
+            };
+            Self::mk(hir::ExprKind::Loan(place), ty, receiver_span)
+        };
+        let mut values = vec![receiver];
+        for (arg, ty) in args.iter().zip(params) {
+            let value = self.expr(cx, &arg.value, Some(ty));
+            values.push(self.coerce(value, ty));
+        }
+        Self::mk(hir::ExprKind::Call(Callee::Std(StdFn::Fs(function)), Vec::new(), values), result, span)
     }
 
     /// `sync.Mutex(value)` and the other `std.sync` constructors: a new
@@ -4580,7 +4723,12 @@ impl Checker<'_> {
             && !self.types.has_error(value.ty)
             && !self.types.has_error(expected)
         {
-            let message = format!("expected {}, found {}", self.display(expected), self.display(value.ty));
+            let message = match value.kind {
+                hir::ExprKind::Int(literal) if expected == Ty::BYTE && (0..256).contains(&literal) => {
+                    format!("an integer literal is not a `Byte`: write `Byte({literal}u8)`")
+                }
+                _ => format!("expected {}, found {}", self.display(expected), self.display(value.ty)),
+            };
             self.diags.error("E1102", value.span, message);
         }
         value
@@ -6138,6 +6286,9 @@ impl Checker<'_> {
             return self.string_method(cx, value, method, args, span);
         }
         if let TyKind::Handle(handle, state) = *self.types.kind(ty) {
+            if handle == Handle::File {
+                return self.file_method(cx, value, method, args, span);
+            }
             if handle.locked() || matches!(handle, Handle::Semaphore | Handle::Permit | Handle::Barrier) {
                 return self.sync_method(cx, value, handle, state, method, args, span);
             }
@@ -6247,6 +6398,7 @@ impl Checker<'_> {
             "toLowerAscii" => (S::LowerAscii, vec![], Ty::STRING),
             "toUpperAscii" => (S::UpperAscii, vec![], Ty::STRING),
             "slice" => (S::SliceChecked, vec![Ty::INT, Ty::INT], checked),
+            "bytes" => (S::Bytes, vec![], self.types.intern(TyKind::Array(Ty::BYTE))),
             _ => return self.no_method(Ty::STRING, method, span),
         };
         if args.len() != params.len() {
@@ -6885,11 +7037,15 @@ impl Checker<'_> {
                 Self::error_expr(span)
             }
             Some(ModuleName::Module(_)) => {
-                let message = format!(
-                    "`{}` is a module, not a value",
-                    segments.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".")
-                );
-                self.diags.error("E1102", span, message);
+                let (code, message) = match segments {
+                    [module] => ("E1102", format!("`{}` is a module, not a value", module.name)),
+                    [module, member] => ("E1001", format!("module `{}` has no value `{}`", module.name, member.name)),
+                    [module, member, ..] => {
+                        ("E1001", format!("module `{}` has no type `{}`", module.name, member.name))
+                    }
+                    [] => unreachable!("a path has a segment"),
+                };
+                self.diags.error(code, span, message);
                 Self::error_expr(span)
             }
             None => {
@@ -6950,6 +7106,36 @@ impl Checker<'_> {
                     return self.arity_error(span, 0, args.len());
                 }
                 return Self::mk(hir::ExprKind::Str(String::new()), Ty::STRING, span);
+            }
+            ["String", "fromBytes"] => {
+                // `ok(text)`, or `InvalidData` when the bytes are not UTF-8.
+                let [arg] = args else { return self.arity_error(span, 1, args.len()) };
+                let bytes = self.types.intern(TyKind::Array(Ty::BYTE));
+                let value = self.expr(cx, &arg.value, Some(bytes));
+                let value = self.coerce(value, bytes);
+                let maybe = self.types.intern(TyKind::Option(Ty::STRING));
+                let ty = self.types.intern(TyKind::Result(Ty::STRING, self.text_error));
+                let decoded = Self::mk(hir::ExprKind::StrOp(hir::StrOp::FromBytes, vec![value]), maybe, span);
+                let text = self.hidden_local(cx, Ty::STRING);
+                let pattern = |kind: hir::PatKind, ty: Ty| hir::Pattern { kind, ty, span };
+                let read = Self::mk(hir::ExprKind::Local(text), Ty::STRING, span);
+                let invalid = Self::mk(hir::ExprKind::Variant(3, Vec::new()), self.text_error, span);
+                let arms = vec![
+                    hir::Arm {
+                        pattern: pattern(
+                            hir::PatKind::Variant(SOME, vec![pattern(hir::PatKind::Binding(text), Ty::STRING)]),
+                            maybe,
+                        ),
+                        guard: None,
+                        body: Self::mk(hir::ExprKind::Variant(OK, vec![(0, read)]), ty, span),
+                    },
+                    hir::Arm {
+                        pattern: pattern(hir::PatKind::Variant(NONE, Vec::new()), maybe),
+                        guard: None,
+                        body: Self::mk(hir::ExprKind::Variant(ERR, vec![(0, invalid)]), ty, span),
+                    },
+                ];
+                return Self::mk(hir::ExprKind::Match(Box::new(decoded), arms), ty, span);
             }
             ["String", "fromChars"] => {
                 let [arg] = args else { return self.arity_error(span, 1, args.len()) };
@@ -7118,6 +7304,57 @@ impl Checker<'_> {
                 self.call_signature(cx, target, None, args, span)
             }
             ([_, member], Some(ModuleName::Module(StdModule::Sync))) => self.sync_new(cx, member, args, expected, span),
+            ([_, member], Some(ModuleName::Module(StdModule::Fs))) => {
+                let fs = self.fs.expect("declared with the module");
+                let failing = |this: &mut Self, ty: Ty| this.types.intern(TyKind::Result(ty, fs.error));
+                let bytes = self.types.intern(TyKind::Array(Ty::BYTE));
+                let names = self.types.intern(TyKind::Array(Ty::STRING));
+                let s = Ty::STRING;
+                use hir::FsFn as F;
+                let (function, params, result) = match *member {
+                    "readText" => (F::ReadText, vec![s], failing(self, s)),
+                    "readBytes" => (F::ReadBytes, vec![s], failing(self, bytes)),
+                    "writeText" => (F::WriteText, vec![s, s], failing(self, Ty::UNIT)),
+                    "writeBytes" => (F::WriteBytes, vec![s, bytes], failing(self, Ty::UNIT)),
+                    "appendText" => (F::AppendText, vec![s, s], failing(self, Ty::UNIT)),
+                    "exists" => (F::Exists, vec![s], Ty::BOOL),
+                    "metadata" => (F::Metadata, vec![s], failing(self, fs.metadata)),
+                    "list" => (F::List, vec![s], failing(self, names)),
+                    "createDirectory" => (F::CreateDirectory, vec![s], failing(self, Ty::UNIT)),
+                    "rename" => (F::Rename, vec![s, s], failing(self, Ty::UNIT)),
+                    "copy" => (F::Copy, vec![s, s], failing(self, Ty::UNIT)),
+                    "remove" => (F::Remove, vec![s], failing(self, Ty::UNIT)),
+                    "removeAll" => (F::RemoveAll, vec![s], failing(self, Ty::UNIT)),
+                    "open" => (F::Open, vec![s, fs.mode], failing(self, fs.file)),
+                    _ => {
+                        let message = format!("module `fs` has no function `{member}`{}", std_alias("fs", member));
+                        self.diags.error("E1001", segments[1].span, message);
+                        return Self::error_expr(span);
+                    }
+                };
+                let signature = Signature::simple(params, result);
+                let target = CallTarget::new(Callee::Std(StdFn::Fs(function)), signature, expected);
+                self.call_signature(cx, target, None, args, span)
+            }
+            ([_, member], Some(ModuleName::Module(StdModule::Path))) => {
+                let part = self.types.intern(TyKind::Option(Ty::STRING));
+                use hir::PathFn as P;
+                let (function, params, result) = match *member {
+                    "join" => (P::Join, vec![Ty::STRING, Ty::STRING], Ty::STRING),
+                    "parent" => (P::Parent, vec![Ty::STRING], part),
+                    "fileName" => (P::FileName, vec![Ty::STRING], part),
+                    "extension" => (P::Extension, vec![Ty::STRING], part),
+                    "isAbsolute" => (P::IsAbsolute, vec![Ty::STRING], Ty::BOOL),
+                    _ => {
+                        let message = format!("module `path` has no function `{member}`{}", std_alias("path", member));
+                        self.diags.error("E1001", segments[1].span, message);
+                        return Self::error_expr(span);
+                    }
+                };
+                let signature = Signature::simple(params, result);
+                let target = CallTarget::new(Callee::Std(StdFn::Path(function)), signature, expected);
+                self.call_signature(cx, target, None, args, span)
+            }
             ([_, member], Some(ModuleName::Module(StdModule::Time))) => {
                 let duration = self.duration.unwrap();
                 let factor = match *member {
@@ -7213,6 +7450,11 @@ impl Checker<'_> {
                     named = true;
                     match signature.names[first..].iter().position(|n| *n == name.name) {
                         Some(position) => position,
+                        None if signature.names[first..].iter().all(String::is_empty) => {
+                            let message = "a standard function takes positional arguments; remove the name";
+                            self.diags.error("E1102", name.span, message);
+                            return Self::error_expr(span);
+                        }
                         None => {
                             let known: Vec<String> =
                                 signature.names[first..].iter().map(|n| format!("`{n}`")).collect();
@@ -7259,7 +7501,15 @@ impl Checker<'_> {
             }
         }
         if let Some(missing) = slots.iter().position(Option::is_none) {
-            let message = format!("missing argument `{}`", signature.names[first + missing]);
+            let message = match signature.names[first + missing].as_str() {
+                // A standard function's parameters have no names.
+                "" => format!(
+                    "missing argument {}, of type {}",
+                    missing + 1,
+                    self.display(signature.params[first + missing])
+                ),
+                name => format!("missing argument `{name}`"),
+            };
             self.diags.error("E1102", span, message);
             return Self::error_expr(span);
         }

@@ -1991,7 +1991,7 @@ presenta sus outputs como completos.
 
 ### 9.7 Artifacts y snapshots por intento
 
-`testing.attach(name, mediaType, data)` copia el `std.bytes.Bytes` exacto al
+`testing.attach(name, mediaType, data)` copia el `Array[Byte]` exacto al
 artifact store del runner y añade un descriptor al intento activo. `name` es un
 `String` no vacío sin `/`, `\` ni ningún scalar Unicode de categoría general
 `Cc`; se compara por bytes UTF-8 sin normalización. `mediaType` conserva sus
@@ -2315,7 +2315,7 @@ pub fn log(message: String)
 pub fn tags(values: Map[String, String])
 pub fn failNow(message: String): Never
 pub fn skip(reason: String): Never
-pub fn attach(name: String, mediaType: String, data: bytes.Bytes)
+pub fn attach(name: String, mediaType: String, data: Array[Byte])
 pub fn snapshot(name: String, actual: String)
 
 pub fn withVirtualTime[
@@ -2359,7 +2359,7 @@ test importsUsers {
 Las seis operaciones de control, metadata y evidencia son monomórficas.
 `log`, `failNow` y `skip` reciben un solo `String`; interpolación y formatting
 ocurren antes de la llamada. `tags` recibe exactamente un
-`Map[String, String]`. `attach` recibe un `std.bytes.Bytes` ya materializado y
+`Map[String, String]`. `attach` recibe un `Array[Byte]` ya materializado y
 `snapshot` compara texto ya convertido mediante las APIs ordinarias de
 formatting. No
 existen niveles de log, timestamps, un tipo dinámico de metadata, reflection de
@@ -3772,7 +3772,7 @@ parent que sea symlink o escape esa raíz.
 
 El root efectivo contiene `manifest.json` y `objects/`. Cada object path usa el
 SHA-256 lowercase de sus bytes y su contenido es exactamente el
-`std.bytes.Bytes` adjunto.
+`Array[Byte]` adjunto.
 El manifest es JSON canónico UTF-8, termina en un único `LF` y tiene:
 
 ~~~json

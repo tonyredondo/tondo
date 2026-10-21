@@ -15,7 +15,9 @@
 //! last reference to a box goes away.
 
 use crate::ast::{BinOp, UnaryOp};
-use crate::hir::{ArrayOp, AtomicOp, Callee, FnId, LockMode, MapOp, Mutation, Program, SharedOp, StdFn, StrOp, TaskOp};
+use crate::hir::{
+    ArrayOp, AtomicOp, Callee, FnId, FsFn, LockMode, MapOp, Mutation, PathFn, Program, SharedOp, StdFn, StrOp, TaskOp,
+};
 use crate::mir::{
     Body, Const, Local, Operand, Overlap, Piece, Place, Proj, Rvalue, SelectCase, Statement, Terminator, project,
 };
@@ -194,6 +196,13 @@ enum Rt {
     AtomicSwap,
     AtomicExchange,
     AtomicAdd,
+    Fs(FsFn),
+    FsFileRelease,
+    PathJoin,
+    PathPart,
+    PathIsAbsolute,
+    StrToBytes,
+    StrFromBytes,
 }
 
 impl Rt {
@@ -352,6 +361,35 @@ impl Rt {
             Rt::AtomicSwap => ("tondo_rt_atomic_swap", &[I64, I8, I64], &[I64]),
             Rt::AtomicExchange => ("tondo_rt_atomic_exchange", &[I64, I8, I64, I64], &[I64]),
             Rt::AtomicAdd => ("tondo_rt_atomic_add", &[I64, I8, I8, I64, I64], &[I64]),
+            Rt::Fs(function) => match function {
+                FsFn::ReadText => ("tondo_rt_fs_read_text", &[I64, I64], &[I64]),
+                FsFn::ReadBytes => ("tondo_rt_fs_read_bytes", &[I64, I64], &[I64]),
+                FsFn::WriteText => ("tondo_rt_fs_write_text", &[I64, I64], &[I64]),
+                FsFn::WriteBytes => ("tondo_rt_fs_write_bytes", &[I64, I64], &[I64]),
+                FsFn::AppendText => ("tondo_rt_fs_append_text", &[I64, I64], &[I64]),
+                FsFn::Exists => ("tondo_rt_fs_exists", &[I64], &[I8]),
+                FsFn::Metadata => ("tondo_rt_fs_metadata", &[I64, I64], &[I64]),
+                FsFn::List => ("tondo_rt_fs_list", &[I64, I64], &[I64]),
+                FsFn::CreateDirectory => ("tondo_rt_fs_create_directory", &[I64], &[I64]),
+                FsFn::Rename => ("tondo_rt_fs_rename", &[I64, I64], &[I64]),
+                FsFn::Copy => ("tondo_rt_fs_copy", &[I64, I64], &[I64]),
+                FsFn::Remove => ("tondo_rt_fs_remove", &[I64], &[I64]),
+                FsFn::RemoveAll => ("tondo_rt_fs_remove_all", &[I64], &[I64]),
+                FsFn::Open => ("tondo_rt_fs_open", &[I64, I64, I64], &[I64]),
+                FsFn::ReadLine => ("tondo_rt_fs_read_line", &[I64, I64], &[I64]),
+                FsFn::Read => ("tondo_rt_fs_read", &[I64, I64, I64], &[I64]),
+                FsFn::ReadRest => ("tondo_rt_fs_read_rest", &[I64, I64], &[I64]),
+                FsFn::Write => ("tondo_rt_fs_write", &[I64, I64], &[I64]),
+                FsFn::WriteBytesTo => ("tondo_rt_fs_write_bytes_to", &[I64, I64], &[I64]),
+                FsFn::Flush => ("tondo_rt_fs_flush", &[I64], &[I64]),
+                FsFn::Close => ("tondo_rt_fs_close", &[I64], &[I64]),
+            },
+            Rt::FsFileRelease => ("tondo_rt_fs_file_release", &[I64], &[]),
+            Rt::PathJoin => ("tondo_rt_path_join", &[I64, I64], &[I64]),
+            Rt::PathPart => ("tondo_rt_path_part", &[I64, I8], &[I64]),
+            Rt::PathIsAbsolute => ("tondo_rt_path_is_absolute", &[I64], &[I8]),
+            Rt::StrToBytes => ("tondo_rt_str_to_bytes", &[I64], &[I64]),
+            Rt::StrFromBytes => ("tondo_rt_str_from_bytes", &[I64], &[I64]),
         }
     }
 }
@@ -1009,8 +1047,23 @@ impl Emit<'_, '_> {
             self.call_rt(Rt::StrRelease, &[text]);
             return;
         }
+        let types = self.cg.types;
+        if let TyKind::Adt(id) = *types.kind(types.repr(ty))
+            && let AdtKind::Enum(variants) = &types.adt(id).kind
+        {
+            // A standard library error: its variant name in words.
+            let tag = self.tag(ty, value);
+            let mut text = self.string_ptr(&words(&variants[0].name));
+            for (index, variant) in variants.iter().enumerate().skip(1) {
+                let this = self.string_ptr(&words(&variant.name));
+                let is_this = self.fb.ins().icmp_imm_s(IntCC::Equal, tag, index as i64);
+                text = self.fb.ins().select(is_this, this, text);
+            }
+            self.call_rt(Rt::SbStr, &[builder, text]);
+            return;
+        }
         let Val::Scalar(value) = value else { unreachable!("no Display for aggregates") };
-        match *self.cg.types.kind(self.cg.types.repr(ty)) {
+        match *types.kind(types.repr(ty)) {
             TyKind::String => {
                 self.call_rt(Rt::SbStr, &[builder, value]);
             }
@@ -1241,6 +1294,7 @@ impl Emit<'_, '_> {
                         Handle::SyncQueue => Rt::SharedQueueRelease,
                         Handle::SyncStack => Rt::SharedStackRelease,
                         Handle::SyncArray => Rt::SharedArrayRelease,
+                        Handle::File => Rt::FsFileRelease,
                         _ => Rt::SyncRelease,
                     };
                     self.call_rt(rt, &[pointer]);
@@ -2009,6 +2063,30 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             return;
         }
         let value = match rvalue {
+            Rvalue::Call(Callee::Std(StdFn::Fs(function)), args) => {
+                self.fs_call(*function, args, place);
+                return;
+            }
+            Rvalue::Call(Callee::Std(StdFn::Path(function)), args) => {
+                let values: Vec<ir::Value> = args.iter().map(|a| self.scalar(a)).collect();
+                match function {
+                    PathFn::Join => Val::Scalar(self.e.call_rt(Rt::PathJoin, &values).unwrap()),
+                    PathFn::IsAbsolute => Val::Scalar(self.e.call_rt(Rt::PathIsAbsolute, &values).unwrap()),
+                    _ => {
+                        let which = match function {
+                            PathFn::Parent => 0,
+                            PathFn::FileName => 1,
+                            _ => 2,
+                        };
+                        let which = self.e.fb.ins().iconst(types::I8, which);
+                        let part = self.e.call_rt(Rt::PathPart, &[values[0], which]).unwrap();
+                        match self.pointer_option(place, ty, Ty::STRING, part) {
+                            Some(value) => value,
+                            None => return,
+                        }
+                    }
+                }
+            }
             Rvalue::Call(callee @ Callee::Std(_), args) => {
                 let status = self.call(*callee, args, None).unwrap();
                 self.std_result(place, ty, status);
@@ -2112,6 +2190,14 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     StrOp::At => {
                         let location = self.location(*span);
                         Val::Scalar(self.e.call_rt(Rt::StrAt, &[values[0], values[1], location]).unwrap())
+                    }
+                    StrOp::Bytes => Val::Scalar(self.e.call_rt(Rt::StrToBytes, &values).unwrap()),
+                    StrOp::FromBytes => {
+                        let text = self.e.call_rt(Rt::StrFromBytes, &values).unwrap();
+                        match self.pointer_option(place, ty, Ty::STRING, text) {
+                            Some(value) => value,
+                            None => return,
+                        }
                     }
                     StrOp::Get | StrOp::Find => {
                         // A position, or -1 for `none`.
@@ -3048,6 +3134,98 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.fb.ins().store(flags(), io_error, error_base, payload.offset as i32);
     }
 
+    /// The option of a value a runtime function gives as a pointer, null
+    /// for `none`; stored at `place` unless returned.
+    fn pointer_option(&mut self, place: &Place, ty: Ty, element: Ty, pointer: ir::Value) -> Option<Val> {
+        let out = self.scratch(element);
+        self.e.fb.ins().store(flags(), pointer, out, 0);
+        let found = self.e.fb.ins().icmp_imm_s(IntCC::NotEqual, pointer, 0);
+        self.removal_result(place, ty, element, out, found)
+    }
+
+    /// A call of `std.fs` (see the runtime's `fs`): the runtime returns 0
+    /// with the value in `out`, or the index of the `FsError` variant plus
+    /// one; this builds the `T ! FsError` at `place`.
+    fn fs_call(&mut self, function: FsFn, args: &[Operand], place: &Place) {
+        let ty = self.place_ty(place);
+        let mut values: Vec<ir::Value> = Vec::new();
+        for arg in args {
+            let value = self.scalar(arg);
+            let value = if self.e.fb.func.dfg.value_type(value) == types::I64 {
+                value
+            } else {
+                self.e.fb.ins().uextend(types::I64, value)
+            };
+            values.push(value);
+        }
+        if function == FsFn::Exists {
+            let found = self.e.call_rt(Rt::Fs(function), &values).unwrap();
+            self.write(place, Val::Scalar(found));
+            return;
+        }
+        let TyKind::Result(success, _) = *self.e.cg.types.kind(ty) else { unreachable!("a result") };
+        // Metadata comes as three words; other values as one pointer.
+        let out = self.e.fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 24, 3));
+        let out = self.e.fb.ins().stack_addr(POINTER, out, 0);
+        let returns_value = success != Ty::UNIT;
+        if returns_value {
+            values.push(out);
+        }
+        let status = self.e.call_rt(Rt::Fs(function), &values).unwrap();
+        let base = self.pointer_to(place, true);
+        let failed = self.e.fb.ins().icmp_imm_s(IntCC::NotEqual, status, 0);
+        self.e.fb.ins().store(flags(), failed, base, 0);
+        let (good, bad, done) = (self.e.fb.create_block(), self.e.fb.create_block(), self.e.fb.create_block());
+        self.e.fb.ins().brif(failed, bad, &[], good, &[]);
+        self.e.fb.switch_to_block(bad);
+        let error = self.e.cg.slot(ty, Proj::Variant(ERR, 0));
+        let variant = self.e.fb.ins().iadd_imm_s(status, -1);
+        let variant = self.e.fb.ins().ireduce(types::I8, variant);
+        self.e.fb.ins().store(flags(), variant, base, error.offset as i32);
+        self.e.fb.ins().jump(done, &[]);
+        self.e.fb.switch_to_block(good);
+        if returns_value {
+            let value = self.fs_value(success, out);
+            let slot = self.e.cg.slot(ty, Proj::Variant(OK, 0));
+            self.e.init_component(base, &slot, value);
+        }
+        self.e.fb.ins().jump(done, &[]);
+        self.e.fb.switch_to_block(done);
+    }
+
+    /// The value a successful `std.fs` call wrote at `out`.
+    fn fs_value(&mut self, ty: Ty, out: ir::Value) -> Val {
+        let word = |this: &mut Self, index: i32| this.e.fb.ins().load(types::I64, flags(), out, index * 8);
+        match *self.e.cg.types.kind(ty) {
+            // `String?` or `Array[Byte]?`: null for `none`.
+            TyKind::Option(element) => {
+                let pointer = word(self, 0);
+                let address = self.scratch(ty);
+                let found = self.e.fb.ins().icmp_imm_s(IntCC::NotEqual, pointer, 0);
+                self.e.fb.ins().store(flags(), found, address, 0);
+                let payload = self.e.cg.slot(ty, Proj::Variant(SOME, 0));
+                let _ = element;
+                self.e.fb.ins().store(flags(), pointer, address, payload.offset as i32);
+                Val::Memory(address)
+            }
+            // `Metadata`: its kind, size and read-only flag.
+            TyKind::Adt(_) => {
+                let address = self.scratch(ty);
+                let kind = word(self, 0);
+                let kind = self.e.fb.ins().ireduce(types::I8, kind);
+                let size = word(self, 1);
+                let read_only = word(self, 2);
+                let read_only = self.e.fb.ins().ireduce(types::I8, read_only);
+                for (index, value) in [kind, size, read_only].into_iter().enumerate() {
+                    let slot = self.e.cg.slot(ty, Proj::Field(index as u32));
+                    self.e.fb.ins().store(flags(), value, address, slot.offset as i32);
+                }
+                Val::Memory(address)
+            }
+            _ => Val::Scalar(word(self, 0)),
+        }
+    }
+
     /// A conversion that cannot fail (18.6).
     fn convert_total(&mut self, value: ir::Value, from: Ty, to: Ty) -> ir::Value {
         let types = self.e.cg.types;
@@ -3230,6 +3408,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Callee::Std(StdFn::ConsolePrintln) => self.e.call_rt(Rt::ConsolePrintln, &values),
             Callee::Std(StdFn::ConsoleFlush) => self.e.call_rt(Rt::ConsoleFlush, &values),
             Callee::Std(StdFn::TimeSleep) => self.e.call_rt(Rt::Sleep, &values),
+            Callee::Std(StdFn::Fs(_) | StdFn::Path(_)) => unreachable!("built where they are assigned"),
             Callee::Trait(..) => unreachable!("trait calls are resolved by monomorphization"),
         };
         for (var, slot) in spilled {
@@ -3481,4 +3660,16 @@ fn int_condition(op: BinOp, signed: bool) -> IntCC {
         (BinOp::Ge, false) => IntCC::UnsignedGreaterThanOrEqual,
         _ => unreachable!(),
     }
+}
+
+/// `NotFound` as `not found`.
+fn words(name: &str) -> String {
+    let mut text = String::new();
+    for c in name.chars() {
+        if c.is_uppercase() && !text.is_empty() {
+            text.push(' ');
+        }
+        text.extend(c.to_lowercase());
+    }
+    text
 }

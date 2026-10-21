@@ -145,6 +145,8 @@ pub enum Handle {
     /// A lock taken on shared state, released when dropped; only lowering
     /// sees it.
     Guard,
+    /// An open `fs.File`; its type is `Unit`.
+    File,
 }
 
 impl Handle {
@@ -167,13 +169,14 @@ impl Handle {
             Handle::Permit => "sync.Permit",
             Handle::Barrier => "sync.Barrier",
             Handle::Guard => "lock",
+            Handle::File => "fs.File",
         }
     }
 
     /// A handle to state shared by all its copies: a `std.sync` value
     /// other than `Permit`, or a `Receiver`.
     pub fn shared(self) -> bool {
-        !matches!(self, Handle::Join | Handle::Group | Handle::Sender | Handle::Permit | Handle::Guard)
+        !matches!(self, Handle::Join | Handle::Group | Handle::Sender | Handle::Permit | Handle::Guard | Handle::File)
     }
 
     /// One of the five shared collections of `std.sync`.
@@ -1125,7 +1128,7 @@ impl Types {
                 return param.copy || !copy && param.discard;
             }
             TyKind::Handle(handle, _) if handle.shared() => Vec::new(),
-            TyKind::Handle(Handle::Sender | Handle::Permit | Handle::Guard, _) if !copy => Vec::new(),
+            TyKind::Handle(Handle::Sender | Handle::Permit | Handle::Guard | Handle::File, _) if !copy => Vec::new(),
             TyKind::Handle(..) if copy => {
                 visiting.pop();
                 return false;
@@ -1247,7 +1250,7 @@ impl Types {
             TyKind::Set(element) => format!("Set[{}]", self.display(*element)),
             TyKind::Handle(handle, state) => {
                 let shown = match (handle, self.kind(*state)) {
-                    (Handle::Semaphore | Handle::Permit | Handle::Barrier | Handle::Guard, _) => {
+                    (Handle::Semaphore | Handle::Permit | Handle::Barrier | Handle::Guard | Handle::File, _) => {
                         return handle.name().to_string();
                     }
                     (Handle::SyncMap, TyKind::Map(key, value)) => {

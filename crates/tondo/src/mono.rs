@@ -356,8 +356,8 @@ impl Mono<'_> {
     }
 
     /// The function and type arguments of a trait method for a concrete
-    /// `Self` (the first of `types`); `None` for the intrinsic `Display` of
-    /// built-in values. The checker guarantees an implementation exists.
+    /// `Self` (the first of `types`); `Display` for the intrinsic `Display` of
+    /// built-in values and standard errors. The checker guarantees an implementation exists.
     fn resolve(&mut self, trait_id: TraitId, method: u32, types: &[Ty]) -> Resolved {
         let self_ty = types[0];
         let count = self.traits[trait_id.0 as usize].param_count;
@@ -389,6 +389,10 @@ impl Mono<'_> {
                     Resolved::Fn(default.expect("a method without implementation has a default"), types.to_vec())
                 }
             };
+        }
+        // The standard library's error enums display intrinsically too.
+        if trait_id == DISPLAY {
+            return Resolved::Display;
         }
         panic!("no implementation of trait {} for {}", trait_id.0, self.types.display(self_ty));
     }

@@ -94,7 +94,7 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
         return Err(format!("unexpected diagnostics:\n{diagnostics}"));
     }
 
-    let run = Command::new(&binary).env("TONDO_RT_CHECK_LEAKS", "1").output().unwrap();
+    let run = Command::new(&binary).env("TONDO_RT_CHECK_LEAKS", "1").current_dir(scratch).output().unwrap();
     let stdout = String::from_utf8_lossy(&run.stdout);
     let stderr = String::from_utf8_lossy(&run.stderr);
     let expected_stdout: String = expect.stdout.iter().map(|l| format!("{l}\n")).collect();

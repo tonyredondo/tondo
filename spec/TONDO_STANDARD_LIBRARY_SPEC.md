@@ -358,7 +358,6 @@ En particular, no introduce implícitamente:
 - Tiempo.
 - Environment.
 - Formato.
-- Bytes de librería.
 - Testing.
 - Errores de host.
 
@@ -894,527 +893,149 @@ Texto y datos binarios no se convierten implícitamente:
 
 - `String` siempre es UTF-8 válido.
 - `Byte` es una unidad binaria nominal.
-- `Array[Byte]` es una colección mutable ordinaria.
-- `std.bytes.Bytes` es el blob binario inmutable y portable de la stdlib.
-- `std.io` define los protocolos portables de lectura/escritura y sus errores;
-  importar esos contratos no realiza I/O ni concede una capability.
+- `Array[Byte]` es la forma de los datos binarios en toda la librería: archivos,
+  procesos, red y codecs leen y escriben `Array[Byte]`. No existe un tipo
+  binario aparte.
 
-La frontera general de decodificación exige un encoding explícito y devuelve
-error ante input inválido. `String(Bytes)` es la conversión explícita y
-canónica del encoding UTF-8; tampoco realiza replacement decoding. Los demás
-encodings se seleccionan mediante las policies nominales de `std.encoding` y
-codificar texto produce los bytes exactos del encoding elegido. El contrato
-cerrado de Base64 y hexadecimal está en
-[`docs/contracts/stdlib-encoding.md`](./docs/contracts/stdlib-encoding.md), con
-registro único en [`testing/stdlib-encoding.json`](./testing/stdlib-encoding.json);
-no hay whitespace permisivo, autodetección ni owner binario alternativo.
-
-`Bytes` tiene un único propietario canónico en `std.bytes`; I/O, console,
-filesystem, process y testing lo reutilizan.
-
-#### 10.2.1 Contrato cerrado de `std.bytes`
-
-`std.bytes` es la única identidad binaria de STD-0.1. El módulo no es un alias de
-`Array[Byte]`: `Bytes` es un valor opaco inmutable, copiable y transferible. Cada
-conversión que materializa almacenamiento devuelve una copia independiente y
-ninguna operación expone el buffer interno. El builder es el único estado mutable
-de esta API y solo puede cambiar mediante un receptor `var self`.
-
-La superficie mínima y canónica es:
+Las conversiones son explícitas:
 
 ```tondo
-import std.bytes
-
-fn bytes.empty(): Bytes ! BytesError
-fn bytes.fromArray(value: Array[Byte]): Bytes ! BytesError
-fn bytes.builder(): BytesBuilder ! BytesError
-
-// Conversiones explícitas del lenguaje; el tipo `Bytes` pertenece a este módulo.
-fn Bytes(value: String): Bytes ! BytesError
-fn String(value: Bytes): String ! Utf8Error
-
-fn Bytes.length(self): Int
-fn Bytes.get(self, index: Int): Byte?
-fn Bytes.slice(self, start: Int, end: Int): Bytes ! BytesError
-fn Bytes.toArray(self): Array[Byte] ! BytesError
-fn Bytes.equal(self, other: Bytes): Bool
-fn Bytes.hash(self): UInt64
-
-fn BytesBuilder.length(self): Int
-fn BytesBuilder.appendByte(var self, value: Byte): Unit ! BytesError
-fn BytesBuilder.append(var self, value: Bytes): Unit ! BytesError
-fn BytesBuilder.appendArray(var self, value: Array[Byte]): Unit ! BytesError
-fn BytesBuilder.finish(var self): Bytes ! BytesError
+let data = text.bytes()                 // Array[Byte]: los bytes UTF-8
+let text = String.fromBytes(data)?      // String ! text.TextError
 ```
 
-`Bytes(value)` codifica los bytes UTF-8 ya válidos de `String`; no hace una
-segunda validación ni reemplaza caracteres. `String(value)` valida siempre y
-devuelve `Utf8Error` sin producir un `String` parcial. `get` es total y devuelve `none`
-fuera de rango; `slice` usa el intervalo semiabierto `[start, end)` y devuelve
-`BytesError` si los límites no son no negativos o no satisfacen
-`start <= end <= length`. `toArray` copia cada elemento. `equal` compara bytes
-en orden y `hash` usa FNV-1a de 64 bits, fijado por esta edición para que dos
-valores iguales tengan siempre el mismo hash.
-
-`BytesBuilder` comienza vacío. `appendByte`, `append` y `appendArray` son
-atómicos: si el límite de bytes del run se excedería, devuelven `BytesError` y
-no cambian el builder. `finish` toma una instantánea independiente; el builder
-puede seguir utilizándose. El límite publicado por el host se aplica a cada
-buffer materializado y nunca permite una reserva silenciosa por encima de
-`ResourceLimits.max_vm_heap_bytes`.
-
-`BytesError` es opaco y pertenece a `std.bytes`; sus variantes internas (límite,
-rango o elemento inválido) no forman parte de la identidad binaria y pueden
-ampliarse sin romper código que solo propaga el error. La API no define
-conversiones implícitas, `replacement decoding`, alias mutables ni una segunda
-implementación de bytes en `std.process`. `Bytes(value)` y `String(value)` son
-las únicas conversiones públicas entre texto y bytes.
-
-La implementación de referencia mantiene una ruta escalar que sirve de oracle.
-Una ruta SIMD, de palabra ancha o específica del target puede acelerar copias,
-comparación y hashing siempre que preserve exactamente el resultado, el orden,
-los errores, los límites y el número observable de operaciones de ownership.
-
-La evidencia executable de este contrato vive en
-[`testing/stdlib-bytes.json`](testing/stdlib-bytes.json) y en el registro por
-celdas [`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json)
-(`STD-A-BYTES-EVIDENCE-001`). Sus seis dimensiones cubren forma del catálogo,
-ownership/snapshots, UTF-8, atomicidad de builders, límites/rangos y
-properties/hot paths. `HOST` es explícitamente `not-applicable` porque el
-owner es un intrinsic del compilador/VM, sin provider separado.
-
-`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
-`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
-
-El owner intrínseco `std.core` queda cerrado para la evidencia de STD-0.1A
-mediante el contrato de grupo [`testing/stdlib-core.json`](testing/stdlib-core.json)
-y su registro de nueve celdas en
-[`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json)
-(`STD-A-CORE-EVIDENCE-001`). La evidencia enlaza las nueve firmas de
-`Option`/`Result` con protocolos estáticos, instanciación genérica, composición
-de mapas y propagación, agregados bytecode y ejecución VM; las pruebas públicas
-incluyen los casos de éxito, error, ausencia, límites y especialización
-explícita. `HOST` es `not-applicable` porque el owner es compiler/VM-owned y no
-consulta capabilities ni el host. El corpus de admission fuzz cubre formas
-`Option`/`Result` y protocolos genéricos.
-
-`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
-`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
-
-El owner intrínseco `std.text` queda cerrado para la evidencia de STD-0.1A
-mediante el contrato de grupo [`testing/stdlib-core.json`](testing/stdlib-core.json)
-y su registro `STD-A-TEXT-EVIDENCE-001` en
-[`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json).
-Las quince firmas de `String` quedan trazadas desde el chequeo y la
-especialización HIR hasta el puente compiler/VM: Unicode válido, índices y
-slicing por scalar, iteración, búsquedas, transformaciones ASCII y rechazo
-atómico de UTF-8 inválido tienen fixtures ejecutables. `HOST` es
-`not-applicable` por ser un owner intrínseco sin capability ni host ambiental;
-el corpus bounded de UTF-8/admission fuzz está enlazado.
-
-`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
-`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
-
-El owner intrínseco `std.collections` queda cerrado para la evidencia de
-STD-0.1A mediante el contrato de grupo [`testing/stdlib-core.json`](testing/stdlib-core.json)
-y su registro `STD-A-COLL-EVIDENCE-001` en
-[`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json).
-Las dieciocho firmas de `Array`, `Map` y `Set` quedan trazadas desde HIR/MIR y
-los intrinsics bootstrap hasta bytecode, VM y el fixture de runtime: semántica
-de valor con COW interno, capacidad y errores atómicos, orden de inserción,
-hashing de claves, membership, reemplazo/eliminación e iteración lazy están
-cubiertos. `HOST` es `not-applicable` porque el owner es intrínseco y portable;
-el admission fuzz y las properties eager/COW aportan cobertura de formas y
-ownership.
-
-`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
-`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
-
-El owner intrínseco `std.iter` queda cerrado para la evidencia de STD-0.1A
-mediante el contrato de grupo [`testing/stdlib-core.json`](testing/stdlib-core.json)
-y su registro `STD-A-ITER-EVIDENCE-001` en
-[`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json).
-Las cuatro firmas de `Iterator` (`map`, `filter`, `take` y `collect`) quedan
-trazadas por el protocolo estático HIR, lowering MIR/bytecode y ejecución VM.
-El fixture `m11-std-iter-001.to` cubre laziness, consumo único, composición,
-callbacks síncronos, closures, rutas calificadas/genéricas, `take(-1)` y
-materialización acotada. Las properties y tests de runtime cubren cursores
-prestados, dispatch de iteradores de usuario, agotamiento, trazado de fuente y
-callbacks, y estados corruptos; `HOST` es `not-applicable` porque no hay
-capability ni dependencia ambiental.
-
-`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
-`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
-
-El owner intrínseco `std.math` queda cerrado para la evidencia de STD-0.1A
-mediante el contrato de grupo [`testing/stdlib-core.json`](testing/stdlib-core.json)
-y su registro `STD-A-MATH-EVIDENCE-001` en
-[`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json).
-The ten scalar signatures are traced through static HIR dispatch, the
-`process_host` bridge, nominal `MathError` values and a public fixture.
-Tests cover both rounding policies, signed zero, infinities, NaN, subnormals,
-overflow and the domain/non-finite boundary of `sqrt`, with additional numeric
-coverage in `m6-num-004-ieee.to`, Float32 properties and constant diagnostics.
-The scalar implementation is the scalar oracle for 0.1. There is no separate
-SIMD or fast-math route; a future vectorized backend must demonstrate bitwise
-equivalence before promotion. `HOST` is `not-applicable`.
-
-`std.math.round` uses nearest-integer rounding with ties to even: `2.5 -> 2.0`,
-`3.5 -> 4.0`, `-2.5 -> -2.0`, and `-3.5 -> -4.0`.
-`std.math.roundTiesAway` chooses the integer farther from zero at exact ties:
-`2.5 -> 3.0` and `-2.5 -> -3.0`. Both functions agree away from ties, including
-`2.1 -> 2.0` and `-2.1 -> -2.0`. The scalar kernel tests
-cover both representable neighbors of positive and negative ties, signed zero,
-subnormals, large integral values, infinities and NaN. The public
-`tests/runtime/m11-std-math-001.to` fixture exercises the compiler/hosted VM route;
-these checks do not establish native AOT conformance. The separate private
-source-driven scalar comparison covers `floor`, `ceil`, `round`,
-`roundTiesAway`, `truncate`, `abs`, `fma`, `min`, `max` and `sqrt` against hosted VM
-observations on the admitted x86_64 GNU Linux target. `sqrt` retains a private
-`Float ! MathError` carrier and checks `ok`/`err` and propagation; its source
-corpus does not inspect `MathError` variants. `fma` must round once;
-`min` and `max` ignore one NaN and select negative/positive zero respectively
-independent of operand order. It does not establish public native AOT
-conformance for the ten-function `std.math` surface.
-
-`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
-`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
-
-The `std.time` owner records its STD-0.1A component evidence in
-[`testing/stdlib-time.json`](testing/stdlib-time.json) and nine cells in
-[`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json)
-(`STD-A-TIME-EVIDENCE-001`). Its six requirements distinguish the
-`Duration`/`Instant`/`Timer` model, real and virtual providers, errors and limits,
-timer lifecycle and capability checks. The real provider uses the monotonic
-`std::time::Instant`; the sealed virtual provider in `std.testing` advances
-explicitly and executes the same semantic corpus. `clock` is checked per
-resolved provider operation, including function references, aliases and
-`defer`; importing `std.time` and using pure `Duration` operations requires
-no clock. `tests/runtime/m10-std-time-001.to` runs through parser, checker,
-bytecode, VM and host. `HOST` is `verified`; owner conformance remains open.
-
-`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
-`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
-
-El owner capability-gated `std.env` queda cerrado para la evidencia de
-STD-0.1A mediante [`testing/stdlib-env.json`](testing/stdlib-env.json) y su
-registro de nueve celdas en [`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json)
-(`STD-A-ENV-EVIDENCE-001`). Sus seis requisitos separan capability y
-disponibilidad, snapshot sellado, argv ordenado, nombres/valores textuales y
-binarios, ausencia mediante `Option`, copias independientes y límites
-atómicos. El proveedor solo recibe un plan runtime explícito: los tests cubren
-inputs inyectados, names inválidos, hosts unavailable y aislamiento de `PATH`,
-`HOME` y otras variables ambientales. `HOST` es `verified`.
-
-`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
-`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
-
-#### 10.2.2 Contrato cerrado de `std.text`
-
-`std.text` mantiene una sola representación: `String` inmutable y siempre
-válido en UTF-8. Los índices y límites de esta API son posiciones de scalar
-Unicode, nunca offsets de bytes. `TextError` pertenece al módulo y no publica
-una representación de error alternativa.
-
-Como los de las colecciones (10.2.3), estos métodos son intrínsecos de `String`,
-que está en el prelude: están disponibles sin `import`. Importar `std.text`
-solo hace falta para nombrar `text.TextError`.
-
-```tondo
-fn String.empty(): String
-fn String.fromChars(value: Array[Char]): String ! text.TextError
-fn String.length(self): Int
-fn String.byteLength(self): Int
-fn String.isEmpty(self): Bool
-fn String.get(self, index: Int): Char?
-fn String.slice(self, start: Int, end: Int): String ! text.TextError
-fn String.concat(self, other: String): String
-fn String.contains(self, needle: String): Bool
-fn String.startsWith(self, prefix: String): Bool
-fn String.endsWith(self, suffix: String): Bool
-fn String.find(self, needle: String): Int?
-fn String.replace(self, old: String, new: String): String
-fn String.trim(self): String
-fn String.toLowerAscii(self): String
-fn String.toUpperAscii(self): String
-fn String.chars(self): String
-
-enum TextError { InvalidIndex, InvalidBoundary, ResourceLimit }
-```
-
-`String.chars()` devuelve el mismo valor inmutable: `String` es el witness
-intrínseco de `Iterator[Char]`, por lo que un `for` puede consumirlo sin crear
-un wrapper de cursor. `fromChars` solo acepta valores `Char` (ya son scalars
-válidos), materializa una copia UTF-8 y falla de forma atómica si excede el
-límite del run. `slice` usa `[start, end)`, rechaza índices negativos o fuera
-de rango con `InvalidIndex`, rechaza `start > end` con `InvalidBoundary` y nunca
-publica una cadena parcial. Las búsquedas son por scalar/substring; `trim` y
-las conversiones ASCII no aplican normalización Unicode ni locale. La
-conversión `String(Bytes)` continúa siendo la única frontera UTF-8 que puede
-devolver `Utf8Error` por bytes inválidos.
-
-#### 10.2.3 Contrato cerrado de `std.collections`
-
-`Array[T]`, `Deque[T]`, `Map[K, V]` y `Set[K]` conservan una sola representación
-de valor del lenguaje. La implementación puede compartir buffers mediante COW,
-pero una asignación, paso por valor o resultado de una operación nunca expone
-alias mutables inesperados. Los métodos que cambian una colección exigen un
-receptor `var`; los métodos de consulta son puros. `Map` y `Set` requieren `Key`
-para garantizar igualdad y hashing estables, preservan el orden de inserción y no
-reordenan una entrada al reemplazar su valor.
-
-Estos métodos son intrínsecos de tipos del prelude: están disponibles sin
-`import`. Importar `std.collections` solo hace falta para nombrar
-`collections.CollectionError`.
-
-Una misma operación tiene el mismo nombre en todas las colecciones: `length` e
-`isEmpty` existen en todas, `push`/`pop` operan en el final de `Array` y `Deque`,
-y la consulta por posición es `get`, que también sirve para observar un extremo
-sin extraerlo (`get(0)` el primero, `get(-1)` el último).
-
-```tondo
-fn Array.new[T](): Array[T]
-fn Array.withCapacity[T](capacity: Int): Array[T] ! CollectionError
-fn Array.length[T](self): Int
-fn Array.isEmpty[T](self): Bool
-fn Array.get[T](self, index: Int): T?
-fn Array.slice[T](self, start: Int, end: Int): Array[T] ! CollectionError
-fn Array.push[T](var self, value: T)
-fn Array.pop[T](var self): T?
-fn Array.insert[T](var self, at: Int, value: T)
-fn Array.removeAt[T](var self, at: Int): T?
-fn Array.clear[T](var self)
-
-fn Deque.new[T](): Deque[T]
-fn Deque.length[T](self): Int
-fn Deque.isEmpty[T](self): Bool
-fn Deque.get[T](self, index: Int): T?
-fn Deque.push[T](var self, value: T)
-fn Deque.pop[T](var self): T?
-fn Deque.pushFront[T](var self, value: T)
-fn Deque.popFront[T](var self): T?
-fn Deque.clear[T](var self)
-
-fn Map.new[K: Key, V](): Map[K, V]
-fn Map.length[K: Key, V](self): Int
-fn Map.isEmpty[K: Key, V](self): Bool
-fn Map.get[K: Key, V](self, key: K): V?
-fn Map.insert[K: Key, V](var self, key: K, value: V): V?
-fn Map.remove[K: Key, V](var self, key: K): V?
-fn Map.contains[K: Key, V](self, key: K): Bool
-fn Map.clear[K: Key, V](var self)
-fn Map.entries[K: Key, V](self): Iterator[(K, V)]
-fn Map.keys[K: Key, V](self): Iterator[K]
-fn Map.values[K: Key, V](self): Iterator[V]
-
-fn Set.new[K: Key](): Set[K]
-fn Set.length[K: Key](self): Int
-fn Set.isEmpty[K: Key](self): Bool
-fn Set.insert[K: Key](var self, value: K): Bool
-fn Set.remove[K: Key](var self, value: K): Bool
-fn Set.contains[K: Key](self, value: K): Bool
-fn Set.clear[K: Key](var self)
-fn Set.values[K: Key](self): Iterator[K]
-
-enum CollectionError { InvalidCapacity, InvalidIndex, InvalidStep, ResourceLimit }
-```
-
-`new` requiere argumentos de tipo explícitos para que no haya una inferencia
-dependiente del uso posterior. `withCapacity` rechaza una capacidad negativa,
-no representable o por encima del límite del run sin publicar una reserva
-parcial. `get` es total y devuelve `none` fuera de rango; los índices negativos
-cuentan desde el final. `slice` usa
-`[start, end)`, exige límites no negativos y que `start <= end <= length`, y es
-atómica.
-
-`push`, `pushFront` e `insert` no son fallibles: no poder reservar memoria es
-agotamiento de recursos de la implementación (lenguaje 10.3), no un error
-recuperable. `push` añade al final y `pushFront` al principio. `pop` y
-`popFront` devuelven `none` cuando la colección está vacía. `insert(at, value)`
-coloca `value` en la posición `at`, que admite índices negativos desde el final
-y puede ser igual a `length` para añadir al final; una posición fuera de
-`0...length` produce el pánico de bounds `P0001`, igual que un índice directo.
-`removeAt(at)` extrae el elemento de esa posición, desplaza los siguientes y
-devuelve `none` si la posición no existe. `clear` elimina todos los elementos.
-
-`Deque[T]` es la colección para colas: `push` y `popFront` forman una cola FIFO
-y ambos extremos operan en tiempo constante amortizado. Admite indexación
-`deque[i]` con las mismas reglas que `Array`. Las colas compartidas entre tasks
-son `sync.Queue` y `sync.Stack`.
-
-`Map.insert` devuelve el valor anterior y mantiene la primera posición de la
-key; `remove` devuelve el valor eliminado. `Set.insert` devuelve `false` cuando
-la key ya existe y `remove` devuelve `false` cuando está ausente. `entries`,
-`keys` y `values` son cursores lazy en orden de inserción: cada target de `for`
-consume exactamente un elemento y el cursor no se reinicia implícitamente.
-
-Un nombre habitual en otros lenguajes que no pertenezca a esta lista
-(`append`, `add`, `peek`, `first`, `last`, `size`, `count`, `len`, `enqueue`,
-`dequeue`, `has`, `delete`...) produce `E1001` indicando la operación canónica.
+`bytes()` no falla. `String.fromBytes` valida UTF-8 estricto y devuelve
+`TextError.InvalidData` ante bytes inválidos, sin producir un `String` parcial
+ni insertar caracteres de reemplazo. Otros encodings pertenecen a
+`std.encoding`.
 
 ### 10.3 Protocolos de I/O
 
-`std.io` posee los contratos portables compartidos por console, filesystem y
-process. El módulo define tipos, traits y errores; no abre streams ni concede
-capabilities al importarse.
-
-Sus APIs concretas deberán distinguir:
-
-- Lectura parcial de lectura exacta.
-- Escritura aceptada de escritura completamente drenada.
-- EOF normal de fallo recuperable.
-- Texto de bytes.
-- Buffer poseído de préstamo temporal.
-- Operación síncrona de punto de suspensión.
-
-Un reader o writer concreto conserva el owner de su módulo y satisface los
-protocolos mediante dispatch estático. `read`, `write`, `flush`, `readAll` y
-`writeAll` esperan al host como cualquier llamada (sección 9).
-No hay variantes
-`readAsync` ni `writeAsync`. STD-0.1 no exige type erasure, vtables ni
-un stream dinámico común para almacenar implementaciones heterogéneas.
-
-La superficie mínima de `std.io` es:
-
-```tondo
-enum IoError { Closed, Cancelled, InvalidData, ResourceLimit, Host }
-enum ReadResult { Data(Bytes), Eof }
-trait Reader {
-    fn read(var self, max: Int): ReadResult ! IoError
-}
-trait Writer {
-    fn write(var self, data: Bytes): Int ! IoError
-    fn flush(var self): Unit ! IoError
-}
-fn defaultLimits(): IoLimits
-fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError
-fn readAll[R: Reader](reader: var R, policy: IoLimits): Bytes ! IoError
-fn writeAll[W: Writer](writer: var W, data: Bytes): Unit ! IoError
-type IoLimits
-```
-
-`read` may return fewer bytes than requested; normal EOF is exclusively
-`ReadResult.Eof`. `readAll` publishes no partial buffer on failure. The hosted
-console Input can check the aggregate limit before consuming its captured
-input; other readers, including File, may already have consumed earlier chunks.
-`writeAll` drains short writes, rejects writers that make no progress and
-flushes on completion. Suspendible backends propagate cancellation as
-`IoError.Cancelled`; the Bytes borrow ends when `write` returns.
-
-`Reader` and `Writer` are ordinary static traits, not value types or aliases
-for hosted tokens. User implementations use the same generic helpers as other
-implementations. `IoLimits` has private representation and can only be obtained
-through its validated factories. An empty `Data` or a chunk larger than the
-requested maximum is `IoError.InvalidData`; aggregate overflow is
-`IoError.ResourceLimit`. Generic readers need not support rollback: an error
-returns no partial buffer, but earlier reads can already have consumed data.
-The concrete `console.Input` adapter additionally checks the aggregate limit
-before consumption, including calls through generic wrappers or function values.
-
-Los protocolos no prometen que toda fuente pueda seek, conocer su longitud,
-repetir una lectura o conservar datos después de cancelar. Cada capacidad
-adicional aparece como trait o método exacto, no como operación que falla
-siempre para ciertos handles.
-
-La evidencia ejecutable `STD-A-IO-EVIDENCE-001` mantiene esta separación:
-`std.io` aporta únicamente los protocolos portables y sus límites, mientras
-`std.console`, `std.fs` y `std.process` poseen los adaptadores capability-gated.
-El corpus de chunks deterministas prueba short I/O, EOF, progreso, errores de
-`flush`, límites y cancelación sin inventar una segunda API síncrona/asíncrona.
-Las dimensiones de coste son bytes copiados, chunks procesados y work-units.
-
-`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
-`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
+`std.io` reunirá los protocolos de lectura y escritura que comparten archivos,
+procesos y red. Sus operaciones esperan como cualquier llamada (sección 9) y no
+existen variantes `Async`. Leer distingue la lectura parcial de la exacta y el
+final de los datos de un error; escribir distingue lo aceptado de lo drenado.
+Los protocolos se definen cuando un segundo módulo los necesite; hasta entonces
+`std.fs.File` ofrece sus propias operaciones (10.5).
 
 ### 10.4 Paths
 
-`std.path.Path` no es un alias de `String`. Debe poder representar paths nativos
-que el host admite aunque no sean Unicode.
-
-La representación es un snapshot de bytes con un límite de 32 KiB. `fromBytes`
-acepta bytes nativos salvo NUL, `toBytes` devuelve una copia exacta y
-`fromString`/`toString` solo aplican la validación UTF-8 necesaria para cruzar
-la frontera textual. No hay normalización Unicode, case-folding, resolución de
-`.`/`..`, expansión de separadores ni consulta implícita al filesystem:
-secuencias NFC/NFD y componentes literales permanecen observables.
-
-La separación es:
-
-- `std.path`: representación y operaciones léxicas.
-- `std.fs`: observación y mutación del filesystem.
-
-Formatear un path para diagnóstico no garantiza una representación reversible.
-Convertirlo a texto puede fallar o exigir una política explícita. Normalizar
-léxicamente no consulta el filesystem, no resuelve enlaces y no afirma
-canonicalidad física.
-
-`kind` devuelve `Bool`: `true` para un snapshot absoluto y `false` para uno
-relativo. No existe un enum paralelo para esta propiedad binaria.
-
-`join` es una operación atómica sobre un único componente y rechaza un
-componente vacío, cualquier `/`, NUL o el resultado que supere el límite. Las
-consultas `parent`, `fileName`, `extension`, `kind` e `isEmpty` son puramente
-léxicas y tienen resultados deterministas para raíz, path vacío, archivos
-ocultos, extensiones vacías y separadores finales.
-
-### 10.5 Filesystem hosted
-
-`std.fs` es la frontera capability-gated para observar y mutar el filesystem.
-Todas sus operaciones que pueden tocar el host esperan sin bloquear el thread;
-`std.path` sigue siendo puro y no espera. Importar `std.fs` no concede `filesystem`: el target debe
-declarar explícitamente esa capability y el compilador rechaza el módulo con
-`E1008` antes del lowering cuando falta. El owner público es:
+Un path es un `String`. `std.path` ofrece operaciones léxicas, que no consultan
+el filesystem ni resuelven enlaces:
 
 ```tondo
-type File
-type Directory
-enum FileKind { File, Directory, Symlink, Other }
-type Metadata = { kind: FileKind, size: Int, readOnly: Bool }
-enum OpenMode { Read, Write, ReadWrite, Append, Create, CreateNew }
-fn open(path: Path, mode: OpenMode): File ! FsError
-fn openDirectory(path: Path): Directory ! FsError
-fn metadata(path: Path): Metadata ! FsError
-fn File.read(var self, max: Int): Option[Bytes] ! FsError
-fn File.write(var self, data: Bytes): Int ! FsError
-fn File.flush(var self): Unit ! FsError
-fn Directory.list(var self): Array[Path] ! FsError
+import std.path
+
+path.join("docs", "guide.md")       // "docs/guide.md"
+path.parent("docs/guide.md")        // some("docs")
+path.fileName("docs/guide.md")      // some("guide.md")
+path.extension("docs/guide.md")     // some("md")
+path.isAbsolute("/etc/hosts")       // true
 ```
 
-`Metadata` is an ordinary value with public fields, immutable by default.
-`metadata` observes the entry itself without following symbolic links, including
-dangling links. `kind` distinguishes regular files, directories, symbolic links
-and other host entries. `size` is the nonnegative host-reported length in bytes;
-for nonregular entries its meaning is platform-dependent. A length outside `Int`
-returns `FsError.ResourceLimit`. `readOnly` is the host read-only attribute, not
-a prediction that the caller can write. The fields are a snapshot: later
-filesystem changes do not update existing values. Query again to observe them.
-Reading fields, copying or matching the value performs no host I/O.
+`join` añade un componente, o devuelve el segundo cuando es absoluto. `parent`,
+`fileName` y `extension` dan `none` cuando el path no tiene esa parte;
+`extension` no incluye el punto. Un nombre de archivo que no es UTF-8 no puede
+representarse: las operaciones de `std.fs` que lo encuentran devuelven
+`FsError.InvalidName`.
 
-`File` y `Directory` son afines: el owner se revoca en cleanup normal y durante
-unwind. El verificador impide el uso posterior en programas seguros y el host
-rechaza cualquier token stale o forjado como una violación de la invariante de
-runtime; `FsError.Closed` queda disponible para cierres observables que no
-invaliden esa invariante. `File` conserva posición entre llamadas y no copia
-el descriptor. `File` implements the ordinary `io.Reader` and `io.Writer`
-traits, so `io.readAll` and `io.writeAll` accept `var File` through normal
-generic dispatch. The adapters preserve closed, cancellation and resource-limit
-errors; other `FsError` variants become `IoError.Host`. Generic `readAll`
-returns no partial buffer on error, but earlier reads may have consumed data.
-`OpenMode` and `FsError` are nominal enums, with ordinary variant values and
-exhaustive matching; neither requires a host handle.
-`list` ordena por bytes nativos; `atomicWrite` usa un temporal en el mismo
-directorio, hace flush y rename. Los límites globales de bytes, entradas y
-trabajo se comprueban antes de materializar bytes o entradas: un rechazo es
-atómico y no publica resultados parciales. El cleanup se ejecuta en las rutas
-normales, durante unwind y al cancelar la tarea que espera. El host no
-sigue enlaces simbólicos al eliminar un recurso temporal y no incluye paths
-físicos ni contenido en `FsError`; la operación de rename no promete
-durabilidad de hardware. The executable evidence is tracked by
-`STD-A-FS-EVIDENCE-001`, which remains open with `STD-FS-IMPL-001` until the
-remaining filesystem admission paths and integrated owner checks are complete.
+### 10.5 Filesystem
 
-`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
-`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
+`std.fs` observa y cambia el filesystem. Sus operaciones esperan sin bloquear el
+thread: el runtime las ejecuta en threads propios mientras la tarea espera, y las
+demás tareas siguen corriendo. No tiene variantes `Async`.
+
+```tondo
+import std.fs
+
+let config = fs.readText("config.toml")?
+fs.writeText("out.txt", report)?
+fs.appendText("app.log", "started\n")?
+let image = fs.readBytes("logo.png")?
+if fs.exists("cache") {
+    fs.removeAll("cache")?
+}
+for name in fs.list("docs")? {
+    console.println(name)
+}
+
+var file = fs.open("big.log", fs.OpenMode.Read)?
+for {
+    match file.readLine()? {
+        some(line) => process(line),
+        none => break,
+    }
+}
+```
+
+La superficie es:
+
+```tondo pseudocode
+pub enum FsError {
+    NotFound
+    PermissionDenied
+    AlreadyExists
+    NotADirectory
+    IsADirectory
+    InvalidData
+    InvalidName
+    Host
+}
+pub enum FileKind { File, Directory, Symlink, Other }
+pub type Metadata = { kind: FileKind, size: Int, readOnly: Bool }
+pub enum OpenMode { Read, Write, Append, CreateNew, ReadWrite }
+pub type File
+
+pub fn readText(path: String): String ! FsError
+pub fn readBytes(path: String): Array[Byte] ! FsError
+pub fn writeText(path: String, text: String): Unit ! FsError
+pub fn writeBytes(path: String, data: Array[Byte]): Unit ! FsError
+pub fn appendText(path: String, text: String): Unit ! FsError
+pub fn exists(path: String): Bool
+pub fn metadata(path: String): Metadata ! FsError
+pub fn list(path: String): Array[String] ! FsError
+pub fn createDirectory(path: String): Unit ! FsError
+pub fn rename(from: String, to: String): Unit ! FsError
+pub fn copy(from: String, to: String): Unit ! FsError
+pub fn remove(path: String): Unit ! FsError
+pub fn removeAll(path: String): Unit ! FsError
+pub fn open(path: String, mode: OpenMode): File ! FsError
+
+pub fn File.readLine(var self): String? ! FsError
+pub fn File.read(var self, max: Int): Array[Byte]? ! FsError
+pub fn File.readText(var self): String ! FsError
+pub fn File.write(var self, text: String): Unit ! FsError
+pub fn File.writeBytes(var self, data: Array[Byte]): Unit ! FsError
+pub fn File.flush(var self): Unit ! FsError
+pub fn File.close(self): Unit ! FsError
+```
+
+- `readText`, `readLine`, `File.readText` y `list` validan UTF-8 y devuelven
+  `InvalidData` o `InvalidName`.
+- `writeText` y `writeBytes` escriben en un archivo temporal del mismo
+  directorio y lo renombran: otro lector ve el contenido anterior o el nuevo,
+  nunca uno a medias. El rename no promete durabilidad ante un corte de
+  energía.
+- `exists` no sigue un enlace roto como existente; `metadata` describe la
+  entrada misma, sin seguir enlaces. `size` es la longitud en bytes que da el
+  host, y `readOnly` el atributo del host, no una predicción de permisos.
+- `list` devuelve los nombres de las entradas, sin `.` ni `..`, ordenados por
+  bytes.
+- `createDirectory` crea también los directorios padre que falten y no falla si
+  el directorio ya existe. `remove` borra un archivo, un enlace o un directorio
+  vacío; `removeAll` borra un directorio con su contenido sin seguir enlaces.
+- `open` con `Read` lee un archivo existente; `Write` lo crea o lo vacía;
+  `Append` lo crea si falta y escribe al final; `CreateNew` falla con
+  `AlreadyExists` si ya existe; `ReadWrite` lee y escribe uno existente.
+- `readLine` devuelve la siguiente línea sin su `\n` ni `\r\n`, o `none` al
+  final; `read(max)` devuelve hasta `max` bytes, o `none` al final;
+  `File.readText` lee el resto del archivo.
+- Un `File` tiene un único dueño y no es `Copy`. Se cierra solo al abandonarse
+  y sus escrituras pendientes se vuelcan entonces; los errores de ese cierre
+  implícito se pierden. `close()` cierra en el momento y devuelve sus errores;
+  `flush()` vuelca las escrituras pendientes sin cerrar.
+- `FsError` no incluye paths ni contenido; `Host` reúne los fallos que el host
+  no permite distinguir.
 
 ### 10.6 Formato
 
@@ -1525,7 +1146,7 @@ rompa COW, ownership o seguridad.
 
 Una API de transformación ofrece una ruta de streaming o escritura sobre
 `std.io.Writer` cuando materializar el resultado completo no es inherente al
-contrato. La operación cómoda que devuelve `Bytes` puede existir además, pero se
+contrato. La operación cómoda que devuelve `Array[Byte]` puede existir además, pero se
 define como collector de la misma máquina semántica y no como una implementación
 divergente.
 
@@ -1770,7 +1391,6 @@ actualizar esta especificación y el tracker antes de implementar.
 | Superficie | Clase | Capability | Edición mínima | Responsabilidad |
 |---|---|---|---:|---|
 | Métodos de tipos intrínsecos | Core | — | 0.1 | Option, Result, String, Array, Map, Set, Range e Iterator |
-| `std.bytes` | Core | — | 0.1 | `Bytes`, builders y conversión binaria explícita |
 | `std.io` | Core | — | 0.1 | Protocolos de lectura/escritura, buffers, EOF, partial I/O y errores portables |
 | `std.math` | Core | — | 0.1 | Matemática escalar portable y semántica IEEE nombrada |
 | `std.format` | Core | — | 0.1 | Formatting explícito sobre `Display`, sin reflection |
@@ -1785,7 +1405,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.toml` | Core | — | 0.1 | TOML tipado y árbol dinámico explícito, preservando errores con spans |
 | `std.cbor` | Core | — | 0.1 | CBOR tipado, streaming y modo determinista explícito |
 | `std.time` | Core + gated | `clock` monotónico; `civil-clock` para reloj de pared y anclas | 0.1 | Time-base monotónico, calendario civil y zonas horarias versionadas |
-| `std.path` | Core | — | 0.1 | Paths nativos y operaciones puramente léxicas |
+| `std.path` | Core | — | 0.1 | Operaciones léxicas sobre paths `String` |
 | `std.regex` | Core | — | 0.1 | Expresiones regulares Unicode con complejidad y límites declarados |
 | `std.uuid` | Core + gated | `entropy` y/o `civil-clock` para generación | 0.1 | UUID, parsing, formatting y generadores explícitos por versión |
 | `std.sync` | Core + gated | `threads` para operaciones cross-thread | 0.1 | Mutex, rwlock, condición, semáforo, once, barrier, atomics y colecciones compartidas linealizables |
@@ -1793,7 +1413,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.log` | Core + gated | `console`, `filesystem` o `network` por sink | 0.1 | Eventos estructurados, niveles, backpressure y sinks explícitos |
 | `std.console` | Capability-gated | `console` | 0.1 | stdin, stdout, stderr, texto, bytes y flushing |
 | `std.env` | Capability-gated | `environment` | 0.1 | Argumentos y environment runtime explícitos |
-| `std.fs` | Capability-gated | `filesystem` | 0.1 | Filesystem, metadata, iteración y recursos de archivo |
+| `std.fs` | Hosted | — | 0.1 | Filesystem, metadata y archivos |
 | `std.process` | Capability-gated | `process` | 0.1 | Planes, procesos, pipes, status, output y cancelación |
 | `std.net` | Capability-gated | `network` | 0.1 | Direcciones, DNS, sockets, streams, datagrams y frontera TLS |
 | `std.testing` | Test-only | ninguna implícita | 0.1 | Control sellado y helpers portables del runner |
@@ -1802,8 +1422,8 @@ actualizar esta especificación y el tracker antes de implementar.
 
 - No existe un módulo importable `std.core`; los nombres intrínsecos continúan
   en el prelude del lenguaje.
-- `std.bytes.Bytes` es el propietario binario común. Ningún módulo define otro
-  `Bytes`.
+- `Array[Byte]` es la forma común de los datos binarios; ningún módulo define
+  otro tipo binario.
 - `std.io` posee los protocolos y errores compartidos; los handles concretos y
   sus efectos pertenecen a módulos capability-gated.
 - `std.path` no toca el filesystem.
@@ -1864,7 +1484,7 @@ actualizar esta especificación y el tracker antes de implementar.
 
 El catálogo y sus propietarios son normativos. Las declaraciones exhaustivas de
 las veintinueve superficies permanecen pendientes, salvo el núcleo sellado que
-`TONDO_TESTING_SPEC.md` ya fija para `std.testing`, `std.bytes`, el sustrato
+`TONDO_TESTING_SPEC.md` ya fija para `std.testing`, el sustrato
 monotónico y civil de `std.time`, el snapshot read-only de `std.env` y los
 contratos runtime-facing de `std.net` y `std.time` civil en las secciones
 14.3.7 y 14.4.6. No existe un contrato bootstrap separado: el corpus consume
@@ -1872,7 +1492,7 @@ siempre este borrador.
 
 La implementación usa dos gates internos sin crear versiones distintas:
 
-- **STD-0.1A / S1A** cierra intrinsics, `std.bytes`, `std.io`, `std.math`,
+- **STD-0.1A / S1A** cierra intrinsics, `std.io`, `std.math`,
   `std.format`, `std.serialization`, `std.reflect`, `std.meta`, `std.json`,
   `std.messagepack`, `std.protobuf`, el sustrato monotónico de `std.time`,
   `std.path`, `std.console`, `std.env`, `std.fs`, `std.process` y
@@ -2050,18 +1670,18 @@ pub type Name
 
 pub enum Value {
     Text(String)
-    Bytes(bytes.Bytes)
+    Bytes(Array[Byte])
 }
 
 pub type Snapshot
 
 pub fn snapshot(): Snapshot ! EnvError
 pub fn Name.fromText(value: String): Name ! EnvError
-pub fn Name.fromBytes(value: bytes.Bytes): Name ! EnvError
+pub fn Name.fromBytes(value: Array[Byte]): Name ! EnvError
 pub fn Snapshot.arguments(self): Array[Value]
 pub fn Snapshot.get(self, name: Name): Option[Value] ! EnvError
 pub fn Value.asText(self): Option[String]
-pub fn Value.asBytes(self): bytes.Bytes
+pub fn Value.asBytes(self): Array[Byte]
 ~~~
 
 `Name.fromText` codifica el nombre en UTF-8 sin normalización Unicode;
@@ -2088,7 +1708,7 @@ devuelve `ResourceLimit` sin publicar un snapshot parcial. Dos llamadas durante
 una misma invocación observan el mismo snapshot sellado y no pueden ver
 cambios externos a mitad de ejecución. La capability `environment` es
 necesaria tanto para `snapshot` como para cualquier operación que consuma un
-snapshot; omitirla produce `E1008` en el límite de módulos. `Duration`, `Bytes`
+snapshot; omitirla produce `E1008` en el límite de módulos. `Duration`, `Array[Byte]`
 y las conversiones de texto siguen siendo APIs independientes y no se importan
 por `std.env`.
 
@@ -2566,20 +2186,20 @@ pub fn EncodingLimits.create(maxInputBytes: Int, maxOutputBytes: Int): EncodingL
 pub fn Base64Options.standard(limits: EncodingLimits): Base64Options
 pub fn Base64Options.urlSafe(limits: EncodingLimits): Base64Options
 pub fn Base64Options.urlSafeUnpadded(limits: EncodingLimits): Base64Options
-pub fn Base64Options.encode(self, input: Bytes): Bytes ! EncodingError
-pub fn Base64Options.decode(self, input: Bytes): Bytes ! EncodingError
-pub fn Base64Options.encodeTo(self, input: Bytes, var output: std.io.Writer): Unit ! EncodingError
-pub fn Base64Options.decodeFrom(self, var input: std.io.Reader): Bytes ! EncodingError
+pub fn Base64Options.encode(self, input: Array[Byte]): Array[Byte] ! EncodingError
+pub fn Base64Options.decode(self, input: Array[Byte]): Array[Byte] ! EncodingError
+pub fn Base64Options.encodeTo(self, input: Array[Byte], var output: std.io.Writer): Unit ! EncodingError
+pub fn Base64Options.decodeFrom(self, var input: std.io.Reader): Array[Byte] ! EncodingError
 pub fn Base64Options.encoder(self): Base64Encoder ! EncodingError
 pub fn Base64Options.decoder(self): Base64Decoder ! EncodingError
 
 pub fn HexOptions.lower(limits: EncodingLimits): HexOptions
 pub fn HexOptions.upper(limits: EncodingLimits): HexOptions
 pub fn HexOptions.anyCase(limits: EncodingLimits): HexOptions
-pub fn HexOptions.encode(self, input: Bytes): Bytes ! EncodingError
-pub fn HexOptions.decode(self, input: Bytes): Bytes ! EncodingError
-pub fn HexOptions.encodeTo(self, input: Bytes, var output: std.io.Writer): Unit ! EncodingError
-pub fn HexOptions.decodeFrom(self, var input: std.io.Reader): Bytes ! EncodingError
+pub fn HexOptions.encode(self, input: Array[Byte]): Array[Byte] ! EncodingError
+pub fn HexOptions.decode(self, input: Array[Byte]): Array[Byte] ! EncodingError
+pub fn HexOptions.encodeTo(self, input: Array[Byte], var output: std.io.Writer): Unit ! EncodingError
+pub fn HexOptions.decodeFrom(self, var input: std.io.Reader): Array[Byte] ! EncodingError
 pub fn HexOptions.encoder(self): HexEncoder ! EncodingError
 pub fn HexOptions.decoder(self): HexDecoder ! EncodingError
 ~~~
@@ -2661,7 +2281,7 @@ owners build-only, sin relajar `--strict`.
 La coordinación normativa completa de STD-0.1A vive en
 [`docs/contracts/stdlib-matrix.md`](./docs/contracts/stdlib-matrix.md) y
 [`testing/stdlib-matrix.json`](./testing/stdlib-matrix.json). Incluye una fila
-por firma y por requisito de owner, el owner intrínseco `std.bytes`, las
+por firma y por requisito de owner, las
 dimensiones públicas de performance y las seis celdas
 `SPEC → IMPL/HOST → MODEL/TEST/FUZZ → PERF → CONF → DOC`. Las celdas
 pendientes exigen razón y referencia; la matriz no adelanta requisitos de
@@ -2677,21 +2297,21 @@ owner-wide fuzz promotion, performance and conformance require separate proof.
 | Owner | Source set | Estado | Dependencias directas |
 |---|---|---|---|
 | `std.core` (intrínsecos) | `stdlib-core` | cerrado | lenguaje |
-| `std.text` | `stdlib-core` | cerrado | `std.bytes` |
+| `std.text` | `stdlib-core` | cerrado | `Array[Byte]` |
 | `std.collections` | `stdlib-core` | cerrado | `std.core` |
 | `std.iter` | `stdlib-core` | cerrado | colecciones |
 | `std.math` | `stdlib-core` | cerrado | numéricos intrínsecos |
-| `std.format` | `stdlib-core` | cerrado | `Display`, `std.bytes` |
-| `std.io` | `stdlib-core` | cerrado | `Bytes` |
-| `std.serialization` | `stdlib-core` | cerrado | `std.io`, `std.bytes` |
+| `std.format` | `stdlib-core` | cerrado | `Display`, `Array[Byte]` |
+| `std.io` | `stdlib-core` | cerrado | `Array[Byte]` |
+| `std.serialization` | `stdlib-core` | cerrado | `std.io`, `Array[Byte]` |
 | `std.console` | `stdlib-hosted` | cerrado | `std.io`, capability `console` |
-| `std.path` | `stdlib-hosted` | cerrado | `String`, `Bytes` |
+| `std.path` | `stdlib-hosted` | cerrado | `String`, `Array[Byte]` |
 | `std.fs` | `stdlib-hosted` | cerrado | `std.path`, `std.io`, `filesystem` |
-| `std.process` | `stdlib-hosted` | cerrado | `std.io`, `std.bytes`, `process` |
+| `std.process` | `stdlib-hosted` | cerrado | `std.io`, `Array[Byte]`, `process` |
 
 Los contratos de JSON, MessagePack, Protobuf y `std.testing` mantienen sus
 registros de owner existentes y reutilizan exactamente `Encoder`,
-`Decoder`, `Reader`, `Writer` y `Bytes` de estos source sets. `std.path`
+`Decoder`, `Reader`, `Writer` y `Array[Byte]` de estos source sets. `std.path`
 no adquiere `filesystem` por importar; `std.console`, `std.fs` y `std.process`
 solo comprueban su capability en el límite del adaptador. Ningún contrato
 introduce una segunda representación de error, stream o colección.
@@ -2720,7 +2340,7 @@ format no admite.
 
 Todo codec ofrece tres niveles cuando el formato los admite:
 
-1. una operación cómoda que transforma un valor completo a/desde `Bytes`;
+1. una operación cómoda que transforma un valor completo a/desde `Array[Byte]`;
 2. un `Reader`/`Writer` incremental sobre `std.io`; y
 3. una máquina de eventos o tokens para procesar documentos sin materializarlos.
 
@@ -2739,7 +2359,7 @@ La ruta dinámica común pertenece a `std.serialization` y se expone como
 `serialization.Value` (JSON y MessagePack pueden reexportarlo como `Value`). Sus
 variantes son `Null`, `Bool`, `Int`, `UInt`, `Float`, `Text`, `Bytes`,
 `Object(ordered Map[String, Value])`, `Map(ordered Array[(Value, Value)])` y
-`Extension(tag, Bytes)`. JSON solo produce las variantes de su modelo y rechaza
+`Extension(tag, Array[Byte])`. JSON solo produce las variantes de su modelo y rechaza
 `Bytes`, `Extension` y mapas con claves no textuales salvo una opción explícita;
 MessagePack conserva bytes, extensiones y claves arbitrarias. Protobuf no usa
 este árbol: su inspección dinámica es un modelo de wire propio con fields
@@ -2770,7 +2390,7 @@ un codec concreto. `@proto(number)` es obligatorio para cada field Protobuf y
 los números nunca se infieren; los números 19000..19999 están reservados.
 `@ignore` es simétrico y omite el field al codificar y decodificar, por lo que
 un field ignorado debe ser `Option[T]` y se reconstruye como `none`.
-`@json(base64)` convierte `Bytes` tipado a/desde texto Base64 (RFC 4648;
+`@json(base64)` convierte `Array[Byte]` tipado a/desde texto Base64 (RFC 4648;
 URL-safe debe nombrarse explícitamente); `parse` dinámico conserva el texto
 original. Las anotaciones se resuelven en compile time y no requieren
 reflection de valores.
@@ -2800,8 +2420,8 @@ pub trait Encoder[C, E] {
     fn float32(var self, value: Float32): Unit ! E
     fn float64(var self, value: Float64): Unit ! E
     fn string(var self, value: String): Unit ! E
-    fn bytes(var self, value: Bytes): Unit ! E
-    fn base64(var self, value: Bytes): Unit ! E
+    fn bytes(var self, value: Array[Byte]): Unit ! E
+    fn base64(var self, value: Array[Byte]): Unit ! E
     fn startArray(var self, length: Int?): Unit ! E
     fn endArray(var self): Unit ! E
     fn startMap(var self, length: Int?): Unit ! E
@@ -2817,7 +2437,7 @@ pub trait Encoder[C, E] {
 pub trait Decoder[C, E] {
     fn peek(var self): SerializationEvent? ! E
     fn next(var self): SerializationEvent ! E
-    fn base64(var self): Bytes ! E
+    fn base64(var self): Array[Byte] ! E
     fn own(var self, event: SerializationEvent): SerializationEvent ! E
     fn reject(var self, error: SerializationError): E
 }
@@ -3195,15 +2815,15 @@ de un field ni datos potencialmente secretos dentro de su mensaje.
 La API fuente única de 0.1 es:
 
 ~~~tondo pseudocode
-pub fn parse(input: Bytes, options: JsonDecodeOptions): Value ! JsonError
-pub fn parseView(input: Bytes, options: JsonDecodeOptions): ValueView ! JsonError
-pub fn decode[T: Decode[Json]](input: Bytes, options: JsonDecodeOptions): T ! JsonError
-pub fn encode[T: Encode[Json]](value: T, options: JsonEncodeOptions): Bytes ! JsonError
-pub fn validate(input: Bytes, options: JsonDecodeOptions): Unit ! JsonError
-pub fn canonicalize(input: Bytes, options: JsonDecodeOptions): Bytes ! JsonError
-pub fn encodeCanonical(value: Value, limits: JsonLimits): Bytes ! JsonError
-pub fn raw(input: Bytes): Raw ! JsonError
-pub unsafe fn rawUnchecked(input: Bytes): Raw
+pub fn parse(input: Array[Byte], options: JsonDecodeOptions): Value ! JsonError
+pub fn parseView(input: Array[Byte], options: JsonDecodeOptions): ValueView ! JsonError
+pub fn decode[T: Decode[Json]](input: Array[Byte], options: JsonDecodeOptions): T ! JsonError
+pub fn encode[T: Encode[Json]](value: T, options: JsonEncodeOptions): Array[Byte] ! JsonError
+pub fn validate(input: Array[Byte], options: JsonDecodeOptions): Unit ! JsonError
+pub fn canonicalize(input: Array[Byte], options: JsonDecodeOptions): Array[Byte] ! JsonError
+pub fn encodeCanonical(value: Value, limits: JsonLimits): Array[Byte] ! JsonError
+pub fn raw(input: Array[Byte]): Raw ! JsonError
+pub unsafe fn rawUnchecked(input: Array[Byte]): Raw
 pub fn JsonReader.next(var self): JsonEvent? ! JsonError
 pub fn JsonReader.own(var self, event: JsonEvent): JsonEvent ! JsonError
 pub fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError
@@ -3253,15 +2873,15 @@ reflection.
 La API fuente única de 0.1 es:
 
 ~~~tondo pseudocode
-pub fn parse(input: Bytes, options: MessagePackDecodeOptions): Value ! MessagePackError
-pub fn parseView(input: Bytes, options: MessagePackDecodeOptions): ValueView ! MessagePackError
-pub fn decode[T: Decode[MessagePack]](input: Bytes, options: MessagePackDecodeOptions): T ! MessagePackError
-pub fn encode(value: Value, options: MessagePackEncodeOptions): Bytes ! MessagePackError
-pub fn encode[T: Encode[MessagePack]](value: T, options: MessagePackEncodeOptions): Bytes ! MessagePackError
-pub fn validate(input: Bytes, options: MessagePackDecodeOptions): Unit ! MessagePackError
-pub fn encodeDeterministic(value: Value, limits: MessagePackLimits): Bytes ! MessagePackError
-pub fn raw(input: Bytes, options: MessagePackDecodeOptions): Raw ! MessagePackError
-pub unsafe fn rawUnchecked(input: Bytes): Raw
+pub fn parse(input: Array[Byte], options: MessagePackDecodeOptions): Value ! MessagePackError
+pub fn parseView(input: Array[Byte], options: MessagePackDecodeOptions): ValueView ! MessagePackError
+pub fn decode[T: Decode[MessagePack]](input: Array[Byte], options: MessagePackDecodeOptions): T ! MessagePackError
+pub fn encode(value: Value, options: MessagePackEncodeOptions): Array[Byte] ! MessagePackError
+pub fn encode[T: Encode[MessagePack]](value: T, options: MessagePackEncodeOptions): Array[Byte] ! MessagePackError
+pub fn validate(input: Array[Byte], options: MessagePackDecodeOptions): Unit ! MessagePackError
+pub fn encodeDeterministic(value: Value, limits: MessagePackLimits): Array[Byte] ! MessagePackError
+pub fn raw(input: Array[Byte], options: MessagePackDecodeOptions): Raw ! MessagePackError
+pub unsafe fn rawUnchecked(input: Array[Byte]): Raw
 pub fn MessagePackReader.next(var self): MessagePackEvent? ! MessagePackError
 pub fn MessagePackReader.own(var self, event: MessagePackEvent): MessagePackEvent ! MessagePackError
 pub fn MessagePackWriter.write(var self, event: MessagePackEvent): Unit ! MessagePackError
@@ -3414,10 +3034,10 @@ descriptor = "none"
 La API runtime única es:
 
 ~~~tondo pseudocode
-pub fn decode[T: Decode[Protobuf]](input: Bytes, options: ProtoDecodeOptions): T ! ProtoError
-pub fn encode[T: Encode[Protobuf]](value: T, options: ProtoEncodeOptions): Bytes ! ProtoError
-pub fn encodeDeterministic[T: Encode[Protobuf]](value: T, limits: ProtoLimits): Bytes ! ProtoError
-pub fn validate[T](input: Bytes, options: ProtoDecodeOptions): Unit ! ProtoError
+pub fn decode[T: Decode[Protobuf]](input: Array[Byte], options: ProtoDecodeOptions): T ! ProtoError
+pub fn encode[T: Encode[Protobuf]](value: T, options: ProtoEncodeOptions): Array[Byte] ! ProtoError
+pub fn encodeDeterministic[T: Encode[Protobuf]](value: T, limits: ProtoLimits): Array[Byte] ! ProtoError
+pub fn validate[T](input: Array[Byte], options: ProtoDecodeOptions): Unit ! ProtoError
 pub fn descriptor[T](): ProtoDescriptor[T]
 pub fn ProtoReader[T].next(var self): ProtoEvent? ! ProtoError
 pub fn ProtoReader[T].own(var self, event: ProtoEvent): ProtoEvent ! ProtoError
@@ -4430,7 +4050,7 @@ de la promoción de S1A.
 La superficie canónica de procesos de STD-0.1:
 
 - Conserva `Command` y `Pipeline` como planes intrínsecos.
-- Usa `std.bytes.Bytes` como owner binario.
+- Usa `Array[Byte]` para los datos binarios.
 - Obtiene argumentos runtime mediante `std.env`.
 - Usa únicamente errores y tipos de sus owners canónicos.
 - Mantiene argv exacto, shell explícito, pipes, backpressure y cleanup.

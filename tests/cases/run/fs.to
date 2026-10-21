@@ -1,0 +1,141 @@
+import std.console
+import std.fs
+import std.path
+
+fn files(dir: String): Unit ! fs.FsError {
+    if fs.exists(dir) {
+        fs.removeAll(dir)?
+    }
+    fs.createDirectory(path.join(dir, "nested/deeper"))?
+    fs.createDirectory(dir)?
+    let notes = path.join(dir, "notes.txt")
+    fs.writeText(notes, "first line\nsecond line\r\nthird")?
+    fs.appendText(notes, "\nfourth")?
+    console.println("length {fs.readText(notes)?.length()}")
+    var lines = fs.open(notes, fs.OpenMode.Read)?
+    for {
+        match lines.readLine()? {
+            some(line) => console.println("line: {line}"),
+            none => break,
+        }
+    }
+    let info = fs.metadata(notes)?
+    match info.kind {
+        fs.FileKind.File => console.println("a file of {info.size} bytes, read-only {info.readOnly}"),
+        _ => console.println("not a file"),
+    }
+
+    let data = path.join(dir, "data.bin")
+    var out = fs.open(data, fs.OpenMode.Write)?
+    out.writeBytes([Byte(1u8), Byte(2u8), Byte(255u8)])?
+    out.write("tail")?
+    out.close()?
+    var log = fs.open(data, fs.OpenMode.Append)?
+    log.write("!")?
+    log.flush()?
+    console.println("bytes {fs.readBytes(data)?}")
+    var chunks = fs.open(data, fs.OpenMode.Read)?
+    for {
+        match chunks.read(3)? {
+            some(chunk) => console.println("chunk {chunk}"),
+            none => break,
+        }
+    }
+    var both = fs.open(notes, fs.OpenMode.ReadWrite)?
+    both.write("FIRST")?
+    console.println("rest: {both.readText()?.length()}")
+
+    fs.writeBytes(path.join(dir, "bad.txt"), [Byte(255u8)])?
+    match fs.readText(path.join(dir, "bad.txt")) {
+        ok(_) => console.println("unexpected"),
+        err(error) => console.println("bad text: {error}"),
+    }
+    fs.copy(notes, path.join(dir, "copy.txt"))?
+    fs.rename(path.join(dir, "copy.txt"), path.join(dir, "moved.txt"))?
+    console.println("entries {fs.list(dir)?}")
+    console.println("exists {fs.exists(path.join(dir, "moved.txt"))} {fs.exists(path.join(dir, "copy.txt"))}")
+    match fs.metadata(path.join(dir, "nested"))?.kind {
+        fs.FileKind.Directory => console.println("nested is a directory"),
+        _ => console.println("unexpected"),
+    }
+    match fs.readText(path.join(dir, "missing.txt")) {
+        ok(_) => console.println("unexpected"),
+        err(fs.FsError.NotFound) => console.println("missing is not found"),
+        err(error) => console.println("other error {error}"),
+    }
+    match fs.open(notes, fs.OpenMode.CreateNew) {
+        ok(_) => console.println("unexpected"),
+        err(error) => console.println("create new: {error}"),
+    }
+    match fs.readText(dir) {
+        ok(_) => console.println("unexpected"),
+        err(error) => console.println("read a directory: {error}"),
+    }
+    match fs.list(notes) {
+        ok(_) => console.println("unexpected"),
+        err(error) => console.println("list a file: {error}"),
+    }
+    fs.removeAll(dir)?
+    console.println("cleaned {fs.exists(dir)}")
+}
+
+fn show(part: String?): String {
+    match part {
+        some(text) => "\"{text}\"",
+        none => "none",
+    }
+}
+
+fn main() {
+    match files("fs_files") {
+        ok(_) => console.println("done"),
+        err(error) => console.println("failed: {error}"),
+    }
+
+    console.println(path.join("docs", "guide.md"))
+    console.println(path.join("docs/", "/etc/hosts"))
+    console.println("{show(path.parent("docs/guide.md"))} {show(path.parent("guide.md"))} {show(path.parent("/"))}")
+    console.println("{show(path.fileName("docs/guide.md"))} {show(path.fileName("/"))}")
+    console.println("{show(path.extension("archive.tar.gz"))} {show(path.extension("Makefile"))} {show(path.extension(".bashrc"))}")
+    console.println("{path.isAbsolute("/etc/hosts")} {path.isAbsolute("etc/hosts")}")
+
+    let utf8 = "héllo".bytes()
+    match String.fromBytes(utf8) {
+        ok(back) => console.println("{utf8.length()} {back}"),
+        err(error) => console.println("{error}"),
+    }
+    match String.fromBytes([Byte(255u8), Byte(0u8)]) {
+        ok(_) => console.println("unexpected"),
+        err(error) => console.println("invalid utf-8: {error}"),
+    }
+}
+
+// expect-stdout: length 36
+// expect-stdout: line: first line
+// expect-stdout: line: second line
+// expect-stdout: line: third
+// expect-stdout: line: fourth
+// expect-stdout: a file of 36 bytes, read-only false
+// expect-stdout: bytes [1, 2, 255, 116, 97, 105, 108, 33]
+// expect-stdout: chunk [1, 2, 255]
+// expect-stdout: chunk [116, 97, 105]
+// expect-stdout: chunk [108, 33]
+// expect-stdout: rest: 31
+// expect-stdout: bad text: invalid data
+// expect-stdout: entries [bad.txt, data.bin, moved.txt, nested, notes.txt]
+// expect-stdout: exists true false
+// expect-stdout: nested is a directory
+// expect-stdout: missing is not found
+// expect-stdout: create new: already exists
+// expect-stdout: read a directory: is a directory
+// expect-stdout: list a file: not a directory
+// expect-stdout: cleaned false
+// expect-stdout: done
+// expect-stdout: docs/guide.md
+// expect-stdout: /etc/hosts
+// expect-stdout: "docs" none none
+// expect-stdout: "guide.md" none
+// expect-stdout: "gz" none none
+// expect-stdout: true false
+// expect-stdout: 6 héllo
+// expect-stdout: invalid utf-8: invalid data

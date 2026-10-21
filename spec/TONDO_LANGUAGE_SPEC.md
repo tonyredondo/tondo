@@ -3430,12 +3430,12 @@ Tipo de función:
 ~~~tondo
 fn(Int): String
 fn(Int, Int): Bool
-fn(Path): Bytes ! IoError
+fn(String): Array[Byte] ! FsError
 fn(String, ...String)
 fn(ref Resource): Status
 fn(mut Array[Float], Float)
 fn(var Array[String], String)
-unsafe fn(Pointer[Byte]): Bytes ! IoError
+unsafe fn(Pointer[Byte]): Array[Byte] ! FsError
 ~~~
 
 Las funciones nombradas pueden pasarse como valores si la firma coincide
@@ -4003,10 +4003,10 @@ Un trait no contiene campos, constructores ni inicialización. Puede declarar un
 
 ~~~tondo
 trait Decode {
-    fn decode(bytes: Bytes): Self ! DecodeError
+    fn decode(bytes: Array[Byte]): Self ! DecodeError
 }
 
-fn decodeUser(bytes: Bytes): User ! DecodeError {
+fn decodeUser(bytes: Array[Byte]): User ! DecodeError {
     Decode.decode[User](bytes)?
 }
 ~~~
@@ -6708,20 +6708,19 @@ Texto y binario permanecen separados:
 
 - `String`: Unicode válido.
 - `Byte`: unidad binaria.
-- `Array[Byte]`: secuencia numérica de bytes.
-- `Bytes`: valor nominal inmutable de `std.bytes` para blobs binarios.
+- `Array[Byte]`: los datos binarios, también en la librería estándar.
 
 Las conversiones explícitas entre texto y bytes son:
 
 ~~~tondo
-let bytes = Bytes(text)?
-let text = String(bytes)?
+let bytes = text.bytes()
+let text = String.fromBytes(bytes)?
 ~~~
 
-`Bytes(text)` toma directamente los bytes UTF-8 válidos de `String` y solo puede
-fallar por el límite de recursos (`BytesError`). `String(bytes)` valida UTF-8
-estricto y puede devolver `Utf8Error`; nunca inserta caracteres de reemplazo.
-No existen conversiones implícitas entre `String` y `Bytes`.
+`bytes()` devuelve los bytes UTF-8 de `String` y no falla.
+`String.fromBytes(bytes)` valida UTF-8 estricto y puede devolver
+`text.TextError.InvalidData`; nunca inserta caracteres de reemplazo. No existen
+conversiones implícitas entre `String` y `Array[Byte]`.
 
 ---
 
@@ -9893,7 +9892,7 @@ anterior:
   `Array`, `Map`, `Set` y `Range`, adaptadores de `Iterator[T]` y algoritmos
   genéricos sobre `Call`, `CallMut` o `CallOnce`; no existe un módulo importable
   `std.core` ni otro propietario paralelo de las colecciones.
-- `std.bytes`, `std.io`, `std.math` y `std.format`: bytes y buffers,
+- `std.io`, `std.math` y `std.format`: bytes y buffers,
   protocolos de I/O, matemáticas escalares y formatting sin una segunda
   interpolación.
 - `std.serialization`, `std.reflect` y `std.meta`: serialización estática,
@@ -10781,9 +10780,8 @@ de módulo canónica ya resuelta; no introduce un import en el fence.
 interfaces de comprobación:
 
 ~~~text
-opaque Bytes
-opaque Utf8Error
 opaque Status
+opaque TextError
 opaque AcquireError
 
 opaque Resource
@@ -10796,7 +10794,7 @@ fn Resource.status(self): Status
 fn consume[T: ~Copy + Discard](value: T)
 
 fn String.isEmpty(self): Bool
-fn String(value: Bytes): String ! Utf8Error
+fn String.fromBytes(value: Array[Byte]): String ! TextError
 fn Array[T].length(self): Int
 fn Array[T].isEmpty(self): Bool
 fn Array[T: Copy].getOr(self, index: Int, fallback: T): T
@@ -10817,32 +10815,10 @@ El universo de módulos contiene:
 module std.console
     fn print(value: String)
 
-module std.bytes
-    opaque Bytes
-    opaque BytesBuilder
-    opaque BytesError
-    opaque Utf8Error
-    fn empty(): Bytes ! BytesError
-    fn Bytes(value: String): Bytes ! BytesError
-    fn fromArray(value: Array[Byte]): Bytes ! BytesError
-    fn builder(): BytesBuilder ! BytesError
-    fn Bytes.length(self): Int
-    fn Bytes.get(self, index: Int): Byte?
-    fn Bytes.slice(self, start: Int, end: Int): Bytes ! BytesError
-    fn Bytes.toArray(self): Array[Byte] ! BytesError
-    fn String(value: Bytes): String ! Utf8Error
-    fn Bytes.equal(self, other: Bytes): Bool
-    fn Bytes.hash(self): UInt64
-    fn BytesBuilder.length(self): Int
-    fn BytesBuilder.appendByte(var self, value: Byte): Unit ! BytesError
-    fn BytesBuilder.append(var self, value: Bytes): Unit ! BytesError
-    fn BytesBuilder.appendArray(var self, value: Array[Byte]): Unit ! BytesError
-    fn BytesBuilder.finish(var self): Bytes ! BytesError
-
 module std.fs
     opaque Path
     opaque IoError
-    fn read(path: Path): Bytes ! IoError
+    fn read(path: Path): Array[Byte] ! IoError
 
 module std.json
     opaque DecodeError
@@ -10858,7 +10834,7 @@ Para `Command` y `Pipeline`, el fixture de procesos añade:
 opaque ProcessError
 
 type ProcessOutput = {
-    stdout: Bytes
+    stdout: Array[Byte]
 }
 
 fn Pipeline.output(self): ProcessOutput ! ProcessError
@@ -10874,8 +10850,8 @@ indicadas:
 |---|---|
 | `spec.cursor` | `Query`, `Row`, `DatabaseError`, `RowCursor`, `Database.openRows`, `RowCursor.close` y su `impl Iterator[Row]`. |
 | `spec.resource` | `fn acquire(): Resource ! AcquireError`. |
-| `spec.domain` | `fn decodeUser(bytes: Bytes): User ! std.json.DecodeError`; `User` debe declararse en el propio fence. |
-| `spec.settings` | Binding de módulo `fs`; aliases `Path = fs.Path`, `IoError = fs.IoError`; tipos `DecodeError`, `Settings`; `fn decodeSettings(Bytes): Settings ! DecodeError`. |
+| `spec.domain` | `fn decodeUser(bytes: Array[Byte]): User ! std.json.DecodeError`; `User` debe declararse en el propio fence. |
+| `spec.settings` | Binding de módulo `fs`; aliases `Path = fs.Path`, `IoError = fs.IoError`; tipos `DecodeError`, `Settings`; `fn decodeSettings(Array[Byte]): Settings ! DecodeError`. |
 | `spec.user` | Tipos `UserId` y `User` definidos en C.4. |
 | `spec.console` | Binding de módulo `console = std.console`. |
 | `spec.jobs` | Tipos `Deque[T]`, `Job`, `JobError` y las operaciones de C.4. |

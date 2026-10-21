@@ -439,3 +439,20 @@ turns the lock to starving: nobody may take it ahead of the queue, and each
 release hands it to the first waiter, or to every reader in a row. The lock
 returns to normal when the queue empties. With eight readers that never
 stop, a writer now waits 4 ms instead of up to a second.
+
+## 2026-10-22 — Files without ceremony
+
+`std.fs` keeps to what programs use: whole-file reads and writes, a
+directory listing and a `File` for reading line by line or in chunks.
+Paths are plain `String`s and `std.path` only works on their text, so
+there is no path type to convert to and from. Binary data is
+`Array[Byte]`, with `text.bytes()` and `String.fromBytes` between it and
+text, instead of a separate bytes type. A `File` closes itself at the end
+of its scope; `close()` exists to see the errors of closing, and the
+`E1404` terminal resources stay for values whose ending must not be
+silent. Errors are one `FsError` enum, which displays as its variant in
+words, like every standard error. Each operation runs on a pool of host
+threads while the task waits, so a slow disk never holds a worker, and
+whole-file writes go through a temporary file and a rename, so a reader
+never sees half a file. There is no capability for the filesystem: a
+program that imports `std.fs` uses it.

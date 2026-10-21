@@ -1,0 +1,26 @@
+import std.fs
+import std.path
+
+fn main() {
+    let text = fs.readFile("a.txt")
+    let other = fs.open("a.txt")
+    _ = fs.writeBytes("a.bin", [1, 2])
+    _ = fs.open(path: "a.txt", mode: fs.OpenMode.Read)
+    match fs.open("a.txt", fs.OpenMode.Read) {
+        ok(file) => {
+            _ = file.readLine()
+            _ = file.close()
+        },
+        err(_) => {},
+    }
+    _ = fs.open("a.txt", fs.Mode.Read)
+    _ = path.basename("a/b.txt")
+}
+
+// expect-error: E1001 module `fs` has no function `readFile`; use `fs.readText`
+// expect-error: E1102 missing argument 2, of type `fs.OpenMode`
+// expect-error: E1102 an integer literal is not a `Byte`: write `Byte(1u8)`
+// expect-error: E1102 a standard function takes positional arguments; remove the name
+// expect-error: E1411 `readLine` changes `file`, which is not declared with `var`: declare it as `var file`
+// expect-error: E1001 module `fs` has no type `Mode`
+// expect-error: E1001 module `path` has no function `basename`; use `path.fileName`
