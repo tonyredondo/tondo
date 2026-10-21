@@ -230,6 +230,8 @@ impl Builder<'_> {
             hir::PatKind::Literal(literal) => {
                 let constant = match literal {
                     hir::Literal::Int(value) => Const::Int(*value, pattern.ty),
+                    hir::Literal::Float(bits) => Const::Float(*bits, pattern.ty),
+                    hir::Literal::Char(c) => Const::Char(*c),
                     hir::Literal::Bool(value) => Const::Bool(*value),
                     hir::Literal::Str(text) => Const::Str(text.clone()),
                     hir::Literal::Unit => unreachable!(),
@@ -556,6 +558,12 @@ impl Builder<'_> {
     fn expr(&mut self, e: &hir::Expr) -> Operand {
         match &e.kind {
             hir::ExprKind::Int(value) => Operand::Const(Const::Int(*value, e.ty)),
+            hir::ExprKind::Float(value) => Operand::Const(Const::Float(value.to_bits(), e.ty)),
+            hir::ExprKind::Char(c) => Operand::Const(Const::Char(*c)),
+            hir::ExprKind::Convert(value) => {
+                let value = self.expr(value);
+                self.temp(e.ty, Rvalue::Convert(value), e.span)
+            }
             hir::ExprKind::Bool(value) => Operand::Const(Const::Bool(*value)),
             hir::ExprKind::Str(text) => Operand::Const(Const::Str(text.clone())),
             hir::ExprKind::Unit => Operand::Const(Const::Unit),

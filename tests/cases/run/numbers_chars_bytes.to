@@ -1,0 +1,46 @@
+import std.console
+
+fn convert(x: Float): String {
+    match Int8(x) {
+        ok(v) => "ok {v}"
+        err(NumericConversionError.OutOfRange) => "range"
+        err(NumericConversionError.NotFinite) => "finite"
+        err(NumericConversionError.NotIntegral) => "integral"
+    }
+}
+
+fn grade(c: Char): String {
+    match c {
+        'a' => "first"
+        'z' => "last"
+        _ => "other"
+    }
+}
+
+fn main(): !NumericConversionError {
+    let x = 1.5
+    let y: Float32 = 0.1
+    let zero = 0.0
+    let nan = zero / zero
+    let inf = 1.0 / zero
+    _ = console.println("{x * 2.0} {y} {x / 3.0} {-x} {1e-7} {1e21} {100.0}")
+    _ = console.println("{nan} {inf} {-inf} {nan == nan} {nan != nan} {nan < 1.0} {-0.0 == 0.0} {1.0 / -0.0}")
+    let c = 'ñ'
+    _ = console.println("{c} {'a' < 'b'} {grade('a')} {grade('q')} {'\u{1F642}'}")
+    let b = Byte(200u8)
+    _ = console.println("{b} {b & Byte(15u8)} {b >> 4} {UInt8(b)}")
+    let small: Int8 = Int8(100)?
+    let wide: Int64 = Int64(small)
+    let f = Float(wide)
+    _ = console.println("{small} {wide} {f} {Float32(1.0e40) == err(NumericConversionError.OutOfRange)} {Int(2.0e18)?}")
+    _ = console.println("{convert(100.0)} {convert(1000.0)} {convert(nan)} {convert(1.5)} {convert(-128.0)} {convert(inf)}")
+    let u: UInt8 = UInt8(-1)?
+}
+
+// expect-stdout: 3.0 0.1 0.5 -1.5 1e-7 1e21 100.0
+// expect-stdout: NaN inf -inf false true false true -inf
+// expect-stdout: ñ true first other 🙂
+// expect-stdout: 200 8 12 200
+// expect-stdout: 100 100 100.0 true 2000000000000000000
+// expect-stdout: ok 100 range finite integral ok -128 finite
+// expect-exit: 1

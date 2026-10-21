@@ -77,6 +77,8 @@ pub struct Expr {
 
 pub enum ExprKind {
     Int(i128),
+    Float(f64),
+    Char(char),
     Bool(bool),
     Str(String),
     Unit,
@@ -98,6 +100,9 @@ pub enum ExprKind {
     Match(Box<Expr>, Vec<Arm>),
     /// `value?` on an option or result; the type is the payload's.
     Try(Box<Expr>),
+    /// A numeric conversion (18.6). Its type is the target, or
+    /// `Target ! NumericConversionError` when it can fail.
+    Convert(Box<Expr>),
     Call(Callee, Vec<Expr>),
     Unary(UnaryOp, Box<Expr>),
     /// Arithmetic, bitwise and comparison operators; `and`/`or` short-circuit.
@@ -143,6 +148,9 @@ pub enum PatKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Literal {
     Int(i128),
+    /// The bits of an `f64` (an `f32` literal is stored exactly as `f64`).
+    Float(u64),
+    Char(char),
     Bool(bool),
     Str(String),
     Unit,

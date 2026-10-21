@@ -79,6 +79,11 @@ pub enum TyKind {
     Bool,
     String,
     Int(IntTy),
+    Float(FloatTy),
+    /// A Unicode scalar value.
+    Char,
+    /// A binary unit, distinct from `UInt8` (19.7).
+    Byte,
     /// Two or more elements; the empty tuple is `Unit`.
     Tuple(Vec<Ty>),
     /// A nominal record, newtype or enum, declared in the program or by a
@@ -88,6 +93,12 @@ pub enum TyKind {
     Option(Ty),
     /// `T ! E`: variants `ok(T)` (0) and `err(E)` (1).
     Result(Ty, Ty),
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum FloatTy {
+    F32,
+    F64,
 }
 
 /// Variant indices of the intrinsic enums.
@@ -155,6 +166,10 @@ impl Ty {
     pub const BOOL: Ty = Ty(3);
     pub const STRING: Ty = Ty(4);
     pub const INT: Ty = Ty(5 + 3);
+    pub const CHAR: Ty = Ty(13);
+    pub const BYTE: Ty = Ty(14);
+    pub const F32: Ty = Ty(15);
+    pub const F64: Ty = Ty(16);
 
     pub fn int(int: IntTy) -> Ty {
         Ty(5 + IntTy::ALL.iter().position(|&i| i == int).unwrap() as u32)
@@ -175,6 +190,9 @@ impl Default for Types {
         }
         for int in IntTy::ALL {
             types.intern(TyKind::Int(int));
+        }
+        for kind in [TyKind::Char, TyKind::Byte, TyKind::Float(FloatTy::F32), TyKind::Float(FloatTy::F64)] {
+            types.intern(kind);
         }
         types
     }
@@ -337,7 +355,15 @@ impl Types {
         visiting.push(ty);
         let repr = self.repr(ty);
         let result = match self.kind(repr) {
-            TyKind::Int(_) | TyKind::Bool | TyKind::String | TyKind::Unit | TyKind::Never | TyKind::Error => true,
+            TyKind::Int(_)
+            | TyKind::Float(_)
+            | TyKind::Char
+            | TyKind::Byte
+            | TyKind::Bool
+            | TyKind::String
+            | TyKind::Unit
+            | TyKind::Never
+            | TyKind::Error => true,
             _ => match (self.components(repr), self.variants(repr)) {
                 (Some(items), _) => items.iter().all(|&t| self.equatable_in(t, visiting)),
                 (None, Some(variants)) => variants.concat().iter().all(|&t| self.equatable_in(t, visiting)),
@@ -374,6 +400,10 @@ impl Types {
             TyKind::Bool => "Bool".into(),
             TyKind::String => "String".into(),
             TyKind::Int(int) => int.name().into(),
+            TyKind::Float(FloatTy::F32) => "Float32".into(),
+            TyKind::Float(FloatTy::F64) => "Float".into(),
+            TyKind::Char => "Char".into(),
+            TyKind::Byte => "Byte".into(),
             TyKind::Tuple(items) => {
                 let items: Vec<String> = items.iter().map(|&t| self.display(t)).collect();
                 format!("({})", items.join(", "))

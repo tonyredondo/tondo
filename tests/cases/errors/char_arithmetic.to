@@ -1,0 +1,5 @@
+fn main() {
+    let c = 'a' + 'b'
+}
+
+// expect-error: E1102

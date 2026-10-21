@@ -1,0 +1,6 @@
+fn main() {
+    let big = 300
+    let small: Int8 = Int8(big)
+}
+
+// expect-error: E1102

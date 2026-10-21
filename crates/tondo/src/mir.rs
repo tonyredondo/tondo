@@ -103,6 +103,9 @@ impl Operand {
 #[derive(Clone, Debug)]
 pub enum Const {
     Int(i128, Ty),
+    /// The bits of an `f64`; `Float32` constants are exactly representable.
+    Float(u64, Ty),
+    Char(char),
     Bool(bool),
     Str(String),
     Unit,
@@ -125,6 +128,9 @@ pub enum Rvalue {
     Variant(u32, Vec<Operand>),
     /// The variant index of an enum value, as the enum's tag type.
     Discriminant(Place),
+    /// A numeric conversion (18.6) to the destination's type, or to
+    /// `T ! NumericConversionError` when it can fail.
+    Convert(Operand),
 }
 
 pub enum Piece {

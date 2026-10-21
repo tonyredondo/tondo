@@ -88,3 +88,17 @@ types without any finite value are rejected (E1107).
 `match` exhaustiveness and unreachable arms use Maranget's usefulness
 algorithm. Errors name a value that is not covered, such as `Shape.Point` or
 `(false, true)`, which gives the programmer (or an LLM) the exact arm to add.
+
+## 2026-10-21 — Displaying floats (proposal for the specification)
+
+The specification leaves the text of a displayed float to the standard
+library (19.6) without fixing it. The implementation prints the shortest
+decimal that reads back as the same value and is always distinguishable from
+an integer: `1.0`, `0.1`, `1e-7`, `1e21`, `NaN`, `inf`, `-inf`. This should be
+written into the standard library specification once approved.
+
+## 2026-10-21 — Narrow arguments to the runtime are extended
+
+Calls into the Rust runtime mark 8- and 16-bit integer parameters as
+zero-extended. LLVM, which compiles the runtime, assumes the caller extended
+them to 32 bits; without it a `Bool` with garbage high bits printed `fals`.

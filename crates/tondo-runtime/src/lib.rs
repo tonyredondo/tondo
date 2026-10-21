@@ -209,6 +209,24 @@ pub unsafe extern "C" fn tondo_rt_sb_bool(b: *mut Builder, value: u8) {
     unsafe { (*b).0.extend_from_slice(text) }
 }
 
+/// Floats use the shortest decimal form that reads back as the same value,
+/// always distinguishable from an integer: `1.0`, `0.1`, `1e-7`, `NaN`, `inf`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_sb_f64(b: *mut Builder, value: f64) {
+    unsafe { write!((*b).0, "{value:?}").unwrap() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_sb_f32(b: *mut Builder, value: f32) {
+    unsafe { write!((*b).0, "{value:?}").unwrap() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_sb_char(b: *mut Builder, value: u32) {
+    let c = char::from_u32(value).unwrap_or(char::REPLACEMENT_CHARACTER);
+    unsafe { write!((*b).0, "{c}").unwrap() }
+}
+
 /// Consumes the builder and returns an owned string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_finish(b: *mut Builder) -> *mut Str {

@@ -1,0 +1,7 @@
+fn main() {
+    let integer: Int = 10
+    let floating: Float = 2.5
+    let invalid = integer + floating
+}
+
+// expect-error: E1102

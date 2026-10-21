@@ -1,0 +1,5 @@
+fn main() {
+    let x: Float32 = 1e39
+}
+
+// expect-error: E1102

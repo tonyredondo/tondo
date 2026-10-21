@@ -21,12 +21,15 @@ pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics)
         aliases: Vec::new(),
         signatures: Vec::new(),
         console_error: None,
+        conversion_error: Ty::ERROR,
     };
+    checker.declare_prelude();
     checker.program(module)
 }
 
 /// Prelude type names (26.3); they cannot be redeclared unqualified.
-const PRELUDE_TYPES: [&str; 37] = [
+const PRELUDE_TYPES: [&str; 38] = [
+    "NumericConversionError",
     "Bool",
     "Int",
     "Float",
@@ -122,6 +125,8 @@ struct Checker<'a> {
     signatures: Vec<Signature>,
     /// `console.ConsoleError`, once `std.console` is imported.
     console_error: Option<Ty>,
+    /// The prelude's `NumericConversionError`.
+    conversion_error: Ty,
 }
 
 /// Per-function checking state.
@@ -188,6 +193,52 @@ impl Checker<'_> {
             return None;
         }
         Some(hir::Program { types: std::mem::take(&mut self.types), functions, main })
+    }
+
+    fn declare_prelude(&mut self) {
+        let (id, ty) = self.types.declare_adt("NumericConversionError".into());
+        let variants = ["OutOfRange", "NotFinite", "NotIntegral"]
+            .map(|name| Variant { name: name.into(), payload: Payload::Unit })
+            .to_vec();
+        self.types.define_adt(id, AdtKind::Enum(variants));
+        self.type_names.insert("NumericConversionError".into(), TypeName::Nominal(ty));
+        self.conversion_error = ty;
+    }
+
+    /// The type a numeric constructor such as `Int8(value)` names (18.6).
+    fn numeric_type(name: &str) -> Option<Ty> {
+        Some(match name {
+            "Int" | "Int64" => Ty::INT,
+            "Int8" => Ty::int(IntTy::I8),
+            "Int16" => Ty::int(IntTy::I16),
+            "Int32" => Ty::int(IntTy::I32),
+            "UInt8" => Ty::int(IntTy::U8),
+            "UInt16" => Ty::int(IntTy::U16),
+            "UInt32" => Ty::int(IntTy::U32),
+            "UInt64" => Ty::int(IntTy::U64),
+            "Float" | "Float64" => Ty::F64,
+            "Float32" => Ty::F32,
+            "Byte" => Ty::BYTE,
+            _ => return None,
+        })
+    }
+
+    /// Whether converting `from` to `to` can fail, or `None` when the table
+    /// of 18.6 has no such conversion.
+    fn conversion_checked(&self, from: Ty, to: Ty) -> Option<bool> {
+        let range = |ty: Ty| match self.types.kind(ty) {
+            TyKind::Int(int) => Some((int.min(), int.max())),
+            TyKind::Byte => Some((0, 255)),
+            _ => None,
+        };
+        let float = |ty: Ty| matches!(self.types.kind(ty), TyKind::Float(_));
+        match (range(from), range(to)) {
+            (Some((from_min, from_max)), Some((to_min, to_max))) => Some(from_min < to_min || from_max > to_max),
+            (Some(_), None) if float(to) => Some(false),
+            (None, Some(_)) if float(from) => Some(true),
+            (None, None) if float(from) && float(to) => Some(from == Ty::F64 && to == Ty::F32),
+            _ => None,
+        }
     }
 
     fn import(&mut self, import: &ast::Import) {
@@ -450,11 +501,10 @@ impl Checker<'_> {
                     {
                         self.console_error.unwrap()
                     }
-                    [single] if ["Float", "Float32", "Float64", "Char", "Byte"].contains(single) => {
-                        let what = format!("type `{single}`");
-                        self.diags.unsupported(t.span, &what);
-                        Ty::ERROR
-                    }
+                    ["Float" | "Float64"] => Ty::F64,
+                    ["Float32"] => Ty::F32,
+                    ["Char"] => Ty::CHAR,
+                    ["Byte"] => Ty::BYTE,
                     [single] if self.type_names.contains_key(*single) => match self.type_names[*single] {
                         TypeName::Nominal(ty) => ty,
                         TypeName::Alias(index) => self.resolve_alias(index),
@@ -913,8 +963,8 @@ impl Checker<'_> {
                 let ty = block.ty;
                 Self::mk(hir::ExprKind::Block(block), ty, span)
             }
-            ast::ExprKind::Float { .. } => self.unsupported_expr(span, "floating-point values"),
-            ast::ExprKind::Char(_) => self.unsupported_expr(span, "`Char` values"),
+            ast::ExprKind::Float { text, suffix } => self.float_literal(text, *suffix, false, expected, span),
+            ast::ExprKind::Char(c) => Self::mk(hir::ExprKind::Char(*c), Ty::CHAR, span),
             ast::ExprKind::Field(base, name) => {
                 let base = self.expr(cx, base, None);
                 self.field_access(base, FieldRef::Name(&name.name), name.span, span)
@@ -1222,6 +1272,8 @@ impl Checker<'_> {
                 let value = self.expr(cx, expr, Some(ty));
                 let literal = match value.kind {
                     hir::ExprKind::Int(v) => hir::Literal::Int(v),
+                    hir::ExprKind::Float(v) => hir::Literal::Float(v.to_bits()),
+                    hir::ExprKind::Char(c) => hir::Literal::Char(c),
                     hir::ExprKind::Bool(b) => hir::Literal::Bool(b),
                     hir::ExprKind::Str(s) => hir::Literal::Str(s),
                     hir::ExprKind::Unit => hir::Literal::Unit,
@@ -1505,6 +1557,30 @@ impl Checker<'_> {
         Self::mk(hir::ExprKind::Int(value), Ty::int(int), span)
     }
 
+    fn float_literal(
+        &mut self,
+        text: &str,
+        suffix: Option<&str>,
+        negative: bool,
+        expected: Option<Ty>,
+        span: Span,
+    ) -> hir::Expr {
+        let ty = match suffix {
+            Some("f32") => Ty::F32,
+            Some(_) => Ty::F64,
+            None if expected == Some(Ty::F32) => Ty::F32,
+            None => Ty::F64,
+        };
+        // Parse in the target format so rounding happens once (5.8).
+        let value = if ty == Ty::F32 { text.parse::<f32>().map(f64::from) } else { text.parse::<f64>() };
+        let value = value.unwrap_or(f64::INFINITY);
+        if value.is_infinite() {
+            let message = format!("literal `{text}` does not fit in {}", self.display(ty));
+            self.diags.error("E1102", span, message);
+        }
+        Self::mk(hir::ExprKind::Float(if negative { -value } else { value }), ty, span)
+    }
+
     fn string(&mut self, cx: &mut FnCx, segments: &[ast::StrSegment], span: Span) -> hir::Expr {
         if let [ast::StrSegment::Text(text)] = segments {
             return Self::mk(hir::ExprKind::Str(text.clone()), Ty::STRING, span);
@@ -1517,7 +1593,14 @@ impl Checker<'_> {
                     let value = self.expr(cx, e, None);
                     let displayable = matches!(
                         self.types.kind(value.ty),
-                        TyKind::Int(_) | TyKind::Bool | TyKind::String | TyKind::Error | TyKind::Never
+                        TyKind::Int(_)
+                            | TyKind::Float(_)
+                            | TyKind::Char
+                            | TyKind::Byte
+                            | TyKind::Bool
+                            | TyKind::String
+                            | TyKind::Error
+                            | TyKind::Never
                     );
                     if !displayable {
                         let message = format!("{} does not implement `Display`", self.display(value.ty));
@@ -1672,6 +1755,26 @@ impl Checker<'_> {
                 let result = self.types.intern(TyKind::Result(Ty::UNIT, error));
                 self.call_with(cx, Callee::Std(function), &[Ty::STRING], result, args, span)
             }
+            ([name], None) if Self::numeric_type(name).is_some() => {
+                let to = Self::numeric_type(name).unwrap();
+                let [arg] = args else {
+                    return self.arity_error(span, 1, args.len());
+                };
+                let value = self.expr(cx, &arg.value, None);
+                match self.conversion_checked(value.ty, to) {
+                    _ if value.ty == Ty::ERROR => Self::error_expr(span),
+                    Some(false) => Self::mk(hir::ExprKind::Convert(Box::new(value)), to, span),
+                    Some(true) => {
+                        let ty = self.types.intern(TyKind::Result(to, self.conversion_error));
+                        Self::mk(hir::ExprKind::Convert(Box::new(value)), ty, span)
+                    }
+                    None => {
+                        let message = format!("there is no conversion from {} to `{name}`", self.display(value.ty));
+                        self.diags.error("E1103", span, message);
+                        Self::error_expr(span)
+                    }
+                }
+            }
             (_, None) => {
                 self.unknown_name(names[0], segments[0].span);
                 Self::error_expr(span)
@@ -1727,12 +1830,18 @@ impl Checker<'_> {
                     }
                     return literal;
                 }
+                if let ast::ExprKind::Float { text, suffix } = &operand.kind {
+                    return self.float_literal(text, *suffix, true, expected, span);
+                }
                 let value = self.expr(cx, operand, expected);
-                if self.types.as_int(value.ty).is_some_and(|i| !i.signed()) {
+                let negatable = match self.types.kind(value.ty) {
+                    TyKind::Int(int) => int.signed(),
+                    TyKind::Float(_) | TyKind::Error | TyKind::Never => true,
+                    _ => false,
+                };
+                if !negatable {
                     let message = format!("negation is not defined for {}", self.display(value.ty));
                     self.diags.error("E1102", span, message);
-                } else {
-                    self.require_int(&value);
                 }
                 let ty = value.ty;
                 Self::mk(hir::ExprKind::Unary(op, Box::new(value)), ty, span)
@@ -1744,7 +1853,9 @@ impl Checker<'_> {
             }
             UnaryOp::BitNot => {
                 let value = self.expr(cx, operand, expected);
-                self.require_int(&value);
+                if value.ty != Ty::BYTE {
+                    self.require_int(&value);
+                }
                 let ty = value.ty;
                 Self::mk(hir::ExprKind::Unary(op, Box::new(value)), ty, span)
             }
@@ -1753,7 +1864,7 @@ impl Checker<'_> {
 
     fn is_untyped_literal(e: &ast::Expr) -> bool {
         match &e.kind {
-            ast::ExprKind::Int { suffix: None, .. } => true,
+            ast::ExprKind::Int { suffix: None, .. } | ast::ExprKind::Float { suffix: None, .. } => true,
             ast::ExprKind::Unary(UnaryOp::Neg, inner) => Self::is_untyped_literal(inner),
             _ => false,
         }
@@ -1804,22 +1915,33 @@ impl Checker<'_> {
             }
             BinOp::Shl | BinOp::Shr => {
                 let left = self.expr(cx, left, expected);
-                self.require_int(&left);
+                if left.ty != Ty::BYTE {
+                    self.require_int(&left);
+                }
                 let right = self.expr(cx, right, None);
                 self.require_int(&right);
                 let ty = left.ty;
                 (left, right, ty)
             }
-            BinOp::Add
-            | BinOp::Sub
-            | BinOp::Mul
-            | BinOp::Div
-            | BinOp::Rem
-            | BinOp::BitAnd
-            | BinOp::BitOr
-            | BinOp::BitXor => {
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
                 let (left, right) = self.operands(cx, left, right, expected);
-                if self.types.as_int(left.ty).is_none() && ![Ty::ERROR, Ty::NEVER].contains(&left.ty) {
+                // Floats have no `%` operator; their remainder is a named operation (17.4).
+                let allowed = match self.types.kind(left.ty) {
+                    TyKind::Int(_) | TyKind::Error | TyKind::Never => true,
+                    TyKind::Float(_) => op != BinOp::Rem,
+                    _ => false,
+                };
+                if !allowed {
+                    operator_error(self, left.ty);
+                }
+                let ty = left.ty;
+                (left, right, ty)
+            }
+            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => {
+                let (left, right) = self.operands(cx, left, right, expected);
+                let allowed =
+                    matches!(self.types.kind(left.ty), TyKind::Int(_) | TyKind::Byte | TyKind::Error | TyKind::Never);
+                if !allowed {
                     operator_error(self, left.ty);
                 }
                 let ty = left.ty;
@@ -1834,8 +1956,16 @@ impl Checker<'_> {
             }
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
                 let (left, right) = self.operands(cx, left, right, None);
-                let ordered =
-                    matches!(self.types.kind(left.ty), TyKind::Int(_) | TyKind::String | TyKind::Error | TyKind::Never);
+                let ordered = matches!(
+                    self.types.kind(left.ty),
+                    TyKind::Int(_)
+                        | TyKind::Float(_)
+                        | TyKind::Char
+                        | TyKind::Byte
+                        | TyKind::String
+                        | TyKind::Error
+                        | TyKind::Never
+                );
                 if !ordered {
                     operator_error(self, left.ty);
                 }
