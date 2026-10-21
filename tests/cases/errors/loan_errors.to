@@ -1,0 +1,41 @@
+fn grow(values: mut Array[Int]) {
+    values.push(1)
+    values = [1]
+}
+
+fn keys(map: mut Map[String, Int]) {
+    map["k"] = 1
+}
+
+fn look(values: ref Array[Int]) {
+    values[0] = 1
+}
+
+fn inspect(value: Int) {
+    value = 2
+}
+
+fn addValue(values: var Array[Int], value: Int) {
+    values.push(value)
+}
+
+fn swap(a: mut Int, b: mut Int) {}
+
+fn main() {
+    let fixed = [1]
+    addValue(var fixed, 2)
+    var numbers = [1]
+    addValue(numbers, 2)
+    addValue(mut numbers, 2)
+    var x = 1
+    swap(mut x, mut x)
+}
+
+// expect-error: E1411 `push` can change the length of `values`, a `mut` loan that keeps its extent; take it as `values: var Array[Int]`
+// expect-error: E1411 assigning `values` may change its extent, but it is a `mut` loan
+// expect-error: E1411 `map[key] = value` can add a key
+// expect-error: E1411 cannot assign to `values`: it is a `ref` loan; take it as `values: mut Array[Int]`
+// expect-error: E1411 cannot assign to `value`: parameters are immutable
+// expect-error: E1411 passing it as `var` changes `fixed`, which is not declared with `var`
+// expect-error: E1102 this parameter is a `var` loan: write `var numbers`
+// expect-error: E1403 two exclusive loans of one call overlap

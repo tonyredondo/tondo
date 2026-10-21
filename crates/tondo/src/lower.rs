@@ -479,6 +479,62 @@ impl Builder<'_> {
         Operand::local(result)
     }
 
+    /// A copy of `value` in a new temporary of the frame.
+    fn copy_operand(&mut self, value: Operand, ty: Ty, span: Span) -> Operand {
+        let local = self.new_local(ty);
+        self.assign(Place::local(local), Rvalue::Use(value), span);
+        if self.needs_drop(ty) {
+            self.push(Statement::Retain(Place::local(local)));
+            self.own(local);
+        }
+        Operand::local(local)
+    }
+
+    /// Exclusive loans of one call that select elements of the same array
+    /// by run-time indices must reach different elements (`P0004`). The
+    /// checker already rejected loans that overlap for sure.
+    fn check_disjoint(&mut self, loans: &[Place], span: Span) {
+        for (index, first) in loans.iter().enumerate() {
+            for second in &loans[index + 1..] {
+                if first.local != second.local {
+                    continue;
+                }
+                let shared = first.path.iter().zip(&second.path).take_while(|(a, b)| a == b).count();
+                let (Some(Proj::Index(a, _)), Some(Proj::Index(b, _))) =
+                    (first.path.get(shared), second.path.get(shared))
+                else {
+                    continue;
+                };
+                let array = Place { local: first.local, path: first.path[..shared].to_vec() };
+                let length = self.temp(Ty::INT, Rvalue::Length(Operand::Copy(array)), span);
+                let a = self.position(Operand::local(*a), length.clone(), span);
+                let b = self.position(Operand::local(*b), length, span);
+                let same = Rvalue::Binary(BinOp::Eq, Operand::local(a), Operand::local(b));
+                let same = self.temp(Ty::BOOL, same, span);
+                let (overlap, next) = (self.new_block(), self.new_block());
+                self.terminate(Terminator::Branch(same, overlap, next));
+                self.switch_to(overlap);
+                self.terminate(Terminator::Panic { code: 4, message: None, span });
+                self.switch_to(next);
+            }
+        }
+    }
+
+    /// An index as a position, counting from the end when negative (10.3).
+    fn position(&mut self, index: Operand, length: Operand, span: Span) -> Local {
+        let result = self.new_local(Ty::INT);
+        self.assign(Place::local(result), Rvalue::Use(index.clone()), span);
+        let zero = Operand::Const(Const::Int(0, Ty::INT));
+        let negative = self.temp(Ty::BOOL, Rvalue::Binary(BinOp::Lt, index.clone(), zero), span);
+        let (from_end, done) = (self.new_block(), self.new_block());
+        self.terminate(Terminator::Branch(negative, from_end, done));
+        self.switch_to(from_end);
+        self.assign(Place::local(result), Rvalue::Binary(BinOp::Add, index, length), span);
+        self.goto(done);
+        self.switch_to(done);
+        result
+    }
+
     /// Returns `value`, as `ok(value)` from a fallible function.
     fn emit_return(&mut self, value: Operand) {
         let value =
@@ -956,8 +1012,35 @@ impl Builder<'_> {
                 self.temp(e.ty, Rvalue::Erase(value, *body, retain), e.span)
             }
             hir::ExprKind::Call(callee, _, args) => {
-                let args = args.iter().map(|a| self.expr(a)).collect();
-                let result = self.temp(e.ty, Rvalue::Call(*callee, args), e.span);
+                // Places this call lends exclusively (16.3).
+                let lent: Vec<hir::LocalId> = args
+                    .iter()
+                    .filter_map(|a| match &a.kind {
+                        hir::ExprKind::Loan(place) => Some(place.local),
+                        _ => None,
+                    })
+                    .collect();
+                let mut operands = Vec::new();
+                for arg in args {
+                    let operand = self.expr(arg);
+                    // A value read from a lent place is copied now, so the
+                    // callee's changes through the loan cannot reach it.
+                    let reads_lent = !matches!(arg.kind, hir::ExprKind::Loan(_))
+                        && matches!(&operand, Operand::Copy(place)
+                            if lent.iter().any(|&l| self.hir_locals[l.0 as usize] == Some(place.local)));
+                    operands.push(if reads_lent { self.copy_operand(operand, arg.ty, arg.span) } else { operand });
+                }
+                let loans: Vec<Place> = args
+                    .iter()
+                    .zip(&operands)
+                    .filter(|(a, _)| matches!(a.kind, hir::ExprKind::Loan(_)))
+                    .filter_map(|(_, o)| match o {
+                        Operand::Copy(place) => Some(place.clone()),
+                        Operand::Const(_) => None,
+                    })
+                    .collect();
+                self.check_disjoint(&loans, e.span);
+                let result = self.temp(e.ty, Rvalue::Call(*callee, operands), e.span);
                 if e.ty == Ty::NEVER {
                     self.terminate(Terminator::Unreachable);
                 }

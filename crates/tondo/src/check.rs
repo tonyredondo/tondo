@@ -249,6 +249,9 @@ struct Signature {
     names: Vec<String>,
     /// The mode of the receiver when the first parameter is `self`.
     receiver: Option<ast::Mode>,
+    /// How each parameter is passed: by value or as a `ref`, `mut` or `var`
+    /// loan (16.3); a plain `self` receiver is `ref`.
+    modes: Vec<ast::Mode>,
     /// Whether the last parameter is variadic; its type is `Array[T]`.
     variadic: bool,
     result: Ty,
@@ -262,7 +265,17 @@ impl Signature {
     /// The signature of a standard function taking `params` by value.
     fn simple(params: Vec<Ty>, result: Ty) -> Signature {
         let names = (0..params.len()).map(|i| format!("argument{i}")).collect();
-        Signature { params, names, receiver: None, variadic: false, result, generics: Vec::new(), name: String::new() }
+        let modes = vec![ast::Mode::Value; params.len()];
+        Signature {
+            params,
+            names,
+            receiver: None,
+            modes,
+            variadic: false,
+            result,
+            generics: Vec::new(),
+            name: String::new(),
+        }
     }
 }
 
@@ -338,6 +351,8 @@ struct FnCx {
     mutates: bool,
     /// A closure without a declared result infers it from its body.
     infer_result: bool,
+    /// For each local: how it was passed if it is a parameter (16.3).
+    params: Vec<Option<ast::Mode>>,
 }
 
 /// A binding a closure captures: read from `source` in the enclosing
@@ -462,6 +477,7 @@ impl Checker<'_> {
             params: vec![self_param],
             names: vec!["self".into()],
             receiver: Some(ast::Mode::Ref),
+            modes: vec![ast::Mode::Ref],
             variadic: false,
             result: Ty::STRING,
             generics: vec![self_param],
@@ -478,6 +494,7 @@ impl Checker<'_> {
             params: vec![self_param],
             names: vec!["self".into()],
             receiver: Some(ast::Mode::Mut),
+            modes: vec![ast::Mode::Mut],
             variadic: false,
             result: self.types.intern(TyKind::Option(element)),
             generics: vec![self_param, element],
@@ -945,9 +962,6 @@ impl Checker<'_> {
                     })
                 }
                 Some(ty) => {
-                    if param.mode != ast::Mode::Value {
-                        self.diags.unsupported(param.span, &format!("`{}` parameters", param.mode.keyword()));
-                    }
                     let ty = self.resolve_type(ty);
                     if param.variadic {
                         if index + 1 != f.params.len() {
@@ -984,7 +998,8 @@ impl Checker<'_> {
             None => f.name.name.clone(),
         };
         self.fn_scopes.push(scope);
-        Signature { params, names, receiver, variadic, result, generics, name }
+        let modes = f.params.iter().map(|p| p.mode).collect();
+        Signature { params, names, receiver, modes, variadic, result, generics, name }
     }
 
     /// Declares the traits of the module: names and parameters first, so
@@ -1315,6 +1330,15 @@ impl Checker<'_> {
         map.extend(own_expected.iter().copied().zip(own_found.iter().copied()));
         if expected.receiver != found.receiver {
             return Some("a different receiver".into());
+        }
+        if let Some(index) =
+            (0..expected.modes.len().min(found.modes.len())).find(|&i| expected.modes[i] != found.modes[i])
+        {
+            let mode = match expected.modes[index] {
+                ast::Mode::Value => "by value".to_string(),
+                mode => format!("as a `{}` loan", mode.keyword()),
+            };
+            return Some(format!("parameter `{}` is passed {mode}", expected.names[index]));
         }
         if expected.params.len() != found.params.len() || expected.variadic != found.variadic {
             return Some(format!("{} parameter(s) are expected", expected.params.len()));
@@ -1920,6 +1944,7 @@ impl Checker<'_> {
             captures: Vec::new(),
             mutates: false,
             infer_result: false,
+            params: Vec::new(),
         }
     }
 
@@ -1951,9 +1976,12 @@ impl Checker<'_> {
         let mut params = Vec::new();
         let mut loans = Vec::new();
         for (param, ty) in f.params.iter().zip(signature.params) {
-            // `mut self` and `var self` borrow the caller's place (11.6).
-            let loan = param.ty.is_none() && matches!(param.mode, ast::Mode::Mut | ast::Mode::Var);
-            params.push(self.declare(&mut cx, &param.name, ty, loan));
+            // `mut` and `var` parameters, receivers included, borrow the
+            // caller's place (16.3); `ref` and values are read-only values.
+            let loan = matches!(param.mode, ast::Mode::Mut | ast::Mode::Var);
+            let local = self.declare(&mut cx, &param.name, ty, loan);
+            cx.params[local.0 as usize] = Some(param.mode);
+            params.push(local);
             loans.push(loan);
         }
         let success = (!cx.infer_result).then_some(cx.result);
@@ -2035,6 +2063,23 @@ impl Checker<'_> {
             None => {
                 let parent = cx.parent.as_deref_mut()?;
                 let (source, mutable) = match self.lookup(parent, name) {
+                    Some(local)
+                        if matches!(
+                            parent.params[local.0 as usize],
+                            Some(ast::Mode::Ref | ast::Mode::Mut | ast::Mode::Var)
+                        ) =>
+                    {
+                        // A loan never escapes into a closure (16.5).
+                        let message = if name == "self" {
+                            "a closure cannot capture the receiver `self`, a loan; copy what it needs first, as in `let offset = self.offset`".to_string()
+                        } else {
+                            format!(
+                                "a closure cannot capture `{name}`, a loan; copy what it needs into a binding first, or pass it as a closure parameter"
+                            )
+                        };
+                        self.diags.error("E1402", span, message);
+                        return Some(Self::error_expr(span));
+                    }
                     Some(local) => {
                         let ty = parent.locals[local.0 as usize].ty;
                         let mutable = parent.mutable[local.0 as usize] && Some(local) != parent.env;
@@ -2153,6 +2198,7 @@ impl Checker<'_> {
     fn hidden_local(&mut self, cx: &mut FnCx, ty: Ty) -> LocalId {
         cx.locals.push(hir::Local { name: "_".into(), ty });
         cx.mutable.push(false);
+        cx.params.push(None);
         LocalId(cx.locals.len() as u32 - 1)
     }
 
@@ -2170,6 +2216,7 @@ impl Checker<'_> {
         let id = LocalId(cx.locals.len() as u32);
         cx.locals.push(hir::Local { name: name.name.clone(), ty });
         cx.mutable.push(mutable);
+        cx.params.push(None);
         cx.scopes.last_mut().unwrap().push((name.name.clone(), id));
         id
     }
@@ -2336,6 +2383,13 @@ impl Checker<'_> {
         if let ast::ExprKind::Index { base, index } = &target.kind {
             let (local, path, ty) = self.place(cx, base)?;
             if let TyKind::Map(key, entry) = *self.types.kind(ty) {
+                if path.is_empty() && cx.params[local.0 as usize] == Some(ast::Mode::Mut) {
+                    let name = &cx.locals[local.0 as usize].name;
+                    let message = format!(
+                        "`{name}[key] = value` can add a key to `{name}`, a `mut` loan that keeps its keys; take it as `var`"
+                    );
+                    self.diags.error("E1411", span, message);
+                }
                 // `map[key] = value` inserts or replaces (10.11); there is no
                 // compound form because the key may be absent.
                 if op.is_some() {
@@ -2351,8 +2405,35 @@ impl Checker<'_> {
                 let insert = hir::ExprKind::Mutate(hir::Mutation::Insert, place, vec![key_value, new]);
                 return Some(hir::Stmt::Expr(Self::mk(insert, result, span)));
             }
+            let (local, path, ty) = self.index_place(cx, (local, path, ty), index, base.span)?;
+            return self.assign_to(cx, (local, path, ty), op, value, span);
         }
-        let (local, path, ty) = self.place(cx, target)?;
+        let place = self.place(cx, target)?;
+        self.assign_to(cx, place, op, value, span)
+    }
+
+    /// `place op= value` once the target is resolved.
+    fn assign_to(
+        &mut self,
+        cx: &mut FnCx,
+        place: (LocalId, Vec<hir::PlaceStep>, Ty),
+        op: Option<BinOp>,
+        value: &ast::Expr,
+        span: Span,
+    ) -> Option<hir::Stmt> {
+        let (local, path, ty) = place;
+        // Replacing the root of a `mut` loan must keep its extent (16.3).
+        if op.is_none()
+            && path.is_empty()
+            && cx.params[local.0 as usize] == Some(ast::Mode::Mut)
+            && !self.fixed_extent(ty)
+        {
+            let name = &cx.locals[local.0 as usize].name;
+            let message = format!(
+                "assigning `{name}` may change its extent, but it is a `mut` loan; take it as `var`, or assign elements or a slice such as `{name}[:] = replacement`"
+            );
+            self.diags.error("E1411", span, message);
+        }
         let value = match op {
             Some(BinOp::Shl | BinOp::Shr) => {
                 if self.types.as_int(ty).is_none() && ty != Ty::ERROR {
@@ -2420,7 +2501,18 @@ impl Checker<'_> {
                     return None;
                 };
                 if !cx.mutable[local.0 as usize] {
-                    let message = format!("cannot assign to `{}`: it is not declared with `var`", root.name);
+                    let ty = self.types.display(cx.locals[local.0 as usize].ty);
+                    let message = match cx.params[local.0 as usize] {
+                        Some(ast::Mode::Ref) => format!(
+                            "cannot assign to `{0}`: it is a `ref` loan; take it as `{0}: mut {ty}` to change the caller's value",
+                            root.name
+                        ),
+                        Some(_) => format!(
+                            "cannot assign to `{0}`: parameters are immutable; take it as `{0}: mut {ty}` to change the caller's value, or copy it into a `var`",
+                            root.name
+                        ),
+                        None => format!("cannot assign to `{}`: it is not declared with `var`", root.name),
+                    };
                     self.diags.error("E1411", root.span, message);
                 }
                 let mut ty = cx.locals[local.0 as usize].ty;
@@ -2433,19 +2525,8 @@ impl Checker<'_> {
                 return Some((local, path, ty));
             }
             ast::ExprKind::Index { base, index } => {
-                let (local, mut path, ty) = self.place(cx, base)?;
-                let (TyKind::Array(element) | TyKind::Deque(element)) = *self.types.kind(ty) else {
-                    let message = if ty == Ty::STRING {
-                        "a `String` is immutable: build a new one, for example with interpolation".to_string()
-                    } else {
-                        format!("{} cannot be indexed", self.display(ty))
-                    };
-                    self.diags.error("E1102", base.span, message);
-                    return None;
-                };
-                let index = self.expr(cx, index, Some(Ty::INT));
-                path.push(hir::PlaceStep::Index(self.coerce(index, Ty::INT)));
-                return Some((local, path, element));
+                let (local, path, ty) = self.place(cx, base)?;
+                return self.index_place(cx, (local, path, ty), index, base.span);
             }
             ast::ExprKind::Field(base, name) => (base, (FieldRef::Name(&name.name), name.span)),
             ast::ExprKind::TupleSlot(base, slot) => (base, (FieldRef::Slot(*slot), target.span)),
@@ -2458,6 +2539,83 @@ impl Checker<'_> {
         let (index, field_ty) = self.field_of(ty, field.0, field.1)?;
         path.extend(index.map(hir::PlaceStep::Field));
         Some((local, path, field_ty))
+    }
+
+    /// Exclusive loans of one call must not overlap each other (16.3): a
+    /// provable overlap is `E1403`; indices known only at run time are
+    /// checked then (`P0004`).
+    fn check_loan_overlap<'e>(&mut self, args: impl Iterator<Item = &'e hir::Expr>, span: Span) {
+        let loans: Vec<&hir::Place> = args
+            .filter_map(|a| match &a.kind {
+                hir::ExprKind::Loan(place) => Some(place),
+                _ => None,
+            })
+            .collect();
+        for (index, first) in loans.iter().enumerate() {
+            for second in &loans[index + 1..] {
+                if first.local != second.local {
+                    continue;
+                }
+                let mut overlap = true;
+                for (a, b) in first.path.iter().zip(&second.path) {
+                    match (a, b) {
+                        (hir::PlaceStep::Field(x), hir::PlaceStep::Field(y)) if x != y => overlap = false,
+                        (hir::PlaceStep::Index(x), hir::PlaceStep::Index(y)) => match (&x.kind, &y.kind) {
+                            (hir::ExprKind::Int(i), hir::ExprKind::Int(j)) if i != j && *i >= 0 && *j >= 0 => {
+                                overlap = false
+                            }
+                            (hir::ExprKind::Int(i), hir::ExprKind::Int(j)) if i == j => continue,
+                            // Decided when the call runs.
+                            _ => overlap = false,
+                        },
+                        _ => continue,
+                    }
+                    break;
+                }
+                if overlap {
+                    let message = "two exclusive loans of one call overlap; lend disjoint parts, or one at a time";
+                    self.diags.error("E1403", span, message);
+                    return;
+                }
+            }
+        }
+    }
+
+    /// The element `base[index]` of the array or deque place `base`.
+    fn index_place(
+        &mut self,
+        cx: &mut FnCx,
+        base: (LocalId, Vec<hir::PlaceStep>, Ty),
+        index: &ast::Expr,
+        base_span: Span,
+    ) -> Option<(LocalId, Vec<hir::PlaceStep>, Ty)> {
+        let (local, mut path, ty) = base;
+        let (TyKind::Array(element) | TyKind::Deque(element)) = *self.types.kind(ty) else {
+            let message = if ty == Ty::STRING {
+                "a `String` is immutable: build a new one, for example with interpolation".to_string()
+            } else {
+                format!("{} cannot be indexed", self.display(ty))
+            };
+            self.diags.error("E1102", base_span, message);
+            return None;
+        };
+        let index = self.expr(cx, index, Some(Ty::INT));
+        path.push(hir::PlaceStep::Index(self.coerce(index, Ty::INT)));
+        Some((local, path, element))
+    }
+
+    /// Whether every value of `ty` has the same structural extent, so a
+    /// `mut` loan may replace it whole (16.3).
+    fn fixed_extent(&self, ty: Ty) -> bool {
+        !matches!(
+            self.types.kind(self.types.repr(ty)),
+            TyKind::Array(_)
+                | TyKind::Deque(_)
+                | TyKind::Map(..)
+                | TyKind::Set(_)
+                | TyKind::Param(_)
+                | TyKind::Opaque(..)
+        )
     }
 
     /// The value of `target op= value` for an arithmetic operator; the result
@@ -4222,10 +4380,12 @@ impl Checker<'_> {
             return Self::error_expr(span);
         }
         let names = (0..params.len()).map(|i| format!("argument{}", i + 1)).collect();
+        let modes = vec![ast::Mode::Value; params.len()];
         let signature = Signature {
             params,
             names,
             receiver: None,
+            modes,
             variadic,
             result,
             generics: Vec::new(),
@@ -4401,7 +4561,7 @@ impl Checker<'_> {
         use hir::Mutation as M;
         let ty = receiver.ty;
         let operation = format!("`{}`", method.name);
-        let Some(hir::Place { local, path }) = self.loan_place(cx, receiver, &operation) else {
+        let Some(hir::Place { local, path }) = self.loan_place(cx, receiver, &operation, true) else {
             return Self::error_expr(span);
         };
         let option = |this: &mut Self, t: Ty| this.types.intern(TyKind::Option(t));
@@ -4461,10 +4621,10 @@ impl Checker<'_> {
                 self.diags.error("E1001", method.span, message);
                 return Self::error_expr(span);
             }
-            Some(ast::Mode::Mut | ast::Mode::Var) => {
+            Some(mode @ (ast::Mode::Mut | ast::Mode::Var)) => {
                 let receiver_span = receiver.span;
                 let operation = format!("`{}`", method.name);
-                match self.loan_place(cx, receiver, &operation) {
+                match self.loan_place(cx, receiver, &operation, mode == ast::Mode::Var) {
                     Some(place) => Self::mk(hir::ExprKind::Loan(place), ty, receiver_span),
                     None => return Self::error_expr(span),
                 }
@@ -5062,6 +5222,10 @@ impl Checker<'_> {
             (true, _) | (false, true) => signature.params[parameter_of(index)],
             (false, false) => element.unwrap_or(Ty::ERROR),
         };
+        // Variadic elements are values; every other argument has its parameter's mode.
+        let mode_of = |index: usize| {
+            if slots.contains(&Some(index)) { signature.modes[parameter_of(index)] } else { ast::Mode::Value }
+        };
         // Check the arguments in the order they are written; an unsuffixed
         // literal waits until the others have fixed its type.
         let mut values: Vec<Option<hir::Expr>> = (0..args.len()).map(|_| None).collect();
@@ -5075,8 +5239,14 @@ impl Checker<'_> {
                 if pass == 0 && expected.is_none() && self.needs_context(&arg.value) {
                     continue;
                 }
-                let receiver_mode = (parameter_of(index) == 0).then_some(signature.receiver).flatten();
-                let value = self.argument_value(cx, arg, expected, receiver_mode);
+                let mode = mode_of(index);
+                let value = self.argument_value(
+                    cx,
+                    arg,
+                    expected,
+                    mode,
+                    parameter_of(index) < first + usize::from(signature.receiver.is_some()) && first == 0,
+                );
                 self.unify(&mut inference, ty, value.ty);
                 // A callable bound to `F: Call[fn(A): B]` also fixes `A` and `B`.
                 if let Some(&(_, bound)) = self.call_bounds.get(&ty)
@@ -5108,10 +5278,10 @@ impl Checker<'_> {
         }
         for (index, value) in values.iter_mut().enumerate() {
             let ty = self.types.subst(type_of(index), &inference.map);
-            let receiver_mode = (parameter_of(index) == 0).then_some(signature.receiver).flatten();
             let raw = value.take().unwrap();
-            *value = Some(self.finish_argument(cx, raw, ty, receiver_mode));
+            *value = Some(self.finish_argument(cx, raw, ty, mode_of(index)));
         }
+        self.check_loan_overlap(values.iter().flatten().chain(receiver.iter()), span);
         let type_args: Vec<Ty> = signature.generics.iter().map(|g| inference.map[g]).collect();
         // The arguments must meet the bounds of the parameters they replace.
         for (&param, &actual) in signature.generics.iter().zip(&type_args) {
@@ -5193,34 +5363,44 @@ impl Checker<'_> {
 
     /// One argument as written, before its parameter type is final; a
     /// `mut self` or `var self` receiver in a qualified call is a loan.
+    /// One argument as written for a parameter passed as `mode`. A plain
+    /// `self` receiver written first in a qualified call takes no keyword.
     fn argument_value(
         &mut self,
         cx: &mut FnCx,
         arg: &ast::Arg,
         expected: Option<Ty>,
-        receiver: Option<ast::Mode>,
+        mode: ast::Mode,
+        receiver: bool,
     ) -> hir::Expr {
-        let loan = matches!(receiver, Some(ast::Mode::Mut | ast::Mode::Var));
-        let expected_mode = if loan { receiver.unwrap() } else { ast::Mode::Value };
-        if arg.mode != expected_mode {
-            let message = match (expected_mode, arg.mode) {
-                (ast::Mode::Value, _) => format!("this parameter takes a value: remove `{}`", arg.mode.keyword()),
-                (mode, _) => format!("the receiver is a `{0}` loan: write `{0} value`", mode.keyword()),
+        let written = if receiver && mode == ast::Mode::Ref { ast::Mode::Value } else { mode };
+        if arg.mode != written {
+            let message = match (written, receiver) {
+                (ast::Mode::Value, true) => {
+                    format!("the receiver `self` is already a shared loan: remove `{}`", arg.mode.keyword())
+                }
+                (ast::Mode::Value, false) => format!("this parameter takes a value: remove `{}`", arg.mode.keyword()),
+                (mode, _) => {
+                    let text = self.sources.file_of(arg.value.span.start).slice(arg.value.span);
+                    format!("this parameter is a `{0}` loan: write `{0} {text}`", mode.keyword())
+                }
             };
-            self.diags.error("E1102", arg.span, message);
+            let code = if receiver { "E1407" } else { "E1102" };
+            self.diags.error(code, arg.span, message);
         }
         self.expr(cx, &arg.value, expected)
     }
 
     /// An argument coerced to its final parameter type, or the loan of its
     /// place for a `mut self` or `var self` receiver.
-    fn finish_argument(&mut self, cx: &mut FnCx, value: hir::Expr, ty: Ty, receiver: Option<ast::Mode>) -> hir::Expr {
+    fn finish_argument(&mut self, cx: &mut FnCx, value: hir::Expr, ty: Ty, mode: ast::Mode) -> hir::Expr {
         let value = self.coerce(value, ty);
-        if !matches!(receiver, Some(ast::Mode::Mut | ast::Mode::Var)) || matches!(value.kind, hir::ExprKind::Loan(_)) {
+        if !matches!(mode, ast::Mode::Mut | ast::Mode::Var) || matches!(value.kind, hir::ExprKind::Loan(_)) {
             return value;
         }
         let span = value.span;
-        match self.loan_place(cx, value, "this operation") {
+        let operation = format!("passing it as `{}`", mode.keyword());
+        match self.loan_place(cx, value, &operation, mode == ast::Mode::Var) {
             Some(place) => Self::mk(hir::ExprKind::Loan(place), ty, span),
             None => Self::error_expr(span),
         }
@@ -5228,7 +5408,9 @@ impl Checker<'_> {
 
     /// The `var` place a value expression denotes, for an operation that
     /// changes it (11.6); reports values that are not such a place.
-    fn loan_place(&mut self, cx: &mut FnCx, value: hir::Expr, operation: &str) -> Option<hir::Place> {
+    /// `structural` operations may change the extent of the root (`var`);
+    /// the others keep it (`mut`, 16.3).
+    fn loan_place(&mut self, cx: &mut FnCx, value: hir::Expr, operation: &str, structural: bool) -> Option<hir::Place> {
         let span = value.span;
         let mut steps = Vec::new();
         let mut current = value;
@@ -5269,11 +5451,33 @@ impl Checker<'_> {
             cx.mutates = true;
             return Some(hir::Place { local, path: steps });
         }
-        if !cx.mutable[local.0 as usize] {
-            let name = &cx.locals[local.0 as usize].name;
-            let message =
-                format!("{operation} changes `{name}`, which is not declared with `var`: declare it as `var {name}`");
-            self.diags.error("E1411", span, message);
+        let name = cx.locals[local.0 as usize].name.clone();
+        let ty = self.display(cx.locals[local.0 as usize].ty);
+        match cx.params[local.0 as usize] {
+            Some(ast::Mode::Mut) if structural && steps.is_empty() => {
+                let message = format!(
+                    "{operation} can change the length of `{name}`, a `mut` loan that keeps its extent; take it as `{name}: var {}`",
+                    ty.trim_matches('`')
+                );
+                self.diags.error("E1411", span, message);
+            }
+            Some(ast::Mode::Mut | ast::Mode::Var) => {}
+            Some(mode) if !cx.mutable[local.0 as usize] => {
+                let what = if mode == ast::Mode::Ref { "a `ref` loan" } else { "a parameter" };
+                let message = format!(
+                    "{operation} changes `{name}`, which is {what}; take it as `{name}: {} {}` to change the caller's value",
+                    if structural { "var" } else { "mut" },
+                    ty.trim_matches('`')
+                );
+                self.diags.error("E1411", span, message);
+            }
+            _ if !cx.mutable[local.0 as usize] => {
+                let message = format!(
+                    "{operation} changes `{name}`, which is not declared with `var`: declare it as `var {name}`"
+                );
+                self.diags.error("E1411", span, message);
+            }
+            _ => {}
         }
         Some(hir::Place { local, path: steps })
     }

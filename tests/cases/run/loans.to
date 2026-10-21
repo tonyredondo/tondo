@@ -1,0 +1,80 @@
+import std.console
+
+type Point = { x: Int, y: Int }
+
+fn scale(values: mut Array[Int], factor: Int) {
+    values *= factor
+    values[0] += 1
+}
+
+fn addValue(values: var Array[Int], value: Int) {
+    values.push(value)
+}
+
+fn reset(point: mut Point) {
+    point = Point { x: 0, y: 0 }
+}
+
+fn describe(point: ref Point): String {
+    "({point.x}, {point.y})"
+}
+
+fn swap(a: mut Int, b: mut Int) {
+    let previous = a
+    a = b
+    b = previous
+}
+
+fn bump(point: mut Point, amount: Int) {
+    point.x += amount
+}
+
+fn grow(lists: mut Array[Array[Int]]) {
+    lists[0].push(9)
+}
+
+fn total(values: ref Array[Int]): Int {
+    var sum = 0
+    for value in values {
+        sum += value
+    }
+    sum
+}
+
+fn snapshot(point: Point, target: mut Point) {
+    target.x = 100
+    console.println("{point.x} {target.x}")
+}
+
+fn main() {
+    var numbers = [1, 2, 3]
+    let copy = numbers
+    scale(mut numbers, 10)
+    addValue(var numbers, 4)
+    console.println("{numbers} {copy} {total(ref numbers)}")
+    var p = Point { x: 3, y: 4 }
+    console.println(describe(ref p))
+    bump(mut p, 2)
+    console.println(describe(ref p))
+    reset(mut p)
+    console.println(describe(ref Point { x: 7, y: 8 }))
+    var a = 1
+    var b = 2
+    swap(mut a, mut b)
+    var pair = [10, 20]
+    swap(mut pair[0], mut pair[1])
+    console.println("{a} {b} {pair} {p.x}")
+    var grid = [[1], [2]]
+    grow(mut grid)
+    var q = Point { x: 1, y: 1 }
+    snapshot(q, mut q)
+    console.println("{grid} {q.x}")
+}
+
+// expect-stdout: [11, 20, 30, 4] [1, 2, 3] 65
+// expect-stdout: (3, 4)
+// expect-stdout: (5, 4)
+// expect-stdout: (7, 8)
+// expect-stdout: 2 1 [20, 10] 0
+// expect-stdout: 1 100
+// expect-stdout: [[1, 9], [2]] 100
