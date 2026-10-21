@@ -1,0 +1,61 @@
+import std.console
+
+type Pair[A, B] = { first: A, second: B }
+
+enum Slot[T] {
+    Empty
+    Full(T)
+}
+
+fn swap[A, B](pair: Pair[A, B]): Pair[B, A] {
+    let Pair { first, second } = pair
+    Pair { first: second, second: first }
+}
+
+fn orElse[T](slot: Slot[T], fallback: T, spare: var Array[T]): T {
+    match slot {
+        Slot.Full(value) => {
+            spare.push(fallback)
+            value
+        }
+        Slot.Empty => fallback
+    }
+}
+
+fn rotate[T](values: Array[T]): Array[T] {
+    var rest = values
+    let first = rest.removeAt(0)
+    var out: Array[T] = []
+    for value in rest {
+        out.push(value)
+    }
+    match first {
+        some(value) => out.push(value)
+        none => {}
+    }
+    out
+}
+
+fn latest[T](values: Array[T], seed: T, old: var Array[T]): T {
+    var current = seed
+    for value in values {
+        old.push(current)
+        current = value
+    }
+    current
+}
+
+fn main() {
+    let pair = swap(Pair { first: 1, second: "one" })
+    console.println("{pair.first} {pair.second}")
+    var spare: Array[Int] = []
+    let empty: Slot[Int] = Slot.Empty
+    console.println("{orElse(Slot.Full(3), 4, var spare)} {orElse(empty, 5, var spare)} {spare}")
+    var old: Array[String] = []
+    let nothing: Array[String] = []
+    console.println("{rotate([1, 2, 3])} {latest(["a", "b"], "z", var old)} {latest(nothing, "y", var old)} {old}")
+}
+
+// expect-stdout: one 1
+// expect-stdout: 3 5 [4]
+// expect-stdout: [2, 3, 1] b y [z, a]

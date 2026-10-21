@@ -65,11 +65,11 @@ impl[T: Summary] Summary for Box[T] {
     }
 }
 
-fn describe[T: Summary](value: T): String {
+fn describe[T: Summary + Discard](value: T): String {
     value.headline()
 }
 
-fn totalArea[S: Shape](shapes: Array[S]): Int {
+fn totalArea[S: Shape + Discard](shapes: Array[S]): Int {
     var total = 0
     for shape in shapes {
         total += shape.area()
@@ -83,7 +83,7 @@ fn grow[S: Shape](shape: S): S {
     copy
 }
 
-fn render[T: Display](values: Array[T]): String {
+fn render[T: Display + Discard](values: Array[T]): String {
     var out = ""
     for value in values {
         out = "{out}{value};"

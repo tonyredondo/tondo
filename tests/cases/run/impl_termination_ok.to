@@ -29,7 +29,7 @@ impl[T: Summary] Render for T {
     }
 }
 
-fn show[T: Render](value: T): String {
+fn show[T: Render + Discard](value: T): String {
     value.render()
 }
 

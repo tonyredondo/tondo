@@ -216,3 +216,17 @@ runtime cleanup stack, popped before the normal call. A panic runs the
 remaining entries before terminating: since a panic ends the process,
 frames are still alive and the native stack never unwinds. A panic inside
 a cleanup is reported as suppressed and the other cleanups still run.
+
+## 2026-10-21 — Ownership is checked on generic code before monomorphization
+
+Every concrete value of 0.1 is `Copy`, so moves and obligations (8.10) only
+concern type parameters without `Copy` or `Discard` bounds and the
+composites that hold them. The checker analyses each function's HIR once,
+before monomorphization, following its structured control flow: branches
+merge "moved" into "moved on some paths", and a loop body is checked again
+with what its previous iteration moved. A use of a moved binding is
+`E1401`; moving a part, copying a non-`Copy` element out of a place or
+moving out of a loan is `E1406`; overwriting a value that cannot be
+dropped is `E1408`; and dropping one at a scope exit, with `_ =`, a `_`
+pattern or `clear()` is `E1409`. `E1404` is left for the terminal types
+that come with native handles. Closure bodies are not analysed yet.

@@ -65,6 +65,8 @@ pub struct Function {
 pub struct Local {
     pub name: String,
     pub ty: Ty,
+    /// Where it is declared, for diagnostics.
+    pub span: Span,
 }
 
 #[derive(Clone)]

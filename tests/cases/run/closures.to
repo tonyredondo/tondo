@@ -12,11 +12,11 @@ fn apply(value: Int, operation: fn(Int): Int): Int {
     operation(value)
 }
 
-fn applyTwice[F: Call[fn(Int): Int]](value: Int, operation: F): Int {
+fn applyTwice[F: Call[fn(Int): Int] + Discard](value: Int, operation: F): Int {
     operation(operation(value))
 }
 
-fn repeat[F: CallMut[fn(): Int]](times: Int, next: F): Array[Int] {
+fn repeat[F: CallMut[fn(): Int] + Discard](times: Int, next: F): Array[Int] {
     var results: Array[Int] = []
     var step = next
     for _ in 0..times {
@@ -29,7 +29,7 @@ fn makeAdder(amount: Int): fn(Int): Int {
     (value: Int): Int { value + amount }
 }
 
-fn mapAll[T, U, F: Call[fn(T): U]](values: Array[T], transform: F): Array[U] {
+fn mapAll[T, U, F: Call[fn(T): U] + Discard](values: Array[T], transform: F): Array[U] {
     var out: Array[U] = []
     for value in values {
         out.push(transform(value))

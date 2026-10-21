@@ -9,11 +9,11 @@ type Index[K: Key, V] = { entries: Map[K, V], name: String }
 
 type Pair[A, B] = { first: A, second: B }
 
-fn Pair[A, B].withFirst[C](self, value: C): Pair[C, B] {
+fn Pair[A, B: Copy].withFirst[C](self, value: C): Pair[C, B] {
     Pair { first: value, second: self.second }
 }
 
-fn orElse[T](value: Maybe[T], fallback: T): T {
+fn orElse[T: Discard](value: Maybe[T], fallback: T): T {
     match value {
         Maybe.Just(inner) => inner
         Maybe.Nothing => fallback
@@ -24,7 +24,7 @@ fn wrap[T](value: T): Maybe[T] {
     Maybe.Just(value)
 }
 
-fn twice[T](value: T): Array[T] {
+fn twice[T: Copy](value: T): Array[T] {
     [identity(value), identity(value)]
 }
 

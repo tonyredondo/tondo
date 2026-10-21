@@ -2,7 +2,7 @@ import std.console
 
 type IndexCursor[T] = { values: Array[T], index: Int }
 
-impl[T] Iterator[(Int, T)] for IndexCursor[T] {
+impl[T: Copy] Iterator[(Int, T)] for IndexCursor[T] {
     fn next(mut self): (Int, T)? {
         let value = self.values.get(self.index)?
         self.index += 1
@@ -10,7 +10,7 @@ impl[T] Iterator[(Int, T)] for IndexCursor[T] {
     }
 }
 
-fn enumerate[T](values: Array[T]): impl Iterator[(Int, T)] + Discard {
+fn enumerate[T: Copy](values: Array[T]): impl Iterator[(Int, T)] + Discard {
     IndexCursor { values, index: 0 }
 }
 

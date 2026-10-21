@@ -190,6 +190,9 @@ pub struct ParamDef {
     pub name: String,
     pub equatable: bool,
     pub key: bool,
+    /// `Copy` (which implies `Discard`) and `Discard` (8.10).
+    pub copy: bool,
+    pub discard: bool,
 }
 
 #[derive(Clone)]
@@ -375,7 +378,7 @@ impl Types {
     }
 
     pub fn declare_param(&mut self, name: String) -> Ty {
-        self.params.push(ParamDef { name, equatable: false, key: false });
+        self.params.push(ParamDef { name, equatable: false, key: false, copy: false, discard: false });
         self.intern(TyKind::Param(self.params.len() as u32 - 1))
     }
 
@@ -965,6 +968,47 @@ impl Types {
                 (None, None) => false,
             },
         };
+        visiting.pop();
+        result
+    }
+
+    /// The closed `Copy` capability (8.10): values are duplicated implicitly
+    /// and using them never moves them. In 0.1 only type parameters without
+    /// the bound, and composites holding them, are affine.
+    pub fn is_copy(&self, ty: Ty) -> bool {
+        self.capability(ty, &mut Vec::new(), &|p| p.copy)
+    }
+
+    /// The closed `Discard` capability (8.10): values may be dropped at the
+    /// end of their scope or with `_ =` without a terminal operation.
+    pub fn is_discard(&self, ty: Ty) -> bool {
+        self.capability(ty, &mut Vec::new(), &|p| p.copy || p.discard)
+    }
+
+    /// A structural capability that every concrete value of 0.1 has and a
+    /// type parameter has when `param` says so; computed coinductively.
+    fn capability(&self, ty: Ty, visiting: &mut Vec<Ty>, param: &dyn Fn(&ParamDef) -> bool) -> bool {
+        if visiting.contains(&ty) {
+            return true;
+        }
+        visiting.push(ty);
+        let repr = self.repr(ty);
+        let parts: Vec<Ty> = match self.kind(repr) {
+            TyKind::Param(index) => {
+                visiting.pop();
+                return param(&self.params[*index as usize]);
+            }
+            TyKind::Opaque(id, _) => vec![self.opaques[*id as usize].carrier],
+            TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) | TyKind::Option(t) => vec![*t],
+            TyKind::Map(a, b) | TyKind::Result(a, b) => vec![*a, *b],
+            TyKind::Tuple(items) | TyKind::Union(items) => items.clone(),
+            _ => match (self.components(repr), self.variants(repr)) {
+                (Some(items), _) => items,
+                (None, Some(variants)) => variants.concat(),
+                (None, None) => Vec::new(),
+            },
+        };
+        let result = parts.iter().all(|&t| self.capability(t, visiting, param));
         visiting.pop();
         result
     }

@@ -779,9 +779,10 @@ impl Checker<'_> {
         match (segments.as_slice(), args.is_empty()) {
             ([name], true) if name.name == "Equatable" => self.types.param_mut(param).equatable = true,
             ([name], true) if name.name == "Key" => self.types.param_mut(param).key = true,
-            // Affine values arrive with ownership (H3); until then every
-            // value can be copied, discarded and shared.
-            ([name], true) if matches!(name.name.as_str(), "Copy" | "Discard" | "Send" | "Share") => {}
+            ([name], true) if name.name == "Copy" => self.types.param_mut(param).copy = true,
+            ([name], true) if name.name == "Discard" => self.types.param_mut(param).discard = true,
+            // `Send` and `Share` matter once there is concurrency (H5).
+            ([name], true) if matches!(name.name.as_str(), "Send" | "Share") => {}
             ([name], false) if matches!(name.name.as_str(), "Call" | "CallMut" | "CallOnce") => {
                 let [signature] = args.as_slice() else {
                     self.diags.error("E1104", bound.span, "a call bound takes one function type: `Call[fn(A): B]`");
@@ -1418,7 +1419,13 @@ impl Checker<'_> {
     /// meet, as text for a diagnostic.
     fn bound_holds(&mut self, param: Ty, actual: Ty, map: &HashMap<Ty, Ty>, depth: usize) -> Option<String> {
         let def = self.types.param(param)?;
-        let (equatable, key) = (def.equatable, def.key);
+        let (equatable, key, copy, discard) = (def.equatable, def.key, def.copy, def.discard);
+        if copy && !self.types.is_copy(actual) {
+            return Some("`Copy`".into());
+        }
+        if discard && !self.types.is_discard(actual) {
+            return Some("`Discard`".into());
+        }
         if key && !self.types.is_key(actual) {
             return Some("`Key`".into());
         }
@@ -1995,7 +2002,7 @@ impl Checker<'_> {
         self.type_params = outer_types;
         self.self_type = outer_self;
         self.implementing = outer_implementing;
-        hir::Function {
+        let function = hir::Function {
             name: signature.name,
             generics: signature.generics,
             params,
@@ -2003,7 +2010,20 @@ impl Checker<'_> {
             locals: cx.locals,
             result: signature.result,
             body,
-        }
+        };
+        self.ownership(&function, &cx.params);
+        function
+    }
+
+    /// Checks moves and obligations (8.10) once the body is typed.
+    fn ownership(&mut self, function: &hir::Function, params: &[Option<ast::Mode>]) {
+        let (signatures, traits) = (&self.signatures, &self.traits);
+        let modes = |callee: Callee| match callee {
+            Callee::Fn(id) => signatures.get(id.0 as usize).map(|s| s.modes.clone()).unwrap_or_default(),
+            Callee::Trait(id, index) => traits[id.0 as usize].methods[index as usize].signature.modes.clone(),
+            Callee::Std(_) => Vec::new(),
+        };
+        crate::ownership::check(&self.types, function, params, &modes, self.diags);
     }
 
     /// The implicit `main` of a root script (spec 20.3). Its error type is
@@ -2018,7 +2038,7 @@ impl Checker<'_> {
             Some(error) => self.types.intern(TyKind::Result(Ty::UNIT, error)),
             None => Ty::UNIT,
         };
-        hir::Function {
+        let function = hir::Function {
             name: "main".into(),
             generics: Vec::new(),
             params: Vec::new(),
@@ -2026,7 +2046,9 @@ impl Checker<'_> {
             locals: cx.locals,
             result,
             body,
-        }
+        };
+        self.ownership(&function, &cx.params);
+        function
     }
 
     /// The error type a `fail` or `?` may produce here, inferring it in a
@@ -2294,7 +2316,7 @@ impl Checker<'_> {
             generics,
             params: vec![LocalId(0)],
             loans: vec![true],
-            locals: vec![hir::Local { name: "<defer>".into(), ty: env_ty }],
+            locals: vec![hir::Local { name: "<defer>".into(), ty: env_ty, span }],
             result: Ty::UNIT,
             body,
         }));
@@ -2305,7 +2327,7 @@ impl Checker<'_> {
 
     /// A local that no name refers to, such as the value of `for _ in ...`.
     fn hidden_local(&mut self, cx: &mut FnCx, ty: Ty) -> LocalId {
-        cx.locals.push(hir::Local { name: "_".into(), ty });
+        cx.locals.push(hir::Local { name: "_".into(), ty, span: Span::default() });
         cx.mutable.push(false);
         cx.params.push(None);
         LocalId(cx.locals.len() as u32 - 1)
@@ -2323,7 +2345,7 @@ impl Checker<'_> {
             self.diags.error("E1005", name.span, message);
         }
         let id = LocalId(cx.locals.len() as u32);
-        cx.locals.push(hir::Local { name: name.name.clone(), ty });
+        cx.locals.push(hir::Local { name: name.name.clone(), ty, span: name.span });
         cx.mutable.push(mutable);
         cx.params.push(None);
         cx.scopes.last_mut().unwrap().push((name.name.clone(), id));
@@ -2416,6 +2438,13 @@ impl Checker<'_> {
             ast::StmtKind::Assign { target, op, value } => self.assign(cx, target, *op, value, stmt.span),
             ast::StmtKind::Discard(value) => {
                 let value = self.expr(cx, value, None);
+                if !self.types.is_discard(value.ty) && !self.types.has_error(value.ty) {
+                    let ty = self.display(value.ty);
+                    let message = format!(
+                        "`_ =` drops a value of type {ty}, which may need to be consumed; pass it on, or bound it by `Discard`"
+                    );
+                    self.diags.error("E1409", value.span, message);
+                }
                 cx.diverged |= value.ty == Ty::NEVER;
                 Some(hir::Stmt::Expr(value))
             }
