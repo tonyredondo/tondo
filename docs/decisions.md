@@ -128,3 +128,19 @@ panics match the scalar operators. `a += b` builds the new array and then
 stores it, which gives the strong guarantee for free. A slice assignment of a
 different length also panics with `P0006`: 10.5 requires equal lengths but
 does not name the panic.
+
+## 2026-10-21 — Unions are anonymous enums
+
+A union type is normalized when it is built: nested unions are flattened,
+`Never` and duplicates disappear, and members are sorted by name, so
+`A | B` and `B | A` are one type with one layout. Its value is an enum with
+one variant per member, which reuses the enum layout, boxes for recursive
+members, glue functions and Maranget's exhaustiveness (a missing member is
+reported as `Int(_)`). A value is injected only when its type is exactly a
+member; an unsuffixed literal takes the only integer or float member, and
+`none`/`some`/`ok`/`err` the only option or result member. `?` widens an
+error into the function's error union, re-tagging when the source is itself
+a smaller union. In patterns, `Member(p)` tests a member and binds the whole
+value, while record, variant, option and literal patterns select the member
+their own type belongs to; a bare type name is rejected because it would
+bind everything.

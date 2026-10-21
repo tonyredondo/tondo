@@ -331,7 +331,7 @@ impl Codegen<'_> {
             TyKind::String | TyKind::Array(_) | TyKind::Deque(_) | TyKind::Map(..) | TyKind::Set(_) => {
                 Class::Scalar(POINTER)
             }
-            TyKind::Tuple(_) | TyKind::Adt(_) | TyKind::Option(_) | TyKind::Result(..) => {
+            TyKind::Tuple(_) | TyKind::Adt(_) | TyKind::Option(_) | TyKind::Result(..) | TyKind::Union(_) => {
                 let layout = self.layout(repr);
                 match layout.shape {
                     Shape::Enum { tag, .. } if layout.size == tag.bytes() => Class::Scalar(tag),
@@ -880,6 +880,33 @@ impl Emit<'_, '_> {
             && let Val::Scalar(text) = value
         {
             return text;
+        }
+        if let Some(members) = types.members(repr) {
+            // Describe the member the union holds.
+            let tag = self.tag(ty, value);
+            let done = self.fb.create_block();
+            self.fb.append_block_param(done, POINTER);
+            for (variant, &member) in members.iter().enumerate() {
+                let (this, next) = (self.fb.create_block(), self.fb.create_block());
+                let is_this = self.fb.ins().icmp_imm_s(IntCC::Equal, tag, variant as i64);
+                self.fb.ins().brif(is_this, this, &[], next, &[]);
+                self.fb.switch_to_block(this);
+                let payload = match value {
+                    Val::Memory(address) => {
+                        let slot = self.cg.slot(ty, Proj::Variant(variant as u32, 0));
+                        let address = self.component_address(address, &slot);
+                        self.value_at(address, member)
+                    }
+                    _ => Val::Zero,
+                };
+                let description = self.describe(member, payload);
+                self.fb.ins().jump(done, &[description.into()]);
+                self.fb.switch_to_block(next);
+            }
+            let fallback = self.string_ptr(&types.display(ty));
+            self.fb.ins().jump(done, &[fallback.into()]);
+            self.fb.switch_to_block(done);
+            return self.fb.block_params(done)[0];
         }
         let names: Vec<String> = match types.kind(repr) {
             TyKind::Adt(id) => match &types.adt(*id).kind {

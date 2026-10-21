@@ -1,0 +1,38 @@
+type A = { x: Int }
+type B = { y: Int }
+type C = { z: Int }
+
+fn c(): Int ! C {
+    fail C { z: 1 }
+}
+
+fn f(): Int ! (A | B) {
+    c()?
+}
+
+fn g(value: Int | String): String {
+    match value {
+        Int(n) => "{n}"
+    }
+}
+
+fn h(value: Int | String): String {
+    match value {
+        String => "s"
+        Bool(b) => "b"
+        _ => "x"
+    }
+}
+
+fn main() {
+    let pair: (Int, Int) | String = "x"
+    let w: Int | String = 1
+    let text = "{w}"
+}
+
+// expect-error: E1301 `C` is missing: declare the result as `Int ! (A | B | C)`
+// expect-error: E1204 `String(_)` is not covered
+// expect-error: E1202 `String` alone would bind any value
+// expect-error: E1202 `Bool` is not a member of `Int | String`
+// expect-error: E1102 a tuple cannot be a union member: wrap it in a newtype
+// expect-error: E1105 `match` on its members

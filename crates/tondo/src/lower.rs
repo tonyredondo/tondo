@@ -370,6 +370,42 @@ impl Builder<'_> {
         }
     }
 
+    /// An error that `?` propagates, as a value of the error union the
+    /// function fails with when it is a member or a smaller union (15.3).
+    fn widen(&mut self, error: Operand, from: Ty, span: Span) -> Operand {
+        let TyKind::Result(_, to) = *self.types.kind(self.function.result) else { unreachable!() };
+        if from == to {
+            return error;
+        }
+        let members = self.types.members(to).expect("the checker allows only widening").to_vec();
+        let index = |member: Ty| members.iter().position(|&m| m == member).expect("a member of the union") as u32;
+        if let Some(from_members) = self.types.members(from).map(<[Ty]>::to_vec) {
+            // Re-tag each member of the smaller union.
+            let source = self.place_of(error, from);
+            let result = self.new_local(to);
+            let tag_ty = self.types.tag_ty(from);
+            let tag = self.temp(tag_ty, Rvalue::Discriminant(source.clone()), span);
+            let done = self.new_block();
+            for (variant, &member) in from_members.iter().enumerate() {
+                let (this, next) = (self.new_block(), self.new_block());
+                let test = Rvalue::Binary(BinOp::Eq, tag.clone(), Operand::Const(Const::Int(variant as i128, tag_ty)));
+                let test = self.temp(Ty::BOOL, test, span);
+                self.terminate(Terminator::Branch(test, this, next));
+                self.switch_to(this);
+                let payload = Operand::Copy(source.variant_field(variant as u32, 0));
+                let value = self.variant(to, index(member), vec![payload], span);
+                self.store(Place::local(result), value, span);
+                self.goto(done);
+                self.switch_to(next);
+            }
+            self.terminate(Terminator::Unreachable);
+            self.switch_to(done);
+            self.own(result);
+            return Operand::local(result);
+        }
+        self.variant(to, index(from), vec![error], span)
+    }
+
     /// Returns `value`, as `ok(value)` from a fallible function.
     fn emit_return(&mut self, value: Operand) {
         let value =
@@ -820,7 +856,9 @@ impl Builder<'_> {
                     let none = self.variant(self.success_ty(), NONE, Vec::new(), e.span);
                     self.emit_return(none);
                 } else {
-                    self.emit_fail(Operand::Copy(place.variant_field(ERR, 0)));
+                    let TyKind::Result(_, error_ty) = *self.types.kind(inner.ty) else { unreachable!() };
+                    let error = self.widen(Operand::Copy(place.variant_field(ERR, 0)), error_ty, e.span);
+                    self.emit_fail(error);
                 }
                 self.switch_to(next);
                 Operand::Copy(place.variant_field(success, 0))

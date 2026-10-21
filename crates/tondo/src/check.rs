@@ -545,12 +545,35 @@ impl Checker<'_> {
                 let inner = self.resolve_type(inner);
                 self.types.intern(TyKind::Option(inner))
             }
-            ast::TypeKind::Union(_) => self.unsupported_type(t.span, "union types"),
+            ast::TypeKind::Union(members) => {
+                let mut types = Vec::new();
+                for member in members {
+                    let ty = self.resolve_type(member);
+                    self.check_union_member(ty, member.span);
+                    types.push(ty);
+                }
+                self.types.union(&types)
+            }
             ast::TypeKind::Tuple(items) => {
                 let items = items.iter().map(|item| self.resolve_type(item)).collect();
                 self.types.intern(TyKind::Tuple(items))
             }
             ast::TypeKind::Fn => self.unsupported_type(t.span, "function types"),
+        }
+    }
+
+    /// Union members are nominal or intrinsic types written as a path (9.5);
+    /// anonymous structural types first get a name with a newtype.
+    fn check_union_member(&mut self, ty: Ty, span: Span) {
+        let anonymous = match self.types.kind(ty) {
+            TyKind::Tuple(_) => Some("a tuple"),
+            TyKind::Unit => Some("`Unit`"),
+            _ => None,
+        };
+        if let Some(what) = anonymous {
+            let message =
+                format!("{what} cannot be a union member: wrap it in a newtype, such as `type Pair = (Int, Int)`");
+            self.diags.error("E1102", span, message);
         }
     }
 
@@ -1084,10 +1107,19 @@ impl Checker<'_> {
     /// Reports a mismatch unless `value` already has (or diverges into)
     /// `expected`. A `T` where `T?` is expected becomes `some(T)` (8.9).
     fn coerce(&mut self, value: hir::Expr, expected: Ty) -> hir::Expr {
-        if let TyKind::Option(inner) = self.types.kind(expected)
-            && value.ty == *inner
+        if value.ty == expected {
+            return value;
+        }
+        // A value of a member's exact type is injected into a union (9.5).
+        if let Some(member) = self.types.members(expected).and_then(|m| m.iter().position(|&t| t == value.ty)) {
+            let span = value.span;
+            return Self::mk(hir::ExprKind::Variant(member as u32, vec![(0, value)]), expected, span);
+        }
+        if let TyKind::Option(inner) = *self.types.kind(expected)
+            && (value.ty == inner || self.types.members(inner).is_some_and(|m| m.contains(&value.ty)))
         {
             let span = value.span;
+            let value = self.coerce(value, inner);
             return Self::mk(hir::ExprKind::Variant(SOME, vec![(0, value)]), expected, span);
         }
         if value.ty != expected
@@ -1185,8 +1217,8 @@ impl Checker<'_> {
             ast::ExprKind::Record { path, fields } => self.record_literal(cx, path, fields, span),
             ast::ExprKind::With { base, updates } => self.with_expr(cx, base, updates, span),
             ast::ExprKind::Try(inner) => self.try_expr(cx, inner, span),
-            ast::ExprKind::None => match expected.map(|t| self.types.kind(t)) {
-                Some(TyKind::Option(_)) => Self::mk(hir::ExprKind::Variant(NONE, Vec::new()), expected.unwrap(), span),
+            ast::ExprKind::None => match self.union_member(expected, "none").map(|t| (t, self.types.kind(t))) {
+                Some((ty, TyKind::Option(_))) => Self::mk(hir::ExprKind::Variant(NONE, Vec::new()), ty, span),
                 _ => {
                     self.diags.error("E1304", span, "`none` needs an expected `T?` type");
                     Self::error_expr(span)
@@ -1454,6 +1486,12 @@ impl Checker<'_> {
     /// in the current scope.
     fn pattern(&mut self, cx: &mut FnCx, p: &ast::Pattern, ty: Ty, context: PatternContext) -> hir::Pattern {
         let span = p.span;
+        if let Some(members) = self.types.members(ty).map(<[Ty]>::to_vec)
+            && !matches!(p.kind, ast::PatternKind::Wildcard)
+            && let Some(pattern) = self.union_pattern(cx, p, ty, &members, context)
+        {
+            return pattern;
+        }
         let mismatch = |this: &Self, what: &str| format!("{what} cannot match a value of type {}", this.display(ty));
         let kind = match &p.kind {
             ast::PatternKind::Wildcard => hir::PatKind::Wildcard,
@@ -1591,6 +1629,9 @@ impl Checker<'_> {
                     None => hir::PatKind::Fields(patterns),
                 }
             }
+            ast::PatternKind::Member { .. } => {
+                return self.pattern_error(span, mismatch(self, "a member pattern"));
+            }
             ast::PatternKind::Path(path) => {
                 let Some(resolved) = self.variant_path(path) else {
                     let message = format!("`{}` is not a variant", Self::path_text(path));
@@ -1609,6 +1650,135 @@ impl Checker<'_> {
             }
         };
         hir::Pattern { kind, ty, span }
+    }
+
+    /// A pattern against a union (9.6): `Member(pattern)` tests the tag and
+    /// matches the whole member, and a pattern of a member's own type (a
+    /// record, variant, option or literal) selects that member. `None` lets
+    /// a binding match the whole union.
+    fn union_pattern(
+        &mut self,
+        cx: &mut FnCx,
+        p: &ast::Pattern,
+        ty: Ty,
+        members: &[Ty],
+        context: PatternContext,
+    ) -> Option<hir::Pattern> {
+        let span = p.span;
+        let explicit = match &p.kind {
+            ast::PatternKind::Member { ty: member, inner } => Some((self.resolve_type(member), &**inner)),
+            ast::PatternKind::Constructor { path, args } if path.len() == 1 => {
+                let name = &path[0].name;
+                match self.type_named(name) {
+                    Some(member) => {
+                        let [inner] = args.as_slice() else {
+                            return Some(self.pattern_error(span, format!("`{name}(...)` takes one pattern")));
+                        };
+                        Some((member, inner))
+                    }
+                    None => None,
+                }
+            }
+            ast::PatternKind::Binding(name) if self.type_named(&name.name).is_some() => {
+                let message = format!(
+                    "`{0}` alone would bind any value; test the member with `{0}(_)` or `{0}(name)`",
+                    name.name
+                );
+                return Some(self.pattern_error(name.span, message));
+            }
+            _ => None,
+        };
+        let (member, inner) = match explicit {
+            Some((member, inner)) => (member, Some(inner)),
+            None => (self.pattern_member_type(p, ty, members)?, None),
+        };
+        if member == Ty::ERROR {
+            return Some(Self::wild(ty, span));
+        }
+        let Some(index) = members.iter().position(|&m| m == member) else {
+            let message = format!("{} is not a member of {}", self.display(member), self.display(ty));
+            return Some(self.pattern_error(span, message));
+        };
+        let inner = self.pattern(cx, inner.unwrap_or(p), member, context);
+        Some(hir::Pattern { kind: hir::PatKind::Variant(index as u32, vec![inner]), ty, span })
+    }
+
+    /// The member type a nominal, option or literal pattern belongs to.
+    fn pattern_member_type(&mut self, p: &ast::Pattern, ty: Ty, members: &[Ty]) -> Option<Ty> {
+        let only = |this: &Self, test: fn(&TyKind) -> bool| {
+            let found: Vec<Ty> = members.iter().copied().filter(|&m| test(this.types.kind(m))).collect();
+            match found.as_slice() {
+                [only] => Some(*only),
+                _ => None,
+            }
+        };
+        match &p.kind {
+            ast::PatternKind::Record { path, .. } | ast::PatternKind::Path(path) => match self.variant_path(path) {
+                Some(resolved) => Some(resolved.map_or(Ty::ERROR, |(enum_ty, _)| enum_ty)),
+                None if path.len() == 1 => self.type_named(&path[0].name),
+                None => None,
+            },
+            ast::PatternKind::Constructor { path, .. } => match path.as_slice() {
+                [name] if matches!(name.name.as_str(), "some") => only(self, |k| matches!(k, TyKind::Option(_))),
+                [name] if matches!(name.name.as_str(), "ok" | "err") => only(self, |k| matches!(k, TyKind::Result(..))),
+                _ => self.variant_path(path).map(|resolved| resolved.map_or(Ty::ERROR, |(enum_ty, _)| enum_ty)),
+            },
+            ast::PatternKind::None => only(self, |k| matches!(k, TyKind::Option(_))),
+            ast::PatternKind::Literal(expr) => self.literal_type(expr, ty),
+            _ => None,
+        }
+    }
+
+    /// The type a literal pattern has when matched against `ty`.
+    fn literal_type(&self, expr: &ast::Expr, ty: Ty) -> Option<Ty> {
+        Some(match &expr.kind {
+            ast::ExprKind::Int { suffix: Some(suffix), .. } => Ty::int(IntTy::from_suffix(suffix)),
+            ast::ExprKind::Int { .. } => self.expected_number(Some(ty), false).unwrap_or(Ty::INT),
+            ast::ExprKind::Float { suffix: Some(suffix), .. } => {
+                if *suffix == "f32" {
+                    Ty::F32
+                } else {
+                    Ty::F64
+                }
+            }
+            ast::ExprKind::Float { .. } => self.expected_number(Some(ty), true).unwrap_or(Ty::F64),
+            ast::ExprKind::Unary(_, inner) => return self.literal_type(inner, ty),
+            ast::ExprKind::Str(_) => Ty::STRING,
+            ast::ExprKind::Char(_) => Ty::CHAR,
+            ast::ExprKind::Bool(_) => Ty::BOOL,
+            _ => return None,
+        })
+    }
+
+    /// The type a single name denotes, without reporting unknown names.
+    fn type_named(&mut self, name: &str) -> Option<Ty> {
+        let path = ast::TypeExpr {
+            kind: ast::TypeKind::Path {
+                segments: vec![ast::Ident { name: name.into(), span: Span::default() }],
+                args: Vec::new(),
+            },
+            span: Span::default(),
+        };
+        let builtin = matches!(
+            name,
+            "Int"
+                | "Int8"
+                | "Int16"
+                | "Int32"
+                | "Int64"
+                | "UInt8"
+                | "UInt16"
+                | "UInt32"
+                | "UInt64"
+                | "Bool"
+                | "String"
+                | "Float"
+                | "Float32"
+                | "Float64"
+                | "Char"
+                | "Byte"
+        );
+        (builtin || self.type_names.contains_key(name)).then(|| self.resolve_type(&path))
     }
 
     fn wild(ty: Ty, span: Span) -> hir::Pattern {
@@ -1687,6 +1857,7 @@ impl Checker<'_> {
         expected: Option<Ty>,
         span: Span,
     ) -> hir::Expr {
+        let expected = self.union_member(expected, constructor);
         let expected_kind = expected.map(|t| self.types.kind(t).clone());
         let (variant, payload_ty, ty) = match (constructor, expected_kind) {
             ("some", Some(TyKind::Option(inner))) => (SOME, Some(inner), expected),
@@ -1709,6 +1880,27 @@ impl Checker<'_> {
         Self::mk(hir::ExprKind::Variant(variant, vec![(0, value)]), ty, span)
     }
 
+    /// The type `none`, `some(...)`, `ok(...)` or `err(...)` builds: the
+    /// expected type, or the only option or result member of an expected
+    /// union, into which the value is then injected.
+    fn union_member(&self, expected: Option<Ty>, constructor: &str) -> Option<Ty> {
+        let Some(members) = expected.and_then(|t| self.types.members(t)) else { return expected };
+        let option = matches!(constructor, "none" | "some");
+        let found: Vec<Ty> = members
+            .iter()
+            .copied()
+            .filter(|&m| match self.types.kind(m) {
+                TyKind::Option(_) => option,
+                TyKind::Result(..) => !option,
+                _ => false,
+            })
+            .collect();
+        match found.as_slice() {
+            [only] => Some(*only),
+            _ => expected,
+        }
+    }
+
     /// `value?` propagates `none` or an error out of the enclosing function
     /// and otherwise yields the payload (15.2).
     fn try_expr(&mut self, cx: &mut FnCx, inner: &ast::Expr, span: Span) -> hir::Expr {
@@ -1728,13 +1920,25 @@ impl Checker<'_> {
                 if let Some(channel) = self.error_channel(cx, error, span, "E1301")
                     && channel != error
                     && channel != Ty::ERROR
+                    && !self.types.has_error(error)
                 {
-                    let message = format!(
-                        "`?` would propagate {} but the function fails with {}",
-                        self.display(error),
-                        self.display(channel)
-                    );
-                    self.diags.error("E1301", span, message);
+                    // Widening into an error union is a closed set inclusion (15.3).
+                    let produced = self.types.members(error).map_or(vec![error], <[Ty]>::to_vec);
+                    let declared = self.types.members(channel).map_or(vec![channel], <[Ty]>::to_vec);
+                    let missing: Vec<Ty> = produced.iter().copied().filter(|t| !declared.contains(t)).collect();
+                    if !missing.is_empty() {
+                        let missing_text: Vec<String> = missing.iter().map(|&t| self.display(t)).collect();
+                        let widened = self.types.union(&[channel, error]);
+                        let result = self.types.intern(TyKind::Result(cx.result, widened));
+                        let message = format!(
+                            "`?` would propagate {} but the function fails with {}; {} is missing: declare the result as {}",
+                            self.display(error),
+                            self.display(channel),
+                            missing_text.join(", "),
+                            self.display(result)
+                        );
+                        self.diags.error("E1301", span, message);
+                    }
                 }
                 Self::mk(hir::ExprKind::Try(Box::new(value)), ok, span)
             }
@@ -2169,13 +2373,35 @@ impl Checker<'_> {
     fn int_literal(&mut self, value: i128, suffix: Option<&str>, expected: Option<Ty>, span: Span) -> hir::Expr {
         let int = match suffix {
             Some(suffix) => IntTy::from_suffix(suffix),
-            None => expected.and_then(|t| self.types.as_int(t)).unwrap_or(IntTy::I64),
+            None => self.expected_number(expected, false).and_then(|t| self.types.as_int(t)).unwrap_or(IntTy::I64),
         };
         if value < int.min() || value > int.max() {
             let message = format!("literal `{value}` does not fit in `{}`", int.name());
             self.diags.error("E1102", span, message);
         }
         Self::mk(hir::ExprKind::Int(value), Ty::int(int), span)
+    }
+
+    /// The integer or float type an unsuffixed literal takes from its
+    /// context: the expected type, or the only such member of an expected
+    /// union or option.
+    fn expected_number(&self, expected: Option<Ty>, float: bool) -> Option<Ty> {
+        let fits = |t: &Ty| match self.types.kind(*t) {
+            TyKind::Int(_) => !float,
+            TyKind::Float(_) => float,
+            _ => false,
+        };
+        let mut ty = expected?;
+        if let TyKind::Option(inner) = self.types.kind(ty) {
+            ty = *inner;
+        }
+        match self.types.members(ty) {
+            Some(members) => match members.iter().filter(|t| fits(t)).collect::<Vec<_>>().as_slice() {
+                [only] => Some(**only),
+                _ => None,
+            },
+            None => fits(&ty).then_some(ty),
+        }
     }
 
     fn float_literal(
@@ -2189,7 +2415,7 @@ impl Checker<'_> {
         let ty = match suffix {
             Some("f32") => Ty::F32,
             Some(_) => Ty::F64,
-            None if expected == Some(Ty::F32) => Ty::F32,
+            None if self.expected_number(expected, true) == Some(Ty::F32) => Ty::F32,
             None => Ty::F64,
         };
         // Parse in the target format so rounding happens once (5.8).
@@ -2213,7 +2439,10 @@ impl Checker<'_> {
                 ast::StrSegment::Expr(e) => {
                     let value = self.expr(cx, e, None);
                     if !self.displayable(value.ty) {
-                        let message = format!("{} does not implement `Display`", self.display(value.ty));
+                        let mut message = format!("{} does not implement `Display`", self.display(value.ty));
+                        if self.types.members(value.ty).is_some() {
+                            message.push_str(": `match` on its members to format each one");
+                        }
                         self.diags.error("E1105", value.span, message);
                     }
                     out.push(hir::Segment::Value(value));

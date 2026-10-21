@@ -1,0 +1,25 @@
+import std.console
+
+type Node = { value: Int, next: Node | String }
+
+fn length(node: Node): Int {
+    match node.next {
+        Node(next) => 1 + length(next)
+        String(_) => 1
+    }
+}
+
+fn main() {
+    let list = Node { value: 1, next: Node { value: 2, next: Node { value: 3, next: "end" } } }
+    var copy = list
+    copy.value = 10
+    var counts: Map[Int | String, Int] = [:]
+    counts[1] = 10
+    counts["one"] = 11
+    counts[1] = 12
+    let keys: Set[Int | String] = Set[1, "a", 1]
+    let key: Int | String = "one"
+    _ = console.println("{length(list)} {list.value} {copy.value} {counts.length()} {counts[key] == some(11)} {keys.length()} {"a" in keys}")
+}
+
+// expect-stdout: 3 1 10 2 true 2 true

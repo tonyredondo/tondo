@@ -773,6 +773,23 @@ impl Parser<'_> {
                     path.push(self.ident()?);
                 }
                 match self.tok() {
+                    Tok::LBracket => {
+                        // `Type[Args](pattern)` tests a union member (9.6).
+                        self.bump();
+                        let mut args = vec![self.type_expr()?];
+                        while self.eat(&Tok::Comma) && !self.at(&Tok::RBracket) {
+                            args.push(self.type_expr()?);
+                        }
+                        self.expect(Tok::RBracket)?;
+                        let ty = TypeExpr {
+                            kind: TypeKind::Path { segments: path, args },
+                            span: start.to(self.prev_span()),
+                        };
+                        self.expect(Tok::LParen)?;
+                        let inner = self.pattern()?;
+                        self.expect(Tok::RParen)?;
+                        PatternKind::Member { ty, inner: Box::new(inner) }
+                    }
                     Tok::LParen => {
                         self.bump();
                         let mut args = Vec::new();

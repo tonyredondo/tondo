@@ -187,6 +187,16 @@ fn render(types: &Types, ty: Ty, pat: &Pat) -> String {
                 (TyKind::Option(inner), _) => return format!("some({})", parts(vec![*inner]).join("")),
                 (TyKind::Result(ok, _), 0) => return format!("ok({})", parts(vec![*ok]).join("")),
                 (TyKind::Result(_, err), _) => return format!("err({})", parts(vec![*err]).join("")),
+                (TyKind::Union(members), v) => {
+                    // A nominal member names itself; others are tested with
+                    // `Member(pattern)` (9.6).
+                    let member = members[v as usize];
+                    let inner = parts(vec![member]).join("");
+                    return match inner.as_str() {
+                        "_" => format!("{}(_)", types.display(member)),
+                        _ => inner,
+                    };
+                }
                 _ => {}
             }
             let TyKind::Adt(id) = types.kind(types.repr(ty)) else { return "_".into() };

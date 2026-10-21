@@ -1,0 +1,103 @@
+import std.console
+
+type IoError = { path: String }
+type DecodeError = { line: Int }
+
+enum Shape {
+    Circle(Float)
+    Point
+}
+
+fn render(value: Int | String): String {
+    match value {
+        Int(number) if number < 0 => "negative {number}"
+        Int(number) => "number {number}"
+        String(text) => "text {text}"
+    }
+}
+
+fn kind(value: Shape | Array[Int] | Bool | String?): String {
+    match value {
+        Shape.Circle(r) => "circle {r}"
+        Shape.Point => "point"
+        Array[Int](numbers) => "numbers {numbers}"
+        true => "yes"
+        false => "no"
+        some(text) => "some {text}"
+        none => "none"
+    }
+}
+
+fn read(path: String): String ! IoError {
+    if path == "" {
+        fail IoError { path: "<empty>" }
+    }
+    path
+}
+
+fn decode(text: String): Int ! DecodeError {
+    if text == "bad" {
+        fail DecodeError { line: 7 }
+    }
+    text.length()
+}
+
+fn load(path: String): Int ! (IoError | DecodeError) {
+    let text = read(path)?
+    decode(text)?
+}
+
+fn retry(path: String): Int ! (DecodeError | IoError | String) {
+    load(path)?
+}
+
+fn explain(result: Int ! (IoError | DecodeError | String)): String {
+    match result {
+        ok(n) => "ok {n}"
+        err(IoError { path }) => "io {path}"
+        err(DecodeError { line }) => "decode {line}"
+        err(String(message)) => "other {message}"
+    }
+}
+
+fn fallback(): Int ! (IoError | DecodeError | String) {
+    fail "no fallback"
+}
+
+fn main() {
+    let a: Int | String = 42
+    let b: String | Int = "hi"
+    var c: Int | String = -1
+    _ = console.println("{render(a)} {render(b)} {render(c)} {a == 42} {a == b}")
+    c = "changed"
+    let shapes: Array[Shape | Array[Int] | Bool | String?] = [Shape.Circle(1.5), Shape.Point, [1, 2], true, some("x"), none]
+    for shape in shapes {
+        _ = console.println(kind(shape))
+    }
+    let small: Int32 | String = 7
+    let picked: Int | String = if c == "changed" { 1 } else { "one" }
+    _ = console.println("{render(picked)} {render(c)}")
+    _ = console.println("{explain(retry("file"))} {explain(retry(""))} {explain(retry("bad"))} {explain(fallback())}")
+    match retry("") {
+        ok(_) => {}
+        err(e) => {
+            let text = match e {
+                IoError { path } => "retry io {path}"
+                DecodeError { .. } => "retry decode"
+                String(s) => s
+            }
+            _ = console.println(text)
+        }
+    }
+}
+
+// expect-stdout: number 42 text hi negative -1 true false
+// expect-stdout: circle 1.5
+// expect-stdout: point
+// expect-stdout: numbers [1, 2]
+// expect-stdout: yes
+// expect-stdout: some x
+// expect-stdout: none
+// expect-stdout: number 1 text changed
+// expect-stdout: ok 4 io <empty> decode 7 other no fallback
+// expect-stdout: retry io <empty>

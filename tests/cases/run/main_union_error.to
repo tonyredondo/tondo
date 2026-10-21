@@ -1,0 +1,15 @@
+enum ConfigError {
+    Missing
+}
+
+type ParseError = { line: Int }
+
+fn parse(): Int ! ParseError {
+    fail ParseError { line: 3 }
+}
+
+fn main(): !(ConfigError | ParseError) {
+    let value = parse()?
+}
+
+// expect-exit: 1

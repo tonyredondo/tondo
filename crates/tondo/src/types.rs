@@ -101,6 +101,9 @@ pub enum TyKind {
     Map(Ty, Ty),
     /// An insertion-ordered set (10.15).
     Set(Ty),
+    /// `A | B`: a closed anonymous union (9.5), represented as an enum with
+    /// one variant per member. Built by `Types::union`, which normalizes it.
+    Union(Vec<Ty>),
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -217,6 +220,35 @@ impl Types {
         ty
     }
 
+    /// The union of `members` (9.5): nested unions are flattened, `Never`
+    /// and duplicates are removed, and the order is canonical, so `A | B`
+    /// and `B | A` are the same type. A single member is the member itself.
+    pub fn union(&mut self, members: &[Ty]) -> Ty {
+        let mut flat = Vec::new();
+        for &member in members {
+            match self.kind(member) {
+                TyKind::Union(inner) => flat.extend(inner.iter().copied()),
+                TyKind::Never => {}
+                _ => flat.push(member),
+            }
+        }
+        flat.sort_by_cached_key(|&t| (self.display(t), t.0));
+        flat.dedup();
+        match flat.as_slice() {
+            [] => Ty::NEVER,
+            [single] => *single,
+            _ => self.intern(TyKind::Union(flat)),
+        }
+    }
+
+    /// The members of a union, or `None` for other types.
+    pub fn members(&self, ty: Ty) -> Option<&[Ty]> {
+        match self.kind(ty) {
+            TyKind::Union(members) => Some(members),
+            _ => None,
+        }
+    }
+
     /// An already interned type.
     pub fn lookup(&self, kind: &TyKind) -> Option<Ty> {
         self.map.get(kind).copied()
@@ -277,6 +309,7 @@ impl Types {
         match self.kind(self.repr(ty)) {
             TyKind::Option(inner) => Some(vec![Vec::new(), vec![*inner]]),
             TyKind::Result(ok, err) => Some(vec![vec![*ok], vec![*err]]),
+            TyKind::Union(members) => Some(members.iter().map(|&m| vec![m]).collect()),
             TyKind::Adt(id) => match &self.adt(*id).kind {
                 AdtKind::Enum(variants) => Some(variants.iter().map(|v| v.payload.types()).collect()),
                 _ => None,
@@ -297,6 +330,7 @@ impl Types {
             TyKind::Tuple(items) => items.clone(),
             TyKind::Option(inner) => vec![*inner],
             TyKind::Result(ok, err) => vec![*ok, *err],
+            TyKind::Union(members) => members.clone(),
             TyKind::Adt(id) => match &self.adt(*id).kind {
                 AdtKind::Record(fields) => fields.iter().map(|f| f.ty).collect(),
                 AdtKind::Newtype(inner) => vec![*inner],
@@ -436,6 +470,7 @@ impl Types {
             TyKind::Result(ok, err) => self.has_error(*ok) || self.has_error(*err),
             TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) => self.has_error(*element),
             TyKind::Map(key, value) => self.has_error(*key) || self.has_error(*value),
+            TyKind::Union(members) => members.iter().any(|&t| self.has_error(t)),
             _ => false,
         }
     }
@@ -465,15 +500,26 @@ impl Types {
             }
             TyKind::Adt(id) => self.adt(*id).name.clone(),
             TyKind::Option(inner) => match self.kind(*inner) {
-                TyKind::Option(_) | TyKind::Result(..) => format!("({})?", self.display(*inner)),
+                TyKind::Option(_) | TyKind::Result(..) | TyKind::Union(_) => format!("({})?", self.display(*inner)),
                 _ => format!("{}?", self.display(*inner)),
             },
             TyKind::Array(element) => format!("Array[{}]", self.display(*element)),
             TyKind::Deque(element) => format!("Deque[{}]", self.display(*element)),
             TyKind::Map(key, value) => format!("Map[{}, {}]", self.display(*key), self.display(*value)),
             TyKind::Set(element) => format!("Set[{}]", self.display(*element)),
-            TyKind::Result(ok, err) if *ok == Ty::UNIT => format!("!{}", self.display(*err)),
-            TyKind::Result(ok, err) => format!("{} ! {}", self.display(*ok), self.display(*err)),
+            TyKind::Result(ok, err) => {
+                // A union in either position is grouped (15.1).
+                let grouped = |t: Ty| match self.kind(t) {
+                    TyKind::Union(_) => format!("({})", self.display(t)),
+                    _ => self.display(t),
+                };
+                if *ok == Ty::UNIT {
+                    format!("!{}", grouped(*err))
+                } else {
+                    format!("{} ! {}", grouped(*ok), grouped(*err))
+                }
+            }
+            TyKind::Union(members) => members.iter().map(|&t| self.display(t)).collect::<Vec<_>>().join(" | "),
         }
     }
 }
