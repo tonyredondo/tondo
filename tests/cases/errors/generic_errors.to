@@ -1,0 +1,20 @@
+type Pair[A, B] = { first: A, second: B }
+
+fn same[T](a: T, b: T): Bool {
+    a == b
+}
+
+fn make[T](): Array[T] {
+    []
+}
+
+fn main() {
+    let p: Pair = Pair { first: 1, second: 2 }
+    let q = Pair[Int] { first: 1, second: 2 }
+    let values = make()
+}
+
+// expect-error: E1102 operator `==` cannot be applied to `T`
+// expect-error: E1104 `Pair` takes type arguments: `Pair[A, B]`
+// expect-error: E1104 `Pair` takes 2 type argument(s), found 1
+// expect-error: E1101 cannot infer `T` from the arguments

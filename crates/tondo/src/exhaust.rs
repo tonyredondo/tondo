@@ -266,7 +266,7 @@ fn render(types: &Types, ty: Ty, pat: &Pat) -> String {
             let adt = types.adt(*id);
             let AdtKind::Enum(variants) = &adt.kind else { return "_".into() };
             let variant = &variants[*v as usize];
-            let name = format!("{}.{}", adt.name, variant.name);
+            let name = format!("{}.{}", types.pattern_name(*id), variant.name);
             match &variant.payload {
                 Payload::Unit => name,
                 Payload::Tuple(items) => format!("{name}({})", parts(items.clone()).join(", ")),
@@ -277,16 +277,16 @@ fn render(types: &Types, ty: Ty, pat: &Pat) -> String {
             TyKind::Unit => "()".into(),
             TyKind::Tuple(items) => format!("({})", parts(items.clone()).join(", ")),
             TyKind::Adt(id) => match &types.adt(*id).kind {
-                AdtKind::Newtype(inner) => format!("{}({})", types.adt(*id).name, parts(vec![*inner]).join("")),
+                AdtKind::Newtype(inner) => format!("{}({})", types.pattern_name(*id), parts(vec![*inner]).join("")),
                 AdtKind::Record(fields) => {
                     let names = fields.iter().map(|f| f.name.clone());
                     let values = parts(fields.iter().map(|f| f.ty).collect());
                     let shown: Vec<String> =
                         names.zip(values).filter(|(_, v)| v != "_").map(|(n, v)| format!("{n}: {v}")).collect();
                     if shown.is_empty() {
-                        format!("{} {{ .. }}", types.adt(*id).name)
+                        format!("{} {{ .. }}", types.pattern_name(*id))
                     } else {
-                        format!("{} {{ {}, .. }}", types.adt(*id).name, shown.join(", "))
+                        format!("{} {{ {}, .. }}", types.pattern_name(*id), shown.join(", "))
                     }
                 }
                 AdtKind::Enum(_) => "_".into(),

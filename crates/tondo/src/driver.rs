@@ -2,7 +2,7 @@
 
 use crate::diag::Diagnostics;
 use crate::source::{SourceMap, Span};
-use crate::{check, codegen, hir, lower, parser};
+use crate::{check, codegen, hir, lower, mono, parser};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -40,6 +40,7 @@ pub fn analyze(path: &Path) -> Result<Analysis, String> {
     }
     let module = parser::parse_file(sources.file(file), &mut diags);
     let program = if diags.has_errors() { None } else { check::check(&module, &sources, &mut diags) };
+    let program = program.and_then(|program| mono::monomorphize(program, &mut diags));
     Ok(Analysis { sources, diags, program })
 }
 

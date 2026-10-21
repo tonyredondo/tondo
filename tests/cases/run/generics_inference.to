@@ -1,0 +1,45 @@
+import std.console
+
+enum Maybe[T] {
+    Nothing
+    Just(T)
+}
+
+type Index[K: Key, V] = { entries: Map[K, V], name: String }
+
+type Pair[A, B] = { first: A, second: B }
+
+fn Pair[A, B].withFirst[C](self, value: C): Pair[C, B] {
+    Pair { first: value, second: self.second }
+}
+
+fn orElse[T](value: Maybe[T], fallback: T): T {
+    match value {
+        Maybe.Just(inner) => inner
+        Maybe.Nothing => fallback
+    }
+}
+
+fn wrap[T](value: T): Maybe[T] {
+    Maybe.Just(value)
+}
+
+fn twice[T](value: T): Array[T] {
+    [identity(value), identity(value)]
+}
+
+fn identity[T](value: T): T {
+    value
+}
+
+fn main() {
+    let a = orElse(wrap(5), 0)
+    let b: Maybe[String] = Maybe.Nothing
+    let c = orElse(b, "none")
+    var index = Index { entries: ["a": 1], name: "letters" }
+    index.entries["b"] = 2
+    let pair = Pair { first: 1, second: "x" }.withFirst(true)
+    console.println("{a} {c} {index.entries} {pair.first} {pair.second} {twice("t")}")
+}
+
+// expect-stdout: 5 none [a: 1, b: 2] true x [t, t]

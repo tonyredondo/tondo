@@ -104,6 +104,9 @@ pub enum TyKind {
     /// `A | B`: a closed anonymous union (9.5), represented as an enum with
     /// one variant per member. Built by `Types::union`, which normalizes it.
     Union(Vec<Ty>),
+    /// A type parameter of a generic declaration (12.1). Generic code is
+    /// checked once with parameters and monomorphized before lowering.
+    Param(u32),
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -124,8 +127,31 @@ pub struct AdtId(pub u32);
 pub struct AdtDef {
     pub name: String,
     pub kind: AdtKind,
+    /// For an instance of a generic type: its template and arguments.
+    pub instance: Option<(TemplateId, Vec<Ty>)>,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct TemplateId(pub u32);
+
+/// A generic record, enum or newtype. Each instantiation, such as
+/// `Pair[Int, String]`, is an ordinary nominal type whose definition is the
+/// template's with the arguments substituted.
+pub struct Template {
+    pub name: String,
+    pub params: Vec<Ty>,
+    /// Filled in once the declaration is resolved.
+    pub kind: Option<AdtKind>,
+}
+
+/// A type parameter and the closed capabilities its bounds grant.
+pub struct ParamDef {
+    pub name: String,
+    pub equatable: bool,
+    pub key: bool,
+}
+
+#[derive(Clone)]
 pub enum AdtKind {
     Record(Vec<Field>),
     /// `type Name = T`: a nominal wrapper with the same representation as `T`.
@@ -166,9 +192,21 @@ pub struct Types {
     kinds: Vec<TyKind>,
     map: HashMap<TyKind, Ty>,
     adts: Vec<AdtDef>,
+    params: Vec<ParamDef>,
+    templates: Vec<Template>,
+    instances: HashMap<(TemplateId, Vec<Ty>), Ty>,
+    /// Instances created before their template was defined.
+    pending: Vec<AdtId>,
+    /// Set when an instantiation nests without bound, such as a type whose
+    /// field is the same type applied to a larger argument.
+    pub runaway: Option<String>,
     reaches: RefCell<HashMap<(Ty, Ty), bool>>,
     needs_drop: RefCell<HashMap<Ty, bool>>,
 }
+
+/// Instantiation depth beyond which a generic type is considered to grow
+/// without bound.
+const MAX_TYPE_DEPTH: usize = 40;
 
 impl Ty {
     pub const ERROR: Ty = Ty(0);
@@ -193,6 +231,11 @@ impl Default for Types {
             kinds: Vec::new(),
             map: HashMap::new(),
             adts: Vec::new(),
+            params: Vec::new(),
+            templates: Vec::new(),
+            instances: HashMap::new(),
+            pending: Vec::new(),
+            runaway: None,
             reaches: RefCell::default(),
             needs_drop: RefCell::default(),
         };
@@ -261,7 +304,7 @@ impl Types {
     /// Declares a nominal type; its definition is filled in by `define_adt`.
     pub fn declare_adt(&mut self, name: String) -> (AdtId, Ty) {
         let id = AdtId(self.adts.len() as u32);
-        self.adts.push(AdtDef { name, kind: AdtKind::Record(Vec::new()) });
+        self.adts.push(AdtDef { name, kind: AdtKind::Record(Vec::new()), instance: None });
         (id, self.intern(TyKind::Adt(id)))
     }
 
@@ -273,6 +316,214 @@ impl Types {
 
     pub fn adt(&self, id: AdtId) -> &AdtDef {
         &self.adts[id.0 as usize]
+    }
+
+    /// The name a pattern uses for a nominal type: a generic type's own
+    /// name for its instances.
+    pub fn pattern_name(&self, id: AdtId) -> &str {
+        match &self.adts[id.0 as usize].instance {
+            Some((template, _)) => &self.templates[template.0 as usize].name,
+            None => &self.adts[id.0 as usize].name,
+        }
+    }
+
+    pub fn declare_param(&mut self, name: String) -> Ty {
+        self.params.push(ParamDef { name, equatable: false, key: false });
+        self.intern(TyKind::Param(self.params.len() as u32 - 1))
+    }
+
+    pub fn param(&self, ty: Ty) -> Option<&ParamDef> {
+        match self.kind(ty) {
+            TyKind::Param(index) => Some(&self.params[*index as usize]),
+            _ => None,
+        }
+    }
+
+    pub fn param_mut(&mut self, ty: Ty) -> &mut ParamDef {
+        let TyKind::Param(index) = *self.kind(ty) else { panic!("not a type parameter") };
+        &mut self.params[index as usize]
+    }
+
+    pub fn declare_template(&mut self, name: String, params: Vec<Ty>) -> TemplateId {
+        self.templates.push(Template { name, params, kind: None });
+        TemplateId(self.templates.len() as u32 - 1)
+    }
+
+    pub fn template(&self, id: TemplateId) -> &Template {
+        &self.templates[id.0 as usize]
+    }
+
+    /// Defines a template and every instance already created from it.
+    pub fn define_template(&mut self, id: TemplateId, kind: AdtKind) {
+        self.templates[id.0 as usize].kind = Some(kind);
+        let pending: Vec<AdtId> = std::mem::take(&mut self.pending);
+        for adt in pending {
+            match self.adts[adt.0 as usize].instance {
+                Some((template, _)) if template == id => self.define_instance(adt),
+                _ => self.pending.push(adt),
+            }
+        }
+    }
+
+    /// The template and arguments of an instance of a generic type.
+    pub fn instance_of(&self, ty: Ty) -> Option<(TemplateId, &[Ty])> {
+        match self.kind(ty) {
+            TyKind::Adt(id) => self.adts[id.0 as usize].instance.as_ref().map(|(t, args)| (*t, args.as_slice())),
+            _ => None,
+        }
+    }
+
+    /// `Template[args]`, created on first use.
+    pub fn instantiate(&mut self, template: TemplateId, args: Vec<Ty>) -> Ty {
+        if let Some(&ty) = self.instances.get(&(template, args.clone())) {
+            return ty;
+        }
+        if args.iter().any(|&a| self.depth(a) > MAX_TYPE_DEPTH) {
+            self.runaway.get_or_insert_with(|| self.templates[template.0 as usize].name.clone());
+            return Ty::ERROR;
+        }
+        let shown: Vec<String> = args.iter().map(|&a| self.display(a)).collect();
+        let name = format!("{}[{}]", self.templates[template.0 as usize].name, shown.join(", "));
+        let (id, ty) = self.declare_adt(name);
+        self.adts[id.0 as usize].instance = Some((template, args.clone()));
+        self.instances.insert((template, args), ty);
+        if self.templates[template.0 as usize].kind.is_some() {
+            self.define_instance(id);
+        } else {
+            self.pending.push(id);
+        }
+        ty
+    }
+
+    fn define_instance(&mut self, id: AdtId) {
+        let (template, args) = self.adts[id.0 as usize].instance.clone().unwrap();
+        let template = &self.templates[template.0 as usize];
+        let map: HashMap<Ty, Ty> = template.params.iter().copied().zip(args).collect();
+        let kind = template.kind.clone().unwrap();
+        let kind = match kind {
+            AdtKind::Newtype(inner) => AdtKind::Newtype(self.subst(inner, &map)),
+            AdtKind::Record(fields) => AdtKind::Record(self.subst_fields(fields, &map)),
+            AdtKind::Enum(variants) => AdtKind::Enum(
+                variants
+                    .into_iter()
+                    .map(|v| Variant {
+                        name: v.name,
+                        payload: match v.payload {
+                            Payload::Unit => Payload::Unit,
+                            Payload::Tuple(items) => {
+                                Payload::Tuple(items.iter().map(|&t| self.subst(t, &map)).collect())
+                            }
+                            Payload::Record(fields) => Payload::Record(self.subst_fields(fields, &map)),
+                        },
+                    })
+                    .collect(),
+            ),
+        };
+        self.define_adt(id, kind);
+    }
+
+    fn subst_fields(&mut self, fields: Vec<Field>, map: &HashMap<Ty, Ty>) -> Vec<Field> {
+        fields.into_iter().map(|f| Field { name: f.name, ty: self.subst(f.ty, map) }).collect()
+    }
+
+    /// `ty` with type parameters replaced according to `map`.
+    pub fn subst(&mut self, ty: Ty, map: &HashMap<Ty, Ty>) -> Ty {
+        if map.is_empty() {
+            return ty;
+        }
+        let each = |types: &mut Self, items: &[Ty]| -> Vec<Ty> { items.iter().map(|&t| types.subst(t, map)).collect() };
+        match self.kind(ty).clone() {
+            TyKind::Param(_) => map.get(&ty).copied().unwrap_or(ty),
+            TyKind::Tuple(items) => {
+                let items = each(self, &items);
+                self.intern(TyKind::Tuple(items))
+            }
+            TyKind::Option(inner) => {
+                let inner = self.subst(inner, map);
+                self.intern(TyKind::Option(inner))
+            }
+            TyKind::Result(ok, err) => {
+                let (ok, err) = (self.subst(ok, map), self.subst(err, map));
+                self.intern(TyKind::Result(ok, err))
+            }
+            TyKind::Array(element) => {
+                let element = self.subst(element, map);
+                self.intern(TyKind::Array(element))
+            }
+            TyKind::Deque(element) => {
+                let element = self.subst(element, map);
+                self.intern(TyKind::Deque(element))
+            }
+            TyKind::Set(element) => {
+                let element = self.subst(element, map);
+                self.intern(TyKind::Set(element))
+            }
+            TyKind::Map(key, value) => {
+                let (key, value) = (self.subst(key, map), self.subst(value, map));
+                // Lowering needs the entry tuple and the `V?` of lookups.
+                self.intern(TyKind::Tuple(vec![key, value]));
+                self.intern(TyKind::Option(value));
+                self.intern(TyKind::Map(key, value))
+            }
+            TyKind::Union(members) => {
+                let members = each(self, &members);
+                self.union(&members)
+            }
+            TyKind::Adt(id) => match self.adts[id.0 as usize].instance.clone() {
+                Some((template, args)) => {
+                    let args = each(self, &args);
+                    self.instantiate(template, args)
+                }
+                None => ty,
+            },
+            _ => ty,
+        }
+    }
+
+    /// The type parameters `ty` mentions.
+    pub fn params_in(&self, ty: Ty, out: &mut Vec<Ty>) {
+        match self.kind(ty) {
+            TyKind::Param(_) => out.push(ty),
+            TyKind::Tuple(items) | TyKind::Union(items) => items.iter().for_each(|&t| self.params_in(t, out)),
+            TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) => self.params_in(*t, out),
+            TyKind::Result(a, b) | TyKind::Map(a, b) => {
+                self.params_in(*a, out);
+                self.params_in(*b, out);
+            }
+            TyKind::Adt(id) => {
+                if let Some((_, args)) = &self.adts[id.0 as usize].instance {
+                    args.iter().for_each(|&t| self.params_in(t, out));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Whether `ty` mentions a type parameter.
+    pub fn has_params(&self, ty: Ty) -> bool {
+        match self.kind(ty) {
+            TyKind::Param(_) => true,
+            TyKind::Tuple(items) | TyKind::Union(items) => items.iter().any(|&t| self.has_params(t)),
+            TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) => self.has_params(*t),
+            TyKind::Result(a, b) | TyKind::Map(a, b) => self.has_params(*a) || self.has_params(*b),
+            TyKind::Adt(id) => self.adts[id.0 as usize]
+                .instance
+                .as_ref()
+                .is_some_and(|(_, args)| args.iter().any(|&t| self.has_params(t))),
+            _ => false,
+        }
+    }
+
+    /// How deeply types nest inside `ty`, to bound instantiation.
+    pub fn depth(&self, ty: Ty) -> usize {
+        let children: Vec<Ty> = match self.kind(ty) {
+            TyKind::Tuple(items) | TyKind::Union(items) => items.clone(),
+            TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) => vec![*t],
+            TyKind::Result(a, b) | TyKind::Map(a, b) => vec![*a, *b],
+            TyKind::Adt(id) => self.adts[id.0 as usize].instance.as_ref().map_or(Vec::new(), |(_, a)| a.clone()),
+            _ => Vec::new(),
+        };
+        1 + children.iter().map(|&t| self.depth(t)).max().unwrap_or(0)
     }
 
     pub fn adt_count(&self) -> usize {
@@ -415,6 +666,7 @@ impl Types {
             | TyKind::Never
             | TyKind::Error => true,
             TyKind::Float(_) | TyKind::Array(_) | TyKind::Deque(_) | TyKind::Map(..) | TyKind::Set(_) => false,
+            TyKind::Param(index) => self.params[*index as usize].key,
             _ => match (self.components(repr), self.variants(repr)) {
                 (Some(items), _) => items.iter().all(|&t| self.key_in(t, visiting)),
                 (None, Some(variants)) => variants.concat().iter().all(|&t| self.key_in(t, visiting)),
@@ -451,6 +703,7 @@ impl Types {
                 self.equatable_in(*element, visiting)
             }
             TyKind::Map(key, value) => self.equatable_in(*key, visiting) && self.equatable_in(*value, visiting),
+            TyKind::Param(index) => self.params[*index as usize].equatable || self.params[*index as usize].key,
             _ => match (self.components(repr), self.variants(repr)) {
                 (Some(items), _) => items.iter().all(|&t| self.equatable_in(t, visiting)),
                 (None, Some(variants)) => variants.concat().iter().all(|&t| self.equatable_in(t, visiting)),
@@ -520,6 +773,7 @@ impl Types {
                 }
             }
             TyKind::Union(members) => members.iter().map(|&t| self.display(t)).collect::<Vec<_>>().join(" | "),
+            TyKind::Param(index) => self.params[*index as usize].name.clone(),
         }
     }
 }

@@ -1,0 +1,13 @@
+fn grow[T](value: T, n: Int): Int {
+    if n == 0 {
+        0
+    } else {
+        grow([value], n - 1)
+    }
+}
+
+fn main() {
+    let n = grow(1, 3)
+}
+
+// expect-error: E1112 `grow` is instantiated with ever larger type arguments

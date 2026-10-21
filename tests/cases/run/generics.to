@@ -1,0 +1,99 @@
+import std.console
+
+type Pair[A, B] = {
+    first: A
+    second: B
+}
+
+fn Pair[A, B].swapped(self): Pair[B, A] {
+    Pair { first: self.second, second: self.first }
+}
+
+fn Pair[A, B].setFirst(mut self, value: A) {
+    self.first = value
+}
+
+enum Tree[T] {
+    Leaf
+    Node(Tree[T], T, Tree[T])
+}
+
+fn insert(tree: Tree[Int], value: Int): Tree[Int] {
+    match tree {
+        Tree.Leaf => Tree.Node(Tree.Leaf, value, Tree.Leaf)
+        Tree.Node(left, current, right) if value < current => Tree.Node(insert(left, value), current, right)
+        Tree.Node(left, current, right) => Tree.Node(left, current, insert(right, value))
+    }
+}
+
+fn walk[T](tree: Tree[T], out: Array[T]): Array[T] {
+    match tree {
+        Tree.Leaf => out
+        Tree.Node(left, value, right) => {
+            var result = walk(left, out)
+            result.push(value)
+            walk(right, result)
+        }
+    }
+}
+
+fn first[T](values: Array[T]): T? {
+    values.get(0)
+}
+
+fn identity[T](value: T): T {
+    value
+}
+
+fn count[T: Equatable](values: Array[T], wanted: T): Int {
+    var total = 0
+    for value in values {
+        if value == wanted {
+            total += 1
+        }
+    }
+    total
+}
+
+fn keysOf[K: Key, V](map: Map[K, V]): Array[K] {
+    var keys: Array[K] = []
+    for (key, _) in map {
+        keys.push(key)
+    }
+    keys
+}
+
+fn describe(value: Int?): String {
+    match value {
+        some(n) => "{n}"
+        none => "-"
+    }
+}
+
+fn main() {
+    var pair = Pair { first: 1, second: "one" }
+    let swapped = pair.swapped()
+    pair.setFirst(10)
+    console.println("{pair.first} {pair.second} {swapped.first} {swapped.second}")
+    let explicit = Pair[String, Bool] { first: "x", second: true }
+    console.println("{explicit.first} {explicit.second}")
+    var tree: Tree[Int] = Tree.Leaf
+    for value in [5, 2, 8, 1, 9, 3] {
+        tree = insert(tree, value)
+    }
+    console.println("{walk(tree, [])}")
+    let words = Tree.Node(Tree.Leaf, "b", Tree.Node(Tree.Leaf, "c", Tree.Leaf))
+    console.println("{walk(words, ["a"])}")
+    let empty: Array[Int] = []
+    console.println("{describe(first([7, 8]))} {describe(first(empty))} {identity("text")} {identity[Int](3)}")
+    console.println("{count([1, 2, 1, 3], 1)} {count(["a", "b"], "b")}")
+    console.println("{keysOf(["x": 1, "y": 2])}")
+}
+
+// expect-stdout: 10 one one 1
+// expect-stdout: x true
+// expect-stdout: [1, 2, 3, 5, 8, 9]
+// expect-stdout: [a, b, c]
+// expect-stdout: 7 - text 3
+// expect-stdout: 2 1
+// expect-stdout: [x, y]

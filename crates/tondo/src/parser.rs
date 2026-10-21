@@ -243,10 +243,39 @@ impl Parser<'_> {
         Ok(())
     }
 
+    /// `[T, U: Bound + Bound]` after a declared name (12.1), or nothing.
+    fn generic_params(&mut self) -> PResult<Vec<GenericParam>> {
+        let mut params = Vec::new();
+        if !self.eat(&Tok::LBracket) {
+            return Ok(params);
+        }
+        loop {
+            self.skip_newlines();
+            if self.at(&Tok::RBracket) {
+                break;
+            }
+            let name = self.ident()?;
+            let mut bounds = Vec::new();
+            if self.eat(&Tok::Colon) {
+                bounds.push(self.type_expr()?);
+                while self.eat(&Tok::Plus) {
+                    bounds.push(self.type_expr()?);
+                }
+            }
+            params.push(GenericParam { name, bounds });
+            if !self.eat(&Tok::Comma) {
+                break;
+            }
+        }
+        self.skip_newlines();
+        self.expect(Tok::RBracket)?;
+        Ok(params)
+    }
+
     fn type_declaration(&mut self, public: bool, start: Span) -> PResult<TypeDecl> {
         self.bump();
         let name = self.ident()?;
-        self.no_generics()?;
+        let generics = self.generic_params()?;
         self.expect(Tok::Eq)?;
         let body = if self.at(&Tok::LBrace) {
             TypeBody::Record(self.record_body()?)
@@ -255,13 +284,13 @@ impl Parser<'_> {
         };
         let span = start.to(self.prev_span());
         self.end_of_statement()?;
-        Ok(TypeDecl { public, name, body, span })
+        Ok(TypeDecl { public, name, generics, body, span })
     }
 
     fn enum_declaration(&mut self, public: bool, start: Span) -> PResult<EnumDecl> {
         self.bump();
         let name = self.ident()?;
-        self.no_generics()?;
+        let generics = self.generic_params()?;
         self.expect(Tok::LBrace)?;
         let mut variants = Vec::new();
         loop {
@@ -291,7 +320,7 @@ impl Parser<'_> {
         }
         let span = start.to(self.prev_span());
         self.end_of_statement()?;
-        Ok(EnumDecl { public, name, variants, span })
+        Ok(EnumDecl { public, name, generics, variants, span })
     }
 
     /// `{ [priv] name: Type, ... }` separated by commas or newlines.
@@ -358,11 +387,13 @@ impl Parser<'_> {
     fn function(&mut self, public: bool, start: Span) -> PResult<FnDecl> {
         self.expect(Tok::Kw(Kw::Fn))?;
         let first = self.ident()?;
-        let (owner, name) = if self.eat(&Tok::Dot) { (Some(first), self.ident()?) } else { (None, first) };
-        if self.at(&Tok::LBracket) {
-            self.diags.unsupported(self.span(), "generic functions");
-            return Err(());
-        }
+        let first_generics = self.generic_params()?;
+        let (owner, owner_generics, name, generics) = if self.eat(&Tok::Dot) {
+            let name = self.ident()?;
+            (Some(first), first_generics, name, self.generic_params()?)
+        } else {
+            (None, Vec::new(), first, first_generics)
+        };
         self.expect(Tok::LParen)?;
         let mut params = Vec::new();
         loop {
@@ -382,7 +413,7 @@ impl Parser<'_> {
         let body = self.block()?;
         let span = start.to(body.span);
         self.end_of_statement()?;
-        Ok(FnDecl { public, owner, name, params, result, suspends, body, span })
+        Ok(FnDecl { public, owner, owner_generics, name, generics, params, result, suspends, body, span })
     }
 
     // ---- types -----------------------------------------------------------
@@ -1037,7 +1068,17 @@ impl Parser<'_> {
                     let ExprKind::Path(path) = expr.kind else { unreachable!() };
                     let fields = self.field_inits()?;
                     let span = expr.span.to(self.prev_span());
-                    expr = Expr { kind: ExprKind::Record { path, fields }, span };
+                    expr = Expr { kind: ExprKind::Record { path, type_args: Vec::new(), fields }, span };
+                }
+                Tok::LBrace
+                    if !self.no_brace
+                        && matches!(&expr.kind, ExprKind::Generic { base, .. } if matches!(base.kind, ExprKind::Path(_))) =>
+                {
+                    let ExprKind::Generic { base, args } = expr.kind else { unreachable!() };
+                    let ExprKind::Path(path) = base.kind else { unreachable!() };
+                    let fields = self.field_inits()?;
+                    let span = expr.span.to(self.prev_span());
+                    expr = Expr { kind: ExprKind::Record { path, type_args: args, fields }, span };
                 }
                 _ => return Ok(expr),
             }
@@ -1055,7 +1096,8 @@ impl Parser<'_> {
                 args.push(self.type_expr()?);
             }
             self.expect(Tok::RBracket)?;
-            if !self.at(&Tok::LParen) {
+            // Type arguments precede a call or a record literal.
+            if !self.at(&Tok::LParen) && !(self.at(&Tok::LBrace) && !self.no_brace) {
                 return Err(());
             }
             Ok(args)

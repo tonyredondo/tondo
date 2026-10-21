@@ -156,3 +156,17 @@ failures to programs that want them; a failure nobody observed is reported
 on stderr at exit with status 1, and a closed pipe ends the process silently
 through `SIGPIPE`, like other command-line tools. See standard library spec
 19.1.
+
+## 2026-10-21 — Generics: checked once, monomorphized
+
+Generic functions are checked once with their type parameters as opaque
+types; what generic code may do with a parameter comes only from its bounds
+(12.5). Type arguments are inferred at each call by unification from the
+explicit arguments, the values (literals and other context-dependent
+values last) and the expected type. A monomorphization pass then copies
+each function reachable from `main` once per combination of type arguments,
+so lowering and code generation only see concrete types. An instance of a
+generic record or enum, such as `Pair[Int, String]`, is an ordinary nominal
+type whose fields are the template's with the arguments substituted; it
+reuses every layout and glue path. Instantiations that keep growing, such
+as polymorphic recursion, are rejected instead of looping.

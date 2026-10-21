@@ -904,7 +904,7 @@ impl Builder<'_> {
                 self.switch_to(next);
                 Operand::Copy(place.variant_field(success, 0))
             }
-            hir::ExprKind::Call(callee, args) => {
+            hir::ExprKind::Call(callee, _, args) => {
                 let args = args.iter().map(|a| self.expr(a)).collect();
                 let result = self.temp(e.ty, Rvalue::Call(*callee, args), e.span);
                 if e.ty == Ty::NEVER {

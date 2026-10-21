@@ -10,6 +10,7 @@ pub mod hir;
 pub mod lexer;
 pub mod lower;
 pub mod mir;
+pub mod mono;
 pub mod parser;
 pub mod source;
 pub mod types;

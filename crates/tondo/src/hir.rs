@@ -16,8 +16,12 @@ pub struct Program {
     pub main: FnId,
 }
 
+#[derive(Clone)]
 pub struct Function {
     pub name: String,
+    /// Type parameters; monomorphization replaces a generic function by
+    /// one copy per combination of arguments it is called with.
+    pub generics: Vec<Ty>,
     pub params: Vec<LocalId>,
     /// Parameters that borrow the caller's place instead of a value: the
     /// `mut self` and `var self` receivers (11.6).
@@ -27,17 +31,20 @@ pub struct Function {
     pub body: Block,
 }
 
+#[derive(Clone)]
 pub struct Local {
     pub name: String,
     pub ty: Ty,
 }
 
+#[derive(Clone)]
 pub struct Block {
     pub stmts: Vec<Stmt>,
     pub tail: Option<Box<Expr>>,
     pub ty: Ty,
 }
 
+#[derive(Clone)]
 pub enum Stmt {
     Let(LocalId, Expr),
     /// `let pattern = value` with an irrefutable pattern.
@@ -88,12 +95,14 @@ pub enum Stmt {
     },
 }
 
+#[derive(Clone)]
 pub struct Expr {
     pub kind: ExprKind,
     pub ty: Ty,
     pub span: Span,
 }
 
+#[derive(Clone)]
 pub enum ExprKind {
     Int(i128),
     Float(f64),
@@ -145,7 +154,8 @@ pub enum ExprKind {
     /// A numeric conversion (18.6). Its type is the target, or
     /// `Target ! NumericConversionError` when it can fail.
     Convert(Box<Expr>),
-    Call(Callee, Vec<Expr>),
+    /// A call with the type arguments of a generic callee (empty otherwise).
+    Call(Callee, Vec<Ty>, Vec<Expr>),
     Unary(UnaryOp, Box<Expr>),
     /// Arithmetic, bitwise and comparison operators; `and`/`or` short-circuit.
     Binary(BinOp, Box<Expr>, Box<Expr>),
@@ -164,11 +174,13 @@ pub enum ExprKind {
 }
 
 /// A binding and a path of fields and indices inside it.
+#[derive(Clone)]
 pub struct Place {
     pub local: LocalId,
     pub path: Vec<PlaceStep>,
 }
 
+#[derive(Clone)]
 pub enum PlaceStep {
     Field(u32),
     Index(Expr),
@@ -259,18 +271,21 @@ impl Mutation {
     }
 }
 
+#[derive(Clone)]
 pub struct Arm {
     pub pattern: Pattern,
     pub guard: Option<Expr>,
     pub body: Expr,
 }
 
+#[derive(Clone)]
 pub struct Pattern {
     pub kind: PatKind,
     pub ty: Ty,
     pub span: Span,
 }
 
+#[derive(Clone)]
 pub enum PatKind {
     Wildcard,
     Binding(LocalId),
@@ -300,6 +315,7 @@ pub enum Literal {
     Unit,
 }
 
+#[derive(Clone)]
 pub enum Segment {
     Text(String),
     Value(Expr),

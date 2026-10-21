@@ -1,0 +1,15 @@
+enum Maybe[T] {
+    Nothing
+    Just(T)
+}
+
+fn get(value: Maybe[Int]): Int {
+    match value {
+        Maybe.Just(n) => n
+    }
+}
+
+fn main() {
+}
+
+// expect-error: E1204 `Maybe.Nothing` is not covered

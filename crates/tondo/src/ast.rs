@@ -31,10 +31,18 @@ pub enum Item {
     Enum(EnumDecl),
 }
 
+/// `T` or `T: Bound + Bound` in a generic declaration (12.1).
+#[derive(Debug, Clone)]
+pub struct GenericParam {
+    pub name: Ident,
+    pub bounds: Vec<TypeExpr>,
+}
+
 #[derive(Debug)]
 pub struct EnumDecl {
     pub public: bool,
     pub name: Ident,
+    pub generics: Vec<GenericParam>,
     pub variants: Vec<VariantDecl>,
     pub span: Span,
 }
@@ -120,6 +128,7 @@ pub enum ArmBody {
 pub struct TypeDecl {
     pub public: bool,
     pub name: Ident,
+    pub generics: Vec<GenericParam>,
     pub body: TypeBody,
     pub span: Span,
 }
@@ -150,7 +159,10 @@ pub struct AliasDecl {
 pub struct FnDecl {
     pub public: bool,
     pub owner: Option<Ident>,
+    /// The binders of a generic owner: `fn Pair[A, B].swapped(self)`.
+    pub owner_generics: Vec<GenericParam>,
     pub name: Ident,
+    pub generics: Vec<GenericParam>,
     pub params: Vec<Param>,
     pub result: Option<TypeExpr>,
     pub suspends: bool,
@@ -284,9 +296,10 @@ pub enum ExprKind {
     Path(Vec<Ident>),
     Field(Box<Expr>, Ident),
     TupleSlot(Box<Expr>, u32),
-    /// `Path { field: value, shorthand }`
+    /// `Path { field: value, shorthand }` or `Path[Args] { ... }`
     Record {
         path: Vec<Ident>,
+        type_args: Vec<TypeExpr>,
         fields: Vec<FieldInit>,
     },
     /// `base with { field: value }`

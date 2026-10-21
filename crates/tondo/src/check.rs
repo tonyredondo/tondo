@@ -8,7 +8,9 @@ use crate::diag::Diagnostics;
 use crate::hir::{self, Callee, FnId, LocalId, StdFn};
 use crate::parser::CONTEXTUAL_CONSTRUCTORS;
 use crate::source::{SourceMap, Span};
-use crate::types::{AdtId, AdtKind, ERR, Field, IntTy, NONE, OK, Payload, SOME, Ty, TyKind, Types, Variant};
+use crate::types::{
+    AdtId, AdtKind, ERR, Field, IntTy, NONE, OK, Payload, SOME, TemplateId, Ty, TyKind, Types, Variant,
+};
 use std::collections::{HashMap, HashSet};
 
 pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics) -> Option<hir::Program> {
@@ -21,6 +23,7 @@ pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics)
         aliases: Vec::new(),
         signatures: Vec::new(),
         methods: HashMap::new(),
+        type_params: Vec::new(),
         console_error: None,
         conversion_error: Ty::ERROR,
         collection_error: Ty::ERROR,
@@ -76,6 +79,8 @@ const PRELUDE_TYPES: [&str; 39] = [
 enum TypeName {
     Nominal(Ty),
     Alias(usize),
+    /// A generic record or enum.
+    Template(TemplateId),
 }
 
 struct AliasEntry {
@@ -114,6 +119,28 @@ enum FieldRef<'a> {
     Slot(u32),
 }
 
+/// Type arguments being inferred for some type parameters (12.1): from
+/// the expected type, then from the values given for them.
+struct Inference {
+    vars: Vec<Ty>,
+    map: HashMap<Ty, Ty>,
+}
+
+impl Inference {
+    fn new(vars: Vec<Ty>) -> Inference {
+        Inference { vars, map: HashMap::new() }
+    }
+}
+
+/// What a call invokes: the callee, its signature, explicit type arguments
+/// (empty when inferred) and the type the call is expected to have.
+struct CallTarget {
+    callee: Callee,
+    signature: Signature,
+    explicit: Vec<Ty>,
+    expected: Option<Ty>,
+}
+
 #[derive(Clone)]
 struct Signature {
     params: Vec<Ty>,
@@ -124,13 +151,15 @@ struct Signature {
     /// Whether the last parameter is variadic; its type is `Array[T]`.
     variadic: bool,
     result: Ty,
+    /// Type parameters: a generic owner's binders, then the function's own.
+    generics: Vec<Ty>,
 }
 
 impl Signature {
     /// The signature of a standard function taking `params` by value.
     fn simple(params: Vec<Ty>, result: Ty) -> Signature {
         let names = (0..params.len()).map(|i| format!("argument{i}")).collect();
-        Signature { params, names, receiver: None, variadic: false, result }
+        Signature { params, names, receiver: None, variadic: false, result, generics: Vec::new() }
     }
 }
 
@@ -144,8 +173,11 @@ struct Checker<'a> {
     type_names: HashMap<String, TypeName>,
     aliases: Vec<AliasEntry>,
     signatures: Vec<Signature>,
-    /// Inherent operations by owner type and name (11.5).
+    /// Inherent operations by owner type and name (11.5). A generic owner
+    /// is keyed by its instance with its own parameters (`owner_key`).
     methods: HashMap<(Ty, String), FnId>,
+    /// Type parameters in scope, innermost last.
+    type_params: Vec<(String, Ty)>,
     /// `console.ConsoleError`, once `std.console` is imported.
     console_error: Option<Ty>,
     /// The prelude's `NumericConversionError`.
@@ -358,6 +390,7 @@ impl Checker<'_> {
     /// so declarations may refer to each other in any order (7.11).
     fn declare_types(&mut self, items: &[ast::Item]) {
         let mut declared = Vec::new();
+        let mut templates = Vec::new();
         for item in items {
             let name = match item {
                 ast::Item::Type(decl) => &decl.name,
@@ -375,6 +408,22 @@ impl Checker<'_> {
                 }
                 ast::Item::Fn(_) => continue,
             };
+            let generics = match item {
+                ast::Item::Type(decl) => &decl.generics,
+                ast::Item::Enum(decl) => &decl.generics,
+                _ => unreachable!(),
+            };
+            if !generics.is_empty() {
+                if let ast::Item::Type(ast::TypeDecl { body: ast::TypeBody::Newtype(_), .. }) = item {
+                    self.diags.unsupported(name.span, "generic newtypes");
+                    continue;
+                }
+                let params = self.declare_generics(generics);
+                let template = self.types.declare_template(name.name.clone(), params.clone());
+                self.declare_type_name(name, TypeName::Template(template));
+                templates.push((item, name, template, generics, params));
+                continue;
+            }
             let (id, ty) = self.types.declare_adt(name.name.clone());
             self.declare_type_name(name, TypeName::Nominal(ty));
             if let ast::Item::Type(ast::TypeDecl { body: ast::TypeBody::Newtype(_), .. }) = item {
@@ -383,7 +432,82 @@ impl Checker<'_> {
             declared.push((item, name, id));
         }
         for &(item, _, id) in &declared {
-            let kind = match item {
+            let kind = self.adt_kind(item);
+            self.types.define_adt(id, kind);
+        }
+        for &(item, name, template, generics, ref params) in &templates {
+            self.enter_generics(generics, params);
+            let kind = self.adt_kind(item);
+            self.leave_generics(generics);
+            self.types.define_template(template, kind);
+            // Productivity is checked on the instance with its own parameters.
+            let ty = self.types.instantiate(template, params.clone());
+            if let TyKind::Adt(id) = *self.types.kind(ty) {
+                declared.push((item, name, id));
+            }
+        }
+        for index in 0..self.aliases.len() {
+            self.resolve_alias(index);
+        }
+        if let Some(name) = self.types.runaway.take() {
+            let message = format!("the generic type `{name}` contains itself with ever larger type arguments");
+            self.diags.error_without_span("E1107", message);
+        }
+        self.check_productivity(&declared);
+    }
+
+    /// Declares the parameters of a generic declaration with the
+    /// capabilities their bounds grant.
+    fn declare_generics(&mut self, generics: &[ast::GenericParam]) -> Vec<Ty> {
+        let mut params = Vec::new();
+        for generic in generics {
+            if self.type_named(&generic.name.name).is_some()
+                || self.type_params.iter().any(|(n, _)| *n == generic.name.name)
+            {
+                let message = format!("type parameter `{}` would shadow a visible type", generic.name.name);
+                self.diags.error("E1003", generic.name.span, message);
+            }
+            let param = self.types.declare_param(generic.name.name.clone());
+            for bound in &generic.bounds {
+                self.apply_bound(param, bound);
+            }
+            params.push(param);
+        }
+        params
+    }
+
+    /// Records what a bound lets generic code do with `param` (12.5).
+    fn apply_bound(&mut self, param: Ty, bound: &ast::TypeExpr) {
+        let ast::TypeKind::Path { segments, args } = &bound.kind else {
+            self.diags.error("E1105", bound.span, "a bound names a trait or capability");
+            return;
+        };
+        match (segments.as_slice(), args.is_empty()) {
+            ([name], true) if name.name == "Equatable" => self.types.param_mut(param).equatable = true,
+            ([name], true) if name.name == "Key" => self.types.param_mut(param).key = true,
+            // Affine values arrive with ownership (H3); until then every
+            // value can be copied, discarded and shared.
+            ([name], true) if matches!(name.name.as_str(), "Copy" | "Discard" | "Send" | "Share") => {}
+            _ => {
+                self.diags.unsupported(bound.span, "trait bounds");
+            }
+        }
+    }
+
+    /// Brings the parameters of a generic declaration into scope.
+    fn enter_generics(&mut self, generics: &[ast::GenericParam], params: &[Ty]) {
+        for (generic, &param) in generics.iter().zip(params) {
+            self.type_params.push((generic.name.name.clone(), param));
+        }
+    }
+
+    fn leave_generics(&mut self, generics: &[ast::GenericParam]) {
+        self.type_params.truncate(self.type_params.len() - generics.len());
+    }
+
+    fn adt_kind(&mut self, item: &ast::Item) -> AdtKind {
+        {
+            match item {
                 ast::Item::Type(ast::TypeDecl { body: ast::TypeBody::Newtype(inner), .. }) => {
                     AdtKind::Newtype(self.resolve_type(inner))
                 }
@@ -410,13 +534,8 @@ impl Checker<'_> {
                     AdtKind::Enum(variants)
                 }
                 _ => unreachable!(),
-            };
-            self.types.define_adt(id, kind);
+            }
         }
-        for index in 0..self.aliases.len() {
-            self.resolve_alias(index);
-        }
-        self.check_productivity(&declared);
     }
 
     fn field_decls(&mut self, fields: &[ast::FieldDecl]) -> Vec<Field> {
@@ -498,6 +617,11 @@ impl Checker<'_> {
         if f.suspends {
             self.diags.unsupported(f.span, "`suspends` functions");
         }
+        let binders = self.declare_generics(&f.owner_generics);
+        self.enter_generics(&f.owner_generics, &binders);
+        let own = self.declare_generics(&f.generics);
+        self.enter_generics(&f.generics, &own);
+        let owner = owner.map(|key| self.receiver_type(key, &binders, f));
         let (mut params, mut names, mut receiver, mut variadic) = (Vec::new(), Vec::new(), None, false);
         for (index, param) in f.params.iter().enumerate() {
             let ty = match &param.ty {
@@ -532,7 +656,54 @@ impl Checker<'_> {
             names.push(param.name.name.clone());
         }
         let result = f.result.as_ref().map_or(Ty::UNIT, |t| self.resolve_type(t));
-        Signature { params, names, receiver, variadic, result }
+        self.leave_generics(&f.generics);
+        self.leave_generics(&f.owner_generics);
+        let generics = binders.into_iter().chain(own).collect();
+        Signature { params, names, receiver, variadic, result, generics }
+    }
+
+    /// The type of `self` in a method of the owner keyed `key`: a generic
+    /// owner applied to the method's binders (11.5).
+    fn receiver_type(&mut self, key: Ty, binders: &[Ty], f: &ast::FnDecl) -> Ty {
+        if key == Ty::ERROR {
+            return key;
+        }
+        let owner = f.owner.as_ref().unwrap();
+        match self.types.instance_of(key) {
+            Some((template, _)) => {
+                let params: Vec<String> =
+                    self.types.template(template).params.iter().map(|&p| self.types.display(p)).collect();
+                if binders.len() != params.len() {
+                    let message = format!(
+                        "an operation of `{0}` declares its type parameters: `fn {0}[{1}].{2}(...)`",
+                        owner.name,
+                        params.join(", "),
+                        f.name.name
+                    );
+                    self.diags.error("E1104", owner.span, message);
+                    return Ty::ERROR;
+                }
+                self.types.instantiate(template, binders.to_vec())
+            }
+            None if !binders.is_empty() => {
+                let message = format!("`{}` is not generic", owner.name);
+                self.diags.error("E1104", owner.span, message);
+                Ty::ERROR
+            }
+            None => key,
+        }
+    }
+
+    /// The key of the operations of `ty`: a generic type's instance with its
+    /// own parameters stands for all of its instances.
+    fn owner_key(&mut self, ty: Ty) -> Ty {
+        match self.types.instance_of(ty) {
+            Some((template, _)) => {
+                let params = self.types.template(template).params.clone();
+                self.types.instantiate(template, params)
+            }
+            None => ty,
+        }
     }
 
     /// The type an inherent method is declared on: a nominal type of this
@@ -540,6 +711,11 @@ impl Checker<'_> {
     fn method_owner(&mut self, owner: &ast::Ident) -> Ty {
         let nominal = match self.type_names.get(&owner.name) {
             Some(TypeName::Nominal(ty)) => Some(Some(*ty)),
+            Some(TypeName::Template(template)) => {
+                let template = *template;
+                let params = self.types.template(template).params.clone();
+                Some(Some(self.types.instantiate(template, params)))
+            }
             Some(TypeName::Alias(_)) => Some(None),
             None => None,
         };
@@ -621,6 +797,18 @@ impl Checker<'_> {
             ast::TypeKind::Path { segments, args } => {
                 if !args.is_empty() {
                     let args: Vec<Ty> = args.iter().map(|a| self.resolve_type(a)).collect();
+                    if let [name] = segments.as_slice()
+                        && let Some(&TypeName::Template(template)) = self.type_names.get(&name.name)
+                    {
+                        let expected = self.types.template(template).params.len();
+                        if args.len() != expected {
+                            let message =
+                                format!("`{}` takes {expected} type argument(s), found {}", name.name, args.len());
+                            self.diags.error("E1104", t.span, message);
+                            return Ty::ERROR;
+                        }
+                        return self.types.instantiate(template, args);
+                    }
                     return match (segments[0].name.as_str(), args.as_slice()) {
                         ("Option", [inner]) if segments.len() == 1 => self.types.intern(TyKind::Option(*inner)),
                         ("Result", [ok, err]) if segments.len() == 1 => self.types.intern(TyKind::Result(*ok, *err)),
@@ -642,6 +830,11 @@ impl Checker<'_> {
                     };
                 }
                 let names: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
+                if let [name] = names.as_slice()
+                    && let Some(&(_, param)) = self.type_params.iter().rev().find(|(n, _)| n == name)
+                {
+                    return param;
+                }
                 match names.as_slice() {
                     ["Int" | "Int64"] => Ty::INT,
                     ["Int8"] => Ty::int(IntTy::I8),
@@ -665,6 +858,13 @@ impl Checker<'_> {
                     [single] if self.type_names.contains_key(*single) => match self.type_names[*single] {
                         TypeName::Nominal(ty) => ty,
                         TypeName::Alias(index) => self.resolve_alias(index),
+                        TypeName::Template(template) => {
+                            let params: Vec<String> =
+                                self.types.template(template).params.iter().map(|&p| self.types.display(p)).collect();
+                            let message = format!("`{single}` takes type arguments: `{single}[{}]`", params.join(", "));
+                            self.diags.error("E1104", t.span, message);
+                            Ty::ERROR
+                        }
                     },
                     _ => {
                         let message = format!("unknown type `{}`", names.join("."));
@@ -746,6 +946,9 @@ impl Checker<'_> {
 
     fn function(&mut self, f: &ast::FnDecl, id: FnId) -> hir::Function {
         let signature = self.signatures[id.0 as usize].clone();
+        let (binders, own) = signature.generics.split_at(f.owner_generics.len());
+        self.enter_generics(&f.owner_generics, binders);
+        self.enter_generics(&f.generics, own);
         let mut cx = self.new_cx(signature.result);
         let mut params = Vec::new();
         let mut loans = Vec::new();
@@ -761,7 +964,17 @@ impl Checker<'_> {
             Some(owner) => format!("{}.{}", owner.name, f.name.name),
             None => f.name.name.clone(),
         };
-        hir::Function { name, params, loans, locals: cx.locals, result: signature.result, body }
+        self.leave_generics(&f.generics);
+        self.leave_generics(&f.owner_generics);
+        hir::Function {
+            name,
+            generics: signature.generics,
+            params,
+            loans,
+            locals: cx.locals,
+            result: signature.result,
+            body,
+        }
     }
 
     /// The implicit `main` of a root script (spec 20.3). Its error type is
@@ -776,7 +989,15 @@ impl Checker<'_> {
             Some(error) => self.types.intern(TyKind::Result(Ty::UNIT, error)),
             None => Ty::UNIT,
         };
-        hir::Function { name: "main".into(), params: Vec::new(), loans: Vec::new(), locals: cx.locals, result, body }
+        hir::Function {
+            name: "main".into(),
+            generics: Vec::new(),
+            params: Vec::new(),
+            loans: Vec::new(),
+            locals: cx.locals,
+            result,
+            body,
+        }
     }
 
     /// The error type a `fail` or `?` may produce here, inferring it in a
@@ -1293,8 +1514,8 @@ impl Checker<'_> {
             ast::ExprKind::Bool(b) => Self::mk(hir::ExprKind::Bool(*b), Ty::BOOL, span),
             ast::ExprKind::Unit => Self::mk(hir::ExprKind::Unit, Ty::UNIT, span),
             ast::ExprKind::Str(segments) => self.string(cx, segments, span),
-            ast::ExprKind::Path(segments) => self.path(cx, segments, span),
-            ast::ExprKind::Call { callee, args } => self.call(cx, callee, args, span),
+            ast::ExprKind::Path(segments) => self.path(cx, segments, expected, span),
+            ast::ExprKind::Call { callee, args } => self.call(cx, callee, args, expected, span),
             ast::ExprKind::Unary(op, operand) => self.unary(cx, *op, operand, expected, span),
             ast::ExprKind::Binary(op, left, right) => self.binary(cx, *op, left, right, expected, span),
             ast::ExprKind::If { condition, then, otherwise } => {
@@ -1360,7 +1581,9 @@ impl Checker<'_> {
                 Self::error_expr(span)
             }
             ast::ExprKind::Match { scrutinee, arms } => self.match_expr(cx, scrutinee, arms, expected, span),
-            ast::ExprKind::Record { path, fields } => self.record_literal(cx, path, fields, span),
+            ast::ExprKind::Record { path, type_args, fields } => {
+                self.record_literal(cx, path, type_args, fields, expected, span)
+            }
             ast::ExprKind::With { base, updates } => self.with_expr(cx, base, updates, span),
             ast::ExprKind::Try(inner) => self.try_expr(cx, inner, span),
             ast::ExprKind::None => match self.union_member(expected, "none").map(|t| (t, self.types.kind(t))) {
@@ -1422,6 +1645,8 @@ impl Checker<'_> {
     }
 
     /// Checks field initializers against `fields`, in source order.
+    /// The values of `inits` for `fields`. With an inference, field types
+    /// may mention parameters being inferred and values are not coerced yet.
     fn field_values(
         &mut self,
         cx: &mut FnCx,
@@ -1429,16 +1654,21 @@ impl Checker<'_> {
         fields: &[(String, Ty)],
         inits: &[ast::FieldInit],
         allow_shorthand: bool,
+        mut inference: Option<&mut Inference>,
     ) -> (Vec<(u32, hir::Expr)>, Vec<bool>) {
         let mut seen = vec![false; fields.len()];
         let mut values = Vec::new();
         for init in inits {
             let index = fields.iter().position(|(name, _)| *name == init.name.name);
-            let expected = index.map(|i| fields[i].1);
+            let expected = match (index, inference.as_deref()) {
+                (Some(i), Some(inference)) => self.inferred(inference, fields[i].1),
+                (Some(i), None) => Some(fields[i].1),
+                (None, _) => None,
+            };
             let value = match &init.value {
                 Some(value) => self.expr(cx, value, expected),
                 None if allow_shorthand && crate::lexer::Kw::lookup(&init.name.name).is_none() => {
-                    self.path(cx, std::slice::from_ref(&init.name), init.name.span)
+                    self.path(cx, std::slice::from_ref(&init.name), None, init.name.span)
                 }
                 None => {
                     let message =
@@ -1456,28 +1686,133 @@ impl Checker<'_> {
                 let message = format!("field `{}` is initialized more than once", init.name.name);
                 self.diags.error("E1102", init.name.span, message);
             }
-            let value = self.coerce(value, fields[index].1);
+            let value = match inference.as_deref_mut() {
+                Some(inference) => {
+                    self.unify(inference, fields[index].1, value.ty);
+                    value
+                }
+                None => self.coerce(value, fields[index].1),
+            };
             values.push((index as u32, value));
         }
         (values, seen)
+    }
+
+    /// `ty` with the inferred arguments, unless it still mentions an
+    /// unknown parameter.
+    fn inferred(&mut self, inference: &Inference, ty: Ty) -> Option<Ty> {
+        let mut params = Vec::new();
+        self.types.params_in(ty, &mut params);
+        let unknown = params.iter().any(|p| inference.vars.contains(p) && !inference.map.contains_key(p));
+        (!unknown).then(|| self.types.subst(ty, &inference.map))
+    }
+
+    /// Binds the parameters in `pattern` so that it matches `actual`.
+    fn unify(&mut self, inference: &mut Inference, pattern: Ty, actual: Ty) {
+        if actual == Ty::ERROR || actual == Ty::NEVER {
+            return;
+        }
+        if inference.vars.contains(&pattern) {
+            inference.map.entry(pattern).or_insert(actual);
+            return;
+        }
+        let (expected, found) = (self.types.kind(pattern).clone(), self.types.kind(actual).clone());
+        match (expected, found) {
+            (TyKind::Tuple(items), TyKind::Tuple(values)) if items.len() == values.len() => {
+                for (item, value) in items.into_iter().zip(values) {
+                    self.unify(inference, item, value);
+                }
+            }
+            (TyKind::Option(a), TyKind::Option(b))
+            | (TyKind::Array(a), TyKind::Array(b))
+            | (TyKind::Deque(a), TyKind::Deque(b))
+            | (TyKind::Set(a), TyKind::Set(b)) => self.unify(inference, a, b),
+            // A value lifts into an option.
+            (TyKind::Option(a), _) => self.unify(inference, a, actual),
+            (TyKind::Result(a, b), TyKind::Result(c, d)) | (TyKind::Map(a, b), TyKind::Map(c, d)) => {
+                self.unify(inference, a, c);
+                self.unify(inference, b, d);
+            }
+            (TyKind::Adt(_), TyKind::Adt(_)) => {
+                if let (Some((template, args)), Some((other, values))) =
+                    (self.types.instance_of(pattern), self.types.instance_of(actual))
+                    && template == other
+                {
+                    let pairs: Vec<(Ty, Ty)> = args.iter().copied().zip(values.iter().copied()).collect();
+                    for (arg, value) in pairs {
+                        self.unify(inference, arg, value);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// For a generic record or enum named without type arguments (its
+    /// instance with its own parameters), the inference of its arguments,
+    /// seeded from the expected type.
+    fn generic_inference(&mut self, ty: Ty, expected: Option<Ty>) -> Option<Inference> {
+        let (template, args) = self.types.instance_of(ty)?;
+        let params = self.types.template(template).params.clone();
+        if args != params.as_slice() {
+            return None;
+        }
+        let mut inference = Inference::new(params);
+        let expected = expected.map(|t| match self.types.kind(t) {
+            TyKind::Option(inner) => *inner,
+            _ => t,
+        });
+        if let Some(expected) = expected {
+            self.unify(&mut inference, ty, expected);
+        }
+        Some(inference)
+    }
+
+    /// The instance of a generic type once every argument is inferred.
+    fn finish_inference(&mut self, inference: &Inference, generic: Ty, span: Span) -> Ty {
+        let unknown: Vec<String> =
+            inference.vars.iter().filter(|v| !inference.map.contains_key(v)).map(|&v| self.types.display(v)).collect();
+        if !unknown.is_empty() {
+            let (template, _) = self.types.instance_of(generic).unwrap();
+            let name = self.types.template(template).name.clone();
+            let message = format!(
+                "cannot infer {} of `{name}`; annotate the expected type, such as `let value: {} = ...`",
+                unknown.join(", "),
+                self.types.display(generic)
+            );
+            self.diags.error("E1101", span, message);
+            return Ty::ERROR;
+        }
+        self.types.subst(generic, &inference.map)
+    }
+
+    /// Whether two nominal types are the same, or instances of one generic type.
+    fn same_nominal(&self, a: Ty, b: Ty) -> bool {
+        a == b
+            || matches!((self.types.instance_of(a), self.types.instance_of(b)), (Some((x, _)), Some((y, _))) if x == y)
     }
 
     fn record_literal(
         &mut self,
         cx: &mut FnCx,
         path: &[ast::Ident],
+        type_args: &[ast::TypeExpr],
         inits: &[ast::FieldInit],
+        expected: Option<Ty>,
         span: Span,
     ) -> hir::Expr {
         if let Some(resolved) = self.variant_path(path) {
             let Some((ty, variant)) = resolved else { return Self::error_expr(span) };
+            if !type_args.is_empty() {
+                return self.unsupported_expr(span, "type arguments on a variant");
+            }
             let Payload::Record(fields) = self.payload(ty, variant) else {
                 let message = format!("`{}` does not take named fields", Self::path_text(path));
                 self.diags.error("E1102", span, message);
                 return Self::error_expr(span);
             };
             let fields: Vec<(String, Ty)> = fields.into_iter().map(|f| (f.name, f.ty)).collect();
-            let (values, seen) = self.field_values(cx, ty, &fields, inits, true);
+            let (ty, values, seen) = self.generic_fields(cx, ty, &fields, inits, expected, span);
             self.report_missing(&fields, &seen, span);
             return Self::mk(hir::ExprKind::Variant(variant, values), ty, span);
         }
@@ -1485,10 +1820,27 @@ impl Checker<'_> {
             return self.unsupported_expr(span, "qualified record literals");
         };
         let ty = match self.type_names.get(&name.name) {
-            Some(TypeName::Nominal(ty)) => *ty,
-            Some(TypeName::Alias(index)) => {
+            Some(TypeName::Nominal(ty)) if type_args.is_empty() => *ty,
+            Some(TypeName::Alias(index)) if type_args.is_empty() => {
                 let index = *index;
                 self.resolve_alias(index)
+            }
+            Some(TypeName::Template(_)) if !type_args.is_empty() => {
+                let explicit = ast::TypeExpr {
+                    kind: ast::TypeKind::Path { segments: path.to_vec(), args: type_args.to_vec() },
+                    span: name.span,
+                };
+                self.resolve_type(&explicit)
+            }
+            Some(TypeName::Template(template)) => {
+                let template = *template;
+                let params = self.types.template(template).params.clone();
+                self.types.instantiate(template, params)
+            }
+            Some(_) => {
+                let message = format!("`{}` is not generic: write `{} {{ ... }}`", name.name, name.name);
+                self.diags.error("E1104", name.span, message);
+                return Self::error_expr(span);
             }
             None => {
                 let message = format!("unknown type `{}`", name.name);
@@ -1499,9 +1851,37 @@ impl Checker<'_> {
         let Some(fields) = self.record_fields(ty, name.span) else {
             return Self::error_expr(span);
         };
-        let (values, seen) = self.field_values(cx, ty, &fields, inits, true);
+        let (ty, values, seen) = self.generic_fields(cx, ty, &fields, inits, expected, span);
         self.report_missing(&fields, &seen, span);
         Self::mk(hir::ExprKind::Record(values), ty, span)
+    }
+
+    /// The field values of a record or record variant of type `ty`. For a
+    /// generic type named without arguments, they are inferred from the
+    /// expected type and the values, which are then coerced.
+    fn generic_fields(
+        &mut self,
+        cx: &mut FnCx,
+        ty: Ty,
+        fields: &[(String, Ty)],
+        inits: &[ast::FieldInit],
+        expected: Option<Ty>,
+        span: Span,
+    ) -> (Ty, Vec<(u32, hir::Expr)>, Vec<bool>) {
+        let Some(mut inference) = self.generic_inference(ty, expected) else {
+            let (values, seen) = self.field_values(cx, ty, fields, inits, true, None);
+            return (ty, values, seen);
+        };
+        let (values, seen) = self.field_values(cx, ty, fields, inits, true, Some(&mut inference));
+        let concrete = self.finish_inference(&inference, ty, span);
+        let values = values
+            .into_iter()
+            .map(|(index, value)| {
+                let field = self.types.subst(fields[index as usize].1, &inference.map);
+                (index, self.coerce(value, field))
+            })
+            .collect();
+        (concrete, values, seen)
     }
 
     fn report_missing(&mut self, fields: &[(String, Ty)], seen: &[bool], span: Span) {
@@ -1527,6 +1907,12 @@ impl Checker<'_> {
                 TypeName::Alias(index) => {
                     let index = *index;
                     self.resolve_alias(index)
+                }
+                // The arguments of a generic enum are inferred at each use.
+                TypeName::Template(template) => {
+                    let template = *template;
+                    let params = self.types.template(template).params.clone();
+                    self.types.instantiate(template, params)
                 }
             },
             [module, name] => self.module_type(&module.name, &name.name)?,
@@ -1710,7 +2096,7 @@ impl Checker<'_> {
                 }
                 if let Some(resolved) = self.variant_path(path) {
                     let Some((enum_ty, variant)) = resolved else { return Self::wild(ty, span) };
-                    if enum_ty != ty {
+                    if !self.same_nominal(enum_ty, ty) {
                         let message = mismatch(self, &format!("a `{}` pattern", Self::path_text(path)));
                         return self.pattern_error(span, message);
                     }
@@ -1745,15 +2131,17 @@ impl Checker<'_> {
             ast::PatternKind::Record { path, fields, rest } => {
                 let (record_ty, declared, variant) = if let Some(resolved) = self.variant_path(path) {
                     let Some((enum_ty, variant)) = resolved else { return Self::wild(ty, span) };
+                    // A generic enum is matched as the scrutinee's instance.
+                    let enum_ty = if self.same_nominal(enum_ty, ty) { ty } else { enum_ty };
                     let Payload::Record(fields) = self.payload(enum_ty, variant) else {
                         let message = format!("`{}` has no named fields", Self::path_text(path));
                         return self.pattern_error(span, message);
                     };
                     (enum_ty, fields.into_iter().map(|f| (f.name, f.ty)).collect(), Some(variant))
                 } else if let [name] = path.as_slice()
-                    && let Some(TypeName::Nominal(record)) = self.type_names.get(&name.name)
+                    && let Some(record) = self.type_named(&name.name)
                 {
-                    let record = *record;
+                    let record = if self.same_nominal(record, ty) { ty } else { record };
                     let Some(fields) = self.record_fields(record, name.span) else { return Self::wild(ty, span) };
                     (record, fields, None)
                 } else {
@@ -1790,7 +2178,7 @@ impl Checker<'_> {
                     return self.pattern_error(span, message);
                 };
                 let Some((enum_ty, variant)) = resolved else { return Self::wild(ty, span) };
-                if enum_ty != ty {
+                if !self.same_nominal(enum_ty, ty) {
                     let message = mismatch(self, &format!("`{}`", Self::path_text(path)));
                     return self.pattern_error(span, message);
                 }
@@ -1904,6 +2292,11 @@ impl Checker<'_> {
 
     /// The type a single name denotes, without reporting unknown names.
     fn type_named(&mut self, name: &str) -> Option<Ty> {
+        // A generic type stands for its instance with its own parameters.
+        if let Some(&TypeName::Template(template)) = self.type_names.get(name) {
+            let params = self.types.template(template).params.clone();
+            return Some(self.types.instantiate(template, params));
+        }
         let path = ast::TypeExpr {
             kind: ast::TypeKind::Path {
                 segments: vec![ast::Ident { name: name.into(), span: Span::default() }],
@@ -1996,7 +2389,7 @@ impl Checker<'_> {
         if updates.is_empty() {
             self.diags.error("E1102", span, "`with` must update at least one field");
         }
-        let (values, _) = self.field_values(cx, ty, &fields, updates, false);
+        let (values, _) = self.field_values(cx, ty, &fields, updates, false, None);
         Self::mk(hir::ExprKind::With(Box::new(base), values), ty, span)
     }
 
@@ -2253,12 +2646,22 @@ impl Checker<'_> {
         base: &ast::Expr,
         type_args: &[ast::TypeExpr],
         args: &[ast::Arg],
+        expected: Option<Ty>,
         span: Span,
     ) -> hir::Expr {
         let ast::ExprKind::Path(segments) = &base.kind else {
             return self.unsupported_expr(span, "generic calls");
         };
         let names: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
+        if let [name] = names.as_slice()
+            && self.lookup(cx, name).is_none()
+            && let Some(ModuleName::Fn(id)) = self.names.get(*name).copied()
+        {
+            let explicit = type_args.iter().map(|t| self.resolve_type(t)).collect();
+            let signature = self.signatures[id.0 as usize].clone();
+            let target = CallTarget { callee: Callee::Fn(id), signature, explicit, expected };
+            return self.call_signature(cx, target, None, args, span);
+        }
         if let ["Map" | "Set", "new"] = names.as_slice() {
             let types: Vec<Ty> = type_args.iter().map(|t| self.resolve_type(t)).collect();
             let ty = match (names[0], types.as_slice()) {
@@ -2324,7 +2727,8 @@ impl Checker<'_> {
     ) -> hir::Expr {
         let value = self.expr(cx, receiver, None);
         let ty = value.ty;
-        if let Some(&id) = self.methods.get(&(ty, method.name.clone())) {
+        let key = self.owner_key(ty);
+        if let Some(&id) = self.methods.get(&(key, method.name.clone())) {
             return self.dot_call(cx, id, value, method, args, span);
         }
         if matches!(self.types.kind(ty), TyKind::Adt(_)) {
@@ -2530,7 +2934,8 @@ impl Checker<'_> {
             }
             Some(_) => receiver,
         };
-        self.call_signature(cx, Callee::Fn(id), &signature, Some(receiver), args, span)
+        let target = CallTarget { callee: Callee::Fn(id), signature, explicit: Vec::new(), expected: None };
+        self.call_signature(cx, target, Some(receiver), args, span)
     }
 
     fn no_method(&mut self, ty: Ty, method: &ast::Ident, span: Span) -> hir::Expr {
@@ -2662,7 +3067,7 @@ impl Checker<'_> {
         Self::mk(hir::ExprKind::Interpolate(out), Ty::STRING, span)
     }
 
-    fn path(&mut self, cx: &mut FnCx, segments: &[ast::Ident], span: Span) -> hir::Expr {
+    fn path(&mut self, cx: &mut FnCx, segments: &[ast::Ident], expected: Option<Ty>, span: Span) -> hir::Expr {
         let first = &segments[0];
         if let Some(local) = self.lookup(cx, &first.name) {
             let ty = cx.locals[local.0 as usize].ty;
@@ -2676,6 +3081,10 @@ impl Checker<'_> {
         if let Some(resolved) = self.variant_path(segments) {
             let Some((ty, variant)) = resolved else { return Self::error_expr(span) };
             if let Payload::Unit = self.payload(ty, variant) {
+                let ty = match self.generic_inference(ty, expected) {
+                    Some(inference) => self.finish_inference(&inference, ty, span),
+                    None => ty,
+                };
                 return Self::mk(hir::ExprKind::Variant(variant, Vec::new()), ty, span);
             }
             let message = format!("`{}` needs a payload", Self::path_text(segments));
@@ -2714,7 +3123,14 @@ impl Checker<'_> {
         self.diags.error("E1001", span, message);
     }
 
-    fn call(&mut self, cx: &mut FnCx, callee: &ast::Expr, args: &[ast::Arg], span: Span) -> hir::Expr {
+    fn call(
+        &mut self,
+        cx: &mut FnCx,
+        callee: &ast::Expr,
+        args: &[ast::Arg],
+        expected: Option<Ty>,
+        span: Span,
+    ) -> hir::Expr {
         match &callee.kind {
             ast::ExprKind::Field(receiver, method) => return self.method_call(cx, receiver, method, args, span),
             ast::ExprKind::Path(segments) if segments.len() > 1 && self.lookup(cx, &segments[0].name).is_some() => {
@@ -2724,7 +3140,7 @@ impl Checker<'_> {
                 return self.method_call(cx, &receiver, method, args, span);
             }
             ast::ExprKind::Generic { base, args: type_args } => {
-                return self.generic_call(cx, base, type_args, args, span);
+                return self.generic_call(cx, base, type_args, args, expected, span);
             }
             _ => {}
         }
@@ -2768,7 +3184,8 @@ impl Checker<'_> {
         {
             if let Some(id) = self.methods.get(&(owner, operation.to_string())).copied() {
                 let signature = self.signatures[id.0 as usize].clone();
-                return self.call_signature(cx, Callee::Fn(id), &signature, None, args, span);
+                let target = CallTarget { callee: Callee::Fn(id), signature, explicit: Vec::new(), expected };
+                return self.call_signature(cx, target, None, args, span);
             }
             if self.types.variants(owner).is_none()
                 || matches!(self.types.kind(owner), TyKind::Option(_) | TyKind::Result(..))
@@ -2791,13 +3208,41 @@ impl Checker<'_> {
             if types.len() != args.len() {
                 return self.arity_error(span, types.len(), args.len());
             }
-            let values = args
-                .iter()
+            // A generic enum's arguments come from the expected type and the
+            // payload; values that need context wait for the others.
+            let mut inference = self.generic_inference(ty, expected);
+            let mut checked: Vec<Option<hir::Expr>> = (0..args.len()).map(|_| None).collect();
+            for pass in 0..2 {
+                for (index, (arg, &payload)) in args.iter().zip(&types).enumerate() {
+                    if checked[index].is_some() {
+                        continue;
+                    }
+                    let expected = match &inference {
+                        Some(inference) => self.inferred(inference, payload),
+                        None => Some(payload),
+                    };
+                    if pass == 0 && expected.is_none() && self.needs_context(&arg.value) {
+                        continue;
+                    }
+                    let value = self.expr(cx, &arg.value, expected);
+                    if let Some(inference) = &mut inference {
+                        self.unify(inference, payload, value.ty);
+                    }
+                    checked[index] = Some(value);
+                }
+            }
+            let values: Vec<hir::Expr> = checked.into_iter().map(Option::unwrap).collect();
+            let (ty, map) = match inference {
+                Some(inference) => (self.finish_inference(&inference, ty, span), inference.map),
+                None => (ty, HashMap::new()),
+            };
+            let values = values
+                .into_iter()
                 .zip(types)
                 .enumerate()
-                .map(|(index, (arg, ty))| {
-                    let value = self.expr(cx, &arg.value, Some(ty));
-                    (index as u32, self.coerce(value, ty))
+                .map(|(index, (value, payload))| {
+                    let payload = self.types.subst(payload, &map);
+                    (index as u32, self.coerce(value, payload))
                 })
                 .collect();
             return Self::mk(hir::ExprKind::Variant(variant, values), ty, span);
@@ -2839,7 +3284,8 @@ impl Checker<'_> {
             }
             ([_], Some(ModuleName::Fn(id))) => {
                 let signature = self.signatures[id.0 as usize].clone();
-                self.call_signature(cx, Callee::Fn(id), &signature, None, args, span)
+                let target = CallTarget { callee: Callee::Fn(id), signature, explicit: Vec::new(), expected };
+                self.call_signature(cx, target, None, args, span)
             }
             ([_, member], Some(ModuleName::Module(StdModule::Console))) => {
                 // `print` and `println` only append to the output buffer and
@@ -2862,7 +3308,8 @@ impl Checker<'_> {
                     }
                 };
                 let signature = Signature::simple(params, result);
-                self.call_signature(cx, Callee::Std(function), &signature, None, args, span)
+                let target = CallTarget { callee: Callee::Std(function), signature, explicit: Vec::new(), expected };
+                self.call_signature(cx, target, None, args, span)
             }
             ([name], None) if Self::numeric_type(name).is_some() => {
                 let to = Self::numeric_type(name).unwrap();
@@ -2905,12 +3352,13 @@ impl Checker<'_> {
     fn call_signature(
         &mut self,
         cx: &mut FnCx,
-        callee: Callee,
-        signature: &Signature,
+        target: CallTarget,
         receiver: Option<hir::Expr>,
         args: &[ast::Arg],
         span: Span,
     ) -> hir::Expr {
+        let CallTarget { callee, signature, explicit, expected } = target;
+        let signature = &signature;
         let first = receiver.is_some() as usize;
         let count = signature.params.len() - first;
         let fixed = count - signature.variadic as usize;
@@ -2979,24 +3427,76 @@ impl Checker<'_> {
             self.diags.error("E1102", span, message);
             return Self::error_expr(span);
         }
-        // Check the arguments in the order they are written.
-        let mut values: Vec<Option<hir::Expr>> = (0..args.len()).map(|_| None).collect();
+        // Type arguments come from explicit arguments, then from the values.
+        let mut inference = Inference::new(signature.generics.clone());
+        if !explicit.is_empty() {
+            if explicit.len() != signature.generics.len() {
+                let message =
+                    format!("expected {} type argument(s), found {}", signature.generics.len(), explicit.len());
+                self.diags.error("E1104", span, message);
+                return Self::error_expr(span);
+            }
+            inference.map.extend(signature.generics.iter().copied().zip(explicit));
+        }
+        if let Some(receiver) = &receiver {
+            self.unify(&mut inference, signature.params[0], receiver.ty);
+        }
         let element = signature.variadic.then(|| match self.types.kind(signature.params[signature.params.len() - 1]) {
             TyKind::Array(element) => *element,
             _ => Ty::ERROR,
         });
-        for (index, arg) in args.iter().enumerate() {
-            let parameter = match slots.iter().position(|&s| s == Some(index)) {
-                Some(position) => first + position,
-                None => signature.params.len() - 1,
-            };
-            let ty = match (slots.contains(&Some(index)), spread == Some(index)) {
-                (true, _) | (false, true) => signature.params[parameter],
-                (false, false) => element.unwrap_or(Ty::ERROR),
-            };
-            let receiver_mode = (parameter == 0).then_some(signature.receiver).flatten();
-            values[index] = Some(self.argument(cx, arg, ty, receiver_mode));
+        let parameter_of = |index: usize| match slots.iter().position(|&s| s == Some(index)) {
+            Some(position) => first + position,
+            None => signature.params.len() - 1,
+        };
+        let type_of = |index: usize| match (slots.contains(&Some(index)), spread == Some(index)) {
+            (true, _) | (false, true) => signature.params[parameter_of(index)],
+            (false, false) => element.unwrap_or(Ty::ERROR),
+        };
+        // Check the arguments in the order they are written; an unsuffixed
+        // literal waits until the others have fixed its type.
+        let mut values: Vec<Option<hir::Expr>> = (0..args.len()).map(|_| None).collect();
+        for pass in 0..2 {
+            for (index, arg) in args.iter().enumerate() {
+                if values[index].is_some() {
+                    continue;
+                }
+                let ty = type_of(index);
+                let expected = self.inferred(&inference, ty);
+                if pass == 0 && expected.is_none() && self.needs_context(&arg.value) {
+                    continue;
+                }
+                let receiver_mode = (parameter_of(index) == 0).then_some(signature.receiver).flatten();
+                let value = self.argument_value(cx, arg, expected, receiver_mode);
+                self.unify(&mut inference, ty, value.ty);
+                values[index] = Some(value);
+            }
         }
+        if let Some(expected) = expected {
+            self.unify(&mut inference, signature.result, expected);
+        }
+        let unknown: Vec<String> = signature
+            .generics
+            .iter()
+            .filter(|g| !inference.map.contains_key(g))
+            .map(|&g| format!("`{}`", self.types.display(g)))
+            .collect();
+        if !unknown.is_empty() {
+            let message = format!(
+                "cannot infer {} from the arguments; write the type arguments: `name[...](...)`",
+                unknown.join(", ")
+            );
+            self.diags.error("E1101", span, message);
+            return Self::error_expr(span);
+        }
+        for (index, value) in values.iter_mut().enumerate() {
+            let ty = self.types.subst(type_of(index), &inference.map);
+            let receiver_mode = (parameter_of(index) == 0).then_some(signature.receiver).flatten();
+            let raw = value.take().unwrap();
+            *value = Some(self.finish_argument(cx, raw, ty, receiver_mode));
+        }
+        let type_args: Vec<Ty> = signature.generics.iter().map(|g| inference.map[g]).collect();
+        let result = self.types.subst(signature.result, &inference.map);
         let mut ordered: Vec<(Option<usize>, hir::Expr)> = Vec::new();
         if let Some(receiver) = receiver {
             ordered.push((None, receiver));
@@ -3006,6 +3506,7 @@ impl Checker<'_> {
             ordered.push((Some(index), values[index].take().unwrap()));
         }
         if let Some(array) = signature.variadic.then(|| signature.params[signature.params.len() - 1]) {
+            let array = self.types.subst(array, &inference.map);
             let value = match spread {
                 Some(index) => values[index].take().unwrap(),
                 None => {
@@ -3020,7 +3521,7 @@ impl Checker<'_> {
         let in_order = ordered.iter().filter_map(|(i, _)| *i).collect::<Vec<_>>().is_sorted();
         if in_order {
             let args = ordered.into_iter().map(|(_, value)| value).collect();
-            return Self::mk(hir::ExprKind::Call(callee, args), signature.result, span);
+            return Self::mk(hir::ExprKind::Call(callee, type_args, args), result, span);
         }
         let mut written: Vec<(usize, LocalId)> = Vec::new();
         let mut stmts = Vec::new();
@@ -3039,18 +3540,21 @@ impl Checker<'_> {
             }
         }
         stmts.sort_by_key(|(index, _)| *index);
-        let call = Self::mk(hir::ExprKind::Call(callee, args), signature.result, span);
-        let block = hir::Block {
-            stmts: stmts.into_iter().map(|(_, s)| s).collect(),
-            tail: Some(Box::new(call)),
-            ty: signature.result,
-        };
-        Self::mk(hir::ExprKind::Block(block), signature.result, span)
+        let call = Self::mk(hir::ExprKind::Call(callee, type_args, args), result, span);
+        let block =
+            hir::Block { stmts: stmts.into_iter().map(|(_, s)| s).collect(), tail: Some(Box::new(call)), ty: result };
+        Self::mk(hir::ExprKind::Block(block), result, span)
     }
 
-    /// One argument for a parameter of type `ty`; a `mut self` or `var self`
-    /// receiver written in a qualified call is a loan of a `var` place.
-    fn argument(&mut self, cx: &mut FnCx, arg: &ast::Arg, ty: Ty, receiver: Option<ast::Mode>) -> hir::Expr {
+    /// One argument as written, before its parameter type is final; a
+    /// `mut self` or `var self` receiver in a qualified call is a loan.
+    fn argument_value(
+        &mut self,
+        cx: &mut FnCx,
+        arg: &ast::Arg,
+        expected: Option<Ty>,
+        receiver: Option<ast::Mode>,
+    ) -> hir::Expr {
         let loan = matches!(receiver, Some(ast::Mode::Mut | ast::Mode::Var));
         let expected_mode = if loan { receiver.unwrap() } else { ast::Mode::Value };
         if arg.mode != expected_mode {
@@ -3060,9 +3564,14 @@ impl Checker<'_> {
             };
             self.diags.error("E1102", arg.span, message);
         }
-        let value = self.expr(cx, &arg.value, Some(ty));
+        self.expr(cx, &arg.value, expected)
+    }
+
+    /// An argument coerced to its final parameter type, or the loan of its
+    /// place for a `mut self` or `var self` receiver.
+    fn finish_argument(&mut self, cx: &FnCx, value: hir::Expr, ty: Ty, receiver: Option<ast::Mode>) -> hir::Expr {
         let value = self.coerce(value, ty);
-        if !loan {
+        if !matches!(receiver, Some(ast::Mode::Mut | ast::Mode::Var)) || matches!(value.kind, hir::ExprKind::Loan(_)) {
             return value;
         }
         let span = value.span;
@@ -3156,6 +3665,21 @@ impl Checker<'_> {
                 let ty = value.ty;
                 Self::mk(hir::ExprKind::Unary(op, Box::new(value)), ty, span)
             }
+        }
+    }
+
+    /// Whether an expression takes its type from the context: a literal
+    /// without suffix, `none`, an empty collection or a construction of a
+    /// generic enum. Inference checks such arguments last.
+    fn needs_context(&self, e: &ast::Expr) -> bool {
+        match &e.kind {
+            ast::ExprKind::None | ast::ExprKind::Construct(..) | ast::ExprKind::Map(_) => true,
+            ast::ExprKind::Array(items) => items.is_empty() || items.iter().all(|item| self.needs_context(item)),
+            ast::ExprKind::Path(segments) | ast::ExprKind::Record { path: segments, .. } => {
+                matches!(self.type_names.get(&segments[0].name), Some(TypeName::Template(_)))
+            }
+            ast::ExprKind::Call { callee, .. } => self.needs_context(callee),
+            _ => Self::is_untyped_literal(e),
         }
     }
 
