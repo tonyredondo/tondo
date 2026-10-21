@@ -1,0 +1,286 @@
+//! Runtime linked into every native Tondo executable.
+//!
+//! The compiler's build script compiles this file with `rustc` as a staticlib
+//! and embeds it; the generated code calls the `tondo_rt_*` symbols below.
+//! That interface is private to the compiler and the runtime: nothing here is
+//! a stable ABI.
+
+#![allow(clippy::missing_safety_doc)]
+
+use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
+use std::io::Write;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering, fence};
+
+// ---------------------------------------------------------------------------
+// Strings
+// ---------------------------------------------------------------------------
+
+/// Header of every string. The UTF-8 bytes follow the header.
+///
+/// String literals are emitted by the compiler as static objects with the
+/// same layout and `rc == IMMORTAL`, so retain and release ignore them.
+#[repr(C)]
+pub struct Str {
+    rc: AtomicUsize,
+    len: usize,
+}
+
+const IMMORTAL: usize = usize::MAX;
+const HEADER: usize = std::mem::size_of::<Str>();
+
+/// Strings currently allocated. Checked at exit when `TONDO_RT_CHECK_LEAKS`
+/// is set, which the compiler's tests use to verify reference counting.
+static LIVE_STRINGS: AtomicUsize = AtomicUsize::new(0);
+
+fn str_layout(len: usize) -> Layout {
+    Layout::from_size_align(HEADER + len, std::mem::align_of::<Str>()).expect("string too large")
+}
+
+/// Allocates a string with refcount 1 holding a copy of `bytes`.
+pub fn str_new(bytes: &[u8]) -> *mut Str {
+    let layout = str_layout(bytes.len());
+    unsafe {
+        let ptr = alloc(layout) as *mut Str;
+        if ptr.is_null() {
+            handle_alloc_error(layout);
+        }
+        ptr.write(Str { rc: AtomicUsize::new(1), len: bytes.len() });
+        LIVE_STRINGS.fetch_add(1, Ordering::Relaxed);
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), (ptr as *mut u8).add(HEADER), bytes.len());
+        ptr
+    }
+}
+
+/// The bytes of a string. The caller keeps the string alive.
+pub unsafe fn str_bytes<'a>(s: *const Str) -> &'a [u8] {
+    unsafe { std::slice::from_raw_parts((s as *const u8).add(HEADER), (*s).len) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_str_retain(s: *const Str) {
+    let rc = unsafe { &(*s).rc };
+    if rc.load(Ordering::Relaxed) != IMMORTAL {
+        rc.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_str_release(s: *mut Str) {
+    let rc = unsafe { &(*s).rc };
+    if rc.load(Ordering::Relaxed) == IMMORTAL {
+        return;
+    }
+    match rc.fetch_sub(1, Ordering::Release) {
+        1 => {
+            fence(Ordering::Acquire);
+            LIVE_STRINGS.fetch_sub(1, Ordering::Relaxed);
+            unsafe { dealloc(s as *mut u8, str_layout((*s).len)) }
+        }
+        0 => runtime_fault("string released after it was freed"),
+        _ => {}
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_str_eq(a: *const Str, b: *const Str) -> u8 {
+    unsafe { (str_bytes(a) == str_bytes(b)) as u8 }
+}
+
+/// Orders strings by Unicode scalar values; for UTF-8 this is byte order.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_str_cmp(a: *const Str, b: *const Str) -> i32 {
+    unsafe { str_bytes(a).cmp(str_bytes(b)) as i32 }
+}
+
+// ---------------------------------------------------------------------------
+// String builder (interpolation)
+// ---------------------------------------------------------------------------
+
+pub struct Builder(Vec<u8>);
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_sb_new() -> *mut Builder {
+    Box::into_raw(Box::new(Builder(Vec::new())))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_sb_str(b: *mut Builder, s: *const Str) {
+    unsafe { (*b).0.extend_from_slice(str_bytes(s)) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_sb_i64(b: *mut Builder, value: i64) {
+    unsafe { write!((*b).0, "{value}").unwrap() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_sb_u64(b: *mut Builder, value: u64) {
+    unsafe { write!((*b).0, "{value}").unwrap() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_sb_bool(b: *mut Builder, value: u8) {
+    let text: &[u8] = if value != 0 { b"true" } else { b"false" };
+    unsafe { (*b).0.extend_from_slice(text) }
+}
+
+/// Consumes the builder and returns an owned string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_sb_finish(b: *mut Builder) -> *mut Str {
+    let builder = unsafe { Box::from_raw(b) };
+    str_new(&builder.0)
+}
+
+// ---------------------------------------------------------------------------
+// Console
+// ---------------------------------------------------------------------------
+
+/// `print` and `println` only append to this ordered buffer (std.console).
+/// It is written out when it grows large and when the program terminates.
+static STDOUT: Mutex<Vec<u8>> = Mutex::new(Vec::new());
+const STDOUT_FLUSH_THRESHOLD: usize = 64 * 1024;
+
+fn console_append(bytes: &[u8], newline: bool) -> i64 {
+    let mut out = STDOUT.lock().unwrap_or_else(|e| e.into_inner());
+    out.extend_from_slice(bytes);
+    if newline {
+        out.push(b'\n');
+    }
+    if out.len() >= STDOUT_FLUSH_THRESHOLD {
+        let _ = std::io::stdout().write_all(&out);
+        out.clear();
+    }
+    0
+}
+
+pub fn flush_stdout() {
+    let mut out = STDOUT.lock().unwrap_or_else(|e| e.into_inner());
+    let mut stdout = std::io::stdout();
+    let _ = stdout.write_all(&out);
+    let _ = stdout.flush();
+    out.clear();
+}
+
+/// Returns 0 on success; a nonzero value is a `ConsoleError` tag.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_console_print(s: *const Str) -> i64 {
+    unsafe { console_append(str_bytes(s), false) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_console_println(s: *const Str) -> i64 {
+    unsafe { console_append(str_bytes(s), true) }
+}
+
+// ---------------------------------------------------------------------------
+// Panics
+// ---------------------------------------------------------------------------
+
+/// Process exit status of a panic (spec 20.10: distinct from error exits).
+pub const PANIC_EXIT_CODE: i32 = 101;
+
+fn panic_name(code: u32) -> &'static str {
+    match code {
+        1 => "bounds",
+        2 => "zero-slice-step",
+        3 => "integer-division-by-zero",
+        4 => "overlapping-borrow",
+        5 => "checked-overflow",
+        6 => "array-shape-mismatch",
+        7 => "assertion-failed",
+        8 => "explicit-panic",
+        9 => "duplicate-dynamic-map-key",
+        10 => "invalid-shift-count",
+        11 => "invalid-repeat-count",
+        _ => "unknown",
+    }
+}
+
+/// Reports a language panic (spec 15.7, codes in 22.2) and terminates.
+/// `message` may be null; `location` is a static `file:line:column` string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_panic(code: u32, message: *const Str, location: *const Str) -> ! {
+    flush_stdout();
+    let mut text = format!("panic[P{code:04}]: {}", panic_name(code));
+    if !message.is_null() {
+        text.push_str(": ");
+        text.push_str(&String::from_utf8_lossy(unsafe { str_bytes(message) }));
+    }
+    let location = String::from_utf8_lossy(unsafe { str_bytes(location) });
+    let _ = writeln!(std::io::stderr(), "{text}\n --> {location}");
+    std::process::exit(PANIC_EXIT_CODE)
+}
+
+/// An internal invariant of the runtime or the generated code was broken.
+fn runtime_fault(message: &str) -> ! {
+    flush_stdout();
+    let _ = writeln!(std::io::stderr(), "tondo runtime fault: {message}");
+    std::process::abort()
+}
+
+/// Exit status when `TONDO_RT_CHECK_LEAKS` finds live strings at exit.
+pub const LEAK_EXIT_CODE: i32 = 99;
+
+pub fn check_leaks() -> Option<usize> {
+    let live = LIVE_STRINGS.load(Ordering::Relaxed);
+    (std::env::var_os("TONDO_RT_CHECK_LEAKS").is_some() && live != 0).then_some(live)
+}
+
+// ---------------------------------------------------------------------------
+// Process entry
+// ---------------------------------------------------------------------------
+
+#[cfg(tondo_staticlib)]
+unsafe extern "C" {
+    /// Generated by the compiler: runs the program's `main` and returns the
+    /// process exit status.
+    fn tondo_main() -> i32;
+}
+
+#[cfg(tondo_staticlib)]
+#[unsafe(no_mangle)]
+pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
+    let status = unsafe { tondo_main() };
+    flush_stdout();
+    if let Some(live) = check_leaks() {
+        let _ = writeln!(std::io::stderr(), "tondo runtime: {live} string(s) leaked");
+        return LEAK_EXIT_CODE;
+    }
+    status
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strings_compare_by_scalar_order_and_free_at_zero() {
+        let a = str_new("abc".as_bytes());
+        let b = str_new("abd".as_bytes());
+        unsafe {
+            assert_eq!(tondo_rt_str_cmp(a, b), -1);
+            assert_eq!(tondo_rt_str_eq(a, a), 1);
+            tondo_rt_str_retain(a);
+            tondo_rt_str_release(a);
+            assert_eq!((*a).rc.load(Ordering::Relaxed), 1);
+            tondo_rt_str_release(a);
+            tondo_rt_str_release(b);
+        }
+    }
+
+    #[test]
+    fn builder_formats_scalars() {
+        let b = tondo_rt_sb_new();
+        let s = str_new("x=".as_bytes());
+        unsafe {
+            tondo_rt_sb_str(b, s);
+            tondo_rt_sb_i64(b, -42);
+            tondo_rt_sb_bool(b, 1);
+            let out = tondo_rt_sb_finish(b);
+            assert_eq!(str_bytes(out), b"x=-42true");
+            tondo_rt_str_release(out);
+            tondo_rt_str_release(s);
+        }
+    }
+}

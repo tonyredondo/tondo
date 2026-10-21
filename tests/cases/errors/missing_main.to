@@ -1,0 +1,3 @@
+fn helper() {}
+
+// expect-error: E1806

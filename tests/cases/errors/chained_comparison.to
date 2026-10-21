@@ -1,0 +1,6 @@
+fn main() {
+    let value = 5
+    let x = 0 < value < 10
+}
+
+// expect-error: E0005

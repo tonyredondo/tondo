@@ -1,0 +1,7 @@
+fn value(flag: Bool): Int {
+    if flag {
+        return 1
+    }
+}
+
+// expect-error: E1102

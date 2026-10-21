@@ -1,0 +1,7 @@
+fn helper() {}
+
+import std.console
+
+fn main() {}
+
+// expect-error: E1007

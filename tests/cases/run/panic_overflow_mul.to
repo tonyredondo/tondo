@@ -1,0 +1,6 @@
+fn main() {
+    let big = 4611686018427387904
+    let x = big * 2
+}
+
+// expect-panic: P0005

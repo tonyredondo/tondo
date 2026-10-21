@@ -1,0 +1,39 @@
+import std.console
+
+// Exercises reference counting: the test harness fails on any leaked or
+// doubly released string.
+fn pick(first: Bool, a: String, b: String): String {
+    if first { a } else { b }
+}
+
+fn longest(words: String, extra: String): String {
+    let joined = "{words} {extra}"
+    if joined == "never" {
+        return words
+    }
+    joined
+}
+
+fn main() {
+    var last = "start"
+    for i in 0..1000 {
+        let s = "item {i}"
+        var t = pick(i % 2 == 0, s, last)
+        t = "{t}."
+        if i % 3 == 0 {
+            continue
+        }
+        if i == 998 {
+            last = t
+            break
+        }
+        last = longest("w", "{i}")
+    }
+    let kept = {
+        let inner = "inner {last}"
+        inner
+    }
+    _ = console.println(kept)
+}
+
+// expect-stdout: inner item 998.

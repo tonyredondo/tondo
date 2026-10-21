@@ -1,0 +1,5 @@
+fn main() {
+    let x = missing + 1
+}
+
+// expect-error: E1001

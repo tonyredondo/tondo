@@ -1,0 +1,21 @@
+[package]
+name = "tondo"
+description = "The Tondo compiler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "tondo"
+path = "src/main.rs"
+
+[dependencies]
+cranelift-codegen = "0.137"
+cranelift-frontend = "0.137"
+cranelift-module = "0.137"
+cranelift-native = "0.137"
+cranelift-object = "0.137"
+unicode-ident = "1"
+unicode-normalization = "0.1"

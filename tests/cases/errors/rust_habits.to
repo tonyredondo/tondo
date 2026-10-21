@@ -1,0 +1,6 @@
+fn main() {
+    let x = Some(1)
+    let y = None
+}
+
+// expect-error: E1001

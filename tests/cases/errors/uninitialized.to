@@ -1,0 +1,5 @@
+fn main() {
+    var x: Int
+}
+
+// expect-error: E1109

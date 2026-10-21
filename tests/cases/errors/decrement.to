@@ -1,0 +1,6 @@
+fn main() {
+    var i = 0
+    i--
+}
+
+// expect-error: E0002

@@ -1,0 +1,17 @@
+[package]
+name = "tondo-runtime"
+description = "Runtime linked into every native Tondo executable"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# The compiler's build script compiles src/lib.rs directly with rustc as a
+# staticlib, so this crate must not have dependencies. The rlib target exists
+# for unit tests and tooling.
+[lib]
+path = "src/lib.rs"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tondo_staticlib)"] }

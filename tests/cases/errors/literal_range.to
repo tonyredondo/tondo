@@ -1,0 +1,5 @@
+fn main() {
+    let x: UInt8 = 256
+}
+
+// expect-error: E1102

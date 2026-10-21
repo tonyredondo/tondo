@@ -1,0 +1,6 @@
+fn main() {
+    let count = 1
+    if count {}
+}
+
+// expect-error: E1102

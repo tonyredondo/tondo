@@ -1,0 +1,6 @@
+fn main() {
+    return
+    let x = 1
+}
+
+// expect-warning: W1006

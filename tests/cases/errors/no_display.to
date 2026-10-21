@@ -1,0 +1,7 @@
+import std.console
+
+fn main() {
+    _ = console.println("{console.print("x")}")
+}
+
+// expect-error: E1105

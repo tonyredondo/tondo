@@ -1,0 +1,11 @@
+import std.console
+
+fn main() {
+    _ = console.println("before")
+    let x = 3
+    assert(x > 1)
+    assert(x > 5, "x is ", "{x}")
+}
+
+// expect-stdout: before
+// expect-panic: P0007

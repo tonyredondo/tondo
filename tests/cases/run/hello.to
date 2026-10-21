@@ -1,0 +1,7 @@
+import std.console
+
+fn main() {
+    _ = console.print("Hello, world\n")
+}
+
+// expect-stdout: Hello, world

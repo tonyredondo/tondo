@@ -1,0 +1,5 @@
+fn main() {
+    let x: Int = "text"
+}
+
+// expect-error: E1102

@@ -1,0 +1,6 @@
+fn main() {
+    let x = 1
+    x = 2
+}
+
+// expect-error: E1411

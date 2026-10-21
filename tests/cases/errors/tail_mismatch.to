@@ -1,0 +1,9 @@
+fn value(): Int { 1 }
+
+// A final expression is the block's value by position (13.1), so it must
+// match the block's type; it is never reinterpreted as a statement.
+fn main() {
+    value()
+}
+
+// expect-error: E1102

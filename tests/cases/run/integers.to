@@ -1,0 +1,23 @@
+import std.console
+
+fn main() {
+    // Truncating division and remainder with the dividend's sign (18.3).
+    _ = console.println("{-7 / 3} {-7 % 3} {7 % -3}")
+    let minimum = -9223372036854775808
+    _ = console.println("{minimum} {minimum % -1}")
+    let small: Int8 = -128
+    let byte: UInt8 = 255
+    let wide = 4_294_967_295u32
+    _ = console.println("{small} {byte} {wide} {18446744073709551615u64}")
+    _ = console.println("{0xFF} {0o17} {0b1010} {1_000_000}")
+    _ = console.println("{-16 >> 2} {240u8 >> 4} {1 << 62} {6 & 3} {6 | 3} {6 ^ 3} {~0}")
+    let ordered = 1 < 2 and 3 >= 3 and not (2 == 3) and 255u8 > 1u8
+    _ = console.println("{ordered}")
+}
+
+// expect-stdout: -2 -1 1
+// expect-stdout: -9223372036854775808 0
+// expect-stdout: -128 255 4294967295 18446744073709551615
+// expect-stdout: 255 15 10 1000000
+// expect-stdout: -4 15 4611686018427387904 2 7 5 -1
+// expect-stdout: true

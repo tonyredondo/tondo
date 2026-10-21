@@ -1,0 +1,26 @@
+import std.console
+
+fn shout(text: String): String {
+    "{text}!"
+}
+
+fn main() {
+    let name = "Ada"
+    let message = "Hola, {name}. Resultado: {2 + 2}"
+    _ = console.println(message)
+    _ = console.println("llaves {{literales}} y \u{1F642} y tab:\t.")
+    _ = console.println(r"raw \n {sin interpolación}")
+    let block = """
+        uno
+          dos: {shout(name)}
+        """
+    _ = console.println(block)
+    _ = console.println("{"a" < "b"} {"b" < "a"} {"ab" == "ab"} {"ñ" > "z"} {name != "Ada"}")
+}
+
+// expect-stdout: Hola, Ada. Resultado: 4
+// expect-stdout: llaves {literales} y 🙂 y tab:	.
+// expect-stdout: raw \n {sin interpolación}
+// expect-stdout: uno
+// expect-stdout:   dos: Ada!
+// expect-stdout: true false true true false

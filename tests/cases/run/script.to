@@ -1,0 +1,12 @@
+#!/usr/bin/env tondo
+import std.console
+
+// A root script: top-level statements form the implicit main (spec 20.3).
+let name = "Tondo"
+var count = 0
+for i in 1..=3 {
+    count += i
+}
+_ = console.println("{name}: {count}")
+
+// expect-stdout: Tondo: 6

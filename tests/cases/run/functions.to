@@ -1,0 +1,38 @@
+import std.console
+
+fn fib(n: Int): Int {
+    if n < 2 {
+        n
+    } else {
+        fib(n - 1) + fib(n - 2)
+    }
+}
+
+fn parity(n: Int): String {
+    if n % 2 == 0 { "even" } else { "odd" }
+}
+
+fn firstOver(limit: Int): Int {
+    var n = 0
+    for {
+        if fib(n) > limit {
+            return n
+        }
+        n += 1
+    }
+}
+
+fn main() {
+    for i in 0..6 {
+        _ = console.println("fib({i}) = {fib(i)} ({parity(fib(i))})")
+    }
+    _ = console.println("first over 100: {firstOver(100)}")
+}
+
+// expect-stdout: fib(0) = 0 (even)
+// expect-stdout: fib(1) = 1 (odd)
+// expect-stdout: fib(2) = 1 (odd)
+// expect-stdout: fib(3) = 2 (even)
+// expect-stdout: fib(4) = 3 (odd)
+// expect-stdout: fib(5) = 5 (odd)
+// expect-stdout: first over 100: 12

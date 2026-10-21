@@ -1,0 +1,7 @@
+fn negate(x: Int8): Int8 { -x }
+
+fn main() {
+    let x = negate(-128)
+}
+
+// expect-panic: P0005

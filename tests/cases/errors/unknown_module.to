@@ -1,0 +1,5 @@
+import nowhere.module
+
+fn main() {}
+
+// expect-error: E1008

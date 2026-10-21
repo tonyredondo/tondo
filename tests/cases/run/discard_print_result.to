@@ -1,0 +1,9 @@
+import std.console
+
+fn main() {
+    let ok = true
+    let err = "no error"
+    _ = console.println("{ok} {err}")
+}
+
+// expect-stdout: true no error

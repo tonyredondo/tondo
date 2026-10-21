@@ -1,0 +1,6 @@
+fn main() {
+    let count = 8
+    let x = 1u8 << count
+}
+
+// expect-panic: P0010

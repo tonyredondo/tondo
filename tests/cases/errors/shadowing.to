@@ -1,0 +1,8 @@
+fn main() {
+    let x = 1
+    if true {
+        let x = 2
+    }
+}
+
+// expect-error: E1003
