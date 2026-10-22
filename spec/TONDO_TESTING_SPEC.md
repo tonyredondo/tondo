@@ -1227,9 +1227,9 @@ test requestTimesOut {
 
 Toda tarea creada dentro de la closure se espera a más tardar al terminar su
 bloque (11.11 de la especificación del lenguaje), así que ninguna sobrevive a la
-closure. El cierre recibe
-`ref VirtualTime`; el controlador no puede moverse, almacenarse ni escapar de
-esa región. La closure devuelve `Unit`, puede ser fallible y propaga su unión de
+closure. El cierre recibe un `VirtualTime`, que puede copiarse pero solo
+mueve el reloj mientras su closure se ejecuta; fuera de ella no hace nada. La
+closure devuelve `Unit`, puede ser fallible y propaga su unión de
 error al body o fase exterior sin envolverla. Pánico, skip, cancelación y cleanup
 conservan sus reglas ordinarias y siempre desmontan el dominio antes de terminar
 el intento. La llamada a `withVirtualTime` debe iniciarse directamente en la
@@ -1242,10 +1242,9 @@ Dentro del dominio:
 
 - El instante monotónico inicial es un cero virtual opaco. Solo sus diferencias
   son observables mediante la API temporal de producción.
-- Cada `Instant` conserva internamente la identidad opaca de su proveedor y
-  dominio. Un `Duration` puede cruzar dominios; un `Instant`, timer o deadline no
-  puede mezclarse con otro dominio. La API estándar debe rechazar esa mezcla de
-  forma determinista en lugar de comparar contadores de relojes distintos.
+- Un `Duration` puede cruzar dominios; un `Instant`, timer o deadline no debe
+  mezclarse con otro dominio. La implementación actual no rechaza esa mezcla:
+  restar un instante de otro reloj da una duración sin sentido.
 - Suspensión, timers y deadlines monotónicos admitidos por el target consultan
   el proveedor virtual. No se reescribe el código ni se inyecta un `Clock`.
 - El calendario civil y las APIs que consulten explícitamente reloj de pared no
@@ -1254,12 +1253,11 @@ Dentro del dominio:
   creación y un nuevo wake se añade después de las ya listas. Timers con el
   mismo deadline se despiertan por secuencia de creación.
 - Una task terminada deja de participar. Una task está **durablemente
-  bloqueada** solo cuando el runtime puede demostrar que despertará únicamente
-  por un timer virtual, por terminación o cancelación de otra task del dominio,
-  o por una operación de sincronización cuyo catálogo estándar la declare
-  durable y cuyo ownership demuestre que todos sus productores, endpoints y
-  posibilidades de wake permanecen confinados al dominio. Si el tipo o análisis
-  no puede demostrarlo, la espera no es durable.
+  bloqueada** cuando espera un timer virtual, la terminación de otra task, un
+  canal, un lock u otra operación de sincronización del lenguaje. Una espera así
+  cuenta como duradera aunque el canal o el lock se compartan con tareas de fuera
+  del dominio: el reloj puede avanzar mientras una de ellas está a punto de
+  despertarla, así que un test controla lo que espera dentro del dominio.
 - Esperas sobre filesystem, red, procesos, reloj de pared, syscalls, callbacks
   o recursos que puedan recibir eventos externos nunca son duraderas. No se
   aceleran ni se simulan; doubles y transportes in-memory controlados son la
@@ -2188,7 +2186,7 @@ pub fn snapshot(name: String, actual: String)
 
 pub fn withVirtualTime[
     E,
-    F: Send + CallOnce[fn(ref VirtualTime): Unit ! E],
+    F: Send + CallOnce[fn(VirtualTime): Unit ! E],
 ](body: F): ! E
 
 pub fn VirtualTime.settle(self)
@@ -2240,10 +2238,9 @@ fallible conserva exactamente `E`. La llamada usa el `?` ordinario para
 propagar ese canal; con `E = Never` no existe rama `err` ejecutable. No existe
 type erasure, allocation de callback ni wrapper `Task`.
 
-`VirtualTime` es un tipo opaco test-only con `Send`, sin `Copy`, `Share`,
-`Equatable`, `Key` ni `Display`. El usuario nunca lo construye ni posee:
-`withVirtualTime` presta un único controlador al cierre y lo revoca al
-terminarlo. `settle` y `advance` esperan, porque conducir otras tareas es una
+`VirtualTime` es un tipo opaco test-only con `Copy`, `Send` y `Share`, sin
+`Equatable`, `Key` ni `Display`. El usuario nunca lo construye:
+`withVirtualTime` se lo da al cierre, y deja de mover el reloj al terminar. `settle` y `advance` esperan, porque conducir otras tareas es una
 espera visible.
 
 Estas operaciones son intrínsecas y selladas dentro de un artefacto de test:
@@ -3610,10 +3607,7 @@ los ejecutan en cada plataforma de CI. El compilador nativo implementa hoy:
 - `testing.withVirtualTime` con `settle` y `advance`, y los pánicos `P2003` a
   `P2005`.
 
-La implementación difiere todavía en tres puntos del tiempo virtual: el cierre
-recibe `VirtualTime` por valor y el valor puede copiarse; mezclar `Instant` de
-dominios distintos no se rechaza; y una espera sobre un canal o un lock
-compartido con tareas de fuera del dominio cuenta como duradera.
+Queda pendiente rechazar la mezcla de `Instant` de dominios distintos (7.9).
 
 ## 17. Referencia rápida
 
