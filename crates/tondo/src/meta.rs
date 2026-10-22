@@ -165,7 +165,8 @@ pub fn generate(
             let place = format!("`[generators.{}]` of the package `{}`", generator.name, packages[package].name);
             // Any problem discards everything the generator wrote.
             let mut problems: Vec<(&'static str, String)> = Vec::new();
-            let declarations = declarations(modules, packages, &generator.roots, &generated, sources, &mut problems);
+            let declarations =
+                declarations(modules, packages, package, &generator.roots, &generated, sources, &mut problems);
             let mut inputs = Vec::new();
             for (name, file) in &generator.inputs {
                 match std::fs::read(file) {
@@ -270,9 +271,11 @@ pub fn generate(
 /// each root, and the public records, enums and newtypes that their public
 /// fields, variants and wrapped types name, with the module of each. One
 /// that only an output of this build declares is `E2109`.
+#[allow(clippy::too_many_arguments)]
 fn declarations(
     modules: &[ModuleSource],
     packages: &[PackageInfo],
+    package: usize,
     roots: &[String],
     generated: &[Vec<String>],
     sources: &SourceMap,
@@ -285,13 +288,18 @@ fn declarations(
     };
     let mut reached: Vec<(usize, String)> = Vec::new();
     for root in roots {
+        // A module of the package, as `outputs` names them, and a type.
         let (module, name) = root.rsplit_once('.').unwrap_or(("", root));
-        let path: Vec<String> = module.split('.').map(String::from).collect();
-        match modules.iter().position(|m| m.path == path) {
+        let path: Vec<String> = std::iter::once(packages[package].name.clone())
+            .chain(module.split('.').filter(|s| !s.is_empty()).map(String::from))
+            .collect();
+        match modules.iter().position(|m| m.package == package && m.path == path) {
             Some(m) if declared(&modules[m], name).is_some_and(|(_, item)| view(item, sources, true).is_some()) => {
                 reached.push((m, name.to_string()));
             }
-            None if generated.contains(&path) => cycle(problems, format!("its root `{root}` is in `{module}`")),
+            None if generated.contains(&path) => {
+                cycle(problems, format!("its root `{root}` is in `{}`", path.join(".")));
+            }
             _ => problems.push(("E2106", format!("its root `{root}` is not a public record, enum or newtype"))),
         }
     }

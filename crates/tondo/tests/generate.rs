@@ -30,7 +30,7 @@ fn generates_modules_from_inputs_and_declarations() {
         &[
             (
                 "tondo.toml",
-                "[package]\nname = \"app\"\n\n[generators.colors]\nprogram = \"gen/colors.to\"\ninputs = [\"colors.txt\"]\noutputs = [\"palette\"]\nroots = [\"app.models.User\"]\n",
+                "[package]\nname = \"app\"\n\n[generators.colors]\nprogram = \"gen/colors.to\"\ninputs = [\"colors.txt\"]\noutputs = [\"palette\"]\nroots = [\"models.User\"]\n",
             ),
             ("colors.txt", "red #ff0000\ngreen #00ff00\n"),
             (
@@ -149,7 +149,7 @@ outputs = [\"models\"]
 [generators.roots]
 program = \"gen/hand.to\"
 outputs = [\"other\"]
-roots = [\"app.models.Missing\", \"app.models.User\", \"app.one.Thing\"]
+roots = [\"models.Missing\", \"models.User\", \"one.Thing\"]
 
 [generators.reads]
 program = \"gen/hand.to\"
@@ -180,9 +180,9 @@ outputs = [\"reads\"]
         "error[E2105]: the generator `[generators.broken]` of the package `app`: its output `broken` is not valid Tondo source; `tondo expand` shows it",
         "error[E2105]: the generator `[generators.derives]` of the package `app`: its output `derives` has a `derive`",
         "error[E2106]: the generator `[generators.hand]` of the package `app`: its output `models` would replace a module written by hand",
-        "error[E2106]: the generator `[generators.roots]` of the package `app`: its root `app.models.Missing` is not a public record, enum or newtype",
+        "error[E2106]: the generator `[generators.roots]` of the package `app`: its root `models.Missing` is not a public record, enum or newtype",
         "error[E2109]: the generator `[generators.roots]` of the package `app`: `app.models.User` names `one.Thing`, which a generator of this build writes",
-        "error[E2109]: the generator `[generators.roots]` of the package `app`: its root `app.one.Thing` is in `app.one`, which a generator of this build writes",
+        "error[E2109]: the generator `[generators.roots]` of the package `app`: its root `one.Thing` is in `app.one`, which a generator of this build writes",
         "error[E2106]: the generator `[generators.reads]` of the package `app`: cannot read its input `missing.txt`",
         // A generator with a problem adds none of its modules.
         "error[E1008]: the package `app` has no module `app.one`",

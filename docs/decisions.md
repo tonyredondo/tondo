@@ -918,7 +918,9 @@ request carries the inputs as bytes with their SHA-256 and the declarations
 its roots reach: the roots, and the public records, enums and newtypes their
 public fields, variants and wrapped types name, found by following the
 imports of each module as written, since nothing is resolved yet. An output
-is a module inside the package. Any problem of a generator, from a panic to
+is a module inside the package, and a root a type of one, both written
+without the package's name: `outputs = ["palette"]`, `roots =
+["models.User"]`. Any problem of a generator, from a panic to
 a missing output or one that is not Tondo source, discards everything it
 wrote, so a build never sees half a generation. A root that reaches an
 output of the same build is `E2109`. A run over budget names the limit and

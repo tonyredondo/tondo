@@ -10309,13 +10309,14 @@ públicos que puede consultar y, si no le bastan los de 27.7, sus presupuestos.
 program = "gen/colors.to"
 inputs = ["colors.txt"]
 outputs = ["palette"]
-roots = ["app.models.User"]
+roots = ["models.User"]
 limits = { steps = "1000000" }
 ~~~
 
-Cada salida es un módulo dentro del paquete: `palette` es `app.palette` y
-`proto.user` es `app.proto.user`. Cada root es el path de un módulo y el nombre
-de un record, enum o newtype público: `app.models.User`.
+Las salidas y los roots se escriben dentro del paquete, sin su nombre. Cada
+salida es un módulo: `palette` es `app.palette` y `proto.user` es
+`app.proto.user`. Cada root es el path de un módulo y el nombre de un record,
+enum o newtype público: `models.User` es `User` de `app.models`.
 
 El programa exporta `generate`. No existe sintaxis `.to` para registrar o
 ejecutar un generador.

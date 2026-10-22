@@ -110,7 +110,7 @@ outputs = ["proto.user"]
   su archivo; `inputs`, los archivos que recibe como valores; `outputs`, los
   módulos que produce dentro del paquete (`"proto.user"`); y opcionalmente
   `roots`, las declaraciones públicas que puede consultar
-  (`"app.models.User"`), y `limits`, una tabla en línea con `steps`, `memory`
+  (`"models.User"`, el tipo `User` del módulo `app.models`), y `limits`, una tabla en línea con `steps`, `memory`
   (bytes) y `output` (bytes de fuente), cada uno un número positivo en un
   string: `limits = { steps = "1000000" }`. Los archivos son relativos al
   `tondo.toml`.
