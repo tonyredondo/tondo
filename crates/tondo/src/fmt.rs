@@ -307,19 +307,25 @@ impl Formatter<'_> {
 
     fn item(&mut self, item: &Item) -> Doc {
         match item {
-            Item::Fn(f) => self.function(f),
+            Item::Fn(f) => concat(vec![annotations(&f.annotations), self.function(f)]),
             Item::Type(t) => {
                 let head = concat(vec![
-                    text(format!("{}type {}", if t.public { "pub " } else { "" }, t.name.name)),
+                    annotations(&t.annotations),
+                    text(format!(
+                        "{}{}type {}",
+                        if t.public { "pub " } else { "" },
+                        if t.foreign { "extern " } else { "" },
+                        t.name.name
+                    )),
                     self.generics(&t.generics),
-                    text(" = "),
                 ]);
                 match &t.body {
-                    TypeBody::Newtype(inner) => concat(vec![head, self.ty(inner)]),
+                    TypeBody::Opaque => head,
+                    TypeBody::Newtype(inner) => concat(vec![head, text(" = "), self.ty(inner)]),
                     TypeBody::Record(fields) => {
                         let fields =
                             fields.iter().map(|f| (f.name.span.start, f.ty.span.end, self.field_decl(f))).collect();
-                        concat(vec![head, self.braced_lines(fields, t.span.end)])
+                        concat(vec![head, text(" = "), self.braced_lines(fields, t.span.end)])
                     }
                 }
             }
@@ -416,14 +422,8 @@ impl Formatter<'_> {
 
     fn field_decl(&mut self, field: &FieldDecl) -> Doc {
         let private = if field.private { "priv " } else { "" };
-        let mut parts = Vec::new();
-        for annotation in &field.annotations {
-            let argument = annotation.argument.as_ref().map_or(String::new(), |a| format!("({a:?})"));
-            parts.push(text(format!("@{}{argument}", annotation.name.name)));
-            parts.push(Doc::Hardline);
-        }
-        parts.push(text(format!("{private}{}: ", field.name.name)));
-        parts.push(self.ty(&field.ty));
+        let parts =
+            vec![annotations(&field.annotations), text(format!("{private}{}: ", field.name.name)), self.ty(&field.ty)];
         concat(parts)
     }
 
@@ -473,9 +473,10 @@ impl Formatter<'_> {
 
     fn function(&mut self, f: &FnDecl) -> Doc {
         let mut head = vec![text(format!(
-            "{}{}fn ",
+            "{}{}{}fn ",
             if f.public { "pub " } else { "" },
-            if f.is_unsafe { "unsafe " } else { "" }
+            if f.is_unsafe { "unsafe " } else { "" },
+            if f.foreign.is_some() { "extern " } else { "" }
         ))];
         if let Some(owner) = &f.owner {
             head.push(text(owner.name.clone()));
@@ -484,7 +485,11 @@ impl Formatter<'_> {
         }
         head.push(text(f.name.name.clone()));
         head.push(self.generics(&f.generics));
-        let params = f.params.iter().map(|p| (p.span, self.param(p))).collect();
+        let mut params: Vec<(Span, Doc)> = f.params.iter().map(|p| (p.span, self.param(p))).collect();
+        if f.foreign.as_ref().is_some_and(|f| f.variadic) {
+            let end = f.params.last().map_or(f.name.span, |p| p.span);
+            params.push((Span::new(end.end, end.end), text("...")));
+        }
         head.push(self.list("(", params, ")"));
         if let Some(result) = &f.result
             && !is_unit(result)
@@ -555,9 +560,11 @@ impl Formatter<'_> {
                 self.list("(", items, ")")
             }
             TypeKind::Opaque(bounds) => concat(vec![text("impl "), self.bounds(bounds)]),
-            TypeKind::Fn { params, modes, variadic, result, is_unsafe } => {
+            TypeKind::Fn { params, modes, variadic, result, is_unsafe, is_extern } => {
                 let count = params.len();
-                let items = params
+                // C's `...` has a mode but no type.
+                let c_variadic = modes.len() > params.len();
+                let mut items: Vec<(Span, Doc)> = params
                     .iter()
                     .zip(modes)
                     .enumerate()
@@ -566,11 +573,20 @@ impl Formatter<'_> {
                             Mode::Value => String::new(),
                             mode => format!("{} ", mode.keyword()),
                         };
-                        let dots = if *variadic && index + 1 == count { "..." } else { "" };
+                        let dots = if *variadic && !c_variadic && index + 1 == count { "..." } else { "" };
                         (p.span, concat(vec![text(format!("{mode}{dots}")), self.ty(p)]))
                     })
                     .collect();
-                let mut docs = vec![text(if *is_unsafe { "unsafe fn" } else { "fn" }), self.list("(", items, ")")];
+                if c_variadic {
+                    let end = params.last().map_or(ty.span.start, |p| p.span.end);
+                    items.push((Span::new(end, end), text("...")));
+                }
+                let keyword = match (is_unsafe, is_extern) {
+                    (true, _) => "unsafe fn",
+                    (_, true) => "extern fn",
+                    _ => "fn",
+                };
+                let mut docs = vec![text(keyword), self.list("(", items, ")")];
                 if let Some(result) = result
                     && !is_unit(result)
                 {
@@ -1280,6 +1296,21 @@ fn level(op: BinOp) -> usize {
     }
 }
 
+/// Annotations, each on its own line before what they annotate.
+fn annotations(annotations: &[Annotation]) -> Doc {
+    let mut parts = Vec::new();
+    for annotation in annotations {
+        let argument = match &annotation.argument {
+            None => String::new(),
+            Some(AnnotationArg::Text(text)) => format!("({text:?})"),
+            Some(AnnotationArg::Int(value)) => format!("({value})"),
+        };
+        parts.push(text(format!("@{}{argument}", annotation.name.name)));
+        parts.push(Doc::Hardline);
+    }
+    concat(parts)
+}
+
 fn item_span(item: &Item) -> Span {
     match item {
         Item::Fn(f) => f.span,
@@ -1322,6 +1353,15 @@ mod tests {
                 "let double=(n:Int):Int{n*2}\nlet larger=if a>b{a}else{b}\n",
                 "let double = (n: Int): Int { n * 2 }\nlet larger = if a > b { a } else { b }\n",
             ),
+            (
+                "@symbol( \"printf\" ) pub extern fn print(format:CString,...):CInt\n",
+                "@symbol(\"printf\")\npub extern fn print(format: CString, ...): CInt\n",
+            ),
+            (
+                "@packed @align(8) extern type Header={@count(4) name:Byte\nnext:Pointer[Header]?}\nextern type Handle\n",
+                "@packed\n@align(8)\nextern type Header = {\n    @count(4)\n    name: Byte\n    next: Pointer[Header]?\n}\n\nextern type Handle\n",
+            ),
+            ("type Compare=extern fn(Int,Int,...):Int\n", "type Compare = extern fn(Int, Int, ...): Int\n"),
         ];
         for (input, output) in pairs {
             assert_eq!(format(input), output, "formatting {input:?}");

@@ -9,7 +9,7 @@ use crate::{ast, parser};
 use std::path::Path;
 
 /// Each module, by its path after `std`, and its source.
-const SOURCES: &[(&str, &str)] = &[("json", include_str!("../std/json.to"))];
+const SOURCES: &[(&str, &str)] = &[("json", include_str!("../std/json.to")), ("ffi", include_str!("../std/ffi.to"))];
 
 fn source(path: &[ast::Ident]) -> Option<(&'static str, &'static str)> {
     match path {
@@ -98,6 +98,8 @@ pub fn derive_json(modules: &mut [ModuleSource], sources: &mut SourceMap, diags:
         for (file, (parsed, _)) in source.files.iter().enumerate() {
             for item in &parsed.items {
                 let (name, generics) = match item {
+                    // C structs cross to C, not to JSON.
+                    ast::Item::Type(t) if t.foreign => continue,
                     ast::Item::Type(t) => (&t.name.name, &t.generics),
                     ast::Item::Enum(e) => (&e.name.name, &e.generics),
                     _ => continue,
@@ -194,6 +196,7 @@ fn parts<'a>(file: &'a ast::Module, name: &str) -> Vec<&'a ast::TypeExpr> {
                 return match &t.body {
                     ast::TypeBody::Record(fields) => fields.iter().map(|f| &f.ty).collect(),
                     ast::TypeBody::Newtype(inner) => vec![inner],
+                    ast::TypeBody::Opaque => Vec::new(),
                 };
             }
             ast::Item::Enum(e) if e.name.name == name => {
@@ -301,7 +304,10 @@ fn wire(field: &ast::FieldDecl) -> String {
         .annotations
         .iter()
         .find(|a| a.name.name == "name")
-        .and_then(|a| a.argument.clone())
+        .and_then(|a| match &a.argument {
+            Some(ast::AnnotationArg::Text(text)) => Some(text.clone()),
+            _ => None,
+        })
         .unwrap_or_else(|| field.name.name.clone())
 }
 
@@ -356,6 +362,7 @@ impl Generator<'_> {
                 ast::TypeBody::Newtype(_) => {
                     out.push_str(&format!("        {}.Encode.encodeJson(self.value, out)\n", self.json))
                 }
+                ast::TypeBody::Opaque => unreachable!("extern types are not derived"),
             },
             ast::Item::Enum(e) => {
                 out.push_str("        match self {\n");
@@ -480,6 +487,7 @@ impl Generator<'_> {
                         self.text(inner)
                     ));
                 }
+                ast::TypeBody::Opaque => unreachable!("extern types are not derived"),
             },
             ast::Item::Enum(e) => {
                 let unknown =

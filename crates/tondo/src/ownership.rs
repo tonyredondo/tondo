@@ -512,6 +512,9 @@ impl Checker<'_> {
             | ExprKind::Str(_)
             | ExprKind::Unit
             | ExprKind::FnValue(..)
+            | ExprKind::ExternFn(_)
+            | ExprKind::Layout(..)
+            | ExprKind::Callback(..)
             | ExprKind::Error => Some(flow),
             ExprKind::Aggregate(items) | ExprKind::Array(items) | ExprKind::Set(items) => self.all(items, flow, true),
             ExprKind::Record(fields) | ExprKind::Variant(_, fields) => {
@@ -626,6 +629,7 @@ impl Checker<'_> {
             ExprKind::Convert(inner) | ExprKind::Panic(inner) | ExprKind::Erase(inner, _) | ExprKind::Spawn(inner) => {
                 self.consume(inner, flow)
             }
+            ExprKind::Fixed(inner) => self.observe(inner, flow),
             ExprKind::Select(arms, otherwise) => {
                 // Every operation is evaluated first; each arm then takes
                 // what its own operation takes.

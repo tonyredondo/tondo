@@ -15,6 +15,8 @@ pub struct Package {
     pub dir: PathBuf,
     /// Its dependencies by alias, as indices into the graph.
     pub dependencies: Vec<(String, usize)>,
+    /// What `[native] libraries` links: `-lname`, or a library file.
+    pub libraries: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -51,12 +53,13 @@ impl Source {
 struct Manifest {
     name: Option<String>,
     dependencies: Vec<(String, Source)>,
+    libraries: Vec<String>,
 }
 
 /// Reads `tondo.toml` in `dir`; a missing file declares nothing.
 fn manifest(dir: &Path) -> Result<Manifest, String> {
     let path = dir.join("tondo.toml");
-    let mut manifest = Manifest { name: None, dependencies: Vec::new() };
+    let mut manifest = Manifest { name: None, dependencies: Vec::new(), libraries: Vec::new() };
     if !path.is_file() {
         return Ok(manifest);
     }
@@ -86,13 +89,36 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
                     manifest.dependencies.push((alias, source));
                 }
             }
+            ("native", false) => {
+                for (key, value, line) in table.entries {
+                    let usage = "`libraries = [\"sqlite3\", \"vendor/libz.a\"]` lists library names or files";
+                    let Value::Array(items) = value else { return Err(at(line, usage.into())) };
+                    if key != "libraries" {
+                        return Err(at(line, format!("unknown key `{key}` in `[native]`: {usage}")));
+                    }
+                    for item in items {
+                        let Some(library) = item.as_str().filter(|l| !l.is_empty()) else {
+                            return Err(at(line, usage.into()));
+                        };
+                        manifest.libraries.push(link_argument(library, dir));
+                    }
+                }
+            }
             (name, _) => {
-                let message = format!("unknown table `[{name}]`: tondo.toml has `[package]` and `[dependencies]`");
+                let message =
+                    format!("unknown table `[{name}]`: tondo.toml has `[package]`, `[dependencies]` and `[native]`");
                 return Err(at(table.line, message));
             }
         }
     }
     Ok(manifest)
+}
+
+/// How the linker receives a native library: `-lname` for a name, or the
+/// path of a library file, relative to `dir`.
+pub fn link_argument(library: &str, dir: &Path) -> String {
+    let file = library.contains('/') || [".a", ".so", ".dylib"].iter().any(|e| library.ends_with(e));
+    if file { dir.join(library).display().to_string() } else { format!("-l{library}") }
 }
 
 /// The source of a dependency: `{ path = ... }`, `{ git = ..., tag = ... }`
@@ -203,7 +229,12 @@ impl Resolver<'_> {
             }
         };
         let index = self.packages.len();
-        self.packages.push(Package { name: name.clone(), dir: dir.clone(), dependencies: Vec::new() });
+        self.packages.push(Package {
+            name: name.clone(),
+            dir: dir.clone(),
+            dependencies: Vec::new(),
+            libraries: manifest.libraries,
+        });
         self.visiting.push(dir.clone());
         for (dependency, source) in manifest.dependencies {
             if dependency == name {

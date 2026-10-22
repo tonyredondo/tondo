@@ -99,7 +99,7 @@ macro_rules! keywords {
 keywords! {
     Alias = "alias", And = "and", As = "as", Break = "break",
     Const = "const", Continue = "continue", Defer = "defer", Derive = "derive",
-    Else = "else", Enum = "enum", Fail = "fail", False = "false",
+    Else = "else", Enum = "enum", Extern = "extern", Fail = "fail", False = "false",
     Fn = "fn", For = "for", If = "if", Impl = "impl", Import = "import", In = "in",
     Let = "let", Match = "match", Mut = "mut", None = "none", Not = "not",
     Or = "or", Priv = "priv", Pub = "pub", Ref = "ref", Return = "return",

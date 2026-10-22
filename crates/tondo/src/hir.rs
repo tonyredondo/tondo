@@ -20,6 +20,19 @@ pub struct Program {
     /// After monomorphization: the user `Display.display` of each type whose
     /// values are displayed inside collections.
     pub display: HashMap<Ty, FnId>,
+    /// The `extern fn` declarations, by `Callee::Extern` index.
+    pub externs: Vec<Extern>,
+}
+
+/// An `extern fn`: a C function the program calls by its symbol.
+#[derive(Clone)]
+pub struct Extern {
+    pub name: String,
+    pub symbol: String,
+    pub params: Vec<Ty>,
+    pub result: Ty,
+    /// Whether it ends with C's `...`; a call passes more arguments.
+    pub variadic: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -232,12 +245,23 @@ pub enum ExprKind {
     Call(Callee, Vec<Ty>, Vec<Expr>),
     /// A named function used as a `fn(...)` value, with its type arguments.
     FnValue(FnId, Vec<Ty>),
+    /// An `extern fn` used as a value: its address, an `extern fn(...)`.
+    ExternFn(u32),
+    /// The size in bytes, or with the flag the alignment, of values of a
+    /// type in memory (`std.ffi`).
+    Layout(Ty, bool),
+    /// An `Array[T]` as a C array `T[n]` of its type, which panics unless
+    /// the lengths agree, or a C array as an `Array[T]`.
+    Fixed(Box<Expr>),
     /// A call through a value: a `fn(...)`, a closure, or a type parameter
     /// bound by `Call`, `CallMut` or `CallOnce`. Monomorphization turns a
     /// call of a closure into a direct call of its body.
     CallValue(Box<Expr>, Vec<Expr>),
     /// A closure made into a `fn(...)` value; the `FnId` is its body.
     Erase(Box<Expr>, FnId),
+    /// A named function, or a closure without captures, as an
+    /// `extern fn(...)` that C calls; the `FnId` is what it runs.
+    Callback(Box<Expr>, FnId),
     /// `spawn call(...)`: starts a task running a `fn()` value that makes
     /// the call; its type is `Join[T]` (11.11).
     Spawn(Box<Expr>),
@@ -626,6 +650,9 @@ pub enum Callee {
     /// the trait's parameters and the method's own. Monomorphization
     /// replaces it with the implementation for the concrete `Self`.
     Trait(TraitId, u32),
+    /// An `extern fn`, by its index in `Program::externs`. Arguments after
+    /// its parameters go to C's `...`.
+    Extern(u32),
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -667,6 +694,9 @@ pub enum PointerOp {
     Read,
     Write,
     Offset,
+    /// A read that takes the value, leaving the memory without it
+    /// (`std.internal.memory`).
+    Take,
 }
 
 /// The operations of `std.process`; those of a plan or a process take it
@@ -821,6 +851,8 @@ pub enum NativeTy {
     IoWriter,
     /// `Pointer[Byte]`
     BytePointer,
+    /// `Array[Byte]`
+    Bytes,
 }
 
 /// A function of an internal module: `std.internal.json`, the runtime's
@@ -880,5 +912,9 @@ pub const NATIVES: &[Native] = {
         m(JsonWriter, "error", &[], String, "tondo_rt_json_writer_error"),
         memory("allocate", &[Int], BytePointer, "tondo_rt_memory_allocate"),
         memory("release", &[BytePointer, Int], Unit, "tondo_rt_memory_release"),
+        memory("cString", &[String], BytePointer, "tondo_rt_memory_c_string"),
+        memory("fromCString", &[BytePointer], String, "tondo_rt_memory_from_c_string"),
+        memory("bytes", &[BytePointer, Int], Bytes, "tondo_rt_memory_bytes"),
+        memory("fromCChars", &[Bytes], String, "tondo_rt_memory_from_c_chars"),
     ]
 };

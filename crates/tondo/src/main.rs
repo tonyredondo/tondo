@@ -7,8 +7,10 @@ use tondo::driver;
 
 const USAGE: &str = "\
 usage:
-  tondo run [<project>|<file.to>] [-- <argument>...]   compile and run a program
-  tondo build [<project>|<file.to>] [--output <path>]  compile a native executable
+  tondo run [<project>|<file.to>] [--link <library>]... [-- <argument>...]
+                                                       compile and run a program
+  tondo build [<project>|<file.to>] [--output <path>] [--link <library>]...
+                                                       compile a native executable
   tondo check [<project>|<file.to>] [--json]           report diagnostics only (as JSON)
   tondo fmt [--check] <file.to>...                     format files canonically
   tondo update [<project>] [<dependency>...]           fetch dependencies again and rewrite tondo.lock
@@ -16,7 +18,9 @@ usage:
   tondo version
 
 A project is a directory with src/main.to, or with main.to or tondo.toml,
-given as <project> or with --project <dir>; the current directory by default.";
+given as <project> or with --project <dir>; the current directory by default.
+--link links a native library by name (-l) or file, besides a project's
+[native] libraries.";
 
 /// Exit status for usage and toolchain failures (distinct from program errors).
 const TOOL_FAILURE: u8 = 3;
@@ -41,7 +45,7 @@ fn main() -> ExitCode {
             println!("{USAGE}");
             Ok(ExitCode::SUCCESS)
         }
-        file if file.ends_with(".to") => run(Path::new(file), &args[1..]),
+        file if file.ends_with(".to") => run(Path::new(file), &args[1..], &[]),
         other => Err(format!("unknown command `{other}`\n{USAGE}")),
     };
     result.unwrap_or_else(|message| {
@@ -137,9 +141,29 @@ fn fmt_command(args: &[OsString]) -> Result<ExitCode, String> {
     Ok(status)
 }
 
+/// The `--link <library>` options before `--`, and the other arguments.
+fn link_options(args: &[OsString]) -> Result<(Vec<String>, Vec<OsString>), String> {
+    let (mut libraries, mut rest) = (Vec::new(), Vec::new());
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        if arg == "--" {
+            rest.push(arg.clone());
+            rest.extend(args.by_ref().cloned());
+        } else if arg == "--link" {
+            let library = args.next().ok_or_else(|| format!("--link needs a library\n{USAGE}"))?;
+            let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+            libraries.push(tondo::deps::link_argument(&library.to_string_lossy(), &cwd));
+        } else {
+            rest.push(arg.clone());
+        }
+    }
+    Ok((libraries, rest))
+}
+
 fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
     let (path, rest) = source_argument(args);
-    let output = match rest {
+    let (libraries, rest) = link_options(rest)?;
+    let output = match rest.as_slice() {
         [] => program_name(&path)?,
         [flag, output] if flag == "--output" || flag == "-o" => PathBuf::from(output),
         _ => return Err(format!("unexpected arguments\n{USAGE}")),
@@ -147,24 +171,26 @@ fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
     let Some(analysis) = analyze(&path)? else {
         return Ok(ExitCode::FAILURE);
     };
-    driver::link(&driver::object(&analysis)?, &output)?;
+    let libraries = [analysis.libraries.clone(), libraries].concat();
+    driver::link(&driver::object(&analysis)?, &output, &libraries)?;
     Ok(ExitCode::SUCCESS)
 }
 
 fn run_command(args: &[OsString]) -> Result<ExitCode, String> {
     let (path, rest) = source_argument(args);
-    let program_args = match rest {
+    let (libraries, rest) = link_options(rest)?;
+    let program_args = match rest.as_slice() {
         [] => &[][..],
         [separator, rest @ ..] if separator == "--" => rest,
         _ => return Err(format!("program arguments go after `--`\n{USAGE}")),
     };
-    run(&path, program_args)
+    run(&path, program_args, &libraries)
 }
 
 /// Compiles (or reuses a cached build of) `path` and executes it.
-fn run(path: &Path, program_args: &[OsString]) -> Result<ExitCode, String> {
+fn run(path: &Path, program_args: &[OsString], libraries: &[String]) -> Result<ExitCode, String> {
     let identity = driver::compiler_identity();
-    let mut parts = vec![identity.into_bytes()];
+    let mut parts = vec![identity.into_bytes(), libraries.join("\n").into_bytes()];
     for input in driver::inputs(path)? {
         parts.push(input.as_os_str().as_encoded_bytes().to_vec());
         parts.push(std::fs::read(&input).map_err(|e| format!("cannot read {}: {e}", input.display()))?);
@@ -179,7 +205,8 @@ fn run(path: &Path, program_args: &[OsString]) -> Result<ExitCode, String> {
         let object = driver::object(&analysis)?;
         std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
         let partial = dir.join(format!(".partial-{}", std::process::id()));
-        driver::link(&object, &partial)?;
+        let libraries = [analysis.libraries.clone(), libraries.to_vec()].concat();
+        driver::link(&object, &partial, &libraries)?;
         std::fs::rename(&partial, &executable).map_err(|e| e.to_string())?;
     }
     exec(&executable, program_args)

@@ -1,0 +1,21 @@
+// A conversion that may lose information is written (8.6); the error
+// says how.
+fn take(value: Int32): Int32 {
+    value
+}
+
+fn main() {
+    let n: Int = 5
+    let f: Float = 1.5
+    take(n)
+    let small: Float32 = f
+    let byte: UInt8 = n * 2
+    let whole: Int = f
+    let float: Float = n
+}
+
+// expect-error: E1102 expected `Int32`, found `Int`, which may not fit: convert it with `Int32(n)?`
+// expect-error: E1102 expected `Float32`, found `Float`, which may not fit: convert it with `Float32(f)?`
+// expect-error: E1102 expected `UInt8`, found `Int`, which may not fit: convert it with `UInt8(n * 2)?`
+// expect-error: E1102 expected `Int`, found `Float`, which may not fit: convert it with `Int(f)?`
+// expect-error: E1102 expected `Float`, found `Int`: convert it with `Float(n)`

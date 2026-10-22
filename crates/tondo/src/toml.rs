@@ -1,11 +1,13 @@
 //! The part of TOML that `tondo.toml` and `tondo.lock` use: tables, arrays
-//! of tables, and keys with strings, integers or inline tables of strings.
+//! of tables, and keys with strings, integers, inline tables of strings or
+//! arrays on one line.
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     String(String),
     Integer(i64),
     Table(Vec<(String, Value)>),
+    Array(Vec<Value>),
 }
 
 impl Value {
@@ -111,6 +113,23 @@ fn parse_value(text: &str) -> Result<(Value, &str), String> {
         }
         return Err("unterminated string".into());
     }
+    if let Some(mut rest) = text.strip_prefix('[') {
+        let mut items = Vec::new();
+        loop {
+            rest = rest.trim_start();
+            if let Some(after) = rest.strip_prefix(']') {
+                return Ok((Value::Array(items), after));
+            }
+            let (value, after) = parse_value(rest)?;
+            items.push(value);
+            rest = after.trim_start();
+            if let Some(after) = rest.strip_prefix(',') {
+                rest = after;
+            } else if !rest.starts_with(']') {
+                return Err("expected `,` or `]` in an array".into());
+            }
+        }
+    }
     if let Some(mut rest) = text.strip_prefix('{') {
         let mut entries = Vec::new();
         loop {
@@ -136,7 +155,7 @@ fn parse_value(text: &str) -> Result<(Value, &str), String> {
     let end = text.find(|c: char| !(c.is_ascii_digit() || c == '-' || c == '_')).unwrap_or(text.len());
     match text[..end].replace('_', "").parse() {
         Ok(number) if end > 0 => Ok((Value::Integer(number), &text[end..])),
-        _ => Err(format!("unsupported value `{text}`: use a string, an integer or an inline table")),
+        _ => Err(format!("unsupported value `{text}`: use a string, an integer, an inline table or an array")),
     }
 }
 
@@ -165,6 +184,9 @@ mod tests {
     #[test]
     fn reports_errors_with_lines() {
         assert!(parse("[a]\nkey\n").unwrap_err().starts_with("line 2:"));
-        assert!(parse("key = [1]\n").is_err());
+        assert!(parse("key = true\n").is_err());
+        assert!(parse("key = [\"a\"\n").is_err());
+        let tables = parse("[native]\nlibraries = [\"m\", \"z\",]\n").unwrap();
+        assert_eq!(tables[1].entries[0].1, Value::Array(vec![Value::String("m".into()), Value::String("z".into())]));
     }
 }

@@ -1,0 +1,10 @@
+import native.zlib
+import std.console
+import std.ffi
+
+fn main(): !NumericConversionError {
+    let version = unsafe { ffi.fromCString(zlib.zlibVersion()) }
+    console.println("{version.length() > 0} {zlib.crc("hello")?}")
+}
+
+// expect-stdout: true 907060870

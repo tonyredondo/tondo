@@ -1,0 +1,57 @@
+import std.ffi
+
+extern fn abs(value: ffi.CInt): ffi.CInt
+
+extern fn texts(text: String, items: Array[Int], f: fn(Int): Int, maybe: Int?)
+
+extern fn moded(value: mut Int)
+
+extern fn generic[T](value: T)
+
+@blocking
+extern fn slow()
+
+@packed
+type Plain = {
+    value: Int
+}
+
+extern type Wrapped = Int
+
+extern type Header = {
+    @count(0)
+    name: ffi.CChar
+    @name("x")
+    other: Int
+}
+
+extern type Handle
+
+extern fn sort(compare: extern fn(Int): Int)
+
+fn main() {
+    abs(1)
+    let offset = 3
+    unsafe {
+        sort((value) { value + offset })
+        let handle = ffi.allocate[Int]().cast[Handle]()
+        handle.read()
+        let made = Handle {}
+    }
+}
+
+// expect-error: E1703 `String` cannot cross to C: text crosses as `ffi.CString`
+// expect-error: E1703 `Array[Int]` cannot cross to C: pass a `Pointer[Int]` to its elements
+// expect-error: E1703 `fn(Int): Int` cannot cross to C: a function crosses as `extern fn(...)`
+// expect-error: E1703 `Int?` cannot cross to C
+// expect-error: E1704 C takes its arguments by value: remove `mut`
+// expect-error: E1704 an `extern fn` takes no type parameters
+// expect-error: E1001 unknown annotation `@blocking`
+// expect-error: E1704 `@packed` lays out a C struct: declare it as `extern type Plain = { ... }`
+// expect-error: E1704 an `extern type` is a C struct
+// expect-error: E1704 `@count` takes how many elements the C array has
+// expect-error: E1001 unknown annotation `@name`; a field of an `extern type` takes `@count(n)`
+// expect-error: E1701 `abs` is a C function: call it inside `unsafe { ... }`
+// expect-error: E1705 a closure that C calls cannot capture values
+// expect-error: E1703 `Handle` is opaque: C alone knows its size
+// expect-error: E1703 `Handle` is opaque: only C makes one

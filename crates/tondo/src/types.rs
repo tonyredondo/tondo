@@ -116,6 +116,12 @@ pub enum TyKind {
     /// Parameters, result, whether the last parameter is variadic, how each
     /// is passed, and whether calling it is `unsafe` (16.12).
     Fn(Vec<Ty>, Ty, bool, Vec<Mode>, bool),
+    /// `extern fn(A, B): R`: the address of a C function, with whether it
+    /// ends with C's `...`. Calls need `unsafe`.
+    CFn(Vec<Ty>, Ty, bool),
+    /// A C array of a fixed count inside an `extern type`, stored in place:
+    /// the field `@count(16) name: CChar` is a `CChar[16]`.
+    CArray(Ty, u32),
     /// A handle to a task or a channel (11.11 to 11.13): the task's result
     /// or the values the channel carries.
     Handle(Handle, Ty),
@@ -372,6 +378,18 @@ pub struct Types {
     needs_drop: RefCell<HashMap<Ty, bool>>,
     /// Standard library types with an intrinsic `Display`.
     pub shown: HashMap<Ty, Shown>,
+    /// The `extern type`s, laid out as C lays out their structs.
+    pub foreign: HashMap<AdtId, CLayout>,
+}
+
+/// How an `extern type` is laid out: C's rules, without padding when
+/// `packed`, aligned to at least `align`; `opaque` when it has no body and
+/// only a pointer can refer to it.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct CLayout {
+    pub packed: bool,
+    pub align: u32,
+    pub opaque: bool,
 }
 
 /// How a standard library type displays.
@@ -425,6 +443,7 @@ impl Default for Types {
             reaches: RefCell::default(),
             needs_drop: RefCell::default(),
             shown: HashMap::new(),
+            foreign: HashMap::new(),
         };
         for kind in [TyKind::Error, TyKind::Unit, TyKind::Never, TyKind::Bool, TyKind::String] {
             types.intern(kind);
@@ -594,7 +613,7 @@ impl Types {
         match self.kind(ty) {
             TyKind::Opaque(..) => out.push(ty),
             TyKind::Tuple(items) | TyKind::Union(items) => items.iter().for_each(|&t| self.opaques_in(t, out)),
-            TyKind::Fn(params, result, ..) => {
+            TyKind::Fn(params, result, ..) | TyKind::CFn(params, result, _) => {
                 params.iter().for_each(|&t| self.opaques_in(t, out));
                 self.opaques_in(*result, out);
             }
@@ -603,6 +622,7 @@ impl Types {
             | TyKind::Deque(t)
             | TyKind::Set(t)
             | TyKind::Handle(_, t)
+            | TyKind::CArray(t, _)
             | TyKind::Pointer(t) => self.opaques_in(*t, out),
             TyKind::Result(a, b) | TyKind::Map(a, b) => {
                 self.opaques_in(*a, out);
@@ -638,6 +658,11 @@ impl Types {
                 let result = self.replace(result, map);
                 self.intern(TyKind::Fn(params, result, variadic, modes, is_unsafe))
             }
+            TyKind::CFn(params, result, variadic) => {
+                let params = each(self, &params);
+                let result = self.replace(result, map);
+                self.intern(TyKind::CFn(params, result, variadic))
+            }
             TyKind::Option(t) => {
                 let t = self.replace(t, map);
                 self.intern(TyKind::Option(t))
@@ -649,6 +674,10 @@ impl Types {
             TyKind::Pointer(t) => {
                 let t = self.replace(t, map);
                 self.intern(TyKind::Pointer(t))
+            }
+            TyKind::CArray(t, count) => {
+                let t = self.replace(t, map);
+                self.intern(TyKind::CArray(t, count))
             }
             TyKind::Deque(t) => {
                 let t = self.replace(t, map);
@@ -819,6 +848,10 @@ impl Types {
                 let element = self.subst(element, map);
                 self.intern(TyKind::Pointer(element))
             }
+            TyKind::CArray(element, count) => {
+                let element = self.subst(element, map);
+                self.intern(TyKind::CArray(element, count))
+            }
             TyKind::Deque(element) => {
                 let element = self.subst(element, map);
                 self.intern(TyKind::Deque(element))
@@ -846,6 +879,11 @@ impl Types {
                 let params = each(self, &params);
                 let result = self.subst(result, map);
                 self.intern(TyKind::Fn(params, result, variadic, modes, is_unsafe))
+            }
+            TyKind::CFn(params, result, variadic) => {
+                let params = each(self, &params);
+                let result = self.subst(result, map);
+                self.intern(TyKind::CFn(params, result, variadic))
             }
             TyKind::Opaque(id, args) => {
                 let args = each(self, &args);
@@ -918,6 +956,10 @@ impl Types {
                 let (r, s) = (*r, *s);
                 x.iter().zip(y).all(|(&p, &q)| each(self, p, q)) && each(self, r, s)
             }
+            (TyKind::CFn(x, r, v), TyKind::CFn(y, s, w)) if x.len() == y.len() && v == w => {
+                let (r, s) = (*r, *s);
+                x.iter().zip(y).all(|(&p, &q)| each(self, p, q)) && each(self, r, s)
+            }
             (TyKind::Option(x), TyKind::Option(y))
             | (TyKind::Array(x), TyKind::Array(y))
             | (TyKind::Pointer(x), TyKind::Pointer(y))
@@ -946,7 +988,7 @@ impl Types {
             TyKind::Tuple(items) | TyKind::Union(items) | TyKind::Opaque(_, items) => {
                 items.iter().for_each(|&t| self.params_in(t, out))
             }
-            TyKind::Fn(params, result, ..) => {
+            TyKind::Fn(params, result, ..) | TyKind::CFn(params, result, _) => {
                 params.iter().for_each(|&t| self.params_in(t, out));
                 self.params_in(*result, out);
             }
@@ -955,6 +997,7 @@ impl Types {
             | TyKind::Deque(t)
             | TyKind::Set(t)
             | TyKind::Handle(_, t)
+            | TyKind::CArray(t, _)
             | TyKind::Pointer(t) => self.params_in(*t, out),
             TyKind::Result(a, b) | TyKind::Map(a, b) => {
                 self.params_in(*a, out);
@@ -976,12 +1019,15 @@ impl Types {
             TyKind::Tuple(items) | TyKind::Union(items) | TyKind::Opaque(_, items) => {
                 items.iter().any(|&t| self.has_params(t))
             }
-            TyKind::Fn(params, result, ..) => params.iter().any(|&t| self.has_params(t)) || self.has_params(*result),
+            TyKind::Fn(params, result, ..) | TyKind::CFn(params, result, _) => {
+                params.iter().any(|&t| self.has_params(t)) || self.has_params(*result)
+            }
             TyKind::Option(t)
             | TyKind::Array(t)
             | TyKind::Deque(t)
             | TyKind::Set(t)
             | TyKind::Handle(_, t)
+            | TyKind::CArray(t, _)
             | TyKind::Pointer(t) => self.has_params(*t),
             TyKind::Result(a, b) | TyKind::Map(a, b) => self.has_params(*a) || self.has_params(*b),
             TyKind::Adt(id) => self.adts[id.0 as usize]
@@ -1001,6 +1047,7 @@ impl Types {
             | TyKind::Deque(t)
             | TyKind::Set(t)
             | TyKind::Handle(_, t)
+            | TyKind::CArray(t, _)
             | TyKind::Pointer(t) => vec![*t],
             TyKind::Result(a, b) | TyKind::Map(a, b) => vec![*a, *b],
             TyKind::Adt(id) => self.adts[id.0 as usize].instance.as_ref().map_or(Vec::new(), |(_, a)| a.clone()),
@@ -1062,7 +1109,7 @@ impl Types {
     pub fn inline_components(&self, ty: Ty) -> Vec<Ty> {
         match self.kind(ty) {
             TyKind::Tuple(items) => items.clone(),
-            TyKind::Option(inner) => vec![*inner],
+            TyKind::Option(inner) | TyKind::CArray(inner, _) => vec![*inner],
             TyKind::Result(ok, err) => vec![*ok, *err],
             TyKind::Union(members) => members.clone(),
             TyKind::Adt(id) => match &self.adt(*id).kind {
@@ -1160,6 +1207,7 @@ impl Types {
             | TyKind::Map(..)
             | TyKind::Set(_)
             | TyKind::Fn(..)
+            | TyKind::CFn(..)
             | TyKind::Handle(..) => false,
             TyKind::Param(index) => self.params[*index as usize].key,
             TyKind::Opaque(id, _) => self.key_in(self.opaques[*id as usize].carrier, visiting),
@@ -1201,8 +1249,8 @@ impl Types {
             }
             TyKind::Opaque(id, _) => vec![self.opaques[*id as usize].carrier],
             // A raw address copies whatever it points to (8.10).
-            TyKind::Pointer(_) => Vec::new(),
-            TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) | TyKind::Option(t) => vec![*t],
+            TyKind::Pointer(_) | TyKind::CFn(..) => Vec::new(),
+            TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) | TyKind::Option(t) | TyKind::CArray(t, _) => vec![*t],
             TyKind::Map(a, b) | TyKind::Result(a, b) => vec![*a, *b],
             TyKind::Tuple(items) | TyKind::Union(items) => items.clone(),
             _ => match (self.components(repr), self.variants(repr)) {
@@ -1243,7 +1291,8 @@ impl Types {
             }
             TyKind::Map(key, value) => self.equatable_in(*key, visiting) && self.equatable_in(*value, visiting),
             TyKind::Param(index) => self.params[*index as usize].equatable || self.params[*index as usize].key,
-            TyKind::Fn(..) | TyKind::Handle(..) => false,
+            // A C array compares as the `Array` it converts to.
+            TyKind::Fn(..) | TyKind::CFn(..) | TyKind::CArray(..) | TyKind::Handle(..) => false,
             TyKind::Opaque(id, _) => self.equatable_in(self.opaques[*id as usize].carrier, visiting),
             _ => match (self.components(repr), self.variants(repr)) {
                 (Some(items), _) => items.iter().all(|&t| self.equatable_in(t, visiting)),
@@ -1266,12 +1315,30 @@ impl Types {
             | TyKind::Deque(element)
             | TyKind::Set(element)
             | TyKind::Handle(_, element)
+            | TyKind::CArray(element, _)
             | TyKind::Pointer(element) => self.has_error(*element),
             TyKind::Map(key, value) => self.has_error(*key) || self.has_error(*value),
             TyKind::Union(members) => members.iter().any(|&t| self.has_error(t)),
-            TyKind::Fn(params, result, ..) => params.iter().any(|&t| self.has_error(t)) || self.has_error(*result),
+            TyKind::Fn(params, result, ..) | TyKind::CFn(params, result, _) => {
+                params.iter().any(|&t| self.has_error(t)) || self.has_error(*result)
+            }
             _ => false,
         }
+    }
+
+    /// The C layout of an `extern type`.
+    pub fn c_layout(&self, ty: Ty) -> Option<CLayout> {
+        match self.kind(ty) {
+            TyKind::Adt(id) => self.foreign.get(id).copied(),
+            _ => None,
+        }
+    }
+
+    /// Whether a value of `ty` is a raw address that is never zero: a
+    /// pointer, a C function or a newtype of one. `T?` of such a type is
+    /// one address, zero for `none`, as C writes a null pointer.
+    pub fn is_address(&self, ty: Ty) -> bool {
+        matches!(self.kind(self.repr(ty)), TyKind::Pointer(_) | TyKind::CFn(..))
     }
 
     pub fn as_int(&self, ty: Ty) -> Option<IntTy> {
@@ -1316,6 +1383,7 @@ impl Types {
             },
             TyKind::Array(element) => format!("Array[{}]", self.display(*element)),
             TyKind::Pointer(element) => format!("Pointer[{}]", self.display(*element)),
+            TyKind::CArray(element, count) => format!("{}[{count}]", self.display(*element)),
             TyKind::Deque(element) => format!("Deque[{}]", self.display(*element)),
             TyKind::Map(key, value) => format!("Map[{}, {}]", self.display(*key), self.display(*value)),
             TyKind::Set(element) => format!("Set[{}]", self.display(*element)),
@@ -1365,6 +1433,16 @@ impl Types {
             TyKind::Union(members) => members.iter().map(|&t| self.display(t)).collect::<Vec<_>>().join(" | "),
             TyKind::Param(index) => self.params[*index as usize].name.clone(),
             TyKind::Opaque(id, _) => self.opaques[*id as usize].name.clone(),
+            TyKind::CFn(params, result, variadic) => {
+                let mut shown: Vec<String> = params.iter().map(|&t| self.display(t)).collect();
+                if *variadic {
+                    shown.push("...".into());
+                }
+                match *result {
+                    Ty::UNIT => format!("extern fn({})", shown.join(", ")),
+                    _ => format!("extern fn({}): {}", shown.join(", "), self.display(*result)),
+                }
+            }
             TyKind::Fn(params, result, variadic, modes, is_unsafe) => {
                 let mut shown: Vec<String> = params
                     .iter()

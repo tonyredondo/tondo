@@ -1,0 +1,17 @@
+// zlib, linked from `[native] libraries` in tondo.toml.
+import std.ffi
+
+pub extern fn zlibVersion(): ffi.CString
+
+@symbol("crc32")
+pub extern fn checksum(initial: ffi.CULong, data: Pointer[ffi.CChar]?, length: ffi.CUInt): ffi.CULong
+
+pub fn crc(text: String): UInt64 ! NumericConversionError {
+    let length = UInt32(text.byteLength())?
+    let bytes = ffi.toCString(text)
+    unsafe {
+        let value = checksum(0u64, bytes, length)
+        ffi.free(bytes)
+        value
+    }
+}

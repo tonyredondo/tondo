@@ -16,7 +16,7 @@ use std::collections::{HashMap, VecDeque};
 const MAX_DEPTH: usize = 32;
 
 pub fn monomorphize(program: Program, diags: &mut Diagnostics) -> Option<Program> {
-    let Program { mut types, functions, main, traits, impls, .. } = program;
+    let Program { mut types, functions, main, traits, impls, externs, .. } = program;
     let mut mono = Mono {
         types: &mut types,
         functions: &functions,
@@ -43,7 +43,7 @@ pub fn monomorphize(program: Program, diags: &mut Diagnostics) -> Option<Program
     }
     let display = std::mem::take(&mut mono.display);
     let functions = mono.out.into_iter().map(|f| f.expect("every instance is generated")).collect();
-    Some(Program { types, functions, main, traits, impls, display })
+    Some(Program { types, functions, main, traits, impls, display, externs })
 }
 
 /// The trait whose method interpolation uses (see the checker).
@@ -207,7 +207,9 @@ impl Mono<'_> {
             | ExprKind::Str(_)
             | ExprKind::Unit
             | ExprKind::Local(_)
+            | ExprKind::ExternFn(_)
             | ExprKind::Error => {}
+            ExprKind::Layout(ty, _) => *ty = self.ty(*ty, map),
             ExprKind::Aggregate(items)
             | ExprKind::Array(items)
             | ExprKind::Set(items)
@@ -229,6 +231,7 @@ impl Mono<'_> {
             }
             ExprKind::Field(inner, _)
             | ExprKind::Retype(inner)
+            | ExprKind::Fixed(inner)
             | ExprKind::Length(inner)
             | ExprKind::Try(inner)
             | ExprKind::Convert(inner)
@@ -305,7 +308,7 @@ impl Mono<'_> {
                             e.kind = ExprKind::CursorNext(place, kind);
                         }
                     },
-                    Callee::Std(_) => {}
+                    Callee::Std(_) | Callee::Extern(_) => {}
                 }
             }
             ExprKind::FnValue(id, type_args) => {
@@ -327,6 +330,16 @@ impl Mono<'_> {
                     values.append(args);
                     e.kind = ExprKind::Call(Callee::Fn(body), Vec::new(), values);
                 }
+            }
+            ExprKind::Callback(inner, target) => {
+                self.expr(inner, map);
+                *target = match &inner.kind {
+                    ExprKind::FnValue(id, _) => *id,
+                    _ => {
+                        let (id, types, _) = self.types.closure(inner.ty).expect("a function or a closure");
+                        self.instance(FnId(id), types)
+                    }
+                };
             }
             ExprKind::Erase(closure, body) => {
                 self.expr(closure, map);

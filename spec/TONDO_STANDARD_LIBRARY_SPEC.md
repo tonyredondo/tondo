@@ -106,9 +106,10 @@ STD-0.1 no intenta:
 - Exponer una clase o wrapper para cada concepto imaginable.
 - Convertir todo helper útil en parte del prelude.
 - Ocultar fallos de host mediante valores por defecto.
-- Proporcionar reflection dinámica sobre valores, carga dinámica o una ABI FFI
-  pública. La metadata estática y descriptiva de `std.reflect` no es una
-  excepción abierta a esta regla.
+- Proporcionar reflection dinámica sobre valores o carga dinámica. La metadata
+  estática y descriptiva de `std.reflect` no es una excepción abierta a esta
+  regla. Las funciones de C se declaran con `extern fn` (16.16 del lenguaje);
+  `std.ffi` (19.3) solo nombra sus tipos y da memoria y strings para C.
 - Congelar el layout, calling convention o estrategia de memoria del backend
   nativo.
 - Añadir sintaxis, keywords, coerciones o reglas de inferencia.
@@ -1715,8 +1716,8 @@ pub fn syncNative()
   entorno de un solo hijo (19.2). Un nombre vacío o con `=` o `NUL`, o un valor
   con `NUL`, produce el pánico `P0015`.
 - El runtime guarda su propia copia del entorno y no llama a `setenv` del
-  sistema, que no es seguro con varios threads: el código nativo llamado por FFI
-  no ve los cambios. `syncNative()` los copia al entorno del sistema; se llama
+  sistema, que no es seguro con varios threads: el código de C que llama un
+  `extern fn` no ve los cambios. `syncNative()` los copia al entorno del sistema; se llama
   antes de que el código nativo lo lea y nunca mientras código nativo corre en
   otra tarea.
 - `currentDirectory` y `setCurrentDirectory` leen y cambian el directorio de
@@ -3791,7 +3792,6 @@ No forman parte de STD-0.1:
 - Matrices, tensors y álgebra lineal.
 - `WeakRef`, `Cell` y mutabilidad interior general.
 - Dynamic linking y plugins.
-- FFI pública, layouts y calling conventions.
 - Package manager y acceso a registries.
 
 La presencia de la capability correspondiente en
@@ -4032,7 +4032,75 @@ Vida de un `Process` (20.9 del lenguaje):
 - `exit(code)` entrega la salida pendiente de la consola y termina el programa
   con ese código, sin ejecutar los `defer` ni esperar a otras tareas.
 
-### 19.3 Una sola implementación vigente
+### 19.3 `std.ffi`
+
+`std.ffi` acompaña a las declaraciones `extern fn` y `extern type` (16.16 del
+lenguaje): nombra los tipos de C y da memoria y strings que C puede usar.
+
+~~~tondo
+import std.ffi
+
+extern fn strlen(text: ffi.CString): ffi.CSize
+
+let length = unsafe { strlen("tondo") }       // 5
+let buffer = ffi.allocate[ffi.CChar](64)
+unsafe { ffi.free(buffer) }
+~~~
+
+Tipos de C, alias de los tipos de Tondo del mismo tamaño y signo en los targets
+soportados:
+
+| Alias | Tipo | Alias | Tipo |
+|---|---|---|---|
+| `CChar` | `Byte` | `CULong` | `UInt64` |
+| `CShort` | `Int16` | `CLongLong` | `Int` |
+| `CUShort` | `UInt16` | `CULongLong` | `UInt64` |
+| `CInt` | `Int32` | `CSize` | `UInt64` |
+| `CUInt` | `UInt32` | `CSSize` | `Int` |
+| `CLong` | `Int` | `CFloat` | `Float32` |
+| `CDouble` | `Float` | `CBool` | `Bool` |
+
+- `CString` es un `char*` que termina en un byte cero: un newtype de
+  `Pointer[CChar]`, que se usa como él y al revés. Un `String` pasa donde una
+  función de C toma un `CString` como una copia para la llamada.
+- `Void` es lo que señala `void*`: un tipo opaco, y todo `Pointer[T]` o
+  `CString` se usa como `Pointer[Void]`.
+
+Funciones:
+
+~~~tondo pseudocode
+pub fn sizeOf[T](): Int
+pub fn alignOf[T](): Int
+pub fn allocate[T: ~Copy](count: Int = 1): Pointer[T]
+pub unsafe fn free(pointer: Pointer[Void]?)
+pub unsafe fn copy[T](from: Pointer[T], to: Pointer[T], count: Int = 1)
+pub fn toCString(text: String): CString
+pub unsafe fn fromCString(text: CString): String
+pub fn toCChars(text: String, count: Int): Array[CChar]
+pub fn fromCChars(chars: Array[CChar]): String
+pub unsafe fn bytes(from: Pointer[Byte], count: Int): Array[Byte]
+pub fn context[T: ~Copy](value: T): Pointer[Void]
+pub unsafe fn fromContext[T](data: Pointer[Void]): T
+pub unsafe fn freeContext[T: ~Copy](data: Pointer[Void])
+~~~
+
+- `allocate` da memoria a ceros para `count` valores del asignador de C, así
+  que C puede liberarla; `free` la devuelve, igual que la de `toCString`,
+  `context` o el `malloc` de C, y `none` no hace nada. Un `count` negativo
+  produce un pánico.
+- `copy` copia `count` valores; las regiones pueden solaparse.
+- `toCString` copia el texto con un byte cero al final para que C lo guarde; un
+  byte cero dentro produce `P0016`. `fromCString` lee un string de C hasta su
+  byte cero, y los bytes que no son UTF-8 pasan a ser U+FFFD.
+- `toCChars` y `fromCChars` hacen lo mismo con un array de C de un struct,
+  como `@count(16) name: CChar`: el primero rellena con ceros hasta `count` y
+  produce un pánico si el texto y un cero no caben.
+- `context` guarda una copia del valor en memoria de C y da su dirección, el
+  `void*` que las APIs de C devuelven a una función que llaman;
+  `fromContext[T]` lee el valor, que debe ser un `T`, y `freeContext[T]` lo
+  suelta y devuelve la memoria.
+
+### 19.4 Una sola implementación vigente
 
 El compilador, la VM y los adapters pueden usar detalles internos distintos,
 pero solo implementan una identidad pública y un contrato fuente. Cuando el

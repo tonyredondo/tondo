@@ -360,6 +360,7 @@ impl Linker<'_> {
                 match &mut t.body {
                     TypeBody::Record(fields) => fields.iter_mut().for_each(|f| self.ty(&mut f.ty)),
                     TypeBody::Newtype(inner) => self.ty(inner),
+                    TypeBody::Opaque => {}
                 }
             }
             Item::Alias(a) => {

@@ -65,7 +65,9 @@ pub fn project(types: &Types, ty: Ty, proj: Proj) -> Ty {
         }
         // Iteration also indexes maps (entries as `(K, V)`) and sets.
         Proj::Index(..) => match types.kind(types.repr(ty)) {
-            TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) => *element,
+            TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) | TyKind::CArray(element, _) => {
+                *element
+            }
             TyKind::Map(key, value) => {
                 types.lookup(&TyKind::Tuple(vec![*key, *value])).expect("map entry type is interned")
             }
@@ -160,6 +162,15 @@ pub enum Rvalue {
     Call(Callee, Vec<Operand>),
     /// A named function as a `fn(...)` value: a static object.
     FnValue(hir::FnId),
+    /// The address of an `extern fn`.
+    ExternFn(u32),
+    /// The address of a C function that runs the function, the body of a
+    /// closure without captures when the flag is set (FFI).
+    Callback(hir::FnId, bool),
+    /// The size, or with the flag the alignment, of a type in memory.
+    Layout(Ty, bool),
+    /// An array as a C array of the destination's type, or the reverse.
+    Fixed(Operand, Span),
     /// A call through a `fn(...)` value.
     CallIndirect(Operand, Vec<Operand>),
     /// A closure boxed into a `fn(...)` value whose code is the body; the

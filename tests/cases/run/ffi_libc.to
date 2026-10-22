@@ -1,0 +1,80 @@
+// C functions of libc: scalars, strings both ways, `...` and C functions
+// as values (FFI).
+import std.console
+import std.ffi
+
+extern fn strlen(text: ffi.CString): ffi.CSize
+
+extern fn abs(value: ffi.CInt): ffi.CInt
+
+extern fn labs(value: ffi.CLong): ffi.CLong
+
+extern fn sqrt(value: Float): Float
+
+extern fn getenv(name: ffi.CString): ffi.CString?
+
+@symbol("atoi")
+extern fn parseInt(text: ffi.CString): ffi.CInt
+
+extern fn printf(format: ffi.CString, ...): ffi.CInt
+
+extern fn snprintf(buffer: Pointer[ffi.CChar], size: ffi.CSize, format: ffi.CString, ...): ffi.CInt
+
+extern fn fflush(stream: Pointer[ffi.Void]?): ffi.CInt
+
+fn twice(f: extern fn(ffi.CInt): ffi.CInt, value: ffi.CInt): ffi.CInt {
+    unsafe { f(f(value)) }
+}
+
+fn main() {
+    let small: Int32 = -3
+    unsafe {
+        console.println("{strlen("hello")} {abs(-5)} {abs(small)} {labs(-12345678901)} {sqrt(2.0)}")
+        // A narrower result widens where an `Int` is expected.
+        let wide: Int = abs(small)
+        console.println("{wide + 10}")
+        match getenv("TONDO_SURELY_UNSET_VARIABLE") {
+            some(_) => console.println("set")
+            none => console.println("unset")
+        }
+        console.println("{parseInt("42")}")
+        let copy = ffi.toCString("abc")
+        console.println("{ffi.fromCString(copy)} {strlen(copy)}")
+        ffi.free(copy)
+        let buffer = ffi.allocate[ffi.CChar](64)
+        let count = snprintf(
+            buffer,
+            64u64,
+            "%s-%d-%ld-%g-%g-%g-%g-%g-%g-%g-%g-%.1f",
+            "x",
+            7i32,
+            1234567890123,
+            1.0,
+            2.0,
+            3.0,
+            4.0,
+            5.0,
+            6.0,
+            7.0,
+            8.0,
+            9.5f32,
+        )
+        console.println("{count} {ffi.fromCString(buffer)}")
+        ffi.free(buffer)
+        _ = console.flush()
+        printf("%s %d %c\n", "printf", 42i32, 65i32)
+        fflush(none)
+        console.println("{twice(abs, -9)}")
+    }
+    console.println("{ffi.sizeOf[ffi.CInt]()} {ffi.sizeOf[Pointer[Int]?]()} {ffi.alignOf[Float]()}")
+}
+
+// expect-stdout: 5 5 3 12345678901 1.4142135623730951
+// expect-stdout: 13
+// expect-stdout: unset
+// expect-stdout: 42
+// expect-stdout: abc 3
+// expect-stdout: 37 x-7-1234567890123-1-2-3-4-5-6-7-8-9.5
+// expect-stdout: printf 42 A
+// expect-stdout: 9
+// expect-stdout: 4 8 8

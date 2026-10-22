@@ -606,3 +606,38 @@ counted value it copies and a read retains what it copies out, so raw
 memory holds references like any owner. With no FFI yet, nothing gives a
 program real memory, so `std.internal.memory` allocates zeroed blocks for
 the tests of this milestone.
+
+## 2026-10-22 — Calling C: extern declarations, std.ffi, implicit widening
+
+A program calls C with `extern fn` and lays out C structs with `extern
+type` (16.16). No ABI string: the C calling convention is the only one, and
+`@symbol` names a symbol that differs from the Tondo name. Every call needs
+`unsafe`. What crosses is closed: numbers, `Bool`, `Byte`, pointers,
+`extern fn(...)`, `extern type`s and `ffi.CString`; a `String` passes where
+a `CString` is taken as a copy freed after the call (`P0016` for a zero byte
+inside), and arguments of C's `...` get C's promotions. `T?` of an address
+is one address, zero for `none`, as C's null pointer, which makes optional
+pointers cross without conversion.
+
+`extern type` follows C's layout, with `@packed`, `@align(n)` and
+`@count(n)` arrays stored in place; without a body it is opaque. Structs
+pass by value with System V's classification: up to two eightbytes in
+integer or vector registers, otherwise in memory; `...` goes through a
+runtime trampoline that sets `al`, which Cranelift cannot.
+
+A named function or a closure without captures becomes an `extern fn(...)`
+through a generated adapter; context travels through `ffi.context`. A
+callback on the caller's thread runs in its task and may wait: with C
+frames on its stack the task waits on that thread instead of migrating. A
+callback from a thread of C runs as a new task while the thread waits.
+
+Instead of a `@blocking` annotation, which an author can forget, workers
+mark the time they spend in C and a monitor starts another worker when one
+stays in the same call past a millisecond while tasks wait to run, as Go
+does; it retires when the call returns.
+
+With it, numbers widen implicitly language-wide when no value can be lost
+(`Int32` to `Int`, `Float32` to `Float`), at coercion sites and between
+operands; anything that may not fit stays a compile error that gives the
+exact checked conversion, so no conversion fails silently or panics at
+run time.

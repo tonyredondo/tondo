@@ -100,7 +100,7 @@ Every milestone ends with programs that compile to native executables and run.
 | **H4** | Projects: modules and packages, `tondo.toml`, dependencies (path, git, archives) and `tondo.lock`, canonical formatter (`tondo fmt`), JSON diagnostics | Done |
 | **H5** | Concurrency without colors: stackful tasks on all cores, `spawn`, `Join`, `Group`, channels, `select`, timeouts, cancellation | Done |
 | **H6** | Hosted standard library: shared state (`std.sync`), streams (`std.io`), filesystem and paths, processes and pipelines, environment, time, JSON with automatic encoding; fire-and-forget tasks; parameters with default values | Done |
-| **H7** | `unsafe` functions, blocks, closures and function types; `Pointer[T]` with its six raw operations | Done |
+| **H7** | `unsafe` functions, blocks, closures and function types; `Pointer[T]` with its six raw operations; calling C: `extern fn` (with C's `...`), `extern type` structs by value and by pointer, callbacks into Tondo from any thread, `std.ffi`, native libraries; lossless numeric widening | Done |
 
 The first cut deliberately leaves out the following. They are part of the
 language and remain planned work, scheduled after H7:

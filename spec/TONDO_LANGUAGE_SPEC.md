@@ -554,12 +554,12 @@ Las palabras reservadas de Tondo 0.1 son:
 ~~~text
 alias      and        as         break      const
 continue   defer      derive     else       enum
-fail       false      fn         for        if
-impl       import     in         let        match
-mut        none       not        or         priv
-pub        ref        return     select     self
-spawn      suite      test       trait      true
-type       unsafe     var        with
+extern     fail       false      fn         for
+if         impl       import     in         let
+match      mut        none       not        or
+priv       pub        ref        return     select
+self       spawn      suite      test       trait
+true       type       unsafe     var        with
 ~~~
 
 | Keyword | Función |
@@ -574,6 +574,7 @@ type       unsafe     var        with
 | `derive` | Solicitar una implementación estática generada de uno o más traits |
 | `else` | Rama alternativa de `if` o fallback no bloqueante final de `select` |
 | `enum` | Declarar una unión nominal |
+| `extern` | Declarar una función o un tipo de C (16.16) |
 | `fail` | Salir de una función por su canal de error |
 | `false` | Literal booleano |
 | `fn` | Declarar una función nombrada o un tipo de función |
@@ -1497,8 +1498,25 @@ let value = if valid {
 
 ### 8.6 Conversiones
 
-No existen conversiones implícitas entre tipos numéricos, strings, bytes, enums o
-newtypes.
+Un número se convierte sin sintaxis solo cuando ningún valor puede perderse:
+un entero a otro entero cuyo rango contiene el suyo (`Int8` a `Int16`, `Int32`
+o `Int`; `UInt32` a `UInt64` o `Int`) y `Float32` a `Float`. Ocurre donde se
+espera el tipo más ancho (8.9) y entre los operandos de un operador (18.7):
+
+~~~tondo
+let small: Int32 = 70000
+let wide: Int = small          // ensancha
+let total = small + wide       // `Int`
+~~~
+
+Ninguna otra conversión es implícita: ni entre enteros y floats, ni las que
+estrechan, ni entre strings, bytes, enums o newtypes. Un literal adopta el tipo
+esperado si su valor cabe (5.7). Donde una variable no cabe por su tipo, el
+error de compilación da la conversión exacta:
+
+~~~text
+error[E1102]: expected `Int32`, found `Int`, which may not fit: convert it with `Int32(n)?`, or handle the error with `match`
+~~~
 
 La forma de conversión explícita es el constructor del tipo:
 
@@ -1591,6 +1609,12 @@ Un valor es asignable a un tipo esperado cuando:
 6. Un error, o cada miembro de una unión de errores, se eleva a una unión destino
    que contiene todo su conjunto normalizado.
 7. `Never` aparece en una ruta que no retorna.
+8. Un número se ensancha a otro de su clase que contiene todos sus valores
+   (8.6).
+9. Un `Pointer[T]` o un `ffi.CString` se usa como `Pointer[ffi.Void]`, el
+   `void*` de C; un `ffi.CString` y un `Pointer[Byte]` se usan uno por el otro;
+   un `Array[T]` y un array de C `T[n]` (16.16) también, y el primero entra en
+   el segundo solo si tiene `n` elementos (`P0006`).
 
 El widening de una unión solo ocurre en la posición superior esperada; no crea
 covariancia ni se busca recursivamente dentro de arrays, options, results u otros
@@ -1763,39 +1787,23 @@ registra como mínimo versión de formato, compilador, edición, target, perfil,
 capacidades, features, `PackageId`, hash de API y dependencias exactas; el consumidor
 rechaza una combinación incompatible en lugar de intentar enlazarla.
 
-Código que necesite layout, alineación, calling convention o endianness estables
-utilizará tipos y declaraciones FFI de una especificación separada. Un record
-Tondo normal no debe serializarse ni cruzar una frontera nativa copiando su
-memoria.
+Código que necesite el layout y la calling convention de C utiliza las
+declaraciones `extern fn` y `extern type` de 16.16. Un record Tondo normal no
+debe serializarse ni cruzar una frontera nativa copiando su memoria.
 
-La especificación FFI 0.1 deberá fijar, sin alterar la gramática segura de esta
-edición:
-
-- Tipos con layout explícito, tamaños, alineación, endianness y reglas de padding.
-- Importación y exportación de símbolos, calling conventions y enlace estático o
-  dinámico.
-- Correspondencia de escalares, punteros opcionales, arrays, strings y callbacks.
-- Ownership de cada parámetro y resultado, incluido quién retiene, libera o fija
-  temporalmente un objeto administrado.
-- Registro de threads extranjeros y conservación de roots durante callbacks.
-- Comportamiento ante excepciones extranjeras, pánicos Tondo y terminación
-  anormal en la frontera.
-- Reglas de procedencia, aliasing, mutabilidad, inicialización y validez de
-  representaciones recibidas.
+Dos representaciones sí son contrato, porque C las ve: `T?` de un tipo que es
+una dirección no nula (`Pointer[T]`, `extern fn(...)` o un newtype de uno) es
+una sola dirección que vale cero para `none`, como el puntero nulo de C; y un
+`extern type` tiene exactamente el layout del struct de C.
 
 Una frontera nativa no puede desenrollar un pánico Tondo a través de frames
-extranjeros salvo que una ABI futura lo declare expresamente compatible. La
-frontera por defecto completa el unwind Tondo hasta su adaptador y aborta antes de
-cruzarlo; un wrapper que necesite recuperación convierte antes el fallo en un
-valor o protocolo nativo explícito. De forma simétrica, una excepción extranjera
-no entra en frames Tondo: el adaptador la convierte o aborta.
+extranjeros. Un pánico dentro de una función que C llamó termina el proceso
+como todo pánico (15.7), después de los `defer` de su tarea, sin volver a C. De
+forma simétrica, una excepción extranjera no entra en frames Tondo.
 
-Los intrinsics y bindings nativos de 0.1 pertenecen al toolchain y a la
-librería estándar; Tondo 0.1 no define una FFI de usuario. No añade
-declaraciones `extern`, atributos arbitrarios ni pragmas a un archivo `.to`
-ordinario.
-Incorporar después nueva sintaxis fuente para FFI requerirá una edición que la
-incluya en su gramática.
+La FFI de usuario es la de 16.16: `extern fn`, `extern type` y las anotaciones
+`@symbol`, `@packed`, `@align` y `@count`. No hay otros atributos ni pragmas en
+un archivo `.to`.
 
 ---
 
@@ -2262,7 +2270,8 @@ checking; la estrategia concreta de indirección sigue sin ser observable.
 
 Una implementación o módulo privilegiado puede declarar tipos cuya representación no es visible al lenguaje normal, por ejemplo handles del sistema. Desde código Tondo se comportan como valores nominales y solo exponen las operaciones públicas declaradas.
 
-El mecanismo para declarar intrinsics y enlazar código nativo pertenece a la especificación de implementación y FFI, no a la sintaxis segura 0.1.
+Un programa declara los tipos opacos de C con `extern type Name`, sin cuerpo
+(16.16): solo un `Pointer` los refiere, y solo C los construye y lee.
 
 ---
 
@@ -5940,7 +5949,8 @@ Reglas adicionales:
   Una frontera que necesite cruzar una task o thread valida sus precondiciones y
   encapsula primero el puntero en un handle opaco auditado; `unsafe` no convierte
   al puntero raw ni al cierre que lo contiene en `Send` o `Share`.
-- `malloc`, `free`, layouts y calling conventions pertenecen a la capa FFI o de sistema, no al prelude seguro.
+- `malloc`, `free`, layouts y calling conventions pertenecen a `std.ffi` y a
+  16.16, no al prelude seguro.
 
 Una integración que necesite indexar por dirección no convierte
 `Pointer[T]` implícitamente en clave. Un módulo de sistema privilegiado puede
@@ -6054,6 +6064,134 @@ El orden entre tareas concurrentes no está definido salvo por:
 - Locks, atomics y otras primitivas con contrato de sincronización.
 
 La librería estándar deberá definir el orden de memoria concreto de sus atomics. El lenguaje no permite inventar sincronización mediante lecturas o escrituras ordinarias.
+
+### 16.16 Funciones y tipos de C
+
+Un programa llama a C declarando sus funciones con `extern fn` y sus structs
+con `extern type`; `std.ffi` nombra los tipos de C y da memoria y strings que C
+puede usar (librería estándar 19.3):
+
+~~~tondo
+import std.ffi
+
+extern type Division = {
+    quotient: ffi.CInt
+    remainder: ffi.CInt
+}
+
+extern fn div(numerator: ffi.CInt, denominator: ffi.CInt): Division
+extern fn strlen(text: ffi.CString): ffi.CSize
+extern fn printf(format: ffi.CString, ...): ffi.CInt
+
+@symbol("sqlite3_open")
+extern fn open(path: ffi.CString, database: Pointer[Pointer[Database]]): ffi.CInt
+
+extern type Database
+
+fn main() {
+    unsafe {
+        let d = div(17, 5)
+        printf("%d %d %zu\n", d.quotient, d.remainder, strlen("tondo"))
+    }
+}
+~~~
+
+#### Funciones
+
+`extern fn name(parámetros): Resultado` declara una función de C, sin cuerpo,
+que el programa llama por su símbolo: el nombre declarado, o el de
+`@symbol("nombre")` cuando difieren o cuando el de C es una palabra reservada
+de Tondo. No tiene parámetros de tipo, receptor, modos `ref`/`mut`/`var` ni
+valores por defecto; un `...` final, sin nombre ni tipo, son los argumentos
+variables de C. `pub` la exporta a otros módulos como a cualquier función.
+
+Toda llamada a una función de C va dentro de `unsafe` (`E1701`): el compilador
+no puede comprobar que la declaración coincide con la de C ni lo que la
+función hace con la memoria (16.12). Nombrada como valor, una `extern fn` es su
+dirección, de tipo `extern fn(A, B): R`, que se llama igual, dentro de
+`unsafe`, y cruza a C como puntero a función.
+
+#### Tipos que cruzan
+
+Cruzan a C, como C los pasa (`E1703` para cualquier otro):
+
+| Tondo | C |
+|---|---|
+| `Int8` … `Int64`, `UInt8` … `UInt64`, `Byte`, `Bool` | enteros del mismo tamaño y signo, `_Bool` |
+| `Float32`, `Float` | `float`, `double` |
+| `Pointer[T]` | `T*` no nulo |
+| `Pointer[T]?`, `extern fn(...)?` | puntero que puede ser `NULL`, `none` |
+| `extern fn(A): R` | puntero a función |
+| un `extern type` | el struct, por valor o por puntero |
+| `ffi.CString` | `char*` que termina en un byte cero |
+
+El resultado puede ser además `Unit` (`void`) o `Never` (una función que no
+vuelve). Los alias de `std.ffi` (`ffi.CInt`, `ffi.CSize`, `ffi.CDouble`…) son
+esos mismos tipos con el nombre de C, así que sus valores son números
+ordinarios y se ensanchan sin sintaxis (8.6). Un `String` pasa donde un
+parámetro es `ffi.CString`, o en `...`, como una copia que termina en un byte
+cero y vive lo que dura la llamada; un texto con un byte cero dentro produce
+`P0016`. Un argumento de `...` es un número, `Bool`, `Byte`, un puntero o un
+texto, con las promociones de C: los enteros de menos de 32 bits pasan como
+`int` y `Float32` como `double`.
+
+#### `extern type`
+
+`extern type Name = { campo: Tipo, ... }` es un struct de C: sus campos, de
+tipos que cruzan, se colocan en orden con la alineación natural de cada uno y
+el struct con la mayor, como hace C. `@packed` quita el relleno y `@align(n)`
+sube la alineación a la potencia de dos `n`. `@count(n)` antes de un campo lo
+hace un array de C `T[n]` guardado en el struct: se indexa para leer y
+escribir, comprobando el rango (`P0001`), y se usa como `Array[T]` y al revés,
+este solo si tiene `n` elementos (`P0006`). En Tondo un `extern type` es un
+record: se construye, se lee por campos y se copia como cualquiera, y
+`Pointer[T]` lee y escribe la memoria de C con su layout.
+
+`extern type Name`, sin cuerpo, es un tipo opaco de C: solo un `Pointer[Name]`
+lo refiere; no se construye, no se lee ni se desplaza (`E1703`). Un `extern
+type` no tiene parámetros de tipo.
+
+#### Funciones que C llama
+
+Donde se espera un `extern fn(...)`, una función con nombre o un cierre sin
+capturas de exactamente esos tipos se convierte en un puntero a función que C
+puede llamar. C no guarda capturas (`E1705`); lo que la función necesita llega
+por el puntero de contexto que las APIs de C pasan, hecho con
+`ffi.context(valor)` y leído con `ffi.fromContext[T](contexto)`:
+
+~~~tondo
+extern fn qsort(
+    base: Pointer[ffi.Void],
+    count: ffi.CSize,
+    size: ffi.CSize,
+    compare: extern fn(Pointer[ffi.Void], Pointer[ffi.Void]): ffi.CInt,
+)
+
+unsafe {
+    qsort(values, count, 8u64, unsafe (left, right) {
+        let (a, b) = (left.cast[Int]().read(), right.cast[Int]().read())
+        if a < b { -1 } else if a > b { 1 } else { 0 }
+    })
+}
+~~~
+
+Cuando C llama durante una llamada de la propia tarea, la función corre en esa
+tarea y puede usar todo el lenguaje, esperas incluidas: mientras haya frames de
+C en su pila, la tarea espera en su thread en lugar de cederlo. Cuando la llama
+un thread de C, la función corre como una tarea nueva y ese thread espera a que
+termine. Un pánico termina el proceso (15.7); nunca vuelve a C.
+
+#### Llamadas largas y enlace
+
+Una función de C ocupa su worker mientras dura. Si una llamada sigue en C
+después de un intervalo corto y hay tareas esperando, el runtime arranca otro
+worker en su lugar, y uno se retira cuando la llamada vuelve; ninguna
+declaración tiene que decir qué funciones bloquean.
+
+El ejecutable enlaza la librería de C del sistema; un proyecto añade otras en
+`[native] libraries` de `tondo.toml`, y un script con `--link` (toolchain 3).
+Las reglas de llamada son las de System V en x86-64; las de otros targets
+llegarán con ellos.
 
 ---
 
@@ -6454,7 +6592,17 @@ return a value of the same floating-point type and agree away from exact ties.
 
 ### 18.7 Promoción
 
-No hay promoción numérica implícita:
+Los operandos de un operador aritmético, de comparación o bitwise tienen un
+mismo tipo. Cuando uno es un número que se ensancha al tipo del otro sin
+perder valores (8.6), se ensancha y la operación usa el más ancho:
+
+~~~tondo
+let count: Int32 = 3
+let total: Int = 10
+let sum = count + total // `Int`
+~~~
+
+Entre enteros y floats no hay promoción:
 
 ~~~tondo compile-fail E1102
 let integer: Int = 10
@@ -7623,6 +7771,9 @@ oculten un diagnóstico independiente.
 |---|---|---|
 | `E1701` | `unsafe-operation-outside-region` | Operación raw invocada sin región `unsafe`. |
 | `E1702` | `invalid-unsafe-contract` | Firma, modificadores o captura raw no hace visible el contrato requerido. |
+| `E1703` | `invalid-c-type` | Un tipo que no cruza a C en una declaración de C, o un tipo opaco que se construye o se lee (16.16). |
+| `E1704` | `invalid-extern-declaration` | Un `extern fn` o `extern type` con genéricos, receptor, modos, valores por defecto o anotaciones que no le corresponden. |
+| `E1705` | `invalid-callback` | Un valor que C no puede llamar, como un cierre con capturas, donde se espera un `extern fn(...)`. |
 | `E1801` | `script-imported-as-module` | Un archivo con statements se importa como módulo. |
 | `E1802` | `duplicate-main` | El target contiene más de un entry point. |
 | `E1803` | `invalid-main` | Existe `main`, pero el target, visibilidad, parámetros, modificadores u outcome no lo permiten. |
@@ -7691,6 +7842,7 @@ oculten un diagnóstico independiente.
 | `P0013` | `deadlock` | Todas las tareas esperan y ninguna puede avanzar. |
 | `P0014` | `reentrant-lock` | Una tarea vuelve a tomar un lock de `std.sync` que ya tiene. |
 | `P0015` | `invalid-environment-name` | `env.set`, `setAll` o `remove` recibe un nombre vacío o con `=` o `NUL`, o un valor con `NUL`. |
+| `P0016` | `nul-in-c-string` | Un texto con un byte cero dentro pasa a C como `ffi.CString`. |
 | `P2001` | `test-skip-during-cleanup` | `testing.skip` intenta omitir un nodo durante cleanup, unwind o teardown. |
 | `P2002` | `test-tag-conflict` | `testing.tags` intenta cambiar el valor ya asociado a una key en el mismo envelope. |
 | `P2003` | `test-virtual-time-deadlock` | Un dominio temporal virtual queda quiescente sin timer ni evento interno capaz de progresar. |
@@ -8262,6 +8414,8 @@ top_decl        = const_decl
                 | impl_decl
                 | derive_decl
                 | function_decl
+                | extern_fn_decl
+                | extern_type_decl
                 | test_decl
                 | suite_decl ;
 
@@ -8352,7 +8506,9 @@ tuple_type      = "(", type_expr, ",", type_expr,
 
 function_type   = [ function_modifiers ], "fn", "(",
                   [ function_type_list ], ")",
-                  [ outcome_annotation ] ;
+                  [ outcome_annotation ]
+                | "extern", "fn", "(", [ type_list, [ ",", "..." ] | "..." ],
+                  [ "," ], ")", [ outcome_annotation ] ;
 
 function_modifiers
                 = "unsafe" ;
@@ -8418,7 +8574,12 @@ record_body     = "{", { NL },
 
 record_field    = { annotation, { NL } }, [ "priv" ], field_name, ":", type_expr ;
 
-annotation      = "@", identifier, [ "(", string_literal, ")" ] ;
+annotation      = "@", identifier,
+                  [ "(", ( string_literal | integer_literal ), ")" ] ;
+
+extern_type_decl
+                = { annotation, { NL } }, [ visibility ], "extern", "type",
+                  identifier, [ "=", record_body ], declaration_end ;
 
 field_separator = ",", { NL }
                 | NL, { NL } ;
@@ -8515,7 +8676,22 @@ parameter       = identifier, ":", [ parameter_modifier ], type_expr,
                 | identifier, ":", "...", type_expr
                 | "self"
                 | receiver_modifier, "self" ;
+
+extern_fn_decl  = { annotation, { NL } }, [ visibility ], "extern", "fn",
+                  identifier, "(", [ extern_parameters ], ")",
+                  [ outcome_annotation ], declaration_end ;
+
+extern_parameters
+                = identifier, ":", type_expr,
+                  { ",", identifier, ":", type_expr },
+                  [ ",", "..." ], [ "," ]
+                | "...", [ "," ] ;
 ~~~
+
+Las anotaciones de una declaración son las de 16.16: `@symbol("nombre")` antes
+de un `extern fn`, `@packed` y `@align(n)` antes de un `extern type`, y
+`@count(n)` antes de uno de sus campos; las de un record ordinario son las de
+serialización (librería estándar 14.6).
 
 Una firma no puede expresar dos `!` superiores. El tipo completo después de `:` puede ser un éxito ordinario, `T ! E` o el shorthand `!E`.
 
@@ -9538,7 +9714,8 @@ como `add`, `merge`, `compose` o `combine`.
 
 No hay:
 
-- Promoción numérica.
+- Promoción numérica que pierda valores o mezcle enteros y floats; solo se
+  ensancha (8.6).
 - Stringification automática fuera de interpolación definida.
 - Conversión booleano/número.
 - Conversión record por similitud.

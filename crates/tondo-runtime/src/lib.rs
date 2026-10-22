@@ -1665,6 +1665,7 @@ fn panic_name(code: u32) -> &'static str {
         13 => "deadlock",
         14 => "reentrant-lock",
         15 => "invalid-environment-name",
+        16 => "nul-in-c-string",
         _ => "unknown",
     }
 }

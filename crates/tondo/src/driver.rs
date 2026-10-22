@@ -17,6 +17,8 @@ pub struct Analysis {
     pub program: Option<hir::Program>,
     /// Who owns the diagnostics (22.3): the package or the single file.
     pub source_id: String,
+    /// The native libraries the packages link (`[native] libraries`).
+    pub libraries: Vec<String>,
 }
 
 /// Reads, parses and checks a program: a project directory (toolchain 3)
@@ -25,8 +27,14 @@ pub fn analyze(path: &Path) -> Result<Analysis, String> {
     let mut sources = SourceMap::default();
     let mut diags = Diagnostics::default();
     let mut source_id = format!("root:{}", path.file_name().unwrap_or_default().to_string_lossy());
+    let mut libraries: Vec<String> = Vec::new();
     let module = if path.is_dir() {
         let packages = deps::resolve(path, None)?;
+        for library in packages.iter().flat_map(|p| &p.libraries) {
+            if !libraries.contains(library) {
+                libraries.push(library.clone());
+            }
+        }
         source_id = format!("pkg:{}", packages[0].name);
         let mut modules: Vec<modules::ModuleSource> = Vec::new();
         let mut root = 0;
@@ -64,7 +72,7 @@ pub fn analyze(path: &Path) -> Result<Analysis, String> {
         }
         if diags.has_errors() {
             diags.sort(&sources);
-            return Ok(Analysis { sources, diags, program: None, source_id });
+            return Ok(Analysis { sources, diags, program: None, source_id, libraries });
         }
         let mut packages: Vec<modules::PackageInfo> = packages
             .into_iter()
@@ -76,7 +84,7 @@ pub fn analyze(path: &Path) -> Result<Analysis, String> {
     } else {
         let module = match parse(path, &mut sources, &mut diags)? {
             Some(module) => module,
-            None => return Ok(Analysis { sources, diags, program: None, source_id }),
+            None => return Ok(Analysis { sources, diags, program: None, source_id, libraries }),
         };
         if stdlib::needed(&module) {
             // The file links with the standard modules it imports.
@@ -94,7 +102,7 @@ pub fn analyze(path: &Path) -> Result<Analysis, String> {
     let program = if diags.has_errors() { None } else { check::check(&module, &sources, &mut diags) };
     let program = program.and_then(|program| mono::monomorphize(program, &mut diags));
     diags.sort(&sources);
-    Ok(Analysis { sources, diags, program, source_id })
+    Ok(Analysis { sources, diags, program, source_id, libraries })
 }
 
 /// Reads and parses one source file; `None` when it cannot be lexed.
@@ -178,8 +186,9 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     std::fs::rename(&temporary, path).map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
-/// Links an object file with the embedded runtime into an executable.
-pub fn link(object: &[u8], output: &Path) -> Result<(), String> {
+/// Links an object file with the embedded runtime and the native
+/// libraries (`-lname` or files) into an executable.
+pub fn link(object: &[u8], output: &Path, libraries: &[String]) -> Result<(), String> {
     let dir = cache_dir().join("runtime");
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let runtime = dir.join(format!("libtondo_runtime-{RUNTIME_HASH}.a"));
@@ -193,6 +202,7 @@ pub fn link(object: &[u8], output: &Path) -> Result<(), String> {
         .arg("-o")
         .arg(output)
         .arg(&object_path)
+        .args(libraries)
         .arg(&runtime)
         .args(RUNTIME_LINK_ARGS.split_whitespace())
         // Unused runtime code and the standard library's debug info would
@@ -202,7 +212,23 @@ pub fn link(object: &[u8], output: &Path) -> Result<(), String> {
     let _ = std::fs::remove_file(&object_path);
     match result {
         Ok(out) if out.status.success() => Ok(()),
-        Ok(out) => Err(format!("linking failed:\n{}", String::from_utf8_lossy(&out.stderr))),
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            // A C function no linked library defines.
+            let mut missing: Vec<&str> = stderr
+                .lines()
+                .filter_map(|line| line.split("undefined reference to `").nth(1)?.split('\'').next())
+                .collect();
+            missing.dedup();
+            if missing.is_empty() {
+                return Err(format!("linking failed:\n{stderr}"));
+            }
+            let names: Vec<String> = missing.iter().map(|m| format!("`{m}`")).collect();
+            Err(format!(
+                "no linked library defines the C function {}: add its library to `[native] libraries` in tondo.toml, or pass `--link <library>` to `tondo run` or `tondo build`",
+                names.join(", ")
+            ))
+        }
         Err(e) => Err(format!("cannot run the linker `{linker}`: {e}; install a C toolchain or set TONDO_CC")),
     }
 }

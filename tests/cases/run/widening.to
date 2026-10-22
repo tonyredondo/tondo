@@ -1,0 +1,28 @@
+// A number widens to a wider one of its kind without syntax (8.6): in
+// bindings, arguments, results, options and operators.
+import std.console
+
+fn total(value: Int): Int {
+    value + 1
+}
+
+fn widen(value: UInt32): UInt64 {
+    value
+}
+
+fn main() {
+    let small: Int8 = -5
+    let medium: Int32 = 70000
+    let unsigned: UInt16 = 65535
+    let wide: Int = small
+    let maybe: Int? = medium
+    let float: Float32 = 1.5
+    let double: Float = float
+    console.println("{wide} {maybe} {total(medium)} {widen(4000000000)} {double}")
+    console.println("{small + wide} {medium * 2 + wide} {unsigned + medium} {float + 2.25}")
+    console.println("{medium > wide} {small < medium} {unsigned | 1u32}")
+}
+
+// expect-stdout: -5 some(70000) 70001 4000000000 1.5
+// expect-stdout: -10 139995 135535 3.75
+// expect-stdout: true true 65535

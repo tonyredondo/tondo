@@ -1,0 +1,11 @@
+// Text with a zero byte inside has no C string (P0016).
+import std.ffi
+
+extern fn strlen(text: ffi.CString): ffi.CSize
+
+fn main() {
+    let text = "a\u{0}b"
+    unsafe { strlen(text) }
+}
+
+// expect-panic: P0016

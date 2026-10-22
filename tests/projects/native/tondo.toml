@@ -1,0 +1,5 @@
+[package]
+name = "native"
+
+[native]
+libraries = ["z"]

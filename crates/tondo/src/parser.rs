@@ -204,7 +204,11 @@ impl Parser<'_> {
     }
 
     fn at_declaration(&self) -> bool {
-        let tok = if self.at_kw(Kw::Pub) { self.nth(1) } else { self.tok() };
+        let offset = usize::from(self.at_kw(Kw::Pub));
+        let tok = self.nth(offset);
+        if matches!(tok, Tok::At | Tok::Kw(Kw::Extern)) {
+            return true;
+        }
         matches!(
             tok,
             Tok::Kw(
@@ -219,17 +223,103 @@ impl Parser<'_> {
                     | Kw::Test
                     | Kw::Suite
             )
-        ) || (matches!(tok, Tok::Kw(Kw::Unsafe)) && matches!(self.nth(1), Tok::Kw(Kw::Fn)))
+        ) || (matches!(tok, Tok::Kw(Kw::Unsafe)) && matches!(self.nth(offset + 1), Tok::Kw(Kw::Fn)))
     }
 
     fn declaration(&mut self) -> PResult<Option<Item>> {
         let start = self.span();
+        let annotations = self.annotations()?;
+        if !annotations.is_empty() && !matches!(self.tok(), Tok::Kw(Kw::Pub | Kw::Extern | Kw::Fn | Kw::Type)) {
+            return self.expected("a declaration after the annotation");
+        }
         let public = self.eat_kw(Kw::Pub);
+        let item = match self.tok() {
+            Tok::Kw(Kw::Extern) if self.nth(1) == &Tok::Kw(Kw::Fn) => {
+                self.bump();
+                let f = self.function(public, start, true)?;
+                if let Some(body) = &f.body {
+                    self.diags.error("E0004", body.span, "an `extern fn` has no body: C defines it");
+                }
+                Item::Fn(f)
+            }
+            Tok::Kw(Kw::Extern) if self.nth(1) == &Tok::Kw(Kw::Type) => {
+                self.bump();
+                let mut t = self.type_declaration(public, start)?;
+                t.foreign = true;
+                Item::Type(t)
+            }
+            Tok::Kw(Kw::Extern) => return self.expected("`fn` or `type` after `extern`"),
+            _ if !annotations.is_empty() => {
+                return self
+                    .declaration_after(public, start)
+                    .map(|item| item.map(|item| Self::annotate(item, annotations)));
+            }
+            _ => return self.declaration_after(public, start),
+        };
+        Ok(Some(Self::annotate(item, annotations)))
+    }
+
+    /// Gives a declaration the annotations written before it; `@symbol`
+    /// names the C function an `extern fn` calls.
+    fn annotate(mut item: Item, annotations: Vec<Annotation>) -> Item {
+        match &mut item {
+            Item::Fn(f) => {
+                if let Some(foreign) = &mut f.foreign
+                    && let Some(AnnotationArg::Text(symbol)) =
+                        annotations.iter().find(|a| a.name.name == "symbol").and_then(|a| a.argument.clone())
+                {
+                    foreign.symbol = symbol;
+                }
+                f.annotations = annotations;
+            }
+            Item::Type(t) => t.annotations = annotations,
+            _ => {}
+        }
+        item
+    }
+
+    /// `@name`, `@name("text")` or `@name(16)`, each on its own line or
+    /// before the declaration or field it annotates.
+    fn annotations(&mut self) -> PResult<Vec<Annotation>> {
+        let mut annotations = Vec::new();
+        while self.at(&Tok::At) {
+            let start = self.bump().span;
+            let name = self.ident()?;
+            let argument = if self.eat(&Tok::LParen) {
+                let argument = match self.tok().clone() {
+                    // A plain string, without interpolation.
+                    Tok::Str(parts) => parts
+                        .iter()
+                        .map(|p| match p {
+                            crate::lexer::StrPart::Text(text) => Some(text.as_str()),
+                            crate::lexer::StrPart::Expr(_) => None,
+                        })
+                        .collect::<Option<String>>()
+                        .map(AnnotationArg::Text),
+                    Tok::Int { value, suffix: None } => Some(AnnotationArg::Int(value)),
+                    _ => None,
+                };
+                let Some(argument) = argument else {
+                    return self.expected("a string without interpolation or an integer");
+                };
+                self.bump();
+                self.expect(Tok::RParen)?;
+                Some(argument)
+            } else {
+                None
+            };
+            annotations.push(Annotation { name, argument, span: start.to(self.prev_span()) });
+            self.skip_newlines();
+        }
+        Ok(annotations)
+    }
+
+    fn declaration_after(&mut self, public: bool, start: Span) -> PResult<Option<Item>> {
         match self.tok() {
-            Tok::Kw(Kw::Fn) => Ok(Some(Item::Fn(self.function(public, start)?))),
+            Tok::Kw(Kw::Fn) => Ok(Some(Item::Fn(self.function(public, start, false)?))),
             Tok::Kw(Kw::Unsafe) if self.nth(1) == &Tok::Kw(Kw::Fn) => {
                 self.bump();
-                let mut f = self.function(public, start)?;
+                let mut f = self.function(public, start, false)?;
                 f.is_unsafe = true;
                 Ok(Some(Item::Fn(f)))
             }
@@ -294,18 +384,29 @@ impl Parser<'_> {
     }
 
     fn type_declaration(&mut self, public: bool, start: Span) -> PResult<TypeDecl> {
+        let foreign = self.prev_is_extern();
         self.bump();
         let name = self.ident()?;
         let generics = self.generic_params()?;
-        self.expect(Tok::Eq)?;
-        let body = if self.at(&Tok::LBrace) {
-            TypeBody::Record(self.record_body()?)
+        // `extern type Name` declares an opaque C type.
+        let body = if foreign && !self.at(&Tok::Eq) {
+            TypeBody::Opaque
         } else {
-            TypeBody::Newtype(self.type_expr()?)
+            self.expect(Tok::Eq)?;
+            if self.at(&Tok::LBrace) {
+                TypeBody::Record(self.record_body()?)
+            } else {
+                TypeBody::Newtype(self.type_expr()?)
+            }
         };
         let span = start.to(self.prev_span());
         self.end_of_statement()?;
-        Ok(TypeDecl { public, name, generics, body, span, module: 0 })
+        Ok(TypeDecl { public, foreign: false, annotations: Vec::new(), name, generics, body, span, module: 0 })
+    }
+
+    /// Whether the token before the current one is `extern`.
+    fn prev_is_extern(&self) -> bool {
+        self.pos > 0 && self.tokens[self.pos - 1].tok == Tok::Kw(Kw::Extern)
     }
 
     fn enum_declaration(&mut self, public: bool, start: Span) -> PResult<EnumDecl> {
@@ -353,32 +454,7 @@ impl Parser<'_> {
             if self.eat(&Tok::RBrace) {
                 return Ok(fields);
             }
-            let mut annotations = Vec::new();
-            while self.at(&Tok::At) {
-                let start = self.bump().span;
-                let name = self.ident()?;
-                let argument = if self.eat(&Tok::LParen) {
-                    // A plain string, without interpolation.
-                    let text = match self.tok().clone() {
-                        Tok::Str(parts) => parts
-                            .iter()
-                            .map(|p| match p {
-                                crate::lexer::StrPart::Text(text) => Some(text.as_str()),
-                                crate::lexer::StrPart::Expr(_) => None,
-                            })
-                            .collect::<Option<String>>(),
-                        _ => None,
-                    };
-                    let Some(text) = text else { return self.expected("a string without interpolation") };
-                    self.bump();
-                    self.expect(Tok::RParen)?;
-                    Some(text)
-                } else {
-                    None
-                };
-                annotations.push(Annotation { name, argument, span: start.to(self.prev_span()) });
-                self.skip_newlines();
-            }
+            let annotations = self.annotations()?;
             // `priv` is a modifier only when another field name follows (23.10).
             let private = self.at_kw(Kw::Priv) && self.nth(1) != &Tok::Colon;
             if private {
@@ -431,7 +507,9 @@ impl Parser<'_> {
         }
     }
 
-    fn function(&mut self, public: bool, start: Span) -> PResult<FnDecl> {
+    /// A function or method; with `foreign`, an `extern fn`, whose
+    /// parameters may end with C's `...`.
+    fn function(&mut self, public: bool, start: Span, foreign: bool) -> PResult<FnDecl> {
         self.expect(Tok::Kw(Kw::Fn))?;
         let first = self.ident()?;
         let first_generics = self.generic_params()?;
@@ -455,6 +533,20 @@ impl Parser<'_> {
         }
         self.skip_newlines();
         self.expect(Tok::RParen)?;
+        let dots = params.last().filter(|p| p.name.name == "...").map(|p| p.span);
+        if dots.is_some() {
+            params.pop();
+        }
+        let misplaced = params.iter().find(|p| p.name.name == "...").map(|p| p.span);
+        if let Some(span) = misplaced.or(dots.filter(|_| !foreign)) {
+            let message = if foreign && misplaced.is_some() {
+                "C's `...` must be the last parameter"
+            } else {
+                "C's `...` only ends the parameters of an `extern fn`; a Tondo variadic parameter is `name: ...T`"
+            };
+            self.diags.error("E0004", span, message);
+        }
+        let variadic = dots.is_some();
         let result = if self.eat(&Tok::Colon) { Some(self.function_result()?) } else { None };
         // A required method of a trait ends at its signature.
         let body = if self.at(&Tok::LBrace) { Some(self.block()?) } else { None };
@@ -463,6 +555,8 @@ impl Parser<'_> {
         Ok(FnDecl {
             public,
             is_unsafe: false,
+            foreign: foreign.then(|| Foreign { symbol: name.name.clone(), variadic }),
+            annotations: Vec::new(),
             owner,
             owner_generics,
             name,
@@ -554,7 +648,7 @@ impl Parser<'_> {
             if !self.at_kw(Kw::Fn) {
                 return self.expected("`fn`");
             }
-            let mut method = self.function(false, start)?;
+            let mut method = self.function(false, start, false)?;
             method.is_unsafe = is_unsafe;
             methods.push(method);
         }
@@ -654,6 +748,17 @@ impl Parser<'_> {
                     }
                     modes.push(self.mode());
                     variadic = self.eat(&Tok::Ellipsis);
+                    // C's `...`, last in an `extern fn(...)` type, has a
+                    // mode but no type.
+                    if variadic {
+                        let save = self.pos;
+                        self.eat(&Tok::Comma);
+                        self.skip_newlines();
+                        if self.at(&Tok::RParen) {
+                            break;
+                        }
+                        self.pos = save;
+                    }
                     params.push(self.type_expr()?);
                     if !self.eat(&Tok::Comma) {
                         break;
@@ -663,15 +768,16 @@ impl Parser<'_> {
                 self.expect(Tok::RParen)?;
                 let result = if self.eat(&Tok::Colon) { Some(Box::new(self.result_type()?)) } else { None };
                 Ok(TypeExpr {
-                    kind: TypeKind::Fn { params, modes, variadic, result, is_unsafe: false },
+                    kind: TypeKind::Fn { params, modes, variadic, result, is_unsafe: false, is_extern: false },
                     span: start.to(self.prev_span()),
                 })
             }
-            Tok::Kw(Kw::Unsafe) if self.nth(1) == &Tok::Kw(Kw::Fn) => {
-                self.bump();
+            Tok::Kw(Kw::Unsafe | Kw::Extern) if self.nth(1) == &Tok::Kw(Kw::Fn) => {
+                let keyword = self.bump().tok;
                 let mut ty = self.type_expr()?;
-                if let TypeKind::Fn { is_unsafe, .. } = &mut ty.kind {
-                    *is_unsafe = true;
+                if let TypeKind::Fn { is_unsafe, is_extern, .. } = &mut ty.kind {
+                    *is_unsafe = keyword == Tok::Kw(Kw::Unsafe);
+                    *is_extern = keyword == Tok::Kw(Kw::Extern);
                 }
                 ty.span = start.to(ty.span);
                 Ok(ty)
@@ -1522,6 +1628,12 @@ impl Parser<'_> {
                 default: None,
                 span: start.to(span),
             });
+        }
+        // C's `...` ends the parameters of an `extern fn`.
+        if self.at(&Tok::Ellipsis) {
+            let span = self.bump().span;
+            let name = Ident { name: "...".into(), span };
+            return Ok(Param { name, ty: None, mode: Mode::Value, variadic: true, default: None, span });
         }
         let name = self.ident()?;
         self.expect(Tok::Colon)?;

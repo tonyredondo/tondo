@@ -51,6 +51,11 @@ pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics)
         io_error: Ty::ERROR,
         env_error: None,
         process: None,
+        externs: Vec::new(),
+        c_string: Ty::ERROR,
+        void: Ty::ERROR,
+        c_arguments: false,
+        extern_names: Vec::new(),
     };
     checker.declare_prelude();
     checker.program(module)
@@ -158,6 +163,8 @@ struct FsTypes {
 #[derive(Copy, Clone)]
 enum ModuleName {
     Fn(FnId),
+    /// An `extern fn`, by its index in `externs`.
+    Extern(u32),
     Module(StdModule),
     /// The constructor `Name(value)` of a newtype (8.8).
     Newtype(Ty),
@@ -323,6 +330,8 @@ struct Signature {
     defaults: Vec<Option<hir::Expr>>,
     /// `unsafe fn`: calls need an `unsafe` region (16.12).
     is_unsafe: bool,
+    /// A C function: a `String` argument passes as a `ffi.CString`.
+    foreign: bool,
 }
 
 impl Signature {
@@ -341,6 +350,7 @@ impl Signature {
             name: String::new(),
             defaults: Vec::new(),
             is_unsafe: false,
+            foreign: false,
         }
     }
 
@@ -477,6 +487,17 @@ struct Checker<'a> {
     env_error: Option<Ty>,
     /// The types of `std.process`, once imported.
     process: Option<ProcessTypes>,
+    /// The `extern fn` declarations (FFI).
+    externs: Vec<hir::Extern>,
+    /// `ffi.CString` and `ffi.Void`, which `std.ffi` names after
+    /// `std.internal.memory`.
+    c_string: Ty,
+    void: Ty,
+    /// While the arguments of a C function are coerced: a `String` passes
+    /// where it takes a `ffi.CString`, as a copy for the call.
+    c_arguments: bool,
+    /// The parameter names of each `extern fn`, for named arguments.
+    extern_names: Vec<Vec<String>>,
 }
 
 /// Per-function checking state.
@@ -613,14 +634,17 @@ impl Checker<'_> {
             })
             .collect();
         self.declare_traits(&traits);
-        let fns: Vec<&ast::FnDecl> = module
+        let (externs, fns): (Vec<&ast::FnDecl>, Vec<&ast::FnDecl>) = module
             .items
             .iter()
             .filter_map(|item| match item {
                 ast::Item::Fn(f) => Some(f),
                 _ => None,
             })
-            .collect();
+            .partition(|f| f.foreign.is_some());
+        for f in externs {
+            self.declare_extern(f);
+        }
         // Every function with a body, in `FnId` order.
         let mut bodies: Vec<&ast::FnDecl> = Vec::new();
         for f in &fns {
@@ -703,6 +727,133 @@ impl Checker<'_> {
             traits,
             impls,
             display: HashMap::new(),
+            externs: std::mem::take(&mut self.externs),
+        })
+    }
+
+    /// An `extern fn` (FFI): a module function without body whose
+    /// parameters and result cross to C, called inside `unsafe`.
+    fn declare_extern(&mut self, f: &ast::FnDecl) {
+        let module = std::mem::replace(&mut self.module, f.module);
+        let foreign = f.foreign.clone().expect("an extern fn");
+        if !f.generics.is_empty() {
+            self.diags.error("E1704", f.generics[0].name.span, "an `extern fn` takes no type parameters: C has none");
+            let id = self.externs.len() as u32;
+            let params = vec![Ty::ERROR; f.params.len()];
+            let (name, symbol) = (f.name.name.clone(), foreign.symbol);
+            self.externs.push(hir::Extern { name, symbol, params, result: Ty::ERROR, variadic: foreign.variadic });
+            self.extern_names.push(f.params.iter().map(|p| p.name.name.clone()).collect());
+            self.declare_module_name(&f.name, ModuleName::Extern(id));
+            self.module = module;
+            return;
+        }
+        if let Some(owner) = &f.owner {
+            let message = "an `extern fn` is a module function, not a method: remove the type before its name";
+            self.diags.error("E1704", owner.span, message);
+        }
+        for annotation in &f.annotations {
+            match (annotation.name.name.as_str(), &annotation.argument) {
+                ("symbol", Some(ast::AnnotationArg::Text(symbol))) if !symbol.is_empty() => {}
+                ("symbol", _) => {
+                    let message = "`@symbol` takes the C function's name: `@symbol(\"sqlite3_open\")`";
+                    self.diags.error("E1704", annotation.span, message);
+                }
+                (name, _) => {
+                    let message = format!(
+                        "unknown annotation `@{name}`; an `extern fn` takes `@symbol(\"name\")`, the C function it calls"
+                    );
+                    self.diags.error("E1001", annotation.span, message);
+                }
+            }
+        }
+        let mut params = Vec::new();
+        for param in &f.params {
+            let Some(written) = &param.ty else {
+                self.diags.error("E1704", param.span, "an `extern fn` has no receiver: C has no methods");
+                params.push(Ty::ERROR);
+                continue;
+            };
+            let ty = self.resolve_type(written);
+            if param.mode != ast::Mode::Value {
+                let message = format!(
+                    "C takes its arguments by value: remove `{}`, or pass a `Pointer[...]` to what it changes",
+                    param.mode.keyword()
+                );
+                self.diags.error("E1704", param.span, message);
+            } else if param.variadic {
+                let message = "C's variable arguments are a last `...`, without name or type";
+                self.diags.error("E1704", param.span, message);
+            } else if let Some(default) = &param.default {
+                self.diags.error("E1704", default.span, "a parameter of an `extern fn` has no default value");
+            } else {
+                self.require_c_type(ty, written.span);
+            }
+            params.push(ty);
+        }
+        let result = match &f.result {
+            Some(written) => {
+                let ty = self.resolve_type(written);
+                if ty != Ty::UNIT && ty != Ty::NEVER {
+                    self.require_c_type(ty, written.span);
+                }
+                ty
+            }
+            None => Ty::UNIT,
+        };
+        let by_value = |this: &Self, ty: Ty| matches!(this.types.kind(this.types.repr(ty)), TyKind::Adt(_));
+        if foreign.variadic && (params.iter().any(|&p| by_value(self, p)) || by_value(self, result)) {
+            let message =
+                "a C function with `...` takes and returns numbers and pointers; pass a `Pointer` to the struct";
+            self.diags.error("E1704", f.name.span, message);
+        }
+        let id = self.externs.len() as u32;
+        self.externs.push(hir::Extern {
+            name: f.name.name.clone(),
+            symbol: foreign.symbol,
+            params,
+            result,
+            variadic: foreign.variadic,
+        });
+        self.extern_names.push(f.params.iter().map(|p| p.name.name.clone()).collect());
+        self.declare_module_name(&f.name, ModuleName::Extern(id));
+        self.module = module;
+    }
+
+    /// Reports a type that cannot cross to C (`E1703`): C's numbers,
+    /// `Bool`, pointers, `extern fn(...)` and `extern type`s can.
+    fn require_c_type(&mut self, ty: Ty, span: Span) -> bool {
+        let Some(reason) = self.c_type_error(ty) else { return true };
+        let message = format!("{} cannot cross to C: {reason}", self.display(ty));
+        self.diags.error("E1703", span, message);
+        false
+    }
+
+    /// Why a value of `ty` cannot cross to C, if it cannot.
+    fn c_type_error(&self, ty: Ty) -> Option<String> {
+        let repr = self.types.repr(ty);
+        Some(match self.types.kind(repr) {
+            TyKind::Int(_)
+            | TyKind::Float(_)
+            | TyKind::Bool
+            | TyKind::Byte
+            | TyKind::Pointer(_)
+            | TyKind::CFn(..)
+            | TyKind::Error => return None,
+            TyKind::CArray(element, _) => return self.c_type_error(*element),
+            TyKind::Option(inner) if self.types.is_address(*inner) => return None,
+            TyKind::Adt(id) => match self.types.foreign.get(id) {
+                Some(layout) if !layout.opaque => return None,
+                Some(_) => "an opaque C type has no size; pass a `Pointer` to it".into(),
+                None => "only an `extern type` is laid out as C lays out a struct".into(),
+            },
+            TyKind::String => "text crosses as `ffi.CString`".into(),
+            TyKind::Array(element) => format!("pass a `Pointer[{}]` to its elements", self.types.display(*element)),
+            TyKind::Char => "a character crosses as `UInt32`".into(),
+            TyKind::Fn(..) => "a function crosses as `extern fn(...)`".into(),
+            TyKind::Option(_) => {
+                "only an option of a pointer or of an `extern fn(...)` crosses, as a null address for `none`".into()
+            }
+            _ => "only numbers, `Bool`, `Byte`, pointers, `extern fn(...)` and `extern type`s do".into(),
         })
     }
 
@@ -720,6 +871,7 @@ impl Checker<'_> {
             name: "Display.display".into(),
             defaults: Vec::new(),
             is_unsafe: false,
+            foreign: false,
         };
         let display = TraitMethod { name: "display".into(), signature, default: None };
         self.traits.push(TraitDef { name: "Display".into(), self_param, params: Vec::new(), methods: vec![display] });
@@ -739,6 +891,7 @@ impl Checker<'_> {
             name: "Iterator.next".into(),
             defaults: Vec::new(),
             is_unsafe: false,
+            foreign: false,
         };
         let next = TraitMethod { name: "next".into(), signature, default: None };
         self.traits.push(TraitDef { name: "Iterator".into(), self_param, params: vec![element], methods: vec![next] });
@@ -821,6 +974,18 @@ impl Checker<'_> {
             self.types.handle(handle, Ty::UNIT);
         }
         for ty in [Ty::STRING, self.types.intern(TyKind::Array(Ty::BYTE))] {
+            self.types.intern(TyKind::Option(ty));
+        }
+        // What `std.ffi` exposes through `std.internal.memory`: C's `void`,
+        // which only a pointer refers to, and C strings.
+        let (id, void) = self.types.declare_adt("ffi.Void".into());
+        self.types.foreign.insert(id, crate::types::CLayout { opaque: true, ..Default::default() });
+        self.void = void;
+        let (id, c_string) = self.types.declare_adt("ffi.CString".into());
+        let bytes = self.types.intern(TyKind::Pointer(Ty::BYTE));
+        self.types.define_adt(id, AdtKind::Newtype(bytes));
+        self.c_string = c_string;
+        for ty in [c_string, bytes, self.types.intern(TyKind::Pointer(void))] {
             self.types.intern(TyKind::Option(ty));
         }
     }
@@ -1041,6 +1206,8 @@ impl Checker<'_> {
             (Some(ModuleName::Module(StdModule::InternalJson)), "NativeWriter") => {
                 self.types.lookup(&TyKind::Handle(Handle::JsonWriter, Ty::UNIT))
             }
+            (Some(ModuleName::Module(StdModule::InternalMemory)), "CString") => Some(self.c_string),
+            (Some(ModuleName::Module(StdModule::InternalMemory)), "Void") => Some(self.void),
             (Some(ModuleName::Module(StdModule::Process)), name) => {
                 let types = self.process?;
                 match name {
@@ -1128,7 +1295,7 @@ impl Checker<'_> {
                     decl.public,
                     match &decl.body {
                         ast::TypeBody::Record(fields) => fields.iter().map(|f| f.private).collect(),
-                        ast::TypeBody::Newtype(_) => Vec::new(),
+                        ast::TypeBody::Newtype(_) | ast::TypeBody::Opaque => Vec::new(),
                     },
                 )),
                 ast::Item::Enum(decl) => Some((decl.module, decl.public, Vec::new())),
@@ -1163,6 +1330,11 @@ impl Checker<'_> {
                 ast::Item::Enum(decl) => &decl.generics,
                 _ => unreachable!(),
             };
+            if let ast::Item::Type(decl) = item
+                && !self.c_type_declaration(decl)
+            {
+                continue;
+            }
             if !generics.is_empty() {
                 if let ast::Item::Type(ast::TypeDecl { body: ast::TypeBody::Newtype(_), .. }) = item {
                     self.diags.unsupported(name.span, "generic newtypes");
@@ -1175,6 +1347,12 @@ impl Checker<'_> {
                 continue;
             }
             let (id, ty) = self.types.declare_adt(name.name.clone());
+            if let ast::Item::Type(decl) = item
+                && decl.foreign
+            {
+                let layout = self.c_layout(decl);
+                self.types.foreign.insert(id, layout);
+            }
             self.declare_type_name(name, TypeName::Nominal(ty));
             if let ast::Item::Type(ast::TypeDecl { body: ast::TypeBody::Newtype(_), .. }) = item {
                 self.declare_module_name(name, ModuleName::Newtype(ty));
@@ -1301,9 +1479,13 @@ impl Checker<'_> {
                 ast::Item::Type(ast::TypeDecl { body: ast::TypeBody::Newtype(inner), .. }) => {
                     AdtKind::Newtype(self.resolve_type(inner))
                 }
+                ast::Item::Type(ast::TypeDecl { body: ast::TypeBody::Record(fields), foreign: true, .. }) => {
+                    AdtKind::Record(self.c_fields(fields))
+                }
                 ast::Item::Type(ast::TypeDecl { body: ast::TypeBody::Record(fields), .. }) => {
                     AdtKind::Record(self.field_decls(fields))
                 }
+                ast::Item::Type(ast::TypeDecl { body: ast::TypeBody::Opaque, .. }) => AdtKind::Record(Vec::new()),
                 ast::Item::Enum(decl) => {
                     let mut seen = HashSet::new();
                     let mut variants = Vec::new();
@@ -1326,6 +1508,96 @@ impl Checker<'_> {
                 _ => unreachable!(),
             }
         }
+    }
+
+    /// Whether a type declaration is well formed as to C: an `extern type`
+    /// is a struct or opaque, without type parameters, and only it takes
+    /// `@packed` or `@align(n)`.
+    fn c_type_declaration(&mut self, decl: &ast::TypeDecl) -> bool {
+        if !decl.foreign {
+            if let Some(annotation) = decl.annotations.first() {
+                let message = format!(
+                    "`@{}` lays out a C struct: declare it as `extern type {} = {{ ... }}`",
+                    annotation.name.name, decl.name.name
+                );
+                self.diags.error("E1704", annotation.span, message);
+            }
+            return true;
+        }
+        if let Some(generic) = decl.generics.first() {
+            self.diags.error("E1704", generic.name.span, "an `extern type` takes no type parameters: C has none");
+            return false;
+        }
+        if let ast::TypeBody::Newtype(inner) = &decl.body {
+            let message = "an `extern type` is a C struct, `= { field: Type, ... }`, or opaque, without `=`; C's other types are aliases in `std.ffi`";
+            self.diags.error("E1704", inner.span, message);
+            return false;
+        }
+        true
+    }
+
+    /// The layout of an `extern type` from `@packed` and `@align(n)`.
+    fn c_layout(&mut self, decl: &ast::TypeDecl) -> crate::types::CLayout {
+        let mut layout =
+            crate::types::CLayout { opaque: matches!(decl.body, ast::TypeBody::Opaque), ..Default::default() };
+        for annotation in &decl.annotations {
+            match (annotation.name.name.as_str(), &annotation.argument) {
+                _ if layout.opaque => {
+                    let message = "an opaque C type has no layout: C alone knows it";
+                    self.diags.error("E1704", annotation.span, message);
+                }
+                ("packed", None) => layout.packed = true,
+                ("align", Some(ast::AnnotationArg::Int(align))) if align.is_power_of_two() && *align <= 4096 => {
+                    layout.align = *align as u32
+                }
+                ("align", _) => {
+                    let message = "`@align` takes a power of two up to 4096: `@align(16)`";
+                    self.diags.error("E1704", annotation.span, message);
+                }
+                (name, _) => {
+                    let message =
+                        format!("unknown annotation `@{name}`; an `extern type` takes `@packed` and `@align(n)`");
+                    self.diags.error("E1001", annotation.span, message);
+                }
+            }
+        }
+        layout
+    }
+
+    /// The fields of a C struct: types that cross to C, and `@count(n)`
+    /// arrays of them stored in place.
+    fn c_fields(&mut self, fields: &[ast::FieldDecl]) -> Vec<Field> {
+        let mut seen = HashSet::new();
+        let mut resolved = Vec::new();
+        for field in fields {
+            if !seen.insert(field.name.name.as_str()) {
+                let message = format!("field `{}` is declared more than once", field.name.name);
+                self.diags.error("E1002", field.name.span, message);
+            }
+            let mut ty = self.resolve_type(&field.ty);
+            if !self.require_c_type(ty, field.ty.span) {
+                ty = Ty::ERROR;
+            }
+            for annotation in &field.annotations {
+                match (annotation.name.name.as_str(), &annotation.argument) {
+                    ("count", Some(ast::AnnotationArg::Int(count))) if *count > 0 && *count <= u32::MAX as u64 => {
+                        ty = self.types.intern(TyKind::CArray(ty, *count as u32));
+                    }
+                    ("count", _) => {
+                        let message = "`@count` takes how many elements the C array has: `@count(16)`";
+                        self.diags.error("E1704", annotation.span, message);
+                    }
+                    (name, _) => {
+                        let message = format!(
+                            "unknown annotation `@{name}`; a field of an `extern type` takes `@count(n)`, for a C array"
+                        );
+                        self.diags.error("E1001", annotation.span, message);
+                    }
+                }
+            }
+            resolved.push(Field { name: field.name.name.clone(), ty });
+        }
+        resolved
     }
 
     fn field_decls(&mut self, fields: &[ast::FieldDecl]) -> Vec<Field> {
@@ -1568,6 +1840,7 @@ impl Checker<'_> {
             name,
             defaults: Vec::new(),
             is_unsafe: f.is_unsafe,
+            foreign: false,
         }
     }
 
@@ -2513,7 +2786,41 @@ impl Checker<'_> {
                 self.diags.error("E0004", t.span, "`~Copy` only appears in a list of bounds");
                 Ty::ERROR
             }
-            ast::TypeKind::Fn { params, modes, variadic, result, is_unsafe } => {
+            ast::TypeKind::Fn { params, modes, variadic, result, is_unsafe: _, is_extern: true } => {
+                // The address of a C function: what crosses to C, by value.
+                let mut types = Vec::new();
+                for param in params {
+                    let ty = self.resolve_type(param);
+                    self.require_c_type(ty, param.span);
+                    types.push(ty);
+                }
+                if let Some(mode) = modes.iter().find(|&&m| m != ast::Mode::Value) {
+                    let message = format!("C takes its arguments by value: remove `{}`", mode.keyword());
+                    self.diags.error("E1704", t.span, message);
+                }
+                // C's `...` has a mode and no type.
+                if *variadic && modes.len() == params.len() {
+                    let message = "C's variable arguments are a last `...`, without a type";
+                    self.diags.error("E1704", t.span, message);
+                }
+                let result = match result {
+                    Some(written) => {
+                        let ty = self.resolve_type(written);
+                        if ty != Ty::UNIT && ty != Ty::NEVER {
+                            self.require_c_type(ty, written.span);
+                        }
+                        ty
+                    }
+                    None => Ty::UNIT,
+                };
+                self.types.intern(TyKind::CFn(types, result, *variadic))
+            }
+            ast::TypeKind::Fn { params, modes, variadic, result, is_unsafe, is_extern: false } => {
+                if modes.len() > params.len() {
+                    let message = "C's `...` ends only an `extern fn(...)`; a Tondo variadic parameter is `...T`";
+                    self.diags.error("E1102", t.span, message);
+                    return Ty::ERROR;
+                }
                 let mut types: Vec<Ty> = params.iter().map(|p| self.resolve_type(p)).collect();
                 if *variadic && let Some(last) = types.last_mut() {
                     *last = self.types.intern(TyKind::Array(*last));
@@ -2646,11 +2953,13 @@ impl Checker<'_> {
 
     /// Checks moves and obligations (8.10) once the body is typed.
     fn ownership(&mut self, function: &mut hir::Function, params: &[Option<ast::Mode>]) {
-        let (signatures, traits) = (&self.signatures, &self.traits);
+        let (signatures, traits, externs) = (&self.signatures, &self.traits, &self.externs);
         let modes = |callee: Callee| match callee {
             Callee::Fn(id) => signatures.get(id.0 as usize).map(|s| s.modes.clone()).unwrap_or_default(),
             Callee::Trait(id, index) => traits[id.0 as usize].methods[index as usize].signature.modes.clone(),
             Callee::Std(function) => function.modes(),
+            // C borrows what it receives.
+            Callee::Extern(id) => vec![ast::Mode::Ref; externs[id as usize].params.len()],
         };
         // The parameter modes of the type parameters bound by `Call...`.
         let bound_modes: HashMap<Ty, Vec<ast::Mode>> = self
@@ -2795,7 +3104,19 @@ impl Checker<'_> {
         is_unsafe: bool,
         span: Span,
     ) -> hir::Expr {
-        let expected = expected.and_then(|t| self.callable(t));
+        // A closure that C calls takes its parameter types from the
+        // `extern fn(...)` expected.
+        let expected = expected.and_then(|t| match self.types.kind(t).clone() {
+            TyKind::CFn(params, result, _) => Some(Callable {
+                modes: vec![ast::Mode::Value; params.len()],
+                params,
+                result,
+                variadic: false,
+                mutates: false,
+                is_unsafe: false,
+            }),
+            _ => self.callable(t),
+        });
         let mut params = Vec::new();
         let mut modes = Vec::new();
         let mut variadic = false;
@@ -3191,6 +3512,17 @@ impl Checker<'_> {
             );
             self.diags.error("E1701", method.span, message);
         }
+        if let Some(target) = target
+            && matches!(method.name.as_str(), "read" | "write" | "offset")
+            && self.types.c_layout(target).is_some_and(|l| l.opaque)
+        {
+            let message = format!(
+                "{} is opaque: C alone knows its size, so only C reads, writes or steps over it",
+                self.display(target)
+            );
+            self.diags.error("E1703", method.span, message);
+            return Self::error_expr(span);
+        }
         let generic = matches!(method.name.as_str(), "cast" | "toPointer");
         let ty_arg = match (generic, types.as_slice()) {
             (true, [ty]) => Some(*ty),
@@ -3269,6 +3601,7 @@ impl Checker<'_> {
             hir::NativeTy::IoReader => self.types.handle(Handle::Reader, Ty::UNIT),
             hir::NativeTy::IoWriter => self.types.handle(Handle::Writer, Ty::UNIT),
             hir::NativeTy::BytePointer => self.types.intern(TyKind::Pointer(Ty::BYTE)),
+            hir::NativeTy::Bytes => self.types.intern(TyKind::Array(Ty::BYTE)),
         }
     }
 
@@ -4802,7 +5135,8 @@ impl Checker<'_> {
         base_span: Span,
     ) -> Option<(LocalId, Vec<hir::PlaceStep>, Ty)> {
         let (local, mut path, ty) = base;
-        let (TyKind::Array(element) | TyKind::Deque(element)) = *self.types.kind(ty) else {
+        let (TyKind::Array(element) | TyKind::Deque(element) | TyKind::CArray(element, _)) = *self.types.kind(ty)
+        else {
             let message = if ty == Ty::STRING {
                 "a `String` is immutable: build a new one, for example with interpolation".to_string()
             } else {
@@ -5393,13 +5727,29 @@ impl Checker<'_> {
                 return value;
             }
         }
+        // A `String` passes to C as a copy that ends with a zero byte.
+        if self.c_arguments
+            && value.ty == Ty::STRING
+            && (expected == self.c_string || self.types.lookup(&TyKind::Option(self.c_string)) == Some(expected))
+        {
+            return value;
+        }
+        let value = match self.implicit(value, expected) {
+            Ok(converted) => return converted,
+            Err(value) => value,
+        };
+        if let TyKind::CFn(params, result, variadic) = self.types.kind(expected).clone() {
+            return self.callback(value, (params, result, variadic), expected);
+        }
         // A value of a member's exact type is injected into a union (9.5).
         if let Some(member) = self.types.members(expected).and_then(|m| m.iter().position(|&t| t == value.ty)) {
             let span = value.span;
             return Self::mk(hir::ExprKind::Variant(member as u32, vec![(0, value)]), expected, span);
         }
         if let TyKind::Option(inner) = *self.types.kind(expected)
-            && (value.ty == inner || self.types.members(inner).is_some_and(|m| m.contains(&value.ty)))
+            && (value.ty == inner
+                || self.types.members(inner).is_some_and(|m| m.contains(&value.ty))
+                || self.converts(value.ty, inner))
         {
             let span = value.span;
             let value = self.coerce(value, inner);
@@ -5414,9 +5764,26 @@ impl Checker<'_> {
                 TyKind::Result(ok, _) | TyKind::Option(ok) => ok == expected,
                 _ => false,
             };
+            let narrowed = self.conversion_checked(value.ty, expected);
             let message = match value.kind {
                 hir::ExprKind::Int(literal) if expected == Ty::BYTE && (0..256).contains(&literal) => {
                     format!("an integer literal is not a `Byte`: write `Byte({literal}u8)`")
+                }
+                _ if narrowed.is_some() && expected != Ty::BYTE && value.ty != Ty::BYTE => {
+                    let text = self.sources.slice(value.span);
+                    let target = self.types.display(expected);
+                    match narrowed {
+                        Some(true) => format!(
+                            "expected {}, found {}, which may not fit: convert it with `{target}({text})?`, or handle the error with `match`",
+                            self.display(expected),
+                            self.display(value.ty)
+                        ),
+                        _ => format!(
+                            "expected {}, found {}: convert it with `{target}({text})`",
+                            self.display(expected),
+                            self.display(value.ty)
+                        ),
+                    }
                 }
                 _ if wrapped => format!(
                     "expected {}, found {}: add `?` to pass the failure on, or handle it with `match`",
@@ -5428,6 +5795,90 @@ impl Checker<'_> {
             self.diags.error("E1102", value.span, message);
         }
         value
+    }
+
+    /// The conversions that never lose information and so need no syntax:
+    /// a number to a wider one of its kind (8.6), any pointer to a
+    /// `Pointer[ffi.Void]`, and between `ffi.CString` and `Pointer[Byte]`.
+    fn implicit(&mut self, value: hir::Expr, expected: Ty) -> Result<hir::Expr, hir::Expr> {
+        if !self.converts(value.ty, expected) {
+            return Err(value);
+        }
+        let span = value.span;
+        let kind = match self.types.kind(expected) {
+            TyKind::Int(_) | TyKind::Float(_) => hir::ExprKind::Convert(Box::new(value)),
+            TyKind::Array(_) | TyKind::CArray(..) => hir::ExprKind::Fixed(Box::new(value)),
+            _ => hir::ExprKind::Retype(Box::new(value)),
+        };
+        Ok(Self::mk(kind, expected, span))
+    }
+
+    /// Whether a value of `from` becomes a `to` implicitly (`implicit`).
+    fn converts(&self, from: Ty, to: Ty) -> bool {
+        if from == to {
+            return false;
+        }
+        let byte_pointer = self.types.lookup(&TyKind::Pointer(Ty::BYTE));
+        match (self.types.kind(from), self.types.kind(to)) {
+            (TyKind::Int(a), TyKind::Int(b)) => a.min() >= b.min() && a.max() <= b.max(),
+            (TyKind::Float(_), TyKind::Float(_)) => to == Ty::F64,
+            (TyKind::Pointer(_), TyKind::Pointer(target)) => *target == self.void,
+            (TyKind::Array(a), TyKind::CArray(b, _)) | (TyKind::CArray(a, _), TyKind::Array(b)) => a == b,
+            _ if from == self.c_string => {
+                Some(to) == byte_pointer || to == self.types.lookup(&TyKind::Pointer(self.void)).unwrap_or(Ty::ERROR)
+            }
+            _ if to == self.c_string => Some(from) == byte_pointer,
+            _ => false,
+        }
+    }
+
+    /// A named function, or a closure without captures, as the address of
+    /// a C function that runs it (FFI): C passes no context, so a function
+    /// that needs one takes it through a `Pointer[ffi.Void]`.
+    fn callback(
+        &mut self,
+        value: hir::Expr,
+        (params, result, variadic): (Vec<Ty>, Ty, bool),
+        expected: Ty,
+    ) -> hir::Expr {
+        let span = value.span;
+        if self.types.has_error(value.ty) || value.ty == Ty::NEVER {
+            return value;
+        }
+        let signature = match self.types.kind(value.ty).clone() {
+            TyKind::Fn(p, r, v, modes, _) if matches!(value.kind, hir::ExprKind::FnValue(..)) => {
+                Some((p, r, v, modes, None))
+            }
+            _ => self.types.closure(value.ty).map(|(_, _, info)| {
+                let captures = self.types.components(value.ty).map_or(0, |c| c.len());
+                (info.params, info.result, info.variadic, info.modes, Some(captures))
+            }),
+        };
+        let Some((p, r, v, modes, captures)) = signature else {
+            let message = format!(
+                "{} cannot become {}: only a named function or a closure without captures can, since C keeps no captures",
+                self.display(value.ty),
+                self.display(expected)
+            );
+            self.diags.error("E1705", span, message);
+            return Self::error_expr(span);
+        };
+        let found = self.types.intern(TyKind::Fn(p.clone(), r, v, modes.clone(), false));
+        if variadic || v || p != params || r != result || modes.iter().any(|&m| m != ast::Mode::Value) {
+            let message = format!(
+                "expected {}, found {}: a function C calls takes and returns exactly its types",
+                self.display(expected),
+                self.types.display(found)
+            );
+            self.diags.error("E1102", span, message);
+            return Self::error_expr(span);
+        }
+        if captures.is_some_and(|c| c > 0) {
+            let message = "a closure that C calls cannot capture values, since C keeps no captures; pass what it needs through a `Pointer[ffi.Void]` made with `ffi.context(value)`";
+            self.diags.error("E1705", span, message);
+            return Self::error_expr(span);
+        }
+        Self::mk(hir::ExprKind::Callback(Box::new(value), FnId(u32::MAX)), expected, span)
     }
 
     fn require_int(&mut self, value: &hir::Expr) {
@@ -5510,7 +5961,9 @@ impl Checker<'_> {
                     let index = self.coerce(index, Ty::INT);
                     return Self::mk(hir::ExprKind::StrOp(hir::StrOp::At, vec![base, index]), Ty::CHAR, span);
                 }
-                let (TyKind::Array(element) | TyKind::Deque(element)) = *self.types.kind(base.ty) else {
+                let (TyKind::Array(element) | TyKind::Deque(element) | TyKind::CArray(element, _)) =
+                    *self.types.kind(base.ty)
+                else {
                     return self.not_indexable(base, span);
                 };
                 let index = self.expr(cx, index, Some(Ty::INT));
@@ -5714,6 +6167,7 @@ impl Checker<'_> {
             }
             (TyKind::Option(a), TyKind::Option(b))
             | (TyKind::Array(a), TyKind::Array(b))
+            | (TyKind::Pointer(a), TyKind::Pointer(b))
             | (TyKind::Deque(a), TyKind::Deque(b))
             | (TyKind::Set(a), TyKind::Set(b)) => self.unify(inference, a, b),
             (TyKind::Handle(h, a), TyKind::Handle(k, b)) if h == k => self.unify(inference, a, b),
@@ -5723,7 +6177,10 @@ impl Checker<'_> {
                 self.unify(inference, a, c);
                 self.unify(inference, b, d);
             }
-            (TyKind::Fn(params, result, ..), TyKind::Fn(values, value, ..)) if params.len() == values.len() => {
+            (TyKind::Fn(params, result, ..), TyKind::Fn(values, value, ..))
+            | (TyKind::CFn(params, result, _), TyKind::CFn(values, value, _))
+                if params.len() == values.len() =>
+            {
                 for (param, value) in params.into_iter().zip(values) {
                     self.unify(inference, param, value);
                 }
@@ -5844,6 +6301,12 @@ impl Checker<'_> {
                 return Self::error_expr(span);
             }
         };
+        if self.types.c_layout(ty).is_some_and(|l| l.opaque) {
+            let message =
+                format!("{} is opaque: only C makes one, and Tondo holds a `Pointer` to it", self.display(ty));
+            self.diags.error("E1703", name.span, message);
+            return Self::error_expr(span);
+        }
         let Some(fields) = self.record_fields(ty, name.span) else {
             return Self::error_expr(span);
         };
@@ -6814,6 +7277,14 @@ impl Checker<'_> {
         expected: Option<Ty>,
         span: Span,
     ) -> hir::Expr {
+        // `value.cast[U]()` of any expression, such as a call's result.
+        if let ast::ExprKind::Field(receiver, method) = &base.kind
+            && matches!(method.name.as_str(), "cast" | "toPointer")
+        {
+            let receiver = self.expr(cx, receiver, None);
+            let types: Vec<Ty> = type_args.iter().map(|t| self.resolve_type(t)).collect();
+            return self.raw(cx, receiver, method, types, args, span);
+        }
         let ast::ExprKind::Path(segments) = &base.kind else {
             return self.unsupported_expr(span, "generic calls");
         };
@@ -6861,6 +7332,43 @@ impl Checker<'_> {
             && self.lookup(cx, "channel").is_none()
         {
             return self.channel(cx, type_args, args, span);
+        }
+        // `memory.take[T](pointer)`: the value, moved out of the memory.
+        if let [module, "take"] = names.as_slice()
+            && self.lookup(cx, module).is_none()
+            && let Some(ModuleName::Module(StdModule::InternalMemory)) = self.names.get(*module)
+        {
+            let ([ty], [arg]) = (type_args, args) else {
+                self.diags.error("E1104", span, "`take` takes one type argument and a pointer");
+                return Self::error_expr(span);
+            };
+            let ty = self.resolve_type(ty);
+            let pointer = self.types.intern(TyKind::Pointer(ty));
+            let value = self.expr(cx, &arg.value, Some(pointer));
+            let value = self.coerce(value, pointer);
+            if !cx.unsafe_region {
+                self.diags.error("E1701", span, "`take` is a raw operation: write it inside `unsafe { ... }`");
+            }
+            return Self::mk(hir::ExprKind::Pointer(hir::PointerOp::Take, vec![value]), ty, span);
+        }
+        // `memory.sizeOf[T]()` and `memory.alignOf[T]()`, which `std.ffi` exposes.
+        if let [module, query @ ("sizeOf" | "alignOf")] = names.as_slice()
+            && self.lookup(cx, module).is_none()
+            && let Some(ModuleName::Module(StdModule::InternalMemory)) = self.names.get(*module)
+        {
+            let [ty] = type_args else {
+                self.diags.error("E1104", span, format!("`{query}` takes one type argument"));
+                return Self::error_expr(span);
+            };
+            if !args.is_empty() {
+                return self.arity_error(span, 0, args.len());
+            }
+            let ty = self.resolve_type(ty);
+            if self.types.c_layout(ty).is_some_and(|l| l.opaque) {
+                let message = format!("{} is opaque: C alone knows its size", self.display(ty));
+                self.diags.error("E1703", span, message);
+            }
+            return Self::mk(hir::ExprKind::Layout(ty, *query == "alignOf"), Ty::INT, span);
         }
         if let [module, kind, "new"] = names.as_slice()
             && self.lookup(cx, module).is_none()
@@ -7300,6 +7808,9 @@ impl Checker<'_> {
         if callee.ty == Ty::ERROR {
             return Self::error_expr(span);
         }
+        if let TyKind::CFn(params, result, variadic) = self.types.kind(callee.ty).clone() {
+            return self.c_value_call(cx, callee, (params, result, variadic), args, expected, span);
+        }
         let Some(Callable { params, result, variadic, mutates, modes, is_unsafe }) = self.callable(callee.ty) else {
             let message = format!("{} cannot be called", self.display(callee.ty));
             self.diags.error("E1102", callee.span, message);
@@ -7326,6 +7837,7 @@ impl Checker<'_> {
             name: "this function".into(),
             defaults: Vec::new(),
             is_unsafe: false,
+            foreign: false,
         };
         // A placeholder callee; the checked arguments are what matters.
         let target = CallTarget::new(Callee::Fn(FnId(u32::MAX)), signature, expected);
@@ -7344,6 +7856,102 @@ impl Checker<'_> {
         let call = Self::mk(hir::ExprKind::CallValue(Box::new(read), values), result, span);
         let block = hir::Block { stmts: vec![hir::Stmt::Let(local, callee)], tail: Some(Box::new(call)), ty: result };
         Self::mk(hir::ExprKind::Block(block), result, span)
+    }
+
+    /// A call of a C function (FFI), inside `unsafe`: its arguments as an
+    /// ordinary call takes them, and after them those of C's `...`.
+    fn extern_call(
+        &mut self,
+        cx: &mut FnCx,
+        id: u32,
+        args: &[ast::Arg],
+        expected: Option<Ty>,
+        span: Span,
+    ) -> hir::Expr {
+        let declared = self.externs[id as usize].clone();
+        let fixed = declared.params.len();
+        let (args, extra) =
+            if declared.variadic && args.len() > fixed { args.split_at(fixed) } else { (args, &[][..]) };
+        if declared.variadic
+            && let Some(arg) = args.iter().chain(extra).find(|a| a.name.is_some())
+        {
+            let message = "a C function with `...` takes its arguments by position: remove the name";
+            self.diags.error("E1102", arg.span, message);
+            return Self::error_expr(span);
+        }
+        let signature = Signature {
+            modes: vec![ast::Mode::Value; fixed],
+            names: self.extern_names[id as usize].clone(),
+            is_unsafe: true,
+            foreign: true,
+            name: declared.name.clone(),
+            ..Signature::simple(declared.params, declared.result)
+        };
+        let target = CallTarget::new(Callee::Extern(id), signature, expected);
+        let mut call = self.call_signature(cx, target, None, args, span);
+        let values: Vec<hir::Expr> = extra.iter().map(|arg| self.c_variadic_argument(cx, arg)).collect();
+        if let hir::ExprKind::Call(_, _, args) = &mut call.kind {
+            args.extend(values);
+        }
+        call
+    }
+
+    /// An argument of C's `...`: a number, `Bool`, `Byte`, pointer or
+    /// text, which passes as a `ffi.CString`.
+    fn c_variadic_argument(&mut self, cx: &mut FnCx, arg: &ast::Arg) -> hir::Expr {
+        let value = self.expr(cx, &arg.value, None);
+        if arg.spread || arg.mode != ast::Mode::Value {
+            self.diags.error("E1102", arg.span, "C's `...` takes values: remove the keyword or the spread");
+            return value;
+        }
+        let repr = self.types.repr(value.ty);
+        if repr == Ty::STRING {
+            return value;
+        }
+        let problem = match self.types.kind(repr) {
+            TyKind::Adt(id) if self.types.foreign.contains_key(id) => {
+                Some("C's `...` takes no struct by value; pass a `Pointer` to it".to_string())
+            }
+            _ => self.c_type_error(value.ty),
+        };
+        if let Some(reason) = problem {
+            let message = format!("{} cannot cross to C: {reason}", self.display(value.ty));
+            self.diags.error("E1703", value.span, message);
+        }
+        value
+    }
+
+    /// A call through an `extern fn(...)` value, inside `unsafe`.
+    fn c_value_call(
+        &mut self,
+        cx: &mut FnCx,
+        callee: hir::Expr,
+        (params, result, variadic): (Vec<Ty>, Ty, bool),
+        args: &[ast::Arg],
+        expected: Option<Ty>,
+        span: Span,
+    ) -> hir::Expr {
+        if variadic {
+            let message =
+                "call a C function with `...` by its `extern fn` declaration, which passes its extra arguments";
+            self.diags.error("E1704", span, message);
+            return Self::error_expr(span);
+        }
+        if let Some(arg) = args.iter().find(|a| a.name.is_some()) {
+            self.diags.error("E1102", arg.span, "a call through a function value takes positional arguments");
+            return Self::error_expr(span);
+        }
+        let signature = Signature {
+            names: (0..params.len()).map(|i| format!("argument{}", i + 1)).collect(),
+            is_unsafe: true,
+            foreign: true,
+            name: "this C function".into(),
+            ..Signature::simple(params, result)
+        };
+        let target = CallTarget::new(Callee::Fn(FnId(u32::MAX)), signature, expected);
+        let call = self.call_signature(cx, target, None, args, span);
+        let hir::ExprKind::Call(_, _, values) = call.kind else { return call };
+        Self::mk(hir::ExprKind::CallValue(Box::new(callee), values), call.ty, span)
     }
 
     /// Whether a value expression reads a place.
@@ -7821,6 +8429,16 @@ impl Checker<'_> {
         }
         match self.names.get(&first.name) {
             Some(ModuleName::Fn(id)) if segments.len() == 1 => self.fn_value(*id, Vec::new(), expected, span),
+            Some(&ModuleName::Extern(id)) if segments.len() == 1 => {
+                let declared = &self.externs[id as usize];
+                let (params, result, variadic) = (declared.params.clone(), declared.result, declared.variadic);
+                let ty = self.types.intern(TyKind::CFn(params, result, variadic));
+                Self::mk(hir::ExprKind::ExternFn(id), ty, span)
+            }
+            Some(ModuleName::Extern(_)) => {
+                self.diags.error("E1102", span, "a function has no fields");
+                Self::error_expr(span)
+            }
             Some(ModuleName::Fn(_)) => {
                 self.diags.error("E1102", span, "a function has no fields");
                 Self::error_expr(span)
@@ -7888,6 +8506,13 @@ impl Checker<'_> {
             }
             ast::ExprKind::Generic { base, args: type_args } => {
                 return self.generic_call(cx, base, type_args, args, expected, span);
+            }
+            // `call().cast[U]()`: written after a call, the type argument
+            // parses as an index.
+            ast::ExprKind::Index { base, index } if matches!(&base.kind, ast::ExprKind::Field(_, m) if m.name == "cast" || m.name == "toPointer") => {
+                if let Some(ty) = Self::type_of_expr(index) {
+                    return self.generic_call(cx, base, &[ty], args, expected, span);
+                }
             }
             _ => {}
         }
@@ -8092,6 +8717,7 @@ impl Checker<'_> {
                 let target = CallTarget::new(Callee::Fn(id), signature, expected);
                 self.call_signature(cx, target, None, args, span)
             }
+            ([_], Some(ModuleName::Extern(id))) => self.extern_call(cx, id, args, expected, span),
             ([_, member], Some(ModuleName::Module(StdModule::Console))) => {
                 // `print` and `println` only append to the output buffer and
                 // cannot fail; delivery errors surface through `flush` (19.1).
@@ -8359,10 +8985,17 @@ impl Checker<'_> {
         let CallTarget { callee, signature, explicit, prebound, expected } = target;
         let signature = &signature;
         if signature.is_unsafe && !cx.unsafe_region {
-            let message = format!(
-                "`{}` is `unsafe`: call it inside `unsafe {{ ... }}`, once its preconditions hold",
-                signature.name
-            );
+            let message = if signature.foreign {
+                format!(
+                    "`{}` is a C function: call it inside `unsafe {{ ... }}`, once its preconditions hold",
+                    signature.name
+                )
+            } else {
+                format!(
+                    "`{}` is `unsafe`: call it inside `unsafe {{ ... }}`, once its preconditions hold",
+                    signature.name
+                )
+            };
             self.diags.error("E1701", span, message);
         }
         let first = receiver.is_some() as usize;
@@ -8536,11 +9169,13 @@ impl Checker<'_> {
             self.diags.error("E1101", span, message);
             return Self::error_expr(span);
         }
+        let c_arguments = std::mem::replace(&mut self.c_arguments, signature.foreign);
         for (index, value) in values.iter_mut().enumerate() {
             let ty = self.types.subst(type_of(index), &inference.map);
             let raw = value.take().unwrap();
             *value = Some(self.finish_argument(cx, raw, ty, mode_of(index)));
         }
+        self.c_arguments = c_arguments;
         // Arguments with whether they are shared `ref` loans; a plain
         // `self` receiver is one.
         let lent = values.iter().enumerate().filter_map(|(i, v)| v.as_ref().map(|v| (v, mode_of(i) == ast::Mode::Ref)));
@@ -8930,8 +9565,18 @@ impl Checker<'_> {
         if self.number_leaf(left.ty).1 > 0 || self.number_leaf(right.ty).1 > 0 || left.ty == Ty::NEVER {
             return (left, right);
         }
-        let right = self.coerce(right, left.ty);
-        (left, right)
+        self.common(left, right)
+    }
+
+    /// Two operands of one type: the right one coerced to the left's, or
+    /// the narrower number widened to the other's (8.6).
+    fn common(&mut self, left: hir::Expr, right: hir::Expr) -> (hir::Expr, hir::Expr) {
+        if matches!(self.types.kind(left.ty), TyKind::Int(_) | TyKind::Float(_)) && self.converts(left.ty, right.ty) {
+            let ty = right.ty;
+            return (self.coerce(left, ty), right);
+        }
+        let ty = left.ty;
+        (left, self.coerce(right, ty))
     }
 
     /// The type of `left op right` for `+ - * / %`, lifted over arrays
@@ -9008,8 +9653,7 @@ impl Checker<'_> {
         } else {
             let left = self.expr(cx, left, expected);
             let right = self.expr(cx, right, Some(left.ty));
-            let right = if left.ty == Ty::NEVER { right } else { self.coerce(right, left.ty) };
-            (left, right)
+            if left.ty == Ty::NEVER { (left, right) } else { self.common(left, right) }
         }
     }
 
@@ -9070,7 +9714,7 @@ impl Checker<'_> {
                     return Self::mk(hir::ExprKind::Call(callee, Vec::new(), vec![left, right]), pipeline, span);
                 }
                 let right = self.expr(cx, right, Some(left.ty));
-                let right = if left.ty == Ty::NEVER { right } else { self.coerce(right, left.ty) };
+                let (left, right) = if left.ty == Ty::NEVER { (left, right) } else { self.common(left, right) };
                 let allowed =
                     matches!(self.types.kind(left.ty), TyKind::Int(_) | TyKind::Byte | TyKind::Error | TyKind::Never);
                 if !allowed {

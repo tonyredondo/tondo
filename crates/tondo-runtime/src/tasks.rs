@@ -15,6 +15,7 @@
 use super::{Glue, LIVE_OBJECTS, Str, flush_stdout, runtime_fault, tondo_rt_panic};
 use std::cell::Cell;
 use std::collections::BinaryHeap;
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
@@ -202,11 +203,17 @@ pub enum ResultKind {
 }
 
 /// The states of a task: it runs, it is switching out to wait, it waits,
-/// or it was notified before it could wait.
+/// or it was notified before it could wait; or it waits on its thread,
+/// since C frames on its stack keep it there.
 const RUNNING: u8 = 0;
 const PARKING: u8 = 1;
 const PARKED: u8 = 2;
 const NOTIFIED: u8 = 3;
+const PINNED: u8 = 4;
+
+/// Where tasks that wait on their thread are woken.
+static PINNED_LOCK: Mutex<()> = Mutex::new(());
+static PINNED_WAKE: Condvar = Condvar::new();
 
 pub(crate) struct Task {
     /// The stack pointer saved when the task is not running.
@@ -231,6 +238,17 @@ pub(crate) struct Task {
     pub(crate) held: Vec<(usize, bool)>,
     finished: bool,
     main: bool,
+    /// For a task that runs a callback for a thread of C, the call.
+    foreign: *const ForeignCall,
+}
+
+/// A callback a thread of C makes, which a task runs while the thread
+/// waits for it.
+struct ForeignCall {
+    inner: unsafe extern "C" fn(*mut u8),
+    frame: *mut u8,
+    done: Mutex<bool>,
+    finished: Condvar,
 }
 
 /// Notifies `wait` with operation `index` at `at`, unless another operation
@@ -272,6 +290,9 @@ struct Queue {
     /// Workers started, and how many wait for a task.
     workers: usize,
     idle: usize,
+    /// Workers started for others that were long in C, which retire once
+    /// those return.
+    surplus: usize,
 }
 
 unsafe impl Send for Queue {}
@@ -283,6 +304,7 @@ static QUEUE: Mutex<Queue> = Mutex::new(Queue {
     sequence: 0,
     workers: 1,
     idle: 0,
+    surplus: 0,
 });
 static READY: Condvar = Condvar::new();
 static STARTED: AtomicBool = AtomicBool::new(false);
@@ -328,13 +350,16 @@ fn notify_with(task: *mut Task, run: impl FnOnce(*mut Task)) {
     let state = unsafe { &(*task).state };
     loop {
         let current = state.load(Ordering::Acquire);
-        let next = if current == PARKED { RUNNING } else { NOTIFIED };
+        let next = if current == PARKED || current == PINNED { RUNNING } else { NOTIFIED };
         if current == NOTIFIED {
             return;
         }
         if state.compare_exchange(current, next, Ordering::AcqRel, Ordering::Acquire).is_ok() {
             if current == PARKED {
                 run(task);
+            } else if current == PINNED {
+                let _lock = PINNED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+                PINNED_WAKE.notify_all();
             }
             return;
         }
@@ -354,6 +379,21 @@ fn park() {
     }
     unsafe {
         let state = &(*task).state;
+        // With C frames on its stack the task cannot resume on another
+        // thread, so it waits on this one; the monitor may start another
+        // worker meanwhile.
+        let in_c = IN_C.with(|c| c.get());
+        if !in_c.is_null() && (*in_c).depth.load(Ordering::SeqCst) > 0 {
+            if state.compare_exchange(RUNNING, PINNED, Ordering::AcqRel, Ordering::Acquire).is_err() {
+                state.store(RUNNING, Ordering::Release);
+                return;
+            }
+            let mut lock = PINNED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            while state.load(Ordering::Acquire) != RUNNING {
+                lock = PINNED_WAKE.wait(lock).unwrap_or_else(|e| e.into_inner());
+            }
+            return;
+        }
         if state.compare_exchange(RUNNING, PARKING, Ordering::AcqRel, Ordering::Acquire).is_err() {
             state.store(RUNNING, Ordering::Release);
             return;
@@ -405,6 +445,11 @@ fn work(main: bool) -> i32 {
             loop {
                 if main && MAIN_DONE.load(Ordering::SeqCst) {
                     return MAIN_STATUS.load(Ordering::SeqCst) as i32;
+                }
+                if !main && queue.surplus > 0 {
+                    queue.surplus -= 1;
+                    queue.workers -= 1;
+                    return 0;
                 }
                 fire_timers(&mut queue);
                 if let Some(task) = queue.runnable.pop_front() {
@@ -479,12 +524,129 @@ fn start_workers() {
     let count = std::thread::available_parallelism().map_or(1, |n| n.get());
     queue().workers = count;
     for _ in 1..count {
+        start_worker();
+    }
+}
+
+fn start_worker() {
+    std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            work(false);
+        })
+        .unwrap_or_else(|_| runtime_fault("cannot start a worker thread"));
+}
+
+// ---------------------------------------------------------------------------
+// Calls of C
+// ---------------------------------------------------------------------------
+
+/// A worker's calls of C: how deeply it is inside them, and a count of
+/// entries and exits that changes whenever a call starts or ends.
+struct InC {
+    depth: AtomicUsize,
+    calls: AtomicUsize,
+    /// Whether another worker took this one's place during the current call.
+    replaced: AtomicBool,
+}
+
+thread_local! {
+    static IN_C: Cell<*const InC> = const { Cell::new(std::ptr::null()) };
+}
+
+/// Every worker that has called C, which the monitor watches.
+static CALLERS: Mutex<Vec<&'static InC>> = Mutex::new(Vec::new());
+static MONITOR: std::sync::OnceLock<std::thread::Thread> = std::sync::OnceLock::new();
+static MONITOR_ASLEEP: AtomicBool = AtomicBool::new(false);
+/// How often the monitor looks: a call still in C after one look and the
+/// next is long, and blocks its worker.
+const MONITOR_PERIOD: Duration = Duration::from_millis(1);
+
+#[inline(never)]
+fn in_c() -> &'static InC {
+    let current = IN_C.with(|c| c.get());
+    if !current.is_null() {
+        return unsafe { &*current };
+    }
+    let new: &'static InC = Box::leak(Box::new(InC {
+        depth: AtomicUsize::new(0),
+        calls: AtomicUsize::new(0),
+        replaced: AtomicBool::new(false),
+    }));
+    CALLERS.lock().unwrap_or_else(|e| e.into_inner()).push(new);
+    IN_C.with(|c| c.set(new));
+    new
+}
+
+/// Compiled code calls this before a C function: while the call lasts the
+/// worker runs nothing else, so the monitor may start another in its place.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_foreign_enter() {
+    let state = in_c();
+    state.calls.fetch_add(1, Ordering::SeqCst);
+    state.depth.fetch_add(1, Ordering::SeqCst);
+    let monitor = MONITOR.get_or_init(|| {
         std::thread::Builder::new()
-            .stack_size(256 * 1024)
-            .spawn(|| {
-                work(false);
-            })
-            .unwrap_or_else(|_| runtime_fault("cannot start a worker thread"));
+            .name("tondo-monitor".into())
+            .stack_size(64 * 1024)
+            .spawn(monitor)
+            .unwrap_or_else(|_| runtime_fault("cannot start the monitor thread"))
+            .thread()
+            .clone()
+    });
+    if MONITOR_ASLEEP.load(Ordering::SeqCst) && MONITOR_ASLEEP.swap(false, Ordering::SeqCst) {
+        monitor.unpark();
+    }
+}
+
+/// After a C function returns: a worker that was replaced meanwhile makes
+/// one worker retire.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_foreign_leave() {
+    let state = in_c();
+    state.calls.fetch_add(1, Ordering::SeqCst);
+    if state.depth.fetch_sub(1, Ordering::SeqCst) == 1 && state.replaced.swap(false, Ordering::SeqCst) {
+        queue().surplus += 1;
+        READY.notify_one();
+    }
+}
+
+/// Watches the workers in C: one still in the same call after a period
+/// blocks its tasks, so when tasks wait to run and no worker is idle,
+/// another worker starts in its place (as Go's runtime does). Sleeps while
+/// no worker is in C.
+fn monitor() {
+    let mut last: HashMap<usize, usize> = HashMap::new();
+    loop {
+        std::thread::sleep(MONITOR_PERIOD);
+        let callers: Vec<&'static InC> = CALLERS.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let mut busy = false;
+        for state in callers {
+            let key = state as *const InC as usize;
+            let calls = state.calls.load(Ordering::SeqCst);
+            if state.depth.load(Ordering::SeqCst) == 0 {
+                last.remove(&key);
+                continue;
+            }
+            busy = true;
+            if last.insert(key, calls) == Some(calls) && !state.replaced.load(Ordering::SeqCst) {
+                let mut queue = queue();
+                if !queue.runnable.is_empty() && queue.idle == 0 {
+                    state.replaced.store(true, Ordering::SeqCst);
+                    queue.workers += 1;
+                    drop(queue);
+                    start_worker();
+                }
+            }
+        }
+        if !busy {
+            MONITOR_ASLEEP.store(true, Ordering::SeqCst);
+            let callers = CALLERS.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            if callers.iter().all(|state| state.depth.load(Ordering::SeqCst) == 0) {
+                std::thread::park();
+            }
+            MONITOR_ASLEEP.store(false, Ordering::SeqCst);
+        }
     }
 }
 
@@ -494,7 +656,12 @@ extern "C" fn trampoline() -> ! {
     unsafe {
         let task = current();
         let (body, code, kind, join) = ((*task).body, (*task).code, (*task).kind, (*task).join);
-        if (*task).main {
+        if !(*task).foreign.is_null() {
+            let call = &*(*task).foreign;
+            (call.inner)(call.frame);
+            *call.done.lock().unwrap_or_else(|e| e.into_inner()) = true;
+            call.finished.notify_one();
+        } else if (*task).main {
             let main: unsafe extern "C" fn() -> i32 = std::mem::transmute(code);
             MAIN_STATUS.store(main() as usize, Ordering::SeqCst);
             end_detached();
@@ -555,7 +722,30 @@ fn new_task(stack: Stack, body: *mut u8, code: *const u8, kind: ResultKind, join
         held: Vec::new(),
         finished: false,
         main: join.is_null(),
+        foreign: std::ptr::null(),
     }))
+}
+
+/// Runs the body of a callback C made: on this worker when C called back
+/// inside a task, or as a new task while a thread of C waits for it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_callback(inner: unsafe extern "C" fn(*mut u8), frame: *mut u8) {
+    if !current().is_null() {
+        return unsafe { inner(frame) };
+    }
+    let call = ForeignCall { inner, frame, done: Mutex::new(false), finished: Condvar::new() };
+    let task =
+        new_task(task_stack(), std::ptr::null_mut(), std::ptr::null(), ResultKind::Nothing, std::ptr::null_mut());
+    unsafe {
+        (*task).main = false;
+        (*task).foreign = &call;
+    }
+    start_workers();
+    schedule(task);
+    let mut done = call.done.lock().unwrap_or_else(|e| e.into_inner());
+    while !*done {
+        done = call.finished.wait(done).unwrap_or_else(|e| e.into_inner());
+    }
 }
 
 /// Runs `tondo_main` as the first task on the calling thread, which becomes

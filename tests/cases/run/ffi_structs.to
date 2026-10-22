@@ -1,0 +1,128 @@
+// C structs: by value in registers, with floats and in place arrays;
+// by pointer; packed and aligned; opaque (FFI).
+import std.console
+import std.ffi
+
+extern type Division = {
+    quotient: ffi.CInt
+    remainder: ffi.CInt
+}
+
+extern type LongDivision = {
+    quotient: ffi.CLong
+    remainder: ffi.CLong
+}
+
+extern type Complex = {
+    real: Float
+    imaginary: Float
+}
+
+extern type Time = {
+    second: ffi.CInt
+    minute: ffi.CInt
+    hour: ffi.CInt
+    day: ffi.CInt
+    month: ffi.CInt
+    year: ffi.CInt
+    weekday: ffi.CInt
+    yearday: ffi.CInt
+    daylight: ffi.CInt
+    offset: ffi.CLong
+    zone: ffi.CString?
+}
+
+extern type Names = {
+    @count(65)
+    system: ffi.CChar
+    @count(65)
+    node: ffi.CChar
+    @count(65)
+    release: ffi.CChar
+    @count(65)
+    version: ffi.CChar
+    @count(65)
+    machine: ffi.CChar
+    @count(65)
+    domain: ffi.CChar
+}
+
+@packed
+extern type Packed = {
+    tag: ffi.CChar
+    value: ffi.CInt
+}
+
+@align(16)
+extern type Aligned = {
+    value: ffi.CInt
+}
+
+extern type File
+
+extern fn div(numerator: ffi.CInt, denominator: ffi.CInt): Division
+
+extern fn ldiv(numerator: ffi.CLong, denominator: ffi.CLong): LongDivision
+
+extern fn csqrt(value: Complex): Complex
+
+extern fn gmtime_r(time: Pointer[ffi.CLong], into: Pointer[Time]): Pointer[Time]?
+
+extern fn uname(into: Pointer[Names]): ffi.CInt
+
+extern fn fopen(path: ffi.CString, mode: ffi.CString): Pointer[File]?
+
+fn main() {
+    console.println(
+        "{ffi.sizeOf[Time]()} {ffi.sizeOf[Names]()} {ffi.sizeOf[Packed]()} {ffi.sizeOf[Aligned]()} {ffi.alignOf[Aligned]()}",
+    )
+    unsafe {
+        let d = div(17, 5)
+        let l = ldiv(-100000000000, 7)
+        let root = csqrt(Complex { real: -4.0, imaginary: 0.0 })
+        console.println(
+            "{d.quotient} {d.remainder} {l.quotient} {l.remainder} {root.real} {root.imaginary}",
+        )
+        let seconds = ffi.allocate[ffi.CLong]()
+        seconds.write(86400 * 365 + 3600 * 5)
+        let time = ffi.allocate[Time]()
+        match gmtime_r(seconds, time) {
+            some(t) => {
+                let value = t.read()
+                console.println(
+                    "{value.year + 1900}-{value.month + 1}-{value.day} {value.hour}h {value.weekday}",
+                )
+            }
+            none => console.println("no time")
+        }
+        let names = ffi.allocate[Names]()
+        let status = uname(names)
+        var copy = names.read()
+        console.println("{status} {ffi.fromCChars(copy.system)} {copy.system[0]}")
+        copy.system[0] = Byte(108u8)
+        let chars: Array[ffi.CChar] = copy.system
+        console.println("{ffi.fromCChars(chars)} {chars.length()}")
+        copy.node = ffi.toCChars("tondo", 65)
+        console.println("{ffi.fromCChars(copy.node)}")
+        let packed = ffi.allocate[Packed]()
+        packed.write(Packed { tag: Byte(1u8), value: 258 })
+        console.println("{ffi.bytes(packed.cast[Byte](), 5)}")
+        match fopen("/surely/missing/file", "r") {
+            some(_) => console.println("opened")
+            none => console.println("no file")
+        }
+        ffi.free(seconds)
+        ffi.free(time)
+        ffi.free(names)
+        ffi.free(packed)
+    }
+}
+
+// expect-stdout: 56 390 5 16 16
+// expect-stdout: 3 2 -14285714285 -5 0.0 2.0
+// expect-stdout: 1971-1-1 5h 5
+// expect-stdout: 0 Linux 76
+// expect-stdout: linux 65
+// expect-stdout: tondo
+// expect-stdout: [1, 2, 1, 0, 0]
+// expect-stdout: no file

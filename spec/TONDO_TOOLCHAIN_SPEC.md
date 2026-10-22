@@ -75,15 +75,23 @@ edition = "0.1"
 units = { path = "libs/units" }
 http = { git = "https://github.com/acme/http", tag = "v1.2.0" }
 zlib = { url = "https://example.com/zlib-1.0.tar.gz" }
+
+[native]
+libraries = ["sqlite3", "vendor/libz.a"]
 ~~~
 
 - `[package]` admite `name`, un identificador, y `edition`, cuyo único valor
   es `"0.1"`, el que se usa por defecto.
 - `[dependencies]` asocia a cada alias su fuente (sección 4).
+- `[native]` admite `libraries`: las librerías de C que el ejecutable enlaza
+  además de la del sistema, para las funciones que declaran sus `extern fn`
+  (16.16 del lenguaje). Un nombre se enlaza como `-lnombre`; una entrada con `/`
+  o que termina en `.a`, `.so` o `.dylib` es un archivo, relativo al
+  `tondo.toml`. El programa enlaza las de todos sus paquetes.
 - Toda otra tabla o clave es error, igual que una clave fuera de tabla.
 
-El archivo usa el subconjunto de TOML de tablas, strings, enteros y tablas en
-línea de strings.
+El archivo usa el subconjunto de TOML de tablas, strings, enteros, tablas en
+línea de strings y arrays en una línea.
 
 ## 4. Dependencias
 
@@ -178,8 +186,8 @@ usa `cc` para enlazar. Si falta una herramienta, el error lo dice. Con
 ## 7. Comandos
 
 ~~~text
-tondo run [<project>|<file.to>] [-- <argument>...]
-tondo build [<project>|<file.to>] [--output <path>]
+tondo run [<project>|<file.to>] [--link <library>]... [-- <argument>...]
+tondo build [<project>|<file.to>] [--output <path>] [--link <library>]...
 tondo check [<project>|<file.to>] [--json]
 tondo fmt [--check] <file.to>...
 tondo update [<project>] [<dependency>...]
@@ -188,6 +196,9 @@ tondo test [<project>]
 
 - `run` compila, guarda el ejecutable en la caché y lo ejecuta; `build` escribe
   el ejecutable; `check` solo informa diagnósticos, en JSON con `--json` (22.3).
+- `--link` enlaza una librería de C más, por nombre o archivo como en
+  `[native] libraries`; un archivo suelto, que no tiene `tondo.toml`, la usa
+  para sus `extern fn`.
 - `fmt` aplica el formato canónico (21) a archivos sueltos; `--check` falla si
   alguno no lo cumple.
 - `test` sigue la [especificación de testing](./TONDO_TESTING_SPEC.md).

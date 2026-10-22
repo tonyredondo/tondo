@@ -1298,6 +1298,17 @@ impl Builder<'_> {
                 Operand::Copy(place.variant_field(success, 0))
             }
             hir::ExprKind::FnValue(id, _) => self.temp(e.ty, Rvalue::FnValue(*id), e.span),
+            hir::ExprKind::ExternFn(id) => self.temp(e.ty, Rvalue::ExternFn(*id), e.span),
+            // A function or a closure without captures: nothing to evaluate.
+            hir::ExprKind::Callback(inner, id) => {
+                let closure = !matches!(inner.kind, hir::ExprKind::FnValue(..));
+                self.temp(e.ty, Rvalue::Callback(*id, closure), e.span)
+            }
+            hir::ExprKind::Layout(ty, align) => self.temp(Ty::INT, Rvalue::Layout(*ty, *align), e.span),
+            hir::ExprKind::Fixed(value) => {
+                let value = self.expr(value);
+                self.temp(e.ty, Rvalue::Fixed(value, e.span), e.span)
+            }
             hir::ExprKind::CursorNext(cursor, kind) => self.cursor_next(cursor, *kind, e),
             hir::ExprKind::CallValue(callee, args) => {
                 let callee = self.expr(callee);

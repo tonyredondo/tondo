@@ -1,0 +1,23 @@
+// A call of C that blocks its worker for long gets another worker in its
+// place, so 128 calls of 400ms take far less than rounds of one per core.
+import std.console
+import std.ffi
+import std.time
+
+extern fn usleep(microseconds: ffi.CUInt): ffi.CInt
+
+fn nap() {
+    unsafe { usleep(400000) }
+}
+
+fn main() {
+    let start = time.now()
+    var group = Group.new[Unit]()
+    for _ in 0..128 {
+        group.add(spawn nap())
+    }
+    _ = group.wait()
+    console.println("{start.elapsed().milliseconds() < 1000}")
+}
+
+// expect-stdout: true

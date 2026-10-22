@@ -170,10 +170,15 @@ pub enum ArmBody {
     Statement(Box<Stmt>),
 }
 
-/// `type Name = { fields }` (record) or `type Name = T` (newtype).
+/// `type Name = { fields }` (record) or `type Name = T` (newtype); with
+/// `extern`, a C struct or, without a body, an opaque C type.
 #[derive(Debug)]
 pub struct TypeDecl {
     pub public: bool,
+    /// `extern type`: laid out as C lays out the struct.
+    pub foreign: bool,
+    /// `@packed` and `@align(n)` before the declaration.
+    pub annotations: Vec<Annotation>,
     pub name: Ident,
     pub generics: Vec<GenericParam>,
     pub body: TypeBody,
@@ -187,6 +192,8 @@ pub struct TypeDecl {
 pub enum TypeBody {
     Record(Vec<FieldDecl>),
     Newtype(TypeExpr),
+    /// `extern type Name`: a C type known only by pointer.
+    Opaque,
 }
 
 #[derive(Debug)]
@@ -194,16 +201,24 @@ pub struct FieldDecl {
     pub private: bool,
     pub name: Ident,
     pub ty: TypeExpr,
-    /// `@name("wire")` and `@ignore`, which serialization reads (8.6).
+    /// `@name("wire")` and `@ignore`, which serialization reads (8.6),
+    /// or `@count(n)` in an `extern type`.
     pub annotations: Vec<Annotation>,
 }
 
-/// `@name` or `@name("text")` before a record field.
+/// `@name`, `@name("text")` or `@name(16)` before a declaration or a
+/// record field.
 #[derive(Debug, Clone)]
 pub struct Annotation {
     pub name: Ident,
-    pub argument: Option<String>,
+    pub argument: Option<AnnotationArg>,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AnnotationArg {
+    Text(String),
+    Int(u64),
 }
 
 /// `alias Name = T`: a transparent name for `T`.
@@ -221,6 +236,10 @@ pub struct FnDecl {
     /// `unsafe fn`: the caller guarantees preconditions the compiler cannot
     /// check (16.12).
     pub is_unsafe: bool,
+    /// `extern fn`: a C function, which has no body.
+    pub foreign: Option<Foreign>,
+    /// `@symbol("name")` before the declaration.
+    pub annotations: Vec<Annotation>,
     pub owner: Option<Ident>,
     /// The binders of a generic owner: `fn Pair[A, B].swapped(self)`.
     pub owner_generics: Vec<GenericParam>,
@@ -234,6 +253,14 @@ pub struct FnDecl {
     /// The module that declares it, numbered when modules are linked; the
     /// root module is 0.
     pub module: u32,
+}
+
+/// What an `extern fn` calls: the C symbol, its declared name unless
+/// `@symbol` gives another, and whether it ends with C's `...`.
+#[derive(Debug, Clone)]
+pub struct Foreign {
+    pub symbol: String,
+    pub variadic: bool,
 }
 
 #[derive(Debug)]
@@ -303,6 +330,8 @@ pub enum TypeKind {
         result: Option<Box<TypeExpr>>,
         /// `unsafe fn(...)`
         is_unsafe: bool,
+        /// `extern fn(...)`: the address of a C function.
+        is_extern: bool,
     },
 }
 
