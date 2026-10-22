@@ -641,3 +641,16 @@ With it, numbers widen implicitly language-wide when no value can be lost
 operands; anything that may not fit stays a compile error that gives the
 exact checked conversion, so no conversion fails silently or panics at
 run time.
+
+## 2026-10-22 — Deadlocks with C: count the threads of C
+
+Whether every task waiting is a deadlock depends on whether C will call
+back, which the runtime cannot see; Go stops detecting deadlocks once cgo
+callbacks exist. Tondo reports `P0013` exactly when nothing of C can act:
+every worker is idle or waits inside a function C called, no worker runs C,
+and the process has no thread the runtime did not start (counted from
+`/proc/self/task` or `task_threads`, against the runtime's own count, minus
+threads of C waiting for a callback's task). Otherwise idle workers look
+again every 100 ms. This also removed a false `P0013` for programs waiting
+on a callback from a C timer or a library's thread.
+

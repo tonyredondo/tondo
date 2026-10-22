@@ -774,7 +774,8 @@ impl Parser<'_> {
             }
             Tok::Kw(Kw::Unsafe | Kw::Extern) if self.nth(1) == &Tok::Kw(Kw::Fn) => {
                 let keyword = self.bump().tok;
-                let mut ty = self.type_expr()?;
+                // A `?` after it belongs to the whole function type.
+                let mut ty = self.primary_type()?;
                 if let TypeKind::Fn { is_unsafe, is_extern, .. } = &mut ty.kind {
                     *is_unsafe = keyword == Tok::Kw(Kw::Unsafe);
                     *is_extern = keyword == Tok::Kw(Kw::Extern);

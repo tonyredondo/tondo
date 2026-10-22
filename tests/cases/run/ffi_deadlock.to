@@ -1,0 +1,31 @@
+// A task that waits inside a function C called, with nothing that could
+// wake it, is a deadlock: no thread of C exists that could call back.
+import std.ffi
+
+extern fn qsort(
+    base: Pointer[ffi.Void],
+    count: ffi.CSize,
+    size: ffi.CSize,
+    compare: extern fn(Pointer[ffi.Void], Pointer[ffi.Void]): ffi.CInt,
+)
+
+unsafe fn stuck(left: Pointer[ffi.Void], right: Pointer[ffi.Void]): ffi.CInt {
+    let (sender, receiver) = channel[Int]()
+    _ = receiver.receive()
+    sender.close()
+    0
+}
+
+fn idle() {}
+
+fn main() {
+    // Other workers start, and wait too.
+    let job = spawn idle()
+    job.wait()
+    unsafe {
+        let values = ffi.allocate[Int](2)
+        qsort(values, 2u64, 8u64, stuck)
+    }
+}
+
+// expect-panic: P0013

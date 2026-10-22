@@ -1,0 +1,79 @@
+// While every task waits, a thread of C may still call back: here a timer
+// of C calls a function after 100ms, so waiting for it is no deadlock.
+import std.console
+import std.ffi
+import std.sync
+
+// `struct sigevent` of glibc with `SIGEV_THREAD`.
+extern type Event = {
+    value: Pointer[ffi.Void]?
+    signal: ffi.CInt
+    notify: ffi.CInt
+    function: (extern fn(Pointer[ffi.Void]?))?
+    attributes: Pointer[ffi.Void]?
+    @count(32)
+    padding: ffi.CChar
+}
+
+extern type Interval = {
+    intervalSeconds: Int
+    intervalNanoseconds: Int
+    seconds: Int
+    nanoseconds: Int
+}
+
+extern fn timer_create(clock: ffi.CInt, event: Pointer[Event], timer: Pointer[Pointer[ffi.Void]?]): ffi.CInt
+
+extern fn timer_settime(
+    timer: Pointer[ffi.Void]?,
+    flags: ffi.CInt,
+    value: Pointer[Interval],
+    old: Pointer[Interval]?,
+): ffi.CInt
+
+unsafe fn fired(value: Pointer[ffi.Void]?) {
+    match value {
+        some(data) => ffi.fromContext[sync.Barrier](data).wait()
+        none => {}
+    }
+}
+
+fn main() {
+    let barrier = sync.Barrier(2)
+    let context = ffi.context(barrier)
+    unsafe {
+        let event = ffi.allocate[Event]()
+        let padding = ffi.toCChars("", 32)
+        event.write(
+            Event {
+                value: context
+                signal: 0
+                notify: 2
+                function: fired
+                attributes: none
+                padding
+            },
+        )
+        let timer = ffi.allocate[Pointer[ffi.Void]?]()
+        let interval = ffi.allocate[Interval]()
+        interval.write(
+            Interval {
+                intervalSeconds: 0
+                intervalNanoseconds: 0
+                seconds: 0
+                nanoseconds: 100000000
+            },
+        )
+        console.println(
+            "{timer_create(0, event, timer)} {timer_settime(timer.read(), 0, interval, none)}",
+        )
+        ffi.free(event)
+        ffi.free(interval)
+    }
+    barrier.wait()
+    console.println("the timer of C called back")
+    unsafe { ffi.freeContext[sync.Barrier](context) }
+}
+
+// expect-stdout: 0 0
+// expect-stdout: the timer of C called back

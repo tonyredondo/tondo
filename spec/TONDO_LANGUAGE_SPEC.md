@@ -6181,6 +6181,13 @@ C en su pila, la tarea espera en su thread en lugar de cederlo. Cuando la llama
 un thread de C, la función corre como una tarea nueva y ese thread espera a que
 termine. Un pánico termina el proceso (15.7); nunca vuelve a C.
 
+Una tarea que espera dentro de una función que C llamó cuenta como cualquier
+otra para `P0013`. Mientras todas esperan, el programa solo está bloqueado si
+nada de C puede despertarlo: ningún worker ejecuta C y no existe ningún thread
+que el runtime no haya creado. Si existe, C podría llamar a una función que
+guarda, como hace un timer o una librería con threads propios, y el runtime
+vuelve a mirar cada poco en lugar de terminar el programa.
+
 #### Llamadas largas y enlace
 
 Una función de C ocupa su worker mientras dura. Si una llamada sigue en C
@@ -7839,7 +7846,7 @@ oculten un diagnóstico independiente.
 | `P0010` | `invalid-shift-count` | Conteo de shift negativo, no representable como `Int` o mayor o igual que el ancho izquierdo. |
 | `P0011` | `invalid-repeat-count` | `Array.repeat` recibe un conteo negativo. |
 | `P0012` | `closed-channel` | `send` sobre un canal cerrado. |
-| `P0013` | `deadlock` | Todas las tareas esperan y ninguna puede avanzar. |
+| `P0013` | `deadlock` | Todas las tareas esperan, ninguna puede avanzar y nada de C puede despertarlas (16.16). |
 | `P0014` | `reentrant-lock` | Una tarea vuelve a tomar un lock de `std.sync` que ya tiene. |
 | `P0015` | `invalid-environment-name` | `env.set`, `setAll` o `remove` recibe un nombre vacío o con `=` o `NUL`, o un valor con `NUL`. |
 | `P0016` | `nul-in-c-string` | Un texto con un byte cero dentro pasa a C como `ffi.CString`. |

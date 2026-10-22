@@ -103,10 +103,7 @@ fn submit(job: Job, long: bool) {
     if long || pool.threads < MOST_THREADS {
         pool.threads += 1;
         drop(pool);
-        std::thread::Builder::new()
-            .stack_size(256 * 1024)
-            .spawn(serve)
-            .unwrap_or_else(|_| super::runtime_fault("cannot start a host thread"));
+        super::tasks::spawn_thread(Some(256 * 1024), serve);
     }
 }
 

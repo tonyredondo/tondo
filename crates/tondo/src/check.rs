@@ -5749,7 +5749,9 @@ impl Checker<'_> {
         if let TyKind::Option(inner) = *self.types.kind(expected)
             && (value.ty == inner
                 || self.types.members(inner).is_some_and(|m| m.contains(&value.ty))
-                || self.converts(value.ty, inner))
+                || self.converts(value.ty, inner)
+                || matches!(self.types.kind(inner), TyKind::CFn(..))
+                    && matches!(self.types.kind(value.ty), TyKind::Fn(..) | TyKind::Adt(_)))
         {
             let span = value.span;
             let value = self.coerce(value, inner);

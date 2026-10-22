@@ -268,7 +268,7 @@ impl Sink {
 
 /// Copies what a child writes into the captured output and `combined`.
 fn collect(mut pipe: std::io::PipeReader, captured: Arc<Mutex<Captured>>, stage: Option<usize>) -> JoinHandle<()> {
-    std::thread::spawn(move || {
+    super::tasks::spawn_thread(None, move || {
         let mut buffer = vec![0; 64 * 1024];
         while let Ok(count) = pipe.read(&mut buffer) {
             if count == 0 {
@@ -287,7 +287,7 @@ fn collect(mut pipe: std::io::PipeReader, captured: Arc<Mutex<Captured>>, stage:
 
 /// Copies what a child writes into a stream of `std.io`.
 fn forward(mut pipe: std::io::PipeReader, target: Held) -> JoinHandle<()> {
-    std::thread::spawn(move || {
+    super::tasks::spawn_thread(None, move || {
         let target = target;
         let mut buffer = vec![0; 64 * 1024];
         while let Ok(count) = pipe.read(&mut buffer) {
@@ -305,7 +305,7 @@ fn forward(mut pipe: std::io::PipeReader, target: Held) -> JoinHandle<()> {
 
 /// Feeds a child's input from bytes or a stream of `std.io`.
 fn feed(mut pipe: std::io::PipeWriter, input: Input) -> JoinHandle<()> {
-    std::thread::spawn(move || match input {
+    super::tasks::spawn_thread(None, move || match input {
         Input::Bytes(bytes) => {
             let _ = pipe.write_all(&bytes);
         }
@@ -722,7 +722,7 @@ pub unsafe extern "C" fn tondo_rt_process_detach(process: *mut ProcessObject) {
         detached: true,
     };
     LIVE.lock().unwrap_or_else(|e| e.into_inner()).retain(|pid| !gone.pids.contains(pid));
-    std::thread::spawn(move || {
+    super::tasks::spawn_thread(None, move || {
         // The program's side of a piped input closes first.
         drop(std::mem::take(&mut gone.streams));
         for child in &mut gone.children {

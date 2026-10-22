@@ -293,6 +293,8 @@ struct Queue {
     /// Workers started for others that were long in C, which retire once
     /// those return.
     surplus: usize,
+    /// The tasks that wait inside a function C called, each on its worker.
+    pinned: Vec<*mut Task>,
 }
 
 unsafe impl Send for Queue {}
@@ -305,6 +307,7 @@ static QUEUE: Mutex<Queue> = Mutex::new(Queue {
     workers: 1,
     idle: 0,
     surplus: 0,
+    pinned: Vec::new(),
 });
 static READY: Condvar = Condvar::new();
 static STARTED: AtomicBool = AtomicBool::new(false);
@@ -388,10 +391,7 @@ fn park() {
                 state.store(RUNNING, Ordering::Release);
                 return;
             }
-            let mut lock = PINNED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            while state.load(Ordering::Acquire) != RUNNING {
-                lock = PINNED_WAKE.wait(lock).unwrap_or_else(|e| e.into_inner());
-            }
+            wait_pinned(task);
             return;
         }
         if state.compare_exchange(RUNNING, PARKING, Ordering::AcqRel, Ordering::Acquire).is_err() {
@@ -400,6 +400,128 @@ fn park() {
         }
         switch(&mut (*task).sp, *home());
     }
+}
+
+/// Waits on this thread until the task is notified, as one more worker
+/// that waits for the deadlock check, which runs again now and then while
+/// only C could wake the program.
+fn wait_pinned(task: *mut Task) {
+    let state = unsafe { &(*task).state };
+    let check = |queue: &Queue| {
+        if matches!(stalled(queue), Stalled::Deadlock) {
+            deadlock();
+        }
+    };
+    {
+        let mut queue = queue();
+        queue.pinned.push(task);
+        check(&queue);
+    }
+    loop {
+        let lock = PINNED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        if state.load(Ordering::Acquire) == RUNNING {
+            break;
+        }
+        let (lock, _) = PINNED_WAKE.wait_timeout(lock, RECHECK).unwrap_or_else(|e| e.into_inner());
+        if state.load(Ordering::Acquire) == RUNNING {
+            break;
+        }
+        drop(lock);
+        check(&queue());
+    }
+    queue().pinned.retain(|&t| t != task);
+}
+
+/// What it means that no task can run: nothing yet, a deadlock (`P0013`),
+/// or a wait that a thread of C may end by calling back.
+enum Stalled {
+    No,
+    Deadlock,
+    MaybeC,
+}
+
+/// How often idle workers look again while only C could wake the program.
+const RECHECK: Duration = Duration::from_millis(100);
+
+/// Every worker waits, for a task or inside a function C called, no timer
+/// is due and no host work runs. That is a deadlock unless a thread the
+/// runtime did not start exists, which C could use to call back.
+fn stalled(queue: &Queue) -> Stalled {
+    // A notified task about to wake on its thread is running.
+    let pinned = queue.pinned.iter().filter(|&&task| unsafe { (*task).state.load(Ordering::Acquire) } == PINNED);
+    if !queue.runnable.is_empty()
+        || queue.timers.peek().is_some()
+        || queue.idle + pinned.count() < queue.workers
+        || HOST_WORK.load(Ordering::SeqCst) != 0
+        || MAIN_DONE.load(Ordering::SeqCst)
+    {
+        return Stalled::No;
+    }
+    // Threads of C that wait for a callback's task cannot call back.
+    let known = RUNTIME_THREADS.load(Ordering::SeqCst) + FOREIGN_WAITING.load(Ordering::SeqCst);
+    if os_threads().is_some_and(|count| count > known) { Stalled::MaybeC } else { Stalled::Deadlock }
+}
+
+/// Threads the runtime started that still run, the main thread included.
+pub(crate) static RUNTIME_THREADS: AtomicUsize = AtomicUsize::new(1);
+/// Threads of C waiting in `tondo_rt_callback` for the task they started.
+static FOREIGN_WAITING: AtomicUsize = AtomicUsize::new(0);
+
+/// Starts a runtime thread, counted while it runs.
+pub(crate) fn spawn_thread<T: Send + 'static>(
+    stack: Option<usize>,
+    body: impl FnOnce() -> T + Send + 'static,
+) -> std::thread::JoinHandle<T> {
+    struct Running;
+    impl Drop for Running {
+        fn drop(&mut self) {
+            RUNTIME_THREADS.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+    RUNTIME_THREADS.fetch_add(1, Ordering::SeqCst);
+    let mut builder = std::thread::Builder::new();
+    if let Some(stack) = stack {
+        builder = builder.stack_size(stack);
+    }
+    builder
+        .spawn(move || {
+            let _running = Running;
+            body()
+        })
+        .unwrap_or_else(|_| runtime_fault("cannot start a thread"))
+}
+
+/// How many threads the process has, where the system tells.
+#[cfg(target_os = "linux")]
+fn os_threads() -> Option<usize> {
+    std::fs::read_dir("/proc/self/task").ok().map(|entries| entries.count())
+}
+
+#[cfg(target_os = "macos")]
+fn os_threads() -> Option<usize> {
+    unsafe extern "C" {
+        static mach_task_self_: u32;
+        fn task_threads(task: u32, threads: *mut *mut u32, count: *mut u32) -> i32;
+        fn mach_port_deallocate(task: u32, port: u32) -> i32;
+        fn vm_deallocate(task: u32, address: usize, size: usize) -> i32;
+    }
+    unsafe {
+        let task = mach_task_self_;
+        let (mut threads, mut count) = (std::ptr::null_mut(), 0u32);
+        if task_threads(task, &mut threads, &mut count) != 0 {
+            return None;
+        }
+        for index in 0..count as usize {
+            mach_port_deallocate(task, *threads.add(index));
+        }
+        vm_deallocate(task, threads as usize, count as usize * 4);
+        Some(count as usize)
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn os_threads() -> Option<usize> {
+    None
 }
 
 /// Fires the timers that are due; their tasks join `runnable`.
@@ -456,15 +578,15 @@ fn work(main: bool) -> i32 {
                     break task;
                 }
                 queue.idle += 1;
-                let next = queue.timers.peek().map(|t| t.at);
-                if next.is_none()
-                    && queue.idle == queue.workers
-                    && HOST_WORK.load(Ordering::SeqCst) == 0
-                    && !MAIN_DONE.load(Ordering::SeqCst)
-                {
-                    // Every worker waits, no task can run and no timer is due.
-                    drop(queue);
-                    deadlock();
+                let mut next = queue.timers.peek().map(|t| t.at);
+                match stalled(&queue) {
+                    Stalled::Deadlock => {
+                        drop(queue);
+                        deadlock();
+                    }
+                    // Look again later: the threads of C may end.
+                    Stalled::MaybeC => next = Some(Instant::now() + RECHECK),
+                    Stalled::No => {}
                 }
                 queue = match next {
                     Some(at) => {
@@ -529,12 +651,9 @@ fn start_workers() {
 }
 
 fn start_worker() {
-    std::thread::Builder::new()
-        .stack_size(256 * 1024)
-        .spawn(|| {
-            work(false);
-        })
-        .unwrap_or_else(|_| runtime_fault("cannot start a worker thread"));
+    spawn_thread(Some(256 * 1024), || {
+        work(false);
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -585,15 +704,7 @@ pub extern "C" fn tondo_rt_foreign_enter() {
     let state = in_c();
     state.calls.fetch_add(1, Ordering::SeqCst);
     state.depth.fetch_add(1, Ordering::SeqCst);
-    let monitor = MONITOR.get_or_init(|| {
-        std::thread::Builder::new()
-            .name("tondo-monitor".into())
-            .stack_size(64 * 1024)
-            .spawn(monitor)
-            .unwrap_or_else(|_| runtime_fault("cannot start the monitor thread"))
-            .thread()
-            .clone()
-    });
+    let monitor = MONITOR.get_or_init(|| spawn_thread(Some(64 * 1024), monitor).thread().clone());
     if MONITOR_ASLEEP.load(Ordering::SeqCst) && MONITOR_ASLEEP.swap(false, Ordering::SeqCst) {
         monitor.unpark();
     }
@@ -741,11 +852,13 @@ pub unsafe extern "C" fn tondo_rt_callback(inner: unsafe extern "C" fn(*mut u8),
         (*task).foreign = &call;
     }
     start_workers();
+    FOREIGN_WAITING.fetch_add(1, Ordering::SeqCst);
     schedule(task);
     let mut done = call.done.lock().unwrap_or_else(|e| e.into_inner());
     while !*done {
         done = call.finished.wait(done).unwrap_or_else(|e| e.into_inner());
     }
+    FOREIGN_WAITING.fetch_sub(1, Ordering::SeqCst);
 }
 
 /// Runs `tondo_main` as the first task on the calling thread, which becomes
