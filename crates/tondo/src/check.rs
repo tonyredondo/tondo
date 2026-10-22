@@ -144,6 +144,8 @@ enum StdModule {
     Testing,
     /// `std.internal.regex`: the runtime's engine, for `std.regex`.
     InternalRegex,
+    /// `std.internal.reflect`: the box of a `reflect.Value`.
+    InternalReflect,
 }
 
 /// The types `std.process` declares when imported.
@@ -997,6 +999,34 @@ impl<'a> Checker<'a> {
         call
     }
 
+    /// `reflect.Value`, once `std.reflect` is imported.
+    fn reflect_value_ty(&self) -> Option<Ty> {
+        match self.type_names.get("reflect.Value") {
+            Some(&TypeName::Nominal(ty)) => Some(ty),
+            _ => None,
+        }
+    }
+
+    /// `reflect.valueOf(value)`, which an argument for a `reflect.Value`
+    /// parameter becomes.
+    fn reflect_value(&mut self, value: hir::Expr) -> hir::Expr {
+        let (Some(&ModuleName::Fn(id)), Some(&reflect), Some(target)) =
+            (self.names.get("reflect.valueOf"), self.trait_names.get("reflect.Reflect"), self.reflect_value_ty())
+        else {
+            return value;
+        };
+        let (ty, span) = (value.ty, value.span);
+        if ty != Ty::ERROR && !self.satisfies(ty, reflect, &[]) {
+            let message = format!(
+                "{} does not implement `reflect.Reflect`, so it cannot become a `reflect.Value`; the compiler implements it for records, enums and newtypes whose parts all implement it",
+                self.display(ty)
+            );
+            self.diags.error("E1105", span, message);
+            return Self::error_expr(span);
+        }
+        Self::mk(hir::ExprKind::Call(Callee::Fn(id), vec![ty], vec![value]), target, span)
+    }
+
     /// `clock.settle()` and `clock.advance(duration)` (testing 7.9).
     fn clock_method(
         &mut self,
@@ -1337,8 +1367,8 @@ impl<'a> Checker<'a> {
             };
             let template = self.types.declare_template(name.into(), params.clone());
             let fields = vec![
-                Field { name: "collection".into(), ty: collection },
-                Field { name: "position".into(), ty: Ty::INT },
+                Field { name: "collection".into(), ty: collection, private: false },
+                Field { name: "position".into(), ty: Ty::INT, private: false },
             ];
             self.types.define_template(template, AdtKind::Record(fields));
             self.types.declare_cursor(template, kind);
@@ -1460,6 +1490,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "memory"] => StdModule::InternalMemory,
             ["std", "testing"] => StdModule::Testing,
             ["std", "internal", "regex"] => StdModule::InternalRegex,
+            ["std", "internal", "reflect"] => StdModule::InternalReflect,
             ["std", ..] => {
                 let what = format!("module `{}`", path.join("."));
                 self.diags.unsupported(import.span, &what);
@@ -1509,9 +1540,9 @@ impl<'a> Checker<'a> {
             let mode = declare_enum(self, "OpenMode", &["Read", "Write", "Append", "CreateNew", "ReadWrite"]);
             let (id, metadata) = self.types.declare_adt(format!("{}.Metadata", name.name));
             let fields = vec![
-                Field { name: "kind".into(), ty: kind },
-                Field { name: "size".into(), ty: Ty::INT },
-                Field { name: "readOnly".into(), ty: Ty::BOOL },
+                Field { name: "kind".into(), ty: kind, private: false },
+                Field { name: "size".into(), ty: Ty::INT, private: false },
+                Field { name: "readOnly".into(), ty: Ty::BOOL, private: false },
             ];
             self.types.define_adt(id, AdtKind::Record(fields));
             let file = self.types.handle(Handle::File, Ty::UNIT);
@@ -1527,6 +1558,9 @@ impl<'a> Checker<'a> {
         if module == StdModule::InternalRegex {
             self.types.handle(Handle::Regex, Ty::UNIT);
             self.types.intern(TyKind::Array(Ty::INT));
+        }
+        if module == StdModule::InternalReflect {
+            self.types.handle(Handle::ReflectBox, Ty::UNIT);
         }
         if module == StdModule::Process && self.process.is_none() {
             let prefix = &name.name;
@@ -1562,16 +1596,18 @@ impl<'a> Checker<'a> {
             ];
             self.types.define_adt(id, AdtKind::Enum(variants));
             let (id, status) = self.types.declare_adt(format!("{prefix}.ExitStatus"));
-            let fields =
-                vec![Field { name: "code".into(), ty: Ty::INT }, Field { name: "success".into(), ty: Ty::BOOL }];
+            let fields = vec![
+                Field { name: "code".into(), ty: Ty::INT, private: false },
+                Field { name: "success".into(), ty: Ty::BOOL, private: false },
+            ];
             self.types.define_adt(id, AdtKind::Record(fields));
             let statuses = self.types.intern(TyKind::Array(status));
             let (id, result) = self.types.declare_adt(format!("{prefix}.ProcessOutput"));
             let fields = vec![
-                Field { name: "stdout".into(), ty: bytes },
-                Field { name: "stderr".into(), ty: bytes },
-                Field { name: "combined".into(), ty: bytes },
-                Field { name: "statuses".into(), ty: statuses },
+                Field { name: "stdout".into(), ty: bytes, private: false },
+                Field { name: "stderr".into(), ty: bytes, private: false },
+                Field { name: "combined".into(), ty: bytes, private: false },
+                Field { name: "statuses".into(), ty: statuses, private: false },
             ];
             self.types.define_adt(id, AdtKind::Record(fields));
             let (id, error) = self.types.declare_adt(format!("{prefix}.ProcessError"));
@@ -1611,7 +1647,7 @@ impl<'a> Checker<'a> {
             self.instant = Some(ty);
             let (id, ty) = self.types.declare_adt(format!("{}.DateTime", name.name));
             let fields = ["year", "month", "day", "hour", "minute", "second", "nanosecond"]
-                .map(|name| Field { name: name.into(), ty: Ty::INT })
+                .map(|name| Field { name: name.into(), ty: Ty::INT, private: false })
                 .to_vec();
             self.types.define_adt(id, AdtKind::Record(fields));
             self.types.shown.insert(ty, Shown::DateTime);
@@ -1631,6 +1667,9 @@ impl<'a> Checker<'a> {
             }
             (Some(ModuleName::Module(StdModule::InternalRegex)), "NativeRegex") => {
                 self.types.lookup(&TyKind::Handle(Handle::Regex, Ty::UNIT))
+            }
+            (Some(ModuleName::Module(StdModule::InternalReflect)), "Box") => {
+                self.types.lookup(&TyKind::Handle(Handle::ReflectBox, Ty::UNIT))
             }
             (Some(ModuleName::Module(StdModule::InternalMemory)), "CString") => Some(self.c_string),
             (Some(ModuleName::Module(StdModule::InternalMemory)), "Void") => Some(self.void),
@@ -2027,7 +2066,7 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            resolved.push(Field { name: field.name.name.clone(), ty });
+            resolved.push(Field { name: field.name.name.clone(), ty, private: false });
         }
         resolved
     }
@@ -2066,7 +2105,7 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            resolved.push(Field { name: field.name.name.clone(), ty });
+            resolved.push(Field { name: field.name.name.clone(), ty, private: field.private });
         }
         resolved
     }
@@ -3678,7 +3717,7 @@ impl<'a> Checker<'a> {
         let parent = cx.parent.take().expect("a closure context has a parent");
         let inner = std::mem::replace(cx, *parent);
 
-        let fields = inner.captures.iter().map(|c| Field { name: c.name.clone(), ty: c.ty }).collect();
+        let fields = inner.captures.iter().map(|c| Field { name: c.name.clone(), ty: c.ty, private: false }).collect();
         self.types.define_template(template, AdtKind::Record(fields));
         let info = self.types.closure_info_mut(template);
         info.result = result;
@@ -3782,7 +3821,11 @@ impl<'a> Checker<'a> {
         };
         let generics: Vec<Ty> = self.type_params.iter().map(|&(_, t)| t).collect();
         let template = self.types.declare_template(name.into(), generics.clone());
-        let fields = values.iter().enumerate().map(|(i, a)| Field { name: format!("argument{i}"), ty: a.ty }).collect();
+        let fields = values
+            .iter()
+            .enumerate()
+            .map(|(i, a)| Field { name: format!("argument{i}"), ty: a.ty, private: false })
+            .collect();
         self.types.define_template(template, AdtKind::Record(fields));
         let env_ty = self.types.instantiate(template, generics.clone());
         let index = self.closure_functions.len();
@@ -4102,6 +4145,7 @@ impl<'a> Checker<'a> {
             hir::NativeTy::Bytes => self.types.intern(TyKind::Array(Ty::BYTE)),
             hir::NativeTy::Ints => self.types.intern(TyKind::Array(Ty::INT)),
             hir::NativeTy::Regex => self.types.handle(Handle::Regex, Ty::UNIT),
+            hir::NativeTy::ReflectBox => self.types.handle(Handle::ReflectBox, Ty::UNIT),
         }
     }
 
@@ -7946,6 +7990,35 @@ impl<'a> Checker<'a> {
             }
             return Self::mk(hir::ExprKind::Layout(ty, *query == "alignOf"), Ty::INT, span);
         }
+        // `native.unbox[T](box)`, `native.is[T](box)` and `native.typeName[T]()`
+        // of `std.internal.reflect`, which `std.reflect` is written on.
+        if let [module, op @ ("unbox" | "is" | "typeName")] = names.as_slice()
+            && self.lookup(cx, module).is_none()
+            && let Some(ModuleName::Module(StdModule::InternalReflect)) = self.names.get(*module)
+        {
+            let boxed = self.types.handle(Handle::ReflectBox, Ty::UNIT);
+            if *op == "typeName" {
+                let [ty] = type_args else {
+                    self.diags.error("E1104", span, "`typeName` takes one type argument");
+                    return Self::error_expr(span);
+                };
+                let ty = self.resolve_type(ty);
+                return Self::mk(hir::ExprKind::Reflect(hir::ReflectOp::Name, ty, Vec::new()), Ty::STRING, span);
+            }
+            let [arg] = args else {
+                return self.arity_error(span, 1, args.len());
+            };
+            let [ty] = type_args else {
+                self.diags.error("E1104", span, format!("`{op}` takes one type argument"));
+                return Self::error_expr(span);
+            };
+            let ty = self.resolve_type(ty);
+            let value = self.expr(cx, &arg.value, Some(boxed));
+            let value = self.coerce(value, boxed);
+            let (op, result) =
+                if *op == "unbox" { (hir::ReflectOp::Unbox, ty) } else { (hir::ReflectOp::Is, Ty::BOOL) };
+            return Self::mk(hir::ExprKind::Reflect(op, ty, vec![value]), result, span);
+        }
         if let [module, kind, "new"] = names.as_slice()
             && self.lookup(cx, module).is_none()
             && let Some(ModuleName::Module(StdModule::Sync)) = self.names.get(*module)
@@ -8045,6 +8118,7 @@ impl<'a> Checker<'a> {
         receiver: &ast::Expr,
         method: &ast::Ident,
         args: &[ast::Arg],
+        expected: Option<Ty>,
         span: Span,
     ) -> hir::Expr {
         let value = self.expr(cx, receiver, None);
@@ -8053,7 +8127,7 @@ impl<'a> Checker<'a> {
         if let Some(&id) = self.methods.get(&(key, method.name.clone())) {
             self.check_method_visible(id, method.span);
             let signature = self.signatures[id.0 as usize].clone();
-            return self.dot_call(cx, Callee::Fn(id), signature, HashMap::new(), value, method, args, span);
+            return self.dot_call(cx, Callee::Fn(id), signature, HashMap::new(), value, method, args, expected, span);
         }
         if self.is_abstract(ty) {
             // A type parameter has the methods of the traits it is bound by (12.7).
@@ -8067,7 +8141,7 @@ impl<'a> Checker<'a> {
                 .collect();
             return match found.as_slice() {
                 [(trait_id, trait_args, index)] => {
-                    self.trait_dot_call(cx, *trait_id, trait_args.clone(), *index, value, method, args, span)
+                    self.trait_dot_call(cx, *trait_id, trait_args.clone(), *index, value, method, args, expected, span)
                 }
                 [] => self.no_method(ty, method, span),
                 _ => {
@@ -8087,14 +8161,14 @@ impl<'a> Checker<'a> {
             && Some(ty) == self.self_type
             && let Some(index) = self.traits[trait_id.0 as usize].methods.iter().position(|m| m.name == method.name)
         {
-            return self.trait_dot_call(cx, trait_id, trait_args, index, value, method, args, span);
+            return self.trait_dot_call(cx, trait_id, trait_args, index, value, method, args, expected, span);
         }
         // `Iterator`'s methods on any type implementing it (11.5).
         if !self.is_abstract(ty)
             && let Some(index) = self.traits[ITERATOR.0 as usize].methods.iter().position(|m| m.name == method.name)
             && let Some(element) = self.iterator_element(ty)
         {
-            return self.trait_dot_call(cx, ITERATOR, vec![element], index, value, method, args, span);
+            return self.trait_dot_call(cx, ITERATOR, vec![element], index, value, method, args, expected, span);
         }
         if Some(ty) == self.duration || Some(ty) == self.instant {
             return self.time_method(cx, value, method, args, span);
@@ -8570,6 +8644,7 @@ impl<'a> Checker<'a> {
         value: hir::Expr,
         method: &ast::Ident,
         args: &[ast::Arg],
+        expected: Option<Ty>,
         span: Span,
     ) -> hir::Expr {
         let def = &self.traits[trait_id.0 as usize];
@@ -8577,7 +8652,7 @@ impl<'a> Checker<'a> {
         let mut prebound = HashMap::from([(def.self_param, value.ty)]);
         prebound.extend(def.params.iter().copied().zip(trait_args));
         let callee = Callee::Trait(trait_id, index as u32);
-        self.dot_call(cx, callee, signature, prebound, value, method, args, span)
+        self.dot_call(cx, callee, signature, prebound, value, method, args, expected, span)
     }
 
     /// `Trait.method(...)`, with `Self` given first in `explicit` or taken
@@ -8769,6 +8844,7 @@ impl<'a> Checker<'a> {
         receiver: hir::Expr,
         method: &ast::Ident,
         args: &[ast::Arg],
+        expected: Option<Ty>,
         span: Span,
     ) -> hir::Expr {
         let ty = receiver.ty;
@@ -8792,7 +8868,7 @@ impl<'a> Checker<'a> {
             }
             Some(_) => receiver,
         };
-        let target = CallTarget { prebound, ..CallTarget::new(callee, signature, None) };
+        let target = CallTarget { prebound, ..CallTarget::new(callee, signature, expected) };
         self.call_signature(cx, target, Some(receiver), args, span)
     }
 
@@ -9076,7 +9152,9 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> hir::Expr {
         match &callee.kind {
-            ast::ExprKind::Field(receiver, method) => return self.method_call(cx, receiver, method, args, span),
+            ast::ExprKind::Field(receiver, method) => {
+                return self.method_call(cx, receiver, method, args, expected, span);
+            }
             ast::ExprKind::Path(segments)
                 if segments.len() > 1
                     && (self.lookup(cx, &segments[0].name).is_some()
@@ -9086,14 +9164,14 @@ impl<'a> Checker<'a> {
                 let (method, prefix) = segments.split_last().unwrap();
                 let receiver_span = prefix[0].span.to(prefix.last().unwrap().span);
                 let receiver = ast::Expr { kind: ast::ExprKind::Path(prefix.to_vec()), span: receiver_span };
-                return self.method_call(cx, &receiver, method, args, span);
+                return self.method_call(cx, &receiver, method, args, expected, span);
             }
             // `Color.Red.describe()`: a method of a variant without payload.
             ast::ExprKind::Path(segments) if segments.len() == 3 && self.unit_variant(&segments[..2]) => {
                 let (method, prefix) = segments.split_last().unwrap();
                 let receiver_span = prefix[0].span.to(prefix[1].span);
                 let receiver = ast::Expr { kind: ast::ExprKind::Path(prefix.to_vec()), span: receiver_span };
-                return self.method_call(cx, &receiver, method, args, span);
+                return self.method_call(cx, &receiver, method, args, expected, span);
             }
             ast::ExprKind::Generic { base, args: type_args } => {
                 return self.generic_call(cx, base, type_args, args, expected, span);
@@ -9376,13 +9454,25 @@ impl<'a> Checker<'a> {
             (
                 [_, member],
                 Some(ModuleName::Module(
-                    module @ (StdModule::InternalJson | StdModule::InternalMemory | StdModule::InternalRegex),
+                    module @ (StdModule::InternalJson
+                    | StdModule::InternalMemory
+                    | StdModule::InternalRegex
+                    | StdModule::InternalReflect),
                 )),
             ) => {
+                if module == StdModule::InternalReflect && *member == "box" {
+                    let [arg] = args else {
+                        return self.arity_error(span, 1, args.len());
+                    };
+                    let value = self.expr(cx, &arg.value, None);
+                    let boxed = self.types.handle(Handle::ReflectBox, Ty::UNIT);
+                    return Self::mk(hir::ExprKind::Reflect(hir::ReflectOp::Box, value.ty, vec![value]), boxed, span);
+                }
                 let module = match module {
                     StdModule::InternalJson => "json",
                     StdModule::InternalMemory => "memory",
-                    _ => "regex",
+                    StdModule::InternalRegex => "regex",
+                    _ => "reflect",
                 };
                 let found =
                     hir::NATIVES.iter().position(|n| n.receiver.is_none() && n.module == module && n.name == *member);
@@ -9752,7 +9842,12 @@ impl<'a> Checker<'a> {
                     continue;
                 }
                 let ty = type_of(index);
-                let expected = self.inferred(&inference, ty).or_else(|| self.call_expectation(&inference, ty));
+                // Any value becomes a `reflect.Value` where one is a parameter (27.10).
+                let dynamic = self.reflect_value_ty() == Some(ty);
+                let expected = match dynamic {
+                    true => None,
+                    false => self.inferred(&inference, ty).or_else(|| self.call_expectation(&inference, ty)),
+                };
                 if pass == 0 && expected.is_none() && self.needs_context(&arg.value) {
                     continue;
                 }
@@ -9764,6 +9859,7 @@ impl<'a> Checker<'a> {
                     mode,
                     parameter_of(index) < first + usize::from(signature.receiver.is_some()) && first == 0,
                 );
+                let value = if dynamic && value.ty != ty && !arg.spread { self.reflect_value(value) } else { value };
                 self.unify(&mut inference, ty, value.ty);
                 // A callable bound to `F: Call[fn(A): B]` also fixes `A` and `B`.
                 if let Some(&(_, bound)) = self.call_bounds.get(&ty)
@@ -9777,11 +9873,15 @@ impl<'a> Checker<'a> {
         }
         if let Some(expected) = expected {
             self.unify(&mut inference, signature.result, expected);
-            // `call(...)?` where its success type is expected.
-            if let TyKind::Result(success, _) | TyKind::Option(success) = *self.types.kind(signature.result)
-                && !matches!(self.types.kind(expected), TyKind::Result(..) | TyKind::Option(_))
-            {
-                self.unify(&mut inference, success, expected);
+            // `call(...)?` where its success type is expected, which may be
+            // an option when the call gives a result.
+            match (self.types.kind(signature.result).clone(), self.types.kind(expected)) {
+                (TyKind::Result(..), TyKind::Result(..))
+                | (TyKind::Option(_), TyKind::Result(..) | TyKind::Option(_)) => {}
+                (TyKind::Result(success, _) | TyKind::Option(success), _) => {
+                    self.unify(&mut inference, success, expected)
+                }
+                _ => {}
             }
         }
         self.infer_from_bounds(&mut inference);
@@ -9815,11 +9915,18 @@ impl<'a> Checker<'a> {
         // The arguments must meet the bounds of the parameters they replace.
         for (&param, &actual) in signature.generics.iter().zip(&type_args) {
             if let Some(missing) = self.bound_holds(param, actual, &inference.map, 0) {
+                // The traits the compiler implements by itself say why it did not.
+                let automatic = matches!(missing.as_str(), "`reflect.Reflect`" | "`json.Encode`" | "`json.Decode`");
                 let message = format!(
-                    "{} does not implement {missing}, which `{}` requires of `{}`",
+                    "{} does not implement {missing}, which `{}` requires of `{}`{}",
                     self.display(actual),
                     signature.name,
-                    self.types.display(param)
+                    self.types.display(param),
+                    if automatic {
+                        "; the compiler implements it for records, enums and newtypes whose parts all implement it"
+                    } else {
+                        ""
+                    }
                 );
                 self.diags.error("E1105", span, message);
                 return Self::error_expr(span);

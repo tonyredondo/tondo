@@ -9817,7 +9817,7 @@ No existe `Any` en el lenguaje. Datos heterogéneos usan enums o uniones cerrada
 y datos externos sin schema usan un enum explícito como `json.Value`. La única
 excepción es `reflect.Value` (27.10), que contiene un valor cualquiera con su
 tipo para herramientas que no conocen los tipos de antemano; se vuelve a un tipo
-estático con `as()`, que lo comprueba.
+estático con `to()`, que lo comprueba.
 
 ### 25.17 Múltiples colecciones equivalentes
 
@@ -10480,12 +10480,19 @@ let value = reflect.valueOf(user)
 for field in value.fields() {
     console.println("{field.name} = {field.value}")
 }
-let back: User = value.as()?
+let back: User = value.to()?
 let view: UserView = reflect.convert(user)
 ~~~
 
 Reglas:
 
+- La reflexión trabaja con los tipos que implementan `reflect.Reflect`. El
+  compilador lo implementa, con código que llega directamente a cada campo y
+  método, para cada record, enum y newtype cuyas partes lo implementan, igual
+  que `json.Encode` (14.10 de la librería estándar); `std.reflect` lo implementa
+  para los tipos intrínsecos y las colecciones. Un `impl` del programa sustituye
+  al automático. Los valores que se reflejan son `Copy`: `reflect.Value` se
+  copia, así que no puede contener un valor afín.
 - `reflect.Value` contiene un valor cualquiera con su tipo. Un argumento cuyo
   parámetro es `reflect.Value`, incluidos los elementos de un parámetro
   variádico `...Array[reflect.Value]`, se convierte solo: `reflect.call(user,
@@ -10501,7 +10508,7 @@ Reglas:
   `ReflectError` cuyo mensaje dice la corrección, por ejemplo
   "`User` has no field `nme`; its fields are `name`, `age`, `address`".
 
-`reflect.convert` y `Value.as()` convierten entre tipos de la misma forma, por
+`reflect.convert` y `Value.to()` convierten entre tipos de la misma forma, por
 nombre de campo y no por layout: `{ x: Int, y: Int }` y
 `{ width: Int, height: Int }` ocupan lo mismo en memoria pero no se mezclan.
 
@@ -10510,23 +10517,23 @@ nombre de campo y no por layout: `{ x: Int, y: Int }` y
 - Un campo del destino que el origen no tiene es un error, salvo que sea
   opcional (`T?`): entonces vale `none`.
 - Los tipos de los campos se convierten con la misma regla. Records, enums (por
-  nombre de variante), tuplas, `Option`, `Array` y `Map` se convierten elemento
-  a elemento. Escalares y newtypes tienen que ser el mismo tipo: un `UserId` no
-  se convierte en `Int`.
+  nombre de variante), `Option`, `Result`, `Array`, `Deque`, `Set` y `Map` se
+  convierten elemento a elemento, y un `T` se convierte en `T?`. Escalares y
+  newtypes tienen que ser el mismo tipo: un `UserId` no se convierte en `Int`.
 - Solo cuentan los campos visibles; un destino con campos `priv` no se construye
   fuera de su módulo, igual que con un literal.
-- `as()` devuelve el valor si ya es del tipo pedido.
+- `to()` devuelve el valor si ya es del tipo pedido, con sus campos privados.
 
 Con los dos tipos conocidos, `reflect.convert` se resuelve al compilar: genera
 la copia, una forma incompatible es `E2110` y cada campo rellenado con `none` es
-el warning `W1012`. `Value.as()` decide en ejecución entre conversiones que el
-compilador genera de antemano.
+el warning `W1012`. `Value.to()` convierte en ejecución con el código que el
+compilador genera para el tipo de destino.
 
-Coste: el compilador solo conserva metadatos de los tipos que llegan a una
-operación de `std.reflect` y de los tipos de sus campos, conserva los métodos
-`pub` de esos tipos para `call` y genera de antemano las conversiones que `as()`
-puede necesitar. Un programa que no usa reflexión no paga nada. No existe una
-lista de todos los tipos ni búsqueda de un tipo por nombre.
+Coste: el compilador solo genera el código de los tipos que llegan a una
+operación de `std.reflect` y de los tipos de sus partes; un `reflect.Value` es
+el valor en una caja del runtime con las operaciones de su tipo. Un programa que
+no usa reflexión no paga nada. No existe una lista de todos los tipos ni
+búsqueda de un tipo por nombre.
 
 `TypeId` solo garantiza igualdad estable dentro del mismo artefacto exacto. No
 es un identificador de wire, no se serializa y puede cambiar entre builds,

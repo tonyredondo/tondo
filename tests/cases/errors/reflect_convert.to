@@ -1,0 +1,17 @@
+import std.reflect
+
+pub type User = { name: String, email: String }
+pub type Card = { name: String, phone: String? }
+pub type Badge = { name: String, phone: String }
+pub type Account = { name: String, priv id: Int }
+
+fn main() {
+    let user = User { name: "Ada", email: "a@b.c" }
+    let card: Card = reflect.convert(user)
+    let badge: Badge = reflect.convert(user)
+    let account: Account = reflect.convert(user)
+}
+
+// expect-warning: W1012
+// expect-error: E2110 `reflect.convert` cannot convert here: `User` has no field `phone`: add it to `User`, or declare `Badge.phone` as `String?` so that it becomes `none`
+// expect-error: E2110 `reflect.convert` cannot convert here: `Account` has private fields, so only a `Account` converts to it

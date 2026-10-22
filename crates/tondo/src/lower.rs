@@ -1319,6 +1319,12 @@ impl Builder<'_> {
                 self.temp(e.ty, Rvalue::Callback(*id, closure), e.span)
             }
             hir::ExprKind::Layout(ty, align) => self.temp(Ty::INT, Rvalue::Layout(*ty, *align), e.span),
+            hir::ExprKind::Reflect(op, ty, values) => {
+                let operands: Vec<Operand> = values.iter().map(|v| self.expr(v)).collect();
+                // A boxed value moves into the box, or is retained there.
+                let retain = *op == hir::ReflectOp::Box && self.move_flags(&operands, &[true], &[values[0].ty])[0];
+                self.temp(e.ty, Rvalue::Reflect(*op, *ty, operands, retain), e.span)
+            }
             hir::ExprKind::Fixed(value) => {
                 let value = self.expr(value);
                 self.temp(e.ty, Rvalue::Fixed(value, e.span), e.span)

@@ -19,6 +19,7 @@ mod io;
 mod json;
 mod memory;
 mod process;
+mod reflect;
 mod regex;
 mod shared;
 mod snapshot;

@@ -839,3 +839,22 @@ encoding. `ignore` paths turn varying values into `"[ignored]"`, `matches`
 also checks their form with a regular expression, and `replace` rewrites
 the final text, mostly for strings. The runtime does all of it, on the
 `regex` crate. The parameter is `matches`, not `match`, which is a keyword.
+
+## 2026-10-23 — Reflection is code the compiler writes
+
+`std.reflect` reads, writes and calls by name, but the runtime does not walk
+type descriptors. Like `json.Encode`, the compiler writes `reflect.Reflect` as
+Tondo source for each record, enum and newtype whose parts implement it: a
+`match` on the field or method name that reaches it directly, the display,
+and the conversion from a value of the same shape. Only the types that reach
+reflection are instantiated. A `reflect.Value` is the value in a runtime box,
+which knows its type so that `to()` to the same type is exact, with the
+dispatch function of its type. `as` is a keyword, so the conversion is
+`to()`; `get` and `call` take the value as a copy, since reflected values are
+`Copy`. `reflect.convert` between known types is checked after
+monomorphization: an impossible shape is `E2110`, a field left `none` is
+`W1012`. Method calls now pass their expected type to inference, so
+`let x: Int = value.to()?` works, and a `?` on a call that gives a result
+infers its success type even when an option is expected. Spilling a
+variable for a `mut self` call reloads it with its own type, which a `Bool`
+or `Float` receiver needs.

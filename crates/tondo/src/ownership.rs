@@ -638,6 +638,8 @@ impl Checker<'_> {
                 Some(flow)
             }
             ExprKind::Fixed(inner) => self.observe(inner, flow),
+            // A boxed value moves into the box; a box is only read.
+            ExprKind::Reflect(op, _, values) => self.all(values, flow, *op == crate::hir::ReflectOp::Box),
             ExprKind::Select(arms, otherwise) => {
                 // Every operation is evaluated first; each arm then takes
                 // what its own operation takes.

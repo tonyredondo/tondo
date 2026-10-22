@@ -174,6 +174,8 @@ pub enum Handle {
     Clock,
     /// The runtime's compiled regular expression (`std.internal.regex`).
     Regex,
+    /// The box a `reflect.Value` keeps its value in (`std.internal.reflect`).
+    ReflectBox,
 }
 
 impl Handle {
@@ -207,6 +209,7 @@ impl Handle {
             Handle::JsonWriter => "json.NativeWriter",
             Handle::Clock => "testing.VirtualTime",
             Handle::Regex => "regex.NativeRegex",
+            Handle::ReflectBox => "reflect.Box",
         }
     }
 
@@ -364,6 +367,8 @@ impl Payload {
 pub struct Field {
     pub name: String,
     pub ty: Ty,
+    /// Declared `priv`: other modules and reflection do not see it.
+    pub private: bool,
 }
 
 pub struct Types {
@@ -825,7 +830,7 @@ impl Types {
     }
 
     fn subst_fields(&mut self, fields: Vec<Field>, map: &HashMap<Ty, Ty>) -> Vec<Field> {
-        fields.into_iter().map(|f| Field { name: f.name, ty: self.subst(f.ty, map) }).collect()
+        fields.into_iter().map(|f| Field { name: f.name, ty: self.subst(f.ty, map), private: f.private }).collect()
     }
 
     /// `ty` with type parameters replaced according to `map`.
@@ -1158,6 +1163,103 @@ impl Types {
         matches!(self.kind(component), TyKind::Adt(_)) && self.reaches(component, container)
     }
 
+    /// Whether a value of `from` converts to `to` by shape (27.10 of the
+    /// language): the optional fields of `to` the conversion leaves `none`
+    /// go to `missing`; the error says why it cannot.
+    pub fn converts(&self, from: Ty, to: Ty, missing: &mut Vec<String>) -> Result<(), String> {
+        if from == to {
+            return Ok(());
+        }
+        let cannot = || Err(format!("`{}` does not convert to `{}`", self.display(from), self.display(to)));
+        match (self.kind(to), self.kind(from)) {
+            (TyKind::Option(to), TyKind::Option(from)) => self.converts(*from, *to, missing),
+            (TyKind::Option(to), _) => self.converts(from, *to, missing),
+            (
+                TyKind::Array(to) | TyKind::Deque(to) | TyKind::Set(to),
+                TyKind::Array(from) | TyKind::Deque(from) | TyKind::Set(from),
+            ) => self.converts(*from, *to, missing),
+            (TyKind::Map(to_key, to_value), TyKind::Map(from_key, from_value)) => {
+                self.converts(*from_key, *to_key, missing)?;
+                self.converts(*from_value, *to_value, missing)
+            }
+            (TyKind::Result(to_ok, to_err), TyKind::Result(from_ok, from_err)) => {
+                self.converts(*from_ok, *to_ok, missing)?;
+                self.converts(*from_err, *to_err, missing)
+            }
+            (&TyKind::Adt(to_id), &TyKind::Adt(from_id)) => match (&self.adt(to_id).kind, &self.adt(from_id).kind) {
+                (AdtKind::Record(to_fields), AdtKind::Record(from_fields)) => {
+                    self.fields_convert(from, to, from_fields, to_fields, missing)
+                }
+                (AdtKind::Enum(to_variants), AdtKind::Enum(from_variants)) => {
+                    for variant in from_variants {
+                        let Some(target) = to_variants.iter().find(|v| v.name == variant.name) else {
+                            return Err(format!(
+                                "`{}` has no variant `{}`, which `{}` has",
+                                self.display(to),
+                                variant.name,
+                                self.display(from)
+                            ));
+                        };
+                        match (&variant.payload, &target.payload) {
+                            (Payload::Unit, Payload::Unit) => {}
+                            (Payload::Tuple(from_types), Payload::Tuple(to_types))
+                                if from_types.len() == to_types.len() =>
+                            {
+                                for (&f, &t) in from_types.iter().zip(to_types) {
+                                    self.converts(f, t, missing)?;
+                                }
+                            }
+                            (Payload::Record(from_fields), Payload::Record(to_fields)) => {
+                                self.fields_convert(from, to, from_fields, to_fields, missing)?
+                            }
+                            _ => {
+                                return Err(format!(
+                                    "the variant `{}` of `{}` and of `{}` carry different payloads",
+                                    variant.name,
+                                    self.display(from),
+                                    self.display(to)
+                                ));
+                            }
+                        }
+                    }
+                    Ok(())
+                }
+                _ => cannot(),
+            },
+            _ => cannot(),
+        }
+    }
+
+    fn fields_convert(
+        &self,
+        from: Ty,
+        to: Ty,
+        from_fields: &[Field],
+        to_fields: &[Field],
+        missing: &mut Vec<String>,
+    ) -> Result<(), String> {
+        let (from_name, to_name) = (self.display(from), self.display(to));
+        if to_fields.iter().any(|f| f.private) {
+            return Err(format!("`{to_name}` has private fields, so only a `{to_name}` converts to it"));
+        }
+        for field in to_fields {
+            match from_fields.iter().find(|f| f.name == field.name && !f.private) {
+                Some(source) => self.converts(source.ty, field.ty, missing)?,
+                None if matches!(self.kind(field.ty), TyKind::Option(_)) => {
+                    missing.push(format!("{to_name}.{}", field.name));
+                }
+                None => {
+                    return Err(format!(
+                        "`{from_name}` has no field `{0}`: add it to `{from_name}`, or declare `{to_name}.{0}` as `{1}?` so that it becomes `none`",
+                        field.name,
+                        self.display(field.ty)
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Whether values of this type own reference-counted storage.
     pub fn needs_drop(&self, ty: Ty) -> bool {
         if let Some(&known) = self.needs_drop.borrow().get(&ty) {
@@ -1414,7 +1516,8 @@ impl Types {
                         | Handle::JsonReader
                         | Handle::JsonWriter
                         | Handle::Clock
-                        | Handle::Regex,
+                        | Handle::Regex
+                        | Handle::ReflectBox,
                         _,
                     ) => {
                         return handle.name().to_string();

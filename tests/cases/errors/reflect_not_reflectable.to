@@ -1,0 +1,13 @@
+import std.reflect
+
+pub type Job = { name: String, run: fn(): Int }
+
+fn main() {
+    let job = Job { name: "build", run: () { 1 } }
+    let value = reflect.valueOf(job)
+    let name: String ! reflect.ReflectError = reflect.call(job, "name", job)
+}
+
+// expect-error: E1105 `Job` does not implement `reflect.Reflect`, which `reflect.valueOf` requires of `T`; the compiler implements it for records, enums and newtypes whose parts all implement it
+// expect-error: E1105 `Job` does not implement `reflect.Reflect`, which `reflect.call` requires of `S`; the compiler implements it for records, enums and newtypes whose parts all implement it
+// expect-error: E1105 `Job` does not implement `reflect.Reflect`, so it cannot become a `reflect.Value`; the compiler implements it for records, enums and newtypes whose parts all implement it

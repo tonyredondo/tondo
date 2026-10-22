@@ -17,7 +17,7 @@
 use crate::ast::{BinOp, UnaryOp};
 use crate::hir::{
     ArrayOp, AtomicOp, Callee, EnvFn, FnId, FsFn, IoFn, LockMode, MapOp, Mutation, PathFn, PointerOp, ProcessFn,
-    Program, SharedOp, StdFn, StrOp, TaskOp,
+    Program, ReflectOp, SharedOp, StdFn, StrOp, TaskOp,
 };
 use crate::mir::{
     Body, Const, Local, Operand, Overlap, Piece, Place, Proj, Rvalue, SelectCase, Statement, Terminator, project,
@@ -46,6 +46,8 @@ const IMMORTAL: u64 = u64::MAX;
 const FN_HEADER: i64 = 32;
 /// Size of a box header in the runtime (`BoxHeader`).
 const BOX_HEADER: i64 = 16;
+/// Where the value starts in the box of a `reflect.Value` (`BoxObject`).
+const REFLECT_VALUE: i64 = 32;
 /// Size of an array header in the runtime (`ArrayHeader`): `len` is at 8 and
 /// a deque's `head` at 24. An array's `head` is always 0.
 const ARRAY_HEADER: i64 = 32;
@@ -107,6 +109,9 @@ enum Rt {
     ClockAdvance,
     ClockRelease,
     RegexRelease,
+    ReflectBox,
+    ReflectRelease,
+    ReflectIs,
     ArrayNew,
     ArrayRetain,
     ArrayRelease,
@@ -315,6 +320,9 @@ impl Rt {
             Rt::ClockAdvance => ("tondo_rt_clock_advance", &[I64, I64, I64], &[]),
             Rt::ClockRelease => ("tondo_rt_clock_release", &[I64], &[]),
             Rt::RegexRelease => ("tondo_rt_regex_release", &[I64], &[]),
+            Rt::ReflectBox => ("tondo_rt_reflect_box", &[I64, I64, I64], &[I64]),
+            Rt::ReflectRelease => ("tondo_rt_reflect_release", &[I64], &[]),
+            Rt::ReflectIs => ("tondo_rt_reflect_is", &[I64, I64], &[I8]),
             Rt::ArrayNew => ("tondo_rt_array_new", &[I64, I64], &[I64]),
             Rt::ArrayRetain => ("tondo_rt_array_retain", &[I64], &[]),
             Rt::ArrayRelease => ("tondo_rt_array_release", &[I64, I64, I64], &[]),
@@ -635,6 +643,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap) -> Resul
         glue: HashMap::new(),
         pending_glue: Vec::new(),
         map_glue: HashMap::new(),
+        identities: HashMap::new(),
         loans: bodies.iter().map(|body| body.loans.clone()).collect(),
         display: &program.display,
         fn_values: HashMap::new(),
@@ -706,6 +715,9 @@ struct Codegen<'a> {
     glue: HashMap<(Glue, Ty), FuncId>,
     pending_glue: Vec<(Glue, Ty, FuncId)>,
     map_glue: HashMap<Ty, DataId>,
+    /// The identity of each type a `reflect.Value` holds: a static with its
+    /// name.
+    identities: HashMap<Ty, DataId>,
     /// Which parameters of each function are loans (`Body::loans`).
     loans: Vec<Vec<bool>>,
     /// The user `Display.display` of types displayed inside collections.
@@ -1073,6 +1085,25 @@ impl Codegen<'_> {
             data.write_data_addr(index as u32 * 24 + 16, name, 0);
         }
         self.module.define_data(id, &data).expect("test table definition");
+        id
+    }
+
+    /// The identity of a type for `std.reflect`: a static holding its name,
+    /// whose address tells the type apart.
+    fn identity(&mut self, ty: Ty) -> DataId {
+        if let Some(&id) = self.identities.get(&ty) {
+            return id;
+        }
+        let name = self.string(&self.types.display(ty));
+        let symbol = format!("tondo_type{}", self.identities.len());
+        let id = self.module.declare_data(&symbol, Linkage::Local, false, false).expect("type identity");
+        let mut data = DataDescription::new();
+        data.define(vec![0u8; 8].into_boxed_slice());
+        data.set_align(8);
+        let name = self.module.declare_data_in_data(name, &mut data);
+        data.write_data_addr(0, name, 0);
+        self.module.define_data(id, &data).expect("type identity definition");
+        self.identities.insert(ty, id);
         id
     }
 
@@ -1638,6 +1669,7 @@ impl Emit<'_, '_> {
                         Handle::JsonWriter => Rt::JsonWriterRelease,
                         Handle::Clock => Rt::ClockRelease,
                         Handle::Regex => Rt::RegexRelease,
+                        Handle::ReflectBox => Rt::ReflectRelease,
                         _ => Rt::SyncRelease,
                     };
                     self.call_rt(rt, &[pointer]);
@@ -2281,7 +2313,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     }
 
     fn unspill(&mut self, var: Variable, address: ir::Value) {
-        let value = self.e.fb.ins().load(POINTER, flags(), address, 0);
+        let current = self.e.fb.use_var(var);
+        let ty = self.e.fb.func.dfg.value_type(current);
+        let value = self.e.fb.ins().load(ty, flags(), address, 0);
         self.e.fb.def_var(var, value);
     }
 
@@ -2871,6 +2905,39 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         Val::Scalar(array)
                     }
                     _ => unreachable!("between an array and a C array"),
+                }
+            }
+            Rvalue::Reflect(op, ty, operands, retain) => {
+                let identity = self.e.cg.identity(*ty);
+                let global = self.e.cg.module.declare_data_in_func(identity, self.e.fb.func);
+                let identity = self.e.fb.ins().symbol_value(POINTER, global);
+                match op {
+                    ReflectOp::Box => {
+                        let value = self.operand(&operands[0]);
+                        if *retain {
+                            self.e.refcount(*ty, value, false);
+                        }
+                        let size = self.e.fb.ins().iconst(POINTER, self.e.cg.layout(*ty).size as i64);
+                        let release = self.e.glue_or_null(Glue::Release, *ty);
+                        let object = self.e.call_rt(Rt::ReflectBox, &[size, release, identity]).unwrap();
+                        let address = self.e.fb.ins().iadd_imm_s(object, REFLECT_VALUE);
+                        self.e.store_val(address, *ty, value);
+                        Val::Scalar(object)
+                    }
+                    ReflectOp::Unbox => {
+                        let object = self.scalar(&operands[0]);
+                        let address = self.e.fb.ins().iadd_imm_s(object, REFLECT_VALUE);
+                        let value = self.e.value_at(address, *ty);
+                        // The box keeps its own.
+                        self.e.refcount(*ty, value, false);
+                        value
+                    }
+                    ReflectOp::Is => {
+                        let object = self.scalar(&operands[0]);
+                        Val::Scalar(self.e.call_rt(Rt::ReflectIs, &[object, identity]).unwrap())
+                    }
+                    // The identity holds the name, an immortal string.
+                    ReflectOp::Name => Val::Scalar(self.e.fb.ins().load(POINTER, flags(), identity, 0)),
                 }
             }
             Rvalue::Layout(measured, align) => {

@@ -1,0 +1,119 @@
+import std.console
+import std.reflect
+
+pub type Address = { city: String }
+pub type User = { name: String, age: Int, address: Address, tags: Array[String], nick: String?, priv password: String }
+pub type UserView = { name: String, address: Address, nick: String? }
+pub type UserId = Int
+
+pub enum Shape {
+    Circle(Float)
+    Rect { width: Float, height: Float }
+    Empty
+}
+
+pub type Square = { side: Float }
+
+pub fn User.greet(self, greeting: String): String {
+    "{greeting}, {self.name}"
+}
+
+pub fn User.birthday(mut self) {
+    self.age += 1
+}
+
+fn report(result: String ! reflect.ReflectError) {
+    match result {
+        ok(text) => console.println(text)
+        err(error) => console.println("{error}")
+    }
+}
+
+fn main(): Unit ! reflect.ReflectError {
+    var user = User {
+        name: "Ada"
+        age: 36
+        address: Address { city: "London" }
+        tags: ["math", "code"]
+        nick: none
+        password: "secret"
+    }
+
+    // Paths, set and calls, with any value passed as a `Value`.
+    let city: String = reflect.get(user, "address.city")?
+    let tag: String = reflect.get(user, "tags.1")?
+    console.println("{city} {tag}")
+    reflect.set(mut user, "age", 37)?
+    reflect.set(mut user, "address.city", "Madrid")?
+    reflect.set(mut user, "tags.0", "logic")?
+    console.println("{user.age} {user.address.city} {user.tags}")
+    let greeting: String = reflect.call(user, "greet", "Hello")?
+    let _: Unit = reflect.callMut(mut user, "birthday")?
+    console.println("{greeting} {user.age}")
+
+    // Walking a value whose type is not known.
+    let value = reflect.valueOf(user)
+    console.println("{value.typeName()}: {value}")
+    for field in value.fields() {
+        console.println("  {field.name} = {field.value}")
+    }
+    let back: User = value.to()?
+    console.println("{back.password} {back == user}")
+
+    // Conversions by shape.
+    let view: UserView = reflect.convert(user)
+    console.println("{reflect.valueOf(view)}")
+    let shapes = [Shape.Circle(1.5), Shape.Rect { width: 2.0, height: 3.0 }, Shape.Empty]
+    let rect = reflect.valueOf(shapes[1])
+    console.println("{reflect.valueOf(shapes)} {rect.variant()} {rect.get("height")?}")
+    let ids: Array[UserId] = [UserId(7)]
+    console.println("{reflect.valueOf(ids)} {reflect.valueOf(["a": 1, "b": 2])}")
+    let counts: Map[String, Int] = reflect.valueOf(["a": 1]).to()?
+    console.println("{counts}")
+    let results: Array[Int ! String] = [ok(1), err("no")]
+    console.println("{reflect.valueOf(results)}")
+
+    // What fails, and the fix it names.
+    report(reflect.get(user, "nme"))
+    report(reflect.get(user, "tags.5"))
+    report(reflect.get(user, "nick.first"))
+    report(reflect.call(user, "birthday"))
+    report(reflect.call(user, "greet"))
+    report(reflect.call(user, "wave"))
+    report(reflect.valueOf(user).to())
+    let shape: Shape ! reflect.ReflectError = reflect.valueOf(Square { side: 1.0 }).to()
+    match shape {
+        ok(_) => console.println("converted")
+        err(error) => console.println("{error}")
+    }
+    let user2: User ! reflect.ReflectError = reflect.valueOf(view).to()
+    match user2 {
+        ok(_) => console.println("converted")
+        err(error) => console.println("{error}")
+    }
+}
+
+// expect-stdout: London code
+// expect-stdout: 37 Madrid [logic, code]
+// expect-stdout: Hello, Ada 38
+// expect-stdout: User: User { name: "Ada", age: 38, address: Address { city: "Madrid" }, tags: ["logic", "code"], nick: none }
+// expect-stdout:   name = Ada
+// expect-stdout:   age = 38
+// expect-stdout:   address = Address { city: "Madrid" }
+// expect-stdout:   tags = ["logic", "code"]
+// expect-stdout:   nick = none
+// expect-stdout: secret true
+// expect-stdout: UserView { name: "Ada", address: Address { city: "Madrid" }, nick: none }
+// expect-stdout: [Circle(1.5), Rect { width: 2.0, height: 3.0 }, Empty] some(Rect) 3.0
+// expect-stdout: [UserId(7)] ["a": 1, "b": 2]
+// expect-stdout: [a: 1]
+// expect-stdout: [ok(1), err("no")]
+// expect-stdout: `User` has no field `nme`; its fields are `name`, `age`, `address`, `tags` and `nick`
+// expect-stdout: `5` is not an index of this `Array[String]`, which has 2 element(s)
+// expect-stdout: this `String?` is `none`, so it has no `first`
+// expect-stdout: `User.birthday` takes `mut self`: call it with `callMut`
+// expect-stdout: `User.greet` takes 1 argument(s), found 0
+// expect-stdout: `User` has no `pub` method `wave`; its methods are `greet` and `birthday`
+// expect-stdout: expected `String`, found `User`, which does not convert to it
+// expect-stdout: expected `Shape`, found `Square`, which does not convert to it
+// expect-stdout: `User` has private fields, so only a `User` converts to it, not a `UserView`

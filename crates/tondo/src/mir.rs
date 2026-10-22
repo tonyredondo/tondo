@@ -169,6 +169,10 @@ pub enum Rvalue {
     Callback(hir::FnId, bool),
     /// The size, or with the flag the alignment, of a type in memory.
     Layout(Ty, bool),
+    /// A value of the type boxed for a `reflect.Value`, which retains one
+    /// that was copied when the flag is set; or the value out of a box; or
+    /// whether a box holds one.
+    Reflect(hir::ReflectOp, Ty, Vec<Operand>, bool),
     /// An array as a C array of the destination's type, or the reverse.
     Fixed(Operand, Span),
     /// A call through a `fn(...)` value.

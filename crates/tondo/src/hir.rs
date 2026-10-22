@@ -271,6 +271,9 @@ pub enum ExprKind {
     /// The size in bytes, or with the flag the alignment, of values of a
     /// type in memory (`std.ffi`).
     Layout(Ty, bool),
+    /// Boxes a value of the type for a `reflect.Value`, takes one out of a
+    /// box, or tells whether a box holds one (`std.internal.reflect`).
+    Reflect(ReflectOp, Ty, Vec<Expr>),
     /// An `Array[T]` as a C array `T[n]` of its type, which panics unless
     /// the lengths agree, or a C array as an `Array[T]`.
     Fixed(Box<Expr>),
@@ -729,6 +732,17 @@ pub enum StdFn {
     ClockAdvance,
 }
 
+/// What `std.internal.reflect` does with a value of a type it is given:
+/// boxes it, or takes it out of a box, or tells whether a box holds one.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ReflectOp {
+    Box,
+    Unbox,
+    Is,
+    /// The type's name, as reflection shows it.
+    Name,
+}
+
 /// The raw operations of a `Pointer[T]` that touch memory or move it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PointerOp {
@@ -898,6 +912,8 @@ pub enum NativeTy {
     Ints,
     /// The runtime's compiled regular expression (`std.internal.regex`).
     Regex,
+    /// The box of a `reflect.Value` (`std.internal.reflect`).
+    ReflectBox,
 }
 
 /// A function of an internal module: `std.internal.json`, the runtime's
@@ -924,6 +940,14 @@ pub const NATIVES: &[Native] = {
     }
     const fn regex(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "regex", name, receiver: None, params, result, symbol }
+    }
+    const fn reflect(
+        name: &'static str,
+        params: &'static [NativeTy],
+        result: NativeTy,
+        symbol: &'static str,
+    ) -> Native {
+        Native { module: "reflect", name, receiver: None, params, result, symbol }
     }
     const fn r(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "regex", name, receiver: Some(Regex), params, result, symbol }
@@ -979,5 +1003,8 @@ pub const NATIVES: &[Native] = {
         r("checkInput", &[String], Unit, "tondo_rt_regex_check_input"),
         r("find", &[String, Int, Int], Ints, "tondo_rt_regex_find"),
         r("replace", &[String, String, Bool], String, "tondo_rt_regex_replace"),
+        reflect("boxName", &[ReflectBox], String, "tondo_rt_reflect_name"),
+        reflect("index", &[String], Int, "tondo_rt_reflect_index"),
+        reflect("quote", &[String], String, "tondo_rt_reflect_quote"),
     ]
 };

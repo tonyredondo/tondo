@@ -1,0 +1,813 @@
+// std.reflect (standard library 14.8): reading, writing and calling by name
+// on values whose type a tool does not know beforehand. The compiler
+// implements `Reflect` for every record, enum and newtype whose parts do,
+// with code that reaches each field and method directly; a `Value` keeps a
+// value with those operations of its type.
+
+import std.internal.reflect as native
+
+/// What went wrong.
+pub enum ReflectErrorKind {
+    NoField
+    NoMethod
+    NoValue
+    WrongType
+    WrongArguments
+    OutOfRange
+}
+
+/// The path or method that failed, and how to fix the call.
+pub type ReflectError = {
+    kind: ReflectErrorKind
+    path: String
+    message: String
+}
+
+impl Display for ReflectError {
+    fn display(self): String {
+        self.message
+    }
+}
+
+/// A field of a value: its name and its value.
+pub type Field = {
+    name: String
+    value: Value
+}
+
+/// Any value, with the operations of its type.
+pub type Value = {
+    priv box: native.Box
+    priv ops: fn(native.Box, Op): Reply ! ReflectError
+}
+
+/// What a `Value` asks the code of its type to do.
+enum Op {
+    Get(String)
+    Set(String, Value)
+    Fields
+    Elements
+    Entries
+    Variant
+    Call(String, Array[Value])
+    CallMut(String, Array[Value])
+    Show(Bool)
+}
+
+/// What the code of a type answers.
+enum Reply {
+    One(Value)
+    Fields(Array[Field]?)
+    Values(Array[Value]?)
+    Pairs(Array[(Value, Value)]?)
+    Text(String?)
+    Changed(Value, Value)
+}
+
+/// The operations reflection has on a type. The compiler implements it for
+/// every record, enum and newtype whose parts implement it; a program can
+/// also implement it.
+pub trait Reflect {
+    /// The value of a field, element or key.
+    fn reflectGet(self, name: String): Value ! ReflectError {
+        fail ReflectError.noField(native.typeName[Self](), name, [])
+    }
+
+    /// Changes a field, element or key.
+    fn reflectSet(mut self, name: String, value: Value): Unit ! ReflectError {
+        fail ReflectError.noField(native.typeName[Self](), name, [])
+    }
+
+    /// The visible fields of a record or of the active variant's record
+    /// payload; `none` for any other value.
+    fn reflectFields(self): Array[Field]? {
+        none
+    }
+
+    /// The elements of a sequence or of the active variant's payload.
+    fn reflectElements(self): Array[Value]? {
+        none
+    }
+
+    /// The entries of a map.
+    fn reflectEntries(self): Array[(Value, Value)]? {
+        none
+    }
+
+    /// The name of the active variant of an enum.
+    fn reflectVariant(self): String? {
+        none
+    }
+
+    /// Calls a `pub` method with `self`.
+    fn reflectCall(self, method: String, args: Array[Value]): Value ! ReflectError {
+        fail ReflectError.noMethod(native.typeName[Self](), method, [])
+    }
+
+    /// Calls a `pub` method, which may change the value.
+    fn reflectCallMut(mut self, method: String, args: Array[Value]): Value ! ReflectError {
+        self.reflectCall(method, args)
+    }
+
+    /// The value as `Value` displays it; strings are quoted when `nested`.
+    fn reflectShow(self, nested: Bool): String
+
+    /// A value of this type from a value of another type of the same shape.
+    fn reflectFrom(value: Value): Self ! ReflectError {
+        fail ReflectError.wrongType(native.typeName[Self](), value)
+    }
+}
+
+/// The name of the type of a value.
+fn nameOf[T: Reflect](value: T): String {
+    native.typeName[T]()
+}
+
+/// The operations of the type `T` on its boxed values.
+fn dispatch[T: Reflect](box: native.Box, op: Op): Reply ! ReflectError {
+    var value = native.unbox[T](box)
+    match op {
+        Op.Get(name) => Reply.One(value.reflectGet(name)?)
+        Op.Set(name, new) => {
+            value.reflectSet(name, new)?
+            Reply.One(valueOf(value))
+        }
+        Op.Fields => Reply.Fields(value.reflectFields())
+        Op.Elements => Reply.Values(value.reflectElements())
+        Op.Entries => Reply.Pairs(value.reflectEntries())
+        Op.Variant => Reply.Text(value.reflectVariant())
+        Op.Call(method, args) => Reply.One(value.reflectCall(method, args)?)
+        Op.CallMut(method, args) => {
+            let result = value.reflectCallMut(method, args)?
+            Reply.Changed(result, valueOf(value))
+        }
+        Op.Show(nested) => Reply.Text(some(value.reflectShow(nested)))
+    }
+}
+
+/// A value of any type that implements `Reflect`, with its operations.
+pub fn valueOf[T: Reflect](value: T): Value {
+    let box = native.box(value)
+    if native.is[Value](box) {
+        return native.unbox[Value](box)
+    }
+    Value { box, ops: dispatch[T] }
+}
+
+/// The value at a path of fields, indexes and map keys separated by `.`.
+pub fn get[T: Reflect, S: Reflect](value: S, path: String): T ! ReflectError {
+    valueOf(value).get(path)?.to()?
+}
+
+/// Changes the value at a path, to a value of its type or one that
+/// converts to it.
+pub fn set[S: Reflect](value: mut S, path: String, new: Value): Unit ! ReflectError {
+    let parts = segments(path)
+    let replacement = if parts.length() == 1 {
+        new
+    } else {
+        valueOf(value).step(parts[0], path)?.replaced(parts, 1, new, path)?
+    }
+    match value.reflectSet(parts[0], replacement) {
+        ok(_) => {}
+        err(error) => fail at(error, path)
+    }
+}
+
+/// Calls a `pub` method with `self` by name.
+pub fn call[R: Reflect, S: Reflect](target: S, method: String, args: ...Value): R ! ReflectError {
+    valueOf(target).call(method, ...args)?.to()?
+}
+
+/// Calls a `pub` method by name, which may change the value.
+pub fn callMut[R: Reflect, S: Reflect](target: mut S, method: String, args: ...Value): R ! ReflectError {
+    match target.reflectCallMut(method, args) {
+        ok(result) => result.to()?
+        err(error) => fail at(error, method)
+    }
+}
+
+/// A value of another type of the same shape; the compiler checks the
+/// shapes when it compiles the call.
+pub fn convert[T: Reflect, S: Reflect](value: S): T {
+    let converted: T ! ReflectError = valueOf(value).to()
+    match converted {
+        ok(done) => done
+        err(error) => panic("reflect.convert: {error}")
+    }
+}
+
+fn Value.run(self, op: Op): Reply ! ReflectError {
+    self.ops(self.box, op)
+}
+
+/// The segments of a path.
+fn segments(path: String): Array[String] {
+    var parts: Array[String] = []
+    var rest = path
+    for {
+        match rest.find(".") {
+            some(dot) => {
+                parts.push(piece(rest, 0, dot))
+                rest = piece(rest, dot + 1, rest.byteLength())
+            }
+            none => {
+                parts.push(rest)
+                return parts
+            }
+        }
+    }
+}
+
+fn piece(text: String, start: Int, end: Int): String {
+    match text.slice(start, end) {
+        ok(part) => part
+        err(_) => ""
+    }
+}
+
+/// The error with the path it happened at.
+fn at(error: ReflectError, path: String): ReflectError {
+    ReflectError { kind: error.kind, path, message: error.message }
+}
+
+fn unexpected(): ReflectError {
+    ReflectError { kind: ReflectErrorKind.WrongType, path: "", message: "reflection got an answer it did not ask for" }
+}
+
+/// The value at a path of fields, indexes and map keys separated by `.`.
+pub fn Value.get(self, path: String): Value ! ReflectError {
+    var current = self
+    for segment in segments(path) {
+        current = current.step(segment, path)?
+    }
+    current
+}
+
+fn Value.step(self, segment: String, path: String): Value ! ReflectError {
+    match self.run(Op.Get(segment)) {
+        ok(Reply.One(value)) => value
+        ok(_) => fail unexpected()
+        err(error) => fail at(error, path)
+    }
+}
+
+/// Changes the value at a path, to a value of its type or one that
+/// converts to it.
+pub fn Value.set(mut self, path: String, new: Value): Unit ! ReflectError {
+    self = self.replaced(segments(path), 0, new, path)?
+}
+
+fn Value.replaced(self, parts: Array[String], index: Int, new: Value, path: String): Value ! ReflectError {
+    let value = if index + 1 == parts.length() {
+        new
+    } else {
+        self.step(parts[index], path)?.replaced(parts, index + 1, new, path)?
+    }
+    match self.run(Op.Set(parts[index], value)) {
+        ok(Reply.One(changed)) => changed
+        ok(_) => fail unexpected()
+        err(error) => fail at(error, path)
+    }
+}
+
+/// Calls a `pub` method with `self` by name.
+pub fn Value.call(self, method: String, args: ...Value): Value ! ReflectError {
+    match self.run(Op.Call(method, args)) {
+        ok(Reply.One(result)) => result
+        ok(_) => fail unexpected()
+        err(error) => fail at(error, method)
+    }
+}
+
+/// Calls a `pub` method by name, which may change the value.
+pub fn Value.callMut(mut self, method: String, args: ...Value): Value ! ReflectError {
+    match self.run(Op.CallMut(method, args)) {
+        ok(Reply.Changed(result, changed)) => {
+            self = changed
+            result
+        }
+        ok(_) => fail unexpected()
+        err(error) => fail at(error, method)
+    }
+}
+
+/// The value as `T`: itself, or converted from a value of the same shape.
+pub fn Value.to[T: Reflect](self): T ! ReflectError {
+    if native.is[T](self.box) {
+        return native.unbox[T](self.box)
+    }
+    Reflect.reflectFrom[T](self)
+}
+
+/// The name of the type of the value.
+pub fn Value.typeName(self): String {
+    native.boxName(self.box)
+}
+
+/// The visible fields of a record, or of the active variant's record
+/// payload.
+pub fn Value.fields(self): Array[Field] {
+    match self.run(Op.Fields) {
+        ok(Reply.Fields(some(fields))) => fields
+        _ => []
+    }
+}
+
+/// The elements of an array, deque or set, or the active variant's payload.
+pub fn Value.elements(self): Array[Value] {
+    match self.run(Op.Elements) {
+        ok(Reply.Values(some(values))) => values
+        _ => []
+    }
+}
+
+/// The entries of a map.
+pub fn Value.entries(self): Array[(Value, Value)] {
+    match self.run(Op.Entries) {
+        ok(Reply.Pairs(some(pairs))) => pairs
+        _ => []
+    }
+}
+
+/// The name of the active variant of an enum, `Option` or `Result`.
+pub fn Value.variant(self): String? {
+    match self.run(Op.Variant) {
+        ok(Reply.Text(name)) => name
+        _ => none
+    }
+}
+
+fn Value.show(self, nested: Bool): String {
+    match self.run(Op.Show(nested)) {
+        ok(Reply.Text(some(text))) => text
+        _ => ""
+    }
+}
+
+/// Whether the value is a sequence, as conversions to one need.
+fn Value.sequence(self): Array[Value]? {
+    match self.run(Op.Elements) {
+        ok(Reply.Values(values)) if self.variant() == none => values
+        _ => none
+    }
+}
+
+/// A field that may be missing, as an optional field converts from: its
+/// value, or `none` when the value has no field of that name.
+pub fn Value.optional(self, name: String): Value? ! ReflectError {
+    match self.run(Op.Get(name)) {
+        ok(Reply.One(value)) => some(value)
+        ok(_) => fail unexpected()
+        err(error) if error.kind == ReflectErrorKind.NoField => none
+        err(error) => fail error
+    }
+}
+
+impl Display for Value {
+    fn display(self): String {
+        self.show(false)
+    }
+}
+
+/// Names in a message: "`a`, `b` and `c`".
+fn listed(names: Array[String]): String {
+    var text = ""
+    for index in 0..names.length() {
+        let separator = if index == 0 {
+            ""
+        } else if index + 1 == names.length() {
+            " and "
+        } else {
+            ", "
+        }
+        text = "{text}{separator}`{names[index]}`"
+    }
+    text
+}
+
+/// A field, element or key a value does not have.
+pub fn ReflectError.noField(typeName: String, name: String, fields: Array[String]): ReflectError {
+    let message = if fields.length() == 0 {
+        "`{typeName}` has no fields, so it has no field `{name}`"
+    } else {
+        "`{typeName}` has no field `{name}`; its fields are {listed(fields)}"
+    }
+    ReflectError { kind: ReflectErrorKind.NoField, path: name, message }
+}
+
+/// A method a value does not have.
+pub fn ReflectError.noMethod(typeName: String, name: String, methods: Array[String]): ReflectError {
+    let message = if methods.length() == 0 {
+        "`{typeName}` has no `pub` methods, so it has no method `{name}`"
+    } else {
+        "`{typeName}` has no `pub` method `{name}`; its methods are {listed(methods)}"
+    }
+    ReflectError { kind: ReflectErrorKind.NoMethod, path: name, message }
+}
+
+/// A value of a type that does not convert to the one wanted.
+pub fn ReflectError.wrongType(expected: String, value: Value): ReflectError {
+    let message = "expected `{expected}`, found `{value.typeName()}`, which does not convert to it"
+    ReflectError { kind: ReflectErrorKind.WrongType, path: "", message }
+}
+
+/// A call with a number of arguments the method does not take.
+pub fn ReflectError.arguments(typeName: String, method: String, expected: Int, found: Int): ReflectError {
+    let message = "`{typeName}.{method}` takes {expected} argument(s), found {found}"
+    ReflectError { kind: ReflectErrorKind.WrongArguments, path: method, message }
+}
+
+/// A conversion to a type with private fields, which only it can build.
+pub fn ReflectError.privateFields(typeName: String, value: Value): ReflectError {
+    let message = "`{typeName}` has private fields, so only a `{typeName}` converts to it, not a `{value.typeName()}`"
+    ReflectError { kind: ReflectErrorKind.WrongType, path: "", message }
+}
+
+/// The method `Value.callMut` needs, called on a value with `call`.
+pub fn ReflectError.needsMut(typeName: String, method: String): ReflectError {
+    let message = "`{typeName}.{method}` takes `mut self`: call it with `callMut`"
+    ReflectError { kind: ReflectErrorKind.WrongArguments, path: method, message }
+}
+
+/// The index a segment names in a sequence of `length` elements.
+fn position(typeName: String, name: String, length: Int): Int ! ReflectError {
+    let index = native.index(name)
+    if index < 0 or index >= length {
+        let message = "`{name}` is not an index of this `{typeName}`, which has {length} element(s)"
+        fail ReflectError { kind: ReflectErrorKind.OutOfRange, path: name, message }
+    }
+    index
+}
+
+/// The elements as a list inside brackets or parentheses.
+fn shown(values: Array[Value]): String {
+    var text = ""
+    for index in 0..values.length() {
+        let separator = if index == 0 { "" } else { ", " }
+        text = "{text}{separator}{values[index].show(true)}"
+    }
+    text
+}
+
+impl Reflect for Int {
+    fn reflectShow(self, nested: Bool): String {
+        "{self}"
+    }
+}
+
+impl Reflect for Int8 {
+    fn reflectShow(self, nested: Bool): String {
+        "{self}"
+    }
+}
+
+impl Reflect for Int16 {
+    fn reflectShow(self, nested: Bool): String {
+        "{self}"
+    }
+}
+
+impl Reflect for Int32 {
+    fn reflectShow(self, nested: Bool): String {
+        "{self}"
+    }
+}
+
+impl Reflect for UInt8 {
+    fn reflectShow(self, nested: Bool): String {
+        "{self}"
+    }
+}
+
+impl Reflect for UInt16 {
+    fn reflectShow(self, nested: Bool): String {
+        "{self}"
+    }
+}
+
+impl Reflect for UInt32 {
+    fn reflectShow(self, nested: Bool): String {
+        "{self}"
+    }
+}
+
+impl Reflect for UInt64 {
+    fn reflectShow(self, nested: Bool): String {
+        "{self}"
+    }
+}
+
+impl Reflect for Float {
+    fn reflectShow(self, nested: Bool): String {
+        "{self}"
+    }
+}
+
+impl Reflect for Float32 {
+    fn reflectShow(self, nested: Bool): String {
+        "{self}"
+    }
+}
+
+impl Reflect for Bool {
+    fn reflectShow(self, nested: Bool): String {
+        "{self}"
+    }
+}
+
+impl Reflect for Char {
+    fn reflectShow(self, nested: Bool): String {
+        "{self}"
+    }
+}
+
+impl Reflect for Byte {
+    fn reflectShow(self, nested: Bool): String {
+        "{self}"
+    }
+}
+
+impl Reflect for Unit {
+    fn reflectShow(self, nested: Bool): String {
+        "()"
+    }
+}
+
+impl Reflect for String {
+    fn reflectShow(self, nested: Bool): String {
+        if nested { native.quote(self) } else { self }
+    }
+}
+
+impl Reflect for Value {
+    fn reflectShow(self, nested: Bool): String {
+        self.show(nested)
+    }
+
+    fn reflectFrom(value: Value): Value ! ReflectError {
+        value
+    }
+}
+
+impl[T: Reflect] Reflect for Array[T] {
+    fn reflectGet(self, name: String): Value ! ReflectError {
+        valueOf(self[position(nameOf(self), name, self.length())?])
+    }
+
+    fn reflectSet(mut self, name: String, value: Value): Unit ! ReflectError {
+        let index = position(nameOf(self), name, self.length())?
+        self[index] = value.to()?
+    }
+
+    fn reflectElements(self): Array[Value]? {
+        var values: Array[Value] = []
+        for item in self {
+            values.push(valueOf(item))
+        }
+        some(values)
+    }
+
+    fn reflectShow(self, nested: Bool): String {
+        match self.reflectElements() {
+            some(values) => "[{shown(values)}]"
+            none => "[]"
+        }
+    }
+
+    fn reflectFrom(value: Value): Array[T] ! ReflectError {
+        match value.sequence() {
+            some(values) => {
+                var items: Array[T] = []
+                for item in values {
+                    items.push(item.to()?)
+                }
+                items
+            }
+            none => fail ReflectError.wrongType(native.typeName[Array[T]](), value)
+        }
+    }
+}
+
+impl[T: Reflect] Reflect for Option[T] {
+    fn reflectGet(self, name: String): Value ! ReflectError {
+        match self {
+            some(inner) => inner.reflectGet(name)?
+            none => fail noValue(nameOf(self), name)
+        }
+    }
+
+    fn reflectSet(mut self, name: String, value: Value): Unit ! ReflectError {
+        match self {
+            some(inner) => {
+                var changed = inner
+                changed.reflectSet(name, value)?
+                self = some(changed)
+            }
+            none => fail noValue(nameOf(self), name)
+        }
+    }
+
+    fn reflectElements(self): Array[Value]? {
+        match self {
+            some(inner) => some([valueOf(inner)])
+            none => some([])
+        }
+    }
+
+    fn reflectVariant(self): String? {
+        match self {
+            some(_) => some("some")
+            none => some("none")
+        }
+    }
+
+    fn reflectShow(self, nested: Bool): String {
+        match self {
+            some(inner) => "some({inner.reflectShow(true)})"
+            none => "none"
+        }
+    }
+
+    fn reflectFrom(value: Value): T? ! ReflectError {
+        match value.variant() {
+            some("none") => none
+            some("some") => some(value.elements()[0].to()?)
+            _ => some(value.to()?)
+        }
+    }
+}
+
+fn noValue(typeName: String, name: String): ReflectError {
+    let message = "this `{typeName}` is `none`, so it has no `{name}`"
+    ReflectError { kind: ReflectErrorKind.NoValue, path: name, message }
+}
+
+/// The key a path segment names in a map whose keys are `K`.
+fn keyOf[K: Reflect + Key](typeName: String, name: String): K ! ReflectError {
+    let key: K ! ReflectError = valueOf(name).to()
+    match key {
+        ok(found) => found
+        err(_) => {
+            let message = "a path names a key of `{typeName}` as a string, and its keys are not strings"
+            fail ReflectError { kind: ReflectErrorKind.NoField, path: name, message }
+        }
+    }
+}
+
+fn noKey(typeName: String, name: String): ReflectError {
+    let message = "this `{typeName}` has no key `{name}`"
+    ReflectError { kind: ReflectErrorKind.NoField, path: name, message }
+}
+
+impl[K: Reflect + Key, V: Reflect] Reflect for Map[K, V] {
+    fn reflectGet(self, name: String): Value ! ReflectError {
+        let key: K = keyOf(nameOf(self), name)?
+        match self[key] {
+            some(found) => valueOf(found)
+            none => fail noKey(nameOf(self), name)
+        }
+    }
+
+    fn reflectSet(mut self, name: String, value: Value): Unit ! ReflectError {
+        let message = "a `{nameOf(self)}` changes as a whole: read it, change `{name}` and set the map"
+        fail ReflectError { kind: ReflectErrorKind.WrongType, path: name, message }
+    }
+
+    fn reflectEntries(self): Array[(Value, Value)]? {
+        var pairs: Array[(Value, Value)] = []
+        for (key, item) in self {
+            pairs.push((valueOf(key), valueOf(item)))
+        }
+        some(pairs)
+    }
+
+    fn reflectShow(self, nested: Bool): String {
+        var text = ""
+        for (key, item) in self {
+            let separator = if text == "" { "" } else { ", " }
+            text = "{text}{separator}{key.reflectShow(true)}: {item.reflectShow(true)}"
+        }
+        if text == "" { "[:]" } else { "[{text}]" }
+    }
+
+    fn reflectFrom(value: Value): Map[K, V] ! ReflectError {
+        match value.run(Op.Entries)? {
+            Reply.Pairs(some(pairs)) => {
+                var map: Map[K, V] = [:]
+                for (key, item) in pairs {
+                    map[key.to()?] = item.to()?
+                }
+                map
+            }
+            _ => fail ReflectError.wrongType(native.typeName[Map[K, V]](), value)
+        }
+    }
+}
+
+impl[T: Reflect, E: Reflect] Reflect for Result[T, E] {
+    fn reflectGet(self, name: String): Value ! ReflectError {
+        match self {
+            ok(inner) => inner.reflectGet(name)?
+            err(error) => error.reflectGet(name)?
+        }
+    }
+
+    fn reflectElements(self): Array[Value]? {
+        match self {
+            ok(inner) => some([valueOf(inner)])
+            err(error) => some([valueOf(error)])
+        }
+    }
+
+    fn reflectVariant(self): String? {
+        match self {
+            ok(_) => some("ok")
+            err(_) => some("err")
+        }
+    }
+
+    fn reflectShow(self, nested: Bool): String {
+        match self {
+            ok(inner) => "ok({inner.reflectShow(true)})"
+            err(error) => "err({error.reflectShow(true)})"
+        }
+    }
+
+    fn reflectFrom(value: Value): Result[T, E] ! ReflectError {
+        match value.variant() {
+            some("ok") => ok(value.elements()[0].to()?)
+            some("err") => err(value.elements()[0].to()?)
+            _ => fail ReflectError.wrongType(native.typeName[Result[T, E]](), value)
+        }
+    }
+}
+
+impl[T: Reflect] Reflect for Deque[T] {
+    fn reflectGet(self, name: String): Value ! ReflectError {
+        valueOf(self[position(nameOf(self), name, self.length())?])
+    }
+
+    fn reflectSet(mut self, name: String, value: Value): Unit ! ReflectError {
+        let index = position(nameOf(self), name, self.length())?
+        self[index] = value.to()?
+    }
+
+    fn reflectElements(self): Array[Value]? {
+        var values: Array[Value] = []
+        for item in self {
+            values.push(valueOf(item))
+        }
+        some(values)
+    }
+
+    fn reflectShow(self, nested: Bool): String {
+        match self.reflectElements() {
+            some(values) => "[{shown(values)}]"
+            none => "[]"
+        }
+    }
+
+    fn reflectFrom(value: Value): Deque[T] ! ReflectError {
+        match value.sequence() {
+            some(values) => {
+                var items = Deque.new[T]()
+                for item in values {
+                    items.push(item.to()?)
+                }
+                items
+            }
+            none => fail ReflectError.wrongType(native.typeName[Deque[T]](), value)
+        }
+    }
+}
+
+impl[T: Reflect + Key] Reflect for Set[T] {
+    fn reflectElements(self): Array[Value]? {
+        var values: Array[Value] = []
+        for item in self {
+            values.push(valueOf(item))
+        }
+        some(values)
+    }
+
+    fn reflectShow(self, nested: Bool): String {
+        match self.reflectElements() {
+            some(values) => "Set[{shown(values)}]"
+            none => "Set[]"
+        }
+    }
+
+    fn reflectFrom(value: Value): Set[T] ! ReflectError {
+        match value.sequence() {
+            some(values) => {
+                var items: Set[T] = Set[]
+                for item in values {
+                    items.insert(item.to()?)
+                }
+                items
+            }
+            none => fail ReflectError.wrongType(native.typeName[Set[T]](), value)
+        }
+    }
+}

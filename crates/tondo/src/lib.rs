@@ -5,6 +5,7 @@ pub mod bind;
 pub mod check;
 pub mod codegen;
 pub mod deps;
+pub mod derive;
 pub mod diag;
 pub mod driver;
 pub mod exhaust;

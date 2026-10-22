@@ -136,7 +136,7 @@ fn analyze_build(path: &Path, tests: bool) -> Result<Analysis, String> {
             let dependencies = [(tested.clone(), 0)].into_iter().collect();
             packages.push(modules::PackageInfo { name: format!("{tested}_tests"), dependencies });
         }
-        stdlib::derive_json(&mut modules, &mut sources, &mut diags);
+        crate::derive::derive(&mut modules, &mut sources, &mut diags);
         stdlib::add(&mut modules, &mut packages, &mut sources, &mut diags);
         let mut module = modules::link(modules, root, &packages, &mut diags);
         module.test_package = tests.then_some(tested);
@@ -152,7 +152,7 @@ fn analyze_build(path: &Path, tests: bool) -> Result<Analysis, String> {
             let mut modules =
                 vec![modules::ModuleSource { path: vec![name.clone()], package: 0, files: vec![(module, true)] }];
             let mut packages = vec![modules::PackageInfo { name, dependencies: Default::default() }];
-            stdlib::derive_json(&mut modules, &mut sources, &mut diags);
+            crate::derive::derive(&mut modules, &mut sources, &mut diags);
             stdlib::add(&mut modules, &mut packages, &mut sources, &mut diags);
             modules::link(modules, 0, &packages, &mut diags)
         } else {

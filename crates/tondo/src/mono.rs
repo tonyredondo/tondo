@@ -27,6 +27,7 @@ pub fn monomorphize(program: Program, diags: &mut Diagnostics) -> Option<Program
         out: Vec::new(),
         display: HashMap::new(),
         runaway: None,
+        conversions: Vec::new(),
     };
     let main = mono.instance(main, Vec::new());
     while let Some((id, args, instance)) = mono.queue.pop_front() {
@@ -39,6 +40,23 @@ pub fn monomorphize(program: Program, diags: &mut Diagnostics) -> Option<Program
     if let Some(name) = mono.runaway.take().or_else(|| mono.types.runaway.take()) {
         let message = format!("`{name}` is instantiated with ever larger type arguments and never terminates");
         diags.error_without_span("E1112", message);
+        return None;
+    }
+    // `reflect.convert` between the types it is instantiated with (27.10).
+    for (span, from, to) in std::mem::take(&mut mono.conversions) {
+        let mut missing = Vec::new();
+        match mono.types.converts(from, to, &mut missing) {
+            Ok(()) => {
+                for field in missing {
+                    let message =
+                        format!("`{field}` is filled with `none`: `{}` has no such field", mono.types.display(from));
+                    diags.warning("W1012", span, message);
+                }
+            }
+            Err(why) => diags.error("E2110", span, format!("`reflect.convert` cannot convert here: {why}")),
+        }
+    }
+    if diags.has_errors() {
         return None;
     }
     let display = std::mem::take(&mut mono.display);
@@ -69,6 +87,9 @@ struct Mono<'a> {
     queue: VecDeque<(FnId, Vec<Ty>, FnId)>,
     out: Vec<Option<Function>>,
     runaway: Option<String>,
+    /// The calls of `reflect.convert`, from and to which type, checked once
+    /// every instance is known.
+    conversions: Vec<(crate::source::Span, Ty, Ty)>,
 }
 
 impl Mono<'_> {
@@ -211,6 +232,10 @@ impl Mono<'_> {
             | ExprKind::ExternFn(_)
             | ExprKind::Error => {}
             ExprKind::Layout(ty, _) => *ty = self.ty(*ty, map),
+            ExprKind::Reflect(_, ty, values) => {
+                *ty = self.ty(*ty, map);
+                self.exprs(values, map);
+            }
             ExprKind::Aggregate(items)
             | ExprKind::Array(items)
             | ExprKind::Set(items)
@@ -294,7 +319,12 @@ impl Mono<'_> {
                 let types: Vec<Ty> = type_args.iter().map(|&t| self.ty(t, map)).collect();
                 type_args.clear();
                 match *callee {
-                    Callee::Fn(id) => *callee = Callee::Fn(self.instance(id, types)),
+                    Callee::Fn(id) => {
+                        if self.functions[id.0 as usize].name == "reflect.convert" {
+                            self.conversions.push((e.span, types[1], types[0]));
+                        }
+                        *callee = Callee::Fn(self.instance(id, types))
+                    }
                     Callee::Trait(trait_id, method) => match self.resolve(trait_id, method, &types) {
                         Resolved::Fn(id, types) => *callee = Callee::Fn(self.instance(id, types)),
                         // A built-in value displays itself.

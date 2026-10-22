@@ -2286,26 +2286,41 @@ superficie es:
 pub type Value
 pub type Field = { name: String, value: Value }
 
-pub fn valueOf[T](value: T): Value
-pub fn get[T, S](value: ref S, path: String): T ! ReflectError
-pub fn set[S](value: mut S, path: String, new: Value): Unit ! ReflectError
-pub fn call[R, S](target: ref S, method: String, ...args: Array[Value]): R ! ReflectError
-pub fn callMut[R, S](target: mut S, method: String, ...args: Array[Value]): R ! ReflectError
-pub fn convert[T, S](value: S): T
-pub fn typeOf[T](value: ref T): TypeInfo
-pub fn typeInfo[T](): TypeInfo
+pub fn valueOf[T: Reflect](value: T): Value
+pub fn get[T: Reflect, S: Reflect](value: S, path: String): T ! ReflectError
+pub fn set[S: Reflect](value: mut S, path: String, new: Value): Unit ! ReflectError
+pub fn call[R: Reflect, S: Reflect](target: S, method: String, args: ...Value): R ! ReflectError
+pub fn callMut[R: Reflect, S: Reflect](target: mut S, method: String, args: ...Value): R ! ReflectError
+pub fn convert[T: Reflect, S: Reflect](value: S): T
+pub fn typeOf[T: Reflect](value: T): TypeInfo
+pub fn typeInfo[T: Reflect](): TypeInfo
 
+pub fn Value.typeName(self): String
 pub fn Value.typeInfo(self): TypeInfo
-pub fn Value.as[T](self): T ! ReflectError
+pub fn Value.to[T: Reflect](self): T ! ReflectError
 pub fn Value.get(self, path: String): Value ! ReflectError
 pub fn Value.set(mut self, path: String, new: Value): Unit ! ReflectError
-pub fn Value.call(self, method: String, ...args: Array[Value]): Value ! ReflectError
-pub fn Value.callMut(mut self, method: String, ...args: Array[Value]): Value ! ReflectError
+pub fn Value.call(self, method: String, args: ...Value): Value ! ReflectError
+pub fn Value.callMut(mut self, method: String, args: ...Value): Value ! ReflectError
 pub fn Value.fields(self): Array[Field]
 pub fn Value.elements(self): Array[Value]
 pub fn Value.entries(self): Array[(Value, Value)]
 pub fn Value.variant(self): String?
+pub fn Value.optional(self, name: String): Value? ! ReflectError
 impl Display for Value
+
+pub trait Reflect {
+    fn reflectGet(self, name: String): Value ! ReflectError
+    fn reflectSet(mut self, name: String, value: Value): Unit ! ReflectError
+    fn reflectFields(self): Array[Field]?
+    fn reflectElements(self): Array[Value]?
+    fn reflectEntries(self): Array[(Value, Value)]?
+    fn reflectVariant(self): String?
+    fn reflectCall(self, method: String, args: Array[Value]): Value ! ReflectError
+    fn reflectCallMut(mut self, method: String, args: Array[Value]): Value ! ReflectError
+    fn reflectShow(self, nested: Bool): String
+    fn reflectFrom(value: Value): Self ! ReflectError
+}
 
 pub enum ReflectErrorKind {
     NoField
@@ -2316,34 +2331,46 @@ pub enum ReflectErrorKind {
     OutOfRange
 }
 pub type ReflectError = { kind: ReflectErrorKind, path: String, message: String }
+pub fn ReflectError.noField(typeName: String, name: String, fields: Array[String]): ReflectError
+pub fn ReflectError.noMethod(typeName: String, name: String, methods: Array[String]): ReflectError
+pub fn ReflectError.wrongType(expected: String, value: Value): ReflectError
+pub fn ReflectError.arguments(typeName: String, method: String, expected: Int, found: Int): ReflectError
+pub fn ReflectError.privateFields(typeName: String, value: Value): ReflectError
+pub fn ReflectError.needsMut(typeName: String, method: String): ReflectError
 ~~~
+
+`Reflect` tiene una implementación por defecto de cada operación salvo
+`reflectShow`; los constructores de `ReflectError` dan los mensajes que usa el
+código que genera el compilador, y un `impl` escrito a mano puede usarlos.
 
 Valores:
 
-- `valueOf` toma el valor por valor, como cualquier argumento; `get`, `call` y
-  `typeOf` lo observan con un préstamo, y `set` y `callMut` lo cambian con un
-  préstamo `mut`.
-- Una ruta separa con `.` nombres de campo, índices de `Array`, `Deque`, tuplas
-  y payloads de tupla, y claves de `Map[String, V]`. Un `Option` con `some` es
-  transparente y uno con `none` da `NoValue`. Un newtype es un valor único: la
-  ruta no entra en él.
-- `get[T]` y `Value.as[T]` dan el valor si es de tipo `T`, o lo convierten por
-  forma (27.10); `as[Value]` es el propio valor. `set` acepta un valor del tipo
-  del campo o uno que se convierte a él; en un `Map` inserta o reemplaza la
-  clave.
-- `call` y `callMut` buscan un método `pub` por nombre, comprueban número y tipo
-  de argumentos y dan su resultado completo como `R`: para un método
-  `T ! E`, `R` es `T ! E`. `call` solo llama métodos con `self`; un método con
-  `mut self` o `var self` necesita `callMut`.
+- `valueOf`, `get`, `call` y `typeOf` toman el valor por valor, que es una copia
+  porque los valores que se reflejan son `Copy`; `set` y `callMut` lo cambian con
+  un préstamo `mut`.
+- Una ruta separa con `.` nombres de campo, índices de `Array` y `Deque`, índices
+  de un payload de tupla, y claves de `Map[String, V]`. Un `Option` con `some`
+  es transparente y uno con `none` da `NoValue`. Un newtype es un valor único:
+  la ruta no entra en él.
+- `get[T]` y `Value.to[T]` dan el valor si es de tipo `T`, o lo convierten por
+  forma (27.10 del lenguaje); `to[Value]` es el propio valor. `set` acepta un
+  valor del tipo del campo o uno que se convierte a él. Un `Map` cambia entero:
+  la reflexión no inserta ni reemplaza una de sus claves.
+- `call` y `callMut` buscan un método `pub` por nombre, comprueban el número de
+  argumentos y convierten cada uno al tipo de su parámetro, y dan su resultado
+  completo como `R`: para un método `T ! E`, `R` es `T ! E`. Se llaman los
+  métodos que reciben `self` o `mut self` y parámetros por valor. `call` solo
+  llama métodos con `self`; uno con `mut self` necesita `callMut`.
 - `fields()` da los campos visibles de un record o del payload record de la
-  variante activa; `elements()` los de un `Array`, `Deque`, `Set`, tupla o payload
-  de tupla; `entries()` los pares de un `Map`; `variant()` el nombre de la
-  variante activa de un enum. Una vista que no corresponde al valor está vacía.
+  variante activa; `elements()` los de un `Array`, `Deque`, `Set` o payload de
+  tupla; `entries()` los pares de un `Map`; `variant()` el nombre de la variante
+  activa de un enum, `Option` o `Result`. Una vista que no corresponde al valor
+  está vacía. `optional(name)` da el campo, o `none` si el valor no lo tiene.
 - `Display` escribe un escalar como su propio `Display` y un compuesto como
-  `User { name: "Ada", age: 36 }`, con los strings entre comillas dentro de un
-  compuesto y sin los campos `priv`.
+  `User { name: "Ada", age: 36 }`, `[1, 2]`, `["a": 1]` o `Set[1, 2]`, con los
+  strings entre comillas dentro de un compuesto y sin los campos `priv`.
 - `ReflectError` dice qué ruta o método falló y su mensaje la corrección:
-  "`User` has no field `nme`; its fields are `name`, `age`, `address`".
+  "`User` has no field `nme`; its fields are `name`, `age` and `address`".
 
 Descripción de tipos:
 
