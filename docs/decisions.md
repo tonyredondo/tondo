@@ -654,3 +654,19 @@ threads of C waiting for a callback's task). Otherwise idle workers look
 again every 100 ms. This also removed a false `P0013` for programs waiting
 on a callback from a C timer or a library's thread.
 
+## 2026-10-22 — arm64 and macOS before H8
+
+Running on Apple silicon moved ahead of the testing milestone. The C
+calling convention became one plan per call in `codegen/cabi.rs`, shared by
+calls, signatures and callback adapters: System V on x86-64, AAPCS64 on
+arm64 (structs of one to four floats of one type in vector registers,
+others up to 16 bytes in integer registers, larger ones by the address of a
+copy since Cranelift has no stack struct arguments there, and a struct
+that no longer fits on the stack with its class of registers used up), and
+Apple's variant, which passes `...` on the stack in 8-byte slots: filler
+arguments use up the registers, and integers widen to 64 bits because
+Cranelift packs narrower ones. Narrow integers cross as extended `int`s on
+every target, since Cranelift does not extend them for Apple. Only x86-64
+needs the runtime trampoline for `...`. CI runs on Linux x86-64, Linux
+arm64 and macOS arm64; tests can be limited to a platform.
+

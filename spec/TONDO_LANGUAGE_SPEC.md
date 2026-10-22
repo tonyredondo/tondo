@@ -6197,8 +6197,9 @@ declaración tiene que decir qué funciones bloquean.
 
 El ejecutable enlaza la librería de C del sistema; un proyecto añade otras en
 `[native] libraries` de `tondo.toml`, y un script con `--link` (toolchain 3).
-Las reglas de llamada son las de System V en x86-64; las de otros targets
-llegarán con ellos.
+Las reglas de llamada son las de C en cada target: System V en x86-64, AAPCS64
+en arm64 y su variante de Apple en macOS, que pasa los argumentos de `...` en
+la pila.
 
 ---
 
