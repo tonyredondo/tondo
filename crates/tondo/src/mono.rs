@@ -401,7 +401,9 @@ impl Mono<'_> {
     /// which code generation calls element by element.
     fn collect_display(&mut self, ty: Ty) {
         let parts = match self.types.kind(ty).clone() {
-            TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) => vec![element],
+            TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) | TyKind::Option(element) => {
+                vec![element]
+            }
             TyKind::Map(key, value) => vec![key, value],
             TyKind::Adt(_) => {
                 if !self.display.contains_key(&ty)

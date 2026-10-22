@@ -432,9 +432,27 @@ impl Lexer<'_> {
     fn punctuation(&mut self, c: char) {
         let start = self.pos;
         let rest = self.rest();
-        if rest.starts_with("--") || rest.starts_with("??") {
-            self.pos += 2;
-            self.error("E0002", start, self.pos, "adjacent `--` and `??` are not Tondo operators");
+        // Operators of other languages, with what Tondo writes instead.
+        let foreign = [
+            ("--", "`--` is not a Tondo operator: write `value -= 1`, or `-(-value)` for a double negation"),
+            ("++", "`++` is not a Tondo operator: write `value += 1`"),
+            ("&&", "`&&` is not a Tondo operator: write `and`"),
+            ("||", "`||` is not a Tondo operator: write `or`"),
+            (
+                "??",
+                "`??` is not a Tondo operator: for a fallback write `match value { some(x) => x, none => fallback }`; to propagate twice, `(value?)?`; a nested option type is `(T?)?`",
+            ),
+        ];
+        if let Some((text, message)) = foreign.iter().find(|(text, _)| rest.starts_with(text)) {
+            self.pos += text.len();
+            self.error("E0002", start, self.pos, *message);
+            // Parsing goes on with a binary operator in its place, so the
+            // operands raise no further errors.
+            match *text {
+                "&&" => self.push(Tok::Kw(Kw::And), start),
+                "||" | "??" => self.push(Tok::Kw(Kw::Or), start),
+                _ => {}
+            }
             return;
         }
         let Some((text, tok)) = PUNCTUATION.iter().find(|(text, _)| rest.starts_with(text)) else {

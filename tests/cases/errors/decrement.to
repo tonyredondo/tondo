@@ -3,4 +3,4 @@ fn main() {
     i--
 }
 
-// expect-error: E0002
+// expect-error: E0002 `--` is not a Tondo operator: write `value -= 1`

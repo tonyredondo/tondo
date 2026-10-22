@@ -79,13 +79,6 @@ fn files(dir: String): Unit ! fs.FsError {
     console.println("cleaned {fs.exists(dir)}")
 }
 
-fn show(part: String?): String {
-    match part {
-        some(text) => "\"{text}\"",
-        none => "none",
-    }
-}
-
 fn main() {
     match files("fs_files") {
         ok(_) => console.println("done"),
@@ -94,11 +87,12 @@ fn main() {
 
     console.println(path.join("docs", "guide.md"))
     console.println(path.join("docs/", "/etc/hosts"))
-    console.println("{show(path.parent("docs/guide.md"))} {show(path.parent("guide.md"))} {show(path.parent("/"))}")
-    console.println("{show(path.fileName("docs/guide.md"))} {show(path.fileName("/"))}")
-    console.println("{show(path.extension("archive.tar.gz"))} {show(path.extension("Makefile"))} {show(path.extension(".bashrc"))}")
+    console.println("{path.parent("docs/guide.md")} {path.parent("guide.md")} {path.parent("/")}")
+    console.println("{path.fileName("docs/guide.md")} {path.fileName("/")}")
+    console.println("{path.extension("archive.tar.gz")} {path.extension("Makefile")} {path.extension(".bashrc")}")
     console.println("{path.isAbsolute("/etc/hosts")} {path.isAbsolute("etc/hosts")}")
 
+    console.println("{[some(1), none]}")
     let utf8 = "héllo".bytes()
     match String.fromBytes(utf8) {
         ok(back) => console.println("{utf8.length()} {back}"),
@@ -133,9 +127,10 @@ fn main() {
 // expect-stdout: done
 // expect-stdout: docs/guide.md
 // expect-stdout: /etc/hosts
-// expect-stdout: "docs" none none
-// expect-stdout: "guide.md" none
-// expect-stdout: "gz" none none
+// expect-stdout: some(docs) none none
+// expect-stdout: some(guide.md) none
+// expect-stdout: some(gz) none none
 // expect-stdout: true false
+// expect-stdout: [some(1), none]
 // expect-stdout: 6 héllo
 // expect-stdout: invalid utf-8: invalid data

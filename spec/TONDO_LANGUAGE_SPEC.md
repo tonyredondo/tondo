@@ -6689,7 +6689,7 @@ reglas ordinarias de coherencia. “Intrínseco” significa aquí que la interp
 lo consulta por contrato del lenguaje, no que el compilador invente
 implementaciones para tipos de usuario.
 
-La resolución es estática. No crea un trait object ni realiza reflection. Los escalares, strings y colecciones intrínsecas implementan `Display` cuando sus componentes también lo implementan. Records, enums y newtypes de usuario deben implementarlo explícitamente si quieren interpolarse como un valor completo.
+La resolución es estática. No crea un trait object ni realiza reflection. Los escalares, strings, colecciones intrínsecas y `T?` implementan `Display` cuando sus componentes también lo implementan. Records, enums y newtypes de usuario deben implementarlo explícitamente si quieren interpolarse como un valor completo.
 
 La interpolación invoca `Display.display` mediante su receptor `self`: observa la expresión durante la llamada y no mueve un valor afín. Si la expresión es un temporal, ese temporal permanece vivo hasta terminar su conversión.
 
@@ -8355,7 +8355,9 @@ carácter. Reconoce comentarios antes de tratar `/` como operador y los prefijos
 `r"`/`r"""` antes de separar un identificador `r` de un literal.
 
 Las secuencias adyacentes `--` y `??` fuera de comentarios o strings se rechazan
-según 17.2 y 17.3; no se dividen en dos operadores. `?.` sí se divide
+según 17.2 y 17.3; no se dividen en dos operadores. Tampoco existen `++`, `&&` ni
+`||`; el diagnóstico de cada una nombra la forma Tondo (`+= 1`, `and`, `or`, o un
+`match` en lugar de coalescencia). `?.` sí se divide
 deliberadamente en propagación `?` seguida de acceso `.` y nunca es safe
 navigation.
 

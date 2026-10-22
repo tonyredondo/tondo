@@ -1,0 +1,15 @@
+fn main() {
+    var i = 0
+    i++
+    let name: String? = none
+    let shown = name ?? "anon"
+    let flag = !true
+    let both = true && false
+    let either = true || false
+}
+
+// expect-error: E0002 `++` is not a Tondo operator: write `value += 1`
+// expect-error: E0002 `??` is not a Tondo operator: for a fallback write `match value { some(x) => x, none => fallback }`
+// expect-error: E0004 `!` is not a prefix operator: write `not value`
+// expect-error: E0002 `&&` is not a Tondo operator: write `and`
+// expect-error: E0002 `||` is not a Tondo operator: write `or`

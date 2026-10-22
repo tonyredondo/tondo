@@ -1048,6 +1048,33 @@ impl Emit<'_, '_> {
             return;
         }
         let types = self.cg.types;
+        if let TyKind::Option(inner) = *types.kind(types.repr(ty)) {
+            let tag = self.tag(ty, value);
+            let (some, none, done) = (self.fb.create_block(), self.fb.create_block(), self.fb.create_block());
+            let is_some = self.fb.ins().icmp_imm_s(IntCC::Equal, tag, SOME as i64);
+            self.fb.ins().brif(is_some, some, &[], none, &[]);
+            self.fb.switch_to_block(some);
+            let open = self.string_ptr("some(");
+            self.call_rt(Rt::SbStr, &[builder, open]);
+            let payload = match value {
+                Val::Memory(address) => {
+                    let slot = self.cg.slot(ty, Proj::Variant(SOME, 0));
+                    let address = self.component_address(address, &slot);
+                    self.value_at(address, inner)
+                }
+                _ => Val::Zero,
+            };
+            self.append_display(builder, inner, payload);
+            let close = self.string_ptr(")");
+            self.call_rt(Rt::SbStr, &[builder, close]);
+            self.fb.ins().jump(done, &[]);
+            self.fb.switch_to_block(none);
+            let text = self.string_ptr("none");
+            self.call_rt(Rt::SbStr, &[builder, text]);
+            self.fb.ins().jump(done, &[]);
+            self.fb.switch_to_block(done);
+            return;
+        }
         if let TyKind::Adt(id) = *types.kind(types.repr(ty))
             && let AdtKind::Enum(variants) = &types.adt(id).kind
         {

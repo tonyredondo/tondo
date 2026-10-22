@@ -1652,7 +1652,9 @@ impl Checker<'_> {
                 TyKind::Int(_) | TyKind::Float(_) | TyKind::Char | TyKind::Byte | TyKind::Bool | TyKind::String => {
                     Some(Vec::new())
                 }
-                TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) => Some(vec![*element]),
+                TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) | TyKind::Option(element) => {
+                    Some(vec![*element])
+                }
                 TyKind::Map(key, value) => Some(vec![*key, *value]),
                 _ => None,
             };

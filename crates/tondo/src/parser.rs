@@ -1572,6 +1572,7 @@ impl Parser<'_> {
                 self.diags.unsupported(start, &what);
                 return Err(());
             }
+            Tok::Bang => return self.error("`!` is not a prefix operator: write `not value`".to_string()),
             _ => return self.expected("expression"),
         };
         Ok(Expr { kind, span: start.to(self.prev_span()) })
