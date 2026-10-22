@@ -711,3 +711,10 @@ Without a header, `tondo bind` asks `pkg-config` for a package's headers,
 and otherwise reads the library's DWARF with `gimli`: its exported
 functions, their types and the constants of its enums, but no macros. If
 neither finds declarations it fails asking for the header.
+
+A struct with bit fields keeps its other fields and turns each run of bit
+fields into the bytes it spans, with a getter and a setter per bit field
+(`flags.mode()`, `flags.set_mode(3)`); the setter panics on a value its
+width cannot hold. Bytes are integers to the C conventions, as bit fields
+are, so such a struct passes by value as C passes it; only padding in a run
+that may share eight bytes with floats keeps it from crossing by value.

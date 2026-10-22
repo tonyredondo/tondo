@@ -78,7 +78,7 @@ fn static_and_shared() {
         link.args(["-shared", "-Wl,-soname,libsample.so"]);
     }
     run(link.arg("-o").arg(dir.join(shared)).arg(dir.join("sample.o")));
-    let expected = "42 2 1 30\nx-42 16.0 5\n99 42 1.2 5000000000\n-2.5 -7 log=5 1 0\n";
+    let expected = "42 2 1 30\nx-42 16.0 5\n99 42 1.2 5000000000\n-2.5 -7 log=5 1 0\n5 17 -3 true 2.0\n28 17\n";
     let static_dir = scratch("bind-static");
     std::fs::copy(dir.join("libsample.a"), static_dir.join("libsample.a")).unwrap();
     assert_eq!(program(&static_dir, "libsample.a", "main.to", true), expected);

@@ -6,8 +6,8 @@
 //! of the headers of its directory it includes, and maps them to Tondo.
 //! Types they use from other headers are resolved to what they name; a
 //! struct from another header becomes opaque when only pointers reach it.
-//! What has no Tondo form (unions by value, bit fields, `long double`,
-//! `va_list`, pointer constants) is listed at the end of the module.
+//! What has no Tondo form (`long double`, macros that are not values or
+//! calls) is listed at the end of the module.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -1525,6 +1525,8 @@ struct Emitter<'c> {
     skipped: Vec<String>,
     used_types: HashSet<String>,
     used_values: HashSet<String>,
+    /// The helpers the accessors of bit fields use.
+    helpers: Vec<&'static str>,
 }
 
 impl<'c> Emitter<'c> {
@@ -1561,6 +1563,7 @@ impl<'c> Emitter<'c> {
             skipped: Vec::new(),
             used_types: HashSet::new(),
             used_values: HashSet::new(),
+            helpers: Vec::new(),
         }
     }
 
@@ -1595,8 +1598,13 @@ impl<'c> Emitter<'c> {
             CType::Named(name) => return self.named(name, position),
             CType::Record(id) => {
                 let record = &self.c.records[*id];
-                if record.fields.as_ref().is_some_and(|f| f.iter().any(|f| f.bits.is_some())) {
-                    return Err("it passes a struct with bit fields by value".into());
+                if let Some(fields) = &record.fields
+                    && fields.iter().any(|f| f.bits.is_some())
+                    && (record.union || !bit_parts(self.c, fields).1)
+                {
+                    return Err("it passes by value bit fields that share eight bytes of padding with floats, \
+                         which C passes in float registers"
+                        .into());
                 }
                 if record.fields.is_none() {
                     return Err("it passes an incomplete struct by value".into());
@@ -1760,6 +1768,7 @@ impl<'c> Emitter<'c> {
                 None => {}
             }
         }
+        body.extend(self.helpers.iter().map(|h| h.to_string()));
         out.push_str(&body.join("\n\n"));
         out.push('\n');
         if !self.skipped.is_empty() {
@@ -1853,8 +1862,9 @@ impl<'c> Emitter<'c> {
         }
     }
 
-    /// An `extern type` for a struct, opaque when it has no body; a union
-    /// or a struct with bit fields becomes opaque bytes of its size.
+    /// An `extern type` for a struct, opaque when it has no body. Each run
+    /// of bit fields becomes its bytes, read and written by methods; a union
+    /// with a field Tondo cannot hold becomes its bytes.
     fn record(&mut self, id: usize, dependency: bool) -> Option<String> {
         let record = &self.c.records[id];
         if !dependency && !self.target(record.file) {
@@ -1875,12 +1885,25 @@ impl<'c> Emitter<'c> {
                 "// {what}: its {size} bytes, which C reads and writes\n{align}pub extern type {name} = {{\n    @count({size})\n    bytes: UInt8\n}}"
             ))
         };
-        if fields.iter().any(|f| f.bits.is_some()) {
-            return bytes(self.c, "a struct with bit fields");
-        }
         let union = record.union;
+        let has_bits = fields.iter().any(|f| f.bits.is_some());
+        if union && has_bits {
+            return bytes(self.c, "a union with bit fields");
+        }
+        let parts = if has_bits { bit_parts(self.c, fields).0 } else { (0..fields.len()).map(Part::Field).collect() };
         let mut lines = Vec::new();
-        for (index, field) in fields.iter().enumerate() {
+        let mut methods = Vec::new();
+        for part in parts {
+            let index = match part {
+                Part::Field(index) => index,
+                Part::Bits(run) => {
+                    let run_name = format!("bits{}", methods.len());
+                    lines.push(format!("    @count({})\n    {run_name}: UInt8", run.end - run.start));
+                    methods.push(self.bit_accessors(&name, &run_name, &run, fields));
+                    continue;
+                }
+            };
+            let field = &fields[index];
             let field_name = field.name.clone().unwrap_or_else(|| format!("anonymous{index}"));
             let (ty, count) = match &self.array_through_typedefs(&field.ty) {
                 CType::Array(element, Some(count)) => {
@@ -1922,8 +1945,123 @@ impl<'c> Emitter<'c> {
                 }
             }
         }
-        let annotation = if union { "@union\n" } else { "" };
-        Some(format!("{annotation}pub extern type {name} = {{\n{}\n}}", lines.join("\n")))
+        let mut annotation = if union { "@union\n".to_string() } else { String::new() };
+        if has_bits {
+            // Bytes do not carry the alignment of the bit fields' types.
+            let natural = fields.iter().filter(|f| f.bits.is_none()).map(|f| layout(self.c, &f.ty).1).max();
+            let align = layout(self.c, &CType::Record(id)).1;
+            if align > natural.unwrap_or(1) {
+                annotation = format!("@align({align})\n");
+            }
+        }
+        let mut out = format!("{annotation}pub extern type {name} = {{\n{}\n}}", lines.join("\n"));
+        for method in methods.into_iter().flatten() {
+            out.push_str("\n\n");
+            out.push_str(&method);
+        }
+        Some(out)
+    }
+
+    /// A getter and a setter for each bit field of `run`, the bytes field
+    /// `run_name` of the struct `name`.
+    fn bit_accessors(&mut self, name: &str, run_name: &str, run: &BitRun, fields: &[CField]) -> Vec<String> {
+        let mut out = Vec::new();
+        for &(index, at) in &run.fields {
+            let field = &fields[index];
+            let field_name = tondo_name(field.name.as_deref().unwrap_or_default());
+            let width = field.bits.unwrap_or_default();
+            let (Some(kind), Ok(mapped)) = (bit_kind(self.c, &field.ty), self.ty(&field.ty, Position::Field)) else {
+                self.skipped.push(format!("{name}: bit field `{field_name}`: its type has no accessor"));
+                continue;
+            };
+            // The bytes that hold the field, as a word with the field `shift` bits up.
+            let (first, last) = (at / 8, (at + width - 1) / 8);
+            let shift = at - first * 8;
+            let read = |ty: &str| {
+                (first..=last)
+                    .map(|byte| {
+                        let value = format!("self.{run_name}[{}]", byte - run.start);
+                        let value = if ty == "UInt8" { value } else { format!("{ty}({value})") };
+                        match (byte - first) * 8 {
+                            0 => value,
+                            up => format!("({value} << {up})"),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            };
+            let mask = (1u128 << width) - 1;
+            let shifted = |word: &str| if shift == 0 { word.to_string() } else { format!("({word} >> {shift})") };
+            let (getter, bits, check) = match kind {
+                BitKind::Bool => (
+                    format!("{} & 1 == 1", shifted(&read("UInt8"))),
+                    "(if value { 1u64 } else { 0u64 })".to_string(),
+                    None,
+                ),
+                BitKind::Int { ty, size, signed } => {
+                    let word = format!("let word = {}\n    ", read(ty));
+                    let getter = if signed {
+                        // Up to the top of the type, then down with its sign.
+                        match (size - shift - width, size - width) {
+                            (_, 0) => format!("{word}word"),
+                            (0, down) => format!("{word}word >> {down}"),
+                            (up, down) => format!("{word}(word << {up}) >> {down}"),
+                        }
+                    } else if width == size {
+                        format!("{word}word")
+                    } else {
+                        format!(
+                            "{word}{} & {mask}",
+                            if shift == 0 { "word".into() } else { format!("(word >> {shift})") }
+                        )
+                    };
+                    let half = 1u128 << (width - 1);
+                    let check = match (signed, ty.starts_with("Int")) {
+                        (true, _) if width < size => Some(format!("value >= -{half} and value < {half}")),
+                        (false, true) => Some(format!("value >= 0 and value <= {mask}")),
+                        (false, false) if width < size => Some(format!("value <= {mask}")),
+                        _ => None,
+                    };
+                    let bits = if ty.starts_with("Int") {
+                        self.helper(BIT_FIELD_BITS);
+                        format!("bitFieldBits(Int(value), {mask})")
+                    } else {
+                        "UInt64(value)".to_string()
+                    };
+                    (getter, bits, check)
+                }
+            };
+            self.helper(BIT_FIELD_BYTE);
+            let bytes = (last - first + 1) * 8;
+            let keep = (if bytes == 64 { u64::MAX as u128 } else { (1u128 << bytes) - 1 }) ^ (mask << shift);
+            let placed = if shift == 0 { bits } else { format!("({bits} << {shift})") };
+            let mut setter = check
+                .map(|check| format!("    assert({check}, \"`{field_name}` holds {width} bits\")\n"))
+                .unwrap_or_default();
+            let word = match (keep, first == last) {
+                // The field fills its bytes.
+                (0, _) => placed,
+                (_, true) => format!("({} & {keep}) | {placed}", read("UInt64")),
+                (_, false) => format!("(({}) & {keep}) | {placed}", read("UInt64")),
+            };
+            setter.push_str(&format!("    let word = {word}\n"));
+            for byte in first..=last {
+                let word = match (byte - first) * 8 {
+                    0 => "word".to_string(),
+                    down => format!("word >> {down}"),
+                };
+                setter.push_str(&format!("    self.{run_name}[{}] = bitFieldByte({word})\n", byte - run.start));
+            }
+            out.push(format!("pub fn {name}.{field_name}(self): {mapped} {{\n    {getter}\n}}"));
+            out.push(format!("pub fn {name}.set_{field_name}(mut self, value: {mapped}) {{\n{setter}}}"));
+        }
+        out
+    }
+
+    fn helper(&mut self, helper: &'static str) {
+        if !self.helpers.contains(&helper) {
+            self.helpers.push(helper);
+        }
     }
 
     fn enumeration(&mut self, id: usize) -> Option<String> {
@@ -2148,6 +2286,120 @@ fn quote(text: &str) -> String {
     }
     out.push('"');
     out
+}
+
+/// The private helpers of the accessors of bit fields, which narrow
+/// without a conversion that could fail.
+const BIT_FIELD_BYTE: &str = "// The low byte of a word, as C keeps a byte of bit fields.
+fn bitFieldByte(word: UInt64): UInt8 {
+    match UInt8(word & 255) {
+        ok(byte) => byte
+        err(_) => 0
+    }
+}";
+
+const BIT_FIELD_BITS: &str = "// The bits of a signed value in a bit field of `mask`, in two's complement.
+fn bitFieldBits(value: Int, mask: UInt64): UInt64 {
+    match UInt64(if value < 0 { -(value + 1) } else { value }) {
+        ok(bits) => if value < 0 { bits ^ mask } else { bits }
+        err(_) => 0
+    }
+}";
+
+/// A part of a struct with bit fields as Tondo lays it out: a field with
+/// its type, or a run of bit fields as the bytes it spans. The struct then
+/// has C's layout and crosses in the same registers.
+enum Part {
+    Field(usize),
+    Bits(BitRun),
+}
+
+struct BitRun {
+    /// The bytes of the struct the run spans.
+    start: u64,
+    end: u64,
+    /// Each named bit field: its index and its first bit in the struct.
+    fields: Vec<(usize, u64)>,
+}
+
+/// The parts of a struct with bit fields, and whether it crosses by value
+/// as C passes it: not when padding in a run may share eight bytes with
+/// floats, which C passes in float registers and bytes would not.
+fn bit_parts(c: &C, fields: &[CField]) -> (Vec<Part>, bool) {
+    let mut parts = Vec::new();
+    let (mut bit, mut covered, mut padded) = (0u64, 0u64, false);
+    for (index, field) in fields.iter().enumerate() {
+        let (size, align) = layout(c, &field.ty);
+        let Some(width) = field.bits else {
+            if let Some(Part::Bits(run)) = parts.last() {
+                padded |= covered < run.end;
+            }
+            let start = bit.div_ceil(8).next_multiple_of(align);
+            bit = (start + size) * 8;
+            parts.push(Part::Field(index));
+            continue;
+        };
+        // Where GCC and Clang place it, as `layout` does.
+        let unit = size * 8;
+        let at = match width {
+            0 => bit.next_multiple_of(align * 8),
+            _ if bit % unit + width > unit => bit.next_multiple_of(unit),
+            _ => bit,
+        };
+        if !matches!(parts.last(), Some(Part::Bits(_))) {
+            let start = bit.div_ceil(8);
+            covered = start;
+            parts.push(Part::Bits(BitRun { start, end: start, fields: Vec::new() }));
+        }
+        let Some(Part::Bits(run)) = parts.last_mut() else { unreachable!() };
+        bit = at + width;
+        run.end = run.end.max(bit.div_ceil(8));
+        if width > 0 && field.name.is_some() {
+            padded |= at / 8 > covered;
+            covered = covered.max(bit.div_ceil(8));
+            run.fields.push((index, at));
+        }
+    }
+    if let Some(Part::Bits(run)) = parts.last() {
+        padded |= covered < run.end;
+    }
+    let floats = fields.iter().any(|f| has_float(c, &f.ty));
+    (parts, !(padded && floats))
+}
+
+fn has_float(c: &C, ty: &CType) -> bool {
+    match ty {
+        CType::Float | CType::Double => true,
+        CType::Array(element, _) => has_float(c, element),
+        CType::Named(name) => c.typedef_names.get(name).is_some_and(|&i| has_float(c, &c.typedefs[i].ty)),
+        CType::Record(id) => c.records[*id].fields.iter().flatten().any(|f| has_float(c, &f.ty)),
+        _ => false,
+    }
+}
+
+/// How the accessors of a bit field read it: as a bit, or as an integer
+/// type with its size in bits and whether its values are signed.
+enum BitKind {
+    Bool,
+    Int { ty: &'static str, size: u64, signed: bool },
+}
+
+fn bit_kind(c: &C, ty: &CType) -> Option<BitKind> {
+    let (ty, size, signed) = match ty {
+        CType::Bool => return Some(BitKind::Bool),
+        CType::UChar => ("UInt8", 8, false),
+        CType::Short => ("Int16", 16, true),
+        CType::UShort => ("UInt16", 16, false),
+        CType::Int => ("Int32", 32, true),
+        CType::UInt => ("UInt32", 32, false),
+        CType::Long | CType::LongLong => ("Int64", 64, true),
+        CType::ULong | CType::ULongLong => ("UInt64", 64, false),
+        // GCC and Clang read an enum's bit field as unsigned unless an item is negative.
+        CType::Enum(id) => ("Int32", 32, c.enums[*id].items.iter().any(|(_, v)| v.is_some_and(|v| v < 0))),
+        CType::Named(name) => return c.typedef_names.get(name).and_then(|&i| bit_kind(c, &c.typedefs[i].ty)),
+        _ => return None,
+    };
+    Some(BitKind::Int { ty, size, signed })
 }
 
 /// The size and alignment of a C type (LP64).

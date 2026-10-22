@@ -56,6 +56,13 @@ fn main() {
         console.println(
             "{negated.as_float} {whole.as_int} {ffi.fromCString(buffer)} {all} {sample.sample_is_all(sample.SAMPLE_NOTHING)}",
         )
+        // Bit fields beside a double, by value both ways.
+        var bits = sample.sample_bits_make(5u32, 17u32, -3)
+        console.println("{bits.a()} {bits.b()} {bits.delta()} {bits.on()} {bits.scale}")
+        bits.set_a(2u32)
+        bits.set_delta(7)
+        bits.set_on(false)
+        console.println("{sample.sample_bits_total(bits)} {bits.b()}")
         sample.sample_close(sample.SAMPLE_OPEN("macro"))
         sample.sample_close(handle)
         ffi.free(values)

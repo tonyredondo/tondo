@@ -230,7 +230,7 @@ directorio que incluyen directamente:
 | función | `extern fn`, con `@symbol` si su símbolo difiere |
 | `struct` | `extern type`, opaco si no tiene cuerpo |
 | `union` | `@union extern type` |
-| `struct` con bit fields | `extern type` de sus bytes, con su tamaño y alineación |
+| `struct` con bit fields | `extern type` con cada grupo de bit fields como sus bytes, y un método para leer y otro para escribir cada uno |
 | `typedef` | `alias` |
 | `enum` | `alias` de `ffi.CInt` y una constante por enumerador |
 | macro de un número o un texto | `const` |
@@ -242,9 +242,8 @@ Los nombres de C se conservan; uno que es palabra reservada o nombre del
 prelude de Tondo recibe `_` al final. Un puntero es opcional, porque C puede
 pasar `NULL`; `const char*` es `ffi.CString?`. Un tipo de otro header se
 resuelve a lo que nombra, y un struct que solo se alcanza por puntero es
-opaco. Lo que no tiene forma en Tondo, como un struct con bit fields por valor o
-una macro que no es un valor ni una llamada, se lista al final del módulo en un
-comentario.
+opaco. Lo que no tiene forma en Tondo, como `long double` o una macro que no es
+un valor ni una llamada, se lista al final del módulo en un comentario.
 El módulo se regenera con el mismo comando que muestra su primera línea.
 
 Sin headers, `bind` los busca:

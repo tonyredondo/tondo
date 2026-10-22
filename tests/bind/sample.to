@@ -57,11 +57,52 @@ pub extern type sample_number = {
 
 pub alias sample_logger = (extern fn(Pointer[ffi.Void]?, ffi.CString?, Pointer[ffi.VaList]))?
 
-// a struct with bit fields: its 4 bytes, which C reads and writes
-@align(4)
 pub extern type sample_bits = {
-    @count(4)
-    bytes: UInt8
+    scale: ffi.CDouble
+    @count(2)
+    bits0: UInt8
+}
+
+pub fn sample_bits.a(self): ffi.CUInt {
+    let word = UInt32(self.bits0[0])
+    word & 7
+}
+
+pub fn sample_bits.set_a(mut self, value: ffi.CUInt) {
+    assert(value <= 7, "`a` holds 3 bits")
+    let word = (UInt64(self.bits0[0]) & 248) | UInt64(value)
+    self.bits0[0] = bitFieldByte(word)
+}
+
+pub fn sample_bits.b(self): ffi.CUInt {
+    let word = UInt32(self.bits0[0])
+    (word >> 3) & 31
+}
+
+pub fn sample_bits.set_b(mut self, value: ffi.CUInt) {
+    assert(value <= 31, "`b` holds 5 bits")
+    let word = (UInt64(self.bits0[0]) & 7) | (UInt64(value) << 3)
+    self.bits0[0] = bitFieldByte(word)
+}
+
+pub fn sample_bits.delta(self): ffi.CInt {
+    let word = Int32(self.bits0[1])
+    (word << 28) >> 28
+}
+
+pub fn sample_bits.set_delta(mut self, value: ffi.CInt) {
+    assert(value >= -8 and value < 8, "`delta` holds 4 bits")
+    let word = (UInt64(self.bits0[1]) & 240) | bitFieldBits(Int(value), 15)
+    self.bits0[1] = bitFieldByte(word)
+}
+
+pub fn sample_bits.on(self): ffi.CBool {
+    (self.bits0[1] >> 4) & 1 == 1
+}
+
+pub fn sample_bits.set_on(mut self, value: ffi.CBool) {
+    let word = (UInt64(self.bits0[1]) & 239) | ((if value { 1u64 } else { 0u64 }) << 4)
+    self.bits0[1] = bitFieldByte(word)
 }
 
 pub extern fn sample_open(name: ffi.CString?, flags: sample_flags): Pointer[sample_handle]?
@@ -86,6 +127,10 @@ pub extern fn sample_next(color: sample_color): sample_color
 
 @symbol("type")
 pub extern fn type_(in_: ffi.CInt): ffi.CInt
+
+pub extern fn sample_bits_total(bits: sample_bits): ffi.CInt
+
+pub extern fn sample_bits_make(a: ffi.CUInt, b: ffi.CUInt, delta: ffi.CInt): sample_bits
 
 pub extern fn sample_negate(number: sample_number, is_float: ffi.CInt): sample_number
 
@@ -132,5 +177,18 @@ pub unsafe fn SAMPLE_OPEN(name: String): Pointer[sample_handle]? {
     sample_open(name, SAMPLE_LIMIT)
 }
 
-// Not bound:
-// - sample_bits_total: it passes a struct with bit fields by value
+// The low byte of a word, as C keeps a byte of bit fields.
+fn bitFieldByte(word: UInt64): UInt8 {
+    match UInt8(word & 255) {
+        ok(byte) => byte
+        err(_) => 0
+    }
+}
+
+// The bits of a signed value in a bit field of `mask`, in two's complement.
+fn bitFieldBits(value: Int, mask: UInt64): UInt64 {
+    match UInt64(if value < 0 { -(value + 1) } else { value }) {
+        ok(bits) => if value < 0 { bits ^ mask } else { bits }
+        err(_) => 0
+    }
+}

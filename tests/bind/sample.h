@@ -51,8 +51,11 @@ typedef union {
 typedef void (*sample_logger)(void *context, const char *format, va_list arguments);
 
 struct sample_bits {
+    double scale;
     unsigned a : 3;
     unsigned b : 5;
+    int delta : 4;
+    _Bool on : 1;
 };
 
 sample_handle *sample_open(const char *name, sample_flags flags);
@@ -65,6 +68,7 @@ double sample_area(const struct sample_record *record);
 sample_color sample_next(sample_color color);
 int type(int in);
 int sample_bits_total(struct sample_bits bits);
+struct sample_bits sample_bits_make(unsigned a, unsigned b, int delta);
 sample_number sample_negate(sample_number number, int is_float);
 int sample_log(sample_logger logger, void *context, const char *format, ...);
 int sample_vformat(char *buffer, size_t size, const char *format, va_list arguments);

@@ -51,7 +51,12 @@ sample_color sample_next(sample_color color) { return color == SAMPLE_RED ? SAMP
 
 int type(int in) { return in + 1; }
 
-int sample_bits_total(struct sample_bits bits) { return bits.a + bits.b; }
+int sample_bits_total(struct sample_bits bits) { return bits.a + bits.b + bits.delta + bits.on + (int)bits.scale; }
+
+struct sample_bits sample_bits_make(unsigned a, unsigned b, int delta) {
+    struct sample_bits bits = {2.0, a, b, delta, 1};
+    return bits;
+}
 
 int sample_real(void) { return 99; }
 
