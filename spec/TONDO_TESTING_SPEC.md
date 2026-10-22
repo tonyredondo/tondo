@@ -2740,9 +2740,8 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
   "format": "tondo-test-report-0.1/1",
   "edition": "0.1",
   "target": {
-    "name": "native",
-    "profile": "hosted",
-    "capabilities": ["console", "process"]
+    "name": "x86_64-linux",
+    "profile": "hosted"
   },
   "compiled": true,
   "selection": {
@@ -2789,8 +2788,7 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
   },
   "limits": {
     "jobs": 1,
-    "timeout_ms": 30000,
-    "resource_profile_sha256": "2abaca4911e68fa9bfbf88195b6c8bca41fd731d5a45f9b51a2bca9234e0c83f"
+    "timeout_ms": 60000
   },
   "suites": [
     {
@@ -2803,8 +2801,8 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
       "name": "arithmetic",
       "source": {
         "file": "src/math_test.to",
-        "start": 0,
-        "end": 126
+        "line": 1,
+        "column": 7
       },
       "owners": ["@tondo/math"],
       "status": "passed",
@@ -2842,8 +2840,8 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
       "name": "addReturnsSum",
       "source": {
         "file": "src/math_test.to",
-        "start": 32,
-        "end": 124
+        "line": 2,
+        "column": 10
       },
       "owners": ["@tondo/math"],
       "status": "passed",
@@ -2884,6 +2882,7 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
     "failed_panic": 0,
     "resource_limit": 0,
     "timeout": 0,
+    "crashed": 0,
     "infrastructure": 0,
     "retried": 0,
     "repeated": 0,
@@ -2913,15 +2912,11 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
 
 `selection.kind` es `all`, `filter`, `glob` o `exact`; `value` es `null` para
 `all` y conserva el argumento exacto en los otros casos.
+`target.name` es la arquitectura y el sistema donde corrieron los tests, como
+`x86_64-linux` o `aarch64-macos`, y `profile` vale `hosted`.
 `policy.deny_skips` y `policy.allow_flaky` contienen los valores efectivos de
-sus flags. `timeout_ms` conserva siempre el límite positivo efectivo del plan
-base, después de aplicar un posible timeout más pequeño de la invocación; la
-forma `--timeout none` se rechaza antes de compilar. Un consumidor aislado del
-modelo de límites todavía puede representar `null` para un timeout desactivado.
-El resource profile contiene
-todos los presupuestos finitos del toolchain y del runtime y se
-distribuye de forma recuperable por el toolchain; el hash del reporte identifica
-exactamente sus bytes canónicos.
+sus flags. `limits.jobs` y `limits.timeout_ms` contienen el número de
+trabajadores y el timeout efectivo por entrada.
 
 `ownership.mode` es `auto`, `explicit` o `none`. `source` y `sha256` son strings
 cuando se utilizó un CODEOWNERS y `null` en otro caso. `source` siempre es
@@ -2993,7 +2988,8 @@ hojas, se hayan ejecutado o bloqueado. Cada descriptor aparece una sola vez,
 aunque tenga varios intentos. Todos los campos normativos aparecen incluso
 cuando están vacíos o son `null`; `kind` es `unit` o `integration`.
 
-`source` identifica la declaración mediante path lógico y rango bytewise.
+`source` identifica la declaración mediante path lógico, línea y columna,
+ambas desde `1`.
 `owners` conserva el orden de la línea CODEOWNERS ganadora. Un descriptor nunca
 mezcla owners estáticos con los `tags` runtime de sus intentos.
 
@@ -3089,7 +3085,6 @@ explícita no aumenta `automatic_advances`. Un dominio interior rechazado por
 
 ### 15.2 Orden y estabilidad
 
-- `capabilities` se ordena por bytes.
 - `suites` se ordena por `id`.
 - `tests` se ordena por `id`.
 - `execution_plan` sigue 8.4 y no altera el orden de los arrays anteriores.
@@ -3109,7 +3104,7 @@ explícita no aumenta `automatic_advances`. Un dominio interior rechazado por
   in 9.3; fields appear in that order, including for empty output.
 - `summary.selected = execution_plan.length = tests.length`.
 - `summary.selected` es la suma exacta de `passed`, `flaky_passed`, `skipped`,
-  `blocked_setup`, `blocked_skip` y los cinco contadores de fallo agregado de
+  `blocked_setup`, `blocked_skip` y los seis contadores de fallo agregado de
   test.
 - `summary.executed` cuenta identidades de test con al menos un intento distinto
   de `blocked-setup` y `blocked-skip`; puede solaparse con un bloqueo agregado
@@ -3124,9 +3119,9 @@ explícita no aumenta `automatic_advances`. Un dominio interior rechazado por
 - `summary.suite_retried` cuenta suites con algún intento `round > 0`;
   `summary.suite_repeated` cuenta suites con más de una `iteration`; y
   `summary.suite_attempts` suma las longitudes de sus arrays `attempts`.
-- `summary.suite_failed` cuenta suites en cualquiera de los cinco estados de
+- `summary.suite_failed` cuenta suites en cualquiera de los seis estados de
   fallo ejecutado; las suites bloqueadas no vuelven a contar la causa.
-- `summary.failed` es la suma de los cinco contadores de fallo de test y
+- `summary.failed` es la suma de los seis contadores de fallo de test y
   `suite_failed`. `flaky_passed`, skips y hojas bloqueadas no incrementan ese
   contador; las policies pueden producir exit `1` con `failed: 0`.
 - `passed` y `suite_passed` cuentan solo agregados limpios; nunca incluyen
@@ -3157,31 +3152,25 @@ exactamente:
   "kind": "panic",
   "code": "P0007",
   "error_type": null,
-  "message": "assertion failed: value == 42",
+  "message": "assertion-failed: value == 42",
   "source": {
     "file": "src/math_test.to",
-    "start": 42,
-    "end": 61
+    "line": 3,
+    "column": 9
   },
-  "stack": [
-    {
-      "function": "application::unit::math::arithmetic::addReturnsSum",
-      "file": "src/math_test.to",
-      "start": 20,
-      "end": 63
-    }
-  ]
+  "stack": []
 }
 ~~~
 
-- `kind` es `error`, `panic`, `resource-limit`, `timeout` o
+- `kind` es `error`, `panic`, `resource-limit`, `timeout`, `crashed` o
   `infrastructure`.
 - `code` es el `Pdddd` o código versionado de tooling disponible; en otro caso
   es `null`.
 - `error_type` contiene la identidad nominal visible de un error recuperable y
   es `null` para los demás kinds.
 - `message` es presentación humana y nunca actúa como identidad.
-- `source` es una ubicación lógica o `null`.
+- `source` es una ubicación lógica o `null`: la del pánico, o la del `?` o
+  `fail` por el que el error salió del test o del setup.
 - `stack` es un array posiblemente vacío de frames Tondo, sin paths físicos.
 
 Un intento `blocked-setup` explica su causa únicamente mediante `blocked_by`;
@@ -3197,8 +3186,8 @@ payloads de intentos anteriores.
   "reason": "requires the external search service",
   "source": {
     "file": "tests/search.to",
-    "start": 118,
-    "end": 171
+    "line": 9,
+    "column": 9
   }
 }
 ~~~
@@ -3224,9 +3213,8 @@ bloqueo, logs ni output:
   "format": "tondo-test-list-0.1/1",
   "edition": "0.1",
   "target": {
-    "name": "native",
-    "profile": "hosted",
-    "capabilities": ["console", "process"]
+    "name": "x86_64-linux",
+    "profile": "hosted"
   },
   "compiled": true,
   "selection": {
@@ -3262,8 +3250,8 @@ bloqueo, logs ni output:
       "name": "arithmetic",
       "source": {
         "file": "src/math_test.to",
-        "start": 0,
-        "end": 126
+        "line": 1,
+        "column": 7
       },
       "owners": ["@tondo/math"]
     }
@@ -3279,8 +3267,8 @@ bloqueo, logs ni output:
       "name": "addReturnsSum",
       "source": {
         "file": "src/math_test.to",
-        "start": 32,
-        "end": 124
+        "line": 2,
+        "column": 10
       },
       "owners": ["@tondo/math"]
     }
@@ -3325,7 +3313,7 @@ La proyección de resultados es:
 | `flaky-pass` | hijo `failure` con type `tondo.flaky-pass`; sin outcome hijo bajo `--allow-flaky` |
 | `skipped`, `blocked-skip` | hijo `skipped` |
 | `failed-error`, `failed-panic` | hijo `failure` |
-| `resource-limit`, `timeout`, `infrastructure` | hijo `error` |
+| `resource-limit`, `timeout`, `crashed`, `infrastructure` | hijo `error` |
 | `blocked-setup` | hijo `skipped` con estado Tondo explícito |
 
 Un fallo agregado de setup o teardown de suite produce además un único testcase
@@ -3612,10 +3600,13 @@ los ejecutan en cada plataforma de CI. El compilador nativo implementa hoy:
 - los selectores `--filter`, `--glob` y `--exact`, `--shard`, el orden canónico
   y aleatorio con `--seed`, `--retry` con `flaky-pass` y `--allow-flaky`,
   `--repeat`, CODEOWNERS, `--list`, `--jobs`, `--timeout`, `--show-output`,
-  `--allow-empty` y `--deny-skips`, con la salida humana.
+  `--allow-empty` y `--deny-skips`, con la salida humana;
+- los reportes `tondo-test-report-0.1/1`, `tondo-test-list-0.1/1` y
+  `tondo-junit-report-0.1/1` con `--test-format json` y `--report`, y
+  `--diagnostic-format`.
 
-Siguen pendientes los reportes JSON y JUnit, attachments, snapshots y el tiempo
-virtual.
+Siguen pendientes attachments, snapshots y el tiempo virtual: sus campos de los
+reportes quedan vacíos.
 
 ## 17. Referencia rápida
 

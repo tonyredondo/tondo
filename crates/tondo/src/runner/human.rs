@@ -30,6 +30,8 @@ pub(super) fn list(tree: &Tree, plan: &[u32], owners: &[Vec<String>]) {
 /// Prints each test's line of a pass in canonical order, as soon as the
 /// lines before it are known.
 pub(super) struct Printer<'a> {
+    /// Silent when stdout gets the JSON report.
+    quiet: bool,
     tree: &'a Tree,
     plan: Vec<u32>,
     expected: Vec<u32>,
@@ -43,14 +45,15 @@ impl<'a> Printer<'a> {
         let mut plan = plan.to_vec();
         plan.sort_by(|&a, &b| tree.id(a).cmp(tree.id(b)));
         let timeout = options.timeout;
-        Printer { tree, plan, expected: Vec::new(), known: HashMap::new(), printed: 0, timeout }
+        let quiet = options.json;
+        Printer { quiet, tree, plan, expected: Vec::new(), known: HashMap::new(), printed: 0, timeout }
     }
 
     /// A pass over `tests`: an iteration of the plan, or a retry round.
     pub(super) fn begin(&mut self, iteration: u32, round: u32, tests: &[u32]) {
-        if round > 0 {
+        if !self.quiet && round > 0 {
             say!("\nretry round {round}:");
-        } else if iteration > 1 {
+        } else if !self.quiet && iteration > 1 {
             say!("\niteration {iteration}:");
         }
         self.expected = self.plan.iter().copied().filter(|t| tests.contains(t)).collect();
@@ -59,7 +62,7 @@ impl<'a> Printer<'a> {
     }
 
     pub(super) fn attempt(&mut self, attempt: &Attempt) {
-        if self.tree.suite(attempt.node) {
+        if self.quiet || self.tree.suite(attempt.node) {
             return;
         }
         self.known.insert(attempt.node, attempt.clone());
@@ -83,7 +86,7 @@ fn short(tree: &Tree, status: &Status) -> String {
         Status::Blocked(suite, false) => format!("BLOCKED: its suite {} failed", tree.id(*suite)),
         Status::Timeout => "TIMEOUT".into(),
         Status::Crashed(_) => "CRASHED".into(),
-        Status::Error(_) | Status::Panic(_) => "FAILED".into(),
+        Status::Error { .. } | Status::Panic(_) => "FAILED".into(),
     }
 }
 
@@ -91,8 +94,10 @@ fn short(tree: &Tree, status: &Status) -> String {
 fn detail(tree: &Tree, attempt: &Attempt, timeout: Duration) -> String {
     match &attempt.status {
         Status::Passed => String::new(),
-        Status::Error(error) if error.contains("\n --> ") => format!("error: {error}"),
-        Status::Error(error) => format!("error: {error}\n --> {}", tree.locations[attempt.node as usize]),
+        Status::Error { message, location, .. } => {
+            let location = location.as_deref().unwrap_or(&tree.locations[attempt.node as usize]);
+            format!("error: {message}\n --> {location}")
+        }
         Status::Panic(text) => text.clone(),
         Status::Timeout => format!("timed out after {}s", timeout.as_secs_f64()),
         Status::Crashed(how) => how.clone(),

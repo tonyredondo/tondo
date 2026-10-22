@@ -17,7 +17,7 @@ pub enum Selector {
 /// A portable glob (8.2): components split by `::`, where `*` matches any
 /// text inside a component, `?` one character, and a component `**` any
 /// number of whole components.
-pub struct Glob(Vec<Part>);
+pub struct Glob(Vec<Part>, String);
 
 enum Part {
     Any,
@@ -49,7 +49,12 @@ impl Glob {
                 parts.push(Part::Component(component.chars().collect()));
             }
         }
-        Ok(Glob(parts))
+        Ok(Glob(parts, pattern.to_string()))
+    }
+
+    /// The pattern as written.
+    pub fn text(&self) -> &str {
+        &self.1
     }
 
     /// Whether the whole identity matches.

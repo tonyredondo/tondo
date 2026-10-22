@@ -11,6 +11,8 @@ macro_rules! say {
 }
 
 mod human;
+mod json;
+mod junit;
 mod owners;
 mod select;
 mod worker;
@@ -39,6 +41,11 @@ pub struct Options {
     pub allow_empty: bool,
     pub deny_skips: bool,
     pub allow_flaky: bool,
+    /// What stdout gets: lines for people, or the JSON report.
+    pub json: bool,
+    /// `--report json=<path>` and `--report junit=<path>`: whether JUnit,
+    /// and where.
+    pub reports: Vec<(bool, PathBuf)>,
 }
 
 /// The tree of the test build, with where each node is declared.
@@ -111,8 +118,16 @@ impl Tree {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Status {
     Passed,
+    /// The reason, then ` --> ` and where `testing.skip` was called.
     Skipped(String),
-    Error(String),
+    /// A recoverable error that left the test or the setup.
+    Error {
+        message: String,
+        error_type: String,
+        location: Option<String>,
+    },
+    /// The panic's report, as the runtime prints it, with any suppressed
+    /// while unwinding after it.
     Panic(String),
     Timeout,
     Crashed(String),
@@ -124,7 +139,7 @@ pub enum Status {
 impl Status {
     /// One of the failures of an executed attempt.
     fn failed(&self) -> bool {
-        matches!(self, Status::Error(_) | Status::Panic(_) | Status::Timeout | Status::Crashed(_))
+        matches!(self, Status::Error { .. } | Status::Panic(_) | Status::Timeout | Status::Crashed(_))
     }
 }
 
@@ -145,6 +160,8 @@ pub struct Attempt {
     pub tags: Vec<(String, String)>,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
+    /// How long its code ran.
+    pub duration: Duration,
 }
 
 /// The round, iteration and unit the attempts of a run belong to.
@@ -168,6 +185,7 @@ impl Attempt {
             tags: Vec::new(),
             stdout: Vec::new(),
             stderr: Vec::new(),
+            duration: Duration::ZERO,
         }
     }
 }
@@ -208,8 +226,9 @@ fn aggregates(tree: &Tree, attempts: &[Attempt]) -> Vec<Aggregate> {
 /// Builds nothing: selects, lists or runs the tests of a built test
 /// executable and reports them; whether the run failed (testing 9.6).
 pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Result<bool, Failure> {
-    let owners = owners::resolve(dir, &options.codeowners).map_err(Failure::Input)?;
-    let owners: Vec<Vec<String>> = (0..tree.nodes.len() as u32).map(|n| owners.of(tree.file(n))).collect();
+    let ownership = owners::resolve(dir, &options.codeowners).map_err(Failure::Input)?;
+    let owners: Vec<Vec<String>> = (0..tree.nodes.len() as u32).map(|n| ownership.of(tree.file(n))).collect();
+    let snapshot_sha256 = snapshot_tree(dir);
     let selected = select::select(tree, &options.selector);
     if selected.is_empty() {
         let message = match &options.selector {
@@ -220,11 +239,12 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
                 "the project has no tests: write `test name { ... }` in a `_test.to` file or under `tests/`".into()
             }
         };
-        if options.allow_empty {
-            say!("{message}");
-            return Ok(false);
+        if !options.allow_empty {
+            return Err(Failure::Empty(message));
         }
-        return Err(Failure::Empty(message));
+        if !options.json {
+            say!("{message}");
+        }
     }
     let selected = match options.shard {
         Some((index, count)) => {
@@ -233,29 +253,106 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         None => selected,
     };
     let plan = select::plan(tree, &selected, &options.order);
-    if let Order::Random(seed, _) = options.order {
+    if let (Order::Random(seed, _), false) = (&options.order, options.json) {
         say!("seed {seed:016x}");
     }
+    let mut context = json::Context {
+        tree,
+        options,
+        owners: &owners,
+        ownership: &ownership,
+        plan: &plan,
+        rounds: &[],
+        snapshot_sha256: &snapshot_sha256,
+        compiled: true,
+    };
     if options.list {
-        human::list(tree, &plan, &owners);
+        if options.json {
+            say!("{}", context.list().text());
+        } else {
+            human::list(tree, &plan, &owners);
+        }
         return Ok(false);
     }
     let started = std::time::Instant::now();
     let mut printer = human::Printer::new(tree, &plan, options);
-    let attempts = campaign(dir, executable, tree, &plan, options, &mut printer);
+    let (attempts, rounds) = campaign(dir, executable, tree, &plan, options, &mut printer);
     let aggregates = aggregates(tree, &attempts);
     let failed = failed(&aggregates, &attempts, options);
-    human::report(tree, &printer, &aggregates, &owners, options, failed, started.elapsed());
+    context.rounds = &rounds;
+    let report = context.report(&aggregates);
+    if options.json {
+        say!("{}", report.text());
+    } else {
+        human::report(tree, &printer, &aggregates, &owners, options, failed, started.elapsed());
+    }
+    for (junit, path) in &options.reports {
+        let text =
+            if *junit { junit::report(tree, &context, &aggregates, &report, options) } else { report.text() + "\n" };
+        publish(path, &text)?;
+    }
     Ok(failed)
 }
 
-/// Why `tondo test` ran nothing: an input it could not use, or no tests.
+/// The report of a test build that did not compile (15.6), where asked.
+pub fn uncompiled(dir: &Path, options: &Options) -> Result<(), Failure> {
+    let ownership = owners::resolve(dir, &options.codeowners).map_err(Failure::Input)?;
+    let tree = Tree { nodes: Vec::new(), locations: Vec::new() };
+    let snapshot_sha256 = snapshot_tree(dir);
+    let context = json::Context {
+        tree: &tree,
+        options,
+        owners: &[],
+        ownership: &ownership,
+        plan: &[],
+        rounds: &[],
+        snapshot_sha256: &snapshot_sha256,
+        compiled: false,
+    };
+    let report = context.report(&[]);
+    if options.json {
+        say!("{}", report.text());
+    }
+    for (junit, path) in &options.reports {
+        if !junit {
+            publish(path, &(report.text() + "\n"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Writes a report whole, or not at all.
+fn publish(path: &Path, text: &str) -> Result<(), Failure> {
+    let partial = path.with_extension(format!("partial-{}", std::process::id()));
+    std::fs::write(&partial, text)
+        .and_then(|_| std::fs::rename(&partial, path))
+        .map_err(|e| Failure::Output(format!("cannot write the report {}: {e}", path.display())))
+}
+
+/// The hash of the snapshot stores (15.7): the package's store, or an empty
+/// one where there is none.
+fn snapshot_tree(dir: &Path) -> String {
+    let package = crate::deps::resolve(dir, None).ok().map(|p| p[0].name.clone()).unwrap_or_default();
+    let store = std::fs::read(dir.join("snapshots/tondo.snap.json")).unwrap_or_else(|_| json::EMPTY_STORE.into());
+    let mut bytes = b"tondo-snapshot-tree-v1\0".to_vec();
+    bytes.extend_from_slice(package.as_bytes());
+    bytes.push(0);
+    bytes.extend_from_slice(&crate::hash::sha256(&store));
+    crate::hash::sha256_hex(&bytes)
+}
+
+/// Why `tondo test` could not report: an input it could not use, no tests,
+/// or a report it could not write.
 pub enum Failure {
     Input(String),
     Empty(String),
+    Output(String),
 }
 
 /// Runs the plan once per iteration, then the retry rounds.
+/// The retry rounds that ran: each one's units, with their tests.
+type Rounds = Vec<Vec<(u32, Vec<u32>)>>;
+
 fn campaign(
     dir: &Path,
     executable: &Path,
@@ -263,8 +360,9 @@ fn campaign(
     plan: &[u32],
     options: &Options,
     printer: &mut human::Printer,
-) -> Vec<Attempt> {
+) -> (Vec<Attempt>, Rounds) {
     let mut attempts = Vec::new();
+    let mut rounds = Vec::new();
     for iteration in 1..=options.repeat {
         printer.begin(iteration, 0, plan);
         // Each top-level suite or test is a unit of the first round.
@@ -286,11 +384,12 @@ fn campaign(
         }
         let tests: Vec<u32> = units.iter().flat_map(|(_, tests)| tests.iter().copied()).collect();
         printer.begin(1, round, &tests);
+        rounds.push(units.clone());
         let units =
             units.into_iter().map(|(unit, tests)| (tests, Context { round, iteration: 1, unit: Some(unit) })).collect();
         attempts.extend(worker::execute(executable, dir, tree, units, options, |a| printer.attempt(a)));
     }
-    attempts
+    (attempts, rounds)
 }
 
 fn top(tree: &Tree, mut node: u32) -> u32 {

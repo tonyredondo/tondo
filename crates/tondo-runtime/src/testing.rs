@@ -174,7 +174,7 @@ pub unsafe extern "C" fn tondo_rt_test_members(members: *const Member, count: us
             r.running.pop();
             let failed = r.error.take().or_else(|| {
                 (r.suites[node as usize] && !r.reached[node as usize])
-                    .then(|| "the setup ended before its members".to_string())
+                    .then(|| "\0the setup ended before its members\0".to_string())
             });
             match failed {
                 Some(error) => {
@@ -249,16 +249,15 @@ impl State {
     }
 }
 
-/// The error a test or a setup returned, as `main` reports it, and where
-/// it left.
+/// The error a test or a setup returned, as `main` reports it: its type,
+/// its description and where it left, separated by NUL.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_test_error(description: *const Str) {
+pub unsafe extern "C" fn tondo_rt_test_error(description: *const Str, error_type: *const Str) {
     let text = String::from_utf8_lossy(unsafe { str_bytes(description) }).into_owned();
+    let error_type = String::from_utf8_lossy(unsafe { str_bytes(error_type) }).into_owned();
     with(|r| {
-        r.error = Some(match r.location.take() {
-            Some(location) => format!("{text}\n --> {location}"),
-            None => text,
-        })
+        let location = r.location.take().unwrap_or_default();
+        r.error = Some(format!("{error_type}\0{text}\0{location}"));
     });
 }
 

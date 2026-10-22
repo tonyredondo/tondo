@@ -287,3 +287,45 @@ fn shards_globs_and_orders() {
         assert!(stderr.contains(message) && status == 2, "{args:?}: {stderr}");
     }
 }
+
+#[test]
+fn writes_json_and_junit_reports() {
+    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("testing-reports");
+    let _ = std::fs::remove_dir_all(&out);
+    std::fs::create_dir_all(&out).unwrap();
+    let (json, xml) = (out.join("report.json"), out.join("report.xml"));
+    let reports = [format!("json={}", json.display()), format!("junit={}", xml.display())];
+    let args = ["test", "--timeout", "1", "--test-format", "json", "--report", &reports[0], "--report", &reports[1]];
+    let (stdout, _, status) = tondo(&sample(), &args);
+    assert_eq!(status, 1);
+    // stdout and the file hold the same bytes.
+    assert_eq!(std::fs::read_to_string(&json).unwrap(), stdout);
+    for part in [
+        "{\"format\":\"tondo-test-report-0.1/1\",\"edition\":\"0.1\",",
+        "\"compiled\":true,\"selection\":{\"kind\":\"all\",\"value\":null},",
+        "\"failure\":{\"kind\":\"error\",\"code\":null,\"error_type\":\"ParseError\",\"message\":\"ParseError.Empty\",\"source\":{\"file\":\"src/main_test.to\",\"line\":15,\"column\":18},\"stack\":[]}",
+        "\"blocked_by\":{\"id\":\"sample::unit::sample::brokenSetup\",\"attempt\":1}",
+        "\"skip\":{\"reason\":\"needs a database\",\"source\":{\"file\":\"src/main_test.to\",\"line\":20,\"column\":5}}",
+        "\"tags\":{\"area\":\"parse\"}",
+        "\"summary\":{\"selected\":12,\"executed\":10,\"passed\":6,\"flaky_passed\":0,\"skipped\":1,\"blocked_setup\":1,\"blocked_skip\":1,\"failed_error\":1,\"failed_panic\":1,\"resource_limit\":0,\"timeout\":1,\"crashed\":0,",
+    ] {
+        assert!(stdout.contains(part), "missing {part} in {stdout}");
+    }
+    assert!(stdout.ends_with("}\n") && !stdout.contains("\ntest "));
+    let xml = std::fs::read_to_string(&xml).unwrap();
+    assert!(xml.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites tests=\"13\" failures=\"3\" errors=\"1\" skipped=\"3\" time=\""));
+    for part in [
+        "<testsuite name=\"sample::unit::sample::brokenSetup\" tests=\"2\" failures=\"1\" errors=\"0\" skipped=\"1\"",
+        "<testcase name=\"@setup\" classname=\"sample::unit::sample::brokenSetup\"",
+        "<failure type=\"P0007\" message=\"assertion-failed: twice(2) is 4\">",
+        "<error type=\"timeout\" message=\"timed out after 1s\">",
+        "<skipped message=\"needs a database\"/>",
+        "<system-out>about to fail\n</system-out>",
+    ] {
+        assert!(xml.contains(part), "missing {part} in {xml}");
+    }
+    // The listing in JSON.
+    let (stdout, _, _) = tondo(&sample(), &["test", "--list", "--test-format", "json", "--filter", "nested"]);
+    assert!(stdout.starts_with("{\"format\":\"tondo-test-list-0.1/1\""));
+    assert!(stdout.contains("\"execution_plan\":[\"sample::unit::sample::shared::nested::seesBoth\"]"));
+}

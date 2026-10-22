@@ -187,11 +187,21 @@ fn worker(
         send(tree, remaining, outcome, sender);
     }
     // The entry that was running when the worker ended.
-    if let Some((mut outcome, reached, _)) = session.running.pop() {
+    if let Some((mut outcome, reached, started)) = session.running.pop() {
+        if let Some(started) = started {
+            outcome.duration += Instant::now() - started;
+        }
         if outcome.status == Status::Passed {
             outcome.status = if timed_out { Status::Timeout } else { Status::Crashed(describe(status)) };
         }
         outcome.teardown = reached;
+        send(tree, remaining, outcome, sender);
+    }
+    // The suites around it ended with the worker, their setup done.
+    while let Some((mut outcome, _, started)) = session.running.pop() {
+        if let Some(started) = started {
+            outcome.duration += Instant::now() - started;
+        }
         send(tree, remaining, outcome, sender);
     }
     Ok(())
@@ -215,8 +225,19 @@ fn send(tree: &Tree, remaining: &mut VecDeque<u32>, outcome: Attempt, sender: &m
     let skipped = matches!(outcome.status, Status::Skipped(_));
     let context = Context { round: outcome.round, iteration: outcome.iteration, unit: outcome.unit };
     let _ = sender.send(outcome);
-    for test in blocked {
-        let _ = sender.send(Attempt::new(test, Status::Blocked(node, skipped), context));
+    // The suites inside that held those tests are blocked too.
+    let mut suites: Vec<u32> = Vec::new();
+    for &test in &blocked {
+        let mut inner = tree.nodes[test as usize].parent;
+        while inner != node && inner != 0 {
+            if !suites.contains(&inner) {
+                suites.push(inner);
+            }
+            inner = tree.nodes[inner as usize].parent;
+        }
+    }
+    for node_blocked in suites.into_iter().chain(blocked) {
+        let _ = sender.send(Attempt::new(node_blocked, Status::Blocked(node, skipped), context));
     }
 }
 
@@ -343,6 +364,9 @@ impl Session {
             "start" => self.running.push((Attempt::new(node, Status::Passed, self.context), false, Some(now))),
             "members" => {
                 if let Some(entry) = self.running.iter_mut().rev().find(|(o, _, _)| o.node == node) {
+                    if let Some(started) = entry.2 {
+                        entry.0.duration += now - started;
+                    }
                     (entry.1, entry.2) = (true, None);
                 }
             }
@@ -353,9 +377,16 @@ impl Session {
             }
             "end" | "error" => {
                 if let Some(position) = self.running.iter().rposition(|(o, _, _)| o.node == node) {
-                    let (mut outcome, reached, _) = self.running.remove(position);
+                    let (mut outcome, reached, started) = self.running.remove(position);
+                    if let Some(started) = started {
+                        outcome.duration += now - started;
+                    }
                     if kind == "error" {
-                        outcome.status = Status::Error(text);
+                        let mut parts = text.splitn(3, '\0');
+                        let error_type = parts.next().unwrap_or_default().to_string();
+                        let message = parts.next().unwrap_or_default().to_string();
+                        let location = parts.next().filter(|l| !l.is_empty()).map(str::to_string);
+                        outcome.status = Status::Error { message, error_type, location };
                     }
                     outcome.teardown = reached && kind == "error";
                     self.done.push((outcome, sequence));

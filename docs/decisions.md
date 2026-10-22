@@ -778,3 +778,14 @@ runs the whole plan again in new workers and passes only if every attempt
 does. Owners come from CODEOWNERS at the repository's root, the nearest
 directory up from the project that holds `.git`.
 
+## 2026-10-22 — JSON and JUnit reports
+
+`tondo test --test-format json` prints the canonical report, `--list` with it
+the list, and `--report json=<path>` or `junit=<path>` write them too; a build
+that does not compile still gets a JSON report with `compiled: false`. The
+schema of the testing spec lost what the native compiler has no use for: a
+target's capabilities and the hash of a resource profile. Locations are a
+file, a line and a column, which the runtime and people already use, instead
+of byte ranges, and `crashed` joins the failures and their counts. Fields of
+attachments, snapshots and virtual time are there, empty until those land.
+

@@ -11,8 +11,11 @@ pub enum Codeowners {
     Path(String),
 }
 
-/// The rules of the CODEOWNERS file in use.
+/// The CODEOWNERS file in use: its path from the repository's root, the
+/// SHA-256 of its bytes, and its rules.
 pub struct Owners {
+    pub source: Option<String>,
+    pub sha256: Option<String>,
     rules: Vec<(Rule, Vec<String>)>,
     /// The project's directory from the repository's root, with a final `/`.
     prefix: String,
@@ -40,7 +43,7 @@ pub fn resolve(dir: &Path, mode: &Codeowners) -> Result<Owners, String> {
     if prefix == "/" {
         prefix.clear();
     }
-    let none = Owners { rules: Vec::new(), prefix: prefix.clone() };
+    let none = Owners { source: None, sha256: None, rules: Vec::new(), prefix: prefix.clone() };
     let chosen = match mode {
         Codeowners::None => return Ok(none),
         Codeowners::Auto => {
@@ -62,6 +65,7 @@ pub fn resolve(dir: &Path, mode: &Codeowners) -> Result<Owners, String> {
     let file = root.join(&chosen);
     check_inside(&root, &file, &chosen)?;
     let bytes = std::fs::read(&file).map_err(|e| format!("cannot read the CODEOWNERS file {chosen}: {e}"))?;
+    let sha256 = crate::hash::sha256_hex(&bytes);
     let text = String::from_utf8(bytes).map_err(|_| format!("the CODEOWNERS file {chosen} is not UTF-8"))?;
     if text.starts_with('\u{feff}') {
         return Err(format!("the CODEOWNERS file {chosen} starts with a byte order mark; remove it"));
@@ -81,7 +85,7 @@ pub fn resolve(dir: &Path, mode: &Codeowners) -> Result<Owners, String> {
         }
         rules.push((Rule::parse(pattern).map_err(|why| format!("{at}: {why}"))?, owners));
     }
-    Ok(Owners { rules, prefix })
+    Ok(Owners { source: Some(chosen), sha256: Some(sha256), rules, prefix })
 }
 
 /// A CODEOWNERS file must be a regular file inside the repository.
@@ -170,7 +174,7 @@ mod tests {
 
     fn owner(rules: &[(&str, &str)], path: &str) -> Option<String> {
         let rules = rules.iter().map(|(p, o)| (Rule::parse(p).unwrap(), vec![o.to_string()])).collect();
-        Owners { rules, prefix: String::new() }.of(path).first().cloned()
+        Owners { source: None, sha256: None, rules, prefix: String::new() }.of(path).first().cloned()
     }
 
     #[test]

@@ -295,7 +295,7 @@ impl Rt {
             Rt::ReportError => ("tondo_rt_report_error", &[I64], &[]),
             Rt::TestStart => ("tondo_rt_test_start", &[I64, I64], &[]),
             Rt::TestMembers => ("tondo_rt_test_members", &[I64, I64], &[]),
-            Rt::TestError => ("tondo_rt_test_error", &[I64], &[]),
+            Rt::TestError => ("tondo_rt_test_error", &[I64, I64], &[]),
             Rt::TestLog => ("tondo_rt_test_log", &[I64], &[]),
             Rt::TestTags => ("tondo_rt_test_tags", &[I64], &[]),
             Rt::TestWhere => ("tondo_rt_test_where", &[I64], &[]),
@@ -1774,7 +1774,9 @@ fn define_glue(cg: &mut Codegen, kind: Glue, ty: Ty, func: &mut ir::Function, fb
                     _ => Val::Zero,
                 };
                 let description = e.describe(error, error_value);
-                e.call_rt(Rt::TestError, &[description]);
+                let error_type = e.cg.types.display(error);
+                let error_type = e.string_ptr(&error_type);
+                e.call_rt(Rt::TestError, &[description, error_type]);
                 e.fb.ins().jump(done, &[]);
                 e.fb.switch_to_block(done);
             }

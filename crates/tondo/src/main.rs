@@ -17,7 +17,8 @@ usage:
   tondo test [<project>] [--filter <text> | --glob <pattern> | --exact <id>] [--shard <i/n>]
             [--order canonical|random] [--seed <hex>] [--list] [--jobs <n>] [--timeout <seconds>]
             [--retry <n>] [--allow-flaky] [--repeat <n>] [--codeowners auto|none|<path>]
-            [--show-output] [--allow-empty] [--deny-skips]
+            [--show-output] [--allow-empty] [--deny-skips] [--test-format human|json]
+            [--report json=<path> | junit=<path>]... [--diagnostic-format human|json]
                                                        run the tests of a project
   tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
                                                        write a module of extern declarations for a C header
@@ -127,7 +128,10 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         allow_empty: false,
         deny_skips: false,
         allow_flaky: false,
+        json: false,
+        reports: Vec::new(),
     };
+    let mut diagnostics_json = false;
     let usage = |message: String| format!("{message}\n{USAGE}");
     // A count written canonically: `0` or digits without a leading zero.
     let count = |text: &str, flag: &str| {
@@ -140,7 +144,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     let mut rest = rest.iter();
     while let Some(arg) = rest.next() {
         let flag = arg.to_string_lossy().into_owned();
-        if seen.contains(&flag) {
+        if seen.contains(&flag) && flag != "--report" {
             return Err(usage(format!("{flag} appears twice")));
         }
         seen.push(flag.clone());
@@ -215,6 +219,30 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             "--allow-empty" => options.allow_empty = true,
             "--deny-skips" => options.deny_skips = true,
             "--allow-flaky" => options.allow_flaky = true,
+            "--test-format" | "--diagnostic-format" => {
+                let json = match value()?.as_str() {
+                    "human" => false,
+                    "json" => true,
+                    other => return Err(usage(format!("{flag} is human or json, not {other}"))),
+                };
+                if flag == "--test-format" {
+                    options.json = json;
+                } else {
+                    diagnostics_json = json;
+                }
+            }
+            "--report" => {
+                let text = value()?;
+                let report = match text.split_once('=') {
+                    Some(("json", path)) if !path.is_empty() => (false, PathBuf::from(path)),
+                    Some(("junit", path)) if !path.is_empty() => (true, PathBuf::from(path)),
+                    _ => return Err(usage(format!("--report takes json=<path> or junit=<path>, not {text}"))),
+                };
+                if options.reports.iter().any(|(_, p)| *p == report.1) {
+                    return Err(usage(format!("two reports go to {}", report.1.display())));
+                }
+                options.reports.push(report);
+            }
             other => return Err(usage(format!("unknown option {other}"))),
         }
     }
@@ -230,6 +258,9 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         && let Some(flag) = listing.iter().find(|f| given(f))
     {
         return Err(usage(format!("--list runs nothing, so it does not go with {flag}")));
+    }
+    if options.list && !options.reports.is_empty() {
+        return Err(usage("--list writes no report; use --test-format json".into()));
     }
     if random {
         // A seed chosen now is shown, so the order can be repeated.
@@ -248,11 +279,20 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         Some(tree) => tree,
         None => {
             let analysis = driver::analyze_tests(&path)?;
-            if !analysis.diags.list.is_empty() {
+            if diagnostics_json {
+                eprint!("{}", analysis.diags.render_json(&analysis.sources, &analysis.source_id));
+            } else if !analysis.diags.list.is_empty() {
                 eprint!("{}", analysis.diags.render(&analysis.sources));
             }
             let Some(program) = &analysis.program else {
-                return Ok(ExitCode::FAILURE);
+                // A report says it did not compile (testing 15.6).
+                return Ok(match runner::uncompiled(&path, &options) {
+                    Err(runner::Failure::Output(message)) => {
+                        eprintln!("tondo: {message}");
+                        ExitCode::from(TOOL_FAILURE)
+                    }
+                    _ => ExitCode::FAILURE,
+                });
             };
             let locations = program.tests.iter().map(|n| analysis.sources.location(n.span)).collect();
             let tree = runner::Tree { nodes: program.tests.clone(), locations };
@@ -271,6 +311,10 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         Err(runner::Failure::Input(message) | runner::Failure::Empty(message)) => {
             eprintln!("tondo: {message}");
             Ok(ExitCode::FAILURE)
+        }
+        Err(runner::Failure::Output(message)) => {
+            eprintln!("tondo: {message}");
+            Ok(ExitCode::from(TOOL_FAILURE))
         }
     }
 }
