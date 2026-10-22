@@ -924,3 +924,15 @@ wrote, so a build never sees half a generation. A root that reaches an
 output of the same build is `E2109`. A run over budget names the limit and
 how `limits` raises it, and a public constant without its type gets the type
 to write in the error.
+
+## 2026-10-23 — Ranges are a prelude type
+
+`start..end` outside a `for` header builds the prelude's `Range[T]`, a
+record with private fields that implements `Iterator[T]` through a private
+`Discrete` trait, so ranges get every adapter without new code generation.
+A `for` over an integer range keeps its counting loop; one over characters
+uses the record. `x in range` and `c in text` call private prelude functions
+that take the element first, keeping the textual order of evaluation.
+`String.chars()` walks the text by byte offset with one runtime call per
+character, and `Array.iter()` is the lazy counterpart of the eager array
+methods. The prelude's intrinsic types show their own names in messages.

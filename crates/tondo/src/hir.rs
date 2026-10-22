@@ -1048,6 +1048,7 @@ pub const NATIVES: &[Native] = {
         text("charValid", &[Int], Bool, "tondo_rt_char_valid"),
         text("charCode", &[Char], Int, "tondo_rt_char_code"),
         text("charFrom", &[Int], Char, "tondo_rt_char_from"),
+        text("scalarAt", &[String, Int], Char, "tondo_rt_text_scalar_at"),
         math("sin", &[Float], Float, "tondo_rt_math_sin"),
         math("cos", &[Float], Float, "tondo_rt_math_cos"),
         math("tan", &[Float], Float, "tondo_rt_math_tan"),

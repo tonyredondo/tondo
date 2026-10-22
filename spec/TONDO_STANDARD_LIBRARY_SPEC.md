@@ -2201,6 +2201,7 @@ fn count(self, needle: String): Int
 fn toLower(self): String                            // reglas de Unicode
 fn toUpper(self): String
 fn compare(self, other: String): Int
+fn chars(self): CharIterator                        // Iterator[Char], perezoso
 fn Int.parse(input: String, radix: Int = 10): Int ! text.TextError
 fn Float.parse(input: String): Float ! text.TextError
 ~~~
@@ -2265,14 +2266,21 @@ fn reverse(mut self)
 fn swap(mut self, i: Int, j: Int)
 fn retain(var self, keep: fn(T): Bool)
 fn extend(var self, other: Array[T])
+fn iter(self): ArrayIterator[T]                     // Iterator[T], perezoso
 ~~~
 
 `Map[K, V]`: `getOr(key, fallback): V`, `mapValues(fn(V): W): Map[K, W]`,
 `filter(fn(K, V): Bool): Map[K, V]` y `merge(other): Map[K, V]`, donde gana
 `other`. `Set[T]`: `union`, `intersection`, `difference` e `isSubset`.
 
-`Iterator[T]`, sobre cualquier iterador, incluidos los cursores de `Map.keys`,
-`values` y `entries` y los tipos del programa que lo implementan:
+`Range[T]` (10.16 del lenguaje) es el valor de `start..end` y `start..=end`,
+de enteros o `Char`: implementa `Iterator[T]`, tiene `contains(value: T): Bool`,
+que es lo que pregunta `value in range`, y `Display` lo escribe como se escribe
+(`0..10`). Un `Range[Char]` salta los surrogates.
+
+`Iterator[T]`, sobre cualquier iterador, incluidos los rangos, `String.chars()`,
+`Array.iter()`, los cursores de `Map.keys`, `values` y `entries` y los tipos del
+programa que lo implementan:
 
 - adaptadores perezosos, que solo piden elementos a su fuente cuando se les
   piden los suyos: `map`, `filter`, `take`, `skip`, `takeWhile`, `skipWhile`,
@@ -2284,7 +2292,8 @@ Estos métodos trabajan sobre una copia del iterador, así que su tipo es `Copy`
 con uno afín, el error dice que se recorra con `for`.
 
 Un cierre que se pasa a estos métodos toma los tipos de sus parámetros de la
-llamada: `numbers.map((n) { n * 2 })`.
+llamada: `numbers.map((n) { n * 2 })`, `(0..10).filter((n) { n % 2 == 0 })` o
+`text.chars().filter((c) { c.isLetter() })`.
 
 `std.math` da las operaciones escalares con la semántica de IEEE-754 y sin
 fast-math. Una operación fuera de su dominio es un error, nunca un `NaN`

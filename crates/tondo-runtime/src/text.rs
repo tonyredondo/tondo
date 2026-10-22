@@ -29,6 +29,13 @@ pub unsafe extern "C" fn tondo_rt_text_split(s: *const Str, separator: *const St
     strings(parts.into_iter())
 }
 
+/// The scalar that starts at a byte offset of a string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_text_scalar_at(s: *const Str, offset: i64) -> u32 {
+    let rest = text(s).get(offset.max(0) as usize..).unwrap_or_default();
+    rest.chars().next().map_or(0xFFFD, |c| c as u32)
+}
+
 /// The lines, without their `\n` or `\r\n`; no last empty line.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_lines(s: *const Str) -> *mut ArrayHeader {

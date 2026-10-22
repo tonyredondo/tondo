@@ -1885,6 +1885,15 @@ impl<'a> Checker<'a> {
 
     /// Declares every nominal type and alias, then resolves their definitions,
     /// so declarations may refer to each other in any order (7.11).
+    /// The name a type shows: its own for an intrinsic type the prelude
+    /// declares, such as `Range`.
+    fn shown_type_name(&self, name: &str, module: u32) -> String {
+        match name.strip_prefix("prelude.") {
+            Some(bare) if PRELUDE_TYPES.contains(&bare) && Some(module) == self.prelude => bare.to_string(),
+            _ => name.to_string(),
+        }
+    }
+
     fn declare_types(&mut self, items: &[ast::Item]) {
         let mut declared = Vec::new();
         let mut templates = Vec::new();
@@ -1903,11 +1912,11 @@ impl<'a> Checker<'a> {
             };
             if let Some((module, public, private_fields)) = owner {
                 let name = match item {
-                    ast::Item::Type(decl) => decl.name.name.clone(),
-                    ast::Item::Enum(decl) => decl.name.name.clone(),
+                    ast::Item::Type(decl) => &decl.name.name,
+                    ast::Item::Enum(decl) => &decl.name.name,
                     _ => unreachable!(),
                 };
-                self.owners.insert(name, Owner { module, public, private_fields });
+                self.owners.insert(self.shown_type_name(name, module), Owner { module, public, private_fields });
             }
             let name = match item {
                 ast::Item::Type(decl) => &decl.name,
@@ -1946,7 +1955,12 @@ impl<'a> Checker<'a> {
                     continue;
                 }
                 let params = self.declare_generics(generics, false);
-                let template = self.types.declare_template(name.name.clone(), params.clone());
+                let module = match item {
+                    ast::Item::Type(decl) => decl.module,
+                    ast::Item::Enum(decl) => decl.module,
+                    _ => unreachable!(),
+                };
+                let template = self.types.declare_template(self.shown_type_name(&name.name, module), params.clone());
                 self.declare_type_name(name, TypeName::Template(template));
                 templates.push((item, name, template, generics, params));
                 continue;
@@ -3426,6 +3440,7 @@ impl<'a> Checker<'a> {
                         ("Sender", [value]) if segments.len() == 1 => self.types.handle(Handle::Sender, *value),
                         ("Receiver", [value]) if segments.len() == 1 => self.types.handle(Handle::Receiver, *value),
                         ("Pointer", [target]) if segments.len() == 1 => self.types.intern(TyKind::Pointer(*target)),
+                        ("Range", [element]) if segments.len() == 1 => self.range_type(*element, t.span),
                         ("Map", [key, value]) if segments.len() == 1 => {
                             self.require_key(*key, t.span);
                             self.map_type(*key, *value)
@@ -3436,7 +3451,7 @@ impl<'a> Checker<'a> {
                         }
                         (
                             "Option" | "Result" | "Array" | "Deque" | "Map" | "Set" | "Join" | "Group" | "Sender"
-                            | "Receiver" | "Pointer",
+                            | "Receiver" | "Pointer" | "Range",
                             _,
                         ) if segments.len() == 1 => {
                             self.diags.error("E1104", t.span, "wrong number of type arguments");
@@ -6245,6 +6260,11 @@ impl<'a> Checker<'a> {
                     return Some(hir::Stmt::ForEach { pattern, source, body });
                 };
                 let (start, end) = self.operands(cx, start, end, None);
+                // Characters count through the prelude's `Range`.
+                if start.ty == Ty::CHAR {
+                    let range = self.range_value(start, end, *op == BinOp::RangeInclusive, source.span);
+                    return Some(self.for_cursor(cx, pattern, range, Ty::CHAR, body));
+                }
                 self.require_int(&start);
                 cx.scopes.push(Vec::new());
                 let local = match &pattern.kind {
@@ -6730,6 +6750,40 @@ impl<'a> Checker<'a> {
             return Self::error_expr(span);
         }
         Self::mk(hir::ExprKind::Callback(Box::new(value), FnId(u32::MAX)), expected, span)
+    }
+
+    /// The prelude's `Range[T]` of integers or characters (10.16).
+    fn range_type(&mut self, element: Ty, span: Span) -> Ty {
+        let Some(&TypeName::Template(range)) = self.type_names.get("prelude.Range") else { return Ty::ERROR };
+        if !matches!(
+            self.types.kind(element),
+            TyKind::Int(_) | TyKind::Char | TyKind::Param(_) | TyKind::Error | TyKind::Never
+        ) {
+            let message = format!("a range counts through integers or characters, not {}", self.display(element));
+            self.diags.error("E1102", span, message);
+            return Ty::ERROR;
+        }
+        self.types.instantiate(range, vec![element])
+    }
+
+    /// What a `Range[T]` yields, if `ty` is one.
+    fn range_element(&self, ty: Ty) -> Option<Ty> {
+        let Some(&TypeName::Template(range)) = self.type_names.get("prelude.Range") else { return None };
+        match self.types.instance_of(ty) {
+            Some((template, args)) if template == range => args.first().copied(),
+            _ => None,
+        }
+    }
+
+    /// `start..end` or `start..=end` as a value.
+    fn range_value(&mut self, start: hir::Expr, end: hir::Expr, inclusive: bool, span: Span) -> hir::Expr {
+        let ty = self.range_type(start.ty, span);
+        if ty == Ty::ERROR {
+            return Self::error_expr(span);
+        }
+        let flag = |value| Self::mk(hir::ExprKind::Bool(value), Ty::BOOL, span);
+        let fields = vec![(0, start), (1, end), (2, flag(inclusive)), (3, flag(false))];
+        Self::mk(hir::ExprKind::Record(fields), ty, span)
     }
 
     fn require_int(&mut self, value: &hir::Expr) {
@@ -10857,6 +10911,20 @@ impl<'a> Checker<'a> {
             }
             BinOp::In => {
                 let container = self.expr(cx, right, None);
+                // A range or a string asks the prelude, the element first.
+                let asked = match self.range_element(container.ty) {
+                    Some(element) => Some(("prelude.rangeHas", element, vec![element])),
+                    None if container.ty == Ty::STRING => Some(("prelude.textHas", Ty::CHAR, Vec::new())),
+                    None => None,
+                };
+                if let Some((name, element, generics)) = asked
+                    && let Some(&ModuleName::Fn(has)) = self.names.get(name)
+                {
+                    let item = self.expr(cx, left, Some(element));
+                    let item = self.coerce(item, element);
+                    let call = hir::ExprKind::Call(Callee::Fn(has), generics, vec![item, container]);
+                    return Self::mk(call, Ty::BOOL, span);
+                }
                 if let TyKind::Map(element, _) | TyKind::Set(element) = *self.types.kind(container.ty) {
                     let item = self.expr(cx, left, Some(element));
                     let item = self.coerce(item, element);
@@ -10880,7 +10948,9 @@ impl<'a> Checker<'a> {
                 return Self::mk(hir::ExprKind::ArrayOp(hir::ArrayOp::Contains, vec![item, container]), Ty::BOOL, span);
             }
             BinOp::Range | BinOp::RangeInclusive => {
-                return self.unsupported_expr(span, &format!("`{}` outside a `for` header", op.as_str()));
+                let hint = expected.and_then(|ty| self.range_element(ty));
+                let (start, end) = self.operands(cx, left, right, hint);
+                return self.range_value(start, end, op == BinOp::RangeInclusive, span);
             }
         };
         Self::mk(hir::ExprKind::Binary(op, Box::new(left), Box::new(right)), ty, span)

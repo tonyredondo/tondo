@@ -2846,7 +2846,9 @@ Un range puede:
 - Consultar pertenencia con `in`.
 - Utilizarse en APIs que acepten rangos.
 
-No es un array y no asigna memoria proporcional a su longitud.
+No es un array y no asigna memoria proporcional a su longitud. Es un valor `Copy`
+que implementa `Iterator[T]`, así que admite los adaptadores del prelude:
+`(0..10).map((n) { n * n })`.
 
 ### 10.17 `Iterator[T]`
 
