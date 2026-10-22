@@ -1230,6 +1230,54 @@ impl Types {
         }
     }
 
+    /// Whether a path of `std.reflect` can reach a value inside `ty` (14.8
+    /// of the standard library), as far as the type tells: an enum's
+    /// active variant and a map's keys are only known when the program runs.
+    pub fn reflect_path(&self, ty: Ty, path: &str) -> Result<(), String> {
+        let mut ty = ty;
+        for segment in path.split('.') {
+            while let TyKind::Option(inner) = self.kind(ty) {
+                ty = *inner;
+            }
+            let shown = self.display(ty);
+            ty = match self.kind(ty) {
+                TyKind::Array(element) | TyKind::Deque(element) => {
+                    if segment.is_empty() || !segment.bytes().all(|b| b.is_ascii_digit()) {
+                        return Err(format!("`{shown}` is reached by index, and `{segment}` is not one"));
+                    }
+                    *element
+                }
+                TyKind::Map(key, value) if *key == Ty::STRING => *value,
+                &TyKind::Adt(id) => match &self.adt(id).kind {
+                    AdtKind::Record(fields) => {
+                        let visible: Vec<&Field> = fields.iter().filter(|f| !f.private).collect();
+                        match visible.iter().find(|f| f.name == segment) {
+                            Some(field) => field.ty,
+                            None => {
+                                let names: Vec<String> = visible.iter().map(|f| format!("`{}`", f.name)).collect();
+                                return Err(match names.as_slice() {
+                                    [] => format!("`{shown}` has no fields, so it has no field `{segment}`"),
+                                    [only] => format!("`{shown}` has no field `{segment}`; its field is {only}"),
+                                    [rest @ .., last] => format!(
+                                        "`{shown}` has no field `{segment}`; its fields are {} and {last}",
+                                        rest.join(", ")
+                                    ),
+                                });
+                            }
+                        }
+                    }
+                    AdtKind::Enum(_) => return Ok(()),
+                    AdtKind::Newtype(_) => {
+                        return Err(format!("`{shown}` is a newtype, a single value without fields"));
+                    }
+                },
+                TyKind::Map(..) | TyKind::Result(..) => return Ok(()),
+                _ => return Err(format!("`{shown}` has no fields, so it has no field `{segment}`")),
+            };
+        }
+        Ok(())
+    }
+
     fn fields_convert(
         &self,
         from: Ty,

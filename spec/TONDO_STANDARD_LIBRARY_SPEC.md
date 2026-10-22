@@ -2320,6 +2320,7 @@ pub trait Reflect {
     fn reflectCallMut(mut self, method: String, args: Array[Value]): Value ! ReflectError
     fn reflectShow(self, nested: Bool): String
     fn reflectFrom(value: Value): Self ! ReflectError
+    fn reflectDescription(): TypeDescription
 }
 
 pub enum ReflectErrorKind {
@@ -2340,8 +2341,10 @@ pub fn ReflectError.needsMut(typeName: String, method: String): ReflectError
 ~~~
 
 `Reflect` tiene una implementación por defecto de cada operación salvo
-`reflectShow`; los constructores de `ReflectError` dan los mensajes que usa el
-código que genera el compilador, y un `impl` escrito a mano puede usarlos.
+`reflectShow`; los constructores de `ReflectError`, `TypeDescription` y los
+descriptores (`FieldInfo.of`, `VariantInfo.of`, `MethodInfo.of`,
+`ParameterInfo.of`, `FunctionInfo.of`) son los que usa el código que genera el
+compilador, y un `impl` escrito a mano puede usarlos.
 
 Valores:
 
@@ -2438,13 +2441,30 @@ pub type VariantInfo
 pub type MethodInfo
 pub type ParameterInfo
 pub type FunctionInfo
+
+pub type TypeDescription = {
+    kind: TypeKind
+    generics: Array[TypeInfo]
+    fields: Array[FieldInfo]
+    variants: Array[VariantInfo]
+    methods: Array[MethodInfo]
+    elements: Array[TypeInfo]
+    underlying: TypeInfo?
+}
+pub fn TypeDescription.of(kind: TypeKind): TypeDescription
 ~~~
 
-`TypeInfo` es un handle inmutable, barato de copiar y `Send + Share`. Expone:
+`TypeInfo` es un handle inmutable y barato de copiar, que calcula lo que
+describe al pedirlo, así que un tipo recursivo no se expande sin fin. Su
+`Display` es su nombre y los enums de descripción muestran el nombre de su
+variante. Expone:
 
 - `id(): TypeId`, `qualifiedName(): String` y `kind(): TypeKind`;
 - `genericArguments(): Array[TypeInfo]` en orden de declaración;
-- `capabilities(): Set[TypeCapability]` con solo capacidades demostradas;
+- `capabilities(): Set[TypeCapability]` con solo capacidades que el compilador
+  demuestra: hoy `Copy`, `Equatable` y `Key`, porque `Send` y `Share` todavía no
+  se comprueban;
+- `underlying(): TypeInfo?`, el tipo que envuelve un newtype;
 - `fields(): Array[FieldInfo]` de un record;
 - `variants(): Array[VariantInfo]` de un enum;
 - `methods(): Array[MethodInfo]` con los métodos `pub`;
@@ -2456,12 +2476,14 @@ Los descriptores secundarios exponen consultas, sin campos públicos:
 
 - `FieldInfo`: `name(): String`, `typeInfo(): TypeInfo`, `ordinal(): Int`,
   `docs(): String?`. Los ordinales conservan la posición declarada aunque se
-  omitan campos privados.
+  omitan campos privados. La documentación son las líneas `///` justo antes del
+  campo, sin los marcadores.
 - `VariantInfo`: `name(): String`, `ordinal(): Int`,
   `payloadKind(): VariantPayloadKind` (`Unit | Tuple | Record`),
   `tupleElements(): Array[TypeInfo]` y `fields(): Array[FieldInfo]`.
 - `MethodInfo`: `name(): String`, `receiver(): ParameterMode` y
-  `function(): FunctionInfo`.
+  `function(): FunctionInfo`, para los métodos que `call` y `callMut` pueden
+  llamar.
 - `ParameterInfo`: `position(): Int`, `typeInfo(): TypeInfo` y
   `mode(): ParameterMode` (`Value | Ref | Mut | Var`).
 - `FunctionInfo`: `parameters(): Array[ParameterInfo]`, `outcome(): TypeInfo`,

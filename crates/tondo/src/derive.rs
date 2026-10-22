@@ -84,7 +84,10 @@ struct Declared {
 struct Method {
     name: String,
     mutating: bool,
-    params: usize,
+    /// The types of its parameters after the receiver, and of its result,
+    /// as written.
+    params: Vec<String>,
+    result: String,
 }
 
 /// A variant as the generator matches it: the pattern that binds its
@@ -173,7 +176,7 @@ fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap
                     let context = Context { kind, module: d.module, file, generics: &d.generics, paths: &paths };
                     context.allowed(ty, &|m, n| find(m, n).is_some_and(|i| qualifies[i]))
                 };
-                callable(&modules[d.module], &d.name, &allowed)
+                callable(&modules[d.module], &d.name, &allowed, sources)
             }
         })
         .collect();
@@ -240,7 +243,12 @@ fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap
 
 /// The `pub` methods of a type that reflection can call, from every file
 /// of its module.
-fn callable(module: &ModuleSource, name: &str, allowed: &dyn Fn(&ast::Module, &ast::TypeExpr) -> bool) -> Vec<Method> {
+fn callable(
+    module: &ModuleSource,
+    name: &str,
+    allowed: &dyn Fn(&ast::Module, &ast::TypeExpr) -> bool,
+    sources: &SourceMap,
+) -> Vec<Method> {
     let mut found = Vec::new();
     for (file, _) in &module.files {
         for item in &file.items {
@@ -259,11 +267,43 @@ fn callable(module: &ModuleSource, name: &str, allowed: &dyn Fn(&ast::Module, &a
                 .all(|p| p.mode == ast::Mode::Value && !p.variadic && p.ty.as_ref().is_some_and(|t| allowed(file, t)));
             let result = f.result.as_ref().is_none_or(|r| allowed(file, r));
             if plain && result {
-                found.push(Method { name: f.name.name.clone(), mutating, params: params.len() });
+                let text = |ty: &ast::TypeExpr| sources.slice(ty.span).to_string();
+                found.push(Method {
+                    name: f.name.name.clone(),
+                    mutating,
+                    params: params.iter().filter_map(|p| p.ty.as_ref()).map(text).collect(),
+                    result: f.result.as_ref().map_or_else(|| "Unit".to_string(), text),
+                });
             }
         }
     }
     found
+}
+
+/// The `///` lines just before a declaration, without their markers.
+fn docs(sources: &SourceMap, span: crate::source::Span) -> Option<String> {
+    let file = sources.file_of(span.start);
+    let before = &file.text[..(span.start - file.base) as usize];
+    // The text before the name on its own line, such as `priv `, goes first.
+    let mut lines: Vec<&str> = before.lines().collect();
+    if !before.ends_with('\n') {
+        lines.pop();
+    }
+    let mut found: Vec<&str> = Vec::new();
+    for line in lines.iter().rev() {
+        match line.trim_start().strip_prefix("///") {
+            Some(doc) => found.push(doc.strip_prefix(' ').unwrap_or(doc)),
+            None => break,
+        }
+    }
+    found.reverse();
+    (!found.is_empty()).then(|| found.join("\n"))
+}
+
+/// A Tondo string literal with this text: escaped, and with its braces
+/// doubled so that they are not interpolation.
+fn literal(text: &str) -> String {
+    format!("{text:?}").replace('{', "{{").replace('}', "}}")
 }
 
 /// The types of the parts of a declaration.
@@ -668,7 +708,101 @@ impl Generator<'_> {
             _ => {}
         }
         out.push_str(&self.reflect_methods(methods));
+        out.push_str(&self.reflect_description(item, methods));
         out.push_str("}\n\n");
+        out
+    }
+
+    /// `reflectDescription`: the kind, generic arguments, visible fields
+    /// with their documentation, variants and methods.
+    fn reflect_description(&self, item: &ast::Item, methods: &[Method]) -> String {
+        let r = self.alias;
+        let info = |ty: &str| format!("{r}.typeInfo[{ty}]()");
+        let fields = |fields: &[ast::FieldDecl]| -> String {
+            let described: Vec<String> = fields
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| !f.private)
+                .map(|(ordinal, f)| {
+                    let docs = docs(self.sources, f.name.span)
+                        .map_or("none".to_string(), |d| format!("some({})", literal(&d)));
+                    format!("{r}.FieldInfo.of({:?}, {ordinal}, {docs}, {})", f.name.name, info(&self.text(&f.ty)))
+                })
+                .collect();
+            format!("[{}]", described.join(", "))
+        };
+        let mut parts: Vec<String> = Vec::new();
+        let kind = match item {
+            ast::Item::Type(t) => match &t.body {
+                ast::TypeBody::Record(declared) => {
+                    parts.push(format!("fields: {}", fields(declared)));
+                    "Record"
+                }
+                ast::TypeBody::Newtype(inner) => {
+                    parts.push(format!("underlying: some({})", info(&self.text(inner))));
+                    "Newtype"
+                }
+                ast::TypeBody::Opaque => "Opaque",
+            },
+            ast::Item::Enum(e) => {
+                let variants: Vec<String> = e
+                    .variants
+                    .iter()
+                    .enumerate()
+                    .map(|(ordinal, v)| {
+                        let name = &v.name.name;
+                        let (kind, elements, named) = match &v.payload {
+                            ast::VariantPayload::Unit => ("Unit", "[]".to_string(), "[]".to_string()),
+                            ast::VariantPayload::Tuple(types) => {
+                                let elements: Vec<String> = types.iter().map(|t| info(&self.text(t))).collect();
+                                ("Tuple", format!("[{}]", elements.join(", ")), "[]".to_string())
+                            }
+                            ast::VariantPayload::Record(declared) => ("Record", "[]".to_string(), fields(declared)),
+                        };
+                        format!("{r}.VariantInfo.of({name:?}, {ordinal}, {r}.VariantPayloadKind.{kind}, {elements}, {named})")
+                    })
+                    .collect();
+                parts.push(format!("variants: [{}]", variants.join(", ")));
+                "Enum"
+            }
+            _ => "Opaque",
+        };
+        let generics: Vec<String> = self.declared.generics.iter().map(|g| info(g)).collect();
+        if !generics.is_empty() {
+            parts.push(format!("generics: [{}]", generics.join(", ")));
+        }
+        let described: Vec<String> = methods
+            .iter()
+            .map(|m| {
+                let receiver = if m.mutating { "Mut" } else { "Ref" };
+                let params: Vec<String> = m
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, ty)| format!("{r}.ParameterInfo.of({i}, {}, {r}.ParameterMode.Value)", info(ty)))
+                    .collect();
+                format!(
+                    "{r}.MethodInfo.of({:?}, {r}.ParameterMode.{receiver}, {r}.FunctionInfo.of([{}], {}, false, false))",
+                    m.name,
+                    params.join(", "),
+                    info(&m.result)
+                )
+            })
+            .collect();
+        if !described.is_empty() {
+            parts.push(format!("methods: [{}]", described.join(", ")));
+        }
+        let mut out = format!(
+            "    fn reflectDescription(): {r}.TypeDescription {{\n        {r}.TypeDescription.of({r}.TypeKind.{kind})"
+        );
+        if !parts.is_empty() {
+            out.push_str(" with {\n");
+            for part in parts {
+                out.push_str(&format!("            {part}\n"));
+            }
+            out.push_str("        }");
+        }
+        out.push_str("\n    }\n\n");
         out
     }
 
@@ -899,7 +1033,7 @@ impl Generator<'_> {
                     out.push_str(&format!("            {m:?} => fail {r}.ReflectError.needsMut({name:?}, __method)\n"));
                     continue;
                 }
-                let count = method.params;
+                let count = method.params.len();
                 let args: Vec<String> = (0..count).map(|i| format!("__args[{i}].to()?")).collect();
                 out.push_str(&format!(
                     "            {m:?} => {{\n                if __args.length() != {count} {{\n                    fail {r}.ReflectError.arguments({name:?}, __method, {count}, __args.length())\n                }}\n                {r}.valueOf(self.{m}({}))\n            }}\n",

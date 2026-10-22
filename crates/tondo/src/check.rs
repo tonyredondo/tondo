@@ -999,6 +999,59 @@ impl<'a> Checker<'a> {
         call
     }
 
+    /// A path or method of `std.reflect` written as a literal, on a value of
+    /// a type known here: one it cannot reach is `E2110` (27.10).
+    fn check_reflection(&mut self, name: &str, type_args: &[Ty], args: &[ast::Arg]) {
+        let target = if name == "reflect.set" { type_args[0] } else { type_args[1] };
+        let Some(arg) = args.get(1).filter(|a| a.name.is_none()) else { return };
+        let ast::ExprKind::Str(segments) = &arg.value.kind else { return };
+        let [ast::StrSegment::Text(text)] = segments.as_slice() else { return };
+        if self.types.has_params(target) || self.types.kind(target) == &TyKind::Error {
+            return;
+        }
+        let result = if name.starts_with("reflect.call") {
+            self.reflect_method(target, text, name == "reflect.callMut")
+        } else {
+            self.types.reflect_path(target, text)
+        };
+        if let Err(why) = result {
+            self.diags.error("E2110", arg.value.span, format!("`{name}` cannot reach `{text}`: {why}"));
+        }
+    }
+
+    /// Whether reflection can call a method of the type by this name.
+    fn reflect_method(&mut self, ty: Ty, method: &str, mutating: bool) -> Result<(), String> {
+        let key = self.owner_key(ty);
+        let shown = self.types.display(ty);
+        let public = |id: &FnId| self.method_visibility.get(id).is_some_and(|&(_, public)| public);
+        let mut names: Vec<&str> = self
+            .methods
+            .iter()
+            .filter(|((owner, _), id)| *owner == key && public(id) && self.signatures[id.0 as usize].receiver.is_some())
+            .map(|((_, name), _)| name.as_str())
+            .collect();
+        names.sort();
+        match self.methods.get(&(key, method.to_string())) {
+            Some(id) if public(id) => match self.signatures[id.0 as usize].receiver {
+                Some(ast::Mode::Mut) if !mutating => {
+                    Err(format!("`{shown}.{method}` takes `mut self`: call it with `callMut`"))
+                }
+                Some(_) => Ok(()),
+                None => Err(format!("`{shown}.{method}` has no receiver; call it as `{shown}.{method}(...)`")),
+            },
+            _ if names.is_empty() => Err(format!("`{shown}` has no `pub` methods, so it has no method `{method}`")),
+            _ => {
+                let listed: Vec<String> = names.iter().map(|n| format!("`{n}`")).collect();
+                let listed = match listed.split_last() {
+                    Some((last, [])) => format!("its method is {last}"),
+                    Some((last, rest)) => format!("its methods are {} and {last}", rest.join(", ")),
+                    None => String::new(),
+                };
+                Err(format!("`{shown}` has no `pub` method `{method}`; {listed}"))
+            }
+        }
+    }
+
     /// `reflect.Value`, once `std.reflect` is imported.
     fn reflect_value_ty(&self) -> Option<Ty> {
         match self.type_names.get("reflect.Value") {
@@ -7992,18 +8045,23 @@ impl<'a> Checker<'a> {
         }
         // `native.unbox[T](box)`, `native.is[T](box)` and `native.typeName[T]()`
         // of `std.internal.reflect`, which `std.reflect` is written on.
-        if let [module, op @ ("unbox" | "is" | "typeName")] = names.as_slice()
+        if let [module, op @ ("unbox" | "is" | "typeName" | "identity" | "capabilities")] = names.as_slice()
             && self.lookup(cx, module).is_none()
             && let Some(ModuleName::Module(StdModule::InternalReflect)) = self.names.get(*module)
         {
             let boxed = self.types.handle(Handle::ReflectBox, Ty::UNIT);
-            if *op == "typeName" {
+            if let Some((op, result)) = match *op {
+                "typeName" => Some((hir::ReflectOp::Name, Ty::STRING)),
+                "identity" => Some((hir::ReflectOp::Identity, Ty::INT)),
+                "capabilities" => Some((hir::ReflectOp::Capabilities, Ty::INT)),
+                _ => None,
+            } {
                 let [ty] = type_args else {
-                    self.diags.error("E1104", span, "`typeName` takes one type argument");
+                    self.diags.error("E1104", span, "this operation takes one type argument");
                     return Self::error_expr(span);
                 };
                 let ty = self.resolve_type(ty);
-                return Self::mk(hir::ExprKind::Reflect(hir::ReflectOp::Name, ty, Vec::new()), Ty::STRING, span);
+                return Self::mk(hir::ExprKind::Reflect(op, ty, Vec::new()), result, span);
             }
             let [arg] = args else {
                 return self.arity_error(span, 1, args.len());
@@ -9946,6 +10004,9 @@ impl<'a> Checker<'a> {
                 self.diags.error("E1105", span, message);
                 return Self::error_expr(span);
             }
+        }
+        if matches!(signature.name.as_str(), "reflect.get" | "reflect.set" | "reflect.call" | "reflect.callMut") {
+            self.check_reflection(&signature.name, &type_args, args);
         }
         let result = self.types.subst(signature.result, &inference.map);
         let mut ordered: Vec<(Option<usize>, hir::Expr)> = Vec::new();

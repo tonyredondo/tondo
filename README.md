@@ -115,7 +115,9 @@ language and remain planned work, scheduled after H7:
 
 | Milestone | Scope |
 |---|---|
-| **H9** | Static metaprogramming (`derive`, generators) and runtime reflection |
+| **H9** | Runtime reflection (`std.reflect`: get, set, call and conversion by shape, done; type descriptions), then static metaprogramming (`derive` with providers, generators in `tondo.toml`) |
+| **Stdlib 1** | The everyday methods of the intrinsic types: `String` (`split`, `lines`, `repeat`, padding, trimming, Unicode case, parsing numbers), `Char`, `Array` (`map`, `filter`, `reduce`, `sorted`, `join`, `groupBy`, ...), `Map`, `Set`, `Option`, `Result`, lazy `Iterator` adapters, `Int` and `Float`; `std.math`. Done after H9.1, before `derive` |
+| **Stdlib 2** | `std.format` (a text builder), `std.encoding` (Base64, hex, URLs), `std.random` (seeded generators, shuffle, choice), `std.uuid` (v4, v7), `std.hash` (SHA-256, HMAC), ISO 8601 dates in `std.time`, and a fallible `main` that shows its error's `Display`. Later: `std.log`, CSV, HTTP |
 | **H10** | Tondo LLM Form (`TONDO_LLM_FORM_SPEC.md`) |
 | **H11** | Race, leak and crash diagnostics; language server; incremental compilation |
 | **H12** | Windows, and a self-contained linker |

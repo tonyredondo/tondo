@@ -2938,6 +2938,14 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     }
                     // The identity holds the name, an immortal string.
                     ReflectOp::Name => Val::Scalar(self.e.fb.ins().load(POINTER, flags(), identity, 0)),
+                    ReflectOp::Identity => Val::Scalar(identity),
+                    ReflectOp::Capabilities => {
+                        let types = self.e.cg.types;
+                        let bits = types.is_copy(*ty) as i64
+                            | (types.is_equatable(*ty) as i64) << 1
+                            | (types.is_key(*ty) as i64) << 2;
+                        Val::Scalar(self.e.fb.ins().iconst(types::I64, bits))
+                    }
                 }
             }
             Rvalue::Layout(measured, align) => {

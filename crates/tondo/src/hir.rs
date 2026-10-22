@@ -741,6 +741,11 @@ pub enum ReflectOp {
     Is,
     /// The type's name, as reflection shows it.
     Name,
+    /// The type's identity, as an `Int`.
+    Identity,
+    /// The capabilities the compiler demonstrates of the type, as bits:
+    /// 1 `Copy`, 2 `Equatable`, 4 `Key`.
+    Capabilities,
 }
 
 /// The raw operations of a `Pointer[T]` that touch memory or move it.

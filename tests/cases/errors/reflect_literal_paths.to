@@ -1,0 +1,31 @@
+import std.reflect
+
+pub type Address = { city: String }
+pub type User = { name: String, address: Address, tags: Array[String], nick: String?, priv password: String }
+
+pub fn User.greet(self, greeting: String): String {
+    "{greeting}, {self.name}"
+}
+
+pub fn User.birthday(mut self) {}
+
+fn main() {
+    var user = User { name: "Ada", address: Address { city: "London" }, tags: [], nick: none, password: "x" }
+    let a: String ! reflect.ReflectError = reflect.get(user, "address.citty")
+    let b: String ! reflect.ReflectError = reflect.get(user, "password")
+    let c: String ! reflect.ReflectError = reflect.get(user, "tags.first")
+    let d: String ! reflect.ReflectError = reflect.get(user, "nick.length")
+    let e: Unit ! reflect.ReflectError = reflect.set(mut user, "nme", "Bo")
+    let f: Unit ! reflect.ReflectError = reflect.call(user, "birthday")
+    let g: String ! reflect.ReflectError = reflect.call(user, "wave")
+    let h: String ! reflect.ReflectError = reflect.get(user, "address.city")
+    let i: Unit ! reflect.ReflectError = reflect.callMut(mut user, "birthday")
+}
+
+// expect-error: E2110 `reflect.get` cannot reach `address.citty`: `Address` has no field `citty`; its field is `city`
+// expect-error: E2110 `reflect.get` cannot reach `password`: `User` has no field `password`; its fields are `name`, `address`, `tags` and `nick`
+// expect-error: E2110 `reflect.get` cannot reach `tags.first`: `Array[String]` is reached by index, and `first` is not one
+// expect-error: E2110 `reflect.get` cannot reach `nick.length`: `String` has no fields, so it has no field `length`
+// expect-error: E2110 `reflect.set` cannot reach `nme`: `User` has no field `nme`; its fields are `name`, `address`, `tags` and `nick`
+// expect-error: E2110 `reflect.call` cannot reach `birthday`: `User.birthday` takes `mut self`: call it with `callMut`
+// expect-error: E2110 `reflect.call` cannot reach `wave`: `User` has no `pub` method `wave`; its methods are `birthday` and `greet`

@@ -2,7 +2,17 @@ import std.console
 import std.reflect
 
 pub type Address = { city: String }
-pub type User = { name: String, age: Int, address: Address, tags: Array[String], nick: String?, priv password: String }
+
+/// Someone who uses the program.
+pub type User = {
+    /// What others call them.
+    name: String
+    age: Int
+    address: Address
+    tags: Array[String]
+    nick: String?
+    priv password: String
+}
 pub type UserView = { name: String, address: Address, nick: String? }
 pub type UserId = Int
 
@@ -77,13 +87,33 @@ fn main(): Unit ! reflect.ReflectError {
     let years: Int = reflect.get(Inventory { counts: ["año": 3] }, "counts.año")?
     console.println("{years}")
 
-    // What fails, and the fix it names.
-    report(reflect.get(user, "nme"))
-    report(reflect.get(user, "tags.5"))
-    report(reflect.get(user, "nick.first"))
-    report(reflect.call(user, "birthday"))
-    report(reflect.call(user, "greet"))
-    report(reflect.call(user, "wave"))
+    // Descriptions of types.
+    let info = reflect.typeOf(user)
+    console.println("{info} {info.kind()} {info.capabilities()}")
+    for field in info.fields() {
+        console.println("  {field.ordinal()} {field.name()}: {field.typeInfo()} {field.docs()}")
+    }
+    for method in info.methods() {
+        let function = method.function()
+        console.println("  {method.name()} {method.receiver()} {function.parameters().length()} -> {function.outcome()}")
+    }
+    for variant in reflect.typeInfo[Shape]().variants() {
+        console.println("  {variant.name()} {variant.payloadKind()} {variant.tupleElements()} {variant.fields().length()}")
+    }
+    let id = reflect.typeInfo[UserId]()
+    console.println("{id.kind()} {id.underlying()} {reflect.typeInfo[Map[String, Int]]().genericArguments()}")
+    console.println("{value.typeInfo().id() == info.id()} {reflect.typeOf(1).id() == info.id()}")
+
+    // What fails when the program runs, and the fix it names; written as
+    // literals, these paths and methods are compile errors.
+    let paths = ["nme", "tags.5", "nick.first"]
+    for path in paths {
+        report(reflect.get(user, path))
+    }
+    let methods = ["birthday", "greet", "wave"]
+    for method in methods {
+        report(reflect.call(user, method))
+    }
     report(reflect.valueOf(user).to())
     let shape: Shape ! reflect.ReflectError = reflect.valueOf(Square { side: 1.0 }).to()
     match shape {
@@ -113,6 +143,19 @@ fn main(): Unit ! reflect.ReflectError {
 // expect-stdout: [a: 1]
 // expect-stdout: [ok(1), err("no")]
 // expect-stdout: 3
+// expect-stdout: User Record Set[Copy, Equatable]
+// expect-stdout:   0 name: String some(What others call them.)
+// expect-stdout:   1 age: Int none
+// expect-stdout:   2 address: Address none
+// expect-stdout:   3 tags: Array[String] none
+// expect-stdout:   4 nick: String? none
+// expect-stdout:   greet Ref 1 -> String
+// expect-stdout:   birthday Mut 0 -> Unit
+// expect-stdout:   Circle Tuple [Float] 0
+// expect-stdout:   Rect Record [] 2
+// expect-stdout:   Empty Unit [] 0
+// expect-stdout: Newtype some(Int) [String, Int]
+// expect-stdout: true false
 // expect-stdout: `User` has no field `nme`; its fields are `name`, `age`, `address`, `tags` and `nick`
 // expect-stdout: `5` is not an index of this `Array[String]`, which has 2 element(s)
 // expect-stdout: this `String?` is `none`, so it has no `first`

@@ -52,6 +52,7 @@ enum Op {
     Call(String, Array[Value])
     CallMut(String, Array[Value])
     Show(Bool)
+    Info
 }
 
 /// What the code of a type answers.
@@ -62,6 +63,7 @@ enum Reply {
     Pairs(Array[(Value, Value)]?)
     Text(String?)
     Changed(Value, Value)
+    Info(TypeInfo)
 }
 
 /// The operations reflection has on a type. The compiler implements it for
@@ -116,6 +118,11 @@ pub trait Reflect {
     fn reflectFrom(value: Value): Self ! ReflectError {
         fail ReflectError.wrongType(native.typeName[Self](), value)
     }
+
+    /// What the type is made of.
+    fn reflectDescription(): TypeDescription {
+        TypeDescription.of(TypeKind.Opaque)
+    }
 }
 
 /// The name of the type of a value.
@@ -142,6 +149,7 @@ fn dispatch[T: Reflect](box: native.Box, op: Op): Reply ! ReflectError {
             Reply.Changed(result, valueOf(value))
         }
         Op.Show(nested) => Reply.Text(some(value.reflectShow(nested)))
+        Op.Info => Reply.Info(typeInfo[T]())
     }
 }
 
@@ -305,6 +313,14 @@ pub fn Value.typeName(self): String {
     native.boxName(self.box)
 }
 
+/// The description of the type of the value.
+pub fn Value.typeInfo(self): TypeInfo {
+    match self.run(Op.Info) {
+        ok(Reply.Info(info)) => info
+        _ => typeInfo[Value]()
+    }
+}
+
 /// The visible fields of a record, or of the active variant's record
 /// payload.
 pub fn Value.fields(self): Array[Field] {
@@ -451,90 +467,150 @@ fn shown(values: Array[Value]): String {
 }
 
 impl Reflect for Int {
+    fn reflectDescription(): TypeDescription {
+        primitive(PrimitiveKind.Int)
+    }
+
     fn reflectShow(self, nested: Bool): String {
         "{self}"
     }
 }
 
 impl Reflect for Int8 {
+    fn reflectDescription(): TypeDescription {
+        primitive(PrimitiveKind.Int8)
+    }
+
     fn reflectShow(self, nested: Bool): String {
         "{self}"
     }
 }
 
 impl Reflect for Int16 {
+    fn reflectDescription(): TypeDescription {
+        primitive(PrimitiveKind.Int16)
+    }
+
     fn reflectShow(self, nested: Bool): String {
         "{self}"
     }
 }
 
 impl Reflect for Int32 {
+    fn reflectDescription(): TypeDescription {
+        primitive(PrimitiveKind.Int32)
+    }
+
     fn reflectShow(self, nested: Bool): String {
         "{self}"
     }
 }
 
 impl Reflect for UInt8 {
+    fn reflectDescription(): TypeDescription {
+        primitive(PrimitiveKind.UInt8)
+    }
+
     fn reflectShow(self, nested: Bool): String {
         "{self}"
     }
 }
 
 impl Reflect for UInt16 {
+    fn reflectDescription(): TypeDescription {
+        primitive(PrimitiveKind.UInt16)
+    }
+
     fn reflectShow(self, nested: Bool): String {
         "{self}"
     }
 }
 
 impl Reflect for UInt32 {
+    fn reflectDescription(): TypeDescription {
+        primitive(PrimitiveKind.UInt32)
+    }
+
     fn reflectShow(self, nested: Bool): String {
         "{self}"
     }
 }
 
 impl Reflect for UInt64 {
+    fn reflectDescription(): TypeDescription {
+        primitive(PrimitiveKind.UInt64)
+    }
+
     fn reflectShow(self, nested: Bool): String {
         "{self}"
     }
 }
 
 impl Reflect for Float {
+    fn reflectDescription(): TypeDescription {
+        primitive(PrimitiveKind.Float)
+    }
+
     fn reflectShow(self, nested: Bool): String {
         "{self}"
     }
 }
 
 impl Reflect for Float32 {
+    fn reflectDescription(): TypeDescription {
+        primitive(PrimitiveKind.Float32)
+    }
+
     fn reflectShow(self, nested: Bool): String {
         "{self}"
     }
 }
 
 impl Reflect for Bool {
+    fn reflectDescription(): TypeDescription {
+        primitive(PrimitiveKind.Bool)
+    }
+
     fn reflectShow(self, nested: Bool): String {
         "{self}"
     }
 }
 
 impl Reflect for Char {
+    fn reflectDescription(): TypeDescription {
+        primitive(PrimitiveKind.Char)
+    }
+
     fn reflectShow(self, nested: Bool): String {
         "{self}"
     }
 }
 
 impl Reflect for Byte {
+    fn reflectDescription(): TypeDescription {
+        primitive(PrimitiveKind.Byte)
+    }
+
     fn reflectShow(self, nested: Bool): String {
         "{self}"
     }
 }
 
 impl Reflect for Unit {
+    fn reflectDescription(): TypeDescription {
+        primitive(PrimitiveKind.Unit)
+    }
+
     fn reflectShow(self, nested: Bool): String {
         "()"
     }
 }
 
 impl Reflect for String {
+    fn reflectDescription(): TypeDescription {
+        primitive(PrimitiveKind.String)
+    }
+
     fn reflectShow(self, nested: Bool): String {
         if nested { native.quote(self) } else { self }
     }
@@ -551,6 +627,10 @@ impl Reflect for Value {
 }
 
 impl[T: Reflect] Reflect for Array[T] {
+    fn reflectDescription(): TypeDescription {
+        applied(AppliedKind.Array, [typeInfo[T]()])
+    }
+
     fn reflectGet(self, name: String): Value ! ReflectError {
         valueOf(self[position(nameOf(self), name, self.length())?])
     }
@@ -590,6 +670,10 @@ impl[T: Reflect] Reflect for Array[T] {
 }
 
 impl[T: Reflect] Reflect for Option[T] {
+    fn reflectDescription(): TypeDescription {
+        applied(AppliedKind.Option, [typeInfo[T]()])
+    }
+
     fn reflectGet(self, name: String): Value ! ReflectError {
         match self {
             some(inner) => inner.reflectGet(name)?
@@ -661,6 +745,10 @@ fn noKey(typeName: String, name: String): ReflectError {
 }
 
 impl[K: Reflect + Key, V: Reflect] Reflect for Map[K, V] {
+    fn reflectDescription(): TypeDescription {
+        applied(AppliedKind.Map, [typeInfo[K](), typeInfo[V]()])
+    }
+
     fn reflectGet(self, name: String): Value ! ReflectError {
         let key: K = keyOf(nameOf(self), name)?
         match self[key] {
@@ -706,6 +794,10 @@ impl[K: Reflect + Key, V: Reflect] Reflect for Map[K, V] {
 }
 
 impl[T: Reflect, E: Reflect] Reflect for Result[T, E] {
+    fn reflectDescription(): TypeDescription {
+        applied(AppliedKind.Result, [typeInfo[T](), typeInfo[E]()])
+    }
+
     fn reflectGet(self, name: String): Value ! ReflectError {
         match self {
             ok(inner) => inner.reflectGet(name)?
@@ -744,6 +836,10 @@ impl[T: Reflect, E: Reflect] Reflect for Result[T, E] {
 }
 
 impl[T: Reflect] Reflect for Deque[T] {
+    fn reflectDescription(): TypeDescription {
+        applied(AppliedKind.Other, [typeInfo[T]()])
+    }
+
     fn reflectGet(self, name: String): Value ! ReflectError {
         valueOf(self[position(nameOf(self), name, self.length())?])
     }
@@ -783,6 +879,10 @@ impl[T: Reflect] Reflect for Deque[T] {
 }
 
 impl[T: Reflect + Key] Reflect for Set[T] {
+    fn reflectDescription(): TypeDescription {
+        applied(AppliedKind.Set, [typeInfo[T]()])
+    }
+
     fn reflectElements(self): Array[Value]? {
         var values: Array[Value] = []
         for item in self {
@@ -808,6 +908,445 @@ impl[T: Reflect + Key] Reflect for Set[T] {
                 items
             }
             none => fail ReflectError.wrongType(native.typeName[Set[T]](), value)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Descriptions of types
+// ---------------------------------------------------------------------------
+
+/// The identity of a type in this executable: equal for the same type, and
+/// meaningless outside it.
+pub type TypeId = {
+    priv value: Int
+}
+
+pub enum PrimitiveKind {
+    Bool
+    Int
+    Int8
+    Int16
+    Int32
+    UInt8
+    UInt16
+    UInt32
+    UInt64
+    Float
+    Float32
+    Byte
+    Char
+    String
+    Unit
+    Never
+}
+
+pub enum AppliedKind {
+    Array
+    Map
+    Set
+    Range
+    Option
+    Result
+    Other
+}
+
+pub enum ReferenceKind {
+    Ref
+    Pointer
+}
+
+pub enum TypeKind {
+    Primitive(PrimitiveKind)
+    Record
+    Enum
+    Newtype
+    Tuple
+    Union
+    Function
+    Applied(AppliedKind)
+    Reference(ReferenceKind)
+    Opaque
+}
+
+pub enum TypeCapability {
+    Copy
+    Equatable
+    Key
+    Send
+    Share
+}
+
+pub enum VariantPayloadKind {
+    Unit
+    Tuple
+    Record
+}
+
+pub enum ParameterMode {
+    Value
+    Ref
+    Mut
+    Var
+}
+
+/// What a type is made of, as the code the compiler writes for it says.
+pub type TypeDescription = {
+    kind: TypeKind
+    generics: Array[TypeInfo]
+    fields: Array[FieldInfo]
+    variants: Array[VariantInfo]
+    methods: Array[MethodInfo]
+    elements: Array[TypeInfo]
+    underlying: TypeInfo?
+}
+
+/// A description of a kind with nothing in it yet.
+pub fn TypeDescription.of(kind: TypeKind): TypeDescription {
+    TypeDescription { kind, generics: [], fields: [], variants: [], methods: [], elements: [], underlying: none }
+}
+
+/// A type: its identity, name and capabilities, and what it is made of,
+/// worked out when asked for.
+pub type TypeInfo = {
+    priv typeId: TypeId
+    priv name: String
+    priv bits: Int
+    priv describe: fn(): TypeDescription
+}
+
+fn describe[T: Reflect](): TypeDescription {
+    Reflect.reflectDescription[T]()
+}
+
+/// The description of the type `T`.
+pub fn typeInfo[T: Reflect](): TypeInfo {
+    TypeInfo {
+        typeId: TypeId { value: native.identity[T]() }
+        name: native.typeName[T]()
+        bits: native.capabilities[T]()
+        describe: describe[T]
+    }
+}
+
+/// The description of the type of a value.
+pub fn typeOf[T: Reflect](value: T): TypeInfo {
+    typeInfo[T]()
+}
+
+pub fn TypeInfo.id(self): TypeId {
+    self.typeId
+}
+
+pub fn TypeInfo.qualifiedName(self): String {
+    self.name
+}
+
+pub fn TypeInfo.kind(self): TypeKind {
+    self.describe().kind
+}
+
+pub fn TypeInfo.genericArguments(self): Array[TypeInfo] {
+    self.describe().generics
+}
+
+/// The capabilities the compiler demonstrates of the type.
+pub fn TypeInfo.capabilities(self): Set[TypeCapability] {
+    var found: Set[TypeCapability] = Set[]
+    if self.bits % 2 == 1 {
+        found.insert(TypeCapability.Copy)
+    }
+    if self.bits / 2 % 2 == 1 {
+        found.insert(TypeCapability.Equatable)
+    }
+    if self.bits / 4 % 2 == 1 {
+        found.insert(TypeCapability.Key)
+    }
+    found
+}
+
+pub fn TypeInfo.fields(self): Array[FieldInfo] {
+    self.describe().fields
+}
+
+pub fn TypeInfo.variants(self): Array[VariantInfo] {
+    self.describe().variants
+}
+
+pub fn TypeInfo.methods(self): Array[MethodInfo] {
+    self.describe().methods
+}
+
+pub fn TypeInfo.tupleElements(self): Array[TypeInfo] {
+    self.describe().elements
+}
+
+/// The type a newtype wraps.
+pub fn TypeInfo.underlying(self): TypeInfo? {
+    self.describe().underlying
+}
+
+impl Display for TypeInfo {
+    fn display(self): String {
+        self.name
+    }
+}
+
+/// A visible field: its name, type, position among all the fields and
+/// documentation.
+pub type FieldInfo = {
+    priv fieldName: String
+    priv position: Int
+    priv text: String?
+    priv info: TypeInfo
+}
+
+pub fn FieldInfo.of(name: String, ordinal: Int, docs: String?, info: TypeInfo): FieldInfo {
+    FieldInfo { fieldName: name, position: ordinal, text: docs, info }
+}
+
+pub fn FieldInfo.name(self): String {
+    self.fieldName
+}
+
+pub fn FieldInfo.ordinal(self): Int {
+    self.position
+}
+
+pub fn FieldInfo.docs(self): String? {
+    self.text
+}
+
+pub fn FieldInfo.typeInfo(self): TypeInfo {
+    self.info
+}
+
+/// A variant: its name, position and payload.
+pub type VariantInfo = {
+    priv variantName: String
+    priv position: Int
+    priv payload: VariantPayloadKind
+    priv parts: Array[TypeInfo]
+    priv named: Array[FieldInfo]
+}
+
+pub fn VariantInfo.of(
+    name: String,
+    ordinal: Int,
+    payloadKind: VariantPayloadKind,
+    tupleElements: Array[TypeInfo],
+    fields: Array[FieldInfo],
+): VariantInfo {
+    VariantInfo { variantName: name, position: ordinal, payload: payloadKind, parts: tupleElements, named: fields }
+}
+
+pub fn VariantInfo.name(self): String {
+    self.variantName
+}
+
+pub fn VariantInfo.ordinal(self): Int {
+    self.position
+}
+
+pub fn VariantInfo.payloadKind(self): VariantPayloadKind {
+    self.payload
+}
+
+pub fn VariantInfo.tupleElements(self): Array[TypeInfo] {
+    self.parts
+}
+
+pub fn VariantInfo.fields(self): Array[FieldInfo] {
+    self.named
+}
+
+/// A `pub` method that reflection can call.
+pub type MethodInfo = {
+    priv methodName: String
+    priv mode: ParameterMode
+    priv signature: FunctionInfo
+}
+
+pub fn MethodInfo.of(name: String, receiver: ParameterMode, function: FunctionInfo): MethodInfo {
+    MethodInfo { methodName: name, mode: receiver, signature: function }
+}
+
+pub fn MethodInfo.name(self): String {
+    self.methodName
+}
+
+pub fn MethodInfo.receiver(self): ParameterMode {
+    self.mode
+}
+
+pub fn MethodInfo.function(self): FunctionInfo {
+    self.signature
+}
+
+/// A parameter: its position, type and how it is passed.
+pub type ParameterInfo = {
+    priv index: Int
+    priv info: TypeInfo
+    priv passing: ParameterMode
+}
+
+pub fn ParameterInfo.of(index: Int, info: TypeInfo, mode: ParameterMode): ParameterInfo {
+    ParameterInfo { index, info, passing: mode }
+}
+
+pub fn ParameterInfo.position(self): Int {
+    self.index
+}
+
+pub fn ParameterInfo.typeInfo(self): TypeInfo {
+    self.info
+}
+
+pub fn ParameterInfo.mode(self): ParameterMode {
+    self.passing
+}
+
+/// A signature: the parameters after the receiver and the whole outcome.
+pub type FunctionInfo = {
+    priv params: Array[ParameterInfo]
+    priv result: TypeInfo
+    priv isVariadic: Bool
+    priv unsafeCall: Bool
+}
+
+pub fn FunctionInfo.of(parameters: Array[ParameterInfo], outcome: TypeInfo, variadic: Bool, isUnsafe: Bool): FunctionInfo {
+    FunctionInfo { params: parameters, result: outcome, isVariadic: variadic, unsafeCall: isUnsafe }
+}
+
+pub fn FunctionInfo.parameters(self): Array[ParameterInfo] {
+    self.params
+}
+
+pub fn FunctionInfo.outcome(self): TypeInfo {
+    self.result
+}
+
+pub fn FunctionInfo.variadic(self): Bool {
+    self.isVariadic
+}
+
+pub fn FunctionInfo.isUnsafe(self): Bool {
+    self.unsafeCall
+}
+
+fn primitive(kind: PrimitiveKind): TypeDescription {
+    TypeDescription.of(TypeKind.Primitive(kind))
+}
+
+fn applied(kind: AppliedKind, generics: Array[TypeInfo]): TypeDescription {
+    TypeDescription.of(TypeKind.Applied(kind)) with { generics: generics }
+}
+
+impl Display for ReflectErrorKind {
+    fn display(self): String {
+        match self {
+            ReflectErrorKind.NoField => "NoField"
+            ReflectErrorKind.NoMethod => "NoMethod"
+            ReflectErrorKind.NoValue => "NoValue"
+            ReflectErrorKind.WrongType => "WrongType"
+            ReflectErrorKind.WrongArguments => "WrongArguments"
+            ReflectErrorKind.OutOfRange => "OutOfRange"
+        }
+    }
+}
+
+impl Display for PrimitiveKind {
+    fn display(self): String {
+        match self {
+            PrimitiveKind.Bool => "Bool"
+            PrimitiveKind.Int => "Int"
+            PrimitiveKind.Int8 => "Int8"
+            PrimitiveKind.Int16 => "Int16"
+            PrimitiveKind.Int32 => "Int32"
+            PrimitiveKind.UInt8 => "UInt8"
+            PrimitiveKind.UInt16 => "UInt16"
+            PrimitiveKind.UInt32 => "UInt32"
+            PrimitiveKind.UInt64 => "UInt64"
+            PrimitiveKind.Float => "Float"
+            PrimitiveKind.Float32 => "Float32"
+            PrimitiveKind.Byte => "Byte"
+            PrimitiveKind.Char => "Char"
+            PrimitiveKind.String => "String"
+            PrimitiveKind.Unit => "Unit"
+            PrimitiveKind.Never => "Never"
+        }
+    }
+}
+
+impl Display for AppliedKind {
+    fn display(self): String {
+        match self {
+            AppliedKind.Array => "Array"
+            AppliedKind.Map => "Map"
+            AppliedKind.Set => "Set"
+            AppliedKind.Range => "Range"
+            AppliedKind.Option => "Option"
+            AppliedKind.Result => "Result"
+            AppliedKind.Other => "Other"
+        }
+    }
+}
+
+impl Display for ReferenceKind {
+    fn display(self): String {
+        match self {
+            ReferenceKind.Ref => "Ref"
+            ReferenceKind.Pointer => "Pointer"
+        }
+    }
+}
+
+impl Display for TypeCapability {
+    fn display(self): String {
+        match self {
+            TypeCapability.Copy => "Copy"
+            TypeCapability.Equatable => "Equatable"
+            TypeCapability.Key => "Key"
+            TypeCapability.Send => "Send"
+            TypeCapability.Share => "Share"
+        }
+    }
+}
+
+impl Display for VariantPayloadKind {
+    fn display(self): String {
+        match self {
+            VariantPayloadKind.Unit => "Unit"
+            VariantPayloadKind.Tuple => "Tuple"
+            VariantPayloadKind.Record => "Record"
+        }
+    }
+}
+
+impl Display for ParameterMode {
+    fn display(self): String {
+        match self {
+            ParameterMode.Value => "Value"
+            ParameterMode.Ref => "Ref"
+            ParameterMode.Mut => "Mut"
+            ParameterMode.Var => "Var"
+        }
+    }
+}
+
+impl Display for TypeKind {
+    fn display(self): String {
+        match self {
+            TypeKind.Primitive(kind) => "Primitive({kind})"
+            TypeKind.Record => "Record"
+            TypeKind.Enum => "Enum"
+            TypeKind.Newtype => "Newtype"
+            TypeKind.Tuple => "Tuple"
+            TypeKind.Union => "Union"
+            TypeKind.Function => "Function"
+            TypeKind.Applied(kind) => "Applied({kind})"
+            TypeKind.Reference(kind) => "Reference({kind})"
+            TypeKind.Opaque => "Opaque"
         }
     }
 }

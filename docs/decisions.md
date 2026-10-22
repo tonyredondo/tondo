@@ -858,3 +858,17 @@ monomorphization: an impossible shape is `E2110`, a field left `none` is
 infers its success type even when an option is expected. Spilling a
 variable for a `mut self` call reloads it with its own type, which a `Bool`
 or `Float` receiver needs.
+
+## 2026-10-23 — Type descriptions are code too, and lazy
+
+`reflect.typeInfo[T]()` and `typeOf(value)` describe a type with the same
+mechanism as the rest of reflection: the generated `impl Reflect` has a
+`reflectDescription` with its kind, fields (and the `///` lines before
+each), variants, methods and generic arguments. A `TypeInfo` holds the
+identity, name and capabilities of its type and a function that works out
+the rest when asked, so a recursive type does not unfold forever. Only the
+capabilities the compiler demonstrates are reported: `Copy`, `Equatable` and
+`Key`; `Send` and `Share` are not checked yet. A literal path or method of
+`reflect.get`, `set`, `call` and `callMut` on a type known at compile time is
+checked there (`E2110`); paths and methods computed at run time fail as a
+`ReflectError`.
