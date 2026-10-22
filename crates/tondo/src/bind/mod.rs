@@ -13,6 +13,83 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod dwarf;
+
+/// Writes the module for a library without headers, from its debug
+/// information, and returns its text.
+pub fn generate_from_library(library: &Path, command: &str) -> Result<String, String> {
+    let c = dwarf::library(library)?;
+    Ok(Emitter::new(&c).module(command))
+}
+
+/// What `tondo bind --package` finds: the package's headers, the
+/// preprocessor arguments and the libraries to link, as `[native]
+/// libraries` entries; or a library file without headers.
+pub struct Package {
+    pub headers: Vec<PathBuf>,
+    pub arguments: Vec<String>,
+    pub libraries: Vec<String>,
+    pub library_file: Option<PathBuf>,
+}
+
+/// Finds a package through `pkg-config`, then as a library of the system's
+/// library paths, whose debug information `generate_from_library` reads.
+pub fn find_package(name: &str) -> Result<Package, String> {
+    let compiler = std::env::var("TONDO_CC").unwrap_or_else(|_| "cc".into());
+    let pkg_config = |args: &[&str]| -> Option<String> {
+        let output = Command::new("pkg-config").args(args).arg(name).output().ok()?;
+        output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
+    let stem = name.strip_prefix("lib").unwrap_or(name);
+    let short = stem.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.' || c == '-');
+    if let Some(cflags) = pkg_config(&["--cflags"]) {
+        let arguments: Vec<String> = cflags.split_whitespace().map(String::from).collect();
+        let mut dirs: Vec<PathBuf> = arguments.iter().filter_map(|a| a.strip_prefix("-I")).map(PathBuf::from).collect();
+        dirs.extend(pkg_config(&["--variable=includedir"]).map(PathBuf::from));
+        let libs = pkg_config(&["--libs"]).unwrap_or_default();
+        let search: Vec<PathBuf> =
+            libs.split_whitespace().filter_map(|a| a.strip_prefix("-L")).map(PathBuf::from).collect();
+        let libraries = libs
+            .split_whitespace()
+            .filter_map(|a| a.strip_prefix("-l"))
+            .map(|library| {
+                // A library outside the system's paths is linked by its file.
+                let file = search.iter().flat_map(|dir| {
+                    ["so", "dylib", "a"].map(|extension| dir.join(format!("lib{library}.{extension}")))
+                });
+                file.into_iter().find(|f| f.is_file()).map_or(library.to_string(), |f| f.display().to_string())
+            })
+            .collect();
+        let candidates = [name, stem, short];
+        let header = dirs.iter().find_map(|dir| {
+            candidates.iter().find_map(|candidate| {
+                [dir.join(format!("{candidate}.h")), dir.join(candidate).join(format!("{candidate}.h"))]
+                    .into_iter()
+                    .find(|h| h.is_file())
+            })
+        });
+        if let Some(header) = header {
+            return Ok(Package { headers: vec![header], arguments, libraries, library_file: None });
+        }
+    }
+    // A library of the system's paths, bound from its debug information.
+    for file in [format!("lib{stem}.so"), format!("lib{stem}.dylib"), format!("lib{stem}.a")] {
+        let output = Command::new(&compiler).arg(format!("-print-file-name={file}")).output();
+        let path = output.ok().map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()));
+        if let Some(path) = path.filter(|p| p.is_absolute() && p.is_file()) {
+            return Ok(Package {
+                headers: Vec::new(),
+                arguments: Vec::new(),
+                libraries: vec![stem.to_string()],
+                library_file: Some(path),
+            });
+        }
+    }
+    Err(format!(
+        "no package `{name}`: pkg-config does not know its headers and the system's library paths have no lib{stem}; pass the header: `tondo bind path/to/{short}.h --library {stem}`"
+    ))
+}
+
 /// Writes the module for `headers` and returns its text.
 pub fn generate(headers: &[PathBuf], arguments: &[String], command: &str) -> Result<String, String> {
     let compiler = std::env::var("TONDO_CC").unwrap_or_else(|_| "cc".into());
@@ -80,6 +157,8 @@ struct Lexed {
 struct Macro {
     name: String,
     file: usize,
+    /// The parameters of a function-like macro.
+    params: Option<Vec<String>>,
     body: Vec<Token>,
 }
 
@@ -116,11 +195,19 @@ fn lex(text: &str, roots: &[PathBuf]) -> Lexed {
                 let name: String =
                     name_and_body.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
                 let after = &name_and_body[name.len()..];
-                // A function-like macro has `(` right after its name.
-                if !name.is_empty() && !after.starts_with('(') {
-                    let body = scan(after, current);
-                    macros.push(Macro { name, file: current, body });
+                if name.is_empty() {
+                    continue;
                 }
+                // A function-like macro has `(` right after its name.
+                let (params, body) = match after.strip_prefix('(').and_then(|rest| rest.split_once(')')) {
+                    Some((params, body)) => {
+                        let params: Vec<String> = params.split(',').map(|p| p.trim().to_string()).collect();
+                        let params = params.into_iter().filter(|p| !p.is_empty()).collect();
+                        (Some(params), body)
+                    }
+                    None => (None, after),
+                };
+                macros.push(Macro { name, file: current, params, body: scan(body, current) });
                 continue;
             }
             // A line marker: `# 12 "file" 1 3`.
@@ -316,6 +403,9 @@ struct C {
     targets: HashSet<usize>,
     /// The declarations in source order: what kind, and its index.
     order: Vec<(Kind, usize)>,
+    /// Whether a struct a pointer reaches is bound whole, as for a library
+    /// read from its debug information, whose structs are its own.
+    complete_records: bool,
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -1070,6 +1160,27 @@ impl<'c> Evaluator<'c> {
                 }
                 Some(Value::Text(text))
             }
+            Tok::Ident(name) if name == "sizeof" => {
+                // `sizeof(type)`, as C lays the type out.
+                if self.punct() != Some("(") {
+                    return None;
+                }
+                let start = self.pos;
+                let mut depth = 0;
+                while let Some(token) = self.tokens.get(self.pos) {
+                    match token.tok {
+                        Tok::Punct("(") => depth += 1,
+                        Tok::Punct(")") => depth -= 1,
+                        _ => {}
+                    }
+                    self.pos += 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                let ty = type_of(self.c, &self.tokens[start + 1..self.pos - 1])?;
+                Some(Value::Int(layout(self.c, &ty).0 as i128, CType::ULong))
+            }
             Tok::Ident(name) => {
                 if let Some(&value) = self.c.constants.get(&name) {
                     return Some(Value::Int(value, CType::Int));
@@ -1077,7 +1188,7 @@ impl<'c> Evaluator<'c> {
                 if self.expanding.contains(&name) {
                     return None;
                 }
-                let body = self.c.macros.iter().rev().find(|m| m.name == name)?.body.clone();
+                let body = self.c.macros.iter().rev().find(|m| m.name == name && m.params.is_none())?.body.clone();
                 self.expanding.push(name);
                 let value = self.value(&body);
                 self.expanding.pop();
@@ -1086,6 +1197,97 @@ impl<'c> Evaluator<'c> {
             Tok::Punct(_) => None,
         }
     }
+}
+
+/// The type that C tokens spell, as in a cast or `sizeof`: words of a basic
+/// type, a typedef name or a tagged type, then pointers.
+fn type_of(c: &C, tokens: &[Token]) -> Option<CType> {
+    let words: Vec<&str> = tokens
+        .iter()
+        .filter_map(|t| match &t.tok {
+            Tok::Ident(w) if !QUALIFIERS.contains(&w.as_str()) => Some(w.as_str()),
+            _ => None,
+        })
+        .collect();
+    let pointers = tokens.iter().filter(|t| t.tok == Tok::Punct("*")).count();
+    if tokens.iter().any(|t| matches!(t.tok, Tok::Punct(p) if p != "*")) {
+        return None;
+    }
+    let mut ty = match words.as_slice() {
+        ["struct" | "union", tag] => CType::Record(c.records.iter().position(|r| r.tag.as_deref() == Some(*tag))?),
+        ["enum", _] => CType::Int,
+        [name] if c.typedef_names.contains_key(*name) => CType::Named(name.to_string()),
+        words if !words.is_empty() && words.iter().all(|w| BASIC.contains(w) || *w == "bool") => {
+            basic(&words.iter().map(|w| w.to_string()).collect::<Vec<_>>())
+        }
+        _ => return None,
+    };
+    for _ in 0..pointers {
+        ty = CType::Pointer(Box::new(ty), false);
+    }
+    Some(ty)
+}
+
+/// `body` without the parentheses around the whole of it.
+fn unwrap(mut body: &[Token]) -> &[Token] {
+    while body.len() >= 2 && body[0].tok == Tok::Punct("(") && body[body.len() - 1].tok == Tok::Punct(")") {
+        // The first `(` must close at the end.
+        let mut depth = 0;
+        let closes_at_end = body.iter().enumerate().all(|(i, t)| {
+            match t.tok {
+                Tok::Punct("(") => depth += 1,
+                Tok::Punct(")") => depth -= 1,
+                _ => {}
+            }
+            depth > 0 || i == body.len() - 1
+        });
+        if !closes_at_end {
+            break;
+        }
+        body = &body[1..body.len() - 1];
+    }
+    body
+}
+
+/// `( type ) value`: a cast, its type and what follows it.
+fn cast(c: &C, body: &[Token]) -> Option<(CType, Vec<Token>)> {
+    let body = unwrap(body);
+    if body.first()?.tok != Tok::Punct("(") {
+        return None;
+    }
+    let close = body.iter().position(|t| t.tok == Tok::Punct(")"))?;
+    let ty = type_of(c, &body[1..close])?;
+    Some((ty, body[close + 1..].to_vec()))
+}
+
+/// The arguments of a call `name(a, b)`, split at the commas outside
+/// parentheses.
+fn call(body: &[Token]) -> Option<(String, Vec<Vec<Token>>)> {
+    let body = unwrap(body);
+    let Tok::Ident(name) = &body.first()?.tok else { return None };
+    if body.get(1)?.tok != Tok::Punct("(") || body.last()?.tok != Tok::Punct(")") {
+        return None;
+    }
+    let (mut args, mut current, mut depth) = (Vec::new(), Vec::new(), 0);
+    for token in &body[2..body.len() - 1] {
+        match token.tok {
+            Tok::Punct("(") => depth += 1,
+            Tok::Punct(")") => depth -= 1,
+            Tok::Punct(",") if depth == 0 => {
+                args.push(std::mem::take(&mut current));
+                continue;
+            }
+            _ => {}
+        }
+        if depth < 0 {
+            return None;
+        }
+        current.push(token.clone());
+    }
+    if !current.is_empty() {
+        args.push(current);
+    }
+    Some((name.clone(), args))
 }
 
 /// The value of a C number literal, typed as C types it.
@@ -1275,6 +1477,25 @@ const PRELUDE: [&str; 33] = [
     "Result", "Array", "Deque", "Map", "Set", "Range", "Iterator", "Pointer",
 ];
 
+/// The Tondo type of a typedef from the C library every program has.
+fn well_known(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "size_t" => "ffi.CSize",
+        "ssize_t" | "ptrdiff_t" | "intptr_t" | "off_t" | "time_t" | "intmax_t" => "Int",
+        "uintptr_t" | "uintmax_t" => "UInt64",
+        "int8_t" => "Int8",
+        "int16_t" => "Int16",
+        "int32_t" => "Int32",
+        "int64_t" => "Int",
+        "uint8_t" => "UInt8",
+        "uint16_t" => "UInt16",
+        "uint32_t" => "UInt32",
+        "uint64_t" => "UInt64",
+        "bool" => "Bool",
+        _ => return None,
+    })
+}
+
 /// A Tondo name for a C name, which keeps it unless it is a keyword or a
 /// name of the prelude.
 fn tondo_name(name: &str) -> String {
@@ -1368,14 +1589,12 @@ impl<'c> Emitter<'c> {
             CType::ULongLong => "ffi.CULongLong".into(),
             CType::Float => "ffi.CFloat".into(),
             CType::Double => "ffi.CDouble".into(),
+            CType::Unsupported("va_list") => return self.va_list(position),
             CType::Unsupported(what) => return Err(format!("it uses `{what}`, which Tondo cannot pass")),
             CType::Hole => return Err("an incomplete declarator".into()),
             CType::Named(name) => return self.named(name, position),
             CType::Record(id) => {
                 let record = &self.c.records[*id];
-                if record.union {
-                    return Err("it passes a union by value".into());
-                }
                 if record.fields.as_ref().is_some_and(|f| f.iter().any(|f| f.bits.is_some())) {
                     return Err("it passes a struct with bit fields by value".into());
                 }
@@ -1397,6 +1616,10 @@ impl<'c> Emitter<'c> {
                     // Text C reads; text C gives back.
                     CType::Char if *pointee_const || position == Position::Result => "ffi.CString?".into(),
                     CType::Void => "Pointer[ffi.Void]?".into(),
+                    // What a `va_list` parameter is on x86-64.
+                    CType::Record(id) if self.c.records[*id].tag.as_deref() == Some("__va_list_tag") => {
+                        self.va_list(position)?
+                    }
                     CType::Function(function) => format!("({})?", self.function_type(function)?),
                     CType::Record(id) => {
                         self.need(*id, false);
@@ -1413,25 +1636,10 @@ impl<'c> Emitter<'c> {
     /// A typedef name: its own name when the module binds it, otherwise the
     /// Tondo type of what it names.
     fn named(&mut self, name: &str, position: Position) -> Mapped {
-        let well_known = match name {
-            "size_t" => Some("ffi.CSize"),
-            "ssize_t" | "ptrdiff_t" | "intptr_t" | "off_t" | "time_t" | "intmax_t" => Some("Int"),
-            "uintptr_t" | "uintmax_t" => Some("UInt64"),
-            "int8_t" => Some("Int8"),
-            "int16_t" => Some("Int16"),
-            "int32_t" => Some("Int32"),
-            "int64_t" => Some("Int"),
-            "uint8_t" => Some("UInt8"),
-            "uint16_t" => Some("UInt16"),
-            "uint32_t" => Some("UInt32"),
-            "uint64_t" => Some("UInt64"),
-            "bool" => Some("Bool"),
-            "va_list" | "__gnuc_va_list" | "__builtin_va_list" => {
-                return Err("it takes a `va_list`, which Tondo cannot pass".into());
-            }
-            _ => None,
-        };
-        if let Some(mapped) = well_known {
+        if matches!(name, "va_list" | "__gnuc_va_list" | "__builtin_va_list") {
+            return self.va_list(position);
+        }
+        if let Some(mapped) = well_known(name) {
             return Ok(mapped.into());
         }
         let Some(&index) = self.c.typedef_names.get(name) else {
@@ -1451,6 +1659,15 @@ impl<'c> Emitter<'c> {
         }
         let ty = typedef.ty.clone();
         self.ty(&ty, position)
+    }
+
+    /// A `va_list` C passes along: as a parameter it is the address of one
+    /// on every target.
+    fn va_list(&self, position: Position) -> Mapped {
+        match position {
+            Position::Parameter => Ok("Pointer[ffi.VaList]".into()),
+            _ => Err("it holds a `va_list`, which only C makes and passes along".into()),
+        }
     }
 
     /// `ty` through typedefs of other files, to see what a pointer points to.
@@ -1490,6 +1707,8 @@ impl<'c> Emitter<'c> {
         if self.target(self.c.records[id].file) && self.record_names.contains_key(&id) {
             return;
         }
+        let own = self.c.complete_records && !self.record_name(id).starts_with('_');
+        let by_value = by_value || own && self.c.records[id].fields.is_some();
         match self.needed.iter_mut().find(|(n, _)| *n == id) {
             Some((_, value)) => *value |= by_value,
             None => self.needed.push((id, by_value)),
@@ -1601,7 +1820,7 @@ impl<'c> Emitter<'c> {
 
     fn typedef(&mut self, index: usize) -> Option<String> {
         let typedef = &self.c.typedefs[index];
-        if !self.target(typedef.file) || typedef.name.starts_with("__") {
+        if !self.target(typedef.file) || typedef.name.starts_with("__") || well_known(&typedef.name).is_some() {
             return None;
         }
         let name = tondo_name(&typedef.name);
@@ -1649,14 +1868,17 @@ impl<'c> Emitter<'c> {
             return None;
         }
         let Some(fields) = &record.fields else { return Some(format!("pub extern type {name}")) };
-        if record.union || fields.iter().any(|f| f.bits.is_some()) {
-            let (size, align) = layout(self.c, &CType::Record(id));
-            let what = if record.union { "a union" } else { "a struct with bit fields" };
+        let bytes = |c: &C, what: &str| {
+            let (size, align) = layout(c, &CType::Record(id));
             let align = if align > 1 { format!("@align({align})\n") } else { String::new() };
-            return Some(format!(
+            Some(format!(
                 "// {what}: its {size} bytes, which C reads and writes\n{align}pub extern type {name} = {{\n    @count({size})\n    bytes: UInt8\n}}"
-            ));
+            ))
+        };
+        if fields.iter().any(|f| f.bits.is_some()) {
+            return bytes(self.c, "a struct with bit fields");
         }
+        let union = record.union;
         let mut lines = Vec::new();
         for (index, field) in fields.iter().enumerate() {
             let field_name = field.name.clone().unwrap_or_else(|| format!("anonymous{index}"));
@@ -1690,13 +1912,18 @@ impl<'c> Emitter<'c> {
                     let count = count.map(|c| format!("@count({c})\n    ")).unwrap_or_default();
                     lines.push(format!("    {count}{field_name}: {mapped}"));
                 }
+                Err(reason) if union => {
+                    self.skipped.push(format!("{name}: field `{field_name}`: {reason}; the union is its bytes"));
+                    return bytes(self.c, "a union");
+                }
                 Err(reason) => {
                     self.skipped.push(format!("{name}: field `{field_name}`: {reason}; the struct is opaque"));
                     return Some(format!("pub extern type {name}"));
                 }
             }
         }
-        Some(format!("pub extern type {name} = {{\n{}\n}}", lines.join("\n")))
+        let annotation = if union { "@union\n" } else { "" };
+        Some(format!("{annotation}pub extern type {name} = {{\n{}\n}}", lines.join("\n")))
     }
 
     fn enumeration(&mut self, id: usize) -> Option<String> {
@@ -1735,6 +1962,12 @@ impl<'c> Emitter<'c> {
             if !self.target(m.file) || m.body.is_empty() || m.name.starts_with('_') {
                 continue;
             }
+            if let Some(params) = &m.params {
+                if let Some(function) = self.macro_function(&m.name, params, &m.body) {
+                    out.push(function);
+                }
+                continue;
+            }
             let name = tondo_name(&m.name);
             if self.used_values.contains(&name) {
                 continue;
@@ -1756,8 +1989,12 @@ impl<'c> Emitter<'c> {
                 Some(Value::Float(..)) => continue,
                 Some(Value::Text(text)) => format!("pub const {name}: String = {}", quote(&text)),
                 None => {
-                    // A value that is not a number or text, such as a cast to
-                    // a pointer, which a constant cannot hold.
+                    if let Some(pointer) = self.pointer_macro(&name, &m.body) {
+                        self.used_values.insert(name);
+                        out.push(pointer);
+                        continue;
+                    }
+                    // A value that is not a number or text.
                     if m.body.iter().any(|t| matches!(t.tok, Tok::Number(_))) {
                         let text = spell(&m.body);
                         self.skipped.push(format!("{}: `{text}` is not a number or text a constant can hold", m.name));
@@ -1769,6 +2006,109 @@ impl<'c> Emitter<'c> {
             out.push(line);
         }
         out
+    }
+}
+
+impl Emitter<'_> {
+    /// A macro that is a pointer made from a number: `none` for `NULL`, and
+    /// a function that makes it otherwise, since a constant cannot hold a
+    /// pointer.
+    fn pointer_macro(&mut self, name: &str, body: &[Token]) -> Option<String> {
+        let (ty, value) = cast(self.c, body)?;
+        let value = Evaluator::new(self.c).integer(&value)?;
+        let resolved = match self.resolve(&ty) {
+            CType::Named(n) => self.c.typedef_names.get(&n).map(|&i| self.c.typedefs[i].ty.clone())?,
+            other => other,
+        };
+        let CType::Pointer(pointee, _) = resolved else { return None };
+        let mapped = self.ty(&ty, Position::Field).ok()?;
+        if value == 0 {
+            return Some(format!("pub const {name}: {mapped} = none"));
+        }
+        let address = value as u64;
+        let made = match self.resolve(&pointee) {
+            CType::Function(function) => format!("toFunction[{}]", self.function_type(&function).ok()?),
+            CType::Void => "toPointer[ffi.Void]".into(),
+            other => format!("toPointer[{}]", self.ty(&other, Position::Field).ok()?),
+        };
+        Some(format!("pub fn {name}(): {mapped} {{\n    unsafe {{ {address}u64.{made}() }}\n}}"))
+    }
+
+    /// A function-like macro that calls a bound function, as a function of
+    /// Tondo whose parameters take the types of the arguments they become.
+    fn macro_function(&mut self, name: &str, params: &[String], body: &[Token]) -> Option<String> {
+        let tondo = tondo_name(name);
+        if self.used_values.contains(&tondo) {
+            return None;
+        }
+        // Other macros with parameters, such as helpers of the header, are
+        // not part of its interface.
+        let (callee, args) = call(body)?;
+        let Some(function) =
+            self.c.functions.iter().find(|f| f.name == callee && self.used_values.contains(&tondo_name(&f.name)))
+        else {
+            self.skipped.push(format!("{name}: a macro that calls `{callee}`, which is not bound"));
+            return None;
+        };
+        let (callee_params, result) = (function.ty.params.clone(), function.ty.result.clone());
+        if args.len() != callee_params.len() {
+            self.skipped.push(format!("{name}: a macro whose call does not match `{callee}`"));
+            return None;
+        }
+        let mut types: Vec<Option<String>> = vec![None; params.len()];
+        let mut values = Vec::new();
+        for (arg, (_, param_ty)) in args.iter().zip(&callee_params) {
+            // A parameter, perhaps in parentheses or cast.
+            let bare = unwrap(arg);
+            let bare = match cast(self.c, bare) {
+                Some((_, rest)) if rest.len() == 1 => rest,
+                _ => bare.to_vec(),
+            };
+            let parameter = match bare.as_slice() {
+                [Token { tok: Tok::Ident(p), .. }] => params.iter().position(|q| q == p),
+                _ => None,
+            };
+            if let Some(index) = parameter {
+                // Text passes as a `String`, which the call of C copies.
+                let ty = match self.ty(param_ty, Position::Parameter).ok()? {
+                    ty if ty == "ffi.CString?" || ty == "ffi.CString" => "String".to_string(),
+                    ty => ty,
+                };
+                types[index] = Some(ty);
+                values.push(tondo_name(&params[index]));
+                continue;
+            }
+            // A constant the module declares, by its name.
+            if let [Token { tok: Tok::Ident(constant), .. }] = unwrap(arg)
+                && self.used_values.contains(&tondo_name(constant))
+            {
+                values.push(tondo_name(constant));
+                continue;
+            }
+            match Evaluator::new(self.c).value(arg) {
+                Some(Value::Int(n, _)) => values.push(n.to_string()),
+                Some(Value::Float(f, _)) => values.push(format!("{f:?}")),
+                Some(Value::Text(text)) => values.push(quote(&text)),
+                None => {
+                    self.skipped.push(format!("{name}: an argument `{}` this tool does not evaluate", spell(arg)));
+                    return None;
+                }
+            }
+        }
+        let Some(types) = types.into_iter().collect::<Option<Vec<String>>>() else {
+            self.skipped.push(format!("{name}: a macro parameter that is not an argument of `{callee}`"));
+            return None;
+        };
+        let result = self.ty(&result, Position::Result).ok()?;
+        let result = if result == "Unit" { String::new() } else { format!(": {result}") };
+        let params: Vec<String> = params.iter().zip(&types).map(|(p, t)| format!("{}: {t}", tondo_name(p))).collect();
+        self.used_values.insert(tondo.clone());
+        Some(format!(
+            "pub unsafe fn {tondo}({}){result} {{\n    {}({})\n}}",
+            params.join(", "),
+            tondo_name(&callee),
+            values.join(", ")
+        ))
     }
 }
 

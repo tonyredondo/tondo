@@ -685,8 +685,29 @@ archive `cc -print-file-name` finds), or a file: `.a` links statically,
 depending on libclang. It binds the given headers and the headers of their
 directory they include directly (curl's `easy.h`, zlib's `zconf.h`, but not
 `unistd.h` from `/usr/include`). Pointers are optional, since C allows
-`NULL`; unions and structs with bit fields become their bytes with the size
-GCC and Clang give them; what cannot be bound is listed in the module. A
+`NULL`; structs with bit fields become their bytes with the size GCC and
+Clang give them; what cannot be bound is listed in the module. A
 test builds a C library as an archive and as a shared library, binds its
 header and runs a program against each on every CI platform.
 
+## 2026-10-22 — macOS on Intel, musl, and what `tondo bind` could not bind
+
+CI also runs on macOS x86-64 and, in Alpine containers started from the
+host, on musl for x86-64 and arm64. musl's Rust toolchain links its own
+`libunwind`, which Alpine's C compiler lacks, so the compiler embeds that
+archive and links it in place of `-lunwind`. Cross-compilation with
+`--target` waits for the self-contained linker (H12), since linking for
+another platform needs its C library.
+
+C unions are `@union extern type`s: fields share offset 0, a literal sets one
+field, and they pass by value under the C rules for their size. `va_list` as
+a parameter is `Pointer[ffi.VaList]`, which Tondo only passes along. A
+pointer macro is `none` when it is `NULL`, or else a function that makes it
+with the raw operation `toFunction`, for sentinels such as
+`SQLITE_TRANSIENT`. A macro with parameters that calls a function becomes an
+`unsafe` function with that function's parameter types.
+
+Without a header, `tondo bind` asks `pkg-config` for a package's headers,
+and otherwise reads the library's DWARF with `gimli`: its exported
+functions, their types and the constants of its enums, but no macros. If
+neither finds declarations it fails asking for the header.

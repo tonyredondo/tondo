@@ -4065,6 +4065,8 @@ soportados:
   función de C toma un `CString` como una copia para la llamada.
 - `Void` es lo que señala `void*`: un tipo opaco, y todo `Pointer[T]` o
   `CString` se usa como `Pointer[Void]`.
+- `VaList` es el `va_list` de C, opaco: una función que C llama lo recibe como
+  `Pointer[VaList]` y lo pasa a la función de C que lo formatea.
 
 Funciones:
 

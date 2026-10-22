@@ -1,0 +1,44 @@
+// C unions: fields that share their memory, passed by value as C passes
+// them; and the C function at an address (FFI).
+import std.console
+import std.ffi
+
+@union
+extern type Number = {
+    integer: Int
+    real: Float
+    @count(8)
+    bytes: UInt8
+}
+
+@union
+extern type Single = {
+    a: Float32
+    b: Float32
+}
+
+fn twice(value: Single): Single {
+    Single { a: value.a * 2.0 }
+}
+
+extern fn abs(value: ffi.CInt): ffi.CInt
+
+fn main() {
+    let n = Number { real: 1.5 }
+    console.println("{ffi.sizeOf[Number]()} {n.integer} {n.real} {n.bytes[7]}")
+    let changed = n with { integer: 7 }
+    console.println("{changed.integer} {changed.bytes[0]}")
+    unsafe {
+        let through: extern fn(Single): Single = twice
+        console.println("{through(Single { b: 1.25 }).a}")
+        let null = 0u64.toFunction[extern fn(ffi.CInt): ffi.CInt]()
+        let pointer: Pointer[ffi.Void] = ffi.allocate[Int]()
+        console.println("{ffi.sizeOf[extern fn(ffi.CInt): ffi.CInt]()}")
+        ffi.free(pointer)
+    }
+}
+
+// expect-stdout: 8 4609434218613702656 1.5 63
+// expect-stdout: 7 7
+// expect-stdout: 2.5
+// expect-stdout: 8

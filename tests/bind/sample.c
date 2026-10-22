@@ -54,3 +54,26 @@ int type(int in) { return in + 1; }
 int sample_bits_total(struct sample_bits bits) { return bits.a + bits.b; }
 
 int sample_real(void) { return 99; }
+
+sample_number sample_negate(sample_number number, int is_float) {
+    if (is_float) {
+        number.as_float = -number.as_float;
+    } else {
+        number.as_int = -number.as_int;
+    }
+    return number;
+}
+
+int sample_log(sample_logger logger, void *context, const char *format, ...) {
+    va_list arguments;
+    va_start(arguments, format);
+    logger(context, format, arguments);
+    va_end(arguments);
+    return 0;
+}
+
+int sample_vformat(char *buffer, size_t size, const char *format, va_list arguments) {
+    return vsnprintf(buffer, size, format, arguments);
+}
+
+int sample_is_all(sample_visit visit) { return visit == SAMPLE_ALL; }

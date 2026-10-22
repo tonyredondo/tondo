@@ -143,7 +143,10 @@ impl Codegen<'_> {
                 Some(chunks(&float))
             }
             Abi::Arm64 { .. } => {
-                // One to four floats of one type: an HFA.
+                // One to four floats of one type: an HFA. The fields of a
+                // union overlap, and count once.
+                leaves.sort_by_key(|&(offset, _)| offset);
+                leaves.dedup();
                 let first = leaves.first().map(|&(_, t)| t);
                 if first.is_some_and(|t| t.is_float())
                     && leaves.len() <= 4

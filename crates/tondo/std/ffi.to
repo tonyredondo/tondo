@@ -42,6 +42,10 @@ pub alias CString = memory.CString
 // `Pointer[ffi.Void]`.
 pub alias Void = memory.Void
 
+// A `va_list` of C, which only C makes: a function C calls may receive a
+// `Pointer[VaList]` and pass it along, as to `vsnprintf`.
+pub extern type VaList
+
 @symbol("free")
 extern fn cFree(pointer: Pointer[Void]?)
 

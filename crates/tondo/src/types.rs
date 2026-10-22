@@ -383,12 +383,13 @@ pub struct Types {
 }
 
 /// How an `extern type` is laid out: C's rules, without padding when
-/// `packed`, aligned to at least `align`; `opaque` when it has no body and
-/// only a pointer can refer to it.
+/// `packed`, aligned to at least `align`, every field at offset 0 when a
+/// `union`; `opaque` when it has no body and only a pointer can refer to it.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct CLayout {
     pub packed: bool,
     pub align: u32,
+    pub union: bool,
     pub opaque: bool,
 }
 
@@ -1291,8 +1292,10 @@ impl Types {
             }
             TyKind::Map(key, value) => self.equatable_in(*key, visiting) && self.equatable_in(*value, visiting),
             TyKind::Param(index) => self.params[*index as usize].equatable || self.params[*index as usize].key,
-            // A C array compares as the `Array` it converts to.
+            // A C array compares as the `Array` it converts to; a union's
+            // fields overlap.
             TyKind::Fn(..) | TyKind::CFn(..) | TyKind::CArray(..) | TyKind::Handle(..) => false,
+            TyKind::Adt(id) if self.foreign.get(id).is_some_and(|l| l.union) => false,
             TyKind::Opaque(id, _) => self.equatable_in(self.opaques[*id as usize].carrier, visiting),
             _ => match (self.components(repr), self.variants(repr)) {
                 (Some(items), _) => items.iter().all(|&t| self.equatable_in(t, visiting)),

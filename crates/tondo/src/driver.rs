@@ -10,6 +10,9 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 const RUNTIME: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libtondo_runtime.a"));
 const RUNTIME_LINK_ARGS: &str = include_str!(concat!(env!("OUT_DIR"), "/runtime-link-args.txt"));
 const RUNTIME_HASH: &str = include_str!(concat!(env!("OUT_DIR"), "/runtime-hash.txt"));
+/// Rust's libunwind for musl targets, which the runtime needs there; empty
+/// elsewhere.
+const UNWIND: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libunwind.a"));
 
 pub struct Analysis {
     pub sources: SourceMap,
@@ -232,6 +235,18 @@ pub fn link(object: &[u8], output: &Path, libraries: &[String]) -> Result<(), St
     let object_path = dir.join(format!("object-{}.o", std::process::id()));
     std::fs::write(&object_path, object).map_err(|e| format!("cannot write {}: {e}", object_path.display()))?;
     let linker = std::env::var("TONDO_CC").unwrap_or_else(|_| "cc".into());
+    let mut runtime_args: Vec<String> = RUNTIME_LINK_ARGS.split_whitespace().map(String::from).collect();
+    if !UNWIND.is_empty() {
+        let unwind = dir.join(format!("libunwind-{RUNTIME_HASH}.a"));
+        if !unwind.exists() {
+            write_atomic(&unwind, UNWIND)?;
+        }
+        for arg in &mut runtime_args {
+            if arg == "-lunwind" {
+                *arg = unwind.display().to_string();
+            }
+        }
+    }
     let mut native = Vec::new();
     for library in libraries {
         native.extend(link_arguments(&linker, library)?);
@@ -242,7 +257,7 @@ pub fn link(object: &[u8], output: &Path, libraries: &[String]) -> Result<(), St
         .arg(&object_path)
         .args(native)
         .arg(&runtime)
-        .args(RUNTIME_LINK_ARGS.split_whitespace())
+        .args(&runtime_args)
         // Unused runtime code and the standard library's debug info would
         // otherwise make up most of every executable.
         .args(if cfg!(target_os = "macos") {

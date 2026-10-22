@@ -1802,7 +1802,7 @@ como todo pánico (15.7), después de los `defer` de su tarea, sin volver a C. D
 forma simétrica, una excepción extranjera no entra en frames Tondo.
 
 La FFI de usuario es la de 16.16: `extern fn`, `extern type` y las anotaciones
-`@symbol`, `@packed`, `@align` y `@count`. No hay otros atributos ni pragmas en
+`@symbol`, `@packed`, `@align`, `@union` y `@count`. No hay otros atributos ni pragmas en
 un archivo `.to`.
 
 ---
@@ -5926,16 +5926,20 @@ pointer.offset(count: Int): Pointer[T]
 pointer.cast[U](): Pointer[U]
 pointer.address(): UInt64
 address.toPointer[T](): Pointer[T] // receptor `address: UInt64`
+address.toFunction[F](): F         // `F` es un `extern fn(...)` (16.16)
 ~~~
 
-Las seis operaciones son unsafe. `cast` y `toPointer` exigen exactamente un
-argumento de tipo explícito; las restantes no aceptan argumentos de tipo.
+Las siete operaciones son unsafe. `cast`, `toPointer` y `toFunction` exigen
+exactamente un argumento de tipo explícito; las restantes no aceptan
+argumentos de tipo. `toFunction` da la función de C de una dirección, como el
+valor centinela `(fn)-1` de algunas APIs de C.
 `write` exige exactamente un valor `T`, `offset` exactamente un `Int`, y las
 demás ningún argumento ordinario. Como en todo método, la forma calificada
 escribe primero el receptor y deduce `T` desde él:
 `Pointer.read(pointer)`, `Pointer.write(pointer, value)`,
 `Pointer.offset(pointer, count)`, `Pointer.cast[U](pointer)`,
-`Pointer.address(pointer)` y `UInt64.toPointer[T](address)`.
+`Pointer.address(pointer)`, `UInt64.toPointer[T](address)` y
+`UInt64.toFunction[F](address)`.
 
 Reglas adicionales:
 
@@ -6147,9 +6151,20 @@ este solo si tiene `n` elementos (`P0006`). En Tondo un `extern type` es un
 record: se construye, se lee por campos y se copia como cualquiera, y
 `Pointer[T]` lee y escribe la memoria de C con su layout.
 
+`@union` antes de un `extern type` lo hace una unión de C: todos sus campos
+empiezan en el mismo byte, y su tamaño y alineación son los del mayor. Un
+literal da uno de sus campos (`Number { real: 1.5 }`) y el resto de bytes son
+cero; leer otro campo lee los mismos bytes con su tipo, y `with` escribe los
+campos que da sobre una copia. Se pasa por valor como C pasa la unión, según
+los tipos de sus campos, y no tiene `==`.
+
 `extern type Name`, sin cuerpo, es un tipo opaco de C: solo un `Pointer[Name]`
 lo refiere; no se construye, no se lee ni se desplaza (`E1703`). Un `extern
 type` no tiene parámetros de tipo.
+
+Un `va_list` de C solo lo crea C, desde los argumentos de su propio `...`. Una
+función de Tondo que C llama puede recibirlo como `Pointer[ffi.VaList]` y
+pasarlo a una función de C que lo toma, como `vsnprintf`.
 
 #### Funciones que C llama
 
@@ -8697,8 +8712,8 @@ extern_parameters
 ~~~
 
 Las anotaciones de una declaración son las de 16.16: `@symbol("nombre")` antes
-de un `extern fn`, `@packed` y `@align(n)` antes de un `extern type`, y
-`@count(n)` antes de uno de sus campos; las de un record ordinario son las de
+de un `extern fn`, `@packed`, `@align(n)` y `@union` antes de un `extern type`,
+y `@count(n)` antes de uno de sus campos; las de un record ordinario son las de
 serialización (librería estándar 14.6).
 
 Una firma no puede expresar dos `!` superiores. El tipo completo después de `:` puede ser un éxito ordinario, `T ! E` o el shorthand `!E`.

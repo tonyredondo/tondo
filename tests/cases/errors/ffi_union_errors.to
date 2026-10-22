@@ -1,0 +1,17 @@
+import std.ffi
+
+@union
+extern type Number = {
+    integer: Int
+    real: Float
+}
+
+fn main() {
+    let both = Number { integer: 1, real: 2.0 }
+    unsafe {
+        let wrong = 1u64.toFunction[Int]()
+    }
+}
+
+// expect-error: E1102 `Number` is a union: give one of its fields
+// expect-error: E1104 `toFunction` makes a C function: its type argument is an `extern fn(...)`, not `Int`

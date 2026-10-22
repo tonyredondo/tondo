@@ -57,6 +57,7 @@ pub fn check<'a>(module: &'a ast::Module, sources: &'a SourceMap, diags: &'a mut
         c_arguments: false,
         extern_names: Vec::new(),
         consts: Vec::new(),
+        const_uses: HashSet::new(),
     };
     checker.declare_prelude();
     checker.program(module)
@@ -550,6 +551,9 @@ struct Checker<'a> {
     extern_names: Vec<Vec<String>>,
     /// The module's constants (6.5), evaluated when first used.
     consts: Vec<ConstEntry<'a>>,
+    /// Where an integer constant is used: its value fits any integer type
+    /// that holds it, as a literal does (8.6).
+    const_uses: HashSet<Span>,
 }
 
 /// A constant: its declaration, and its value once evaluated.
@@ -807,6 +811,9 @@ impl<'a> Checker<'a> {
         if let Some(value) = &self.consts[id].value {
             let mut value = value.clone();
             value.span = span;
+            if let hir::ExprKind::Int(_) = value.kind {
+                self.const_uses.insert(span);
+            }
             return value;
         }
         let decl = self.consts[id].decl;
@@ -852,6 +859,9 @@ impl<'a> Checker<'a> {
         self.self_type = outer_self;
         self.consts[id].value = Some(value.clone());
         value.span = span;
+        if let hir::ExprKind::Int(_) = value.kind {
+            self.const_uses.insert(span);
+        }
         value
     }
 
@@ -1671,6 +1681,7 @@ impl<'a> Checker<'a> {
                     self.diags.error("E1704", annotation.span, message);
                 }
                 ("packed", None) => layout.packed = true,
+                ("union", None) => layout.union = true,
                 ("align", Some(ast::AnnotationArg::Int(align))) if align.is_power_of_two() && *align <= 4096 => {
                     layout.align = *align as u32
                 }
@@ -1679,8 +1690,9 @@ impl<'a> Checker<'a> {
                     self.diags.error("E1704", annotation.span, message);
                 }
                 (name, _) => {
-                    let message =
-                        format!("unknown annotation `@{name}`; an `extern type` takes `@packed` and `@align(n)`");
+                    let message = format!(
+                        "unknown annotation `@{name}`; an `extern type` takes `@packed`, `@align(n)` and `@union`"
+                    );
                     self.diags.error("E1001", annotation.span, message);
                 }
             }
@@ -3624,7 +3636,7 @@ impl<'a> Checker<'a> {
         };
         let known = matches!(
             (target.is_some(), method.name.as_str()),
-            (true, "read" | "write" | "offset" | "cast" | "address") | (false, "toPointer")
+            (true, "read" | "write" | "offset" | "cast" | "address") | (false, "toPointer" | "toFunction")
         );
         if !known {
             return self.no_method(receiver.ty, method, span);
@@ -3647,12 +3659,16 @@ impl<'a> Checker<'a> {
             self.diags.error("E1703", method.span, message);
             return Self::error_expr(span);
         }
-        let generic = matches!(method.name.as_str(), "cast" | "toPointer");
+        let generic = matches!(method.name.as_str(), "cast" | "toPointer" | "toFunction");
         let ty_arg = match (generic, types.as_slice()) {
             (true, [ty]) => Some(*ty),
             (false, []) => None,
             (true, _) => {
-                let example = if method.name == "cast" { "pointer.cast[Byte]()" } else { "address.toPointer[Byte]()" };
+                let example = match method.name.as_str() {
+                    "cast" => "pointer.cast[Byte]()",
+                    "toPointer" => "address.toPointer[Byte]()",
+                    _ => "address.toFunction[extern fn(Int): Int]()",
+                };
                 let message = format!("`{}` takes the type it points to: `{example}`", method.name);
                 self.diags.error("E1104", span, message);
                 return Self::error_expr(span);
@@ -3683,6 +3699,19 @@ impl<'a> Checker<'a> {
             "write" => Self::mk(hir::ExprKind::Pointer(hir::PointerOp::Write, values), Ty::UNIT, span),
             "offset" => Self::mk(hir::ExprKind::Pointer(hir::PointerOp::Offset, values), receiver_ty, span),
             "address" => retype(values.remove(0), address),
+            // The C function at an address, such as a sentinel `(fn)-1` of C.
+            "toFunction" => {
+                let function = ty_arg.unwrap();
+                if !matches!(self.types.kind(function), TyKind::CFn(..)) && !self.types.has_error(function) {
+                    let message = format!(
+                        "`toFunction` makes a C function: its type argument is an `extern fn(...)`, not {}",
+                        self.display(function)
+                    );
+                    self.diags.error("E1104", span, message);
+                    return Self::error_expr(span);
+                }
+                retype(values.remove(0), function)
+            }
             _ => {
                 let pointer = self.types.intern(TyKind::Pointer(ty_arg.unwrap()));
                 retype(values.remove(0), pointer)
@@ -5858,6 +5887,18 @@ impl<'a> Checker<'a> {
         {
             return value;
         }
+        // An integer constant's value is checked like a literal's.
+        if let hir::ExprKind::Int(number) = value.kind
+            && self.const_uses.contains(&value.span)
+            && let Some(int) = self.types.as_int(expected)
+        {
+            if number >= int.min() && number <= int.max() {
+                return Self::mk(hir::ExprKind::Int(number), expected, value.span);
+            }
+            let message = format!("the constant's value {number} does not fit in {}", self.display(expected));
+            self.diags.error("E1102", value.span, message);
+            return value;
+        }
         let value = match self.implicit(value, expected) {
             Ok(converted) => return converted,
             Err(value) => value,
@@ -6444,8 +6485,33 @@ impl<'a> Checker<'a> {
             self.diags.error("E1502", name.span, message);
         }
         let (ty, values, seen) = self.generic_fields(cx, ty, &fields, inits, expected, span);
+        if self.types.c_layout(ty).is_some_and(|l| l.union) {
+            return self.union_literal(cx, ty, values, span);
+        }
         self.report_missing(&fields, &seen, span);
         Self::mk(hir::ExprKind::Record(values), ty, span)
+    }
+
+    /// A C union from one of its fields, the rest of its bytes zero.
+    fn union_literal(&mut self, cx: &mut FnCx, ty: Ty, mut values: Vec<(u32, hir::Expr)>, span: Span) -> hir::Expr {
+        if values.len() != 1 {
+            let message = format!(
+                "{} is a union: give one of its fields, which all share its memory, as in `{} {{ field: value }}`",
+                self.display(ty),
+                self.types.display(ty)
+            );
+            self.diags.error("E1102", span, message);
+            return Self::error_expr(span);
+        }
+        let (index, value) = values.pop().unwrap();
+        let local = self.hidden_local(cx, ty);
+        let zeroed = Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::Zeroed, Vec::new()), ty, span);
+        let stmts = vec![
+            hir::Stmt::Let(local, zeroed),
+            hir::Stmt::Assign { local, path: vec![hir::PlaceStep::Field(index)], op: None, value, span },
+        ];
+        let tail = Self::mk(hir::ExprKind::Local(local), ty, span);
+        Self::mk(hir::ExprKind::Block(hir::Block { stmts, tail: Some(Box::new(tail)), ty }), ty, span)
     }
 
     /// The field values of a record or record variant of type `ty`. For a
@@ -7152,6 +7218,22 @@ impl<'a> Checker<'a> {
             }
         }
         let (values, _) = self.field_values(cx, ty, &fields, updates, false, None);
+        if self.types.c_layout(ty).is_some_and(|l| l.union) {
+            // The fields of a union overlap: a copy, then the fields written.
+            let local = self.hidden_local(cx, ty);
+            let mut stmts = vec![hir::Stmt::Let(local, base)];
+            for (index, value) in values {
+                stmts.push(hir::Stmt::Assign {
+                    local,
+                    path: vec![hir::PlaceStep::Field(index)],
+                    op: None,
+                    value,
+                    span,
+                });
+            }
+            let tail = Self::mk(hir::ExprKind::Local(local), ty, span);
+            return Self::mk(hir::ExprKind::Block(hir::Block { stmts, tail: Some(Box::new(tail)), ty }), ty, span);
+        }
         Self::mk(hir::ExprKind::With(Box::new(base), values), ty, span)
     }
 
@@ -7405,7 +7487,7 @@ impl<'a> Checker<'a> {
     ) -> hir::Expr {
         // `value.cast[U]()` of any expression, such as a call's result.
         if let ast::ExprKind::Field(receiver, method) = &base.kind
-            && matches!(method.name.as_str(), "cast" | "toPointer")
+            && matches!(method.name.as_str(), "cast" | "toPointer" | "toFunction")
         {
             let receiver = self.expr(cx, receiver, None);
             let types: Vec<Ty> = type_args.iter().map(|t| self.resolve_type(t)).collect();
@@ -7419,7 +7501,7 @@ impl<'a> Checker<'a> {
         // forms `Pointer.cast[U](pointer)` and `UInt64.toPointer[T](address)`.
         // `record.field.cast[U]()`: a receiver of several segments.
         if names.len() > 2
-            && matches!(names[names.len() - 1], "cast" | "toPointer")
+            && matches!(names[names.len() - 1], "cast" | "toPointer" | "toFunction")
             && (self.lookup(cx, names[0]).is_some()
                 || self.visible_capture(cx, names[0])
                 || matches!(self.names.get(names[0]), Some(ModuleName::Const(_))))
@@ -7431,7 +7513,7 @@ impl<'a> Checker<'a> {
             let types: Vec<Ty> = type_args.iter().map(|t| self.resolve_type(t)).collect();
             return self.raw(cx, receiver, method, types, args, span);
         }
-        if let [first, method @ ("cast" | "toPointer")] = names.as_slice() {
+        if let [first, method @ ("cast" | "toPointer" | "toFunction")] = names.as_slice() {
             let raw = match *first {
                 "Pointer" | "UInt64" if self.lookup(cx, first).is_none() => None,
                 _ if self.lookup(cx, first).is_some() || self.visible_capture(cx, first) => {
@@ -7664,7 +7746,7 @@ impl<'a> Checker<'a> {
             return self.time_method(cx, value, method, args, span);
         }
         if matches!(self.types.kind(ty), TyKind::Pointer(_))
-            || (ty == Ty::int(IntTy::U64) && method.name == "toPointer")
+            || (ty == Ty::int(IntTy::U64) && matches!(method.name.as_str(), "toPointer" | "toFunction"))
         {
             return self.raw(cx, value, method, Vec::new(), args, span);
         }
@@ -8658,7 +8740,7 @@ impl<'a> Checker<'a> {
             }
             // `call().cast[U]()`: written after a call, the type argument
             // parses as an index.
-            ast::ExprKind::Index { base, index } if matches!(&base.kind, ast::ExprKind::Field(_, m) if m.name == "cast" || m.name == "toPointer") => {
+            ast::ExprKind::Index { base, index } if matches!(&base.kind, ast::ExprKind::Field(_, m) if matches!(m.name.as_str(), "cast" | "toPointer" | "toFunction")) => {
                 if let Some(ty) = Self::type_of_expr(index) {
                     return self.generic_call(cx, base, &[ty], args, expected, span);
                 }

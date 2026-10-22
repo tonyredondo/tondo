@@ -7,6 +7,17 @@ unsafe fn twice(context: Pointer[ffi.Void]?, value: ffi.CInt): ffi.CInt {
     value * 2
 }
 
+// C passes the arguments of its `...` as a `va_list`, formatted into the
+// buffer that is the context.
+unsafe fn logger(context: Pointer[ffi.Void]?, format: ffi.CString?, arguments: Pointer[ffi.VaList]) {
+    match context {
+        some(buffer) => {
+            sample.sample_vformat(buffer.cast[ffi.CChar](), 32u64, format, arguments)
+        }
+        none => {}
+    }
+}
+
 fn main() {
     unsafe {
         let handle = sample.sample_open("tondo", 3u32)
@@ -27,7 +38,7 @@ fn main() {
                 weights: [1.5, 0.0, 0.0, 2.0]
                 corner: sample.sample_point { x: 10, y: 0 }
                 nested: sample.sample_record_nested { inner: 3 }
-                either: sample.sample_record_either { bytes: [0u8, 0u8, 0u8, 0u8] }
+                either: sample.sample_record_either { as_int: 0 }
                 label: none
                 visit: none
             },
@@ -38,6 +49,14 @@ fn main() {
         console.println(
             "{sample.sample_renamed()} {sample.type_(41)} {sample.SAMPLE_VERSION} {sample.SAMPLE_BIG}",
         )
+        let negated = sample.sample_negate(sample.sample_number { as_float: 2.5 }, 1)
+        let whole = sample.sample_negate(sample.sample_number { as_int: 7 }, 0)
+        sample.sample_log(logger, buffer, "%s=%d", "log", 5i32)
+        let all = sample.sample_is_all(sample.SAMPLE_ALL())
+        console.println(
+            "{negated.as_float} {whole.as_int} {ffi.fromCString(buffer)} {all} {sample.sample_is_all(sample.SAMPLE_NOTHING)}",
+        )
+        sample.sample_close(sample.SAMPLE_OPEN("macro"))
         sample.sample_close(handle)
         ffi.free(values)
         ffi.free(buffer)

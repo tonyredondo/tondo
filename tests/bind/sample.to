@@ -43,12 +43,19 @@ pub extern type sample_record_nested = {
     inner: ffi.CInt
 }
 
-// a union: its 4 bytes, which C reads and writes
-@align(4)
+@union
 pub extern type sample_record_either = {
-    @count(4)
-    bytes: UInt8
+    as_int: ffi.CInt
+    as_float: ffi.CFloat
 }
+
+@union
+pub extern type sample_number = {
+    as_int: ffi.CInt
+    as_float: ffi.CFloat
+}
+
+pub alias sample_logger = (extern fn(Pointer[ffi.Void]?, ffi.CString?, Pointer[ffi.VaList]))?
 
 // a struct with bit fields: its 4 bytes, which C reads and writes
 @align(4)
@@ -80,6 +87,24 @@ pub extern fn sample_next(color: sample_color): sample_color
 @symbol("type")
 pub extern fn type_(in_: ffi.CInt): ffi.CInt
 
+pub extern fn sample_negate(number: sample_number, is_float: ffi.CInt): sample_number
+
+pub extern fn sample_log(
+    logger: sample_logger,
+    context: Pointer[ffi.Void]?,
+    format: ffi.CString?,
+    ...,
+): ffi.CInt
+
+pub extern fn sample_vformat(
+    buffer: Pointer[ffi.CChar]?,
+    size: ffi.CSize,
+    format: ffi.CString?,
+    arguments: Pointer[ffi.VaList],
+): ffi.CInt
+
+pub extern fn sample_is_all(visit: sample_visit): ffi.CInt
+
 @symbol("sample_real")
 pub extern fn sample_renamed(): ffi.CInt
 
@@ -95,6 +120,17 @@ pub const SAMPLE_BIG: ffi.CLong = 5000000000
 
 pub const SAMPLE_RATIO: ffi.CDouble = 0.5
 
+pub const SAMPLE_NOTHING: sample_visit = none
+
+pub fn SAMPLE_ALL(): sample_visit {
+    unsafe {
+        18446744073709551615u64.toFunction[extern fn(Pointer[ffi.Void]?, ffi.CInt): ffi.CInt]()
+    }
+}
+
+pub unsafe fn SAMPLE_OPEN(name: String): Pointer[sample_handle]? {
+    sample_open(name, SAMPLE_LIMIT)
+}
+
 // Not bound:
 // - sample_bits_total: it passes a struct with bit fields by value
-// - SAMPLE_NOTHING: `((sample_visit)0)` is not a number or text a constant can hold

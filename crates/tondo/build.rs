@@ -14,7 +14,7 @@ fn main() {
     let library = out_dir.join("libtondo_runtime.a");
     let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
     let target = env::var("TARGET").unwrap();
-    let output = Command::new(rustc)
+    let output = Command::new(&rustc)
         .args(["--crate-name", "tondo_runtime", "--crate-type", "staticlib"])
         .args(["--edition", "2024", "--target", &target])
         .args(["-C", "opt-level=3", "-C", "panic=abort", "-C", "debuginfo=0"])
@@ -33,6 +33,19 @@ fn main() {
         .find_map(|line| line.split_once("native-static-libs: ").map(|(_, libs)| libs.trim()))
         .unwrap_or("");
     std::fs::write(out_dir.join("runtime-link-args.txt"), link_args).unwrap();
+
+    // With musl, Rust's runtime needs libunwind, which Rust ships for the
+    // target and Alpine does not install: the compiler carries it.
+    let unwind = out_dir.join("libunwind.a");
+    let sysroot = Command::new(&rustc).args(["--print", "sysroot"]).output().ok();
+    let shipped = sysroot.map(|o| {
+        PathBuf::from(String::from_utf8_lossy(&o.stdout).trim())
+            .join(format!("lib/rustlib/{target}/lib/self-contained/libunwind.a"))
+    });
+    match shipped.filter(|path| target.contains("musl") && path.is_file()) {
+        Some(path) => std::fs::copy(path, &unwind).map(|_| ()).unwrap(),
+        None => std::fs::write(&unwind, b"").unwrap(),
+    }
 
     // FNV-1a of the library identifies the runtime in compiler caches.
     let bytes = std::fs::read(&library).unwrap();

@@ -198,7 +198,7 @@ tondo build [<project>|<file.to>] [--output <path>] [--link <library>]...
 tondo check [<project>|<file.to>] [--json]
 tondo fmt [--check] <file.to>...
 tondo update [<project>] [<dependency>...]
-tondo bind <header.h>... [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
+tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
 tondo test [<project>]
 ~~~
 
@@ -209,8 +209,9 @@ tondo test [<project>]
   para sus `extern fn`.
 - `fmt` aplica el formato canónico (21) a archivos sueltos; `--check` falla si
   alguno no lo cumple.
-- `bind` escribe un módulo con las declaraciones de C de unos headers
-  (sección 7.1) y añade cada `--library` a `[native] libraries`.
+- `bind` escribe un módulo con las declaraciones de C de unos headers, de un
+  paquete del sistema o de una librería (sección 7.1) y, en un proyecto, añade
+  cada librería a `[native] libraries`.
 - `test` sigue la [especificación de testing](./TONDO_TESTING_SPEC.md).
 - Estado de salida: `0` éxito; `1` diagnósticos de error o fallo de formato; `2`
   uso incorrecto; `3` error del toolchain (sección 9). `run` devuelve el estado
@@ -228,18 +229,35 @@ directorio que incluyen directamente:
 |---|---|
 | función | `extern fn`, con `@symbol` si su símbolo difiere |
 | `struct` | `extern type`, opaco si no tiene cuerpo |
-| `union`, `struct` con bit fields | `extern type` de sus bytes, con su alineación |
+| `union` | `@union extern type` |
+| `struct` con bit fields | `extern type` de sus bytes, con su tamaño y alineación |
 | `typedef` | `alias` |
 | `enum` | `alias` de `ffi.CInt` y una constante por enumerador |
 | macro de un número o un texto | `const` |
+| macro de un puntero | `const` de valor `none` si es `NULL`; si no, una función que lo construye |
+| macro con parámetros que llama a una función | una función `unsafe` que la llama, con los tipos de sus parámetros |
+| `va_list` como parámetro | `Pointer[ffi.VaList]` |
 
 Los nombres de C se conservan; uno que es palabra reservada o nombre del
 prelude de Tondo recibe `_` al final. Un puntero es opcional, porque C puede
 pasar `NULL`; `const char*` es `ffi.CString?`. Un tipo de otro header se
 resuelve a lo que nombra, y un struct que solo se alcanza por puntero es
-opaco. Lo que no tiene forma en Tondo, como un `va_list`, una unión por valor
-o una macro que es un puntero, se lista al final del módulo en un comentario.
+opaco. Lo que no tiene forma en Tondo, como un struct con bit fields por valor o
+una macro que no es un valor ni una llamada, se lista al final del módulo en un
+comentario.
 El módulo se regenera con el mismo comando que muestra su primera línea.
+
+Sin headers, `bind` los busca:
+
+- `--package <name>` pregunta a `pkg-config` por los headers del paquete
+  (`<name>.h` o `<name>/<name>.h` en su `includedir`), sus flags de C y sus
+  librerías, que pasan a `[native] libraries`. Si `pkg-config` no lo conoce,
+  usa `lib<name>` de las rutas de librerías del sistema como un `--library`.
+- `--library <archivo>` lee la información de depuración (DWARF) de la
+  librería, o de su `.dSYM` en macOS: las funciones que exporta, con los tipos
+  que alcanzan, y las constantes de sus `enum`. No tiene macros, así que no hay
+  otras constantes.
+- Si nada de eso da declaraciones, es un error que pide el header.
 
 ## 8. Determinismo
 

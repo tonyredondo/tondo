@@ -14,7 +14,7 @@ usage:
   tondo check [<project>|<file.to>] [--json]           report diagnostics only (as JSON)
   tondo fmt [--check] <file.to>...                     format files canonically
   tondo update [<project>] [<dependency>...]           fetch dependencies again and rewrite tondo.lock
-  tondo bind <header.h>... [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
+  tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
                                                        write a module of extern declarations for a C header
   tondo <file.to> [<argument>...]                      run a script (for #! lines)
   tondo version
@@ -115,7 +115,7 @@ fn update_command(args: &[OsString]) -> Result<ExitCode, String> {
 /// for C headers, and adds the library to `[native] libraries`.
 fn bind_command(args: &[OsString]) -> Result<ExitCode, String> {
     let (mut headers, mut libraries, mut arguments) = (Vec::new(), Vec::new(), Vec::new());
-    let (mut project, mut output) = (PathBuf::from("."), None);
+    let (mut project, mut output, mut package) = (PathBuf::from("."), None, None);
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         let text = arg.to_string_lossy();
@@ -123,6 +123,7 @@ fn bind_command(args: &[OsString]) -> Result<ExitCode, String> {
         match text.as_ref() {
             "--library" | "--link" => libraries.push(value("--library")?.to_string_lossy().into_owned()),
             "--project" => project = PathBuf::from(value("--project")?),
+            "--package" => package = Some(value("--package")?.to_string_lossy().into_owned()),
             "--output" | "-o" => output = Some(PathBuf::from(value("--output")?)),
             "-I" | "-D" => arguments.push(format!("{text}{}", value(&text)?.to_string_lossy())),
             flag if flag.starts_with("-I") || flag.starts_with("-D") => arguments.push(flag.to_string()),
@@ -130,14 +131,34 @@ fn bind_command(args: &[OsString]) -> Result<ExitCode, String> {
             _ => headers.push(PathBuf::from(arg)),
         }
     }
-    if headers.is_empty() {
-        return Err(format!("expected a C header\n{USAGE}"));
-    }
     let command = std::iter::once("tondo bind".to_string())
         .chain(std::env::args().skip(2).map(|a| if a.contains(' ') { format!("{a:?}") } else { a }))
         .collect::<Vec<_>>()
         .join(" ");
-    let module = tondo::bind::generate(&headers, &arguments, &command)?;
+    // Without headers: those of a package, or a library's debug information.
+    let mut library_file = None;
+    let mut name = headers.first().cloned();
+    if headers.is_empty() {
+        if let Some(package) = &package {
+            let found = tondo::bind::find_package(package)?;
+            headers = found.headers;
+            arguments.extend(found.arguments);
+            libraries.extend(found.libraries);
+            library_file = found.library_file;
+            name = Some(PathBuf::from(format!("{package}.h")));
+        } else if let Some(library) = libraries.first().map(PathBuf::from).filter(|l| l.is_file()) {
+            let stem = library.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            let stem = stem.strip_prefix("lib").unwrap_or(&stem).split('.').next().unwrap_or_default().to_string();
+            name = Some(PathBuf::from(format!("{stem}.h")));
+            library_file = Some(library);
+        } else {
+            return Err(format!("expected a C header, a --package, or a --library file to read\n{USAGE}"));
+        }
+    }
+    let module = match &library_file {
+        Some(library) if headers.is_empty() => tondo::bind::generate_from_library(library, &command)?,
+        _ => tondo::bind::generate(&headers, &arguments, &command)?,
+    };
     let mut sources = tondo::source::SourceMap::default();
     let index = sources.add(Path::new("bound.to"), module.clone());
     let mut diags = tondo::diag::Diagnostics::default();
@@ -145,15 +166,19 @@ fn bind_command(args: &[OsString]) -> Result<ExitCode, String> {
     let module = tondo::fmt::format(sources.file(index), &mut diags).unwrap_or(module);
     let (name, path) = match output {
         Some(path) => (path.file_stem().unwrap_or_default().to_string_lossy().into_owned(), path),
-        None => tondo::bind::module_path(&project, &headers[0]),
+        None => tondo::bind::module_path(&project, name.as_deref().unwrap_or(Path::new("native.h"))),
     };
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     }
     std::fs::write(&path, module).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     eprintln!("wrote {}: import it as a module of the project, `import <package>.{name}`", path.display());
+    // Only a project's manifest takes the libraries.
+    let is_project = ["tondo.toml", "src/main.to", "main.to"].iter().any(|f| project.join(f).is_file());
     for library in &libraries {
-        if tondo::bind::add_library(&project, library)? {
+        if !is_project {
+            eprintln!("link {library:?}: add it to [native] libraries in the project's tondo.toml");
+        } else if tondo::bind::add_library(&project, library)? {
             eprintln!("added {library:?} to [native] libraries in tondo.toml");
         }
     }

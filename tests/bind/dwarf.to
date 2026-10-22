@@ -1,0 +1,30 @@
+// A program on the module `tondo bind` reads from the debug information of
+// the library, without its header: it has the library's functions and
+// types, and the constants of its enums, but not its macros.
+import app.sample
+import std.console
+import std.ffi
+
+unsafe fn twice(context: Pointer[ffi.Void]?, value: ffi.CInt): ffi.CInt {
+    value * 2
+}
+
+fn main() {
+    unsafe {
+        let handle = sample.sample_open("tondo", 3u32)
+        let values = ffi.allocate[ffi.CInt](3)
+        values.write(1)
+        values.offset(1).write(2)
+        values.offset(2).write(39)
+        let mirrored = sample.sample_mirror(sample.sample_point { x: 1, y: 2 })
+        console.println(
+            "{sample.sample_sum(values, 3u64)} {mirrored.x} {mirrored.y} {sample.sample_visit_all(handle, twice, none)}",
+        )
+        let negated = sample.sample_negate(sample.sample_number { as_float: 2.5 }, 1)
+        console.println(
+            "{sample.sample_real()} {sample.type_(41)} {sample.sample_next(sample.SAMPLE_GREEN)} {negated.as_float}",
+        )
+        sample.sample_close(handle)
+        ffi.free(values)
+    }
+}

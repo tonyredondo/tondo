@@ -767,10 +767,11 @@ impl Codegen<'_> {
             for component in self.types.components(ty).expect("a record") {
                 let layout = self.layout(component);
                 let component_align = if c.packed { 1 } else { layout.align };
-                let offset = size.next_multiple_of(component_align);
+                // A union's fields share its memory.
+                let offset = if c.union { 0 } else { size.next_multiple_of(component_align) };
                 fields.offsets.push(offset);
                 fields.boxed.push(false);
-                size = offset + layout.size;
+                size = size.max(offset + layout.size);
                 align = align.max(component_align);
             }
             let align = align.max(c.align);
@@ -3329,9 +3330,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Class::Scalar(t) => Val::Scalar(self.e.fb.ins().iconst(t, 0)),
             Class::Memory => {
                 let address = self.scratch(ty);
-                let size = self.e.cg.layout(ty).size;
+                let layout = self.e.cg.layout(ty);
                 let config = self.e.cg.module.target_config();
-                self.e.fb.emit_small_memset(config, address, 0, size as u64, 8, flags());
+                let align = layout.align.clamp(1, 8) as u8;
+                self.e.fb.emit_small_memset(config, address, 0, layout.size as u64, align, flags());
                 Val::Memory(address)
             }
         }
