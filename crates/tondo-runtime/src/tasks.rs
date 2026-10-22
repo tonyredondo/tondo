@@ -467,6 +467,15 @@ pub(crate) static RUNTIME_THREADS: AtomicUsize = AtomicUsize::new(1);
 /// Threads of C waiting in `tondo_rt_callback` for the task they started.
 static FOREIGN_WAITING: AtomicUsize = AtomicUsize::new(0);
 
+/// Waits, up to a second, for the calls from threads of C still running:
+/// what they hold is not leaked when the program ends before them.
+pub fn wait_foreign_calls() {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while FOREIGN_WAITING.load(Ordering::SeqCst) > 0 && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
 /// Starts a runtime thread, counted while it runs.
 pub(crate) fn spawn_thread<T: Send + 'static>(
     stack: Option<usize>,

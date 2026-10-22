@@ -1732,8 +1732,10 @@ fn runtime_fault(message: &str) -> ! {
 pub const LEAK_EXIT_CODE: i32 = 99;
 
 pub fn check_leaks() -> Option<usize> {
+    std::env::var_os("TONDO_RT_CHECK_LEAKS")?;
+    tasks::wait_foreign_calls();
     let live = LIVE_OBJECTS.load(Ordering::Relaxed);
-    (std::env::var_os("TONDO_RT_CHECK_LEAKS").is_some() && live != 0).then_some(live)
+    (live != 0).then_some(live)
 }
 
 // ---------------------------------------------------------------------------
