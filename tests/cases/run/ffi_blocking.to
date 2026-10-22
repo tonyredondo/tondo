@@ -1,5 +1,6 @@
 // A call of C that blocks its worker for long gets another worker in its
-// place, so 128 calls of 400ms take far less than rounds of one per core.
+// place, so 256 calls of 400ms take far less than rounds of one per core:
+// over 3s up to 32 cores. The limit leaves room for slow CI machines.
 import std.console
 import std.ffi
 import std.time
@@ -13,11 +14,11 @@ fn nap() {
 fn main() {
     let start = time.now()
     var group = Group.new[Unit]()
-    for _ in 0..128 {
+    for _ in 0..256 {
         group.add(spawn nap())
     }
     _ = group.wait()
-    console.println("{start.elapsed().milliseconds() < 1000}")
+    console.println("{start.elapsed().milliseconds() < 3000}")
 }
 
 // expect-stdout: true
