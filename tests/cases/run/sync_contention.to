@@ -1,5 +1,6 @@
 import std.console
 import std.sync
+import std.time
 
 fn orZero(found: Int?): Int {
     match found {
@@ -46,7 +47,9 @@ fn consumer(queue: sync.Queue[String], taken: sync.Atomic[Int], target: Int): In
                 mine += 1
                 _ = taken.add(1)
             }
-            none => {}
+            // Tasks do not preempt each other: an empty queue lets the
+            // producers run, whatever the number of cores.
+            none => time.sleep(time.microseconds(10))
         }
     }
     mine

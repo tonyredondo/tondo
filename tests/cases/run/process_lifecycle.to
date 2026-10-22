@@ -6,8 +6,8 @@ import std.time
 
 fn slow(): Int {
     match process.command("sleep", "5").run() {
-        ok(status) => status.code,
-        err(_) => -1,
+        ok(status) => status.code
+        err(_) => -1
     }
 }
 
@@ -15,11 +15,15 @@ fn main(): !process.ProcessError {
     let started = time.now()
     let job = spawn slow()
     match job.wait(timeout: time.milliseconds(100)) {
-        some(code) => console.println("finished {code}"),
-        none => console.println("timed out, killed quickly {started.elapsed().isLessThan(time.seconds(2))}"),
+        some(code) => console.println("finished {code}")
+        none => console.println(
+            "timed out, killed quickly {started.elapsed().isLessThan(time.seconds(2))}",
+        )
     }
     let yes = (process.command("yes") | process.command("head", "-n", "1")).output()?
-    console.println("yes|head: {yes.text()?.length()} success {yes.statuses.length()} {yes.statuses[0].success} {yes.statuses[1].success}")
+    console.println(
+        "yes|head: {yes.text()?.length()} success {yes.statuses.length()} {yes.statuses[0].success} {yes.statuses[1].success}",
+    )
     let status = (process.command("yes") | process.command("head", "-n", "1")).status()?
     console.println("pipefail with sigpipe: {status.success}")
     let failing = (process.command("false") | process.command("true")).status()?
@@ -27,7 +31,8 @@ fn main(): !process.ProcessError {
     _ = process.command("echo", "line one").stdout(process.Output.File("proc_out.txt")).run()?
     _ = process.command("echo", "line two").stdout(process.Output.Append("proc_out.txt")).run()?
     let counted = process.command("wc", "-l").stdin(process.Input.File("proc_out.txt")).output()?
-    console.println("lines: {counted.text()?}")
+    // macOS pads the count.
+    console.println("lines: {counted.text()?.trim()}")
     let buffer = io.Buffer()
     let previous = console.stdout()
     console.setOutput(buffer.writer())
@@ -53,7 +58,6 @@ fn main(): !process.ProcessError {
 // expect-stdout: pipefail with sigpipe: true
 // expect-stdout: pipefail: false 1
 // expect-stdout: lines: 2
-// expect-stdout: 
 // expect-stdout: captured 38 bytes
 // expect-stdout: pid known true
 // expect-stdout: scope waited true

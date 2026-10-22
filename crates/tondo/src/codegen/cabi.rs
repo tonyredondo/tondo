@@ -215,7 +215,12 @@ impl Codegen<'_> {
                 fill(&mut params, &mut floats, types::F64);
             }
             if self.class(ty) != Class::Memory {
-                let scalar = self.c_scalar(ty);
+                let mut scalar = self.c_scalar(ty);
+                // Each argument of Apple's `...` fills an 8-byte slot.
+                if index >= fixed && abi == (Abi::Arm64 { apple: true }) && scalar.value_type.bits() < 64 {
+                    let signed = matches!(self.types.kind(self.types.repr(ty)), TyKind::Int(int) if int.signed());
+                    scalar = if signed { AbiParam::new(types::I64).sext() } else { AbiParam::new(types::I64).uext() };
+                }
                 let left = if scalar.value_type.is_float() { &mut floats } else { &mut ints };
                 *left = left.saturating_sub(1);
                 params.push((scalar, Source::Scalar(index)));
