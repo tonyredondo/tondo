@@ -239,3 +239,79 @@ true
     assert_eq!(stdout, expected, "{stderr}");
     assert!(output.status.success(), "{stderr}");
 }
+
+/// A WebSocket server that echoes text, reverses bytes and closes after
+/// `bye`.
+fn websocket_server() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            std::thread::spawn(move || {
+                use tungstenite::Message;
+                let Ok(mut socket) = tungstenite::accept(stream) else { return };
+                while let Ok(message) = socket.read() {
+                    match message {
+                        Message::Text(text) => {
+                            let _ = socket.send(Message::Text(format!("echo: {text}").into()));
+                            if text.as_str() == "bye" {
+                                let _ = socket.close(None);
+                            }
+                        }
+                        Message::Binary(data) => {
+                            let reversed: Vec<u8> = data.iter().rev().copied().collect();
+                            let _ = socket.send(Message::Binary(reversed.into()));
+                        }
+                        Message::Close(_) => break,
+                        _ => {}
+                    }
+                }
+            });
+        }
+    });
+    format!("ws://{address}")
+}
+
+#[test]
+fn websocket_against_a_local_server() {
+    let url = websocket_server();
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("http-websocket");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = r#"
+import std.console
+import std.env
+import std.http
+
+fn main(): !http.HttpError {
+    let socket = http.WebSocket.connect("{env.get("WS").unwrapOr("")}/chat", headers: ["X-Test": "yes"])?
+    socket.sendText("hola")?
+    socket.sendBytes([Byte(1u8), Byte(2u8), Byte(3u8)])?
+    console.println("{socket.receive()?}")
+    socket.sendText("bye")?
+    for message in socket {
+        match message? {
+            http.Message.Text(text) => console.println(text)
+            http.Message.Binary(bytes) => console.println("{bytes}")
+        }
+    }
+    console.println("closed {socket.receive()?}")
+    match http.WebSocket.connect("ws://127.0.0.1:1/") {
+        err(error) => console.println("{"{error}".startsWith("cannot connect")}")
+        ok(_) => console.println("connected")
+    }
+}
+"#;
+    std::fs::write(dir.join("main.to"), program).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", "main.to"])
+        .current_dir(&dir)
+        .env("WS", &url)
+        .env("TONDO_RT_CHECK_LEAKS", "1")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stdout, "some(echo: hola)\n[3, 2, 1]\necho: bye\nclosed none\ntrue\n", "{stderr}");
+    assert!(output.status.success(), "{stderr}");
+}

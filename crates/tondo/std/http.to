@@ -1,6 +1,6 @@
 // std.http (standard library 14.24): an HTTP client for HTTP/1.1 and
-// HTTP/2 over TLS, with bodies that stream both ways, multipart forms and
-// Server-Sent Events, on the runtime's transport.
+// HTTP/2 over TLS, with bodies that stream both ways, multipart forms,
+// Server-Sent Events and WebSockets, on the runtime's transport.
 
 import std.encoding as __encoding
 import std.internal.http as httpNative
@@ -529,6 +529,112 @@ pub fn patch(
     timeout: __time.Duration? = none,
 ): Response ! HttpError {
     Client.new().request("PATCH", url, body, query, headers, timeout)?
+}
+
+// ---------------------------------------------------------------------------
+// WebSockets
+// ---------------------------------------------------------------------------
+
+/// A message of a WebSocket.
+pub enum Message {
+    Text(String)
+    Binary(Array[Byte])
+}
+
+/// A text message as its text, a binary one as `3 bytes`.
+impl Display for Message {
+    fn display(self): String {
+        match self {
+            Message.Text(text) => text
+            Message.Binary(bytes) => "{bytes.length()} bytes"
+        }
+    }
+}
+
+/// A WebSocket connection (RFC 6455), over TLS for `wss://`. One task can
+/// send while another receives; pings are answered on their own. Iterating
+/// it receives messages until the connection closes.
+pub type WebSocket = {
+    priv native: httpNative.Native
+    priv closed: Bool
+}
+
+pub fn WebSocket.connect(
+    url: String,
+    headers: Map[String, String] = [:],
+    timeout: __time.Duration? = none,
+): WebSocket ! HttpError {
+    var pairs: Array[String] = []
+    for (name, value) in headers {
+        pairs.push(name)
+        pairs.push(value)
+    }
+    let limit = match timeout {
+        some(limit) => limit.milliseconds()
+        none => 0
+    }
+    let socket = httpNative.wsConnect(url, pairs, limit)
+    failed(socket)?
+    WebSocket { native: socket, closed: false }
+}
+
+pub fn WebSocket.send(self, message: Message): Unit ! HttpError {
+    let problem = match message {
+        Message.Text(text) => httpNative.wsSend(self.native, false, text, [])
+        Message.Binary(bytes) => httpNative.wsSend(self.native, true, "", bytes)
+    }
+    if not problem.isEmpty() {
+        fail HttpError.Protocol(problem)
+    }
+}
+
+pub fn WebSocket.sendText(self, text: String): Unit ! HttpError {
+    self.send(Message.Text(text))?
+}
+
+pub fn WebSocket.sendBytes(self, bytes: Array[Byte]): Unit ! HttpError {
+    self.send(Message.Binary(bytes))?
+}
+
+/// The next message, or `none` once the connection closed.
+pub fn WebSocket.receive(self): Message? ! HttpError {
+    let received = httpNative.wsReceive(self.native)
+    failed(received)?
+    let kind = httpNative.wsKind(received)
+    if kind == 0 {
+        return some(Message.Text(httpNative.wsText(received)))
+    }
+    if kind == 1 {
+        return some(Message.Binary(httpNative.wsData(received)))
+    }
+    none
+}
+
+/// Closes the connection, telling the server.
+pub fn WebSocket.close(self): Unit ! HttpError {
+    let problem = httpNative.wsClose(self.native)
+    if not problem.isEmpty() {
+        fail HttpError.Protocol(problem)
+    }
+}
+
+impl Iterator[Message ! HttpError] for WebSocket {
+    fn next(mut self): (Message ! HttpError)? {
+        if self.closed {
+            return none
+        }
+        match self.receive() {
+            ok(some(message)) => some(ok(message))
+            ok(none) => {
+                self.closed = true
+                none
+            }
+            err(error) => {
+                self.closed = true
+                some(err(error))
+            }
+        }
+    }
 }
 
 fn joined(base: String, url: String): String {

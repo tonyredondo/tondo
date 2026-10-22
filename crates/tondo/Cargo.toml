@@ -21,3 +21,6 @@ gimli = { version = "0.33", default-features = false, features = ["read", "std"]
 object = { version = "0.40", default-features = false, features = ["read", "std", "compression"] }
 unicode-ident = "1"
 unicode-normalization = "0.1"
+
+[dev-dependencies]
+tungstenite = "0.30.0"

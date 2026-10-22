@@ -996,3 +996,12 @@ trusts the system's roots, or Mozilla's when the system has none. Status
 400 and above is an error that carries the response. A standard module that
 imports `std.json` brings its automatic implementations, as `std.http`
 does.
+
+## 2026-10-23 — WebSockets in std.http
+
+`WebSocket` runs on tokio-tungstenite with the same TLS roots, offering only
+HTTP/1.1 in ALPN since the handshake is an HTTP/1.1 upgrade. Its halves sit
+behind separate locks, so one task sends while another receives. Receiving
+skips pings and pongs, which the library answers, and turns a close into
+the end; a socket is an iterator of messages until then, like CSV rows and
+response lines.

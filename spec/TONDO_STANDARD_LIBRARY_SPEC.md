@@ -1487,7 +1487,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.regex` | Core | — | 0.1 | Expresiones regulares Unicode con complejidad y límites declarados |
 | `std.csv` | Core | — | 0.1 | CSV RFC 4180 materializado y en streaming |
 | `std.hash` | Core | — | 0.1 | Digests SHA-1, SHA-256 y SHA-512 y HMAC |
-| `std.http` | Capability-gated | `network` | 0.1 | Cliente HTTP/1.1 y HTTP/2 con TLS, cuerpos en streaming, multipart y Server-Sent Events |
+| `std.http` | Capability-gated | `network` | 0.1 | Cliente HTTP/1.1 y HTTP/2 con TLS, cuerpos en streaming, multipart, Server-Sent Events y WebSockets |
 | `std.random` | Core + gated | `entropy` para sembrar desde el sistema | 0.1 | Generadores pseudoaleatorios sembrados, mezcla, elección y bytes de entropía |
 | `std.uuid` | Core + gated | `entropy` y/o `civil-clock` para generación | 0.1 | UUID, parsing, formatting y generadores explícitos por versión |
 | `std.sync` | Core + gated | `threads` para operaciones cross-thread | 0.1 | Mutex, rwlock, condición, semáforo, once, barrier, atomics y colecciones compartidas linealizables |
@@ -3634,6 +3634,16 @@ pub fn Response.lines(self): Lines            // Iterator[String ! HttpError]
 pub fn Response.events(self): Events          // Iterator[Event ! HttpError]
 pub fn Response.copyTo(self, output: io.Writer): Int ! HttpError
 pub type Event = { event: String, data: String, id: String? }
+
+pub enum Message { Text(String), Binary(Array[Byte]) }
+pub type WebSocket                            // Iterator[Message ! HttpError]
+pub fn WebSocket.connect(url: String, headers: Map[String, String] = [:],
+    timeout: time.Duration? = none): WebSocket ! HttpError
+pub fn WebSocket.send(self, message: Message): Unit ! HttpError
+pub fn WebSocket.sendText(self, text: String): Unit ! HttpError
+pub fn WebSocket.sendBytes(self, bytes: Array[Byte]): Unit ! HttpError
+pub fn WebSocket.receive(self): Message? ! HttpError
+pub fn WebSocket.close(self): Unit ! HttpError
 ~~~
 
 - No hay cliente global. Las funciones del módulo abren una conexión por
@@ -3658,6 +3668,22 @@ pub type Event = { event: String, data: String, id: String? }
   sistema no tiene ninguno, en los de Mozilla.
 - `timeout` limita la petición entera, incluido el cuerpo; `connectTimeout`,
   solo la conexión. Una tarea cancelada abandona su petición.
+- `WebSocket.connect` abre una conexión de RFC 6455, con TLS para `wss://`, y
+  `timeout` limita su handshake. Una tarea puede enviar mientras otra recibe;
+  los pings se contestan solos. `receive` da el siguiente mensaje de texto o
+  binario, o `none` cuando la conexión se cerró, y recorrer el socket con `for`
+  recibe hasta entonces. `Display` de un mensaje es su texto, o `3 bytes`.
+
+~~~tondo
+let socket = http.WebSocket.connect("wss://example.com/chat")?
+socket.sendText("hola")?
+for message in socket {
+    match message? {
+        http.Message.Text(text) => console.println(text)
+        http.Message.Binary(bytes) => save(bytes)
+    }
+}
+~~~
 - Un provider o generador no puede importar `std.http` (`E2108`).
 
 ---

@@ -315,7 +315,7 @@ pub extern "C" fn tondo_rt_http_body_form(form: *mut NativeObject) -> *mut Nativ
 /// A response, or why there is none: its head, and its body until a
 /// reader takes it.
 struct Response {
-    failure: Mutex<Option<(&'static str, String)>>,
+    failure: Failure,
     status: u16,
     reason: String,
     url: String,
@@ -447,7 +447,8 @@ fn response<'a>(object: *mut NativeObject) -> &'a Response {
 /// empty string.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_failure(object: *mut NativeObject) -> *mut Str {
-    let failure = response(object).failure.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(slot) = failure_of(object) else { return str_new(b"") };
+    let failure = slot.lock().unwrap_or_else(|e| e.into_inner());
     match failure.as_ref() {
         Some((kind, message)) => str_new(format!("{kind}\t{message}").as_bytes()),
         None => str_new(b""),
@@ -524,4 +525,188 @@ impl Host for Chunks {
 pub extern "C" fn tondo_rt_http_body(object: *mut NativeObject) -> *mut StreamObject {
     let body = response(object).body.lock().unwrap_or_else(|e| e.into_inner()).take();
     crate::io::stream(Box::new(Chunks { body, chunk: Bytes::new() }), Mode::Long, false)
+}
+
+// ---------------------------------------------------------------------------
+// WebSockets
+// ---------------------------------------------------------------------------
+
+type Connection = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+type Frame = tokio_tungstenite::tungstenite::Message;
+type Failure = Mutex<Option<(&'static str, String)>>;
+
+/// A WebSocket's halves, each behind its own lock: one task can send while
+/// another receives.
+struct Socket {
+    failure: Failure,
+    sink: Option<Arc<tokio::sync::Mutex<futures_util::stream::SplitSink<Connection, Frame>>>>,
+    stream: Option<Arc<tokio::sync::Mutex<futures_util::stream::SplitStream<Connection>>>>,
+}
+
+/// A message received: text (0), binary (1) or the end (2), or a failure.
+struct Received {
+    failure: Failure,
+    kind: i64,
+    text: String,
+    data: Vec<u8>,
+}
+
+/// Where an object of this module keeps its failure.
+fn failure_of<'a>(object: *mut NativeObject) -> Option<&'a Failure> {
+    native::get::<Response>(object)
+        .map(|r| &r.failure)
+        .or_else(|| native::get::<Socket>(object).map(|s| &s.failure))
+        .or_else(|| native::get::<Received>(object).map(|r| &r.failure))
+}
+
+fn ws_failure(error: tokio_tungstenite::tungstenite::Error) -> (&'static str, String) {
+    use tokio_tungstenite::tungstenite::Error;
+    let kind = match &error {
+        Error::Url(_) => "url",
+        Error::Io(_) | Error::Tls(_) => "connect",
+        _ => "protocol",
+    };
+    (kind, error.to_string())
+}
+
+/// Opens a WebSocket (RFC 6455) with the headers, names and values in
+/// turn; the handshake waits `timeout_ms`, or forever with 0.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_http_ws_connect(
+    url: *const Str,
+    headers: *mut ArrayHeader,
+    timeout_ms: i64,
+) -> *mut NativeObject {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue};
+    let failed = |kind: &'static str, message: String| {
+        native::new(Socket { failure: Mutex::new(Some((kind, message))), sink: None, stream: None })
+    };
+    let mut request = match text(url).into_client_request() {
+        Ok(request) => request,
+        Err(error) => return failed("url", error.to_string()),
+    };
+    for pair in strings(headers).chunks(2) {
+        if let [name, value] = pair {
+            match (HeaderName::try_from(name.as_str()), HeaderValue::try_from(value.as_str())) {
+                (Ok(name), Ok(value)) => {
+                    request.headers_mut().insert(name, value);
+                }
+                _ => return failed("protocol", format!("`{name}: {value}` is not a header")),
+            }
+        }
+    }
+    // The WebSocket handshake is HTTP/1.1.
+    let mut config = tls();
+    config.alpn_protocols = vec![b"http/1.1".to_vec()];
+    let connector = tokio_tungstenite::Connector::Rustls(Arc::new(config));
+    let connecting = tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(connector));
+    let outcome = wait(async move {
+        match timeout_ms {
+            0 => connecting.await.map_err(ws_failure),
+            limit => match tokio::time::timeout(Duration::from_millis(limit.max(0) as u64), connecting).await {
+                Ok(connected) => connected.map_err(ws_failure),
+                Err(_) => Err(("timeout", "the handshake timed out".into())),
+            },
+        }
+    });
+    match outcome {
+        None => failed("protocol", "the task was cancelled".into()),
+        Some(Err((kind, message))) => failed(kind, message),
+        Some(Ok((connection, _))) => {
+            use futures_util::StreamExt;
+            let (sink, stream) = connection.split();
+            native::new(Socket {
+                failure: Mutex::new(None),
+                sink: Some(Arc::new(tokio::sync::Mutex::new(sink))),
+                stream: Some(Arc::new(tokio::sync::Mutex::new(stream))),
+            })
+        }
+    }
+}
+
+/// Sends a text or, with `binary`, a binary message; the error, or an
+/// empty string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_http_ws_send(
+    socket: *mut NativeObject,
+    binary: u8,
+    message: *const Str,
+    data: *mut ArrayHeader,
+) -> *mut Str {
+    use futures_util::SinkExt;
+    let Some(sink) = native::get::<Socket>(socket).and_then(|s| s.sink.clone()) else {
+        return str_new(b"not an open WebSocket");
+    };
+    let frame = if binary != 0 { Frame::Binary(bytes_of(data).into()) } else { Frame::Text(text(message).into()) };
+    match wait(async move { sink.lock().await.send(frame).await }) {
+        Some(Ok(())) => str_new(b""),
+        Some(Err(error)) => str_new(error.to_string().as_bytes()),
+        None => str_new(b"the task was cancelled"),
+    }
+}
+
+/// The next text or binary message; pings are answered and skipped, and a
+/// close is the end.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_ws_receive(socket: *mut NativeObject) -> *mut NativeObject {
+    use futures_util::StreamExt;
+    use tokio_tungstenite::tungstenite::Error;
+    let received =
+        |kind: i64, text: String, data: Vec<u8>| native::new(Received { failure: Mutex::new(None), kind, text, data });
+    let Some(stream) = native::get::<Socket>(socket).and_then(|s| s.stream.clone()) else {
+        return received(2, String::new(), Vec::new());
+    };
+    let outcome = wait(async move {
+        let mut stream = stream.lock().await;
+        loop {
+            match stream.next().await {
+                Some(Ok(Frame::Text(text))) => return Ok((0, text.to_string(), Vec::new())),
+                Some(Ok(Frame::Binary(data))) => return Ok((1, String::new(), data.to_vec())),
+                Some(Ok(Frame::Close(_))) | None => return Ok((2, String::new(), Vec::new())),
+                Some(Err(Error::ConnectionClosed | Error::AlreadyClosed)) => return Ok((2, String::new(), Vec::new())),
+                Some(Err(error)) => return Err(ws_failure(error)),
+                Some(Ok(_)) => {}
+            }
+        }
+    });
+    match outcome {
+        Some(Ok((kind, text, data))) => received(kind, text, data),
+        failed => {
+            let failure = match failed {
+                Some(Err(failure)) => failure,
+                _ => ("protocol", "the task was cancelled".into()),
+            };
+            native::new(Received { failure: Mutex::new(Some(failure)), kind: 2, text: String::new(), data: Vec::new() })
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_ws_kind(received: *mut NativeObject) -> i64 {
+    native::get::<Received>(received).map_or(2, |r| r.kind)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_ws_text(received: *mut NativeObject) -> *mut Str {
+    str_new(native::get::<Received>(received).map_or("", |r| r.text.as_str()).as_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_ws_data(received: *mut NativeObject) -> *mut ArrayHeader {
+    byte_array(native::get::<Received>(received).map_or(&[][..], |r| r.data.as_slice()))
+}
+
+/// Closes a WebSocket, telling the server; the error, or an empty string.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_ws_close(socket: *mut NativeObject) -> *mut Str {
+    use futures_util::SinkExt;
+    let Some(sink) = native::get::<Socket>(socket).and_then(|s| s.sink.clone()) else {
+        return str_new(b"");
+    };
+    match wait(async move { sink.lock().await.close().await }) {
+        Some(Ok(())) | Some(Err(tokio_tungstenite::tungstenite::Error::ConnectionClosed)) => str_new(b""),
+        Some(Err(error)) => str_new(error.to_string().as_bytes()),
+        None => str_new(b"the task was cancelled"),
+    }
 }
