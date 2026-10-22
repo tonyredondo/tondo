@@ -805,6 +805,9 @@ pub enum NativeTy {
     Unit,
     JsonReader,
     JsonWriter,
+    /// A stream of `std.io`.
+    IoReader,
+    IoWriter,
 }
 
 /// A function of `std.internal.json`, the runtime's JSON tokenizer and
@@ -835,6 +838,8 @@ pub const NATIVES: &[Native] = {
     &[
         f("reader", &[String, Bool], JsonReader, "tondo_rt_json_reader"),
         f("writer", &[Bool, Bool], JsonWriter, "tondo_rt_json_writer"),
+        f("streamReader", &[IoReader, Bool], JsonReader, "tondo_rt_json_stream_reader"),
+        f("streamWriter", &[IoWriter, Bool, Bool], JsonWriter, "tondo_rt_json_stream_writer"),
         f("isInt", &[String], Bool, "tondo_rt_json_is_int"),
         f("parseInt", &[String], Int, "tondo_rt_json_parse_int"),
         f("parseFloat", &[String], Float, "tondo_rt_json_parse_float"),
@@ -853,5 +858,6 @@ pub const NATIVES: &[Native] = {
         m(JsonWriter, "bracket", &[Bool, Bool], Unit, "tondo_rt_json_write_bracket"),
         m(JsonWriter, "raw", &[String], Unit, "tondo_rt_json_write_raw"),
         m(JsonWriter, "finish", &[], String, "tondo_rt_json_finish"),
+        m(JsonWriter, "error", &[], String, "tondo_rt_json_writer_error"),
     ]
 };

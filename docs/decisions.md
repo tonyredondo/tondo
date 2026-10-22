@@ -582,3 +582,12 @@ as Rust's `must_use` does for its `Result`. The same holds for the final
 expression of a block whose type is `Unit`, which Tondo cannot mark as a
 statement with a semicolon. `T ! E` now displays as `ok(value)` or
 `err(error)`, like `T?`.
+
+## 2026-10-22 — JSON streams in constant memory
+
+`json.readerFrom` pulls 64 KB at a time from an `io.Reader` as the parser
+needs input and lets consumed input go, keeping line and column counts for
+what it dropped; `json.writerTo` hands output to an `io.Writer` every
+64 KB. `decodeFrom` and `encodeTo` are built on them, so reading a 51 MB
+document event by event peaks at the memory of an empty program. Only
+canonical output buffers, since it sorts keys at the end.

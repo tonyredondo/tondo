@@ -2595,7 +2595,9 @@ pub enum Event { Null, Bool(Bool), Number(Number), Text(String), BeginArray, End
 pub type Reader
 pub type Writer
 pub fn reader(text: String, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): Reader
+pub fn readerFrom(stream: io.Reader, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): Reader
 pub fn writer(pretty: Bool = false, canonical: Bool = false): Writer
+pub fn writerTo(stream: io.Writer, pretty: Bool = false, canonical: Bool = false): Writer
 pub fn Reader.next(self): Event? ! JsonError
 pub fn Writer.null(self)
 pub fn Writer.bool(self, value: Bool)
@@ -2609,6 +2611,7 @@ pub fn Writer.endArray(self)
 pub fn Writer.beginObject(self)
 pub fn Writer.endObject(self)
 pub fn Writer.finish(self): String
+pub fn Writer.flush(self): Unit ! JsonError
 ~~~
 
 Codificación tipada:
@@ -2649,7 +2652,11 @@ Lectura y escritura por eventos:
   recibe valores, claves y corchetes y `finish()` da el texto. Son la base de
   `encode` y `decode` y de las implementaciones escritas a mano, que reciben un
   `Writer`, o un `Reader` y el primer evento de su valor.
-- `encodeTo` y `decodeFrom` escriben y leen un stream de `std.io`.
+- `readerFrom` lee un stream de `std.io` a medida que el documento lo necesita, y
+  `writerTo` le entrega la salida a medida que crece; `flush` termina el
+  documento y devuelve los fallos de escritura. Solo la parte en curso del
+  documento está en memoria, salvo con `canonical`, que ordena las claves al
+  final. `decodeFrom` y `encodeTo` son `decode` y `encode` sobre ellos.
 
 Un `JsonError` da su clase, un mensaje, el camino del valor (`$.users[2].age`)
 y la línea y columna; su `Display` es

@@ -3114,6 +3114,8 @@ impl Checker<'_> {
             hir::NativeTy::Unit => Ty::UNIT,
             hir::NativeTy::JsonReader => self.types.handle(Handle::JsonReader, Ty::UNIT),
             hir::NativeTy::JsonWriter => self.types.handle(Handle::JsonWriter, Ty::UNIT),
+            hir::NativeTy::IoReader => self.types.handle(Handle::Reader, Ty::UNIT),
+            hir::NativeTy::IoWriter => self.types.handle(Handle::Writer, Ty::UNIT),
         }
     }
 

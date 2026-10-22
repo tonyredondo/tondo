@@ -1,0 +1,39 @@
+import std.console
+import std.io
+import std.json
+
+type Point = {
+    x: Int
+    y: Int
+}
+
+fn main(): !json.JsonError {
+    let buffer = io.Buffer()
+    var points: Array[Point] = []
+    for i in 0..3 {
+        points.push(Point { x: i, y: i * i })
+    }
+    json.encodeTo(points, buffer.writer())?
+    let input = json.readerFrom(buffer.reader())
+    var keys = 0
+    for {
+        match input.next()? {
+            some(json.Event.Key(_)) => {
+                keys += 1
+            }
+            some(_) => {}
+            none => break
+        }
+    }
+    console.println("keys {keys}")
+    let back: Array[Point] = json.decodeFrom(buffer.reader())?
+    console.println("{back.length()} {back[2].y}")
+    match json.decodeFrom[Array[Point]](io.reader(r"""[{"x": 1, "y": 2}] extra""")) {
+        ok(_) => console.println("unexpected")
+        err(error) => console.println("{error}")
+    }
+}
+
+// expect-stdout: keys 6
+// expect-stdout: 3 4
+// expect-stdout: unexpected data after the value at $ (line 1, column 20)

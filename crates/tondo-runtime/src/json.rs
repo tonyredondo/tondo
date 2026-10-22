@@ -2,6 +2,7 @@
 //! 14.10), which is written in Tondo on top of them. RFC 8259, strict: one
 //! root value, no trailing data, no duplicate keys, bounded depth.
 
+use super::io::{StreamObject, retain, run, tondo_rt_stream_release};
 use super::{LIVE_OBJECTS, Str, str_bytes, str_new};
 use std::collections::HashSet;
 use std::fmt::Write as _;
@@ -30,9 +31,35 @@ enum Frame {
     Object { keys: HashSet<String>, key: Option<String>, expect_key: bool, started: bool },
 }
 
+/// A stream of `std.io` the reader pulls its input from.
+struct Source(*mut StreamObject);
+
+unsafe impl Send for Source {}
+
+impl Drop for Source {
+    fn drop(&mut self) {
+        unsafe { tondo_rt_stream_release(self.0) }
+    }
+}
+
+/// Bytes read from a stream per refill, and how much consumed input a
+/// stream reader keeps before it lets it go.
+const CHUNK: usize = 64 * 1024;
+
 struct Reader {
+    /// The input not let go yet; `offset` is where it starts in the whole.
     input: Vec<u8>,
+    offset: usize,
     position: usize,
+    /// More input, read as parsing needs it, and whether it ended.
+    source: Option<Source>,
+    exhausted: bool,
+    /// The lines that ended in input already let go, and the characters
+    /// since the last of them, for line and column numbers.
+    lines_before: usize,
+    column_carry: usize,
+    /// Where a value whose text is being kept started.
+    pinned: Option<usize>,
     frames: Vec<Frame>,
     /// The text of the last string, key or number.
     text: String,
@@ -52,21 +79,83 @@ pub struct ReaderObject {
 }
 
 impl Reader {
+    fn new(input: Vec<u8>, source: Option<Source>, duplicates: bool) -> Reader {
+        Reader {
+            input,
+            offset: 0,
+            position: 0,
+            exhausted: source.is_none(),
+            source,
+            lines_before: 0,
+            column_carry: 0,
+            pinned: None,
+            frames: Vec::new(),
+            text: String::new(),
+            done: false,
+            root_seen: false,
+            error: None,
+            duplicates,
+            start: 0,
+        }
+    }
+
     fn fail(&mut self, message: impl Into<String>) -> i64 {
         if self.error.is_none() {
-            self.error = Some((message.into(), self.position));
+            self.error = Some((message.into(), self.offset + self.position));
         }
         ERROR
     }
 
     fn skip_space(&mut self) {
-        while let Some(b' ' | b'\t' | b'\n' | b'\r') = self.input.get(self.position) {
+        while let Some(b' ' | b'\t' | b'\n' | b'\r') = self.peek() {
             self.position += 1;
         }
     }
 
-    fn peek(&self) -> Option<u8> {
+    fn peek(&mut self) -> Option<u8> {
+        if self.position >= self.input.len() {
+            self.ensure(1);
+        }
         self.input.get(self.position).copied()
+    }
+
+    /// Reads from the source until `count` bytes follow the position, or
+    /// it ends; whether they do.
+    fn ensure(&mut self, count: usize) -> bool {
+        while self.input.len() < self.position + count && !self.exhausted {
+            let Some(source) = &self.source else {
+                self.exhausted = true;
+                break;
+            };
+            match run(source.0, |s| s.read(CHUNK)) {
+                Ok(Some(chunk)) => self.input.extend_from_slice(&chunk),
+                Ok(None) => self.exhausted = true,
+                Err(error) => {
+                    self.exhausted = true;
+                    self.fail(format!("cannot read the stream: {error}"));
+                }
+            }
+        }
+        self.input.len() >= self.position + count
+    }
+
+    /// Lets consumed input go, keeping what a kept value still needs.
+    fn compact(&mut self) {
+        if self.source.is_none() || self.position < CHUNK {
+            return;
+        }
+        let keep = self.pinned.map_or(self.position, |p| (p - self.offset).min(self.position));
+        let dropped = &self.input[..keep];
+        match dropped.iter().rposition(|&b| b == b'\n') {
+            Some(last) => {
+                self.lines_before += dropped.iter().filter(|&&b| b == b'\n').count();
+                self.column_carry = String::from_utf8_lossy(&dropped[last + 1..]).chars().count();
+            }
+            None => self.column_carry += String::from_utf8_lossy(dropped).chars().count(),
+        }
+        self.input.drain(..keep);
+        self.offset += keep;
+        self.position -= keep;
     }
 
     /// The JSON path of the value at the current position.
@@ -88,11 +177,14 @@ impl Reader {
         path
     }
 
+    /// The line and column of an offset in the whole input.
     fn line_column(&self, offset: usize) -> (usize, usize) {
-        let before = &self.input[..offset.min(self.input.len())];
-        let line = before.iter().filter(|&&b| b == b'\n').count() + 1;
-        let start = before.iter().rposition(|&b| b == b'\n').map_or(0, |p| p + 1);
-        let column = String::from_utf8_lossy(&before[start..]).chars().count() + 1;
+        let before = &self.input[..offset.saturating_sub(self.offset).min(self.input.len())];
+        let line = self.lines_before + before.iter().filter(|&&b| b == b'\n').count() + 1;
+        let column = match before.iter().rposition(|&b| b == b'\n') {
+            Some(last) => String::from_utf8_lossy(&before[last + 1..]).chars().count() + 1,
+            None => self.column_carry + String::from_utf8_lossy(before).chars().count() + 1,
+        };
         (line, column)
     }
 
@@ -103,13 +195,14 @@ impl Reader {
         if self.done {
             return END;
         }
+        self.compact();
         self.skip_space();
         // Close containers, and separate and key their members.
         let (array, expect_key, started) = match self.frames.last() {
             Some(Frame::Array { started, .. }) => (true, false, *started),
             Some(Frame::Object { expect_key, started, .. }) => (false, *expect_key, *started),
             None if self.root_seen => {
-                if self.position < self.input.len() {
+                if self.peek().is_some() {
                     return self.fail("unexpected data after the value");
                 }
                 self.done = true;
@@ -180,7 +273,7 @@ impl Reader {
 
     fn value(&mut self) -> i64 {
         self.skip_space();
-        self.start = self.position;
+        self.start = self.offset + self.position;
         let Some(byte) = self.peek() else {
             return self.fail("unexpected end of input");
         };
@@ -212,7 +305,7 @@ impl Reader {
                     b'f' => ("false", FALSE),
                     _ => ("null", NULL),
                 };
-                if self.input[self.position..].starts_with(word.as_bytes()) {
+                if self.ensure(word.len()) && self.input[self.position..].starts_with(word.as_bytes()) {
                     self.position += word.len();
                     self.after_value(event)
                 } else {
@@ -268,6 +361,7 @@ impl Reader {
     }
 
     fn hex4(&mut self) -> Result<u32, &'static str> {
+        self.ensure(4);
         let digits = self.input.get(self.position..self.position + 4).ok_or("invalid escape")?;
         let text = std::str::from_utf8(digits).map_err(|_| "invalid escape")?;
         let value = u32::from_str_radix(text, 16).map_err(|_| "invalid escape")?;
@@ -298,7 +392,7 @@ impl Reader {
                         b'u' => {
                             let first = self.hex4()?;
                             let code = if (0xD800..0xDC00).contains(&first) {
-                                if !self.input[self.position..].starts_with(b"\\u") {
+                                if !(self.ensure(2) && self.input[self.position..].starts_with(b"\\u")) {
                                     return Err("unpaired surrogate in escape");
                                 }
                                 self.position += 2;
@@ -349,18 +443,19 @@ fn reader<'a>(object: *mut ReaderObject) -> std::sync::MutexGuard<'a, Reader> {
 /// `jsonnative.reader(text, duplicates)`
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_reader(text: *const Str, duplicates: u8) -> *mut ReaderObject {
+    let reader = Reader::new(unsafe { str_bytes(text) }.to_vec(), None, duplicates != 0);
+    reader_object(reader)
+}
+
+/// `jsonnative.streamReader(stream, duplicates)`: reads the stream as the
+/// document needs it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_json_stream_reader(stream: *mut StreamObject, duplicates: u8) -> *mut ReaderObject {
+    reader_object(Reader::new(Vec::new(), Some(Source(retain(stream))), duplicates != 0))
+}
+
+fn reader_object(reader: Reader) -> *mut ReaderObject {
     LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
-    let reader = Reader {
-        input: unsafe { str_bytes(text) }.to_vec(),
-        position: 0,
-        frames: Vec::new(),
-        text: String::new(),
-        done: false,
-        root_seen: false,
-        error: None,
-        duplicates: duplicates != 0,
-        start: 0,
-    };
     Box::into_raw(Box::new(ReaderObject { rc: AtomicUsize::new(1), reader: Mutex::new(reader) }))
 }
 
@@ -387,10 +482,13 @@ pub unsafe extern "C" fn tondo_rt_json_skip(object: *mut ReaderObject, event: i6
 pub unsafe extern "C" fn tondo_rt_json_raw(object: *mut ReaderObject, event: i64) -> *mut Str {
     let mut r = reader(object);
     let begin = r.start;
-    if r.skip(event) < 0 {
+    r.pinned = Some(begin);
+    let skipped = r.skip(event);
+    r.pinned = None;
+    if skipped < 0 {
         return str_new(b"");
     }
-    let text = r.input[begin..r.position].to_vec();
+    let text = r.input[begin - r.offset..r.position].to_vec();
     str_new(&text)
 }
 
@@ -406,7 +504,7 @@ pub unsafe extern "C" fn tondo_rt_json_fail(object: *mut ReaderObject, message: 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_where(object: *mut ReaderObject, which: i64) -> *mut Str {
     let r = reader(object);
-    let offset = r.error.as_ref().map_or(r.position, |(_, at)| *at);
+    let offset = r.error.as_ref().map_or(r.offset + r.position, |(_, at)| *at);
     let (line, column) = r.line_column(offset);
     let text = match which {
         0 => r.error.as_ref().map_or(String::new(), |(message, _)| message.clone()),
@@ -454,6 +552,9 @@ struct Writer {
     stack: Vec<(Tree, Option<String>)>,
     root: Option<Tree>,
     pending_key: Option<String>,
+    /// The stream output goes to as it grows, and its first failure.
+    sink: Option<Source>,
+    failed: Option<String>,
 }
 
 #[repr(C)]
@@ -582,6 +683,20 @@ impl Writer {
         }
     }
 
+    /// Passes the output to the sink once enough gathers, or `all` of it.
+    fn deliver(&mut self, all: bool) {
+        let Some(sink) = &self.sink else { return };
+        if self.out.is_empty() || (!all && self.out.len() < CHUNK) {
+            return;
+        }
+        let data = std::mem::take(&mut self.out).into_bytes();
+        if self.failed.is_none()
+            && let Err(error) = run(sink.0, move |s| s.write(&data))
+        {
+            self.failed = Some(format!("cannot write the stream: {error}"));
+        }
+    }
+
     fn finish(&mut self) -> String {
         if let Some(root) = self.root.take() {
             fn emit(tree: &Tree, out: &mut String) {
@@ -616,17 +731,47 @@ impl Writer {
             }
             emit(&root, &mut self.out);
         }
+        if self.sink.is_some() {
+            self.deliver(true);
+            if let Some(sink) = &self.sink
+                && self.failed.is_none()
+                && let Err(error) = run(sink.0, |s| s.flush())
+            {
+                self.failed = Some(format!("cannot write the stream: {error}"));
+            }
+        }
         std::mem::take(&mut self.out)
     }
 }
 
-fn writer<'a>(object: *mut WriterObject) -> std::sync::MutexGuard<'a, Writer> {
-    unsafe { (*object).writer.lock().unwrap_or_else(|e| e.into_inner()) }
+/// The writer, after the previous operation, which may have grown the
+/// output enough to pass it to a sink.
+struct Guard<'a>(std::sync::MutexGuard<'a, Writer>);
+
+impl std::ops::Deref for Guard<'_> {
+    type Target = Writer;
+    fn deref(&self) -> &Writer {
+        &self.0
+    }
 }
 
-/// `jsonnative.writer(pretty, canonical)`
-#[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_json_writer(pretty: u8, canonical: u8) -> *mut WriterObject {
+impl std::ops::DerefMut for Guard<'_> {
+    fn deref_mut(&mut self) -> &mut Writer {
+        &mut self.0
+    }
+}
+
+impl Drop for Guard<'_> {
+    fn drop(&mut self) {
+        self.0.deliver(false);
+    }
+}
+
+fn writer<'a>(object: *mut WriterObject) -> Guard<'a> {
+    Guard(unsafe { (*object).writer.lock().unwrap_or_else(|e| e.into_inner()) })
+}
+
+fn writer_object(pretty: u8, canonical: u8, sink: Option<Source>) -> *mut WriterObject {
     LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
     let writer = Writer {
         out: String::new(),
@@ -636,8 +781,33 @@ pub extern "C" fn tondo_rt_json_writer(pretty: u8, canonical: u8) -> *mut Writer
         stack: Vec::new(),
         root: None,
         pending_key: None,
+        sink,
+        failed: None,
     };
     Box::into_raw(Box::new(WriterObject { rc: AtomicUsize::new(1), writer: Mutex::new(writer) }))
+}
+
+/// `jsonnative.writer(pretty, canonical)`
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_json_writer(pretty: u8, canonical: u8) -> *mut WriterObject {
+    writer_object(pretty, canonical, None)
+}
+
+/// `jsonnative.streamWriter(stream, pretty, canonical)`: passes the output
+/// to the stream as it grows.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_json_stream_writer(
+    stream: *mut StreamObject,
+    pretty: u8,
+    canonical: u8,
+) -> *mut WriterObject {
+    writer_object(pretty, canonical, Some(Source(retain(stream))))
+}
+
+/// The first failure to write a stream writer's stream, or empty.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_json_writer_error(object: *mut WriterObject) -> *mut Str {
+    str_new(writer(object).failed.clone().unwrap_or_default().as_bytes())
 }
 
 /// Writes a scalar: 0 null, 1 true, 2 false.
@@ -718,17 +888,7 @@ pub unsafe extern "C" fn tondo_rt_json_write_raw(object: *mut WriterObject, text
         return;
     }
     // Replayed event by event, so that keys sort and numbers normalize.
-    let mut r = Reader {
-        input: bytes,
-        position: 0,
-        frames: Vec::new(),
-        text: String::new(),
-        done: false,
-        root_seen: false,
-        error: None,
-        duplicates: true,
-        start: 0,
-    };
+    let mut r = Reader::new(bytes, None, true);
     loop {
         match r.next() {
             NULL => w.leaf("null".into()),

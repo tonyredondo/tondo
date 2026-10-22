@@ -215,6 +215,12 @@ pub fn reader(text: String, unknownFields: UnknownFields = UnknownFields.Ignore,
     Reader { native: jsonnative.reader(text, allowDuplicateKeys), rejectUnknown: unknownFields == UnknownFields.Reject }
 }
 
+/// A JSON document read event by event from a stream, as it arrives: only
+/// the part being read is in memory.
+pub fn readerFrom(stream: jsonio.Reader, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): Reader {
+    Reader { native: jsonnative.streamReader(stream, allowDuplicateKeys), rejectUnknown: unknownFields == UnknownFields.Reject }
+}
+
 /// The next event, or `none` after the whole document.
 pub fn Reader.next(self): Event? ! JsonError {
     let code = self.native.next()
@@ -230,7 +236,10 @@ pub fn Reader.next(self): Event? ! JsonError {
         8 => Event.BeginObject
         9 => Event.EndObject
         10 => Event.Key(self.native.text())
-        _ => fail self.error(ErrorKind.Syntax)
+        _ => {
+            let kind = if self.native.where(0).startsWith("cannot read") { ErrorKind.Io } else { ErrorKind.Syntax }
+            fail self.error(kind)
+        }
     }
     some(event)
 }
@@ -395,9 +404,26 @@ pub fn Writer.endObject(self) {
     self.native.bracket(false, true)
 }
 
-/// The document written so far.
+/// A JSON document written value by value to a stream, which receives the
+/// output as it grows.
+pub fn writerTo(stream: jsonio.Writer, pretty: Bool = false, canonical: Bool = false): Writer {
+    Writer { native: jsonnative.streamWriter(stream, pretty, canonical) }
+}
+
+/// The document written so far; empty for a writer to a stream, which
+/// `flush` ends instead.
 pub fn Writer.finish(self): String {
     self.native.finish()
+}
+
+/// Ends the document of a writer to a stream: delivers what is pending and
+/// reports a failure to write.
+pub fn Writer.flush(self): Unit ! JsonError {
+    _ = self.native.finish()
+    let failure = self.native.error()
+    if failure.length() > 0 {
+        fail streamError(failure)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -424,7 +450,11 @@ pub fn encode[T: Encode](value: T, pretty: Bool = false, canonical: Bool = false
 
 /// A value of `T` from JSON text, which must hold exactly one value.
 pub fn decode[T: Decode](text: String, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): T ! JsonError {
-    let input = reader(text, unknownFields, allowDuplicateKeys)
+    whole[T](reader(text, unknownFields, allowDuplicateKeys))
+}
+
+/// The one value a reader holds.
+fn whole[T: Decode](input: Reader): T ! JsonError {
     let first = input.value()?
     let value = Decode.decodeJson[T](input, first)?
     match input.next()? {
@@ -451,20 +481,16 @@ pub fn fromValue[T: Decode](value: Value): T ! JsonError {
     decode[T](encode(value))
 }
 
-/// A value from a stream, which must hold exactly one.
+/// A value from a stream, which must hold exactly one, read as it arrives.
 pub fn decodeFrom[T: Decode](stream: jsonio.Reader, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): T ! JsonError {
-    match stream.readText() {
-        ok(text) => decode[T](text, unknownFields, allowDuplicateKeys)?
-        err(error) => fail streamError("cannot read the stream: {error}")
-    }
+    whole[T](readerFrom(stream, unknownFields, allowDuplicateKeys))
 }
 
-/// Writes the JSON text of a value to a stream.
+/// Writes the JSON text of a value to a stream as it is produced.
 pub fn encodeTo[T: Encode](value: T, stream: jsonio.Writer, pretty: Bool = false, canonical: Bool = false): Unit ! JsonError {
-    match stream.write(encode(value, pretty, canonical)) {
-        ok(_) => {}
-        err(error) => fail streamError("cannot write the stream: {error}")
-    }
+    let out = writerTo(stream, pretty, canonical)
+    value.encodeJson(out)
+    out.flush()?
 }
 
 fn streamError(message: String): JsonError {
