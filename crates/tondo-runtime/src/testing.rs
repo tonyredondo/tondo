@@ -49,6 +49,8 @@ struct Runner {
     running: Vec<u32>,
     /// The error the entry that just ended returned.
     error: Option<String>,
+    /// Where the last error left a test or a setup.
+    location: Option<String>,
     /// Suites whose setup reached their members.
     reached: Vec<bool>,
     /// The tags of each entry.
@@ -121,6 +123,7 @@ pub unsafe extern "C" fn tondo_rt_test_start(table: *const Node, count: usize) {
         sequence: 0,
         running: Vec::new(),
         error: None,
+        location: None,
         tags: HashMap::new(),
     };
     *RUNNER.lock().unwrap_or_else(|e| e.into_inner()) = Some(runner);
@@ -152,6 +155,7 @@ pub unsafe extern "C" fn tondo_rt_test_members(members: *const Member, count: us
             }
             r.running.push(node);
             r.error = None;
+            r.location = None;
             r.reached[node as usize] = false;
             r.frame("start", node, b"");
             Some((member, node))
@@ -160,6 +164,11 @@ pub unsafe extern "C" fn tondo_rt_test_members(members: *const Member, count: us
         let state = (!with(|r| r.suites[node as usize]).unwrap_or(true)).then(State::save);
         let member = &members[member];
         unsafe { (member.glue)(member.object) };
+        // A panic in another task cancelled this one: its cleanups run as
+        // it returns, and the worker ends.
+        if crate::tasks::cancelled() {
+            return;
+        }
         let dirty = state.is_some_and(|state| state.restore());
         with(|r| {
             r.running.pop();
@@ -204,7 +213,7 @@ impl State {
         State {
             directory: std::env::current_dir().ok(),
             environment: std::env::vars_os().collect(),
-            tasks: crate::tasks::LIVE_TASKS.load(Ordering::SeqCst),
+            tasks: crate::tasks::live_tasks(),
         }
     }
 
@@ -231,7 +240,7 @@ impl State {
         }
         // A finished task is freed just after it ends.
         for _ in 0..100 {
-            if crate::tasks::LIVE_TASKS.load(Ordering::SeqCst) <= self.tasks {
+            if crate::tasks::live_tasks() <= self.tasks {
                 return false;
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
@@ -240,11 +249,24 @@ impl State {
     }
 }
 
-/// The error a test or a setup returned, as `main` reports it.
+/// The error a test or a setup returned, as `main` reports it, and where
+/// it left.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_test_error(description: *const Str) {
     let text = String::from_utf8_lossy(unsafe { str_bytes(description) }).into_owned();
-    with(|r| r.error = Some(text));
+    with(|r| {
+        r.error = Some(match r.location.take() {
+            Some(location) => format!("{text}\n --> {location}"),
+            None => text,
+        })
+    });
+}
+
+/// Where an error leaves a test or a setup: its `fail` or its `?`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_test_where(location: *const Str) {
+    let text = String::from_utf8_lossy(unsafe { str_bytes(location) }).into_owned();
+    with(|r| r.location = Some(text));
 }
 
 /// `testing.log(message)`.

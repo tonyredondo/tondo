@@ -749,3 +749,19 @@ skip. Workers report through frames on stderr, and mark stdout at each
 frame, so each entry gets the output written while it ran. Panic locations
 use a file's path in its package (`src/main_test.to:12:5`).
 
+## 2026-10-22 — A panic cancels every task; where a test's error left
+
+A panic in any task runs that task's `defer`s and then cancels every other
+task, which runs its own at its next wait, as cancellation does (11.11,
+11.15); the process ends once the main task and the rest have finished, or
+after five seconds if one keeps computing without waiting. Before, only the
+panicking task cleaned up, so a panic in a task a test started skipped the
+test's cleanup and its suite's teardown, and `main`'s `defer`s in any
+program.
+
+A test or a setup that ends with an error reports the `?` or `fail` the
+error left through, which the runtime learns on that path only; errors stay
+plain values without a trace. `tondo test` keeps the test executable and
+its tree in the cache, named after everything the build reads, and runs
+them without compiling while nothing changes.
+

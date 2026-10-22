@@ -156,15 +156,31 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             other => return Err(format!("unknown option {other}\n{USAGE}")),
         }
     }
-    let analysis = driver::analyze_tests(&path)?;
-    if !analysis.diags.list.is_empty() {
-        eprint!("{}", analysis.diags.render(&analysis.sources));
-    }
-    let Some(program) = &analysis.program else {
-        return Ok(ExitCode::FAILURE);
+    // The build is reused while nothing it reads changes.
+    let dir = runner::build_dir(&path)?;
+    let (executable, tree_file) = (dir.join("tests"), dir.join("tree"));
+    let tree = match runner::Tree::load(&tree_file).filter(|_| executable.is_file()) {
+        Some(tree) => tree,
+        None => {
+            let analysis = driver::analyze_tests(&path)?;
+            if !analysis.diags.list.is_empty() {
+                eprint!("{}", analysis.diags.render(&analysis.sources));
+            }
+            let Some(program) = &analysis.program else {
+                return Ok(ExitCode::FAILURE);
+            };
+            let locations = program.tests.iter().map(|n| analysis.sources.location(n.span)).collect();
+            let tree = runner::Tree { nodes: program.tests.clone(), locations };
+            std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+            // Linked aside and renamed, so another run of the same tests keeps its own.
+            let partial = executable.with_extension(format!("partial-{}", std::process::id()));
+            driver::link(&driver::object(&analysis)?, &partial, &analysis.libraries)?;
+            std::fs::rename(&partial, &executable)
+                .map_err(|e| format!("cannot write {}: {e}", executable.display()))?;
+            tree.save(&tree_file)?;
+            tree
+        }
     };
-    let locations = program.tests.iter().map(|n| analysis.sources.location(n.span)).collect();
-    let tree = runner::Tree { nodes: program.tests.clone(), locations };
     let selected = runner::select(&tree, &options)?;
     if selected.is_empty() {
         let message = match (&options.filter, &options.exact) {
@@ -186,14 +202,6 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         }
         return Ok(ExitCode::SUCCESS);
     }
-    let executable = runner::executable_path(&std::fs::canonicalize(&path).map_err(|e| e.to_string())?);
-    if let Some(dir) = executable.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    }
-    // Linked aside and renamed, so another run of the same tests keeps its own.
-    let partial = executable.with_extension(format!("partial-{}", std::process::id()));
-    driver::link(&driver::object(&analysis)?, &partial, &analysis.libraries)?;
-    std::fs::rename(&partial, &executable).map_err(|e| format!("cannot write {}: {e}", executable.display()))?;
     let started = std::time::Instant::now();
     // Each test's line in canonical order, as soon as the ones before it
     // are known.
@@ -227,11 +235,16 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     for outcome in &outcomes {
         let node = &tree.nodes[outcome.node as usize];
         let what = if node.suite {
-            format!("suite {} ({})", node.id, if outcome.teardown { "teardown" } else { "setup" })
+            match outcome.status {
+                Status::Passed => format!("suite {}", node.id),
+                _ if outcome.teardown => format!("suite {} (teardown)", node.id),
+                _ => format!("suite {} (setup)", node.id),
+            }
         } else {
             node.id.clone()
         };
         let detail = match &outcome.status {
+            Status::Error(error) if error.contains("\n --> ") => format!("error: {error}"),
             Status::Error(error) => format!("error: {error}\n --> {}", tree.locations[outcome.node as usize]),
             Status::Panic(text) => text.clone(),
             Status::Timeout => format!("timed out after {}s", options.timeout.as_secs_f64()),

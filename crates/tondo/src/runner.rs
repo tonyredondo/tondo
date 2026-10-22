@@ -33,6 +33,36 @@ pub struct Tree {
 }
 
 impl Tree {
+    /// Writes the tree beside the executable it describes, one node a line:
+    /// its parent, whether it is a suite, its identity and its location.
+    pub fn save(&self, path: &Path) -> Result<(), String> {
+        let lines: Vec<String> = self
+            .nodes
+            .iter()
+            .zip(&self.locations)
+            .map(|(n, location)| format!("{}\t{}\t{}\t{location}", n.parent, n.suite as u8, n.id))
+            .collect();
+        let partial = path.with_extension(format!("partial-{}", std::process::id()));
+        std::fs::write(&partial, lines.join("\n")).map_err(|e| format!("cannot write {}: {e}", partial.display()))?;
+        std::fs::rename(&partial, path).map_err(|e| format!("cannot write {}: {e}", path.display()))
+    }
+
+    /// The tree `save` wrote, if it is there.
+    pub fn load(path: &Path) -> Option<Tree> {
+        let text = std::fs::read_to_string(path).ok()?;
+        let mut tree = Tree { nodes: Vec::new(), locations: Vec::new() };
+        for line in text.lines() {
+            let mut parts = line.splitn(4, '\t');
+            let parent = parts.next()?.parse().ok()?;
+            let suite = parts.next()? == "1";
+            let id = parts.next()?.to_string();
+            let span = crate::source::Span::new(0, 0);
+            tree.nodes.push(TestNodeInfo { id, parent, suite, span });
+            tree.locations.push(parts.next()?.to_string());
+        }
+        Some(tree)
+    }
+
     fn within(&self, mut node: u32, ancestor: u32) -> bool {
         loop {
             if node == ancestor {
@@ -510,10 +540,17 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
-/// Where the test executable of a project is built.
-pub fn executable_path(dir: &Path) -> PathBuf {
-    let key = crate::driver::fingerprint(&[dir.as_os_str().as_encoded_bytes()]);
-    crate::driver::cache_dir().join("test").join(key).join("tests")
+/// Where the test build of the project at `path` is kept: a directory
+/// named after everything the build reads, with the executable and its tree.
+pub fn build_dir(path: &Path) -> Result<PathBuf, String> {
+    let identity = crate::driver::compiler_identity();
+    let mut parts = vec![identity.into_bytes()];
+    for input in crate::driver::test_inputs(path)? {
+        parts.push(input.as_os_str().as_encoded_bytes().to_vec());
+        parts.push(std::fs::read(&input).map_err(|e| format!("cannot read {}: {e}", input.display()))?);
+    }
+    let key = crate::driver::fingerprint(&parts.iter().map(Vec::as_slice).collect::<Vec<_>>());
+    Ok(crate::driver::cache_dir().join("test").join(key))
 }
 
 /// The outcome of each test and suite, the last one of each node when it

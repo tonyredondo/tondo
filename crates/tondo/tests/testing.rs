@@ -39,7 +39,7 @@ test sample::unit::sample::spinsForever ... TIMEOUT
 
 --- suite sample::unit::sample::brokenSetup (setup)
 error: ParseError.Empty
- --> src/main_test.to:55:7
+ --> src/main_test.to:56:17
 
 --- sample::unit::sample::failsAnAssertion
 panic[P0007]: assertion-failed: twice(2) is 4
@@ -49,7 +49,7 @@ about to fail
 
 --- sample::unit::sample::returnsAnError
 error: ParseError.Empty
- --> src/main_test.to:14:6
+ --> src/main_test.to:15:18
 
 --- suite sample::unit::sample::skipped (setup)
 skipped: no network
@@ -91,6 +91,52 @@ fn selects_and_lists() {
     assert_eq!(status, 0);
     let (_, _, status) = tondo(&sample(), &["test", "--filter", "skipsWithAReason", "--deny-skips"]);
     assert_eq!(status, 1);
+}
+
+/// A panic in a task a test started still runs the test's cleanups and its
+/// suite's teardown; the next test runs in a new worker.
+#[test]
+fn tears_down_after_a_panic_in_a_task() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("testing-task-panic");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"tasks\"\n").unwrap();
+    std::fs::write(dir.join("src/main.to"), "fn main() {}\n").unwrap();
+    let tests = "\
+import std.console
+
+fn boom() {
+    panic(\"in a task\")
+}
+
+suite service {
+    defer console.println(\"stop service\")
+
+    test panicsInATask {
+        defer console.println(\"test cleanup\")
+        let job = spawn boom()
+        job.wait()
+    }
+
+    test runsAfter {}
+}
+";
+    std::fs::write(dir.join("src/main_test.to"), tests).unwrap();
+    let (stdout, _, status) = tondo(&dir, &["test"]);
+    let expected = "\
+test tasks::unit::tasks::service::panicsInATask ... FAILED
+test tasks::unit::tasks::service::runsAfter ... ok
+
+--- tasks::unit::tasks::service::panicsInATask
+panic[P0008]: explicit-panic: in a task
+ --> src/main_test.to:4:5
+stdout:
+test cleanup
+stop service
+
+FAILED. 1 passed; 1 failed; 0 skipped; 0 blocked
+";
+    assert_eq!((untimed(&stdout).as_str(), status), (expected, 1));
 }
 
 #[test]

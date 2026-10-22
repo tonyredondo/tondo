@@ -617,8 +617,8 @@ fn work(main: bool) -> i32 {
                 if let Some(stack) = task.stack.take() {
                     recycle(stack);
                 }
+                tasks().remove(&(&*task as *const Task as usize));
                 drop(task);
-                LIVE_TASKS.fetch_sub(1, Ordering::SeqCst);
                 if was_main {
                     MAIN_DONE.store(true, Ordering::SeqCst);
                     // Take the queue's lock so the main thread cannot miss
@@ -826,14 +826,96 @@ extern "C" fn trampoline() -> ! {
     runtime_fault("a finished task resumed")
 }
 
-/// Tasks created and not yet freed, which a test runner compares before
-/// and after a test.
-pub(crate) static LIVE_TASKS: AtomicUsize = AtomicUsize::new(0);
+/// Every task created and not yet freed: a panic cancels them, and a test
+/// runner counts them before and after a test.
+static TASKS: std::sync::LazyLock<Mutex<std::collections::HashSet<usize>>> = std::sync::LazyLock::new(Default::default);
+
+fn tasks() -> std::sync::MutexGuard<'static, std::collections::HashSet<usize>> {
+    TASKS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// How many tasks are alive.
+pub(crate) fn live_tasks() -> usize {
+    tasks().len()
+}
+
+/// How long a panic waits for the other tasks to run their cleanups.
+const PANIC_GRACE: Duration = Duration::from_secs(5);
+
+/// The exit status of a panic or a test's skip that ends the program.
+static ENDING: AtomicUsize = AtomicUsize::new(usize::MAX);
+
+/// After a panic, or a test's skip, ran its task's cleanups (11.11): cancels
+/// every other task, which runs its own `defer`s at its next wait, and
+/// finishes this one. The process then ends with `status` once the main
+/// task has finished and the other tasks with it, or after `PANIC_GRACE`.
+pub(crate) fn end_all(status: i32) -> ! {
+    let _ = ENDING.compare_exchange(usize::MAX, status as usize, Ordering::SeqCst, Ordering::SeqCst);
+    static WATCHDOG: std::sync::Once = std::sync::Once::new();
+    WATCHDOG.call_once(|| {
+        spawn_thread(Some(64 * 1024), || {
+            std::thread::sleep(PANIC_GRACE);
+            flush_stdout();
+            super::process::cancel_live();
+            std::process::exit(ENDING.load(Ordering::SeqCst) as i32)
+        });
+    });
+    let me = current();
+    for &task in tasks().iter() {
+        if task as *mut Task != me {
+            unsafe { cancel_task(task as *mut Task) };
+        }
+    }
+    if me.is_null() {
+        flush_stdout();
+        super::process::cancel_live();
+        std::process::exit(status)
+    }
+    unsafe {
+        let join = (*me).join;
+        if (*me).main {
+            MAIN_STATUS.store(status as usize, Ordering::SeqCst);
+        } else if !(*me).foreign.is_null() {
+            // The thread of C that waits for the callback goes on.
+            let call = &*(*me).foreign;
+            *call.done.lock().unwrap_or_else(|e| e.into_inner()) = true;
+            call.finished.notify_one();
+        } else if !join.is_null() {
+            // Its join completes without a result, so whoever waits for
+            // it goes on and nothing releases what it never made.
+            if !(*join).result.is_null() {
+                std::ptr::write_bytes((*join).result, 0, (*join).size);
+            }
+            (*join).taken = true;
+            if complete(join) {
+                DETACHED.lock().unwrap_or_else(|e| e.into_inner()).retain(|&j| j != join as usize);
+                tondo_rt_join_release(join);
+            }
+        }
+        (*me).finished = true;
+        switch(&mut (*me).sp, *home());
+    }
+    runtime_fault("a finished task resumed")
+}
+
+/// When the main task has finished after a panic: waits for the other
+/// tasks to run their cleanups, and gives the panic's exit status.
+#[cfg_attr(not(tondo_staticlib), allow(dead_code))]
+pub(crate) fn ending() -> Option<i32> {
+    let status = ENDING.load(Ordering::SeqCst);
+    if status == usize::MAX {
+        return None;
+    }
+    let deadline = Instant::now() + PANIC_GRACE;
+    while live_tasks() > 0 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    Some(status as i32)
+}
 
 fn new_task(stack: Stack, body: *mut u8, code: *const u8, kind: ResultKind, join: *mut JoinObject) -> *mut Task {
-    LIVE_TASKS.fetch_add(1, Ordering::SeqCst);
     let sp = unsafe { initial_stack(stack.top()) };
-    Box::into_raw(Box::new(Task {
+    let task = Box::into_raw(Box::new(Task {
         sp,
         stack: Some(stack),
         body,
@@ -849,7 +931,9 @@ fn new_task(stack: Stack, body: *mut u8, code: *const u8, kind: ResultKind, join
         finished: false,
         main: join.is_null(),
         foreign: std::ptr::null(),
-    }))
+    }));
+    tasks().insert(task as usize);
+    task
 }
 
 /// Runs the body of a callback C made: on this worker when C called back

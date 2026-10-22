@@ -1,22 +1,19 @@
+// A panic in a task runs its cleanups and cancels the other tasks, which
+// run theirs at their next wait, `main` included (11.11).
 import std.console
 
-fn note(text: String) {
-    console.println(text)
-}
-
-fn crash(n: Int): Int {
-    defer note("cleanup in the task")
-    let values = [1, 2]
-    values[n]
+fn boom() {
+    defer console.println("task cleanup")
+    panic("in a task")
 }
 
 fn main() {
-    defer note("not run: main's cleanup")
-    let job = spawn crash(5)
-    console.println("waiting")
-    console.println("unreachable {job.wait()}")
+    defer console.println("main cleanup")
+    let job = spawn boom()
+    job.wait()
+    console.println("not reached")
 }
 
-// expect-stdout: waiting
-// expect-stdout: cleanup in the task
-// expect-panic: P0001
+// expect-panic: P0008
+// expect-stdout: task cleanup
+// expect-stdout: main cleanup

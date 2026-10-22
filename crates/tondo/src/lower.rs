@@ -215,6 +215,14 @@ impl Builder<'_> {
     }
 
     /// Evaluates `rvalue` into a new temporary; owned results join the frame.
+    /// In a test or a setup, tells the runner where an error leaves it.
+    fn note_failure(&mut self, span: Span) {
+        if self.function.test {
+            let call = Rvalue::Call(hir::Callee::Std(hir::StdFn::TestWhere), Vec::new());
+            self.temp(Ty::UNIT, call, span);
+        }
+    }
+
     fn temp(&mut self, ty: Ty, rvalue: Rvalue, span: Span) -> Operand {
         // Everything but a copy of a place produces a new value.
         let owned = !matches!(rvalue, Rvalue::Use(_));
@@ -870,7 +878,9 @@ impl Builder<'_> {
                 self.emit_return(value);
             }
             hir::Stmt::Fail(error) => {
+                let span = error.span;
                 let error = self.expr(error);
+                self.note_failure(span);
                 self.emit_fail(error);
             }
             hir::Stmt::Break | hir::Stmt::Continue => {
@@ -1292,6 +1302,7 @@ impl Builder<'_> {
                 } else {
                     let TyKind::Result(_, error_ty) = *self.types.kind(inner.ty) else { unreachable!() };
                     let error = self.widen(Operand::Copy(place.variant_field(ERR, 0)), error_ty, e.span);
+                    self.note_failure(e.span);
                     self.emit_fail(error);
                 }
                 self.switch_to(next);

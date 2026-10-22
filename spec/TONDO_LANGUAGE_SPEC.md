@@ -3720,8 +3720,10 @@ programa. Cuando `main` termina, el runtime cancela las tareas sueltas que sigan
 corriendo y espera su cleanup antes de finalizar el proceso.
 
 Un pánico en cualquier tarea termina el programa: el runtime informa el pánico,
-ejecuta los `defer` pendientes de esa tarea y finaliza el proceso, como un
-pánico de la tarea principal.
+ejecuta los `defer` pendientes de esa tarea y cancela todas las demás (11.15),
+que ejecutan los suyos al llegar a su siguiente espera. El proceso termina
+cuando la tarea principal y las demás han acabado, o a los cinco segundos si
+alguna sigue calculando sin esperar.
 
 ### 11.12 Grupos de tareas
 

@@ -206,6 +206,15 @@ pub fn inputs(path: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(inputs)
 }
 
+/// The files a test build of the project at `path` reads: those of its
+/// build, its unit test companions and its integration test roots.
+pub fn test_inputs(path: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut inputs = inputs(path)?;
+    let (companions, roots) = project::test_sources(path, "")?;
+    inputs.extend(companions.into_iter().chain(roots).map(|f| f.path));
+    Ok(inputs)
+}
+
 /// Lowers a checked program to a native object file.
 pub fn object(analysis: &Analysis) -> Result<Vec<u8>, String> {
     let program = analysis.program.as_ref().expect("object() requires a checked program");

@@ -1711,9 +1711,7 @@ pub unsafe extern "C" fn tondo_rt_panic(mut code: u32, message: *const Str, loca
     } else if code == testing::SKIP {
         testing::terminal(code, &format!("{}\n --> {location}", message.unwrap_or_default()));
         run_cleanups();
-        process::cancel_live();
-        flush_stdout();
-        std::process::exit(0)
+        tasks::end_all(0)
     }
     let mut text = format!("panic[P{code:04}]: {}", panic_name(code));
     if let Some(message) = message {
@@ -1727,9 +1725,8 @@ pub unsafe extern "C" fn tondo_rt_panic(mut code: u32, message: *const Str, loca
         let _ = writeln!(std::io::stderr(), "{report}");
     }
     run_cleanups();
-    process::cancel_live();
-    flush_stdout();
-    std::process::exit(PANIC_EXIT_CODE)
+    // The other tasks run their cleanups too, before the process ends.
+    tasks::end_all(PANIC_EXIT_CODE)
 }
 
 /// Reports the error a fallible `main` returned (spec 20.10).
@@ -1772,6 +1769,11 @@ unsafe extern "C" {
 #[unsafe(no_mangle)]
 pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
     let mut status = tasks::run_main(tondo_main);
+    if let Some(status) = tasks::ending() {
+        process::cancel_live();
+        flush_stdout();
+        return status;
+    }
     // Memory the shared collections retired, kept while readers might see it.
     shared::flush();
     if let Some(failure) = finish_stdout()

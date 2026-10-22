@@ -892,6 +892,7 @@ impl<'a> Checker<'a> {
             result: Ty::UNIT,
             body,
             moves: HashSet::new(),
+            test: false,
         };
         self.ownership(&mut function, &cx.params);
         function
@@ -3240,6 +3241,7 @@ impl<'a> Checker<'a> {
             result: signature.result,
             body,
             moves: HashSet::new(),
+            test: false,
         };
         self.ownership(&mut function, &cx.params);
         function
@@ -3290,6 +3292,7 @@ impl<'a> Checker<'a> {
             result,
             body,
             moves: HashSet::new(),
+            test: false,
         };
         self.ownership(&mut function, &cx.params);
         function
@@ -3556,6 +3559,7 @@ impl<'a> Checker<'a> {
             result,
             body,
             moves: HashSet::new(),
+            test,
         };
         // A cleanup runs once, so it may give its captures away.
         if !deferred {
@@ -3679,6 +3683,7 @@ impl<'a> Checker<'a> {
             result,
             body,
             moves: HashSet::new(),
+            test: false,
         }));
         let values = values.into_iter().enumerate().map(|(i, a)| (i as u32, a)).collect();
         Self::mk(hir::ExprKind::Record(values), env_ty, span)

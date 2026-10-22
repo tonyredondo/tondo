@@ -98,6 +98,9 @@ pub struct Function {
     /// position; lowering releases a binding's references there instead of
     /// at the end of its scope.
     pub moves: HashSet<(LocalId, Span)>,
+    /// Whether it runs a test or a suite's setup, which tells the runner
+    /// where an error leaves it (testing 7.6).
+    pub test: bool,
 }
 
 #[derive(Clone)]
@@ -712,6 +715,8 @@ pub enum StdFn {
     /// `testing.log(message)` and `testing.tags(values)` (testing 11.2).
     TestLog,
     TestTags,
+    /// Tells the runner where an error leaves a test or a setup.
+    TestWhere,
 }
 
 /// The raw operations of a `Pointer[T]` that touch memory or move it.

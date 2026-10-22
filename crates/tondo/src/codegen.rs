@@ -98,6 +98,7 @@ enum Rt {
     TestError,
     TestLog,
     TestTags,
+    TestWhere,
     ArrayNew,
     ArrayRetain,
     ArrayRelease,
@@ -297,6 +298,7 @@ impl Rt {
             Rt::TestError => ("tondo_rt_test_error", &[I64], &[]),
             Rt::TestLog => ("tondo_rt_test_log", &[I64], &[]),
             Rt::TestTags => ("tondo_rt_test_tags", &[I64], &[]),
+            Rt::TestWhere => ("tondo_rt_test_where", &[I64], &[]),
             Rt::ArrayNew => ("tondo_rt_array_new", &[I64, I64], &[I64]),
             Rt::ArrayRetain => ("tondo_rt_array_retain", &[I64], &[]),
             Rt::ArrayRelease => ("tondo_rt_array_release", &[I64, I64, I64], &[]),
@@ -4112,6 +4114,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Callee::Std(StdFn::TimeSleep) => self.e.call_rt(Rt::Sleep, &values),
             Callee::Std(StdFn::TestLog) => self.e.call_rt(Rt::TestLog, &values),
             Callee::Std(StdFn::TestTags) => self.e.call_rt(Rt::TestTags, &values),
+            Callee::Std(StdFn::TestWhere) => {
+                let location = self.location(self.span);
+                self.e.call_rt(Rt::TestWhere, &[location])
+            }
             Callee::Std(
                 StdFn::Fs(_)
                 | StdFn::Path(_)
