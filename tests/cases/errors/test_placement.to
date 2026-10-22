@@ -1,0 +1,11 @@
+// `test` and `suite` belong at the top level of a test file or in a suite.
+fn helper() {
+    test inner {}
+}
+
+pub test exported {}
+
+fn main() {}
+
+// expect-error: E0004 a `test` is declared at the top level of a test file or inside a `suite`
+// expect-error: E0004 a `test` is never `pub`: remove `pub`

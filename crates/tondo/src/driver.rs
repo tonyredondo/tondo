@@ -27,6 +27,25 @@ pub struct Analysis {
 /// Reads, parses and checks a program: a project directory (toolchain 3)
 /// or a single source file.
 pub fn analyze(path: &Path) -> Result<Analysis, String> {
+    analyze_build(path, false)
+}
+
+/// Reads, parses and checks the test build of a project (testing 5): its
+/// sources, its unit test companions and its integration test roots. The
+/// sources are checked first on their own, so tests cannot make code that
+/// is wrong without them build.
+pub fn analyze_tests(path: &Path) -> Result<Analysis, String> {
+    if !path.is_dir() {
+        return Err(format!("{} is not a project: `tondo test` runs the tests of a project directory", path.display()));
+    }
+    let production = analyze(path)?;
+    if production.diags.has_errors() {
+        return Ok(production);
+    }
+    analyze_build(path, true)
+}
+
+fn analyze_build(path: &Path, tests: bool) -> Result<Analysis, String> {
     let mut sources = SourceMap::default();
     let mut diags = Diagnostics::default();
     let mut source_id = format!("root:{}", path.file_name().unwrap_or_default().to_string_lossy());
@@ -73,6 +92,38 @@ pub fn analyze(path: &Path) -> Result<Analysis, String> {
                 modules[position].files.push((parsed, is_root));
             }
         }
+        let tested = packages[0].name.clone();
+        if tests {
+            // Companions join the module of their directory; each root
+            // under `tests/` is a module of a package that depends on the
+            // tested one.
+            let (companions, roots) = project::test_sources(&packages[0].dir, &tested)?;
+            for file in companions {
+                let parsed = parse(&file.path, &mut sources, &mut diags)?;
+                let relative = file.path.strip_prefix(&packages[0].dir).unwrap_or(&file.path);
+                sources.set_identity(sources.len() - 1, relative.display().to_string(), file.module.join("."));
+                let Some(mut parsed) = parsed else { continue };
+                parsed.class = ast::SourceClass::Unit;
+                match modules.iter_mut().find(|m| m.package == 0 && m.path == file.module) {
+                    Some(module) => module.files.push((parsed, false)),
+                    None => modules.push(modules::ModuleSource {
+                        path: file.module,
+                        package: 0,
+                        files: vec![(parsed, false)],
+                    }),
+                }
+            }
+            let package = packages.len();
+            for file in roots {
+                let parsed = parse(&file.path, &mut sources, &mut diags)?;
+                let relative = file.path.strip_prefix(&packages[0].dir).unwrap_or(&file.path);
+                sources.set_identity(sources.len() - 1, relative.display().to_string(), file.module.join("."));
+                let Some(mut parsed) = parsed else { continue };
+                parsed.class = ast::SourceClass::Integration;
+                let path = std::iter::once(format!("{tested}_tests")).chain(file.module).collect();
+                modules.push(modules::ModuleSource { path, package, files: vec![(parsed, false)] });
+            }
+        }
         if diags.has_errors() {
             diags.sort(&sources);
             return Ok(Analysis { sources, diags, program: None, source_id, libraries });
@@ -81,9 +132,15 @@ pub fn analyze(path: &Path) -> Result<Analysis, String> {
             .into_iter()
             .map(|p| modules::PackageInfo { name: p.name, dependencies: p.dependencies.into_iter().collect() })
             .collect();
+        if tests {
+            let dependencies = [(tested.clone(), 0)].into_iter().collect();
+            packages.push(modules::PackageInfo { name: format!("{tested}_tests"), dependencies });
+        }
         stdlib::derive_json(&mut modules, &mut sources, &mut diags);
         stdlib::add(&mut modules, &mut packages, &mut sources, &mut diags);
-        modules::link(modules, root, &packages, &mut diags)
+        let mut module = modules::link(modules, root, &packages, &mut diags);
+        module.test_package = tests.then_some(tested);
+        module
     } else {
         let module = match parse(path, &mut sources, &mut diags)? {
             Some(module) => module,

@@ -1,0 +1,9 @@
+// A test in a program's own sources fails the build; tests live in test
+// files.
+suite outside {
+    test inside {}
+}
+
+fn main() {}
+
+// expect-error: E2001 a `suite` belongs in a test file

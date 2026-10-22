@@ -618,6 +618,7 @@ fn work(main: bool) -> i32 {
                     recycle(stack);
                 }
                 drop(task);
+                LIVE_TASKS.fetch_sub(1, Ordering::SeqCst);
                 if was_main {
                     MAIN_DONE.store(true, Ordering::SeqCst);
                     // Take the queue's lock so the main thread cannot miss
@@ -825,7 +826,12 @@ extern "C" fn trampoline() -> ! {
     runtime_fault("a finished task resumed")
 }
 
+/// Tasks created and not yet freed, which a test runner compares before
+/// and after a test.
+pub(crate) static LIVE_TASKS: AtomicUsize = AtomicUsize::new(0);
+
 fn new_task(stack: Stack, body: *mut u8, code: *const u8, kind: ResultKind, join: *mut JoinObject) -> *mut Task {
+    LIVE_TASKS.fetch_add(1, Ordering::SeqCst);
     let sp = unsafe { initial_stack(stack.top()) };
     Box::into_raw(Box::new(Task {
         sp,

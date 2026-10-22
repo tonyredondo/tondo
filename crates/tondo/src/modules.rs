@@ -109,6 +109,11 @@ pub fn link(mut modules: Vec<ModuleSource>, root: usize, packages: &[PackageInfo
                     edges[index].push((target, import.span));
                     continue;
                 }
+                if path == ["std", "testing"] && file.class == SourceClass::Production {
+                    let message =
+                        "`std.testing` is only for tests: import it in a `_test.to` file or a file under `tests/`";
+                    diags.error("E2003", import.span, message);
+                }
                 if path[0] == "std" {
                     let duplicate = std_imports.iter().find(|i| i.alias_name() == alias.name);
                     match duplicate {
@@ -166,12 +171,14 @@ pub fn link(mut modules: Vec<ModuleSource>, root: usize, packages: &[PackageInfo
     }
     report_cycles(&modules, &edges, diags);
 
-    let mut merged = Module { imports: std_imports, ..Module::default() };
+    let module_paths = modules.iter().map(|m| m.path.clone()).collect();
+    let mut merged = Module { imports: std_imports, module_paths, ..Module::default() };
     let paths: Vec<String> = modules.iter().map(|m| m.path.join(".")).collect();
     for (index, module) in modules.into_iter().enumerate() {
         for ((file, is_root), imports) in module.files.into_iter().zip(&file_imports[index]) {
+            let class = file.class;
             let mut linker =
-                Linker { module: index, imports, decls: &decls, prefixes: &prefixes, paths: &paths, diags };
+                Linker { module: index, class, imports, decls: &decls, prefixes: &prefixes, paths: &paths, diags };
             let Module { items, statements, .. } = file;
             for mut item in items {
                 linker.item(&mut item);
@@ -188,6 +195,19 @@ pub fn link(mut modules: Vec<ModuleSource>, root: usize, packages: &[PackageInfo
         }
     }
     merged
+}
+
+/// The name of a `pub` declaration.
+fn public_name(item: &Item) -> Option<&Ident> {
+    match item {
+        Item::Fn(f) if f.public => Some(&f.name),
+        Item::Type(t) if t.public => Some(&t.name),
+        Item::Alias(a) if a.public => Some(&a.name),
+        Item::Const(c) if c.public => Some(&c.name),
+        Item::Enum(e) if e.public => Some(&e.name),
+        Item::Trait(t) if t.public => Some(&t.name),
+        _ => None,
+    }
 }
 
 fn declarations(module: &ModuleSource) -> Declarations {
@@ -216,7 +236,7 @@ fn declarations(module: &ModuleSource) -> Declarations {
                 Item::Trait(t) => {
                     decls.types.insert(t.name.name.clone(), t.public);
                 }
-                Item::Fn(_) | Item::Impl(_) => {}
+                Item::Fn(_) | Item::Impl(_) | Item::Test(_) => {}
             }
         }
     }
@@ -280,6 +300,8 @@ impl Import {
 
 struct Linker<'a> {
     module: usize,
+    /// The class of the file being linked.
+    class: SourceClass,
     /// This file's imports of the package's modules.
     imports: &'a HashMap<String, usize>,
     decls: &'a [Declarations],
@@ -354,6 +376,12 @@ impl Linker<'_> {
 
     fn item(&mut self, item: &mut Item) {
         let module = self.module as u32;
+        if self.class != SourceClass::Production
+            && let Some(name) = public_name(item)
+        {
+            let message = format!("a test file cannot export `{}`: remove `pub`", name.name);
+            self.diags.error("E2003", name.span, message);
+        }
         match item {
             Item::Fn(f) => self.function(f, true),
             Item::Type(t) => {
@@ -402,6 +430,23 @@ impl Linker<'_> {
                 self.ty(&mut i.trait_ref);
                 self.ty(&mut i.target);
                 i.methods.iter_mut().for_each(|m| self.function(m, false));
+            }
+            Item::Test(node) => self.test_node(node),
+        }
+    }
+
+    /// A test or a suite: the module and class it belongs to, and the
+    /// paths in its body; its members see the suite's setup bindings.
+    fn test_node(&mut self, node: &mut TestNode) {
+        match node {
+            TestNode::Test(t) => {
+                (t.module, t.class) = (self.module as u32, self.class);
+                self.block(&mut t.body);
+            }
+            TestNode::Suite(s) => {
+                (s.module, s.class) = (self.module as u32, self.class);
+                s.setup.iter_mut().for_each(|stmt| self.stmt(stmt));
+                s.members.iter_mut().for_each(|member| self.test_node(member));
             }
         }
     }

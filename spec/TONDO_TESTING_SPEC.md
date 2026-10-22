@@ -1,10 +1,10 @@
 # Tondo: especificación del lenguaje y toolchain de testing
 
-- **Estado:** borrador normativo en desarrollo; implementación funcional y gate T0 vivo disponibles.
+- **Estado:** borrador normativo en desarrollo; el compilador nativo implementa el núcleo (sección 16).
 - **Edición objetivo:** Tondo 0.1.
 - **Especificación base:** [Tondo 0.1](./TONDO_LANGUAGE_SPEC.md).
-- **Formatos de tooling:** `tondo-test-report-0.1/8`,
-  `tondo-test-list-0.1/6`, `tondo-junit-report-0.1/5`,
+- **Formatos de tooling:** `tondo-test-report-0.1/1`,
+  `tondo-test-list-0.1/1`, `tondo-junit-report-0.1/1`,
   `tondo-test-artifacts-0.1/1` y `tondo-snapshot-store-0.1/1`.
 
 Esta especificación añade a Tondo las declaraciones `suite` y `test` y define
@@ -21,15 +21,12 @@ Un dominio temporal opt-in ejecuta suspensión, timers y deadlines contra un
 reloj monotónico virtual, avanza únicamente bajo quiescencia demostrable y
 permite observar fronteras temporales exactas sin `sleep` wall-clock. Repetición
 proactiva, artefactos por intento y snapshots textuales complementan esa
-evidencia sin introducir subtests dinámicos ni estado global. Inputs secretos,
-interrupción externa y cleanup asíncrono tienen fronteras explícitas para que el
-runner nunca presente una ejecución parcial o no reproducible como completa.
+evidencia sin introducir subtests dinámicos ni estado global. Interrupción
+externa y cleanup asíncrono tienen fronteras explícitas para que el runner nunca
+presente una ejecución parcial como completa.
 Forma parte del único borrador consolidado Tondo 0.1. La especificación
 principal incorpora las keywords, grammar, semántica general y diagnósticos; este
-documento fija el contrato especializado del runner y sus formatos. El tracker
-es únicamente el plan de implementación. Un compilador no puede anunciar
-conformidad completa Tondo 0.1 hasta implementar ambos contratos y pasar el
-grupo de testing de `tondo-conformance-draft`.
+documento fija el contrato especializado del runner y sus formatos.
 
 En este documento, **debe** expresa un requisito de conformidad, **no puede**
 expresa una prohibición, **puede** expresa una capacidad permitida y **se
@@ -84,9 +81,8 @@ El sistema de testing de Tondo persigue catorce objetivos:
     versionados y nunca se publican o actualizan implícitamente.
 11. Discovery, plan, orden y presentación canónica son deterministas y
    observables; todo campo operacional no reproducible se identifica como tal.
-12. Inputs públicos y secretos son explícitos; el runner representa un secreto
-    solo por descriptor, advierte que una copia explícita puede filtrarlo y no
-    promete redacción mágica.
+12. Un test ve el entorno de quien lo ejecuta y la raíz del proyecto como
+    directorio de trabajo; lo que cambie de ambos no llega al test siguiente.
 13. El código y las dependencias de test no cambian el artefacto de producción.
 14. El núcleo no introduce clases de test, annotations, macros, reflection ni
    hooks de ciclo de vida.
@@ -206,12 +202,8 @@ continúa llamando a las mismas APIs que usaría en producción y no recibe un
 con reloj de pared pertenecen a la biblioteca estándar Tondo 0.1, pero no son
 requisito del dominio virtual ni se virtualizan implícitamente.
 
-El gate de testing no puede anunciar tiempo virtual conforme hasta que exista
-esa especificación mínima y el adaptador de la VM la ejecute tanto con proveedor
-monotónico real como virtual. Sus módulos y bytes deben entrar versionados en el
-plan cerrado. El tracker puede secuenciar ese slice antes del resto de la
-librería estándar, pero no sustituirlo por nombres, duraciones o bridges
-privados del runner.
+El tiempo virtual se construye sobre ese sustrato de `std.time`, no sobre
+nombres, duraciones o bridges privados del runner.
 
 ### 2.5 Cleanup que espera
 
@@ -250,8 +242,7 @@ en su posición LIFO. La forma:
   pudiendo terminarla.
 
 La especificación principal incorpora esta extensión general de `defer`, su
-grammar, efectos y ownership. La implementación debe cerrar también MIR, runtime
-y cleanup antes de Gate T0. Una suite la reutiliza sin semántica especial:
+grammar, efectos y ownership. Una suite la reutiliza sin semántica especial:
 
 ~~~tondo
 suite remoteApi {
@@ -378,6 +369,10 @@ visible_node_id = package_name, "::", source_kind, "::",
                   identifier, { "::", identifier } ;
 source_kind     = "unit" | "integration" ;
 ~~~
+
+Un módulo se nombra por su path dentro del paquete; el módulo raíz, que no
+tiene path propio, usa el nombre del paquete:
+`application::unit::application::addsValues`.
 
 El nombre de paquete mostrado es el nombre local declarado por el manifiesto;
 la identidad interna conserva el `PackageId` completo para distinguir versiones
@@ -882,16 +877,11 @@ El artefacto contiene:
 - Árbol ordenado de suites/tests, parent IDs y source ranges.
 - Configuración y resultado estático de ownership por nodo.
 - Entradas privadas de setup y de tests hoja.
-- Operaciones verificadas de control de testing y la asociación de cada entrada
-  con su envelope privado de ejecución.
-- Operaciones verificadas de attachment y snapshot, snapshot store
+- Las operaciones de control de testing y la asociación de cada entrada con su
+  envelope privado de ejecución.
+- Las operaciones de attachment y snapshot, el snapshot store
   `tondo-snapshot-store-0.1/1`, su hash previo y el artifact store efectivo.
-- Operaciones verificadas de dominio temporal y su catálogo cerrado de puntos
-  de suspensión duraderos.
-- Layout comprobado de los snapshots `Copy + Send + Share` que cruzan cada
-  arista del árbol.
-- Perfil de inputs públicos, descriptores secretos sin sus valores y hashes
-  necesarios para reproducir el build.
+- Las operaciones del dominio temporal.
 
 No contiene un registro mutable de funciones ni descubre tests mediante
 reflection en runtime.
@@ -942,11 +932,23 @@ Cada participación de suite comienza además con su propio registro vacío de
 dominios virtuales; un dominio abierto y cerrado durante setup o teardown nunca
 se hereda por los envelopes de sus descendientes.
 
-Una implementación puede reutilizar threads, allocators o procesos internos
-solo si esa reutilización no expone otros valores, roots, tasks, handles,
-buffers, pánicos u output. No existen globals mutables Tondo que sobrevivan
-entre entradas. Esta libertad no aplica a una unidad de retry, cuya frontera de
-proceso nueva es obligatoria según 8.7. Los efectos externos —filesystem,
+Las hojas se ejecutan en procesos trabajadores. Un trabajador ejecuta hojas una
+tras otra como llamadas ordinarias, entrando en sus suites y saliendo de ellas:
+
+- Un error recuperable se registra y el trabajador continúa.
+- Un pánico, `testing.failNow` o `testing.skip` ejecuta el unwind de la entrada y
+  el teardown de las suites abiertas, se registra y termina el trabajador. El
+  siguiente test comienza en un trabajador nuevo, que vuelve a ejecutar el setup
+  de las suites que necesita.
+- Un timeout o un crash (una señal del sistema, por ejemplo desde código de C)
+  termina el trabajador desde fuera, y la ejecución continúa igual.
+- Entre hojas el runner restaura el directorio de trabajo y el entorno. Si una
+  hoja deja tasks vivas, el runner cambia de trabajador.
+
+No existen globals mutables Tondo, así que ningún valor Tondo pasa de una hoja a
+otra. Lo que una librería de C guarde en sus globales sí persiste entre hojas de
+un mismo trabajador. Una unidad de retry y cada iteración de repeat comienzan
+siempre en un trabajador nuevo (8.7, 8.8). Los efectos externos —filesystem,
 procesos, red, reloj o servicios— no se revierten mágicamente y deben aislarse
 mediante nombres, recursos y cleanup explícitos.
 
@@ -999,28 +1001,23 @@ por el thread del host. El controlador `VirtualTime` es un préstamo explícito
 para dirigir el reloj; no da acceso a identidad, estado, sinks ni políticas del
 test.
 
-HIR, MIR y bytecode representan estas operaciones mediante un catálogo cerrado.
-Sus verifiers solo las admiten dentro de un artefacto de test y ningún backend
-puede implementarlas como una escritura a un contexto global compartido.
+El compilador solo admite estas operaciones dentro de un artefacto de test.
 `std.testing` no exige la capability `console`; sus logs y tags utilizan canales
 del runner, no stdout ni stderr. El dominio virtual tampoco concede una
 capability de host ausente: sustituye únicamente el proveedor monotónico de las
 APIs temporales que ya fueron admitidas para el target.
 
-El frontend reserva los identificadores que comienzan por `__tondo` dentro de
-fuentes de test. Ese prefijo pertenece exclusivamente a nombres generados por
-el compilador y no forma parte de la API de `std.testing`. El origen sellado
-`GeneratedTesting`, no la ortografía por sí sola, autoriza sus operaciones
-internas: copiar un nombre interno a una fuente ordinaria se rechaza antes de
-emitir bytecode. El lowerer genera una única participación con el árbol
-seleccionado; setup, closures de hoja y cleanup atraviesan HIR, MIR, bytecode y
-VM comunes. El runner no reemplaza ese código por callbacks o por una máquina
-de lifecycle paralela.
+El setup de una suite, sus miembros y su cleanup son código ordinario: la suite
+es una función cuyo setup termina entregando al runner sus miembros como
+cierres, y cuyos `defer` forman su teardown. El runner no reemplaza ese código
+por callbacks ni por una máquina de lifecycle paralela.
 
 ### 7.3 Lifecycle de suite
 
-En cada participación de una suite en la ronda inicial o en una unidad de retry,
-la suite se ejecuta de esta forma:
+Una suite participa una vez en cada trabajador que ejecuta hojas suyas (7.1):
+con `--jobs 1` y sin pánicos, timeouts ni crashes, una sola vez por invocación;
+después de que uno termine un trabajador, el nuevo vuelve a entrar en las suites
+de las hojas que quedan. En cada participación, la suite se ejecuta de esta forma:
 
 1. Si no contiene ningún test seleccionado, no se entra en ella.
 2. El runner ejecuta su setup exactamente una vez para esa participación.
@@ -1127,12 +1124,13 @@ Un pánico termina el test actual después del unwind, no el proceso completo de
 runner. El runner conserva el código `P`, ubicación y stack trace disponibles y
 continúa con tests posteriores cuando el aislamiento sigue siendo válido.
 
-Un pánico en setup o teardown pertenece a la suite y sigue 7.3. Un abort fuera
-del modelo de pánico, corrupción del runtime o imposibilidad de restablecer
-aislamiento se clasifica como fallo de infraestructura. El runner puede detener
-el bosque restante porque ya no puede garantizar resultados fiables. En ese
-caso termina con exit `3` y no emite un reporte canónico incompleto; todo reporte
-`tondo-test-report-0.1/8` válido clasifica cada hoja seleccionada.
+Un pánico en setup o teardown pertenece a la suite y sigue 7.3. Un crash del
+proceso fuera del modelo de pánico, como una señal desde código de C, termina el
+trabajador: la entrada en curso queda `crashed`, con la señal o el estado de
+salida, y el resto continúa en un trabajador nuevo. Solo la pérdida de fiabilidad
+del propio runner es `infrastructure`; entonces termina con exit `3` y no emite
+un reporte canónico incompleto, porque todo reporte `tondo-test-report-0.1/1`
+válido clasifica cada hoja seleccionada.
 
 ### 7.6 Errores recuperables
 
@@ -1148,59 +1146,20 @@ deja que alcance al runner.
 ### 7.7 Inputs de host
 
 El runner no proporciona parámetros mágicos a suites ni tests. Los argumentos
-de proceso del programa Tondo son vacíos.
+de proceso del programa Tondo son vacíos y su entrada estándar está vacía.
 
 Entorno, cwd, filesystem, red, reloj, entropía y procesos solo existen mediante
-sus APIs y capabilities normales. El plan de test registra los inputs de host
-declarados. La invocación oficial:
+sus APIs y capabilities normales:
 
-- Usa como cwd inicial el directorio de proyecto asociado al manifiesto cuando
-  el target ofrece cwd; el path físico no entra en hashes ni reportes.
-- Proporciona un environment vacío salvo entradas explícitas materializadas en
-  el plan de test por el contrato del toolchain.
-- No concede una capability ausente en el target de producción únicamente por
-  tratarse de un test.
+- El directorio de trabajo inicial es la raíz del proyecto.
+- El entorno es el del proceso que ejecuta `tondo test`.
+- Entre hojas de un mismo trabajador, el runner restaura ambos (7.1).
+- No se concede una capability ausente en el target de producción únicamente
+  por tratarse de un test.
 
-Cada input declarado es **público** o **secreto**:
-
-- Los bytes, identidad lógica y metadata portable de un input público forman
-  parte del hash `public_sha256` del plan y pueden aparecer en diagnostics.
-- Un input secreto tiene nombre lógico, proveedor y una identidad de versión
-  opaca opcional. Como input del runner, su valor no entra en hashes,
-  interfaces, artifacts, JSON, JUnit ni output humano; únicamente entra su
-  descriptor.
-- `secret_profile_sha256` identifica únicamente la lista canónica de
-  descriptores `(nombre, proveedor, versión presente o ausente)`, nunca sus
-  valores. `secret_count` registra su cantidad sin revelar nombres en reportes.
-- Si un descriptor secreto carece de versión, la ejecución se marca
-  `secret-dependent-unversioned`; con todas las versiones presentes se marca
-  `secret-dependent-versioned`; sin secretos se marca `closed`.
-- Un secreto solo se materializa dentro del worker y se revoca al terminar el
-  intento o iteración. No puede convertirse en input de compilación, snapshot
-  esperado ni artifact implícito.
-
-Si un input público no puede cerrarse en el plan o un worker no puede
-materializar un secreto declarado, ninguna entrada de ese worker comienza. La
-invocación termina con exit `1` como input inválido y no presenta el trabajo
-anterior como reporte completo; sigue 15.6. No encontrar o autenticar un secreto
-no se convierte en skip. Si el valor ya materializado no puede revocarse o
-destruirse dentro de la frontera prometida, se ha perdido aislamiento y aplica
-exit `3`.
-
-La garantía termina cuando el propio programa copia el secreto a un log, tag,
-stream, failure, snapshot actual o attachment: ese canal puede revelar el valor
-o un hash derivado. El runner no puede redaccionar esos bytes con fiabilidad. La
-API y documentación de tooling deben advertirlo y los límites no sustituyen esa
-responsabilidad.
-Un reporter nunca inspecciona valores buscando coincidencias secretas: hacerlo
-sería incompleto, dependiente de encoding y una fuente de canales laterales.
-
-Filesystem, red, procesos y servicios externos pueden hacer que el resultado
-dependa de estado no representable por hashes. El reporte conserva el perfil de
-inputs declarado, pero no afirma reproducibilidad más amplia que esos inputs.
-
-Una implementación puede ofrecer un target de test con capacidades adicionales,
-pero ese target es distinto y debe quedar visible en el reporte.
+Filesystem, red, procesos, entorno y servicios externos pueden hacer que el
+resultado dependa de estado que el runner no controla; el reporte no afirma más
+reproducibilidad que la del árbol, la selección y el orden.
 
 Dentro de 7.9, las APIs monotónicas admitidas conservan sus firmas y capability,
 pero resuelven el proveedor virtual del dominio. Ese proveedor y su cero no son
@@ -1208,66 +1167,35 @@ inputs de host ni permiten acceder a una API temporal que el target rechazaba.
 
 ### 7.8 Límites y timeouts
 
-Cada test hoja y cada fase activa de setup o teardown se ejecuta con límites
-finitos de instrucciones o trabajo, memoria, profundidad y output. Los bytes de
-keys/values de `testing.tags`, logs, stdout y stderr consumen el presupuesto de
-output del mismo nodo; metadata y logs no ofrecen canales ilimitados
-alternativos. Attachments y valores actuales de snapshot consumen presupuestos
-separados pero igualmente finitos de bytes y cantidad; sus nombres,
-media types, hashes y descriptores cargan metadata/output. Dominios virtuales,
-timers, cola ready y sus descriptores consumen los presupuestos de
-trabajo/memoria/metadata del mismo intento; un loop no puede crear reportes
-ilimitados abriendo dominios secuenciales. El toolchain publica sus defaults y
-registra los valores efectivos o el hash de su resource profile en el reporte.
-Cada operación preflighta su delta completo: si no cabe, produce
-`resource-limit` sin descriptor, object parcial ni cambio stageado.
+Cada test hoja y cada fase activa de setup o teardown se ejecuta con un timeout
+y con presupuestos finitos de output. Los bytes de keys/values de
+`testing.tags`, logs, stdout y stderr consumen el presupuesto de output del
+mismo nodo; attachments y valores actuales de snapshot consumen presupuestos
+separados pero igualmente finitos. El toolchain publica sus defaults. Una
+operación que no cabe produce `resource-limit` sin descriptor, object parcial ni
+cambio stageado.
 
-`--timeout` aplica de forma independiente a un body de test, a un setup de suite
-y a un teardown de suite. El reloj de una suite se pausa mientras solo espera
-descendientes; por tanto, una suite grande no consume el timeout por sumar la
-duración de sus tests.
+`--timeout <segundos>` fija el límite de cada entrada; el default es `60`. Aplica
+de forma independiente a un body de test, a un setup de suite y a un teardown de
+suite. El reloj de una suite se pausa mientras solo espera descendientes; por
+tanto, una suite grande no consume el timeout por sumar la duración de sus tests.
+No existe un timeout desactivado.
 
-Un timeout wall-clock es un límite del runner, no un error Tondo ni un pánico. El
-runner debe poder terminar la entrada aislada incluso si el código no llega a un
-punto cooperativo de cancelación. No puede dejar un proceso o thread de usuario
-ejecutándose después de reportar el terminal. Se mide con un reloj monotónico
-real exterior al envelope y nunca se sustituye ni avanza mediante
-`withVirtualTime`.
+Un timeout wall-clock es un límite del runner, no un error Tondo ni un pánico. Se
+mide con un reloj monotónico real exterior al trabajador y nunca se sustituye ni
+avanza mediante `withVirtualTime`. El trabajador se ejecuta en su propio grupo de
+procesos; al vencer el timeout el runner termina el grupo completo, con los
+procesos que la entrada haya iniciado, y declara la entrada `timeout`. Un timeout
+o resource limit nunca se convierte automáticamente en test ignorado.
 
-A test target that declares `process` requires an OS containment provider able
-to terminate the worker and all its descendant processes, including descendants
-whose original parent exited or which started another session. The runner must
-establish this provider before dispatching any participation; missing or
-unusable isolation rejects execution with exit `3` and publishes no test report
-or store update. Compilation and `--list` need no execution provider. Selection
-does not remove this requirement from a process-capable target.
+Timeout, crash y agotamiento de presupuesto pueden impedir que el código Tondo
+complete sus `defer`; no son terminales del lenguaje con garantía de unwind. Una
+suite o test con efectos externos no puede confiar en teardown de usuario
+después de una terminación forzada.
 
-The coordinator owns each fresh containment group and must close it before waiting
-for inherited pipes and before publishing any terminal observation. This applies
-to successful and failed tests, timeout, retry, repeat and forced interruption.
-Provider cleanup uses a finite real monotonic deadline. A cleanup failure is an
-infrastructure failure, preserves prior outputs and retains affected temporary
-paths instead of traversing them while a descendant may still be active.
-The provider model and cleanup limit enter the resource profile; delegated
-physical paths, group names and OS process identifiers never enter its identity.
-
-Los presupuestos estructurales y de runtime siempre permanecen finitos. Una
-implementación aislada puede representar un timeout wall-clock desactivado con
-`--timeout none`, pero el contrato ejecutable de 10.1 exige un límite positivo
-cerrado en el sidecar y rechaza esa opción en la frontera CLI. Así no existe
-una forma accidental de ampliar el tiempo permitido desde una invocación. Un
-timeout o resource limit nunca se convierte automáticamente en test ignorado.
-
-Timeout y agotamiento de presupuesto pueden impedir que el código Tondo complete
-sus `defer`; no son terminales del lenguaje con garantía de unwind. El runner sí
-debe limpiar su propia frontera de aislamiento y declarar el estado
-correspondiente. Una suite o test con efectos externos no puede confiar en
-teardown de usuario después de una terminación forzada.
-
-El grace period de una interrupción externa forma parte del mismo resource
-profile, pero no sustituye `--timeout`: limita cuánto espera el runner para
-cancelar y limpiar entradas activas después de que la invocación completa ya
-haya sido abandonada.
+El grace period de una interrupción externa no sustituye `--timeout`: limita
+cuánto espera el runner para cancelar y limpiar entradas activas después de que
+la invocación completa ya haya sido abandonada.
 
 ### 7.9 Dominio de tiempo virtual determinista
 
@@ -1377,8 +1305,8 @@ observaciones del host. Una espera externa puede completar normalmente, pero
 impide declarar quiescencia mientras siga pendiente y queda protegida solo por
 el timeout wall-clock y los límites reales del runner.
 
-El timeout de 7.8, la duración JUnit, límites de CPU/instrucciones, memoria y
-output siempre utilizan recursos reales. Un loop runnable, un timer periódico
+El timeout de 7.8, la duración JUnit y los límites de output siempre utilizan
+recursos reales. Un loop runnable, un timer periódico
 sin condición terminal o una espera externa atascada no puede esconderse detrás
 del reloj virtual.
 
@@ -1622,7 +1550,8 @@ de la única iteración. La opción
 default es `0`; el runner nunca infiere retries desde historial, tags, nombre,
 owners o estado de CI.
 
-Solo son elegibles los estados `failed-error`, `failed-panic` y `timeout`.
+Solo son elegibles los estados `failed-error`, `failed-panic`, `timeout` y
+`crashed`.
 `resource-limit` e `infrastructure` no se reintentan porque indican que el mismo
 perfil no puede garantizar una nueva ejecución fiable. Tampoco se reintentan
 fallos de compilación, `skipped`, `blocked-skip` ni un bloqueo como causa
@@ -1664,9 +1593,9 @@ agregado y la participación más reciente disponibles al terminarla, aplicando
 las exclusiones anteriores. Se detiene cuando no queda una unidad elegible o se
 han consumido las `N` rondas.
 
-Cada unidad de retry se ejecuta en un proceso worker nuevo. Solo puede
-reutilizarse el artefacto compilado inmutable. El worker comienza con VM, heap,
-GC roots, executor, tasks, handles, envelopes, tags, logs, stdout, stderr,
+Cada unidad de retry se ejecuta en un trabajador nuevo. Solo puede
+reutilizarse el artefacto compilado inmutable. El trabajador comienza con heap,
+executor, tasks, handles, envelopes, tags, logs, stdout, stderr,
 registros de artifacts/snapshots, presupuestos y recursos temporales nuevos; no
 restaura snapshots de entorno de suite ni reutiliza objetos de un intento
 anterior. El snapshot store esperado es el mismo input inmutable de la
@@ -1720,7 +1649,7 @@ Cada iteración:
 
 1. Conserva target, artefacto compilado, inputs declarados, capabilities,
    selección, shard, seed, orden, timeout y resource profile.
-2. Comienza en un proceso worker nuevo con VM, heap, roots, executor, tasks,
+2. Comienza en un trabajador nuevo con heap, executor, tasks,
    handles, suites, envelopes, buffers, dominio temporal y recursos temporales
    nuevos.
 3. Ejecuta el mismo `execution_plan`; una seed random reproduce el mismo orden
@@ -1775,7 +1704,8 @@ exactamente uno de estos estados de intento:
 | `failed-panic` | Ocurrió un pánico Tondo después de unwind. |
 | `resource-limit` | Se agotó un presupuesto configurado. |
 | `timeout` | Venció el límite wall-clock del runner. |
-| `infrastructure` | El harness, runtime o aislamiento dejó de ser fiable. |
+| `crashed` | El proceso terminó fuera del modelo de pánico, por ejemplo por una señal. |
+| `infrastructure` | El propio runner dejó de ser fiable. |
 | `blocked-setup` | No se invocó porque falló una suite ancestral seleccionada. |
 | `blocked-skip` | No se invocó porque una suite ancestral solicitó skip. |
 
@@ -1803,10 +1733,10 @@ Las combinaciones de intento válidas son cerradas:
 
 - `passed`, `blocked-setup` y `blocked-skip` siempre usan `phase: null`.
 - `skipped` usa `phase: setup` en una suite y no tiene phase en un test.
-- Cualquiera de los cinco estados de fallo ejecutado puede usar
+- Cualquiera de los seis estados de fallo ejecutado puede usar
   `phase: setup`.
-- `phase: teardown` admite `failed-panic`, `resource-limit`, `timeout` o
-  `infrastructure`. No admite `failed-error`, porque `defer` es infallible desde
+- `phase: teardown` admite `failed-panic`, `resource-limit`, `timeout`,
+  `crashed` o `infrastructure`. No admite `failed-error`, porque `defer` es infallible desde
   el sistema de tipos, ni `skipped`, porque cleanup no puede omitir un resultado
   ya producido.
 
@@ -1825,8 +1755,8 @@ Después de cada ronda, el runner deriva un único estado agregado y un
   fallo más reciente, si existe; en otro caso es el último intento. El agregado
   copia su estado.
 
-Los cinco estados de fallo ejecutado son `failed-error`, `failed-panic`,
-`resource-limit`, `timeout` e `infrastructure`. Elegir el fallo ejecutado más
+Los seis estados de fallo ejecutado son `failed-error`, `failed-panic`,
+`resource-limit`, `timeout`, `crashed` e `infrastructure`. Elegir el fallo ejecutado más
 reciente impide que un bloqueo o skip posterior oculte un fallo previo todavía
 no resuelto. `flaky-pass` solo existe como agregado; nunca es el estado de un
 intento. Un nodo reejecutado únicamente porque pertenecía a una unidad de suite
@@ -2017,9 +1947,8 @@ El artifact store:
   `objects/<sha256-lowercase>`.
 - Publica un manifest canónico que relaciona intento, nombre, media type, hash,
   tamaño y object path lógico.
-- El manifest no añade paths físicos, timestamps, owners del filesystem ni
-  descriptores de inputs secretos. Los objects conservan exactamente el payload
-  que el test entregó y, por tanto, siguen la advertencia de 7.7.
+- El manifest no añade paths físicos, timestamps ni owners del filesystem. Los
+  objects conservan exactamente el payload que el test entregó.
 - Es un output explícito del runner; nunca se sube a red ni se incrusta como
   Base64 en JSON o JUnit.
 - Escribe cada objeto y el manifest mediante reemplazo atómico. Un blob completo
@@ -2064,13 +1993,12 @@ concreta. No existe actualización ambiental, automática en CI ni
 
 Artifacts y snapshots pertenecen al intento que alcanzó la operación, no se
 heredan entre suites/tests ni se fusionan entre retries o iteraciones. Sus bytes
-y contadores consumen los límites de 7.8. Un valor secreto copiado
-explícitamente por el test deja de estar protegido por el runner.
+y contadores consumen los límites de 7.8.
 
-### 9.8 Modelo interno y protocolo coordinator/worker
+### 9.8 Modelo interno
 
 El runner mantiene una única representación validada
-`tondo-test-report-0.1/8`: un bosque de descriptors de suite y test, cada uno
+`tondo-test-report-0.1/1`: un bosque de descriptors de suite y test, cada uno
 con su lista ordenada de `attempts`, estado agregado y `decisive_attempt`, más
 el `execution_plan`, la policy y el `summary` derivado. Los reporters humano,
 JSON y JUnit consumen este árbol; no pueden volver a inferir estados,
@@ -2086,40 +2014,15 @@ partición exacta de los nodos y cuenta artifacts/snapshots sin deduplicar
 objetos físicos. Un árbol con schema desconocido, IDs duplicados, referencias
 rotas, status no derivado o summary inconsistente se rechaza completo.
 
-La frontera coordinator/worker usa el record versionado
-`tondo-test-worker-0.1/1`. Cada frame tiene exactamente `format`, `run_id`,
-`sequence` y el payload de dirección correspondiente; hay un contador
-independiente por dirección que empieza en `1` y avanza sin huecos.
-Coordinator puede enviar:
-
-- `hello`: `worker_id`, target, `plan_sha256` y todos los límites positivos
-  (`timeout_ms`, timeouts de setup/teardown, output/artifacts/snapshots,
-  memoria, instrucciones y timers virtuales);
-- `run`: una `RetryUnit` (`test` o `suite`), su lista de hojas, `iteration` y
-  `round`;
-- `cancel`: razón y grace period positivo; y
-- `shutdown`: razón de cierre.
-
-Worker responde con `ready`, `started`, `attempt`, `finished`, `cancelled`,
-`closed` o `error`. `attempt` transporta el mismo record validado que entra en
-el árbol y nunca contiene bodies, valores de inputs secretos, PIDs, paths
-físicos ni timestamps operativos. Un handshake válido es `hello` → `ready`;
-solo después se admite `run`, y `finished` devuelve el worker a idle. Una
-cancelación entra en estado `cancelling`, requiere `cancelled` antes de otro
-run y no se considera completa hasta que el worker haya terminado cleanup y
-revocado recursos. `shutdown` exige `closed`; un error fatal cierra la sesión.
-Frames fuera de orden, con otro `run_id`, secuencia incorrecta, límite cero,
-unit vacía o schema con campos desconocidos invalidan la conversación y no
-producen un reporte parcial. El worker no ejecuta cuerpos como parte de esta
-frontera: solo transporta intentos ya observados por la implementación futura.
+Los trabajadores informan al runner de cada entrada mientras la ejecutan; ese
+protocolo es interno al toolchain y no forma parte del contrato.
 
 ## 10. Contrato de `tondo test`
 
 Interfaz mínima:
 
 ~~~text
-tondo test [--project <dir>]
-           [--test-plan <path>]
+tondo test [<project> | --project <dir>]
            [--filter <text> | --glob <pattern> | --exact <node-id>]
            [--codeowners <auto|none|path>]
            [--shard <index/count>]
@@ -2127,7 +2030,7 @@ tondo test [--project <dir>]
            [--seed <hex-u64>]
            [--list]
            [--jobs <positive-int>]
-           [--timeout <duration|none>]
+           [--timeout <seconds>]
            [--retry <non-negative-int>]
            [--repeat <positive-int>]
            [--artifacts <path>]
@@ -2141,44 +2044,19 @@ tondo test [--project <dir>]
            [--allow-empty]
 ~~~
 
-`--project <dir>` selecciona una raíz convencional. Si se omite, se usa el
-directorio actual. No existe una opción de manifiesto JSON.
-`--test-plan <path>` selecciona un sidecar explícito: el formato humano
-recomendado y único es TOML (`tondo.test.toml`). Sin sidecar, los defaults se
-materializan en memoria.
+`--project <dir>`, o el primer argumento, selecciona una raíz convencional. Si
+se omite, se usa el directorio actual. No existe un archivo de plan: los
+defaults viven en el toolchain y los flags los cambian para la invocación.
 
-### 10.1 Defaults, sidecar opcional y aislamiento de hojas
+### 10.1 Defaults y trabajadores
 
 `tondo test` funciona sin que el usuario mantenga un archivo de plan. El runner
-descubre el proyecto por layout convencional y `tondo.toml` y materializa en memoria un
-`tondo-test-plan-draft` opinionado a partir del grafo cerrado: fuentes activas,
-target, capacidades, `std.time@monotonic-v1`, CODEOWNERS automático, orden
-canónico, una campaña sin retry/repeat, artifact store content-addressed y el
-perfil finito de límites del toolchain.
-
-El sidecar `tondo.test.toml` es opcional. Si se proporciona
-`--test-plan <path>`, o existe el archivo adyacente a la raíz del proyecto, el
-runner lo carga como plan base; TOML se normaliza a la misma estructura cerrada
-que usa la frontera interna y sus hashes de proyecto deben coincidir exactamente
-con el grafo materializado. Si no existe ningún sidecar, se usan los defaults en
-memoria. Un sidecar inválido o perteneciente a otro
-proyecto termina con exit `2` antes de descubrir o compilar tests. El sidecar
-es un plan avanzado/reproducible, no un archivo que el flujo normal deba
-editar.
-
-El plan base cierra roots y fuentes de test, target, capacidades, reporters,
-artifact store (formato, límite y ruta por defecto), snapshot stores y todos los
-límites positivos. Los flags de la invocación producen un overlay efímero: se
-pueden cambiar selector, shard, orden/seed, jobs, retry, repeat, presentación y
-paths de salida sin escribir el sidecar. La presentación (`--test-format` y
-`--report`) pertenece a la invocación y no altera los reporters estructurales
-validados en el plan base. `--retry` y `--repeat` permanecen
-limitados por el presupuesto estructural; `--timeout` puede reducir el límite,
-pero nunca ampliarlo, y `--timeout none` se rechaza. Roots, sources,
-dependencias, capabilities, formatos y techos de recursos no son sustituibles
-por flags ordinarios. El reporte conserva la configuración efectiva de la
-invocación; un sidecar explícito sigue identificado por sus hashes de proyecto
-antes de que comience la campaña.
+descubre el proyecto por layout convencional y `tondo.toml` y fija en memoria
+sus defaults: CODEOWNERS automático, orden canónico, un trabajador, timeout de
+60 segundos por entrada, una campaña sin retry ni repeat y el artifact store
+content-addressed. Los flags de la invocación cambian selector, shard,
+orden/seed, jobs, timeout, retry, repeat, presentación y paths de salida solo
+para esa invocación.
 
 `--artifacts` puede elegir un root físico alternativo para los objetos de esa
 invocación, pero no cambia el formato ni el límite cerrado por el plan. Las
@@ -2186,13 +2064,13 @@ snapshot stores declaradas se cargan como inputs inmutables antes de ejecutar;
 sus hashes entran en la identidad del reporte y una ruta ausente solo se crea
 en `--update-snapshots`.
 
-Cada hoja se ejecuta en un proceso worker nuevo, incluso cuando la
-coordinación usa varios jobs, retry o repeat. El coordinator conserva el
-único modelo de resultados y recibe del worker únicamente evidencia ya
-observada (logs, tags, stdout/stderr, artifacts, snapshots y candidatos de
-update). El timeout por hoja es un límite wall-clock monotónico: al vencer se
-termina el proceso y el intento queda `timeout`; nunca se deja una hebra de
-usuario ejecutándose en segundo plano.
+Las hojas se ejecutan en trabajadores según 7.1; `--jobs N` mantiene hasta `N`
+a la vez, y las hojas de una misma suite de nivel superior van al mismo
+trabajador. El runner conserva el único modelo de resultados y recibe de los
+trabajadores únicamente evidencia ya observada (logs, tags, stdout/stderr,
+artifacts, snapshots y candidatos de update). Al vencer un timeout termina el
+grupo de procesos del trabajador y el intento queda `timeout`; nunca se deja una
+hebra de usuario ejecutándose en segundo plano.
 
 `--update-snapshots` ejecuta en orden canónico y un solo job. Los valores se
 acumulan en una `SnapshotUpdateStage` privada y solo se publican con rename
@@ -2214,16 +2092,14 @@ Reglas:
   reporte `junit`; tampoco admite `--retry`, `--repeat`, `--allow-flaky`,
   `--artifacts` ni `--update-snapshots`. Sí admite los tres selectores,
   sharding, orden y reporte `json`.
-- `--jobs` vale `1` por defecto en el perfil seguro; un sidecar puede fijar
-  otro valor y `--jobs` lo sobreescribe solo para la invocación.
-- `--timeout` aplica por test hoja y por fase activa de suite, no al tiempo total
-  del subárbol.
+- `--jobs` vale `1` por defecto.
+- `--timeout` acepta un número positivo de segundos y aplica por test hoja y por
+  fase activa de suite, no al tiempo total del subárbol.
 - `--retry` aparece como máximo una vez, acepta únicamente un entero decimal
   canónico no negativo dentro del límite estructural publicado y sigue 8.7:
   `0` o un dígito `1..9` seguido de dígitos, sin signo, padding, separadores ni
-  whitespace. El default efectivo es `0` si no lo fija el plan base; los
-  retries reutilizan la compilación y nunca recompilan entre intentos. Un
-  `--retry N` es un override efímero y no modifica el sidecar TOML.
+  whitespace. El default es `0`; los retries reutilizan la compilación y nunca
+  recompilan entre intentos.
 - `--repeat` aparece como máximo una vez, acepta un entero decimal canónico
   positivo dentro del límite estructural publicado y sigue 8.8. El default
   efectivo es `1`; un valor explícito `1` es válido y conserva la misma
@@ -2242,13 +2118,13 @@ Reglas:
   proyección JUnit no roja cuando los demás resultados lo permiten.
 - `--test-format human` es el default interactivo.
 - `--test-format json` emite exactamente un reporte
-  `tondo-test-report-0.1/8`, o una lista `tondo-test-list-0.1/6` con `--list`.
+  `tondo-test-report-0.1/1`, o una lista `tondo-test-list-0.1/1` con `--list`.
 - `--report` es repetible y escribe el resultado de la misma ejecución sin
   volver a compilar ni ejecutar. Se divide por el primer `=`; format y path
   vacíos son inválidos.
 - `--report json=<path>` escribe exactamente los mismos bytes que el JSON
   correspondiente de `--test-format json`.
-- `--report junit=<path>` escribe `tondo-junit-report-0.1/5` según 15.5.
+- `--report junit=<path>` escribe `tondo-junit-report-0.1/1` según 15.5.
 - Dos reportes no pueden resolver al mismo output ni sobrescribir un input,
   source, manifest, lockfile, snapshot store, artifact store u otro producto
   declarado. Cada archivo se publica atómicamente después de completar su
@@ -2258,14 +2134,10 @@ Reglas:
 - Opciones desconocidas, repetidas cuando no son repetibles o combinaciones
   incompatibles terminan con exit `2` sin compilar.
 
-La capa de parsing produce un `TestCliPlan` cerrado antes de leer el manifest;
-la siguiente frontera pura resuelve el sidecar opcional o los defaults descritos
-en 10.1. Conserva la presencia explícita de `--retry` y `--repeat` incluso
-cuando sus valores son `0` y `1`, y normaliza seed/duración/shard/paths sin
-ejecutar ningún body en esta fase. El driver combina después el plan base con
-el overlay de argumentos para descubrir hojas, seleccionarlas, ordenar/shardear,
-crear workers aislados y ejecutar cada body a través del backend VM; JSON/JUnit
-se publican solo después de ensamblar el resultado canónico. Retries/repeat,
+El toolchain valida todas las opciones antes de compilar y sin ejecutar ningún
+body; después compila, descubre las hojas, las selecciona, las ordena y reparte
+y las ejecuta en trabajadores. JSON y JUnit se publican solo después de
+ensamblar el resultado canónico. Retries/repeat,
 snapshots, CODEOWNERS y timeout se ejecutan dentro de esa misma campaña y
 quedan reflejados en el reporte; no existe una segunda ruta de ejecución para
 estas políticas.
@@ -2281,11 +2153,6 @@ Si un output solicitado no puede serializarse o publicarse después de ejecutar,
 el comando termina con exit `3` y no presenta el conjunto de reportes como
 completo. Un JSON ya publicado debe continuar siendo byte a byte válido; el
 toolchain no deja archivos parciales ni finge atomicidad entre paths distintos.
-
-El schema concreto del manifiesto, los defaults de límites y la representación
-de inputs públicos/secretos pertenecen a la especificación del toolchain, pero
-deben producir exactamente el perfil cerrado de 7.7 y no pueden contradecir las
-observaciones fijadas aquí.
 
 ## 11. Frontera con `assert` y `std.testing`
 
@@ -2791,44 +2658,6 @@ Benchmarks, coverage, fuzzing, mutation testing y property testing son modos de
 tooling construidos sobre fuentes y artefactos explícitos. No cambian la
 semántica de `test`.
 
-### 13.1 Identidad de quality evidence
-
-The repository's current acceptance floor is 80% for global line, function
-and region coverage. Historical measurements and their provenance remain
-unchanged. Every risk scope must meet the same 80% floor for each dimension,
-including dimensions whose historical measurement was below that floor.
-An explicit floor cannot be combined with a relative-drop allowance. Mutation
-requirements remain separate. Implementation batches use focused behavioral
-checks, followed by one consolidated coverage campaign for the completed batch.
-
-Coverage y mutation son artefactos de tooling, no una propiedad que pueda
-inferirse únicamente de un porcentaje. Cada ejecución que vaya a entrar en un
-baseline o en el ratchet debe publicar, junto al report raw, un binding JSON
-`tondo-quality-report-binding/1` con:
-
-- `report_sha256`, hash de los bytes exactos del report;
-- `before` y `after`, snapshots iguales de `tondo-quality-provenance/1`;
-- the canonical input-tree digest, including `crates`, `tests`, `acceptance`,
-  `stdlib`, `fuzz`, `scripts`, workflows, `conformance/draft`, `.cargo`,
-  `Cargo.toml` and `Cargo.lock`;
-- flags de compilación relevantes y las versiones completas de `rustc` y
-  `cargo`.
-
-El runner toma el snapshot `before`, ejecuta el instrumento, toma `after` y
-rechaza cualquier cambio entre ambos. `tondo-reliability quality verify` exige
-el binding correspondiente a cada report y vuelve a calcular la identidad
-actual antes de aceptar coverage o mutation. `ratchet check` conserva ambos
-digests por scope y rechaza un report antiguo, mezclado, modificado o generado
-con otro toolchain aunque sus métricas superen el baseline. `quality capture`
-guarda la identidad de la captura en el baseline vigente; ese dato describe
-su origen y no convierte el baseline en una excepción al gate actual.
-
-Los paths de `target`, los directorios temporales y los propios reportes no
-forman parte del árbol medido: cambiar la ubicación de build no invalida la
-evidencia, mientras que cambiar una fuente, un script o un flag sí. El binding
-es canónico, de campos cerrados y debe acompañar al report en CI y en cualquier
-ratchet que lo consuma.
-
 ## 14. Diagnósticos nuevos
 
 Tondo 0.1 incluye estos códigos en su registro normativo:
@@ -2875,27 +2704,8 @@ infraestructura son diagnósticos del toolchain, no nuevos errores de compilaci�
 `E`. El cleanup sigue la forma general de `defer` fijada en 2.5, y las
 violaciones de ownership conservan sus códigos `E14xx`.
 
-La frontera de tooling dinámico del runner se describe en
-[`docs/contracts/diagnostic-tooling.md`](./docs/contracts/diagnostic-tooling.md)
-y RFC-019. `tondo test --diagnostics` añade perfiles `race`, `leaks` y `crash`
-al intento existente: cada ejecución, retry y shard conserva su identidad y
-recibe un proceso limpio, y los reportes `.tdump` se registran como artifacts
-content-addressed. JSON y JUnit proyectan sus descriptores sin duplicar el
-payload. Una observación positiva falla el intento; una limitación de target se
-publica como unsupported y no se convierte en éxito. Estos perfiles son
-instrumentación del runtime/toolchain, no nuevos keywords, hooks públicos ni un
-segundo harness.
-
-La primera capa ejecutable de esa instrumentación está cerrada por
-`DIAG-RUNTIME-001`: la VM hosted produce, de forma opt-in y acotada, la traza
-`tondo-diagnostic-runtime/1` descrita en
-[`docs/contracts/diagnostic-runtime.md`](./docs/contracts/diagnostic-runtime.md).
-La ruta normal devuelve `diagnostics = None` y no genera eventos; superar el
-presupuesto de eventos falla cerrado y cualquier truncación queda marcada para
-los detectores posteriores. `RACE-001` consume esta traza en la VM hosted con
-vector clocks y estados `clean`/`finding`/`unsupported`; la integración del
-runner, los adapters públicos y la paridad nativa siguen siendo bloques
-posteriores.
+Los diagnósticos dinámicos de carreras, fugas y crashes son trabajo posterior
+del toolchain y no forman parte de este contrato.
 
 ## 15. Formato machine-readable
 
@@ -2924,10 +2734,10 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
 
 ~~~json
 {
-  "format": "tondo-test-report-0.1/8",
+  "format": "tondo-test-report-0.1/1",
   "edition": "0.1",
   "target": {
-    "name": "tondo-vm-hosted",
+    "name": "native",
     "profile": "hosted",
     "capabilities": ["console", "process"]
   },
@@ -2940,12 +2750,6 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
     "mode": "auto",
     "source": ".github/CODEOWNERS",
     "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
-  },
-  "inputs": {
-    "public_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
-    "secret_profile_sha256": null,
-    "secret_count": 0,
-    "reproducibility": "closed"
   },
   "shard": null,
   "order": {
@@ -3112,14 +2916,9 @@ base, después de aplicar un posible timeout más pequeño de la invocación; la
 forma `--timeout none` se rechaza antes de compilar. Un consumidor aislado del
 modelo de límites todavía puede representar `null` para un timeout desactivado.
 El resource profile contiene
-todos los presupuestos finitos del frontend, verifiers y runtime y se
+todos los presupuestos finitos del toolchain y del runtime y se
 distribuye de forma recuperable por el toolchain; el hash del reporte identifica
 exactamente sus bytes canónicos.
-
-`inputs` sigue 7.7. Ambos hashes son sesenta y cuatro hexadecimales lowercase;
-`secret_profile_sha256` es `null` sin secretos. `reproducibility` es `closed`,
-`secret-dependent-versioned` o `secret-dependent-unversioned`. Ningún campo
-permite reconstruir un valor secreto.
 
 `ownership.mode` es `auto`, `explicit` o `none`. `source` y `sha256` son strings
 cuando se utilizó un CODEOWNERS y `null` en otro caso. `source` siempre es
@@ -3183,7 +2982,7 @@ publicado en update mode. `published` es `null` en check mode; en update mode es
 `true` cuando todos los stores se publicaron y `false` cuando otros resultados
 impidieron aplicar los cambios, en cuyo caso `after_sha256 == before_sha256`.
 Si una publicación iniciada no puede terminar de forma fiable, no existe
-reporte `/7` válido que afirme un `after_sha256` completo.
+reporte `/1` válido que afirme un `after_sha256` completo.
 
 `suites` contiene el bosque mínimo necesario para los tests del shard,
 incluidos nodos `blocked-setup` y `blocked-skip`. `tests` contiene todas sus
@@ -3411,18 +3210,18 @@ Campos privados y payloads opacos no se serializan por reflection.
 
 ### 15.4 Lista machine-readable
 
-`--list --test-format json` emite `tondo-test-list-0.1/6`. Comparte `edition`,
-`target`, `compiled`, `selection`, `ownership`, `inputs`, `shard`, `order` y
+`--list --test-format json` emite `tondo-test-list-0.1/1`. Comparte `edition`,
+`target`, `compiled`, `selection`, `ownership`, `shard`, `order` y
 `execution_plan`; añade la identidad del snapshot store, pero contiene
 descriptores sin estado, phase, failure, skip, tags, artifacts, snapshots,
 bloqueo, logs ni output:
 
 ~~~json
 {
-  "format": "tondo-test-list-0.1/6",
+  "format": "tondo-test-list-0.1/1",
   "edition": "0.1",
   "target": {
-    "name": "tondo-vm-hosted",
+    "name": "native",
     "profile": "hosted",
     "capabilities": ["console", "process"]
   },
@@ -3435,12 +3234,6 @@ bloqueo, logs ni output:
     "mode": "auto",
     "source": ".github/CODEOWNERS",
     "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
-  },
-  "inputs": {
-    "public_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
-    "secret_profile_sha256": null,
-    "secret_count": 0,
-    "reproducibility": "closed"
   },
   "snapshot_store": {
     "format": "tondo-snapshot-store-0.1/1",
@@ -3498,15 +3291,14 @@ las suites descendientes del shard; `tests` contiene sus hojas.
 una selección previa vacía; un shard vacío válido produce ambos arrays y el plan
 vacíos sin necesitar esa opción. `selection.kind` admite `glob` con el mismo
 contrato de 15.1; la lista no incluye retry ni policy de flaky porque `--retry`
-y `--allow-flaky` son inválidos con `--list`. Tampoco materializa valores
-secretos ni abre un artifact store. `snapshot_store.sha256` es exactamente el
+y `--allow-flaky` son inválidos con `--list`. Tampoco abre un artifact store. `snapshot_store.sha256` es exactamente el
 hash de árbol previo definido en 15.7, no el hash aislado de un solo package.
 
 ### 15.5 Perfil JUnit XML
 
-`--report junit=<path>` genera `tondo-junit-report-0.1/5` como XML 1.0 UTF-8. Es
+`--report junit=<path>` genera `tondo-junit-report-0.1/1` como XML 1.0 UTF-8. Es
 un artefacto operacional para CI, no la fuente normativa ni reproducible del
-resultado: incluye duración wall-clock. El reporte JSON `/7` continúa siendo la
+resultado: incluye duración wall-clock. El reporte JSON `/1` continúa siendo la
 forma canónica y sin pérdida.
 
 El archivo comienza con `<?xml version="1.0" encoding="UTF-8"?>`, no lleva BOM,
@@ -3572,7 +3364,6 @@ tondo.target
 tondo.compiled
 tondo.selection
 tondo.ownership
-tondo.inputs
 tondo.shard
 tondo.order
 tondo.seed
@@ -3615,9 +3406,9 @@ Arrays, objetos y `null` se codifican como JSON compacto canónico dentro de
 contenido después del escaping XML ordinario. Las properties aparecen en el
 orden listado, sin nombres duplicados; una property no aplicable se omite y una
 aplicable cuyo valor es nulo se conserva como `null`. Los valores de ejecución
-son los mismos del JSON `/8`;
-`tondo.format` vale `tondo-junit-report-0.1/5` y `tondo.json_format` conserva
-`tondo-test-report-0.1/8`. Las properties forman la representación completa de
+son los mismos del JSON `/1`;
+`tondo.format` vale `tondo-junit-report-0.1/1` y `tondo.json_format` conserva
+`tondo-test-report-0.1/1`. Las properties forman la representación completa de
 los campos normativos; los elementos JUnit convencionales proyectan además el
 subconjunto que los consumidores suelen mostrar.
 
@@ -3661,7 +3452,7 @@ los testcases agregados realmente emitidos, incluidos sintéticos, nunca sobre e
 número de intentos. El orden de testsuites sigue el ID, no completion order.
 Dentro de cada testsuite se ordena `@setup`, después `@flaky`, después hojas por
 ID y por último `@teardown`; los elementos ausentes no ocupan posición. Shard,
-seed, algoritmo, retry, repeat, inputs y stores se incluyen aunque no haya hojas
+seed, algoritmo, retry, repeat y stores se incluyen aunque no haya hojas
 por `--allow-empty` o por un shard vacío. En ese caso se emite un único
 `testsuite` de cero casos
 llamado `@tondo-plan`, con `tondo.synthetic: "empty-plan"`, únicamente como
@@ -3685,7 +3476,7 @@ tondo test \
     --report json=artifacts/tests.json
 ~~~
 
-### 15.6 Fallo de compilación o materialización de inputs
+### 15.6 Fallo de compilación
 
 Si la compilación falla:
 
@@ -3701,14 +3492,6 @@ Si la compilación falla:
 - No se produce JUnit ni manifest de artifacts, porque no existe una ejecución
   que proyectar.
 - No se abre update mode ni se modifica un snapshot store.
-
-Si el plan no puede cerrar un input público o un worker no puede materializar
-un secreto, el toolchain emite un diagnóstico de input y exit `1`, pero no un
-reporte de test: no existe una clasificación íntegra de todas las hojas. No
-produce JUnit ni manifest, no publica snapshot updates y conserva los outputs
-finales anteriores. Intentos u objects content-addressed ya observados son
-información parcial no referenciada, igual que tras una interrupción. `--list`
-no materializa valores secretos y por ello no activa este caso.
 
 ### 15.7 Snapshot store canónico
 
@@ -3797,7 +3580,7 @@ El manifest es JSON canónico UTF-8, termina en un único `LF` y tiene:
 `objects` se ordena por `sha256` y deduplica contenido; `attachments` se ordena
 por `node`, `attempt` y `name`. Cada referencia apunta a un intento y descriptor
 existentes en el resultado normativo que la misma invocación serializa —o
-serializaría— como reporte `/7`; solicitar un archivo JSON no es requisito para
+serializaría— como reporte `/1`; solicitar un archivo JSON no es requisito para
 producir artifacts. Unknown fields, duplicados, tamaños/hashes inconsistentes o
 paths no derivados son inválidos.
 
@@ -3812,134 +3595,22 @@ no ejecuta contenido y no interpreta media types.
 
 ## 16. Conformidad
 
-Una implementación conforme incorpora estos casos como el grupo de testing de
-`tondo-conformance-draft`, con manifiesto y hashes propios dentro de la misma suite
-versionada. El grupo cubre como mínimo:
+La conformidad se comprueba con los tests del repositorio: los casos de
+`tests/cases`, los proyectos de `tests/testing` y los tests de integración que
+los ejecutan en cada plataforma de CI. El compilador nativo implementa hoy:
 
-1. Tokens, CST lossless, parser y formatter de `suite_decl` y `test_decl`.
-2. Reserva de `suite` y `test` en Tondo 0.1 y rechazo como identificadores.
-3. Rechazo de cada forma alternativa, hook y registro dinámico ausente.
-4. Árbol estático, suites vacías, nesting y colisiones de hermanos entre
-   archivos.
-5. Identidad de suite/test, parent IDs y orden independiente del orden de
-   archivos.
-6. Capturas válidas `let: Copy + Send + Share` y rechazo de `var`, préstamos,
-   valores afines.
-7. Las firmas exactas y test-only del núcleo `std.testing`, incluidos
-   `attach`, `snapshot`, `VirtualTime`, rechazo desde producción y ausencia de
-   `TestContext`, `currentTest()` o identidad observable.
-8. Envelope no falsificable, propagación por helpers/closures/tasks
-   estructuradas, aislamiento paralelo y rechazo verifier de operaciones
-   forjadas.
-9. `testing.log` en body/setup/teardown y helpers, asociación exacta, orden,
-   límite de output y separación de stdout/stderr.
-10. `testing.failNow: Never`, `P0007`, unwind y continuidad de hermanos.
-11. Skip de hoja/setup, razón única, `blocked-skip`, cleanup y precedencia,
-    `P2001`, policy default y `--deny-skips`.
-12. `testing.tags`, merge idempotente, `P2002` por conflicto, atribución desde
-    helpers/tasks, uso durante cleanup, presupuesto de output y prohibición de
-    usar tags runtime para discovery, selección, sharding u orden.
-13. Setup que espera o no, infallible y fallible inferido.
-14. Ejecución de setup exactamente una vez y solo para subárboles seleccionados.
-15. Nesting exterior-interior, teardown interior-exterior y LIFO de `defer`.
-16. Fallo de setup, `blocked-setup`, causa única y continuidad de hermanos.
-17. Fallo de teardown sin reescribir resultados de descendientes.
-18. Retorno normal, error, pánico, assert, resource limit y timeout de tests.
-19. `defer`, acciones de salida y unwind en terminales de suite/test.
-20. Async, `scope`, `spawn`, cancelación y pánico de hijos.
-21. Unit overlay con acceso privado que no repara producción inválida.
-22. Integration root sin acceso privado.
-23. Separación exacta entre grafo de producción y dev-dependencies.
-24. Resolución CODEOWNERS automática, explícita y desactivada; precedencia de
-    archivos, parsing estricto, última regla aplicable, paths lógicos, source y
-    hash reportados, owners opacos y ausencia de red o efecto en producción.
-25. Filtros, exact match de suite/test, list, selección vacía, allow-empty y
-    combinaciones CLI de deny-skips.
-26. Sharding `sha256-mod-v1` posterior a selección, validación de índices,
-    cobertura y disjunción entre shards, compilación completa, lifecycle
-    independiente y shard válido vacío.
-27. Orden canónico `id-byte-order-v1`, orden aleatorio `sha256-tree-v1`, seed
-    explícita/generada, suites estructuralmente atómicas, `execution_plan` y
-    alcance exacto de replay con uno o varios jobs.
-28. Orden serial, lifecycle jerárquico, límite conjunto de `--jobs N` y
-    presentación estable aunque cambie completion order.
-29. Captura separada de logs/stdout/stderr para suites y tests.
-30. Parsing y combinaciones de CLI, formatos stdout, reportes repetibles,
-    colisiones de paths, publicación atómica por archivo y exits `3`/`4`.
-31. Bytes `tondo-test-json-v1`, reportes `tondo-test-report-0.1/8` y
-    `tondo-test-list-0.1/6`, ownership, inputs, shard, order, tags, artifacts,
-    snapshots, iteraciones, intentos, retry/repeat, `execution_plan`, invariantes
-    de summary, skips, bloqueos y rechazo de schema inválido.
-32. Perfil `tondo-junit-report-0.1/5`, mapeo de estados, lifecycle sintético,
-    properties, streams, duración operacional, conteos y equivalencia con la
-    misma ejecución JSON.
-33. Targets y capabilities distintos.
-34. Ausencia total de suites, tests, `std.testing`, metadata y
-    dev-dependencies en productos de producción.
-35. Ejecución individual mediante `--exact` equivalente a la misma hoja dentro
-    del árbol completo bajo inputs idénticos.
-36. Vectores de glob portable con `*`, `?` y `**`; match completo de
-    suite/test, unión deduplicada, Unicode scalar, patrones inválidos, selección
-    vacía y ausencia de regex o expansión del host.
-37. Elegibilidad, absorción y orden de unidades de retry, rondas acotadas,
-    lifecycle ancestral, subárbol de suite, conservación de shard/seed/plan y
-    máximo global de jobs.
-38. Worker nuevo por unidad de retry, reutilización exclusiva del artefacto
-    inmutable, heap/roots/executor/envelopes/buffers/presupuestos nuevos y
-    revocación de procesos y recursos rastreados antes de terminar.
-39. Historial de intentos, causalidad `blocked_by`, intento decisivo,
-    `flaky-pass`, summaries JSON y matriz de exit status con y sin
-    `--allow-flaky`; skips o resource/infrastructure failures no se reintentan.
-40. Proyección JUnit de retry: un testcase agregado por hoja, lifecycle y flaky
-    sintéticos únicos, `tondo.retry`, `tondo.decisive_attempt`,
-    `tondo.attempts`, streams decisivos, conteos por identidad y policy
-    `--allow-flaky`.
-41. Contrato temporal mínimo de producción compartido, body
-    `CallOnce[fn(ref VirtualTime)]` con suspensión inferida, propagación exacta de `E`, préstamo
-    no escapable, identidad/mismatch entre proveedores, ausencia de `Clock`
-    inyectado y rechazo desde producción.
-42. Herencia del dominio por tasks estructuradas, cola ready y empates de timers
-    deterministas, avance automático solo bajo quiescencia durable y catálogo
-    que excluye esperas externas.
-43. `settle` sin avance, `advance` exacto/cero/múltiples deadlines, salto
-    automático, varios dominios secuenciales, rechazo de solapamiento `P2004`,
-    deadlock `P2003` y rango/overflow `P2005`.
-44. Separación entre tiempo monotónico virtual y calendario/I/O real, timeout
-    wall-clock, resource limits, cancelación, pánico, skip, errores y cleanup
-    durante creación, ejecución y desmontaje del dominio.
-45. `virtual_time` por intento en JSON `/7`, orden y contadores canónicos,
-    reinicio exacto entre retries, `tondo.virtual_time` en JUnit `/4`, duración
-    JUnit real y equivalencia VM/backend para el mismo corpus temporal.
-46. `defer` que espera en Tondo 0.1: inferencia para llamada o bloque infallible, ownership afín,
-    inferencia en test/setup/script y funciones, cleanup
-    LIFO esperado, pánico/límites y rechazo de cualquier forma alternativa sin
-    introducir hooks de suite.
-47. Inputs públicos/secretos, hashes de perfil, tres estados de
-    reproducibilidad, materialización/revocación por worker y ausencia de
-    valores secretos añadidos por el runner en plan, reportes o productos,
-    incluida la advertencia sobre copias explícitas del programa y exits
-    `1`/`3` sin reporte parcial ante materialización/revocación fallida.
-48. Interrupción externa: cese de dispatch, cancelación, grace period, cleanup,
-    revocación, segunda interrupción, exits `4`/`3` y ausencia de reportes
-    completos o snapshot updates parciales.
-49. `testing.attach`, gramática de nombre/media type, `P2006`, límites,
-    atribución por intento y artifact store content-addressed `/1` sin upload ni
-    bytes Base64, incluidos object preexistente corrupto y blobs huérfanos.
-50. `--repeat`, incompatibilidades, workers e iteraciones secuenciales limpios,
-    mismo plan/seed, `iteration`, no-op semántico con count uno, policy roja ante
-    cualquier non-pass con count mayor y separación exacta respecto a retry.
-51. `testing.snapshot`, match/missing/mismatch, `P2007`/`P2008`, concurrencia,
-    update mode explícito, restricciones, staging/publicación y store canónico
-    `tondo-snapshot-store-0.1/1` con layout source-control, hash y rechazo de
-    symlinks/escapes.
-52. Inputs, repeat, artifact/snapshot policy, descriptores, hashes, contadores y
-    todos los intentos se proyectan sin pérdida en JSON `/7` y mediante
-    properties en JUnit `/4`; artifacts externos y snapshot values no se
-    embeben, y VM/backend producen los mismos resultados para el corpus nuevo.
+- `suite` y `test`: grammar, formato, árbol estático, identidades y los
+  diagnósticos `E2001` a `E2005`;
+- unit companions e integration roots (5.2 a 5.4);
+- de `std.testing`, `log`, `tags`, `failNow` y `skip`;
+- trabajadores (7.1), lifecycle de suite (7.3), timeouts (7.8) y los estados
+  `passed`, `skipped`, `failed-error`, `failed-panic`, `timeout`, `crashed`,
+  `blocked-setup` y `blocked-skip`;
+- `--filter`, `--exact`, `--list`, `--jobs`, `--timeout`, `--show-output`,
+  `--allow-empty` y `--deny-skips`, con la salida humana.
 
-La VM de referencia y cada backend nativo deben ejecutar las mismas fuentes y
-producir el mismo estado, código de pánico, output y reporte canónico. Duración
-no participa en la comparación.
+Siguen pendientes glob, shard, orden aleatorio, retry, repeat, CODEOWNERS, los
+reportes JSON y JUnit, attachments, snapshots y el tiempo virtual.
 
 ## 17. Referencia rápida
 

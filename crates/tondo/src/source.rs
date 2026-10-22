@@ -100,10 +100,14 @@ impl SourceMap {
         &self.files[index]
     }
 
-    /// `file:line:column` of the start of a span.
+    /// `file:line:column` of the start of a span: the file's path in its
+    /// package, or as given for a file on its own.
     pub fn location(&self, span: Span) -> String {
         let file = self.file_of(span.start);
         let (line, column) = file.line_col(span.start);
+        if file.logical != file.name {
+            return format!("{}:{line}:{column}", file.logical);
+        }
         format!("{}:{line}:{column}", file.path.display())
     }
 

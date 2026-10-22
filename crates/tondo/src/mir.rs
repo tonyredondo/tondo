@@ -179,6 +179,9 @@ pub enum Rvalue {
     /// Starts a task that calls a `fn()` value, which the task takes; the
     /// flag retains one that was copied rather than moved.
     Spawn(Operand, bool),
+    /// Gives the runner the members of a suite: each node of the test tree
+    /// with the `fn()` value that runs it, taken as `Spawn` takes its body.
+    TestMembers(Vec<(u32, Operand, bool)>),
     /// An operation of a `Join` or a `Group`, receiver first; flags mark
     /// copied operands to retain as they move in, as a join into a group.
     TaskOp(TaskOp, Vec<Operand>, Vec<bool>, Span),

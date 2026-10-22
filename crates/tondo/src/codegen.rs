@@ -93,6 +93,11 @@ enum Rt {
     BoxRelease,
     BoxUnique,
     ReportError,
+    TestStart,
+    TestMembers,
+    TestError,
+    TestLog,
+    TestTags,
     ArrayNew,
     ArrayRetain,
     ArrayRelease,
@@ -287,6 +292,11 @@ impl Rt {
             Rt::BoxRelease => ("tondo_rt_box_release", &[I64, I64], &[]),
             Rt::BoxUnique => ("tondo_rt_box_unique", &[I64, I64, I64], &[]),
             Rt::ReportError => ("tondo_rt_report_error", &[I64], &[]),
+            Rt::TestStart => ("tondo_rt_test_start", &[I64, I64], &[]),
+            Rt::TestMembers => ("tondo_rt_test_members", &[I64, I64], &[]),
+            Rt::TestError => ("tondo_rt_test_error", &[I64], &[]),
+            Rt::TestLog => ("tondo_rt_test_log", &[I64], &[]),
+            Rt::TestTags => ("tondo_rt_test_tags", &[I64], &[]),
             Rt::ArrayNew => ("tondo_rt_array_new", &[I64, I64], &[I64]),
             Rt::ArrayRetain => ("tondo_rt_array_retain", &[I64], &[]),
             Rt::ArrayRelease => ("tondo_rt_array_release", &[I64, I64, I64], &[]),
@@ -563,6 +573,9 @@ enum Glue {
     Display,
     /// Hashes a `Key` value.
     Hash,
+    /// Runs a member of the test tree, a `fn()` value, and reports the
+    /// error it returns.
+    Test,
 }
 
 fn int_type(int: IntTy) -> ir::Type {
@@ -632,7 +645,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap) -> Resul
         cg.module.clear_context(&mut context);
     }
     let main = program.main.0 as usize;
-    cg.entry_point(main, bodies[main].result, &mut context, &mut builder_context)?;
+    cg.entry_point(main, bodies[main].result, &program.tests, &mut context, &mut builder_context)?;
     while let Some((target, thunk)) = cg.pending_thunks.pop() {
         context.func.signature = cg.module.declarations().get_function_decl(thunk).signature.clone();
         context.func.name = UserFuncName::user(3, thunk.as_u32());
@@ -1024,6 +1037,27 @@ impl Codegen<'_> {
         id
     }
 
+    /// The tree of a test build for the runner: for each node, its parent,
+    /// whether it is a suite, and its identity.
+    fn test_table(&mut self, tests: &[crate::hir::TestNodeInfo]) -> DataId {
+        let names: Vec<DataId> = tests.iter().map(|t| self.string(&t.id)).collect();
+        let id = self.module.declare_data("tondo_tests", Linkage::Local, false, false).expect("test table");
+        let mut bytes = vec![0u8; tests.len() * 24];
+        for (index, test) in tests.iter().enumerate() {
+            bytes[index * 24..index * 24 + 8].copy_from_slice(&(test.parent as u64).to_le_bytes());
+            bytes[index * 24 + 8..index * 24 + 16].copy_from_slice(&(test.suite as u64).to_le_bytes());
+        }
+        let mut data = DataDescription::new();
+        data.define(bytes.into_boxed_slice());
+        data.set_align(8);
+        for (index, name) in names.into_iter().enumerate() {
+            let name = self.module.declare_data_in_data(name, &mut data);
+            data.write_data_addr(index as u32 * 24 + 16, name, 0);
+        }
+        self.module.define_data(id, &data).expect("test table definition");
+        id
+    }
+
     /// A static, immortal string object: `[refcount][length][bytes]`.
     fn string(&mut self, text: &str) -> DataId {
         if let Some(&id) = self.strings.get(text) {
@@ -1051,9 +1085,11 @@ impl Codegen<'_> {
         &mut self,
         main: usize,
         result: Ty,
+        tests: &[crate::hir::TestNodeInfo],
         context: &mut cranelift_codegen::Context,
         fbc: &mut FunctionBuilderContext,
     ) -> Result<(), String> {
+        let table = (!tests.is_empty()).then(|| self.test_table(tests));
         let mut signature = self.module.make_signature();
         signature.returns.push(AbiParam::new(types::I32));
         let id = self.module.declare_function("tondo_main", Linkage::Export, &signature).map_err(|e| e.to_string())?;
@@ -1064,6 +1100,13 @@ impl Codegen<'_> {
             let mut e = Emit { cg: self, fb };
             let block = e.fb.create_block();
             e.fb.switch_to_block(block);
+            // A test build hands the runner its tree before `main` runs it.
+            if let Some(table) = table {
+                let table = e.cg.module.declare_data_in_func(table, e.fb.func);
+                let address = e.fb.ins().symbol_value(POINTER, table);
+                let count = e.fb.ins().iconst(types::I64, tests.len() as i64);
+                e.call_rt(Rt::TestStart, &[address, count]);
+            }
             let callee = e.cg.module.declare_func_in_func(e.cg.functions[main], e.fb.func);
             let value = match e.cg.class(result) {
                 Class::Memory => {
@@ -1686,6 +1729,56 @@ fn define_glue(cg: &mut Codegen, kind: Glue, ty: Ty, func: &mut ir::Function, fb
         _ => None,
     };
     match (kind, enum_shape) {
+        (Glue::Test, _) => {
+            let TyKind::Fn(_, result, ..) = *e.cg.types.kind(ty) else { unreachable!("a test member is a `fn()`") };
+            let code = e.fb.ins().load(POINTER, flags(), params[0], 16);
+            let captures = e.fb.ins().iadd_imm_s(params[0], FN_HEADER);
+            let signature = e.cg.uniform_signature(&[], &[], result);
+            let signature = e.fb.import_signature(signature);
+            let value = match e.cg.class(result) {
+                Class::Memory => {
+                    let layout = e.cg.layout(result);
+                    let data = StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        layout.size,
+                        layout.align.trailing_zeros() as u8,
+                    );
+                    let slot = e.fb.create_sized_stack_slot(data);
+                    let address = e.fb.ins().stack_addr(POINTER, slot, 0);
+                    e.fb.ins().call_indirect(signature, code, &[address, captures]);
+                    Val::Memory(address)
+                }
+                Class::Scalar(_) => {
+                    let call = e.fb.ins().call_indirect(signature, code, &[captures]);
+                    Val::Scalar(e.fb.inst_results(call)[0])
+                }
+                Class::Zero => {
+                    e.fb.ins().call_indirect(signature, code, &[captures]);
+                    Val::Zero
+                }
+            };
+            if let TyKind::Result(_, error) = *e.cg.types.kind(result) {
+                let tag = e.tag(result, value);
+                let failed = e.fb.ins().icmp_imm_s(IntCC::Equal, tag, ERR as i64);
+                let (report, done) = (e.fb.create_block(), e.fb.create_block());
+                e.fb.ins().brif(failed, report, &[], done, &[]);
+                e.fb.switch_to_block(report);
+                let error_value = match value {
+                    Val::Memory(address) => {
+                        let slot = e.cg.slot(result, Proj::Variant(ERR, 0));
+                        let address = e.component_address(address, &slot);
+                        e.value_at(address, error)
+                    }
+                    _ => Val::Zero,
+                };
+                let description = e.describe(error, error_value);
+                e.call_rt(Rt::TestError, &[description]);
+                e.fb.ins().jump(done, &[]);
+                e.fb.switch_to_block(done);
+            }
+            e.refcount(result, value, true);
+            e.fb.ins().return_(&[]);
+        }
         (Glue::Display, _) => {
             let value = e.value_at(params[1], ty);
             e.append_display(params[0], ty, value);
@@ -2383,6 +2476,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
                 Rvalue::AssignSlice(target, bounds, value, span) => self.assign_slice(target, bounds, value, *span),
                 Rvalue::CheckRegion(array, region, other, span) => self.check_region(array, region, other, *span),
+                Rvalue::TestMembers(members) => self.test_members(members),
                 _ => {}
             }
             return;
@@ -2782,6 +2876,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let captures = self.e.fb.ins().iadd_imm_s(object, FN_HEADER);
                 self.e.store_val(captures, env, value);
                 Val::Scalar(object)
+            }
+            Rvalue::TestMembers(members) => {
+                self.test_members(members);
+                Val::Zero
             }
             Rvalue::Spawn(body, retain) => {
                 let TyKind::Fn(_, result, ..) = *self.e.cg.types.kind(self.operand_ty(body)) else {
@@ -4012,6 +4110,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Callee::Std(StdFn::ConsoleEprintln) => self.e.call_rt(Rt::ConsoleEprintln, &values),
             Callee::Std(StdFn::Io(IoFn::BufferClear)) => self.e.call_rt(Rt::Io(IoFn::BufferClear), &values),
             Callee::Std(StdFn::TimeSleep) => self.e.call_rt(Rt::Sleep, &values),
+            Callee::Std(StdFn::TestLog) => self.e.call_rt(Rt::TestLog, &values),
+            Callee::Std(StdFn::TestTags) => self.e.call_rt(Rt::TestTags, &values),
             Callee::Std(
                 StdFn::Fs(_)
                 | StdFn::Path(_)
@@ -4032,6 +4132,38 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             self.unspill(var, slot);
         }
         result
+    }
+
+    /// Gives the runner the members of a suite: `[node, glue, fn value]`
+    /// for each, read while it runs them; then releases the values.
+    fn test_members(&mut self, members: &[(u32, Operand, bool)]) {
+        // `[node, glue, fn value]` for each member, read by the
+        // runner while it runs them.
+        let size = (members.len() as u32 * 24).max(8);
+        let slot = self.e.fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size, 3));
+        let address = self.e.fb.ins().stack_addr(POINTER, slot, 0);
+        let mut objects = Vec::new();
+        for (index, (node, member, retain)) in members.iter().enumerate() {
+            let ty = self.operand_ty(member);
+            let object = self.scalar(member);
+            if *retain {
+                self.e.refcount(ty, Val::Scalar(object), false);
+            }
+            let glue = self.e.cg.glue(Glue::Test, ty);
+            let glue = self.e.cg.module.declare_func_in_func(glue, self.e.fb.func);
+            let glue = self.e.fb.ins().func_addr(POINTER, glue);
+            let node = self.e.fb.ins().iconst(types::I64, *node as i64);
+            let offset = index as i32 * 24;
+            self.e.fb.ins().store(flags(), node, address, offset);
+            self.e.fb.ins().store(flags(), glue, address, offset + 8);
+            self.e.fb.ins().store(flags(), object, address, offset + 16);
+            objects.push((ty, object));
+        }
+        let count = self.e.fb.ins().iconst(types::I64, members.len() as i64);
+        self.e.call_rt(Rt::TestMembers, &[address, count]);
+        for (ty, object) in objects {
+            self.e.refcount(ty, Val::Scalar(object), true);
+        }
     }
 
     /// A call through a `fn(...)` value: its code receives the captures'

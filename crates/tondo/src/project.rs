@@ -50,6 +50,71 @@ pub fn sources(dir: &Path, name: &str) -> Result<(Vec<ProjectFile>, usize), Stri
     Ok((files, root))
 }
 
+/// The test files of the package `name` in `dir` (testing 5.2): the unit
+/// test companions (`*_test.to` beside the sources), with the module each
+/// joins, and the integration roots under `tests/`, each with its path
+/// there as a module path.
+pub fn test_sources(dir: &Path, name: &str) -> Result<(Vec<ProjectFile>, Vec<ProjectFile>), String> {
+    let source = dir.join("src");
+    let (root_dir, recursive) = if source.is_dir() { (source, true) } else { (dir.to_path_buf(), false) };
+    let mut paths = Vec::new();
+    walk_tests(&root_dir, recursive, &mut paths)?;
+    paths.sort();
+    let mut companions = Vec::new();
+    for path in paths {
+        let relative = path.parent().and_then(|p| p.strip_prefix(&root_dir).ok()).unwrap_or(Path::new(""));
+        let mut module = vec![name.to_string()];
+        module.extend(relative.components().map(|c| c.as_os_str().to_string_lossy().into_owned()));
+        companions.push(ProjectFile { path, module });
+    }
+    let tests = dir.join("tests");
+    let mut paths = Vec::new();
+    if tests.is_dir() {
+        walk(&tests, true, &mut paths)?;
+        walk_tests(&tests, true, &mut paths)?;
+    }
+    paths.sort();
+    let mut roots = Vec::new();
+    for path in paths {
+        let relative = path.strip_prefix(&tests).unwrap_or(&path).with_extension("");
+        let mut module = Vec::new();
+        for part in relative.components() {
+            let part = part.as_os_str().to_str().unwrap_or_default();
+            if !is_identifier(part) {
+                return Err(format!(
+                    "the test file {} cannot be a module: `{part}` is not an identifier",
+                    path.display()
+                ));
+            }
+            module.push(part.to_string());
+        }
+        roots.push(ProjectFile { path, module });
+    }
+    Ok((companions, roots))
+}
+
+/// The `*_test.to` files under `dir`.
+fn walk_tests(dir: &Path, recursive: bool, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let kind = entry.file_type().map_err(|e| e.to_string())?;
+        if name.starts_with('.') || kind.is_symlink() {
+            continue;
+        }
+        if kind.is_dir() {
+            if recursive && name != "target" && name != "vendor" {
+                walk_tests(&entry.path(), true, out)?;
+            }
+        } else if name.ends_with("_test.to") {
+            out.push(entry.path());
+        }
+    }
+    Ok(())
+}
+
 fn walk(dir: &Path, recursive: bool, out: &mut Vec<PathBuf>) -> Result<(), String> {
     let entries = std::fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
     for entry in entries {

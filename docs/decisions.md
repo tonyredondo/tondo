@@ -718,3 +718,34 @@ fields into the bytes it spans, with a getter and a setter per bit field
 width cannot hold. Bytes are integers to the C conventions, as bit fields
 are, so such a struct passes by value as C passes it; only padding in a run
 that may share eight bytes with floats keeps it from crossing by value.
+
+## 2026-10-22 — Tests run in workers that restart after a failure
+
+Tests run in worker processes, each running tests one after another as
+plain calls; a panic, `testing.failNow`, `testing.skip`, a timeout or a
+crash ends the worker, and a new one runs the rest, running again the setup
+of the suites they need. A process per test would cost about 0.7 ms on
+Linux and would need the values a suite shares to be serialized; `fork` per
+test is cheaper but unsafe with C libraries that keep threads, and Windows
+has none. Recovering from a panic inside one process would leak what the
+test held and could not stop a loop. Tests in one worker share what C keeps
+in globals; the runner restores the working directory and the environment
+between tests and replaces a worker a test leaves tasks running in. A crash
+is its own state, `crashed`, and the run goes on.
+
+Tests see the environment of whoever runs `tondo test` and the project root
+as working directory; there is no test plan file and no profile of public
+and secret inputs. The testing spec lost what described the earlier
+implementation (its VM, bytecode, worker protocol, instruction budgets,
+quality evidence), and its formats start again at `/1`.
+
+A suite compiles to a function: its setup, then a call that hands the
+runner its members as closures, which capture the setup's `let` bindings
+of `Copy` types (`E2005` otherwise), then its `defer`s as its teardown. A
+test is checked as such a closure, inferring its errors like a script.
+`testing.failNow` is the assertion panic `P0007` where it is called, so its
+location is the test's; `testing.skip` is a panic the runner reports as a
+skip. Workers report through frames on stderr, and mark stdout at each
+frame, so each entry gets the output written while it ran. Panic locations
+use a file's path in its package (`src/main_test.to:12:5`).
+

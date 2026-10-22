@@ -14,6 +14,9 @@ usage:
   tondo check [<project>|<file.to>] [--json]           report diagnostics only (as JSON)
   tondo fmt [--check] <file.to>...                     format files canonically
   tondo update [<project>] [<dependency>...]           fetch dependencies again and rewrite tondo.lock
+  tondo test [<project>] [--filter <text> | --exact <id>] [--list] [--jobs <n>] [--timeout <seconds>]
+            [--show-output] [--allow-empty] [--deny-skips]
+                                                       run the tests of a project
   tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
                                                        write a module of extern declarations for a C header
   tondo <file.to> [<argument>...]                      run a script (for #! lines)
@@ -40,6 +43,7 @@ fn main() -> ExitCode {
         "fmt" => fmt_command(&args[1..]),
         "update" => update_command(&args[1..]),
         "bind" => bind_command(&args[1..]),
+        "test" => test_command(&args[1..]),
         "version" | "--version" | "-V" => {
             println!("tondo {} (native, cranelift)", driver::VERSION);
             Ok(ExitCode::SUCCESS)
@@ -97,6 +101,183 @@ fn check_command(args: &[OsString]) -> Result<ExitCode, String> {
         return Ok(if analysis.program.is_some() { ExitCode::SUCCESS } else { ExitCode::FAILURE });
     }
     Ok(if analyze(&path)?.is_some() { ExitCode::SUCCESS } else { ExitCode::FAILURE })
+}
+
+/// Builds the tests of a project, runs those selected and reports them
+/// (testing 10).
+fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
+    use tondo::runner::{self, Status};
+    let (path, rest) = match args.first() {
+        Some(first) if !first.to_string_lossy().starts_with('-') => (PathBuf::from(first), &args[1..]),
+        _ => source_argument(args),
+    };
+    let mut options = runner::Options {
+        filter: None,
+        exact: None,
+        list: false,
+        jobs: 1,
+        timeout: std::time::Duration::from_secs(60),
+        show_output: false,
+        allow_empty: false,
+        deny_skips: false,
+    };
+    let mut rest = rest.iter();
+    while let Some(arg) = rest.next() {
+        let mut value = |what: &str| {
+            rest.next()
+                .map(|v| v.to_string_lossy().into_owned())
+                .ok_or_else(|| format!("{what} needs a value\n{USAGE}"))
+        };
+        match arg.to_string_lossy().as_ref() {
+            "--filter" if options.filter.is_none() && options.exact.is_none() => {
+                options.filter = Some(value("--filter")?)
+            }
+            "--exact" if options.filter.is_none() && options.exact.is_none() => options.exact = Some(value("--exact")?),
+            "--filter" | "--exact" => return Err(format!("give one of --filter and --exact, once\n{USAGE}")),
+            "--list" => options.list = true,
+            "--jobs" => {
+                options.jobs = value("--jobs")?
+                    .parse()
+                    .ok()
+                    .filter(|&n| n > 0)
+                    .ok_or_else(|| format!("--jobs takes a positive number\n{USAGE}"))?
+            }
+            "--timeout" => {
+                let seconds: f64 = value("--timeout")?
+                    .parse()
+                    .ok()
+                    .filter(|&s: &f64| s > 0.0 && s.is_finite())
+                    .ok_or_else(|| format!("--timeout takes a positive number of seconds\n{USAGE}"))?;
+                options.timeout = std::time::Duration::from_secs_f64(seconds);
+            }
+            "--show-output" => options.show_output = true,
+            "--allow-empty" => options.allow_empty = true,
+            "--deny-skips" => options.deny_skips = true,
+            other => return Err(format!("unknown option {other}\n{USAGE}")),
+        }
+    }
+    let analysis = driver::analyze_tests(&path)?;
+    if !analysis.diags.list.is_empty() {
+        eprint!("{}", analysis.diags.render(&analysis.sources));
+    }
+    let Some(program) = &analysis.program else {
+        return Ok(ExitCode::FAILURE);
+    };
+    let locations = program.tests.iter().map(|n| analysis.sources.location(n.span)).collect();
+    let tree = runner::Tree { nodes: program.tests.clone(), locations };
+    let selected = runner::select(&tree, &options)?;
+    if selected.is_empty() {
+        let message = match (&options.filter, &options.exact) {
+            (Some(text), _) => format!("no test matches --filter {text:?}"),
+            (_, Some(id)) => format!("no suite or test is {id:?}; `tondo test --list` lists them"),
+            _ => "the project has no tests: write `test name { ... }` in a `_test.to` file or under `tests/`".into(),
+        };
+        if options.allow_empty {
+            println!("{message}");
+            return Ok(ExitCode::SUCCESS);
+        }
+        eprintln!("tondo: {message}");
+        return Ok(ExitCode::FAILURE);
+    }
+    if options.list {
+        for node in runner::listed(&tree, &selected) {
+            let suffix = if tree.nodes[node as usize].suite { " (suite)" } else { "" };
+            println!("{}{suffix}", tree.nodes[node as usize].id);
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+    let executable = runner::executable_path(&std::fs::canonicalize(&path).map_err(|e| e.to_string())?);
+    if let Some(dir) = executable.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    }
+    // Linked aside and renamed, so another run of the same tests keeps its own.
+    let partial = executable.with_extension(format!("partial-{}", std::process::id()));
+    driver::link(&driver::object(&analysis)?, &partial, &analysis.libraries)?;
+    std::fs::rename(&partial, &executable).map_err(|e| format!("cannot write {}: {e}", executable.display()))?;
+    let started = std::time::Instant::now();
+    // Each test's line in canonical order, as soon as the ones before it
+    // are known.
+    let mut known: std::collections::HashMap<u32, runner::Outcome> = std::collections::HashMap::new();
+    let mut printed = 0;
+    let line = |outcome: &runner::Outcome| {
+        let id = &tree.nodes[outcome.node as usize].id;
+        let status = match &outcome.status {
+            Status::Passed => "ok".to_string(),
+            Status::Skipped(reason) => format!("skipped: {}", reason.lines().next().unwrap_or_default()),
+            Status::Blocked(suite, true) => format!("skipped: its suite {} skipped", tree.nodes[*suite as usize].id),
+            Status::Blocked(suite, false) => format!("BLOCKED: its suite {} failed", tree.nodes[*suite as usize].id),
+            Status::Timeout => "TIMEOUT".into(),
+            Status::Crashed(_) => "CRASHED".into(),
+            Status::Error(_) | Status::Panic(_) => "FAILED".into(),
+        };
+        println!("test {id} ... {status}");
+    };
+    let outcomes = runner::run(&executable, &path, &tree, &selected, &options, |outcome| {
+        if !tree.nodes[outcome.node as usize].suite {
+            known.insert(outcome.node, outcome.clone());
+        }
+        while let Some(outcome) = selected.get(printed).and_then(|t| known.get(t)) {
+            line(outcome);
+            printed += 1;
+        }
+    });
+    let outcomes = runner::summary(&tree, &outcomes);
+    // Failures, with what each wrote; skips with their reasons.
+    let mut failures = Vec::new();
+    for outcome in &outcomes {
+        let node = &tree.nodes[outcome.node as usize];
+        let what = if node.suite {
+            format!("suite {} ({})", node.id, if outcome.teardown { "teardown" } else { "setup" })
+        } else {
+            node.id.clone()
+        };
+        let detail = match &outcome.status {
+            Status::Error(error) => format!("error: {error}\n --> {}", tree.locations[outcome.node as usize]),
+            Status::Panic(text) => text.clone(),
+            Status::Timeout => format!("timed out after {}s", options.timeout.as_secs_f64()),
+            Status::Crashed(how) => how.clone(),
+            Status::Skipped(reason) if node.suite => format!("skipped: {reason}"),
+            Status::Passed | Status::Skipped(_) | Status::Blocked(..) if !options.show_output => continue,
+            _ => String::new(),
+        };
+        let mut text = format!("--- {what}\n");
+        if !detail.is_empty() {
+            text.push_str(&detail);
+            text.push('\n');
+        }
+        for (label, bytes) in [("stdout", &outcome.stdout), ("stderr", &outcome.stderr)] {
+            if !bytes.is_empty() {
+                text.push_str(&format!("{label}:\n{}", String::from_utf8_lossy(bytes)));
+                if !bytes.ends_with(b"\n") {
+                    text.push('\n');
+                }
+            }
+        }
+        if !outcome.logs.is_empty() {
+            text.push_str(&format!("logs:\n{}\n", outcome.logs.join("\n")));
+        }
+        if !outcome.tags.is_empty() {
+            let tags: Vec<String> = outcome.tags.iter().map(|(k, v)| format!("{k}={v}")).collect();
+            text.push_str(&format!("tags: {}\n", tags.join(", ")));
+        }
+        failures.push(text);
+    }
+    if !failures.is_empty() {
+        println!("\n{}", failures.join("\n"));
+    }
+    let tests: Vec<&runner::Outcome> = outcomes.iter().filter(|o| !tree.nodes[o.node as usize].suite).collect();
+    let count = |f: fn(&Status) -> bool| tests.iter().filter(|o| f(&o.status)).count();
+    let failed = runner::failed(&outcomes, options.deny_skips);
+    println!(
+        "{}. {} passed; {} failed; {} skipped; {} blocked; {:.2}s",
+        if failed { "FAILED" } else { "ok" },
+        count(|s| *s == Status::Passed),
+        count(|s| matches!(s, Status::Error(_) | Status::Panic(_) | Status::Timeout | Status::Crashed(_))),
+        count(|s| matches!(s, Status::Skipped(_) | Status::Blocked(_, true))),
+        count(|s| matches!(s, Status::Blocked(_, false))),
+        started.elapsed().as_secs_f64()
+    );
+    Ok(if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS })
 }
 
 /// Resolves the named dependencies, or all of them, again instead of

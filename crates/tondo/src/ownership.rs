@@ -626,8 +626,16 @@ impl Checker<'_> {
             }
             ExprKind::Length(value) | ExprKind::Unary(_, value) => self.observe(value, flow),
             ExprKind::Try(inner) => self.consume(inner, flow),
-            ExprKind::Convert(inner) | ExprKind::Panic(inner) | ExprKind::Erase(inner, _) | ExprKind::Spawn(inner) => {
-                self.consume(inner, flow)
+            ExprKind::Convert(inner)
+            | ExprKind::Panic(inner, _)
+            | ExprKind::Erase(inner, _)
+            | ExprKind::Spawn(inner) => self.consume(inner, flow),
+            ExprKind::TestMembers(members) => {
+                let mut flow = flow;
+                for (_, member) in members {
+                    flow = self.consume(member, flow)?;
+                }
+                Some(flow)
             }
             ExprKind::Fixed(inner) => self.observe(inner, flow),
             ExprKind::Select(arms, otherwise) => {

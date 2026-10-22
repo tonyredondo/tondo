@@ -1,0 +1,67 @@
+// Unit tests: they see what the module keeps private.
+import std.console
+import std.testing
+
+test doublesPrivately {
+    assert(twice(21) == 42)
+}
+
+test failsAnAssertion {
+    console.println("about to fail")
+    assert(twice(2) == 5, "twice(2) is {twice(2)}")
+}
+
+test returnsAnError {
+    let length = parse("")?
+    assert(length == 0)
+}
+
+test skipsWithAReason {
+    testing.skip("needs a database")
+}
+
+test logsAndTags {
+    testing.log("first")
+    testing.tags(["area": "parse"])
+    console.println("logged")
+}
+
+test spinsForever {
+    var count = 0
+    for {
+        count += 1
+    }
+}
+
+// The setup runs once for the tests of each worker; `defer` tears it down.
+suite shared {
+    let base = 20
+    console.println("setup")
+    defer console.println("teardown")
+
+    test addsToBase {
+        assert(base + 22 == 42)
+    }
+
+    suite nested {
+        let more = base + 1
+
+        test seesBoth {
+            assert(more == 21)
+        }
+    }
+}
+
+suite brokenSetup {
+    let value = parse("")?
+
+    test isBlocked {
+        assert(value == 1)
+    }
+}
+
+suite skipped {
+    testing.skip("no network")
+
+    test isSkipped {}
+}

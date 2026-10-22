@@ -337,6 +337,15 @@ impl Parser<'_> {
             Tok::Kw(Kw::Enum) => Ok(Some(Item::Enum(self.enum_declaration(public, start)?))),
             Tok::Kw(Kw::Trait) => Ok(Some(Item::Trait(self.trait_declaration(public, start)?))),
             Tok::Kw(Kw::Impl) => Ok(Some(Item::Impl(self.impl_declaration(start)?))),
+            Tok::Kw(Kw::Test | Kw::Suite) => {
+                if public {
+                    let keyword = self.tok().describe();
+                    self.diags.error("E0004", start, format!("a {keyword} is never `pub`: remove `pub`"));
+                }
+                let node = self.test_node()?;
+                self.end_of_statement()?;
+                Ok(Some(Item::Test(node)))
+            }
             Tok::Kw(Kw::Alias) => {
                 self.bump();
                 let name = self.ident()?;
@@ -354,6 +363,52 @@ impl Parser<'_> {
             }
             _ => self.expected("declaration"),
         }
+    }
+
+    /// `test name { ... }` or `suite name { setup members }` (testing 3.1).
+    fn test_node(&mut self) -> PResult<TestNode> {
+        let start = self.span();
+        let suite = self.at_kw(Kw::Suite);
+        self.bump();
+        let name = self.ident()?;
+        if !suite {
+            let body = self.block()?;
+            let span = start.to(body.span);
+            return Ok(TestNode::Test(TestDecl { name, span, body, module: 0, class: SourceClass::Production }));
+        }
+        self.expect(Tok::LBrace)?;
+        let (mut setup, mut members) = (Vec::new(), Vec::new());
+        loop {
+            self.skip_newlines();
+            if self.at(&Tok::RBrace) || self.at(&Tok::Eof) {
+                break;
+            }
+            let before = self.pos;
+            let result = if self.at_kw(Kw::Test) || self.at_kw(Kw::Suite) {
+                self.test_node().and_then(|node| {
+                    members.push(node);
+                    self.end_of_statement()
+                })
+            } else if !members.is_empty() {
+                let message = "after its first `test` or `suite`, a suite holds only tests and suites: \
+                     move this statement before them";
+                self.diags.error("E0004", self.span(), message);
+                Err(())
+            } else {
+                self.statement_or_tail().map(|stmt| {
+                    setup.push(stmt.unwrap_or_else(|expr| Stmt { span: expr.span, kind: StmtKind::Expr(expr) }))
+                })
+            };
+            if result.is_err() {
+                self.recover();
+                if self.pos == before && !self.at(&Tok::RBrace) {
+                    self.bump();
+                }
+            }
+        }
+        let end = self.expect(Tok::RBrace)?;
+        let span = start.to(end);
+        Ok(TestNode::Suite(SuiteDecl { name, setup, members, span, module: 0, class: SourceClass::Production }))
     }
 
     fn no_generics(&mut self) -> PResult<()> {
@@ -836,6 +891,12 @@ impl Parser<'_> {
 
     /// Parses a statement, or the expression that ends a block (`Err(expr)`).
     fn statement_or_tail(&mut self) -> PResult<Result<Stmt, Expr>> {
+        if self.at_kw(Kw::Test) || self.at_kw(Kw::Suite) {
+            let keyword = self.tok().describe();
+            let message = format!("a {keyword} is declared at the top level of a test file or inside a `suite`");
+            self.diags.error("E0004", self.span(), message);
+            return Err(());
+        }
         if self.starts_statement() {
             return self.statement().map(Ok);
         }

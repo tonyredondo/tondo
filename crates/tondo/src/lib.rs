@@ -19,6 +19,7 @@ pub mod mono;
 pub mod ownership;
 pub mod parser;
 pub mod project;
+pub mod runner;
 pub mod source;
 pub mod stdlib;
 pub mod toml;

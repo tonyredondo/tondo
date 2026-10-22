@@ -383,7 +383,49 @@ impl Formatter<'_> {
                 ]);
                 concat(vec![head, self.members(&i.methods, i.span.end)])
             }
+            Item::Test(node) => self.test_node(node),
         }
+    }
+
+    /// `test name { ... }`, or a suite: its setup, then each member after
+    /// an empty line (testing 3.4).
+    fn test_node(&mut self, node: &TestNode) -> Doc {
+        let suite = match node {
+            TestNode::Test(t) => return concat(vec![text(format!("test {} ", t.name.name)), self.block(&t.body)]),
+            TestNode::Suite(s) => s,
+        };
+        let head = text(format!("suite {} ", suite.name.name));
+        let has_comments = self.comments.get(self.next).is_some_and(|c| c.start < suite.span.end);
+        if suite.setup.is_empty() && suite.members.is_empty() && !has_comments {
+            return concat(vec![head, text("{}")]);
+        }
+        let mut body = Vec::new();
+        let mut previous: Option<u32> = None;
+        for stmt in &suite.setup {
+            body.push(Doc::Hardline);
+            if let Some(end) = previous
+                && self.blank_between(end, self.first_comment_or(stmt.span.start))
+            {
+                body.push(Doc::Hardline);
+            }
+            body.push(self.leading(stmt.span.start));
+            body.push(self.stmt(stmt));
+            body.push(self.trailing(stmt.span.end));
+            previous = Some(stmt.span.end);
+        }
+        for member in &suite.members {
+            body.push(Doc::Hardline);
+            if previous.is_some() {
+                body.push(Doc::Hardline);
+            }
+            let span = member.span();
+            body.push(self.leading(span.start));
+            body.push(self.test_node(member));
+            body.push(self.trailing(span.end));
+            previous = Some(span.end);
+        }
+        body.push(self.leading_in_block(suite.span.end));
+        concat(vec![head, text("{"), indent(concat(body)), Doc::Hardline, text("}")])
     }
 
     /// `{` with one unit per line, then `}`; never on one line.
@@ -1330,6 +1372,7 @@ fn item_span(item: &Item) -> Span {
         Item::Enum(e) => e.span,
         Item::Trait(t) => t.span,
         Item::Impl(i) => i.span,
+        Item::Test(node) => node.span(),
     }
 }
 

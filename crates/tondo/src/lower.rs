@@ -1326,6 +1326,15 @@ impl Builder<'_> {
                 let retain = self.move_flags(std::slice::from_ref(&value), &[true], &[ty])[0];
                 self.temp(e.ty, Rvalue::Erase(value, *body, retain), e.span)
             }
+            hir::ExprKind::TestMembers(members) => {
+                let mut values = Vec::new();
+                for (node, member) in members {
+                    let value = self.expr(member);
+                    let retain = self.move_flags(std::slice::from_ref(&value), &[true], &[member.ty])[0];
+                    values.push((*node, value, retain));
+                }
+                self.temp(Ty::UNIT, Rvalue::TestMembers(values), e.span)
+            }
             hir::ExprKind::Spawn(body) => {
                 let ty = body.ty;
                 let value = self.expr(body);
@@ -1400,9 +1409,9 @@ impl Builder<'_> {
                     .collect();
                 self.temp(Ty::STRING, Rvalue::Concat(pieces), e.span)
             }
-            hir::ExprKind::Panic(message) => {
+            hir::ExprKind::Panic(message, code) => {
                 let message = self.expr(message);
-                self.terminate(Terminator::Panic { code: 8, message: Some(message), span: e.span });
+                self.terminate(Terminator::Panic { code: *code, message: Some(message), span: e.span });
                 Operand::Const(Const::Unit)
             }
             hir::ExprKind::Assert { condition, parts, source } => {

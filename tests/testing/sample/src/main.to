@@ -1,0 +1,21 @@
+// A small library under test, and a `main` the tests do not run.
+import std.console
+
+pub enum ParseError {
+    Empty
+}
+
+pub fn parse(text: String): Int ! ParseError {
+    if text == "" {
+        fail ParseError.Empty
+    }
+    text.length()
+}
+
+fn twice(value: Int): Int {
+    value * 2
+}
+
+fn main() {
+    console.println("{twice(21)}")
+}

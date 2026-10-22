@@ -1,0 +1,308 @@
+//! The runner inside a test build (testing 7). `tondo test` starts the
+//! executable as a worker with a plan, the tests to run in order; the
+//! worker runs them one after another, entering and leaving their suites,
+//! and reports each entry through frames on stderr. A panic, a skip or a
+//! crash ends the worker, and `tondo test` starts another for the rest of
+//! the plan.
+//!
+//! A frame is `\x1e<nonce> <sequence> <kind> <node> <length>\n` and then
+//! `length` bytes. Each frame also writes `\x1e<nonce> <sequence>\n` to
+//! stdout, so that `tondo test` gives each entry the output written before
+//! it.
+
+use crate::{MapObject, Str, str_bytes};
+use std::collections::{HashMap, VecDeque};
+use std::ffi::OsString;
+use std::io::Write;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// A node of the tree, as the compiler lays it out.
+#[repr(C)]
+pub struct Node {
+    parent: u64,
+    suite: u64,
+    /// The identity, which `tondo test` already knows.
+    _id: *const Str,
+}
+
+/// A member a suite gives the runner: its node, and the glue that runs
+/// its `fn()` value.
+#[repr(C)]
+pub struct Member {
+    node: u64,
+    glue: unsafe extern "C" fn(*mut u8),
+    object: *mut u8,
+}
+
+/// The code of `testing.skip`'s panic (see the compiler's `hir::SKIP`).
+pub const SKIP: u32 = 2000;
+
+struct Runner {
+    parents: Vec<u32>,
+    suites: Vec<bool>,
+    /// The tests still to run.
+    plan: VecDeque<u32>,
+    nonce: String,
+    sequence: u64,
+    /// The suites entered and the test that runs, innermost last.
+    running: Vec<u32>,
+    /// The error the entry that just ended returned.
+    error: Option<String>,
+    /// Suites whose setup reached their members.
+    reached: Vec<bool>,
+    /// The tags of each entry.
+    tags: HashMap<u32, HashMap<String, String>>,
+}
+
+static RUNNER: Mutex<Option<Runner>> = Mutex::new(None);
+
+/// Whether the process runs tests.
+pub(crate) static ACTIVE: AtomicBool = AtomicBool::new(false);
+
+fn with<R>(f: impl FnOnce(&mut Runner) -> R) -> Option<R> {
+    RUNNER.lock().unwrap_or_else(|e| e.into_inner()).as_mut().map(f)
+}
+
+impl Runner {
+    fn frame(&mut self, kind: &str, node: u32, payload: &[u8]) {
+        crate::flush_stdout();
+        self.sequence += 1;
+        let mut out = std::io::stdout().lock();
+        let _ = writeln!(out, "\x1e{} {}", self.nonce, self.sequence);
+        let _ = out.flush();
+        let mut frame = format!("\x1e{} {} {kind} {node} {}\n", self.nonce, self.sequence, payload.len()).into_bytes();
+        frame.extend_from_slice(payload);
+        let _ = std::io::stderr().lock().write_all(&frame);
+    }
+
+    /// Whether `node` is `ancestor` or inside it.
+    fn within(&self, mut node: u32, ancestor: u32) -> bool {
+        loop {
+            if node == ancestor {
+                return true;
+            }
+            if node == 0 {
+                return false;
+            }
+            node = self.parents[node as usize];
+        }
+    }
+
+    /// The entry whose code runs, or the root.
+    fn current(&self) -> u32 {
+        self.running.last().copied().unwrap_or(0)
+    }
+}
+
+/// Called before the tests run, with the tree.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_test_start(table: *const Node, count: usize) {
+    let nodes = unsafe { std::slice::from_raw_parts(table, count) };
+    let parents: Vec<u32> = nodes.iter().map(|n| n.parent as u32).collect();
+    let suites: Vec<bool> = nodes.iter().map(|n| n.suite != 0).collect();
+    // The plan, or every test when the executable runs on its own.
+    let plan = match std::env::var_os("TONDO_TEST_PLAN") {
+        Some(path) => std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .split_whitespace()
+            .filter_map(|n| n.parse().ok())
+            .filter(|&n: &u32| (n as usize) < count)
+            .collect(),
+        None => (1..count as u32).filter(|&n| !suites[n as usize]).collect(),
+    };
+    let nonce = std::env::var("TONDO_TEST_NONCE").unwrap_or_else(|_| "tondo".into());
+    let runner = Runner {
+        reached: vec![false; count],
+        parents,
+        suites,
+        plan,
+        nonce,
+        sequence: 0,
+        running: Vec::new(),
+        error: None,
+        tags: HashMap::new(),
+    };
+    *RUNNER.lock().unwrap_or_else(|e| e.into_inner()) = Some(runner);
+    ACTIVE.store(true, Ordering::Relaxed);
+}
+
+/// Runs the members of a suite, or of the root, that the plan holds
+/// next, until the next test of the plan is not inside them.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_test_members(members: *const Member, count: usize) {
+    let members = unsafe { std::slice::from_raw_parts(members, count) };
+    // The suite whose setup just ended: its members begin.
+    let suite = with(|r| {
+        let suite = members.first().map_or(0, |m| r.parents[m.node as usize]);
+        if suite != 0 {
+            r.reached[suite as usize] = true;
+            r.frame("members", suite, b"");
+        }
+        suite
+    });
+    let Some(suite) = suite else { return };
+    loop {
+        let next = with(|r| {
+            let next = *r.plan.front()?;
+            let member = members.iter().position(|m| r.within(next, m.node as u32))?;
+            let node = members[member].node as u32;
+            if !r.suites[node as usize] {
+                r.plan.pop_front();
+            }
+            r.running.push(node);
+            r.error = None;
+            r.reached[node as usize] = false;
+            r.frame("start", node, b"");
+            Some((member, node))
+        });
+        let Some(Some((member, node))) = next else { break };
+        let state = (!with(|r| r.suites[node as usize]).unwrap_or(true)).then(State::save);
+        let member = &members[member];
+        unsafe { (member.glue)(member.object) };
+        let dirty = state.is_some_and(|state| state.restore());
+        with(|r| {
+            r.running.pop();
+            let failed = r.error.take().or_else(|| {
+                (r.suites[node as usize] && !r.reached[node as usize])
+                    .then(|| "the setup ended before its members".to_string())
+            });
+            match failed {
+                Some(error) => {
+                    // A suite that fails in its setup blocks its tests.
+                    if r.suites[node as usize] {
+                        let blocked: Vec<u32> = r.plan.iter().copied().filter(|&t| r.within(t, node)).collect();
+                        r.plan.retain(|t| !blocked.contains(t));
+                    }
+                    r.frame("error", node, error.as_bytes());
+                }
+                None => r.frame("end", node, b""),
+            }
+        });
+        // A test that left tasks running ends this worker; another runs
+        // the rest of the plan.
+        if dirty {
+            crate::flush_stdout();
+            std::process::exit(0);
+        }
+    }
+    if suite != 0 {
+        with(|r| r.frame("teardown", suite, b""));
+    }
+}
+
+/// What a test may change in the process that the next one should not
+/// see: the working directory, the environment and the tasks alive.
+struct State {
+    directory: Option<std::path::PathBuf>,
+    environment: Vec<(OsString, OsString)>,
+    tasks: usize,
+}
+
+impl State {
+    fn save() -> State {
+        State {
+            directory: std::env::current_dir().ok(),
+            environment: std::env::vars_os().collect(),
+            tasks: crate::tasks::LIVE_TASKS.load(Ordering::SeqCst),
+        }
+    }
+
+    /// Restores the directory and the environment; whether tasks the test
+    /// started are still alive.
+    fn restore(self) -> bool {
+        if let Some(directory) = &self.directory {
+            let _ = std::env::set_current_dir(directory);
+        }
+        let saved: HashMap<OsString, OsString> = self.environment.into_iter().collect();
+        for (name, value) in std::env::vars_os() {
+            match saved.get(&name) {
+                // SAFETY: between tests no Tondo code of the test runs; the
+                // runtime's other threads do not read the environment.
+                Some(old) if *old != value => unsafe { std::env::set_var(&name, old) },
+                Some(_) => {}
+                None => unsafe { std::env::remove_var(&name) },
+            }
+        }
+        for (name, value) in &saved {
+            if std::env::var_os(name).is_none() {
+                unsafe { std::env::set_var(name, value) };
+            }
+        }
+        // A finished task is freed just after it ends.
+        for _ in 0..100 {
+            if crate::tasks::LIVE_TASKS.load(Ordering::SeqCst) <= self.tasks {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        true
+    }
+}
+
+/// The error a test or a setup returned, as `main` reports it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_test_error(description: *const Str) {
+    let text = String::from_utf8_lossy(unsafe { str_bytes(description) }).into_owned();
+    with(|r| r.error = Some(text));
+}
+
+/// `testing.log(message)`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_test_log(message: *const Str) {
+    let bytes = unsafe { str_bytes(message) };
+    with(|r| {
+        let node = r.current();
+        r.frame("log", node, bytes)
+    });
+}
+
+/// `testing.tags(values)`: all of them or, when a key already has another
+/// value, none and the panic `P2002` for the smallest such key.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_test_tags(map: *mut MapObject) {
+    let mut pairs = Vec::new();
+    if !map.is_null() {
+        let map = unsafe { &*map };
+        for index in 0..map.len() {
+            let entry = unsafe { map.entries.as_ptr().add(index * map.entry_size) };
+            let key = unsafe { *(entry as *const *const Str) };
+            let value = unsafe { *(entry.add(map.value_offset) as *const *const Str) };
+            let text = |s| String::from_utf8_lossy(unsafe { str_bytes(s) }).into_owned();
+            pairs.push((text(key), text(value)));
+        }
+    }
+    let conflict = with(|r| {
+        let node = r.current();
+        let tags = r.tags.entry(node).or_default();
+        let conflict = pairs.iter().filter(|(k, v)| tags.get(k).is_some_and(|old| old != v)).map(|(k, _)| k).min();
+        if let Some(key) = conflict {
+            return Some(key.clone());
+        }
+        let mut added = Vec::new();
+        for (key, value) in &pairs {
+            if tags.insert(key.clone(), value.clone()).is_none() {
+                added.push((key.clone(), value.clone()));
+            }
+        }
+        for (key, value) in added {
+            r.frame("tag", node, format!("{key}\0{value}").as_bytes());
+        }
+        None
+    });
+    if let Some(Some(key)) = conflict {
+        let message = crate::str_new(format!("`{key}` already has another value").as_bytes());
+        let location = crate::str_new(b"testing.tags");
+        unsafe { crate::tondo_rt_panic(2002, message, location) };
+    }
+}
+
+/// Reports the panic or the skip that ends the worker; whether the
+/// process runs tests.
+pub(crate) fn terminal(code: u32, text: &str) -> bool {
+    with(|r| {
+        let node = r.current();
+        r.frame(if code == SKIP { "skip" } else { "panic" }, node, text.as_bytes());
+    })
+    .is_some()
+}

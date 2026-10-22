@@ -16,7 +16,7 @@ use std::collections::{HashMap, VecDeque};
 const MAX_DEPTH: usize = 32;
 
 pub fn monomorphize(program: Program, diags: &mut Diagnostics) -> Option<Program> {
-    let Program { mut types, functions, main, traits, impls, externs, .. } = program;
+    let Program { mut types, functions, main, traits, impls, externs, tests, .. } = program;
     let mut mono = Mono {
         types: &mut types,
         functions: &functions,
@@ -43,7 +43,7 @@ pub fn monomorphize(program: Program, diags: &mut Diagnostics) -> Option<Program
     }
     let display = std::mem::take(&mut mono.display);
     let functions = mono.out.into_iter().map(|f| f.expect("every instance is generated")).collect();
-    Some(Program { types, functions, main, traits, impls, display, externs })
+    Some(Program { types, functions, main, traits, impls, display, externs, tests })
 }
 
 /// The trait whose method interpolation uses (see the checker).
@@ -237,7 +237,8 @@ impl Mono<'_> {
             | ExprKind::Convert(inner)
             | ExprKind::Unary(_, inner)
             | ExprKind::Spawn(inner)
-            | ExprKind::Panic(inner) => self.expr(inner, map),
+            | ExprKind::Panic(inner, _) => self.expr(inner, map),
+            ExprKind::TestMembers(members) => members.iter_mut().for_each(|(_, member)| self.expr(member, map)),
             ExprKind::Match(scrutinee, arms) => {
                 self.expr(scrutinee, map);
                 for arm in arms {

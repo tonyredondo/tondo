@@ -35,6 +35,7 @@ pub fn check<'a>(module: &'a ast::Module, sources: &'a SourceMap, diags: &'a mut
         cursor_templates: HashMap::new(),
         closure_base: 0,
         closure_functions: Vec::new(),
+        test_nodes: Vec::new(),
         fn_scopes: Vec::new(),
         duration: None,
         instant: None,
@@ -139,6 +140,8 @@ enum StdModule {
     InternalJson,
     /// `std.internal.memory`: raw memory, for tests of `unsafe` code.
     InternalMemory,
+    /// `std.testing`: what a test tells the runner (testing 11.2).
+    Testing,
 }
 
 /// The types `std.process` declares when imported.
@@ -505,6 +508,8 @@ struct Checker<'a> {
     /// every declared function.
     closure_base: u32,
     closure_functions: Vec<Option<hir::Function>>,
+    /// In a test build, the tree of suites and tests (testing 3.2).
+    test_nodes: Vec<hir::TestNodeInfo>,
     /// The scope of each function's signature and body.
     fn_scopes: Vec<FnScope>,
     /// `time.Duration`, once `std.time` is imported: nanoseconds.
@@ -609,6 +614,20 @@ struct FnCx {
     /// The `ref`, `mut` and `var` bindings of patterns, as opposed to
     /// parameters.
     loan_bindings: HashSet<LocalId>,
+    /// The closure that runs a test or a suite, which uses only the `let`
+    /// bindings of `Copy` types of its suites (testing 4.3).
+    test_member: bool,
+    /// The setup of a suite, which `return` cannot leave (testing 4.1).
+    setup: bool,
+}
+
+/// What a closure is: a `defer` block, `unsafe`, or the closure of a test
+/// or a suite.
+#[derive(Copy, Clone)]
+struct ClosureKind {
+    deferred: bool,
+    is_unsafe: bool,
+    test: bool,
 }
 
 /// How a callable value is called (11.7, 11.8): its parameters and their
@@ -744,9 +763,22 @@ impl<'a> Checker<'a> {
             self.const_value(id, span);
         }
 
-        // Closure bodies are numbered after every declared function and the
-        // script's `main`.
-        self.closure_base = bodies.len() as u32 + u32::from(!module.statements.is_empty());
+        for item in &module.items {
+            if let ast::Item::Test(node) = item
+                && Self::test_class(node) == ast::SourceClass::Production
+            {
+                let message = format!(
+                    "a {} belongs in a test file: move it to a `_test.to` file next to this code, or to a file under `tests/`",
+                    if matches!(node, ast::TestNode::Suite(_)) { "`suite`" } else { "`test`" }
+                );
+                self.diags.error("E2001", node.span(), message);
+            }
+        }
+
+        // Closure bodies are numbered after every declared function, the
+        // script's `main` and the root of a test build's tree.
+        let testing = module.test_package.is_some();
+        self.closure_base = bodies.len() as u32 + u32::from(!module.statements.is_empty()) + u32::from(testing);
         let mut functions: Vec<hir::Function> =
             bodies.iter().zip(0..).map(|(f, i)| self.function(f, FnId(i))).collect();
 
@@ -764,9 +796,19 @@ impl<'a> Checker<'a> {
         } else if let Some(id) = explicit_main {
             self.validate_main(fns[id.0 as usize], id);
             id
+        } else if testing {
+            FnId(0)
         } else {
             self.diags.error_without_span("E1806", "the program has no `main` function and no top-level statements");
             return None;
+        };
+        // A test build runs its tests instead of `main`.
+        let main = match &module.test_package {
+            Some(package) => {
+                functions.push(self.tests(module, package));
+                FnId(functions.len() as u32 - 1)
+            }
+            None => main,
         };
         functions.extend(std::mem::take(&mut self.closure_functions).into_iter().map(|f| f.expect("checked closure")));
 
@@ -802,7 +844,116 @@ impl<'a> Checker<'a> {
             impls,
             display: HashMap::new(),
             externs: std::mem::take(&mut self.externs),
+            tests: std::mem::take(&mut self.test_nodes),
         })
+    }
+
+    fn test_class(node: &ast::TestNode) -> ast::SourceClass {
+        match node {
+            ast::TestNode::Test(t) => t.class,
+            ast::TestNode::Suite(s) => s.class,
+        }
+    }
+
+    /// The root of a test build's tree (testing 3.2): a function that runs
+    /// the top-level suites and tests of the test files.
+    fn tests(&mut self, module: &ast::Module, package: &str) -> hir::Function {
+        let root = hir::TestNodeInfo { id: String::new(), parent: 0, suite: true, span: Span::new(0, 0) };
+        self.test_nodes.push(root);
+        let mut nodes = Vec::new();
+        let mut prefixes = Vec::new();
+        for item in &module.items {
+            let ast::Item::Test(node) = item else { continue };
+            let (module_index, class) = match node {
+                ast::TestNode::Test(t) => (t.module, t.class),
+                ast::TestNode::Suite(s) => (s.module, s.class),
+            };
+            // `package::unit::module.path` or `package::integration::file.path`.
+            let path = &module.module_paths[module_index as usize];
+            let (kind, logical) = match class {
+                ast::SourceClass::Production => continue,
+                ast::SourceClass::Unit if path.len() == 1 => ("unit", path[0].clone()),
+                ast::SourceClass::Unit => ("unit", path[1..].join(".")),
+                ast::SourceClass::Integration => ("integration", path[1..].join(".")),
+            };
+            nodes.push(node);
+            prefixes.push(format!("{package}::{kind}::{logical}"));
+        }
+        let mut cx = self.new_cx(Ty::UNIT);
+        let run = self.test_members(&mut cx, &nodes, 0, &prefixes, Span::new(0, 0));
+        let body = hir::Block { stmts: vec![hir::Stmt::Expr(run)], tail: None, ty: Ty::UNIT };
+        let mut function = hir::Function {
+            name: "tests".into(),
+            generics: Vec::new(),
+            params: Vec::new(),
+            loans: Vec::new(),
+            fallible: false,
+            locals: cx.locals,
+            result: Ty::UNIT,
+            body,
+            moves: HashSet::new(),
+        };
+        self.ownership(&mut function, &cx.params);
+        function
+    }
+
+    /// The members of a suite, or of the root, each as a closure that runs
+    /// it; `prefixes` gives the identity each member's name extends.
+    fn test_members(
+        &mut self,
+        cx: &mut FnCx,
+        nodes: &[&ast::TestNode],
+        parent: u32,
+        prefixes: &[String],
+        span: Span,
+    ) -> hir::Expr {
+        let mut members = Vec::new();
+        let mut seen = HashSet::new();
+        for (&node, prefix) in nodes.iter().zip(prefixes) {
+            let name = node.name();
+            let id = format!("{prefix}::{}", name.name);
+            if name.name == "_" {
+                self.diags.error("E1115", name.span, "a test or a suite needs a name; `_` is not one");
+                continue;
+            }
+            if !seen.insert(id.clone()) {
+                let message =
+                    format!("`{}` is declared twice at this level of the test tree; give one another name", name.name);
+                self.diags.error("E2002", name.span, message);
+                continue;
+            }
+            let index = self.test_nodes.len() as u32;
+            let suite = matches!(node, ast::TestNode::Suite(_));
+            self.test_nodes.push(hir::TestNodeInfo { id: id.clone(), parent, suite, span: name.span });
+            let unit = self.types.intern(TyKind::Fn(Vec::new(), Ty::UNIT, false, Vec::new(), false));
+            let kind = ClosureKind { deferred: false, is_unsafe: false, test: true };
+            let closure =
+                self.closure_with(cx, (&[], None), Some(unit), kind, node.span(), |this, inner, _| match node {
+                    ast::TestNode::Test(t) => this.block(inner, &t.body, Some(Ty::UNIT)),
+                    ast::TestNode::Suite(s) => this.suite_body(inner, s, index, &id),
+                });
+            let Some((body, _, info)) = self.types.closure(closure.ty) else { continue };
+            let erased = self.types.intern(TyKind::Fn(Vec::new(), info.result, false, Vec::new(), false));
+            members.push((index, Self::mk(hir::ExprKind::Erase(Box::new(closure), FnId(body)), erased, name.span)));
+        }
+        Self::mk(hir::ExprKind::TestMembers(members), Ty::UNIT, span)
+    }
+
+    /// The body of a suite's closure: its setup, then its members, then,
+    /// as it ends, its `defer`s.
+    fn suite_body(&mut self, cx: &mut FnCx, suite: &ast::SuiteDecl, index: u32, id: &str) -> hir::Block {
+        cx.setup = true;
+        let mut stmts = self.statements(cx, &suite.setup);
+        cx.setup = false;
+        if suite.members.is_empty() {
+            let message = format!("the suite `{}` has no tests: add a `test` inside it, or remove it", suite.name.name);
+            self.diags.error("E2004", suite.name.span, message);
+        }
+        let members: Vec<&ast::TestNode> = suite.members.iter().collect();
+        let prefixes = vec![id.to_string(); members.len()];
+        stmts.push(hir::Stmt::Expr(self.test_members(cx, &members, index, &prefixes, suite.span)));
+        let ty = if cx.diverged { Ty::NEVER } else { Ty::UNIT };
+        hir::Block { stmts, tail: None, ty }
     }
 
     /// The value of a constant, evaluated on first use (6.5): integer
@@ -1175,6 +1326,7 @@ impl<'a> Checker<'a> {
             ["std", "process"] => StdModule::Process,
             ["std", "internal", "json"] => StdModule::InternalJson,
             ["std", "internal", "memory"] => StdModule::InternalMemory,
+            ["std", "testing"] => StdModule::Testing,
             ["std", ..] => {
                 let what = format!("module `{}`", path.join("."));
                 self.diags.unsupported(import.span, &what);
@@ -1457,7 +1609,11 @@ impl<'a> Checker<'a> {
                     self.declare_type_name(&decl.name, TypeName::Alias(self.aliases.len() - 1));
                     continue;
                 }
-                ast::Item::Fn(_) | ast::Item::Trait(_) | ast::Item::Impl(_) | ast::Item::Const(_) => continue,
+                ast::Item::Fn(_)
+                | ast::Item::Trait(_)
+                | ast::Item::Impl(_)
+                | ast::Item::Const(_)
+                | ast::Item::Test(_) => continue,
             };
             let generics = match item {
                 ast::Item::Type(decl) => &decl.generics,
@@ -3021,6 +3177,8 @@ impl<'a> Checker<'a> {
             unsafe_body: false,
             lent: Vec::new(),
             loan_bindings: HashSet::new(),
+            test_member: false,
+            setup: false,
         }
     }
 
@@ -3169,10 +3327,31 @@ impl<'a> Checker<'a> {
     /// closure, capturing it on first use (11.8).
     fn capture(&mut self, cx: &mut FnCx, name: &str, span: Span) -> Option<hir::Expr> {
         let env = cx.env?;
+        let test_member = cx.test_member;
         let index = match cx.captures.iter().position(|c| c.name == name) {
             Some(index) => index,
             None => {
                 let parent = cx.parent.as_deref_mut()?;
+                if test_member && let Some(local) = self.lookup(parent, name) {
+                    let index = local.0 as usize;
+                    let ty = parent.locals[index].ty;
+                    let why = if parent.params[index].is_some_and(|m| m != ast::Mode::Value) {
+                        Some("a loan".to_string())
+                    } else if parent.mutable[index] {
+                        Some("a `var`".to_string())
+                    } else if !self.types.is_copy(ty) {
+                        Some(format!("of type {}, which is not `Copy`", self.display(ty)))
+                    } else {
+                        None
+                    };
+                    if let Some(why) = why {
+                        let message = format!(
+                            "a test cannot use `{name}` of its suite, {why}: a suite shares only `let` bindings of `Copy` types; make what the test needs inside it"
+                        );
+                        self.diags.error("E2005", span, message);
+                        return Some(Self::error_expr(span));
+                    }
+                }
                 let (source, mutable) = match self.lookup(parent, name) {
                     Some(local)
                         if matches!(
@@ -3230,7 +3409,6 @@ impl<'a> Checker<'a> {
 
     /// A closure from its parts; a `defer` block is a closure without
     /// parameters whose body cannot leave its scope (13.7).
-    #[allow(clippy::too_many_arguments)]
     fn closure_parts(
         &mut self,
         cx: &mut FnCx,
@@ -3239,6 +3417,23 @@ impl<'a> Checker<'a> {
         deferred: bool,
         is_unsafe: bool,
         span: Span,
+    ) -> hir::Expr {
+        let kind = ClosureKind { deferred, is_unsafe, test: false };
+        let body = |this: &mut Self, cx: &mut FnCx, success| this.block(cx, closure_body, success);
+        self.closure_with(cx, (closure_params, closure_result), expected, kind, span, body)
+    }
+
+    /// A closure whose body `check_body` checks in the closure's context,
+    /// given the success type it must produce, if known. The closure of a
+    /// test or a suite infers its errors, as a script does.
+    fn closure_with(
+        &mut self,
+        cx: &mut FnCx,
+        (closure_params, closure_result): (&[ast::ClosureParam], Option<&ast::TypeExpr>),
+        expected: Option<Ty>,
+        ClosureKind { deferred, is_unsafe, test }: ClosureKind,
+        span: Span,
+        check_body: impl FnOnce(&mut Self, &mut FnCx, Option<Ty>) -> hir::Block,
     ) -> hir::Expr {
         // A closure that C calls takes its parameter types from the
         // `extern fn(...)` expected.
@@ -3310,6 +3505,8 @@ impl<'a> Checker<'a> {
         // The body is checked in its own context, nested in the current one.
         let mut inner = self.new_cx(declared.unwrap_or(Ty::ERROR));
         inner.infer_result = declared.is_none();
+        inner.infer_error = test;
+        inner.test_member = test;
         inner.deferred = deferred;
         inner.unsafe_region = is_unsafe;
         inner.unsafe_body = is_unsafe;
@@ -3326,11 +3523,15 @@ impl<'a> Checker<'a> {
             locals.push(local);
         }
         let success = (!cx.infer_result).then_some(cx.result);
-        let body = self.block(cx, closure_body, success);
+        let body = check_body(self, cx, success);
         let result = match declared {
             Some(declared) => declared,
             None if cx.result != Ty::ERROR => cx.result,
             None => body.ty,
+        };
+        let result = match cx.error {
+            Some(error) if test => self.types.intern(TyKind::Result(result, error)),
+            _ => result,
         };
         let parent = cx.parent.take().expect("a closure context has a parent");
         let inner = std::mem::replace(cx, *parent);
@@ -4999,6 +5200,11 @@ impl<'a> Checker<'a> {
                 None
             }
             ast::StmtKind::Defer(deferred) => self.defer(cx, deferred, stmt.span),
+            ast::StmtKind::Return(_) if cx.setup => {
+                let message = "the setup of a suite cannot `return`, or its tests would never run; use `fail` or `testing.skip(reason)`";
+                self.diags.error("E1205", stmt.span, message);
+                None
+            }
             ast::StmtKind::Return(value) => {
                 let result = cx.result;
                 let value = match value {
@@ -8915,7 +9121,7 @@ impl<'a> Checker<'a> {
                 };
                 let message = self.expr(cx, &message.value, Some(Ty::STRING));
                 let message = self.coerce(message, Ty::STRING);
-                Self::mk(hir::ExprKind::Panic(Box::new(message)), Ty::NEVER, span)
+                Self::mk(hir::ExprKind::Panic(Box::new(message), 8), Ty::NEVER, span)
             }
             (["assert"], _) => {
                 let Some((condition, parts)) = args.split_first() else {
@@ -8980,6 +9186,31 @@ impl<'a> Checker<'a> {
                     }
                 };
                 let signature = Signature::simple(params, result);
+                let target = CallTarget::new(Callee::Std(function), signature, expected);
+                self.call_signature(cx, target, None, args, span)
+            }
+            ([_, member], Some(ModuleName::Module(StdModule::Testing))) => {
+                let (function, param) = match *member {
+                    // An assertion that fails, or a skip: both end the test
+                    // or suite where they are called.
+                    "failNow" | "skip" => {
+                        let [arg] = args else {
+                            return self.arity_error(span, 1, args.len());
+                        };
+                        let message = self.expr(cx, &arg.value, Some(Ty::STRING));
+                        let message = Box::new(self.coerce(message, Ty::STRING));
+                        let code = if *member == "failNow" { 7 } else { hir::SKIP };
+                        return Self::mk(hir::ExprKind::Panic(message, code), Ty::NEVER, span);
+                    }
+                    "log" => (StdFn::TestLog, Ty::STRING),
+                    "tags" => (StdFn::TestTags, self.types.intern(TyKind::Map(Ty::STRING, Ty::STRING))),
+                    _ => {
+                        let message = format!("module `testing` has no function `{member}`");
+                        self.diags.error("E1001", segments[1].span, message);
+                        return Self::error_expr(span);
+                    }
+                };
+                let signature = Signature::simple(vec![param], Ty::UNIT);
                 let target = CallTarget::new(Callee::Std(function), signature, expected);
                 self.call_signature(cx, target, None, args, span)
             }

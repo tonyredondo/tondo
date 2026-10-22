@@ -14,6 +14,21 @@ pub struct Module {
     pub items: Vec<Item>,
     /// Top-level statements of a root script (spec 20.3).
     pub statements: Vec<Stmt>,
+    /// Whether the file is production code, a unit test companion or an
+    /// integration test root (testing 5.1).
+    pub class: SourceClass,
+    /// After linking: the path of each module, by its number.
+    pub module_paths: Vec<Vec<String>>,
+    /// In a test build, the name of the package under test.
+    pub test_package: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum SourceClass {
+    #[default]
+    Production,
+    Unit,
+    Integration,
 }
 
 #[derive(Clone, Debug)]
@@ -32,6 +47,54 @@ pub enum Item {
     Enum(EnumDecl),
     Trait(TraitDecl),
     Impl(ImplDecl),
+    Test(TestNode),
+}
+
+/// A `test` or a `suite` (testing 3).
+#[derive(Debug)]
+pub enum TestNode {
+    Test(TestDecl),
+    Suite(SuiteDecl),
+}
+
+impl TestNode {
+    pub fn name(&self) -> &Ident {
+        match self {
+            TestNode::Test(t) => &t.name,
+            TestNode::Suite(s) => &s.name,
+        }
+    }
+
+    pub fn span(&self) -> Span {
+        match self {
+            TestNode::Test(t) => t.span,
+            TestNode::Suite(s) => s.span,
+        }
+    }
+}
+
+/// `test name { body }`: a leaf the runner runs.
+#[derive(Debug)]
+pub struct TestDecl {
+    pub name: Ident,
+    pub body: Block,
+    pub span: Span,
+    /// The module and the class of the file that declares it, set when
+    /// modules are linked.
+    pub module: u32,
+    pub class: SourceClass,
+}
+
+/// `suite name { setup members }`: its setup runs before its members and
+/// its `defer`s after them.
+#[derive(Debug)]
+pub struct SuiteDecl {
+    pub name: Ident,
+    pub setup: Vec<Stmt>,
+    pub members: Vec<TestNode>,
+    pub span: Span,
+    pub module: u32,
+    pub class: SourceClass,
 }
 
 /// `trait Name[Params] { fn ... }`: required methods have no body (12.3).

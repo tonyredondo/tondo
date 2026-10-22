@@ -1,0 +1,16 @@
+// An integration test: it sees only what the package makes public.
+import sample
+
+test parsesThroughThePublicApi {
+    match sample.parse("abc") {
+        ok(length) => assert(length == 3)
+        err(_) => assert(false, "abc parses")
+    }
+}
+
+test rejectsEmptyText {
+    match sample.parse("") {
+        err(sample.ParseError.Empty) => {}
+        ok(_) => assert(false, "empty text is an error")
+    }
+}

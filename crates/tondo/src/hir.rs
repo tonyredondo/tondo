@@ -22,6 +22,24 @@ pub struct Program {
     pub display: HashMap<Ty, FnId>,
     /// The `extern fn` declarations, by `Callee::Extern` index.
     pub externs: Vec<Extern>,
+    /// In a test build, the tree of suites and tests, the root first;
+    /// `main` then runs the root's members.
+    pub tests: Vec<TestNodeInfo>,
+}
+
+/// The code of the panic that `testing.skip` ends a test or suite with,
+/// which the runner reports as a skip.
+pub const SKIP: u32 = 2000;
+
+/// A node of the test tree (testing 3.2).
+#[derive(Clone)]
+pub struct TestNodeInfo {
+    /// The visible identity (`package::unit::module::suite::test`); empty
+    /// for the root.
+    pub id: String,
+    pub parent: u32,
+    pub suite: bool,
+    pub span: Span,
 }
 
 /// An `extern fn`: a C function the program calls by its symbol.
@@ -280,8 +298,13 @@ pub enum ExprKind {
     If(Box<Expr>, Block, Option<Box<Expr>>),
     Block(Block),
     Interpolate(Vec<Segment>),
-    /// `panic(message)`
-    Panic(Box<Expr>),
+    /// `panic(message)`, or a panic with another code: `testing.failNow`
+    /// fails as an assertion (`P0007`) and `testing.skip` with `SKIP`.
+    Panic(Box<Expr>, u32),
+    /// The members of the suite (or of the root of the test tree) whose
+    /// setup is done: each node with the closure, erased to a `fn()`, that
+    /// runs it (testing 7.3).
+    TestMembers(Vec<(u32, Expr)>),
     /// `assert(condition, parts...)`; `source` is the condition's text.
     Assert {
         condition: Box<Expr>,
@@ -686,6 +709,9 @@ pub enum StdFn {
     Fs(FsFn),
     /// An operation of `std.path` (10.4).
     Path(PathFn),
+    /// `testing.log(message)` and `testing.tags(values)` (testing 11.2).
+    TestLog,
+    TestTags,
 }
 
 /// The raw operations of a `Pointer[T]` that touch memory or move it.

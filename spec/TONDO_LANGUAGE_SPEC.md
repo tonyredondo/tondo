@@ -10555,8 +10555,8 @@ de recursos, tiempo monotónico virtual, captura de output, snapshots y
 artefactos content-addressed.
 
 Una ejecución alimenta la salida humana y, sin volver a ejecutar tests, los
-formatos `tondo-test-report-0.1/8`, `tondo-test-list-0.1/6` y
-`tondo-junit-report-0.1/5`. Artefactos y snapshots usan respectivamente
+formatos `tondo-test-report-0.1/1`, `tondo-test-list-0.1/1` y
+`tondo-junit-report-0.1/1`. Artefactos y snapshots usan respectivamente
 `tondo-test-artifacts-0.1/1` y `tondo-snapshot-store-0.1/1`. El número tras `/`
 versiona el schema, no la edición del lenguaje.
 

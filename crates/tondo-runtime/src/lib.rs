@@ -21,6 +21,7 @@ mod process;
 mod shared;
 mod sync;
 mod tasks;
+mod testing;
 mod time;
 
 // ---------------------------------------------------------------------------
@@ -1610,7 +1611,8 @@ pub(crate) fn console_append(bytes: &[u8], newline: bool) {
     }
     let terminal = *out.terminal.get_or_insert_with(|| std::io::IsTerminal::is_terminal(&std::io::stdout()));
     let line = newline || bytes.contains(&b'\n');
-    if out.buffer.len() >= STDOUT_FLUSH_THRESHOLD || (terminal && line) {
+    // A test's output must survive a crash, so a test build delivers it at once.
+    if out.buffer.len() >= STDOUT_FLUSH_THRESHOLD || (terminal && line) || testing::ACTIVE.load(Ordering::Relaxed) {
         out.deliver();
     }
 }
@@ -1666,6 +1668,8 @@ fn panic_name(code: u32) -> &'static str {
         14 => "reentrant-lock",
         15 => "invalid-environment-name",
         16 => "nul-in-c-string",
+        2001 => "test-skip-during-cleanup",
+        2002 => "test-tag-conflict",
         _ => "unknown",
     }
 }
@@ -1696,17 +1700,32 @@ fn run_cleanups() {
 /// as suppressed and the remaining cleanups still run. `message` may be
 /// null; `location` is a static `file:line:column` string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_panic(code: u32, message: *const Str, location: *const Str) -> ! {
+pub unsafe extern "C" fn tondo_rt_panic(mut code: u32, message: *const Str, location: *const Str) -> ! {
     flush_stdout();
-    let mut text = format!("panic[P{code:04}]: {}", panic_name(code));
-    if !message.is_null() {
-        text.push_str(": ");
-        text.push_str(&String::from_utf8_lossy(unsafe { str_bytes(message) }));
-    }
+    let message = (!message.is_null()).then(|| String::from_utf8_lossy(unsafe { str_bytes(message) }).into_owned());
     let location = String::from_utf8_lossy(unsafe { str_bytes(location) });
     let suppressed = PANICKING.fetch_add(1, Ordering::SeqCst) > 0;
+    // `testing.skip(reason)` ends a test as skipped, unless cleanup runs.
+    if code == testing::SKIP && suppressed {
+        code = 2001;
+    } else if code == testing::SKIP {
+        testing::terminal(code, &format!("{}\n --> {location}", message.unwrap_or_default()));
+        run_cleanups();
+        process::cancel_live();
+        flush_stdout();
+        std::process::exit(0)
+    }
+    let mut text = format!("panic[P{code:04}]: {}", panic_name(code));
+    if let Some(message) = message {
+        text.push_str(": ");
+        text.push_str(&message);
+    }
     let prefix = if suppressed { "suppressed while unwinding: " } else { "" };
-    let _ = writeln!(std::io::stderr(), "{prefix}{text}\n --> {location}");
+    let report = format!("{prefix}{text}\n --> {location}");
+    // A test build reports it to `tondo test` instead.
+    if !testing::terminal(code, &report) {
+        let _ = writeln!(std::io::stderr(), "{report}");
+    }
     run_cleanups();
     process::cancel_live();
     flush_stdout();
