@@ -16,6 +16,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("reflect", include_str!("../std/reflect.to")),
     ("prelude", include_str!("../std/prelude.to")),
     ("math", include_str!("../std/math.to")),
+    ("meta", include_str!("../std/meta.to")),
 ];
 
 /// The module written in Tondo an import brings: `std.testing` brings

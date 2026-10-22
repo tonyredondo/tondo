@@ -10197,45 +10197,52 @@ no configura nada: el lockfile ya fija el paquete por hash y, con él, su
 provider. Un trait sin provider declarado produce `E2102`. El compilador no
 carga plugins nativos.
 
-El provider es una función del archivo declarado:
+El provider es la función `provide` del archivo declarado (`derive` es una
+palabra reservada):
 
 ~~~tondo
 // show/derive/show.to
 import std.meta
 
-pub fn derive(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {
+pub fn provide(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {
     let target = request.target()
-    // "x: {self.x}, y: {self.y}"
-    var fields = ""
-    for field in target.fields() {
-        let comma = if fields == "" { "" } else { ", " }
-        fields = fields.concat(comma).concat(meta.code(r"$name: {self.$name}", ["name": field.name]))
-    }
     var out = request.sourceBuilder()
+    var fields: Array[String] = []
+    for field in target.fields() {
+        fields.push(meta.code(r"$name: {self.$name}", ["name": field.name]))
+    }
     out.add(meta.code(r"""
-        impl show.Show for $type {
+        impl $trait for $type {
             fn show(self): String {
-                "$type {{ $fields }}"
+                "$name {{ $fields }}"
             }
         }
-        """, ["type": target.name(), "fields": fields]))?
+        """, [
+        "trait": request.traitName(),
+        "type": target.typeName(),
+        "name": target.name(),
+        "fields": fields.join(", "),
+    ]))?
     out.finishDerive()
 }
 ~~~
 
-El toolchain compila el provider para la máquina que compila, en el perfil
-`meta` (27.7), lo ejecuta en un proceso aparte con la petición y recibe la
-fuente por un canal propio, no por su stdout. Un pánico, un cierre inesperado o
-un error devuelto se informan como `E2104` en la declaración `derive`.
+`request.traitName()` es el trait como lo escribe el `derive` (`show.Show`) y
+`target.typeName()` el tipo con sus parámetros (`Page[T]`), así que el `impl`
+usa los nombres del módulo del tipo. El toolchain compila el provider para la
+máquina que compila, en el perfil `meta` (27.7), lo ejecuta en un proceso aparte
+con la petición y recibe la fuente por un canal propio, no por su stdout. Un
+pánico, un cierre inesperado, un error devuelto o un `out.error(...)` se informan
+como `E2104` en la declaración `derive`. `tondo expand` muestra el `impl` de cada
+`derive`, también el de uno rechazado.
 
 Por cada trait solicitado, el provider puede emitir únicamente:
 
 - un único `impl` de ese trait para el target autorizado, con los métodos y
   operaciones asociadas exigidos por el contrato del trait.
 
-Imports required by `SourceBuilder.renderType` may precede that impl. They
-must name types admitted by the request snapshot; duplicate or unrelated
-imports are rejected. They do not authorize additional declarations.
+Un tipo de la petición ya está escrito como lo escribe el módulo de la
+declaración, así que la fuente no lleva imports.
 
 No puede emitir helpers, tipos, globals, otra declaración `derive`, otra
 solicitud de generación ni un `impl` para un target o trait distinto. Puede
@@ -10400,8 +10407,8 @@ generador, con la operación que no está permitida.
   número en cualquier máquina. Un límite de tiempo podría cumplirse en una
   máquina y fallar en otra más lenta.
 - La memoria la cuenta el runtime y los bytes de resultado el toolchain.
-- Los providers usan límites por defecto del toolchain; un generador puede
-  declarar los suyos en el manifiesto. El mismo programa, modelo, inputs, límites, toolchain y target
+- Los providers tienen 100 millones de pasos, 1 GiB de memoria y 1 MiB de
+  fuente; un generador puede declarar sus límites en el manifiesto. El mismo programa, modelo, inputs, límites, toolchain y target
 debe producir exactamente los mismos bytes o los mismos diagnósticos ordenados.
 Un proveedor que no pueda cumplirlo no es válido para un build reproducible.
 

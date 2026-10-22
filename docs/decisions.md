@@ -891,3 +891,21 @@ for the other arguments and the expected result first. Tuples display as
 `(a, b)`, and the intrinsic numeric types have constants (`Int.max`,
 `Float.pi`). The standard modules written in Tondo now import the runtime
 under distinct aliases, since a package's alias names one module.
+
+## 2026-10-23 — `derive` runs providers as programs
+
+Before the program is checked, each `derive` asks the provider of each trait
+it names for an `impl`. The package that declares the trait names the
+provider's file in `[derive]` of its `tondo.toml`; the trait is resolved as
+the linker resolves imports. The toolchain appends a `main` that serves the
+request to the provider's file, builds it for the `meta` profile and caches
+the executable per compiler and source. It runs it with an empty environment
+in an empty directory, the request in a JSON file and the response in
+another, of length-prefixed sections. The `meta` profile rejects the host
+modules, `spawn`, `unsafe` and `extern` while compiling (`E2108`); the code
+counts a step at each call and each turn of a loop, the runtime's allocator
+counts memory when it has a limit, and a run over a budget ends with its own
+status (`E2107`). What comes back must parse as exactly the `impl` asked for
+(`E2105`); it joins the type's module, and `tondo expand` shows it. The
+provider's function is `provide`, since `derive` is a keyword; a `TypeRef` is
+the type as the declaration's module writes it, so no imports are needed.

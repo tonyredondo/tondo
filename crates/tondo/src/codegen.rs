@@ -112,6 +112,7 @@ enum Rt {
     ReflectBox,
     ReflectRelease,
     ReflectIs,
+    MetaStep,
     ArrayNew,
     ArrayRetain,
     ArrayRelease,
@@ -323,6 +324,7 @@ impl Rt {
             Rt::ReflectBox => ("tondo_rt_reflect_box", &[I64, I64, I64], &[I64]),
             Rt::ReflectRelease => ("tondo_rt_reflect_release", &[I64], &[]),
             Rt::ReflectIs => ("tondo_rt_reflect_is", &[I64, I64], &[I8]),
+            Rt::MetaStep => ("tondo_rt_meta_step", &[], &[]),
             Rt::ArrayNew => ("tondo_rt_array_new", &[I64, I64], &[I64]),
             Rt::ArrayRetain => ("tondo_rt_array_retain", &[I64], &[]),
             Rt::ArrayRelease => ("tondo_rt_array_release", &[I64, I64, I64], &[]),
@@ -622,7 +624,9 @@ fn flags() -> MemFlagsData {
     MemFlagsData::trusted()
 }
 
-pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap) -> Result<Vec<u8>, String> {
+/// Compiles the program to an object file; `meta` counts a step at each
+/// call and each turn of a loop, for a provider or generator (27.7).
+pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, meta: bool) -> Result<Vec<u8>, String> {
     let mut flags = settings::builder();
     flags.set("opt_level", "speed").map_err(|e| e.to_string())?;
     flags.set("is_pic", "true").map_err(|e| e.to_string())?;
@@ -636,6 +640,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap) -> Resul
         module: ObjectModule::new(builder),
         types: &program.types,
         sources,
+        meta,
         functions: Vec::new(),
         runtime: HashMap::new(),
         strings: HashMap::new(),
@@ -708,6 +713,8 @@ struct Codegen<'a> {
     module: ObjectModule,
     types: &'a Types,
     sources: &'a SourceMap,
+    /// Counts steps, for the `meta` profile.
+    meta: bool,
     functions: Vec<FuncId>,
     runtime: HashMap<Rt, FuncId>,
     strings: HashMap<String, DataId>,
@@ -2067,9 +2074,20 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         for (index, block) in self.body.blocks.iter().enumerate() {
             if index > 0 {
                 self.e.fb.switch_to_block(self.blocks[index]);
+            } else if self.e.cg.meta {
+                self.e.call_rt(Rt::MetaStep, &[]);
             }
             for stmt in &block.stmts {
                 self.statement(stmt);
+            }
+            // A jump back to an earlier block closes a loop: a step.
+            let back = match &block.terminator {
+                Terminator::Goto(target) => target.0 as usize <= index,
+                Terminator::Branch(_, then, otherwise) => then.0 as usize <= index || otherwise.0 as usize <= index,
+                _ => false,
+            };
+            if back && self.e.cg.meta {
+                self.e.call_rt(Rt::MetaStep, &[]);
             }
             self.terminator(&block.terminator);
         }

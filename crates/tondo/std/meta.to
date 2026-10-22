@@ -1,0 +1,313 @@
+// std.meta (standard library 14.9): what a `derive` provider receives and
+// how it writes the implementation it gives back. A provider runs while the
+// program compiles, in the `meta` profile, and sees only its request.
+
+import std.internal.meta as metaNative
+import std.json as __json
+
+/// Why a provider cannot give its response.
+pub enum Error {
+    UnknownInput(String)
+    UnknownOutput(String)
+    DuplicateOutput(String)
+    MissingOutput(String)
+    OutputLimit
+    Provider(String)
+    TypeRendering(String)
+}
+
+impl Display for Error {
+    fn display(self): String {
+        match self {
+            Error.UnknownInput(name) => "there is no input `{name}`"
+            Error.UnknownOutput(name) => "there is no output `{name}`"
+            Error.DuplicateOutput(name) => "the output `{name}` is written twice"
+            Error.MissingOutput(name) => "the output `{name}` is not written"
+            Error.OutputLimit => "the output is larger than its limit"
+            Error.Provider(message) => message
+            Error.TypeRendering(message) => message
+        }
+    }
+}
+
+/// A type as the program writes it where the declaration is.
+pub type TypeRef = {
+    priv text: String
+}
+
+/// What tells two types apart: their text where the declaration is.
+pub fn TypeRef.identity(self): String {
+    self.text
+}
+
+impl Display for TypeRef {
+    fn display(self): String {
+        self.text
+    }
+}
+
+/// A field of the declaration, private ones included.
+pub type FieldView = {
+    name: String
+    typeRef: TypeRef
+    private: Bool
+}
+
+/// A variant: its name and the fields or elements of its payload.
+pub type VariantView = {
+    name: String
+    fields: Array[FieldView]
+    elements: Array[TypeRef]
+}
+
+/// A type parameter and the bounds written on it.
+pub type GenericView = {
+    name: String
+    bounds: Array[String]
+}
+
+pub enum DeclarationKind {
+    Record
+    Enum
+    Newtype
+}
+
+/// The record, enum or newtype a `derive` names.
+pub type Declaration = {
+    priv declared: String
+    priv path: String
+    priv form: DeclarationKind
+    priv binders: Array[GenericView]
+    priv members: Array[FieldView]
+    priv cases: Array[VariantView]
+    priv wrapped: TypeRef?
+}
+
+pub fn Declaration.name(self): String {
+    self.declared
+}
+
+/// The module that declares it, as `app.shapes`.
+pub fn Declaration.module(self): String {
+    self.path
+}
+
+pub fn Declaration.kind(self): DeclarationKind {
+    self.form
+}
+
+/// The type with its parameters, as an `impl` header names it: `Page[T]`.
+pub fn Declaration.typeName(self): String {
+    if self.binders.length() == 0 {
+        return self.declared
+    }
+    var names: Array[String] = []
+    for generic in self.binders {
+        names.push(generic.name)
+    }
+    "{self.declared}[{names.join(", ")}]"
+}
+
+pub fn Declaration.generics(self): Array[GenericView] {
+    self.binders
+}
+
+pub fn Declaration.fields(self): Array[FieldView] {
+    self.members
+}
+
+pub fn Declaration.variants(self): Array[VariantView] {
+    self.cases
+}
+
+/// The type a newtype wraps.
+pub fn Declaration.underlying(self): TypeRef? {
+    self.wrapped
+}
+
+/// What `derive` asks of a provider: an `impl` of the trait, as the program
+/// writes its name, for the declaration.
+pub type DeriveRequest = {
+    priv traitText: String
+    priv declaration: Declaration
+    priv outputLimit: Int
+}
+
+pub fn DeriveRequest.target(self): Declaration {
+    self.declaration
+}
+
+/// The trait as the `derive` writes it, such as `show.Show`, which the
+/// `impl` header names.
+pub fn DeriveRequest.traitName(self): String {
+    self.traitText
+}
+
+pub fn DeriveRequest.sourceBuilder(self): SourceBuilder {
+    SourceBuilder { written: none, problems: [], limit: self.outputLimit }
+}
+
+/// The source a provider gives back, and what went wrong.
+pub type SourceBuilder = {
+    priv written: String?
+    priv problems: Array[String]
+    priv limit: Int
+}
+
+/// The type as the declaration's module writes it.
+pub fn SourceBuilder.renderType(mut self, ty: TypeRef): String ! Error {
+    ty.text
+}
+
+/// The implementation, once.
+pub fn SourceBuilder.add(mut self, source: String): Unit ! Error {
+    if self.written.isSome() {
+        fail Error.DuplicateOutput("derive")
+    }
+    if source.byteLength() > self.limit {
+        fail Error.OutputLimit
+    }
+    self.written = some(source)
+}
+
+/// A problem with the declaration, which the compiler reports at the
+/// `derive`; the response is not published.
+pub fn SourceBuilder.error(mut self, message: String) {
+    self.problems.push(message)
+}
+
+pub fn SourceBuilder.finishDerive(self): DeriveResponse ! Error {
+    if self.written.isNone() and self.problems.length() == 0 {
+        fail Error.MissingOutput("derive")
+    }
+    DeriveResponse { source: self.written.unwrapOr(""), problems: self.problems }
+}
+
+/// What a provider gives back.
+pub type DeriveResponse = {
+    priv source: String
+    priv problems: Array[String]
+}
+
+/// The template with each `$name` replaced by its value and `$$` by `$`;
+/// with a raw template, the template is literally the code it writes. A
+/// `$name` without a value panics.
+pub fn code(template: String, values: Map[String, String]): String {
+    var out = ""
+    var name = ""
+    var reading = false
+    for ch in template {
+        if reading {
+            if ch.isAlphanumeric() or ch == '_' {
+                name = "{name}{ch}"
+                continue
+            }
+            out = "{out}{substitute(name, values)}"
+            reading = false
+            name = ""
+        }
+        if ch == '$' {
+            reading = true
+        } else {
+            out = "{out}{ch}"
+        }
+    }
+    if reading {
+        out = "{out}{substitute(name, values)}"
+    }
+    out
+}
+
+fn substitute(name: String, values: Map[String, String]): String {
+    if name == "" {
+        return "$"
+    }
+    match values[name] {
+        some(value) => value
+        none => panic("meta.code: the template uses `${name}`, which has no value")
+    }
+}
+
+fn text(value: __json.Value): String {
+    value.asText().unwrapOr("")
+}
+
+fn typeRef(value: __json.Value): TypeRef {
+    TypeRef { text: text(value) }
+}
+
+fn fieldViews(value: __json.Value): Array[FieldView] {
+    var fields: Array[FieldView] = []
+    for field in value.asArray().unwrapOr([]) {
+        fields.push(FieldView { name: text(field["name"]), typeRef: typeRef(field["type"]), private: field["private"].asBool().unwrapOr(false) })
+    }
+    fields
+}
+
+/// The request the toolchain wrote, as `std.meta` values.
+fn readRequest(source: String): DeriveRequest {
+    let document = match __json.parse(source) {
+        ok(document) => document
+        err(error) => panic("std.meta: the request is not JSON: {error}")
+    }
+    let target = document["target"]
+    var generics: Array[GenericView] = []
+    for generic in target["generics"].asArray().unwrapOr([]) {
+        var bounds: Array[String] = []
+        for bound in generic["bounds"].asArray().unwrapOr([]) {
+            bounds.push(text(bound))
+        }
+        generics.push(GenericView { name: text(generic["name"]), bounds })
+    }
+    var variants: Array[VariantView] = []
+    for variant in target["variants"].asArray().unwrapOr([]) {
+        var elements: Array[TypeRef] = []
+        for element in variant["elements"].asArray().unwrapOr([]) {
+            elements.push(typeRef(element))
+        }
+        variants.push(VariantView { name: text(variant["name"]), fields: fieldViews(variant["fields"]), elements })
+    }
+    let form = match text(target["kind"]) {
+        "enum" => DeclarationKind.Enum
+        "newtype" => DeclarationKind.Newtype
+        _ => DeclarationKind.Record
+    }
+    let wrapped: TypeRef? = if target["underlying"].isNull() { none } else { some(typeRef(target["underlying"])) }
+    let declaration = Declaration {
+        declared: text(target["name"])
+        path: text(target["module"])
+        form
+        binders: generics
+        members: fieldViews(target["fields"])
+        cases: variants
+        wrapped
+    }
+    DeriveRequest {
+        traitText: text(document["trait"])
+        declaration
+        outputLimit: document["limits"]["output"].asInt().unwrapOr(1048576)
+    }
+}
+
+/// One section of the response: its kind, its length in bytes and its text.
+fn section(kind: String, value: String): String {
+    "{kind} {value.byteLength()}\n{value}\n"
+}
+
+/// Runs a provider on the request the toolchain wrote and writes its
+/// response; the toolchain calls it from the program it builds around the
+/// provider.
+pub fn serveDerive(provider: fn(DeriveRequest): DeriveResponse ! Error) {
+    let request = readRequest(metaNative.request())
+    let response = match provider(request) {
+        ok(given) => {
+            var out = section("source", given.source)
+            for problem in given.problems {
+                out = "{out}{section("error", problem)}"
+            }
+            out
+        }
+        err(error) => section("error", "{error}")
+    }
+    metaNative.respond(response)
+}

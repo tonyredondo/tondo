@@ -384,6 +384,18 @@ impl Formatter<'_> {
                 concat(vec![head, self.members(&i.methods, i.span.end)])
             }
             Item::Test(node) => self.test_node(node),
+            Item::Derive(d) => {
+                let mut parts = vec![text("derive"), self.generics(&d.generics), text(" ")];
+                for (index, t) in d.traits.iter().enumerate() {
+                    if index > 0 {
+                        parts.push(text(" + "));
+                    }
+                    parts.push(self.ty(t));
+                }
+                parts.push(text(" for "));
+                parts.push(self.ty(&d.target));
+                concat(parts)
+            }
         }
     }
 
@@ -1373,6 +1385,7 @@ fn item_span(item: &Item) -> Span {
         Item::Trait(t) => t.span,
         Item::Impl(i) => i.span,
         Item::Test(node) => node.span(),
+        Item::Derive(d) => d.span,
     }
 }
 

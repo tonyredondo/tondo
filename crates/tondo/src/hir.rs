@@ -963,6 +963,9 @@ pub const NATIVES: &[Native] = {
     const fn math(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "math", name, receiver: None, params, result, symbol }
     }
+    const fn meta(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
+        Native { module: "meta", name, receiver: None, params, result, symbol }
+    }
     const fn r(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "regex", name, receiver: Some(Regex), params, result, symbol }
     }
@@ -1020,6 +1023,8 @@ pub const NATIVES: &[Native] = {
         reflect("boxName", &[ReflectBox], String, "tondo_rt_reflect_name"),
         reflect("index", &[String], Int, "tondo_rt_reflect_index"),
         reflect("quote", &[String], String, "tondo_rt_reflect_quote"),
+        meta("request", &[], String, "tondo_rt_meta_request"),
+        meta("respond", &[String], Unit, "tondo_rt_meta_respond"),
         text("split", &[String, String], Strings, "tondo_rt_text_split"),
         text("lines", &[String], Strings, "tondo_rt_text_lines"),
         text("words", &[String], Strings, "tondo_rt_text_words"),

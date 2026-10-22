@@ -22,6 +22,10 @@ pub struct Analysis {
     pub source_id: String,
     /// The native libraries the packages link (`[native] libraries`).
     pub libraries: Vec<String>,
+    /// A provider or generator, built for the `meta` profile (27.7).
+    pub meta: bool,
+    /// What each `derive` expanded to, for `tondo expand`.
+    pub expansions: Vec<crate::meta::Expansion>,
 }
 
 /// Reads, parses and checks a program: a project directory (toolchain 3)
@@ -45,7 +49,17 @@ pub fn analyze_tests(path: &Path) -> Result<Analysis, String> {
     analyze_build(path, true)
 }
 
+/// Reads, parses and checks a provider for the `meta` profile (27.7).
+pub fn analyze_meta(path: &Path) -> Result<Analysis, String> {
+    analyze_with(path, false, true)
+}
+
 fn analyze_build(path: &Path, tests: bool) -> Result<Analysis, String> {
+    analyze_with(path, tests, false)
+}
+
+fn analyze_with(path: &Path, tests: bool, meta: bool) -> Result<Analysis, String> {
+    let mut expansions = Vec::new();
     let mut sources = SourceMap::default();
     let mut diags = Diagnostics::default();
     let mut source_id = format!("root:{}", path.file_name().unwrap_or_default().to_string_lossy());
@@ -126,8 +140,9 @@ fn analyze_build(path: &Path, tests: bool) -> Result<Analysis, String> {
         }
         if diags.has_errors() {
             diags.sort(&sources);
-            return Ok(Analysis { sources, diags, program: None, source_id, libraries });
+            return Ok(Analysis { sources, diags, program: None, source_id, libraries, meta, expansions });
         }
+        let mut providers: Vec<Vec<(String, PathBuf)>> = packages.iter().map(|p| p.providers.clone()).collect();
         let mut packages: Vec<modules::PackageInfo> = packages
             .into_iter()
             .map(|p| modules::PackageInfo { name: p.name, dependencies: p.dependencies.into_iter().collect() })
@@ -135,7 +150,9 @@ fn analyze_build(path: &Path, tests: bool) -> Result<Analysis, String> {
         if tests {
             let dependencies = [(tested.clone(), 0)].into_iter().collect();
             packages.push(modules::PackageInfo { name: format!("{tested}_tests"), dependencies });
+            providers.push(Vec::new());
         }
+        expansions = crate::meta::expand(&mut modules, &packages, &providers, &mut sources, &mut diags);
         crate::derive::derive(&mut modules, &mut sources, &mut diags);
         stdlib::add(&mut modules, &mut packages, &mut sources, &mut diags);
         let mut module = modules::link(modules, root, &packages, &mut diags);
@@ -144,7 +161,7 @@ fn analyze_build(path: &Path, tests: bool) -> Result<Analysis, String> {
     } else {
         let module = match parse(path, &mut sources, &mut diags)? {
             Some(module) => module,
-            None => return Ok(Analysis { sources, diags, program: None, source_id, libraries }),
+            None => return Ok(Analysis { sources, diags, program: None, source_id, libraries, meta, expansions }),
         };
         if stdlib::needed(&module) {
             // The file links with the standard modules it imports.
@@ -152,6 +169,7 @@ fn analyze_build(path: &Path, tests: bool) -> Result<Analysis, String> {
             let mut modules =
                 vec![modules::ModuleSource { path: vec![name.clone()], package: 0, files: vec![(module, true)] }];
             let mut packages = vec![modules::PackageInfo { name, dependencies: Default::default() }];
+            expansions = crate::meta::expand(&mut modules, &packages, &[], &mut sources, &mut diags);
             crate::derive::derive(&mut modules, &mut sources, &mut diags);
             stdlib::add(&mut modules, &mut packages, &mut sources, &mut diags);
             modules::link(modules, 0, &packages, &mut diags)
@@ -159,10 +177,10 @@ fn analyze_build(path: &Path, tests: bool) -> Result<Analysis, String> {
             module
         }
     };
-    let program = if diags.has_errors() { None } else { check::check(&module, &sources, &mut diags) };
+    let program = if diags.has_errors() { None } else { check::check(&module, &sources, &mut diags, meta) };
     let program = program.and_then(|program| mono::monomorphize(program, &mut diags));
     diags.sort(&sources);
-    Ok(Analysis { sources, diags, program, source_id, libraries })
+    Ok(Analysis { sources, diags, program, source_id, libraries, meta, expansions })
 }
 
 /// Reads and parses one source file; `None` when it cannot be lexed.
@@ -202,6 +220,7 @@ pub fn inputs(path: &Path) -> Result<Vec<PathBuf>, String> {
         if manifest.is_file() {
             inputs.push(manifest);
         }
+        inputs.extend(package.providers.into_iter().map(|(_, file)| file));
     }
     Ok(inputs)
 }
@@ -219,7 +238,7 @@ pub fn test_inputs(path: &Path) -> Result<Vec<PathBuf>, String> {
 pub fn object(analysis: &Analysis) -> Result<Vec<u8>, String> {
     let program = analysis.program.as_ref().expect("object() requires a checked program");
     let bodies = lower::lower(program);
-    codegen::compile(program, &bodies, &analysis.sources)
+    codegen::compile(program, &bodies, &analysis.sources, analysis.meta)
 }
 
 pub fn cache_dir() -> PathBuf {

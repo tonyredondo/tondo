@@ -14,6 +14,7 @@ pub mod hash;
 pub mod hir;
 pub mod lexer;
 pub mod lower;
+pub mod meta;
 pub mod mir;
 pub mod modules;
 pub mod mono;

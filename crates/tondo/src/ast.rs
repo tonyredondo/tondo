@@ -48,6 +48,17 @@ pub enum Item {
     Trait(TraitDecl),
     Impl(ImplDecl),
     Test(TestNode),
+    Derive(DeriveDecl),
+}
+
+/// `derive[T] module.Trait + other.Trait for Type[T]`: asks each trait's
+/// provider for an `impl` for a type of this module (27.2).
+#[derive(Debug)]
+pub struct DeriveDecl {
+    pub generics: Vec<GenericParam>,
+    pub traits: Vec<TypeExpr>,
+    pub target: TypeExpr,
+    pub span: Span,
 }
 
 /// A `test` or a `suite` (testing 3).

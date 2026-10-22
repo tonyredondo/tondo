@@ -12,6 +12,7 @@ usage:
   tondo build [<project>|<file.to>] [--output <path>] [--link <library>]...
                                                        compile a native executable
   tondo check [<project>|<file.to>] [--json]           report diagnostics only (as JSON)
+  tondo expand [<project>|<file.to>]                   show what each `derive` expanded to
   tondo fmt [--check] <file.to>...                     format files canonically
   tondo update [<project>] [<dependency>...]           fetch dependencies again and rewrite tondo.lock
   tondo test [<project>] [--filter <text> | --glob <pattern> | --exact <id>] [--shard <i/n>]
@@ -44,6 +45,7 @@ fn main() -> ExitCode {
         "run" => run_command(&args[1..]),
         "build" => build_command(&args[1..]),
         "check" => check_command(&args[1..]),
+        "expand" => expand_command(&args[1..]),
         "fmt" => fmt_command(&args[1..]),
         "update" => update_command(&args[1..]),
         "bind" => bind_command(&args[1..]),
@@ -105,6 +107,24 @@ fn check_command(args: &[OsString]) -> Result<ExitCode, String> {
         return Ok(if analysis.program.is_some() { ExitCode::SUCCESS } else { ExitCode::FAILURE });
     }
     Ok(if analyze(&path)?.is_some() { ExitCode::SUCCESS } else { ExitCode::FAILURE })
+}
+
+/// Shows the `impl` each `derive` of the program expanded to (27.3).
+fn expand_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let (path, rest) = source_argument(args);
+    if !rest.is_empty() {
+        return Err(format!("unexpected arguments\n{USAGE}"));
+    }
+    let analysis = driver::analyze(&path)?;
+    for expansion in &analysis.expansions {
+        println!("// {} ({})\n{}", expansion.request, expansion.location, expansion.source.trim_end());
+        println!();
+    }
+    if analysis.diags.has_errors() {
+        eprint!("{}", analysis.diags.render(&analysis.sources));
+        return Ok(ExitCode::FAILURE);
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Builds the tests of a project, runs those selected and reports them

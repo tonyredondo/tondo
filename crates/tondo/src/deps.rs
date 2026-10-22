@@ -17,6 +17,9 @@ pub struct Package {
     pub dependencies: Vec<(String, usize)>,
     /// What `[native] libraries` links: `-lname`, or a library file.
     pub libraries: Vec<String>,
+    /// The provider of each trait it declares that `derive` can ask for
+    /// (`[derive]`): the trait's name and the provider's file.
+    pub providers: Vec<(String, PathBuf)>,
 }
 
 #[derive(Clone)]
@@ -54,12 +57,13 @@ struct Manifest {
     name: Option<String>,
     dependencies: Vec<(String, Source)>,
     libraries: Vec<String>,
+    providers: Vec<(String, PathBuf)>,
 }
 
 /// Reads `tondo.toml` in `dir`; a missing file declares nothing.
 fn manifest(dir: &Path) -> Result<Manifest, String> {
     let path = dir.join("tondo.toml");
-    let mut manifest = Manifest { name: None, dependencies: Vec::new(), libraries: Vec::new() };
+    let mut manifest = Manifest { name: None, dependencies: Vec::new(), libraries: Vec::new(), providers: Vec::new() };
     if !path.is_file() {
         return Ok(manifest);
     }
@@ -104,9 +108,25 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
                     }
                 }
             }
+            ("derive", false) => {
+                for (key, value, line) in table.entries {
+                    let usage = format!(
+                        "`{key} = \"derive/{}.to\"` names the file of the trait's provider",
+                        key.to_lowercase()
+                    );
+                    let Some(file) = value.as_str().filter(|f| f.ends_with(".to")) else {
+                        return Err(at(line, usage));
+                    };
+                    if !is_identifier(&key) {
+                        return Err(at(line, format!("`{key}` is not the name of a trait")));
+                    }
+                    manifest.providers.push((key, dir.join(file)));
+                }
+            }
             (name, _) => {
-                let message =
-                    format!("unknown table `[{name}]`: tondo.toml has `[package]`, `[dependencies]` and `[native]`");
+                let message = format!(
+                    "unknown table `[{name}]`: tondo.toml has `[package]`, `[dependencies]`, `[native]` and `[derive]`"
+                );
                 return Err(at(table.line, message));
             }
         }
@@ -236,6 +256,7 @@ impl Resolver<'_> {
             dir: dir.clone(),
             dependencies: Vec::new(),
             libraries: manifest.libraries,
+            providers: manifest.providers,
         });
         self.visiting.push(dir.clone());
         for (dependency, source) in manifest.dependencies {

@@ -236,7 +236,7 @@ fn declarations(module: &ModuleSource) -> Declarations {
                 Item::Trait(t) => {
                     decls.types.insert(t.name.name.clone(), t.public);
                 }
-                Item::Fn(_) | Item::Impl(_) | Item::Test(_) => {}
+                Item::Fn(_) | Item::Impl(_) | Item::Test(_) | Item::Derive(_) => {}
             }
         }
     }
@@ -432,6 +432,8 @@ impl Linker<'_> {
                 i.methods.iter_mut().for_each(|m| self.function(m, false));
             }
             Item::Test(node) => self.test_node(node),
+            // Expanded into implementations before modules are linked.
+            Item::Derive(_) => {}
         }
     }
 

@@ -337,6 +337,22 @@ impl Parser<'_> {
             Tok::Kw(Kw::Enum) => Ok(Some(Item::Enum(self.enum_declaration(public, start)?))),
             Tok::Kw(Kw::Trait) => Ok(Some(Item::Trait(self.trait_declaration(public, start)?))),
             Tok::Kw(Kw::Impl) => Ok(Some(Item::Impl(self.impl_declaration(start)?))),
+            Tok::Kw(Kw::Derive) => {
+                if public {
+                    self.diags.error("E0004", start, "a `derive` is never `pub`: remove `pub`");
+                }
+                self.bump();
+                let generics = self.generic_params()?;
+                let mut traits = vec![self.type_expr()?];
+                while self.eat(&Tok::Plus) {
+                    traits.push(self.type_expr()?);
+                }
+                self.expect(Tok::Kw(Kw::For))?;
+                let target = self.type_expr()?;
+                let span = start.to(self.prev_span());
+                self.end_of_statement()?;
+                Ok(Some(Item::Derive(DeriveDecl { generics, traits, target, span })))
+            }
             Tok::Kw(Kw::Test | Kw::Suite) => {
                 if public {
                     let keyword = self.tok().describe();

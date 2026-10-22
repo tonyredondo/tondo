@@ -212,6 +212,7 @@ usa `cc` para enlazar. Si falta una herramienta, el error lo dice. Con
 tondo run [<project>|<file.to>] [--link <library>]... [-- <argument>...]
 tondo build [<project>|<file.to>] [--output <path>] [--link <library>]...
 tondo check [<project>|<file.to>] [--json]
+tondo expand [<project>|<file.to>]
 tondo fmt [--check] <file.to>...
 tondo update [<project>] [<dependency>...]
 tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
@@ -223,6 +224,8 @@ tondo test [<project>]
 - `--link` enlaza una librería de C más, por nombre o archivo como en
   `[native] libraries`; un archivo suelto, que no tiene `tondo.toml`, la usa
   para sus `extern fn`.
+- `expand` muestra, con su formato canónico, el `impl` que dio el provider de
+  cada `derive` (27.3 del lenguaje), y dónde está el `derive`.
 - `fmt` aplica el formato canónico (21) a archivos sueltos; `--check` falla si
   alguno no lo cumple.
 - `bind` escribe un módulo con las declaraciones de C de unos headers, de un

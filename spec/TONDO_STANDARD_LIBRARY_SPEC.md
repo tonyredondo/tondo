@@ -2574,7 +2574,8 @@ builder con el que escriben fuente y sus respuestas.
 pub type DeriveRequest
 pub type GenerateRequest
 pub type Declaration
-pub type FieldView = { name: String, typeRef: TypeRef }
+pub enum DeclarationKind { Record, Enum, Newtype }
+pub type FieldView = { name: String, typeRef: TypeRef, private: Bool }
 pub type VariantView = { name: String, fields: Array[FieldView], elements: Array[TypeRef] }
 pub type GenericView = { name: String, bounds: Array[String] }
 pub type TypeRef
@@ -2603,6 +2604,8 @@ pub fn GenerateRequest.sourceBuilder(self): SourceBuilder
 
 pub fn Declaration.name(self): String
 pub fn Declaration.module(self): String
+pub fn Declaration.kind(self): DeclarationKind
+pub fn Declaration.typeName(self): String
 pub fn Declaration.generics(self): Array[GenericView]
 pub fn Declaration.fields(self): Array[FieldView]
 pub fn Declaration.variants(self): Array[VariantView]
@@ -2611,26 +2614,31 @@ pub fn Declaration.underlying(self): TypeRef?
 pub fn TypeRef.identity(self): String
 
 pub fn code(template: String, values: Map[String, String]): String
-pub fn SourceBuilder.renderType(mut self, output: String, ty: TypeRef): String ! Error
-pub fn SourceBuilder.add(mut self, output: String, source: String): Unit ! Error
+pub fn SourceBuilder.renderType(mut self, ty: TypeRef): String ! Error
+pub fn SourceBuilder.add(mut self, source: String): Unit ! Error
+pub fn SourceBuilder.write(mut self, output: String, source: String): Unit ! Error
 pub fn SourceBuilder.finish(self): GenerateResponse ! Error
 pub fn SourceBuilder.finishDerive(self): DeriveResponse ! Error
 pub fn SourceBuilder.error(mut self, message: String)
 ~~~
 
 - `DeriveRequest.target()` es la vista del tipo autorizado por la declaración
-  `derive`, con sus campos privados (27.4); `GenerateRequest.declarations()` las
-  declaraciones públicas de los roots del generador.
+  `derive`, con sus campos privados (27.4); `traitName()` es el trait como lo
+  escribe el `derive`. `GenerateRequest.declarations()` da las declaraciones
+  públicas de los roots del generador.
+- `Declaration.typeName()` es el tipo con sus parámetros, como lo nombra la
+  cabecera de un `impl`: `Page[T]`.
+- Un `TypeRef` es el tipo como lo escribe el módulo de la declaración; su
+  `identity()` es ese texto, y `renderType` lo escribe tal cual.
 - `code` sustituye cada `$nombre` de la plantilla por su valor y `$$` por `$`;
   con una plantilla raw, la plantilla es literalmente el código generado. Un
   `$nombre` sin valor es un pánico, que el toolchain informa como fallo del
   provider.
-- `renderType` escribe un tipo con los nombres que ve el módulo de la salida y
-  añade los imports que necesita.
-- Un builder de `derive` solo admite su salida, y `finishDerive` exige que
-  contenga exactamente el `impl` pedido; uno de generador admite cada salida
-  declarada una vez y `finish` exige todas. `error` añade un diagnóstico, que
-  impide publicar la respuesta.
+- Un builder de `derive` admite su fuente una vez con `add`, y `finishDerive`
+  exige que la tenga; el toolchain comprueba que sea exactamente el `impl`
+  pedido. Uno de generador admite con `write` cada salida declarada una vez, y
+  `finish` exige todas. `error` añade un diagnóstico, que impide publicar la
+  respuesta.
 
 No ofrece filesystem, environment, procesos, reloj, entropía, red ni callbacks
 del compilador: todo lo que un provider o generador necesita llega en la

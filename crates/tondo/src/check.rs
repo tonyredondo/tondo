@@ -14,8 +14,16 @@ use crate::types::{
 };
 use std::collections::{HashMap, HashSet};
 
-pub fn check<'a>(module: &'a ast::Module, sources: &'a SourceMap, diags: &'a mut Diagnostics) -> Option<hir::Program> {
+/// Checks a linked program; `meta` is the profile of a provider or
+/// generator, which has no host capabilities (27.7).
+pub fn check<'a>(
+    module: &'a ast::Module,
+    sources: &'a SourceMap,
+    diags: &'a mut Diagnostics,
+    meta: bool,
+) -> Option<hir::Program> {
     let mut checker = Checker {
+        meta,
         types: Types::default(),
         diags,
         sources,
@@ -152,6 +160,8 @@ enum StdModule {
     /// scalar math, for the prelude and `std.math`.
     InternalText,
     InternalMath,
+    /// `std.internal.meta`: the request and response of a provider.
+    InternalMeta,
 }
 
 /// The types `std.process` declares when imported.
@@ -487,6 +497,8 @@ fn std_alias(module: &str, member: &str) -> String {
 }
 
 struct Checker<'a> {
+    /// The `meta` profile: no host capabilities (27.7).
+    meta: bool,
     types: Types,
     diags: &'a mut Diagnostics,
     sources: &'a SourceMap,
@@ -1087,6 +1099,19 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// In the `meta` profile, an operation of the host is `E2108`: a
+    /// provider or generator runs while compiling and sees only its request
+    /// (27.7). Whether it was.
+    fn meta_denied(&mut self, span: Span, what: &str) -> bool {
+        if self.meta {
+            let message = format!(
+                "{what} is not available to a provider or generator, which runs while the program compiles and works only on its request"
+            );
+            self.diags.error("E2108", span, message);
+        }
+        self.meta
+    }
+
     /// `reflect.Value`, once `std.reflect` is imported.
     fn reflect_value_ty(&self) -> Option<Ty> {
         match self.type_names.get("reflect.Value") {
@@ -1269,6 +1294,7 @@ impl<'a> Checker<'a> {
     /// An `extern fn` (FFI): a module function without body whose
     /// parameters and result cross to C, called inside `unsafe`.
     fn declare_extern(&mut self, f: &ast::FnDecl) {
+        self.meta_denied(f.span, "`extern fn`");
         let module = std::mem::replace(&mut self.module, f.module);
         let foreign = f.foreign.clone().expect("an extern fn");
         if !f.generics.is_empty() {
@@ -1581,6 +1607,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "reflect"] => StdModule::InternalReflect,
             ["std", "internal", "text"] => StdModule::InternalText,
             ["std", "internal", "math"] => StdModule::InternalMath,
+            ["std", "internal", "meta"] => StdModule::InternalMeta,
             ["std", ..] => {
                 let what = format!("module `{}`", path.join("."));
                 self.diags.unsupported(import.span, &what);
@@ -1592,6 +1619,19 @@ impl<'a> Checker<'a> {
                 return;
             }
         };
+        if matches!(
+            module,
+            StdModule::Fs
+                | StdModule::Process
+                | StdModule::Env
+                | StdModule::Time
+                | StdModule::Sync
+                | StdModule::Testing
+                | StdModule::InternalMemory
+        ) && self.meta_denied(import.span, &format!("`{}`", path.join(".")))
+        {
+            return;
+        }
         let name = import.alias.as_ref().unwrap_or(import.path.last().unwrap());
         self.declare_module_name(name, ModuleName::Module(module));
         if module == StdModule::Sync && self.compare_exchange.is_none() {
@@ -1885,7 +1925,8 @@ impl<'a> Checker<'a> {
                 | ast::Item::Trait(_)
                 | ast::Item::Impl(_)
                 | ast::Item::Const(_)
-                | ast::Item::Test(_) => continue,
+                | ast::Item::Test(_)
+                | ast::Item::Derive(_) => continue,
             };
             let generics = match item {
                 ast::Item::Type(decl) => &decl.generics,
@@ -4122,6 +4163,7 @@ impl<'a> Checker<'a> {
     /// `spawn call(arguments)` (11.11): the callee and arguments are
     /// evaluated now, by value, and a new task makes the call.
     fn spawn(&mut self, cx: &mut FnCx, call: &ast::Expr, span: Span) -> hir::Expr {
+        self.meta_denied(span, "`spawn`");
         let ast::ExprKind::Call { args, .. } = &call.kind else {
             let message =
                 "`spawn` takes a call, such as `spawn fetch(url)`; put other work in a function and spawn its call";
@@ -6823,6 +6865,7 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Try(inner) => self.try_expr(cx, inner, expected, span),
             ast::ExprKind::Closure(closure) => self.closure(cx, closure, expected, span),
             ast::ExprKind::Unsafe(block) => {
+                self.meta_denied(span, "`unsafe`");
                 let outer = std::mem::replace(&mut cx.unsafe_region, true);
                 let block = self.block(cx, block, expected);
                 cx.unsafe_region = outer;
@@ -9738,7 +9781,8 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalRegex
                     | StdModule::InternalReflect
                     | StdModule::InternalText
-                    | StdModule::InternalMath),
+                    | StdModule::InternalMath
+                    | StdModule::InternalMeta),
                 )),
             ) => {
                 if module == StdModule::InternalReflect && *member == "box" {
@@ -9755,6 +9799,7 @@ impl<'a> Checker<'a> {
                     StdModule::InternalRegex => "regex",
                     StdModule::InternalText => "text",
                     StdModule::InternalMath => "math",
+                    StdModule::InternalMeta => "meta",
                     _ => "reflect",
                 };
                 let found =

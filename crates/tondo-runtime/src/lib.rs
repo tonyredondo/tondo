@@ -19,6 +19,7 @@ mod io;
 mod json;
 mod math;
 mod memory;
+mod meta;
 mod process;
 mod reflect;
 mod regex;
@@ -1778,8 +1779,13 @@ unsafe extern "C" {
 }
 
 #[cfg(tondo_staticlib)]
+#[global_allocator]
+static ALLOCATOR: meta::Counting = meta::Counting;
+
+#[cfg(tondo_staticlib)]
 #[unsafe(no_mangle)]
 pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
+    meta::start();
     let mut status = tasks::run_main(tondo_main);
     if let Some(status) = tasks::ending() {
         process::cancel_live();
