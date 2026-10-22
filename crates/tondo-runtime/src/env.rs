@@ -19,6 +19,13 @@ fn table() -> MutexGuard<'static, Option<Table>> {
     table
 }
 
+/// The environment processes started now inherit.
+pub(crate) fn environment() -> Vec<(OsString, OsString)> {
+    let table = table();
+    let table = table.as_ref().unwrap();
+    table.iter().map(|(k, v)| (OsString::from_vec(k.clone()), OsString::from_vec(v.clone()))).collect()
+}
+
 fn text(bytes: &[u8]) -> *mut Str {
     str_new(String::from_utf8_lossy(bytes).as_bytes())
 }

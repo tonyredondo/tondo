@@ -1,0 +1,13 @@
+import std.process
+
+fn main() {
+    let a = process.exec("ls")
+    let b = process.command("ls") | 5
+    let c = (process.command("ls") | process.command("wc")).directory("/tmp")
+    let d = process.command("ls").stdout("file.txt")
+}
+
+// expect-error: E1001 module `process` has no function `exec`; use `process.command`
+// expect-error: E1102 `|` joins a `Command` or `Pipeline` with another, not with `Int`
+// expect-error: E1001 `Pipeline` has no method `directory`
+// expect-error: E1102 expected `process.Output`, found `String`: write `process.Output.File(path)`

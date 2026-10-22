@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicUsize, Ordering, fence};
 mod env;
 mod fs;
 mod io;
+mod process;
 mod shared;
 mod sync;
 mod tasks;
@@ -1704,6 +1705,7 @@ pub unsafe extern "C" fn tondo_rt_panic(code: u32, message: *const Str, location
     let prefix = if suppressed { "suppressed while unwinding: " } else { "" };
     let _ = writeln!(std::io::stderr(), "{prefix}{text}\n --> {location}");
     run_cleanups();
+    process::cancel_live();
     flush_stdout();
     std::process::exit(PANIC_EXIT_CODE)
 }

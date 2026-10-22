@@ -1,0 +1,68 @@
+import std.console
+import std.io
+import std.process
+
+fn main(): !process.ProcessError {
+    let echo = process.command("echo", "hello", "world")
+    let status = echo.run()?
+    console.println("run: code {status.code} success {status.success}")
+    let output = echo.output()?
+    console.println("output: [{output.text()?}] statuses {output.statuses.length()}")
+    let pipeline = process.command("printf", "b\\na\\nc\\n") | process.command("sort") | process.command("head", "-n", "2")
+    console.println("pipeline: [{pipeline.output()?.text()?}]")
+    let failing = process.shell("echo oops >&2; exit 3")
+    let quiet = failing.status()?
+    console.println("status: {quiet.code} {quiet.success}")
+    match failing.check() {
+        ok(_) => console.println("unexpected"),
+        err(error) => {
+            console.println("check: {error}")
+            match error {
+                process.ProcessError.Failed(exit, out) => console.println("stderr {out.stderr.length()} bytes, code {exit.code}"),
+                _ => console.println("other"),
+            }
+        },
+    }
+    match process.command("surely-not-a-program").run() {
+        ok(_) => console.println("unexpected"),
+        err(error) => console.println("missing: {error}"),
+    }
+    let merged = process.shell("echo out; echo err >&2").mergeStderr().output()?
+    console.println("merged: {merged.combined.length()} bytes, stderr {merged.stderr.length()}")
+    let fed = process.command("tr", "a-z", "A-Z").stdin(process.Input.Text("shout\n")).output()?
+    console.println("fed: {fed.text()?}")
+    let buffer = io.Buffer()
+    _ = process.command("echo", "into buffer").stdout(process.Output.Writer(buffer.writer())).run()?
+    console.println("buffer: {buffer.length()} bytes")
+    let env = process.shell("echo $TONDO_X in $(pwd)").env("TONDO_X", "set").directory("/tmp").output()?
+    console.println("env: {env.text()?}")
+    var child = process.command("cat").stdin(process.Input.Pipe).stdout(process.Output.Pipe).start()?
+    _ = child.stdin().writeLine("through cat")
+    _ = child.stdin().close()
+    match child.stdout().readLine() {
+        ok(line) => console.println("child says: {line}"),
+        err(error) => console.println("{error}"),
+    }
+    let done = child.wait()?
+    console.println("child: {done.code}")
+}
+
+// expect-stdout: hello world
+// expect-stdout: run: code 0 success true
+// expect-stdout: output: [hello world
+// expect-stdout: ] statuses 1
+// expect-stdout: pipeline: [a
+// expect-stdout: b
+// expect-stdout: ]
+// expect-stdout: status: 3 false
+// expect-stdout: check: exited with code 3
+// expect-stdout: stderr 5 bytes, code 3
+// expect-stdout: missing: not found
+// expect-stdout: merged: 8 bytes, stderr 0
+// expect-stdout: fed: SHOUT
+// expect-stdout: 
+// expect-stdout: buffer: 12 bytes
+// expect-stdout: env: set in /tmp
+// expect-stdout: 
+// expect-stdout: child says: some(through cat)
+// expect-stdout: child: 0

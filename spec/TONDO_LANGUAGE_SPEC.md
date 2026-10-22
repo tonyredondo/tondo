@@ -6669,7 +6669,7 @@ let pipeline = (
 )
 
 let output = pipeline.output()?
-console.print(String(output.stdout)?)
+console.print(output.text()?)
 ~~~
 
 En un script raíz:
@@ -6711,10 +6711,10 @@ let command = process.command("git", "show", revision)
 Su forma conceptual aprovecha los variádicos homogéneos:
 
 ~~~tondo
-fn cmd(program: String, args: ...String): Command
+fn command(program: String, arguments: ...String): Command
 ~~~
 
-Construir un comando no lo ejecuta. `Command` y `Pipeline` son siempre planes inertes `Copy + Send + Share`, por lo que su configuración persistente solo puede contener datos copiables, compartibles y reutilizables. Un stream, descriptor u otro recurso one-shot se proporciona al iniciar la ejecución y se mueve al handle resultante; no puede quedar oculto dentro del plan. No hay parsing de shell, interpolación textual, globbing ni expansión de variables implícita. Cada argumento conserva exactamente los caracteres del `String` recibido.
+Construir un comando no lo ejecuta. `Command` y `Pipeline` son siempre planes inertes `Copy + Send + Share`, por lo que su configuración persistente solo puede contener datos copiables, compartibles y reutilizables, entre ellos los streams compartidos de `std.io`; las pipes y los procesos que crea una ejecución pertenecen a esa ejecución o a su handle. No hay parsing de shell, interpolación textual, globbing ni expansión de variables implícita. Cada argumento conserva exactamente los caracteres del `String` recibido.
 
 La ejecución mediante shell requiere una API nombrada y explícita:
 
@@ -6745,13 +6745,14 @@ Solo existen las cuatro combinaciones cerradas de `Command` y `Pipeline`
 definidas en 17.6. Los usuarios no pueden sobrecargar `|`, y el operador no
 conecta arrays, cursores u otros valores Tondo.
 
-Un pipeline comienza a ejecutar únicamente mediante una operación de ejecución explícita, conceptualmente:
+Un pipeline comienza a ejecutar únicamente mediante una operación de ejecución
+explícita de `std.process` (19.2 de la librería estándar):
 
-- `start()`: inicia y devuelve un handle de proceso o pipeline.
-- `status()`: espera y devuelve estados de salida.
+- `start()`: inicia y devuelve un handle de proceso.
+- `run()`: conecta los streams configurados, espera y devuelve el estado.
+- `status()`: espera sin entrada ni salida y devuelve el estado.
 - `output()`: espera y captura stdout y stderr.
-- `run()`: conecta los streams configurados y espera.
-- `check()`: espera y convierte estados no satisfactorios en un error nominal.
+- `check()`: como `output()`, y convierte un estado sin éxito en error.
 
 Las operaciones que esperan I/O son funciones ordinarias que esperan sin marcas
 (11.10): detienen la tarea, no el thread.
@@ -6764,7 +6765,7 @@ Decodificar texto o datos estructurados es visible y puede fallar:
 
 ~~~tondo
 let output = pipeline.output()?
-let text = String(output.stdout)?
+let text = output.text()?
 let values = decodeRecords(text)?
 ~~~
 
@@ -6774,7 +6775,9 @@ Esta separación preserva fidelidad binaria, evita elegir codecs implícitos y m
 
 No poder crear un proceso, perder un stream o fallar al esperar son errores recuperables de la API de proceso. Un código de salida no cero es inicialmente un valor `ExitStatus`, no un pánico ni necesariamente un error Tondo.
 
-Una operación `check()` puede aplicar una política explícita y devolver `!ProcessExitError`. En un pipeline, el resultado conserva el estado de cada etapa; la librería deberá especificar qué políticas de comprobación ofrece sin copiar silenciosamente la regla particular de un shell.
+`check()` devuelve `ProcessError.Failed` con el estado y la salida cuando una
+etapa no termina con éxito. En un pipeline, el resultado conserva el estado de
+cada etapa, y el estado del conjunto solo tiene éxito si lo tienen todas.
 
 `Command.start()` crea un proceso del sistema y devuelve un handle; `spawn` queda
 reservado para tareas. La separación evita una excepción
@@ -6784,12 +6787,10 @@ léxica para nombres de método y hace visible qué clase de concurrencia comien
 
 Un proceso iniciado es un recurso externo. Su handle en propiedad es afín y permite esperar, cancelar o transferir ownership mediante movimiento explícito. Abandonar el handle de un hijo todavía activo cierra su entrada y espera a que termine, como un `Join` (11.11); durante un pánico lo cancela. `detach()` suelta el proceso para que siga sin esperarlo.
 
-Cuando la tarea que espera un proceso se cancela:
-
-- La cancelación detiene la espera y aplica la política de cleanup configurada.
-- Cerrar pipes y esperar hijos evita zombies y tareas suspendidas permanentemente.
-- Un timeout es un error recuperable o resultado nominal visible, no un pánico.
-- La terminación forzada nunca se infiere solo por abandonar un binding; debe formar parte del contrato del handle o de una operación nombrada.
+Cuando la tarea que espera un proceso se cancela, la espera termina, las etapas
+del proceso terminan y el runtime las espera, de modo que no quedan zombies. La
+terminación forzada nunca se infiere de abandonar un binding fuera de un
+pánico: es la operación `cancel()`.
 
 Los detalles portables de señales, grupos de procesos, consolas, quoting por plataforma y herencia de file descriptors pertenecen a la especificación de la librería estándar.
 
@@ -9454,7 +9455,7 @@ let pipeline = (
 )
 
 let output = pipeline.check()?
-console.print(String(output.stdout)?)
+console.print(output.text()?)
 ~~~
 
 La llamada a `check()` espera a que termine el pipeline. Construir el pipeline no ejecuta nada hasta alcanzarla.
@@ -10513,7 +10514,7 @@ import std.process
 
 let pipeline = process.command("producer") | process.command("consumer")
 let output = pipeline.output()?
-console.print(String(output.stdout)?)
+console.print(output.text()?)
 ~~~
 
 Las sentencias top-level existen solo en el archivo raíz de un script y forman un `main` implícito.
@@ -10646,8 +10647,7 @@ module std.json
     opaque DecodeError
 
 module std.process
-    fn args(): Array[String]
-    fn cmd(program: String, arguments: ...String): Command
+    fn command(program: String, arguments: ...String): Command
 ~~~
 
 Para `Command` y `Pipeline`, el fixture de procesos añade:
@@ -10661,6 +10661,7 @@ type ProcessOutput = {
 
 fn Pipeline.output(self): ProcessOutput ! ProcessError
 fn Pipeline.check(self): ProcessOutput ! ProcessError
+fn ProcessOutput.text(self): String ! ProcessError
 ~~~
 
 ### C.3 Fixtures especializados

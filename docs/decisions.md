@@ -528,3 +528,22 @@ people already read. For the wall clock there is `time.utcNow()`, a
 time zones, local time and calendar arithmetic wait for a later version.
 Integer arithmetic on a newtype now follows the sign of the integer it
 holds; it used to check `time.Instant` subtraction as unsigned.
+
+## 2026-10-22 — Processes with pipes and typed redirections
+
+`std.process` keeps the spec's plans and adds what a shell offers without
+parsing shell syntax. `Command` and `Pipeline` are immutable shared plans
+composed with `|`; `stdin`, `stdout` and `stderr` take an `Input` or
+`Output` enum for `<`, `>`, `>>`, `2>&1`, `/dev/null`, a fixed text, a
+stream of `std.io` or a pipe the program reads and writes through the
+`Process`. `run`, `status`, `output`, `check` and `start` differ only in
+their default streams, and an explicit redirection always wins. A non-zero
+exit is data except for `check`, which returns `Failed` with the status
+and the whole output; a pipeline succeeds only when every stage does,
+except a stage ended by a closed pipe before a later one succeeded, so
+`yes | head -1` succeeds. A child that inherits the console writes to the
+program's replaced console stream when there is one, so capturing the
+console captures children too. Waiting runs on host threads and a
+cancelled task kills its children; dropping a `Process` closes its input
+and waits, a panic kills them, and `detach()` lets them outlive the
+program.

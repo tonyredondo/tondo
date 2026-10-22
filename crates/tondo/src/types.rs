@@ -152,6 +152,10 @@ pub enum Handle {
     Writer,
     Reader,
     Buffer,
+    /// The process plans of the language (20.5) and a started process.
+    Command,
+    Pipeline,
+    Process,
 }
 
 impl Handle {
@@ -178,13 +182,25 @@ impl Handle {
             Handle::Writer => "io.Writer",
             Handle::Reader => "io.Reader",
             Handle::Buffer => "io.Buffer",
+            Handle::Command => "Command",
+            Handle::Pipeline => "Pipeline",
+            Handle::Process => "process.Process",
         }
     }
 
     /// A handle to state shared by all its copies: a `std.sync` value
     /// other than `Permit`, a `Receiver`, or a stream or buffer of `std.io`.
     pub fn shared(self) -> bool {
-        !matches!(self, Handle::Join | Handle::Group | Handle::Sender | Handle::Permit | Handle::Guard | Handle::File)
+        !matches!(
+            self,
+            Handle::Join
+                | Handle::Group
+                | Handle::Sender
+                | Handle::Permit
+                | Handle::Guard
+                | Handle::File
+                | Handle::Process
+        )
     }
 
     /// One of the five shared collections of `std.sync`.
@@ -356,6 +372,8 @@ pub enum Shown {
     Duration,
     /// `std.time.DateTime`, in RFC 3339.
     DateTime,
+    /// `std.process.ProcessError`: words, or the exit code that failed.
+    ProcessError,
 }
 
 /// Instantiation depth beyond which a generic type is considered to grow
@@ -1269,7 +1287,10 @@ impl Types {
                         | Handle::File
                         | Handle::Writer
                         | Handle::Reader
-                        | Handle::Buffer,
+                        | Handle::Buffer
+                        | Handle::Command
+                        | Handle::Pipeline
+                        | Handle::Process,
                         _,
                     ) => {
                         return handle.name().to_string();

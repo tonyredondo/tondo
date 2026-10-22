@@ -55,6 +55,43 @@ pub(crate) fn host<R: Send + 'static>(long: bool, job: impl FnOnce() -> R + Send
     result.lock().unwrap_or_else(|e| e.into_inner()).take().expect("the host operation finished")
 }
 
+/// Like `host` for long work, but a cancelled task stops waiting:
+/// `on_cancel` makes the work end soon, and the task waits for that.
+pub(crate) fn host_cancellable<R: Send + 'static>(
+    job: impl FnOnce() -> R + Send + 'static,
+    on_cancel: impl FnOnce(),
+) -> R {
+    if current().is_null() {
+        return job();
+    }
+    let result = Arc::new((Mutex::new(None), Condvar::new()));
+    let wait = Wait::new();
+    let (slot, waiting) = (result.clone(), wait.clone());
+    HOST_WORK.fetch_add(1, Ordering::SeqCst);
+    submit(
+        Box::new(move || {
+            let value = job();
+            *slot.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(value);
+            slot.1.notify_all();
+            if waiting.claim(0) {
+                notify(waiting.task);
+            }
+            HOST_WORK.fetch_sub(1, Ordering::SeqCst);
+        }),
+        true,
+    );
+    if wait.block() == super::tasks::CANCELLED {
+        on_cancel();
+    }
+    let mut value = result.0.lock().unwrap_or_else(|e| e.into_inner());
+    loop {
+        if let Some(value) = value.take() {
+            return value;
+        }
+        value = result.1.wait(value).unwrap_or_else(|e| e.into_inner());
+    }
+}
+
 fn submit(job: Job, long: bool) {
     let mut pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
     pool.jobs.push_back(job);
@@ -165,6 +202,18 @@ impl Host for Discard {
     }
     fn write(&mut self, _data: &[u8]) -> std::io::Result<()> {
         Ok(())
+    }
+}
+
+impl Host for std::io::PipeReader {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        Read::read(self, buffer)
+    }
+}
+
+impl Host for std::io::PipeWriter {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<()> {
+        self.write_all(data)
     }
 }
 
@@ -426,7 +475,7 @@ pub unsafe extern "C" fn tondo_rt_stream_release(stream: *mut StreamObject) {
     }
 }
 
-fn retain(stream: *mut StreamObject) -> *mut StreamObject {
+pub(crate) fn retain(stream: *mut StreamObject) -> *mut StreamObject {
     unsafe { (*stream).rc.fetch_add(1, Ordering::Relaxed) };
     stream
 }
@@ -605,8 +654,9 @@ pub unsafe extern "C" fn tondo_rt_io_buffer_release(buffer: *mut BufferObject) {
 // Console
 // ---------------------------------------------------------------------------
 
-/// The streams the console uses now: output, error and input.
-struct Console([*mut StreamObject; 3]);
+/// The streams the console uses now: output, error and input, and which
+/// the program replaced.
+struct Console([*mut StreamObject; 3], [bool; 3]);
 
 unsafe impl Send for Console {}
 
@@ -615,11 +665,14 @@ static CONSOLE: Mutex<Option<Console>> = Mutex::new(None);
 fn console() -> MutexGuard<'static, Option<Console>> {
     let mut console = CONSOLE.lock().unwrap_or_else(|e| e.into_inner());
     console.get_or_insert_with(|| {
-        Console([
-            stream(Box::new(Stdout), Mode::Inline, false),
-            stream(Box::new(Stderr), Mode::Inline, false),
-            stream(Box::new(Stdin), Mode::Long, false),
-        ])
+        Console(
+            [
+                stream(Box::new(Stdout), Mode::Inline, false),
+                stream(Box::new(Stderr), Mode::Inline, false),
+                stream(Box::new(Stdin), Mode::Long, false),
+            ],
+            [false; 3],
+        )
     });
     console
 }
@@ -700,11 +753,24 @@ pub extern "C" fn tondo_rt_console_stream(index: i64) -> *mut StreamObject {
 /// to the stream; what the previous one holds reaches it first.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_console_set(index: i64, stream: *mut StreamObject) {
-    let previous = std::mem::replace(&mut console().as_mut().unwrap().0[index as usize], retain(stream));
+    let previous = {
+        let mut console = console();
+        let console = console.as_mut().unwrap();
+        console.1[index as usize] = true;
+        std::mem::replace(&mut console.0[index as usize], retain(stream))
+    };
     run(previous, |s| {
         let _ = s.flush();
     });
     unsafe { tondo_rt_stream_release(previous) };
+}
+
+/// The console stream at `index` when the program replaced it, with one
+/// more reference: a child process that inherits it writes there.
+pub(crate) fn replaced_console(index: usize) -> Option<*mut StreamObject> {
+    let console = console();
+    let console = console.as_ref().unwrap();
+    console.1[index].then(|| retain(console.0[index]))
 }
 
 /// When the program ends: delivers what the console streams hold and lets

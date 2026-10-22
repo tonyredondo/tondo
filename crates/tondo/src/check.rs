@@ -50,6 +50,7 @@ pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics)
         text_error: Ty::ERROR,
         io_error: Ty::ERROR,
         env_error: None,
+        process: None,
     };
     checker.declare_prelude();
     checker.program(module)
@@ -125,6 +126,18 @@ enum StdModule {
     Path,
     Io,
     Env,
+    Process,
+}
+
+/// The types `std.process` declares when imported.
+#[derive(Copy, Clone)]
+struct ProcessTypes {
+    input: Ty,
+    output: Ty,
+    status: Ty,
+    result: Ty,
+    error: Ty,
+    process: Ty,
 }
 
 /// The types `std.fs` declares when imported.
@@ -384,6 +397,8 @@ fn std_alias(module: &str, member: &str) -> String {
         ("time", "utcnow" | "nowUtc" | "date" | "today") => "utcNow",
         ("time", "ms" | "millis") => "milliseconds",
         ("time", "secs") => "seconds",
+        ("process", "run" | "exec" | "spawn" | "cmd" | "new") => "command",
+        ("process", "sh" | "system") => "shell",
         _ => return String::new(),
     };
     format!("; use `{module}.{function}`")
@@ -452,6 +467,8 @@ struct Checker<'a> {
     io_error: Ty,
     /// `std.env.EnvError`, once `std.env` is imported.
     env_error: Option<Ty>,
+    /// The types of `std.process`, once imported.
+    process: Option<ProcessTypes>,
 }
 
 /// Per-function checking state.
@@ -835,6 +852,7 @@ impl Checker<'_> {
             ["std", "path"] => StdModule::Path,
             ["std", "io"] => StdModule::Io,
             ["std", "env"] => StdModule::Env,
+            ["std", "process"] => StdModule::Process,
             ["std", ..] => {
                 let what = format!("module `{}`", path.join("."));
                 self.diags.unsupported(import.span, &what);
@@ -895,6 +913,68 @@ impl Checker<'_> {
             }
             self.fs = Some(FsTypes { error, kind, metadata, mode, file });
         }
+        if module == StdModule::Process && self.process.is_none() {
+            let prefix = &name.name;
+            let bytes = self.types.intern(TyKind::Array(Ty::BYTE));
+            let writer = self.types.handle(Handle::Writer, Ty::UNIT);
+            let reader = self.types.handle(Handle::Reader, Ty::UNIT);
+            let variant = |name: &str, payload: Option<Ty>| Variant {
+                name: name.into(),
+                payload: payload.map_or(Payload::Unit, |ty| Payload::Tuple(vec![ty])),
+            };
+            let s = Ty::STRING;
+            let (id, input) = self.types.declare_adt(format!("{prefix}.Input"));
+            let variants = vec![
+                variant("Inherit", None),
+                variant("Null", None),
+                variant("Text", Some(s)),
+                variant("Bytes", Some(bytes)),
+                variant("File", Some(s)),
+                variant("Reader", Some(reader)),
+                variant("Pipe", None),
+            ];
+            self.types.define_adt(id, AdtKind::Enum(variants));
+            let (id, output) = self.types.declare_adt(format!("{prefix}.Output"));
+            let variants = vec![
+                variant("Inherit", None),
+                variant("Null", None),
+                variant("Capture", None),
+                variant("File", Some(s)),
+                variant("Append", Some(s)),
+                variant("Writer", Some(writer)),
+                variant("Stdout", None),
+                variant("Pipe", None),
+            ];
+            self.types.define_adt(id, AdtKind::Enum(variants));
+            let (id, status) = self.types.declare_adt(format!("{prefix}.ExitStatus"));
+            let fields =
+                vec![Field { name: "code".into(), ty: Ty::INT }, Field { name: "success".into(), ty: Ty::BOOL }];
+            self.types.define_adt(id, AdtKind::Record(fields));
+            let statuses = self.types.intern(TyKind::Array(status));
+            let (id, result) = self.types.declare_adt(format!("{prefix}.ProcessOutput"));
+            let fields = vec![
+                Field { name: "stdout".into(), ty: bytes },
+                Field { name: "stderr".into(), ty: bytes },
+                Field { name: "combined".into(), ty: bytes },
+                Field { name: "statuses".into(), ty: statuses },
+            ];
+            self.types.define_adt(id, AdtKind::Record(fields));
+            let (id, error) = self.types.declare_adt(format!("{prefix}.ProcessError"));
+            let variants = vec![
+                variant("NotFound", None),
+                variant("PermissionDenied", None),
+                variant("InvalidData", None),
+                Variant { name: "Failed".into(), payload: Payload::Tuple(vec![status, result]) },
+                variant("Host", None),
+            ];
+            self.types.define_adt(id, AdtKind::Enum(variants));
+            self.types.shown.insert(error, Shown::ProcessError);
+            let process = self.types.handle(Handle::Process, Ty::UNIT);
+            for handle in [Handle::Command, Handle::Pipeline] {
+                self.types.handle(handle, Ty::UNIT);
+            }
+            self.process = Some(ProcessTypes { input, output, status, result, error, process });
+        }
         if module == StdModule::Env && self.env_error.is_none() {
             let (id, ty) = self.types.declare_adt(format!("{}.EnvError", name.name));
             let variants = ["NotFound", "NotADirectory", "PermissionDenied", "Host"]
@@ -928,6 +1008,18 @@ impl Checker<'_> {
     fn module_type(&self, module: &str, name: &str) -> Option<Ty> {
         match (self.names.get(module), name) {
             (Some(ModuleName::Module(StdModule::Env)), "EnvError") => self.env_error,
+            (Some(ModuleName::Module(StdModule::Process)), name) => {
+                let types = self.process?;
+                match name {
+                    "Input" => Some(types.input),
+                    "Output" => Some(types.output),
+                    "ExitStatus" => Some(types.status),
+                    "ProcessOutput" => Some(types.result),
+                    "ProcessError" => Some(types.error),
+                    "Process" => Some(types.process),
+                    _ => None,
+                }
+            }
             (Some(ModuleName::Module(StdModule::Io)), name) => match name {
                 "IoError" => Some(self.io_error),
                 "Writer" => self.types.lookup(&TyKind::Handle(Handle::Writer, Ty::UNIT)),
@@ -2278,6 +2370,8 @@ impl Checker<'_> {
                     ["Bool"] => Ty::BOOL,
                     ["String"] => Ty::STRING,
                     ["Unit"] => Ty::UNIT,
+                    ["Command"] => self.types.handle(Handle::Command, Ty::UNIT),
+                    ["Pipeline"] => self.types.handle(Handle::Pipeline, Ty::UNIT),
                     ["Never"] => Ty::NEVER,
                     [module, name] if self.module_type(module, name).is_some() => {
                         self.module_type(module, name).unwrap()
@@ -3019,6 +3113,71 @@ impl Checker<'_> {
             }
             _ => unreachable!("checked above"),
         }
+    }
+
+    /// A method of a `Command`, a `Pipeline` or a `process.Process` (19.2).
+    fn process_method(
+        &mut self,
+        cx: &mut FnCx,
+        receiver: hir::Expr,
+        handle: Handle,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> hir::Expr {
+        use hir::ProcessFn as P;
+        let Some(types) = self.process else {
+            let message = format!("running a {} takes `import std.process`", self.display(receiver.ty));
+            self.diags.error("E1001", method.span, message);
+            return Self::error_expr(span);
+        };
+        let ty = receiver.ty;
+        let failing = |this: &mut Self, ok: Ty| this.types.intern(TyKind::Result(ok, types.error));
+        let (s, plan) = (Ty::STRING, handle != Handle::Process);
+        let (function, params, result) = match (handle, method.name.as_str()) {
+            (Handle::Command, "directory") => (P::Configure(0), vec![s], ty),
+            (Handle::Command, "env") => (P::Configure(1), vec![s, s], ty),
+            (Handle::Command, "removeEnv") => (P::Configure(2), vec![s], ty),
+            (Handle::Command, "clearEnv") => (P::Configure(3), vec![], ty),
+            (_, "stdin") if plan => (P::Configure(4), vec![types.input], ty),
+            (_, "stdout") if plan => (P::Configure(5), vec![types.output], ty),
+            (Handle::Command, "stderr") => (P::Configure(6), vec![types.output], ty),
+            (_, "mergeStderr") if plan => (P::Configure(7), vec![], ty),
+            (_, "run") if plan => (P::Run, vec![], failing(self, types.status)),
+            (_, "status") if plan => (P::Status, vec![], failing(self, types.status)),
+            (_, "output") if plan => (P::Output, vec![], failing(self, types.result)),
+            (_, "check") if plan => (P::Check, vec![], failing(self, types.result)),
+            (_, "start") if plan => (P::Start, vec![], failing(self, types.process)),
+            (Handle::Process, "stdin") => (P::Stream(0), vec![], self.types.handle(Handle::Writer, Ty::UNIT)),
+            (Handle::Process, "stdout") => (P::Stream(1), vec![], self.types.handle(Handle::Reader, Ty::UNIT)),
+            (Handle::Process, "stderr") => (P::Stream(2), vec![], self.types.handle(Handle::Reader, Ty::UNIT)),
+            (Handle::Process, "id") => (P::Id, vec![], Ty::INT),
+            (Handle::Process, "wait") => (P::Wait, vec![], failing(self, types.status)),
+            (Handle::Process, "cancel") => (P::Cancel, vec![], failing(self, types.status)),
+            (Handle::Process, "output") => (P::Collect(false), vec![], failing(self, types.result)),
+            (Handle::Process, "check") => (P::Collect(true), vec![], failing(self, types.result)),
+            (Handle::Process, "detach") => (P::Detach, vec![], Ty::UNIT),
+            _ => return self.no_method(ty, method, span),
+        };
+        if args.len() != params.len() {
+            return self.arity_error(span, params.len(), args.len());
+        }
+        let mut values = vec![receiver];
+        for (arg, ty) in args.iter().zip(params) {
+            let value = self.expr(cx, &arg.value, Some(ty));
+            // A path where a redirection goes: name the variant that takes it.
+            if value.ty == Ty::STRING && (ty == types.input || ty == types.output) {
+                let message = format!(
+                    "expected {}, found `String`: write `{}.File(path)`",
+                    self.display(ty),
+                    self.types.display(ty)
+                );
+                self.diags.error("E1102", value.span, message);
+                return Self::error_expr(span);
+            }
+            values.push(self.coerce(value, ty));
+        }
+        Self::mk(hir::ExprKind::Call(Callee::Std(StdFn::Process(function)), Vec::new(), values), result, span)
     }
 
     /// A method of an `io.Writer`, `io.Reader` or `io.Buffer` (10.3): shared
@@ -6540,6 +6699,18 @@ impl Checker<'_> {
         if Some(ty) == self.duration || Some(ty) == self.instant {
             return self.time_method(cx, value, method, args, span);
         }
+        if let Some(types) = self.process
+            && ty == types.result
+            && method.name == "text"
+        {
+            if !args.is_empty() {
+                return self.arity_error(span, 0, args.len());
+            }
+            let stdout = self.field_access(value, FieldRef::Name("stdout"), method.span, span);
+            let result = self.types.intern(TyKind::Result(Ty::STRING, types.error));
+            let callee = Callee::Std(StdFn::Process(hir::ProcessFn::Text));
+            return Self::mk(hir::ExprKind::Call(callee, Vec::new(), vec![stdout]), result, span);
+        }
         if matches!(self.types.kind(ty), TyKind::Adt(_)) {
             // A field holding a function is called (11.5).
             if self.record_has_field(ty, &method.name) {
@@ -6567,6 +6738,9 @@ impl Checker<'_> {
             }
             if matches!(handle, Handle::Writer | Handle::Reader | Handle::Buffer) {
                 return self.io_method(cx, value, handle, method, args, span);
+            }
+            if matches!(handle, Handle::Command | Handle::Pipeline | Handle::Process) {
+                return self.process_method(cx, value, handle, method, args, span);
             }
             if handle.locked() || matches!(handle, Handle::Semaphore | Handle::Permit | Handle::Barrier) {
                 return self.sync_method(cx, value, handle, state, method, args, span);
@@ -7586,6 +7760,38 @@ impl Checker<'_> {
                 let target = CallTarget::new(Callee::Std(function), signature, expected);
                 self.call_signature(cx, target, None, args, span)
             }
+            ([_, member], Some(ModuleName::Module(StdModule::Process))) => {
+                use hir::ProcessFn as P;
+                let command = self.types.handle(Handle::Command, Ty::UNIT);
+                let s = Ty::STRING;
+                let mut signature = match *member {
+                    "command" => {
+                        let arguments = self.types.intern(TyKind::Array(s));
+                        let mut signature = Signature::simple(vec![s, arguments], command);
+                        signature.names = vec!["program".into(), "arguments".into()];
+                        signature.variadic = true;
+                        signature
+                    }
+                    "shell" => Signature::simple(vec![s], command),
+                    "exit" => Signature::simple(vec![Ty::INT], Ty::NEVER),
+                    _ => {
+                        let message =
+                            format!("module `process` has no function `{member}`{}", std_alias("process", member));
+                        self.diags.error("E1001", segments[1].span, message);
+                        return Self::error_expr(span);
+                    }
+                };
+                let function = match *member {
+                    "command" => P::Command,
+                    "shell" => P::Shell,
+                    _ => P::Exit,
+                };
+                if function == P::Shell {
+                    signature.names = vec!["text".into()];
+                }
+                let target = CallTarget::new(Callee::Std(StdFn::Process(function)), signature, expected);
+                self.call_signature(cx, target, None, args, span)
+            }
             ([_, member], Some(ModuleName::Module(StdModule::Env))) => {
                 use hir::EnvFn as E;
                 let s = Ty::STRING;
@@ -8447,6 +8653,36 @@ impl Checker<'_> {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
                 let (left, right) = self.arithmetic_operands(cx, left, right, expected);
                 let ty = self.arithmetic(op, left.ty, right.ty, span);
+                (left, right, ty)
+            }
+            // `Command | Pipeline` composes process plans (17.6).
+            BinOp::BitOr if !Self::is_untyped_literal(left) => {
+                let plan = |this: &Self, ty: Ty| {
+                    matches!(this.types.kind(ty), TyKind::Handle(Handle::Command | Handle::Pipeline, _))
+                };
+                let hint = expected.filter(|&ty| !plan(self, ty));
+                let left = self.expr(cx, left, hint);
+                if plan(self, left.ty) {
+                    let right = self.expr(cx, right, None);
+                    if !plan(self, right.ty) && !self.types.has_error(right.ty) {
+                        let message = format!(
+                            "`|` joins a `Command` or `Pipeline` with another, not with {}",
+                            self.display(right.ty)
+                        );
+                        self.diags.error("E1102", right.span, message);
+                    }
+                    let pipeline = self.types.handle(Handle::Pipeline, Ty::UNIT);
+                    let callee = Callee::Std(StdFn::Process(hir::ProcessFn::Pipe));
+                    return Self::mk(hir::ExprKind::Call(callee, Vec::new(), vec![left, right]), pipeline, span);
+                }
+                let right = self.expr(cx, right, Some(left.ty));
+                let right = if left.ty == Ty::NEVER { right } else { self.coerce(right, left.ty) };
+                let allowed =
+                    matches!(self.types.kind(left.ty), TyKind::Int(_) | TyKind::Byte | TyKind::Error | TyKind::Never);
+                if !allowed {
+                    operator_error(self, left.ty);
+                }
+                let ty = left.ty;
                 (left, right, ty)
             }
             BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => {

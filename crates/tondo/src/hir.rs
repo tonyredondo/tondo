@@ -641,6 +641,8 @@ pub enum StdFn {
     Io(IoFn),
     /// An operation of `std.env` (14.3.5).
     Env(EnvFn),
+    /// An operation of `std.process` (19.2).
+    Process(ProcessFn),
     /// `time.sleep(delay)`: waits without blocking the thread (14.3.3).
     TimeSleep,
     /// `time.now()`, `unixTime()`, `utcNow()` and `utc(sinceEpoch)` (14.3).
@@ -652,6 +654,34 @@ pub enum StdFn {
     Fs(FsFn),
     /// An operation of `std.path` (10.4).
     Path(PathFn),
+}
+
+/// The operations of `std.process`; those of a plan or a process take it
+/// first.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ProcessFn {
+    Command,
+    Shell,
+    Exit,
+    /// `left | right`
+    Pipe,
+    /// A setting of a plan, numbered as the runtime's
+    /// `tondo_rt_process_configure` takes it.
+    Configure(u8),
+    Run,
+    Status,
+    Output,
+    Check,
+    Start,
+    Text,
+    /// `stdin()`, `stdout()` or `stderr()` of a process: 0, 1 or 2.
+    Stream(u8),
+    Id,
+    Wait,
+    Cancel,
+    /// `Process.output()` and `check()`.
+    Collect(bool),
+    Detach,
 }
 
 /// The operations of `std.env`.
@@ -755,6 +785,8 @@ impl StdFn {
             StdFn::Fs(
                 FsFn::ReadLine | FsFn::Read | FsFn::ReadRest | FsFn::Write | FsFn::WriteBytesTo | FsFn::Flush,
             ) => vec![Mode::Var, Mode::Value],
+            // They observe the process; the others take it.
+            StdFn::Process(ProcessFn::Stream(_) | ProcessFn::Id) => vec![Mode::Ref],
             _ => Vec::new(),
         }
     }

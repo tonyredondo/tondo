@@ -3974,33 +3974,152 @@ let captured = buffer.text()?
 
 ### 19.2 `std.process`
 
-La superficie canónica de procesos de STD-0.1:
+`std.process` lanza procesos. `Command` y `Pipeline` son planes inertes del
+lenguaje (20.5 y 20.6 de su especificación): describirlos no ejecuta nada, se
+componen con `|` y son `Copy`, `Send` y `Share`.
 
-- Conserva `Command` y `Pipeline` como planes intrínsecos.
-- Usa `Array[Byte]` para los datos binarios.
-- Obtiene argumentos runtime mediante `std.env`.
-- Usa únicamente errores y tipos de sus owners canónicos.
-- Mantiene argv exacto, shell explícito, pipes, backpressure y cleanup.
-- `ProcessOutput` conserva `stdout` y `stderr` separados y ofrece además
-  `combined`, una captura byte a byte en el orden observado por el host.
-- `pipe` equivale a `stdout | stdin`; `Command.mergeStderr()` y
-  `Pipeline.mergeStderr()` conectan `stdout + stderr | stdin` y son la forma
-  tipada de `|&`/`2>&1 |` sin depender de un shell.
-- Las redirecciones shell (`2>&1`, `2>file`, `&>file`, `>/dev/null`) solo se
-  interpretan dentro de `shell(...)`. `command(...)` nunca analiza sintaxis de
-  shell; el modo script podrá bajar sus operadores de redirección a estos
-  planes tipados y exigirá las capabilities de los recursos que abra.
+~~~tondo
+import std.process
 
-El corpus vivo se regenera contra esta superficie y su PackageId actual.
+let log = process.command("git", "log", "--oneline")
+let output = (log | process.command("grep", pattern)).output()?
+console.print(output.text()?)
 
-La evidencia ejecutable de esta frontera es `STD-A-PROC-EVIDENCE-001`: enlaza
-las diecisiete firmas públicas con el contrato hosted, la capability estática,
-los planes inertes y handles terminales, HIR/lowering, bytecode/VM, el host de
-procesos y los fixtures M8. El gate cubre backpressure, streams separados y
-`combined`, redirección de stderr, estados/errores, cancelación y reaping.
+process.command("make", "all")
+    .directory("build")
+    .env("CC", "clang")
+    .stdout(process.Output.Append("build.log"))
+    .stderr(process.Output.Stdout)
+    .check()?
+~~~
 
-`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
-`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
+La superficie es:
+
+~~~tondo pseudocode
+pub fn command(program: String, arguments: ...String): Command
+pub fn shell(text: String): Command
+pub fn exit(code: Int): Never
+
+pub enum Input {
+    Inherit
+    Null
+    Text(String)
+    Bytes(Array[Byte])
+    File(String)
+    Reader(io.Reader)
+    Pipe
+}
+pub enum Output {
+    Inherit
+    Null
+    Capture
+    File(String)
+    Append(String)
+    Writer(io.Writer)
+    Stdout
+    Pipe
+}
+pub type ExitStatus = { code: Int, success: Bool }
+pub type ProcessOutput = {
+    stdout: Array[Byte]
+    stderr: Array[Byte]
+    combined: Array[Byte]
+    statuses: Array[ExitStatus]
+}
+pub enum ProcessError {
+    NotFound
+    PermissionDenied
+    InvalidData
+    Failed(ExitStatus, ProcessOutput)
+    Host
+}
+pub type Process
+
+pub fn Command.directory(self, path: String): Command
+pub fn Command.env(self, name: String, value: String): Command
+pub fn Command.removeEnv(self, name: String): Command
+pub fn Command.clearEnv(self): Command
+pub fn Command.stdin(self, input: Input): Command
+pub fn Command.stdout(self, output: Output): Command
+pub fn Command.stderr(self, output: Output): Command
+pub fn Command.mergeStderr(self): Command
+pub fn Pipeline.stdin(self, input: Input): Pipeline
+pub fn Pipeline.stdout(self, output: Output): Pipeline
+pub fn Pipeline.mergeStderr(self): Pipeline
+
+// En Command y en Pipeline:
+pub fn run(self): ExitStatus ! ProcessError
+pub fn status(self): ExitStatus ! ProcessError
+pub fn output(self): ProcessOutput ! ProcessError
+pub fn check(self): ProcessOutput ! ProcessError
+pub fn start(self): Process ! ProcessError
+
+pub fn ProcessOutput.text(self): String ! ProcessError
+pub fn Process.stdin(self): io.Writer
+pub fn Process.stdout(self): io.Reader
+pub fn Process.stderr(self): io.Reader
+pub fn Process.id(self): Int
+pub fn Process.wait(self): ExitStatus ! ProcessError
+pub fn Process.output(self): ProcessOutput ! ProcessError
+pub fn Process.check(self): ProcessOutput ! ProcessError
+pub fn Process.cancel(self): ExitStatus ! ProcessError
+pub fn Process.detach(self)
+~~~
+
+Planes:
+
+- `command` guarda el programa y cada argumento por separado: no hay shell,
+  globbing ni expansión de variables. `shell` es el único constructor que usa
+  el shell del sistema (`/bin/sh -c` en Unix).
+- `|` une el stdout de la última etapa de la izquierda con el stdin de la
+  primera de la derecha mediante una pipe del sistema, que aplica
+  backpressure. `mergeStderr()` envía además el stderr al mismo sitio que el
+  stdout (`|&`, `2>&1`); en un `Pipeline`, el de todas sus etapas.
+- `directory`, `env`, `removeEnv` y `clearEnv` fijan el directorio y el
+  entorno del hijo, que por lo demás hereda los del programa (14.3.5).
+- `stdin`, `stdout` y `stderr` redirigen los streams: `Inherit` usa los del
+  programa, `Null` ninguno, `Text` y `Bytes` dan una entrada fija, `File` lee o
+  escribe un archivo (`<`, `>`), `Append` añade al final (`>>`), `Reader` y
+  `Writer` conectan un stream de `std.io` —como un `io.Buffer` o la consola—,
+  `Capture` recoge la salida en el `ProcessOutput`, `Stdout` envía el stderr
+  al stdout (`2>&1`) y `Pipe` deja el stream al programa a través del
+  `Process`. En un `Pipeline`, `stdin` es la de la primera etapa y `stdout` la
+  de la última.
+
+Ejecución:
+
+- `run` usa por defecto los streams del programa, espera y devuelve el estado.
+- `status` espera sin entrada y descartando la salida.
+- `output` captura stdout y stderr, sin entrada, y devuelve un
+  `ProcessOutput`. `check` hace lo mismo y devuelve `ProcessError.Failed` con
+  el estado y la salida si alguna etapa no termina con éxito.
+- `start` inicia el proceso sin esperarlo; sus streams son los del programa
+  salvo los redirigidos. `Process.wait`, `output`, `check` y `cancel` lo
+  esperan; `cancel` termina antes todas sus etapas.
+- Las redirecciones explícitas prevalecen sobre los valores por defecto de
+  cada operación.
+- Un código de salida distinto de cero es un dato: solo `check` lo convierte en
+  error. El estado de un `Pipeline` tiene éxito cuando lo tienen todas sus
+  etapas (`pipefail`), y su código es el de la última etapa que falla, o el de
+  la última. Un proceso terminado por una señal tiene el código `128 + señal`,
+  como lo informan los shells.
+- `combined` reúne stdout y stderr en el orden en que el host los entregó, sin
+  inventar un orden por líneas. Los stderr de un `Pipeline` se concatenan en
+  orden de etapas.
+- `ProcessOutput.text()` decodifica el stdout como UTF-8 y devuelve
+  `InvalidData` si no lo es.
+- No poder iniciar un programa da `NotFound` o `PermissionDenied`; `Host`
+  reúne los demás fallos del host.
+
+Vida de un `Process` (20.9 del lenguaje):
+
+- Abandonar el handle cierra la entrada de sus procesos y espera a que
+  terminen, como un `Join`; durante un pánico los cancela. `detach()` los suelta
+  para que sigan sin esperarlos, también después de terminar el programa.
+- Cancelar la tarea que espera un proceso termina sus etapas, espera a que
+  acaben y no deja zombies.
+- `exit(code)` entrega la salida pendiente de la consola y termina el programa
+  con ese código, sin ejecutar los `defer` ni esperar a otras tareas.
 
 ### 19.3 Una sola implementación vigente
 

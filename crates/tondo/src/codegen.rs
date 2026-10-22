@@ -16,8 +16,8 @@
 
 use crate::ast::{BinOp, UnaryOp};
 use crate::hir::{
-    ArrayOp, AtomicOp, Callee, EnvFn, FnId, FsFn, IoFn, LockMode, MapOp, Mutation, PathFn, Program, SharedOp, StdFn,
-    StrOp, TaskOp,
+    ArrayOp, AtomicOp, Callee, EnvFn, FnId, FsFn, IoFn, LockMode, MapOp, Mutation, PathFn, ProcessFn, Program,
+    SharedOp, StdFn, StrOp, TaskOp,
 };
 use crate::mir::{
     Body, Const, Local, Operand, Overlap, Piece, Place, Proj, Rvalue, SelectCase, Statement, Terminator, project,
@@ -212,6 +212,10 @@ enum Rt {
     Fs(FsFn),
     Io(IoFn),
     Env(EnvFn),
+    Process(ProcessFn),
+    PlanRelease,
+    ProcessRelease,
+    SbProcessError,
     StreamRelease,
     BufferRelease,
     PathJoin,
@@ -441,6 +445,25 @@ impl Rt {
                 EnvFn::SetCurrentDirectory => ("tondo_rt_env_set_current_directory", &[I64], &[I64]),
                 EnvFn::SyncNative => ("tondo_rt_env_sync_native", &[], &[]),
             },
+            Rt::Process(function) => match function {
+                ProcessFn::Command => ("tondo_rt_process_command", &[I64, I64], &[I64]),
+                ProcessFn::Shell => ("tondo_rt_process_shell", &[I64], &[I64]),
+                ProcessFn::Exit => ("tondo_rt_process_exit", &[I64], &[]),
+                ProcessFn::Pipe => ("tondo_rt_process_pipe", &[I64, I64], &[I64]),
+                ProcessFn::Configure(_) => ("tondo_rt_process_configure", &[I64, I64, I64, I64], &[I64]),
+                ProcessFn::Run | ProcessFn::Status => ("tondo_rt_process_run", &[I64, I8, I64], &[I64]),
+                ProcessFn::Output | ProcessFn::Check => ("tondo_rt_process_output", &[I64, I8, I64, I64, I64], &[I64]),
+                ProcessFn::Start => ("tondo_rt_process_start", &[I64, I64], &[I64]),
+                ProcessFn::Text => ("tondo_rt_process_text", &[I64, I64], &[I64]),
+                ProcessFn::Stream(_) => ("tondo_rt_process_stream", &[I64, I64], &[I64]),
+                ProcessFn::Id => ("tondo_rt_process_id", &[I64], &[I64]),
+                ProcessFn::Wait | ProcessFn::Cancel => ("tondo_rt_process_wait", &[I64, I8, I64], &[I64]),
+                ProcessFn::Collect(_) => ("tondo_rt_process_collect", &[I64, I8, I64, I64, I64], &[I64]),
+                ProcessFn::Detach => ("tondo_rt_process_detach", &[I64], &[]),
+            },
+            Rt::PlanRelease => ("tondo_rt_process_plan_release", &[I64], &[]),
+            Rt::ProcessRelease => ("tondo_rt_process_release", &[I64], &[]),
+            Rt::SbProcessError => ("tondo_rt_sb_process_error", &[I64, I64, I64], &[]),
             Rt::StreamRelease => ("tondo_rt_stream_release", &[I64], &[]),
             Rt::BufferRelease => ("tondo_rt_io_buffer_release", &[I64], &[]),
             Rt::PathJoin => ("tondo_rt_path_join", &[I64, I64], &[I64]),
@@ -1139,6 +1162,19 @@ impl Emit<'_, '_> {
                 self.call_rt(Rt::SbDuration, &[builder, nanos]);
                 return;
             }
+            Some(Shown::ProcessError) => {
+                // The code of `Failed`, the variant with a payload; other
+                // variants ignore it.
+                let tag = self.tag(ty, value);
+                let tag = self.fb.ins().uextend(types::I64, tag);
+                let Val::Memory(address) = value else { unreachable!("an error with payloads is in memory") };
+                let payload = self.cg.slot(ty, Proj::Variant(3, 0));
+                let status = self.component_address(address, &payload);
+                let code_slot = self.cg.slot(payload.ty, Proj::Field(0));
+                let code = self.fb.ins().load(types::I64, flags(), status, code_slot.offset as i32);
+                self.call_rt(Rt::SbProcessError, &[builder, tag, code]);
+                return;
+            }
             Some(Shown::DateTime) => {
                 let Val::Memory(address) = value else { unreachable!("a date is in memory") };
                 let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 56, 3);
@@ -1402,6 +1438,8 @@ impl Emit<'_, '_> {
                         Handle::SyncArray => Rt::SharedArrayRelease,
                         Handle::File | Handle::Writer | Handle::Reader => Rt::StreamRelease,
                         Handle::Buffer => Rt::BufferRelease,
+                        Handle::Command | Handle::Pipeline => Rt::PlanRelease,
+                        Handle::Process => Rt::ProcessRelease,
                         _ => Rt::SyncRelease,
                     };
                     self.call_rt(rt, &[pointer]);
@@ -2237,6 +2275,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     self.e.fb.ins().store(flags(), word, address, slot.offset as i32);
                 }
                 Val::Memory(address)
+            }
+            Rvalue::Call(Callee::Std(StdFn::Process(function)), args) => {
+                match self.process_call(*function, args, place) {
+                    Some(value) => value,
+                    None => return,
+                }
             }
             Rvalue::Call(Callee::Std(StdFn::ConsoleReadLine), _) => {
                 let line = self.e.call_rt(Rt::ConsoleReadLine, &[]).unwrap();
@@ -3347,6 +3391,151 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.fb.switch_to_block(done);
     }
 
+    /// A call of `std.process`, its value when it is not built at `place`.
+    fn process_call(&mut self, function: ProcessFn, args: &[Operand], place: &Place) -> Option<Val> {
+        let ty = self.place_ty(place);
+        let mut values: Vec<ir::Value> = args.iter().map(|a| self.scalar_or_address(a)).collect();
+        let rt = Rt::Process(function);
+        let flag = |this: &mut Self, on: bool| this.e.fb.ins().iconst(types::I8, on as i64);
+        match function {
+            ProcessFn::Configure(setting) => {
+                let setting_value = self.e.fb.ins().iconst(types::I64, setting as i64);
+                let zero = self.e.fb.ins().iconst(types::I64, 0);
+                let (a, b) = match setting {
+                    0 | 2 => (values[1], zero),
+                    1 => (values[1], values[2]),
+                    3 | 7 => (zero, zero),
+                    // An `Input` or `Output`: its tag and the pointer its
+                    // payload holds, the same place in every variant.
+                    _ => {
+                        let enum_ty = self.operand_ty(&args[1]);
+                        let value = self.operand(&args[1]);
+                        let tag = self.e.tag(enum_ty, value);
+                        let tag = self.e.fb.ins().uextend(types::I64, tag);
+                        let payload = match value {
+                            Val::Memory(address) => {
+                                let variants = self.e.cg.types.variants(enum_ty).unwrap();
+                                let carrying = variants.iter().position(|v| !v.is_empty()).unwrap();
+                                let slot = self.e.cg.slot(enum_ty, Proj::Variant(carrying as u32, 0));
+                                self.e.fb.ins().load(types::I64, flags(), address, slot.offset as i32)
+                            }
+                            _ => zero,
+                        };
+                        (tag, payload)
+                    }
+                };
+                let plan = values[0];
+                return Some(Val::Scalar(self.e.call_rt(rt, &[plan, setting_value, a, b]).unwrap()));
+            }
+            ProcessFn::Command | ProcessFn::Shell | ProcessFn::Pipe | ProcessFn::Id => {
+                return Some(Val::Scalar(self.e.call_rt(rt, &values).unwrap()));
+            }
+            ProcessFn::Stream(which) => {
+                let which = self.e.fb.ins().iconst(types::I64, which as i64);
+                return Some(Val::Scalar(self.e.call_rt(rt, &[values[0], which]).unwrap()));
+            }
+            ProcessFn::Text => {
+                self.status_call(rt, args, place);
+                return None;
+            }
+            ProcessFn::Run | ProcessFn::Status | ProcessFn::Wait | ProcessFn::Cancel => {
+                let on = matches!(function, ProcessFn::Status | ProcessFn::Cancel);
+                values.push(flag(self, on));
+            }
+            ProcessFn::Output | ProcessFn::Check | ProcessFn::Collect(_) => {
+                let check = matches!(function, ProcessFn::Check | ProcessFn::Collect(true));
+                values.push(flag(self, check));
+                // Where the runtime writes each `ExitStatus` of the array.
+                let TyKind::Result(result, _) = *self.e.cg.types.kind(ty) else { unreachable!("a result") };
+                let statuses = self.e.cg.types.components(result).unwrap()[3];
+                let TyKind::Array(status) = *self.e.cg.types.kind(statuses) else { unreachable!("an array") };
+                let size = self.e.fb.ins().iconst(types::I64, self.e.cg.layout(status).size as i64);
+                let success = self.e.cg.slot(status, Proj::Field(1)).offset;
+                let success = self.e.fb.ins().iconst(types::I64, success as i64);
+                values.extend([size, success]);
+            }
+            ProcessFn::Start => {}
+            ProcessFn::Exit | ProcessFn::Detach => unreachable!("they return nothing"),
+        }
+        self.process_result(rt, values, place);
+        None
+    }
+
+    /// Calls a runtime function of `std.process` that writes up to six words
+    /// at `out` and returns 0 or a `ProcessError` status, and builds the
+    /// result at `place`: an `ExitStatus`, a `ProcessOutput` or a `Process`,
+    /// or the error, with the status and output of `Failed`.
+    fn process_result(&mut self, rt: Rt, mut values: Vec<ir::Value>, place: &Place) {
+        const FAILED: i64 = 4;
+        let ty = self.place_ty(place);
+        let TyKind::Result(success, error) = *self.e.cg.types.kind(ty) else { unreachable!("a result") };
+        let out = self.e.fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 48, 3));
+        let out = self.e.fb.ins().stack_addr(POINTER, out, 0);
+        values.push(out);
+        let status = self.e.call_rt(rt, &values).unwrap();
+        let words: Vec<ir::Value> = (0..6).map(|i| self.e.fb.ins().load(types::I64, flags(), out, i * 8)).collect();
+        let base = self.pointer_to(place, true);
+        let failed = self.e.fb.ins().icmp_imm_s(IntCC::NotEqual, status, 0);
+        self.e.fb.ins().store(flags(), failed, base, 0);
+        let (good, bad, done) = (self.e.fb.create_block(), self.e.fb.create_block(), self.e.fb.create_block());
+        self.e.fb.ins().brif(failed, bad, &[], good, &[]);
+        self.e.fb.switch_to_block(bad);
+        let value = self.scratch(error);
+        let variant = self.e.fb.ins().iadd_imm_s(status, -1);
+        let variant = self.e.fb.ins().ireduce(types::I8, variant);
+        self.e.fb.ins().store(flags(), variant, value, 0);
+        let output_ty = self.e.cg.types.variants(error).unwrap()[FAILED as usize - 1][1];
+        if success == output_ty {
+            let (failure, other) = (self.e.fb.create_block(), self.e.fb.create_block());
+            let is_failure = self.e.fb.ins().icmp_imm_s(IntCC::Equal, status, FAILED);
+            self.e.fb.ins().brif(is_failure, failure, &[], other, &[]);
+            self.e.fb.switch_to_block(failure);
+            let status_ty = self.e.cg.types.variants(error).unwrap()[FAILED as usize - 1][0];
+            let exit = self.record_from_words(status_ty, &words[4..6]);
+            let output = self.record_from_words(output_ty, &words[0..4]);
+            for (index, component) in [exit, output].into_iter().enumerate() {
+                let slot = self.e.cg.slot(error, Proj::Variant(FAILED as u32 - 1, index as u32));
+                self.e.init_component(value, &slot, component);
+            }
+            self.e.fb.ins().jump(other, &[]);
+            self.e.fb.switch_to_block(other);
+        }
+        let slot = self.e.cg.slot(ty, Proj::Variant(ERR, 0));
+        self.e.init_component(base, &slot, Val::Memory(value));
+        self.e.fb.ins().jump(done, &[]);
+        self.e.fb.switch_to_block(good);
+        let ok = match self.e.cg.types.components(success).map(|c| c.len()) {
+            Some(count) => self.record_from_words(success, &words[0..count]),
+            None => Val::Scalar(words[0]),
+        };
+        let slot = self.e.cg.slot(ty, Proj::Variant(OK, 0));
+        self.e.init_component(base, &slot, ok);
+        self.e.fb.ins().jump(done, &[]);
+        self.e.fb.switch_to_block(done);
+    }
+
+    /// A record whose fields are scalars, from one word each.
+    fn record_from_words(&mut self, ty: Ty, words: &[ir::Value]) -> Val {
+        let address = self.scratch(ty);
+        for (index, &word) in words.iter().enumerate() {
+            let slot = self.e.cg.slot(ty, Proj::Field(index as u32));
+            let field = match self.e.cg.class(slot.ty) {
+                Class::Scalar(t) if t != types::I64 => self.e.fb.ins().ireduce(t, word),
+                _ => word,
+            };
+            self.e.init_component(address, &slot, Val::Scalar(field));
+        }
+        Val::Memory(address)
+    }
+
+    /// An operand as one word: a scalar, or the address of a value in memory.
+    fn scalar_or_address(&mut self, operand: &Operand) -> ir::Value {
+        match self.operand(operand) {
+            Val::Scalar(value) | Val::Memory(value) => value,
+            Val::Zero => self.e.fb.ins().iconst(types::I64, 0),
+        }
+    }
+
     /// The value a successful status call wrote at `out`.
     fn fs_value(&mut self, ty: Ty, out: ir::Value) -> Val {
         let word = |this: &mut Self, index: i32| this.e.fb.ins().load(types::I64, flags(), out, index * 8);
@@ -3564,6 +3753,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let index = self.e.fb.ins().iconst(types::I64, index as i64);
                 self.e.call_rt(Rt::ConsoleSet, &[index, values[0]])
             }
+            Callee::Std(StdFn::Process(ProcessFn::Exit)) => self.e.call_rt(Rt::Process(ProcessFn::Exit), &values),
+            Callee::Std(StdFn::Process(ProcessFn::Detach)) => self.e.call_rt(Rt::Process(ProcessFn::Detach), &values),
             Callee::Std(StdFn::ConsoleEprint) => self.e.call_rt(Rt::ConsoleEprint, &values),
             Callee::Std(StdFn::ConsoleEprintln) => self.e.call_rt(Rt::ConsoleEprintln, &values),
             Callee::Std(StdFn::Io(IoFn::BufferClear)) => self.e.call_rt(Rt::Io(IoFn::BufferClear), &values),
@@ -3573,6 +3764,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 | StdFn::Path(_)
                 | StdFn::Io(_)
                 | StdFn::Env(_)
+                | StdFn::Process(_)
                 | StdFn::TimeNow
                 | StdFn::TimeUnix
                 | StdFn::TimeUtc
