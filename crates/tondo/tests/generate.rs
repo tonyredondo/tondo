@@ -43,11 +43,13 @@ fn generates_modules_from_inputs_and_declarations() {
             ),
             (
                 "src/main.to",
-                "import std.console\nimport app.palette\n\nfn main() {\n    console.println(\"{palette.Red} {palette.Green}\")\n    console.println(palette.Hash)\n    console.println(\"{palette.Declarations}\")\n}\n",
+                "import std.console\nimport app.palette\n\nfn main() {\n    console.println(\"{palette.Red} {palette.Green}\")\n    console.println(palette.Hash)\n    console.println(\"{palette.Declarations}\")\n    console.println(palette.Stable)\n}\n",
             ),
             (
                 "gen/colors.to",
                 r#"import std.meta
+import std.random
+import std.uuid
 
 /// A constant per line of the input, its hash, and what the roots declare.
 pub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Error {
@@ -59,6 +61,9 @@ pub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Err
         lines.push(meta.code(r"pub const $name: String = $hex", ["name": name, "hex": "\"{parts[1]}\""]))
     }
     lines.push("pub const Hash: String = \"{input.sha256}\"")
+    // What is the same on every run works in a generator.
+    var seeded = random.Random.seeded(7)
+    lines.push("pub const Stable: String = \"{uuid.Uuid.v5(uuid.Uuid.namespaceDns(), "app")} {seeded.int(1..=6)}\"")
     var declared: Array[String] = []
     for declaration in request.declarations() {
         var parts: Array[String] = []
@@ -83,7 +88,7 @@ pub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Err
     assert_eq!(
         (stdout.as_str(), status),
         (
-            "#ff0000 #00ff00\n9edb2f9d5c03d433f24a539eadd8797d05907cbf3d42489b6979e3f93b613eff\n[app.models.User: name home, app.places.Address: city kind, app.places.Kind: House Flat]\n",
+            "#ff0000 #00ff00\n9edb2f9d5c03d433f24a539eadd8797d05907cbf3d42489b6979e3f93b613eff\n[app.models.User: name home, app.places.Address: city kind, app.places.Kind: House Flat]\n91ad9bcb-d637-579d-818a-e391a5631aa1 4\n",
             0
         ),
         "{stderr}"
@@ -158,7 +163,7 @@ outputs = [\"reads\"]
         ("gen/partial.to", write("one", "pub const A: Int = 1")),
         ("gen/spin.to", generator("    var n = 0\n    for {\n        n += 1\n    }")),
         ("gen/files.to", format!("import std.fs\n{}", write("files", "pub const A: Int = 1"))),
-        ("gen/dice.to", format!("import std.random\n{}", write("dice", "pub const A: Int = 1"))),
+        ("gen/dice.to", generator("    var dice = random.Random.new()\n    var out = request.sourceBuilder()\n    out.write(\"dice\", \"pub const A: Int = {dice.int(1..=6)}\")?\n    out.finish()").replace("import std.meta", "import std.meta\nimport std.random")),
         ("gen/broken.to", write("broken", "fn (")),
         ("gen/derives.to", write("derives", "derive x.Y for Z")),
         ("gen/hand.to", write("models", "pub const A: Int = 1")),
@@ -171,7 +176,7 @@ outputs = [\"reads\"]
         "error[E2106]: the generator `[generators.partial]` of the package `app`: the output `two` is not written",
         "error[E2107]: the generator `[generators.spin]` of the package `app`: it spent its budget of 1000 steps; `limits = { steps = \"...\" }` raises it",
         "error[E2108]: the generator `[generators.files]` of the package `app`: it uses what a generator cannot: it does not compile:\nerror[E2108]: `std.fs` is not available to a provider or generator",
-        "error[E2108]: the generator `[generators.dice]` of the package `app`: it uses what a generator cannot: it does not compile:\nerror[E2108]: `std.random` is not available to a provider or generator",
+        "error[E2108]: the generator `[generators.dice]` of the package `app`: it uses what a generator cannot: it does not compile:\nerror[E2108]: `Random.new`, which gives another value each time, is not available to a provider or generator",
         "error[E2105]: the generator `[generators.broken]` of the package `app`: its output `broken` is not valid Tondo source; `tondo expand` shows it",
         "error[E2105]: the generator `[generators.derives]` of the package `app`: its output `derives` has a `derive`",
         "error[E2106]: the generator `[generators.hand]` of the package `app`: its output `models` would replace a module written by hand",

@@ -55,6 +55,7 @@ pub fn check<'a>(
         owners: HashMap::new(),
         method_visibility: HashMap::new(),
         prelude: None,
+        unrepeatable: HashMap::new(),
         intrinsic_owners: HashMap::new(),
         trait_modules: HashMap::new(),
         conversion_error: Ty::ERROR,
@@ -503,6 +504,9 @@ fn std_alias(module: &str, member: &str) -> String {
 struct Checker<'a> {
     /// The `meta` profile: no host capabilities (27.7).
     meta: bool,
+    /// The standard functions whose values depend on the moment or the
+    /// machine, which the `meta` profile cannot call, with their names.
+    unrepeatable: HashMap<FnId, &'static str>,
     types: Types,
     diags: &'a mut Diagnostics,
     sources: &'a SourceMap,
@@ -740,15 +744,6 @@ impl<'a> Checker<'a> {
         for import in &module.imports {
             self.import(import);
         }
-        // What depends on the moment or the machine (27.7).
-        for denied in ["random", "uuid"] {
-            if self.meta && module.module_paths.iter().any(|p| p == &["std", denied]) {
-                let message = format!(
-                    "`std.{denied}` is not available to a provider or generator, which runs while the program compiles and works only on its request"
-                );
-                self.diags.error_without_span("E2108", message);
-            }
-        }
 
         self.declare_types(&module.items);
         // The prelude's `trait Iterator[T]` adds methods to the intrinsic one.
@@ -786,6 +781,23 @@ impl<'a> Checker<'a> {
         let mut bodies: Vec<&ast::FnDecl> = Vec::new();
         for f in &fns {
             let id = FnId(bodies.len() as u32);
+            // What reads the clock or the system's entropy (27.7).
+            let bare = |name: &str| name.rsplit('.').next().unwrap_or_default().to_string();
+            let qualified = (
+                module.module_paths[f.module as usize].join("."),
+                f.owner.as_ref().map(|o| bare(&o.name)),
+                bare(&f.name.name),
+            );
+            let unrepeatable = match qualified {
+                (m, Some(o), n) if m == "std.uuid" && o == "Uuid" && n == "v4" => Some("`Uuid.v4`"),
+                (m, Some(o), n) if m == "std.uuid" && o == "Uuid" && n == "v7" => Some("`Uuid.v7`"),
+                (m, Some(o), n) if m == "std.random" && o == "Random" && n == "new" => Some("`Random.new`"),
+                (m, None, n) if m == "std.random" && n == "entropy" => Some("`random.entropy`"),
+                _ => None,
+            };
+            if let Some(name) = unrepeatable {
+                self.unrepeatable.insert(id, name);
+            }
             let owner = f.owner.as_ref().map(|owner| self.method_owner(owner, f.module));
             let signature = self.signature(f, owner, FnScope::default());
             let receiver = signature.receiver;
@@ -1125,6 +1137,15 @@ impl<'a> Checker<'a> {
             self.diags.error("E2108", span, message);
         }
         self.meta
+    }
+
+    /// A provider or generator gives the same output for the same request,
+    /// so it cannot call what reads the clock or the system's entropy.
+    fn repeatable(&mut self, id: FnId, span: Span) {
+        if let Some(name) = self.unrepeatable.get(&id) {
+            let what = format!("{name}, which gives another value each time,");
+            self.meta_denied(span, &what);
+        }
     }
 
     /// `reflect.Value`, once `std.reflect` is imported.
@@ -8787,6 +8808,7 @@ impl<'a> Checker<'a> {
     /// A named function as a `fn(...)` value (11.7). A generic function is
     /// specialized by explicit arguments or by the expected function type.
     fn fn_value(&mut self, id: FnId, explicit: Vec<Ty>, expected: Option<Ty>, span: Span) -> hir::Expr {
+        self.repeatable(id, span);
         let signature = self.signatures[id.0 as usize].clone();
         if signature.receiver.is_some() {
             let message = format!(
@@ -10127,6 +10149,9 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> hir::Expr {
         let CallTarget { callee, signature, explicit, prebound, expected } = target;
+        if let Callee::Fn(id) = callee {
+            self.repeatable(id, span);
+        }
         let signature = &signature;
         if signature.is_unsafe && !cx.unsafe_region {
             let message = if signature.foreign {

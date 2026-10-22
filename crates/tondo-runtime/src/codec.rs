@@ -196,6 +196,12 @@ pub extern "C" fn tondo_rt_entropy(count: i64) -> *mut ArrayHeader {
     byte_array(&out)
 }
 
+/// Milliseconds since the Unix epoch, for UUIDv7.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_unix_millis() -> i64 {
+    super::time::tondo_rt_time_unix().div_euclid(1_000_000)
+}
+
 /// The `counter`-th value of the SplitMix64 sequence that starts at `seed`.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_random_mix(seed: i64, counter: i64) -> i64 {

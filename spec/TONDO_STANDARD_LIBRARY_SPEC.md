@@ -3456,8 +3456,9 @@ pub fn Uuid.compare(self, other: Uuid): Int
   `urn:uuid:` delante; otra forma es `UuidError.InvalidText`. `fromBytes` exige
   dieciséis bytes. Ambos conservan UUIDs de cualquier versión o variante; los
   generadores solo producen la variante de RFC 9562.
-- Un provider o generador no puede importar `std.uuid` ni `std.random` (27.7
-  del lenguaje): sus valores dependen del momento y de la máquina.
+- Un provider o generador (27.7 del lenguaje) puede usar `v5`, `parse` y el
+  resto, pero no `v4` ni `v7`, que dan otro valor cada vez: llamarlos es
+  `E2108`.
 
 ### 14.18 `std.log`
 
@@ -3673,6 +3674,8 @@ pub fn entropy(count: Int): Array[Byte]
   Fisher-Yates sobre una copia; `choice` da `none` sin elementos.
 - El generador no sirve para secretos: claves, tokens y nonces usan
   `random.entropy(count)`, que lee la entropía del sistema.
+- Un provider o generador (27.7 del lenguaje) puede usar `Random.seeded`, pero
+  no `Random.new` ni `entropy`: llamarlos es `E2108`.
 
 ---
 

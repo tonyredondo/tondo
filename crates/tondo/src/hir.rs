@@ -1063,6 +1063,7 @@ pub const NATIVES: &[Native] = {
         codec("urlDecode", &[String], String, "tondo_rt_url_decode"),
         codec("digest", &[Int, Bytes, Bytes, Bool], Bytes, "tondo_rt_hash_digest"),
         codec("entropy", &[Int], Bytes, "tondo_rt_entropy"),
+        codec("unixMillis", &[], Int, "tondo_rt_unix_millis"),
         codec("mix", &[Int, Int], Int, "tondo_rt_random_mix"),
         codec("randomBytes", &[Int, Int, Int], Bytes, "tondo_rt_random_bytes"),
         math("sin", &[Float], Float, "tondo_rt_math_sin"),

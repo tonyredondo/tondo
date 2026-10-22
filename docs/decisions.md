@@ -950,5 +950,8 @@ a counter, and the generator is a record of both. A `Uuid` holds its
 lowercase hexadecimal, which is `Key` and orders as its bytes do; an
 `Array[Byte]` is not `Key`. ISO 8601 parsing and `DateTime.sinceEpoch()` are
 Tondo in a module that `import std.time` links, like `std.testing` links
-`std.json`. Providers and generators cannot import `std.random` or
-`std.uuid`, whose values depend on the moment and the machine.
+`std.json`. Providers and generators can call what is deterministic in
+`std.random` and `std.uuid`, but not `Uuid.v4`, `Uuid.v7`, `Random.new` or
+`random.entropy`: the checker knows these four and reports the call, and
+`v7` reads the clock through the runtime so that `std.uuid` does not import
+`std.time`.

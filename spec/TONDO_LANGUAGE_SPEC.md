@@ -10428,6 +10428,10 @@ ofrece filesystem, red, procesos, environment, reloj, aleatoriedad, threads,
   FFI, `unsafe`, `Pointer`, identidad de host ni tareas. Tampoco puede
 descubrir archivos, paquetes o tipos que no estén en su request.
 
+Lo que lee el reloj o la entropía del sistema, como `Uuid.v4` o
+`Random.new`, es `E2108` donde se llama; lo determinista de esos mismos
+módulos, como `Uuid.v5` o `Random.seeded`, está disponible.
+
 Un run tiene presupuestos enteros declarados de pasos, memoria administrada y
 bytes de resultado. Alcanzar uno produce `E2107`, que nombra el límite y cuánto
 se usó; pedir una capacidad ausente produce `E2108`, al compilar el provider o

@@ -2,7 +2,6 @@
 // that display as `8-4-4-4-12` lowercase hexadecimal.
 
 import std.internal.codec as codecNative
-import std.time as __time
 
 /// A UUID. Equal, ordered and usable as a key by its sixteen bytes, as
 /// unsigned numbers in network order.
@@ -49,7 +48,7 @@ pub fn Uuid.v5(namespace: Uuid, name: String): Uuid {
 /// A UUID that sorts by when it was made (version 7): the Unix time in
 /// milliseconds, then 74 bits from the system's entropy.
 pub fn Uuid.v7(): Uuid {
-    let millis = __time.unixTime().milliseconds()
+    let millis = codecNative.unixMillis()
     var bytes = codecNative.entropy(16)
     for index in 0..6 {
         bytes[index] = byte(millis >> (40 - 8 * index))
