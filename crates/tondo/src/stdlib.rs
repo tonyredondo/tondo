@@ -497,7 +497,9 @@ impl Generator<'_> {
                 out.push_str(&format!("                _ => {unknown}\n            }}\n"));
                 let carrying = e.variants.iter().any(|v| !matches!(v.payload, ast::VariantPayload::Unit));
                 if !carrying {
-                    out.push_str(&format!("            _ => fail input.mismatch(first, \"a variant of `{name}`\")\n        }}\n"));
+                    out.push_str(&format!(
+                        "            _ => fail input.mismatch(first, \"a variant of `{name}`\")\n        }}\n"
+                    ));
                     out.push_str("    }\n}\n\n");
                     return out;
                 }
