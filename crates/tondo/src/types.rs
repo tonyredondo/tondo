@@ -277,9 +277,8 @@ pub struct ParamDef {
     pub name: String,
     pub equatable: bool,
     pub key: bool,
-    /// `Copy` (which implies `Discard`) and `Discard` (8.10).
+    /// `Copy` (8.10).
     pub copy: bool,
-    pub discard: bool,
 }
 
 #[derive(Clone)]
@@ -465,7 +464,7 @@ impl Types {
     }
 
     pub fn declare_param(&mut self, name: String) -> Ty {
-        self.params.push(ParamDef { name, equatable: false, key: false, copy: false, discard: false });
+        self.params.push(ParamDef { name, equatable: false, key: false, copy: false });
         self.intern(TyKind::Param(self.params.len() as u32 - 1))
     }
 
@@ -1103,19 +1102,12 @@ impl Types {
     /// it (`~Copy`, or a type's or trait's), and composites holding them,
     /// are affine.
     pub fn is_copy(&self, ty: Ty) -> bool {
-        self.capability(ty, &mut Vec::new(), true)
+        self.copy_in(ty, &mut Vec::new())
     }
 
-    /// The closed `Discard` capability (8.10): values may be dropped at the
-    /// end of their scope or with `_ =` without a terminal operation.
-    pub fn is_discard(&self, ty: Ty) -> bool {
-        self.capability(ty, &mut Vec::new(), false)
-    }
-
-    /// `Copy` or `Discard`, structural and computed coinductively: a type
-    /// parameter has what it declares; a `Join`, `Group` or `Sender` has a
-    /// single owner, and the first two can be dropped when their result can.
-    fn capability(&self, ty: Ty, visiting: &mut Vec<Ty>, copy: bool) -> bool {
+    /// `Copy`, structural and computed coinductively: a type parameter has
+    /// what it declares; a handle is `Copy` only when it is shared.
+    fn copy_in(&self, ty: Ty, visiting: &mut Vec<Ty>) -> bool {
         if visiting.contains(&ty) {
             return true;
         }
@@ -1124,16 +1116,13 @@ impl Types {
         let parts: Vec<Ty> = match self.kind(repr) {
             TyKind::Param(index) => {
                 visiting.pop();
-                let param = &self.params[*index as usize];
-                return param.copy || !copy && param.discard;
+                return self.params[*index as usize].copy;
             }
             TyKind::Handle(handle, _) if handle.shared() => Vec::new(),
-            TyKind::Handle(Handle::Sender | Handle::Permit | Handle::Guard | Handle::File, _) if !copy => Vec::new(),
-            TyKind::Handle(..) if copy => {
+            TyKind::Handle(..) => {
                 visiting.pop();
                 return false;
             }
-            TyKind::Handle(_, result) => vec![*result],
             TyKind::Opaque(id, _) => vec![self.opaques[*id as usize].carrier],
             TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) | TyKind::Option(t) => vec![*t],
             TyKind::Map(a, b) | TyKind::Result(a, b) => vec![*a, *b],
@@ -1144,7 +1133,7 @@ impl Types {
                 (None, None) => Vec::new(),
             },
         };
-        let result = parts.iter().all(|&t| self.capability(t, visiting, copy));
+        let result = parts.iter().all(|&t| self.copy_in(t, visiting));
         visiting.pop();
         result
     }

@@ -11,8 +11,7 @@
 use crate::ast::Mode;
 use crate::diag::Diagnostics;
 use crate::hir::{
-    ArrayOp, Block, Callee, Expr, ExprKind, Function, LocalId, MapOp, Mutation, PatKind, Pattern, PlaceStep, Segment,
-    Stmt,
+    ArrayOp, Block, Callee, Expr, ExprKind, Function, LocalId, MapOp, PatKind, Pattern, PlaceStep, Segment, Stmt,
 };
 use crate::source::Span;
 use crate::types::{Handle, Ty, TyKind, Types};
@@ -55,8 +54,6 @@ fn merge(a: Option<Flow>, b: Option<Flow>) -> Option<Flow> {
 }
 
 struct Loop {
-    /// The number of scopes outside the loop.
-    depth: usize,
     breaks: Option<Flow>,
     continues: Option<Flow>,
 }
@@ -87,18 +84,12 @@ pub fn check(
         modes,
         bound_modes,
         diags,
-        scopes: Vec::new(),
         loops: Vec::new(),
         reported: HashSet::new(),
         moves: HashSet::new(),
         quiet: false,
     };
-    // Parameters passed by value belong to the body; loans do not.
-    let owned = function.params.iter().copied().filter(|p| params[p.0 as usize] == Some(Mode::Value)).collect();
-    checker.scopes.push(owned);
-    if let Some(flow) = checker.block(&function.body, Flow::default()) {
-        checker.settle(0, &flow, "the function ends");
-    }
+    checker.block(&function.body, Flow::default());
     checker.moves
 }
 
@@ -109,8 +100,6 @@ struct Checker<'a> {
     modes: &'a dyn Fn(Callee) -> Vec<Mode>,
     bound_modes: &'a Map<Ty, Vec<Mode>>,
     diags: &'a mut Diagnostics,
-    /// The owned bindings of each scope.
-    scopes: Vec<Vec<LocalId>>,
     loops: Vec<Loop>,
     /// What was reported, as `(code, position)`: loops are checked twice.
     reported: HashSet<(&'static str, u32)>,
@@ -135,39 +124,7 @@ impl Checker<'_> {
         format!("`{}`", self.types.display(ty))
     }
 
-    /// Reports the owned bindings of `scopes[from..]` that may still hold a
-    /// value that cannot be dropped when `leaving` happens.
-    fn settle(&mut self, from: usize, flow: &Flow, leaving: &str) {
-        let pending: Vec<(LocalId, Option<Moved>)> = self.scopes[from..]
-            .iter()
-            .flatten()
-            .map(|&l| (l, flow.moved.get(&l).copied()))
-            .filter(|&(l, state)| state != Some(Moved::Surely) && !self.types.is_discard(self.local(l).ty))
-            .collect();
-        for (local, state) in pending {
-            let (name, ty, span) = (self.local(local).name.clone(), self.local(local).ty, self.local(local).span);
-            let paths = if state == Some(Moved::Maybe) { "on some paths " } else { "" };
-            let wait = if matches!(self.types.kind(ty), TyKind::Handle(..)) { "call `wait()`, " } else { "" };
-            let message = format!(
-                "`{name}` still holds its value {paths}when {leaving}, and its type {} may need to be consumed; {wait}pass it on or return it on every path, or add `Discard` to its type parameter",
-                self.display(ty)
-            );
-            self.error("E1409", span, message);
-        }
-    }
-
     fn block(&mut self, block: &Block, flow: Flow) -> Option<Flow> {
-        self.scopes.push(Vec::new());
-        let flow = self.statements(block, flow);
-        if let Some(flow) = &flow {
-            let depth = self.scopes.len() - 1;
-            self.settle(depth, flow, "its block ends");
-        }
-        self.scopes.pop();
-        flow
-    }
-
-    fn statements(&mut self, block: &Block, flow: Flow) -> Option<Flow> {
         let mut flow = flow;
         for stmt in &block.stmts {
             flow = self.stmt(stmt, flow)?;
@@ -181,9 +138,6 @@ impl Checker<'_> {
     /// A binding takes a new value. Hidden bindings only pass values along.
     fn declare(&mut self, local: LocalId, flow: &mut Flow) {
         flow.moved.remove(&local);
-        if self.local(local).name != "_" && self.params[local.0 as usize].is_none() {
-            self.scopes.last_mut().unwrap().push(local);
-        }
     }
 
     fn stmt(&mut self, stmt: &Stmt, flow: Flow) -> Option<Flow> {
@@ -195,7 +149,6 @@ impl Checker<'_> {
             }
             Stmt::Destructure(pattern, value) => {
                 let mut flow = self.consume(value, flow)?;
-                self.dropped_parts(pattern);
                 self.bind(pattern, &mut flow);
                 Some(flow)
             }
@@ -206,18 +159,7 @@ impl Checker<'_> {
                 if !whole {
                     self.use_local(*local, *span, &flow);
                 }
-                // An assignment must not drop a value that may need consuming;
-                // a complete one gives a moved binding its value back.
-                let ty = self.place_ty(*local, path);
-                let holds = !whole || flow.moved.get(local) != Some(&Moved::Surely);
-                if op.is_none() && holds && !self.types.is_discard(ty) {
-                    let message = format!(
-                        "assigning `{}` here would drop the value it holds, and its type {} may need to be consumed; pass that value on first, or add `Discard` to its type parameter",
-                        self.local(*local).name,
-                        self.display(ty)
-                    );
-                    self.error("E1408", *span, message);
-                }
+                // A complete assignment gives a moved binding its value back.
                 if whole {
                     flow.moved.remove(local);
                 }
@@ -245,21 +187,16 @@ impl Checker<'_> {
             Stmt::AwaitChange(..) => Some(flow),
             Stmt::Expr(value) => self.consume(value, flow),
             Stmt::Return(value) => {
-                let flow = match value {
-                    Some(value) => self.consume(value, flow)?,
-                    None => flow,
-                };
-                self.settle(0, &flow, "the function returns");
+                if let Some(value) = value {
+                    self.consume(value, flow)?;
+                }
                 None
             }
             Stmt::Fail(value) => {
-                let flow = self.consume(value, flow)?;
-                self.settle(0, &flow, "the function fails");
+                self.consume(value, flow)?;
                 None
             }
             Stmt::Break | Stmt::Continue => {
-                let depth = self.loops.last()?.depth;
-                self.settle(depth, &flow, "the loop is left");
                 let current = self.loops.last_mut()?;
                 let exits = if matches!(stmt, Stmt::Break) { &mut current.breaks } else { &mut current.continues };
                 *exits = merge(exits.take(), Some(flow));
@@ -276,17 +213,9 @@ impl Checker<'_> {
                 // `ref` bindings observe the collection; others take it.
                 let flow =
                     if self.borrows(pattern) { self.observe(source, flow)? } else { self.consume(source, flow)? };
-                self.dropped_parts(pattern);
                 self.repeat(flow, true, |this, mut flow| {
-                    this.scopes.push(Vec::new());
                     this.bind(pattern, &mut flow);
-                    let end = this.block(body, flow);
-                    if let Some(end) = &end {
-                        let depth = this.scopes.len() - 1;
-                        this.settle(depth, end, "the iteration ends");
-                    }
-                    this.scopes.pop();
-                    end
+                    this.block(body, flow)
                 })
             }
             Stmt::ForRange { start, end, body, .. } => {
@@ -308,8 +237,7 @@ impl Checker<'_> {
         let mut head = flow;
         let mut breaks = None;
         loop {
-            let depth = self.scopes.len();
-            self.loops.push(Loop { depth, breaks: None, continues: None });
+            self.loops.push(Loop { breaks: None, continues: None });
             let end = body(self, head.clone());
             let current = self.loops.pop().expect("pushed above");
             breaks = merge(breaks, current.breaks);
@@ -320,17 +248,6 @@ impl Checker<'_> {
             head = next;
         }
         if exhausts { merge(Some(head), breaks) } else { breaks }
-    }
-
-    /// The type of the place at `path` inside `local`.
-    fn place_ty(&self, local: LocalId, path: &[PlaceStep]) -> Ty {
-        path.iter().fold(self.local(local).ty, |ty, step| match step {
-            PlaceStep::Field(index) => self.types.components(ty).map_or(Ty::ERROR, |c| c[*index as usize]),
-            PlaceStep::Index(_) => match self.types.kind(self.types.repr(ty)) {
-                TyKind::Array(element) | TyKind::Deque(element) | TyKind::Map(_, element) => *element,
-                _ => Ty::ERROR,
-            },
-        })
     }
 
     fn indices(&mut self, path: &[PlaceStep], flow: Flow) -> Option<Flow> {
@@ -390,25 +307,6 @@ impl Checker<'_> {
     /// type is not `Copy`.
     fn owns(&self, local: LocalId) -> bool {
         self.params[local.0 as usize].is_none() && !self.types.is_copy(self.local(local).ty)
-    }
-
-    /// Reports the parts a pattern that consumes its value leaves unbound
-    /// although they cannot be dropped.
-    fn dropped_parts(&mut self, pattern: &Pattern) {
-        match &pattern.kind {
-            PatKind::Wildcard | PatKind::Array { rest: Some(None), .. } if !self.types.is_discard(pattern.ty) => {
-                let message = format!(
-                    "this pattern drops a part of type {}, which may need to be consumed; bind it to a name and pass it on, or add `Discard` to its type parameter",
-                    self.display(pattern.ty)
-                );
-                self.error("E1409", pattern.span, message);
-            }
-            PatKind::Fields(items) | PatKind::Variant(_, items) | PatKind::Array { items, .. } => {
-                items.iter().for_each(|p| self.dropped_parts(p))
-            }
-            PatKind::Newtype(inner) => self.dropped_parts(inner),
-            _ => {}
-        }
     }
 
     /// How to make a value `Copy`, when a type parameter declared `~Copy`
@@ -634,10 +532,6 @@ impl Checker<'_> {
                 let flow = if takes { self.consume(scrutinee, flow)? } else { self.observe(scrutinee, flow)? };
                 let mut out = None;
                 for arm in arms {
-                    if takes {
-                        self.dropped_parts(&arm.pattern);
-                    }
-                    self.scopes.push(Vec::new());
                     let mut arm_flow = flow.clone();
                     self.bind(&arm.pattern, &mut arm_flow);
                     let mut end = match &arm.guard {
@@ -645,11 +539,6 @@ impl Checker<'_> {
                         None => Some(arm_flow),
                     };
                     end = end.and_then(|f| self.consume(&arm.body, f));
-                    if let Some(end) = &end {
-                        let depth = self.scopes.len() - 1;
-                        self.settle(depth, end, "its arm ends");
-                    }
-                    self.scopes.pop();
                     out = merge(out, end);
                 }
                 out
@@ -702,15 +591,6 @@ impl Checker<'_> {
             ExprKind::Mutate(mutation, place, values) => {
                 let mut flow = self.indices(&place.path, flow)?;
                 self.use_local(place.local, expr.span, &flow);
-                let ty = self.place_ty(place.local, &place.path);
-                if *mutation == Mutation::Clear && !self.types.is_discard(ty) {
-                    let message = format!(
-                        "`clear()` would drop the elements of `{}`, and its type {} may need to be consumed; take them out with `pop()` or a `for` loop, or add `Discard` to its type parameter",
-                        self.local(place.local).name,
-                        self.display(ty)
-                    );
-                    self.error("E1409", expr.span, message);
-                }
                 for (value, moves) in values.iter().zip(mutation.moves(values.len())) {
                     flow = if moves { self.consume(value, flow)? } else { self.observe(value, flow)? };
                 }
@@ -730,11 +610,7 @@ impl Checker<'_> {
                 self.observe(right, flow)
             }
             ExprKind::Length(value) | ExprKind::Unary(_, value) => self.observe(value, flow),
-            ExprKind::Try(inner) => {
-                let flow = self.consume(inner, flow)?;
-                self.settle(0, &flow, "`?` fails");
-                Some(flow)
-            }
+            ExprKind::Try(inner) => self.consume(inner, flow),
             ExprKind::Convert(inner) | ExprKind::Panic(inner) | ExprKind::Erase(inner, _) | ExprKind::Spawn(inner) => {
                 self.consume(inner, flow)
             }
@@ -760,16 +636,10 @@ impl Checker<'_> {
                         self.quiet = false;
                         arm_flow = taken?;
                     }
-                    self.scopes.push(Vec::new());
                     if let Some(pattern) = &arm.pattern {
                         self.bind(pattern, &mut arm_flow);
                     }
                     let end = self.consume(&arm.body, arm_flow);
-                    if let Some(end) = &end {
-                        let depth = self.scopes.len() - 1;
-                        self.settle(depth, end, "its arm ends");
-                    }
-                    self.scopes.pop();
                     out = merge(out, end);
                 }
                 if let Some(otherwise) = otherwise {

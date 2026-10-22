@@ -32,7 +32,7 @@ fn scaleBy(factor: Int, values: mut Array[Int]) {
     values *= factor
 }
 
-fn count[T: ~Copy + Discard](values: ref Array[T]): Int {
+fn count[T: ~Copy](values: ref Array[T]): Int {
     values.length()
 }
 

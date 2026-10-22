@@ -305,7 +305,7 @@ Son cambios incompatibles, como mínimo:
 - Retirar una capability o un target anunciado.
 - Hacer más débil una garantía pública de orden, atomicidad o complejidad.
 - Hacer que código válido seleccione otra declaración por añadir un método.
-- Cambiar ownership, capacidades estructurales u obligación terminal.
+- Cambiar ownership, capacidades estructurales o la acción de salida de un recurso.
 - Convertir un dato portable en dato dependiente del host.
 
 Añadir un módulo o una declaración es compatible solo cuando no cambia
@@ -660,7 +660,6 @@ Cada error público debe:
 - Ser accesible desde toda firma que lo exponga.
 - Tener variantes cerradas y exhaustivas.
 - Declarar payloads portables.
-- Cumplir `Discard`.
 - Declarar `Copy`, `Equatable`, `Key`, `Send` o `Share` solo cuando sus payloads
   y semántica lo permiten.
 - Separar clasificación programática de representación humana.
@@ -726,7 +725,7 @@ El contrato de una operación incluye:
 - Si copia, mueve, presta o consume cada argumento.
 - Si devuelve storage independiente, una vista o un owner.
 - Las capacidades estructurales del resultado.
-- Toda obligación terminal.
+- La acción de salida de cada recurso que devuelve.
 
 La documentación no puede contradecir una firma usando expresiones vagas como
 “puede modificar” o “quizá consume”.
@@ -764,18 +763,14 @@ Una optimización no puede alterar:
 
 Un archivo, proceso activo, stream one-shot, lock u otro recurso:
 
-- Es un owner afín cuando desaparecer silenciosamente perdería una obligación.
-- Declara una operación terminal exacta.
-- Puede utilizarse con `defer`.
+- Es un owner afín, salvo que sea un handle compartido como los de `std.sync`.
+- Declara su acción de salida (8.10 del lenguaje): qué hace al abandonarse y qué
+  hace durante un pánico.
+- Ofrece una operación explícita que lo libera antes y devuelve sus errores.
 - No depende del GC ni de un finalizador de usuario.
-- No se oculta dentro de `Ref[T]`, COW o un valor `Copy`.
-- Tiene cleanup defensivo de host para abortos del runtime, sin convertir ese
-  fallback en semántica de éxito.
 
-Cada tipo afín publica una sola forma terminal canónica para cada outcome. No
-ofrece simultáneamente `close`, `dispose` y `release` como sinónimos. Una
-operación como `cancel` solo cuenta como terminal si su firma y contrato consumen
-el owner y completan todo cleanup requerido.
+Cada tipo afín publica una sola operación de cierre para cada outcome. No
+ofrece simultáneamente `close`, `dispose` y `release` como sinónimos.
 
 ### 8.5 Iteradores y vistas
 
@@ -793,7 +788,7 @@ La API documenta:
 - Si consume la fuente.
 - Si conserva préstamos.
 - Si puede fallar durante iteración.
-- Qué operación terminal cierra un cursor afín.
+- Qué acción de salida tiene un cursor que posee un recurso.
 
 No materializa un array de forma oculta detrás de una API anunciada como lazy.
 
@@ -1794,7 +1789,7 @@ coinciden se devuelve `CivilError.DomainMismatch`.
 
 La igualdad de un `ZonedDateTime` incluye UTC, ID de zona y versión del bundle;
 dos folds con distinto offset no se confunden. Los valores son
-`Copy + Discard + Send + Share`, no handles de host. Las operaciones son
+`Copy + Send + Share`, no handles de host. Las operaciones son
 síncronas, acotadas y portables; un backend puede emplear tablas compactas o
 SIMD para lotes solo si conserva bytes, errores, límites y resultados
 idénticos. Los hooks privados de diagnóstico omiten payloads por defecto.
@@ -1810,7 +1805,7 @@ sección describe los módulos que los complementan para el estado compartido.
 `std.sync` reúne el estado compartido entre tareas: primitivas de
 sincronización y colecciones compartidas. Cada valor de sus tipos es un handle
 hacia un estado compartido: copiarlo copia el handle, no el contenido, y todos
-cumplen `Copy`, `Discard`, `Send` y `Share` salvo `Permit`. Ninguno cumple
+cumplen `Copy`, `Send` y `Share` salvo `Permit`. Ninguno cumple
 `Equatable` ni `Key`. Las operaciones son linealizables, salvo el recuento de
 `sync.Map` y `sync.Set` descrito en 14.4.4.2. Un lock, permiso o barrera
 disputado detiene la tarea, no el thread, y la espera termina al cancelar la
@@ -1888,7 +1883,7 @@ let id = requests.add(1)
   en orden de llegada hasta vaciar la cola, también a un escritor frente a
   lectores continuos.
 - `Semaphore(n)` reparte `n` permisos. `acquire` espera uno libre. Un `Permit`
-  no es `Copy` y cumple `Discard`: el permiso vuelve con `release()` o al
+  no es `Copy`: el permiso vuelve con `release()` o al
   abandonarse el `Permit`, también al moverlo a una tarea que termina, de modo
   que `spawn fetch(url, limit.acquire())` limita la concurrencia.
 - `Once` inicializa su valor una sola vez. Mientras una tarea ejecuta `init`,
@@ -2399,14 +2394,6 @@ URL-safe debe nombrarse explícitamente); `parse` dinámico conserva el texto
 original. Las anotaciones se resuelven en compile time y no requieren
 reflection de valores.
 
-Un `Encode[C]` o `Decode[C]` derivado añade `Discard` únicamente a los
-parámetros genéricos usados en payloads. En encode es necesario porque el
-writer puede fallar antes de consumir todos los fields recibidos por valor; en
-decode permite limpiar valores parciales si falla la validación de un field o
-cierre posterior. Una implementación manual puede manejar tipos affine si
-consume todos los valores pendientes en cada salida de error; el compilador
-aplica exactamente el mismo análisis de ownership al código generado y al
-escrito a mano.
 
 ### 14.7 `std.serialization`
 
@@ -2595,7 +2582,6 @@ pub enum ReferenceKind {
 
 pub enum TypeCapability {
     Copy
-    Discard
     Equatable
     Key
     Send
@@ -3435,7 +3421,7 @@ Publication and exact-SHA CI closure are tracked separately in the live tracker.
 
 `std.uuid` defines an immutable 128-bit value interoperable with RFC 9562.
 Its sixteen network-order bytes support the normative Tondo capabilities
-`Copy`, `Discard`, `Equatable`, `Key`, `Send` and `Share`, including `Map`/`Set`
+`Copy`, `Equatable`, `Key`, `Send` and `Share`, including `Map`/`Set`
 keys; `Uuid.compare` provides unsigned byte ordering. The Rust kernel separately
 implements `Eq`, `Ord` and `Hash`. Parsing accepts dashed `8-4-4-4-12` text and
 the `urn:uuid:` prefix with either hex case; formatting always emits lowercase
@@ -4102,7 +4088,7 @@ STD-0.1 puede publicarse como 0.1.0 únicamente cuando:
 - [ ] Todas las capabilities ausentes producen rechazo estático.
 - [ ] Los tipos y errores tienen un propietario canónico.
 - [ ] Los módulos core no dependen de host.
-- [ ] Los recursos afines tienen una operación terminal y cleanup probado.
+- [ ] Los recursos tienen una acción de salida y una operación de cierre probadas.
 - [ ] Los ejemplos son ejecutables.
 - [ ] La matriz de evidencia cubre las seis dimensiones.
 - [ ] La suite estándar pasa sobre la VM.

@@ -53,7 +53,7 @@ pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics)
 }
 
 /// Prelude type names (26.3); they cannot be redeclared unqualified.
-const PRELUDE_TYPES: [&str; 42] = [
+const PRELUDE_TYPES: [&str; 41] = [
     "NumericConversionError",
     "Bool",
     "Int",
@@ -90,7 +90,6 @@ const PRELUDE_TYPES: [&str; 42] = [
     "Command",
     "Pipeline",
     "Copy",
-    "Discard",
     "Equatable",
     "Key",
     "Send",
@@ -1070,7 +1069,6 @@ impl Checker<'_> {
             ([name], true) if name.name == "Equatable" => self.types.param_mut(param).equatable = true,
             ([name], true) if name.name == "Key" => self.types.param_mut(param).key = true,
             ([name], true) if name.name == "Copy" => self.types.param_mut(param).copy = true,
-            ([name], true) if name.name == "Discard" => self.types.param_mut(param).discard = true,
             // `Send` and `Share` matter once there is concurrency (H5).
             ([name], true) if matches!(name.name.as_str(), "Send" | "Share") => {}
             ([name], false) if matches!(name.name.as_str(), "Call" | "CallMut" | "CallOnce") => {
@@ -1779,12 +1777,9 @@ impl Checker<'_> {
     /// meet, as text for a diagnostic.
     fn bound_holds(&mut self, param: Ty, actual: Ty, map: &HashMap<Ty, Ty>, depth: usize) -> Option<String> {
         let def = self.types.param(param)?;
-        let (equatable, key, copy, discard) = (def.equatable, def.key, def.copy, def.discard);
+        let (equatable, key, copy) = (def.equatable, def.key, def.copy);
         if copy && !self.types.is_copy(actual) {
             return Some("`Copy` (type parameters are `Copy` unless declared `~Copy`)".into());
-        }
-        if discard && !self.types.is_discard(actual) {
-            return Some("`Discard`".into());
         }
         if key && !self.types.is_key(actual) {
             return Some("`Key`".into());
@@ -1920,13 +1915,7 @@ impl Checker<'_> {
         let shown: Vec<String> = bounds.iter().map(|b| self.bound_text(b)).collect();
         let name = format!("impl {}", shown.join(" + "));
         // Like a type parameter, an opaque result is `Copy` unless it says
-        // `~Copy`, and then it must still publish `Discard`: it never hides
-        // an obligation.
-        let relaxed = bounds.iter().any(|b| matches!(b.kind, ast::TypeKind::NotCopy));
-        if relaxed && !shown.iter().any(|b| b == "Discard") {
-            let message = format!("an opaque result never hides an obligation: write `{name} + Discard`");
-            self.diags.error("E1117", result.span, message);
-        }
+        // `~Copy`.
         let carrier = self.types.declare_param(name.clone());
         self.types.param_mut(carrier).copy = true;
         for bound in bounds {
@@ -2792,13 +2781,6 @@ impl Checker<'_> {
     /// which waits for it at its end.
     fn spawn_statement(&mut self, cx: &mut FnCx, call: &ast::Expr) -> hir::Stmt {
         let join = self.expr(cx, call, None);
-        if !self.types.is_discard(join.ty) && !self.types.has_error(join.ty) {
-            let message = format!(
-                "the result of this task has type {}, which may need to be consumed; bind the task and wait for it: `let job = spawn ...` and `job.wait()`",
-                self.display(self.types.handle_result(join.ty))
-            );
-            self.diags.error("E1409", call.span, message);
-        }
         let local = self.hidden_local(cx, join.ty);
         hir::Stmt::Let(local, join)
     }
@@ -3708,6 +3690,7 @@ impl Checker<'_> {
             (Handle::Group, "length" | "isEmpty") => T::GroupLength,
             (Handle::Group, "wait") => T::GroupWait,
             (Handle::Join, "cancel") => T::Cancel,
+            (Handle::Join, "detach") => T::Detach,
             (Handle::Group, "cancel") => T::GroupCancel,
             (Handle::Sender, "send") => T::Send,
             (Handle::Sender, "close") => T::Close,
@@ -3757,7 +3740,7 @@ impl Checker<'_> {
         }
         let result = match op {
             T::Wait => result,
-            T::GroupAdd | T::Send | T::Close | T::Cancel | T::GroupCancel => Ty::UNIT,
+            T::GroupAdd | T::Send | T::Close | T::Cancel | T::Detach | T::GroupCancel => Ty::UNIT,
             T::GroupNext | T::Receive | T::ReceiveTimeout | T::WaitTimeout => self.types.intern(TyKind::Option(result)),
             T::CopySender => ty,
             T::IsClosed => Ty::BOOL,
@@ -3895,13 +3878,6 @@ impl Checker<'_> {
             ast::StmtKind::Assign { target, op, value } => self.assign(cx, target, *op, value, stmt.span),
             ast::StmtKind::Discard(value) => {
                 let value = self.expr(cx, value, None);
-                if !self.types.is_discard(value.ty) && !self.types.has_error(value.ty) {
-                    let ty = self.display(value.ty);
-                    let message = format!(
-                        "`_ =` drops a value of type {ty}, which may need to be consumed; pass it on, or add `Discard` to its type parameter"
-                    );
-                    self.diags.error("E1409", value.span, message);
-                }
                 cx.diverged |= value.ty == Ty::NEVER;
                 Some(hir::Stmt::Expr(value))
             }
@@ -6725,13 +6701,6 @@ impl Checker<'_> {
         body: &ast::Block,
     ) -> hir::Stmt {
         let (ty, span) = (source.ty, source.span);
-        if !self.types.is_discard(ty) && !self.types.has_error(ty) {
-            let message = format!(
-                "the loop drops the cursor when it ends, but its type {} may need to be consumed; add `Discard` to its type parameter",
-                self.display(ty)
-            );
-            self.diags.error("E1409", span, message);
-        }
         let cursor = self.hidden_local(cx, ty);
         cx.mutable[cursor.0 as usize] = true;
         let option = self.types.intern(TyKind::Option(element));

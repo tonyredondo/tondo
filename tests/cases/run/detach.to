@@ -1,0 +1,32 @@
+import std.console
+import std.time
+
+fn quick(n: Int): Int {
+    console.println("quick {n}")
+    n
+}
+
+fn forever(name: String) {
+    defer console.println("{name} cleaned up")
+    for {
+        time.sleep(time.milliseconds(5))
+    }
+}
+
+fn spawner() {
+    (spawn forever("grandchild")).detach()
+}
+
+fn main() {
+    (spawn quick(1)).detach()
+    let job = spawn forever("background")
+    job.detach()
+    (spawn spawner()).detach()
+    time.sleep(time.milliseconds(30))
+    console.println("main ends")
+}
+
+// expect-stdout: quick 1
+// expect-stdout: main ends
+// expect-stdout: background cleaned up
+// expect-stdout: grandchild cleaned up

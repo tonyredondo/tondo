@@ -364,6 +364,8 @@ pub enum TaskOp {
     WaitTimeout,
     /// `job.cancel()`
     Cancel,
+    /// `job.detach()`
+    Detach,
     /// `group.cancel()`
     GroupCancel,
     /// A new `std.sync` value holding its state; the state comes first.
@@ -438,6 +440,7 @@ impl TaskOp {
             TaskOp::Wait
             | TaskOp::WaitTimeout
             | TaskOp::Cancel
+            | TaskOp::Detach
             | TaskOp::GroupCancel
             | TaskOp::SyncNew
             | TaskOp::PermitRelease => index == 0,

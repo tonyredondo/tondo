@@ -45,7 +45,7 @@ fn latest[T: ~Copy](values: Array[T], seed: T, old: var Array[T]): T {
     current
 }
 
-fn count[T: ~Copy + Discard](values: Array[T]): Int {
+fn count[T: ~Copy](values: Array[T]): Int {
     var n = 0
     for value in values {
         n += 1

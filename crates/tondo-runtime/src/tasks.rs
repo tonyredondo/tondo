@@ -497,6 +497,7 @@ extern "C" fn trampoline() -> ! {
         if (*task).main {
             let main: unsafe extern "C" fn() -> i32 = std::mem::transmute(code);
             MAIN_STATUS.store(main() as usize, Ordering::SeqCst);
+            end_detached();
         } else {
             let captures = body.add(super::FN_HEADER);
             let out = (*join).result;
@@ -524,7 +525,12 @@ extern "C" fn trampoline() -> ! {
                 }
             }
             super::tondo_rt_fn_release(body as *mut super::FnObject);
-            complete(join);
+            if complete(join) {
+                let mut detached = DETACHED.lock().unwrap_or_else(|e| e.into_inner());
+                detached.retain(|&j| j != join as usize);
+                drop(detached);
+                tondo_rt_join_release(join);
+            }
         }
         (*task).finished = true;
         switch(&mut (*task).sp, *home());
@@ -727,6 +733,8 @@ pub struct JoinObject {
     index: usize,
     /// The task, alive while it is not done.
     task: *mut Task,
+    /// Let go with `detach()`: the task holds a reference until it ends.
+    detached: bool,
 }
 
 /// Starts a task that calls the closure `body`, a `fn` object it takes,
@@ -761,6 +769,7 @@ pub unsafe extern "C" fn tondo_rt_spawn(
         group: std::ptr::null_mut(),
         index: 0,
         task: std::ptr::null_mut(),
+        detached: false,
     }));
     let code = unsafe { *(body.add(16) as *const *const u8) };
     let kind = match kind {
@@ -778,12 +787,13 @@ pub unsafe extern "C" fn tondo_rt_spawn(
 
 /// Marks the task done and notifies whoever waits for it. The group hears
 /// of it under the join's lock, so nobody sees the task done, and frees the
-/// group, before that.
-unsafe fn complete(join: *mut JoinObject) {
+/// group, before that. True when the task was detached.
+unsafe fn complete(join: *mut JoinObject) -> bool {
     unsafe {
         let j = &mut *join;
         lock(&j.lock);
         j.done = true;
+        let detached = j.detached;
         let mut woken: Vec<*mut Task> = Vec::new();
         for (wait, index) in std::mem::take(&mut j.waiters) {
             if (*wait).claim(index) {
@@ -795,6 +805,50 @@ unsafe fn complete(join: *mut JoinObject) {
         }
         unlock(&j.lock);
         woken.into_iter().for_each(notify);
+        detached
+    }
+}
+
+/// The joins of detached tasks that are still running.
+static DETACHED: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+
+/// `job.detach()`: the task runs on without anyone waiting for it, and
+/// holds its join until it ends.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_join_detach(join: *mut JoinObject) {
+    unsafe {
+        let j = &mut *join;
+        let mut detached = DETACHED.lock().unwrap_or_else(|e| e.into_inner());
+        lock(&j.lock);
+        if !j.done {
+            j.detached = true;
+            j.rc.fetch_add(1, Ordering::Relaxed);
+            detached.push(join as usize);
+        }
+        unlock(&j.lock);
+    }
+}
+
+/// When `main` returns: cancels the detached tasks still running and waits
+/// for their cleanup (11.11), including tasks they detach meanwhile.
+fn end_detached() {
+    loop {
+        let joins: Vec<usize> = {
+            let detached = DETACHED.lock().unwrap_or_else(|e| e.into_inner());
+            for &join in detached.iter() {
+                unsafe { (*(join as *mut JoinObject)).rc.fetch_add(1, Ordering::Relaxed) };
+            }
+            detached.clone()
+        };
+        if joins.is_empty() {
+            return;
+        }
+        for join in joins {
+            unsafe {
+                cancel_join(join as *mut JoinObject);
+                tondo_rt_join_release(join as *mut JoinObject);
+            }
+        }
     }
 }
 

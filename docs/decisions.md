@@ -467,3 +467,22 @@ omits the argument, so they never depend on other parameters or on state.
 Loans, variadic parameters and trait methods have none, and a `fn(...)`
 value forgets them. LLM authors write defaults in Python, C# and Kotlin;
 the error for a missing argument now names its type.
+
+## 2026-10-22 — No terminal obligations; resources clean up on exit
+
+The spec had types whose values could not be dropped: every normal exit
+from a scope had to call a terminal operation such as `wait()` or
+`close()`, or register a `defer` for it, or fail with `E1404`. Supporting
+that took the `Discard` capability and its bounds, rules against
+overwriting, ignoring with `..` or `clear()`-ing such values, unwind
+actions, armed and disarmed cleanup entries, `defer` guards and confirmed
+transfers in every call. All of it is gone. Every value can be dropped,
+and a resource's type defines what dropping it does, as files and joins
+already did: a file flushes and closes, a join waits, a process handle
+closes the child's input and waits, and a panic cancels instead.
+`close()`, `wait()` and `cancel()` remain to see errors. A deferred call
+now takes its arguments when it is registered.
+
+The opposite case, work nobody should wait for, is explicit:
+`job.detach()` lets a task run on, and when `main` returns the runtime
+cancels the detached tasks still running and waits for their cleanup.

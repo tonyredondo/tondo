@@ -148,6 +148,7 @@ enum Rt {
     Cancelled,
     JoinWaitTimeout,
     JoinCancel,
+    JoinDetach,
     GroupCancel,
     SyncNew,
     SyncValue,
@@ -313,6 +314,7 @@ impl Rt {
             Rt::Cancelled => ("tondo_rt_cancelled", &[], &[I8]),
             Rt::JoinWaitTimeout => ("tondo_rt_join_wait_timeout", &[I64, I64, I64], &[I8]),
             Rt::JoinCancel => ("tondo_rt_join_cancel", &[I64], &[]),
+            Rt::JoinDetach => ("tondo_rt_join_detach", &[I64], &[]),
             Rt::GroupCancel => ("tondo_rt_group_cancel", &[I64], &[]),
             Rt::SyncNew => ("tondo_rt_sync_new", &[I64, I64, I64], &[I64]),
             Rt::SyncValue => ("tondo_rt_sync_value", &[I64], &[I64]),
@@ -2717,6 +2719,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             TaskOp::Cancel => {
                 self.e.call_rt(Rt::JoinCancel, &[values[0]]);
+                None
+            }
+            TaskOp::Detach => {
+                self.e.call_rt(Rt::JoinDetach, &[values[0]]);
                 None
             }
             TaskOp::GroupCancel => {

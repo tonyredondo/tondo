@@ -446,8 +446,6 @@ El símbolo sintético no puede escribirse ni observarse desde fuente. El body:
 - Puede usar `return`, que sale únicamente del test actual.
 - Puede usar `fail` y `?`; ambos alimentan el canal inferido `E`.
 
-El error inferido debe cumplir `Discard`. Un error con obligación terminal no
-puede escapar hasta el runner; debe transformarse o consumirse dentro del test.
 
 Una expresión final distinta de `Unit`, un `return` con valor incompatible o
 cualquier error de tipos utiliza los diagnósticos ordinarios. No existe un tipo
@@ -455,7 +453,7 @@ especial `TestResult`.
 
 El prefijo de setup de cada suite se comprueba como otra entrada privada
 equivalente a `fn <suite-setup>(): Unit ! E`, con unión cerrada inferida
-`E: Discard`. Su entorno local permanece vivo mientras el runner ejecuta los
+`E`. Su entorno local permanece vivo mientras el runner ejecuta los
 descendientes seleccionados y abandona después el scope léxico de la suite. Ese
 entorno y sus entradas de ejecución no son valores Tondo, no tienen ABI pública
 y no pueden observarse desde fuente.
@@ -510,8 +508,8 @@ Una suite o test escribe `scope` de forma explícita igual que un script.
 
 ### 4.3 Ownership, préstamos y `defer`
 
-Una suite o test no relaja ownership. Todo valor afín, obligación terminal,
-préstamo o cleanup debe satisfacer las mismas reglas que en una función normal.
+Una suite o test no relaja ownership. Todo valor afín, préstamo o cleanup debe
+satisfacer las mismas reglas que en una función normal.
 
 `defer` es la única construcción de teardown del lenguaje:
 
@@ -541,8 +539,8 @@ cuando:
 - La referencia no mueve, presta con `mut`/`var` ni consume el binding ancestral.
 
 El runner construye un snapshot lógico de esas capturas para cada hijo antes de
-programarlo. Un binding `var`, un préstamo `ref`/`mut`/`var`, un valor afín o un
-valor con obligación terminal no puede cruzar esa frontera y produce `E2005`.
+programarlo. Un binding `var`, un préstamo `ref`/`mut`/`var` o un valor afín no
+puede cruzar esa frontera y produce `E2005`.
 Constantes, funciones y declaraciones de módulo se resuelven por nombre y no son
 capturas.
 
@@ -2841,7 +2839,7 @@ Tondo 0.1 incluye estos códigos en su registro normativo:
 | `E2002` | `duplicate-test-node` | Dos miembros suite/test producen la misma identidad o nombre de hermano dentro del mismo árbol. |
 | `E2003` | `invalid-test-source-declaration` | Una fuente de test intenta exportar API, alterar la unidad de producción sellada o ser consumida desde producción; o producción intenta importar `std.testing`. |
 | `E2004` | `empty-test-suite` | Una suite no contiene ningún miembro directo y, por tanto, ningún test descendiente. |
-| `E2005` | `invalid-suite-capture` | Un descendiente intenta capturar `var`, préstamo, valor afín/terminal o un tipo que no cumple `Copy + Send + Share`. |
+| `E2005` | `invalid-suite-capture` | Un descendiente intenta capturar `var`, préstamo, valor afín o un tipo que no cumple `Copy + Send + Share`. |
 
 El runtime de test añade ocho pánicos:
 
@@ -2865,7 +2863,6 @@ El resto reutiliza diagnósticos existentes:
 - Colisión de helpers ordinarios: `E1002`.
 - Identidad `_` u otra declaración semánticamente mal formada: `E1115`.
 - Tipo final distinto de `Unit`: `E1102`.
-- Error inferido sin `Discard`: `E1105`.
 - Transferencia de control inválida, incluido `return` desde setup: `E1205`.
 - Error o `?` incompatible: `E1301`/`E1302`.
 - Ownership, préstamos y cleanup: familia `E14xx`.
@@ -3827,7 +3824,7 @@ versionada. El grupo cubre como mínimo:
 5. Identidad de suite/test, parent IDs y orden independiente del orden de
    archivos.
 6. Capturas válidas `let: Copy + Send + Share` y rechazo de `var`, préstamos,
-   valores afines y obligaciones terminales.
+   valores afines.
 7. Las firmas exactas y test-only del núcleo `std.testing`, incluidos
    `attach`, `snapshot`, `VirtualTime`, rechazo desde producción y ausencia de
    `TestContext`, `currentTest()` o identidad observable.
@@ -3848,7 +3845,7 @@ versionada. El grupo cubre como mínimo:
 16. Fallo de setup, `blocked-setup`, causa única y continuidad de hermanos.
 17. Fallo de teardown sin reescribir resultados de descendientes.
 18. Retorno normal, error, pánico, assert, resource limit y timeout de tests.
-19. `defer`, terminal obligations y unwind en terminales de suite/test.
+19. `defer`, acciones de salida y unwind en terminales de suite/test.
 20. Async, `scope`, `spawn`, cancelación y pánico de hijos.
 21. Unit overlay con acceso privado que no repara producción inválida.
 22. Integration root sin acceso privado.

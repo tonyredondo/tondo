@@ -1149,7 +1149,7 @@ let Point { x, y } = point
 
 Un patrón refutable, como una variante concreta de enum, debe consumirse con `match`.
 
-El inicializador se evalúa una vez. Desestructurar un valor `Copy` copia lógicamente sus componentes y deja disponible el origen; desestructurar un valor afín consume el agregado completo y transfiere cada componente enlazado. Un componente omitido solo puede abandonarse si no conserva una obligación terminal.
+El inicializador se evalúa una vez. Desestructurar un valor `Copy` copia lógicamente sus componentes y deja disponible el origen; desestructurar un valor afín consume el agregado completo y transfiere cada componente enlazado. Un componente omitido se abandona.
 
 ### 7.4 Ausencia de shadowing
 
@@ -1234,16 +1234,15 @@ un error semántico y el diagnóstico propone quitar el modificador. El formatte
 solo opera sobre la fuente válida resultante, no convierte esa prohibición en una
 regla de estilo distinta.
 
-La visibilidad de un campo se aplica también a acceso, construcción, actualización y patrones. Desde otro módulo, un patrón de record no puede nombrar un campo `priv` y debe terminar en `..` si existen campos no visibles. El patrón no revela sus nombres, tipos ni valores. Las reglas ordinarias de ownership siguen aplicándose: si un campo omitido conserva una obligación terminal, ignorarlo mediante `..` no satisface esa obligación y el patrón es rechazado.
+La visibilidad de un campo se aplica también a acceso, construcción, actualización y patrones. Desde otro módulo, un patrón de record no puede nombrar un campo `priv` y debe terminar en `..` si existen campos no visibles. El patrón no revela sus nombres, tipos ni valores.
 
 `priv` oculta la representación nominal, no las propiedades semánticas del valor
 completo. Por ello:
 
-- Igualdad, hashing y derivación de `Copy`, `Discard`, `Equatable`, `Key`, `Send`,
-  `Share` y obligación terminal incluyen también los campos privados.
-- La interfaz pública compilada expone únicamente el resultado de cada capacidad y
-  si existe una obligación terminal; no expone el nombre, tipo ni posición del
-  campo que la causa.
+- Igualdad, hashing y derivación de `Copy`, `Equatable`, `Key`, `Send` y `Share`
+  incluyen también los campos privados.
+- La interfaz pública compilada expone únicamente el resultado de cada capacidad;
+  no expone el nombre, tipo ni posición del campo que la causa.
 - Si el record es `Equatable` o `Key`, dos valores que solo difieran en un campo
   privado pueden comparar como distintos y producir hashes distintos. La
   documentación pública del tipo debe declarar esta semántica sin revelar la
@@ -1299,7 +1298,7 @@ En un resultado `impl Bound`, los bounds y el error exterior sí forman parte de
 la API y deben ser accesibles; el tipo concreto queda deliberadamente oculto por
 12.8 y puede ser privado o un entorno de cierre anónimo.
 
-Las capacidades estructurales, obligaciones y constructibilidad externa derivadas
+Las capacidades estructurales y la constructibilidad externa derivadas
 de campos privados sí forman parte de la interfaz pública en la forma opaca
 descrita en 7.6. La comprobación de API registra el resultado, no la ruta privada
 que lo origina.
@@ -1571,7 +1570,7 @@ parámetro propietario o temporal movible; no extrae ownership a través de `sel
 `mut`, `var` ni una proyección parcial. El patrón irrefutable `Name(value)` ofrece
 la misma extracción al desestructurar un propietario completo.
 
-Un newtype hereda automáticamente las capacidades intrínsecas `Copy`, `Discard`,
+Un newtype hereda automáticamente las capacidades intrínsecas `Copy`,
 `Equatable`, `Key`, `Send` y `Share` que correspondan a su valor, pero no hereda
 métodos ni traits implementados por el tipo subyacente.
 
@@ -1632,95 +1631,33 @@ Un argumento `ref` es un préstamo compartido y no mueve el valor. `mut` y `var`
 son préstamos exclusivos: `mut` conserva la extensión estructural del lvalue,
 aunque puede reemplazar su contenido completo cuando esa extensión se conserva;
 `var` permite además cambiar la extensión o reemplazarla sin conservarla, según
-16.3. Los tipos intrínsecos u opacos pueden exigir un consumo terminal antes de
-abandonar su scope. Todo tipo con esa obligación es necesariamente no `Copy`.
-Un cursor concreto conserva exactamente las
-capacidades y obligaciones que se deriven de su estado; implementar
-`Iterator[T]` no añade, elimina ni oculta ninguna.
+16.3. Un binding de patrón `ref`, `mut` o `var` sigue siendo un préstamo, no un
+nuevo propietario.
 
-Un binding de patrón `ref`, `mut` o `var` sigue siendo un préstamo, no un nuevo
-propietario. La obligación terminal permanece íntegra en el scrutinee o colección
-de origen y nunca se considera satisfecha al terminar el arm o la iteración.
+Todo valor puede abandonarse: al salir del scope de su propietario, al
+sobrescribirse o mediante `_ = value`. Abandonar un valor libera lo que posee.
+Los tipos intrínsecos y de la librería estándar que representan un recurso
+definen además una **acción de salida**, que se ejecuta entonces:
 
-La obligación terminal se propaga estructuralmente a newtypes, tuples, records,
-enums, options, results, uniones, colecciones y entornos de cierre cuyo tipo
-pueda contener el valor.
-La comprobación es conservadora y no depende del payload o longitud de runtime:
-`File?` y `Array[File]` se consumen de forma exhaustiva aunque un valor concreto
-sea `none` o esté vacío. Mover o desestructurar un compuesto transfiere las
-obligaciones a los nuevos propietarios; nunca las satisface por sí solo.
-Sobrescribir, descartar o dejar salir de scope un valor obligado es error, salvo
-que una operación terminal declarada lo consuma o un `defer` válido reserve ese
-consumo. Un parámetro genérico declarado `~Copy` sin constraint `Discard` se
-considera potencialmente obligado: una implementación genérica debe transferirlo
-o consumirlo en todos los caminos y no puede abandonarlo de forma implícita. Como
-`Copy` implica `Discard`, el `Copy` implícito de 12.1 o un bound `Discard`
-demuestran abandono seguro, pero `Discard` no exige duplicación.
+- Un `fs.File` vuelca sus escrituras pendientes y se cierra.
+- Un `Join` o `Group` espera a sus tareas (11.11).
+- Un handle de proceso cierra la entrada de sus procesos y espera a que terminen
+  (20.9).
+- Un guard de `std.sync` libera su lock.
 
-Todo tipo intrínseco u opaco con obligación terminal declara además exactamente
-una **acción de unwind**. No es una operación elegida por el programa ni una API
-pública:
-
-- Es infallible desde la semántica Tondo: no devuelve error, no produce pánico y
-  no ejecuta cleanup de usuario arbitrario.
-- No espera a otras tareas.
-- Libera, cancela o neutraliza el ownership de la forma más conservadora definida
-  por el tipo.
-- En un compuesto se deriva estructuralmente y se aplica en orden inverso al de
-  construcción.
-- Un fallo externo durante esa acción se conserva como diagnóstico suprimido; no
-  reemplaza la causa del unwind.
-
-Cada token de ownership terminal vivo tiene exactamente una entrada de cleanup
-armada. Para un binding o temporal ordinario, adquirir ownership registra en su
-scope una entrada de fallback que contiene la acción de unwind. La entrada sigue
-los movimientos locales del token.
-
-Cada scope léxico conserva sus entradas en orden de registro:
-
-1. Un `defer` ordinario añade una entrada explícita.
-2. Registrar un `defer` que consume un token terminal desarma su fallback y añade
-   en ese punto un guard explícito. El guard sigue el token según 13.7. El fallback
-   y el guard nunca pueden estar armados a la vez.
-3. Una operación terminal marca la entrada consumida antes de invocarse. Un
-   handoff confirmado desarma la entrada del origen y registra la del nuevo
-   propietario; si el handoff falla, la entrada original continúa armada.
-4. Al ejecutar cualquier entrada se la desarma primero. Incluso si un cleanup
-   posterior produce pánico, ningún token puede limpiarse dos veces.
-5. Construir un compuesto confirma simultáneamente los handoffs de sus
-   componentes y los pliega en una única entrada del nuevo owner. Su fallback
-   estructural recorre los componentes en orden inverso de construcción.
-   Desestructurarlo realiza la operación inversa; nunca coexisten las entradas de
-   los componentes con la del compuesto.
-
-Las entradas explícitas se ejecutan en LIFO en toda salida que abandone su scope.
-Las entradas de fallback ordinarias se omiten en final normal, `return`, `fail`,
-`?`, `break` y `continue`: el análisis estático exige antes una operación terminal
-visible o un guard y produce `E1404` si falta. En pánico o cancelación, el runtime
-sí drena en LIFO todas las entradas todavía armadas, explícitas e intrínsecas. Así
-cada token terminal vivo recibe exactamente un cleanup aun cuando no pueda
-continuar el control normal.
-
-Al abandonar un bloque, la espera de sus `Join` y grupos pendientes (11.11) ocupa
-en ese LIFO el lugar de la declaración de su binding, junto a los `defer`.
-
-Por ejemplo, la acción de unwind de un archivo intenta cerrarlo, la de un proceso
-aplica su política explícita de terminación y recolección. El fallback anormal nunca convierte el cleanup ordinario en implícito.
-
-Los movimientos que forman una llamada, agregado, retorno, `spawn` o asignación múltiple utilizan una **transferencia confirmada**:
-
-1. Evaluar un operando afín reserva su propietario y hace que el binding deje de estar disponible para el resto de la expresión, pero todavía no confirma el handoff.
-2. El handoff se confirma cuando el callee ha recibido todos los argumentos, el agregado o destino quedó construido, el retorno fue aceptado por el llamador o la tarea hija recibió sus argumentos.
-3. Si la evaluación termina antes por `?`, `fail`, pánico o cancelación, un binding
-   reservado recupera su ownership y su entrada armada; un temporal sin propietario
-   anterior drena la suya. Nunca se repiten efectos ya evaluados.
-
-Este protocolo conserva el orden de evaluación de 5.12 y evita una ventana sin propietario entre dos argumentos. La comprobación terminal sigue cubriendo finales de scope y salidas estáticas como `return`, `fail`, `?`, `break` y `continue`.
+Un compuesto ejecuta las acciones de sus componentes; las de un scope se
+ejecutan en orden inverso al de declaración de sus bindings, intercaladas con
+sus `defer` (13.7). Durante un pánico o una cancelación se ejecutan las mismas
+acciones, salvo que un handle de proceso cancela sus procesos en lugar de
+esperarlos. Los errores de una acción de salida se pierden: cada recurso ofrece
+una operación explícita —`close()`, `wait()`, `cancel()`— que lo libera antes y
+devuelve sus errores. `detach()` suelta una tarea o un proceso que no debe
+esperarse (11.11, 20.9).
 
 Cumplen `Copy` automáticamente:
 
 - Escalares, `Unit`, `Never`, strings y valores uniformes `fn(...)`.
-- Todo `Ref[T]` bien formado —su formación ya exige `T: Discard`—, y `Pointer[T]`
+- Todo `Ref[T]`, y `Pointer[T]`
   con independencia de `T`; copiar un puntero no concede ninguna operación
   segura adicional.
 - Tuplas, records, enums, options, results y uniones cuando todos sus componentes son `Copy`.
@@ -1742,32 +1679,7 @@ No cumplen `Copy`:
 
 `Copy` puede utilizarse como constraint genérico, pero un módulo no puede implementarlo manualmente ni alterar su derivación. Los parámetros de tipo de funciones, métodos e `impl` lo cumplen implícitamente salvo que declaren `~Copy` (12.1). Una API que necesite compartir identidad copiablemente utiliza `Ref[T]` o un handle explícitamente compartido; una API que necesite ownership único utiliza un valor afín.
 
-`Discard` es la capacidad intrínseca cerrada complementaria a la obligación
-terminal:
-
-- Un valor cumple `Discard` exactamente cuando puede alcanzar el final de su scope
-  o `_ = value` sin una operación terminal.
-- `Copy` implica `Discard`, pero un valor afín también puede ser `Discard`; un
-  cursor concreto que solo conserva estado local descartable es un ejemplo
-  canónico.
-- Newtypes, tuples, records, enums, options, results, uniones y colecciones la
-  derivan cuando ninguno de sus componentes posibles conserva una obligación.
-- Los cierres concretos la derivan de todas sus capturas según 11.8.
-- `cursor[own,C]` la cumple exactamente cuando `C: Discard`;
-  `cursor[ref,C]` siempre la cumple porque solo libera su préstamo compartido y
-  su posición local; `cursor[mut,C]` siempre la cumple porque descartarlo termina
-  el préstamo exclusivo sin descartar `C`.
-- Implementar `Iterator[T]` no altera la derivación del cursor: sus campos y su
-  contrato opaco deciden si cumple `Discard`. `Join[T]` y `Group[T]` la cumplen
-  cuando `T` la cumple: descartarlos espera a sus tareas (11.11).
-- Un tipo opaco la declara como parte de su contrato. Declarar `Discard` y una
-  obligación terminal a la vez es inválido.
-
-Un módulo no puede implementar `Discard` manualmente. Un bound
-`T: ~Copy + Discard` permite escribir consumidores genéricos que ignoren de forma
-segura valores afines sin exigir la capacidad más fuerte `Copy`.
-
-En tipos nominales recursivos, las capacidades estructurales se calculan como un punto fijo coinductivo: una referencia recursiva al mismo grupo no falla por sí sola, pero cualquier campo alcanzable que no cumpla la capacidad hace fallar al grupo correspondiente. La misma regla se utiliza para `Discard`, `Equatable`, `Key`, `Send` y `Share`.
+En tipos nominales recursivos, las capacidades estructurales se calculan como un punto fijo coinductivo: una referencia recursiva al mismo grupo no falla por sí sola, pero cualquier campo alcanzable que no cumpla la capacidad hace fallar al grupo correspondiente. La misma regla se utiliza para `Equatable`, `Key`, `Send` y `Share`.
 
 ### 8.11 Igualdad
 
@@ -1809,9 +1721,8 @@ Son `Key`:
 - Records formados enteramente por campos `Key`.
 - Enums con payloads `Key`.
 - `Option[K]`, `Result[K, E]` cuando ambos componentes sean `Key`, y uniones cerradas cuyos miembros sean `Key`.
-- Todo `Ref[T]` bien formado, mediante identidad estable y con independencia de
-  que `T` sea `Key`; la restricción separada `T: Discard` pertenece a la formación
-  de `Ref`, no a la identidad.
+- Todo `Ref[T]`, mediante identidad estable y con independencia de que `T` sea
+  `Key`.
 
 No son `Key`:
 
@@ -2012,22 +1923,10 @@ El resultado es un record nuevo. Los campos no mencionados conservan su valor. E
 - Evalúa el record base antes que los nuevos valores.
 - Evalúa actualizaciones de arriba abajo.
 - No modifica el record original cuando este cumple `Copy`.
-- Consume un record base afín y transfiere al resultado sus campos no actualizados; el binding base queda no disponible.
-- Puede aplicarse a un record que conserve una obligación terminal siempre que
-  cada campo actualizado cumpla `Discard`. Los campos no actualizados, incluidos
-  los obligados y privados, se transfieren intactos al resultado, que conserva la
-  obligación estructural del tipo.
-- No puede reemplazar mediante `with` un campo cuyo valor anterior tenga una
-  obligación terminal, aunque el valor nuevo tenga la misma. Ese reemplazo debe
-  extraer o consumir explícitamente el owner anterior antes de construir el
-  record nuevo.
+- Consume un record base afín y transfiere al resultado sus campos no actualizados, incluidos los privados; el binding base queda no disponible. Los valores anteriores de los campos actualizados se abandonan.
 
-La actualización completa utiliza transferencia confirmada: evalúa primero la
-base y después todos los valores nuevos; solo cuando ninguno puede fallar mueve
-los campos conservados y publica el resultado. Si la evaluación sale antes por
-error, pánico o cancelación, el propietario base se restaura o el temporal ejecuta
-su acción de unwind según 8.10. Un guard `defer` asociado al record sigue el
-movimiento al resultado como cualquier otro movimiento local del mismo tipo.
+La actualización evalúa primero la base y después todos los valores nuevos; solo
+cuando ninguno puede fallar construye el resultado.
 
 En código mutable puede asignarse el resultado:
 
@@ -2542,7 +2441,7 @@ como `var`.
 
 El lado derecho se evalúa por completo y su longitud se valida antes de la primera escritura. Si origen y destino se solapan, el lado derecho actúa como snapshot; una asignación que falla antes de escribir deja el array intacto.
 
-Modificar una variable que comparte almacenamiento con valores inmutables realiza detach antes de escribir. Una vista mutable explícita, descrita en la sección 16, modifica el origen después de separar primero cualquier snapshot lógico anterior. Reemplazar mediante `[]=` uno o varios elementos con obligación terminal es error; se utiliza una operación `replace` o de región que devuelve todos los valores anteriores.
+Modificar una variable que comparte almacenamiento con valores inmutables realiza detach antes de escribir. Una vista mutable explícita, descrita en la sección 16, modifica el origen después de separar primero cualquier snapshot lógico anterior. Reemplazar mediante `[]=` abandona los elementos anteriores; una operación `replace` o de región los devuelve cuando se necesitan.
 
 ### 10.6 Aritmética de arrays
 
@@ -2764,7 +2663,7 @@ En contexto de asignación, `map[key] = value` inserta o reemplaza.
 
 Insertar o eliminar una clave cambia la extensión del map y requiere un binding local `var`, un receptor `var self` o un parámetro `var Map[K, V]`. Un préstamo `mut Map[K, V]` solo puede actualizar una clave cuya presencia se afirme mediante una operación nombrada.
 
-La asignación compuesta sobre un índice de map no existe en 0.1. Como la clave podría estar ausente, `map[key] += value` ocultaría una política. Se utiliza una asignación explícita con `getOr` o la API `entry` de la librería. Si `V` puede contener una obligación terminal, `map[key] = value` también es error porque la clave podría reemplazar un valor todavía pendiente; se utiliza una operación que devuelva el valor anterior.
+La asignación compuesta sobre un índice de map no existe en 0.1. Como la clave podría estar ausente, `map[key] += value` ocultaría una política. Se utiliza una asignación explícita con `getOr` o la API `entry` de la librería.
 
 Eliminar se expresa únicamente mediante una operación nombrada:
 
@@ -2804,16 +2703,8 @@ La tabla hash puede usar una semilla aleatoria de seguridad, pero esa semilla no
 En un literal con claves repetidas:
 
 - Una duplicación detectable entre constantes produce `E1116`.
-- Si `V: Discard` y dos expresiones dinámicas producen la misma clave, la última
-  reemplaza el valor y se conserva la posición de la primera inserción.
-
-Si `V` puede conservar una obligación terminal, la validez no depende de probar
-que las claves dinámicas sean distintas: todas las claves y valores se evalúan de
-izquierda a derecha en temporales y, antes de construir el map, se ejecuta una
-comprobación obligatoria de duplicados. Claves distintas construyen el map; una
-duplicación produce `P0009 duplicate-dynamic-map-key` antes de transferir ownership al
-map, y el unwind libera todos los temporales. Una API que devuelva el valor
-reemplazado permite manejar duplicados como dato recuperable.
+- Si dos expresiones dinámicas producen la misma clave, la última reemplaza el
+  valor y se conserva la posición de la primera inserción.
 
 ### 10.13 Iteración de maps
 
@@ -2947,8 +2838,7 @@ En posición de tipo, `Iterator[T]` solo puede aparecer como constraint, en la
 cabecera de un `impl` o dentro del resultado opaco estático de 12.8; no es un tipo
 de valor ni borra la representación del cursor. No puede utilizarse por sí solo
 como field, parámetro o retorno. Una API devuelve un cursor nominal, utiliza
-`impl Iterator[T]` cuando puede ocultarlo sin obligación terminal, o es
-genérica:
+`impl Iterator[T]` cuando puede ocultarlo, o es genérica:
 
 ~~~tondo
 fn drain[T, I: Iterator[T]](cursor: I) {
@@ -2973,15 +2863,14 @@ coherencia ordinaria y una duplicación produce `E1111`. Así
 `Iterator[Int] for Cursor[String]` al sustituir `T = String`.
 
 El protocolo solo exige que `next` reciba un préstamo exclusivo y devuelva
-`none` al terminar. No impone que el cursor sea `Copy`, `Discard`, `Send`,
-`Share` o terminal. El tipo concreto conserva esas capacidades según 8.10 y
-16.13:
+`none` al terminar. No impone que el cursor sea `Copy`, `Send` o `Share`. El
+tipo concreto conserva esas capacidades según 8.10 y 16.13:
 
 - Un cursor puede ser copiable; cada copia representa entonces un cursor lógico
   independiente conforme al contrato de su tipo.
-- Un cursor puede ser afín y descartable.
-- Un cursor que posea un archivo, conexión u otro recurso conserva su obligación
-  terminal y puede no ser `Send`.
+- Un cursor puede ser afín.
+- Un cursor que posea un archivo, conexión u otro recurso lo libera con su
+  acción de salida (8.10) y puede no ser `Send`.
 - Aunque un cursor concreto cumpla `Share`, avanzar siempre exige un lvalue
   prestado en exclusiva mediante `mut`.
 - El protocolo no promete indexación, longitud, finitud ni reinicio.
@@ -3009,13 +2898,13 @@ Los cursores de las cinco fuentes intrínsecas tienen una representación de tip
 interna que no puede escribirse en fuente:
 
 - `cursor[own,C]` conserva en propiedad una colección `C` y su posición. Deriva
-  `Copy`, `Discard`, `Send` y `Share` de la capacidad homónima de `C`.
+  `Copy`, `Send` y `Share` de la capacidad homónima de `C`.
 - `cursor[ref,C]` conserva un préstamo compartido de `C` y su posición. Siempre
-  cumple `Copy + Discard`; cumple tanto `Send` como `Share` únicamente cuando
+  cumple `Copy`; cumple tanto `Send` como `Share` únicamente cuando
   `C: Send + Share`, sin que eso permita al préstamo escapar de las regiones
   autorizadas por 16.13.
-- `cursor[mut,C]` conserva un préstamo exclusivo de `C` y su posición. Cumple
-  `Discard`, pero no `Copy`, `Send`, `Share`, `Equatable` ni `Key`. Es la forma
+- `cursor[mut,C]` conserva un préstamo exclusivo de `C` y su posición. No cumple
+  `Copy`, `Send`, `Share`, `Equatable` ni `Key`. Es la forma
   interna común de headers con algún binding `mut` o `var`; el modo exacto se
   conserva en cada binding de elemento.
 - Ninguna de las tres formas cumple `Equatable` ni `Key`: la igualdad observable
@@ -3024,52 +2913,32 @@ interna que no puede escribirse en fuente:
 Una copia admitida comienza en la misma posición y avanza de forma
 independiente. Copiar `cursor[own,C]` realiza la copia lógica de `C`; copiar
 `cursor[ref,C]` duplica el préstamo compartido, nunca la colección ni su
-ownership. `cursor[mut,C]` no puede copiarse. Descartar un cursor no consume ni
-oculta obligaciones que no posea.
+ownership. `cursor[mut,C]` no puede copiarse.
 
 `for pattern in expression` evalúa `expression` exactamente una vez, transfiere
 el cursor concreto a un propietario interno y llama a `Iterator.next` hasta
 recibir `none`. El patrón debe ser irrefutable para el `T` único de la
 implementación.
 
-Un cursor concreto terminal requiere que una operación de cleanup quede
-reservada antes de entrar en el bucle:
+Un cursor que posee un recurso, como las filas de una consulta, lo libera con su
+acción de salida cuando el bucle termina, también por `break`, `return`, `?` o
+un pánico:
 
 ~~~tondo fragment spec.cursor
 fn consumeRows(query: Query): !DatabaseError {
-    let rows = Database.openRows(query)?
-    defer RowCursor.close(rows)
-
-    for row in rows {
+    for row in Database.openRows(query)? {
         consume(row)
     }
 }
 ~~~
-
-El guard sigue el movimiento hacia el propietario interno del `for`. Al recibir
-`none` o ejecutar `break`, el cursor restante se transfiere al slot oculto del
-guard, que conserva el orden LIFO y solo ejecuta su operación al abandonar el
-scope léxico original. `return`, `fail` y `?` realizan esa misma transferencia
-antes de ejecutar los defers del scope. Durante pánico o cancelación se ejecuta el
-defer registrado; la acción de unwind del tipo concreto queda para un temporal
-cuya transferencia o registro no llegó a confirmarse.
-
-Recibir `none` no elimina por sí solo una obligación terminal de usuario, porque
-`next` solo presta el cursor. Los cursores intrínsecos que drenan una colección de
-elementos terminales son la única excepción: el lenguaje conoce que el
-agotamiento ha transferido todos sus elementos, consume al propietario interno y
-desactiva cualquier guard que ya no tenga valor que limpiar. Una salida temprana
-de ese drenaje continúa exigiendo un cleanup reservado.
 
 En un header ordinario sin bindings `ref`, `mut` ni `var`, evaluar una colección
 `Copy` para un `for` crea una copia lógica y deja disponible el origen. Evaluar
 una colección no `Copy` mueve la colección completa al cursor y produce sus
 elementos por movimiento; el binding original deja de estar disponible. Las
 colecciones compartidas de `std.sync` recorren en cambio su `snapshot()`. Un
-cursor concreto se
-copia o mueve al iniciar el bucle según sus propias capacidades y mediante la
-transferencia confirmada de 8.10. Un guard terminal registrado sobre la
-colección o cursor se retargetea al propietario interno sin duplicar ownership.
+cursor concreto se copia o mueve al iniciar el bucle según sus propias
+capacidades.
 
 Un header que contiene bindings `ref`, `mut` o `var` utiliza en cambio uno de los
 modos prestados de 13.3: conserva estable la colección y nunca consume sus
@@ -3217,10 +3086,10 @@ Reglas:
 
 Un parámetro fijo escrito `_` descarta su argumento, no crea binding y solo puede
 proporcionarse por posición; `_:` nunca es una etiqueta de llamada. En la forma
-por valor, su tipo debe cumplir `Discard`. En `_: ref T`, `_: mut T` o
-`_: var T`, conserva el contrato de préstamo pero no adquiere ownership ni exige
-`T: Discard`; estas formas permiten implementar conscientemente una firma cuyo
-parámetro no necesita el body concreto. Un parámetro variádico sí necesita un
+por valor abandona el argumento. En `_: ref T`, `_: mut T` o `_: var T`,
+conserva el contrato de préstamo pero no adquiere ownership; estas formas
+permiten implementar conscientemente una firma cuyo parámetro no necesita el
+body concreto. Un parámetro variádico sí necesita un
 nombre ordinario porque ese nombre identifica tanto el pack como su spread
 nombrado.
 
@@ -3464,7 +3333,7 @@ exactamente. `ref`, `mut`, `var`, `unsafe`, el
 variádico, el éxito y el error forman parte del contrato; los nombres de
 parámetros no. Un valor cuyo tipo es
 literalmente `fn(...)` tiene representación uniforme y cumple siempre
-`Copy + Discard + Send + Share`. Esto incluye funciones nombradas especializadas
+`Copy + Send + Share`. Esto incluye funciones nombradas especializadas
 y cierres que hayan realizado la coerción segura definida en 11.8.
 
 Una función genérica no es un valor polimórfico de primera clase. Antes de
@@ -3511,7 +3380,7 @@ una firma de llamada conocida. Dos expresiones de cierre distintas tienen tipos
 distintos aunque su firma coincida. El tipo no puede escribirse directamente,
 pero puede inferirse en un binding local o pasar por un parámetro genérico con uno
 de los bounds de llamada definidos más abajo. Una función que lo devuelve sin
-coerción utiliza `impl Call... + Discard` según 12.8; el tipo sigue siendo
+coerción utiliza `impl Call...` según 12.8; el tipo sigue siendo
 concreto y no se transforma en trait object.
 
 Cuando existe un tipo de función esperado, las anotaciones inferibles pueden
@@ -3675,21 +3544,16 @@ CallOnce[fn(A): B]
 - `CallMut[S]` lo presta en exclusiva y puede repetirse. El cuerpo puede modificar
   capturas, pero no moverlas fuera del entorno.
 - `CallOnce[S]` recibe el callable por valor. El cuerpo puede mover capturas y la
-  invocación consume un callable no `Copy`. Si su entorno conserva obligaciones
-  terminales, el body debe satisfacerlas o transferirlas en todos los caminos.
+  invocación consume un callable no `Copy`.
 
-`Call[S]` implica `CallMut[S]`. `Call[S] + Discard` y
-`CallMut[S] + Discard` implican `CallOnce[S]`; sin `Discard`, consumir el entorno
-podría abandonar una obligación y esa implicación no existe. El compilador puede
-derivar `CallOnce` independientemente cuando el body consume o transfiere todas
-las capturas terminales. Son protocolos cerrados: un módulo no puede declararlos
+`Call[S]` implica `CallMut[S]`, y `CallMut[S]` implica `CallOnce[S]`. Son
+protocolos cerrados: un módulo no puede declararlos
 ni implementarlos manualmente. Toda función nombrada y todo valor uniforme
 `fn(...)` implementan los tres para su firma exacta.
 
 El compilador deriva los protocolos de cada cierre a partir de todos sus caminos
 de control. Una captura escrita impide `Call`; una captura movida impide
-`Call` y `CallMut`. `CallOnce` exige además que ninguna captura terminal quede
-abandonada tras una salida normal, `return`, `fail` o `?`. La mutabilidad
+`Call` y `CallMut`. La mutabilidad
 compartida entre tareas se expresa con un tipo de sincronización explícito.
 
 Una llamada ordinaria prueba, en orden, `Call`, `CallMut` y `CallOnce`, y elige el
@@ -3716,8 +3580,6 @@ una llamada directa.
 Las capacidades del tipo anónimo se derivan de su entorno igual que en un record:
 
 - Es `Copy` cuando todas sus capturas son `Copy`.
-- Es `Discard` cuando todas sus capturas son `Discard`.
-- Conserva obligación terminal si alguna captura la conserva.
 - Es `Send` cuando todas sus capturas son `Send`.
 - Es `Share` cuando todas sus capturas son `Share`; esto no permite invocar un
   `CallMut` a través de un préstamo compartido.
@@ -3752,10 +3614,8 @@ intención. Tondo 0.1 no tiene una marca semántica adicional tipo `must_use`; u
 futura librería o perfil de lint puede reconocer APIs concretas sin cambiar la
 validez del descarte.
 
-`_ = value` exige `value: Discard` y no satisface una obligación terminal.
-Descartar de ese modo un `Join`, un handle en propiedad todavía activo o
-cualquier compuesto que los contenga es error; debe ejecutarse una operación
-terminal concreta.
+`_ = value` abandona el valor como al salir de su scope: un `Join` espera a su
+tarea y un recurso ejecuta su acción de salida (8.10).
 
 ### 11.10 Funciones que esperan
 
@@ -3801,8 +3661,10 @@ valor que entra en la tarea, incluidas las capturas de un cierre, debe cumplir
   resultado si llega a tiempo o, si no, `none` después de cancelar la tarea y
   esperar su cleanup (11.15).
 - `job.cancel()` cancela la tarea y espera a que termine.
+- `job.detach()` suelta la tarea: sigue corriendo sin que nadie la espere y su
+  resultado se abandona al terminar.
 
-Las tres operaciones consumen el `Join`. Un `Join` puede moverse, guardarse en
+Las cuatro operaciones consumen el `Join`. Un `Join` puede moverse, guardarse en
 una colección, pasarse a otra función o devolverse. Si al terminar el bloque que
 lo posee nadie lo ha consumido, el bloque espera a la tarea y descarta su
 resultado, también cuando sale por `return`, `fail` o `?`. Así ninguna tarea queda
@@ -3810,8 +3672,18 @@ suelta ni hay que escribir nada para esperarla. Un `spawn` escrito como
 sentencia, o como valor de un bloque, rama o brazo de tipo `Unit`, no necesita
 `_ =`: su `Join` pertenece a ese bloque. Por eso `for id in ids { spawn
 notify(id) }` espera cada tarea al final de su iteración; para que corran a la
-vez se reúnen en un `Group`. Si el resultado no cumple `Discard`, el `Join`
-debe consumirse explícitamente (`E1409`).
+vez se reúnen en un `Group`.
+
+Soltar una tarea con `detach()` es la excepción explícita, para trabajo que no
+debe retener a quien lo inicia, como enviar una métrica:
+
+~~~tondo
+(spawn report(metrics)).detach()
+~~~
+
+Una tarea suelta sigue sujeta a las demás reglas: un pánico en ella termina el
+programa. Cuando `main` termina, el runtime cancela las tareas sueltas que sigan
+corriendo y espera su cleanup antes de finalizar el proceso.
 
 Un pánico en cualquier tarea termina el programa: el runtime informa el pánico,
 ejecuta los `defer` pendientes de esa tarea y finaliza el proceso, como un
@@ -3945,7 +3817,7 @@ Un parámetro de tipo declarado por una función, un método o un `impl` cumple
 `Copy` implícitamente: el código genérico ordinario copia, descarta e indexa sus
 valores sin escribir bounds, y solo acepta argumentos `Copy`. `~Copy` retira esa
 suposición en el código que también acepte valores afines; el parámetro queda
-con los bounds escritos, y `Discard` vuelve a permitir abandonarlo (8.10):
+con los bounds escritos:
 
 ~~~tondo
 fn keep[T: ~Copy](value: T): T {
@@ -4104,14 +3976,14 @@ ordenado: el orden no cambia la firma ni la satisfacción. Repetir el mismo
 bound normalizado es `E1115` porque no aporta contrato. El formatter conserva el
 orden escrito —no resuelve nombres—, mientras la comparación de APIs, métodos y
 resultados opacos utiliza el conjunto normalizado.
-`Copy`, `Discard`, `Equatable`, `Key`, `Send` y `Share` son capacidades
+`Copy`, `Equatable`, `Key`, `Send` y `Share` son capacidades
 estructurales cerradas. `Call[S]`, `CallMut[S]` y `CallOnce[S]` son protocolos
 cerrados de callable cuya `S` debe ser un tipo de función completo. Todos son
 bounds válidos, pero ningún módulo puede implementarlos manualmente.
 `~Copy` puede aparecer una vez en la lista de un parámetro de función, método o
 `impl`, o de un resultado opaco, y retira el `Copy` implícito de 12.1.
 La resolución aplica las implicaciones cerradas de 11.8, incluidas
-`Call[S] => CallMut[S]` y `(CallMut[S] + Discard) => CallOnce[S]`; no inventa
+`Call[S] => CallMut[S]` y `CallMut[S] => CallOnce[S]`; no inventa
 otras relaciones entre firmas.
 
 `Iterator[T]` es distinto: su contrato está predefinido por el lenguaje, pero los
@@ -4214,7 +4086,7 @@ formar un ciclo. Esto permite adaptadores acíclicos como
 su tamaño o introduce constructores termina produciendo una matriz idempotente
 sin descenso diagonal y se rechaza.
 
-Los bounds de `Copy`, `Discard`, `Equatable`, `Key`, `Send`, `Share`, `Call`,
+Los bounds de `Copy`, `Equatable`, `Key`, `Send`, `Share`, `Call`,
 `CallMut` y `CallOnce` no crean aristas: se resuelven por sus reglas intrínsecas.
 Todos los compiladores conformes construyen las mismas matrices y aceptan el mismo
 conjunto de `impl`. El diagnóstico incluye la ruta cíclica y la matriz idempotente
@@ -4286,10 +4158,7 @@ Reglas:
   valores, cierres, métodos de trait ni sus implementaciones.
 - La lista contiene uno o más traits, capacidades o protocolos válidos para un
   generic bound. Como un parámetro de tipo, el resultado publica `Copy`
-  implícitamente; con `~Copy` la lista debe incluir `Discard`. Así una firma
-  opaca nunca esconde una obligación terminal ni el nombre de su operación de
-  cleanup. Un cursor que posea un recurso devuelve en cambio
-  un tipo nominal visible con su operación terminal.
+  implícitamente salvo que la lista incluya `~Copy`.
 - Todos los caminos normales de `return` y la expresión final deben producir
   exactamente un mismo tipo concreto después de aliases. Los caminos `Never` no
   participan, pero debe existir al menos un camino normal alcanzable que aporte
@@ -4311,22 +4180,27 @@ Reglas:
   declaración, nunca el nombre privado ni los fields capturados.
 
 Fuera de `decl_outcome_annotation`, `impl Bound` no forma una expresión de tipo y
-produce `E0004`. Dentro de una declaración admitida, un conjunto con `~Copy` que
-no incluya `Discard`, la ausencia de un testigo normal, retornos con tipos concretos
-distintos o un bound no satisfecho producen `E1117`. Esta forma
+produce `E0004`. Dentro de una declaración admitida, la ausencia de un testigo
+normal, retornos con tipos concretos distintos o un bound no satisfecho producen
+`E1117`. Esta forma
 resuelve factories de cierres con estado y adaptadores concretos sin añadir trait
 objects ni borrar `Copy`, `Send`, `Share` o el modo de llamada declarado.
 
 ~~~tondo compile-fail E1117
-fn hiddenCounter(): impl Call[fn(): Int] + ~Copy {
+fn pick(first: Bool): impl Call[fn(): Int] {
+    if first {
+        return (): Int {
+            1
+        }
+    }
     (): Int {
-        1
+        2
     }
 }
 ~~~
 
-Aunque el cierre concreto sea descartable, un contrato opaco `~Copy` debe
-publicar `Discard`; el consumidor no depende de una propiedad escondida.
+Dos cierres son tipos concretos distintos aunque compartan firma, así que la
+función no tiene un único testigo.
 
 ### 12.9 Límites de los traits
 
@@ -4599,10 +4473,10 @@ Como `return`, `fail` termina únicamente la función o cierre más cercano; nun
 `defer` registra trabajo para el final del scope léxico actual:
 
 ~~~tondo
-let resource = acquire()?
-defer Resource.release(resource)
+let started = time.now()
+defer report(started)
 
-resource.flush()
+process(items)?
 ~~~
 
 También acepta bloque:
@@ -4627,37 +4501,11 @@ Reglas:
   mismo orden LIFO (11.11).
 - Se ejecutan durante el desenrollado de todo pánico producido por el lenguaje.
 - Se ejecutan durante la cancelación estructurada de una task antes de que su join finalice.
-- En un defer de llamada, los receptores y argumentos `Copy` se evalúan y capturan al registrar el defer.
+- En un defer de llamada, el callee, los receptores y los argumentos se evalúan
+  al registrar el defer. Un argumento afín se mueve entonces al defer y su
+  binding deja de estar disponible.
 - Un bloque defer captura valores `Copy` al registrarse. No puede capturar un valor afín; su cleanup utiliza la forma de llamada.
-- Si una llamada diferida consume un binding afín completo, el compilador crea un
-  guard terminal asociado a su token de ownership, desarma el fallback intrínseco
-  y registra el guard en la posición actual de la pila de cleanup de 8.10. No
-  existen dos cleanups activos para el mismo token. El movimiento al callee se
-  aplaza hasta salir del scope; mientras tanto el valor puede seguir utilizándose
-  mediante métodos `self` y préstamos breves `ref`, `mut` o `var`, y el guard
-  sigue un movimiento local hacia otro binding.
-- El callee puede ser un cierre concreto `CallOnce`. Si el cierre es afín, su
-  valor completo cuenta como el único operando afín de la llamada diferida; sus
-  capturas permanecen dentro del entorno y no se cuentan por separado. Esto
-  permite reservar `defer cleanup()` cuando `cleanup` posee el recurso que
-  consumirá.
-- Una llamada diferida puede reservar como máximo un operando afín propietario;
-  sus demás receptores y argumentos deben ser `Copy`. Varios recursos se limpian
-  con varios `defer` o se agrupan previamente en un único owner con una operación
-  terminal propia. Así desactivar o retargetear un guard nunca deja media llamada
-  diferida.
-- El retarget local solo admite mover ese valor completo a otro binding del mismo
-  tipo. Mientras el guard esté activo no puede desestructurarse ni incrustarse en
-  otro agregado local, porque la llamada diferida ya no podría reconstruir su
-  argumento. El movimiento intrínseco al propietario interno de `for` es la
-  excepción definida en 10.17.
-- Un handoff confirmado que transfiere el valor fuera del scope del guard —incluidos llamada consumidora, `return`, `spawn` o envío a un canal— desactiva ese guard porque el nuevo propietario adquiere la obligación y su propia entrada de fallback. Si la transferencia no llega a confirmarse, el guard permanece activo. Consumirlo antes mediante una operación terminal también desactiva el guard. No se ejecuta nunca dos veces.
-- Un valor con guard activo no puede registrarse para un segundo consumo terminal. El compilador muestra tanto el primer registro como el intento conflictivo.
-- Una expresión temporal afín pasada a defer queda en propiedad del defer desde el registro.
-- No se difiere un préstamo `ref`, `mut` o `var` ni un receptor `self` afín que
-  solo fuera prestado. El cleanup afín se expresa como una operación asociada que
-  consume el binding completo; el compilador puede comprobar así un único
-  propietario y un orden terminal inequívoco.
+- No se difiere un préstamo `ref`, `mut` o `var`: termina antes que el scope.
 - La expresión diferida debe ser infallible y devolver `Unit`.
 - Un cleanup puede esperar como cualquier llamada, pero no inicia tareas con
   `spawn`. La llamada no se inicia al registrar el defer: sus operandos y
@@ -4698,7 +4546,7 @@ través de `mut`, o una proyección potencialmente ausente— produce
 lugar inválidos; una incompatibilidad entre el tipo del lugar y el valor derecho
 continúa siendo `E1102`.
 
-Asignar sobre un lugar disponible reemplaza su valor anterior. Si ese valor conserva una obligación terminal, la asignación es error salvo que la misma operación haya movido antes el valor anterior a un temporal que también quede consumido o reasignado. Asignar directamente al binding completo de un `var` movido lo repone; sus campos e índices siguen inaccesibles mientras esté movido.
+Asignar sobre un lugar disponible reemplaza y abandona su valor anterior. Asignar directamente al binding completo de un `var` movido lo repone; sus campos e índices siguen inaccesibles mientras esté movido.
 
 Una asignación simple resuelve la ubicación izquierda exactamente una vez, evalúa después por completo el lado derecho y solo entonces escribe. Un error o pánico durante la evaluación derecha no modifica el destino. Los bounds, longitudes, conflictos de préstamo y demás precondiciones comprobables se validan antes de reemplazar el valor anterior.
 
@@ -4713,8 +4561,7 @@ Los paréntesis son obligatorios. `left, right = right, left` no es sintaxis vá
 
 La asignación múltiple es asignación de una tupla, no un segundo mecanismo de retorno. El lado derecho produce un único valor tuple cuya aridad y tipos deben corresponder al patrón izquierdo.
 
-Cada destino `_` consume su componente sin escribirlo y exige que ese componente
-cumpla `Discard`; nunca elimina una obligación terminal.
+Cada destino `_` abandona su componente sin escribirlo.
 
 La operación se realiza en fases:
 
@@ -4723,7 +4570,7 @@ La operación se realiza en fases:
 3. Se comprueba y desestructura la tupla.
 4. Se escribe de izquierda a derecha.
 
-Los temporales del lado derecho conservan ownership. Esto permite permutar valores afines sin abandonarlos, por ejemplo `(left, right) = (right, left)`: ambos valores se mueven primero a temporales y después reponen sus bindings. Cada obligación terminal debe seguir teniendo exactamente un propietario al terminar la sentencia.
+Los temporales del lado derecho conservan ownership. Esto permite permutar valores afines sin abandonarlos, por ejemplo `(left, right) = (right, left)`: ambos valores se mueven primero a temporales y después reponen sus bindings.
 
 Una ubicación `mut` o `var` con contenido no `Copy` solo puede moverse en esta
 sentencia si recibe simultáneamente otro valor válido. La transferencia no se
@@ -4783,8 +4630,8 @@ La clasificación cerrada de cada par es:
   todos los lugares y antes de reservar ownership, mover un valor o escribir un
   destino.
 
-Exigen disjunción los pares en los que interviene una fuente no `Copy`, un valor
-terminal o una transferencia atómica. La validez del programa no depende así de
+Exigen disjunción los pares en los que interviene una fuente no `Copy` o una
+transferencia atómica. La validez del programa no depende así de
 la potencia del análisis estático.
 
 En la permutación especial de valores no `Copy`, la evaluación derecha produce
@@ -4800,8 +4647,7 @@ Cuando todos los componentes son `Copy` o se descartan válidamente, esos pares 
 entran en el conjunto de disjunción obligatoria: dos destinos que solo resultan
 iguales en runtime conservan la regla simple de escritura de izquierda a derecha
 y gana el último. Un solapamiento inevitable ya fue rechazado por `E1405`. En
-cuanto interviene una fuente no `Copy`, un valor terminal o una transferencia que
-deba ser atómica, todos los lugares correspondientes deben ser distintos mediante
+cuanto interviene una fuente no `Copy` o una transferencia que deba ser atómica, todos los lugares correspondientes deben ser distintos mediante
 prueba estática o mediante la comprobación dinámica anterior. Así ninguna
 escritura puede abandonar silenciosamente un valor anterior.
 
@@ -4957,10 +4803,8 @@ consume valores necesarios para probar ramas posteriores. Un guard puede leer
 bindings de patrón `Copy` o `ref`; cualquier decisión que necesite ownership afín
 se realiza dentro del body de la rama consumidora.
 
-Al terminar una rama en modo consumo, todo componente afín enlazado, ignorado
-mediante `_` o `..`, o conservado en el temporal debe haber sido transferido,
-consumido o ser abandonable. En modo observación esas obligaciones siguen en el
-origen. Una obligación terminal nunca desaparece por hacer `match`.
+Al terminar una rama en modo consumo, todo componente afín ignorado mediante `_`
+o `..`, o conservado en el temporal, se abandona.
 
 ### 14.2 Exhaustividad
 
@@ -5397,18 +5241,14 @@ Un pánico representa un invariante roto, por ejemplo:
 - Longitudes incompatibles en aritmética de arrays.
 - Solapamiento detectado por el check dinámico normativo de préstamos o
   transferencia atómica.
-- Claves dinámicas repetidas en un literal de map cuyo valor no es `Discard`.
 - Una llamada explícita a `panic` o `assert` fallido.
 
 Un pánico:
 
 - No forma parte de `! E`.
 - No puede capturarse en Tondo 0.1.
-- Desenrolla scopes mediante el orden único de 8.10 y ejecuta en LIFO todos los
-  `defer` registrados por el código que abandona.
-- Ejecuta exactamente una vez el fallback intrínseco de todo token terminal vivo
-  que no tenga guard, incluidos bindings ordinarios y temporales cuya transferencia
-  no se confirmó.
+- Desenrolla scopes mediante el orden único de 8.10 y ejecuta en LIFO los
+  `defer` y las acciones de salida del código que abandona.
 - Dentro de concurrencia estructurada, cancela hermanos, espera su cleanup y se propaga como pánico hasta el scope propietario.
 - Si alcanza el scope raíz, termina el proceso después del cleanup estructurado.
 - Debe producir un diagnóstico con ubicación y una traza cuando el runtime disponga de símbolos.
@@ -5758,10 +5598,9 @@ Un compuesto que contiene un elemento afín no cumple `Copy` y se mueve como un 
 #### Contrato normativo
 
 Tondo no expone `malloc`, `free`, operaciones raw ni destructores arbitrarios en
-código seguro. La acción de unwind cerrada de un tipo terminal no es un destructor
-de usuario: no se ejecuta por recolección ni por la salida ordinaria de un binding,
-y solo neutraliza ownership en los casos cerrados definidos por 8.10, incluido el
-teardown de un propietario estructurado. `Pointer[T]` existe exclusivamente detrás
+código seguro. La acción de salida de un recurso (8.10) no es un destructor de
+usuario: la define cada tipo intrínseco o de la librería estándar y no depende
+de la recolección. `Pointer[T]` existe exclusivamente detrás
 de `unsafe`, como se define en 16.12.
 
 La implementación debe:
@@ -5815,16 +5654,17 @@ ningún resultado observable definido por esta edición.
 
 ### 16.8 Recursos externos
 
-Archivos, sockets, locks y otros recursos no dependen del recolector. Se cierran explícitamente y pueden apoyarse en `defer`:
+Archivos, sockets, locks y otros recursos no dependen del recolector. Cada uno se
+libera con su acción de salida al abandonar el scope de su propietario (8.10), y
+una operación explícita como `close()` lo libera antes y devuelve sus errores:
 
 ~~~tondo
-let file = fs.open(path)?
-defer fs.File.release(file)
-
-file.readHeader()?
+var file = fs.open(path, fs.OpenMode.Write)?
+file.write(header)?
+file.close()?
 ~~~
 
-El defer reserva el handle afín para su consumo terminal, pero sus métodos de observación continúan disponibles hasta abandonar el scope. No existen finalizadores de usuario como contrato de cleanup.
+No existen finalizadores de usuario como contrato de cleanup.
 
 ### 16.9 Valores e identidad
 
@@ -5847,21 +5687,17 @@ visibles.
 ### 16.10 `Ref[T]`
 
 `Ref[T]` es una referencia segura, fuerte, no nula y con identidad estable a un
-valor `T: Discard` administrado automáticamente:
+valor `T` administrado automáticamente:
 
 ~~~tondo
 let users: Ref[Map[String, User]] = Ref([:])
 let sameUsers = users
 ~~~
 
-La formación de `Ref[T]` exige `T: Discard`. Esta es la restricción mínima que
-permite que una referencia fuerte duplicable desaparezca con normalidad: impide
-esconder una obligación terminal cuyo cleanup tendría que ejecutarse de forma
-implícita al desaparecer la última referencia, pero no exige que el contenido
-pueda copiarse. Un valor afín abandonable puede por tanto adquirir identidad; un
-archivo, `Join` u otro owner terminal utiliza en cambio un handle explícito
-diseñado para su protocolo de cierre. En código genérico, formar `Ref[T]` exige el
-constraint `T: Discard`.
+El contenido no necesita poder copiarse: un valor afín también puede adquirir
+identidad. Un recurso dentro de un `Ref[T]` ejecuta su acción de salida cuando
+desaparece la última referencia; si el programa necesita liberarlo en un punto
+concreto, lo cierra explícitamente.
 
 Copiar un `Ref[T]` copia la referencia, no `T`. Ambos bindings identifican el
 mismo objeto y lo mantienen vivo. El contenido se observa mediante la proyección
@@ -5914,7 +5750,7 @@ del objeto identificado. El estado compartido modificable se construye
 explícitamente con tipos como `Cell[T]`, `Mutex[T]`, `Atomic[T]` o actores, cuyos
 contratos pertenecerán a la librería estándar.
 
-Una referencia débil `WeakRef[T]`, también limitada a `T: Discard`, puede existir
+Una referencia débil `WeakRef[T]` puede existir
 en la librería para caches y grafos que no deban mantener vivo el destino. No
 cambia las garantías de `Ref[T]`. Consultarla constituye una observación de
 liveness: la librería debe documentar que el resultado puede depender del progreso
@@ -5928,16 +5764,12 @@ explícitos.
 Un tipo opaco de librería puede declarar identidad propia, por ejemplo un proceso hijo, socket o ventana. Debe especificar:
 
 - Si el handle cumple `Copy` y comparte identidad, o si es afín y transfiere ownership al moverse.
-- Si cumple `Discard` o conserva una obligación terminal; ambas afirmaciones son
-  mutuamente excluyentes.
 - Si tiene igualdad o cumple `Key`.
-- Qué operación libera o cierra el recurso.
-- Qué acción infallible utiliza durante unwind si conserva una obligación
-  terminal; esa acción no espera a otras tareas.
+- Qué operación libera o cierra el recurso y devuelve sus errores.
+- Qué acción de salida ejecuta al abandonarse, y cuál durante un pánico.
 - Si puede cruzar tareas o threads.
-- Si abandonar el scope exige haber ejecutado una operación terminal.
 
-Un handle compartido copiablemente debe hacer seguro y explícito el estado compartido de cierre. Un handle en propiedad se declara afín; sus operaciones de observación utilizan `self`, las mutaciones de extensión fija utilizan `mut self`, los reemplazos de estado estructural utilizan `var self` y una operación terminal que consume ownership se expresa como función asociada con un parámetro ordinario por valor.
+Un handle compartido copiablemente debe hacer seguro y explícito el estado compartido de cierre. Un handle en propiedad se declara afín; sus operaciones de observación utilizan `self`, las mutaciones de extensión fija utilizan `mut self`, los reemplazos de estado estructural utilizan `var self` y una operación que consume ownership recibe `self` por valor.
 
 La mera representación interna mediante un puntero no concede identidad observable ni `Key` automáticamente.
 
@@ -6324,11 +6156,11 @@ reutilizar subpipelines sin introducir una segunda operación.
 
 `Command` y `Pipeline` forman parte del contrato del lenguaje para evitar que el
 compilador reconozca por nombre tipos ordinarios de un módulo. La librería
-estándar proporciona sus constructores, configuración y operaciones terminales.
+estándar proporciona sus constructores, configuración y operaciones de ejecución.
 No se aplican operadores bitwise a `Bool`, sets ni enums. Los tipos de usuario no
 pueden declarar nuevas combinaciones de pipeline.
 
-La composición copia lógicamente sus planes inertes. `Command` y `Pipeline` nunca poseen recursos one-shot ni obligaciones terminales; esos valores se transfieren al handle de ejecución mediante operaciones explícitas de la librería.
+La composición copia lógicamente sus planes inertes. `Command` y `Pipeline` nunca poseen recursos one-shot; esos valores pertenecen al handle de ejecución.
 
 En contexto de tipo, `|` construye una unión. En contexto de valor, los tipos estáticos distinguen bitwise de composición de procesos.
 
@@ -6800,8 +6632,6 @@ fn main(): !AppError {
 - No es un método.
 - Devuelve `Unit`.
 - Puede declarar un error `E` mediante `: !E`.
-- Su error `E` debe cumplir `Discard`; al llegar a la frontera del runtime debe
-  ser un dato diagnosticable, no ownership pendiente de cleanup.
 - Puede esperar e iniciar tareas, pero no puede ser `unsafe`.
 - No puede sobrecargarse.
 
@@ -6859,8 +6689,6 @@ En un script raíz:
 - Las sentencias del script pueden esperar y usar `spawn` como el cuerpo de
   cualquier función.
 - El compilador infiere localmente la unión cerrada de errores propagados por el cuerpo, porque la firma implícita no es una API importable.
-- El error inferido debe cumplir `Discard`, igual que en un `main` explícito; una
-  obligación terminal no puede convertirse en el diagnóstico final del runtime.
 - `return` y `fail` actúan sobre el `main` implícito.
 - No puede coexistir una función `main` explícita con sentencias ejecutables top-level.
 - Un archivo con sentencias de script no puede importarse como módulo.
@@ -6924,7 +6752,7 @@ Solo existen las cuatro combinaciones cerradas de `Command` y `Pipeline`
 definidas en 17.6. Los usuarios no pueden sobrecargar `|`, y el operador no
 conecta arrays, cursores u otros valores Tondo.
 
-Un pipeline comienza a ejecutar únicamente mediante una operación terminal explícita, conceptualmente:
+Un pipeline comienza a ejecutar únicamente mediante una operación de ejecución explícita, conceptualmente:
 
 - `start()`: inicia y devuelve un handle de proceso o pipeline.
 - `status()`: espera y devuelve estados de salida.
@@ -6961,7 +6789,7 @@ léxica para nombres de método y hace visible qué clase de concurrencia comien
 
 ### 20.9 Vida, cancelación y cleanup
 
-Un proceso iniciado es un recurso externo. Su handle en propiedad es afín y debe permitir esperar, cancelar o transferir ownership mediante movimiento explícito. Abandonar un hijo todavía activo sin una operación terminal o un `defer` que garantice cleanup es error de compilación.
+Un proceso iniciado es un recurso externo. Su handle en propiedad es afín y permite esperar, cancelar o transferir ownership mediante movimiento explícito. Abandonar el handle de un hijo todavía activo cierra su entrada y espera a que termine, como un `Join` (11.11); durante un pánico lo cancela. `detach()` suelta el proceso para que siga sin esperarlo.
 
 Cuando la tarea que espera un proceso se cancela:
 
@@ -7034,7 +6862,7 @@ incluyendo en el diagnóstico la capacidad ausente.
 
 Las semánticas nucleares, los tipos de valor y las tareas no dependen de varios
 threads: un scheduler monothread es conforme. `Command` y `Pipeline` siguen siendo tipos
-intrínsecos de plan, pero sus constructores y operaciones terminales pertenecen a
+intrínsecos de plan, pero sus constructores y operaciones de ejecución pertenecen a
 `std.process` y solo existen con la capacidad `process`. Por tanto, un script que
 requiere procesos se rechaza durante resolución o build para un target sin esa
 capacidad; no recibe un fallback tardío ni una emulación shell implícita.
@@ -7708,7 +7536,7 @@ oculten un diagnóstico independiente.
 | `E1114` | `invalid-impl-contract` | Un `impl` no coincide exactamente con su trait o viola orphan rules. |
 | `E1115` | `invalid-declaration` | Declaración semánticamente mal formada sin código más específico. |
 | `E1116` | `duplicate-map-key` | Un literal de map repite una clave constante. |
-| `E1117` | `invalid-opaque-result` | Un resultado opaco carece de testigo normal o viola `Discard`, unicidad concreta o bounds publicados. |
+| `E1117` | `invalid-opaque-result` | Un resultado opaco carece de testigo normal o viola unicidad concreta o bounds publicados. |
 
 #### Patrones y control de flujo
 
@@ -7737,13 +7565,10 @@ oculten un diagnóstico independiente.
 | `E1401` | `use-after-move` | Se usa un binding no disponible después de un movimiento. |
 | `E1402` | `invalid-borrow-lifetime` | Un préstamo escapa, sobrevive a su origen o cruza una frontera prohibida. |
 | `E1403` | `overlapping-mutable-borrow` | Solapamiento estáticamente demostrable entre préstamos incompatibles. |
-| `E1404` | `terminal-value-not-consumed` | Una obligación terminal alcanza final, `return`, `fail`, `?`, `break` o `continue` sin consumo o guard. |
 | `E1405` | `duplicate-assignment-destination` | Destinos que deben ser distintos se solapan estáticamente. |
 | `E1406` | `invalid-affine-transfer` | Movimiento parcial, duplicado o handoff afín no confirmable. |
 | `E1407` | `invalid-call-mode` | El callable requiere `CallMut` o `CallOnce` y el lvalue/ownership no lo permite. |
-| `E1408` | `terminal-overwrite` | Una escritura abandonaría el valor terminal anterior. |
-| `E1409` | `discard-requires-capability` | `_ =` o abandono genérico carece de `Discard`. |
-| `E1410` | `invalid-defer` | Registro diferido viola aridad afín, sincronía, resultado o consumo único. |
+| `E1410` | `invalid-defer` | Un `defer` no es una llamada o un bloque, presta un valor, devuelve un resultado o puede fallar. |
 | `E1411` | `invalid-assignment-target` | El lvalue no concede la escritura, preservación de extensión o presencia que exige la asignación. |
 
 #### Visibilidad y API
@@ -7791,7 +7616,7 @@ oculten un diagnóstico independiente.
 | `E2002` | `duplicate-test-node` | Dos miembros suite/test producen la misma identidad o nombre de hermano dentro del mismo árbol. |
 | `E2003` | `invalid-test-source-declaration` | Una fuente de test intenta exportar API, alterar la unidad de producción sellada o ser consumida desde producción; o producción intenta importar `std.testing`. |
 | `E2004` | `empty-test-suite` | Una suite no contiene ningún miembro directo y, por tanto, ningún test descendiente. |
-| `E2005` | `invalid-suite-capture` | Un descendiente intenta capturar `var`, préstamo, valor afín/terminal o un tipo que no cumple `Copy + Send + Share`. |
+| `E2005` | `invalid-suite-capture` | Un descendiente intenta capturar `var`, préstamo, valor afín o un tipo que no cumple `Copy + Send + Share`. |
 
 #### Metaprogramación estática
 
@@ -7835,7 +7660,6 @@ oculten un diagnóstico independiente.
 | `P0006` | `array-shape-mismatch` | Operación vectorizada recibe longitudes incompatibles. |
 | `P0007` | `assertion-failed` | `assert` recibe `false`. |
 | `P0008` | `explicit-panic` | Invocación explícita de `panic`. |
-| `P0009` | `duplicate-dynamic-map-key` | Literal de map con valor terminal produce claves dinámicas repetidas. |
 | `P0010` | `invalid-shift-count` | Conteo de shift negativo, no representable como `Int` o mayor o igual que el ancho izquierdo. |
 | `P0011` | `invalid-repeat-count` | `Array.repeat` recibe un conteo negativo. |
 | `P0012` | `closed-channel` | `send` sobre un canal cerrado. |
@@ -8036,7 +7860,7 @@ El tooling debe poder consultar de forma estructurada:
 - Modo de ownership de cada `match` —copia, observación o consumo— y el patrón que
   obliga a elegirlo.
 - Scope propietario y estado de consumo de cada `Join`.
-- Capacidades `Copy`, `Discard`, `Equatable`, `Key`, `Send` y `Share` derivadas.
+- Capacidades `Copy`, `Equatable`, `Key`, `Send` y `Share` derivadas.
 - Firma y protocolos `Call`, `CallMut` o `CallOnce` derivados para cada cierre,
   junto con las capacidades de su entorno sin exponer valores privados.
 - ID nominal y bounds publicados de cada resultado `impl Bound`, sin revelar su
@@ -8050,7 +7874,6 @@ El tooling debe poder consultar de forma estructurada:
   resultante, hash de expansión y source map.
 - La versión/hash del snapshot meta y producers que originaron cada archivo
   generado, sin exponer inputs privados más allá de sus descriptores.
-- Presencia y origen estructural de una obligación terminal.
 - Estado disponible, movido, reservado o consumido de cada valor afín.
 - Regiones `unsafe` y operación que exige cada una.
 - Expansión de azúcar como `T?`, `T ! E` y dot-call.
@@ -8149,10 +7972,6 @@ Son errores obligatorios, entre otros:
   región estructurada (`E1402`).
 - Préstamos incompatibles con solapamiento estático (`E1403`); un solapamiento
   dependiente de datos se comprueba en runtime como `P0004`.
-- Recurso con obligación terminal que abandona su scope sin consumo o `defer`
-  (`E1404`).
-- Descarte genérico que carece de `Discard` (`E1409`).
-- Sobrescritura de un valor terminal (`E1408`).
 - Invocación que no satisface el modo `Call`, `CallMut` o `CallOnce` requerido
   (`E1407`).
 - Destino de asignación que no concede el permiso o la clase de escritura
@@ -8203,8 +8022,8 @@ La suite se divide como mínimo en:
 3. **Consultas semánticas:** schema JSON, IDs, spans, reparaciones y datos
    obligatorios de 22.5.
 4. **Runtime:** orden de evaluación, overflow, bounds, slicing, copy-on-write,
-   arrays, maps, sets, defer, pánico, unwind, movimiento y obligaciones
-   terminales; mediante un adaptador de runtime también comprueba reachability,
+   arrays, maps, sets, defer, pánico, unwind, movimiento y acciones de salida;
+   mediante un adaptador de runtime también comprueba reachability,
    preservación de roots, ciclos inalcanzables y el reintento previo a OOM.
 5. **Concurrencia:** litmus tests de memoria y progreso que enumeran resultados
    permitidos y prohibidos, sin exigir un orden de scheduling ni tiempos de
@@ -8465,7 +8284,7 @@ generic_args    = "[", type_expr,
 ~~~
 
 Cada elemento de `generic_bound` debe resolver a un trait, una capacidad
-intrínseca cerrada como `Copy`, `Discard`, `Equatable`, `Key`, `Send` o `Share`,
+intrínseca cerrada como `Copy`, `Equatable`, `Key`, `Send` o `Share`,
 o un protocolo cerrado `Call[S]`, `CallMut[S]` o `CallOnce[S]` cuya `S` sea un
 `function_type`. `~Copy` retira el `Copy` implícito de 12.1.
 
@@ -8547,8 +8366,7 @@ Restricciones contextuales:
 - Una unión como error debe agruparse: `T ! (E1 | E2)`.
 - Una función infallible que devuelve `Unit` omite la anotación completa. Cualquier otro resultado se introduce con `:`.
 - `opaque_outcome` se limita semánticamente a las declaraciones enumeradas en
-  12.8. Con `~Copy`, su `generic_bound` debe incluir `Discard`; el `!` opcional pertenece al
-  canal exterior de la función y no al bound.
+  12.8. El `!` opcional pertenece al canal exterior de la función y no al bound.
 - En `function_type_list`, `...T` puede aparecer como máximo una vez y únicamente al final.
 - `ref T`, `mut T` y `var T` forman parte del tipo de función y no pueden
   combinarse con `...T`.
@@ -9733,13 +9551,9 @@ Importar nunca ejecuta código. No hay bloques `init`.
 ### 25.13 Destructores y finalizadores
 
 El tiempo de recolección no es parte del contrato. Los recursos externos se
-cierran explícitamente y pueden utilizar `defer`. No existen destructores de
-usuario ejecutados al abandonar normalmente un scope ni finalizadores ligados al
-recolector. La acción de unwind intrínseca de un tipo terminal es el fallback
-cerrado del registro único de 8.10 para pánico, cancelación, transferencias
-incompletas y teardown de propietarios estructurados. Se desarma al registrar un
-guard, por lo que nunca se ejecutan ambos, y no reemplaza el cleanup visible
-exigido en salidas ordinarias.
+liberan con la acción de salida que define su tipo (8.10) o explícitamente, y
+pueden utilizar `defer`. No existen destructores de usuario ni finalizadores
+ligados al recolector.
 
 ### 25.14 Punteros en código seguro y memoria manual implícita
 
@@ -9810,9 +9624,10 @@ por defecto calculados a partir de otros parámetros. Los variádicos existen ú
 
 ### 25.21 Generators y concurrencia no estructurada
 
-No hay `yield`, generators de sintaxis especial, tareas sueltas ni futures. Una
-llamada espera sin marcas; solo `spawn` conserva trabajo pendiente, y su `Join` se
-espera a más tardar al terminar su bloque. `Iterator[T]` cubre también los
+No hay `yield`, generators de sintaxis especial ni futures. Una llamada espera
+sin marcas; solo `spawn` conserva trabajo pendiente, y su `Join` se espera a más
+tardar al terminar su bloque, salvo que `detach()` suelte la tarea de forma
+explícita (11.11). `Iterator[T]` cubre también los
 recorridos que esperan (10.18).
 
 ### 25.22 Dispatch dinámico de traits
@@ -9892,8 +9707,8 @@ Esta especificación define:
   cerrado de comportamiento indefinido.
 - Tareas con `spawn`, `Join` y `Group`, canales, `select`, cancelación cooperativa
   y garantía de progreso.
-- Capacidades intrínsecas `Copy`, `Discard`, `Equatable`, `Key`, `Send` y
-  `Share`, y protocolos cerrados `Call`, `CallMut` y `CallOnce`.
+- Capacidades intrínsecas `Copy`, `Equatable`, `Key`, `Send` y `Share`, y
+  protocolos cerrados `Call`, `CallMut` y `CallOnce`.
 - Contrato mínimo de `Display` utilizado por interpolación; formatos concretos y
   helpers pertenecen a la librería.
 - Contrato de `main`, script raíz y `main` implícito.
@@ -9959,7 +9774,7 @@ Option Result
 Array Deque Map Set Range Iterator
 Ref Pointer Join Group Sender Receiver
 Command Pipeline
-Copy Discard Equatable Key Send Share
+Copy Equatable Key Send Share
 Call CallMut CallOnce
 Display
 NumericConversionError
@@ -9983,7 +9798,7 @@ El lenguaje garantiza las capacidades necesarias para:
 - Indexar y slicing.
 - Iterar.
 - Copiar lógicamente valores `Copy` y mover una sola vez valores afines.
-- Rastrear obligaciones terminales y consumo estructurado.
+- Liberar recursos con su acción de salida al abandonar su scope.
 - Observar temporalmente cualquier valor mediante `ref` sin copiarlo ni moverlo.
 - Mutar con extensión fija mediante `mut` y cambiar estructura mediante `var`.
 - Consultar/insertar una clave.
@@ -10037,7 +9852,7 @@ constituyen una promesa pública de compatibilidad. Desde su publicación:
 - Añadir el primer campo privado de un record público requiere una versión mayor
   porque retira su construcción literal externa. En un record que ya no era
   externamente construible, cambiar campos privados requiere una versión mayor
-  cuando altera campos públicos, capacidades derivadas, obligación terminal o la
+  cuando altera campos públicos, capacidades derivadas o la
   semántica documentada de igualdad y hashing, según 7.6. Eliminar el último campo
   privado añade una forma pública de construcción y requiere una versión menor
   solo si conserva el resto del contrato; de lo contrario requiere una mayor.
@@ -10465,8 +10280,7 @@ Cada setup de suite se comprueba como otra entrada equivalente a:
 fn <suite-setup>(): Unit ! E
 ~~~
 
-`E` es la unión cerrada inferida localmente y debe cumplir `Discard`; si no hay
-fallos, es `Never`. El body de test puede usar `return` sin
+`E` es la unión cerrada inferida localmente; si no hay fallos, es `Never`. El body de test puede usar `return` sin
 valor, `fail` y `?`; el setup admite `fail` y `?`, pero un `return` que ocultaría
 descendientes produce `E1205`. Ninguna forma introduce `TestResult`.
 
@@ -10483,7 +10297,7 @@ existen hooks `before`/`after` ni callbacks de lifecycle paralelos.
 
 Un descendiente solo puede leer un binding ancestral cuando fue declarado con
 `let`, su tipo cumple `Copy + Send + Share` y el uso no mueve, muta ni consume el
-binding. `var`, préstamos, valores afines y obligaciones terminales producen
+binding. `var`, préstamos y valores afines producen
 `E2005`. Constantes, funciones y declaraciones de módulo se resuelven por nombre
 y no cuentan como capturas.
 
@@ -10583,7 +10397,7 @@ Map[K, V]
 Set[K]
 Range[T]
 Iterator[T]     // solo como bound; no es un tipo de valor
-Ref[T]          // requiere T: Discard
+Ref[T]
 Pointer[T]
 Join[T]
 Group[T]
@@ -10692,13 +10506,12 @@ consume(result)
 
 - Pasar o asignar un valor `Copy` deja disponible el origen.
 - Pasar o asignar un valor no `Copy` lo mueve.
-- `Discard` permite abandonar un valor aunque no sea `Copy`; su ausencia indica
-  una obligación terminal potencial.
 - Un `var` movido puede reponerse mediante asignación completa.
-- Un valor con obligación terminal debe consumirse explícitamente o reservarse con `defer`.
+- Un recurso se libera con su acción de salida al abandonar su scope; `close()` o
+  `wait()` lo hacen antes y devuelven sus errores.
 - `Send` controla transferencia entre tasks o threads; `Share`, observación concurrente de una identidad.
 - Cada cierre captura por valor: copia capturas `Copy`, mueve las demás y deriva
-  de su entorno `Copy`, `Discard`, obligación terminal, `Send` y `Share`.
+  de su entorno `Copy`, `Send` y `Share`.
 - `Call`, `CallMut` y `CallOnce` expresan respectivamente llamada compartida,
   exclusiva reutilizable y consumidora.
 
@@ -10746,8 +10559,6 @@ Tondo se considera fiel a esta especificación cuando un programa puede leerse c
 - El fallo recuperable se ve como `!`.
 - La mutación se ve como `var` o `mut`.
 - La duplicación permitida está limitada a valores `Copy`; el resto del ownership se mueve una sola vez.
-- El abandono genérico seguro se ve como `Discard`; su ausencia conserva visible
-  una posible obligación terminal.
 - La identidad compartida se ve como `Ref`.
 - La observación prestada se ve como `ref`.
 - El acceso raw se ve como `Pointer` y `unsafe`.
@@ -10794,7 +10605,7 @@ Cada fixture se compone de:
 Una declaración del bloque siempre gana por identidad propia, no por sustitución
 del fixture. Una colisión de nombre produce `E1002`; el runner no retira
 declaraciones para hacer pasar un ejemplo. Todos los tipos opacos siguientes son
-`Copy + Discard + Send + Share` salvo que se indique otra cosa. Una línea
+`Copy + Send + Share` salvo que se indique otra cosa. Una línea
 `capabilities:` reemplaza por completo ese conjunto, no se suma a él.
 Dentro de la serialización C.6, un path que comienza por `std.` es una identidad
 de módulo canónica ya resuelta; no introduce un import en el fence.
@@ -10811,12 +10622,10 @@ opaque AcquireError
 
 opaque Resource
     capabilities: Send
-    terminal: Resource.release(Resource)
-    unwind: resource-release
 
 fn Resource.release(resource: Resource)
 fn Resource.status(self): Status
-fn consume[T: ~Copy + Discard](value: T)
+fn consume[T: ~Copy](value: T)
 
 fn String.isEmpty(self): Bool
 fn String.fromBytes(value: Array[Byte]): String ! TextError
@@ -10895,8 +10704,6 @@ opaque Database
 
 opaque RowCursor
     capabilities: Send
-    terminal: RowCursor.close(RowCursor)
-    unwind: cursor-close
 
 fn Database.openRows(query: Query): RowCursor ! DatabaseError
 fn RowCursor.close(cursor: RowCursor)
@@ -10906,9 +10713,8 @@ impl Iterator[Row] for RowCursor {
 }
 ~~~
 
-El cursor no cumple `Copy`, `Discard` ni `Share`. Esta declaración comprueba que
-`for` conserva el tipo concreto, que el guard de `defer` sigue su movimiento y
-que `Iterator[Row]` no borra la obligación terminal.
+El cursor no cumple `Copy` ni `Share`. Esta declaración comprueba que `for`
+conserva el tipo concreto y que `Iterator[Row]` no borra sus capacidades.
 
 ### C.4 Tipos de dominio de los ejemplos
 
@@ -10924,9 +10730,8 @@ type User = {
 }
 ~~~
 
-`spec.jobs` inyecta una `Deque[T: Discard]` opaca con capacidad exacta
-`Discard`: no es `Copy`, `Send` ni `Share` dentro del fixture. El bound impide
-que el stub oculte una obligación terminal de `T`. Añade además:
+`spec.jobs` inyecta una `Deque[T]` opaca que no es `Copy`, `Send` ni `Share`
+dentro del fixture. Añade además:
 
 ~~~text
 type Job = {

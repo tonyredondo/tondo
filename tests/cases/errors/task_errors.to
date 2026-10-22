@@ -18,14 +18,6 @@ fn keep[T: ~Copy](value: T): T {
     value
 }
 
-fn unused[T: ~Copy](value: T) {
-    spawn keep(value)
-}
-
-fn dropped[T: ~Copy](value: T) {
-    let job = spawn keep(value)
-}
-
 fn main() {
     var counter = Counter { value: 0 }
     var values = [1]
@@ -48,5 +40,4 @@ fn main() {
 // expect-error: E1401 `job` was moved before this use, since its type `Join[Int]` is not `Copy`; use it before passing it on
 // expect-error: E1411 `add` changes `group`, which is not declared with `var`
 // expect-error: E1101 `Group.new` needs its element type: `Group.new[T](...)`
-// expect-error: E1409 the result of this task has type `T`, which may need to be consumed; bind the task and wait for it
-// expect-error: E1409 `job` still holds its value when its block ends, and its type `Join[T]` may need to be consumed; call `wait()`
+
