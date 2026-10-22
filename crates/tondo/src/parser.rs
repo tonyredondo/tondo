@@ -745,8 +745,9 @@ impl Parser<'_> {
         Ok(Stmt { kind, span })
     }
 
-    fn finish_expression_statement(&mut self, expr: Expr) -> PResult<Stmt> {
-        let op = match self.tok() {
+    /// `=` (as `Some(None)`) or a compound assignment's operator.
+    fn assignment_op(&self) -> Option<Option<BinOp>> {
+        match self.tok() {
             Tok::Eq => Some(None),
             Tok::PlusEq => Some(Some(BinOp::Add)),
             Tok::MinusEq => Some(Some(BinOp::Sub)),
@@ -759,7 +760,11 @@ impl Parser<'_> {
             Tok::ShlEq => Some(Some(BinOp::Shl)),
             Tok::ShrEq => Some(Some(BinOp::Shr)),
             _ => None,
-        };
+        }
+    }
+
+    fn finish_expression_statement(&mut self, expr: Expr) -> PResult<Stmt> {
+        let op = self.assignment_op();
         let start = expr.span;
         let kind = match op {
             Some(op) => {
@@ -951,20 +956,35 @@ impl Parser<'_> {
 
     /// What follows `=>` in a `match` or `select` arm, up to its end.
     fn arm_body(&mut self) -> PResult<ArmBody> {
+        let start = self.span();
+        let statement =
+            |kind: StmtKind, this: &Self| ArmBody::Statement(Box::new(Stmt { kind, span: start.to(this.prev_span()) }));
         let body = match self.tok() {
             Tok::Kw(Kw::Return | Kw::Fail | Kw::Break | Kw::Continue) => {
-                let start = self.span();
                 let kind = self.transfer()?;
-                ArmBody::Transfer(Box::new(Stmt { kind, span: start.to(self.prev_span()) }))
+                statement(kind, self)
             }
             Tok::Ident(name) if name == "_" && self.nth(1) == &Tok::Eq => {
-                return self.error("a statement in a match arm needs a block: `=> { ... }`");
+                self.bump();
+                self.bump();
+                let kind = StmtKind::Discard(self.expression()?);
+                statement(kind, self)
             }
-            _ => ArmBody::Expr(self.expression()?),
+            Tok::Kw(kw @ (Kw::Let | Kw::Var | Kw::Defer | Kw::For)) => {
+                return self.error(format!("`{}` in a match arm needs a block: `=> {{ ... }}`", kw.as_str()));
+            }
+            _ => {
+                let expr = self.expression()?;
+                match self.assignment_op() {
+                    Some(op) => {
+                        self.bump();
+                        let value = self.expression()?;
+                        statement(StmtKind::Assign { target: expr, op, value }, self)
+                    }
+                    None => ArmBody::Expr(expr),
+                }
+            }
         };
-        if matches!(self.tok(), Tok::Eq | Tok::PlusEq | Tok::MinusEq | Tok::StarEq | Tok::SlashEq) {
-            return self.error("an assignment in a match arm needs a block: `=> { ... }`");
-        }
         // An arm ends at a new line or a comma (23.17).
         if !self.eat(&Tok::Comma) && !self.at(&Tok::Newline) && !self.at(&Tok::RBrace) {
             return self.expected("a new line after the arm");

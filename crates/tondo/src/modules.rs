@@ -563,7 +563,7 @@ impl Linker<'_> {
                     }
                     match &mut arm.body {
                         ArmBody::Expr(body) => self.expr(body),
-                        ArmBody::Transfer(stmt) => self.stmt(stmt),
+                        ArmBody::Statement(stmt) => self.stmt(stmt),
                     }
                 }
             }
@@ -578,7 +578,7 @@ impl Linker<'_> {
                     }
                     match &mut arm.body {
                         ArmBody::Expr(body) => self.expr(body),
-                        ArmBody::Transfer(stmt) => self.stmt(stmt),
+                        ArmBody::Statement(stmt) => self.stmt(stmt),
                     }
                 }
             }

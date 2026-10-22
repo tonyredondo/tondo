@@ -1,10 +1,10 @@
 fn f(x: Int?) {
     match x {
-        some(v) => _ = v
+        some(v) => let y = v
         none => ()
     }
 }
 
 fn main() {}
 
-// expect-error: E0004
+// expect-error: E0004 `let` in a match arm needs a block: `=> { ... }`

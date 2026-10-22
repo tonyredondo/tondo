@@ -1130,7 +1130,7 @@ impl Formatter<'_> {
                 let right = self.expr(body);
                 group(concat(vec![concat(left), text(" =>"), indent(concat(vec![Doc::Softline, right]))]))
             }
-            ArmBody::Transfer(stmt) => concat(vec![concat(left), text(" => "), self.stmt(stmt)]),
+            ArmBody::Statement(stmt) => concat(vec![concat(left), text(" => "), self.stmt(stmt)]),
         }
     }
 

@@ -1,0 +1,31 @@
+import std.console
+
+fn bump(n: Int): Int {
+    n + 100
+}
+
+fn main() {
+    var total = 0
+    var names: Array[String] = []
+    for value in [some(1), none, some(3)] {
+        match value {
+            some(n) => total += n
+            none => names.push("missing")
+        }
+    }
+    for n in 0..4 {
+        match n {
+            0 => total = total * 10
+            1 => bump(n)
+            2 => _ = bump(n)
+            _ => continue
+        }
+    }
+    let label = match total {
+        40 => "forty"
+        _ => "other"
+    }
+    console.println("{total} {names} {label}")
+}
+
+// expect-stdout: 40 [missing] forty

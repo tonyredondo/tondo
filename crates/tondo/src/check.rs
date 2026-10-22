@@ -5845,10 +5845,15 @@ impl Checker<'_> {
                     None => value,
                 }
             }
-            ast::ArmBody::Transfer(stmt) => {
+            ast::ArmBody::Statement(stmt) => {
+                // An assignment or `_ =` gives `Unit`; a transfer leaves.
+                let ty = match stmt.kind {
+                    ast::StmtKind::Assign { .. } | ast::StmtKind::Discard(_) => Ty::UNIT,
+                    _ => Ty::NEVER,
+                };
                 let stmts = self.statement(cx, stmt).into_iter().collect();
-                let block = hir::Block { stmts, tail: None, ty: Ty::NEVER };
-                Self::mk(hir::ExprKind::Block(block), Ty::NEVER, stmt.span)
+                let block = hir::Block { stmts, tail: None, ty };
+                Self::mk(hir::ExprKind::Block(block), ty, stmt.span)
             }
         };
         if result.is_none() && body.ty != Ty::NEVER && body.ty != Ty::ERROR {

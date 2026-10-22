@@ -4767,19 +4767,24 @@ match result {
 }
 ~~~
 
-Como forma breve, un arm puede contener directamente `return`, `fail`, `break` o
-`continue`. La transferencia conserva exactamente su destino léxico y aporta
-`Never` al tipo del arm:
+Como forma breve, un arm puede contener directamente `return`, `fail`, `break`,
+`continue` o una asignación, `_ = value` incluido. La transferencia conserva
+exactamente su destino léxico y aporta `Never` al tipo del arm; la asignación
+aporta `Unit`:
 
 ~~~tondo
 match result {
     ok(value) => return value
     err(error) => fail error
 }
+
+match event {
+    some(n) => total += n
+    none => missing += 1
+}
 ~~~
 
-Bindings, asignaciones, `defer`, loops y varias sentencias continúan requiriendo
-un bloque.
+Bindings, `defer`, loops y varias sentencias continúan requiriendo un bloque.
 
 `match` evalúa el scrutinee una sola vez y elige un modo estático uniforme:
 
@@ -8627,7 +8632,7 @@ match_expression
                   { NL | match_arm }, "}" ;
 
 match_arm       = pattern, [ "if", expression ], "=>",
-                  ( expression | block | control_transfer ),
+                  ( expression | block | arm_statement ),
                   match_arm_end ;
 
 match_arm_end   = NL | "," ;
@@ -8639,12 +8644,14 @@ select_expression
 
 select_arm      = [ "let", irrefutable_pattern, "=" ],
                   plain_postfix_expression, "=>",
-                  ( expression | block | control_transfer ),
+                  ( expression | block | arm_statement ),
                   match_arm_end ;
 
 select_else_arm = "else", "=>",
-                  ( expression | block | control_transfer ),
+                  ( expression | block | arm_statement ),
                   match_arm_end ;
+
+arm_statement   = control_transfer | assignment ;
 
 control_transfer
                 = return_stmt

@@ -165,8 +165,9 @@ pub struct SelectArm {
 #[derive(Debug)]
 pub enum ArmBody {
     Expr(Expr),
-    /// `return`, `fail`, `break` or `continue` written directly after `=>`.
-    Transfer(Box<Stmt>),
+    /// A statement written directly after `=>`: `return`, `fail`, `break`,
+    /// `continue`, an assignment or `_ = value`.
+    Statement(Box<Stmt>),
 }
 
 /// `type Name = { fields }` (record) or `type Name = T` (newtype).
