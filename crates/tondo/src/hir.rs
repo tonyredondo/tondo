@@ -966,6 +966,9 @@ pub const NATIVES: &[Native] = {
     const fn meta(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "meta", name, receiver: None, params, result, symbol }
     }
+    const fn codec(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
+        Native { module: "codec", name, receiver: None, params, result, symbol }
+    }
     const fn r(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "regex", name, receiver: Some(Regex), params, result, symbol }
     }
@@ -1049,6 +1052,19 @@ pub const NATIVES: &[Native] = {
         text("charCode", &[Char], Int, "tondo_rt_char_code"),
         text("charFrom", &[Int], Char, "tondo_rt_char_from"),
         text("scalarAt", &[String, Int], Char, "tondo_rt_text_scalar_at"),
+        codec("base64Encode", &[Bytes, Bool], String, "tondo_rt_base64_encode"),
+        codec("base64Check", &[String, Bool], Int, "tondo_rt_base64_check"),
+        codec("base64Decode", &[String, Bool], Bytes, "tondo_rt_base64_decode"),
+        codec("hexEncode", &[Bytes], String, "tondo_rt_hex_encode"),
+        codec("hexCheck", &[String], Int, "tondo_rt_hex_check"),
+        codec("hexDecode", &[String], Bytes, "tondo_rt_hex_decode"),
+        codec("urlEncode", &[String], String, "tondo_rt_url_encode"),
+        codec("urlCheck", &[String], Int, "tondo_rt_url_check"),
+        codec("urlDecode", &[String], String, "tondo_rt_url_decode"),
+        codec("digest", &[Int, Bytes, Bytes, Bool], Bytes, "tondo_rt_hash_digest"),
+        codec("entropy", &[Int], Bytes, "tondo_rt_entropy"),
+        codec("mix", &[Int, Int], Int, "tondo_rt_random_mix"),
+        codec("randomBytes", &[Int, Int, Int], Bytes, "tondo_rt_random_bytes"),
         math("sin", &[Float], Float, "tondo_rt_math_sin"),
         math("cos", &[Float], Float, "tondo_rt_math_cos"),
         math("tan", &[Float], Float, "tondo_rt_math_tan"),

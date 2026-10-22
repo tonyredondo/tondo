@@ -1,0 +1,92 @@
+// std.random (standard library 14.22): pseudo-random values from a
+// generator, seeded for a sequence that repeats or from the system's
+// entropy. The generator is not for secrets: keys and tokens take
+// `random.entropy`.
+
+import std.internal.codec as codecNative
+
+/// A generator of pseudo-random values: SplitMix64 from a seed. The same
+/// seed gives the same values on every machine.
+pub type Random = {
+    priv seed: Int
+    priv drawn: Int
+}
+
+/// A generator whose values the seed fixes.
+pub fn Random.seeded(seed: Int): Random {
+    Random { seed, drawn: 0 }
+}
+
+/// A generator seeded from the system's entropy: other values each run.
+pub fn Random.new(): Random {
+    var seed = 0
+    for byte in codecNative.entropy(8) {
+        seed = seed << 8 | Int(byte)
+    }
+    Random.seeded(seed)
+}
+
+/// The next 63 random bits, as a non-negative `Int`.
+fn Random.bits(mut self): Int {
+    let value = codecNative.mix(self.seed, self.drawn)
+    self.drawn += 1
+    value & Int.max
+}
+
+/// An integer of the range, each as likely: `random.int(1..=6)`. An empty
+/// range, or one with more values than `Int.max`, panics.
+pub fn Random.int(mut self, range: Range[Int]): Int {
+    if range.isEmpty() {
+        panic("random.int: the range {range} is empty")
+    }
+    let last = if range.isInclusive() { range.end() } else { range.end() - 1 }
+    let span = last - range.start() + 1
+    // Draws above the last whole multiple of `span` would favour the
+    // smallest values.
+    let rejected = (Int.max % span + 1) % span
+    for {
+        let draw = self.bits()
+        if draw <= Int.max - rejected {
+            return range.start() + draw % span
+        }
+    }
+}
+
+/// A float in `[0, 1)`, each of its 2^53 values as likely.
+pub fn Random.float(mut self): Float {
+    Float(self.bits() >> 10) / 9007199254740992.0
+}
+
+pub fn Random.bool(mut self): Bool {
+    self.bits() & 1 == 1
+}
+
+pub fn Random.bytes(mut self, count: Int): Array[Byte] {
+    let bytes = codecNative.randomBytes(self.seed, self.drawn, count)
+    self.drawn += (count + 7) / 8
+    bytes
+}
+
+/// The items in an order where each is as likely (Fisher-Yates).
+pub fn Random.shuffled[T](mut self, items: Array[T]): Array[T] {
+    var out = items
+    var index = out.length() - 1
+    for index > 0 {
+        out.swap(index, self.int(0..=index))
+        index -= 1
+    }
+    out
+}
+
+/// One of the items, each as likely, or `none` when there are none.
+pub fn Random.choice[T](mut self, items: Array[T]): T? {
+    if items.length() == 0 {
+        return none
+    }
+    items.get(self.int(0..items.length()))
+}
+
+/// `count` bytes from the system's entropy, for keys, tokens and seeds.
+pub fn entropy(count: Int): Array[Byte] {
+    codecNative.entropy(count)
+}

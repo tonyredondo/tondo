@@ -1333,23 +1333,23 @@ impl Discrete for Char {
 /// `start..end`, without `end`, or `start..=end`, with it: the values from
 /// `start` on, one after another; none when `start` is past the end.
 pub type Range[T] = {
-    priv start: T
-    priv end: T
+    priv lower: T
+    priv upper: T
     priv inclusive: Bool
     priv done: Bool
 }
 
 impl[T: Discrete + Ordered] Iterator[T] for Range[T] {
     fn next(mut self): T? {
-        let toEnd = self.start.compare(self.end)
+        let toEnd = self.lower.compare(self.upper)
         if self.done or toEnd > 0 or (toEnd == 0 and not self.inclusive) {
             return none
         }
-        let value = self.start
+        let value = self.lower
         if toEnd == 0 {
             self.done = true
         } else {
-            self.start = value.successor()
+            self.lower = value.successor()
         }
         some(value)
     }
@@ -1358,14 +1358,36 @@ impl[T: Discrete + Ordered] Iterator[T] for Range[T] {
 /// `0..10` or `'a'..='z'`.
 impl[T: Display] Display for Range[T] {
     fn display(self): String {
-        if self.inclusive { "{self.start}..={self.end}" } else { "{self.start}..{self.end}" }
+        if self.inclusive { "{self.lower}..={self.upper}" } else { "{self.lower}..{self.upper}" }
     }
+}
+
+/// The first value it yields, unless it is empty.
+pub fn Range[T].start(self): T {
+    self.lower
+}
+
+/// The value where it stops: the last it yields with `..=`, the one after
+/// it with `..`.
+pub fn Range[T].end(self): T {
+    self.upper
+}
+
+/// Whether it was written `..=`, and yields its `end`.
+pub fn Range[T].isInclusive(self): Bool {
+    self.inclusive
+}
+
+/// Whether it yields no value.
+pub fn Range[T: Ordered].isEmpty(self): Bool {
+    let toEnd = self.lower.compare(self.upper)
+    self.done or toEnd > 0 or (toEnd == 0 and not self.inclusive)
 }
 
 /// Whether `value` is one the range still yields.
 pub fn Range[T: Ordered].contains(self, value: T): Bool {
-    let end = value.compare(self.end)
-    not self.done and value.compare(self.start) >= 0 and (end < 0 or (end == 0 and self.inclusive))
+    let end = value.compare(self.upper)
+    not self.done and value.compare(self.lower) >= 0 and (end < 0 or (end == 0 and self.inclusive))
 }
 
 /// `value in range`, which reads the value first (5.12 of the language).

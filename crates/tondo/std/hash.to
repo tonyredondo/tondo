@@ -1,0 +1,47 @@
+// std.hash (standard library 14.21): SHA digests and HMAC.
+
+import std.internal.codec as codecNative
+
+/// The digest of some data. It displays as lowercase hexadecimal.
+pub type Digest = {
+    priv value: Array[Byte]
+}
+
+pub fn Digest.bytes(self): Array[Byte] {
+    self.value
+}
+
+/// The digest as lowercase hexadecimal, two digits per byte.
+pub fn Digest.hex(self): String {
+    codecNative.hexEncode(self.value)
+}
+
+impl Display for Digest {
+    fn display(self): String {
+        self.hex()
+    }
+}
+
+/// SHA-1, for formats that name it, such as UUIDv5 and Git. It is broken
+/// for security: use SHA-256 there.
+pub fn sha1(data: Array[Byte]): Digest {
+    Digest { value: codecNative.digest(1, [], data, false) }
+}
+
+pub fn sha256(data: Array[Byte]): Digest {
+    Digest { value: codecNative.digest(256, [], data, false) }
+}
+
+pub fn sha512(data: Array[Byte]): Digest {
+    Digest { value: codecNative.digest(512, [], data, false) }
+}
+
+/// The HMAC of the data with the key (RFC 2104), on SHA-256.
+pub fn hmacSha256(key: Array[Byte], data: Array[Byte]): Digest {
+    Digest { value: codecNative.digest(256, key, data, true) }
+}
+
+/// The HMAC of the data with the key (RFC 2104), on SHA-512.
+pub fn hmacSha512(key: Array[Byte], data: Array[Byte]): Digest {
+    Digest { value: codecNative.digest(512, key, data, true) }
+}

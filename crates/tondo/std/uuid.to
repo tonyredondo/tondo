@@ -1,0 +1,138 @@
+// std.uuid (standard library 14.17): RFC 9562 identifiers, sixteen bytes
+// that display as `8-4-4-4-12` lowercase hexadecimal.
+
+import std.internal.codec as codecNative
+import std.time as __time
+
+/// A UUID. Equal, ordered and usable as a key by its sixteen bytes, as
+/// unsigned numbers in network order.
+pub type Uuid = {
+    // Its bytes in lowercase hexadecimal, which order as the bytes do.
+    priv hex: String
+}
+
+pub enum UuidError {
+    /// A text other than `8-4-4-4-12` hexadecimal, after an optional
+    /// `urn:uuid:`.
+    InvalidText
+    /// Other than sixteen bytes.
+    WrongLength
+}
+
+impl Display for UuidError {
+    fn display(self): String {
+        match self {
+            UuidError.InvalidText => "a UUID is written `8-4-4-4-12` in hexadecimal"
+            UuidError.WrongLength => "a UUID has sixteen bytes"
+        }
+    }
+}
+
+/// The UUID whose bits are all zero.
+pub fn Uuid.nil(): Uuid {
+    Uuid { hex: "0".repeat(32) }
+}
+
+/// A random UUID (version 4): 122 bits from the system's entropy.
+pub fn Uuid.v4(): Uuid {
+    stamped(codecNative.entropy(16), 4)
+}
+
+/// The UUID of a name in a namespace (version 5, on SHA-1): the same pair
+/// always gives the same UUID.
+pub fn Uuid.v5(namespace: Uuid, name: String): Uuid {
+    var data = namespace.bytes()
+    data.extend(name.bytes())
+    stamped(codecNative.digest(1, [], data, false).take(16), 5)
+}
+
+/// A UUID that sorts by when it was made (version 7): the Unix time in
+/// milliseconds, then 74 bits from the system's entropy.
+pub fn Uuid.v7(): Uuid {
+    let millis = __time.unixTime().milliseconds()
+    var bytes = codecNative.entropy(16)
+    for index in 0..6 {
+        bytes[index] = byte(millis >> (40 - 8 * index))
+    }
+    stamped(bytes, 7)
+}
+
+/// The namespaces of RFC 9562 for `v5`, for names that are domain names,
+/// URLs, ISO object identifiers or X.500 distinguished names.
+pub fn Uuid.namespaceDns(): Uuid {
+    Uuid { hex: "6ba7b8109dad11d180b400c04fd430c8" }
+}
+
+pub fn Uuid.namespaceUrl(): Uuid {
+    Uuid { hex: "6ba7b8119dad11d180b400c04fd430c8" }
+}
+
+pub fn Uuid.namespaceOid(): Uuid {
+    Uuid { hex: "6ba7b8129dad11d180b400c04fd430c8" }
+}
+
+pub fn Uuid.namespaceX500(): Uuid {
+    Uuid { hex: "6ba7b8149dad11d180b400c04fd430c8" }
+}
+
+/// A UUID written `8-4-4-4-12` in hexadecimal of either case, with or
+/// without `urn:uuid:` before it.
+pub fn Uuid.parse(input: String): Uuid ! UuidError {
+    let body = if input.toLower().startsWith("urn:uuid:") { input.slice(9, input.length()).unwrapOr("") } else { input }
+    let dashes = [8, 13, 18, 23].all((at) { body.get(at) == some('-') })
+    let digits = body.replace("-", "")
+    if body.byteLength() != 36 or not dashes or digits.byteLength() != 32 or codecNative.hexCheck(digits) != -1 {
+        fail UuidError.InvalidText
+    }
+    Uuid { hex: digits.toLower() }
+}
+
+pub fn Uuid.fromBytes(bytes: Array[Byte]): Uuid ! UuidError {
+    if bytes.length() != 16 {
+        fail UuidError.WrongLength
+    }
+    Uuid { hex: codecNative.hexEncode(bytes) }
+}
+
+/// The sixteen bytes, in network order.
+pub fn Uuid.bytes(self): Array[Byte] {
+    codecNative.hexDecode(self.hex)
+}
+
+/// The version its bits say: 4, 5 or 7 for the ones this module makes.
+pub fn Uuid.version(self): Int {
+    Int.parse(self.hex.slice(12, 13).unwrapOr("0"), radix: 16).unwrapOr(0)
+}
+
+/// Negative, zero or positive as `self` goes before, with or after `other`.
+pub fn Uuid.compare(self, other: Uuid): Int {
+    self.hex.compare(other.hex)
+}
+
+impl Ordered for Uuid {
+    fn compare(self, other: Uuid): Int {
+        self.hex.compare(other.hex)
+    }
+}
+
+impl Display for Uuid {
+    fn display(self): String {
+        let hex = self.hex
+        let part = (from: Int, to: Int) { hex.slice(from, to).unwrapOr("") }
+        "{part(0, 8)}-{part(8, 12)}-{part(12, 16)}-{part(16, 20)}-{part(20, 32)}"
+    }
+}
+
+/// The bytes with the version in the high bits of byte 6 and the RFC 9562
+/// variant in the high bits of byte 8.
+fn stamped(bytes: Array[Byte], version: Int): Uuid {
+    var value = bytes
+    value[6] = value[6] & Byte(15u8) | byte(version << 4)
+    value[8] = value[8] & Byte(63u8) | Byte(128u8)
+    Uuid { hex: codecNative.hexEncode(value) }
+}
+
+/// The low eight bits.
+fn byte(value: Int): Byte {
+    Byte(value & 255).unwrapOr(Byte(0u8))
+}

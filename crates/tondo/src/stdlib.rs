@@ -17,14 +17,25 @@ const SOURCES: &[(&str, &str)] = &[
     ("prelude", include_str!("../std/prelude.to")),
     ("math", include_str!("../std/math.to")),
     ("meta", include_str!("../std/meta.to")),
+    ("encoding", include_str!("../std/encoding.to")),
+    ("hash", include_str!("../std/hash.to")),
+    ("random", include_str!("../std/random.to")),
+    ("format", include_str!("../std/format.to")),
+    ("uuid", include_str!("../std/uuid.to")),
+    ("datetime", include_str!("../std/datetime.to")),
 ];
 
-/// The module written in Tondo an import brings: `std.testing` brings
-/// `std.json`, which `testing.snapshot` encodes values with.
+/// The module written in Tondo an import brings.
 pub(crate) fn source(path: &[ast::Ident]) -> Option<(&'static str, &'static str)> {
     match path {
         [std, name] if std.name == "std" => {
-            let name = if name.name == "testing" { "json" } else { name.name.as_str() };
+            // `std.testing` brings `std.json`, which `testing.snapshot`
+            // encodes values with, and `std.time` its parts in Tondo.
+            let name = match name.name.as_str() {
+                "testing" => "json",
+                "time" => "datetime",
+                name => name,
+            };
             SOURCES.iter().find(|(n, _)| *n == name).copied()
         }
         _ => None,

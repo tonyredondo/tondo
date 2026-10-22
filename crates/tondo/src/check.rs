@@ -48,6 +48,7 @@ pub fn check<'a>(
         duration: None,
         instant: None,
         datetime: None,
+        time_error: None,
         compare_exchange: None,
         fs: None,
         module: 0,
@@ -162,6 +163,9 @@ enum StdModule {
     InternalMath,
     /// `std.internal.meta`: the request and response of a provider.
     InternalMeta,
+    /// `std.internal.codec`: encodings, digests and entropy, for
+    /// `std.encoding`, `std.hash`, `std.random` and `std.uuid`.
+    InternalCodec,
 }
 
 /// The types `std.process` declares when imported.
@@ -540,6 +544,8 @@ struct Checker<'a> {
     instant: Option<Ty>,
     /// `time.DateTime`: seven `Int` fields, from the year down.
     datetime: Option<Ty>,
+    /// `time.TimeError`: a text that is not a date and time.
+    time_error: Option<Ty>,
     /// `sync.CompareExchange`, once `std.sync` is imported: the template
     /// and its instance with its own parameter.
     compare_exchange: Option<(TemplateId, Ty)>,
@@ -733,6 +739,15 @@ impl<'a> Checker<'a> {
         self.prelude = module.module_paths.iter().position(|p| p == &["std", "prelude"]).map(|i| i as u32);
         for import in &module.imports {
             self.import(import);
+        }
+        // What depends on the moment or the machine (27.7).
+        for denied in ["random", "uuid"] {
+            if self.meta && module.module_paths.iter().any(|p| p == &["std", denied]) {
+                let message = format!(
+                    "`std.{denied}` is not available to a provider or generator, which runs while the program compiles and works only on its request"
+                );
+                self.diags.error_without_span("E2108", message);
+            }
         }
 
         self.declare_types(&module.items);
@@ -1610,6 +1625,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "text"] => StdModule::InternalText,
             ["std", "internal", "math"] => StdModule::InternalMath,
             ["std", "internal", "meta"] => StdModule::InternalMeta,
+            ["std", "internal", "codec"] => StdModule::InternalCodec,
             ["std", ..] => {
                 let what = format!("module `{}`", path.join("."));
                 self.diags.unsupported(import.span, &what);
@@ -1787,6 +1803,11 @@ impl<'a> Checker<'a> {
             self.types.define_adt(id, AdtKind::Record(fields));
             self.types.shown.insert(ty, Shown::DateTime);
             self.datetime = Some(ty);
+            let (id, ty) = self.types.declare_adt(format!("{}.TimeError", name.name));
+            let variants = vec![Variant { name: "InvalidDateTime".into(), payload: Payload::Unit }];
+            self.types.define_adt(id, AdtKind::Enum(variants));
+            self.types.shown.insert(ty, Shown::Words);
+            self.time_error = Some(ty);
         }
     }
 
@@ -1830,6 +1851,7 @@ impl<'a> Checker<'a> {
             (Some(ModuleName::Module(StdModule::Collections)), "CollectionError") => Some(self.collection_error),
             (Some(ModuleName::Module(StdModule::Text)), "TextError") => Some(self.text_error),
             (Some(ModuleName::Module(StdModule::Time)), "Duration") => self.duration,
+            (Some(ModuleName::Module(StdModule::Time)), "TimeError") => self.time_error,
             (Some(ModuleName::Module(StdModule::Time)), "Instant") => self.instant,
             (Some(ModuleName::Module(StdModule::Time)), "DateTime") => self.datetime,
             (Some(ModuleName::Module(StdModule::Sync)), "CompareExchange") => self.compare_exchange.map(|(_, g)| g),
@@ -8516,6 +8538,17 @@ impl<'a> Checker<'a> {
         {
             return self.trait_dot_call(cx, ITERATOR, vec![element], index, value, method, args, expected, span);
         }
+        // `DateTime.sinceEpoch()`, written in Tondo (14.3.4).
+        if Some(ty) == self.datetime
+            && method.name == "sinceEpoch"
+            && let Some(&ModuleName::Fn(id)) = self.names.get("datetime.sinceEpoch")
+        {
+            if !args.is_empty() {
+                return self.arity_error(span, 0, args.len());
+            }
+            let call = hir::ExprKind::Call(Callee::Fn(id), Vec::new(), vec![value]);
+            return Self::mk(call, self.duration.unwrap(), span);
+        }
         if Some(ty) == self.duration || Some(ty) == self.instant {
             return self.time_method(cx, value, method, args, span);
         }
@@ -9836,7 +9869,8 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalReflect
                     | StdModule::InternalText
                     | StdModule::InternalMath
-                    | StdModule::InternalMeta),
+                    | StdModule::InternalMeta
+                    | StdModule::InternalCodec),
                 )),
             ) => {
                 if module == StdModule::InternalReflect && *member == "box" {
@@ -9854,6 +9888,7 @@ impl<'a> Checker<'a> {
                     StdModule::InternalText => "text",
                     StdModule::InternalMath => "math",
                     StdModule::InternalMeta => "meta",
+                    StdModule::InternalCodec => "codec",
                     _ => "reflect",
                 };
                 let found =
@@ -10013,6 +10048,13 @@ impl<'a> Checker<'a> {
                     "unixTime" => (StdFn::TimeUnix, vec![], duration),
                     "utcNow" => (StdFn::TimeUtcNow, vec![], datetime),
                     "utc" => (StdFn::TimeUtc, vec![duration], datetime),
+                    // ISO 8601, written in Tondo (14.3.4).
+                    "parseDateTime" if let Some(&ModuleName::Fn(id)) = self.names.get("datetime.parse") => {
+                        let result = self.types.intern(TyKind::Result(datetime, self.time_error.unwrap()));
+                        let signature = Signature::simple(vec![Ty::STRING], result);
+                        let target = CallTarget::new(Callee::Fn(id), signature, expected);
+                        return self.call_signature(cx, target, None, args, span);
+                    }
                     _ => {
                         let Some(factor) = Self::time_unit(member) else {
                             let message =

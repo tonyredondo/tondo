@@ -1,0 +1,31 @@
+// std.encoding and std.hash.
+
+import std.console
+import std.encoding
+import std.hash
+
+fn main(): !encoding.EncodingError {
+    let data = "héllo, wörld".bytes()
+    let text = encoding.base64Encode(data)
+    let url = encoding.base64Encode([Byte(255u8), Byte(254u8), Byte(253u8)], encoding.Base64Alphabet.Url)
+    console.println("{text} {url} {encoding.hexEncode([Byte(0u8), Byte(15u8), Byte(255u8)])}")
+    console.println("{encoding.base64Decode(text)? == data} {encoding.base64Decode("__79", encoding.Base64Alphabet.Url)?} {encoding.base64Decode("aGk")?}")
+    console.println("{encoding.base64Decode("//79", encoding.Base64Alphabet.Url)} {encoding.base64Decode("aG!k")} {encoding.base64Decode("a")}")
+    console.println("{encoding.hexDecode("00fFaA")?} {encoding.hexDecode("abc")} {encoding.hexDecode("zz")}")
+    let query = encoding.urlEncode("a b/c?d=é&e~")
+    console.println("{query} {encoding.urlDecode(query)?} {encoding.urlDecode("%zz")} {encoding.urlDecode("%FF")} {encoding.urlDecode("ab%4")}")
+    console.println("{hash.sha256("abc".bytes())}")
+    console.println("{hash.sha1("abc".bytes())} {hash.sha256([]).bytes().length()}")
+    console.println("{hash.sha512("".bytes()).hex().slice(0, 16).unwrapOr("")} {hash.sha256("a".bytes()) == hash.sha256("a".bytes())}")
+    console.println("{hash.hmacSha256("key".bytes(), "The quick brown fox jumps over the lazy dog".bytes())}")
+}
+
+// expect-stdout: aMOpbGxvLCB3w7ZybGQ= __79 000fff
+// expect-stdout: true [255, 254, 253] [104, 105]
+// expect-stdout: err(invalid character at byte 0) err(invalid character at byte 2) err(the text ends in the middle of a value)
+// expect-stdout: [0, 255, 170] err(the text ends in the middle of a value) err(invalid character at byte 0)
+// expect-stdout: a%20b%2Fc%3Fd%3D%C3%A9%26e~ a b/c?d=é&e~ err(invalid character at byte 0) err(the decoded bytes are not UTF-8) err(the text ends in the middle of a value)
+// expect-stdout: ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+// expect-stdout: a9993e364706816aba3e25717850c26c9cd0d89d 32
+// expect-stdout: cf83e1357eefb8bd true
+// expect-stdout: f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8

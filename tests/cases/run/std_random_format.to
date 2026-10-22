@@ -1,0 +1,33 @@
+// std.random, seeded, and std.format.
+
+import std.console
+import std.format
+import std.random
+
+fn main() {
+    var r = random.Random.seeded(42)
+    console.println("{r.int(1..=6)} {r.int(1..=6)} {r.int(0..3)} {r.float()} {r.bool()} {r.bytes(5)}")
+    var again = random.Random.seeded(42)
+    console.println("{again.int(1..=6)} {again.int(1..=6)}")
+    let empty: Array[Int] = []
+    console.println("{r.shuffled([1, 2, 3, 4, 5])} {r.choice(["a", "b"])} {r.choice(empty)}")
+    var fresh = random.Random.new()
+    var counts = [0, 0, 0]
+    for _ in 0..30000 {
+        counts[fresh.int(0..3)] += 1
+    }
+    console.println("{counts.all((c) { c > 9000 and c < 11000 })} {random.entropy(16).length()}")
+    var b = format.Builder.new()
+    b.add("x = ")
+    b.add(3)
+    b.addLine("!")
+    b.add(1.5)
+    console.println("{b}|{b.isEmpty()} {format.Builder.new().isEmpty()}")
+}
+
+// expect-stdout: 6 2 0 0.6883814330472751 false [6, 219, 128, 60, 250]
+// expect-stdout: 6 2
+// expect-stdout: [3, 4, 2, 5, 1] some(b) none
+// expect-stdout: true 16
+// expect-stdout: x = 3!
+// expect-stdout: 1.5|false true

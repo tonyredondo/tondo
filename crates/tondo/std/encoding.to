@@ -1,0 +1,90 @@
+// std.encoding (standard library 14.20): binary data as text and back, in
+// Base64, hexadecimal and the percent-encoding of URLs.
+
+import std.internal.codec as codecNative
+
+/// The alphabets of Base64 (RFC 4648): `Standard`, with `+`, `/` and `=`
+/// padding, and `Url`, with `-` and `_` and without padding.
+pub enum Base64Alphabet {
+    Standard
+    Url
+}
+
+/// Why a text does not decode.
+pub enum EncodingError {
+    /// A character the encoding does not use, at this byte offset.
+    InvalidCharacter(Int)
+    /// The text ends in the middle of a value.
+    Truncated
+    /// What the text encodes is not UTF-8.
+    NotUtf8
+}
+
+impl Display for EncodingError {
+    fn display(self): String {
+        match self {
+            EncodingError.InvalidCharacter(offset) => "invalid character at byte {offset}"
+            EncodingError.Truncated => "the text ends in the middle of a value"
+            EncodingError.NotUtf8 => "the decoded bytes are not UTF-8"
+        }
+    }
+}
+
+/// The Base64 text of the bytes.
+pub fn base64Encode(bytes: Array[Byte], alphabet: Base64Alphabet = Base64Alphabet.Standard): String {
+    codecNative.base64Encode(bytes, isUrl(alphabet))
+}
+
+/// The bytes a Base64 text writes, with or without its padding.
+pub fn base64Decode(
+    input: String,
+    alphabet: Base64Alphabet = Base64Alphabet.Standard,
+): Array[Byte] ! EncodingError {
+    checked(input, codecNative.base64Check(input, isUrl(alphabet)))?
+    codecNative.base64Decode(input, isUrl(alphabet))
+}
+
+/// The lowercase hexadecimal text of the bytes, two digits each.
+pub fn hexEncode(bytes: Array[Byte]): String {
+    codecNative.hexEncode(bytes)
+}
+
+/// The bytes a hexadecimal text writes, in either case.
+pub fn hexDecode(input: String): Array[Byte] ! EncodingError {
+    checked(input, codecNative.hexCheck(input))?
+    codecNative.hexDecode(input)
+}
+
+/// The text with each byte of its UTF-8 written as `%XX`, except letters,
+/// digits, `-`, `.`, `_` and `~` (RFC 3986): a path segment or a query
+/// value that keeps its meaning in a URL.
+pub fn urlEncode(input: String): String {
+    codecNative.urlEncode(input)
+}
+
+/// The text a percent-encoded text writes; `+` stays `+`.
+pub fn urlDecode(input: String): String ! EncodingError {
+    checked(input, codecNative.urlCheck(input))?
+    codecNative.urlDecode(input)
+}
+
+fn isUrl(alphabet: Base64Alphabet): Bool {
+    match alphabet {
+        Base64Alphabet.Standard => false
+        Base64Alphabet.Url => true
+    }
+}
+
+/// What the runtime found: `-1` nothing, `-2` bytes that are not UTF-8, the
+/// text's length when it ends early, or the offset of a wrong character.
+fn checked(input: String, problem: Int): Unit ! EncodingError {
+    if problem == -2 {
+        fail EncodingError.NotUtf8
+    }
+    if problem == input.byteLength() {
+        fail EncodingError.Truncated
+    }
+    if problem >= 0 {
+        fail EncodingError.InvalidCharacter(problem)
+    }
+}

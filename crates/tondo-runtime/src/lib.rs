@@ -13,6 +13,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering, fence};
 
 mod clock;
+mod codec;
 mod env;
 mod fs;
 mod io;

@@ -1136,14 +1136,20 @@ Una API de console recibe texto o bytes ya definidos por su contrato. La
 decisión de añadir newline, separator, flushing o encoding pertenece a esa
 operación y nunca es implícita por terminal.
 
-El contrato executable de `std.format` está en
-`docs/contracts/stdlib-core.md`: `Builder`, `format` y `join` son una única
-superficie estática sobre `Display`. Los builders comprueban el límite antes de
-mutar, y el caso de error no expone materialización parcial. La evidencia
-`STD-A-FMT-EVIDENCE-001` enlaza las cinco firmas con HIR/MIR/bytecode/VM, el
-fixture runtime, properties de límites y la auditoría pública; fuzz de
-operaciones y baselines de allocations/materialización se mantienen como
-promoción posterior, no como garantías inventadas.
+`std.format` construye texto pieza a pieza sobre `Display`; unir un array es
+`Array.join`:
+
+~~~tondo pseudocode
+pub type Builder
+pub fn Builder.new(): Builder
+pub fn Builder.add[T: Display](mut self, value: T)
+pub fn Builder.addLine[T: Display](mut self, value: T)   // y un \n
+pub fn Builder.isEmpty(self): Bool
+pub fn Builder.text(self): String
+~~~
+
+El builder guarda las piezas y las une una sola vez, en `text()` o al mostrarlo
+con su `Display`, que es ese mismo texto.
 
 ---
 
@@ -1479,6 +1485,8 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.time` | Core + gated | `clock` monotónico; `civil-clock` para reloj de pared y anclas | 0.1 | Time-base monotónico, calendario civil y zonas horarias versionadas |
 | `std.path` | Core | — | 0.1 | Operaciones léxicas sobre paths `String` |
 | `std.regex` | Core | — | 0.1 | Expresiones regulares Unicode con complejidad y límites declarados |
+| `std.hash` | Core | — | 0.1 | Digests SHA-1, SHA-256 y SHA-512 y HMAC |
+| `std.random` | Core + gated | `entropy` para sembrar desde el sistema | 0.1 | Generadores pseudoaleatorios sembrados, mezcla, elección y bytes de entropía |
 | `std.uuid` | Core + gated | `entropy` y/o `civil-clock` para generación | 0.1 | UUID, parsing, formatting y generadores explícitos por versión |
 | `std.sync` | Core + gated | `threads` para operaciones cross-thread | 0.1 | Mutex, rwlock, condición, semáforo, once, barrier, atomics y colecciones compartidas linealizables |
 | `std.executor` | Core + gated | `threads` para pools bloqueantes | 0.1 | Pools acotados, actores y bridge de trabajo bloqueante sobre las tareas del lenguaje |
@@ -1661,9 +1669,13 @@ pub type DateTime = {
     nanosecond: Int
 }
 
+pub enum TimeError { InvalidDateTime }
+
 pub fn utcNow(): DateTime
 pub fn unixTime(): Duration
 pub fn utc(sinceEpoch: Duration): DateTime
+pub fn parseDateTime(text: String): DateTime ! TimeError
+pub fn DateTime.sinceEpoch(self): Duration
 ~~~
 
 `utcNow` y `unixTime` leen el reloj del sistema, que puede retroceder si
@@ -1671,9 +1683,26 @@ alguien lo ajusta; para medir intervalos se usa `now`. `unixTime` es el tiempo
 desde `1970-01-01T00:00:00Z` y `utc` convierte uno de esos tiempos a fecha, en
 el calendario gregoriano y sin segundos intercalares. `Display` de `DateTime`
 es RFC 3339 en UTC, con la fracción solo cuando no es cero y sin ceros finales:
-`2026-10-22T06:38:28Z`, `2026-10-22T06:38:28.5Z`. Las zonas horarias, la hora
-local y el formato de fechas en otros calendarios quedan para una versión
-posterior.
+`2026-10-22T06:38:28Z`, `2026-10-22T06:38:28.5Z`. `sinceEpoch` es la
+inversa de `utc`.
+
+`parseDateTime` lee ISO 8601 en la forma extendida de RFC 3339 y la devuelve en
+UTC: una fecha `2026-10-22`, que es su medianoche, o una fecha con hora
+separada por `T`, `t` o un espacio, `HH:MM` con `:SS` y una fracción
+opcionales, y una zona opcional: `Z`, `z`, `+HH:MM`, `+HHMM`, `+HH` o su
+negativa; sin zona, la hora es UTC. Una fracción de más de nueve dígitos se
+trunca. Un texto con otra forma, una fecha o una hora que no existe, el segundo
+60 o un año fuera de 1678–2261, los que caben en un `Duration`, dan
+`TimeError.InvalidDateTime`:
+
+~~~tondo
+let date = time.parseDateTime("2026-10-22 08:38:28.5+02:00")?
+console.println("{date}")                         // 2026-10-22T06:38:28.5Z
+let later = time.utc(date.sinceEpoch().add(time.hours(1)))
+~~~
+
+Las zonas horarias, la hora local y el formato de fechas en otros calendarios
+quedan para una versión posterior.
 
 #### 14.3.5 `std.env`: argumentos y entorno
 
@@ -2275,8 +2304,9 @@ fn iter(self): ArrayIterator[T]                     // Iterator[T], perezoso
 
 `Range[T]` (10.16 del lenguaje) es el valor de `start..end` y `start..=end`,
 de enteros o `Char`: implementa `Iterator[T]`, tiene `contains(value: T): Bool`,
-que es lo que pregunta `value in range`, y `Display` lo escribe como se escribe
-(`0..10`). Un `Range[Char]` salta los surrogates.
+que es lo que pregunta `value in range`, `start()`, `end()`, `isInclusive()` e
+`isEmpty()`, y `Display` lo escribe como se escribe (`0..10`). Un `Range[Char]`
+salta los surrogates.
 
 `Iterator[T]`, sobre cualquier iterador, incluidos los rangos, `String.chars()`,
 `Array.iter()`, los cursores de `Map.keys`, `values` y `entries` y los tipos del
@@ -3392,118 +3422,42 @@ tablas Unicode son las de `regex-syntax` (16.0.0), fijadas por `Cargo.lock`.
 
 ### 14.17 `std.uuid`
 
-`std.uuid` defines an immutable 128-bit value interoperable with RFC 9562.
-Its sixteen network-order bytes support the normative Tondo capabilities
-`Copy`, `Equatable`, `Key`, `Send` and `Share`, including `Map`/`Set`
-keys; `Uuid.compare` provides unsigned byte ordering. The Rust kernel separately
-implements `Eq`, `Ord` and `Hash`. Parsing accepts dashed `8-4-4-4-12` text and
-the `urn:uuid:` prefix with either hex case; formatting always emits lowercase
-dashed text. Compact/braced text, whitespace, COM GUID conversion and text
-normalization are rejected. Sentinels, bytes, text and inspection are core
-operations that do not consult the host.
+`std.uuid` da los identificadores de RFC 9562: dieciséis bytes que se escriben
+`8-4-4-4-12` en hexadecimal minúscula.
 
-Solo se generan v4, v5 y v7. v4 requiere la capability `entropy` y fija 122
-bits aleatorios; v5 es determinista sobre `namespace.bytes || name` con SHA-1
-y no es un secreto; v7 combina 48 bits de milisegundos Unix UTC con 74 bits de
-entropía y requiere `civil-clock + entropy`. v7 no mantiene contadores, locks,
-retries ni estado global y no promete monotonicidad estricta. El parser puede
-conservar valores externos de cualquier versión o variante; los generadores
-solo producen la variante RFC 9562. La ausencia de capabilities es `E1008` y
-los fallos del provider se normalizan a `UuidError` sin fallback ambiental.
+~~~tondo pseudocode
+pub type Uuid
+pub enum UuidError { InvalidText, WrongLength }
 
-`Uuid.v4`, `Uuid.v5` y `Uuid.v7` no esperan; no existe una API async duplicada. Los límites cubren texto (45 bytes), bytes (16), nombre
-v5 (16 MiB), requests de entropía y heap; cualquier exceso falla antes de
-publicar un resultado. Comparación y hash son lexicográficos sobre los bytes,
-independientes del timestamp o la versión. El camino scalar de ancho fijo es el
-oracle; SIMD solo puede promoverse tras equivalencia byte a byte.
+pub fn Uuid.v4(): Uuid
+pub fn Uuid.v5(namespace: Uuid, name: String): Uuid
+pub fn Uuid.v7(): Uuid
+pub fn Uuid.nil(): Uuid
+pub fn Uuid.namespaceDns(): Uuid
+pub fn Uuid.namespaceUrl(): Uuid
+pub fn Uuid.namespaceOid(): Uuid
+pub fn Uuid.namespaceX500(): Uuid
+pub fn Uuid.parse(text: String): Uuid ! UuidError
+pub fn Uuid.fromBytes(bytes: Array[Byte]): Uuid ! UuidError
+pub fn Uuid.bytes(self): Array[Byte]
+pub fn Uuid.version(self): Int
+pub fn Uuid.compare(self, other: Uuid): Int
+~~~
 
-El contrato machine-readable, la documentación normativa y los negativos son
-[`testing/stdlib-uuid.json`](./testing/stdlib-uuid.json),
-[`docs/contracts/stdlib-uuid.md`](./docs/contracts/stdlib-uuid.md),
-[`scripts/stdlib-uuid-check.sh`](./scripts/stdlib-uuid-check.sh) y
-[`scripts/stdlib-uuid-test.sh`](./scripts/stdlib-uuid-test.sh). The B0 design is
-locked by `STD-ID-001`. `STD-UUID-IMPL-001` has a `verified-stdlib-kernel` scalar
-Rust implementation with 18 focused tests, exact network/text semantics and
-explicit-input v4/v5/v7 transformations. UUIDv5 uses exactly pinned
-`sha1 0.10.6` with `force-soft`, hashing namespace and opaque name separately.
-The kernel performs no provider calls: v4 receives sixteen entropy bytes and
-v7 receives checked Unix milliseconds plus ten bytes. Its fixed-width Rust
-value/copy and fallible 36-byte string materialization do not establish public
-Tondo heap admission, capability checking or provider quality. Source-bound
-quality and the full functional gate pass: 293,081 of 319,953 workspace lines
-(91.6013%), every global/risk 80% floor and six critical mutants caught.
-The implementation checker verifies 96 invalid records and both valid local
-states. Publication and exact-SHA CI closure are tracked separately.
-`STD-UUID-HOST-001` now implements public compiler/production VM registration
-for all fourteen operations, with private high/low `UInt64` storage and the six
-normative value capabilities. Exactly pinned `getrandom 0.4.3` supplies one
-bounded entropy fill; checked `SystemTime` supplies v7's Unix milliseconds.
-Direct/alias/defer references enforce provider capabilities with `E1008`.
-`UuidError` exposes `kind: UuidErrorKind` and `offset: Int?` with intrinsic
-`Display`, including the real `testing.assertOk` failure path. Sealed Rust
-envelope fixtures exercise provider failures without a public Tondo setter.
-Transport and complete typed result storage are checked before provider effects,
-including ordinary VM byte/object limits and test phase budgets. The host
-register is [`testing/stdlib-uuid-host.json`](./testing/stdlib-uuid-host.json);
-its contract and local promotion state are
-[`docs/contracts/stdlib-uuid-host.md`](./docs/contracts/stdlib-uuid-host.md).
-HOST quality and every full functional gate step pass on the frozen source:
-294,459 of 321,402 workspace lines (91.6170%), every global/risk 80% floor,
-six critical mutants caught, 23 focused compiler/VM tests and 86 invalid
-promotion records. Publication and exact-SHA CI closure are recorded in the tracker.
-The independent model/fuzz boundary is verified in
-[testing/stdlib-uuid-test.json](./testing/stdlib-uuid-test.json) and
-[docs/contracts/stdlib-uuid-test.md](./docs/contracts/stdlib-uuid-test.md).
-It uses an independent unsigned value/parser/bounded v5 digest, 54 retained
-vectors and eleven integration tests including a sealed production VM provider
-transcript. Its 85 invalid records, 128-run smoke and full functional gate pass.
-Source-bound quality verifies 294,814 of 321,733 lines (91.6331%), every
-global/risk 80% floor and six selected mutants caught. Published source
-`27bd0d3` and tracker closure `048730a` pass exact-SHA CI confirmation.
-Reference bounds do not establish production rejection.
-The locally `verified-hosted-scalar-baseline` performance protocol is registered in
-[testing/stdlib-uuid-performance.json](./testing/stdlib-uuid-performance.json)
-and [docs/contracts/stdlib-uuid-performance.md](./docs/contracts/stdlib-uuid-performance.md).
-It selects 22 hosted scalar bridge routes and 27 retained samples each,
-including explicit sealed/OS providers, exact independent/authored expectations
-and bounded refusals. Logical resource models are distinct from actual reply
-charges and registry counts. Clean captures retain 594 measurements; the
-focused tests and all 2,647 workspace Rust tests pass. Source-bound quality
-verifies 295,200 of 322,169 lines (91.6289%), every global/risk 80% floor and
-all six critical mutants caught. Every full functional gate step passes,
-including 206 draft cases and exact async/select repetitions. Publication and
-exact-SHA CI closure remain tracker steps. Complete VM latency,
-native UUID ABI/AOT, SIMD and code-size measurements are not claimed.
-The conformance implementation is `verified-public-hosted-vm-and-native-kernel-process` in
-[testing/stdlib-uuid-conformance.json](./testing/stdlib-uuid-conformance.json)
-and [docs/contracts/stdlib-uuid-conformance.md](./docs/contracts/stdlib-uuid-conformance.md).
-Five groups compare seventy-seven exact public hosted VM and native Rust-kernel
-observations, with an independent model before VM execution. Fifteen additional
-VM capability checks preserve sealed first-provider values after direct,
-alias and `defer` static checks. The full fifty-four-vector prerequisite corpus
-is distinct from the fifty-two common public-call vectors; two kernel-only
-configuration controls retain separate proof. Three Rust adapter tests and seven
-report-law tests pass, alongside 174 invalid records and all 2,650 workspace
-Rust tests. Clean committed capture and every full functional gate step pass
-on the frozen source. Source-bound quality verifies 295,206 of 322,169 lines
-(91.6308%), every global/risk 80% line/function/region floor and all six selected
-critical mutants caught. Source `24859a1` and tracker closure `0173d30` pass
-exact-SHA CI confirmation. Native UUID ABI/provider/AOT promotion is not claimed.
-The [public Tondo usage guide](./docs/contracts/stdlib-uuid.md#executable-usage-guide-for-stduuid)
-and [canonical program](./tests/runtime/m11-std-uuid-doc-001.to) cover all fourteen
-UUID operations in six paths. Seven checked fragments include the entry point;
-the guide and actual program must agree before execution. The documentation
-record is `verified-public-hosted-usage`. Checks pass 326 invalid records/guide
-fixtures and both local
-progression states, execute the documented project and core/v5 without provider
-grants, and observe actual `E1008` refusals. v4/v7 use production OS providers.
-The guide records nominal errors, encoding choices, copies, limits and costs,
-without a uniqueness, strict-monotonicity, public provider-setter or native UUID
-claim. All 2,650 workspace Rust tests and every full functional gate step pass.
-Source-bound quality measures 295,204 of 322,169 lines (91.6302%), preserves
-every global/risk 80% line/function/region floor and catches all six selected
-critical mutants. Publication and exact-SHA CI closure remain pending in the
-tracker; the next owner is `STD-NET-IMPL-001`.
+- `Uuid` es `Copy`, `Equatable` y `Key`, implementa `Ordered` por sus bytes como
+  números sin signo, en orden de red, y `Display` lo escribe en minúsculas con
+  guiones.
+- `v4` toma 122 bits de la entropía del sistema. `v5` es SHA-1 sobre los bytes
+  del namespace seguidos del nombre: el mismo par da siempre el mismo UUID, que
+  no es secreto. `v7` pone los milisegundos Unix UTC en los 48 bits altos y 74
+  bits de entropía detrás, así que ordena por creación entre milisegundos
+  distintos; no guarda contadores ni estado.
+- `parse` acepta `8-4-4-4-12` en hexadecimal de cualquier caja, con o sin
+  `urn:uuid:` delante; otra forma es `UuidError.InvalidText`. `fromBytes` exige
+  dieciséis bytes. Ambos conservan UUIDs de cualquier versión o variante; los
+  generadores solo producen la variante de RFC 9562.
+- Un provider o generador no puede importar `std.uuid` ni `std.random` (27.7
+  del lenguaje): sus valores dependen del momento y de la máquina.
 
 ### 14.18 `std.log`
 
@@ -3645,6 +3599,80 @@ Los benchmarks separan parse, validate, typed decode, dynamic decode, encode,
 streaming y allocation. También miden profundidad hostil, strings con escapes,
 maps grandes, unknown fields y chunks mínimos; optimizar el happy path no puede
 convertir un input adversario en consumo no acotado.
+
+### 14.20 `std.encoding`
+
+`std.encoding` escribe datos binarios como texto y los lee de vuelta:
+
+~~~tondo pseudocode
+pub enum Base64Alphabet { Standard, Url }
+pub enum EncodingError { InvalidCharacter(Int), Truncated, NotUtf8 }
+
+pub fn base64Encode(bytes: Array[Byte], alphabet: Base64Alphabet = Base64Alphabet.Standard): String
+pub fn base64Decode(text: String, alphabet: Base64Alphabet = Base64Alphabet.Standard): Array[Byte] ! EncodingError
+pub fn hexEncode(bytes: Array[Byte]): String
+pub fn hexDecode(text: String): Array[Byte] ! EncodingError
+pub fn urlEncode(text: String): String
+pub fn urlDecode(text: String): String ! EncodingError
+~~~
+
+- Base64 sigue RFC 4648: `Standard` usa `+` y `/` y rellena con `=`; `Url` usa
+  `-` y `_` y no rellena. Al leer, el relleno es opcional en ambos.
+- `hexEncode` escribe dos dígitos minúsculos por byte; `hexDecode` acepta
+  cualquier caja.
+- `urlEncode` escribe cada byte del UTF-8 como `%XX` salvo letras, dígitos, `-`,
+  `.`, `_` y `~` (RFC 3986), así que sirve para un segmento de path o un valor de
+  query. `urlDecode` lee `%XX` y deja `+` como está.
+- Un carácter que la codificación no usa es `InvalidCharacter` con su offset en
+  bytes; un texto que acaba a mitad de un valor, `Truncated`; lo que `urlDecode`
+  lee y no es UTF-8, `NotUtf8`.
+
+### 14.21 `std.hash`
+
+`std.hash` calcula digests y HMAC (RFC 2104):
+
+~~~tondo pseudocode
+pub type Digest
+pub fn Digest.bytes(self): Array[Byte]
+pub fn Digest.hex(self): String
+
+pub fn sha1(data: Array[Byte]): Digest
+pub fn sha256(data: Array[Byte]): Digest
+pub fn sha512(data: Array[Byte]): Digest
+pub fn hmacSha256(key: Array[Byte], data: Array[Byte]): Digest
+pub fn hmacSha512(key: Array[Byte], data: Array[Byte]): Digest
+~~~
+
+`Display` de un `Digest` es su hexadecimal minúsculo:
+`hash.sha256(text.bytes())` se interpola directamente. SHA-1 existe para los
+formatos que lo nombran, como UUIDv5 y Git; para seguridad se usa SHA-256.
+
+### 14.22 `std.random`
+
+`std.random` da valores pseudoaleatorios de un generador explícito; no hay
+estado global:
+
+~~~tondo pseudocode
+pub type Random
+pub fn Random.seeded(seed: Int): Random
+pub fn Random.new(): Random
+pub fn Random.int(mut self, range: Range[Int]): Int
+pub fn Random.float(mut self): Float
+pub fn Random.bool(mut self): Bool
+pub fn Random.bytes(mut self, count: Int): Array[Byte]
+pub fn Random.shuffled[T](mut self, items: Array[T]): Array[T]
+pub fn Random.choice[T](mut self, items: Array[T]): T?
+pub fn entropy(count: Int): Array[Byte]
+~~~
+
+- El generador es SplitMix64: la misma semilla da los mismos valores en
+  cualquier máquina. `Random.new()` toma la semilla de la entropía del sistema.
+- `int` da cada valor del rango con la misma probabilidad, sin sesgo:
+  `dice.int(1..=6)`. Un rango vacío, o con más valores que `Int.max`, es un
+  pánico. `float` da un valor de `[0, 1)` con 53 bits; `shuffled` es
+  Fisher-Yates sobre una copia; `choice` da `none` sin elementos.
+- El generador no sirve para secretos: claves, tokens y nonces usan
+  `random.entropy(count)`, que lee la entropía del sistema.
 
 ---
 

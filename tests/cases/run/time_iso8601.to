@@ -1,0 +1,28 @@
+// ISO 8601 text in std.time.
+
+import std.console
+import std.time
+
+fn main(): !time.TimeError {
+    for text in ["2026-10-22", "2026-10-22T06:38:28Z", "2026-10-22 08:38:28.5+02:00", "2024-02-29t23:59:59.123456789123-0130", "1999-12-31T23:59+01"] {
+        let date = time.parseDateTime(text)?
+        console.println("{date} {time.utc(date.sinceEpoch()) == date}")
+    }
+    for text in ["2023-02-29", "2026-13-01", "2026-10-22T25:00Z", "2026-10-22T06:38:28.Z", "nope", "2026-10-22T06:38:28Zjunk"] {
+        console.println("{time.parseDateTime(text)}")
+    }
+    console.println("{time.parseDateTime("1970-01-01T00:00:01Z")?.sinceEpoch()}")
+}
+
+// expect-stdout: 2026-10-22T00:00:00Z true
+// expect-stdout: 2026-10-22T06:38:28Z true
+// expect-stdout: 2026-10-22T06:38:28.5Z true
+// expect-stdout: 2024-03-01T01:29:59.123456789Z true
+// expect-stdout: 1999-12-31T22:59:00Z true
+// expect-stdout: err(invalid date time)
+// expect-stdout: err(invalid date time)
+// expect-stdout: err(invalid date time)
+// expect-stdout: err(invalid date time)
+// expect-stdout: err(invalid date time)
+// expect-stdout: err(invalid date time)
+// expect-stdout: 1s

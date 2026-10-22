@@ -1,0 +1,24 @@
+// std.uuid.
+
+import std.console
+import std.uuid
+
+fn main(): !uuid.UuidError {
+    let dns = uuid.Uuid.namespaceDns()
+    let id = uuid.Uuid.v5(dns, "python.org")
+    console.println("{dns} {id} {id.version()}")
+    let (a, b) = (uuid.Uuid.v4(), uuid.Uuid.v7())
+    console.println("{a.version()} {b.version()} {a != b} {"{a}".length()} {uuid.Uuid.fromBytes(b.bytes())? == b}")
+    let parsed = uuid.Uuid.parse("URN:UUID:6BA7B810-9DAD-11D1-80B4-00C04FD430C8")?
+    console.println("{parsed == dns} {uuid.Uuid.nil()} {uuid.Uuid.parse("nope")} {uuid.Uuid.fromBytes([])}")
+    var seen: Set[uuid.Uuid] = Set[]
+    seen.insert(dns)
+    seen.insert(parsed)
+    let (first, second) = (uuid.Uuid.v7(), uuid.Uuid.v7())
+    console.println("{seen.length()} {dns.compare(id)} {first.compare(second) <= 0} {[id, dns].sorted() == [dns, id]}")
+}
+
+// expect-stdout: 6ba7b810-9dad-11d1-80b4-00c04fd430c8 886313e1-3b8a-5372-9b90-0c9aee199e5d 5
+// expect-stdout: 4 7 true 36 true
+// expect-stdout: true 00000000-0000-0000-0000-000000000000 err(a UUID is written `8-4-4-4-12` in hexadecimal) err(a UUID has sixteen bytes)
+// expect-stdout: 1 -1 true true

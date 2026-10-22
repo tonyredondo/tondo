@@ -936,3 +936,19 @@ that take the element first, keeping the textual order of evaluation.
 `String.chars()` walks the text by byte offset with one runtime call per
 character, and `Array.iter()` is the lazy counterpart of the eager array
 methods. The prelude's intrinsic types show their own names in messages.
+
+## 2026-10-23 — Encoding, digests, randomness and UUIDs in Tondo
+
+`std.encoding`, `std.hash`, `std.random`, `std.uuid` and `std.format` are
+written in Tondo over one internal module, `std.internal.codec`, whose
+runtime side does the byte work: Base64, hexadecimal and percent-encoding,
+SHA and HMAC through the RustCrypto crates, the system's entropy from
+`/dev/urandom`, and SplitMix64's mixing. A decoder checks first and decodes
+after, so an error names its offset without a status protocol. Tondo's
+checked arithmetic cannot step a generator, so the runtime mixes a seed and
+a counter, and the generator is a record of both. A `Uuid` holds its
+lowercase hexadecimal, which is `Key` and orders as its bytes do; an
+`Array[Byte]` is not `Key`. ISO 8601 parsing and `DateTime.sinceEpoch()` are
+Tondo in a module that `import std.time` links, like `std.testing` links
+`std.json`. Providers and generators cannot import `std.random` or
+`std.uuid`, whose values depend on the moment and the machine.

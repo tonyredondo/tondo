@@ -1,0 +1,128 @@
+// The parts of std.time (standard library 14.3.4) written in Tondo, which
+// a program that imports std.time links with: ISO 8601 text and dates as
+// times since the Unix epoch.
+
+import std.time as __time
+
+/// `time.parseDateTime`: `2026-10-22`, `2026-10-22T06:38:28Z`,
+/// `2026-10-22 08:38:28.5+02:00` and the like, in UTC.
+fn parse(input: String): __time.DateTime ! __time.TimeError {
+    let chars = input.chars().collect()
+    var at = 0
+    // The number `count` digits write from `at` on.
+    let number = (from: Int, count: Int) {
+        var value = 0
+        for index in from..from + count {
+            match chars.get(index) {
+                some(c) if c.isDigit() => value = value * 10 + c.code() - '0'.code()
+                _ => return -1
+            }
+        }
+        value
+    }
+    let year = number(0, 4)
+    let month = number(5, 2)
+    let day = number(8, 2)
+    if chars.get(4) != some('-') or chars.get(7) != some('-') {
+        fail __time.TimeError.InvalidDateTime
+    }
+    at = 10
+    var (hour, minute, second, nanosecond, offset) = (0, 0, 0, 0, 0)
+    if at < chars.length() {
+        if not (chars[at] in "Tt ") {
+            fail __time.TimeError.InvalidDateTime
+        }
+        hour = number(at + 1, 2)
+        minute = number(at + 4, 2)
+        if chars.get(at + 3) != some(':') {
+            fail __time.TimeError.InvalidDateTime
+        }
+        at += 6
+        if chars.get(at) == some(':') {
+            second = number(at + 1, 2)
+            at += 3
+            if chars.get(at) == some('.') {
+                at += 1
+                var digits = 0
+                for at < chars.length() and chars[at].isDigit() {
+                    if digits < 9 {
+                        nanosecond = nanosecond * 10 + chars[at].code() - '0'.code()
+                        digits += 1
+                    }
+                    at += 1
+                }
+                if digits == 0 {
+                    fail __time.TimeError.InvalidDateTime
+                }
+                for _ in digits..9 {
+                    nanosecond *= 10
+                }
+            }
+        }
+        match chars.get(at) {
+            some(c) if c == 'Z' or c == 'z' => at += 1
+            some(sign) if sign == '+' or sign == '-' => {
+                let hours = number(at + 1, 2)
+                let minutes = match chars.get(at + 3) {
+                    some(':') => {
+                        at += 6
+                        number(at - 2, 2)
+                    }
+                    some(_) => {
+                        at += 5
+                        number(at - 2, 2)
+                    }
+                    none => {
+                        at += 3
+                        0
+                    }
+                }
+                if hours < 0 or hours > 23 or minutes < 0 or minutes > 59 {
+                    fail __time.TimeError.InvalidDateTime
+                }
+                offset = (hours * 60 + minutes) * 60
+                if sign == '-' {
+                    offset = -offset
+                }
+            }
+            _ => {}
+        }
+    }
+    // The years whose times since the epoch fit in a `Duration`.
+    let valid = at == chars.length() and year >= 1678 and year <= 2261 and month >= 1 and month <= 12
+        and day >= 1 and day <= daysIn(year, month) and hour >= 0 and hour <= 23 and minute >= 0
+        and minute <= 59 and second >= 0 and second <= 59
+    if not valid {
+        fail __time.TimeError.InvalidDateTime
+    }
+    let seconds = days(year, month, day) * 86400 + hour * 3600 + minute * 60 + second - offset
+    __time.utc(__time.nanoseconds(seconds * 1000000000 + nanosecond))
+}
+
+/// `DateTime.sinceEpoch()`: the inverse of `time.utc`.
+fn sinceEpoch(date: __time.DateTime): __time.Duration {
+    let seconds = days(date.year, date.month, date.day) * 86400 + date.hour * 3600 + date.minute * 60 + date.second
+    __time.nanoseconds(seconds * 1000000000 + date.nanosecond)
+}
+
+/// Days from 1970-01-01 to a date of the proleptic Gregorian calendar
+/// (Howard Hinnant's algorithm).
+fn days(year: Int, month: Int, day: Int): Int {
+    let y = if month <= 2 { year - 1 } else { year }
+    let era = (if y >= 0 { y } else { y - 399 }) / 400
+    let yoe = y - era * 400
+    let doy = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    era * 146097 + doe - 719468
+}
+
+fn daysIn(year: Int, month: Int): Int {
+    let leap = year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+    if month == 2 {
+        if leap { 29 } else { 28 }
+    } else if month == 4 or month == 6 or month == 9 or month == 11 {
+        30
+    } else {
+        31
+    }
+}

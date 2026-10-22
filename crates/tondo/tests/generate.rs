@@ -125,6 +125,10 @@ limits = { steps = \"1000\" }
 program = \"gen/files.to\"
 outputs = [\"files\"]
 
+[generators.dice]
+program = \"gen/dice.to\"
+outputs = [\"dice\"]
+
 [generators.broken]
 program = \"gen/broken.to\"
 outputs = [\"broken\"]
@@ -154,6 +158,7 @@ outputs = [\"reads\"]
         ("gen/partial.to", write("one", "pub const A: Int = 1")),
         ("gen/spin.to", generator("    var n = 0\n    for {\n        n += 1\n    }")),
         ("gen/files.to", format!("import std.fs\n{}", write("files", "pub const A: Int = 1"))),
+        ("gen/dice.to", format!("import std.random\n{}", write("dice", "pub const A: Int = 1"))),
         ("gen/broken.to", write("broken", "fn (")),
         ("gen/derives.to", write("derives", "derive x.Y for Z")),
         ("gen/hand.to", write("models", "pub const A: Int = 1")),
@@ -166,6 +171,7 @@ outputs = [\"reads\"]
         "error[E2106]: the generator `[generators.partial]` of the package `app`: the output `two` is not written",
         "error[E2107]: the generator `[generators.spin]` of the package `app`: it spent its budget of 1000 steps; `limits = { steps = \"...\" }` raises it",
         "error[E2108]: the generator `[generators.files]` of the package `app`: it uses what a generator cannot: it does not compile:\nerror[E2108]: `std.fs` is not available to a provider or generator",
+        "error[E2108]: the generator `[generators.dice]` of the package `app`: it uses what a generator cannot: it does not compile:\nerror[E2108]: `std.random` is not available to a provider or generator",
         "error[E2105]: the generator `[generators.broken]` of the package `app`: its output `broken` is not valid Tondo source; `tondo expand` shows it",
         "error[E2105]: the generator `[generators.derives]` of the package `app`: its output `derives` has a `derive`",
         "error[E2106]: the generator `[generators.hand]` of the package `app`: its output `models` would replace a module written by hand",
