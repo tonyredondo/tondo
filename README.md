@@ -22,6 +22,11 @@ Hello, world
 
 ## Using it
 
+Every CI run leaves a ready `tondo` for each platform as an artifact,
+`tondo-<target>` (x86-64 and arm64 Linux with glibc and musl, macOS on Apple
+silicon and Intel): `bin/tondo` is the whole toolchain, and it needs only a
+C toolchain (`cc`) to link (`dist/README.md`).
+
 Building requires Rust (the version is pinned in `rust-toolchain.toml`) and a C
 toolchain (`cc`), which is used as the linker.
 

@@ -5,12 +5,22 @@ on:
     branches: [main]
   pull_request:
 
+# Each job tests, then packs the `tondo` it built for its platform as an
+# artifact: dist/tondo-<target>.tar.gz.
 jobs:
   test:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel]
+        include:
+          - os: ubuntu-latest
+            target: x86_64-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-linux-gnu
+          - os: macos-latest
+            target: aarch64-macos
+          - os: macos-15-intel
+            target: x86_64-macos
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -20,6 +30,12 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - run: dist/package.sh ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tondo-${{ matrix.target }}
+          path: dist/tondo-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
 
   # Linux with musl, as Alpine has it. The checkout runs on the host, since
   # its Node cannot run on Alpine for arm64.
@@ -27,7 +43,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm]
+        include:
+          - os: ubuntu-latest
+            target: x86_64-linux-musl
+          - os: ubuntu-24.04-arm
+            target: aarch64-linux-musl
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -35,4 +55,10 @@ jobs:
           docker run --rm -v "$PWD:/work" -w /work rust:alpine sh -c
           "apk add --no-cache musl-dev zlib-dev zlib-static git curl tar &&
           (rustup show active-toolchain || rustup toolchain install) &&
-          cargo test --workspace"
+          cargo test --workspace &&
+          dist/package.sh ${{ matrix.target }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tondo-${{ matrix.target }}
+          path: dist/tondo-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
