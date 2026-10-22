@@ -5,7 +5,8 @@ fn main() {
     let text = fs.readFile("a.txt")
     let other = fs.open("a.txt")
     _ = fs.writeBytes("a.bin", [1, 2])
-    _ = fs.open(path: "a.txt", mode: fs.OpenMode.Read)
+    _ = path.join(base: "a", "b")
+    fs.removeAll("tmp")
     match fs.open("a.txt", fs.OpenMode.Read) {
         ok(file) => {
             _ = file.readLine()
@@ -18,9 +19,10 @@ fn main() {
 }
 
 // expect-error: E1001 module `fs` has no function `readFile`; use `fs.readText`
-// expect-error: E1102 missing argument 2, of type `fs.OpenMode`
+// expect-error: E1102 missing argument `mode`, of type `fs.OpenMode`
 // expect-error: E1102 an integer literal is not a `Byte`: write `Byte(1u8)`
 // expect-error: E1102 a standard function takes positional arguments; remove the name
+// expect-error: E1001 module `fs` has no function `removeAll`; use `fs.remove(path, recursive: true)`
 // expect-error: E1411 `readLine` changes `file`, which is not declared with `var`: declare it as `var file`
 // expect-error: E1001 module `fs` has no type `Mode`
 // expect-error: E1001 module `path` has no function `basename`; use `path.fileName`

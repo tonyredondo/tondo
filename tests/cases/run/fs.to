@@ -4,7 +4,7 @@ import std.path
 
 fn files(dir: String): Unit ! fs.FsError {
     if fs.exists(dir) {
-        fs.removeAll(dir)?
+        fs.remove(dir, recursive: true)?
     }
     fs.createDirectory(path.join(dir, "nested/deeper"))?
     fs.createDirectory(dir)?
@@ -71,11 +71,15 @@ fn files(dir: String): Unit ! fs.FsError {
         ok(_) => console.println("unexpected"),
         err(error) => console.println("read a directory: {error}"),
     }
-    match fs.list(notes) {
+    match fs.list(path: notes) {
         ok(_) => console.println("unexpected"),
         err(error) => console.println("list a file: {error}"),
     }
-    fs.removeAll(dir)?
+    match fs.remove(dir) {
+        ok(_) => console.println("unexpected"),
+        err(error) => console.println("remove a full directory: {error}"),
+    }
+    fs.remove(dir, recursive: true)?
     console.println("cleaned {fs.exists(dir)}")
 }
 
@@ -123,6 +127,7 @@ fn main() {
 // expect-stdout: create new: already exists
 // expect-stdout: read a directory: is a directory
 // expect-stdout: list a file: not a directory
+// expect-stdout: remove a full directory: is a directory
 // expect-stdout: cleaned false
 // expect-stdout: done
 // expect-stdout: docs/guide.md

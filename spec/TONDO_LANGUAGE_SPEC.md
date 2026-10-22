@@ -3211,7 +3211,7 @@ Reglas:
 - Los argumentos posicionales deben preceder a los nombrados.
 - Después del primer argumento nombrado, todos los siguientes son nombrados.
 - Un argumento nombrado debe coincidir exactamente con el parámetro.
-- Cada parámetro fijo se proporciona exactamente una vez; el variádico recibe cero o más elementos.
+- Cada parámetro fijo se proporciona exactamente una vez, salvo que tenga valor por defecto; el variádico recibe cero o más elementos.
 - La evaluación conserva orden textual, no orden de declaración.
 - Los nombres de parámetros públicos, salvo el descarte `_`, forman parte del contrato fuente de la API.
 
@@ -3224,7 +3224,28 @@ parámetro no necesita el body concreto. Un parámetro variádico sí necesita u
 nombre ordinario porque ese nombre identifica tanto el pack como su spread
 nombrado.
 
-Tondo 0.1 no tiene parámetros por defecto, sobrecarga de funciones por firma ni conversión implícita de tupla a argumentos. Alternativas configurables se expresan mediante un record de opciones.
+Un parámetro por valor puede declarar un valor por defecto, que la llamada usa
+cuando omite el argumento:
+
+~~~tondo
+fn remove(path: String, recursive: Bool = false): Unit ! FsError
+
+remove("cache")
+remove("cache", recursive: true)
+~~~
+
+El valor por defecto es una constante: un literal, `none`, `[]`, `[:]`, o una
+variante, tuple o record cuyos componentes también lo son, con operadores
+aritméticos entre ellos. Se evalúa en cada llamada que lo usa, en el scope del
+módulo de la función, y no puede nombrar otros parámetros. Los parámetros con
+valor por defecto pueden ir en cualquier posición, pero solo los que siguen al
+último argumento posicional pueden omitirse; los demás se dan por nombre. Un
+parámetro `ref`, `mut`, `var` o variádico no tiene valor por defecto, y
+tampoco los métodos de un trait ni sus implementaciones, cuyas firmas deben
+coincidir. El tipo `fn(...)` de una función no conserva sus valores por
+defecto: una llamada a través de él da todos los argumentos.
+
+Tondo no tiene sobrecarga de funciones por firma ni conversión implícita de tupla a argumentos. Varias decisiones relacionadas se agrupan en un record de opciones.
 
 Un parámetro `ref` observa temporalmente un valor sin copiarlo ni moverlo. El modo
 aparece en firma y llamada:
@@ -8643,7 +8664,8 @@ method_owner    = identifier, [ generic_params ] ;
 parameter_list  = "(", [ parameter,
                   { ",", parameter }, [ "," ] ], ")" ;
 
-parameter       = identifier, ":", [ parameter_modifier ], type_expr
+parameter       = identifier, ":", [ parameter_modifier ], type_expr,
+                  [ "=", expression ]
                 | identifier, ":", "...", type_expr
                 | "self"
                 | receiver_modifier, "self" ;
@@ -9781,9 +9803,10 @@ alternativas. No existen formas globales `SArray`, `SMap`, `SSet`, `Stack` o
 
 No hay punto y coma. Las llaves delimitan bloques; la indentación es canónica pero no define scope.
 
-### 25.20 Parámetros por defecto y packs heterogéneos
+### 25.20 Packs heterogéneos
 
-Los parámetros por defecto no forman parte de 0.1; un record de opciones conserva evolución de API. Los variádicos existen únicamente como un pack final homogéneo `...T`. No hay parameter packs heterogéneos, variadic generics ni conversión automática desde tuples.
+Los parámetros por defecto existen solo como constantes (11.3); no hay valores
+por defecto calculados a partir de otros parámetros. Los variádicos existen únicamente como un pack final homogéneo `...T`. No hay parameter packs heterogéneos, variadic generics ni conversión automática desde tuples.
 
 ### 25.21 Generators y concurrencia no estructurada
 

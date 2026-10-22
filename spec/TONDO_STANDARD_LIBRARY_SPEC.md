@@ -570,10 +570,12 @@ abreviatura aceptada no crea también un alias largo.
 
 ### 6.3 Parámetros y configuración
 
-Tondo no tiene overload por firma ni parámetros por defecto. La stdlib utiliza:
+Tondo no tiene overload por firma. La stdlib utiliza:
 
 - Parámetros ordinarios para datos obligatorios.
 - Parámetros nombrados cuando mejoran claridad sin cambiar la firma.
+- Un parámetro con valor por defecto para una decisión opcional, como
+  `fs.remove(path, recursive: true)`.
 - Un record `Options` nominal cuando existen varias decisiones opcionales.
 - Un enum cuando un valor elige modos semánticamente distintos.
 - Un variádico homogéneo únicamente cuando cero o más valores del mismo tipo
@@ -953,7 +955,7 @@ fs.writeText("out.txt", report)?
 fs.appendText("app.log", "started\n")?
 let image = fs.readBytes("logo.png")?
 if fs.exists("cache") {
-    fs.removeAll("cache")?
+    fs.remove("cache", recursive: true)?
 }
 for name in fs.list("docs")? {
     console.println(name)
@@ -997,8 +999,7 @@ pub fn list(path: String): Array[String] ! FsError
 pub fn createDirectory(path: String): Unit ! FsError
 pub fn rename(from: String, to: String): Unit ! FsError
 pub fn copy(from: String, to: String): Unit ! FsError
-pub fn remove(path: String): Unit ! FsError
-pub fn removeAll(path: String): Unit ! FsError
+pub fn remove(path: String, recursive: Bool = false): Unit ! FsError
 pub fn open(path: String, mode: OpenMode): File ! FsError
 
 pub fn File.readLine(var self): String? ! FsError
@@ -1023,7 +1024,8 @@ pub fn File.close(self): Unit ! FsError
   bytes.
 - `createDirectory` crea también los directorios padre que falten y no falla si
   el directorio ya existe. `remove` borra un archivo, un enlace o un directorio
-  vacío; `removeAll` borra un directorio con su contenido sin seguir enlaces.
+  vacío; un directorio con contenido da `IsADirectory`, salvo con
+  `recursive: true`, que lo borra con su contenido sin seguir enlaces.
 - `open` con `Read` lee un archivo existente; `Write` lo crea o lo vacía;
   `Append` lo crea si falta y escribe al final; `CreateNew` falla con
   `AlreadyExists` si ya existe; `ReadWrite` lee y escribe uno existente.

@@ -456,3 +456,14 @@ threads while the task waits, so a slow disk never holds a worker, and
 whole-file writes go through a temporary file and a rename, so a reader
 never sees half a file. There is no capability for the filesystem: a
 program that imports `std.fs` uses it.
+
+## 2026-10-22 — Parameters with default values
+
+An optional decision such as deleting a directory with its contents is one
+parameter, `fs.remove(path, recursive: true)`, rather than a second
+function or an options record. Defaults are constants (literals, `none`,
+`[]`, or variants, tuples and records of them), evaluated at each call that
+omits the argument, so they never depend on other parameters or on state.
+Loans, variadic parameters and trait methods have none, and a `fn(...)`
+value forgets them. LLM authors write defaults in Python, C# and Kotlin;
+the error for a missing argument now names its type.

@@ -499,7 +499,12 @@ impl Formatter<'_> {
             mode => format!("{} ", mode.keyword()),
         };
         let variadic = if param.variadic { "..." } else { "" };
-        concat(vec![text(format!("{}: {mode}{variadic}", param.name.name)), self.ty(ty)])
+        let mut parts = vec![text(format!("{}: {mode}{variadic}", param.name.name)), self.ty(ty)];
+        if let Some(default) = &param.default {
+            parts.push(text(" = "));
+            parts.push(self.expr(default));
+        }
+        concat(parts)
     }
 
     // ---- types -----------------------------------------------------------

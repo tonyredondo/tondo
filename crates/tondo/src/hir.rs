@@ -650,7 +650,6 @@ pub enum FsFn {
     Rename,
     Copy,
     Remove,
-    RemoveAll,
     Open,
     ReadLine,
     Read,

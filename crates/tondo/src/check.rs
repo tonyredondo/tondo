@@ -296,6 +296,9 @@ struct Signature {
     generics: Vec<Ty>,
     /// The name diagnostics use for the callee.
     name: String,
+    /// The value of each parameter a call may omit, by parameter; empty when
+    /// none has one.
+    defaults: Vec<Option<hir::Expr>>,
 }
 
 impl Signature {
@@ -312,11 +315,37 @@ impl Signature {
             result,
             generics: Vec::new(),
             name: String::new(),
+            defaults: Vec::new(),
         }
+    }
+
+    /// Whether a call may omit the parameter at the index.
+    fn has_default(&self, index: usize) -> bool {
+        self.defaults.get(index).is_some_and(Option::is_some)
     }
 }
 
 const INTRINSICS: [&str; 3] = ["panic", "assert", "channel"];
+
+/// Whether a value is the same at every evaluation and has no effects, as a
+/// default value must be.
+fn constant(value: &mut hir::Expr) -> bool {
+    constant_parts(value).is_some_and(|parts| parts.into_iter().all(constant))
+}
+
+/// The components of a constant; `None` for a value that is not one.
+fn constant_parts(value: &mut hir::Expr) -> Option<Vec<&mut hir::Expr>> {
+    use hir::ExprKind as K;
+    Some(match &mut value.kind {
+        K::Int(_) | K::Float(_) | K::Char(_) | K::Bool(_) | K::Str(_) | K::Unit => Vec::new(),
+        K::Unary(_, inner) | K::Retype(inner) | K::Convert(inner) => vec![inner],
+        K::Binary(_, left, right) => vec![left, right],
+        K::Aggregate(items) | K::Array(items) | K::Set(items) => items.iter_mut().collect(),
+        K::Record(fields) | K::Variant(_, fields) => fields.iter_mut().map(|(_, v)| v).collect(),
+        K::Map(entries) => entries.iter_mut().flat_map(|(k, v)| [k, v]).collect(),
+        _ => return None,
+    })
+}
 
 /// The function other languages' names for a standard operation mean.
 fn std_alias(module: &str, member: &str) -> String {
@@ -330,7 +359,7 @@ fn std_alias(module: &str, member: &str) -> String {
             "createDirectory"
         }
         ("fs", "delete" | "unlink" | "removeFile" | "rmdir" | "removeDir") => "remove",
-        ("fs", "rmrf" | "removeDirAll" | "deleteAll" | "removeTree") => "removeAll",
+        ("fs", "removeAll" | "rmrf" | "removeDirAll" | "deleteAll" | "removeTree") => "remove(path, recursive: true)",
         ("fs", "readDir" | "readdir" | "listDir" | "listDirectory" | "entries") => "list",
         ("fs", "move" | "mv") => "rename",
         ("fs", "stat" | "isFile" | "isDir" | "isDirectory") => "metadata",
@@ -554,6 +583,9 @@ impl Checker<'_> {
                 self.implementation(decl, &mut bodies);
             }
         }
+        for (index, f) in fns.iter().enumerate() {
+            self.defaults(f, FnId(index as u32));
+        }
         self.check_termination();
 
         // Closure bodies are numbered after every declared function and the
@@ -628,6 +660,7 @@ impl Checker<'_> {
             result: Ty::STRING,
             generics: vec![self_param],
             name: "Display.display".into(),
+            defaults: Vec::new(),
         };
         let display = TraitMethod { name: "display".into(), signature, default: None };
         self.traits.push(TraitDef { name: "Display".into(), self_param, params: Vec::new(), methods: vec![display] });
@@ -645,6 +678,7 @@ impl Checker<'_> {
             result: self.types.intern(TyKind::Option(element)),
             generics: vec![self_param, element],
             name: "Iterator.next".into(),
+            defaults: Vec::new(),
         };
         let next = TraitMethod { name: "next".into(), signature, default: None };
         self.traits.push(TraitDef { name: "Iterator".into(), self_param, params: vec![element], methods: vec![next] });
@@ -1187,6 +1221,60 @@ impl Checker<'_> {
 
     /// The signature of `f` declared in `outer` (an impl or trait scope, or
     /// the module), recording the scope its body is checked in.
+    /// Checks the default values of a function's parameters against their
+    /// types, once every name of the module is known.
+    fn defaults(&mut self, f: &ast::FnDecl, id: FnId) {
+        if f.params.iter().all(|p| p.default.is_none()) {
+            return;
+        }
+        let module = std::mem::replace(&mut self.module, f.module);
+        let mut defaults = Vec::new();
+        for (index, param) in f.params.iter().enumerate() {
+            let Some(default) = &param.default else {
+                defaults.push(None);
+                continue;
+            };
+            if param.mode != ast::Mode::Value || param.variadic {
+                let message = if param.variadic {
+                    "a variadic parameter has no default value: omitted, it is empty"
+                } else {
+                    "a loan parameter has no default value: it lends the caller's place"
+                };
+                self.diags.error("E1102", default.span, message);
+                defaults.push(None);
+                continue;
+            }
+            let ty = self.signatures[id.0 as usize].params[index];
+            let mut cx = self.new_cx(Ty::UNIT);
+            let value = self.expr(&mut cx, default, Some(ty));
+            let mut value = self.coerce(value, ty);
+            if !constant(&mut value) && !self.types.has_error(value.ty) {
+                let message = "a default value is a constant: a literal, `none`, `[]`, or a variant, tuple or record of constants";
+                self.diags.error("E1102", default.span, message);
+            }
+            defaults.push(Some(value));
+        }
+        self.module = module;
+        self.signatures[id.0 as usize].defaults = defaults;
+    }
+
+    /// A trait method's parameters have no default values: implementations
+    /// could not agree on them.
+    fn no_defaults(&mut self, f: &ast::FnDecl) {
+        if let Some(default) = f.params.iter().find_map(|p| p.default.as_ref()) {
+            let message = "a trait method's parameters have no default values; declare an inherent method `fn Type.name(...)` with them";
+            self.diags.error("E1102", default.span, message);
+        }
+    }
+
+    /// A default value for a call whose type arguments are `map`.
+    fn instantiate(&mut self, value: &mut hir::Expr, map: &HashMap<Ty, Ty>) {
+        value.ty = self.types.subst(value.ty, map);
+        for part in constant_parts(value).unwrap_or_default() {
+            self.instantiate(part, map);
+        }
+    }
+
     fn signature(&mut self, f: &ast::FnDecl, owner: Option<Ty>, outer: FnScope) -> Signature {
         let outer_count = outer.types.len();
         self.type_params.extend(outer.types.iter().cloned());
@@ -1259,7 +1347,7 @@ impl Checker<'_> {
         };
         self.fn_scopes.push(scope);
         let modes = f.params.iter().map(|p| p.mode).collect();
-        Signature { params, names, receiver, modes, variadic, result, generics, name }
+        Signature { params, names, receiver, modes, variadic, result, generics, name, defaults: Vec::new() }
     }
 
     /// Declares the traits of the module: names and parameters first, so
@@ -1311,6 +1399,7 @@ impl Checker<'_> {
                 }
                 let mut signature = self.signature(f, None, scope.clone());
                 signature.name = format!("{}.{}", decl.name.name, f.name.name);
+                self.no_defaults(f);
                 let default = match &f.body {
                     Some(_) => {
                         let fn_id = FnId(bodies.len() as u32);
@@ -1450,6 +1539,7 @@ impl Checker<'_> {
             let id = FnId(bodies.len() as u32);
             let mut signature = self.signature(f, None, scope.clone());
             signature.name = format!("{trait_name}.{}", f.name.name);
+            self.no_defaults(f);
             let expected = &declared[index].1;
             if let Some(problem) = self.signature_mismatch(expected, &signature, &map, binders.len()) {
                 let message = format!("`{}` does not match `{trait_name}`: {problem}", f.name.name);
@@ -6527,6 +6617,7 @@ impl Checker<'_> {
             result,
             generics: Vec::new(),
             name: "this function".into(),
+            defaults: Vec::new(),
         };
         // A placeholder callee; the checked arguments are what matters.
         let target = CallTarget::new(Callee::Fn(FnId(u32::MAX)), signature, expected);
@@ -7314,27 +7405,32 @@ impl Checker<'_> {
                 let s = Ty::STRING;
                 use hir::FsFn as F;
                 let (function, params, result) = match *member {
-                    "readText" => (F::ReadText, vec![s], failing(self, s)),
-                    "readBytes" => (F::ReadBytes, vec![s], failing(self, bytes)),
-                    "writeText" => (F::WriteText, vec![s, s], failing(self, Ty::UNIT)),
-                    "writeBytes" => (F::WriteBytes, vec![s, bytes], failing(self, Ty::UNIT)),
-                    "appendText" => (F::AppendText, vec![s, s], failing(self, Ty::UNIT)),
-                    "exists" => (F::Exists, vec![s], Ty::BOOL),
-                    "metadata" => (F::Metadata, vec![s], failing(self, fs.metadata)),
-                    "list" => (F::List, vec![s], failing(self, names)),
-                    "createDirectory" => (F::CreateDirectory, vec![s], failing(self, Ty::UNIT)),
-                    "rename" => (F::Rename, vec![s, s], failing(self, Ty::UNIT)),
-                    "copy" => (F::Copy, vec![s, s], failing(self, Ty::UNIT)),
-                    "remove" => (F::Remove, vec![s], failing(self, Ty::UNIT)),
-                    "removeAll" => (F::RemoveAll, vec![s], failing(self, Ty::UNIT)),
-                    "open" => (F::Open, vec![s, fs.mode], failing(self, fs.file)),
+                    "readText" => (F::ReadText, vec![("path", s)], failing(self, s)),
+                    "readBytes" => (F::ReadBytes, vec![("path", s)], failing(self, bytes)),
+                    "writeText" => (F::WriteText, vec![("path", s), ("text", s)], failing(self, Ty::UNIT)),
+                    "writeBytes" => (F::WriteBytes, vec![("path", s), ("data", bytes)], failing(self, Ty::UNIT)),
+                    "appendText" => (F::AppendText, vec![("path", s), ("text", s)], failing(self, Ty::UNIT)),
+                    "exists" => (F::Exists, vec![("path", s)], Ty::BOOL),
+                    "metadata" => (F::Metadata, vec![("path", s)], failing(self, fs.metadata)),
+                    "list" => (F::List, vec![("path", s)], failing(self, names)),
+                    "createDirectory" => (F::CreateDirectory, vec![("path", s)], failing(self, Ty::UNIT)),
+                    "rename" => (F::Rename, vec![("from", s), ("to", s)], failing(self, Ty::UNIT)),
+                    "copy" => (F::Copy, vec![("from", s), ("to", s)], failing(self, Ty::UNIT)),
+                    "remove" => (F::Remove, vec![("path", s), ("recursive", Ty::BOOL)], failing(self, Ty::UNIT)),
+                    "open" => (F::Open, vec![("path", s), ("mode", fs.mode)], failing(self, fs.file)),
                     _ => {
                         let message = format!("module `fs` has no function `{member}`{}", std_alias("fs", member));
                         self.diags.error("E1001", segments[1].span, message);
                         return Self::error_expr(span);
                     }
                 };
-                let signature = Signature::simple(params, result);
+                let (names, params): (Vec<&str>, Vec<Ty>) = params.into_iter().unzip();
+                let mut signature = Signature::simple(params, result);
+                signature.names = names.into_iter().map(String::from).collect();
+                if function == F::Remove {
+                    let recursive = Self::mk(hir::ExprKind::Bool(false), Ty::BOOL, span);
+                    signature.defaults = vec![None, Some(recursive)];
+                }
                 let target = CallTarget::new(Callee::Std(StdFn::Fs(function)), signature, expected);
                 self.call_signature(cx, target, None, args, span)
             }
@@ -7502,7 +7598,8 @@ impl Checker<'_> {
                 return Self::error_expr(span);
             }
         }
-        if let Some(missing) = slots.iter().position(Option::is_none) {
+        let omitted = |position: usize| slots[position].is_none() && !signature.has_default(first + position);
+        if let Some(missing) = (0..fixed).find(|&position| omitted(position)) {
             let message = match signature.names[first + missing].as_str() {
                 // A standard function's parameters have no names.
                 "" => format!(
@@ -7510,7 +7607,9 @@ impl Checker<'_> {
                     missing + 1,
                     self.display(signature.params[first + missing])
                 ),
-                name => format!("missing argument `{name}`"),
+                name => {
+                    format!("missing argument `{name}`, of type {}", self.display(signature.params[first + missing]))
+                }
             };
             self.diags.error("E1102", span, message);
             return Self::error_expr(span);
@@ -7640,9 +7739,17 @@ impl Checker<'_> {
         if let Some(receiver) = receiver {
             ordered.push((None, receiver));
         }
-        for slot in slots {
-            let index = slot.unwrap();
-            ordered.push((Some(index), values[index].take().unwrap()));
+        for (position, slot) in slots.into_iter().enumerate() {
+            match slot {
+                Some(index) => ordered.push((Some(index), values[index].take().unwrap())),
+                None => {
+                    let mut value =
+                        signature.defaults[first + position].clone().expect("an omitted argument has a default");
+                    self.instantiate(&mut value, &inference.map);
+                    value.span = span;
+                    ordered.push((None, value));
+                }
+            }
         }
         if let Some(array) = signature.variadic.then(|| signature.params[signature.params.len() - 1]) {
             let array = self.types.subst(array, &inference.map);

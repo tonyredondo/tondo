@@ -1,0 +1,38 @@
+trait Shape {
+    fn area(self, scale: Int = 1): Int
+}
+
+fn two(): Int {
+    2
+}
+
+fn a(x: Int = two()): Int {
+    x
+}
+
+fn b(values: var Array[Int] = []) {
+    values.push(1)
+}
+
+fn c(items: ...Int = [1]): Int {
+    items.length()
+}
+
+fn d(x: Int = "one"): Int {
+    x
+}
+
+fn e(first: Int, second: Int = 0): Int {
+    first + second
+}
+
+fn main() {
+    _ = e(second: 1)
+}
+
+// expect-error: E1102 a trait method's parameters have no default values; declare an inherent method `fn Type.name(...)` with them
+// expect-error: E1102 a default value is a constant: a literal, `none`, `[]`, or a variant, tuple or record of constants
+// expect-error: E1102 a loan parameter has no default value: it lends the caller's place
+// expect-error: E1102 a variadic parameter has no default value: omitted, it is empty
+// expect-error: E1102 expected `Int`, found `String`
+// expect-error: E1102 missing argument `first`

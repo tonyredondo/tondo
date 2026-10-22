@@ -1444,6 +1444,7 @@ impl Parser<'_> {
                 ty: None,
                 mode,
                 variadic: false,
+                default: None,
                 span: start.to(span),
             });
         }
@@ -1452,7 +1453,9 @@ impl Parser<'_> {
         let mode = self.mode();
         let variadic = mode == Mode::Value && self.eat(&Tok::Ellipsis);
         let ty = self.type_expr()?;
-        Ok(Param { span: name.span.to(ty.span), name, ty: Some(ty), mode, variadic })
+        let default = if self.eat(&Tok::Eq) { Some(self.expression()?) } else { None };
+        let span = name.span.to(self.prev_span());
+        Ok(Param { span, name, ty: Some(ty), mode, variadic, default })
     }
 
     fn mode(&mut self) -> Mode {

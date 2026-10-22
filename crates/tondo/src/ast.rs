@@ -230,6 +230,8 @@ pub struct Param {
     pub mode: Mode,
     /// `name: ...T`
     pub variadic: bool,
+    /// `name: T = value`: the value a call that omits the argument passes.
+    pub default: Option<Expr>,
     pub span: Span,
 }
 

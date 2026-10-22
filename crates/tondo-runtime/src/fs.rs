@@ -290,22 +290,15 @@ pub unsafe extern "C" fn tondo_rt_fs_copy(from: *const Str, to: *const Str) -> i
     unsafe { change(from, to, |from, to| std::fs::copy(from, to).map(|_| ())) }
 }
 
-/// `remove`: a file, a link or an empty directory.
+/// `remove`: a file, a link or an empty directory; with `recursive`, a
+/// directory and its contents, without following links.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_fs_remove(path: *const Str) -> i64 {
+pub unsafe extern "C" fn tondo_rt_fs_remove(path: *const Str, recursive: i64) -> i64 {
     unsafe {
-        change(path, std::ptr::null(), |p, _| {
-            if std::fs::symlink_metadata(&p)?.is_dir() { std::fs::remove_dir(p) } else { std::fs::remove_file(p) }
-        })
-    }
-}
-
-/// `removeAll`: a directory and its contents, without following links.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_fs_remove_all(path: *const Str) -> i64 {
-    unsafe {
-        change(path, std::ptr::null(), |p, _| {
-            if std::fs::symlink_metadata(&p)?.is_dir() { std::fs::remove_dir_all(p) } else { std::fs::remove_file(p) }
+        change(path, std::ptr::null(), move |p, _| match std::fs::symlink_metadata(&p)?.is_dir() {
+            true if recursive != 0 => std::fs::remove_dir_all(p),
+            true => std::fs::remove_dir(p),
+            false => std::fs::remove_file(p),
         })
     }
 }
