@@ -209,7 +209,7 @@ fn segments(path: String): Array[String] {
         match rest.find(".") {
             some(dot) => {
                 parts.push(piece(rest, 0, dot))
-                rest = piece(rest, dot + 1, rest.byteLength())
+                rest = piece(rest, dot + 1, rest.length())
             }
             none => {
                 parts.push(rest)
