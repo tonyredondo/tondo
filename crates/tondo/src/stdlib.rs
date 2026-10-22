@@ -23,6 +23,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("format", include_str!("../std/format.to")),
     ("uuid", include_str!("../std/uuid.to")),
     ("datetime", include_str!("../std/datetime.to")),
+    ("csv", include_str!("../std/csv.to")),
 ];
 
 /// The module written in Tondo an import brings.

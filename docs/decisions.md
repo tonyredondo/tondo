@@ -955,3 +955,14 @@ Tondo in a module that `import std.time` links, like `std.testing` links
 `random.entropy`: the checker knows these four and reports the call, and
 `v7` reads the clock through the runtime so that `std.uuid` does not import
 `std.time`.
+
+## 2026-10-23 — CSV streams through iterators of results
+
+`csv.rows` and `csv.records` are iterators whose elements are
+`T ! CsvError`, so a file of any size reads with `for row in csv.rows(file)`
+and `row?`, and every adapter applies. A record that spans lines is read a
+line at a time until its quotes close; the runtime checks and splits a
+record, and the Tondo side tracks lines for errors. `parse` and
+`parseRecords` read a whole text through the same iterators over
+`io.reader(text)`. The writer quotes only what needs it and ends lines with
+`\n`.

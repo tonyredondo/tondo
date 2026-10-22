@@ -1731,7 +1731,7 @@ impl<'a> Checker<'a> {
         if module == StdModule::InternalReflect {
             self.types.handle(Handle::ReflectBox, Ty::UNIT);
         }
-        if module == StdModule::InternalText {
+        if module == StdModule::InternalText || module == StdModule::InternalCodec {
             self.types.intern(TyKind::Array(Ty::STRING));
         }
         if module == StdModule::Process && self.process.is_none() {

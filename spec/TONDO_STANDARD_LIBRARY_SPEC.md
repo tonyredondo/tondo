@@ -1485,6 +1485,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.time` | Core + gated | `clock` monotónico; `civil-clock` para reloj de pared y anclas | 0.1 | Time-base monotónico, calendario civil y zonas horarias versionadas |
 | `std.path` | Core | — | 0.1 | Operaciones léxicas sobre paths `String` |
 | `std.regex` | Core | — | 0.1 | Expresiones regulares Unicode con complejidad y límites declarados |
+| `std.csv` | Core | — | 0.1 | CSV RFC 4180 materializado y en streaming |
 | `std.hash` | Core | — | 0.1 | Digests SHA-1, SHA-256 y SHA-512 y HMAC |
 | `std.random` | Core + gated | `entropy` para sembrar desde el sistema | 0.1 | Generadores pseudoaleatorios sembrados, mezcla, elección y bytes de entropía |
 | `std.uuid` | Core + gated | `entropy` y/o `civil-clock` para generación | 0.1 | UUID, parsing, formatting y generadores explícitos por versión |
@@ -3676,6 +3677,62 @@ pub fn entropy(count: Int): Array[Byte]
   `random.entropy(count)`, que lee la entropía del sistema.
 - Un provider o generador (27.7 del lenguaje) puede usar `Random.seeded`, pero
   no `Random.new` ni `entropy`: llamarlos es `E2108`.
+
+### 14.23 `std.csv`
+
+`std.csv` lee y escribe valores separados por comas (RFC 4180) registro a
+registro, así que un archivo de cualquier tamaño pasa sin cargarse entero:
+
+~~~tondo
+let input = fs.open("sales.csv", fs.OpenMode.Read)?.reader()
+for record in csv.records(input) {
+    let sale = record?
+    total += Int.parse(sale.getOr("amount", "0"))?
+}
+
+let out = csv.Writer.new(fs.open("report.csv", fs.OpenMode.Write)?.writer())
+out.write(["region", "total"])?
+~~~
+
+La superficie es:
+
+~~~tondo pseudocode
+pub enum CsvError {
+    Malformed(Int, Int)            // línea y columna
+    Unterminated(Int)              // línea donde empieza el campo
+    FieldCount(Int, Int, Int)      // línea, campos de la cabecera y del registro
+    Io(io.IoError)
+}
+
+pub type Rows                      // Iterator[Array[String] ! CsvError]
+pub type Records                   // Iterator[Map[String, String] ! CsvError]
+pub type Writer
+
+pub fn rows(input: io.Reader, separator: Char = ','): Rows
+pub fn records(input: io.Reader, separator: Char = ','): Records
+pub fn parse(text: String, separator: Char = ','): Array[Array[String]] ! CsvError
+pub fn parseRecords(text: String, separator: Char = ','): Array[Map[String, String]] ! CsvError
+pub fn Writer.new(output: io.Writer, separator: Char = ','): Writer
+pub fn Writer.write(self, fields: Array[String]): Unit ! io.IoError
+pub fn format(rows: Array[Array[String]], separator: Char = ','): String
+pub fn formatRecords(records: Array[Map[String, String]], separator: Char = ','): String
+~~~
+
+- `rows` y `records` leen un registro cada vez que se les pide; `parse` y
+  `parseRecords` leen un texto entero con ellos. En `records` el primer
+  registro es la cabecera, y cada registro es un mapa de sus nombres a sus
+  campos, en el orden de la cabecera.
+- Un campo entre comillas puede contener el separador, comillas dobladas
+  (`""`) y saltos de línea. Se acepta `\n` o `\r\n` entre registros, se saltan
+  las líneas vacías y se quita el BOM UTF-8 del principio.
+- Una comilla dentro de un campo que no empieza con ella, o texto tras una
+  comilla de cierre, es `Malformed`; un campo entre comillas que no se cierra,
+  `Unterminated`; en `records`, un registro con otro número de campos que la
+  cabecera, `FieldCount`. Tras un error, el iterador no da más registros.
+- `Writer.write` y `format` escriben una línea terminada en `\n` por registro y
+  ponen entre comillas el campo que contiene el separador, una comilla o un
+  salto de línea. `formatRecords` escribe como cabecera los nombres del primer
+  registro.
 
 ---
 

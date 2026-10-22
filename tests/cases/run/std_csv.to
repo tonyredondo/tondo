@@ -1,0 +1,44 @@
+// std.csv: whole texts, streams of rows and records, and writing.
+
+import std.console
+import std.csv
+import std.io
+
+fn main(): !csv.CsvError {
+    let text = "\u{FEFF}name,age,note\nAda,36,\"likes \"\"maths\"\", tea\"\n\nBo,20,\"two\nlines\"\n"
+    console.println("{csv.parse(text)?}")
+    for record in csv.records(io.reader(text)) {
+        let r = record?
+        console.println("{r.getOr("name", "")} is {r.getOr("age", "")}: {r.getOr("note", "")}")
+    }
+    console.println("{csv.parse("a,b\nc\"d,e")} {csv.parse("a,\"b")} {csv.parse("a,\"b\"x")}")
+    console.println("{csv.parseRecords("a,b\n1,2,3")} {csv.parse("x;y\n1;2", separator: ';')?}")
+    let table = [["name", "note"], ["Ada", "says \"hi\", twice"], ["Bo", "two\nlines"]]
+    let written = csv.format(table)
+    console.print(written)
+    console.println("{csv.parse(written)? == table}")
+    let buffer = io.Buffer()
+    let out = csv.Writer.new(buffer.writer(), separator: '\t')
+    out.write(["a", "b\tc"]).expect("in memory")
+    console.print(buffer.text().unwrapOr(""))
+    console.print(csv.formatRecords(csv.parseRecords("k,v\n1,2\n3,4")?))
+    console.println("{csv.rows(io.reader("1,2\n3,4")).count()}")
+}
+
+// expect-stdout: [[name, age, note], [Ada, 36, likes "maths", tea], [Bo, 20, two
+// expect-stdout: lines]]
+// expect-stdout: Ada is 36: likes "maths", tea
+// expect-stdout: Bo is 20: two
+// expect-stdout: lines
+// expect-stdout: err(line 2, column 2: a quote is out of place) err(line 1: a quoted field does not end) err(line 1, column 6: a quote is out of place)
+// expect-stdout: err(line 2: 3 fields where the header has 2) [[x, y], [1, 2]]
+// expect-stdout: name,note
+// expect-stdout: Ada,"says ""hi"", twice"
+// expect-stdout: Bo,"two
+// expect-stdout: lines"
+// expect-stdout: true
+// expect-stdout: a	"b	c"
+// expect-stdout: k,v
+// expect-stdout: 1,2
+// expect-stdout: 3,4
+// expect-stdout: 2

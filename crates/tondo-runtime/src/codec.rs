@@ -222,3 +222,62 @@ pub extern "C" fn tondo_rt_random_bytes(seed: i64, counter: i64, count: i64) -> 
         .collect();
     byte_array(&out)
 }
+
+/// The fields of one CSV record (RFC 4180) that may span lines, or where it
+/// is wrong: `Err(None)` while a quoted field has not ended, or the scalar
+/// index of a character out of place.
+fn csv_record(record: &str, separator: char) -> Result<Vec<String>, Option<usize>> {
+    let (mut fields, mut field) = (Vec::new(), String::new());
+    // Inside quotes; after a closing quote; at the start of a field.
+    let (mut quoted, mut closed, mut start) = (false, false, true);
+    let mut chars = record.chars().enumerate().peekable();
+    while let Some((index, c)) = chars.next() {
+        if quoted {
+            if c != '"' {
+                field.push(c);
+            } else if chars.next_if(|&(_, next)| next == '"').is_some() {
+                field.push('"');
+            } else {
+                (quoted, closed) = (false, true);
+            }
+        } else if c == separator {
+            fields.push(std::mem::take(&mut field));
+            (closed, start) = (false, true);
+        } else if c == '"' && start {
+            (quoted, start) = (true, false);
+        } else if closed || c == '"' {
+            return Err(Some(index));
+        } else {
+            field.push(c);
+            start = false;
+        }
+    }
+    if quoted {
+        return Err(None);
+    }
+    fields.push(field);
+    Ok(fields)
+}
+
+/// `-1` for a whole record, `-2` while a quoted field has not ended, or the
+/// scalar index of a character out of place.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_csv_check(record: *const Str, separator: u32) -> i64 {
+    let separator = char::from_u32(separator).unwrap_or(',');
+    match csv_record(&String::from_utf8_lossy(text(record)), separator) {
+        Ok(_) => -1,
+        Err(None) => -2,
+        Err(Some(index)) => index as i64,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_csv_fields(record: *const Str, separator: u32) -> *mut ArrayHeader {
+    let separator = char::from_u32(separator).unwrap_or(',');
+    let fields = csv_record(&String::from_utf8_lossy(text(record)), separator).unwrap_or_default();
+    let array = super::tondo_rt_array_new(8, fields.len());
+    for (index, field) in fields.iter().enumerate() {
+        unsafe { *(element(array, 8, index) as *mut *mut Str) = str_new(field.as_bytes()) };
+    }
+    array
+}

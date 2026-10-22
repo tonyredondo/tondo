@@ -1,0 +1,190 @@
+// std.csv (standard library 14.23): comma-separated values (RFC 4180), read
+// and written a record at a time, so a file of any size streams through.
+
+import std.internal.codec as codecNative
+import std.io as __io
+
+pub enum CsvError {
+    /// A quote inside a field that does not start with one, or text after a
+    /// closing quote, at this line and column.
+    Malformed(Int, Int)
+    /// A quoted field that does not end, from this line on.
+    Unterminated(Int)
+    /// A record at this line with other than the header's number of fields:
+    /// the line, the header's count and the record's.
+    FieldCount(Int, Int, Int)
+    /// Reading the input failed.
+    Io(__io.IoError)
+}
+
+impl Display for CsvError {
+    fn display(self): String {
+        match self {
+            CsvError.Malformed(at, column) => "line {at}, column {column}: a quote is out of place"
+            CsvError.Unterminated(at) => "line {at}: a quoted field does not end"
+            CsvError.FieldCount(at, expected, found) => "line {at}: {found} fields where the header has {expected}"
+            CsvError.Io(error) => "reading the input: {error}"
+        }
+    }
+}
+
+/// The records of a CSV stream, each as its fields, read as they are asked
+/// for: `for row in csv.rows(file) { let fields = row? }`. Blank lines are
+/// skipped; after an error there are no more.
+pub type Rows = {
+    priv input: __io.Reader
+    priv separator: Char
+    // The lines read so far.
+    priv line: Int
+    priv done: Bool
+}
+
+pub fn rows(input: __io.Reader, separator: Char = ','): Rows {
+    Rows { input, separator, line: 0, done: false }
+}
+
+impl Iterator[Array[String] ! CsvError] for Rows {
+    fn next(mut self): (Array[String] ! CsvError)? {
+        if self.done {
+            return none
+        }
+        let first = self.line + 1
+        var record = ""
+        var started = false
+        for {
+            let next = match self.input.readLine() {
+                ok(next) => next
+                err(error) => return self.stop(CsvError.Io(error))
+            }
+            let read = match next {
+                some(text) => text
+                none if started => return self.stop(CsvError.Unterminated(first))
+                none => {
+                    self.done = true
+                    return none
+                }
+            }
+            self.line += 1
+            // A byte order mark, as spreadsheets write it.
+            let text = if self.line == 1 { read.removePrefix("\u{FEFF}") } else { read }
+            if not started and text.isEmpty() {
+                continue
+            }
+            record = if started { "{record}\n{text}" } else { text }
+            started = true
+            let problem = codecNative.csvCheck(record, self.separator)
+            if problem >= 0 {
+                let before = record.slice(0, problem).unwrapOr("")
+                let column = match before.findLast("\n") {
+                    some(at) => problem - at
+                    none => problem + 1
+                }
+                return self.stop(CsvError.Malformed(first + before.count("\n"), column))
+            }
+            if problem == -1 {
+                return some(ok(codecNative.csvFields(record, self.separator)))
+            }
+        }
+    }
+}
+
+fn Rows.stop(mut self, error: CsvError): (Array[String] ! CsvError)? {
+    self.done = true
+    some(err(error))
+}
+
+/// The records of a CSV stream whose first record is the header, each as a
+/// map from the header's names to its fields, in the header's order.
+pub type Records = {
+    priv source: Rows
+    priv header: Array[String]?
+}
+
+pub fn records(input: __io.Reader, separator: Char = ','): Records {
+    Records { source: rows(input, separator), header: none }
+}
+
+impl Iterator[Map[String, String] ! CsvError] for Records {
+    fn next(mut self): (Map[String, String] ! CsvError)? {
+        if self.header.isNone() {
+            match self.source.next()? {
+                ok(names) => self.header = some(names)
+                err(error) => return some(err(error))
+            }
+        }
+        let names = self.header.unwrapOr([])
+        let fields = match self.source.next()? {
+            ok(fields) => fields
+            err(error) => return some(err(error))
+        }
+        if fields.length() != names.length() {
+            self.source.done = true
+            return some(err(CsvError.FieldCount(self.source.line, names.length(), fields.length())))
+        }
+        var record: Map[String, String] = [:]
+        for (index, name) in names.enumerate() {
+            record[name] = fields[index]
+        }
+        some(ok(record))
+    }
+}
+
+/// Every record of a CSV text, each as its fields.
+pub fn parse(input: String, separator: Char = ','): Array[Array[String]] ! CsvError {
+    var out: Array[Array[String]] = []
+    for row in rows(__io.reader(input), separator) {
+        out.push(row?)
+    }
+    out
+}
+
+/// Every record of a CSV text whose first record is the header.
+pub fn parseRecords(input: String, separator: Char = ','): Array[Map[String, String]] ! CsvError {
+    var out: Array[Map[String, String]] = []
+    for record in records(__io.reader(input), separator) {
+        out.push(record?)
+    }
+    out
+}
+
+/// Writes records to a stream, a line each; a field with the separator, a
+/// quote or a line break goes in quotes.
+pub type Writer = {
+    priv output: __io.Writer
+    priv separator: Char
+}
+
+pub fn Writer.new(output: __io.Writer, separator: Char = ','): Writer {
+    Writer { output, separator }
+}
+
+pub fn Writer.write(self, fields: Array[String]): Unit ! __io.IoError {
+    self.output.writeLine(csvLine(fields, self.separator))?
+}
+
+/// The CSV text of the records, a line each.
+pub fn format(table: Array[Array[String]], separator: Char = ','): String {
+    table.map((fields) { "{csvLine(fields, separator)}\n" }).join("")
+}
+
+/// The CSV text of records with the same names: a header with the first
+/// record's names, then a line for each.
+pub fn formatRecords(entries: Array[Map[String, String]], separator: Char = ','): String {
+    let names = match entries.first() {
+        some(first) => first.keys().collect()
+        none => return ""
+    }
+    var table = [names]
+    for entry in entries {
+        table.push(names.map((name) { entry.getOr(name, "") }))
+    }
+    format(table, separator)
+}
+
+fn csvLine(fields: Array[String], separator: Char): String {
+    let quoted = (field: String) {
+        let special = field.contains("{separator}") or field.contains("\"") or field.contains("\n") or field.contains("\r")
+        if special { "\"{field.replace("\"", "\"\"")}\"" } else { field }
+    }
+    fields.map(quoted).join("{separator}")
+}

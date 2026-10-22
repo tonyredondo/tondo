@@ -1064,6 +1064,8 @@ pub const NATIVES: &[Native] = {
         codec("digest", &[Int, Bytes, Bytes, Bool], Bytes, "tondo_rt_hash_digest"),
         codec("entropy", &[Int], Bytes, "tondo_rt_entropy"),
         codec("unixMillis", &[], Int, "tondo_rt_unix_millis"),
+        codec("csvCheck", &[String, Char], Int, "tondo_rt_csv_check"),
+        codec("csvFields", &[String, Char], Strings, "tondo_rt_csv_fields"),
         codec("mix", &[Int, Int], Int, "tondo_rt_random_mix"),
         codec("randomBytes", &[Int, Int, Int], Bytes, "tondo_rt_random_bytes"),
         math("sin", &[Float], Float, "tondo_rt_math_sin"),
