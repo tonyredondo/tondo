@@ -1,47 +1,58 @@
 //! The snapshot store and the artifact store (testing 15.7, 15.8).
 
-use super::json::Value;
 use crate::hash::{sha256, sha256_hex};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// The snapshot store of a package: its entries by test or suite and name.
+/// The snapshot store of a package: a file `<name>.snap` for each snapshot
+/// under `snapshots/`, in a directory for its test, which holds the value.
 pub(super) struct Snapshots {
-    pub path: PathBuf,
-    pub entries: BTreeMap<(String, String), String>,
+    root: PathBuf,
+    /// The values by test or suite and name.
+    entries: BTreeMap<(String, String), String>,
     /// The hash of the store tree before the run.
     pub before: String,
     package: String,
 }
 
-const HEADER: &str = "{\n  \"format\": \"tondo-snapshot-store-0.1/1\",\n";
-
 impl Snapshots {
-    /// Reads `snapshots/tondo.snap.json` of the package at `dir`, which must
-    /// be canonical; a store that is not there is empty.
+    /// Reads `snapshots/` of the package at `dir`, where every file must be
+    /// a snapshot; a store that is not there is empty.
     pub(super) fn read(dir: &Path, package: &str) -> Result<Snapshots, String> {
-        let path = dir.join("snapshots/tondo.snap.json");
-        let shown = "snapshots/tondo.snap.json";
+        let root = dir.join("snapshots");
         let mut entries = BTreeMap::new();
-        if let Ok(meta) = std::fs::symlink_metadata(&path) {
-            if !meta.is_file() {
-                return Err(format!("{shown} is not a regular file"));
-            }
-            let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {shown}: {e}"))?;
-            entries = parse(&text).ok_or_else(|| {
-                format!(
-                    "{shown} is not a canonical snapshot store; fix it, or remove it and run `tondo test --update-snapshots`"
-                )
-            })?;
-            if serialize(&entries) != text {
-                return Err(format!(
-                    "{shown} is not in its canonical form: entries sorted by id and name, one per line"
-                ));
+        let mut pending = vec![root.clone()];
+        while let Some(directory) = pending.pop() {
+            let Ok(list) = std::fs::read_dir(&directory) else { continue };
+            for entry in list {
+                let path = entry.map_err(|e| format!("cannot read {}: {e}", directory.display()))?.path();
+                let shown = path.strip_prefix(dir).unwrap_or(&path).display().to_string();
+                let meta = std::fs::symlink_metadata(&path).map_err(|e| format!("cannot read {shown}: {e}"))?;
+                if meta.is_dir() {
+                    pending.push(path);
+                    continue;
+                }
+                let steps: Vec<String> = path
+                    .strip_prefix(&root)
+                    .unwrap_or(&path)
+                    .iter()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .collect();
+                let name = steps.last().and_then(|f| f.strip_suffix(".snap")).filter(|n| !n.is_empty());
+                let (Some(name), true, true) = (name, steps.len() >= 4, meta.is_file()) else {
+                    return Err(format!(
+                        "{shown} is not a snapshot: `snapshots/` holds only files `<kind>/<module>/<suites...>/<test>/<name>.snap`; move or remove it"
+                    ));
+                };
+                let bytes = std::fs::read(&path).map_err(|e| format!("cannot read {shown}: {e}"))?;
+                let value = String::from_utf8(bytes).map_err(|_| format!("{shown} is not UTF-8"))?;
+                let test = steps[..steps.len() - 1].join("::");
+                entries.insert((format!("{package}::{test}"), name.to_string()), value);
             }
         }
-        let before = tree_hash(package, &serialize(&entries));
-        Ok(Snapshots { path, entries, before, package: package.to_string() })
+        let before = tree_hash(package, &entries);
+        Ok(Snapshots { root, entries, before, package: package.to_string() })
     }
 
     /// The entries for the worker: three lengths on a line, then the
@@ -62,111 +73,45 @@ impl Snapshots {
         self.entries.get(&(id.to_string(), name.to_string())).cloned()
     }
 
-    /// Writes the store with these values set, keeping every other entry;
-    /// the hash of the tree after.
+    /// Writes the files of these values, keeping every other; the hash of
+    /// the tree after.
     pub(super) fn publish(&self, values: Vec<((String, String), String)>) -> Result<String, String> {
         let mut entries = self.entries.clone();
-        entries.extend(values);
-        let text = serialize(&entries);
-        if let Some(dir) = self.path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        for ((id, name), value) in values {
+            let test = id.strip_prefix(&format!("{}::", self.package)).unwrap_or(&id);
+            let mut path = self.root.clone();
+            path.extend(test.split("::"));
+            std::fs::create_dir_all(&path).map_err(|e| format!("cannot create {}: {e}", path.display()))?;
+            write_atomically(&path.join(format!("{name}.snap")), value.as_bytes())?;
+            entries.insert((id, name), value);
         }
-        write_atomically(&self.path, text.as_bytes())?;
-        Ok(tree_hash(&self.package, &text))
+        Ok(tree_hash(&self.package, &entries))
     }
 }
 
-/// The hash of the stores of the packages under test (`tondo-snapshot-tree-v1`).
-pub(super) fn tree_hash(package: &str, store: &str) -> String {
-    let mut bytes = b"tondo-snapshot-tree-v1\0".to_vec();
-    bytes.extend_from_slice(package.as_bytes());
-    bytes.push(0);
-    bytes.extend_from_slice(&sha256(store.as_bytes()));
-    sha256_hex(&bytes)
-}
-
-fn serialize(entries: &BTreeMap<(String, String), String>) -> String {
-    if entries.is_empty() {
-        return format!("{HEADER}  \"entries\": []\n}}\n");
-    }
-    let lines: Vec<String> = entries
+/// The hash of the stores of the packages under test
+/// (`tondo-snapshot-tree-v2`): for the package, its name and how many
+/// snapshots it has, then each snapshot's path in the store and the hash of
+/// its value, in the order of their paths.
+fn tree_hash(package: &str, entries: &BTreeMap<(String, String), String>) -> String {
+    let mut files: Vec<(String, &String)> = entries
         .iter()
         .map(|((id, name), value)| {
-            let field = |key: &str, text: &str| (key.to_string(), Value::Str(text.to_string()));
-            let entry = Value::Object(vec![field("id", id), field("name", name), field("value", value)]);
-            format!("    {}", entry.text())
+            let test = id.strip_prefix(&format!("{package}::")).unwrap_or(id);
+            (format!("{}/{name}.snap", test.replace("::", "/")), value)
         })
         .collect();
-    format!("{HEADER}  \"entries\": [\n{}\n  ]\n}}\n", lines.join(",\n"))
-}
-
-/// The entries of a store, read line by line.
-fn parse(text: &str) -> Option<BTreeMap<(String, String), String>> {
-    let rest = text.strip_prefix(HEADER)?;
-    let mut entries = BTreeMap::new();
-    if rest == "  \"entries\": []\n}\n" {
-        return Some(entries);
+    files.sort();
+    let mut bytes = b"tondo-snapshot-tree-v2\0".to_vec();
+    bytes.extend_from_slice(package.as_bytes());
+    bytes.push(0);
+    bytes.extend_from_slice(&(files.len() as u64).to_be_bytes());
+    for (path, value) in files {
+        bytes.extend_from_slice(path.as_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(&sha256(value.as_bytes()));
     }
-    let body = rest.strip_prefix("  \"entries\": [\n")?.strip_suffix("\n  ]\n}\n")?;
-    for line in body.split('\n') {
-        let line = line.strip_prefix("    ")?;
-        let line = line.strip_suffix(',').unwrap_or(line);
-        let mut reader = Reader(line.chars().collect(), 0);
-        reader.expect("{\"id\":")?;
-        let id = reader.string()?;
-        reader.expect(",\"name\":")?;
-        let name = reader.string()?;
-        reader.expect(",\"value\":")?;
-        let value = reader.string()?;
-        reader.expect("}")?;
-        if reader.1 != reader.0.len() || entries.insert((id, name), value).is_some() {
-            return None;
-        }
-    }
-    Some(entries)
-}
-
-struct Reader(Vec<char>, usize);
-
-impl Reader {
-    fn expect(&mut self, text: &str) -> Option<()> {
-        for c in text.chars() {
-            (self.0.get(self.1) == Some(&c)).then_some(())?;
-            self.1 += 1;
-        }
-        Some(())
-    }
-
-    fn string(&mut self) -> Option<String> {
-        self.expect("\"")?;
-        let mut out = String::new();
-        loop {
-            let c = *self.0.get(self.1)?;
-            self.1 += 1;
-            match c {
-                '"' => return Some(out),
-                '\\' => {
-                    let e = *self.0.get(self.1)?;
-                    self.1 += 1;
-                    out.push(match e {
-                        '"' | '\\' | '/' => e,
-                        'b' => '\u{8}',
-                        't' => '\t',
-                        'n' => '\n',
-                        'f' => '\u{c}',
-                        'r' => '\r',
-                        'u' => {
-                            let hex: String = self.0.get(self.1..self.1 + 4)?.iter().collect();
-                            self.1 += 4;
-                            char::from_u32(u32::from_str_radix(&hex, 16).ok()?)?
-                        }
-                        _ => return None,
-                    });
-                }
-                c => out.push(c),
-            }
-        }
-    }
+    sha256_hex(&bytes)
 }
 
 /// The artifact store: content-addressed objects and their manifest.
@@ -208,15 +153,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stores_round_trip_canonically() {
-        let mut entries = BTreeMap::new();
-        entries.insert(("a::unit::a::t".to_string(), "out".to_string()), "line\n\"quoted\" \u{1}".to_string());
-        entries.insert(("a::unit::a::s".to_string(), "x".to_string()), String::new());
-        let text = serialize(&entries);
-        assert_eq!(parse(&text), Some(entries));
-        let empty = serialize(&BTreeMap::new());
-        assert_eq!(empty, "{\n  \"format\": \"tondo-snapshot-store-0.1/1\",\n  \"entries\": []\n}\n");
-        assert_eq!(parse(&empty), Some(BTreeMap::new()));
-        assert_eq!(parse(&text.replace("    {", "   {")), None);
+    fn stores_a_file_per_snapshot() {
+        let dir = std::env::temp_dir().join(format!("tondo-store-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let empty = Snapshots::read(&dir, "app").unwrap();
+        let value = "line\n\"quoted\" \u{1}".to_string();
+        let id = "app::unit::app::math::adds".to_string();
+        let after = empty.publish(vec![((id.clone(), "out".into()), value.clone())]).unwrap();
+        assert_ne!(after, empty.before);
+        let path = dir.join("snapshots/unit/app/math/adds/out.snap");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), value);
+        let read = Snapshots::read(&dir, "app").unwrap();
+        assert_eq!((read.expected(&id, "out"), read.before), (Some(value), after));
+        std::fs::write(dir.join("snapshots/unit/app/notes.txt"), "").unwrap();
+        let error = Snapshots::read(&dir, "app").err().unwrap();
+        assert!(error.starts_with("snapshots/unit/app/notes.txt is not a snapshot"), "{error}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

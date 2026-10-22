@@ -21,6 +21,7 @@ mod memory;
 mod process;
 mod regex;
 mod shared;
+mod snapshot;
 mod sync;
 mod tasks;
 mod testing;

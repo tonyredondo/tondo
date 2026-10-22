@@ -15,9 +15,14 @@ const SOURCES: &[(&str, &str)] = &[
     ("regex", include_str!("../std/regex.to")),
 ];
 
+/// The module written in Tondo an import brings: `std.testing` brings
+/// `std.json`, which `testing.snapshot` encodes values with.
 fn source(path: &[ast::Ident]) -> Option<(&'static str, &'static str)> {
     match path {
-        [std, name] if std.name == "std" => SOURCES.iter().find(|(n, _)| *n == name.name).copied(),
+        [std, name] if std.name == "std" => {
+            let name = if name.name == "testing" { "json" } else { name.name.as_str() };
+            SOURCES.iter().find(|(n, _)| *n == name).copied()
+        }
         _ => None,
     }
 }
@@ -90,11 +95,13 @@ fn json_alias(file: &ast::Module) -> Option<String> {
 
 /// Implements `json.Encode` and `json.Decode` for every record, enum and
 /// newtype whose parts implement them, unless the program implements them
-/// itself, when the program imports `std.json` (standard library 14.6).
+/// itself, when the program imports `std.json` (standard library 14.6) or
+/// `std.testing`.
 /// The implementations are Tondo source in the type's module, which the
 /// rest of the compiler checks like any other.
 pub fn derive_json(modules: &mut [ModuleSource], sources: &mut SourceMap, diags: &mut Diagnostics) {
-    if !modules.iter().any(|m| m.files.iter().any(|(f, _)| json_alias(f).is_some())) {
+    let brings = |file: &ast::Module| file.imports.iter().any(|i| source(&i.path).is_some_and(|(n, _)| n == "json"));
+    if !modules.iter().any(|m| m.files.iter().any(|(f, _)| brings(f))) {
         return;
     }
     let mut declared: Vec<Declared> = Vec::new();

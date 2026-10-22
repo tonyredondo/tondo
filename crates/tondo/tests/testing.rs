@@ -354,11 +354,8 @@ test badMedia {
     assert_eq!(status, 1);
     let (_, _, status) = tondo(&dir, &["test", "--filter", "rendersGreeting", "--update-snapshots"]);
     assert_eq!(status, 0);
-    let store = std::fs::read_to_string(dir.join("snapshots/tondo.snap.json")).unwrap();
-    assert_eq!(
-        store,
-        "{\n  \"format\": \"tondo-snapshot-store-0.1/1\",\n  \"entries\": [\n    {\"id\":\"app::unit::app::rendersGreeting\",\"name\":\"greeting\",\"value\":\"Hello, Ada!\\nBye.\"}\n  ]\n}\n"
-    );
+    let store = std::fs::read_to_string(dir.join("snapshots/unit/app/rendersGreeting/greeting.snap")).unwrap();
+    assert_eq!(store, "Hello, Ada!\nBye.");
     let (_, _, status) = tondo(&dir, &["test", "--filter", "rendersGreeting"]);
     assert_eq!(status, 0);
     let changed = tests.replace("Bye.", "Goodbye.");
@@ -380,6 +377,53 @@ test badMedia {
         (stderr, status)
     };
     assert!(stderr.contains("--update-snapshots runs with --jobs 1") && status == 2);
+}
+
+#[test]
+fn snapshots_values_as_json() {
+    let tests = r#"
+import std.testing
+
+type Item = { name: String, price: Int }
+type Order = { id: String, createdAt: String, items: Array[Item], total: Int }
+
+fn order(id: String): Order {
+    Order { id, createdAt: "2026-10-22T18:00:00Z", items: [Item { name: "book", price: 12 }], total: 12 }
+}
+
+test createsOrder {
+    testing.snapshot("order", order("3fa85f64"), ignore: ["createdAt"], matches: ["id": r"[0-9a-f]{8}"])
+    testing.snapshot("log", "took 12ms, then 3ms", replace: [r"\d+ms": "[time]"])
+}
+
+test badId {
+    testing.snapshot("order", order("nope"), matches: ["id": r"[0-9a-f]{8}"])
+}
+"#;
+    let dir = project("testing-json-snapshots", tests);
+    let (_, _, status) = tondo(&dir, &["test", "--filter", "createsOrder", "--update-snapshots"]);
+    assert_eq!(status, 0);
+    let read = |name: &str| std::fs::read_to_string(dir.join("snapshots/unit/app/createsOrder").join(name)).unwrap();
+    assert_eq!(
+        read("order.snap"),
+        "{\n  \"createdAt\": \"[ignored]\",\n  \"id\": \"[matches [0-9a-f]{8}]\",\n  \"items\": [\n    {\n      \"name\": \"book\",\n      \"price\": 12\n    }\n  ],\n  \"total\": 12\n}"
+    );
+    assert_eq!(read("log.snap"), "took [time], then [time]");
+    let (_, _, status) = tondo(&dir, &["test", "--filter", "createsOrder"]);
+    assert_eq!(status, 0);
+    let (stdout, _, status) = tondo(&dir, &["test", "--filter", "badId"]);
+    assert_eq!(status, 1);
+    let message = r#"panic[P2007]: test-snapshot-mismatch: in the snapshot "order", the value at "id" is "nope", which does not match the pattern "[0-9a-f]{8}""#;
+    assert!(stdout.contains(message), "{stdout}");
+    // `ignore` and `matches` look into JSON, which a `String` is not.
+    std::fs::write(
+        dir.join("src/main_test.to"),
+        tests.replace(r#""took 12ms, then 3ms","#, r#""took 12ms", ignore: ["x"],"#),
+    )
+    .unwrap();
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--filter", "createsOrder"]);
+    assert!(stderr.contains("error[E1102]: `ignore` and `matches` look into the JSON of a value"), "{stdout}{stderr}");
+    assert_eq!(status, 1);
 }
 
 #[test]

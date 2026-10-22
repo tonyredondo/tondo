@@ -826,3 +826,16 @@ the engine runs in O(m·n) and bounds its own memory by the program size. The
 first match is `find`, since `match` is a keyword. `findAll` and `replaceAll`
 pass over an empty match where the last one ended, as the crate does, so both
 see the same matches.
+
+## 2026-10-22 — A file per snapshot, of any value
+
+A single store file put every snapshot on one escaped line, unreadable in a
+review, and only took strings. Now each snapshot is
+`snapshots/<kind>/<module>/<suites...>/<test>/<name>.snap`, holding exactly
+the text compared, and `testing.snapshot` takes any value: a `String` as it
+is, anything else as the JSON `json.encode` writes, indented with sorted
+keys. `import std.testing` brings `std.json`, so every type gets its
+encoding. `ignore` paths turn varying values into `"[ignored]"`, `matches`
+also checks their form with a regular expression, and `replace` rewrites
+the final text, mostly for strings. The runtime does all of it, on the
+`regex` crate. The parameter is `matches`, not `match`, which is a keyword.

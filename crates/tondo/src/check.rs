@@ -949,6 +949,54 @@ impl<'a> Checker<'a> {
         Self::mk(hir::ExprKind::Block(block), info.result, span)
     }
 
+    /// `testing.snapshot(name, value, ignore:, matches:, replace:)` (testing
+    /// 9.7): a `String` is compared as it is, any other value as the JSON
+    /// `json.encode` writes for it.
+    fn snapshot(&mut self, cx: &mut FnCx, args: &[ast::Arg], span: Span) -> hir::Expr {
+        let Some(&ModuleName::Fn(encode)) = self.names.get("json.encode") else {
+            unreachable!("std.json comes with std.testing")
+        };
+        let value = self.signatures[encode.0 as usize].generics[0];
+        let strings = self.types.intern(TyKind::Array(Ty::STRING));
+        let map = self.types.intern(TyKind::Map(Ty::STRING, Ty::STRING));
+        let mut signature = Signature::simple(vec![Ty::STRING, value, strings, map, map], Ty::UNIT);
+        signature.names = ["name", "value", "ignore", "matches", "replace"].map(String::from).to_vec();
+        signature.generics = vec![value];
+        signature.name = "testing.snapshot".into();
+        signature.defaults = vec![
+            None,
+            None,
+            Some(Self::mk(hir::ExprKind::Array(Vec::new()), strings, span)),
+            Some(Self::mk(hir::ExprKind::Map(Vec::new()), map, span)),
+            Some(Self::mk(hir::ExprKind::Map(Vec::new()), map, span)),
+        ];
+        let target = CallTarget::new(Callee::Std(StdFn::TestSnapshot), signature, None);
+        let mut call = self.call_signature(cx, target, None, args, span);
+        // The call, or the block that evaluates its named arguments first.
+        fn inner(expr: &mut hir::Expr) -> Option<(Ty, &mut Vec<hir::Expr>)> {
+            match &mut expr.kind {
+                hir::ExprKind::Call(_, types, values) => Some((types[0], values)),
+                hir::ExprKind::Block(block) => block.tail.as_deref_mut().and_then(inner),
+                _ => None,
+            }
+        }
+        let Some((ty, values)) = inner(&mut call) else { return call };
+        let json = ty != Ty::STRING;
+        if json {
+            let raw = values.remove(1);
+            let no = || Self::mk(hir::ExprKind::Bool(false), Ty::BOOL, span);
+            let text = hir::ExprKind::Call(Callee::Fn(encode), vec![ty], vec![raw, no(), no()]);
+            values.insert(1, Self::mk(text, Ty::STRING, span));
+        } else if let Some(arg) =
+            args.iter().find(|a| a.name.as_ref().is_some_and(|n| n.name == "ignore" || n.name == "matches"))
+        {
+            let message = "`ignore` and `matches` look into the JSON of a value; a `String` is compared as it is, so change its varying parts with `replace: [pattern: text]`";
+            self.diags.error("E1102", arg.span, message);
+        }
+        values.insert(2, Self::mk(hir::ExprKind::Bool(json), Ty::BOOL, span));
+        call
+    }
+
     /// `clock.settle()` and `clock.advance(duration)` (testing 7.9).
     fn clock_method(
         &mut self,
@@ -9314,7 +9362,7 @@ impl<'a> Checker<'a> {
                     "attach" => {
                         (StdFn::TestAttach, vec![Ty::STRING, Ty::STRING, self.types.intern(TyKind::Array(Ty::BYTE))])
                     }
-                    "snapshot" => (StdFn::TestSnapshot, vec![Ty::STRING, Ty::STRING]),
+                    "snapshot" => return self.snapshot(cx, args, span),
                     _ => {
                         let message = format!("module `testing` has no function `{member}`");
                         self.diags.error("E1001", segments[1].span, message);

@@ -14,7 +14,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// The kinds of `RegexErrorKind`, in its order from 1.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum Kind {
     InvalidSyntax = 1,
     UnexpectedEnd,
@@ -156,6 +156,47 @@ fn syntax_kind(kind: &Syntax) -> Kind {
     }
 }
 
+/// A pattern in the dialect, compiled within the limits; the kind and
+/// offset of what stops it.
+fn compile(
+    pattern: &str,
+    flags: i64,
+    depth: u32,
+    max_captures: i64,
+    size: usize,
+) -> Result<regex::Regex, (Kind, usize)> {
+    let parsed = ast::parse::ParserBuilder::new()
+        .nest_limit(depth)
+        .build()
+        .parse(pattern)
+        .map_err(|error| (syntax_kind(error.kind()), error.span().start.offset))?;
+    if let Some(error) = outside(&parsed, max_captures) {
+        return Err(error);
+    }
+    let translated = regex_syntax::hir::translate::TranslatorBuilder::new()
+        .case_insensitive(flags & 1 != 0)
+        .build()
+        .translate(pattern, &parsed);
+    if let Err(error) = translated {
+        use regex_syntax::hir::ErrorKind as Hir;
+        let kind = match error.kind() {
+            Hir::UnicodePropertyNotFound | Hir::UnicodePropertyValueNotFound | Hir::UnicodePerlClassNotFound => {
+                Kind::InvalidUnicodeProperty
+            }
+            _ => Kind::UnsupportedFeature,
+        };
+        return Err((kind, error.span().start.offset));
+    }
+    // The pattern is valid, so only its size can stop it.
+    builder(pattern, flags, size, depth).build().map_err(|_| (Kind::ProgramLimitExceeded, 0))
+}
+
+/// A pattern with the default options and limits, for the runtime's own
+/// use; an error reads as `std.regex` shows it.
+pub(crate) fn pattern(pattern: &str) -> Result<regex::Regex, String> {
+    compile(pattern, 0, 256, 256, 16_000_000).map_err(|(kind, offset)| format!("regex.{kind:?} at byte {offset}"))
+}
+
 /// `Regex.compile`: the pattern with its options as bits (case-insensitive,
 /// multi-line, dot matches newline, CRLF, ungreedy) and its limits; null
 /// with an error when it cannot be.
@@ -180,37 +221,13 @@ pub unsafe extern "C" fn tondo_rt_regex_compile(
         return std::ptr::null_mut();
     }
     let depth = u32::try_from(max_depth).unwrap_or(u32::MAX);
-    let parsed = match ast::parse::ParserBuilder::new().nest_limit(depth).build().parse(pattern) {
-        Ok(parsed) => parsed,
-        Err(error) => {
-            fail(syntax_kind(error.kind()), error.span().start.offset);
+    let size = usize::try_from(max_states).unwrap_or(usize::MAX).saturating_mul(16);
+    let regex = match compile(pattern, flags, depth, max_captures, size) {
+        Ok(regex) => regex,
+        Err((kind, offset)) => {
+            fail(kind, offset);
             return std::ptr::null_mut();
         }
-    };
-    if let Some((kind, offset)) = outside(&parsed, max_captures) {
-        fail(kind, offset);
-        return std::ptr::null_mut();
-    }
-    let translated = regex_syntax::hir::translate::TranslatorBuilder::new()
-        .case_insensitive(flags & 1 != 0)
-        .build()
-        .translate(pattern, &parsed);
-    if let Err(error) = translated {
-        use regex_syntax::hir::ErrorKind as Hir;
-        let kind = match error.kind() {
-            Hir::UnicodePropertyNotFound | Hir::UnicodePropertyValueNotFound | Hir::UnicodePerlClassNotFound => {
-                Kind::InvalidUnicodeProperty
-            }
-            _ => Kind::UnsupportedFeature,
-        };
-        fail(kind, error.span().start.offset);
-        return std::ptr::null_mut();
-    }
-    let size = usize::try_from(max_states).unwrap_or(usize::MAX).saturating_mul(16);
-    let Ok(regex) = builder(pattern, flags, size, depth).build() else {
-        // The pattern is valid, so only its size can stop it.
-        fail(Kind::ProgramLimitExceeded, 0);
-        return std::ptr::null_mut();
     };
     LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
     let limit = |n: i64| usize::try_from(n).unwrap_or(usize::MAX);

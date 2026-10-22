@@ -5,7 +5,7 @@
 - **Especificación base:** [Tondo 0.1](./TONDO_LANGUAGE_SPEC.md).
 - **Formatos de tooling:** `tondo-test-report-0.1/1`,
   `tondo-test-list-0.1/1`, `tondo-junit-report-0.1/1`,
-  `tondo-test-artifacts-0.1/1` y `tondo-snapshot-store-0.1/1`.
+  `tondo-test-artifacts-0.1/1` y `tondo-snapshot-store-0.1/2`.
 
 Esta especificación añade a Tondo las declaraciones `suite` y `test` y define
 cómo el toolchain descubre, compila, ejecuta y reporta árboles estáticos de
@@ -883,7 +883,7 @@ El artefacto contiene:
 - Las operaciones de control de testing y la asociación de cada entrada con su
   envelope privado de ejecución.
 - Las operaciones de attachment y snapshot, el snapshot store
-  `tondo-snapshot-store-0.1/1`, su hash previo y el artifact store efectivo.
+  `tondo-snapshot-store-0.1/2`, su hash previo y el artifact store efectivo.
 - Las operaciones del dominio temporal.
 
 No contiene un registro mutable de funciones ni descubre tests mediante
@@ -1956,10 +1956,50 @@ El artifact store:
   sin manifest puede quedar huérfano tras interrupción y no constituye
   evidencia referenciada.
 
-`testing.snapshot(name, actual)` compara el `String` exacto con la entrada
-`(node_id, name)` de `tondo-snapshot-store-0.1/1`. Usa la misma gramática de
-nombre que attachments, no normaliza newline, Unicode ni whitespace y devuelve
-`Unit`.
+`testing.snapshot(name, value, ignore:, matches:, replace:)` compara un valor
+con el archivo `<name>.snap` del test o suite que lo alcanza (15.7) y devuelve
+`Unit`. `name` usa la misma gramática que attachments. El texto comparado es:
+
+- para un `String`, el texto exacto, sin normalizar newline, Unicode ni
+  whitespace;
+- para cualquier otro valor, el JSON que `json.encode` escribe para él,
+  indentado con dos espacios y con las claves de cada objeto ordenadas por
+  bytes UTF-8. Todo tipo cuyas partes admiten JSON implementa `json.Encode` sin
+  escribir nada (14.6 de la librería estándar); un valor sin `json.Encode` es
+  un error de compilación.
+
+```tondo
+test createsOrder {
+    let order = shop.createOrder(cart)?
+    testing.snapshot(
+        "order",
+        order,
+        ignore: ["createdAt"],
+        matches: ["id": r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"],
+    )
+    testing.snapshot("log", output, replace: [r"\d+ms": "[time]"])
+}
+```
+
+`ignore: Array[String]` y `matches: Map[String, String]` miran dentro de ese
+JSON; con un `String` son un error de compilación. Una ruta de una sola clave,
+como `"createdAt"`, alcanza esa clave a cualquier profundidad. Una ruta con
+puntos, como `"user.id"` o `"items.*.id"`, parte de la raíz, y cada segmento es
+una clave, un índice o `*`, que es cualquiera de ellos.
+
+- Un valor que alcanza `ignore` se guarda como `"[ignored]"`.
+- Un valor que alcanza `matches` debe cumplir entero su patrón de `std.regex`,
+  sin escribir `^` ni `$`: un string por su texto, cualquier otro valor por su
+  JSON. Se guarda como `"[matches <patrón>]"`, así que el valor concreto puede
+  cambiar entre ejecuciones. Si no lo cumple, el test falla con `P2007`
+  nombrando la ruta, el valor y el patrón, también al actualizar.
+- Si `ignore` y `matches` alcanzan el mismo valor, gana `ignore`. Una ruta que
+  no alcanza nada no hace nada.
+
+`replace: Map[String, String]` sustituye en el texto final, en el orden escrito,
+cada coincidencia de cada patrón por su texto, que se toma literal. Sirve sobre
+todo para un `String`, donde lo que varía no está bajo una clave. Una ruta vacía
+o un patrón inválido produce `P2008`.
 
 En modo normal:
 
@@ -1980,12 +2020,12 @@ usar nombres distintos; los descriptores finales se ordenan por nombre.
 Con `--update-snapshots`, `missing` se vuelve `created` y `mismatched` se vuelve
 `updated` sin producir pánico. `matched` permanece igual. El runner:
 
-1. Abre el store previo como input test-only antes de ejecutar.
-2. Conserva entradas no alcanzadas; nunca elimina snapshots por ausencia.
-3. Stagea todos los cambios y solo publica stores canónicos después de una
+1. Lee el store previo como input test-only antes de ejecutar.
+2. Conserva archivos no alcanzados; nunca elimina snapshots por ausencia.
+3. Guarda los valores nuevos y solo escribe sus archivos después de una
    invocación completa sin otros fallos, skips, bloqueos ni interrupción.
-4. Reemplaza atómicamente cada store de paquete; si no puede publicar todos,
-   usa exit `3` y no declara actualización completa.
+4. Reemplaza atómicamente cada archivo; si no puede escribirlos todos, usa
+   exit `3` y no declara actualización completa.
 
 Update es incompatible con retry, repeat, shard y orden random y exige
 `--jobs 1`; sí puede utilizar un selector explícito para revisar una key
@@ -2182,7 +2222,13 @@ pub fn tags(values: Map[String, String])
 pub fn failNow(message: String): Never
 pub fn skip(reason: String): Never
 pub fn attach(name: String, mediaType: String, data: Array[Byte])
-pub fn snapshot(name: String, actual: String)
+pub fn snapshot[T: json.Encode](
+    name: String,
+    value: T,
+    ignore: Array[String] = [],
+    matches: Map[String, String] = [:],
+    replace: Map[String, String] = [:],
+)
 
 pub fn withVirtualTime[
     E,
@@ -2222,14 +2268,14 @@ test importsUsers {
 }
 ~~~
 
-Las seis operaciones de control, metadata y evidencia son monomórficas.
-`log`, `failNow` y `skip` reciben un solo `String`; interpolación y formatting
-ocurren antes de la llamada. `tags` recibe exactamente un
-`Map[String, String]`. `attach` recibe un `Array[Byte]` ya materializado y
-`snapshot` compara texto ya convertido mediante las APIs ordinarias de
-formatting. No
-existen niveles de log, timestamps, un tipo dinámico de metadata, reflection de
-valores ni sobrecargas variádicas en Tondo 0.1.
+Las operaciones de control, metadata y evidencia son monomórficas salvo
+`snapshot`. `log`, `failNow` y `skip` reciben un solo `String`; interpolación y
+formatting ocurren antes de la llamada. `tags` recibe exactamente un
+`Map[String, String]`. `attach` recibe un `Array[Byte]` ya materializado.
+`snapshot` es genérica sobre el valor que compara: un `String`, o cualquier
+valor con `json.Encode`, que `import std.testing` trae consigo. No existen
+niveles de log, timestamps, un tipo dinámico de metadata, reflection de valores
+ni sobrecargas variádicas en Tondo 0.1.
 
 `withVirtualTime` es genérica únicamente sobre la unión de error y el tipo
 concreto del cierre. Exige `CallOnce` porque ejecuta el body una vez y `Send`
@@ -2251,7 +2297,7 @@ Estas operaciones son intrínsecas y selladas dentro de un artefacto de test:
 - `skip` exige una razón, produce el terminal cooperativo de skip y tiene
   resultado `Never`.
 - `attach` copia un artifact conforme a 9.7 o produce `P2006`; devuelve `Unit`.
-- `snapshot` compara o actualiza una entrada conforme a 9.7, produce
+- `snapshot` compara o actualiza un archivo del store conforme a 9.7, produce
   `P2007`/`P2008` cuando corresponde y devuelve `Unit`.
 - `withVirtualTime` crea y desmonta el dominio de 7.9 y propaga retorno, error,
   pánico, skip y cancelación de la closure sin reinterpretarlos.
@@ -2596,8 +2642,10 @@ test rendersInvoice {
 ~~~
 
 El attachment conserva los bytes para inspección sin convertirlos en parte del
-failure. El snapshot compara texto exacto y falla bajo ejecución ordinaria si
-falta o cambia. Actualizarlo exige una invocación explícita:
+failure. El snapshot compara texto exacto, guardado en
+`snapshots/unit/invoice/rendersInvoice/invoice-text.snap`, y falla bajo
+ejecución ordinaria si falta o cambia. Actualizarlo exige una invocación
+explícita:
 
 ~~~text
 tondo test --exact application::unit::invoice::rendersInvoice \
@@ -2723,10 +2771,9 @@ es inválida.
 
 Reportes, listas y manifests usan el layout compacto, sin whitespace fuera de
 strings, y terminan en un único `LF`. Un fragmento compacto embebido en JUnit no
-incluye ese `LF`. El snapshot store usa en cambio el layout source-control de
-15.7 para conservar diffs por entry. Salvo el fence exacto de 15.7, los ejemplos
-JSON indentados son presentaciones legibles de la forma, no sus bytes
-serializados.
+incluye ese `LF`. El snapshot store usa en cambio un archivo por snapshot
+(15.7) para conservar diffs legibles. Los ejemplos JSON indentados son
+presentaciones legibles de la forma, no sus bytes serializados.
 
 `--test-format json` y `--report json=<path>` emiten un único objeto JSON UTF-8,
 sin BOM ni bytes posteriores salvo `LF`. Los valores concretos siguientes son
@@ -2773,7 +2820,7 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
     "algorithm": "sha256-objects-v1"
   },
   "snapshot_policy": {
-    "format": "tondo-snapshot-store-0.1/1",
+    "format": "tondo-snapshot-store-0.1/2",
     "mode": "check",
     "before_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
     "after_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
@@ -3224,7 +3271,7 @@ bloqueo, logs ni output:
     "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
   },
   "snapshot_store": {
-    "format": "tondo-snapshot-store-0.1/1",
+    "format": "tondo-snapshot-store-0.1/2",
     "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
   },
   "shard": null,
@@ -3483,58 +3530,53 @@ Si la compilación falla:
 
 ### 15.7 Snapshot store canónico
 
-Cada paquete de test declara un único archivo lógico de snapshot. El default del
-toolchain es `snapshots/tondo.snap.json` relativo a la raíz del paquete; un
-manifiesto puede sustituirlo por otro path lógico cerrado. El archivo es JSON
-UTF-8 sin BOM y usa este layout exacto:
+El snapshot store de un paquete de test es el directorio `snapshots/` de la raíz
+del paquete, con un archivo por snapshot:
 
-~~~json
-{
-  "format": "tondo-snapshot-store-0.1/1",
-  "entries": [
-    {"id":"application::unit::invoice::rendersInvoice","name":"invoice-text","value":"Invoice 42\nTotal: 100 EUR"}
-  ]
-}
+~~~text
+snapshots/<kind>/<module>/<suites...>/<test>/<name>.snap
 ~~~
 
-El layout source-control usa exactamente dos espacios en los tres niveles
-estructurales mostrados, un espacio después de los dos `:` exteriores, ninguna
-otra separación, una entry compacta completa por línea y coma únicamente tras
-cada entry no final. El documento termina en un único `LF`. Si no hay entries,
-la línea exterior es exactamente `  "entries": []`. Las entries se ordenan por
-`id` y después `name`, ambos por bytes UTF-8. La pareja es única; unknown fields,
-duplicados, whitespace u orden no canónicos, IDs sintácticamente no canónicos o
-nombres que violen 9.7 hacen inválido el input de proyecto antes de ejecutar.
-Una entry cuyo ID ya no existe en el árbol es stale pero válida: update la
-conserva y el toolchain puede advertirla, nunca borrarla implícitamente. `value`
-conserva el `String` exacto; no existe encoding Base64 ni tipo dinámico en `/1`.
+Los directorios siguen el ID del test o suite que alcanzó el snapshot, sin el
+paquete: `application::unit::invoice::rendersInvoice` y el nombre
+`invoice-text` son `snapshots/unit/invoice/rendersInvoice/invoice-text.snap`.
+El archivo contiene exactamente el texto comparado (9.7), en UTF-8, sin escapar,
+envolver ni añadir un `LF` final. Así cada snapshot se revisa como un archivo de
+texto ordinario y dos tests no chocan en un merge.
 
-El hash del store usa sus bytes canónicos. El hash conjunto
-`snapshot_policy.before_sha256`/`after_sha256` es:
+Todo lo que hay bajo `snapshots/` debe ser un directorio o un archivo `.snap`
+regular en UTF-8 al menos tres niveles por debajo, el `<kind>`, el `<module>` y
+el test. Cualquier otro archivo, un symlink o un archivo que no es UTF-8 hace
+inválido el input de proyecto antes de ejecutar, con un mensaje que nombra el
+path. Un archivo cuyo test ya no existe en el árbol es stale pero válido: update
+lo conserva y nunca lo borra implícitamente. Un store ausente está vacío; en
+check mode cada snapshot alcanzado produce `missing` y en update mode se crean
+sus archivos.
+
+El hash conjunto `snapshot_policy.before_sha256`/`after_sha256` es:
 
 ~~~text
 SHA-256(
-    "tondo-snapshot-tree-v1\0" ||
+    "tondo-snapshot-tree-v2\0" ||
     for each package in PackageId order:
-        UTF8(package_id) || 00 || sha256(store_bytes)
+        UTF8(package_id) || 00 || u64be(file_count) ||
+        for each file in order of its path's UTF-8 bytes:
+            UTF8(path) || 00 || sha256(file_bytes)
 )
 ~~~
 
-`\0` y `00` representan un único byte cero; cada `sha256(store_bytes)` aporta
-sus 32 bytes binarios, no su texto hexadecimal. El campo exterior serializa el
-digest final como 64 hexadecimales lowercase.
+`path` es relativo a `snapshots/` con `/` como separador. `\0` y `00`
+representan un único byte cero, `u64be` ocho bytes big-endian, y cada
+`sha256(file_bytes)` aporta sus 32 bytes binarios, no su texto hexadecimal. El
+campo exterior serializa el digest final como 64 hexadecimales lowercase.
 
-Un store ausente equivale al objeto canónico con `entries: []`; en check mode
-cada snapshot alcanzado produce `missing` y en update mode puede crearse el
-archivo. Update stagea un store completo, conserva entries no alcanzadas y
-publica mediante reemplazo atómico. No elimina entries obsoletas ni cambia
-snapshots de paquetes fuera de la selección compilada.
+Update conserva los archivos no alcanzados y reemplaza atómicamente cada archivo
+creado o cambiado. No elimina archivos obsoletos ni cambia snapshots de paquetes
+fuera de la selección compilada.
 
 El store es input/output test-only: entra en el plan y reportes de test, nunca en
-la interfaz o artefacto de producción. Un merge conflict es texto JSON ordinario
-y debe resolverse antes de que el parser canónico acepte el archivo. El path se
-resuelve bajo la raíz lógica del paquete; el runner rechaza el store o cualquier
-parent que sea symlink o escape esa raíz.
+la interfaz o artefacto de producción. El runner rechaza un symlink dentro del
+store.
 
 ### 15.8 Artifact store canónico
 
@@ -3602,7 +3644,8 @@ los ejecutan en cada plataforma de CI. El compilador nativo implementa hoy:
   `tondo-junit-report-0.1/1` con `--test-format json` y `--report`, y
   `--diagnostic-format`;
 - `testing.attach` con el artifact store en `target/test-artifacts` o
-  `--artifacts`, y `testing.snapshot` con el snapshot store y
+  `--artifacts`, y `testing.snapshot` de un `String` o del JSON de un valor,
+  con `ignore`, `matches` y `replace`, sobre un archivo por snapshot y
   `--update-snapshots`;
 - `testing.withVirtualTime` con `settle` y `advance`, y los pánicos `P2003` a
   `P2005`.

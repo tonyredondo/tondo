@@ -296,17 +296,7 @@ pub unsafe extern "C" fn tondo_rt_test_log(message: *const Str) {
 /// value, none and the panic `P2002` for the smallest such key.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_test_tags(map: *mut MapObject) {
-    let mut pairs = Vec::new();
-    if !map.is_null() {
-        let map = unsafe { &*map };
-        for index in 0..map.len() {
-            let entry = unsafe { map.entries.as_ptr().add(index * map.entry_size) };
-            let key = unsafe { *(entry as *const *const Str) };
-            let value = unsafe { *(entry.add(map.value_offset) as *const *const Str) };
-            let text = |s| String::from_utf8_lossy(unsafe { str_bytes(s) }).into_owned();
-            pairs.push((text(key), text(value)));
-        }
-    }
+    let pairs = pairs(map);
     let conflict = with(|r| {
         let node = r.current();
         let tags = r.tags.entry(node).or_default();
@@ -372,6 +362,30 @@ fn text(s: *const Str) -> String {
     String::from_utf8_lossy(unsafe { str_bytes(s) }).into_owned()
 }
 
+/// The entries of a `Map[String, String]`, in order.
+fn pairs(map: *mut MapObject) -> Vec<(String, String)> {
+    if map.is_null() {
+        return Vec::new();
+    }
+    let map = unsafe { &*map };
+    (0..map.len())
+        .map(|index| {
+            let entry = unsafe { map.entries.as_ptr().add(index * map.entry_size) };
+            let key = unsafe { *(entry as *const *const Str) };
+            let value = unsafe { *(entry.add(map.value_offset) as *const *const Str) };
+            (text(key), text(value))
+        })
+        .collect()
+}
+
+/// The elements of an `Array[String]`.
+fn strings(array: *mut ArrayHeader) -> Vec<String> {
+    if array.is_null() {
+        return Vec::new();
+    }
+    (0..unsafe { (*array).len }).map(|i| text(unsafe { *(crate::element(array, 8, i) as *const *const Str) })).collect()
+}
+
 fn fail(code: u32, message: String, location: *const Str) -> ! {
     let message = crate::str_new(message.as_bytes());
     unsafe { crate::tondo_rt_panic(code, message, location) }
@@ -409,15 +423,35 @@ pub unsafe extern "C" fn tondo_rt_test_attach(
     }
 }
 
-/// `testing.snapshot(name, actual)` (testing 9.7): compares with the store,
-/// or records the value when updating; a missing or different value is the
-/// panic `P2007`, and a bad or repeated name `P2008`.
+/// `testing.snapshot(name, value, ignore:, matches:, replace:)` (testing
+/// 9.7): the value is a `String`, or its JSON when `json`; compares it with
+/// the store, or records it when updating. A missing or different value,
+/// or one that does not have the form `matches` asks for, is the panic
+/// `P2007`; a bad or repeated name, or a bad path or pattern, `P2008`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_test_snapshot(name: *const Str, actual: *const Str, location: *const Str) {
-    let (name, actual) = (text(name), text(actual));
+pub unsafe extern "C" fn tondo_rt_test_snapshot(
+    name: *const Str,
+    value: *const Str,
+    json: u8,
+    ignore: *mut ArrayHeader,
+    matches: *mut MapObject,
+    replace: *mut MapObject,
+    location: *const Str,
+) {
+    let name = text(name);
     if let Some(why) = invalid_name(&name) {
         fail(2008, why, location);
     }
+    let actual =
+        match crate::snapshot::render(text(value), json != 0, &strings(ignore), &pairs(matches), &pairs(replace)) {
+            Ok(actual) => actual,
+            Err(crate::snapshot::Refused::Mismatch(why)) => {
+                fail(2007, format!("in the snapshot {name:?}, {why}"), location)
+            }
+            Err(crate::snapshot::Refused::Invalid(why)) => {
+                fail(2008, format!("in the snapshot {name:?}, {why}"), location)
+            }
+        };
     let outcome = with(|r| {
         let node = r.current();
         if !r.checked.insert((node, name.clone())) {

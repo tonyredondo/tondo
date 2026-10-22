@@ -217,7 +217,7 @@ impl Context<'_> {
             ),
         ];
         if !with_plan {
-            let store = obj(vec![("format", str("tondo-snapshot-store-0.1/1")), ("sha256", str(self.snapshots.0))]);
+            let store = obj(vec![("format", str("tondo-snapshot-store-0.1/2")), ("sha256", str(self.snapshots.0))]);
             fields.push(("snapshot_store", store));
         }
         fields.push(("shard", shard));
@@ -317,7 +317,7 @@ impl Context<'_> {
         fields.push((
             "snapshot_policy",
             obj(vec![
-                ("format", str("tondo-snapshot-store-0.1/1")),
+                ("format", str("tondo-snapshot-store-0.1/2")),
                 ("mode", str(if options.update_snapshots { "update" } else { "check" })),
                 ("before_sha256", str(self.snapshots.0)),
                 ("after_sha256", str(self.snapshots.1)),

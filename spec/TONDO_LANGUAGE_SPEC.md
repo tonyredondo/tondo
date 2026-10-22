@@ -10559,7 +10559,7 @@ artefactos content-addressed.
 Una ejecución alimenta la salida humana y, sin volver a ejecutar tests, los
 formatos `tondo-test-report-0.1/1`, `tondo-test-list-0.1/1` y
 `tondo-junit-report-0.1/1`. Artefactos y snapshots usan respectivamente
-`tondo-test-artifacts-0.1/1` y `tondo-snapshot-store-0.1/1`. El número tras `/`
+`tondo-test-artifacts-0.1/1` y `tondo-snapshot-store-0.1/2`. El número tras `/`
 versiona el schema, no la edición del lenguaje.
 
 Un retry que pasa después de fallar se reporta como `flaky-pass`, no como

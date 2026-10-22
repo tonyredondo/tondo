@@ -308,7 +308,7 @@ impl Rt {
             Rt::TestTags => ("tondo_rt_test_tags", &[I64], &[]),
             Rt::TestWhere => ("tondo_rt_test_where", &[I64], &[]),
             Rt::TestAttach => ("tondo_rt_test_attach", &[I64, I64, I64, I64], &[]),
-            Rt::TestSnapshot => ("tondo_rt_test_snapshot", &[I64, I64, I64], &[]),
+            Rt::TestSnapshot => ("tondo_rt_test_snapshot", &[I64, I64, I8, I64, I64, I64, I64], &[]),
             Rt::ClockBegin => ("tondo_rt_clock_begin", &[I64], &[I64]),
             Rt::ClockEnd => ("tondo_rt_clock_end", &[], &[]),
             Rt::ClockSettle => ("tondo_rt_clock_settle", &[I64], &[]),
