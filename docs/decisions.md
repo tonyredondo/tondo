@@ -765,3 +765,16 @@ plain values without a trace. `tondo test` keeps the test executable and
 its tree in the cache, named after everything the build reads, and runs
 them without compiling while nothing changes.
 
+## 2026-10-22 — Selection, shards, order, retries and repeats
+
+`tondo test` selects with `--filter`, `--glob` or `--exact`, splits the
+selection with `--shard` by the SHA-256 of each identity, and orders it by
+identity or, with `--order random`, by the digests of each node's members
+under a seed it always prints. Each retry round runs every unit in a new
+worker: a failed test, or a suite that failed in its own setup or teardown
+with the tests inside it, which absorbs the units within; a pass after a
+failure is `flaky-pass` and fails the run unless `--allow-flaky`. `--repeat`
+runs the whole plan again in new workers and passes only if every attempt
+does. Owners come from CODEOWNERS at the repository's root, the nearest
+directory up from the project that holds `.git`.
+

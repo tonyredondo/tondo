@@ -103,14 +103,14 @@ Every milestone ends with programs that compile to native executables and run.
 | **H7** | `unsafe` functions, blocks, closures and function types; `Pointer[T]` with its raw operations; calling C: `extern fn` (with C's `...`), `extern type` structs by value and by pointer, callbacks into Tondo from any thread, `std.ffi`, native libraries; lossless numeric widening | Done |
 | **Targets** | Linux x86-64 and arm64 (glibc and musl), macOS on Apple silicon and Intel, each with its C calling convention; CI on all of them | Done |
 | **Bindings** | `tondo bind` writes a module of `extern` declarations and constants from C headers, a `pkg-config` package, or a library's debug information; unions, `va_list`, macros, bit fields; static and shared native libraries; `const` | Done |
-| **H8.1** | Testing: `test` and `suite`, unit test companions and integration test roots, `std.testing` (`log`, `tags`, `failNow`, `skip`), `tondo test` running tests in worker processes with timeouts, selection and listing | Done |
+| **H8.1** | Testing: `test` and `suite`, unit test companions and integration test roots, `std.testing` (`log`, `tags`, `failNow`, `skip`), `tondo test` running tests in worker processes with timeouts, selection by filter, glob or identity, shards, random order with a seed, retries and flaky passes, repeats, CODEOWNERS | Done |
 
 The first cut deliberately leaves out the following. They are part of the
 language and remain planned work, scheduled after H7:
 
 | Milestone | Scope |
 |---|---|
-| **H8.2** | Testing: glob selection, shards, random order, retries, repeat, CODEOWNERS, JSON and JUnit reports |
+| **H8.2** | Testing: JSON and JUnit reports |
 | **H8.3** | Testing: attachments, snapshots, virtual time |
 | **H9** | Static metaprogramming (`derive`, generators) and runtime reflection |
 | **H10** | Tondo LLM Form (`TONDO_LLM_FORM_SPEC.md`) |

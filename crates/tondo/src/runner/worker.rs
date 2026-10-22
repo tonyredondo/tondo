@@ -1,223 +1,74 @@
-//! `tondo test` (testing 10): builds the test executable of a project,
-//! selects its tests, runs them in worker processes and reports them.
-//!
-//! A worker runs the tests of its plan one after another (see the
-//! runtime's `testing` module) and reports each entry through frames on
-//! stderr. A panic, a skip, a timeout or a crash ends the worker; another
-//! starts with the rest of the plan and runs again the setups its suites
-//! need.
+//! The worker processes that run tests (testing 7.1). A worker runs the
+//! tests of its plan one after another (see the runtime's `testing`
+//! module) and reports each entry through frames on stderr. A panic, a
+//! skip, a timeout or a crash ends the worker; another starts with the
+//! rest of the plan and runs again the setups its suites need.
 
-use crate::hir::TestNodeInfo;
-use std::collections::{HashMap, VecDeque};
+use super::{Attempt, Context, Options, Status, Tree};
+use std::collections::VecDeque;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-pub struct Options {
-    pub filter: Option<String>,
-    pub exact: Option<String>,
-    pub list: bool,
-    pub jobs: usize,
-    pub timeout: Duration,
-    pub show_output: bool,
-    pub allow_empty: bool,
-    pub deny_skips: bool,
-}
-
-/// The tree of the test build, with where each node is declared.
-pub struct Tree {
-    pub nodes: Vec<TestNodeInfo>,
-    pub locations: Vec<String>,
-}
-
-impl Tree {
-    /// Writes the tree beside the executable it describes, one node a line:
-    /// its parent, whether it is a suite, its identity and its location.
-    pub fn save(&self, path: &Path) -> Result<(), String> {
-        let lines: Vec<String> = self
-            .nodes
-            .iter()
-            .zip(&self.locations)
-            .map(|(n, location)| format!("{}\t{}\t{}\t{location}", n.parent, n.suite as u8, n.id))
-            .collect();
-        let partial = path.with_extension(format!("partial-{}", std::process::id()));
-        std::fs::write(&partial, lines.join("\n")).map_err(|e| format!("cannot write {}: {e}", partial.display()))?;
-        std::fs::rename(&partial, path).map_err(|e| format!("cannot write {}: {e}", path.display()))
-    }
-
-    /// The tree `save` wrote, if it is there.
-    pub fn load(path: &Path) -> Option<Tree> {
-        let text = std::fs::read_to_string(path).ok()?;
-        let mut tree = Tree { nodes: Vec::new(), locations: Vec::new() };
-        for line in text.lines() {
-            let mut parts = line.splitn(4, '\t');
-            let parent = parts.next()?.parse().ok()?;
-            let suite = parts.next()? == "1";
-            let id = parts.next()?.to_string();
-            let span = crate::source::Span::new(0, 0);
-            tree.nodes.push(TestNodeInfo { id, parent, suite, span });
-            tree.locations.push(parts.next()?.to_string());
-        }
-        Some(tree)
-    }
-
-    fn within(&self, mut node: u32, ancestor: u32) -> bool {
-        loop {
-            if node == ancestor {
-                return true;
-            }
-            if node == 0 {
-                return false;
-            }
-            node = self.nodes[node as usize].parent;
-        }
-    }
-
-    fn id(&self, node: u32) -> &str {
-        &self.nodes[node as usize].id
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Status {
-    Passed,
-    Skipped(String),
-    Error(String),
-    Panic(String),
-    Timeout,
-    Crashed(String),
-    /// Not run: a suite around it failed (`blocked-setup`) or skipped.
-    Blocked(u32, bool),
-}
-
-impl Status {
-    fn failed(&self) -> bool {
-        matches!(self, Status::Error(_) | Status::Panic(_) | Status::Timeout | Status::Crashed(_))
-    }
-}
-
-/// What one run of a test, or of a suite's setup and teardown, gave.
-#[derive(Clone, Debug)]
-pub struct Outcome {
-    pub node: u32,
-    pub status: Status,
-    /// For a suite: whether it failed in its teardown rather than its setup.
-    pub teardown: bool,
-    pub logs: Vec<String>,
-    pub tags: Vec<(String, String)>,
-    pub stdout: Vec<u8>,
-    pub stderr: Vec<u8>,
-}
-
-impl Outcome {
-    fn new(node: u32, status: Status) -> Outcome {
-        Outcome {
-            node,
-            status,
-            teardown: false,
-            logs: Vec::new(),
-            tags: Vec::new(),
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-        }
-    }
-}
-
-/// The tests the options select, in canonical order (testing 8.1, 8.2).
-pub fn select(tree: &Tree, options: &Options) -> Result<Vec<u32>, String> {
-    let mut selected: Vec<u32> = (1..tree.nodes.len() as u32)
-        .filter(|&n| !tree.nodes[n as usize].suite)
-        .filter(|&n| match (&options.filter, &options.exact) {
-            (Some(text), _) => tree.id(n).contains(text.as_str()),
-            (_, Some(id)) => {
-                let target = tree.nodes.iter().position(|node| node.id == *id);
-                target.is_some_and(|target| tree.within(n, target as u32))
-            }
-            _ => true,
-        })
-        .collect();
-    selected.sort_by(|&a, &b| tree.id(a).cmp(tree.id(b)));
-    Ok(selected)
-}
-
-/// The suites and tests of a selection, each once, in canonical order.
-pub fn listed(tree: &Tree, selected: &[u32]) -> Vec<u32> {
-    let mut nodes: Vec<u32> = Vec::new();
-    for &test in selected {
-        let mut node = test;
-        while node != 0 {
-            if !nodes.contains(&node) {
-                nodes.push(node);
-            }
-            node = tree.nodes[node as usize].parent;
-        }
-    }
-    nodes.sort_by(|&a, &b| tree.id(a).cmp(tree.id(b)));
-    nodes
-}
-
-/// Runs the selected tests with `executable` from `dir`, `jobs` workers
-/// at a time; `report` sees each outcome as it is known.
-pub fn run(
+/// Runs each unit's tests, starting each unit in a new worker, `--jobs`
+/// units at a time; `report` sees each attempt as it is known.
+pub(super) fn execute(
     executable: &Path,
     dir: &Path,
     tree: &Tree,
-    selected: &[u32],
+    units: Vec<(Vec<u32>, Context)>,
     options: &Options,
-    mut report: impl FnMut(&Outcome),
-) -> Vec<Outcome> {
-    // Each top-level suite or test goes to the lane with the fewest tests.
-    let mut lanes: Vec<Vec<u32>> = vec![Vec::new(); options.jobs.max(1)];
-    let mut units: Vec<(u32, Vec<u32>)> = Vec::new();
-    for &test in selected {
-        let mut top = test;
-        while tree.nodes[top as usize].parent != 0 {
-            top = tree.nodes[top as usize].parent;
-        }
-        match units.iter_mut().find(|(t, _)| *t == top) {
-            Some((_, tests)) => tests.push(test),
-            None => units.push((top, vec![test])),
-        }
-    }
-    for (_, tests) in units {
-        let lane = (0..lanes.len()).min_by_key(|&l| lanes[l].len()).unwrap_or(0);
-        lanes[lane].extend(tests);
-    }
+    mut report: impl FnMut(&Attempt),
+) -> Vec<Attempt> {
+    let threads = options.jobs.max(1).min(units.len());
+    let queue = Mutex::new(VecDeque::from(units));
     let (sender, receiver) = mpsc::channel();
-    let mut outcomes = Vec::new();
+    let mut attempts = Vec::new();
     std::thread::scope(|scope| {
-        for plan in lanes.into_iter().filter(|p| !p.is_empty()) {
-            let sender = sender.clone();
-            scope.spawn(move || lane(executable, dir, tree, plan, options.timeout, &sender));
+        for _ in 0..threads {
+            let (sender, queue) = (sender.clone(), &queue);
+            scope.spawn(move || {
+                while let Some((plan, context)) = queue.lock().unwrap_or_else(|e| e.into_inner()).pop_front() {
+                    lane(executable, dir, tree, plan, context, options.timeout, &sender);
+                }
+            });
         }
         drop(sender);
-        for outcome in receiver {
-            report(&outcome);
-            outcomes.push(outcome);
+        for attempt in receiver {
+            report(&attempt);
+            attempts.push(attempt);
         }
     });
-    outcomes
+    attempts
 }
 
 /// Runs a plan in workers, one after another, until each test has an
 /// outcome.
-fn lane(executable: &Path, dir: &Path, tree: &Tree, plan: Vec<u32>, timeout: Duration, sender: &mpsc::Sender<Outcome>) {
+fn lane(
+    executable: &Path,
+    dir: &Path,
+    tree: &Tree,
+    plan: Vec<u32>,
+    context: Context,
+    timeout: Duration,
+    sender: &mpsc::Sender<Attempt>,
+) {
     let mut remaining: VecDeque<u32> = plan.into();
     while !remaining.is_empty() {
         let before = remaining.len();
-        if let Err(message) = worker(executable, dir, tree, &mut remaining, timeout, sender) {
+        if let Err(message) = worker(executable, dir, tree, &mut remaining, context, timeout, sender) {
             // The worker could not start: every test fails alike.
             for test in remaining.drain(..) {
-                let _ = sender.send(Outcome::new(test, Status::Crashed(message.clone())));
+                let _ = sender.send(Attempt::new(test, Status::Crashed(message.clone()), context));
             }
         }
         if remaining.len() == before
             && let Some(test) = remaining.pop_front()
         {
             let message = "the test process ended before it ran a test".to_string();
-            let _ = sender.send(Outcome::new(test, Status::Crashed(message)));
+            let _ = sender.send(Attempt::new(test, Status::Crashed(message), context));
         }
     }
 }
@@ -231,10 +82,11 @@ enum Event {
 /// A worker's state while `tondo test` reads it.
 struct Session {
     nonce: Vec<u8>,
+    context: Context,
     /// Entries started and not ended, innermost last: each with its outcome
     /// so far, whether a suite reached its members, and when its current
     /// phase began, if it is timed.
-    running: Vec<(Outcome, bool, Option<Instant>)>,
+    running: Vec<(Attempt, bool, Option<Instant>)>,
     /// The entry that was running after each frame, by its sequence number.
     owners: Vec<Option<u32>>,
     stdout: Vec<u8>,
@@ -243,7 +95,7 @@ struct Session {
     pending: Vec<(u64, Vec<u8>)>,
     stdout_frames: u64,
     /// Outcomes ended by a frame, until stdout reaches that frame.
-    done: Vec<(Outcome, u64)>,
+    done: Vec<(Attempt, u64)>,
 }
 
 fn worker(
@@ -251,8 +103,9 @@ fn worker(
     dir: &Path,
     tree: &Tree,
     remaining: &mut VecDeque<u32>,
+    context: Context,
     timeout: Duration,
-    sender: &mpsc::Sender<Outcome>,
+    sender: &mpsc::Sender<Attempt>,
 ) -> Result<(), String> {
     let plan =
         std::env::temp_dir().join(format!("tondo-plan-{}-{:?}", std::process::id(), std::thread::current().id()));
@@ -298,6 +151,7 @@ fn worker(
     drop(events);
     let mut session = Session {
         nonce: format!("\x1e{nonce} ").into_bytes(),
+        context,
         running: Vec::new(),
         owners: vec![None],
         stdout: Vec::new(),
@@ -345,7 +199,7 @@ fn worker(
 
 /// Reports an outcome and takes its tests out of the plan: a test that
 /// ran, or the tests a suite that failed or skipped in its setup blocks.
-fn send(tree: &Tree, remaining: &mut VecDeque<u32>, outcome: Outcome, sender: &mpsc::Sender<Outcome>) {
+fn send(tree: &Tree, remaining: &mut VecDeque<u32>, outcome: Attempt, sender: &mpsc::Sender<Attempt>) {
     let node = outcome.node;
     let suite = tree.nodes[node as usize].suite;
     let blocked: Vec<u32> = if !suite {
@@ -359,9 +213,10 @@ fn send(tree: &Tree, remaining: &mut VecDeque<u32>, outcome: Outcome, sender: &m
         blocked
     };
     let skipped = matches!(outcome.status, Status::Skipped(_));
+    let context = Context { round: outcome.round, iteration: outcome.iteration, unit: outcome.unit };
     let _ = sender.send(outcome);
     for test in blocked {
-        let _ = sender.send(Outcome::new(test, Status::Blocked(node, skipped)));
+        let _ = sender.send(Attempt::new(test, Status::Blocked(node, skipped), context));
     }
 }
 
@@ -485,7 +340,7 @@ impl Session {
         let text = String::from_utf8_lossy(payload).into_owned();
         let now = Instant::now();
         match kind {
-            "start" => self.running.push((Outcome::new(node, Status::Passed), false, Some(now))),
+            "start" => self.running.push((Attempt::new(node, Status::Passed, self.context), false, Some(now))),
             "members" => {
                 if let Some(entry) = self.running.iter_mut().rev().find(|(o, _, _)| o.node == node) {
                     (entry.1, entry.2) = (true, None);
@@ -538,42 +393,4 @@ impl Session {
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
-}
-
-/// Where the test build of the project at `path` is kept: a directory
-/// named after everything the build reads, with the executable and its tree.
-pub fn build_dir(path: &Path) -> Result<PathBuf, String> {
-    let identity = crate::driver::compiler_identity();
-    let mut parts = vec![identity.into_bytes()];
-    for input in crate::driver::test_inputs(path)? {
-        parts.push(input.as_os_str().as_encoded_bytes().to_vec());
-        parts.push(std::fs::read(&input).map_err(|e| format!("cannot read {}: {e}", input.display()))?);
-    }
-    let key = crate::driver::fingerprint(&parts.iter().map(Vec::as_slice).collect::<Vec<_>>());
-    Ok(crate::driver::cache_dir().join("test").join(key))
-}
-
-/// The outcome of each test and suite, the last one of each node when it
-/// ran more than once, in canonical order.
-pub fn summary(tree: &Tree, outcomes: &[Outcome]) -> Vec<Outcome> {
-    let mut latest: HashMap<u32, Outcome> = HashMap::new();
-    for outcome in outcomes {
-        let entry = latest.entry(outcome.node).or_insert_with(|| outcome.clone());
-        // A suite that failed once stays failed.
-        if !(entry.status.failed() && !outcome.status.failed()) {
-            *entry = outcome.clone();
-        }
-    }
-    let mut list: Vec<Outcome> = latest.into_values().collect();
-    list.sort_by(|a, b| tree.id(a.node).cmp(tree.id(b.node)));
-    list
-}
-
-/// Whether the outcomes fail the run (testing 9.6).
-pub fn failed(outcomes: &[Outcome], deny_skips: bool) -> bool {
-    outcomes.iter().any(|o| {
-        o.status.failed()
-            || matches!(o.status, Status::Blocked(_, false))
-            || (deny_skips && matches!(o.status, Status::Skipped(_) | Status::Blocked(_, true)))
-    })
 }

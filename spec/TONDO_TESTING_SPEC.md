@@ -788,6 +788,9 @@ CODEOWNERS
 docs/CODEOWNERS
 ~~~
 
+La raíz del repositorio es el directorio más cercano, desde el proyecto hacia
+arriba, que contiene `.git`; sin él, la raíz del proyecto.
+
 `--codeowners <path>` selecciona un archivo explícito y
 `--codeowners none` desactiva la resolución. Un path explícito es lógico,
 relativo a la raíz, no contiene `.`/`..`, no escapa mediante symlink y debe
@@ -3606,11 +3609,13 @@ los ejecutan en cada plataforma de CI. El compilador nativo implementa hoy:
 - trabajadores (7.1), lifecycle de suite (7.3), timeouts (7.8) y los estados
   `passed`, `skipped`, `failed-error`, `failed-panic`, `timeout`, `crashed`,
   `blocked-setup` y `blocked-skip`;
-- `--filter`, `--exact`, `--list`, `--jobs`, `--timeout`, `--show-output`,
+- los selectores `--filter`, `--glob` y `--exact`, `--shard`, el orden canónico
+  y aleatorio con `--seed`, `--retry` con `flaky-pass` y `--allow-flaky`,
+  `--repeat`, CODEOWNERS, `--list`, `--jobs`, `--timeout`, `--show-output`,
   `--allow-empty` y `--deny-skips`, con la salida humana.
 
-Siguen pendientes glob, shard, orden aleatorio, retry, repeat, CODEOWNERS, los
-reportes JSON y JUnit, attachments, snapshots y el tiempo virtual.
+Siguen pendientes los reportes JSON y JUnit, attachments, snapshots y el tiempo
+virtual.
 
 ## 17. Referencia rápida
 

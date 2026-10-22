@@ -181,3 +181,102 @@ suite returns {
     let (_, stderr, _) = tondo(&dir, &["check"]);
     assert!(stderr.contains("error[E2003]"), "{stderr}");
 }
+
+/// A project in the target directory, a repository of its own, with the
+/// given test file.
+fn project(name: &str, tests: &str) -> PathBuf {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join(".git")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"app\"\n").unwrap();
+    std::fs::write(dir.join("src/main.to"), "fn main() {}\n").unwrap();
+    std::fs::write(dir.join("src/main_test.to"), tests).unwrap();
+    dir
+}
+
+#[test]
+fn retries_repeats_and_owners() {
+    let tests = "\
+import std.fs
+
+// Fails while the file `flag` is missing, and makes it.
+test flaky {
+    if not fs.exists(\"flag\") {
+        fs.writeText(\"flag\", \"\")?
+        assert(false, \"first run\")
+    }
+}
+
+test steady {}
+";
+    let dir = project("testing-retries", tests);
+    std::fs::create_dir_all(dir.join(".github")).unwrap();
+    std::fs::write(dir.join(".github/CODEOWNERS"), "# owners\n* @all\n*_test.to @testers\n").unwrap();
+    let (stdout, _, status) = tondo(&dir, &["test", "--retry", "1"]);
+    let expected = "\
+test app::unit::app::flaky ... FAILED
+test app::unit::app::steady ... ok
+
+retry round 1:
+test app::unit::app::flaky ... ok
+
+--- app::unit::app::flaky (flaky: it passed after failing)
+owners: @testers
+attempt 1: panic[P0007]: assertion-failed: first run
+ --> src/main_test.to:7:9
+attempt 2, retry round 1: passed
+
+FAILED. 1 passed; 1 flaky; 0 failed; 0 skipped; 0 blocked
+";
+    assert_eq!((untimed(&stdout).as_str(), status), (expected, 1));
+    std::fs::remove_file(dir.join("flag")).unwrap();
+    let (_, _, status) = tondo(&dir, &["test", "--retry", "1", "--allow-flaky"]);
+    assert_eq!(status, 0);
+    // Repeating finds it too, and passes only when every run passes.
+    std::fs::remove_file(dir.join("flag")).unwrap();
+    let (stdout, _, status) = tondo(&dir, &["test", "--repeat", "2", "--filter", "flaky"]);
+    assert!(stdout.contains("\niteration 2:\ntest app::unit::app::flaky ... ok\n"), "{stdout}");
+    assert_eq!(status, 1);
+    let (_, _, status) = tondo(&dir, &["test", "--repeat", "3", "--filter", "steady"]);
+    assert_eq!(status, 0);
+    let (stdout, _, _) = tondo(&dir, &["test", "--list", "--codeowners", "none"]);
+    assert_eq!(stdout, "app::unit::app::flaky\napp::unit::app::steady\n");
+    let (stdout, _, _) = tondo(&dir, &["test", "--list"]);
+    assert_eq!(stdout, "app::unit::app::flaky  @testers\napp::unit::app::steady  @testers\n");
+}
+
+#[test]
+fn shards_globs_and_orders() {
+    let mut tests = String::new();
+    for name in ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"] {
+        tests.push_str(&format!("test {name} {{}}\n\n"));
+    }
+    tests.push_str("suite group {\n    test inner {}\n}\n");
+    let dir = project("testing-shards", &tests);
+    let ran = |args: &[&str]| -> Vec<String> {
+        let (stdout, _, _) = tondo(&dir, &[&["test"], args].concat());
+        stdout.lines().filter_map(|l| l.strip_prefix("test ")).map(|l| l.split(' ').next().unwrap().to_string()).collect()
+    };
+    // The shards split the tests between them.
+    let mut all: Vec<String> = (1..=3).flat_map(|i| ran(&["--shard", &format!("{i}/3")])).collect();
+    all.sort();
+    assert_eq!(all, ran(&[]));
+    assert_eq!(ran(&["--glob", "app::unit::app::*ta"]), ["app::unit::app::beta", "app::unit::app::delta", "app::unit::app::zeta"]);
+    assert_eq!(ran(&["--glob", "**::group"]), ["app::unit::app::group::inner"]);
+    // A seed gives its order every time; lines stay in canonical order.
+    let (first, _, _) = tondo(&dir, &["test", "--order", "random", "--seed", "5eed"]);
+    let (again, _, _) = tondo(&dir, &["test", "--order", "random", "--seed", "5eed"]);
+    assert!(first.starts_with("seed 0000000000005eed\n"));
+    assert_eq!(untimed(&first), untimed(&again));
+    for (args, message) in [
+        (&["--glob", "a::**::**"][..], "two `**` components follow each other"),
+        (&["--shard", "0/3"], "--shard takes index/count"),
+        (&["--seed", "5eed"], "--seed goes with --order random"),
+        (&["--repeat", "2", "--retry", "1"], "it does not go with --retry"),
+        (&["--filter", "a", "--exact", "b"], "give only one of"),
+    ] {
+        let (_, stderr, status) = tondo(&dir, &[&["test"], args].concat());
+        assert!(stderr.contains(message) && status == 2, "{args:?}: {stderr}");
+    }
+}

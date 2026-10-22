@@ -14,7 +14,9 @@ usage:
   tondo check [<project>|<file.to>] [--json]           report diagnostics only (as JSON)
   tondo fmt [--check] <file.to>...                     format files canonically
   tondo update [<project>] [<dependency>...]           fetch dependencies again and rewrite tondo.lock
-  tondo test [<project>] [--filter <text> | --exact <id>] [--list] [--jobs <n>] [--timeout <seconds>]
+  tondo test [<project>] [--filter <text> | --glob <pattern> | --exact <id>] [--shard <i/n>]
+            [--order canonical|random] [--seed <hex>] [--list] [--jobs <n>] [--timeout <seconds>]
+            [--retry <n>] [--allow-flaky] [--repeat <n>] [--codeowners auto|none|<path>]
             [--show-output] [--allow-empty] [--deny-skips]
                                                        run the tests of a project
   tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
@@ -106,55 +108,138 @@ fn check_command(args: &[OsString]) -> Result<ExitCode, String> {
 /// Builds the tests of a project, runs those selected and reports them
 /// (testing 10).
 fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
-    use tondo::runner::{self, Status};
+    use tondo::runner::{self, Codeowners, Glob, Order, Selector};
     let (path, rest) = match args.first() {
         Some(first) if !first.to_string_lossy().starts_with('-') => (PathBuf::from(first), &args[1..]),
         _ => source_argument(args),
     };
     let mut options = runner::Options {
-        filter: None,
-        exact: None,
+        selector: Selector::All,
+        shard: None,
+        order: Order::Canonical,
         list: false,
         jobs: 1,
         timeout: std::time::Duration::from_secs(60),
+        retry: 0,
+        repeat: 1,
+        codeowners: Codeowners::Auto,
         show_output: false,
         allow_empty: false,
         deny_skips: false,
+        allow_flaky: false,
     };
+    let usage = |message: String| format!("{message}\n{USAGE}");
+    // A count written canonically: `0` or digits without a leading zero.
+    let count = |text: &str, flag: &str| {
+        text.parse::<u64>()
+            .ok()
+            .filter(|_| text == "0" || (!text.starts_with('0') && text.bytes().all(|b| b.is_ascii_digit())))
+            .ok_or_else(|| usage(format!("{flag} takes a number written without sign or leading zeros")))
+    };
+    let (mut seed, mut random, mut seen) = (None, false, Vec::new());
     let mut rest = rest.iter();
     while let Some(arg) = rest.next() {
-        let mut value = |what: &str| {
-            rest.next()
-                .map(|v| v.to_string_lossy().into_owned())
-                .ok_or_else(|| format!("{what} needs a value\n{USAGE}"))
+        let flag = arg.to_string_lossy().into_owned();
+        if seen.contains(&flag) {
+            return Err(usage(format!("{flag} appears twice")));
+        }
+        seen.push(flag.clone());
+        let mut value = || {
+            rest.next().map(|v| v.to_string_lossy().into_owned()).ok_or_else(|| usage(format!("{flag} needs a value")))
         };
-        match arg.to_string_lossy().as_ref() {
-            "--filter" if options.filter.is_none() && options.exact.is_none() => {
-                options.filter = Some(value("--filter")?)
+        match flag.as_str() {
+            "--filter" | "--glob" | "--exact" if !matches!(options.selector, Selector::All) => {
+                return Err(usage("give only one of --filter, --glob and --exact".into()));
             }
-            "--exact" if options.filter.is_none() && options.exact.is_none() => options.exact = Some(value("--exact")?),
-            "--filter" | "--exact" => return Err(format!("give one of --filter and --exact, once\n{USAGE}")),
+            "--filter" => options.selector = Selector::Filter(value()?),
+            "--glob" => options.selector = Selector::Glob(Glob::parse(&value()?).map_err(usage)?),
+            "--exact" => options.selector = Selector::Exact(value()?),
+            "--shard" => {
+                let text = value()?;
+                let parts = text.split_once('/').map(|(i, n)| (count(i, "--shard"), count(n, "--shard")));
+                match parts {
+                    Some((Ok(index), Ok(total))) if index >= 1 && index <= total => {
+                        options.shard = Some((index, total))
+                    }
+                    _ => return Err(usage(format!("--shard takes index/count with 1 <= index <= count, not {text}"))),
+                }
+            }
+            "--order" => match value()?.as_str() {
+                "canonical" => random = false,
+                "random" => random = true,
+                other => return Err(usage(format!("--order is canonical or random, not {other}"))),
+            },
+            "--seed" => {
+                let text = value()?;
+                let valid = (1..=16).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_hexdigit());
+                seed = Some(
+                    valid
+                        .then(|| u64::from_str_radix(&text, 16).ok())
+                        .flatten()
+                        .ok_or_else(|| usage(format!("--seed takes one to sixteen hexadecimal digits, not {text}")))?,
+                );
+            }
             "--list" => options.list = true,
             "--jobs" => {
-                options.jobs = value("--jobs")?
-                    .parse()
+                options.jobs = count(&value()?, "--jobs")
                     .ok()
                     .filter(|&n| n > 0)
-                    .ok_or_else(|| format!("--jobs takes a positive number\n{USAGE}"))?
+                    .map(|n| n as usize)
+                    .ok_or_else(|| usage("--jobs takes a positive number".into()))?
             }
             "--timeout" => {
-                let seconds: f64 = value("--timeout")?
+                let seconds: f64 = value()?
                     .parse()
                     .ok()
                     .filter(|&s: &f64| s > 0.0 && s.is_finite())
-                    .ok_or_else(|| format!("--timeout takes a positive number of seconds\n{USAGE}"))?;
+                    .ok_or_else(|| usage("--timeout takes a positive number of seconds".into()))?;
                 options.timeout = std::time::Duration::from_secs_f64(seconds);
+            }
+            "--retry" => options.retry = count(&value()?, "--retry")? as u32,
+            "--repeat" => {
+                options.repeat = count(&value()?, "--repeat")?
+                    .try_into()
+                    .ok()
+                    .filter(|&n: &u32| n > 0)
+                    .ok_or_else(|| usage("--repeat takes a positive number".into()))?
+            }
+            "--codeowners" => {
+                options.codeowners = match value()?.as_str() {
+                    "auto" => Codeowners::Auto,
+                    "none" => Codeowners::None,
+                    "" => return Err(usage("--codeowners takes auto, none or a path".into())),
+                    path => Codeowners::Path(path.to_string()),
+                }
             }
             "--show-output" => options.show_output = true,
             "--allow-empty" => options.allow_empty = true,
             "--deny-skips" => options.deny_skips = true,
-            other => return Err(format!("unknown option {other}\n{USAGE}")),
+            "--allow-flaky" => options.allow_flaky = true,
+            other => return Err(usage(format!("unknown option {other}"))),
         }
+    }
+    let given = |flag: &str| seen.iter().any(|s| s == flag);
+    if seed.is_some() && !random {
+        return Err(usage("--seed goes with --order random".into()));
+    }
+    if given("--repeat") && (given("--retry") || given("--allow-flaky")) {
+        return Err(usage("--repeat runs everything again; it does not go with --retry or --allow-flaky".into()));
+    }
+    let listing = ["--show-output", "--deny-skips", "--retry", "--repeat", "--allow-flaky"];
+    if options.list
+        && let Some(flag) = listing.iter().find(|f| given(f))
+    {
+        return Err(usage(format!("--list runs nothing, so it does not go with {flag}")));
+    }
+    if random {
+        // A seed chosen now is shown, so the order can be repeated.
+        let chosen = seed.is_none();
+        let seed = seed.unwrap_or_else(|| {
+            let entropy = format!("{:?}{}", std::time::SystemTime::now(), std::process::id());
+            let digest = tondo::hash::sha256(entropy.as_bytes());
+            u64::from_be_bytes(digest[..8].try_into().unwrap())
+        });
+        options.order = Order::Random(seed, chosen);
     }
     // The build is reused while nothing it reads changes.
     let dir = runner::build_dir(&path)?;
@@ -181,116 +266,13 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             tree
         }
     };
-    let selected = runner::select(&tree, &options)?;
-    if selected.is_empty() {
-        let message = match (&options.filter, &options.exact) {
-            (Some(text), _) => format!("no test matches --filter {text:?}"),
-            (_, Some(id)) => format!("no suite or test is {id:?}; `tondo test --list` lists them"),
-            _ => "the project has no tests: write `test name { ... }` in a `_test.to` file or under `tests/`".into(),
-        };
-        if options.allow_empty {
-            println!("{message}");
-            return Ok(ExitCode::SUCCESS);
+    match runner::test(&path, &executable, &tree, &options) {
+        Ok(failed) => Ok(if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS }),
+        Err(runner::Failure::Input(message) | runner::Failure::Empty(message)) => {
+            eprintln!("tondo: {message}");
+            Ok(ExitCode::FAILURE)
         }
-        eprintln!("tondo: {message}");
-        return Ok(ExitCode::FAILURE);
     }
-    if options.list {
-        for node in runner::listed(&tree, &selected) {
-            let suffix = if tree.nodes[node as usize].suite { " (suite)" } else { "" };
-            println!("{}{suffix}", tree.nodes[node as usize].id);
-        }
-        return Ok(ExitCode::SUCCESS);
-    }
-    let started = std::time::Instant::now();
-    // Each test's line in canonical order, as soon as the ones before it
-    // are known.
-    let mut known: std::collections::HashMap<u32, runner::Outcome> = std::collections::HashMap::new();
-    let mut printed = 0;
-    let line = |outcome: &runner::Outcome| {
-        let id = &tree.nodes[outcome.node as usize].id;
-        let status = match &outcome.status {
-            Status::Passed => "ok".to_string(),
-            Status::Skipped(reason) => format!("skipped: {}", reason.lines().next().unwrap_or_default()),
-            Status::Blocked(suite, true) => format!("skipped: its suite {} skipped", tree.nodes[*suite as usize].id),
-            Status::Blocked(suite, false) => format!("BLOCKED: its suite {} failed", tree.nodes[*suite as usize].id),
-            Status::Timeout => "TIMEOUT".into(),
-            Status::Crashed(_) => "CRASHED".into(),
-            Status::Error(_) | Status::Panic(_) => "FAILED".into(),
-        };
-        println!("test {id} ... {status}");
-    };
-    let outcomes = runner::run(&executable, &path, &tree, &selected, &options, |outcome| {
-        if !tree.nodes[outcome.node as usize].suite {
-            known.insert(outcome.node, outcome.clone());
-        }
-        while let Some(outcome) = selected.get(printed).and_then(|t| known.get(t)) {
-            line(outcome);
-            printed += 1;
-        }
-    });
-    let outcomes = runner::summary(&tree, &outcomes);
-    // Failures, with what each wrote; skips with their reasons.
-    let mut failures = Vec::new();
-    for outcome in &outcomes {
-        let node = &tree.nodes[outcome.node as usize];
-        let what = if node.suite {
-            match outcome.status {
-                Status::Passed => format!("suite {}", node.id),
-                _ if outcome.teardown => format!("suite {} (teardown)", node.id),
-                _ => format!("suite {} (setup)", node.id),
-            }
-        } else {
-            node.id.clone()
-        };
-        let detail = match &outcome.status {
-            Status::Error(error) if error.contains("\n --> ") => format!("error: {error}"),
-            Status::Error(error) => format!("error: {error}\n --> {}", tree.locations[outcome.node as usize]),
-            Status::Panic(text) => text.clone(),
-            Status::Timeout => format!("timed out after {}s", options.timeout.as_secs_f64()),
-            Status::Crashed(how) => how.clone(),
-            Status::Skipped(reason) if node.suite => format!("skipped: {reason}"),
-            Status::Passed | Status::Skipped(_) | Status::Blocked(..) if !options.show_output => continue,
-            _ => String::new(),
-        };
-        let mut text = format!("--- {what}\n");
-        if !detail.is_empty() {
-            text.push_str(&detail);
-            text.push('\n');
-        }
-        for (label, bytes) in [("stdout", &outcome.stdout), ("stderr", &outcome.stderr)] {
-            if !bytes.is_empty() {
-                text.push_str(&format!("{label}:\n{}", String::from_utf8_lossy(bytes)));
-                if !bytes.ends_with(b"\n") {
-                    text.push('\n');
-                }
-            }
-        }
-        if !outcome.logs.is_empty() {
-            text.push_str(&format!("logs:\n{}\n", outcome.logs.join("\n")));
-        }
-        if !outcome.tags.is_empty() {
-            let tags: Vec<String> = outcome.tags.iter().map(|(k, v)| format!("{k}={v}")).collect();
-            text.push_str(&format!("tags: {}\n", tags.join(", ")));
-        }
-        failures.push(text);
-    }
-    if !failures.is_empty() {
-        println!("\n{}", failures.join("\n"));
-    }
-    let tests: Vec<&runner::Outcome> = outcomes.iter().filter(|o| !tree.nodes[o.node as usize].suite).collect();
-    let count = |f: fn(&Status) -> bool| tests.iter().filter(|o| f(&o.status)).count();
-    let failed = runner::failed(&outcomes, options.deny_skips);
-    println!(
-        "{}. {} passed; {} failed; {} skipped; {} blocked; {:.2}s",
-        if failed { "FAILED" } else { "ok" },
-        count(|s| *s == Status::Passed),
-        count(|s| matches!(s, Status::Error(_) | Status::Panic(_) | Status::Timeout | Status::Crashed(_))),
-        count(|s| matches!(s, Status::Skipped(_) | Status::Blocked(_, true))),
-        count(|s| matches!(s, Status::Blocked(_, false))),
-        started.elapsed().as_secs_f64()
-    );
-    Ok(if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS })
 }
 
 /// Resolves the named dependencies, or all of them, again instead of
