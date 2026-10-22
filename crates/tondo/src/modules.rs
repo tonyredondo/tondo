@@ -62,8 +62,10 @@ pub fn link(mut modules: Vec<ModuleSource>, root: usize, packages: &[PackageInfo
     let decls: Vec<Declarations> = modules.iter().map(declarations).collect();
     // The root package's modules are named after their path inside it, and
     // other packages' after their whole path, unless that is ambiguous.
+    // Standard modules are named without `std`: `json.Value`.
     let prefix = |module: &ModuleSource, whole: bool| match &module.path[..] {
         [package] => package.clone(),
+        [_, rest @ ..] if packages[module.package].name == "std" => rest.join("."),
         [_, rest @ ..] if module.package == 0 && !whole => rest.join("."),
         path => path.join("."),
     };
@@ -96,6 +98,17 @@ pub fn link(mut modules: Vec<ModuleSource>, root: usize, packages: &[PackageInfo
                     diags.error("E1003", alias.span, message);
                 }
                 let package = &packages[module.package];
+                let written =
+                    packages.iter().position(|p| p.name == "std").and_then(|std| by_path.get(&(std, path.join("."))));
+                if let Some(&target) = written {
+                    // A standard module written in Tondo.
+                    if aliases.insert(alias.name.clone(), target).is_some() {
+                        let message = format!("`{}` is imported twice in this file", alias.name);
+                        diags.error("E1002", alias.span, message);
+                    }
+                    edges[index].push((target, import.span));
+                    continue;
+                }
                 if path[0] == "std" {
                     let duplicate = std_imports.iter().find(|i| i.alias_name() == alias.name);
                     match duplicate {
@@ -386,6 +399,9 @@ impl Linker<'_> {
         for param in &mut f.params {
             if let Some(ty) = &mut param.ty {
                 self.ty(ty);
+            }
+            if let Some(default) = &mut param.default {
+                self.expr(default);
             }
         }
         if let Some(result) = &mut f.result {

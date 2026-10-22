@@ -1,0 +1,25 @@
+import std.console
+import std.json
+import orders.catalog
+
+type Order = {
+    id: Int
+    items: Array[catalog.Product]
+    note: String?
+}
+
+fn main(): !json.JsonError {
+    let pen = catalog.Product {
+        name: "pen"
+        price: catalog.Price { amount: 3, currency: catalog.Currency.Eur }
+        inStock: true
+    }
+    let order = Order { id: 1, items: [pen], note: none }
+    let text = json.encode(order)
+    console.println(text)
+    let back: Order = json.decode(text)?
+    console.println("{back.items[0].name} {back.items[0].price.amount} {back.items[0].inStock}")
+}
+
+// expect-stdout: {"id":1,"items":[{"name":"pen","price":{"amount":3,"currency":"Eur"},"in_stock":true}],"note":null}
+// expect-stdout: pen 3 true

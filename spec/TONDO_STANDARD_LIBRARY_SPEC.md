@@ -1463,11 +1463,11 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.io` | Core | — | 0.1 | Protocolos de lectura/escritura, buffers, EOF, partial I/O y errores portables |
 | `std.math` | Core | — | 0.1 | Matemática escalar portable y semántica IEEE nombrada |
 | `std.format` | Core | — | 0.1 | Formatting explícito sobre `Display`, sin reflection |
-| `std.serialization` | Core | — | 0.1 | Traits estáticos, eventos estructurales y contratos compartidos de encode/decode |
+| `std.serialization` | Core | — | 0.1 | Protocolo común de encode/decode cuando exista un segundo formato (14.7) |
 | `std.reflect` | Core | — | 0.1 | Metadata de tipos retenida explícitamente, sin inspección dinámica de valores |
 | `std.meta` | Build-only | — | 0.1 | Modelo semántico inmutable, requests y emisión para providers/generators |
 | `std.encoding` | Core | — | 0.1 | Encodings binario-texto, incluidos Base64 y hexadecimal, con APIs materializadas y streaming |
-| `std.json` | Core | — | 0.1 | JSON RFC 8259, APIs tipadas, streaming y árbol dinámico explícito |
+| `std.json` | Core | — | 0.1 | JSON RFC 8259: encode/decode tipados, eventos, `Value` dinámico, JCS y `Raw` |
 | `std.messagepack` | Core | — | 0.1 | MessagePack tipado, streaming y árbol dinámico explícito |
 | `std.protobuf` | Core + Build-only | — | 0.1 | Wire format y código schema-first generado desde `.proto` |
 | `std.yaml` | Core | — | 0.1 | YAML seguro, tipado y streaming sobre `std.serialization`, con límites explícitos |
@@ -2251,204 +2251,26 @@ y conformance antes de cerrar S1A.
 
 ### 14.6 Arquitectura común de serialización
 
-Hay dos rutas deliberadamente distintas:
+Cada formato ofrece dos rutas:
 
-- **Tipada:** un tipo concreto implementa `serialization.Encode[C]` y/o
-  `serialization.Decode[C]`; el compilador monomorfiza la llamada y el codec
-  accede directamente a su estructura.
-- **Dinámica explícita:** JSON y MessagePack comparten `serialization.Value`
-  (reexportado como `json.Value`/`messagepack.Value`) para documentos cuyo
-  schema no se conoce al compilar; Protobuf conserva un modelo de wire propio.
+- **Tipada:** un tipo se codifica y decodifica directamente con los traits del
+  formato, sin pasar por un árbol ni consultar reflection. El compilador
+  implementa esos traits para cada record, enum y newtype cuyas partes los
+  implementan; un `impl` del programa sustituye al automático.
+- **Dinámica:** un árbol explícito (`json.Value`) para documentos cuyo schema no
+  se conoce al compilar.
 
-La ruta tipada no construye un `Value`, no consulta `std.reflect` y no busca
-fields por string. La ruta dinámica no introduce `Any`: sus casos posibles son
-un enum cerrado y documentado, y el codec rechaza las variantes que su wire
-format no admite.
-
-Todo codec ofrece tres niveles cuando el formato los admite:
-
-1. una operación cómoda que transforma un valor completo a/desde `Array[Byte]`;
-2. un `Reader`/`Writer` incremental sobre `std.io`; y
-3. una máquina de eventos o tokens para procesar documentos sin materializarlos.
-
-Los tres niveles comparten parser, validador y encoder. Un helper materializado
-no mantiene una segunda semántica. Las APIs de streaming soportan chunks
-arbitrarios, incluida una secuencia UTF-8, varint o escalar dividida entre dos
-chunks, y aplican backpressure del reader/writer.
-
-Cada decoder acepta límites explícitos agrupados en un record: bytes de input,
-profundidad, longitud de string/blob, elementos de colección y bytes
-materializados. Los defaults estándar son finitos y versionados. Alcanzar un
-límite devuelve un error nominal con clase, offset y path estructural; no
-produce un pánico ni un valor parcial.
-
-La ruta dinámica común pertenece a `std.serialization` y se expone como
-`serialization.Value` (JSON y MessagePack pueden reexportarlo como `Value`). Sus
-variantes son `Null`, `Bool`, `Int`, `UInt`, `Float`, `Text`, `Bytes`,
-`Object(ordered Map[String, Value])`, `Map(ordered Array[(Value, Value)])` y
-`Extension(tag, Array[Byte])`. JSON solo produce las variantes de su modelo y rechaza
-`Bytes`, `Extension` y mapas con claves no textuales salvo una opción explícita;
-MessagePack conserva bytes, extensiones y claves arbitrarias. Protobuf no usa
-este árbol: su inspección dinámica es un modelo de wire propio con fields
-desconocidos.
-
-`Value` es poseído, mutable y tiene copia lógica independiente. `ValueView` es
-prestado e inmutable y solo vive hasta el siguiente evento o hasta que termina
-la entrada; `parseView` lo entrega sin materialización. `clone()` siempre produce
-una copia lógica; copy-on-write es una optimización interna no observable.
-`Raw`/`RawView` son bytes opacos específicos de cada codec. `raw(bytes)` valida
-antes de construir `Raw`; `rawUnchecked(bytes)` solo existe en `unsafe`.
-
-La derivación estática utiliza `Encode[C]` y `Decode[C]`, donde `C` es el codec
-(`Json`, `MessagePack` o `Protobuf`), no interfaces runtime:
-
-~~~tondo pseudocode
-pub trait Encode[C] {
-    fn encode[E, S: Encoder[C, E]](value: Self, encoder: var S): Unit ! E
-}
-pub trait Decode[C] {
-    fn decode[E, D: Decoder[C, E]](decoder: var D): Self ! E
-}
-~~~
-
-Un mismo tipo puede implementar varios codecs. `@name("wire_name")` cambia el
-nombre común; `@json(base64)`, `@messagepack(binary)` y `@proto(number)` afinan
-un codec concreto. `@proto(number)` es obligatorio para cada field Protobuf y
-los números nunca se infieren; los números 19000..19999 están reservados.
-`@ignore` es simétrico y omite el field al codificar y decodificar, por lo que
-un field ignorado debe ser `Option[T]` y se reconstruye como `none`.
-`@json(base64)` convierte `Array[Byte]` tipado a/desde texto Base64 (RFC 4648;
-URL-safe debe nombrarse explícitamente); `parse` dinámico conserva el texto
-original. Las anotaciones se resuelven en compile time y no requieren
-reflection de valores.
-
+Las anotaciones de campo `@name("wire")` e `@ignore` (9.2 del lenguaje) eligen
+el nombre de un campo fuera del programa u omiten un campo opcional, en todos
+los formatos. Un formato ofrece además lectura y escritura por eventos, que
+comparten parser y emisor con las demás rutas.
 
 ### 14.7 `std.serialization`
 
-`std.serialization` posee los protocolos estáticos compartidos. La forma
-normativa exhaustiva está en
-[`docs/contracts/stdlib-serialization.md`](./docs/contracts/stdlib-serialization.md)
-y se resume aquí para mantener la tabla de owners junto al lenguaje:
-
-~~~tondo pseudocode
-pub trait Encoder[C, E] {
-    fn null(var self): Unit ! E
-    fn bool(var self, value: Bool): Unit ! E
-    fn int(var self, value: Int64): Unit ! E
-    fn uint(var self, value: UInt64): Unit ! E
-    fn float32(var self, value: Float32): Unit ! E
-    fn float64(var self, value: Float64): Unit ! E
-    fn string(var self, value: String): Unit ! E
-    fn bytes(var self, value: Array[Byte]): Unit ! E
-    fn base64(var self, value: Array[Byte]): Unit ! E
-    fn startArray(var self, length: Int?): Unit ! E
-    fn endArray(var self): Unit ! E
-    fn startMap(var self, length: Int?): Unit ! E
-    fn mapKey(var self): Unit ! E
-    fn endMap(var self): Unit ! E
-    fn startRecord(var self, name: String, fields: Int?): Unit ! E
-    fn field(var self, name: String): Unit ! E
-    fn endRecord(var self): Unit ! E
-    fn startEnum(var self, name: String, variant: String): Unit ! E
-    fn endEnum(var self): Unit ! E
-}
-
-pub trait Decoder[C, E] {
-    fn peek(var self): SerializationEvent? ! E
-    fn next(var self): SerializationEvent ! E
-    fn base64(var self): Array[Byte] ! E
-    fn own(var self, event: SerializationEvent): SerializationEvent ! E
-    fn reject(var self, error: SerializationError): E
-}
-
-pub trait Encode[C] {
-    fn encode[E, S: Encoder[C, E]](value: Self, encoder: var S): Unit ! E
-}
-
-pub trait Decode[C] {
-    fn decode[E, D: Decoder[C, E]](decoder: var D): Self ! E
-}
-~~~
-
-`SerializationEvent` contiene scalars con anchura explícita, arrays, maps con
-`MapKey`, records (`StartRecord`/`Field`) y enums (`StartEnum`). La máquina de
-eventos exige una raíz única, fields únicos, claves y payloads completos,
-longitudes exactas cuando se declaran y cierres balanceados. Los frames son
-explícitos y acotados; no se usa la pila de llamadas del host.
-
-`Encoder.base64` y `Decoder.base64` son la única operación común para la policy
-de bytes representados como Base64 RFC 4648 canónico. Su alfabeto, padding,
-canonicalidad, límites y streaming son los fijados por el contrato de
-[`std.encoding`](./docs/contracts/stdlib-encoding.md). El derive JSON la activa
-solo con `@json(base64)`; no construye `Value` ni acepta alfabetos/padding
-alternativos.
-
-`Encode` recibe el valor por ownership como parámetro asociado, de modo que un
-tipo affine se consume una sola vez y no requiere un receiver ficticio. El
-encoder/decoder se pasa como `var` para que avance su estado sin boxing ni
-allocation por evento. `peek` observa el siguiente evento sin consumirlo y
-devuelve `none` únicamente cuando no queda ninguno; permite componer `Option`,
-arrays y maps sin buffering ni retroceso. Los payloads de texto/bytes de
-`next` son vistas hasta el siguiente evento y `own` es la única materialización
-estable. `reject` traduce un `SerializationError` estructural al error nominal
-exacto del codec; no borra el tipo, no crea una union y no habilita
-conversiones implícitas.
-
-La distribución registra providers para:
-
-~~~tondo pseudocode
-import std.serialization
-
-derive serialization.Encode[Json] + serialization.Decode[Json]
-    + serialization.Encode[MessagePack] + serialization.Decode[MessagePack]
-    for User
-~~~
-
-El comportamiento derivado:
-
-- el encode visita fields en orden de declaración; el decode usa una máquina
-  estática de slots y acepta cualquier orden de fields;
-- utiliza el spelling declarado de cada field como nombre externo por defecto,
-  incluidos fields privados cuya autorización concede `derive`;
-- conserva discriminante y payload de enum de forma estructural;
-- introduce bounds mínimos sobre parámetros genéricos;
-- rechaza en compile time un field sin implementación requerida; y
-- consume cada field conocido como máximo una vez y publica el valor solo tras
-  validar todos sus componentes; `DuplicateField`, `UnknownField` y
-  `MissingField` son fallos distintos;
-- reconstruye `Option[T]` ausentes como `none` y consume fields `@ignore`
-  aplicando su policy antes de publicar `none`;
-- para MessagePack materializa records y enums como maps de claves string; para
-  Protobuf usa tokens `#number` que el adapter baja al field tag sin inferir
-  desde el orden.
-
-Renombrar, omitir, aplanar o transformar fields cambia un contrato de wire y no
-se esconde en attributes generales. Se expresa con un `impl` manual o con un
-tipo DTO explícito. Protobuf no utiliza este derive para inferir field numbers.
-El error común conserva tipo, path, offset y límites; cada codec puede añadir
-sus variantes nominales sin cambiar la máquina compartida.
-
-La evidencia ejecutable de este owner es `STD-A-SER-EVIDENCE-001`: enlaza el
-contrato común con los traits `Encoder`/`Decoder` y `Encode`/`Decode`, la máquina
-de eventos con frames explícitos, `Value`/`ValueView`/`Raw`, paths, límites,
-chunking y publicación atómica. Los providers herméticos de derive conservan
-la identidad del codec, generan output determinista, source maps y diagnostics
-reproducibles para records, enums, newtypes, genéricos y attributes. `HOST` es
-`not-applicable`.
-
-`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
-`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
-
-La evidencia ejecutable de `std.json` es `STD-A-JSON-EVIDENCE-001`. Cierra las
-rutas typed, dynamic y streaming sobre el mismo parser de frames explícitos,
-incluyendo `JsonNumber` exacto, `Value`/`ValueView`/`Raw`, límites antes de
-crecer, políticas de duplicados y errores terminales. La suite comprueba
-Unicode, números, JCS/RFC 8785, canonicalización, fragmentación de un byte,
-interoperabilidad bidireccional con `serde_json` y los adaptadores de
-`Encode`/`Decode` sin DOM. `HOST` es `not-applicable`: el bridge del compilador
-no introduce una capability ni semántica dependiente del target. El fuzz
-dedicado por operación, los baselines de allocations/memoria por target y
-`STD-CONF-001` siguen explícitamente como promoción posterior.
+Los traits de codificación viven por ahora en el único formato implementado,
+`std.json`. Cuando exista un segundo formato, `std.serialization` reunirá un
+protocolo de eventos común y los traits pasarán a ser compartidos, con las
+mismas implementaciones automáticas y anotaciones.
 
 ### 14.8 `std.reflect`
 
@@ -2695,62 +2517,143 @@ stdlib ni como una API runtime.
 
 ### 14.10 `std.json`
 
-`std.json` implementa JSON UTF-8 conforme a
-[RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html). Su superficie contiene:
+`std.json` implementa JSON UTF-8 según
+[RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html), en modo estricto: un
+único valor, sin datos detrás, sin claves duplicadas salvo que se permitan y
+con una profundidad máxima de 128. Está escrito en Tondo sobre un tokenizador y
+un emisor del runtime.
 
-- encode/decode tipado mediante `Encode` y `Decode`;
-- `JsonReader`, `JsonWriter` y eventos incrementales;
-- `Value` para uso sin schema;
-- `JsonNumber`, que conserva una representación numérica validada sin forzar
-  pérdida inmediata a `Float64`; y
-- opciones nominales de límites, campos desconocidos, duplicados y números no
-  representables.
+~~~tondo
+import std.json
 
-El modo estricto por defecto rechaza trailing data, UTF-8 inválido, escapes
-inválidos, profundidad excedida, claves duplicadas y números fuera de la
-política solicitada. Ignorar campos desconocidos o elegir una política distinta
-requiere `DecodeOptions` explícito; no depende de globals.
+type User = {
+    @name("user_id")
+    id: Int
+    name: String
+    email: String?
+}
 
-El encoder ordinario conserva el orden declarativo de un tipo y el orden de
-inserción de `Value.Object`. `encodeCanonical` implementa
-[RFC 8785 (JCS)](https://www.rfc-editor.org/rfc/rfc8785.html):
-ordena properties según esa norma, usa su serialización de strings y números y
-emite UTF-8 sin whitespace. Como JCS restringe el dominio a I-JSON, la operación
-devuelve un error si un `JsonNumber` no puede representarse en ese dominio sin
-cambiar su valor; nunca redondea silenciosamente. La operación normal no promete
-que whitespace o spelling coincidan con el input.
+let user: User = json.decode(text)?
+let back = json.encode(user, pretty: true)
 
-Los enums derivados usan un único objeto externally tagged con exactamente un
-miembro: el nombre de la variante es la clave; una variante unit usa `null`,
-una tuple usa un array de aridad exacta y una record usa un object con sus
-fields derivados. Esta forma es cerrada: se rechazan variantes desconocidas,
-payloads con forma o aridad distintas y miembros exteriores adicionales.
-
-Un error contiene clase estable, byte offset, línea/columna cuando puedan
-calcularse y path estructural. No copia automáticamente el documento, el valor
-de un field ni datos potencialmente secretos dentro de su mensaje.
-
-La API fuente única de 0.1 es:
-
-~~~tondo pseudocode
-pub fn parse(input: Array[Byte], options: JsonDecodeOptions): Value ! JsonError
-pub fn parseView(input: Array[Byte], options: JsonDecodeOptions): ValueView ! JsonError
-pub fn decode[T: Decode[Json]](input: Array[Byte], options: JsonDecodeOptions): T ! JsonError
-pub fn encode[T: Encode[Json]](value: T, options: JsonEncodeOptions): Array[Byte] ! JsonError
-pub fn validate(input: Array[Byte], options: JsonDecodeOptions): Unit ! JsonError
-pub fn canonicalize(input: Array[Byte], options: JsonDecodeOptions): Array[Byte] ! JsonError
-pub fn encodeCanonical(value: Value, limits: JsonLimits): Array[Byte] ! JsonError
-pub fn raw(input: Array[Byte]): Raw ! JsonError
-pub unsafe fn rawUnchecked(input: Array[Byte]): Raw
-pub fn JsonReader.next(var self): JsonEvent? ! JsonError
-pub fn JsonReader.own(var self, event: JsonEvent): JsonEvent ! JsonError
-pub fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError
-pub fn JsonWriter.finish(var self): Unit ! JsonError
+let document = json.parse(text)?
+let city = document["users"][0]["address"]["city"].asText()
 ~~~
 
-Los tipos, options, limits, eventos y errores exhaustivos están cerrados en el
-[contrato fuente de `std.json`](./docs/contracts/stdlib-json.md). `next` devuelve
-`none` una sola vez tras la raíz y reader/writer son terminales tras error.
+La superficie es:
+
+~~~tondo pseudocode
+pub enum Value {
+    Null
+    Bool(Bool)
+    Number(Number)
+    Text(String)
+    Array(Array[Value])
+    Object(Map[String, Value])
+}
+pub type Number
+pub type Raw
+pub enum ErrorKind { Syntax, Type, Missing, Unknown, Range, Io }
+pub type JsonError = { kind: ErrorKind, message: String, path: String, line: Int, column: Int }
+pub enum UnknownFields { Ignore, Reject }
+
+pub trait Encode {
+    fn encodeJson(self, out: Writer)
+}
+pub trait Decode {
+    fn decodeJson(input: Reader, first: Event): Self ! JsonError
+}
+
+pub fn encode[T: Encode](value: T, pretty: Bool = false, canonical: Bool = false): String
+pub fn decode[T: Decode](text: String, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): T ! JsonError
+pub fn encodeTo[T: Encode](value: T, stream: io.Writer, pretty: Bool = false, canonical: Bool = false): Unit ! JsonError
+pub fn decodeFrom[T: Decode](stream: io.Reader, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): T ! JsonError
+pub fn parse(text: String): Value ! JsonError
+pub fn toValue[T: Encode](value: T): Value
+pub fn fromValue[T: Decode](value: Value): T ! JsonError
+pub fn number(text: String): Number ! JsonError
+pub fn raw(text: String): Raw ! JsonError
+
+pub fn Value.get(self, key: String): Value?
+pub fn Value.at(self, index: Int): Value?
+pub fn Value.field(self, key: String): Value
+pub fn Value.item(self, index: Int): Value
+pub fn Value.asText(self): String?
+pub fn Value.asInt(self): Int?
+pub fn Value.asFloat(self): Float?
+pub fn Value.asBool(self): Bool?
+pub fn Value.asArray(self): Array[Value]?
+pub fn Value.asObject(self): Map[String, Value]?
+pub fn Value.isNull(self): Bool
+pub fn Number.text(self): String
+pub fn Number.toInt(self): Int?
+pub fn Number.toFloat(self): Float
+pub fn Raw.text(self): String
+
+pub enum Event { Null, Bool(Bool), Number(Number), Text(String), BeginArray, EndArray, BeginObject, EndObject, Key(String) }
+pub type Reader
+pub type Writer
+pub fn reader(text: String, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): Reader
+pub fn writer(pretty: Bool = false, canonical: Bool = false): Writer
+pub fn Reader.next(self): Event? ! JsonError
+pub fn Writer.null(self)
+pub fn Writer.bool(self, value: Bool)
+pub fn Writer.int(self, value: Int)
+pub fn Writer.float(self, value: Float)
+pub fn Writer.number(self, value: Number)
+pub fn Writer.string(self, value: String)
+pub fn Writer.key(self, name: String)
+pub fn Writer.beginArray(self)
+pub fn Writer.endArray(self)
+pub fn Writer.beginObject(self)
+pub fn Writer.endObject(self)
+pub fn Writer.finish(self): String
+~~~
+
+Codificación tipada:
+
+- `Encode` y `Decode` están implementados para `Int`, `Float`, `Bool`,
+  `String`, `T?`, `Array[T]`, `Map[String, V]`, `Value`, `Number` y `Raw`, y el
+  compilador los implementa para cada record, enum y newtype del programa cuyas
+  partes los implementan. Una implementación escrita en el programa sustituye a
+  la automática.
+- Un record es un objeto con sus campos en orden de declaración; `none` es
+  `null`, y un campo opcional ausente se decodifica como `none`. Un campo
+  obligatorio ausente da `Missing`.
+- Un newtype es su valor. Una variante sin payload es su nombre como string; una
+  con payload es un objeto de una sola clave, el nombre, cuyo valor es el
+  payload, un array si tiene varios componentes o un objeto si tiene campos.
+- Los campos desconocidos se ignoran, salvo con
+  `unknownFields: UnknownFields.Reject`, que da `Unknown`.
+- `pretty` indenta con dos espacios; `canonical` escribe
+  [RFC 8785 (JCS)](https://www.rfc-editor.org/rfc/rfc8785.html): claves
+  ordenadas por unidades UTF-16, sin espacios y números como doubles. Un float
+  no finito se escribe `null`.
+
+Documentos dinámicos:
+
+- `parse` da un `Value`. `document["key"]` y `document[index]` leen un miembro o
+  un elemento, o `Null` cuando no existe, de modo que un camino se encadena sin
+  comprobar cada paso; `get` y `at` dan `none` en su lugar. `asText`, `asInt`,
+  `asFloat`, `asBool`, `asArray` y `asObject` dan el contenido cuando es de ese
+  tipo. Un objeto conserva el orden de sus claves.
+- Un `Number` guarda el número tal como se escribió, sin perder precisión antes
+  de que el programa elija `toInt` o `toFloat`.
+- Un `Raw` guarda un valor JSON validado sin interpretarlo, por ejemplo un
+  payload que otra parte del programa decodificará, y se escribe tal cual.
+
+Lectura y escritura por eventos:
+
+- Un `Reader` entrega `Event`s en orden y `none` tras el documento; un `Writer`
+  recibe valores, claves y corchetes y `finish()` da el texto. Son la base de
+  `encode` y `decode` y de las implementaciones escritas a mano, que reciben un
+  `Writer`, o un `Reader` y el primer evento de su valor.
+- `encodeTo` y `decodeFrom` escriben y leen un stream de `std.io`.
+
+Un `JsonError` da su clase, un mensaje, el camino del valor (`$.users[2].age`)
+y la línea y columna; su `Display` es
+`expected an integer, found a string at $.users[2].age (line 3, column 10)`. No
+copia el documento ni el valor de un campo.
 
 ### 14.11 `std.messagepack`
 

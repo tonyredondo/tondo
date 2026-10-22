@@ -12,8 +12,14 @@ use unicode_normalization::UnicodeNormalization;
 pub enum Tok {
     Ident(String),
     Kw(Kw),
-    Int { value: u64, suffix: Option<&'static str> },
-    Float { text: String, suffix: Option<&'static str> },
+    Int {
+        value: u64,
+        suffix: Option<&'static str>,
+    },
+    Float {
+        text: String,
+        suffix: Option<&'static str>,
+    },
     Char(char),
     Str(Vec<StrPart>),
     LParen,
@@ -49,6 +55,8 @@ pub enum Tok {
     Shr,
     Bang,
     Question,
+    /// `@`, which starts an annotation of a record field.
+    At,
     PlusEq,
     MinusEq,
     StarEq,
@@ -163,6 +171,7 @@ const PUNCTUATION: &[(&str, Tok)] = &[
     ("^", Tok::Caret),
     ("~", Tok::Tilde),
     ("!", Tok::Bang),
+    ("@", Tok::At),
     ("?", Tok::Question),
 ];
 

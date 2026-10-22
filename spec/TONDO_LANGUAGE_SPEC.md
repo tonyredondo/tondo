@@ -1904,6 +1904,22 @@ pub fn Email.parse(text: String): Email ! EmailError {
 }
 ~~~
 
+Un campo puede llevar anotaciones, que solo leen las librerías de
+serialización (14.6 de la librería estándar) y no cambian su tipo ni su valor:
+
+~~~tondo
+type Account = {
+    @name("user_id")
+    userId: Int
+    @ignore
+    cache: String?
+}
+~~~
+
+`@name("text")` da el nombre del campo fuera del programa e `@ignore` lo omite;
+un campo ignorado es opcional, porque al decodificarse queda `none`. Otra
+anotación es error.
+
 ### 9.3 Actualización de records
 
 Tondo 0.1 utiliza actualización funcional explícita mediante la keyword `with`:
@@ -8385,7 +8401,9 @@ record_body     = "{", { NL },
                     [ field_separator ] ],
                   { NL }, "}" ;
 
-record_field    = [ "priv" ], field_name, ":", type_expr ;
+record_field    = { annotation, { NL } }, [ "priv" ], field_name, ":", type_expr ;
+
+annotation      = "@", identifier, [ "(", string_literal, ")" ] ;
 
 field_separator = ",", { NL }
                 | NL, { NL } ;

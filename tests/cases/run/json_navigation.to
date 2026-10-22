@@ -1,0 +1,23 @@
+import std.console
+import std.json
+
+fn main(): !json.JsonError {
+    let doc = json.parse(r"""{"users": [{"name": "ana", "age": 31}, {"name": "bo"}]}""")?
+    console.println("{doc["users"][0]["name"].asText()} {doc["users"][1]["age"].asInt()} {doc["users"][5]["name"].isNull()}")
+    let index = 1
+    let key = "name"
+    console.println("{doc["users"][index][key]}")
+    match doc["users"].asArray() {
+        some(users) => {
+            for user in users {
+                console.println("user {user["name"]}")
+            }
+        }
+        none => console.println("no users"),
+    }
+}
+
+// expect-stdout: some(ana) none true
+// expect-stdout: "bo"
+// expect-stdout: user "ana"
+// expect-stdout: user "bo"

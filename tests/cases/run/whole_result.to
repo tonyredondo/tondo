@@ -1,0 +1,74 @@
+import std.console
+
+enum Color {
+    Red
+    Blue
+}
+
+fn Color.isRed(self): Bool {
+    match self {
+        Color.Red => true
+        _ => false
+    }
+}
+
+enum Problem {
+    Negative
+}
+
+fn checked(value: Int): Int ! Problem {
+    if value < 0 {
+        fail Problem.Negative
+    }
+    value
+}
+
+fn first[T](values: Array[T]): T ! Problem {
+    match values.get(0) {
+        some(value) => value
+        none => fail Problem.Negative
+    }
+}
+
+// A fallible function may give back a whole `T ! E`, which propagates.
+fn forward(value: Int): Int ! Problem {
+    checked(value)
+}
+
+fn early(value: Int): Int ! Problem {
+    if value > 100 {
+        return checked(-1)
+    }
+    first([value])
+}
+
+fn inferred(): Int ! Problem {
+    let value: Int = first([7, 8])?
+    value
+}
+
+fn main() {
+    console.println("{Color.Red.isRed()} {Color.Blue.isRed()}")
+    match forward(3) {
+        ok(value) => console.println("forward {value}"),
+        err(_) => console.println("forward failed"),
+    }
+    match forward(-3) {
+        ok(_) => console.println("unexpected"),
+        err(_) => console.println("forward propagated"),
+    }
+    match early(500) {
+        ok(_) => console.println("unexpected"),
+        err(_) => console.println("early propagated"),
+    }
+    match inferred() {
+        ok(value) => console.println("inferred {value}"),
+        err(_) => console.println("unexpected"),
+    }
+}
+
+// expect-stdout: true false
+// expect-stdout: forward 3
+// expect-stdout: forward propagated
+// expect-stdout: early propagated
+// expect-stdout: inferred 7

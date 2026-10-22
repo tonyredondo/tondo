@@ -1,0 +1,16 @@
+pub enum Currency {
+    Eur
+    Usd
+}
+
+pub type Price = {
+    amount: Int
+    currency: Currency
+}
+
+pub type Product = {
+    name: String
+    price: Price
+    @name("in_stock")
+    inStock: Bool
+}

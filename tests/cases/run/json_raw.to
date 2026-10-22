@@ -1,0 +1,30 @@
+import std.console
+import std.io
+import std.json
+
+type Envelope = {
+    kind: String
+    payload: json.Raw
+}
+
+fn main(): !json.JsonError {
+    let text = r"""{"kind": "user", "payload": {"z": 1, "a": [true, null, 1.50]}}"""
+    let envelope: Envelope = json.decode(text)?
+    console.println("{envelope.kind} raw={envelope.payload}")
+    console.println(json.encode(envelope))
+    console.println(json.encode(envelope, canonical: true))
+    let buffer = io.Buffer()
+    json.encodeTo([1, 2, 3], buffer.writer())?
+    let back: Array[Int] = json.decodeFrom(buffer.reader())?
+    console.println("{back}")
+    match json.raw(r"""{oops""") {
+        ok(_) => console.println("unexpected"),
+        err(error) => console.println("{error}"),
+    }
+}
+
+// expect-stdout: user raw={"z": 1, "a": [true, null, 1.50]}
+// expect-stdout: {"kind":"user","payload":{"z": 1, "a": [true, null, 1.50]}}
+// expect-stdout: {"kind":"user","payload":{"a":[true,null,1.5],"z":1}}
+// expect-stdout: [1, 2, 3]
+// expect-stdout: expected a key in quotes at $ (line 1, column 2)

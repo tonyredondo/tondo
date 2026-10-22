@@ -643,6 +643,8 @@ pub enum StdFn {
     Env(EnvFn),
     /// An operation of `std.process` (19.2).
     Process(ProcessFn),
+    /// A function of an internal standard module, by its index in `NATIVES`.
+    Native(u16),
     /// `time.sleep(delay)`: waits without blocking the thread (14.3.3).
     TimeSleep,
     /// `time.now()`, `unixTime()`, `utcNow()` and `utc(sinceEpoch)` (14.3).
@@ -791,3 +793,65 @@ impl StdFn {
         }
     }
 }
+
+/// A type a native function of an internal standard module takes or gives:
+/// a scalar, a string or a handle.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum NativeTy {
+    Int,
+    Float,
+    Bool,
+    String,
+    Unit,
+    JsonReader,
+    JsonWriter,
+}
+
+/// A function of `std.internal.json`, the runtime's JSON tokenizer and
+/// emitter that `std.json` is written on.
+pub struct Native {
+    pub name: &'static str,
+    /// The handle whose method it is, or `None` for a module function.
+    pub receiver: Option<NativeTy>,
+    pub params: &'static [NativeTy],
+    pub result: NativeTy,
+    pub symbol: &'static str,
+}
+
+pub const NATIVES: &[Native] = {
+    use NativeTy::*;
+    const fn f(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
+        Native { name, receiver: None, params, result, symbol }
+    }
+    const fn m(
+        receiver: NativeTy,
+        name: &'static str,
+        params: &'static [NativeTy],
+        result: NativeTy,
+        symbol: &'static str,
+    ) -> Native {
+        Native { name, receiver: Some(receiver), params, result, symbol }
+    }
+    &[
+        f("reader", &[String, Bool], JsonReader, "tondo_rt_json_reader"),
+        f("writer", &[Bool, Bool], JsonWriter, "tondo_rt_json_writer"),
+        f("isInt", &[String], Bool, "tondo_rt_json_is_int"),
+        f("parseInt", &[String], Int, "tondo_rt_json_parse_int"),
+        f("parseFloat", &[String], Float, "tondo_rt_json_parse_float"),
+        m(JsonReader, "next", &[], Int, "tondo_rt_json_next"),
+        m(JsonReader, "text", &[], String, "tondo_rt_json_text"),
+        m(JsonReader, "skip", &[Int], Int, "tondo_rt_json_skip"),
+        m(JsonReader, "fail", &[String], Unit, "tondo_rt_json_fail"),
+        m(JsonReader, "where", &[Int], String, "tondo_rt_json_where"),
+        m(JsonReader, "raw", &[Int], String, "tondo_rt_json_raw"),
+        m(JsonWriter, "word", &[Int], Unit, "tondo_rt_json_write_word"),
+        m(JsonWriter, "int", &[Int], Unit, "tondo_rt_json_write_int"),
+        m(JsonWriter, "float", &[Float], Unit, "tondo_rt_json_write_float"),
+        m(JsonWriter, "number", &[String], Unit, "tondo_rt_json_write_number"),
+        m(JsonWriter, "string", &[String], Unit, "tondo_rt_json_write_string"),
+        m(JsonWriter, "key", &[String], Unit, "tondo_rt_json_write_key"),
+        m(JsonWriter, "bracket", &[Bool, Bool], Unit, "tondo_rt_json_write_bracket"),
+        m(JsonWriter, "raw", &[String], Unit, "tondo_rt_json_write_raw"),
+        m(JsonWriter, "finish", &[], String, "tondo_rt_json_finish"),
+    ]
+};

@@ -2,7 +2,7 @@
 
 use crate::diag::Diagnostics;
 use crate::source::{SourceMap, Span};
-use crate::{ast, check, codegen, deps, hir, lower, modules, mono, parser, project};
+use crate::{ast, check, codegen, deps, hir, lower, modules, mono, parser, project, stdlib};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -66,15 +66,29 @@ pub fn analyze(path: &Path) -> Result<Analysis, String> {
             diags.sort(&sources);
             return Ok(Analysis { sources, diags, program: None, source_id });
         }
-        let packages: Vec<modules::PackageInfo> = packages
+        let mut packages: Vec<modules::PackageInfo> = packages
             .into_iter()
             .map(|p| modules::PackageInfo { name: p.name, dependencies: p.dependencies.into_iter().collect() })
             .collect();
+        stdlib::derive_json(&mut modules, &mut sources, &mut diags);
+        stdlib::add(&mut modules, &mut packages, &mut sources, &mut diags);
         modules::link(modules, root, &packages, &mut diags)
     } else {
-        match parse(path, &mut sources, &mut diags)? {
+        let module = match parse(path, &mut sources, &mut diags)? {
             Some(module) => module,
             None => return Ok(Analysis { sources, diags, program: None, source_id }),
+        };
+        if stdlib::needed(&module) {
+            // The file links with the standard modules it imports.
+            let name = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+            let mut modules =
+                vec![modules::ModuleSource { path: vec![name.clone()], package: 0, files: vec![(module, true)] }];
+            let mut packages = vec![modules::PackageInfo { name, dependencies: Default::default() }];
+            stdlib::derive_json(&mut modules, &mut sources, &mut diags);
+            stdlib::add(&mut modules, &mut packages, &mut sources, &mut diags);
+            modules::link(modules, 0, &packages, &mut diags)
+        } else {
+            module
         }
     };
     let program = if diags.has_errors() { None } else { check::check(&module, &sources, &mut diags) };

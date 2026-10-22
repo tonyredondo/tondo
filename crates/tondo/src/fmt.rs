@@ -416,7 +416,15 @@ impl Formatter<'_> {
 
     fn field_decl(&mut self, field: &FieldDecl) -> Doc {
         let private = if field.private { "priv " } else { "" };
-        concat(vec![text(format!("{private}{}: ", field.name.name)), self.ty(&field.ty)])
+        let mut parts = Vec::new();
+        for annotation in &field.annotations {
+            let argument = annotation.argument.as_ref().map_or(String::new(), |a| format!("({a:?})"));
+            parts.push(text(format!("@{}{argument}", annotation.name.name)));
+            parts.push(Doc::Hardline);
+        }
+        parts.push(text(format!("{private}{}: ", field.name.name)));
+        parts.push(self.ty(&field.ty));
+        concat(parts)
     }
 
     fn variant(&mut self, variant: &VariantDecl) -> Doc {

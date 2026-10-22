@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicUsize, Ordering, fence};
 mod env;
 mod fs;
 mod io;
+mod json;
 mod process;
 mod shared;
 mod sync;

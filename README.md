@@ -99,7 +99,7 @@ Every milestone ends with programs that compile to native executables and run.
 | **H3** | Ownership: affine values (`~Copy`), `ref`/`mut`/`var` loans, region loans, loan patterns, loan modes in function types, `defer`, panic cleanups | Done |
 | **H4** | Projects: modules and packages, `tondo.toml`, dependencies (path, git, archives) and `tondo.lock`, canonical formatter (`tondo fmt`), JSON diagnostics | Done |
 | **H5** | Concurrency without colors: stackful tasks on all cores, `spawn`, `Join`, `Group`, channels, `select`, timeouts, cancellation | Done |
-| **H6** | Hosted standard library: shared state (`std.sync`), filesystem, processes and pipelines, environment, time, JSON; fire-and-forget tasks | In progress: `std.sync`, `std.fs`, `std.path`, `std.io`, `std.env`, `std.time`, `std.process` |
+| **H6** | Hosted standard library: shared state (`std.sync`), streams (`std.io`), filesystem and paths, processes and pipelines, environment, time, JSON with automatic encoding; fire-and-forget tasks; parameters with default values | Done |
 
 The first cut deliberately leaves out the following. They are part of the
 language and remain planned work, scheduled after H6:

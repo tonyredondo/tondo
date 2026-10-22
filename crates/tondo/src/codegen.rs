@@ -213,6 +213,9 @@ enum Rt {
     Io(IoFn),
     Env(EnvFn),
     Process(ProcessFn),
+    Native(u16),
+    JsonReaderRelease,
+    JsonWriterRelease,
     PlanRelease,
     ProcessRelease,
     SbProcessError,
@@ -461,6 +464,9 @@ impl Rt {
                 ProcessFn::Collect(_) => ("tondo_rt_process_collect", &[I64, I8, I64, I64, I64], &[I64]),
                 ProcessFn::Detach => ("tondo_rt_process_detach", &[I64], &[]),
             },
+            Rt::Native(_) => unreachable!("declared from `NATIVES`"),
+            Rt::JsonReaderRelease => ("tondo_rt_json_reader_release", &[I64], &[]),
+            Rt::JsonWriterRelease => ("tondo_rt_json_writer_release", &[I64], &[]),
             Rt::PlanRelease => ("tondo_rt_process_plan_release", &[I64], &[]),
             Rt::ProcessRelease => ("tondo_rt_process_release", &[I64], &[]),
             Rt::SbProcessError => ("tondo_rt_sb_process_error", &[I64, I64, I64], &[]),
@@ -907,7 +913,25 @@ impl Codegen<'_> {
         if let Some(&id) = self.runtime.get(&rt) {
             return id;
         }
-        let (name, params, returns) = rt.signature();
+        let native;
+        let (name, params, returns) = match rt {
+            Rt::Native(index) => {
+                let function = &crate::hir::NATIVES[index as usize];
+                let clif = |ty: crate::hir::NativeTy| match ty {
+                    crate::hir::NativeTy::Float => types::F64,
+                    crate::hir::NativeTy::Bool => types::I8,
+                    _ => types::I64,
+                };
+                let params: Vec<ir::Type> = function.receiver.iter().chain(function.params).map(|&t| clif(t)).collect();
+                let returns: Vec<ir::Type> = (function.result != crate::hir::NativeTy::Unit)
+                    .then(|| clif(function.result))
+                    .into_iter()
+                    .collect();
+                native = (params, returns);
+                (function.symbol, native.0.as_slice(), native.1.as_slice())
+            }
+            _ => rt.signature(),
+        };
         let mut signature = self.module.make_signature();
         // The C ABI as LLVM implements it expects narrow integer arguments
         // extended to 32 bits by the caller.
@@ -1440,6 +1464,8 @@ impl Emit<'_, '_> {
                         Handle::Buffer => Rt::BufferRelease,
                         Handle::Command | Handle::Pipeline => Rt::PlanRelease,
                         Handle::Process => Rt::ProcessRelease,
+                        Handle::JsonReader => Rt::JsonReaderRelease,
+                        Handle::JsonWriter => Rt::JsonWriterRelease,
                         _ => Rt::SyncRelease,
                     };
                     self.call_rt(rt, &[pointer]);
@@ -3753,6 +3779,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let index = self.e.fb.ins().iconst(types::I64, index as i64);
                 self.e.call_rt(Rt::ConsoleSet, &[index, values[0]])
             }
+            Callee::Std(StdFn::Native(index)) => self.e.call_rt(Rt::Native(index), &values),
             Callee::Std(StdFn::Process(ProcessFn::Exit)) => self.e.call_rt(Rt::Process(ProcessFn::Exit), &values),
             Callee::Std(StdFn::Process(ProcessFn::Detach)) => self.e.call_rt(Rt::Process(ProcessFn::Detach), &values),
             Callee::Std(StdFn::ConsoleEprint) => self.e.call_rt(Rt::ConsoleEprint, &values),

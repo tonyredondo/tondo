@@ -1,0 +1,729 @@
+// std.json (standard library 14.10): JSON documents as values of `Value`,
+// and the encoding and decoding of any type through `Encode` and `Decode`,
+// on top of the runtime's tokenizer and emitter.
+
+import std.internal.json as jsonnative
+import std.io as jsonio
+
+// ---------------------------------------------------------------------------
+// Values
+// ---------------------------------------------------------------------------
+
+/// A JSON document of unknown shape.
+pub enum Value {
+    Null
+    Bool(Bool)
+    Number(Number)
+    Text(String)
+    Array(Array[Value])
+    Object(Map[String, Value])
+}
+
+/// A JSON number as written, so that no precision is lost before the
+/// program chooses a type for it.
+pub type Number = {
+    priv digits: String
+}
+
+/// A number from its JSON text.
+pub fn number(text: String): Number ! JsonError {
+    let input = Reader { native: jsonnative.reader(text, false), rejectUnknown: false }
+    match input.value()? {
+        Event.Number(value) => value
+        _ => fail input.failure(ErrorKind.Type, "`{text}` is not a JSON number")
+    }
+}
+
+pub fn Number.text(self): String {
+    self.digits
+}
+
+/// The number as an `Int`, when it is an integer that fits.
+pub fn Number.toInt(self): Int? {
+    if jsonnative.isInt(self.digits) {
+        return jsonnative.parseInt(self.digits)
+    }
+    none
+}
+
+/// The nearest `Float`.
+pub fn Number.toFloat(self): Float {
+    jsonnative.parseFloat(self.digits)
+}
+
+impl Display for Number {
+    fn display(self): String {
+        self.digits
+    }
+}
+
+pub fn Value.isNull(self): Bool {
+    match self {
+        Value.Null => true
+        _ => false
+    }
+}
+
+/// The member `key` of an object.
+pub fn Value.get(self, key: String): Value? {
+    match self {
+        Value.Object(members) => members.get(key)
+        _ => none
+    }
+}
+
+/// The element `index` of an array.
+pub fn Value.at(self, index: Int): Value? {
+    match self {
+        Value.Array(items) => {
+            if index < 0 or index >= items.length() {
+                return none
+            }
+            items[index]
+        }
+        _ => none
+    }
+}
+
+/// The member `key` of an object, or `Null`: `document["key"]`.
+pub fn Value.field(self, key: String): Value {
+    match self.get(key) {
+        some(value) => value
+        none => Value.Null
+    }
+}
+
+/// The element `index` of an array, or `Null`: `document[index]`.
+pub fn Value.item(self, index: Int): Value {
+    match self.at(index) {
+        some(value) => value
+        none => Value.Null
+    }
+}
+
+pub fn Value.asText(self): String? {
+    match self {
+        Value.Text(text) => text
+        _ => none
+    }
+}
+
+pub fn Value.asInt(self): Int? {
+    match self {
+        Value.Number(digits) => digits.toInt()
+        _ => none
+    }
+}
+
+pub fn Value.asFloat(self): Float? {
+    match self {
+        Value.Number(digits) => digits.toFloat()
+        _ => none
+    }
+}
+
+pub fn Value.asBool(self): Bool? {
+    match self {
+        Value.Bool(value) => value
+        _ => none
+    }
+}
+
+pub fn Value.asArray(self): Array[Value]? {
+    match self {
+        Value.Array(items) => items
+        _ => none
+    }
+}
+
+pub fn Value.asObject(self): Map[String, Value]? {
+    match self {
+        Value.Object(members) => members
+        _ => none
+    }
+}
+
+impl Display for Value {
+    fn display(self): String {
+        encode(self)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+pub enum ErrorKind {
+    /// The text is not JSON.
+    Syntax
+    /// A value of another kind than the type needs.
+    Type
+    /// A field the type needs is absent.
+    Missing
+    /// A field the type does not have, when unknown fields are rejected.
+    Unknown
+    /// A number that does not fit the type.
+    Range
+    /// The stream it was read from or written to failed.
+    Io
+}
+
+pub type JsonError = {
+    kind: ErrorKind
+    message: String
+    /// Where in the document, as `$.users[2].age`.
+    path: String
+    line: Int
+    column: Int
+}
+
+impl Display for JsonError {
+    fn display(self): String {
+        "{self.message} at {self.path} (line {self.line}, column {self.column})"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Reading
+// ---------------------------------------------------------------------------
+
+/// What a `Reader` finds next.
+pub enum Event {
+    Null
+    Bool(Bool)
+    Number(Number)
+    Text(String)
+    BeginArray
+    EndArray
+    BeginObject
+    EndObject
+    Key(String)
+}
+
+pub enum UnknownFields {
+    Ignore
+    Reject
+}
+
+/// A JSON document read event by event.
+pub type Reader = {
+    priv native: jsonnative.NativeReader
+    priv rejectUnknown: Bool
+}
+
+pub fn reader(text: String, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): Reader {
+    Reader { native: jsonnative.reader(text, allowDuplicateKeys), rejectUnknown: unknownFields == UnknownFields.Reject }
+}
+
+/// The next event, or `none` after the whole document.
+pub fn Reader.next(self): Event? ! JsonError {
+    let code = self.native.next()
+    let event = match code {
+        0 => return none
+        1 => Event.Null
+        2 => Event.Bool(true)
+        3 => Event.Bool(false)
+        4 => Event.Number(Number { digits: self.native.text() })
+        5 => Event.Text(self.native.text())
+        6 => Event.BeginArray
+        7 => Event.EndArray
+        8 => Event.BeginObject
+        9 => Event.EndObject
+        10 => Event.Key(self.native.text())
+        _ => fail self.error(ErrorKind.Syntax)
+    }
+    some(event)
+}
+
+/// The next event, which must exist.
+pub fn Reader.value(self): Event ! JsonError {
+    match self.next()? {
+        some(event) => event
+        none => fail self.failure(ErrorKind.Syntax, "unexpected end of input")
+    }
+}
+
+/// The next key of an object, or `none` at its end.
+pub fn Reader.nextKey(self): String? ! JsonError {
+    match self.value()? {
+        Event.Key(key) => key
+        Event.EndObject => none
+        _ => fail self.failure(ErrorKind.Syntax, "expected a key")
+    }
+}
+
+/// Skips the rest of a value whose first event was `first`.
+pub fn Reader.skip(self, first: Event): Unit ! JsonError {
+    let code = match first {
+        Event.BeginArray => 6
+        Event.BeginObject => 8
+        _ => 0
+    }
+    if self.native.skip(code) < 0 {
+        fail self.error(ErrorKind.Syntax)
+    }
+}
+
+/// A member the type does not have: skipped, or an error when unknown
+/// fields are rejected.
+pub fn Reader.unknownField(self, key: String, first: Event): Unit ! JsonError {
+    if self.rejectUnknown {
+        fail self.failure(ErrorKind.Unknown, "unknown field `{key}`")
+    }
+    self.skip(first)?
+}
+
+/// Checks that an object starts, for the type `name`.
+pub fn Reader.beginObject(self, first: Event, name: String): Unit ! JsonError {
+    match first {
+        Event.BeginObject => {}
+        _ => fail self.mismatch(first, "an object for `{name}`")
+    }
+}
+
+/// Checks that an array starts, for `name`.
+pub fn Reader.beginArray(self, first: Event, name: String): Unit ! JsonError {
+    match first {
+        Event.BeginArray => {}
+        _ => fail self.mismatch(first, "an array for `{name}`")
+    }
+}
+
+/// Checks that an array ends.
+pub fn Reader.endArray(self): Unit ! JsonError {
+    match self.value()? {
+        Event.EndArray => {}
+        _ => fail self.failure(ErrorKind.Type, "expected the end of the array")
+    }
+}
+
+/// A field that must have been present.
+pub fn Reader.required[T: ~Copy](self, value: T?, field: String): T ! JsonError {
+    match value {
+        some(found) => found
+        none => fail self.failure(ErrorKind.Missing, "missing field `{field}`")
+    }
+}
+
+/// An error for a value of the wrong kind.
+pub fn Reader.mismatch(self, first: Event, expected: String): JsonError {
+    let found = match first {
+        Event.Null => "null"
+        Event.Bool(_) => "a boolean"
+        Event.Number(_) => "a number"
+        Event.Text(_) => "a string"
+        Event.BeginArray => "an array"
+        Event.BeginObject => "an object"
+        _ => "the end of a value"
+    }
+    self.failure(ErrorKind.Type, "expected {expected}, found {found}")
+}
+
+/// An error at the current position.
+pub fn Reader.failure(self, kind: ErrorKind, message: String): JsonError {
+    self.native.fail(message)
+    self.error(kind)
+}
+
+fn Reader.error(self, kind: ErrorKind): JsonError {
+    JsonError {
+        kind: kind
+        message: self.native.where(0)
+        path: self.native.where(1)
+        line: jsonnative.parseInt(self.native.where(2))
+        column: jsonnative.parseInt(self.native.where(3))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Writing
+// ---------------------------------------------------------------------------
+
+/// A JSON document written value by value.
+pub type Writer = {
+    priv native: jsonnative.NativeWriter
+}
+
+/// `pretty` indents the output; `canonical` writes RFC 8785 (JCS): sorted
+/// keys, no whitespace and numbers as doubles.
+pub fn writer(pretty: Bool = false, canonical: Bool = false): Writer {
+    Writer { native: jsonnative.writer(pretty, canonical) }
+}
+
+pub fn Writer.null(self) {
+    self.native.word(0)
+}
+
+pub fn Writer.bool(self, value: Bool) {
+    self.native.word(if value { 1 } else { 2 })
+}
+
+pub fn Writer.int(self, value: Int) {
+    self.native.int(value)
+}
+
+/// A float; `null` when it is not finite.
+pub fn Writer.float(self, value: Float) {
+    self.native.float(value)
+}
+
+pub fn Writer.number(self, value: Number) {
+    self.native.number(value.digits)
+}
+
+pub fn Writer.string(self, value: String) {
+    self.native.string(value)
+}
+
+pub fn Writer.key(self, name: String) {
+    self.native.key(name)
+}
+
+pub fn Writer.beginArray(self) {
+    self.native.bracket(true, false)
+}
+
+pub fn Writer.endArray(self) {
+    self.native.bracket(false, false)
+}
+
+pub fn Writer.beginObject(self) {
+    self.native.bracket(true, true)
+}
+
+pub fn Writer.endObject(self) {
+    self.native.bracket(false, true)
+}
+
+/// The document written so far.
+pub fn Writer.finish(self): String {
+    self.native.finish()
+}
+
+// ---------------------------------------------------------------------------
+// Encoding and decoding
+// ---------------------------------------------------------------------------
+
+/// A type that writes itself as JSON. The compiler implements it for every
+/// record, enum and newtype whose parts implement it.
+pub trait Encode {
+    fn encodeJson(self, out: Writer)
+}
+
+/// A type that reads itself from JSON, given the first event of its value.
+pub trait Decode {
+    fn decodeJson(input: Reader, first: Event): Self ! JsonError
+}
+
+/// The JSON text of a value.
+pub fn encode[T: Encode](value: T, pretty: Bool = false, canonical: Bool = false): String {
+    let out = writer(pretty, canonical)
+    value.encodeJson(out)
+    out.finish()
+}
+
+/// A value of `T` from JSON text, which must hold exactly one value.
+pub fn decode[T: Decode](text: String, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): T ! JsonError {
+    let input = reader(text, unknownFields, allowDuplicateKeys)
+    let first = input.value()?
+    let value = Decode.decodeJson[T](input, first)?
+    match input.next()? {
+        none => value
+        some(_) => fail input.failure(ErrorKind.Syntax, "unexpected data after the value")
+    }
+}
+
+/// A document of unknown shape.
+pub fn parse(text: String): Value ! JsonError {
+    decode[Value](text)
+}
+
+/// A value as a `Value`.
+pub fn toValue[T: Encode](value: T): Value {
+    match parse(encode(value)) {
+        ok(document) => document
+        err(_) => Value.Null
+    }
+}
+
+/// A `Value` as a value of `T`.
+pub fn fromValue[T: Decode](value: Value): T ! JsonError {
+    decode[T](encode(value))
+}
+
+/// A value from a stream, which must hold exactly one.
+pub fn decodeFrom[T: Decode](stream: jsonio.Reader, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): T ! JsonError {
+    match stream.readText() {
+        ok(text) => decode[T](text, unknownFields, allowDuplicateKeys)?
+        err(error) => fail streamError("cannot read the stream: {error}")
+    }
+}
+
+/// Writes the JSON text of a value to a stream.
+pub fn encodeTo[T: Encode](value: T, stream: jsonio.Writer, pretty: Bool = false, canonical: Bool = false): Unit ! JsonError {
+    match stream.write(encode(value, pretty, canonical)) {
+        ok(_) => {}
+        err(error) => fail streamError("cannot write the stream: {error}")
+    }
+}
+
+fn streamError(message: String): JsonError {
+    JsonError { kind: ErrorKind.Io, message: message, path: "$", line: 0, column: 0 }
+}
+
+/// JSON text kept as it is, validated: a member whose content another part
+/// of the program reads, or one that must round-trip byte for byte.
+pub type Raw = {
+    priv json: String
+}
+
+/// Raw JSON from its text, which must be one valid value.
+pub fn raw(text: String): Raw ! JsonError {
+    _ = parse(text)?
+    Raw { json: text }
+}
+
+pub fn Raw.text(self): String {
+    self.json
+}
+
+impl Display for Raw {
+    fn display(self): String {
+        self.json
+    }
+}
+
+impl Encode for Raw {
+    fn encodeJson(self, out: Writer) {
+        out.native.raw(self.json)
+    }
+}
+
+impl Decode for Raw {
+    fn decodeJson(input: Reader, first: Event): Raw ! JsonError {
+        let code = match first {
+            Event.BeginArray => 6
+            Event.BeginObject => 8
+            _ => 0
+        }
+        let json = input.native.raw(code)
+        if json.length() == 0 {
+            fail input.error(ErrorKind.Syntax)
+        }
+        Raw { json: json }
+    }
+}
+
+impl Encode for Value {
+    fn encodeJson(self, out: Writer) {
+        match self {
+            Value.Null => out.null()
+            Value.Bool(value) => out.bool(value)
+            Value.Number(digits) => out.number(digits)
+            Value.Text(text) => out.string(text)
+            Value.Array(items) => {
+                out.beginArray()
+                for item in items {
+                    item.encodeJson(out)
+                }
+                out.endArray()
+            }
+            Value.Object(members) => {
+                out.beginObject()
+                for (key, member) in members {
+                    out.key(key)
+                    member.encodeJson(out)
+                }
+                out.endObject()
+            }
+        }
+    }
+}
+
+impl Decode for Value {
+    fn decodeJson(input: Reader, first: Event): Value ! JsonError {
+        match first {
+            Event.Null => Value.Null
+            Event.Bool(value) => Value.Bool(value)
+            Event.Number(digits) => Value.Number(digits)
+            Event.Text(text) => Value.Text(text)
+            Event.BeginArray => {
+                var items: Array[Value] = []
+                for {
+                    let event = input.value()?
+                    match event {
+                        Event.EndArray => break
+                        _ => items.push(Decode.decodeJson[Value](input, event)?)
+                    }
+                }
+                Value.Array(items)
+            }
+            Event.BeginObject => {
+                var members: Map[String, Value] = [:]
+                for {
+                    match input.nextKey()? {
+                        some(key) => {
+                            let event = input.value()?
+                            members[key] = Decode.decodeJson[Value](input, event)?
+                        }
+                        none => break
+                    }
+                }
+                Value.Object(members)
+            }
+            _ => fail input.mismatch(first, "a value")
+        }
+    }
+}
+
+impl Encode for Number {
+    fn encodeJson(self, out: Writer) {
+        out.number(self)
+    }
+}
+
+impl Decode for Number {
+    fn decodeJson(input: Reader, first: Event): Number ! JsonError {
+        match first {
+            Event.Number(digits) => digits
+            _ => fail input.mismatch(first, "a number")
+        }
+    }
+}
+
+impl Encode for Int {
+    fn encodeJson(self, out: Writer) {
+        out.int(self)
+    }
+}
+
+impl Decode for Int {
+    fn decodeJson(input: Reader, first: Event): Int ! JsonError {
+        match first {
+            Event.Number(digits) => match digits.toInt() {
+                some(value) => value
+                none => fail input.failure(ErrorKind.Range, "{digits} is not an integer that fits `Int`")
+            }
+            _ => fail input.mismatch(first, "an integer")
+        }
+    }
+}
+
+impl Encode for Float {
+    fn encodeJson(self, out: Writer) {
+        out.float(self)
+    }
+}
+
+impl Decode for Float {
+    fn decodeJson(input: Reader, first: Event): Float ! JsonError {
+        match first {
+            Event.Number(digits) => digits.toFloat()
+            _ => fail input.mismatch(first, "a number")
+        }
+    }
+}
+
+impl Encode for Bool {
+    fn encodeJson(self, out: Writer) {
+        out.bool(self)
+    }
+}
+
+impl Decode for Bool {
+    fn decodeJson(input: Reader, first: Event): Bool ! JsonError {
+        match first {
+            Event.Bool(value) => value
+            _ => fail input.mismatch(first, "a boolean")
+        }
+    }
+}
+
+impl Encode for String {
+    fn encodeJson(self, out: Writer) {
+        out.string(self)
+    }
+}
+
+impl Decode for String {
+    fn decodeJson(input: Reader, first: Event): String ! JsonError {
+        match first {
+            Event.Text(text) => text
+            _ => fail input.mismatch(first, "a string")
+        }
+    }
+}
+
+impl[T: Encode] Encode for Array[T] {
+    fn encodeJson(self, out: Writer) {
+        out.beginArray()
+        for item in self {
+            item.encodeJson(out)
+        }
+        out.endArray()
+    }
+}
+
+impl[T: Decode] Decode for Array[T] {
+    fn decodeJson(input: Reader, first: Event): Array[T] ! JsonError {
+        match first {
+            Event.BeginArray => {}
+            _ => fail input.mismatch(first, "an array")
+        }
+        var items: Array[T] = []
+        for {
+            let event = input.value()?
+            match event {
+                Event.EndArray => break
+                _ => items.push(Decode.decodeJson[T](input, event)?)
+            }
+        }
+        items
+    }
+}
+
+impl[T: Encode] Encode for Option[T] {
+    fn encodeJson(self, out: Writer) {
+        match self {
+            some(value) => value.encodeJson(out)
+            none => out.null()
+        }
+    }
+}
+
+impl[T: Decode] Decode for Option[T] {
+    fn decodeJson(input: Reader, first: Event): Option[T] ! JsonError {
+        match first {
+            Event.Null => none
+            _ => some(Decode.decodeJson[T](input, first)?)
+        }
+    }
+}
+
+impl[V: Encode] Encode for Map[String, V] {
+    fn encodeJson(self, out: Writer) {
+        out.beginObject()
+        for (key, value) in self {
+            out.key(key)
+            value.encodeJson(out)
+        }
+        out.endObject()
+    }
+}
+
+impl[V: Decode] Decode for Map[String, V] {
+    fn decodeJson(input: Reader, first: Event): Map[String, V] ! JsonError {
+        input.beginObject(first, "Map")?
+        var members: Map[String, V] = [:]
+        for {
+            match input.nextKey()? {
+                some(key) => {
+                    let event = input.value()?
+                    members[key] = Decode.decodeJson[V](input, event)?
+                }
+                none => break
+            }
+        }
+        members
+    }
+}

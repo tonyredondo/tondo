@@ -347,6 +347,32 @@ impl Parser<'_> {
             if self.eat(&Tok::RBrace) {
                 return Ok(fields);
             }
+            let mut annotations = Vec::new();
+            while self.at(&Tok::At) {
+                let start = self.bump().span;
+                let name = self.ident()?;
+                let argument = if self.eat(&Tok::LParen) {
+                    // A plain string, without interpolation.
+                    let text = match self.tok().clone() {
+                        Tok::Str(parts) => parts
+                            .iter()
+                            .map(|p| match p {
+                                crate::lexer::StrPart::Text(text) => Some(text.as_str()),
+                                crate::lexer::StrPart::Expr(_) => None,
+                            })
+                            .collect::<Option<String>>(),
+                        _ => None,
+                    };
+                    let Some(text) = text else { return self.expected("a string without interpolation") };
+                    self.bump();
+                    self.expect(Tok::RParen)?;
+                    Some(text)
+                } else {
+                    None
+                };
+                annotations.push(Annotation { name, argument, span: start.to(self.prev_span()) });
+                self.skip_newlines();
+            }
             // `priv` is a modifier only when another field name follows (23.10).
             let private = self.at_kw(Kw::Priv) && self.nth(1) != &Tok::Colon;
             if private {
@@ -355,7 +381,7 @@ impl Parser<'_> {
             let name = self.field_name()?;
             self.expect(Tok::Colon)?;
             let ty = self.type_expr()?;
-            fields.push(FieldDecl { private, name, ty });
+            fields.push(FieldDecl { private, name, ty, annotations });
             self.field_separator()?;
         }
     }

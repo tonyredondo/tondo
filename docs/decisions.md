@@ -547,3 +547,27 @@ console captures children too. Waiting runs on host threads and a
 cancelled task kills its children; dropping a `Process` closes its input
 and waits, a panic kills them, and `detach()` lets them outlive the
 program.
+
+## 2026-10-22 — std.json is written in Tondo, and every type encodes
+
+`std.json` is the first standard module written in Tondo itself: the
+compiler carries its source and links it as a module of a package `std`
+when a program imports it. Rust provides only what Tondo cannot do as
+fast, a tokenizer and an emitter, reached through `std.internal.json`.
+The surface follows the spec's three routes. The typed one, `encode` and
+`decode`, works for any record, enum and newtype without `derive`: the
+compiler writes the `Encode` and `Decode` implementations as Tondo source
+in the type's module, for every type whose parts can be encoded, and a
+hand-written `impl` replaces them. `@name("wire")` and `@ignore` on fields
+are the only knobs. The dynamic route is `json.Value`, which a program
+navigates as `document["users"][0]["name"].asText()`, missing parts
+reading as `Null`. The event route is a `Reader` and a `Writer`, which the
+other two are built on. `Number` keeps numbers exact, `Raw` keeps a value
+unparsed, and `canonical: true` writes RFC 8785. The traits live in
+`std.json` until a second format needs `std.serialization`.
+
+Two language rules the spec already had now work, which JSON code relies
+on: a fallible function may end with, or `return`, a whole `T ! E`, which
+propagates like `?`; and `call(...)?` infers the call's type arguments
+from the type its result is expected to have, so
+`let users: Array[User] = json.decode(text)?` needs no `[Array[User]]`.

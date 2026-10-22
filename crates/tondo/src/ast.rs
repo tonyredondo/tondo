@@ -193,6 +193,16 @@ pub struct FieldDecl {
     pub private: bool,
     pub name: Ident,
     pub ty: TypeExpr,
+    /// `@name("wire")` and `@ignore`, which serialization reads (8.6).
+    pub annotations: Vec<Annotation>,
+}
+
+/// `@name` or `@name("text")` before a record field.
+#[derive(Debug, Clone)]
+pub struct Annotation {
+    pub name: Ident,
+    pub argument: Option<String>,
+    pub span: Span,
 }
 
 /// `alias Name = T`: a transparent name for `T`.

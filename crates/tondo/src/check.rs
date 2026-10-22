@@ -127,6 +127,9 @@ enum StdModule {
     Io,
     Env,
     Process,
+    /// `std.internal.json`: the runtime's tokenizer and emitter, for
+    /// `std.json`.
+    InternalJson,
 }
 
 /// The types `std.process` declares when imported.
@@ -502,6 +505,9 @@ struct FnCx {
     params: Vec<Option<ast::Mode>>,
     /// The body of a `defer` block, which cannot leave its scope (13.7).
     deferred: bool,
+    /// Set while the next block checked is a function's body, whose value
+    /// the function returns.
+    body: bool,
     /// Collections lent to the bindings of enclosing `for` loops (13.3),
     /// and whether exclusively.
     lent: Vec<(hir::Place, bool)>,
@@ -853,6 +859,7 @@ impl Checker<'_> {
             ["std", "io"] => StdModule::Io,
             ["std", "env"] => StdModule::Env,
             ["std", "process"] => StdModule::Process,
+            ["std", "internal", "json"] => StdModule::InternalJson,
             ["std", ..] => {
                 let what = format!("module `{}`", path.join("."));
                 self.diags.unsupported(import.span, &what);
@@ -912,6 +919,10 @@ impl Checker<'_> {
                 self.types.intern(TyKind::Option(ty));
             }
             self.fs = Some(FsTypes { error, kind, metadata, mode, file });
+        }
+        if module == StdModule::InternalJson {
+            self.types.handle(Handle::JsonReader, Ty::UNIT);
+            self.types.handle(Handle::JsonWriter, Ty::UNIT);
         }
         if module == StdModule::Process && self.process.is_none() {
             let prefix = &name.name;
@@ -1008,6 +1019,12 @@ impl Checker<'_> {
     fn module_type(&self, module: &str, name: &str) -> Option<Ty> {
         match (self.names.get(module), name) {
             (Some(ModuleName::Module(StdModule::Env)), "EnvError") => self.env_error,
+            (Some(ModuleName::Module(StdModule::InternalJson)), "NativeReader") => {
+                self.types.lookup(&TyKind::Handle(Handle::JsonReader, Ty::UNIT))
+            }
+            (Some(ModuleName::Module(StdModule::InternalJson)), "NativeWriter") => {
+                self.types.lookup(&TyKind::Handle(Handle::JsonWriter, Ty::UNIT))
+            }
             (Some(ModuleName::Module(StdModule::Process)), name) => {
                 let types = self.process?;
                 match name {
@@ -1303,7 +1320,33 @@ impl Checker<'_> {
                 let message = format!("field `{}` is declared more than once", field.name.name);
                 self.diags.error("E1002", field.name.span, message);
             }
-            resolved.push(Field { name: field.name.name.clone(), ty: self.resolve_type(&field.ty) });
+            let ty = self.resolve_type(&field.ty);
+            for annotation in &field.annotations {
+                match (annotation.name.name.as_str(), &annotation.argument) {
+                    ("name", Some(_)) => {}
+                    ("ignore", None) if matches!(self.types.kind(ty), TyKind::Option(_) | TyKind::Error) => {}
+                    ("ignore", None) => {
+                        let message = format!(
+                            "an ignored field is optional, since decoding leaves it `none`: write `{}: {}?`",
+                            field.name.name,
+                            self.types.display(ty)
+                        );
+                        self.diags.error("E1102", annotation.span, message);
+                    }
+                    ("name", None) => {
+                        let message = "`@name` takes the name the field has outside: `@name(\"user_id\")`";
+                        self.diags.error("E1102", annotation.span, message);
+                    }
+                    _ => {
+                        let message = format!(
+                            "unknown annotation `@{}`; a field takes `@name(\"text\")` or `@ignore`",
+                            annotation.name.name
+                        );
+                        self.diags.error("E1001", annotation.span, message);
+                    }
+                }
+            }
+            resolved.push(Field { name: field.name.name.clone(), ty });
         }
         resolved
     }
@@ -2488,6 +2531,7 @@ impl Checker<'_> {
             infer_result: false,
             params: Vec::new(),
             deferred: false,
+            body: false,
             lent: Vec::new(),
             loan_bindings: HashSet::new(),
         }
@@ -2531,6 +2575,7 @@ impl Checker<'_> {
             loans.push(loan);
         }
         let success = (!cx.infer_result).then_some(cx.result);
+        cx.body = true;
         let body = self.block(&mut cx, f.body.as_ref().expect("functions with an id have a body"), success);
         if let Some(opaque) = opaque {
             self.record_witness(&cx, opaque, &body, f);
@@ -3039,6 +3084,46 @@ impl Checker<'_> {
 
     /// The methods of `fs.File` (standard library 10.5): a `var` loan of the
     /// file, except `close`, which takes it.
+    /// A value a function gives back as its result `expected`: a fallible
+    /// function may give the whole `T ! E` it declares, which propagates its
+    /// error like `?` (11.2).
+    fn returned(&mut self, cx: &FnCx, value: hir::Expr, expected: Ty) -> hir::Expr {
+        if let Some(error) = cx.error
+            && expected == cx.result
+            && let TyKind::Result(ok, produced) = *self.types.kind(value.ty)
+            && ok == expected
+            && produced == error
+        {
+            let span = value.span;
+            return Self::mk(hir::ExprKind::Try(Box::new(value)), expected, span);
+        }
+        self.coerce(value, expected)
+    }
+
+    /// Whether `Type.Variant` names a variant without payload of an enum.
+    fn unit_variant(&self, path: &[ast::Ident]) -> bool {
+        let Some(TypeName::Nominal(ty)) = self.type_names.get(&path[0].name) else { return false };
+        let TyKind::Adt(id) = *self.types.kind(*ty) else { return false };
+        match &self.types.adt(id).kind {
+            AdtKind::Enum(variants) => {
+                variants.iter().any(|v| v.name == path[1].name && matches!(v.payload, Payload::Unit))
+            }
+            _ => false,
+        }
+    }
+
+    fn native_ty(&mut self, ty: hir::NativeTy) -> Ty {
+        match ty {
+            hir::NativeTy::Int => Ty::INT,
+            hir::NativeTy::Float => Ty::F64,
+            hir::NativeTy::Bool => Ty::BOOL,
+            hir::NativeTy::String => Ty::STRING,
+            hir::NativeTy::Unit => Ty::UNIT,
+            hir::NativeTy::JsonReader => self.types.handle(Handle::JsonReader, Ty::UNIT),
+            hir::NativeTy::JsonWriter => self.types.handle(Handle::JsonWriter, Ty::UNIT),
+        }
+    }
+
     /// Nanoseconds in a unit of `std.time`, by the name of its constructor
     /// and reader.
     fn time_unit(name: &str) -> Option<i128> {
@@ -4155,6 +4240,7 @@ impl Checker<'_> {
     // ---- statements ------------------------------------------------------
 
     fn block(&mut self, cx: &mut FnCx, b: &ast::Block, expected: Option<Ty>) -> hir::Block {
+        let body = std::mem::take(&mut cx.body);
         cx.scopes.push(Vec::new());
         let outer = std::mem::replace(&mut cx.diverged, false);
         let stmts = self.statements(cx, &b.stmts);
@@ -4164,6 +4250,7 @@ impl Checker<'_> {
             }
             let value = self.expr(cx, t, expected);
             Box::new(match expected {
+                Some(expected) if body => self.returned(cx, value, expected),
                 Some(expected) => self.coerce(value, expected),
                 None => value,
             })
@@ -4285,7 +4372,7 @@ impl Checker<'_> {
                     }
                     Some(value) => {
                         let value = self.expr(cx, value, Some(result));
-                        Some(self.coerce(value, result))
+                        Some(self.returned(cx, value, result))
                     }
                     None => {
                         if result != Ty::UNIT && result != Ty::ERROR {
@@ -5155,10 +5242,19 @@ impl Checker<'_> {
             && !self.types.has_error(value.ty)
             && !self.types.has_error(expected)
         {
+            let wrapped = match *self.types.kind(value.ty) {
+                TyKind::Result(ok, _) | TyKind::Option(ok) => ok == expected,
+                _ => false,
+            };
             let message = match value.kind {
                 hir::ExprKind::Int(literal) if expected == Ty::BYTE && (0..256).contains(&literal) => {
                     format!("an integer literal is not a `Byte`: write `Byte({literal}u8)`")
                 }
+                _ if wrapped => format!(
+                    "expected {}, found {}: add `?` to pass the failure on, or handle it with `match`",
+                    self.display(expected),
+                    self.display(value.ty)
+                ),
                 _ => format!("expected {}, found {}", self.display(expected), self.display(value.ty)),
             };
             self.diags.error("E1102", value.span, message);
@@ -5222,6 +5318,18 @@ impl Checker<'_> {
             }
             ast::ExprKind::Index { base, index } => {
                 let base = self.expr(cx, base, None);
+                // `document["key"]` and `document[index]` of a `json.Value`
+                // read a member or an element, or `Null` (14.10).
+                if let Some(&TypeName::Nominal(json)) = self.type_names.get("json.Value")
+                    && base.ty == json
+                {
+                    let index = self.expr(cx, index, None);
+                    let (method, ty) = if index.ty == Ty::STRING { ("field", Ty::STRING) } else { ("item", Ty::INT) };
+                    let index = self.coerce(index, ty);
+                    let key = self.owner_key(json);
+                    let id = self.methods[&(key, method.to_string())];
+                    return Self::mk(hir::ExprKind::Call(Callee::Fn(id), Vec::new(), vec![base, index]), json, span);
+                }
                 if let TyKind::Map(key, value) = *self.types.kind(base.ty) {
                     // Reading a map entry yields `V?`: absence is normal (10.10).
                     let index = self.expr(cx, index, Some(key));
@@ -5284,7 +5392,7 @@ impl Checker<'_> {
                 self.record_literal(cx, path, type_args, fields, expected, span)
             }
             ast::ExprKind::With { base, updates } => self.with_expr(cx, base, updates, span),
-            ast::ExprKind::Try(inner) => self.try_expr(cx, inner, span),
+            ast::ExprKind::Try(inner) => self.try_expr(cx, inner, expected, span),
             ast::ExprKind::Closure(closure) => self.closure(cx, closure, expected, span),
             ast::ExprKind::None => match self.union_member(expected, "none").map(|t| (t, self.types.kind(t))) {
                 Some((ty, TyKind::Option(_))) => Self::mk(hir::ExprKind::Variant(NONE, Vec::new()), ty, span),
@@ -6333,11 +6441,16 @@ impl Checker<'_> {
 
     /// `value?` propagates `none` or an error out of the enclosing function
     /// and otherwise yields the payload (15.2).
-    fn try_expr(&mut self, cx: &mut FnCx, inner: &ast::Expr, span: Span) -> hir::Expr {
+    fn try_expr(&mut self, cx: &mut FnCx, inner: &ast::Expr, expected: Option<Ty>, span: Span) -> hir::Expr {
         if cx.deferred {
             self.diags.error("E1410", span, "a defer block cannot propagate an error; handle it inside the block");
         }
-        let value = self.expr(cx, inner, None);
+        // A call learns the success type it should give: `decode(text)?`.
+        let hint = match &inner.kind {
+            ast::ExprKind::Call { .. } => expected,
+            _ => None,
+        };
+        let value = self.expr(cx, inner, hint);
         match self.types.kind(value.ty).clone() {
             TyKind::Option(payload) => {
                 if !matches!(self.types.kind(cx.result), TyKind::Option(_)) {
@@ -6741,6 +6854,25 @@ impl Checker<'_> {
             }
             if matches!(handle, Handle::Command | Handle::Pipeline | Handle::Process) {
                 return self.process_method(cx, value, handle, method, args, span);
+            }
+            if matches!(handle, Handle::JsonReader | Handle::JsonWriter) {
+                let receiver =
+                    if handle == Handle::JsonReader { hir::NativeTy::JsonReader } else { hir::NativeTy::JsonWriter };
+                let found = hir::NATIVES.iter().position(|n| n.receiver == Some(receiver) && n.name == method.name);
+                let Some(index) = found else { return self.no_method(ty, method, span) };
+                let native = &hir::NATIVES[index];
+                if args.len() != native.params.len() {
+                    return self.arity_error(span, native.params.len(), args.len());
+                }
+                let mut values = vec![value];
+                for (arg, &param) in args.iter().zip(native.params) {
+                    let param = self.native_ty(param);
+                    let argument = self.expr(cx, &arg.value, Some(param));
+                    values.push(self.coerce(argument, param));
+                }
+                let result = self.native_ty(native.result);
+                let callee = Callee::Std(StdFn::Native(index as u16));
+                return Self::mk(hir::ExprKind::Call(callee, Vec::new(), values), result, span);
             }
             if handle.locked() || matches!(handle, Handle::Semaphore | Handle::Permit | Handle::Barrier) {
                 return self.sync_method(cx, value, handle, state, method, args, span);
@@ -7532,6 +7664,13 @@ impl Checker<'_> {
                 let receiver = ast::Expr { kind: ast::ExprKind::Path(prefix.to_vec()), span: receiver_span };
                 return self.method_call(cx, &receiver, method, args, span);
             }
+            // `Color.Red.describe()`: a method of a variant without payload.
+            ast::ExprKind::Path(segments) if segments.len() == 3 && self.unit_variant(&segments[..2]) => {
+                let (method, prefix) = segments.split_last().unwrap();
+                let receiver_span = prefix[0].span.to(prefix[1].span);
+                let receiver = ast::Expr { kind: ast::ExprKind::Path(prefix.to_vec()), span: receiver_span };
+                return self.method_call(cx, &receiver, method, args, span);
+            }
             ast::ExprKind::Generic { base, args: type_args } => {
                 return self.generic_call(cx, base, type_args, args, expected, span);
             }
@@ -7758,6 +7897,19 @@ impl Checker<'_> {
                 };
                 let signature = Signature::simple(params, result);
                 let target = CallTarget::new(Callee::Std(function), signature, expected);
+                self.call_signature(cx, target, None, args, span)
+            }
+            ([_, member], Some(ModuleName::Module(StdModule::InternalJson))) => {
+                let found = hir::NATIVES.iter().position(|n| n.receiver.is_none() && n.name == *member);
+                let Some(index) = found else {
+                    let message = format!("module `{}` has no function `{member}`", segments[0].name);
+                    self.diags.error("E1001", segments[1].span, message);
+                    return Self::error_expr(span);
+                };
+                let native = &hir::NATIVES[index];
+                let params = native.params.iter().map(|&t| self.native_ty(t)).collect();
+                let signature = Signature::simple(params, self.native_ty(native.result));
+                let target = CallTarget::new(Callee::Std(StdFn::Native(index as u16)), signature, expected);
                 self.call_signature(cx, target, None, args, span)
             }
             ([_, member], Some(ModuleName::Module(StdModule::Process))) => {
@@ -8126,6 +8278,12 @@ impl Checker<'_> {
         }
         if let Some(expected) = expected {
             self.unify(&mut inference, signature.result, expected);
+            // `call(...)?` where its success type is expected.
+            if let TyKind::Result(success, _) | TyKind::Option(success) = *self.types.kind(signature.result)
+                && !matches!(self.types.kind(expected), TyKind::Result(..) | TyKind::Option(_))
+            {
+                self.unify(&mut inference, success, expected);
+            }
         }
         self.infer_from_bounds(&mut inference);
         let unknown: Vec<String> = signature

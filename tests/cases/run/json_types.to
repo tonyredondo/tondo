@@ -1,0 +1,88 @@
+import std.console
+import std.json
+
+type Address = {
+    city: String
+    zip: String?
+}
+
+type User = {
+    name: String
+    age: Int
+    tags: Array[String]
+    address: Address
+    nickname: String?
+}
+
+enum Shape {
+    Empty
+    Circle(Float)
+    Rect(Float, Float)
+    Named { label: String, sides: Int }
+}
+
+type Page[T] = {
+    items: Array[T]
+    total: Int
+}
+
+fn main(): !json.JsonError {
+    let user = User { name: "ana", age: 31, tags: ["x"], address: Address { city: "Madrid", zip: none }, nickname: none }
+    let text = json.encode(user)
+    console.println(text)
+    let back: User = json.decode(text)?
+    console.println("{back.name} {back.age} {back.address.city} {back.nickname == none}")
+    let shapes = [Shape.Empty, Shape.Circle(1.5), Shape.Rect(2.0, 3.0), Shape.Named { label: "tri", sides: 3 }]
+    let encoded = json.encode(shapes)
+    console.println(encoded)
+    let decoded: Array[Shape] = json.decode(encoded)?
+    console.println("{decoded.length()} {json.encode(decoded) == encoded}")
+    let page = Page { items: [user], total: 1 }
+    console.println(json.encode(page, pretty: true))
+    let loose: User = json.decode(r"""{"name": "bo", "age": 2, "tags": [], "address": {"city": "X"}, "extra": [1, {"a": 2}]}""")?
+    console.println("loose {loose.name} {loose.address.zip}")
+    match json.decode[User](r"""{"name": "bo", "tags": [], "address": {"city": "X"}}""") {
+        ok(_) => console.println("unexpected"),
+        err(error) => console.println("{error}"),
+    }
+    match json.decode[User](r"""{"name": "bo", "age": 1, "tags": [], "address": {"city": "X"}, "extra": 1}""", unknownFields: json.UnknownFields.Reject) {
+        ok(_) => console.println("unexpected"),
+        err(error) => console.println("{error}"),
+    }
+    match json.decode[Shape](r"""{"Hexagon": 1}""") {
+        ok(_) => console.println("unexpected"),
+        err(error) => console.println("{error}"),
+    }
+    let value = json.toValue(user)
+    console.println("{value["address"]["city"]}")
+    let again: User = json.fromValue(value)?
+    console.println(again.name)
+}
+
+// expect-stdout: {"name":"ana","age":31,"tags":["x"],"address":{"city":"Madrid","zip":null},"nickname":null}
+// expect-stdout: ana 31 Madrid true
+// expect-stdout: ["Empty",{"Circle":1.5},{"Rect":[2,3]},{"Named":{"label":"tri","sides":3}}]
+// expect-stdout: 4 true
+// expect-stdout: {
+// expect-stdout:   "items": [
+// expect-stdout:     {
+// expect-stdout:       "name": "ana",
+// expect-stdout:       "age": 31,
+// expect-stdout:       "tags": [
+// expect-stdout:         "x"
+// expect-stdout:       ],
+// expect-stdout:       "address": {
+// expect-stdout:         "city": "Madrid",
+// expect-stdout:         "zip": null
+// expect-stdout:       },
+// expect-stdout:       "nickname": null
+// expect-stdout:     }
+// expect-stdout:   ],
+// expect-stdout:   "total": 1
+// expect-stdout: }
+// expect-stdout: loose bo none
+// expect-stdout: missing field `age` at $ (line 1, column 53)
+// expect-stdout: unknown field `extra` at $.extra (line 1, column 74)
+// expect-stdout: unknown variant `Hexagon` of `Shape` at $.Hexagon (line 1, column 14)
+// expect-stdout: "Madrid"
+// expect-stdout: ana

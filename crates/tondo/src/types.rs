@@ -156,6 +156,9 @@ pub enum Handle {
     Command,
     Pipeline,
     Process,
+    /// The runtime's JSON tokenizer and emitter (`std.internal.json`).
+    JsonReader,
+    JsonWriter,
 }
 
 impl Handle {
@@ -185,6 +188,8 @@ impl Handle {
             Handle::Command => "Command",
             Handle::Pipeline => "Pipeline",
             Handle::Process => "process.Process",
+            Handle::JsonReader => "json.NativeReader",
+            Handle::JsonWriter => "json.NativeWriter",
         }
     }
 
@@ -1290,7 +1295,9 @@ impl Types {
                         | Handle::Buffer
                         | Handle::Command
                         | Handle::Pipeline
-                        | Handle::Process,
+                        | Handle::Process
+                        | Handle::JsonReader
+                        | Handle::JsonWriter,
                         _,
                     ) => {
                         return handle.name().to_string();

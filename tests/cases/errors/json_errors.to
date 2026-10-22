@@ -1,0 +1,23 @@
+import std.json
+
+type Handler = {
+    name: String
+    run: fn(): Int
+}
+
+type Settings = {
+    @ignore
+    secret: String
+    @rename("x")
+    other: Int
+}
+
+fn main() {
+    let text = json.encode(Handler { name: "a", run: (): Int { 1 } })
+    let items: Array[Int] = json.decode("[1]")
+}
+
+// expect-error: E1105 `Handler` does not implement `json.Encode`, which `json.encode` requires of `T`
+// expect-error: E1102 an ignored field is optional, since decoding leaves it `none`: write `secret: String?`
+// expect-error: E1001 unknown annotation `@rename`; a field takes `@name("text")` or `@ignore`
+// expect-error: E1102 expected `Array[Int]`, found `Array[Int] ! json.JsonError`: add `?` to pass the failure on, or handle it with `match`

@@ -1,0 +1,22 @@
+import std.console
+import std.json
+
+type Account = {
+    @name("user_id")
+    userId: Int
+    @name("display-name")
+    displayName: String
+    @ignore
+    cache: String?
+}
+
+fn main(): !json.JsonError {
+    let account = Account { userId: 7, displayName: "Ana", cache: "local" }
+    let text = json.encode(account)
+    console.println(text)
+    let back: Account = json.decode(r"""{"user_id": 8, "display-name": "Bo", "cache": "ignored"}""")?
+    console.println("{back.userId} {back.displayName} {back.cache}")
+}
+
+// expect-stdout: {"user_id":7,"display-name":"Ana"}
+// expect-stdout: 8 Bo none
