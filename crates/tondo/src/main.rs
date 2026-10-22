@@ -19,6 +19,7 @@ usage:
             [--retry <n>] [--allow-flaky] [--repeat <n>] [--codeowners auto|none|<path>]
             [--show-output] [--allow-empty] [--deny-skips] [--test-format human|json]
             [--report json=<path> | junit=<path>]... [--diagnostic-format human|json]
+            [--artifacts <dir>] [--update-snapshots]
                                                        run the tests of a project
   tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
                                                        write a module of extern declarations for a C header
@@ -130,6 +131,8 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         allow_flaky: false,
         json: false,
         reports: Vec::new(),
+        artifacts: None,
+        update_snapshots: false,
     };
     let mut diagnostics_json = false;
     let usage = |message: String| format!("{message}\n{USAGE}");
@@ -219,6 +222,8 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             "--allow-empty" => options.allow_empty = true,
             "--deny-skips" => options.deny_skips = true,
             "--allow-flaky" => options.allow_flaky = true,
+            "--update-snapshots" => options.update_snapshots = true,
+            "--artifacts" => options.artifacts = Some(PathBuf::from(value()?)),
             "--test-format" | "--diagnostic-format" => {
                 let json = match value()?.as_str() {
                     "human" => false,
@@ -258,6 +263,19 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         && let Some(flag) = listing.iter().find(|f| given(f))
     {
         return Err(usage(format!("--list runs nothing, so it does not go with {flag}")));
+    }
+    if options.update_snapshots {
+        // Snapshots are written in one known order (9.7).
+        let incompatible = ["--shard", "--retry", "--repeat", "--allow-flaky", "--list"];
+        if let Some(flag) = incompatible.iter().find(|f| given(f)) {
+            return Err(usage(format!("--update-snapshots does not go with {flag}")));
+        }
+        if options.jobs != 1 || random {
+            return Err(usage("--update-snapshots runs with --jobs 1 and the canonical order".into()));
+        }
+    }
+    if options.list && given("--artifacts") {
+        return Err(usage("--list attaches nothing, so it does not go with --artifacts".into()));
     }
     if options.list && !options.reports.is_empty() {
         return Err(usage("--list writes no report; use --test-format json".into()));

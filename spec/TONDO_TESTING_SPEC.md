@@ -3603,10 +3603,12 @@ los ejecutan en cada plataforma de CI. El compilador nativo implementa hoy:
   `--allow-empty` y `--deny-skips`, con la salida humana;
 - los reportes `tondo-test-report-0.1/1`, `tondo-test-list-0.1/1` y
   `tondo-junit-report-0.1/1` con `--test-format json` y `--report`, y
-  `--diagnostic-format`.
+  `--diagnostic-format`;
+- `testing.attach` con el artifact store en `target/test-artifacts` o
+  `--artifacts`, y `testing.snapshot` con el snapshot store y
+  `--update-snapshots`.
 
-Siguen pendientes attachments, snapshots y el tiempo virtual: sus campos de los
-reportes quedan vacíos.
+Sigue pendiente el tiempo virtual: `virtual_time` queda vacío en los reportes.
 
 ## 17. Referencia rápida
 

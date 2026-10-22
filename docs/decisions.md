@@ -789,3 +789,14 @@ file, a line and a column, which the runtime and people already use, instead
 of byte ranges, and `crashed` joins the failures and their counts. Fields of
 attachments, snapshots and virtual time are there, empty until those land.
 
+## 2026-10-22 — Attachments and snapshots
+
+`testing.attach` sends its bytes to `tondo test`, which stores them as
+content-addressed objects under `target/test-artifacts` (or `--artifacts`)
+and writes the manifest after the run. `testing.snapshot` checks against
+`snapshots/tondo.snap.json`, which `tondo test` reads strictly before
+running and hands each worker; a missing or different value is `P2007` where
+it is called, and the report shows the first line that differs.
+`--update-snapshots` records them instead and publishes the store only after
+a run with nothing failed, skipped or blocked.
+

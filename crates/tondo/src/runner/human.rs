@@ -124,6 +124,25 @@ fn written(attempt: &Attempt) -> String {
         let tags: Vec<String> = attempt.tags.iter().map(|(k, v)| format!("{k}={v}")).collect();
         text.push_str(&format!("tags: {}\n", tags.join(", ")));
     }
+    for artifact in &attempt.artifacts {
+        text.push_str(&format!(
+            "artifact {}: {}, {} bytes, objects/{}\n",
+            artifact.name, artifact.media_type, artifact.size, artifact.sha256
+        ));
+    }
+    for snapshot in attempt.snapshots.iter().filter(|s| s.status != "matched") {
+        text.push_str(&format!("snapshot {}: {}\n", snapshot.name, snapshot.status));
+        // The first line that differs.
+        if let Some(expected) = &snapshot.expected {
+            let mut lines = expected.split('\n').zip(snapshot.actual.split('\n')).enumerate();
+            let differs = lines.find(|(_, (e, a))| e != a).map(|(i, (e, a))| (i + 1, e, a));
+            let (line, wanted, found) = differs.unwrap_or_else(|| {
+                let line = expected.split('\n').count().min(snapshot.actual.split('\n').count()) + 1;
+                (line, "(the value ends before)", "(the value ends before)")
+            });
+            text.push_str(&format!("  line {line}, expected: {wanted}\n  line {line}, found:    {found}\n"));
+        }
+    }
     text
 }
 

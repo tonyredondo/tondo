@@ -329,3 +329,55 @@ fn writes_json_and_junit_reports() {
     assert!(stdout.starts_with("{\"format\":\"tondo-test-list-0.1/1\""));
     assert!(stdout.contains("\"execution_plan\":[\"sample::unit::sample::shared::nested::seesBoth\"]"));
 }
+
+#[test]
+fn attaches_and_checks_snapshots() {
+    let tests = "\
+import std.testing
+
+fn render(name: String): String {
+    \"Hello, {name}!\\nBye.\"
+}
+
+test rendersGreeting {
+    testing.attach(\"greeting.txt\", \"text/plain\", render(\"Ada\").bytes())
+    testing.snapshot(\"greeting\", render(\"Ada\"))
+}
+
+test badMedia {
+    testing.attach(\"x\", \"not a type\", [])
+}
+";
+    let dir = project("testing-snapshots", tests);
+    let (stdout, _, status) = tondo(&dir, &["test", "--filter", "rendersGreeting"]);
+    assert!(stdout.contains("panic[P2007]: test-snapshot-mismatch: there is no snapshot \"greeting\""), "{stdout}");
+    assert_eq!(status, 1);
+    let (_, _, status) = tondo(&dir, &["test", "--filter", "rendersGreeting", "--update-snapshots"]);
+    assert_eq!(status, 0);
+    let store = std::fs::read_to_string(dir.join("snapshots/tondo.snap.json")).unwrap();
+    assert_eq!(
+        store,
+        "{\n  \"format\": \"tondo-snapshot-store-0.1/1\",\n  \"entries\": [\n    {\"id\":\"app::unit::app::rendersGreeting\",\"name\":\"greeting\",\"value\":\"Hello, Ada!\\nBye.\"}\n  ]\n}\n"
+    );
+    let (_, _, status) = tondo(&dir, &["test", "--filter", "rendersGreeting"]);
+    assert_eq!(status, 0);
+    let changed = tests.replace("Bye.", "Goodbye.");
+    std::fs::write(dir.join("src/main_test.to"), changed).unwrap();
+    let (stdout, _, status) = tondo(&dir, &["test", "--filter", "rendersGreeting", "--test-format", "json"]);
+    assert_eq!(status, 1);
+    assert!(stdout.contains("\"snapshots\":[{\"name\":\"greeting\",\"status\":\"mismatched\","), "{stdout}");
+    assert!(
+        stdout.contains("\"artifacts\":[{\"name\":\"greeting.txt\",\"media_type\":\"text/plain\",\"size\":\"20\",")
+    );
+    let (stdout, _, _) = tondo(&dir, &["test", "--filter", "rendersGreeting"]);
+    assert!(stdout.contains("snapshot greeting: mismatched\n  line 2, expected: Bye.\n  line 2, found:    Goodbye.\n"));
+    let manifest = std::fs::read_to_string(dir.join("target/test-artifacts/manifest.json")).unwrap();
+    assert!(manifest.starts_with("{\"format\":\"tondo-test-artifacts-0.1/1\",\"objects\":[{\"sha256\":"));
+    let (stdout, _, _) = tondo(&dir, &["test", "--filter", "badMedia"]);
+    assert!(stdout.contains("panic[P2006]: test-artifact-conflict: \"not a type\" is not a media type"));
+    let (stderr, status) = {
+        let (_, stderr, status) = tondo(&dir, &["test", "--update-snapshots", "--jobs", "2"]);
+        (stderr, status)
+    };
+    assert!(stderr.contains("--update-snapshots runs with --jobs 1") && status == 2);
+}

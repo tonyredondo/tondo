@@ -10,8 +10,8 @@
 //! stdout, so that `tondo test` gives each entry the output written before
 //! it.
 
-use crate::{MapObject, Str, str_bytes};
-use std::collections::{HashMap, VecDeque};
+use crate::{ArrayHeader, MapObject, Str, str_bytes};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
 use std::io::Write;
 use std::sync::Mutex;
@@ -22,8 +22,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub struct Node {
     parent: u64,
     suite: u64,
-    /// The identity, which `tondo test` already knows.
-    _id: *const Str,
+    id: *const Str,
 }
 
 /// A member a suite gives the runner: its node, and the glue that runs
@@ -39,6 +38,7 @@ pub struct Member {
 pub const SKIP: u32 = 2000;
 
 struct Runner {
+    ids: Vec<String>,
     parents: Vec<u32>,
     suites: Vec<bool>,
     /// The tests still to run.
@@ -55,6 +55,13 @@ struct Runner {
     reached: Vec<bool>,
     /// The tags of each entry.
     tags: HashMap<u32, HashMap<String, String>>,
+    /// The names an entry attached and the snapshots it checked.
+    attached: HashSet<(u32, String)>,
+    checked: HashSet<(u32, String)>,
+    /// The snapshot store, by test or suite and name, and whether this run
+    /// updates it instead of checking against it.
+    snapshots: HashMap<(String, String), String>,
+    update: bool,
 }
 
 static RUNNER: Mutex<Option<Runner>> = Mutex::new(None);
@@ -114,7 +121,14 @@ pub unsafe extern "C" fn tondo_rt_test_start(table: *const Node, count: usize) {
         None => (1..count as u32).filter(|&n| !suites[n as usize]).collect(),
     };
     let nonce = std::env::var("TONDO_TEST_NONCE").unwrap_or_else(|_| "tondo".into());
+    let ids = nodes.iter().map(|n| String::from_utf8_lossy(unsafe { str_bytes(n.id) }).into_owned()).collect();
+    let snapshots = std::env::var_os("TONDO_TEST_SNAPSHOTS").map(|p| read_store(&p)).unwrap_or_default();
     let runner = Runner {
+        ids,
+        attached: HashSet::new(),
+        checked: HashSet::new(),
+        snapshots,
+        update: std::env::var_os("TONDO_TEST_UPDATE").is_some(),
         reached: vec![false; count],
         parents,
         suites,
@@ -315,6 +329,122 @@ pub unsafe extern "C" fn tondo_rt_test_tags(map: *mut MapObject) {
         let message = crate::str_new(format!("`{key}` already has another value").as_bytes());
         let location = crate::str_new(b"testing.tags");
         unsafe { crate::tondo_rt_panic(2002, message, location) };
+    }
+}
+
+/// The snapshot entries `tondo test` gives the worker: records of three
+/// lengths on a line, then the identity, name and value they measure.
+fn read_store(path: &std::ffi::OsStr) -> HashMap<(String, String), String> {
+    let bytes = std::fs::read(path).unwrap_or_default();
+    let mut entries = HashMap::new();
+    let mut rest = &bytes[..];
+    while let Some(end) = rest.iter().position(|&b| b == b'\n') {
+        let lengths: Vec<usize> =
+            String::from_utf8_lossy(&rest[..end]).split(' ').filter_map(|n| n.parse().ok()).collect();
+        let [id, name, value] = lengths[..] else { break };
+        let body = &rest[end + 1..];
+        if body.len() < id + name + value {
+            break;
+        }
+        let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+        entries.insert((text(&body[..id]), text(&body[id..id + name])), text(&body[id + name..id + name + value]));
+        rest = &body[id + name + value..];
+    }
+    entries
+}
+
+/// Why a name cannot name an artifact or a snapshot (testing 9.7).
+fn invalid_name(name: &str) -> Option<String> {
+    if name.is_empty() || name.contains(['/', '\\']) || name.chars().any(char::is_control) {
+        return Some(format!("{name:?} is not a name: it is empty, or has `/`, `\\` or a control character"));
+    }
+    None
+}
+
+/// A media type: `token/token`, without parameters.
+fn valid_media(media: &str) -> bool {
+    let token =
+        |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$&'*+-.^_`|~".contains(&b));
+    media.split_once('/').is_some_and(|(a, b)| token(a) && token(b))
+}
+
+fn text(s: *const Str) -> String {
+    String::from_utf8_lossy(unsafe { str_bytes(s) }).into_owned()
+}
+
+fn fail(code: u32, message: String, location: *const Str) -> ! {
+    let message = crate::str_new(message.as_bytes());
+    unsafe { crate::tondo_rt_panic(code, message, location) }
+}
+
+/// `testing.attach(name, mediaType, data)` (testing 9.7): `tondo test`
+/// stores the bytes; a bad or repeated name is the panic `P2006`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_test_attach(
+    name: *const Str,
+    media: *const Str,
+    data: *mut ArrayHeader,
+    location: *const Str,
+) {
+    let (name, media) = (text(name), text(media));
+    if let Some(why) = invalid_name(&name) {
+        fail(2006, why, location);
+    }
+    if !valid_media(&media) {
+        fail(2006, format!("{media:?} is not a media type such as \"application/json\""), location);
+    }
+    let bytes = if data.is_null() { Vec::new() } else { unsafe { crate::io::array_bytes(data) } };
+    let repeated = with(|r| {
+        let node = r.current();
+        if !r.attached.insert((node, name.clone())) {
+            return true;
+        }
+        let mut payload = format!("{name}\0{media}\0").into_bytes();
+        payload.extend_from_slice(&bytes);
+        r.frame("attach", node, &payload);
+        false
+    });
+    if repeated == Some(true) {
+        fail(2006, format!("an artifact named {name:?} is already attached here"), location);
+    }
+}
+
+/// `testing.snapshot(name, actual)` (testing 9.7): compares with the store,
+/// or records the value when updating; a missing or different value is the
+/// panic `P2007`, and a bad or repeated name `P2008`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_test_snapshot(name: *const Str, actual: *const Str, location: *const Str) {
+    let (name, actual) = (text(name), text(actual));
+    if let Some(why) = invalid_name(&name) {
+        fail(2008, why, location);
+    }
+    let outcome = with(|r| {
+        let node = r.current();
+        if !r.checked.insert((node, name.clone())) {
+            return Err(format!("the snapshot {name:?} is already checked here"));
+        }
+        let expected = r.snapshots.get(&(r.ids[node as usize].clone(), name.clone()));
+        let status = match (expected, r.update) {
+            (Some(expected), _) if *expected == actual => "matched",
+            (None, false) => "missing",
+            (Some(_), false) => "mismatched",
+            (None, true) => "created",
+            (Some(_), true) => "updated",
+        };
+        r.frame("snapshot", node, format!("{status}\0{name}\0{actual}").as_bytes());
+        Ok(status)
+    });
+    match outcome {
+        Some(Err(why)) => fail(2008, why, location),
+        Some(Ok("missing")) => {
+            fail(2007, format!("there is no snapshot {name:?}; `tondo test --update-snapshots` records it"), location)
+        }
+        Some(Ok("mismatched")) => fail(
+            2007,
+            format!("the snapshot {name:?} differs; `tondo test --update-snapshots` records the new value"),
+            location,
+        ),
+        _ => {}
     }
 }
 

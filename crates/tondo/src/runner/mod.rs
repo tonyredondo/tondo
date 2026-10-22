@@ -15,6 +15,7 @@ mod json;
 mod junit;
 mod owners;
 mod select;
+mod store;
 mod worker;
 
 pub use owners::Codeowners;
@@ -46,6 +47,10 @@ pub struct Options {
     /// `--report json=<path>` and `--report junit=<path>`: whether JUnit,
     /// and where.
     pub reports: Vec<(bool, PathBuf)>,
+    /// Where attachments go; `target/test-artifacts` of the project if not.
+    pub artifacts: Option<PathBuf>,
+    /// Records missing and changed snapshots instead of failing on them.
+    pub update_snapshots: bool,
 }
 
 /// The tree of the test build, with where each node is declared.
@@ -162,6 +167,28 @@ pub struct Attempt {
     pub stderr: Vec<u8>,
     /// How long its code ran.
     pub duration: Duration,
+    pub artifacts: Vec<Artifact>,
+    pub snapshots: Vec<Snapshot>,
+}
+
+/// What `testing.attach` attached.
+#[derive(Clone, Debug)]
+pub struct Artifact {
+    pub name: String,
+    pub media_type: String,
+    pub size: usize,
+    pub sha256: String,
+}
+
+/// What `testing.snapshot` checked: `matched`, `missing`, `mismatched`,
+/// `created` or `updated`, with the value it had.
+#[derive(Clone, Debug)]
+pub struct Snapshot {
+    pub name: String,
+    pub status: String,
+    /// The value in the store, if it had one.
+    pub expected: Option<String>,
+    pub actual: String,
 }
 
 /// The round, iteration and unit the attempts of a run belong to.
@@ -186,6 +213,8 @@ impl Attempt {
             stdout: Vec::new(),
             stderr: Vec::new(),
             duration: Duration::ZERO,
+            artifacts: Vec::new(),
+            snapshots: Vec::new(),
         }
     }
 }
@@ -228,7 +257,7 @@ fn aggregates(tree: &Tree, attempts: &[Attempt]) -> Vec<Aggregate> {
 pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Result<bool, Failure> {
     let ownership = owners::resolve(dir, &options.codeowners).map_err(Failure::Input)?;
     let owners: Vec<Vec<String>> = (0..tree.nodes.len() as u32).map(|n| ownership.of(tree.file(n))).collect();
-    let snapshot_sha256 = snapshot_tree(dir);
+    let snapshots = store::Snapshots::read(dir, &package(dir)).map_err(Failure::Input)?;
     let selected = select::select(tree, &options.selector);
     if selected.is_empty() {
         let message = match &options.selector {
@@ -263,7 +292,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         ownership: &ownership,
         plan: &plan,
         rounds: &[],
-        snapshot_sha256: &snapshot_sha256,
+        snapshots: (&snapshots.before, &snapshots.before, None),
         compiled: true,
     };
     if options.list {
@@ -276,9 +305,45 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     }
     let started = std::time::Instant::now();
     let mut printer = human::Printer::new(tree, &plan, options);
-    let (attempts, rounds) = campaign(dir, executable, tree, &plan, options, &mut printer);
+    let artifacts = store::Artifacts {
+        root: options.artifacts.clone().unwrap_or_else(|| dir.join("target/test-artifacts")),
+        error: std::sync::Mutex::new(None),
+    };
+    let entries = std::env::temp_dir().join(format!("tondo-snapshots-{}", std::process::id()));
+    std::fs::write(&entries, snapshots.for_worker()).map_err(|e| Failure::Output(e.to_string()))?;
+    let stores = worker::Stores {
+        artifacts: &artifacts,
+        snapshots: &snapshots,
+        entries: &entries,
+        update: options.update_snapshots,
+    };
+    let run = worker::Run { executable, dir, tree, options, stores };
+    let (attempts, rounds) = campaign(&run, &plan, &mut printer);
+    let _ = std::fs::remove_file(&entries);
     let aggregates = aggregates(tree, &attempts);
     let failed = failed(&aggregates, &attempts, options);
+    // Updated snapshots are published only after a run without failures,
+    // skips or blocks (9.7).
+    let after = if options.update_snapshots {
+        let clean = aggregates.iter().all(|a| a.status == Status::Passed && !a.flaky);
+        let values: Vec<((String, String), String)> = attempts
+            .iter()
+            .flat_map(|a| a.snapshots.iter().map(move |s| (a.node, s)))
+            .filter(|(_, s)| s.status == "created" || s.status == "updated")
+            .map(|(node, s)| ((tree.id(node).to_string(), s.name.clone()), s.actual.clone()))
+            .collect();
+        match clean {
+            true => Some((snapshots.publish(values).map_err(Failure::Output)?, true)),
+            false => Some((snapshots.before.clone(), false)),
+        }
+    } else {
+        None
+    };
+    write_manifest(tree, &artifacts, &aggregates)?;
+    context.snapshots = match &after {
+        Some((after, published)) => (&snapshots.before, after, Some(*published)),
+        None => (&snapshots.before, &snapshots.before, None),
+    };
     context.rounds = &rounds;
     let report = context.report(&aggregates);
     if options.json {
@@ -291,14 +356,71 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
             if *junit { junit::report(tree, &context, &aggregates, &report, options) } else { report.text() + "\n" };
         publish(path, &text)?;
     }
+    if let Some(error) = artifacts.error.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        return Err(Failure::Output(error));
+    }
     Ok(failed)
+}
+
+/// The package's name, from its manifest.
+fn package(dir: &Path) -> String {
+    crate::deps::resolve(dir, None).ok().map(|p| p[0].name.clone()).unwrap_or_default()
+}
+
+/// The manifest of the artifact store (15.8), when the run attached any.
+fn write_manifest(tree: &Tree, artifacts: &store::Artifacts, aggregates: &[Aggregate]) -> Result<(), Failure> {
+    let mut objects: Vec<(String, usize)> = Vec::new();
+    let mut attachments: Vec<(String, usize, String, String, String)> = Vec::new();
+    for aggregate in aggregates {
+        for (index, attempt) in aggregate.attempts.iter().enumerate() {
+            for artifact in &attempt.artifacts {
+                if !objects.iter().any(|(h, _)| *h == artifact.sha256) {
+                    objects.push((artifact.sha256.clone(), artifact.size));
+                }
+                let node = tree.id(aggregate.node).to_string();
+                let entry =
+                    (node, index + 1, artifact.name.clone(), artifact.media_type.clone(), artifact.sha256.clone());
+                attachments.push(entry);
+            }
+        }
+    }
+    if attachments.is_empty() {
+        return Ok(());
+    }
+    objects.sort();
+    attachments.sort();
+    use json::Value;
+    let text = |t: &str| Value::Str(t.to_string());
+    let object = |(hash, size): &(String, usize)| {
+        Value::Object(vec![
+            ("sha256".into(), text(hash)),
+            ("size".into(), text(&size.to_string())),
+            ("path".into(), text(&format!("objects/{hash}"))),
+        ])
+    };
+    let attachment = |(node, attempt, name, media, hash): &(String, usize, String, String, String)| {
+        Value::Object(vec![
+            ("node".into(), text(node)),
+            ("attempt".into(), Value::Int(*attempt as i64)),
+            ("name".into(), text(name)),
+            ("media_type".into(), text(media)),
+            ("sha256".into(), text(hash)),
+        ])
+    };
+    let manifest = Value::Object(vec![
+        ("format".into(), text("tondo-test-artifacts-0.1/1")),
+        ("objects".into(), Value::Array(objects.iter().map(object).collect())),
+        ("attachments".into(), Value::Array(attachments.iter().map(attachment).collect())),
+    ]);
+    store::write_atomically(&artifacts.root.join("manifest.json"), (manifest.text() + "\n").as_bytes())
+        .map_err(Failure::Output)
 }
 
 /// The report of a test build that did not compile (15.6), where asked.
 pub fn uncompiled(dir: &Path, options: &Options) -> Result<(), Failure> {
     let ownership = owners::resolve(dir, &options.codeowners).map_err(Failure::Input)?;
     let tree = Tree { nodes: Vec::new(), locations: Vec::new() };
-    let snapshot_sha256 = snapshot_tree(dir);
+    let snapshots = store::Snapshots::read(dir, &package(dir)).map_err(Failure::Input)?;
     let context = json::Context {
         tree: &tree,
         options,
@@ -306,7 +428,7 @@ pub fn uncompiled(dir: &Path, options: &Options) -> Result<(), Failure> {
         ownership: &ownership,
         plan: &[],
         rounds: &[],
-        snapshot_sha256: &snapshot_sha256,
+        snapshots: (&snapshots.before, &snapshots.before, None),
         compiled: false,
     };
     let report = context.report(&[]);
@@ -329,18 +451,6 @@ fn publish(path: &Path, text: &str) -> Result<(), Failure> {
         .map_err(|e| Failure::Output(format!("cannot write the report {}: {e}", path.display())))
 }
 
-/// The hash of the snapshot stores (15.7): the package's store, or an empty
-/// one where there is none.
-fn snapshot_tree(dir: &Path) -> String {
-    let package = crate::deps::resolve(dir, None).ok().map(|p| p[0].name.clone()).unwrap_or_default();
-    let store = std::fs::read(dir.join("snapshots/tondo.snap.json")).unwrap_or_else(|_| json::EMPTY_STORE.into());
-    let mut bytes = b"tondo-snapshot-tree-v1\0".to_vec();
-    bytes.extend_from_slice(package.as_bytes());
-    bytes.push(0);
-    bytes.extend_from_slice(&crate::hash::sha256(&store));
-    crate::hash::sha256_hex(&bytes)
-}
-
 /// Why `tondo test` could not report: an input it could not use, no tests,
 /// or a report it could not write.
 pub enum Failure {
@@ -353,14 +463,8 @@ pub enum Failure {
 /// The retry rounds that ran: each one's units, with their tests.
 type Rounds = Vec<Vec<(u32, Vec<u32>)>>;
 
-fn campaign(
-    dir: &Path,
-    executable: &Path,
-    tree: &Tree,
-    plan: &[u32],
-    options: &Options,
-    printer: &mut human::Printer,
-) -> (Vec<Attempt>, Rounds) {
+fn campaign(run: &worker::Run, plan: &[u32], printer: &mut human::Printer) -> (Vec<Attempt>, Rounds) {
+    let (tree, options) = (run.tree, run.options);
     let mut attempts = Vec::new();
     let mut rounds = Vec::new();
     for iteration in 1..=options.repeat {
@@ -375,7 +479,7 @@ fn campaign(
         }
         let context = Context { round: 0, iteration, unit: None };
         let units = units.into_iter().map(|u| (u, context)).collect();
-        attempts.extend(worker::execute(executable, dir, tree, units, options, |a| printer.attempt(a)));
+        attempts.extend(worker::execute(run, units, |a| printer.attempt(a)));
     }
     for round in 1..=options.retry {
         let units = retry_units(tree, plan, &attempts);
@@ -387,7 +491,7 @@ fn campaign(
         rounds.push(units.clone());
         let units =
             units.into_iter().map(|(unit, tests)| (tests, Context { round, iteration: 1, unit: Some(unit) })).collect();
-        attempts.extend(worker::execute(executable, dir, tree, units, options, |a| printer.attempt(a)));
+        attempts.extend(worker::execute(run, units, |a| printer.attempt(a)));
     }
     (attempts, rounds)
 }

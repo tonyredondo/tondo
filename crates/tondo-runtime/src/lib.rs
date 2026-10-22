@@ -1670,6 +1670,12 @@ fn panic_name(code: u32) -> &'static str {
         16 => "nul-in-c-string",
         2001 => "test-skip-during-cleanup",
         2002 => "test-tag-conflict",
+        2003 => "test-virtual-time-deadlock",
+        2004 => "overlapping-test-virtual-time",
+        2005 => "test-virtual-time-range",
+        2006 => "test-artifact-conflict",
+        2007 => "test-snapshot-mismatch",
+        2008 => "test-snapshot-conflict",
         _ => "unknown",
     }
 }

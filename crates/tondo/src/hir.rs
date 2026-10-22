@@ -717,6 +717,10 @@ pub enum StdFn {
     TestTags,
     /// Tells the runner where an error leaves a test or a setup.
     TestWhere,
+    /// `testing.attach(name, mediaType, data)` and
+    /// `testing.snapshot(name, actual)` (testing 9.7).
+    TestAttach,
+    TestSnapshot,
 }
 
 /// The raw operations of a `Pointer[T]` that touch memory or move it.

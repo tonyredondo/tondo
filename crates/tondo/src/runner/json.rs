@@ -158,7 +158,9 @@ pub(super) struct Context<'a> {
     pub plan: &'a [u32],
     /// Each retry round that ran: its units, each with its tests.
     pub rounds: &'a [Vec<(u32, Vec<u32>)>],
-    pub snapshot_sha256: &'a str,
+    /// The snapshot tree's hash before and after the run, and whether an
+    /// update was published.
+    pub snapshots: (&'a str, &'a str, Option<bool>),
     pub compiled: bool,
 }
 
@@ -215,7 +217,7 @@ impl Context<'_> {
             ),
         ];
         if !with_plan {
-            let store = obj(vec![("format", str("tondo-snapshot-store-0.1/1")), ("sha256", str(self.snapshot_sha256))]);
+            let store = obj(vec![("format", str("tondo-snapshot-store-0.1/1")), ("sha256", str(self.snapshots.0))]);
             fields.push(("snapshot_store", store));
         }
         fields.push(("shard", shard));
@@ -316,10 +318,10 @@ impl Context<'_> {
             "snapshot_policy",
             obj(vec![
                 ("format", str("tondo-snapshot-store-0.1/1")),
-                ("mode", str("check")),
-                ("before_sha256", str(self.snapshot_sha256)),
-                ("after_sha256", str(self.snapshot_sha256)),
-                ("published", Value::Null),
+                ("mode", str(if options.update_snapshots { "update" } else { "check" })),
+                ("before_sha256", str(self.snapshots.0)),
+                ("after_sha256", str(self.snapshots.1)),
+                ("published", self.snapshots.2.map_or(Value::Null, Value::Bool)),
             ]),
         ));
         fields.push((
@@ -407,8 +409,8 @@ impl Context<'_> {
         let mut tags = attempt.tags.clone();
         tags.sort();
         fields.push(("tags", Value::Object(tags.into_iter().map(|(k, v)| (k, str(v))).collect())));
-        fields.push(("artifacts", Value::Array(Vec::new())));
-        fields.push(("snapshots", Value::Array(Vec::new())));
+        fields.push(("artifacts", artifacts(attempt)));
+        fields.push(("snapshots", snapshots(attempt)));
         fields.push(("virtual_time", Value::Array(Vec::new())));
         fields.push(("logs", Value::Array(attempt.logs.iter().map(|l| str(l.clone())).collect())));
         fields.push(("stdout", stream(&attempt.stdout)));
@@ -426,6 +428,9 @@ impl Context<'_> {
         let repeated = |a: &Aggregate| a.attempts.iter().any(|t| t.iteration > 1);
         let failed = |a: &Aggregate| a.status.failed();
         let test_failed = tests.iter().filter(|a| failed(a)).count();
+        let every: Vec<&Attempt> = aggregates.iter().flat_map(|a| &a.attempts).collect();
+        let snapshot_count =
+            |status: &str| int(every.iter().flat_map(|a| &a.snapshots).filter(|s| s.status == status).count());
         let suite_failed = suites.iter().filter(|a| failed(a)).count();
         obj(vec![
             ("selected", int(tests.len())),
@@ -454,17 +459,57 @@ impl Context<'_> {
             ("suite_retried", count(&suites, &retried)),
             ("suite_repeated", count(&suites, &repeated)),
             ("suite_attempts", attempts(&suites)),
-            ("artifacts", int(0)),
-            ("artifact_bytes", str("0")),
-            ("snapshots", int(0)),
-            ("snapshot_matched", int(0)),
-            ("snapshot_missing", int(0)),
-            ("snapshot_mismatched", int(0)),
-            ("snapshot_created", int(0)),
-            ("snapshot_updated", int(0)),
+            ("artifacts", int(every.iter().map(|a| a.artifacts.len()).sum())),
+            ("artifact_bytes", str(every.iter().flat_map(|a| &a.artifacts).map(|a| a.size).sum::<usize>().to_string())),
+            ("snapshots", int(every.iter().map(|a| a.snapshots.len()).sum())),
+            ("snapshot_matched", snapshot_count("matched")),
+            ("snapshot_missing", snapshot_count("missing")),
+            ("snapshot_mismatched", snapshot_count("mismatched")),
+            ("snapshot_created", snapshot_count("created")),
+            ("snapshot_updated", snapshot_count("updated")),
             ("failed", int(test_failed + suite_failed)),
         ])
     }
+}
+
+/// An attempt's attachments, by name.
+pub(super) fn artifacts(attempt: &Attempt) -> Value {
+    let mut list: Vec<&super::Artifact> = attempt.artifacts.iter().collect();
+    list.sort_by(|a, b| a.name.cmp(&b.name));
+    Value::Array(
+        list.into_iter()
+            .map(|a| {
+                obj(vec![
+                    ("name", str(a.name.clone())),
+                    ("media_type", str(a.media_type.clone())),
+                    ("size", str(a.size.to_string())),
+                    ("sha256", str(a.sha256.clone())),
+                    ("object", str(format!("objects/{}", a.sha256))),
+                ])
+            })
+            .collect(),
+    )
+}
+
+/// An attempt's snapshot checks, by name.
+pub(super) fn snapshots(attempt: &Attempt) -> Value {
+    let mut list: Vec<&super::Snapshot> = attempt.snapshots.iter().collect();
+    list.sort_by(|a, b| a.name.cmp(&b.name));
+    Value::Array(
+        list.into_iter()
+            .map(|s| {
+                obj(vec![
+                    ("name", str(s.name.clone())),
+                    ("status", str(s.status.clone())),
+                    (
+                        "expected_sha256",
+                        s.expected.as_ref().map_or(Value::Null, |e| str(crate::hash::sha256_hex(e.as_bytes()))),
+                    ),
+                    ("actual_sha256", str(crate::hash::sha256_hex(s.actual.as_bytes()))),
+                ])
+            })
+            .collect(),
+    )
 }
 
 pub(super) fn status_name(status: &Status) -> &'static str {
@@ -506,9 +551,6 @@ pub(super) fn failure(status: &Status, options: &Options) -> Value {
         ("stack", Value::Array(Vec::new())),
     ])
 }
-
-/// The canonical bytes of an empty snapshot store (15.7).
-pub(super) const EMPTY_STORE: &str = "{\n  \"format\": \"tondo-snapshot-store-0.1/1\",\n  \"entries\": []\n}\n";
 
 #[cfg(test)]
 mod tests {

@@ -9207,15 +9207,19 @@ impl<'a> Checker<'a> {
                         let code = if *member == "failNow" { 7 } else { hir::SKIP };
                         return Self::mk(hir::ExprKind::Panic(message, code), Ty::NEVER, span);
                     }
-                    "log" => (StdFn::TestLog, Ty::STRING),
-                    "tags" => (StdFn::TestTags, self.types.intern(TyKind::Map(Ty::STRING, Ty::STRING))),
+                    "log" => (StdFn::TestLog, vec![Ty::STRING]),
+                    "tags" => (StdFn::TestTags, vec![self.types.intern(TyKind::Map(Ty::STRING, Ty::STRING))]),
+                    "attach" => {
+                        (StdFn::TestAttach, vec![Ty::STRING, Ty::STRING, self.types.intern(TyKind::Array(Ty::BYTE))])
+                    }
+                    "snapshot" => (StdFn::TestSnapshot, vec![Ty::STRING, Ty::STRING]),
                     _ => {
                         let message = format!("module `testing` has no function `{member}`");
                         self.diags.error("E1001", segments[1].span, message);
                         return Self::error_expr(span);
                     }
                 };
-                let signature = Signature::simple(vec![param], Ty::UNIT);
+                let signature = Signature::simple(param, Ty::UNIT);
                 let target = CallTarget::new(Callee::Std(function), signature, expected);
                 self.call_signature(cx, target, None, args, span)
             }

@@ -4,7 +4,8 @@
 //! skip, a timeout or a crash ends the worker; another starts with the
 //! rest of the plan and runs again the setups its suites need.
 
-use super::{Attempt, Context, Options, Status, Tree};
+use super::store::{Artifacts, Snapshots};
+use super::{Artifact, Attempt, Context, Options, Snapshot, Status, Tree};
 use std::collections::VecDeque;
 use std::io::Read;
 use std::path::Path;
@@ -12,17 +13,29 @@ use std::process::{Command, Stdio};
 use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
 
+/// Where attachments go, the snapshots to check, the file the workers
+/// read them from, and whether this run updates them.
+pub(super) struct Stores<'a> {
+    pub artifacts: &'a Artifacts,
+    pub snapshots: &'a Snapshots,
+    pub entries: &'a Path,
+    pub update: bool,
+}
+
+/// What every worker of a run shares: the executable, the project it runs
+/// in, the tree, the timeout and the stores.
+pub(super) struct Run<'a> {
+    pub executable: &'a Path,
+    pub dir: &'a Path,
+    pub tree: &'a Tree,
+    pub options: &'a Options,
+    pub stores: Stores<'a>,
+}
+
 /// Runs each unit's tests, starting each unit in a new worker, `--jobs`
 /// units at a time; `report` sees each attempt as it is known.
-pub(super) fn execute(
-    executable: &Path,
-    dir: &Path,
-    tree: &Tree,
-    units: Vec<(Vec<u32>, Context)>,
-    options: &Options,
-    mut report: impl FnMut(&Attempt),
-) -> Vec<Attempt> {
-    let threads = options.jobs.max(1).min(units.len());
+pub(super) fn execute(run: &Run, units: Vec<(Vec<u32>, Context)>, mut report: impl FnMut(&Attempt)) -> Vec<Attempt> {
+    let threads = run.options.jobs.max(1).min(units.len());
     let queue = Mutex::new(VecDeque::from(units));
     let (sender, receiver) = mpsc::channel();
     let mut attempts = Vec::new();
@@ -31,7 +44,7 @@ pub(super) fn execute(
             let (sender, queue) = (sender.clone(), &queue);
             scope.spawn(move || {
                 while let Some((plan, context)) = queue.lock().unwrap_or_else(|e| e.into_inner()).pop_front() {
-                    lane(executable, dir, tree, plan, context, options.timeout, &sender);
+                    lane(run, plan, context, &sender);
                 }
             });
         }
@@ -46,19 +59,11 @@ pub(super) fn execute(
 
 /// Runs a plan in workers, one after another, until each test has an
 /// outcome.
-fn lane(
-    executable: &Path,
-    dir: &Path,
-    tree: &Tree,
-    plan: Vec<u32>,
-    context: Context,
-    timeout: Duration,
-    sender: &mpsc::Sender<Attempt>,
-) {
+fn lane(run: &Run, plan: Vec<u32>, context: Context, sender: &mpsc::Sender<Attempt>) {
     let mut remaining: VecDeque<u32> = plan.into();
     while !remaining.is_empty() {
         let before = remaining.len();
-        if let Err(message) = worker(executable, dir, tree, &mut remaining, context, timeout, sender) {
+        if let Err(message) = worker(run, &mut remaining, context, sender) {
             // The worker could not start: every test fails alike.
             for test in remaining.drain(..) {
                 let _ = sender.send(Attempt::new(test, Status::Crashed(message.clone()), context));
@@ -80,7 +85,9 @@ enum Event {
 }
 
 /// A worker's state while `tondo test` reads it.
-struct Session {
+struct Session<'a> {
+    tree: &'a Tree,
+    stores: &'a Stores<'a>,
     nonce: Vec<u8>,
     context: Context,
     /// Entries started and not ended, innermost last: each with its outcome
@@ -99,14 +106,13 @@ struct Session {
 }
 
 fn worker(
-    executable: &Path,
-    dir: &Path,
-    tree: &Tree,
+    run: &Run,
     remaining: &mut VecDeque<u32>,
     context: Context,
-    timeout: Duration,
     sender: &mpsc::Sender<Attempt>,
 ) -> Result<(), String> {
+    let (executable, dir, tree, timeout, stores) =
+        (run.executable, run.dir, run.tree, run.options.timeout, &run.stores);
     let plan =
         std::env::temp_dir().join(format!("tondo-plan-{}-{:?}", std::process::id(), std::thread::current().id()));
     let text: Vec<String> = remaining.iter().map(|t| t.to_string()).collect();
@@ -120,9 +126,13 @@ fn worker(
         .current_dir(dir)
         .env("TONDO_TEST_PLAN", &plan)
         .env("TONDO_TEST_NONCE", &nonce)
+        .env("TONDO_TEST_SNAPSHOTS", stores.entries)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if stores.update {
+        command.env("TONDO_TEST_UPDATE", "1");
+    }
     // Its own process group, so that a timeout ends what it started too.
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
@@ -150,6 +160,8 @@ fn worker(
     }
     drop(events);
     let mut session = Session {
+        tree,
+        stores,
         nonce: format!("\x1e{nonce} ").into_bytes(),
         context,
         running: Vec::new(),
@@ -257,7 +269,7 @@ fn describe(status: std::process::ExitStatus) -> String {
     format!("the test process exited with status {}", status.code().unwrap_or(-1))
 }
 
-impl Session {
+impl Session<'_> {
     fn owner(&self) -> Option<usize> {
         (!self.running.is_empty()).then(|| self.running.len() - 1)
     }
@@ -402,6 +414,36 @@ impl Session {
                     && let Some((key, value)) = text.split_once('\0')
                 {
                     entry.0.tags.push((key.to_string(), value.to_string()));
+                }
+            }
+            "attach" => {
+                let mut parts = payload.splitn(3, |&b| b == 0);
+                let (name, media, bytes) = (parts.next(), parts.next(), parts.next());
+                if let (Some(name), Some(media), Some(bytes)) = (name, media, bytes)
+                    && let Some(entry) = self.running.iter_mut().rev().find(|(o, _, _)| o.node == node)
+                {
+                    let sha256 = self.stores.artifacts.store(bytes);
+                    entry.0.artifacts.push(Artifact {
+                        name: String::from_utf8_lossy(name).into_owned(),
+                        media_type: String::from_utf8_lossy(media).into_owned(),
+                        size: bytes.len(),
+                        sha256,
+                    });
+                }
+            }
+            "snapshot" => {
+                let mut parts = text.splitn(3, '\0');
+                let (status, name, actual) = (parts.next(), parts.next(), parts.next());
+                if let (Some(status), Some(name), Some(actual)) = (status, name, actual) {
+                    let expected = self.stores.snapshots.expected(self.tree.id(node), name);
+                    if let Some(entry) = self.running.iter_mut().rev().find(|(o, _, _)| o.node == node) {
+                        entry.0.snapshots.push(Snapshot {
+                            name: name.to_string(),
+                            status: status.to_string(),
+                            expected,
+                            actual: actual.to_string(),
+                        });
+                    }
                 }
             }
             "skip" | "panic" => {

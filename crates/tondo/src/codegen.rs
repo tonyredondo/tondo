@@ -99,6 +99,8 @@ enum Rt {
     TestLog,
     TestTags,
     TestWhere,
+    TestAttach,
+    TestSnapshot,
     ArrayNew,
     ArrayRetain,
     ArrayRelease,
@@ -299,6 +301,8 @@ impl Rt {
             Rt::TestLog => ("tondo_rt_test_log", &[I64], &[]),
             Rt::TestTags => ("tondo_rt_test_tags", &[I64], &[]),
             Rt::TestWhere => ("tondo_rt_test_where", &[I64], &[]),
+            Rt::TestAttach => ("tondo_rt_test_attach", &[I64, I64, I64, I64], &[]),
+            Rt::TestSnapshot => ("tondo_rt_test_snapshot", &[I64, I64, I64], &[]),
             Rt::ArrayNew => ("tondo_rt_array_new", &[I64, I64], &[I64]),
             Rt::ArrayRetain => ("tondo_rt_array_retain", &[I64], &[]),
             Rt::ArrayRelease => ("tondo_rt_array_release", &[I64, I64, I64], &[]),
@@ -4119,6 +4123,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Callee::Std(StdFn::TestWhere) => {
                 let location = self.location(self.span);
                 self.e.call_rt(Rt::TestWhere, &[location])
+            }
+            Callee::Std(function @ (StdFn::TestAttach | StdFn::TestSnapshot)) => {
+                // Their panics name where they were called.
+                values.push(self.location(self.span));
+                let rt = if function == StdFn::TestAttach { Rt::TestAttach } else { Rt::TestSnapshot };
+                self.e.call_rt(rt, &values)
             }
             Callee::Std(
                 StdFn::Fs(_)
