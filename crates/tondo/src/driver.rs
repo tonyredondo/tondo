@@ -143,6 +143,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool) -> Result<Analysis, String
             return Ok(Analysis { sources, diags, program: None, source_id, libraries, meta, expansions });
         }
         let mut providers: Vec<Vec<(String, PathBuf)>> = packages.iter().map(|p| p.providers.clone()).collect();
+        let generators: Vec<Vec<deps::Generator>> = packages.iter().map(|p| p.generators.clone()).collect();
         let mut packages: Vec<modules::PackageInfo> = packages
             .into_iter()
             .map(|p| modules::PackageInfo { name: p.name, dependencies: p.dependencies.into_iter().collect() })
@@ -152,7 +153,8 @@ fn analyze_with(path: &Path, tests: bool, meta: bool) -> Result<Analysis, String
             packages.push(modules::PackageInfo { name: format!("{tested}_tests"), dependencies });
             providers.push(Vec::new());
         }
-        expansions = crate::meta::expand(&mut modules, &packages, &providers, &mut sources, &mut diags);
+        expansions = crate::meta::generate(&mut modules, &packages, &generators, &mut sources, &mut diags);
+        expansions.extend(crate::meta::expand(&mut modules, &packages, &providers, &mut sources, &mut diags));
         crate::derive::derive(&mut modules, &mut sources, &mut diags);
         stdlib::add(&mut modules, &mut packages, &mut sources, &mut diags);
         let mut module = modules::link(modules, root, &packages, &mut diags);
@@ -221,6 +223,10 @@ pub fn inputs(path: &Path) -> Result<Vec<PathBuf>, String> {
             inputs.push(manifest);
         }
         inputs.extend(package.providers.into_iter().map(|(_, file)| file));
+        for generator in package.generators {
+            inputs.push(generator.program);
+            inputs.extend(generator.inputs.into_iter().map(|(_, file)| file));
+        }
     }
     Ok(inputs)
 }

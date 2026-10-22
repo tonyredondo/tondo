@@ -50,6 +50,21 @@ pub unsafe extern "C" fn tondo_rt_meta_respond(text: *const Str) {
     }
 }
 
+/// The bytes a hexadecimal text writes, for a generator's inputs.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_meta_bytes(hex: *const Str) -> *mut super::ArrayHeader {
+    let hex = unsafe { str_bytes(hex) };
+    let bytes: Vec<u8> = hex
+        .chunks(2)
+        .filter_map(|pair| std::str::from_utf8(pair).ok().and_then(|p| u8::from_str_radix(p, 16).ok()))
+        .collect();
+    let array = super::tondo_rt_array_new(1, bytes.len());
+    for (index, byte) in bytes.into_iter().enumerate() {
+        unsafe { *super::element(array, 1, index) = byte };
+    }
+    array
+}
+
 /// Counts the memory a `meta` program holds, up to the limit that
 /// `TONDO_META_MEMORY` sets; any other program only pays a load.
 #[cfg(tondo_staticlib)]

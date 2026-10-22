@@ -116,7 +116,7 @@ language and remain planned work, scheduled after H7:
 
 | Milestone | Scope |
 |---|---|
-| **H9** | Runtime reflection (`std.reflect`: get, set, call, conversion by shape and type descriptions) and `derive` with providers built for the `meta` profile, with `tondo expand`: done. Next, generators declared in `tondo.toml` |
+| **H9** | Runtime reflection (`std.reflect`: get, set, call, conversion by shape and type descriptions), `derive` with providers and generators declared in `tondo.toml`, both built for the `meta` profile, with `tondo expand`: done |
 | **Stdlib 2** | `String` as an `Iterator[Char]` and ranges as values, so that `text.chars().filter(...)` and `(0..10).map(...)` work; `std.format` (a text builder), `std.encoding` (Base64, hex, URLs), `std.random` (seeded generators, shuffle, choice), `std.uuid` (v4, v7), `std.hash` (SHA-256, HMAC), ISO 8601 dates in `std.time`, and a fallible `main` that shows its error's `Display`. Later: `std.log`, CSV, HTTP |
 | **H10** | Tondo LLM Form (`TONDO_LLM_FORM_SPEC.md`) |
 | **H11** | Race, leak and crash diagnostics; language server; incremental compilation |

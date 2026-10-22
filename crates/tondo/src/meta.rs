@@ -4,7 +4,9 @@
 //! `[derive]` of its `tondo.toml`. The provider is a Tondo program built for
 //! the `meta` profile and run in a process of its own, with the request in a
 //! file and its response in another; what it gives back must be exactly the
-//! `impl` asked for, which joins the type's module.
+//! `impl` asked for, which joins the type's module. Generators (27.5) run
+//! the same way, from `[generators.<name>]`, and write modules of their
+//! package.
 
 use crate::ast;
 use crate::diag::Diagnostics;
@@ -13,10 +15,24 @@ use crate::source::SourceMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// The budgets of a provider's run (27.7).
-const STEPS: u64 = 100_000_000;
-const MEMORY: u64 = 1 << 30;
-const OUTPUT: u64 = 1 << 20;
+/// The budgets of a run (27.7): steps, bytes of memory and of source.
+#[derive(Clone, Copy)]
+struct Budgets {
+    steps: u64,
+    memory: u64,
+    output: u64,
+}
+
+/// A provider's budgets, and a generator's unless it declares its own.
+const DEFAULT: Budgets = Budgets { steps: 100_000_000, memory: 1 << 30, output: 1 << 20 };
+
+/// What a program built for `meta` serves: a `derive`'s request with its
+/// `provide`, or a generator's with its `generate`.
+#[derive(Clone, Copy, PartialEq)]
+enum Entry {
+    Provide,
+    Generate,
+}
 
 /// An `impl` a provider gave, for `tondo expand`.
 pub struct Expansion {
@@ -71,8 +87,8 @@ pub fn expand(
                         continue;
                     };
                     let request = request(&trait_text, &target, &paths[module]);
-                    match run(&provider, &request) {
-                        Ok(Response { source, problems }) if problems.is_empty() => {
+                    match run(&provider, Entry::Provide, &request, DEFAULT) {
+                        Ok(Response { source, problems, .. }) if problems.is_empty() => {
                             let name = format!("{}.{}.derived.to", paths[module].join("."), trait_text);
                             match accept(&source, &trait_text, &target.written, &name, sources) {
                                 Some((items, formatted)) => {
@@ -102,9 +118,9 @@ pub fn expand(
                                 diags.error("E2104", derive.span, format!("`{trait_text}`: {problem}"));
                             }
                         }
-                        Err(Failure::Budget(what)) => {
+                        Err(Failure::Budget(_, what)) => {
                             let message = format!(
-                                "the provider of `{trait_text}` spent its {what} budget for `{}`",
+                                "the provider of `{trait_text}` spent its budget of {what} for `{}`",
                                 target.written
                             );
                             diags.error("E2107", derive.span, message);
@@ -124,10 +140,263 @@ pub fn expand(
     expansions
 }
 
-/// The declaration a `derive` names, as its request describes it.
-struct Target {
-    /// The type as written: `Page[T]`.
-    written: String,
+/// Runs each generator of each package (27.5) and adds the modules it
+/// writes; `generators` are those of each package, by its index.
+pub fn generate(
+    modules: &mut Vec<ModuleSource>,
+    packages: &[PackageInfo],
+    generators: &[Vec<crate::deps::Generator>],
+    sources: &mut SourceMap,
+    diags: &mut Diagnostics,
+) -> Vec<Expansion> {
+    let mut expansions = Vec::new();
+    let path_of = |package: usize, output: &str| -> Vec<String> {
+        std::iter::once(packages[package].name.clone()).chain(output.split('.').map(String::from)).collect()
+    };
+    let generated: Vec<Vec<String>> = generators
+        .iter()
+        .enumerate()
+        .flat_map(|(package, list)| list.iter().flat_map(move |g| g.outputs.iter().map(move |o| (package, o))))
+        .map(|(package, output)| path_of(package, output))
+        .collect();
+    let mut written = Vec::new();
+    for (package, list) in generators.iter().enumerate() {
+        for generator in list {
+            let place = format!("`[generators.{}]` of the package `{}`", generator.name, packages[package].name);
+            // Any problem discards everything the generator wrote.
+            let mut problems: Vec<(&'static str, String)> = Vec::new();
+            let declarations = declarations(modules, packages, &generator.roots, &generated, sources, &mut problems);
+            let mut inputs = Vec::new();
+            for (name, file) in &generator.inputs {
+                match std::fs::read(file) {
+                    Ok(bytes) => {
+                        let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+                        let hash = crate::hash::sha256_hex(&bytes);
+                        inputs.push(format!(
+                            "{{\"name\":{},\"hex\":{},\"sha256\":{}}}",
+                            json(name),
+                            json(&hex),
+                            json(&hash)
+                        ));
+                    }
+                    Err(e) => problems.push(("E2106", format!("cannot read its input `{name}`: {e}"))),
+                }
+            }
+            let budgets = Budgets {
+                steps: generator.steps.unwrap_or(DEFAULT.steps),
+                memory: generator.memory.unwrap_or(DEFAULT.memory),
+                output: generator.output.unwrap_or(DEFAULT.output),
+            };
+            let mut accepted = Vec::new();
+            if problems.is_empty() {
+                let outputs: Vec<String> = generator.outputs.iter().map(|o| json(o)).collect();
+                let request = format!(
+                    "{{\"inputs\":[{}],\"outputs\":[{}],\"declarations\":[{}],\"limits\":{{\"output\":{}}}}}",
+                    inputs.join(","),
+                    outputs.join(","),
+                    declarations.join(","),
+                    budgets.output
+                );
+                match run(&generator.program, Entry::Generate, &request, budgets) {
+                    Ok(response) if !response.problems.is_empty() => {
+                        problems.extend(response.problems.into_iter().map(|p| ("E2106", p)));
+                    }
+                    Ok(response) => {
+                        for output in &generator.outputs {
+                            if !response.files.iter().any(|(name, _)| name == output) {
+                                problems.push(("E2106", format!("it did not write its output `{output}`")));
+                            }
+                        }
+                        for (output, source) in response.files {
+                            let path = path_of(package, &output);
+                            if !generator.outputs.contains(&output) {
+                                problems
+                                    .push(("E2106", format!("it wrote `{output}`, which is not one of its `outputs`")));
+                            } else if modules.iter().any(|m| m.path == path) {
+                                let why = format!("its output `{output}` would replace a module written by hand");
+                                problems.push(("E2106", why));
+                            } else {
+                                accepted.push((output, path, source));
+                            }
+                        }
+                    }
+                    Err(Failure::Budget(limit, what)) => {
+                        let why =
+                            format!("it spent its budget of {what}; `limits = {{ {limit} = \"...\" }}` raises it");
+                        problems.push(("E2107", why));
+                    }
+                    Err(Failure::Provider(why)) => problems.push(("E2106", format!("it failed: {why}"))),
+                    Err(Failure::Denied(why)) => {
+                        problems.push(("E2108", format!("it uses what a generator cannot: {why}")));
+                    }
+                }
+            }
+            let mut parsed = Vec::new();
+            for (output, path, source) in accepted {
+                let name = format!("{}.to", path.join("/"));
+                let id = sources.add(Path::new(&name), source.clone());
+                sources.set_identity(id, format!("<generated>/{name}"), path.join("."));
+                let mut errors = Diagnostics::default();
+                let module = crate::parser::parse_file(sources.file(id), &mut errors);
+                let derives = module.items.iter().any(|i| matches!(i, ast::Item::Derive(_)));
+                let request = format!("generator {} wrote {output}", generator.name);
+                if errors.has_errors() || derives || !module.statements.is_empty() {
+                    let why = if derives { "has a `derive`" } else { "is not valid Tondo source" };
+                    problems.push(("E2105", format!("its output `{output}` {why}; `tondo expand` shows it")));
+                    expansions.push(Expansion {
+                        request: format!("{request} (rejected)"),
+                        location: place.clone(),
+                        source,
+                    });
+                    continue;
+                }
+                let formatted = crate::fmt::format(sources.file(id), &mut Diagnostics::default()).unwrap_or(source);
+                expansions.push(Expansion { request, location: place.clone(), source: formatted });
+                parsed.push(ModuleSource { path, package, files: vec![(module, false)] });
+            }
+            if problems.is_empty() {
+                written.extend(parsed);
+            }
+            for (code, why) in problems {
+                diags.error_without_span(code, format!("the generator {place}: {why}"));
+            }
+        }
+    }
+    modules.extend(written);
+    expansions
+}
+
+/// The declarations a generator sees (27.5), as a request describes them:
+/// each root, and the public records, enums and newtypes that their public
+/// fields, variants and wrapped types name, with the module of each. One
+/// that only an output of this build declares is `E2109`.
+fn declarations(
+    modules: &[ModuleSource],
+    packages: &[PackageInfo],
+    roots: &[String],
+    generated: &[Vec<String>],
+    sources: &SourceMap,
+    problems: &mut Vec<(&'static str, String)>,
+) -> Vec<String> {
+    let cycle = |problems: &mut Vec<(&'static str, String)>, what: String| {
+        let why =
+            format!("{what}, which a generator of this build writes; a generator sees only modules written by hand");
+        problems.push(("E2109", why));
+    };
+    let mut reached: Vec<(usize, String)> = Vec::new();
+    for root in roots {
+        let (module, name) = root.rsplit_once('.').unwrap_or(("", root));
+        let path: Vec<String> = module.split('.').map(String::from).collect();
+        match modules.iter().position(|m| m.path == path) {
+            Some(m) if declared(&modules[m], name).is_some_and(|(_, item)| view(item, sources, true).is_some()) => {
+                reached.push((m, name.to_string()));
+            }
+            None if generated.contains(&path) => cycle(problems, format!("its root `{root}` is in `{module}`")),
+            _ => problems.push(("E2106", format!("its root `{root}` is not a public record, enum or newtype"))),
+        }
+    }
+    let mut out = Vec::new();
+    let mut next = 0;
+    while let Some((module, name)) = reached.get(next).cloned() {
+        next += 1;
+        let Some((file, item)) = declared(&modules[module], &name) else { continue };
+        let Some(view) = view(item, sources, true) else { continue };
+        out.push(view_json(&view, &modules[module].path.join(".")));
+        let mut named = Vec::new();
+        for ty in public_types(item) {
+            paths(ty, &mut named);
+        }
+        for segments in named {
+            let found = match segments {
+                [one] if !view.generics.iter().any(|(g, _)| *g == one.name) => Some((module, one.name.clone())),
+                [qualifier, one] => match imported(modules, packages, module, file, &qualifier.name) {
+                    Some((package, path)) => {
+                        match modules.iter().position(|m| m.package == package && m.path == path) {
+                            Some(m) => Some((m, one.name.clone())),
+                            None if generated.contains(&path) => {
+                                let written = format!("{}.{}", qualifier.name, one.name);
+                                cycle(
+                                    problems,
+                                    format!("`{}.{name}` names `{written}`", modules[module].path.join(".")),
+                                );
+                                None
+                            }
+                            None => None,
+                        }
+                    }
+                    None => None,
+                },
+                _ => None,
+            };
+            if let Some(found) = found.filter(|f| !reached.contains(f) && declared(&modules[f.0], &f.1).is_some()) {
+                reached.push(found);
+            }
+        }
+    }
+    out
+}
+
+/// The record, enum or newtype a module declares under `name`, and its file.
+fn declared<'a>(module: &'a ModuleSource, name: &str) -> Option<(usize, &'a ast::Item)> {
+    module.files.iter().enumerate().find_map(|(file, (source, _))| {
+        source.items.iter().find_map(|item| match item {
+            ast::Item::Type(t) if t.name.name == name => Some((file, item)),
+            ast::Item::Enum(e) if e.name.name == name => Some((file, item)),
+            _ => None,
+        })
+    })
+}
+
+/// The types of a declaration's public fields, variants and wrapped type.
+fn public_types(item: &ast::Item) -> Vec<&ast::TypeExpr> {
+    fn fields(declared: &[ast::FieldDecl]) -> Vec<&ast::TypeExpr> {
+        declared.iter().filter(|f| !f.private).map(|f| &f.ty).collect()
+    }
+    match item {
+        ast::Item::Type(t) => match &t.body {
+            ast::TypeBody::Record(declared) => fields(declared),
+            ast::TypeBody::Newtype(inner) => vec![inner],
+            ast::TypeBody::Opaque => Vec::new(),
+        },
+        ast::Item::Enum(e) => e
+            .variants
+            .iter()
+            .flat_map(|v| match &v.payload {
+                ast::VariantPayload::Unit => Vec::new(),
+                ast::VariantPayload::Tuple(types) => types.iter().collect(),
+                ast::VariantPayload::Record(declared) => fields(declared),
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The paths a type names, with those of its arguments.
+fn paths<'a>(ty: &'a ast::TypeExpr, out: &mut Vec<&'a [ast::Ident]>) {
+    match &ty.kind {
+        ast::TypeKind::Path { segments, args } => {
+            out.push(segments);
+            args.iter().for_each(|a| paths(a, out));
+        }
+        ast::TypeKind::Optional(inner) => paths(inner, out),
+        ast::TypeKind::Result { ok, err } => {
+            ok.iter().for_each(|t| paths(t, out));
+            paths(err, out);
+        }
+        ast::TypeKind::Union(types) | ast::TypeKind::Tuple(types) | ast::TypeKind::Opaque(types) => {
+            types.iter().for_each(|t| paths(t, out));
+        }
+        ast::TypeKind::Fn { params, result, .. } => {
+            params.iter().for_each(|t| paths(t, out));
+            result.iter().for_each(|t| paths(t, out));
+        }
+        ast::TypeKind::NotCopy => {}
+    }
+}
+
+/// A declaration as a request describes it: its kind, parameters, fields,
+/// variants and the type a newtype wraps, each type as written.
+struct View {
     name: String,
     kind: &'static str,
     generics: Vec<(String, Vec<String>)>,
@@ -140,6 +409,69 @@ struct Field {
     name: String,
     ty: String,
     private: bool,
+}
+
+/// The view of a record, enum or newtype; with `public`, only a `pub` one
+/// and its public fields.
+fn view(item: &ast::Item, sources: &SourceMap, public: bool) -> Option<View> {
+    let text = |ty: &ast::TypeExpr| sources.slice(ty.span).to_string();
+    let fields = |declared: &[ast::FieldDecl]| -> Vec<Field> {
+        declared
+            .iter()
+            .filter(|f| !(public && f.private))
+            .map(|f| Field { name: f.name.name.clone(), ty: text(&f.ty), private: f.private })
+            .collect()
+    };
+    let generics = |declared: &[ast::GenericParam]| -> Vec<(String, Vec<String>)> {
+        declared.iter().map(|g| (g.name.name.clone(), g.bounds.iter().map(text).collect())).collect()
+    };
+    let mut view = View {
+        name: String::new(),
+        kind: "record",
+        generics: Vec::new(),
+        fields: Vec::new(),
+        variants: Vec::new(),
+        underlying: None,
+    };
+    match item {
+        ast::Item::Type(t) if !t.foreign && (t.public || !public) => {
+            view.name = t.name.name.rsplit('.').next().unwrap_or_default().to_string();
+            view.generics = generics(&t.generics);
+            match &t.body {
+                ast::TypeBody::Record(declared) => view.fields = fields(declared),
+                ast::TypeBody::Newtype(inner) => {
+                    view.kind = "newtype";
+                    view.underlying = Some(text(inner));
+                }
+                ast::TypeBody::Opaque => return None,
+            }
+        }
+        ast::Item::Enum(e) if e.public || !public => {
+            view.name = e.name.name.rsplit('.').next().unwrap_or_default().to_string();
+            view.kind = "enum";
+            view.generics = generics(&e.generics);
+            view.variants = e
+                .variants
+                .iter()
+                .map(|v| match &v.payload {
+                    ast::VariantPayload::Unit => (v.name.name.clone(), Vec::new(), Vec::new()),
+                    ast::VariantPayload::Tuple(types) => {
+                        (v.name.name.clone(), Vec::new(), types.iter().map(text).collect())
+                    }
+                    ast::VariantPayload::Record(declared) => (v.name.name.clone(), fields(declared), Vec::new()),
+                })
+                .collect();
+        }
+        _ => return None,
+    }
+    Some(view)
+}
+
+/// The declaration a `derive` names: the type as written, and its view with
+/// the binders and bounds of the `derive`.
+struct Target {
+    written: String,
+    view: View,
 }
 
 /// The record, enum or newtype of this module the `derive` names, with
@@ -170,64 +502,23 @@ fn target(
         wrong(diags, "must be written with exactly the binders of `derive`, in order: `derive[T] Trait for Type[T]`");
         return None;
     }
-    let text = |ty: &ast::TypeExpr| sources.slice(ty.span).to_string();
-    let fields = |declared: &[ast::FieldDecl]| -> Vec<Field> {
-        declared.iter().map(|f| Field { name: f.name.name.clone(), ty: text(&f.ty), private: f.private }).collect()
+    let found = modules[module].files.iter().flat_map(|(f, _)| &f.items).find_map(|item| match item {
+        ast::Item::Type(t) if t.name.name == name.name => view(item, sources, false),
+        ast::Item::Enum(e) if e.name.name == name.name => view(item, sources, false),
+        _ => None,
+    });
+    let Some(mut view) = found else {
+        wrong(diags, "is not a record, enum or newtype of this module");
+        return None;
     };
-    let generics = derive.generics.iter().map(|g| (g.name.name.clone(), g.bounds.iter().map(text).collect())).collect();
-    for (file, _) in &modules[module].files {
-        for item in &file.items {
-            let mut target = Target {
-                written: written.clone(),
-                name: name.name.clone(),
-                kind: "record",
-                generics: Vec::new(),
-                fields: Vec::new(),
-                variants: Vec::new(),
-                underlying: None,
-            };
-            match item {
-                ast::Item::Type(t) if t.name.name == name.name && !t.foreign => match &t.body {
-                    ast::TypeBody::Record(declared) => target.fields = fields(declared),
-                    ast::TypeBody::Newtype(inner) => {
-                        target.kind = "newtype";
-                        target.underlying = Some(text(inner));
-                    }
-                    ast::TypeBody::Opaque => continue,
-                },
-                ast::Item::Enum(e) if e.name.name == name.name => {
-                    target.kind = "enum";
-                    target.variants = e
-                        .variants
-                        .iter()
-                        .map(|v| match &v.payload {
-                            ast::VariantPayload::Unit => (v.name.name.clone(), Vec::new(), Vec::new()),
-                            ast::VariantPayload::Tuple(types) => {
-                                (v.name.name.clone(), Vec::new(), types.iter().map(text).collect())
-                            }
-                            ast::VariantPayload::Record(declared) => {
-                                (v.name.name.clone(), fields(declared), Vec::new())
-                            }
-                        })
-                        .collect();
-                }
-                _ => continue,
-            }
-            let declared = match item {
-                ast::Item::Type(t) => t.generics.len(),
-                ast::Item::Enum(e) => e.generics.len(),
-                _ => 0,
-            };
-            if declared != binders.len() {
-                wrong(diags, &format!("has {declared} type parameter(s)"));
-                return None;
-            }
-            target.generics = generics;
-            return Some(target);
-        }
+    if view.generics.len() != binders.len() {
+        wrong(diags, &format!("has {} type parameter(s)", view.generics.len()));
+        return None;
     }
-    wrong(diags, "is not a record, enum or newtype of this module");
-    None
+    let text = |ty: &ast::TypeExpr| sources.slice(ty.span).to_string();
+    view.generics =
+        derive.generics.iter().map(|g| (g.name.name.clone(), g.bounds.iter().map(text).collect())).collect();
+    Some(Target { written, view })
 }
 
 /// The provider of the trait: the file its package names in `[derive]`
@@ -253,24 +544,8 @@ fn provider(
     let (declaring, name) = match names.as_slice() {
         [name] => (Some(module), *name),
         [qualifier, name] => {
-            let source = &modules[module].files[file].0;
-            let import =
-                source.imports.iter().find(|i| i.alias.as_ref().unwrap_or(i.path.last().unwrap()).name == *qualifier);
-            // As modules are linked: the first segment names this package
-            // or a dependency, and the rest a module inside it.
-            let declaring = import.and_then(|i| {
-                let path: Vec<&str> = i.path.iter().map(|p| p.name.as_str()).collect();
-                let package = &packages[modules[module].package];
-                let target = if path[0] == package.name {
-                    modules[module].package
-                } else {
-                    *package.dependencies.get(path[0])?
-                };
-                let full: Vec<String> = std::iter::once(packages[target].name.clone())
-                    .chain(path[1..].iter().map(|s| s.to_string()))
-                    .collect();
-                modules.iter().position(|m| m.package == target && m.path == full)
-            });
+            let declaring = imported(modules, packages, module, file, qualifier)
+                .and_then(|(package, path)| modules.iter().position(|m| m.package == package && m.path == path));
             (declaring, *name)
         }
         _ => (None, ""),
@@ -304,6 +579,26 @@ fn provider(
     }
 }
 
+/// The package and path of the module a file imports under `qualifier`,
+/// as modules are linked: the import's first segment names this package or
+/// a dependency, and the rest a module inside it.
+fn imported(
+    modules: &[ModuleSource],
+    packages: &[PackageInfo],
+    module: usize,
+    file: usize,
+    qualifier: &str,
+) -> Option<(usize, Vec<String>)> {
+    let source = &modules[module].files[file].0;
+    let import =
+        source.imports.iter().find(|i| i.alias.as_ref().unwrap_or(i.path.last().unwrap()).name == qualifier)?;
+    let path: Vec<&str> = import.path.iter().map(|p| p.name.as_str()).collect();
+    let package = &packages[modules[module].package];
+    let target = if path[0] == package.name { modules[module].package } else { *package.dependencies.get(path[0])? };
+    let full = std::iter::once(packages[target].name.clone()).chain(path[1..].iter().map(|s| s.to_string())).collect();
+    Some((target, full))
+}
+
 fn json(text: &str) -> String {
     let mut out = String::from("\"");
     for c in text.chars() {
@@ -329,9 +624,9 @@ fn fields_json(fields: &[Field]) -> String {
     format!("[{}]", fields.join(","))
 }
 
-/// The request as JSON, which `std.meta` reads.
-fn request(trait_text: &str, target: &Target, module: &[String]) -> String {
-    let generics: Vec<String> = target
+/// A view as JSON, which `std.meta` reads.
+fn view_json(view: &View, module: &str) -> String {
+    let generics: Vec<String> = view
         .generics
         .iter()
         .map(|(name, bounds)| {
@@ -339,7 +634,7 @@ fn request(trait_text: &str, target: &Target, module: &[String]) -> String {
             format!("{{\"name\":{},\"bounds\":[{}]}}", json(name), bounds.join(","))
         })
         .collect();
-    let variants: Vec<String> = target
+    let variants: Vec<String> = view
         .variants
         .iter()
         .map(|(name, fields, elements)| {
@@ -352,38 +647,49 @@ fn request(trait_text: &str, target: &Target, module: &[String]) -> String {
             )
         })
         .collect();
-    let underlying = target.underlying.as_deref().map_or("null".to_string(), json);
+    let underlying = view.underlying.as_deref().map_or("null".to_string(), json);
     format!(
-        "{{\"trait\":{},\"target\":{{\"name\":{},\"module\":{},\"kind\":{},\"generics\":[{}],\"fields\":{},\"variants\":[{}],\"underlying\":{}}},\"limits\":{{\"output\":{OUTPUT}}}}}",
-        json(trait_text),
-        json(&target.name),
-        json(&module.join(".")),
-        json(target.kind),
+        "{{\"name\":{},\"module\":{},\"kind\":{},\"generics\":[{}],\"fields\":{},\"variants\":[{}],\"underlying\":{}}}",
+        json(&view.name),
+        json(module),
+        json(view.kind),
         generics.join(","),
-        fields_json(&target.fields),
+        fields_json(&view.fields),
         variants.join(","),
         underlying
     )
 }
 
-/// What a provider gave back: its source, or the problems it found.
+/// The request of a provider.
+fn request(trait_text: &str, target: &Target, module: &[String]) -> String {
+    format!(
+        "{{\"trait\":{},\"target\":{},\"limits\":{{\"output\":{}}}}}",
+        json(trait_text),
+        view_json(&target.view, &module.join(".")),
+        DEFAULT.output
+    )
+}
+
+/// What a provider or generator gave back: its source or the modules it
+/// wrote, and the problems it found.
 struct Response {
     source: String,
+    files: Vec<(String, String)>,
     problems: Vec<String>,
 }
 
 enum Failure {
-    /// The budget it spent: `step` or `memory`.
-    Budget(String),
+    /// The budget it spent: its key in `limits`, and how much it was.
+    Budget(&'static str, String),
     /// Why it could not be built or did not answer.
     Provider(String),
     /// What it uses that the `meta` profile does not have.
     Denied(String),
 }
 
-/// Builds the provider, or takes it from the cache, and runs it.
-fn run(provider: &Path, request: &str) -> Result<Response, Failure> {
-    let executable = build(provider).map_err(|why| match why.contains("error[E2108]") {
+/// Builds the program, or takes it from the cache, and runs it.
+fn run(program: &Path, entry: Entry, request: &str, budgets: Budgets) -> Result<Response, Failure> {
+    let executable = build(program, entry).map_err(|why| match why.contains("error[E2108]") {
         true => Failure::Denied(why),
         false => Failure::Provider(why),
     })?;
@@ -395,8 +701,8 @@ fn run(provider: &Path, request: &str) -> Result<Response, Failure> {
         .env_clear()
         .env("TONDO_META_REQUEST", &request_file)
         .env("TONDO_META_RESPONSE", &response_file)
-        .env("TONDO_META_STEPS", STEPS.to_string())
-        .env("TONDO_META_MEMORY", MEMORY.to_string())
+        .env("TONDO_META_STEPS", budgets.steps.to_string())
+        .env("TONDO_META_MEMORY", budgets.memory.to_string())
         .current_dir(&dir)
         .output();
     let response = std::fs::read(&response_file);
@@ -404,15 +710,33 @@ fn run(provider: &Path, request: &str) -> Result<Response, Failure> {
     let output = output.map_err(|e| Failure::Provider(format!("cannot run it: {e}")))?;
     let stderr = String::from_utf8_lossy(&output.stderr);
     if output.status.code() == Some(70) {
-        let what = if stderr.contains("memory") { "memory" } else { "step" };
-        return Err(Failure::Budget(what.to_string()));
+        return Err(match stderr.contains("memory") {
+            true => Failure::Budget("memory", format!("{} bytes of memory", budgets.memory)),
+            false => Failure::Budget("steps", format!("{} steps", budgets.steps)),
+        });
     }
     if !output.status.success() {
-        let why = stderr.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("it ended without an answer");
-        return Err(Failure::Provider(why.trim().to_string()));
+        // A panic's message and where it happened, or the last thing it said.
+        let lines: Vec<&str> = stderr.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+        let why = match lines.iter().position(|l| l.starts_with("panic[")) {
+            Some(at) => match lines.get(at + 1) {
+                Some(place) if place.starts_with("-->") => {
+                    format!("{} ({})", lines[at], place.trim_start_matches("--> "))
+                }
+                _ => lines[at].to_string(),
+            },
+            None => lines.last().map_or("it ended without an answer".to_string(), |l| l.to_string()),
+        };
+        return Err(Failure::Provider(why));
     }
     let response = response.map_err(|_| Failure::Provider("it gave no response".into()))?;
-    parse_response(&response).ok_or_else(|| Failure::Provider("its response is not what std.meta writes".into()))
+    let response = parse_response(&response)
+        .ok_or_else(|| Failure::Provider("its response is not what std.meta writes".into()))?;
+    let size = response.source.len() + response.files.iter().map(|(_, source)| source.len()).sum::<usize>();
+    if size as u64 > budgets.output {
+        return Err(Failure::Budget("output", format!("{} bytes of source", budgets.output)));
+    }
+    Ok(response)
 }
 
 fn unique() -> u64 {
@@ -423,7 +747,7 @@ fn unique() -> u64 {
 
 /// Sections of `kind length\n` and `length` bytes, then a newline.
 fn parse_response(bytes: &[u8]) -> Option<Response> {
-    let mut response = Response { source: String::new(), problems: Vec::new() };
+    let mut response = Response { source: String::new(), files: Vec::new(), problems: Vec::new() };
     let mut rest = bytes;
     while !rest.is_empty() {
         let end = rest.iter().position(|&b| b == b'\n')?;
@@ -435,21 +759,25 @@ fn parse_response(bytes: &[u8]) -> Option<Response> {
         match kind {
             "source" => response.source = text,
             "error" => response.problems.push(text),
-            _ => return None,
+            _ => response.files.push((kind.strip_prefix("output:")?.to_string(), text)),
         }
         rest = rest.get(end + 2 + length..)?;
     }
     Some(response)
 }
 
-/// The provider's executable: built from its file with a `main` that serves
+/// The program's executable: built from its file with a `main` that serves
 /// the request, for the `meta` profile, once per compiler and source.
-fn build(provider: &Path) -> Result<PathBuf, String> {
+fn build(provider: &Path, entry: Entry) -> Result<PathBuf, String> {
+    let (function, serve) = match entry {
+        Entry::Provide => ("provide", "serveDerive"),
+        Entry::Generate => ("generate", "serveGenerate"),
+    };
     let text = std::fs::read_to_string(provider).map_err(|e| format!("cannot read {}: {e}", provider.display()))?;
     let alias = meta_alias(&text).ok_or_else(|| {
-        format!("{} does not import std.meta, which its `provide` function takes and gives", provider.display())
+        format!("{} does not import std.meta, which its `{function}` function takes and gives", provider.display())
     })?;
-    let source = format!("{text}\n\nfn main() {{\n    {alias}.serveDerive(provide)\n}}\n");
+    let source = format!("{text}\n\nfn main() {{\n    {alias}.{serve}({function})\n}}\n");
     let identity = crate::driver::compiler_identity();
     let key = crate::driver::fingerprint(&[identity.as_bytes(), source.as_bytes()]);
     let dir = crate::driver::cache_dir().join("meta").join(key);

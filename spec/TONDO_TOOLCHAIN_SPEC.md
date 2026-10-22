@@ -108,9 +108,12 @@ outputs = ["proto.user"]
   declara un trait puede dar su provider.
 - `[generators.<nombre>]` declara un generador (27.5 del lenguaje): `program`,
   su archivo; `inputs`, los archivos que recibe como valores; `outputs`, los
-  módulos que produce; y opcionalmente `roots`, las declaraciones públicas que
-  puede consultar, y `limits`, una tabla en línea con `steps`, `memory` y
-  `output`.
+  módulos que produce dentro del paquete (`"proto.user"`); y opcionalmente
+  `roots`, las declaraciones públicas que puede consultar
+  (`"app.models.User"`), y `limits`, una tabla en línea con `steps`, `memory`
+  (bytes) y `output` (bytes de fuente), cada uno un número positivo en un
+  string: `limits = { steps = "1000000" }`. Los archivos son relativos al
+  `tondo.toml`.
 - Toda otra tabla o clave es error, igual que una clave fuera de tabla.
 
 El archivo usa el subconjunto de TOML de tablas, strings, enteros, tablas en

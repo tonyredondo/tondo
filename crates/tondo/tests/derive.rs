@@ -141,7 +141,7 @@ fn main() {}
     assert_eq!(status, 1);
     for expected in [
         "error[E2102]: `show.Plain` has no provider: the package that declares it names one in its tondo.toml, as `[derive]` with `Plain = \"derive/plain.to\"`",
-        "error[E2107]: the provider of `show.Loop` spent its step budget for `Point`",
+        "error[E2107]: the provider of `show.Loop` spent its budget of 100000000 steps for `Point`",
         "error[E2108]: the provider of `show.Files` uses what a provider cannot: it does not compile:\nerror[E2108]: `std.fs` is not available to a provider or generator",
         "error[E2105]: the provider of `show.Extra` gave something other than one `impl show.Extra for Point`",
         "error[E2104]: `show.Show`: `Show` derives only for records, and `Shape` is not one",

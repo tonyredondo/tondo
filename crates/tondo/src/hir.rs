@@ -1025,6 +1025,7 @@ pub const NATIVES: &[Native] = {
         reflect("quote", &[String], String, "tondo_rt_reflect_quote"),
         meta("request", &[], String, "tondo_rt_meta_request"),
         meta("respond", &[String], Unit, "tondo_rt_meta_respond"),
+        meta("bytes", &[String], Bytes, "tondo_rt_meta_bytes"),
         text("split", &[String, String], Strings, "tondo_rt_text_split"),
         text("lines", &[String], Strings, "tondo_rt_text_lines"),
         text("words", &[String], Strings, "tondo_rt_text_words"),

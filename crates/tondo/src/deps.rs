@@ -20,6 +20,26 @@ pub struct Package {
     /// The provider of each trait it declares that `derive` can ask for
     /// (`[derive]`): the trait's name and the provider's file.
     pub providers: Vec<(String, PathBuf)>,
+    /// The generators it declares (`[generators.<name>]`).
+    pub generators: Vec<Generator>,
+}
+
+/// A generator (27.5 of the language): a program that writes modules of
+/// the package from files it is given and declarations it may look at.
+#[derive(Clone, Debug)]
+pub struct Generator {
+    pub name: String,
+    pub program: PathBuf,
+    /// Each input by the name the manifest gives it, and its file.
+    pub inputs: Vec<(String, PathBuf)>,
+    /// The modules it writes, as paths inside the package: `proto.user`.
+    pub outputs: Vec<String>,
+    /// The public declarations it may look at, as `module.path.Type`.
+    pub roots: Vec<String>,
+    /// Its budgets of steps, memory and output, when it declares them.
+    pub steps: Option<u64>,
+    pub memory: Option<u64>,
+    pub output: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -58,12 +78,19 @@ struct Manifest {
     dependencies: Vec<(String, Source)>,
     libraries: Vec<String>,
     providers: Vec<(String, PathBuf)>,
+    generators: Vec<Generator>,
 }
 
 /// Reads `tondo.toml` in `dir`; a missing file declares nothing.
 fn manifest(dir: &Path) -> Result<Manifest, String> {
     let path = dir.join("tondo.toml");
-    let mut manifest = Manifest { name: None, dependencies: Vec::new(), libraries: Vec::new(), providers: Vec::new() };
+    let mut manifest = Manifest {
+        name: None,
+        dependencies: Vec::new(),
+        libraries: Vec::new(),
+        providers: Vec::new(),
+        generators: Vec::new(),
+    };
     if !path.is_file() {
         return Ok(manifest);
     }
@@ -123,15 +150,78 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
                     manifest.providers.push((key, dir.join(file)));
                 }
             }
+            (name, false) if name.starts_with("generators.") => {
+                let generator =
+                    generator(&name["generators.".len()..], table.entries, dir).map_err(|(line, e)| at(line, e))?;
+                manifest.generators.push(generator);
+            }
             (name, _) => {
                 let message = format!(
-                    "unknown table `[{name}]`: tondo.toml has `[package]`, `[dependencies]`, `[native]` and `[derive]`"
+                    "unknown table `[{name}]`: tondo.toml has `[package]`, `[dependencies]`, `[native]`, `[derive]` and `[generators.<name>]`"
                 );
                 return Err(at(table.line, message));
             }
         }
     }
     Ok(manifest)
+}
+
+/// A `[generators.<name>]` table: `program`, `inputs`, `outputs`, and
+/// optionally `roots` and `limits`.
+fn generator(name: &str, entries: Vec<(String, Value, usize)>, dir: &Path) -> Result<Generator, (usize, String)> {
+    let usage = "a generator has `program = \"gen/x.to\"`, `inputs = [\"file\", ...]`, `outputs = [\"module.path\", ...]`, and optionally `roots = [\"module.Type\", ...]` and `limits = { steps = \"...\", memory = \"...\", output = \"...\" }`";
+    if !is_identifier(name) {
+        return Err((0, format!("`{name}` is not a generator name: {usage}")));
+    }
+    let mut generator = Generator {
+        name: name.to_string(),
+        program: PathBuf::new(),
+        inputs: Vec::new(),
+        outputs: Vec::new(),
+        roots: Vec::new(),
+        steps: None,
+        memory: None,
+        output: None,
+    };
+    let strings = |value: &Value, line: usize| -> Result<Vec<String>, (usize, String)> {
+        match value {
+            Value::Array(items) => {
+                items.iter().map(|i| i.as_str().map(String::from).ok_or((line, usage.to_string()))).collect()
+            }
+            _ => Err((line, usage.to_string())),
+        }
+    };
+    for (key, value, line) in entries {
+        match key.as_str() {
+            "program" => {
+                let file = value.as_str().filter(|f| f.ends_with(".to")).ok_or((line, usage.to_string()))?;
+                generator.program = dir.join(file);
+            }
+            "inputs" => {
+                generator.inputs = strings(&value, line)?.into_iter().map(|i| (i.clone(), dir.join(i))).collect()
+            }
+            "outputs" => generator.outputs = strings(&value, line)?,
+            "roots" => generator.roots = strings(&value, line)?,
+            "limits" => {
+                let Value::Table(limits) = value else { return Err((line, usage.to_string())) };
+                for (limit, amount) in limits {
+                    let amount = amount.as_str().and_then(|a| a.parse::<u64>().ok()).filter(|&a| a > 0);
+                    let amount = amount.ok_or((line, format!("`{limit}` is a positive number in a string")))?;
+                    match limit.as_str() {
+                        "steps" => generator.steps = Some(amount),
+                        "memory" => generator.memory = Some(amount),
+                        "output" => generator.output = Some(amount),
+                        _ => return Err((line, usage.to_string())),
+                    }
+                }
+            }
+            _ => return Err((line, format!("unknown key `{key}`: {usage}"))),
+        }
+    }
+    if generator.program.as_os_str().is_empty() || generator.outputs.is_empty() {
+        return Err((0, format!("the generator `{name}` needs `program` and `outputs`: {usage}")));
+    }
+    Ok(generator)
 }
 
 /// A native library as `[native] libraries` or `--link` names it: a name,
@@ -257,6 +347,7 @@ impl Resolver<'_> {
             dependencies: Vec::new(),
             libraries: manifest.libraries,
             providers: manifest.providers,
+            generators: manifest.generators,
         });
         self.visiting.push(dir.clone());
         for (dependency, source) in manifest.dependencies {

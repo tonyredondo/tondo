@@ -144,14 +144,103 @@ pub fn DeriveRequest.traitName(self): String {
 }
 
 pub fn DeriveRequest.sourceBuilder(self): SourceBuilder {
-    SourceBuilder { written: none, problems: [], limit: self.outputLimit }
+    SourceBuilder { written: none, problems: [], limit: self.outputLimit, outputs: [], files: [:], size: 0 }
 }
 
-/// The source a provider gives back, and what went wrong.
+/// A file a generator is given: its name in the manifest, its bytes and
+/// their SHA-256.
+pub type Input = {
+    name: String
+    bytes: Array[Byte]
+    sha256: String
+}
+
+/// The bytes as UTF-8 text.
+pub fn Input.text(self): String ! Error {
+    match String.fromBytes(self.bytes) {
+        ok(decoded) => decoded
+        err(_) => fail Error.Provider("the input `{self.name}` is not UTF-8 text")
+    }
+}
+
+/// What a generator is asked for: the modules it declares, from its inputs
+/// and the public declarations it may look at.
+pub type GenerateRequest = {
+    priv inputList: Array[Input]
+    priv outputList: Array[String]
+    priv declarationList: Array[Declaration]
+    priv outputLimit: Int
+}
+
+pub fn GenerateRequest.inputs(self): Array[Input] {
+    self.inputList
+}
+
+pub fn GenerateRequest.input(self, name: String): Input ! Error {
+    for input in self.inputList {
+        if input.name == name {
+            return input
+        }
+    }
+    fail Error.UnknownInput(name)
+}
+
+/// The modules it writes, as `proto.user`.
+pub fn GenerateRequest.outputs(self): Array[String] {
+    self.outputList
+}
+
+pub fn GenerateRequest.declarations(self): Array[Declaration] {
+    self.declarationList
+}
+
+pub fn GenerateRequest.sourceBuilder(self): SourceBuilder {
+    SourceBuilder { written: none, problems: [], limit: self.outputLimit, outputs: self.outputList, files: [:], size: 0 }
+}
+
+/// The source a provider or generator gives back, and what went wrong.
 pub type SourceBuilder = {
     priv written: String?
     priv problems: Array[String]
     priv limit: Int
+    priv outputs: Array[String]
+    priv files: Map[String, String]
+    priv size: Int
+}
+
+/// A module a generator declares, once.
+pub fn SourceBuilder.write(mut self, output: String, source: String): Unit ! Error {
+    if not (output in self.outputs) {
+        fail Error.UnknownOutput(output)
+    }
+    if self.files.contains(output) {
+        fail Error.DuplicateOutput(output)
+    }
+    if self.size + source.byteLength() > self.limit {
+        fail Error.OutputLimit
+    }
+    self.size += source.byteLength()
+    var files = self.files
+    files[output] = source
+    self.files = files
+}
+
+/// Every module the generator declares.
+pub fn SourceBuilder.finish(self): GenerateResponse ! Error {
+    if self.problems.length() == 0 {
+        for output in self.outputs {
+            if not self.files.contains(output) {
+                fail Error.MissingOutput(output)
+            }
+        }
+    }
+    GenerateResponse { files: self.files, problems: self.problems }
+}
+
+/// What a generator gives back.
+pub type GenerateResponse = {
+    priv files: Map[String, String]
+    priv problems: Array[String]
 }
 
 /// The type as the declaration's module writes it.
@@ -202,6 +291,12 @@ pub fn code(template: String, values: Map[String, String]): String {
                 name = "{name}{ch}"
                 continue
             }
+            // `$$` is a `$`.
+            if name == "" and ch == '$' {
+                out = "{out}$"
+                reading = false
+                continue
+            }
             out = "{out}{substitute(name, values)}"
             reading = false
             name = ""
@@ -244,13 +339,17 @@ fn fieldViews(value: __json.Value): Array[FieldView] {
     fields
 }
 
-/// The request the toolchain wrote, as `std.meta` values.
+/// The request of a provider.
 fn readRequest(source: String): DeriveRequest {
-    let document = match __json.parse(source) {
-        ok(document) => document
-        err(error) => panic("std.meta: the request is not JSON: {error}")
+    let document = parsed(source)
+    DeriveRequest {
+        traitText: text(document["trait"])
+        declaration: declarationOf(document["target"])
+        outputLimit: document["limits"]["output"].asInt().unwrapOr(1048576)
     }
-    let target = document["target"]
+}
+
+fn declarationOf(target: __json.Value): Declaration {
     var generics: Array[GenericView] = []
     for generic in target["generics"].asArray().unwrapOr([]) {
         var bounds: Array[String] = []
@@ -273,7 +372,7 @@ fn readRequest(source: String): DeriveRequest {
         _ => DeclarationKind.Record
     }
     let wrapped: TypeRef? = if target["underlying"].isNull() { none } else { some(typeRef(target["underlying"])) }
-    let declaration = Declaration {
+    Declaration {
         declared: text(target["name"])
         path: text(target["module"])
         form
@@ -282,11 +381,57 @@ fn readRequest(source: String): DeriveRequest {
         cases: variants
         wrapped
     }
-    DeriveRequest {
-        traitText: text(document["trait"])
-        declaration
+}
+
+fn parsed(source: String): __json.Value {
+    match __json.parse(source) {
+        ok(document) => document
+        err(error) => panic("std.meta: the request is not JSON: {error}")
+    }
+}
+
+/// The request of a generator.
+fn readGenerate(source: String): GenerateRequest {
+    let document = parsed(source)
+    var inputs: Array[Input] = []
+    for input in document["inputs"].asArray().unwrapOr([]) {
+        inputs.push(Input { name: text(input["name"]), bytes: metaNative.bytes(text(input["hex"])), sha256: text(input["sha256"]) })
+    }
+    var outputs: Array[String] = []
+    for output in document["outputs"].asArray().unwrapOr([]) {
+        outputs.push(text(output))
+    }
+    var declarations: Array[Declaration] = []
+    for declaration in document["declarations"].asArray().unwrapOr([]) {
+        declarations.push(declarationOf(declaration))
+    }
+    GenerateRequest {
+        inputList: inputs
+        outputList: outputs
+        declarationList: declarations
         outputLimit: document["limits"]["output"].asInt().unwrapOr(1048576)
     }
+}
+
+/// Runs a generator on the request the toolchain wrote and writes its
+/// response; the toolchain calls it from the program it builds around the
+/// generator.
+pub fn serveGenerate(generator: fn(GenerateRequest): GenerateResponse ! Error) {
+    let request = readGenerate(metaNative.request())
+    let response = match generator(request) {
+        ok(given) => {
+            var out = ""
+            for (output, source) in given.files {
+                out = "{out}{section("output:{output}", source)}"
+            }
+            for problem in given.problems {
+                out = "{out}{section("error", problem)}"
+            }
+            out
+        }
+        err(error) => section("error", "{error}")
+    }
+    metaNative.respond(response)
 }
 
 /// One section of the response: its kind, its length in bytes and its text.

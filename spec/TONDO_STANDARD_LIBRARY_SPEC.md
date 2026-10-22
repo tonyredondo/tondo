@@ -2602,6 +2602,8 @@ pub fn GenerateRequest.outputs(self): Array[String]
 pub fn GenerateRequest.declarations(self): Array[Declaration]
 pub fn GenerateRequest.sourceBuilder(self): SourceBuilder
 
+pub fn Input.text(self): String ! Error
+
 pub fn Declaration.name(self): String
 pub fn Declaration.module(self): String
 pub fn Declaration.kind(self): DeclarationKind
@@ -2625,7 +2627,10 @@ pub fn SourceBuilder.error(mut self, message: String)
 - `DeriveRequest.target()` es la vista del tipo autorizado por la declaración
   `derive`, con sus campos privados (27.4); `traitName()` es el trait como lo
   escribe el `derive`. `GenerateRequest.declarations()` da las declaraciones
-  públicas de los roots del generador.
+  públicas de los roots del generador y las que alcanzan sus campos públicos,
+  variantes y tipos envueltos; `module()` dice dónde está cada una.
+- `Input.text()` lee los bytes como UTF-8, y falla con `Error.Provider` si no
+  lo son.
 - `Declaration.typeName()` es el tipo con sus parámetros, como lo nombra la
   cabecera de un `impl`: `Page[T]`.
 - Un `TypeRef` es el tipo como lo escribe el módulo de la declaración; su

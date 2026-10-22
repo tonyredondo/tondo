@@ -1253,15 +1253,17 @@ impl<'a> Checker<'a> {
         let outer_types = std::mem::take(&mut self.type_params);
         let outer_self = self.self_type.take();
         let ty = decl.ty.as_ref().map(|t| self.resolve_type(t));
+        let mut cx = self.new_cx(Ty::UNIT);
+        let value = self.expr(&mut cx, &decl.value, ty);
         if decl.public && ty.is_none() {
+            let written =
+                if self.types.has_error(value.ty) { "Type".to_string() } else { self.types.display(value.ty) };
+            let name = decl.name.name.rsplit('.').next().unwrap_or(&decl.name.name);
             let message = format!(
-                "a public constant declares its type, which is part of the module's API: `pub const {}: Type = ...`",
-                decl.name.name
+                "a public constant declares its type, which is part of the module's API: `pub const {name}: {written} = ...`"
             );
             self.diags.error("E1115", decl.name.span, message);
         }
-        let mut cx = self.new_cx(Ty::UNIT);
-        let value = self.expr(&mut cx, &decl.value, ty);
         let mut value = match ty {
             Some(ty) => self.coerce(value, ty),
             None => value,

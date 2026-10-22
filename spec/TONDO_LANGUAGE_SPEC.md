@@ -7828,7 +7828,7 @@ oculten un diagnóstico independiente.
 | `E2103` | `invalid-derive-request` | La lista o el módulo repite la misma pareja trait/target, nombra algo que no es trait o contiene una solicitud no admitida por el provider. |
 | `E2104` | `derive-expansion-failed` | El provider rechazó una estructura válida y produjo uno o más diagnósticos asociados a la declaración. |
 | `E2105` | `invalid-generated-source` | La salida no es fuente Tondo válida, excede la superficie autorizada o intenta iniciar otra ronda de generación. |
-| `E2106` | `generator-contract-violation` | Un generador omitió, añadió, duplicó o escribió fuera de las salidas declaradas. |
+| `E2106` | `generator-contract-violation` | Un generador falló u omitió, añadió o escribió fuera de las salidas declaradas, o nombra un root o un input que no existe. |
 | `E2107` | `generator-resource-limit` | Un provider o generador agotó un presupuesto declarado de ejecución, memoria o salida. |
 | `E2108` | `meta-capability-denied` | Código del target `meta` intenta utilizar una operación o capacidad no disponible en ese perfil. |
 | `E2109` | `generation-dependency-cycle` | Un root del snapshot meta depende transitivamente de una declaración que solo existiría como salida de la misma ronda. |
@@ -10294,50 +10294,77 @@ infieren.
 
 ### 27.5 Generadores declarados por el manifiesto
 
-Un generador general es un programa Tondo identificado por `PackageId`, hash,
-entry point y versión del modelo meta. El manifiesto declara:
-
-- su conjunto finito de inputs, cada uno con nombre, bytes y hash;
-- los roots públicos exactos del snapshot semántico que puede consultar;
-- todos los paths lógicos y módulos que puede producir;
-- target, perfil y versión de su API meta; y
-- presupuestos de pasos, memoria y bytes de salida.
-
-Se declara en la tabla `[generators.<nombre>]` de `tondo.toml` (sección 3 del
-toolchain):
+Un generador es un programa Tondo que escribe módulos de su paquete a partir de
+archivos de datos y de declaraciones públicas. Se declara en la tabla
+`[generators.<nombre>]` de `tondo.toml` (sección 3 del toolchain): el
+programa, su conjunto finito de inputs, los módulos que produce, los roots
+públicos que puede consultar y, si no le bastan los de 27.7, sus presupuestos.
 
 ~~~toml
-[generators.protos]
-program = "gen/protos.to"
-inputs = ["proto/user.proto"]
-outputs = ["proto.user"]
+[generators.colors]
+program = "gen/colors.to"
+inputs = ["colors.txt"]
+outputs = ["palette"]
+roots = ["app.models.User"]
+limits = { steps = "1000000" }
 ~~~
 
-El programa exporta
-`pub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Error`.
-No existe sintaxis `.to` para registrar o ejecutar un generador. El toolchain
-compila el programa en el perfil `meta`, lo ejecuta en un proceso aparte, le
-entrega los inputs como valores y recibe un resultado estructurado con archivos
-o diagnósticos. `stdout` no es un canal de generación. Las salidas son módulos
-con paths lógicos; nunca se escriben en el directorio de fuentes.
+Cada salida es un módulo dentro del paquete: `palette` es `app.palette` y
+`proto.user` es `app.proto.user`. Cada root es el path de un módulo y el nombre
+de un record, enum o newtype público: `app.models.User`.
 
-Cada salida declarada debe aparecer exactamente una vez. Una salida adicional,
-ausente, duplicada, con otro módulo o fuera de su path produce `E2106` y descarta
-la generación completa. Los bytes aceptados se formatean canónicamente, reciben
-identidad de fuente generada y pasan por el lexer, parser, resolver y typechecker
-ordinarios.
+El programa exporta `generate`. No existe sintaxis `.to` para registrar o
+ejecutar un generador.
 
-Un generador general solo observa la clausura semántica pública de los roots
-declarados. Una lista vacía produce un modelo sin declaraciones y es la forma
-normal de un generador schema-first. No recibe bodies ni símbolos privados. Para
-generar a partir de un schema, descriptor o archivo de datos, ese contenido debe
-ser un input explícito; no puede abrir el archivo por su cuenta.
+~~~tondo
+// gen/colors.to
+import std.meta
 
-Cada root, y toda declaración necesaria para resolver su firma o estructura,
-debe poder typecheckearse usando únicamente fuente escrita e interfaces de
-dependencias. Si depende de una salida de la ronda actual se produce `E2109`.
-Las declaraciones que no pertenezcan a esa clausura pueden referenciar fuente
-generada y se validan durante el typecheck completo posterior.
+/// A constant per line of `colors.txt`: `red #ff0000` is `RED`.
+pub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Error {
+    var lines: Array[String] = []
+    for line in request.input("colors.txt")?.text()?.lines() {
+        let parts = line.split(" ")
+        let values = ["name": parts[0].toUpper(), "hex": "\"{parts[1]}\""]
+        lines.push(meta.code(r"pub const $name: String = $hex", values))
+    }
+    var out = request.sourceBuilder()
+    out.write("palette", lines.join("\n"))?
+    out.finish()
+}
+~~~
+
+El toolchain compila el programa en el perfil `meta` (27.7) y, antes de
+comprobar el paquete, lo ejecuta en un proceso aparte con la petición:
+
+- `inputs()` e `input(nombre)`: cada input con el nombre que le da el
+  manifiesto, sus bytes y su hash SHA-256; `text()` lo lee como UTF-8. El
+  generador no abre archivos: lo que necesita de un schema, un descriptor o un
+  archivo de datos llega como input.
+- `declarations()`: cada root, y los records, enums y newtypes públicos que
+  nombran sus campos públicos, sus variantes y el tipo que envuelven, en el
+  orden en que se alcanzan. No incluye campos privados ni bodies. Cada tipo
+  está escrito como en el módulo de su declaración, que da `module()`. Sin
+  roots, la lista está vacía: es la forma normal de un generador a partir de un
+  schema.
+- `outputs()`: las salidas declaradas.
+
+Con `out.write(salida, fuente)` escribe cada salida una vez, y `out.finish()`
+exige todas. `stdout` no es un canal de generación, y las salidas nunca se
+escriben en el directorio de fuentes: se formatean, reciben la identidad de
+fuente generada (`<generated>/app/palette.to`) y pasan por el parser, el
+resolver y el typechecker ordinarios. `tondo expand` las muestra.
+
+Un pánico, un error devuelto, un `out.error(...)`, una salida ausente, ajena a
+`outputs` o que reemplazaría un módulo escrito a mano, un root que no es un
+record, enum o newtype público y un input que no se puede leer producen
+`E2106`. Una salida que no es fuente Tondo válida o que contiene `derive`
+produce `E2105`. Cualquiera de ellos descarta la generación completa: no se
+añade ninguna de sus salidas.
+
+Ningún root, ni una declaración que alcance, puede estar en una salida de la
+misma ronda: eso produce `E2109`. Las declaraciones fuera de esa clausura
+pueden usar la fuente generada.
 
 ### 27.6 Modelo semántico meta
 

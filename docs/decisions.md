@@ -909,3 +909,18 @@ status (`E2107`). What comes back must parse as exactly the `impl` asked for
 (`E2105`); it joins the type's module, and `tondo expand` shows it. The
 provider's function is `provide`, since `derive` is a keyword; a `TypeRef` is
 the type as the declaration's module writes it, so no imports are needed.
+
+## 2026-10-23 — Generators run before the package is checked
+
+Each `[generators.<name>]` of a package runs as a provider does, with
+`generate` served instead of `provide`, before the program is checked. Its
+request carries the inputs as bytes with their SHA-256 and the declarations
+its roots reach: the roots, and the public records, enums and newtypes their
+public fields, variants and wrapped types name, found by following the
+imports of each module as written, since nothing is resolved yet. An output
+is a module inside the package. Any problem of a generator, from a panic to
+a missing output or one that is not Tondo source, discards everything it
+wrote, so a build never sees half a generation. A root that reaches an
+output of the same build is `E2109`. A run over budget names the limit and
+how `limits` raises it, and a public constant without its type gets the type
+to write in the error.
