@@ -1,0 +1,18 @@
+import shadowing.helper
+
+pub fn total(): Int {
+    3
+}
+
+pub fn report(): Int {
+    let total = 5
+    for helper in [1] {
+        _ = helper
+    }
+    total
+}
+
+// A local cannot take the name of a value of its module, or of a module it
+// imports, in any module (E1003).
+// expect-error: E1003 `total` would shadow a visible binding with the same name
+// expect-error: E1003 `helper` would shadow a visible binding with the same name

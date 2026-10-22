@@ -1,0 +1,6 @@
+import std.console
+import shadowing.util
+
+fn main() {
+    console.println("{util.report()}")
+}

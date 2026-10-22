@@ -296,6 +296,19 @@ impl Linker<'_> {
         }
     }
 
+    /// A local binding, which must not take the name of a value this module
+    /// declares or imports. The checker reports that in the root module,
+    /// whose names keep their spelling; elsewhere they are renamed by now.
+    fn binding(&mut self, name: &Ident) {
+        if self.prefixes[self.module].is_none() || name.name == "self" {
+            return;
+        }
+        if self.decls[self.module].values.contains_key(&name.name) || self.imports.contains_key(&name.name) {
+            let message = format!("`{}` would shadow a visible binding with the same name", name.name);
+            self.diags.error("E1003", name.span, message);
+        }
+    }
+
     /// Renames a declaration of this module.
     fn declared(&self, name: &mut Ident) {
         name.name = self.renamed(self.module, &name.name);
@@ -399,6 +412,7 @@ impl Linker<'_> {
         for param in &mut f.params {
             if let Some(ty) = &mut param.ty {
                 self.ty(ty);
+                self.binding(&param.name);
             }
             if let Some(default) = &mut param.default {
                 self.expr(default);
@@ -586,6 +600,7 @@ impl Linker<'_> {
             }
             ExprKind::Closure(closure) => {
                 for param in &mut closure.params {
+                    self.binding(&param.name);
                     if let Some(ty) = &mut param.ty {
                         self.ty(ty);
                     }
@@ -613,7 +628,12 @@ impl Linker<'_> {
             }
             PatternKind::Record { path, fields, .. } => {
                 self.path(path, Position::Any);
-                fields.iter_mut().filter_map(|f| f.pattern.as_mut()).for_each(|p| self.pattern(p));
+                for field in fields {
+                    match &mut field.pattern {
+                        Some(pattern) => self.pattern(pattern),
+                        None => self.binding(&field.name),
+                    }
+                }
             }
             PatternKind::Path(path) => self.path(path, Position::Any),
             PatternKind::Tuple(items) | PatternKind::Array { items, .. } => {
@@ -623,11 +643,8 @@ impl Linker<'_> {
                 self.ty(ty);
                 self.pattern(inner);
             }
-            PatternKind::Literal(_)
-            | PatternKind::Binding(_)
-            | PatternKind::Loan(..)
-            | PatternKind::Wildcard
-            | PatternKind::None => {}
+            PatternKind::Binding(name) | PatternKind::Loan(_, name) => self.binding(name),
+            PatternKind::Literal(_) | PatternKind::Wildcard | PatternKind::None => {}
         }
     }
 }
