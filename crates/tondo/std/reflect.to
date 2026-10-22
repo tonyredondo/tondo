@@ -4,7 +4,7 @@
 // with code that reaches each field and method directly; a `Value` keeps a
 // value with those operations of its type.
 
-import std.internal.reflect as native
+import std.internal.reflect as reflectNative
 
 /// What went wrong.
 pub enum ReflectErrorKind {
@@ -37,8 +37,8 @@ pub type Field = {
 
 /// Any value, with the operations of its type.
 pub type Value = {
-    priv box: native.Box
-    priv ops: fn(native.Box, Op): Reply ! ReflectError
+    priv box: reflectNative.Box
+    priv ops: fn(reflectNative.Box, Op): Reply ! ReflectError
 }
 
 /// What a `Value` asks the code of its type to do.
@@ -72,12 +72,12 @@ enum Reply {
 pub trait Reflect {
     /// The value of a field, element or key.
     fn reflectGet(self, name: String): Value ! ReflectError {
-        fail ReflectError.noField(native.typeName[Self](), name, [])
+        fail ReflectError.noField(reflectNative.typeName[Self](), name, [])
     }
 
     /// Changes a field, element or key.
     fn reflectSet(mut self, name: String, value: Value): Unit ! ReflectError {
-        fail ReflectError.noField(native.typeName[Self](), name, [])
+        fail ReflectError.noField(reflectNative.typeName[Self](), name, [])
     }
 
     /// The visible fields of a record or of the active variant's record
@@ -103,7 +103,7 @@ pub trait Reflect {
 
     /// Calls a `pub` method with `self`.
     fn reflectCall(self, method: String, args: Array[Value]): Value ! ReflectError {
-        fail ReflectError.noMethod(native.typeName[Self](), method, [])
+        fail ReflectError.noMethod(reflectNative.typeName[Self](), method, [])
     }
 
     /// Calls a `pub` method, which may change the value.
@@ -116,7 +116,7 @@ pub trait Reflect {
 
     /// A value of this type from a value of another type of the same shape.
     fn reflectFrom(value: Value): Self ! ReflectError {
-        fail ReflectError.wrongType(native.typeName[Self](), value)
+        fail ReflectError.wrongType(reflectNative.typeName[Self](), value)
     }
 
     /// What the type is made of.
@@ -127,12 +127,12 @@ pub trait Reflect {
 
 /// The name of the type of a value.
 fn nameOf[T: Reflect](value: T): String {
-    native.typeName[T]()
+    reflectNative.typeName[T]()
 }
 
 /// The operations of the type `T` on its boxed values.
-fn dispatch[T: Reflect](box: native.Box, op: Op): Reply ! ReflectError {
-    var value = native.unbox[T](box)
+fn dispatch[T: Reflect](box: reflectNative.Box, op: Op): Reply ! ReflectError {
+    var value = reflectNative.unbox[T](box)
     match op {
         Op.Get(name) => Reply.One(value.reflectGet(name)?)
         Op.Set(name, new) => {
@@ -155,9 +155,9 @@ fn dispatch[T: Reflect](box: native.Box, op: Op): Reply ! ReflectError {
 
 /// A value of any type that implements `Reflect`, with its operations.
 pub fn valueOf[T: Reflect](value: T): Value {
-    let box = native.box(value)
-    if native.is[Value](box) {
-        return native.unbox[Value](box)
+    let box = reflectNative.box(value)
+    if reflectNative.is[Value](box) {
+        return reflectNative.unbox[Value](box)
     }
     Value { box, ops: dispatch[T] }
 }
@@ -302,15 +302,15 @@ pub fn Value.callMut(mut self, method: String, args: ...Value): Value ! ReflectE
 
 /// The value as `T`: itself, or converted from a value of the same shape.
 pub fn Value.to[T: Reflect](self): T ! ReflectError {
-    if native.is[T](self.box) {
-        return native.unbox[T](self.box)
+    if reflectNative.is[T](self.box) {
+        return reflectNative.unbox[T](self.box)
     }
     Reflect.reflectFrom[T](self)
 }
 
 /// The name of the type of the value.
 pub fn Value.typeName(self): String {
-    native.boxName(self.box)
+    reflectNative.boxName(self.box)
 }
 
 /// The description of the type of the value.
@@ -448,7 +448,7 @@ pub fn ReflectError.needsMut(typeName: String, method: String): ReflectError {
 
 /// The index a segment names in a sequence of `length` elements.
 fn position(typeName: String, name: String, length: Int): Int ! ReflectError {
-    let index = native.index(name)
+    let index = reflectNative.index(name)
     if index < 0 or index >= length {
         let message = "`{name}` is not an index of this `{typeName}`, which has {length} element(s)"
         fail ReflectError { kind: ReflectErrorKind.OutOfRange, path: name, message }
@@ -612,7 +612,7 @@ impl Reflect for String {
     }
 
     fn reflectShow(self, nested: Bool): String {
-        if nested { native.quote(self) } else { self }
+        if nested { reflectNative.quote(self) } else { self }
     }
 }
 
@@ -664,7 +664,7 @@ impl[T: Reflect] Reflect for Array[T] {
                 }
                 items
             }
-            none => fail ReflectError.wrongType(native.typeName[Array[T]](), value)
+            none => fail ReflectError.wrongType(reflectNative.typeName[Array[T]](), value)
         }
     }
 }
@@ -788,7 +788,7 @@ impl[K: Reflect + Key, V: Reflect] Reflect for Map[K, V] {
                 }
                 map
             }
-            _ => fail ReflectError.wrongType(native.typeName[Map[K, V]](), value)
+            _ => fail ReflectError.wrongType(reflectNative.typeName[Map[K, V]](), value)
         }
     }
 }
@@ -830,7 +830,7 @@ impl[T: Reflect, E: Reflect] Reflect for Result[T, E] {
         match value.variant() {
             some("ok") => ok(value.elements()[0].to()?)
             some("err") => err(value.elements()[0].to()?)
-            _ => fail ReflectError.wrongType(native.typeName[Result[T, E]](), value)
+            _ => fail ReflectError.wrongType(reflectNative.typeName[Result[T, E]](), value)
         }
     }
 }
@@ -873,7 +873,7 @@ impl[T: Reflect] Reflect for Deque[T] {
                 }
                 items
             }
-            none => fail ReflectError.wrongType(native.typeName[Deque[T]](), value)
+            none => fail ReflectError.wrongType(reflectNative.typeName[Deque[T]](), value)
         }
     }
 }
@@ -907,7 +907,7 @@ impl[T: Reflect + Key] Reflect for Set[T] {
                 }
                 items
             }
-            none => fail ReflectError.wrongType(native.typeName[Set[T]](), value)
+            none => fail ReflectError.wrongType(reflectNative.typeName[Set[T]](), value)
         }
     }
 }
@@ -1022,9 +1022,9 @@ fn describe[T: Reflect](): TypeDescription {
 /// The description of the type `T`.
 pub fn typeInfo[T: Reflect](): TypeInfo {
     TypeInfo {
-        typeId: TypeId { value: native.identity[T]() }
-        name: native.typeName[T]()
-        bits: native.capabilities[T]()
+        typeId: TypeId { value: reflectNative.identity[T]() }
+        name: reflectNative.typeName[T]()
+        bits: reflectNative.capabilities[T]()
         describe: describe[T]
     }
 }

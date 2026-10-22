@@ -1,0 +1,33 @@
+// The prelude's methods of String, Char, Int and Float, and std.math.
+
+import std.console
+import std.math
+
+pub type Person = { name: String, age: Int }
+
+fn main(): Unit ! math.MathError {
+    // String
+    console.println("{"a,b,,c".split(",")} {"héllo".split("")} {"x\ny\r\nz\n".lines()} {"  a  b ".words()}")
+    console.println("[{"7".padStart(3, "0")}] [{"ab".padEnd(5, "-.")}] [{"  hi ".trimStart()}] [{" hi  ".trimEnd()}]")
+    console.println("{"v1.2".removePrefix("v")} {"file.txt".removeSuffix(".txt")} {"abcabc".findLast("bc")} {"abcabc".count("b")}")
+    console.println("{"Straße ÉLAN".toUpper()} {"ÉLAN".toLower()} {"ab".repeat(3)}")
+    console.println("{Int.parse("42")} {Int.parse("-1_000")} {Int.parse("ff", radix: 16)} {Int.parse("4x")} {Float.parse("2.5e3")}")
+    console.println("{255.toString(radix: 16)} {(-10).toString(radix: 2)} {3.14159.toFixed(2)} {2.0.toFixed(0)}")
+    // Char
+    console.println("{'7'.isDigit()} {'é'.isLetter()} {' '.isWhitespace()} {'A'.isUpper()} {'a'.toUpper()} {'é'.code()} {Char.from(97)} {Char.from(-1)}")
+    // Int and Float
+    console.println("{(-5).abs()} {3.min(9)} {3.max(9)} {15.clamp(0, 10)} {2.pow(10)} {Int.max}")
+    console.println("{(-2.5).abs()} {2.7.floor()} {2.1.ceil()} {2.5.round()} {3.5.round()} {9.0.sqrt()?} {2.0.pow(0.5)} {Float.nan.isNaN()} {(1.0 / 0.0).isInfinite()}")
+    console.println("{math.gcd(12, 18)} {math.lcm(4, 6)} {math.roundTiesAway(2.5)} {math.hypot(3.0, 4.0)}")
+}
+
+// expect-stdout: [a, b, , c] [h, é, l, l, o] [x, y, z] [a, b]
+// expect-stdout: [007] [ab-.-] [hi ] [ hi]
+// expect-stdout: 1.2 file some(4) 2
+// expect-stdout: STRASSE ÉLAN élan ababab
+// expect-stdout: ok(42) ok(-1000) ok(255) err(invalid data) ok(2500.0)
+// expect-stdout: ff -1010 3.14 2
+// expect-stdout: true true true true A 233 some(a) none
+// expect-stdout: 5 3 9 10 1024 9223372036854775807
+// expect-stdout: 2.5 2.0 3.0 2.0 4.0 3.0 1.4142135623730951 true true
+// expect-stdout: 6 12 3.0 5.0

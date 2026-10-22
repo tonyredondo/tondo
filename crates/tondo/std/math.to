@@ -1,0 +1,146 @@
+// std.math (standard library 14.1): scalar math with IEEE-754 semantics and
+// no fast-math. An operation outside its domain is an error, never a quiet
+// `NaN`.
+
+import std.internal.math as mathNative
+
+/// Why an operation has no result.
+pub enum MathError {
+    /// The value is outside the operation's domain, such as the square root
+    /// of a negative number.
+    Domain
+}
+
+impl Display for MathError {
+    fn display(self): String {
+        match self {
+            MathError.Domain => "the value is outside the operation's domain"
+        }
+    }
+}
+
+pub fn sqrt(value: Float): Float ! MathError {
+    if value < 0.0 {
+        fail MathError.Domain
+    }
+    mathNative.sqrt(value)
+}
+
+pub fn pow(base: Float, exponent: Float): Float {
+    mathNative.pow(base, exponent)
+}
+
+pub fn exp(value: Float): Float {
+    mathNative.exp(value)
+}
+
+/// The natural logarithm of a value above zero.
+pub fn ln(value: Float): Float ! MathError {
+    if value <= 0.0 {
+        fail MathError.Domain
+    }
+    mathNative.ln(value)
+}
+
+pub fn log10(value: Float): Float ! MathError {
+    if value <= 0.0 {
+        fail MathError.Domain
+    }
+    mathNative.log10(value)
+}
+
+pub fn log2(value: Float): Float ! MathError {
+    if value <= 0.0 {
+        fail MathError.Domain
+    }
+    mathNative.log2(value)
+}
+
+pub fn sin(value: Float): Float {
+    mathNative.sin(value)
+}
+
+pub fn cos(value: Float): Float {
+    mathNative.cos(value)
+}
+
+pub fn tan(value: Float): Float {
+    mathNative.tan(value)
+}
+
+/// The arcsine of a value from -1 to 1.
+pub fn asin(value: Float): Float ! MathError {
+    if value < -1.0 or value > 1.0 {
+        fail MathError.Domain
+    }
+    mathNative.asin(value)
+}
+
+/// The arccosine of a value from -1 to 1.
+pub fn acos(value: Float): Float ! MathError {
+    if value < -1.0 or value > 1.0 {
+        fail MathError.Domain
+    }
+    mathNative.acos(value)
+}
+
+pub fn atan(value: Float): Float {
+    mathNative.atan(value)
+}
+
+/// The angle of the point `(x, y)`.
+pub fn atan2(y: Float, x: Float): Float {
+    mathNative.atan2(y, x)
+}
+
+/// The length of the hypotenuse, without overflowing on the way.
+pub fn hypot(x: Float, y: Float): Float {
+    mathNative.hypot(x, y)
+}
+
+pub fn floor(value: Float): Float {
+    mathNative.floor(value)
+}
+
+pub fn ceil(value: Float): Float {
+    mathNative.ceil(value)
+}
+
+/// The nearest integer; a value halfway between goes to the even one.
+pub fn round(value: Float): Float {
+    mathNative.round(value)
+}
+
+/// The nearest integer; a value halfway between goes away from zero.
+pub fn roundTiesAway(value: Float): Float {
+    mathNative.roundAway(value)
+}
+
+pub fn truncate(value: Float): Float {
+    mathNative.trunc(value)
+}
+
+/// `a * b + c`, rounded once.
+pub fn fma(a: Float, b: Float, c: Float): Float {
+    mathNative.fma(a, b, c)
+}
+
+/// The greatest common divisor, never negative.
+pub fn gcd(a: Int, b: Int): Int {
+    var x = a.abs()
+    var y = b.abs()
+    for y != 0 {
+        let rest = x % y
+        x = y
+        y = rest
+    }
+    x
+}
+
+/// The least common multiple, never negative.
+pub fn lcm(a: Int, b: Int): Int {
+    if a == 0 or b == 0 {
+        return 0
+    }
+    (a / gcd(a, b) * b).abs()
+}

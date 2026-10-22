@@ -1039,6 +1039,7 @@ impl Codegen<'_> {
                 let clif = |ty: crate::hir::NativeTy| match ty {
                     crate::hir::NativeTy::Float => types::F64,
                     crate::hir::NativeTy::Bool => types::I8,
+                    crate::hir::NativeTy::Char => types::I32,
                     _ => types::I64,
                 };
                 let params: Vec<ir::Type> = function.receiver.iter().chain(function.params).map(|&t| clif(t)).collect();
@@ -1344,6 +1345,29 @@ impl Emit<'_, '_> {
                 self.fb.ins().jump(done, &[]);
             }
             self.fb.switch_to_block(done);
+            return;
+        }
+        // A tuple: `(a, b)`, each part with its own `Display`.
+        if let TyKind::Tuple(items) = types.kind(types.repr(ty)).clone() {
+            let open = self.string_ptr("(");
+            self.call_rt(Rt::SbStr, &[builder, open]);
+            for (index, &item) in items.iter().enumerate() {
+                if index > 0 {
+                    let comma = self.string_ptr(", ");
+                    self.call_rt(Rt::SbStr, &[builder, comma]);
+                }
+                let part = match value {
+                    Val::Memory(address) => {
+                        let slot = self.cg.slot(ty, Proj::Field(index as u32));
+                        let address = self.component_address(address, &slot);
+                        self.value_at(address, item)
+                    }
+                    _ => Val::Zero,
+                };
+                self.append_display(builder, item, part);
+            }
+            let close = self.string_ptr(")");
+            self.call_rt(Rt::SbStr, &[builder, close]);
             return;
         }
         if let TyKind::Option(inner) = *types.kind(types.repr(ty)) {

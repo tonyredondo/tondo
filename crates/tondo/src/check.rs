@@ -45,6 +45,8 @@ pub fn check<'a>(module: &'a ast::Module, sources: &'a SourceMap, diags: &'a mut
         module: 0,
         owners: HashMap::new(),
         method_visibility: HashMap::new(),
+        prelude: None,
+        intrinsic_owners: HashMap::new(),
         trait_modules: HashMap::new(),
         conversion_error: Ty::ERROR,
         collection_error: Ty::ERROR,
@@ -146,6 +148,10 @@ enum StdModule {
     InternalRegex,
     /// `std.internal.reflect`: the box of a `reflect.Value`.
     InternalReflect,
+    /// `std.internal.text` and `std.internal.math`: the runtime's text and
+    /// scalar math, for the prelude and `std.math`.
+    InternalText,
+    InternalMath,
 }
 
 /// The types `std.process` declares when imported.
@@ -533,6 +539,10 @@ struct Checker<'a> {
     owners: HashMap<String, Owner>,
     /// The module of each inherent operation, and whether it is `pub`.
     method_visibility: HashMap<FnId, (u32, bool)>,
+    /// The module `std.prelude`, which declares the methods of the intrinsic
+    /// types, and their keys by name.
+    prelude: Option<u32>,
+    intrinsic_owners: HashMap<String, Ty>,
     /// The module of each user trait.
     trait_modules: HashMap<TraitId, u32>,
     /// The prelude's `NumericConversionError`.
@@ -708,19 +718,25 @@ struct Capture {
 
 impl<'a> Checker<'a> {
     fn program(&mut self, module: &'a ast::Module) -> Option<hir::Program> {
+        self.prelude = module.module_paths.iter().position(|p| p == &["std", "prelude"]).map(|i| i as u32);
         for import in &module.imports {
             self.import(import);
         }
 
         self.declare_types(&module.items);
-        let traits: Vec<&ast::TraitDecl> = module
+        // The prelude's `trait Iterator[T]` adds methods to the intrinsic one.
+        let (extensions, traits): (Vec<&ast::TraitDecl>, Vec<&ast::TraitDecl>) = module
             .items
             .iter()
             .filter_map(|item| match item {
                 ast::Item::Trait(t) => Some(t),
                 _ => None,
             })
-            .collect();
+            .partition(|t| Some(t.module) == self.prelude && t.name.name.rsplit('.').next() == Some("Iterator"));
+        for extension in &extensions {
+            // Its module names it by its own path.
+            self.trait_names.insert(extension.name.name.clone(), ITERATOR);
+        }
         self.declare_traits(&traits);
         for item in &module.items {
             if let ast::Item::Const(decl) = item {
@@ -743,7 +759,7 @@ impl<'a> Checker<'a> {
         let mut bodies: Vec<&ast::FnDecl> = Vec::new();
         for f in &fns {
             let id = FnId(bodies.len() as u32);
-            let owner = f.owner.as_ref().map(|owner| self.method_owner(owner));
+            let owner = f.owner.as_ref().map(|owner| self.method_owner(owner, f.module));
             let signature = self.signature(f, owner, FnScope::default());
             let receiver = signature.receiver;
             self.signatures.push(signature);
@@ -754,6 +770,9 @@ impl<'a> Checker<'a> {
             }
         }
         self.trait_methods(&traits, &mut bodies);
+        for extension in extensions {
+            self.iterator_defaults(extension, &mut bodies);
+        }
         for item in &module.items {
             if let ast::Item::Impl(decl) = item {
                 self.implementation(decl, &mut bodies);
@@ -1049,6 +1068,22 @@ impl<'a> Checker<'a> {
                 };
                 Err(format!("`{shown}` has no `pub` method `{method}`; {listed}"))
             }
+        }
+    }
+
+    /// A constant of an intrinsic numeric type: `max` and `min` of the
+    /// integers, and `pi`, `e`, `infinity`, `nan` and `epsilon` of the floats.
+    fn intrinsic_constant(&self, ty: Ty, name: &str) -> Option<hir::ExprKind> {
+        match (self.types.kind(ty), name) {
+            (TyKind::Int(int), "max") => Some(hir::ExprKind::Int(int.max())),
+            (TyKind::Int(int), "min") => Some(hir::ExprKind::Int(int.min())),
+            (TyKind::Float(_), "pi") => Some(hir::ExprKind::Float(std::f64::consts::PI)),
+            (TyKind::Float(_), "e") => Some(hir::ExprKind::Float(std::f64::consts::E)),
+            (TyKind::Float(_), "infinity") => Some(hir::ExprKind::Float(f64::INFINITY)),
+            (TyKind::Float(_), "nan") => Some(hir::ExprKind::Float(f64::NAN)),
+            (TyKind::Float(crate::types::FloatTy::F64), "epsilon") => Some(hir::ExprKind::Float(f64::EPSILON)),
+            (TyKind::Float(_), "epsilon") => Some(hir::ExprKind::Float(f32::EPSILON as f64)),
+            _ => None,
         }
     }
 
@@ -1544,6 +1579,8 @@ impl<'a> Checker<'a> {
             ["std", "testing"] => StdModule::Testing,
             ["std", "internal", "regex"] => StdModule::InternalRegex,
             ["std", "internal", "reflect"] => StdModule::InternalReflect,
+            ["std", "internal", "text"] => StdModule::InternalText,
+            ["std", "internal", "math"] => StdModule::InternalMath,
             ["std", ..] => {
                 let what = format!("module `{}`", path.join("."));
                 self.diags.unsupported(import.span, &what);
@@ -1614,6 +1651,9 @@ impl<'a> Checker<'a> {
         }
         if module == StdModule::InternalReflect {
             self.types.handle(Handle::ReflectBox, Ty::UNIT);
+        }
+        if module == StdModule::InternalText {
+            self.types.intern(TyKind::Array(Ty::STRING));
         }
         if module == StdModule::Process && self.process.is_none() {
             let prefix = &name.name;
@@ -2381,7 +2421,15 @@ impl<'a> Checker<'a> {
             let params = decl.generics.iter().map(|g| self.types.declare_param(g.name.name.clone())).collect();
             let id = TraitId(self.traits.len() as u32);
             self.trait_modules.insert(id, decl.module);
-            self.traits.push(TraitDef { name: name.name.clone(), self_param, params, methods: Vec::new() });
+            // The prelude's traits are everywhere, by their own name.
+            let shown = match name.name.strip_prefix("prelude.") {
+                Some(bare) if Some(decl.module) == self.prelude => {
+                    self.trait_names.insert(bare.to_string(), id);
+                    bare.to_string()
+                }
+                _ => name.name.clone(),
+            };
+            self.traits.push(TraitDef { name: shown, self_param, params, methods: Vec::new() });
             self.trait_names.insert(name.name.clone(), id);
         }
         for (index, decl) in traits.iter().enumerate() {
@@ -2432,6 +2480,31 @@ impl<'a> Checker<'a> {
                 };
                 self.traits[id.0 as usize].methods.push(TraitMethod { name: f.name.name.clone(), signature, default });
             }
+        }
+    }
+
+    /// The methods the prelude gives every iterator (10.17): defaults of the
+    /// intrinsic `Iterator`, whose `self` they copy, so their receivers are
+    /// `Copy`.
+    fn iterator_defaults<'d>(&mut self, decl: &'d ast::TraitDecl, bodies: &mut Vec<&'d ast::FnDecl>) {
+        let def = &self.traits[ITERATOR.0 as usize];
+        let (self_param, element) = (def.self_param, def.params[0]);
+        self.types.param_mut(self_param).copy = true;
+        self.types.param_mut(element).copy = true;
+        let Some(generic) = decl.generics.first() else { return };
+        let types = vec![("Self".to_string(), self_param), (generic.name.name.clone(), element)];
+        let scope = FnScope { module: decl.module, types, self_type: Some(self_param), implementing: None };
+        for f in &decl.methods {
+            if f.name.name == "next" || f.body.is_none() {
+                continue;
+            }
+            let mut signature = self.signature(f, None, scope.clone());
+            signature.name = format!("Iterator.{}", f.name.name);
+            let id = FnId(bodies.len() as u32);
+            self.signatures.push(signature.clone());
+            bodies.push(f);
+            let method = TraitMethod { name: f.name.name.clone(), signature, default: Some(id) };
+            self.traits[ITERATOR.0 as usize].methods.push(method);
         }
     }
 
@@ -2773,6 +2846,7 @@ impl<'a> Checker<'a> {
                     Some(vec![*element])
                 }
                 TyKind::Map(key, value) | TyKind::Result(key, value) => Some(vec![*key, *value]),
+                TyKind::Tuple(items) => Some(items.clone()),
                 _ => None,
             };
             if let Some(parts) = parts {
@@ -2876,6 +2950,18 @@ impl<'a> Checker<'a> {
     fn call_expectation(&mut self, inference: &Inference, ty: Ty) -> Option<Ty> {
         let &(_, bound) = self.call_bounds.get(&ty)?;
         let TyKind::Fn(params, result, variadic, modes, is_unsafe) = self.types.kind(bound).clone() else {
+            return None;
+        };
+        let params = params.into_iter().map(|p| self.inferred(inference, p)).collect::<Option<Vec<Ty>>>()?;
+        let result = self.inferred(inference, result).unwrap_or(Ty::ERROR);
+        Some(self.types.intern(TyKind::Fn(params, result, variadic, modes, is_unsafe)))
+    }
+
+    /// What a closure for a `fn(A): B` parameter is checked against when
+    /// its parameters are known and its result is not yet: `B` comes from
+    /// the closure's body.
+    fn fn_expectation(&mut self, inference: &Inference, ty: Ty) -> Option<Ty> {
+        let TyKind::Fn(params, result, variadic, modes, is_unsafe) = self.types.kind(ty).clone() else {
             return None;
         };
         let params = params.into_iter().map(|p| self.inferred(inference, p)).collect::<Option<Vec<Ty>>>()?;
@@ -3038,6 +3124,32 @@ impl<'a> Checker<'a> {
             return key;
         }
         let owner = f.owner.as_ref().unwrap();
+        // An intrinsic collection of the prelude, over the method's binders.
+        let rebuilt = match (self.types.kind(key).clone(), binders) {
+            (TyKind::Array(_), [t]) => Some(TyKind::Array(*t)),
+            (TyKind::Deque(_), [t]) => Some(TyKind::Deque(*t)),
+            (TyKind::Set(_), [t]) => Some(TyKind::Set(*t)),
+            (TyKind::Map(..), [k, v]) => Some(TyKind::Map(*k, *v)),
+            (TyKind::Option(_), [t]) => Some(TyKind::Option(*t)),
+            (TyKind::Result(..), [t, e]) => Some(TyKind::Result(*t, *e)),
+            (TyKind::Array(_) | TyKind::Deque(_) | TyKind::Set(_) | TyKind::Option(_), _) => {
+                let message = format!(
+                    "an operation of `{0}` declares its type parameter: `fn {0}[T].{1}(...)`",
+                    owner.name, f.name.name
+                );
+                self.diags.error("E1104", owner.span, message);
+                return Ty::ERROR;
+            }
+            (TyKind::Map(..) | TyKind::Result(..), _) => {
+                let message = format!("an operation of `{0}` declares its two type parameters", owner.name);
+                self.diags.error("E1104", owner.span, message);
+                return Ty::ERROR;
+            }
+            _ => None,
+        };
+        if let Some(kind) = rebuilt {
+            return self.types.intern(kind);
+        }
         match self.types.instance_of(key) {
             Some((template, _)) => {
                 let params: Vec<String> =
@@ -3063,9 +3175,78 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// The key under which the prelude declares the methods of an intrinsic
+    /// type: a collection, option or result over parameters of its own, or
+    /// the type itself.
+    fn intrinsic_owner(&mut self, name: &str) -> Option<Ty> {
+        if let Some(&ty) = self.intrinsic_owners.get(name) {
+            return Some(ty);
+        }
+        let param = |this: &mut Self, name: &str, key: bool| {
+            let param = this.types.declare_param(name.into());
+            this.types.param_mut(param).key = key;
+            param
+        };
+        let ty = match name {
+            "Array" => {
+                let t = param(self, "T", false);
+                self.types.intern(TyKind::Array(t))
+            }
+            "Deque" => {
+                let t = param(self, "T", false);
+                self.types.intern(TyKind::Deque(t))
+            }
+            "Set" => {
+                let t = param(self, "T", true);
+                self.types.intern(TyKind::Set(t))
+            }
+            "Map" => {
+                let (k, v) = (param(self, "K", true), param(self, "V", false));
+                self.types.intern(TyKind::Map(k, v))
+            }
+            "Option" => {
+                let t = param(self, "T", false);
+                self.types.intern(TyKind::Option(t))
+            }
+            "Result" => {
+                let (t, e) = (param(self, "T", false), param(self, "E", false));
+                self.types.intern(TyKind::Result(t, e))
+            }
+            "String" => Ty::STRING,
+            "Char" => Ty::CHAR,
+            "Bool" => Ty::BOOL,
+            "Byte" => Ty::BYTE,
+            "Int" | "Int64" => Ty::INT,
+            "Int8" => Ty::int(IntTy::I8),
+            "Int16" => Ty::int(IntTy::I16),
+            "Int32" => Ty::int(IntTy::I32),
+            "UInt8" => Ty::int(IntTy::U8),
+            "UInt16" => Ty::int(IntTy::U16),
+            "UInt32" => Ty::int(IntTy::U32),
+            "UInt64" => Ty::int(IntTy::U64),
+            "Float" | "Float64" => self.types.intern(TyKind::Float(crate::types::FloatTy::F64)),
+            "Float32" => self.types.intern(TyKind::Float(crate::types::FloatTy::F32)),
+            _ => return None,
+        };
+        self.intrinsic_owners.insert(name.to_string(), ty);
+        Some(ty)
+    }
+
     /// The key of the operations of `ty`: a generic type's instance with its
     /// own parameters stands for all of its instances.
     fn owner_key(&mut self, ty: Ty) -> Ty {
+        let intrinsic = match self.types.kind(ty) {
+            TyKind::Array(_) => Some("Array"),
+            TyKind::Deque(_) => Some("Deque"),
+            TyKind::Set(_) => Some("Set"),
+            TyKind::Map(..) => Some("Map"),
+            TyKind::Option(_) => Some("Option"),
+            TyKind::Result(..) => Some("Result"),
+            _ => None,
+        };
+        if let Some(name) = intrinsic {
+            return self.intrinsic_owner(name).expect("an intrinsic owner");
+        }
         match self.types.instance_of(ty) {
             Some((template, _)) => {
                 let params = self.types.template(template).params.clone();
@@ -3077,7 +3258,13 @@ impl<'a> Checker<'a> {
 
     /// The type an inherent method is declared on: a nominal type of this
     /// module (11.5).
-    fn method_owner(&mut self, owner: &ast::Ident) -> Ty {
+    fn method_owner(&mut self, owner: &ast::Ident, module: u32) -> Ty {
+        // The prelude declares the methods of the intrinsic types.
+        if Some(module) == self.prelude
+            && let Some(key) = self.intrinsic_owner(&owner.name)
+        {
+            return key;
+        }
         let nominal = match self.type_names.get(&owner.name) {
             Some(TypeName::Nominal(ty)) => Some(Some(*ty)),
             Some(TypeName::Template(template)) => {
@@ -4199,6 +4386,8 @@ impl<'a> Checker<'a> {
             hir::NativeTy::Ints => self.types.intern(TyKind::Array(Ty::INT)),
             hir::NativeTy::Regex => self.types.handle(Handle::Regex, Ty::UNIT),
             hir::NativeTy::ReflectBox => self.types.handle(Handle::ReflectBox, Ty::UNIT),
+            hir::NativeTy::Strings => self.types.intern(TyKind::Array(Ty::STRING)),
+            hir::NativeTy::Char => Ty::CHAR,
         }
     }
 
@@ -8705,6 +8894,16 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> hir::Expr {
+        // The prelude's methods of an iterator copy it (10.17).
+        if trait_id == ITERATOR && index > 0 && !self.types.is_copy(value.ty) && !self.types.has_error(value.ty) {
+            let message = format!(
+                "`{}` copies the iterator, and {} is not `Copy`: go through it with `for`",
+                method.name,
+                self.display(value.ty)
+            );
+            self.diags.error("E1406", method.span, message);
+            return Self::error_expr(span);
+        }
         let def = &self.traits[trait_id.0 as usize];
         let signature = def.methods[index].signature.clone();
         let mut prebound = HashMap::from([(def.self_param, value.ty)]);
@@ -9121,6 +9320,14 @@ impl<'a> Checker<'a> {
             }
             return value;
         }
+        // The constants of the intrinsic numeric types: `Int.max`, `Float.pi`.
+        if let [type_name, constant] = segments
+            && !self.names.contains_key(&type_name.name)
+            && let Some(ty) = self.intrinsic_owner(&type_name.name)
+            && let Some(kind) = self.intrinsic_constant(ty, &constant.name)
+        {
+            return Self::mk(kind, ty, span);
+        }
         // `Type.operation` as a value: an associated operation (11.7).
         if let [type_name, operation] = segments
             && !self.names.contains_key(&type_name.name)
@@ -9221,6 +9428,20 @@ impl<'a> Checker<'a> {
             {
                 let (method, prefix) = segments.split_last().unwrap();
                 let receiver_span = prefix[0].span.to(prefix.last().unwrap().span);
+                let receiver = ast::Expr { kind: ast::ExprKind::Path(prefix.to_vec()), span: receiver_span };
+                return self.method_call(cx, &receiver, method, args, expected, span);
+            }
+            // `Float.nan.isNaN()`: a method of an intrinsic constant.
+            ast::ExprKind::Path(segments)
+                if segments.len() == 3
+                    && !self.names.contains_key(&segments[0].name)
+                    && self.lookup(cx, &segments[0].name).is_none()
+                    && self
+                        .intrinsic_owner(&segments[0].name)
+                        .is_some_and(|ty| self.intrinsic_constant(ty, &segments[1].name).is_some()) =>
+            {
+                let (method, prefix) = segments.split_last().unwrap();
+                let receiver_span = prefix[0].span.to(prefix[1].span);
                 let receiver = ast::Expr { kind: ast::ExprKind::Path(prefix.to_vec()), span: receiver_span };
                 return self.method_call(cx, &receiver, method, args, expected, span);
             }
@@ -9515,7 +9736,9 @@ impl<'a> Checker<'a> {
                     module @ (StdModule::InternalJson
                     | StdModule::InternalMemory
                     | StdModule::InternalRegex
-                    | StdModule::InternalReflect),
+                    | StdModule::InternalReflect
+                    | StdModule::InternalText
+                    | StdModule::InternalMath),
                 )),
             ) => {
                 if module == StdModule::InternalReflect && *member == "box" {
@@ -9530,6 +9753,8 @@ impl<'a> Checker<'a> {
                     StdModule::InternalJson => "json",
                     StdModule::InternalMemory => "memory",
                     StdModule::InternalRegex => "regex",
+                    StdModule::InternalText => "text",
+                    StdModule::InternalMath => "math",
                     _ => "reflect",
                 };
                 let found =
@@ -9895,6 +10120,14 @@ impl<'a> Checker<'a> {
         // literal waits until the others have fixed its type.
         let mut values: Vec<Option<hir::Expr>> = (0..args.len()).map(|_| None).collect();
         for pass in 0..2 {
+            // What the call is expected to give fixes what the arguments
+            // that wait for context, such as closures, may not.
+            if pass == 1
+                && let Some(expected) = expected
+                && values.iter().any(Option::is_none)
+            {
+                self.unify(&mut inference, signature.result, expected);
+            }
             for (index, arg) in args.iter().enumerate() {
                 if values[index].is_some() {
                     continue;
@@ -9902,9 +10135,16 @@ impl<'a> Checker<'a> {
                 let ty = type_of(index);
                 // Any value becomes a `reflect.Value` where one is a parameter (27.10).
                 let dynamic = self.reflect_value_ty() == Some(ty);
+                // A partly known `fn(A): B` waits, for an argument that needs
+                // context, until the other arguments and the expected result
+                // have fixed what they can.
+                let waits = pass == 0 && self.needs_context(&arg.value);
                 let expected = match dynamic {
                     true => None,
-                    false => self.inferred(&inference, ty).or_else(|| self.call_expectation(&inference, ty)),
+                    false => self
+                        .inferred(&inference, ty)
+                        .or_else(|| self.call_expectation(&inference, ty))
+                        .or_else(|| if waits { None } else { self.fn_expectation(&inference, ty) }),
                 };
                 if pass == 0 && expected.is_none() && self.needs_context(&arg.value) {
                     continue;
@@ -9919,6 +10159,13 @@ impl<'a> Checker<'a> {
                 );
                 let value = if dynamic && value.ty != ty && !arg.spread { self.reflect_value(value) } else { value };
                 self.unify(&mut inference, ty, value.ty);
+                // A closure for a `fn(A): B` parameter fixes what `B` mentions.
+                if matches!(self.types.kind(ty), TyKind::Fn(..))
+                    && let Some(Callable { params, result, variadic, modes, is_unsafe, .. }) = self.callable(value.ty)
+                {
+                    let found = self.types.intern(TyKind::Fn(params, result, variadic, modes, is_unsafe));
+                    self.unify(&mut inference, ty, found);
+                }
                 // A callable bound to `F: Call[fn(A): B]` also fixes `A` and `B`.
                 if let Some(&(_, bound)) = self.call_bounds.get(&ty)
                     && let Some(Callable { params, result, variadic, modes, is_unsafe, .. }) = self.callable(value.ty)
@@ -10301,6 +10548,8 @@ impl<'a> Checker<'a> {
                 matches!(self.type_names.get(&segments[0].name), Some(TypeName::Template(_)))
             }
             ast::ExprKind::Call { callee, .. } => self.needs_context(callee),
+            // A closure whose parameters take their types from the call.
+            ast::ExprKind::Closure(closure) => closure.params.iter().any(|p| p.ty.is_none()),
             _ => Self::is_untyped_literal(e),
         }
     }

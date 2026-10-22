@@ -2,7 +2,7 @@
 // in time linear in their input, on the runtime's engine. No
 // backreferences or look-around; spans are byte offsets into the input.
 
-import std.internal.regex as native
+import std.internal.regex as regexNative
 
 /// How a pattern matches.
 pub type RegexOptions = {
@@ -128,7 +128,7 @@ pub type RegexSpan = {
 
 /// The text of the span, which must fall between scalars of `input`.
 pub fn RegexSpan.slice(self, input: String): String ! RegexError {
-    let text = native.slice(input, self.start, self.end)
+    let text = regexNative.slice(input, self.start, self.end)
     check(RegexPhase.Match)?
     text
 }
@@ -166,12 +166,12 @@ pub fn RegexMatch.captureName(self, name: String): RegexCapture? {
 
 /// A compiled pattern, immutable and shared.
 pub type Regex = {
-    priv native: native.NativeRegex
+    priv native: regexNative.NativeRegex
 }
 
 /// The error the engine left, if any.
 fn check(phase: RegexPhase): Unit ! RegexError {
-    let code = native.errorKind()
+    let code = regexNative.errorKind()
     if code == 0 {
         return
     }
@@ -200,7 +200,7 @@ fn check(phase: RegexPhase): Unit ! RegexError {
         some(kind) => kind
         none => RegexErrorKind.InvalidSyntax
     }
-    fail RegexError { kind, phase, offset: native.errorOffset() }
+    fail RegexError { kind, phase, offset: regexNative.errorOffset() }
 }
 
 /// Compiles a pattern; an error says what and where in it.
@@ -240,7 +240,7 @@ pub fn Regex.compile(
     if options.ungreedy {
         flags += 16
     }
-    let compiled = native.compile(
+    let compiled = regexNative.compile(
         pattern,
         flags,
         limits.maxPatternBytes,

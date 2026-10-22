@@ -1120,6 +1120,7 @@ intrínsecos lo implementan así:
   `Set`: `Set[a, b]`. Los elementos usan su propio `Display`.
 - `T?`: `some(value)` o `none`, con el `Display` de `T`.
 - `T ! E`: `ok(value)` o `err(error)`, con el `Display` de cada uno.
+- Tuplas: `(a, b)`, con el `Display` de cada parte.
 - Los enums de error de la stdlib: su variante en palabras, como `not found`.
 
 La stdlib puede añadir formato controlado mediante `std.format`, pero:
@@ -2163,93 +2164,157 @@ explícitamente sin reclamar. `STD-ENCODING-DOC-001` queda cerrado por la guía
 ejecutable y sus seis familias de ejemplos; el siguiente bloque del owner es
 `STD-YAML-IMPL-001`.
 
-### 14.5 Contratos cerrados de los owners STD-0.1A
+### 14.5 El prelude y `std.math`
 
-Las firmas exhaustivas de los owners de valores y host están en
-[`docs/contracts/stdlib-core.md`](./docs/contracts/stdlib-core.md) y
-[`docs/contracts/stdlib-hosted.md`](./docs/contracts/stdlib-hosted.md). Esos
-documentos forman parte del mismo contrato, no una API alternativa: cada
-declaración que aparezca aquí o en un ejemplo debe coincidir byte a byte en
-nombre, visibilidad, parámetros, modo, outcome y capability. La distribución
-canónica incluye ambos source sets y sus hashes.
+Todo programa tiene, sin importar nada, los métodos que el prelude da a los tipos
+intrínsecos y los traits `Ordered` y `Numeric`. El prelude está escrito en Tondo
+sobre operaciones del runtime; un programa solo compila los métodos que usa. Las
+posiciones de un `String` son índices de escalares, como en el lenguaje.
 
-La integración normativa de STD-0.1A queda así:
+~~~tondo pseudocode
+pub trait Ordered { fn compare(self, other: Self): Int }
+pub trait Numeric { fn zero(): Self; fn plus(self, other: Self): Self }
+~~~
 
-La relación entre estos owners, sus source sets, dependencias y capabilities
-no se duplica en otro catálogo: la fuente machine-readable única es
-[`testing/stdlib-spec.json`](./testing/stdlib-spec.json), validada por
-`scripts/stdlib-spec-check.sh`. El orden del catálogo es topológico y el gate
-rechaza owners duplicados, contratos ausentes, aliases, defaults implícitos y
-ciclos. Este cierre integra el contrato de los owners; no convierte los
-contratos `closed-contract` en implementaciones publicadas.
+`Ordered` está implementado para los enteros, `Byte`, `Char`, `String`, `Bool`
+y `Float`, cuyo `compare` pone `NaN` después de cualquier otro valor y lo iguala
+a sí mismo; `Numeric`, para `Int` y `Float`. Un programa puede implementar
+`Ordered` para sus tipos. `Int`, `Float`, `String` y `Char` tienen además
+`compare` como método propio. Los enteros tienen las constantes `max` y `min`
+(`Int.max`), y los floats `pi`, `e`, `infinity`, `nan` y `epsilon`.
 
-La trazabilidad de implementación por firma se mantiene separada en
-[`docs/contracts/stdlib-public-api-audit.md`](./docs/contracts/stdlib-public-api-audit.md)
-y [`testing/stdlib-public-api.json`](./testing/stdlib-public-api.json). La
-matriz debe demostrar `contrato → HIR → lowering → host/VM → caso público`;
-un path Rust, una prueba documental o un alias bootstrap no son evidencia
-suficiente. Mientras existan filas `open-gaps`, el catálogo sigue siendo un
-contrato de desarrollo y no una publicación.
+`String`:
 
-Core implementation coordination is recorded separately in
-[`docs/contracts/stdlib-implementation-coordination.md`](./docs/contracts/stdlib-implementation-coordination.md)
-y [`testing/stdlib-implementation-coordination.json`](./testing/stdlib-implementation-coordination.json).
-This register derives its state from component evidence and the public audit.
-An empty or incomplete owner inventory remains an explicit gap; it cannot
-close Core coordination or the S1A promotion contract.
+~~~tondo pseudocode
+fn split(self, separator: String): Array[String]   // los caracteres con ""
+fn lines(self): Array[String]                       // sin \n ni \r\n
+fn words(self): Array[String]                       // entre espacios Unicode
+fn repeat(self, count: Int): String
+fn padStart(self, width: Int, fill: String = " "): String
+fn padEnd(self, width: Int, fill: String = " "): String
+fn trimStart(self): String
+fn trimEnd(self): String
+fn removePrefix(self, prefix: String): String
+fn removeSuffix(self, suffix: String): String
+fn findLast(self, needle: String): Int?
+fn count(self, needle: String): Int
+fn toLower(self): String                            // reglas de Unicode
+fn toUpper(self): String
+fn compare(self, other: String): Int
+fn Int.parse(input: String, radix: Int = 10): Int ! text.TextError
+fn Float.parse(input: String): Float ! text.TextError
+~~~
 
-La coordinación Hosted se registra por separado en
-[`docs/contracts/stdlib-hosted-implementation-coordination.md`](./docs/contracts/stdlib-hosted-implementation-coordination.md)
-y [`testing/stdlib-hosted-implementation-coordination.json`](./testing/stdlib-hosted-implementation-coordination.json).
-Este registro comprueba las cuatro superficies `std.console`, `std.path`,
-`std.fs` y `std.process`, sus bridges, capabilities y 48 firmas públicas. La
-capability vacía de `std.path` es intencional: sus operaciones son puramente
-léxicas. El cierre Hosted mantiene abiertos los gaps públicos de codecs y
-owners build-only, sin relajar `--strict`.
+`Int.parse` acepta un signo y `_` entre dígitos en bases de 2 a 36; `Float.parse`
+lee la forma decimal, `inf`, `-inf` y `NaN`. Un texto que no es un número que
+cabe da `TextError.InvalidData`.
 
-La coordinación normativa completa de STD-0.1A vive en
-[`docs/contracts/stdlib-matrix.md`](./docs/contracts/stdlib-matrix.md) y
-[`testing/stdlib-matrix.json`](./testing/stdlib-matrix.json). Incluye una fila
-por firma y por requisito de owner, las
-dimensiones públicas de performance y las seis celdas
-`SPEC → IMPL/HOST → MODEL/TEST/FUZZ → PERF → CONF → DOC`. Las celdas
-pendientes exigen razón y referencia; la matriz no adelanta requisitos de
-STD-0.1B ni convierte evidencia de kernel en una API publicada.
+`Char`: `isDigit`, `isLetter`, `isWhitespace`, `isUpper`, `isLower` e
+`isAlphanumeric` (`Bool`); `toUpper` y `toLower`, que cambian el escalar cuando
+su otra forma es uno solo; `code(): Int`, `Char.from(code: Int): Char?` y
+`compare`.
 
-The owner-aware target `fuzz/fuzz_targets/stdlib_owners.rs` indexes 22 routes
-with bounded input and corpus records in `testing/stdlib-fuzz.json`. The audit
-reopened `STD-A-FUZZ-001`: route presence, a fixed source admission probe or a
-Rust model alone does not demonstrate an input-dependent public runtime oracle.
-The existing component campaigns remain evidence for their measured boundary;
-owner-wide fuzz promotion, performance and conformance require separate proof.
+`Int`: `abs`, `min(other)`, `max(other)`, `clamp(low, high)`, `pow(exponent)`,
+cuyo desbordamiento es un pánico como en toda aritmética, `toString(radix: Int =
+10)` y `compare`. `Float`: `abs`, `min`, `max`, `clamp`, `floor`, `ceil`,
+`round` (la mitad va al par), `truncate`, `sqrt(): Float ! math.MathError`,
+`pow(exponent: Float)`, `isNaN`, `isInfinite`, `isFinite`, `toFixed(decimals:
+Int): String` y `compare`.
 
-| Owner | Source set | Estado | Dependencias directas |
-|---|---|---|---|
-| `std.core` (intrínsecos) | `stdlib-core` | cerrado | lenguaje |
-| `std.text` | `stdlib-core` | cerrado | `Array[Byte]` |
-| `std.collections` | `stdlib-core` | cerrado | `std.core` |
-| `std.iter` | `stdlib-core` | cerrado | colecciones |
-| `std.math` | `stdlib-core` | cerrado | numéricos intrínsecos |
-| `std.format` | `stdlib-core` | cerrado | `Display`, `Array[Byte]` |
-| `std.io` | `stdlib-core` | cerrado | `Array[Byte]` |
-| `std.serialization` | `stdlib-core` | cerrado | `std.io`, `Array[Byte]` |
-| `std.console` | `stdlib-hosted` | cerrado | `std.io`, capability `console` |
-| `std.path` | `stdlib-hosted` | cerrado | `String`, `Array[Byte]` |
-| `std.fs` | `stdlib-hosted` | cerrado | `std.path`, `std.io`, `filesystem` |
-| `std.process` | `stdlib-hosted` | cerrado | `std.io`, `Array[Byte]`, `process` |
+`Option[T]`: `isSome`, `isNone`, `map(fn(T): U): U?`, `andThen(fn(T): U?): U?`,
+`unwrapOr(fallback: T): T`, `orElse(other: T?): T?`, `filter(fn(T): Bool): T?`,
+`okOr(error: E): T ! E` y `expect(message: String): T`, que hace pánico con el
+mensaje si no hay valor. `Result[T, E]`: `isOk`, `isErr`, `map(fn(T): U): U ! E`,
+`mapErr(fn(E): F): T ! F`, `andThen(fn(T): U ! E): U ! E`, `unwrapOr`, `ok(): T?`,
+`err(): E?` y `expect`.
 
-Los contratos de JSON, MessagePack, Protobuf y `std.testing` mantienen sus
-registros de owner existentes y reutilizan exactamente `Encoder`,
-`Decoder`, `Reader`, `Writer` y `Array[Byte]` de estos source sets. `std.path`
-no adquiere `filesystem` por importar; `std.console`, `std.fs` y `std.process`
-solo comprueban su capability en el límite del adaptador. Ningún contrato
-introduce una segunda representación de error, stream o colección.
+`Array[T]`, que da arrays nuevos salvo los métodos `mut` y `var`:
 
-La implementación hosted inicial puede residir en unidades privilegiadas
-mientras el compilador no sea capaz de compilar estos módulos en Tondo. Esa
-decisión es de bootstrap y no cambia el owner, la semántica ni la identidad de
-la API. Cada unidad debe publicar su source hash, modelo, tests, oracle escalar
-y conformance antes de cerrar S1A.
+~~~tondo pseudocode
+fn first(self): T?
+fn last(self): T?
+fn map[U](self, transform: fn(T): U): Array[U]
+fn filter(self, keep: fn(T): Bool): Array[T]
+fn flatMap[U](self, transform: fn(T): Array[U]): Array[U]
+fn reduce[A](self, initial: A, combine: fn(A, T): A): A
+fn any(self, predicate: fn(T): Bool): Bool
+fn all(self, predicate: fn(T): Bool): Bool
+fn find(self, predicate: fn(T): Bool): T?
+fn findIndex(self, predicate: fn(T): Bool): Int?
+fn count(self, predicate: fn(T): Bool): Int
+fn sum(self): T                                     // T: Numeric
+fn min(self): T?                                    // T: Ordered
+fn max(self): T?                                    // T: Ordered
+fn sorted(self): Array[T]                           // T: Ordered, estable
+fn sortedBy[K: Ordered](self, key: fn(T): K): Array[T]
+fn sortedWith(self, compare: fn(T, T): Int): Array[T]
+fn reversed(self): Array[T]
+fn unique(self): Array[T]                           // T: Key
+fn take(self, count: Int): Array[T]
+fn drop(self, count: Int): Array[T]
+fn zip[U](self, other: Array[U]): Array[(T, U)]
+fn enumerate(self): Array[(Int, T)]
+fn chunks(self, size: Int): Array[Array[T]]
+fn windows(self, size: Int): Array[Array[T]]
+fn groupBy[K: Key](self, key: fn(T): K): Map[K, Array[T]]
+fn partition(self, predicate: fn(T): Bool): (Array[T], Array[T])
+fn join(self, separator: String): String            // T: Display
+fn sort(mut self)                                   // T: Ordered
+fn sortBy[K: Ordered](mut self, key: fn(T): K)
+fn reverse(mut self)
+fn swap(mut self, i: Int, j: Int)
+fn retain(var self, keep: fn(T): Bool)
+fn extend(var self, other: Array[T])
+~~~
+
+`Map[K, V]`: `getOr(key, fallback): V`, `mapValues(fn(V): W): Map[K, W]`,
+`filter(fn(K, V): Bool): Map[K, V]` y `merge(other): Map[K, V]`, donde gana
+`other`. `Set[T]`: `union`, `intersection`, `difference` e `isSubset`.
+
+`Iterator[T]`, sobre cualquier iterador, incluidos los cursores de `Map.keys`,
+`values` y `entries` y los tipos del programa que lo implementan:
+
+- adaptadores perezosos, que solo piden elementos a su fuente cuando se les
+  piden los suyos: `map`, `filter`, `take`, `skip`, `takeWhile`, `skipWhile`,
+  `enumerate`, `zip`, `chain` y `flatMap`;
+- consumidores: `collect(): Array[T]`, `count`, `any`, `all`, `find`, `reduce` y
+  `forEach`. Para sumar, ordenar o unir se usa `collect()` y el método del array.
+
+Estos métodos trabajan sobre una copia del iterador, así que su tipo es `Copy`;
+con uno afín, el error dice que se recorra con `for`.
+
+Un cierre que se pasa a estos métodos toma los tipos de sus parámetros de la
+llamada: `numbers.map((n) { n * 2 })`.
+
+`std.math` da las operaciones escalares con la semántica de IEEE-754 y sin
+fast-math. Una operación fuera de su dominio es un error, nunca un `NaN`
+silencioso:
+
+~~~tondo pseudocode
+pub enum MathError { Domain }
+pub fn sqrt(value: Float): Float ! MathError
+pub fn ln(value: Float): Float ! MathError
+pub fn log10(value: Float): Float ! MathError
+pub fn log2(value: Float): Float ! MathError
+pub fn asin(value: Float): Float ! MathError
+pub fn acos(value: Float): Float ! MathError
+pub fn pow(base: Float, exponent: Float): Float
+pub fn exp(value: Float): Float
+pub fn sin(value: Float): Float
+pub fn cos(value: Float): Float
+pub fn tan(value: Float): Float
+pub fn atan(value: Float): Float
+pub fn atan2(y: Float, x: Float): Float
+pub fn hypot(x: Float, y: Float): Float
+pub fn floor(value: Float): Float
+pub fn ceil(value: Float): Float
+pub fn round(value: Float): Float                   // la mitad va al par
+pub fn roundTiesAway(value: Float): Float           // la mitad se aleja de cero
+pub fn truncate(value: Float): Float
+pub fn fma(a: Float, b: Float, c: Float): Float     // redondea una vez
+pub fn gcd(a: Int, b: Int): Int
+pub fn lcm(a: Int, b: Int): Int
+~~~
 
 ### 14.6 Arquitectura común de serialización
 

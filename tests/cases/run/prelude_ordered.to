@@ -1,0 +1,18 @@
+// A program's type in order through the prelude's `Ordered`.
+
+import std.console
+
+pub type Version = { major: Int, minor: Int }
+
+impl Ordered for Version {
+    fn compare(self, other: Version): Int {
+        if self.major != other.major { self.major.compare(other.major) } else { self.minor.compare(other.minor) }
+    }
+}
+
+fn main() {
+    let versions = [Version { major: 2, minor: 0 }, Version { major: 1, minor: 5 }, Version { major: 1, minor: 2 }]
+    console.println("{versions.sorted().map((v) { "{v.major}.{v.minor}" })} {versions.max().map((v) { v.major })}")
+}
+
+// expect-stdout: [1.2, 1.5, 2.0] some(2)

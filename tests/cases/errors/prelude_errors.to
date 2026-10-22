@@ -1,0 +1,17 @@
+import std.console
+
+pub type Job = { name: String }
+
+
+fn main() {
+    let jobs = [Job { name: "a" }]
+    console.println("{jobs.sorted()}")
+    console.println("{jobs.sum()}")
+    console.println("{jobs.join(", ")}")
+    console.println("{[1, 2].unique().first().expect()}")
+}
+
+// expect-error: E1105 `Job` does not implement `Ordered`, which `Array.sorted` requires of `T`
+// expect-error: E1105 `Job` does not implement `Numeric`, which `Array.sum` requires of `T`
+// expect-error: E1105 `Job` does not implement `Display`, which `Array.join` requires of `T`
+// expect-error: E1102 missing argument `message`, of type `String`

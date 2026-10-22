@@ -1,0 +1,61 @@
+// The prelude's methods of Array, Map, Set, Option and Result.
+
+import std.console
+
+pub type Person = { name: String, age: Int }
+
+fn main() {
+    let numbers = [5, 3, 8, 1, 9, 2]
+    console.println("{numbers.first()} {numbers.last()} {[0].last()} {numbers.map((n) { n * 2 })} {numbers.filter((n) { n % 2 == 0 })}")
+    console.println("{numbers.reduce(0, (total, n) { total + n })} {numbers.sum()} {[1.5, 2.5].sum()} {numbers.min()} {numbers.max()}")
+    console.println("{numbers.any((n) { n > 8 })} {numbers.all((n) { n > 0 })} {numbers.find((n) { n > 5 })} {numbers.findIndex((n) { n == 1 })} {numbers.count((n) { n > 2 })}")
+    console.println("{numbers.sorted()} {numbers.reversed()} {[3, 1, 3, 2, 1].unique()} {numbers.take(2)} {numbers.drop(4)}")
+    console.println("{numbers.chunks(4)} {[1, 2, 3, 4].windows(3)}")
+    console.println("{["b", "a", "c"].sorted()} {["pear", "fig", "apple"].sortedBy((s) { s.length() })} {numbers.flatMap((n) { [n, n] }).take(4)}")
+    let people = [Person { name: "Ada", age: 36 }, Person { name: "Bo", age: 20 }, Person { name: "Cy", age: 36 }]
+    let byAge = people.groupBy((p) { p.age })
+    console.println("{byAge.length()} {byAge[36].map((group) { group.map((p) { p.name }) })}")
+    let (adults, young) = people.partition((p) { p.age > 30 })
+    console.println("{adults.length()} {young.length()} {people.sortedBy((p) { p.name }).map((p) { p.name }).join(", ")}")
+    console.println("{[1, 2, 3].join("-")} {[1.5, 2.0].join(" ")}")
+    var items = [3, 1, 2]
+    items.sort()
+    items.reverse()
+    items.swap(0, 2)
+    items.retain((n) { n != 2 })
+    items.extend([7, 8])
+    console.println("{items}")
+    // Map and Set
+    let ages = ["ada": 36, "bo": 20]
+    console.println("{ages.getOr("cy", 0)} {ages.mapValues((a) { a + 1 })} {ages.filter((k, v) { v > 30 })} {ages.merge(["bo": 21, "cy": 5])}")
+    let a = Set[1, 2, 3]
+    let b = Set[2, 3, 4]
+    console.println("{a.union(b)} {a.intersection(b)} {a.difference(b)} {Set[2].isSubset(a)} {a.isSubset(b)}")
+    // Option and Result
+    let some3: Int? = some(3)
+    let nothing: Int? = none
+    console.println("{some3.map((n) { n + 1 })} {nothing.map((n) { n + 1 })} {some3.andThen((n) { if n > 2 { some(n) } else { none } })} {nothing.unwrapOr(7)}")
+    console.println("{nothing.orElse(some(1))} {some3.filter((n) { n > 5 })} {some3.isSome()} {nothing.isNone()} {some3.okOr("missing")} {nothing.okOr("missing")}")
+    let good: Int ! String = ok(2)
+    let bad: Int ! String = err("boom")
+    console.println("{good.map((n) { n * 10 })} {bad.mapErr((e) { e.length() })} {good.unwrapOr(0)} {bad.unwrapOr(0)} {good.ok()} {bad.err()} {good.isOk()} {bad.isErr()}")
+    let checked: Int ! String = good.andThen((n) { if n > 1 { n } else { fail "small" } })
+    console.println("{checked} {some3.expect("there")}")
+}
+
+// expect-stdout: some(5) some(2) some(0) [10, 6, 16, 2, 18, 4] [8, 2]
+// expect-stdout: 28 28 4.0 some(1) some(9)
+// expect-stdout: true true some(8) some(3) 4
+// expect-stdout: [1, 2, 3, 5, 8, 9] [2, 9, 1, 8, 3, 5] [3, 1, 2] [5, 3] [9, 2]
+// expect-stdout: [[5, 3, 8, 1], [9, 2]] [[1, 2, 3], [2, 3, 4]]
+// expect-stdout: [a, b, c] [fig, pear, apple] [5, 5, 3, 3]
+// expect-stdout: 2 some([Ada, Cy])
+// expect-stdout: 2 1 Ada, Bo, Cy
+// expect-stdout: 1-2-3 1.5 2.0
+// expect-stdout: [1, 3, 7, 8]
+// expect-stdout: 0 [ada: 37, bo: 21] [ada: 36] [ada: 36, bo: 21, cy: 5]
+// expect-stdout: Set[1, 2, 3, 4] Set[2, 3] Set[1] true false
+// expect-stdout: some(4) none some(3) 7
+// expect-stdout: some(1) none true true ok(3) err(missing)
+// expect-stdout: ok(20) err(4) 2 0 some(2) some(boom) true true
+// expect-stdout: ok(2) 3

@@ -422,10 +422,10 @@ impl Mono<'_> {
             if !matched {
                 continue;
             }
-            if implementation.intrinsic {
+            if implementation.intrinsic && method == 0 {
                 return Resolved::Cursor(self.types.cursor(self_ty).expect("an intrinsic cursor"));
             }
-            return match implementation.methods[method as usize] {
+            return match implementation.methods.get(method as usize).copied().flatten() {
                 Some(id) => {
                     let binders = implementation.generics.iter().map(|g| map[g]);
                     Resolved::Fn(id, binders.chain(own.iter().copied()).collect())

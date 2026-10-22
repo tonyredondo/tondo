@@ -872,3 +872,22 @@ capabilities the compiler demonstrates are reported: `Copy`, `Equatable` and
 `reflect.get`, `set`, `call` and `callMut` on a type known at compile time is
 checked there (`E2110`); paths and methods computed at run time fail as a
 `ReflectError`.
+
+## 2026-10-23 — A prelude in Tondo for the intrinsic types
+
+The everyday methods of `String`, `Char`, `Int`, `Float`, `Option`, `Result`,
+`Array`, `Map`, `Set` and every `Iterator` live in `std/prelude.to`, which
+every program links with. Only the prelude may declare methods on intrinsic
+types (`fn Array[T].map[U](...)`); their owners are keyed by the intrinsic
+kind over parameters of its own, so a call on `Array[Int]` finds them. What
+Tondo cannot do well goes to the runtime: splitting, Unicode case and
+classes, numbers to and from text, and `std.math`. Ordering and sums use the
+prelude traits `Ordered` and `Numeric`, which a program can implement; there
+is no ordering capability in the language. The prelude's `trait Iterator[T]`
+adds default methods to the intrinsic trait: lazy adapters and consumers
+that copy the iterator, so they need a `Copy` iterator. Closures passed to
+these methods infer their parameters from a partly known `fn(A): B` and wait
+for the other arguments and the expected result first. Tuples display as
+`(a, b)`, and the intrinsic numeric types have constants (`Int.max`,
+`Float.pi`). The standard modules written in Tondo now import the runtime
+under distinct aliases, since a package's alias names one module.

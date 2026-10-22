@@ -1,0 +1,1267 @@
+// The prelude (standard library 14.1): the methods of the intrinsic types,
+// which every program has without importing anything, and the traits that
+// order and add values.
+
+import std.internal.text as textNative
+import std.internal.math as mathNative
+import std.math as __math
+import std.text as __text
+
+// ---------------------------------------------------------------------------
+// Order and sums
+// ---------------------------------------------------------------------------
+
+/// A type whose values are in order: `compare` is negative, zero or
+/// positive as `self` goes before, with or after `other`.
+pub trait Ordered {
+    fn compare(self, other: Self): Int
+}
+
+/// A type whose values add up, from a zero.
+pub trait Numeric {
+    fn zero(): Self
+    fn plus(self, other: Self): Self
+}
+
+fn order[T: Ordered](a: T, b: T): Int {
+    a.compare(b)
+}
+
+/// Negative, zero or positive as `self` goes before, with or after `other`.
+pub fn Int.compare(self, other: Int): Int {
+    Ordered.compare(self, other)
+}
+
+/// Negative, zero or positive as `self` goes before, with or after `other`;
+/// `NaN` goes after every other value.
+pub fn Float.compare(self, other: Float): Int {
+    Ordered.compare(self, other)
+}
+
+/// Negative, zero or positive as `self` goes before, with or after `other`,
+/// by Unicode scalar values.
+pub fn String.compare(self, other: String): Int {
+    Ordered.compare(self, other)
+}
+
+/// Negative, zero or positive as `self` goes before, with or after `other`.
+pub fn Char.compare(self, other: Char): Int {
+    Ordered.compare(self, other)
+}
+
+impl Ordered for Int {
+    fn compare(self, other: Int): Int {
+        if self < other { -1 } else if self > other { 1 } else { 0 }
+    }
+}
+
+impl Ordered for Int8 {
+    fn compare(self, other: Int8): Int {
+        if self < other { -1 } else if self > other { 1 } else { 0 }
+    }
+}
+
+impl Ordered for Int16 {
+    fn compare(self, other: Int16): Int {
+        if self < other { -1 } else if self > other { 1 } else { 0 }
+    }
+}
+
+impl Ordered for Int32 {
+    fn compare(self, other: Int32): Int {
+        if self < other { -1 } else if self > other { 1 } else { 0 }
+    }
+}
+
+impl Ordered for UInt8 {
+    fn compare(self, other: UInt8): Int {
+        if self < other { -1 } else if self > other { 1 } else { 0 }
+    }
+}
+
+impl Ordered for UInt16 {
+    fn compare(self, other: UInt16): Int {
+        if self < other { -1 } else if self > other { 1 } else { 0 }
+    }
+}
+
+impl Ordered for UInt32 {
+    fn compare(self, other: UInt32): Int {
+        if self < other { -1 } else if self > other { 1 } else { 0 }
+    }
+}
+
+impl Ordered for UInt64 {
+    fn compare(self, other: UInt64): Int {
+        if self < other { -1 } else if self > other { 1 } else { 0 }
+    }
+}
+
+impl Ordered for Byte {
+    fn compare(self, other: Byte): Int {
+        if self < other { -1 } else if self > other { 1 } else { 0 }
+    }
+}
+
+impl Ordered for Char {
+    fn compare(self, other: Char): Int {
+        if self < other { -1 } else if self > other { 1 } else { 0 }
+    }
+}
+
+impl Ordered for String {
+    fn compare(self, other: String): Int {
+        if self < other { -1 } else if self > other { 1 } else { 0 }
+    }
+}
+
+impl Ordered for Bool {
+    fn compare(self, other: Bool): Int {
+        if self == other { 0 } else if self { 1 } else { -1 }
+    }
+}
+
+/// Floats in total order: `NaN` after every other value, and equal to itself.
+impl Ordered for Float {
+    fn compare(self, other: Float): Int {
+        if self < other {
+            -1
+        } else if self > other {
+            1
+        } else if self == other {
+            0
+        } else if self.isNaN() and other.isNaN() {
+            0
+        } else if self.isNaN() {
+            1
+        } else {
+            -1
+        }
+    }
+}
+
+impl Numeric for Int {
+    fn zero(): Int {
+        0
+    }
+
+    fn plus(self, other: Int): Int {
+        self + other
+    }
+}
+
+impl Numeric for Float {
+    fn zero(): Float {
+        0.0
+    }
+
+    fn plus(self, other: Float): Float {
+        self + other
+    }
+}
+
+// ---------------------------------------------------------------------------
+// String
+// ---------------------------------------------------------------------------
+
+/// The pieces between each `separator`; the characters when it is empty.
+pub fn String.split(self, separator: String): Array[String] {
+    textNative.split(self, separator)
+}
+
+/// The lines, without their `\n` or `\r\n`.
+pub fn String.lines(self): Array[String] {
+    textNative.lines(self)
+}
+
+/// The pieces between runs of whitespace.
+pub fn String.words(self): Array[String] {
+    textNative.words(self)
+}
+
+pub fn String.repeat(self, count: Int): String {
+    textNative.repeat(self, count)
+}
+
+/// The text with `fill` before it, repeated and cut, up to `width` scalars.
+pub fn String.padStart(self, width: Int, fill: String = " "): String {
+    "{padding(self.length(), width, fill)}{self}"
+}
+
+/// The text with `fill` after it, repeated and cut, up to `width` scalars.
+pub fn String.padEnd(self, width: Int, fill: String = " "): String {
+    "{self}{padding(self.length(), width, fill)}"
+}
+
+fn padding(length: Int, width: Int, fill: String): String {
+    let missing = width - length
+    if missing <= 0 or fill.length() == 0 {
+        return ""
+    }
+    let repeated = fill.repeat(missing / fill.length() + 1)
+    match repeated.slice(0, missing) {
+        ok(cut) => cut
+        err(_) => repeated
+    }
+}
+
+pub fn String.trimStart(self): String {
+    textNative.trimStart(self)
+}
+
+pub fn String.trimEnd(self): String {
+    textNative.trimEnd(self)
+}
+
+/// The text without `prefix` at its start, if it has it.
+pub fn String.removePrefix(self, prefix: String): String {
+    if not self.startsWith(prefix) {
+        return self
+    }
+    match self.slice(prefix.length(), self.length()) {
+        ok(rest) => rest
+        err(_) => self
+    }
+}
+
+/// The text without `suffix` at its end, if it has it.
+pub fn String.removeSuffix(self, suffix: String): String {
+    if not self.endsWith(suffix) {
+        return self
+    }
+    match self.slice(0, self.length() - suffix.length()) {
+        ok(rest) => rest
+        err(_) => self
+    }
+}
+
+/// The scalar index of the last `needle`.
+pub fn String.findLast(self, needle: String): Int? {
+    let at = textNative.findLast(self, needle)
+    if at < 0 { none } else { some(at) }
+}
+
+/// How many times `needle` appears, without overlapping.
+pub fn String.count(self, needle: String): Int {
+    textNative.count(self, needle)
+}
+
+/// The text in lowercase, by Unicode's rules.
+pub fn String.toLower(self): String {
+    textNative.lower(self)
+}
+
+/// The text in uppercase, by Unicode's rules.
+pub fn String.toUpper(self): String {
+    textNative.upper(self)
+}
+
+/// The integer the text writes in `radix` (2 to 36), with an optional sign
+/// and `_` between digits.
+pub fn Int.parse(input: String, radix: Int = 10): Int ! __text.TextError {
+    if not textNative.isInt(input, radix) {
+        fail __text.TextError.InvalidData
+    }
+    textNative.parseInt(input, radix)
+}
+
+/// The float the text writes, such as `1.5`, `-2e3`, `inf` or `NaN`.
+pub fn Float.parse(input: String): Float ! __text.TextError {
+    if not textNative.isFloat(input) {
+        fail __text.TextError.InvalidData
+    }
+    textNative.parseFloat(input)
+}
+
+// ---------------------------------------------------------------------------
+// Char
+// ---------------------------------------------------------------------------
+
+/// Whether it is one of `0` to `9`.
+pub fn Char.isDigit(self): Bool {
+    textNative.charIs(self, 0)
+}
+
+pub fn Char.isLetter(self): Bool {
+    textNative.charIs(self, 1)
+}
+
+pub fn Char.isWhitespace(self): Bool {
+    textNative.charIs(self, 2)
+}
+
+pub fn Char.isUpper(self): Bool {
+    textNative.charIs(self, 3)
+}
+
+pub fn Char.isLower(self): Bool {
+    textNative.charIs(self, 4)
+}
+
+pub fn Char.isAlphanumeric(self): Bool {
+    textNative.charIs(self, 5)
+}
+
+/// The uppercase scalar, when it is a single one.
+pub fn Char.toUpper(self): Char {
+    textNative.charCase(self, true)
+}
+
+/// The lowercase scalar, when it is a single one.
+pub fn Char.toLower(self): Char {
+    textNative.charCase(self, false)
+}
+
+/// The Unicode scalar value.
+pub fn Char.code(self): Int {
+    textNative.charCode(self)
+}
+
+/// The scalar with this Unicode value, if it is one.
+pub fn Char.from(code: Int): Char? {
+    if textNative.charValid(code) { some(textNative.charFrom(code)) } else { none }
+}
+
+// ---------------------------------------------------------------------------
+// Int and Float
+// ---------------------------------------------------------------------------
+
+pub fn Int.abs(self): Int {
+    if self < 0 { -self } else { self }
+}
+
+pub fn Int.min(self, other: Int): Int {
+    if other < self { other } else { self }
+}
+
+pub fn Int.max(self, other: Int): Int {
+    if other > self { other } else { self }
+}
+
+/// The value inside `low` to `high`.
+pub fn Int.clamp(self, low: Int, high: Int): Int {
+    self.max(low).min(high)
+}
+
+/// The value raised to a power of zero or more; overflow panics like any
+/// arithmetic.
+pub fn Int.pow(self, exponent: Int): Int {
+    var result = 1
+    var base = self
+    var rest = exponent
+    for rest > 0 {
+        if rest % 2 == 1 {
+            result *= base
+        }
+        rest /= 2
+        if rest > 0 {
+            base *= base
+        }
+    }
+    result
+}
+
+/// The value in `radix` (2 to 36), with lowercase digits.
+pub fn Int.toString(self, radix: Int = 10): String {
+    textNative.int(self, radix)
+}
+
+pub fn Float.abs(self): Float {
+    if self < 0.0 { -self } else { self }
+}
+
+pub fn Float.min(self, other: Float): Float {
+    if other < self { other } else { self }
+}
+
+pub fn Float.max(self, other: Float): Float {
+    if other > self { other } else { self }
+}
+
+pub fn Float.clamp(self, low: Float, high: Float): Float {
+    self.max(low).min(high)
+}
+
+pub fn Float.floor(self): Float {
+    mathNative.floor(self)
+}
+
+pub fn Float.ceil(self): Float {
+    mathNative.ceil(self)
+}
+
+/// The nearest integer; a value halfway between goes to the even one.
+pub fn Float.round(self): Float {
+    mathNative.round(self)
+}
+
+pub fn Float.truncate(self): Float {
+    mathNative.trunc(self)
+}
+
+pub fn Float.sqrt(self): Float ! __math.MathError {
+    __math.sqrt(self)
+}
+
+pub fn Float.pow(self, exponent: Float): Float {
+    mathNative.pow(self, exponent)
+}
+
+pub fn Float.isNaN(self): Bool {
+    mathNative.classify(self) == 2
+}
+
+pub fn Float.isInfinite(self): Bool {
+    mathNative.classify(self) == 1
+}
+
+pub fn Float.isFinite(self): Bool {
+    mathNative.classify(self) == 0
+}
+
+/// The value with exactly `decimals` digits after the point: `2.50`.
+pub fn Float.toFixed(self, decimals: Int): String {
+    textNative.fixed(self, decimals)
+}
+
+// ---------------------------------------------------------------------------
+// Option and Result
+// ---------------------------------------------------------------------------
+
+pub fn Option[T].isSome(self): Bool {
+    match self {
+        some(_) => true
+        none => false
+    }
+}
+
+pub fn Option[T].isNone(self): Bool {
+    not self.isSome()
+}
+
+pub fn Option[T].map[U](self, transform: fn(T): U): U? {
+    match self {
+        some(value) => some(transform(value))
+        none => none
+    }
+}
+
+/// The option the function gives for the value, or `none`.
+pub fn Option[T].andThen[U](self, next: fn(T): U?): U? {
+    match self {
+        some(value) => next(value)
+        none => none
+    }
+}
+
+pub fn Option[T].unwrapOr(self, fallback: T): T {
+    match self {
+        some(value) => value
+        none => fallback
+    }
+}
+
+/// This option if it has a value, or `other`.
+pub fn Option[T].orElse(self, other: T?): T? {
+    match self {
+        some(value) => some(value)
+        none => other
+    }
+}
+
+pub fn Option[T].filter(self, keep: fn(T): Bool): T? {
+    match self {
+        some(value) if keep(value) => some(value)
+        _ => none
+    }
+}
+
+/// The value, or the error when there is none.
+pub fn Option[T].okOr[E](self, error: E): T ! E {
+    match self {
+        some(value) => value
+        none => fail error
+    }
+}
+
+/// The value; a `none` panics with the message.
+pub fn Option[T].expect(self, message: String): T {
+    match self {
+        some(value) => value
+        none => panic(message)
+    }
+}
+
+pub fn Result[T, E].isOk(self): Bool {
+    match self {
+        ok(_) => true
+        err(_) => false
+    }
+}
+
+pub fn Result[T, E].isErr(self): Bool {
+    not self.isOk()
+}
+
+pub fn Result[T, E].map[U](self, transform: fn(T): U): U ! E {
+    match self {
+        ok(value) => transform(value)
+        err(error) => fail error
+    }
+}
+
+pub fn Result[T, E].mapErr[F](self, transform: fn(E): F): T ! F {
+    match self {
+        ok(value) => value
+        err(error) => fail transform(error)
+    }
+}
+
+/// The result the function gives for the value, or the error.
+pub fn Result[T, E].andThen[U](self, next: fn(T): U ! E): U ! E {
+    match self {
+        ok(value) => next(value)?
+        err(error) => fail error
+    }
+}
+
+pub fn Result[T, E].unwrapOr(self, fallback: T): T {
+    match self {
+        ok(value) => value
+        err(_) => fallback
+    }
+}
+
+pub fn Result[T, E].ok(self): T? {
+    match self {
+        ok(value) => some(value)
+        err(_) => none
+    }
+}
+
+pub fn Result[T, E].err(self): E? {
+    match self {
+        ok(_) => none
+        err(error) => some(error)
+    }
+}
+
+/// The value; an error panics with the message.
+pub fn Result[T, E].expect(self, message: String): T {
+    match self {
+        ok(value) => value
+        err(_) => panic(message)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Array
+// ---------------------------------------------------------------------------
+
+pub fn Array[T].first(self): T? {
+    self.get(0)
+}
+
+pub fn Array[T].last(self): T? {
+    self.get(self.length() - 1)
+}
+
+pub fn Array[T].map[U](self, transform: fn(T): U): Array[U] {
+    var out: Array[U] = []
+    for item in self {
+        out.push(transform(item))
+    }
+    out
+}
+
+pub fn Array[T].filter(self, keep: fn(T): Bool): Array[T] {
+    var out: Array[T] = []
+    for item in self {
+        if keep(item) {
+            out.push(item)
+        }
+    }
+    out
+}
+
+pub fn Array[T].flatMap[U](self, transform: fn(T): Array[U]): Array[U] {
+    var out: Array[U] = []
+    for item in self {
+        for part in transform(item) {
+            out.push(part)
+        }
+    }
+    out
+}
+
+/// The elements combined from `initial`, in order.
+pub fn Array[T].reduce[A](self, initial: A, combine: fn(A, T): A): A {
+    var total = initial
+    for item in self {
+        total = combine(total, item)
+    }
+    total
+}
+
+pub fn Array[T].any(self, predicate: fn(T): Bool): Bool {
+    for item in self {
+        if predicate(item) {
+            return true
+        }
+    }
+    false
+}
+
+pub fn Array[T].all(self, predicate: fn(T): Bool): Bool {
+    for item in self {
+        if not predicate(item) {
+            return false
+        }
+    }
+    true
+}
+
+/// The first element that passes the test.
+pub fn Array[T].find(self, predicate: fn(T): Bool): T? {
+    for item in self {
+        if predicate(item) {
+            return some(item)
+        }
+    }
+    none
+}
+
+/// The index of the first element that passes the test.
+pub fn Array[T].findIndex(self, predicate: fn(T): Bool): Int? {
+    for index in 0..self.length() {
+        if predicate(self[index]) {
+            return some(index)
+        }
+    }
+    none
+}
+
+/// How many elements pass the test.
+pub fn Array[T].count(self, predicate: fn(T): Bool): Int {
+    var total = 0
+    for item in self {
+        if predicate(item) {
+            total += 1
+        }
+    }
+    total
+}
+
+pub fn Array[T: Numeric].sum(self): T {
+    var total = Numeric.zero[T]()
+    for item in self {
+        total = total.plus(item)
+    }
+    total
+}
+
+pub fn Array[T: Ordered].min(self): T? {
+    var found: T? = none
+    for item in self {
+        found = match found {
+            some(best) if best.compare(item) <= 0 => some(best)
+            _ => some(item)
+        }
+    }
+    found
+}
+
+pub fn Array[T: Ordered].max(self): T? {
+    var found: T? = none
+    for item in self {
+        found = match found {
+            some(best) if best.compare(item) >= 0 => some(best)
+            _ => some(item)
+        }
+    }
+    found
+}
+
+/// The elements in order, equal ones as they were.
+pub fn Array[T: Ordered].sorted(self): Array[T] {
+    self.sortedWith(order[T])
+}
+
+/// The elements in the order of their keys, equal ones as they were.
+pub fn Array[T].sortedBy[K: Ordered](self, key: fn(T): K): Array[T] {
+    var keyed: Array[(K, T)] = []
+    for item in self {
+        keyed.push((key(item), item))
+    }
+    var out: Array[T] = []
+    for (_, item) in mergeSort(keyed, (a: (K, T), b: (K, T)) { a.0.compare(b.0) }) {
+        out.push(item)
+    }
+    out
+}
+
+/// The elements in the order `compare` gives, equal ones as they were.
+pub fn Array[T].sortedWith(self, compare: fn(T, T): Int): Array[T] {
+    mergeSort(self, compare)
+}
+
+fn mergeSort[T](items: Array[T], compare: fn(T, T): Int): Array[T] {
+    let length = items.length()
+    if length <= 1 {
+        return items
+    }
+    let half = length / 2
+    let left = mergeSort(items[:half], compare)
+    let right = mergeSort(items[half:], compare)
+    var out: Array[T] = []
+    var (i, j) = (0, 0)
+    for i < left.length() and j < right.length() {
+        if compare(right[j], left[i]) < 0 {
+            out.push(right[j])
+            j += 1
+        } else {
+            out.push(left[i])
+            i += 1
+        }
+    }
+    for i < left.length() {
+        out.push(left[i])
+        i += 1
+    }
+    for j < right.length() {
+        out.push(right[j])
+        j += 1
+    }
+    out
+}
+
+pub fn Array[T].reversed(self): Array[T] {
+    self[::-1]
+}
+
+/// The elements without repeats, each where it first appears.
+pub fn Array[T: Key].unique(self): Array[T] {
+    var seen: Set[T] = Set[]
+    var out: Array[T] = []
+    for item in self {
+        if seen.insert(item) {
+            out.push(item)
+        }
+    }
+    out
+}
+
+/// The first `count` elements.
+pub fn Array[T].take(self, count: Int): Array[T] {
+    self[:count.max(0)]
+}
+
+/// The elements after the first `count`.
+pub fn Array[T].drop(self, count: Int): Array[T] {
+    self[count.max(0):]
+}
+
+/// Pairs of elements at the same index, as many as the shorter has.
+pub fn Array[T].zip[U](self, other: Array[U]): Array[(T, U)] {
+    var out: Array[(T, U)] = []
+    for index in 0..self.length().min(other.length()) {
+        out.push((self[index], other[index]))
+    }
+    out
+}
+
+/// Each element with its index.
+pub fn Array[T].enumerate(self): Array[(Int, T)] {
+    var out: Array[(Int, T)] = []
+    for index in 0..self.length() {
+        out.push((index, self[index]))
+    }
+    out
+}
+
+/// The elements in groups of `size`; the last may be smaller.
+pub fn Array[T].chunks(self, size: Int): Array[Array[T]] {
+    var out: Array[Array[T]] = []
+    if size <= 0 {
+        return out
+    }
+    var start = 0
+    for start < self.length() {
+        out.push(self[start:start + size])
+        start += size
+    }
+    out
+}
+
+/// Every run of `size` consecutive elements.
+pub fn Array[T].windows(self, size: Int): Array[Array[T]] {
+    var out: Array[Array[T]] = []
+    if size <= 0 {
+        return out
+    }
+    for start in 0..self.length() - size + 1 {
+        out.push(self[start:start + size])
+    }
+    out
+}
+
+/// The elements by key, in the order the keys first appear.
+pub fn Array[T].groupBy[K: Key](self, key: fn(T): K): Map[K, Array[T]] {
+    var groups: Map[K, Array[T]] = [:]
+    for item in self {
+        let k = key(item)
+        var group = groups.getOr(k, [])
+        group.push(item)
+        groups[k] = group
+    }
+    groups
+}
+
+/// The elements that pass the test, and those that do not.
+pub fn Array[T].partition(self, predicate: fn(T): Bool): (Array[T], Array[T]) {
+    var (passed, failed): (Array[T], Array[T]) = ([], [])
+    for item in self {
+        if predicate(item) {
+            passed.push(item)
+        } else {
+            failed.push(item)
+        }
+    }
+    (passed, failed)
+}
+
+/// The elements as text, with `separator` between them.
+pub fn Array[T: Display].join(self, separator: String): String {
+    var parts: Array[String] = []
+    for item in self {
+        parts.push("{item}")
+    }
+    textNative.join(parts, separator)
+}
+
+/// Puts the elements in order, equal ones as they were.
+pub fn Array[T: Ordered].sort(mut self) {
+    let sorted = self.sorted()
+    self[:] = sorted
+}
+
+/// Puts the elements in the order of their keys.
+pub fn Array[T].sortBy[K: Ordered](mut self, key: fn(T): K) {
+    let sorted = self.sortedBy(key)
+    self[:] = sorted
+}
+
+pub fn Array[T].reverse(mut self) {
+    let reversed = self.reversed()
+    self[:] = reversed
+}
+
+pub fn Array[T].swap(mut self, i: Int, j: Int) {
+    let first = self[i]
+    self[i] = self[j]
+    self[j] = first
+}
+
+/// Keeps only the elements that pass the test.
+pub fn Array[T].retain(var self, keep: fn(T): Bool) {
+    self = self.filter(keep)
+}
+
+/// Adds the elements of `other` at the end.
+pub fn Array[T].extend(var self, other: Array[T]) {
+    for item in other {
+        self.push(item)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Map and Set
+// ---------------------------------------------------------------------------
+
+/// The value of the key, or `fallback`.
+pub fn Map[K: Key, V].getOr(self, key: K, fallback: V): V {
+    match self[key] {
+        some(value) => value
+        none => fallback
+    }
+}
+
+pub fn Map[K: Key, V].mapValues[W](self, transform: fn(V): W): Map[K, W] {
+    var out: Map[K, W] = [:]
+    for (key, value) in self {
+        out[key] = transform(value)
+    }
+    out
+}
+
+pub fn Map[K: Key, V].filter(self, keep: fn(K, V): Bool): Map[K, V] {
+    var out: Map[K, V] = [:]
+    for (key, value) in self {
+        if keep(key, value) {
+            out[key] = value
+        }
+    }
+    out
+}
+
+/// The entries of both, with those of `other` where both have a key.
+pub fn Map[K: Key, V].merge(self, other: Map[K, V]): Map[K, V] {
+    var out = self
+    for (key, value) in other {
+        out[key] = value
+    }
+    out
+}
+
+pub fn Set[T: Key].union(self, other: Set[T]): Set[T] {
+    var out = self
+    for item in other {
+        out.insert(item)
+    }
+    out
+}
+
+pub fn Set[T: Key].intersection(self, other: Set[T]): Set[T] {
+    var out: Set[T] = Set[]
+    for item in self {
+        if other.contains(item) {
+            out.insert(item)
+        }
+    }
+    out
+}
+
+pub fn Set[T: Key].difference(self, other: Set[T]): Set[T] {
+    var out: Set[T] = Set[]
+    for item in self {
+        if not other.contains(item) {
+            out.insert(item)
+        }
+    }
+    out
+}
+
+/// Whether every element is also in `other`.
+pub fn Set[T: Key].isSubset(self, other: Set[T]): Bool {
+    for item in self {
+        if not other.contains(item) {
+            return false
+        }
+    }
+    true
+}
+
+// ---------------------------------------------------------------------------
+// Iterator
+// ---------------------------------------------------------------------------
+
+/// What every iterator can do besides `next`. The adapters are lazy: they
+/// take elements from their source only as they are asked for theirs. Each
+/// method works on a copy of the iterator, so its type is `Copy`.
+pub trait Iterator[T] {
+    fn map[U](self, transform: fn(T): U): MapIterator[Self, T, U] {
+        MapIterator { source: self, transform }
+    }
+
+    fn filter(self, keep: fn(T): Bool): FilterIterator[Self, T] {
+        FilterIterator { source: self, keep }
+    }
+
+    /// The first `count` elements.
+    fn take(self, count: Int): TakeIterator[Self, T] {
+        TakeIterator { source: self, remaining: count, unused: none }
+    }
+
+    /// The elements after the first `count`.
+    fn skip(self, count: Int): SkipIterator[Self, T] {
+        SkipIterator { source: self, count, unused: none }
+    }
+
+    /// The elements until the first that fails the test.
+    fn takeWhile(self, predicate: fn(T): Bool): TakeWhileIterator[Self, T] {
+        TakeWhileIterator { source: self, predicate, done: false }
+    }
+
+    /// The elements from the first that fails the test.
+    fn skipWhile(self, predicate: fn(T): Bool): SkipWhileIterator[Self, T] {
+        SkipWhileIterator { source: self, predicate, started: false }
+    }
+
+    /// Each element with its position.
+    fn enumerate(self): EnumerateIterator[Self, T] {
+        EnumerateIterator { source: self, index: 0, unused: none }
+    }
+
+    /// Pairs of elements from both, as long as both have one.
+    fn zip[U, J: Iterator[U]](self, other: J): ZipIterator[Self, J, T, U] {
+        ZipIterator { first: self, second: other, unused: none }
+    }
+
+    /// The elements, then those of `other`.
+    fn chain[J: Iterator[T]](self, other: J): ChainIterator[Self, J, T] {
+        ChainIterator { first: self, second: other, inSecond: false, unused: none }
+    }
+
+    /// The elements of the array each element gives, in order.
+    fn flatMap[U](self, transform: fn(T): Array[U]): FlatMapIterator[Self, T, U] {
+        FlatMapIterator { source: self, transform, current: [], position: 0 }
+    }
+
+    fn collect(self): Array[T] {
+        let cursor = self
+        var out: Array[T] = []
+        for item in cursor {
+            out.push(item)
+        }
+        out
+    }
+
+    fn count(self): Int {
+        let cursor = self
+        var total = 0
+        for _ in cursor {
+            total += 1
+        }
+        total
+    }
+
+    fn any(self, predicate: fn(T): Bool): Bool {
+        let cursor = self
+        for item in cursor {
+            if predicate(item) {
+                return true
+            }
+        }
+        false
+    }
+
+    fn all(self, predicate: fn(T): Bool): Bool {
+        let cursor = self
+        for item in cursor {
+            if not predicate(item) {
+                return false
+            }
+        }
+        true
+    }
+
+    fn find(self, predicate: fn(T): Bool): T? {
+        let cursor = self
+        for item in cursor {
+            if predicate(item) {
+                return some(item)
+            }
+        }
+        none
+    }
+
+    fn reduce[A](self, initial: A, combine: fn(A, T): A): A {
+        let cursor = self
+        var total = initial
+        for item in cursor {
+            total = combine(total, item)
+        }
+        total
+    }
+
+    fn forEach(self, action: fn(T)) {
+        let cursor = self
+        for item in cursor {
+            action(item)
+        }
+    }
+}
+
+pub type MapIterator[I, T, U] = {
+    priv source: I
+    priv transform: fn(T): U
+}
+
+impl[I: Iterator[T], T, U] Iterator[U] for MapIterator[I, T, U] {
+    fn next(mut self): U? {
+        match self.source.next() {
+            some(item) => some(self.transform(item))
+            none => none
+        }
+    }
+}
+
+pub type FilterIterator[I, T] = {
+    priv source: I
+    priv keep: fn(T): Bool
+}
+
+impl[I: Iterator[T], T] Iterator[T] for FilterIterator[I, T] {
+    fn next(mut self): T? {
+        for {
+            match self.source.next() {
+                some(item) => {
+                    if self.keep(item) {
+                        return some(item)
+                    }
+                }
+                none => return none
+            }
+        }
+    }
+}
+
+pub type TakeIterator[I, T] = {
+    priv source: I
+    priv remaining: Int
+    priv unused: T?
+}
+
+impl[I: Iterator[T], T] Iterator[T] for TakeIterator[I, T] {
+    fn next(mut self): T? {
+        if self.remaining <= 0 {
+            return none
+        }
+        self.remaining -= 1
+        self.source.next()
+    }
+}
+
+pub type SkipIterator[I, T] = {
+    priv source: I
+    priv count: Int
+    priv unused: T?
+}
+
+impl[I: Iterator[T], T] Iterator[T] for SkipIterator[I, T] {
+    fn next(mut self): T? {
+        for self.count > 0 {
+            self.count -= 1
+            if self.source.next().isNone() {
+                return none
+            }
+        }
+        self.source.next()
+    }
+}
+
+pub type TakeWhileIterator[I, T] = {
+    priv source: I
+    priv predicate: fn(T): Bool
+    priv done: Bool
+}
+
+impl[I: Iterator[T], T] Iterator[T] for TakeWhileIterator[I, T] {
+    fn next(mut self): T? {
+        if self.done {
+            return none
+        }
+        match self.source.next() {
+            some(item) if self.predicate(item) => some(item)
+            _ => {
+                self.done = true
+                none
+            }
+        }
+    }
+}
+
+pub type SkipWhileIterator[I, T] = {
+    priv source: I
+    priv predicate: fn(T): Bool
+    priv started: Bool
+}
+
+impl[I: Iterator[T], T] Iterator[T] for SkipWhileIterator[I, T] {
+    fn next(mut self): T? {
+        if self.started {
+            return self.source.next()
+        }
+        for {
+            match self.source.next() {
+                some(item) => {
+                    if not self.predicate(item) {
+                        self.started = true
+                        return some(item)
+                    }
+                }
+                none => return none
+            }
+        }
+    }
+}
+
+pub type EnumerateIterator[I, T] = {
+    priv source: I
+    priv index: Int
+    priv unused: T?
+}
+
+impl[I: Iterator[T], T] Iterator[(Int, T)] for EnumerateIterator[I, T] {
+    fn next(mut self): (Int, T)? {
+        match self.source.next() {
+            some(item) => {
+                let position = self.index
+                self.index += 1
+                some((position, item))
+            }
+            none => none
+        }
+    }
+}
+
+pub type ZipIterator[I, J, T, U] = {
+    priv first: I
+    priv second: J
+    priv unused: (T, U)?
+}
+
+impl[I: Iterator[T], J: Iterator[U], T, U] Iterator[(T, U)] for ZipIterator[I, J, T, U] {
+    fn next(mut self): (T, U)? {
+        match self.first.next() {
+            some(a) => match self.second.next() {
+                some(b) => some((a, b))
+                none => none
+            }
+            none => none
+        }
+    }
+}
+
+pub type ChainIterator[I, J, T] = {
+    priv first: I
+    priv second: J
+    priv inSecond: Bool
+    priv unused: T?
+}
+
+impl[I: Iterator[T], J: Iterator[T], T] Iterator[T] for ChainIterator[I, J, T] {
+    fn next(mut self): T? {
+        if not self.inSecond {
+            match self.first.next() {
+                some(item) => return some(item)
+                none => self.inSecond = true
+            }
+        }
+        self.second.next()
+    }
+}
+
+pub type FlatMapIterator[I, T, U] = {
+    priv source: I
+    priv transform: fn(T): Array[U]
+    priv current: Array[U]
+    priv position: Int
+}
+
+impl[I: Iterator[T], T, U] Iterator[U] for FlatMapIterator[I, T, U] {
+    fn next(mut self): U? {
+        for self.position >= self.current.length() {
+            match self.source.next() {
+                some(item) => {
+                    self.current = self.transform(item)
+                    self.position = 0
+                }
+                none => return none
+            }
+        }
+        let item = self.current[self.position]
+        self.position += 1
+        some(item)
+    }
+}

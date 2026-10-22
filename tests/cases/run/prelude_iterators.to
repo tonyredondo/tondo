@@ -1,0 +1,35 @@
+// The prelude's lazy adapters and consumers of any iterator.
+
+import std.console
+
+pub type Countdown = { from: Int }
+
+impl Iterator[Int] for Countdown {
+    fn next(mut self): Int? {
+        if self.from <= 0 {
+            return none
+        }
+        self.from -= 1
+        some(self.from + 1)
+    }
+}
+
+fn main() {
+    let c = Countdown { from: 5 }
+    console.println("{c.collect()} {c.map((n) { n * 10 }).collect()} {c.filter((n) { n % 2 == 1 }).collect()}")
+    console.println("{c.take(2).collect()} {c.skip(3).collect()} {c.takeWhile((n) { n > 3 }).collect()} {c.skipWhile((n) { n > 3 }).collect()}")
+    console.println("{c.enumerate().collect()} {c.zip(Countdown { from: 2 }).collect()} {c.chain(Countdown { from: 2 }).collect()}")
+    console.println("{c.flatMap((n) { [n, n] }).take(5).collect()} {c.count()} {c.any((n) { n == 3 })} {c.all((n) { n > 0 })} {c.find((n) { n < 3 })} {c.reduce(0, (a, n) { a + n })}")
+    c.map((n) { n * n }).filter((n) { n > 4 }).forEach((n) { console.println("square {n}") })
+    let ages = ["ada": 36, "bo": 20]
+    console.println("{ages.keys().collect()} {ages.values().map((a) { a + 1 }).collect()} {ages.entries().count()}")
+}
+
+// expect-stdout: [5, 4, 3, 2, 1] [50, 40, 30, 20, 10] [5, 3, 1]
+// expect-stdout: [5, 4] [2, 1] [5, 4] [3, 2, 1]
+// expect-stdout: [(0, 5), (1, 4), (2, 3), (3, 2), (4, 1)] [(5, 2), (4, 1)] [5, 4, 3, 2, 1, 2, 1]
+// expect-stdout: [5, 5, 4, 4, 3] 5 true true some(2) 15
+// expect-stdout: square 25
+// expect-stdout: square 16
+// expect-stdout: square 9
+// expect-stdout: [ada, bo] [37, 21] 2

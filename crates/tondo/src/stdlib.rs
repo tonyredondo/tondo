@@ -14,6 +14,8 @@ const SOURCES: &[(&str, &str)] = &[
     ("ffi", include_str!("../std/ffi.to")),
     ("regex", include_str!("../std/regex.to")),
     ("reflect", include_str!("../std/reflect.to")),
+    ("prelude", include_str!("../std/prelude.to")),
+    ("math", include_str!("../std/math.to")),
 ];
 
 /// The module written in Tondo an import brings: `std.testing` brings
@@ -28,9 +30,10 @@ pub(crate) fn source(path: &[ast::Ident]) -> Option<(&'static str, &'static str)
     }
 }
 
-/// Whether a module imports a standard module written in Tondo.
-pub fn needed(module: &ast::Module) -> bool {
-    module.imports.iter().any(|import| source(&import.path).is_some())
+/// Whether a program links with standard modules written in Tondo: always,
+/// for the prelude, which has the methods of the intrinsic types.
+pub fn needed(_module: &ast::Module) -> bool {
+    true
 }
 
 /// Adds the standard modules written in Tondo that the program imports,
@@ -42,7 +45,7 @@ pub fn add(
     diags: &mut Diagnostics,
 ) {
     let package = packages.len();
-    let mut pending: Vec<&str> = Vec::new();
+    let mut pending: Vec<&str> = vec!["prelude"];
     let wanted = |module: &ast::Module, pending: &mut Vec<&str>| {
         for import in &module.imports {
             if let Some((name, _)) = source(&import.path)
@@ -56,9 +59,6 @@ pub fn add(
         for (file, _) in &module.files {
             wanted(file, &mut pending);
         }
-    }
-    if pending.is_empty() {
-        return;
     }
     packages.push(PackageInfo { name: "std".into(), dependencies: Default::default() });
     let mut done = 0;

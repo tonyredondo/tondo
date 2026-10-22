@@ -919,6 +919,9 @@ pub enum NativeTy {
     Regex,
     /// The box of a `reflect.Value` (`std.internal.reflect`).
     ReflectBox,
+    /// `Array[String]`
+    Strings,
+    Char,
 }
 
 /// A function of an internal module: `std.internal.json`, the runtime's
@@ -953,6 +956,12 @@ pub const NATIVES: &[Native] = {
         symbol: &'static str,
     ) -> Native {
         Native { module: "reflect", name, receiver: None, params, result, symbol }
+    }
+    const fn text(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
+        Native { module: "text", name, receiver: None, params, result, symbol }
+    }
+    const fn math(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
+        Native { module: "math", name, receiver: None, params, result, symbol }
     }
     const fn r(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "regex", name, receiver: Some(Regex), params, result, symbol }
@@ -1011,5 +1020,48 @@ pub const NATIVES: &[Native] = {
         reflect("boxName", &[ReflectBox], String, "tondo_rt_reflect_name"),
         reflect("index", &[String], Int, "tondo_rt_reflect_index"),
         reflect("quote", &[String], String, "tondo_rt_reflect_quote"),
+        text("split", &[String, String], Strings, "tondo_rt_text_split"),
+        text("lines", &[String], Strings, "tondo_rt_text_lines"),
+        text("words", &[String], Strings, "tondo_rt_text_words"),
+        text("join", &[Strings, String], String, "tondo_rt_text_join"),
+        text("repeat", &[String, Int], String, "tondo_rt_text_repeat"),
+        text("trimStart", &[String], String, "tondo_rt_text_trim_start"),
+        text("trimEnd", &[String], String, "tondo_rt_text_trim_end"),
+        text("findLast", &[String, String], Int, "tondo_rt_text_find_last"),
+        text("count", &[String, String], Int, "tondo_rt_text_count"),
+        text("lower", &[String], String, "tondo_rt_text_lower"),
+        text("upper", &[String], String, "tondo_rt_text_upper"),
+        text("isInt", &[String, Int], Bool, "tondo_rt_text_is_int"),
+        text("parseInt", &[String, Int], Int, "tondo_rt_text_parse_int"),
+        text("isFloat", &[String], Bool, "tondo_rt_text_is_float"),
+        text("parseFloat", &[String], Float, "tondo_rt_text_parse_float"),
+        text("int", &[Int, Int], String, "tondo_rt_text_int"),
+        text("fixed", &[Float, Int], String, "tondo_rt_text_fixed"),
+        text("charIs", &[Char, Int], Bool, "tondo_rt_char_is"),
+        text("charCase", &[Char, Bool], Char, "tondo_rt_char_case"),
+        text("charValid", &[Int], Bool, "tondo_rt_char_valid"),
+        text("charCode", &[Char], Int, "tondo_rt_char_code"),
+        text("charFrom", &[Int], Char, "tondo_rt_char_from"),
+        math("sin", &[Float], Float, "tondo_rt_math_sin"),
+        math("cos", &[Float], Float, "tondo_rt_math_cos"),
+        math("tan", &[Float], Float, "tondo_rt_math_tan"),
+        math("asin", &[Float], Float, "tondo_rt_math_asin"),
+        math("acos", &[Float], Float, "tondo_rt_math_acos"),
+        math("atan", &[Float], Float, "tondo_rt_math_atan"),
+        math("exp", &[Float], Float, "tondo_rt_math_exp"),
+        math("ln", &[Float], Float, "tondo_rt_math_ln"),
+        math("log10", &[Float], Float, "tondo_rt_math_log10"),
+        math("log2", &[Float], Float, "tondo_rt_math_log2"),
+        math("sqrt", &[Float], Float, "tondo_rt_math_sqrt"),
+        math("floor", &[Float], Float, "tondo_rt_math_floor"),
+        math("ceil", &[Float], Float, "tondo_rt_math_ceil"),
+        math("round", &[Float], Float, "tondo_rt_math_round"),
+        math("trunc", &[Float], Float, "tondo_rt_math_trunc"),
+        math("roundAway", &[Float], Float, "tondo_rt_math_round_away"),
+        math("atan2", &[Float, Float], Float, "tondo_rt_math_atan2"),
+        math("hypot", &[Float, Float], Float, "tondo_rt_math_hypot"),
+        math("pow", &[Float, Float], Float, "tondo_rt_math_pow"),
+        math("fma", &[Float, Float, Float], Float, "tondo_rt_math_fma"),
+        math("classify", &[Float], Int, "tondo_rt_math_class"),
     ]
 };

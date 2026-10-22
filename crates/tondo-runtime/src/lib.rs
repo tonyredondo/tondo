@@ -17,6 +17,7 @@ mod env;
 mod fs;
 mod io;
 mod json;
+mod math;
 mod memory;
 mod process;
 mod reflect;
@@ -26,6 +27,7 @@ mod snapshot;
 mod sync;
 mod tasks;
 mod testing;
+mod text;
 mod time;
 
 // ---------------------------------------------------------------------------

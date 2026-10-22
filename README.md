@@ -109,14 +109,14 @@ Every milestone ends with programs that compile to native executables and run.
 | **Targets** | Linux x86-64 and arm64 (glibc and musl), macOS on Apple silicon and Intel, each with its C calling convention; CI on all of them | Done |
 | **Bindings** | `tondo bind` writes a module of `extern` declarations and constants from C headers, a `pkg-config` package, or a library's debug information; unions, `va_list`, macros, bit fields; static and shared native libraries; `const` | Done |
 | **H8** | Testing: `test` and `suite`, unit test companions and integration test roots, `std.testing` (`log`, `tags`, `failNow`, `skip`), `tondo test` running tests in worker processes with timeouts, selection by filter, glob or identity, shards, random order with a seed, retries and flaky passes, repeats, CODEOWNERS, JSON and JUnit reports, attachments, snapshots of any value in a file each, virtual time | Done |
+| **Stdlib 1** | The prelude: the everyday methods of `String` (`split`, `lines`, `repeat`, padding, trimming, Unicode case, parsing numbers), `Char`, `Int`, `Float`, `Option`, `Result`, `Array` (`map`, `filter`, `reduce`, `sorted`, `join`, `groupBy`, ...), `Map`, `Set` and lazy `Iterator` adapters; `Ordered` and `Numeric`; `std.math` | Done |
 
 The first cut deliberately leaves out the following. They are part of the
 language and remain planned work, scheduled after H7:
 
 | Milestone | Scope |
 |---|---|
-| **H9** | Runtime reflection (`std.reflect`: get, set, call and conversion by shape, done; type descriptions), then static metaprogramming (`derive` with providers, generators in `tondo.toml`) |
-| **Stdlib 1** | The everyday methods of the intrinsic types: `String` (`split`, `lines`, `repeat`, padding, trimming, Unicode case, parsing numbers), `Char`, `Array` (`map`, `filter`, `reduce`, `sorted`, `join`, `groupBy`, ...), `Map`, `Set`, `Option`, `Result`, lazy `Iterator` adapters, `Int` and `Float`; `std.math`. Done after H9.1, before `derive` |
+| **H9** | Runtime reflection (`std.reflect`: get, set, call, conversion by shape and type descriptions; done), then static metaprogramming (`derive` with providers, generators in `tondo.toml`) |
 | **Stdlib 2** | `std.format` (a text builder), `std.encoding` (Base64, hex, URLs), `std.random` (seeded generators, shuffle, choice), `std.uuid` (v4, v7), `std.hash` (SHA-256, HMAC), ISO 8601 dates in `std.time`, and a fallible `main` that shows its error's `Display`. Later: `std.log`, CSV, HTTP |
 | **H10** | Tondo LLM Form (`TONDO_LLM_FORM_SPEC.md`) |
 | **H11** | Race, leak and crash diagnostics; language server; incremental compilation |
