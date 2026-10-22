@@ -1,0 +1,606 @@
+// std.http (standard library 14.24): an HTTP client for HTTP/1.1 and
+// HTTP/2 over TLS, with bodies that stream both ways, multipart forms and
+// Server-Sent Events, on the runtime's transport.
+
+import std.encoding as __encoding
+import std.internal.http as httpNative
+import std.io as __io
+import std.json as __json
+import std.time as __time
+
+/// Why a request has no response a program can use.
+pub enum HttpError {
+    /// A URL that does not parse, or whose scheme is not `http` or `https`.
+    InvalidUrl(String)
+    /// The name did not resolve, the server refused, or TLS failed.
+    Connect(String)
+    /// The request took longer than its timeout.
+    Timeout
+    /// The server answered with a status of 400 or more: the response, to
+    /// read its body.
+    Status(Response)
+    /// The request's or the response's body failed, or is not what was
+    /// asked for: not UTF-8, not the JSON of the type.
+    Body(String)
+    /// Anything else of HTTP: too many redirects, a broken connection.
+    Protocol(String)
+}
+
+impl Display for HttpError {
+    fn display(self): String {
+        match self {
+            HttpError.InvalidUrl(why) => "invalid URL: {why}"
+            HttpError.Connect(why) => "cannot connect: {why}"
+            HttpError.Timeout => "the request timed out"
+            HttpError.Status(response) => "{response.verb} {response.finalUrl} answered {response.code} {response.phrase}"
+            HttpError.Body(why) => "the body: {why}"
+            HttpError.Protocol(why) => "HTTP: {why}"
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bodies
+// ---------------------------------------------------------------------------
+
+enum Content {
+    Data(Array[Byte], String)
+    Stream(__io.Reader, Int, String)
+    Form(Array[Part])
+}
+
+/// What a request sends.
+pub type Body = {
+    priv content: Content
+}
+
+pub fn Body.text(text: String, contentType: String = "text/plain; charset=utf-8"): Body {
+    Body { content: Content.Data(text.bytes(), contentType) }
+}
+
+pub fn Body.bytes(bytes: Array[Byte], contentType: String = "application/octet-stream"): Body {
+    Body { content: Content.Data(bytes, contentType) }
+}
+
+/// The value as JSON (`std.json`).
+pub fn Body.json[T: __json.Encode](value: T): Body {
+    Body { content: Content.Data(__json.encode(value).bytes(), "application/json") }
+}
+
+/// The fields as a URL-encoded form, as an HTML form posts them.
+pub fn Body.form(fields: Map[String, String]): Body {
+    var pairs: Array[String] = []
+    for (name, value) in fields {
+        pairs.push("{__encoding.urlEncode(name)}={__encoding.urlEncode(value)}")
+    }
+    Body { content: Content.Data(pairs.join("&").bytes(), "application/x-www-form-urlencoded") }
+}
+
+/// A `multipart/form-data` form: fields and files, as uploads send them.
+pub fn Body.multipart(parts: Array[Part]): Body {
+    Body { content: Content.Form(parts) }
+}
+
+/// What a stream gives, read as it is sent; `length` is its size in bytes
+/// when known. A stream is read once.
+pub fn Body.stream(
+    input: __io.Reader,
+    length: Int? = none,
+    contentType: String = "application/octet-stream",
+): Body {
+    Body { content: Content.Stream(input, length.unwrapOr(-1), contentType) }
+}
+
+enum Source {
+    Field(String)
+    Data(Array[Byte])
+    File(String)
+    Stream(__io.Reader, Int)
+}
+
+/// A part of a multipart form.
+pub type Part = {
+    priv name: String
+    priv source: Source
+    priv fileName: String
+    priv contentType: String
+}
+
+pub fn Part.field(name: String, value: String): Part {
+    Part { name, source: Source.Field(value), fileName: "", contentType: "" }
+}
+
+/// A file's bytes, sent under `fileName`.
+pub fn Part.bytes(name: String, bytes: Array[Byte], fileName: String, contentType: String = ""): Part {
+    Part { name, source: Source.Data(bytes), fileName, contentType }
+}
+
+/// A file on disk, read as it is sent, under its own name and with the
+/// content type of its extension unless one is given.
+pub fn Part.file(name: String, path: String, contentType: String = ""): Part {
+    Part { name, source: Source.File(path), fileName: "", contentType }
+}
+
+/// What a stream gives, read as it is sent, under `fileName`.
+pub fn Part.stream(
+    name: String,
+    input: __io.Reader,
+    fileName: String,
+    contentType: String = "",
+    length: Int? = none,
+): Part {
+    Part { name, source: Source.Stream(input, length.unwrapOr(-1)), fileName, contentType }
+}
+
+// ---------------------------------------------------------------------------
+// Responses
+// ---------------------------------------------------------------------------
+
+/// A response, whose head has arrived; its body arrives as it is read,
+/// once, by `text`, `bytes`, `json`, `body`, `lines`, `events` or `copyTo`.
+pub type Response = {
+    priv native: httpNative.Native
+    priv verb: String
+    priv code: Int
+    priv phrase: String
+    priv finalUrl: String
+    priv protocol: String
+    priv headerList: Array[String]
+}
+
+/// `200 OK`.
+impl Display for Response {
+    fn display(self): String {
+        "{self.code} {self.phrase}"
+    }
+}
+
+pub fn Response.status(self): Int {
+    self.code
+}
+
+/// The status's reason phrase: `OK`, `Not Found`.
+pub fn Response.reason(self): String {
+    self.phrase
+}
+
+/// The URL that answered, after redirects.
+pub fn Response.url(self): String {
+    self.finalUrl
+}
+
+/// `HTTP/1.1` or `HTTP/2.0`.
+pub fn Response.version(self): String {
+    self.protocol
+}
+
+/// The first value of a header, by its name in any case.
+pub fn Response.header(self, name: String): String? {
+    self.headerValues(name).first()
+}
+
+/// Every value of a header, by its name in any case.
+pub fn Response.headerValues(self, name: String): Array[String] {
+    let wanted = name.toLower()
+    var values: Array[String] = []
+    var index = 0
+    for index + 1 < self.headerList.length() {
+        if self.headerList[index] == wanted {
+            values.push(self.headerList[index + 1])
+        }
+        index += 2
+    }
+    values
+}
+
+/// The headers, lowercase, with the values of a repeated one joined by
+/// `, `.
+pub fn Response.headers(self): Map[String, String] {
+    var out: Map[String, String] = [:]
+    var index = 0
+    for index + 1 < self.headerList.length() {
+        let (name, value) = (self.headerList[index], self.headerList[index + 1])
+        out[name] = match out.get(name) {
+            some(before) => "{before}, {value}"
+            none => value
+        }
+        index += 2
+    }
+    out
+}
+
+pub fn Response.bytes(self): Array[Byte] ! HttpError {
+    let bytes = httpNative.readAll(self.native)
+    failed(self.native)?
+    bytes
+}
+
+/// The body as UTF-8 text.
+pub fn Response.text(self): String ! HttpError {
+    match String.fromBytes(self.bytes()?) {
+        ok(decoded) => decoded
+        err(_) => fail HttpError.Body("it is not UTF-8 text")
+    }
+}
+
+/// The body as the JSON of a `T` (`std.json`), decoded as it arrives.
+pub fn Response.json[T: __json.Decode](self): T ! HttpError {
+    match __json.decodeFrom[T](self.body()) {
+        ok(value) => value
+        err(error) => fail HttpError.Body("{error}")
+    }
+}
+
+/// The body as a stream, read as the program asks for it.
+pub fn Response.body(self): __io.Reader {
+    httpNative.body(self.native)
+}
+
+/// The body's lines, as they arrive: newline-delimited JSON, logs.
+pub fn Response.lines(self): Lines {
+    Lines { input: self.body(), done: false }
+}
+
+/// The body's Server-Sent Events, as they arrive.
+pub fn Response.events(self): Events {
+    Events { source: self.lines() }
+}
+
+/// Writes the body to a stream as it arrives; how many bytes it wrote.
+pub fn Response.copyTo(self, output: __io.Writer): Int ! HttpError {
+    let input = self.body()
+    var total = 0
+    for {
+        let chunk = match input.read(65536) {
+            ok(some(chunk)) => chunk
+            ok(none) => return total
+            err(error) => fail HttpError.Body("{error}")
+        }
+        match output.writeBytes(chunk) {
+            ok(_) => total += chunk.length()
+            err(error) => fail HttpError.Body("writing it: {error}")
+        }
+    }
+}
+
+/// The lines of a body, as `Response.lines()` gives them.
+pub type Lines = {
+    priv input: __io.Reader
+    priv done: Bool
+}
+
+impl Iterator[String ! HttpError] for Lines {
+    fn next(mut self): (String ! HttpError)? {
+        if self.done {
+            return none
+        }
+        match self.input.readLine() {
+            ok(some(line)) => some(ok(line))
+            ok(none) => {
+                self.done = true
+                none
+            }
+            err(error) => {
+                self.done = true
+                some(err(HttpError.Body("{error}")))
+            }
+        }
+    }
+}
+
+/// A Server-Sent Event: its type, `message` unless the server names one,
+/// its data, with a `\n` between data lines, and its id.
+pub type Event = {
+    event: String
+    data: String
+    id: String?
+}
+
+/// The events of a body, as `Response.events()` gives them.
+pub type Events = {
+    priv source: Lines
+}
+
+impl Iterator[Event ! HttpError] for Events {
+    fn next(mut self): (Event ! HttpError)? {
+        var kind = "message"
+        var data: Array[String] = []
+        var id: String? = none
+        var started = false
+        for {
+            let line = match self.source.next() {
+                some(ok(line)) => line
+                some(err(error)) => return some(err(error))
+                none if started => return some(ok(Event { event: kind, data: data.join("\n"), id }))
+                none => return none
+            }
+            if line.isEmpty() {
+                if started {
+                    return some(ok(Event { event: kind, data: data.join("\n"), id }))
+                }
+                continue
+            }
+            if line.startsWith(":") {
+                continue
+            }
+            let colon = line.find(":").unwrapOr(line.length())
+            let field = line.slice(0, colon).unwrapOr("")
+            let value = line.slice(colon + 1, line.length()).unwrapOr("").removePrefix(" ")
+            if field == "event" {
+                kind = value
+            } else if field == "data" {
+                data.push(value)
+            } else if field == "id" {
+                id = some(value)
+            }
+            started = true
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Clients
+// ---------------------------------------------------------------------------
+
+/// Sends requests and keeps their connections for the next ones, over
+/// HTTP/2 when the server offers it. Its URLs may be relative to
+/// `baseUrl`, and its headers go with every request.
+pub type Client = {
+    priv native: httpNative.Native
+    priv base: String
+    priv defaults: Map[String, String]
+    priv limit: __time.Duration?
+}
+
+pub fn Client.new(
+    baseUrl: String = "",
+    headers: Map[String, String] = [:],
+    timeout: __time.Duration? = none,
+    connectTimeout: __time.Duration? = none,
+    redirects: Int = 10,
+): Client {
+    let connect = match connectTimeout {
+        some(limit) => limit.milliseconds()
+        none => 0
+    }
+    Client { native: httpNative.client(connect, redirects), base: baseUrl, defaults: headers, limit: timeout }
+}
+
+pub fn Client.get(
+    self,
+    url: String,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: __time.Duration? = none,
+): Response ! HttpError {
+    self.request("GET", url, none, query, headers, timeout)?
+}
+
+pub fn Client.head(
+    self,
+    url: String,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: __time.Duration? = none,
+): Response ! HttpError {
+    self.request("HEAD", url, none, query, headers, timeout)?
+}
+
+pub fn Client.delete(
+    self,
+    url: String,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: __time.Duration? = none,
+): Response ! HttpError {
+    self.request("DELETE", url, none, query, headers, timeout)?
+}
+
+pub fn Client.post(
+    self,
+    url: String,
+    body: Body? = none,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: __time.Duration? = none,
+): Response ! HttpError {
+    self.request("POST", url, body, query, headers, timeout)?
+}
+
+pub fn Client.put(
+    self,
+    url: String,
+    body: Body? = none,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: __time.Duration? = none,
+): Response ! HttpError {
+    self.request("PUT", url, body, query, headers, timeout)?
+}
+
+pub fn Client.patch(
+    self,
+    url: String,
+    body: Body? = none,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: __time.Duration? = none,
+): Response ! HttpError {
+    self.request("PATCH", url, body, query, headers, timeout)?
+}
+
+/// A request with any method. It waits for the response's head; a status
+/// of 400 or more is `HttpError.Status`.
+pub fn Client.request(
+    self,
+    method: String,
+    url: String,
+    body: Body? = none,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: __time.Duration? = none,
+): Response ! HttpError {
+    var all = self.defaults
+    for (name, value) in headers {
+        all[name] = value
+    }
+    var pairs: Array[String] = []
+    for (name, value) in all {
+        pairs.push(name)
+        pairs.push(value)
+    }
+    let limit = match timeout.orElse(self.limit) {
+        some(limit) => limit.milliseconds()
+        none => 0
+    }
+    let target = withQuery(joined(self.base, url), query)
+    let sent = httpNative.send(self.native, method, target, pairs, native(body)?, limit)
+    failed(sent)?
+    let parts = httpNative.head(sent).split("\t")
+    let response = Response {
+        native: sent
+        verb: method
+        code: httpNative.status(sent)
+        phrase: parts[0]
+        finalUrl: parts[1]
+        protocol: parts[2]
+        headerList: httpNative.headers(sent)
+    }
+    if response.code >= 400 {
+        fail HttpError.Status(response)
+    }
+    response
+}
+
+// A request without a client: one connection each.
+
+pub fn get(
+    url: String,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: __time.Duration? = none,
+): Response ! HttpError {
+    Client.new().request("GET", url, none, query, headers, timeout)?
+}
+
+pub fn head(
+    url: String,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: __time.Duration? = none,
+): Response ! HttpError {
+    Client.new().request("HEAD", url, none, query, headers, timeout)?
+}
+
+pub fn delete(
+    url: String,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: __time.Duration? = none,
+): Response ! HttpError {
+    Client.new().request("DELETE", url, none, query, headers, timeout)?
+}
+
+pub fn post(
+    url: String,
+    body: Body? = none,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: __time.Duration? = none,
+): Response ! HttpError {
+    Client.new().request("POST", url, body, query, headers, timeout)?
+}
+
+pub fn put(
+    url: String,
+    body: Body? = none,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: __time.Duration? = none,
+): Response ! HttpError {
+    Client.new().request("PUT", url, body, query, headers, timeout)?
+}
+
+pub fn patch(
+    url: String,
+    body: Body? = none,
+    query: Map[String, String] = [:],
+    headers: Map[String, String] = [:],
+    timeout: __time.Duration? = none,
+): Response ! HttpError {
+    Client.new().request("PATCH", url, body, query, headers, timeout)?
+}
+
+fn joined(base: String, url: String): String {
+    if base.isEmpty() or url.startsWith("http://") or url.startsWith("https://") {
+        return url
+    }
+    if url.isEmpty() {
+        return base
+    }
+    "{base.removeSuffix("/")}/{url.removePrefix("/")}"
+}
+
+fn withQuery(url: String, query: Map[String, String]): String {
+    if query.length() == 0 {
+        return url
+    }
+    var pairs: Array[String] = []
+    for (name, value) in query {
+        pairs.push("{__encoding.urlEncode(name)}={__encoding.urlEncode(value)}")
+    }
+    let separator = if url.contains("?") { "&" } else { "?" }
+    "{url}{separator}{pairs.join("&")}"
+}
+
+/// The runtime's body for a request.
+fn native(body: Body?): httpNative.Native ! HttpError {
+    let content = match body {
+        some(given) => given.content
+        none => return httpNative.bodyEmpty()
+    }
+    match content {
+        Content.Data(bytes, contentType) => httpNative.bodyBytes(bytes, contentType)
+        Content.Stream(input, length, contentType) => httpNative.bodyStream(input, length, contentType)
+        Content.Form(parts) => {
+            let form = httpNative.form()
+            for part in parts {
+                match part.source {
+                    Source.Field(value) => httpNative.formText(form, part.name, value)
+                    Source.Data(bytes) => httpNative.formBytes(form, part.name, bytes, part.fileName, part.contentType)
+                    Source.File(path) => {
+                        let problem = httpNative.formFile(form, part.name, path, part.contentType)
+                        if not problem.isEmpty() {
+                            fail HttpError.Body("cannot read `{path}`: {problem}")
+                        }
+                    }
+                    Source.Stream(input, length) => {
+                        httpNative.formStream(form, part.name, input, part.fileName, part.contentType, length)
+                    }
+                }
+            }
+            httpNative.bodyForm(form)
+        }
+    }
+}
+
+/// The failure the runtime recorded for a request or its body.
+fn failed(sent: httpNative.Native): Unit ! HttpError {
+    let failure = httpNative.failure(sent)
+    if failure.isEmpty() {
+        return
+    }
+    let tab = failure.find("\t").unwrapOr(0)
+    let kind = failure.slice(0, tab).unwrapOr("")
+    let why = failure.slice(tab + 1, failure.length()).unwrapOr("")
+    if kind == "url" {
+        fail HttpError.InvalidUrl(why)
+    } else if kind == "timeout" {
+        fail HttpError.Timeout
+    } else if kind == "connect" {
+        fail HttpError.Connect(why)
+    } else if kind == "body" {
+        fail HttpError.Body(why)
+    }
+    fail HttpError.Protocol(why)
+}

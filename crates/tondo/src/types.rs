@@ -176,6 +176,9 @@ pub enum Handle {
     Regex,
     /// The box a `reflect.Value` keeps its value in (`std.internal.reflect`).
     ReflectBox,
+    /// A value of the runtime, such as an HTTP client or response
+    /// (`std.internal.http`).
+    Native,
 }
 
 impl Handle {
@@ -210,6 +213,7 @@ impl Handle {
             Handle::Clock => "testing.VirtualTime",
             Handle::Regex => "regex.NativeRegex",
             Handle::ReflectBox => "reflect.Box",
+            Handle::Native => "internal.Native",
         }
     }
 
@@ -1565,7 +1569,8 @@ impl Types {
                         | Handle::JsonWriter
                         | Handle::Clock
                         | Handle::Regex
-                        | Handle::ReflectBox,
+                        | Handle::ReflectBox
+                        | Handle::Native,
                         _,
                     ) => {
                         return handle.name().to_string();

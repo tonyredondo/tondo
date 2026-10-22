@@ -922,6 +922,8 @@ pub enum NativeTy {
     /// `Array[String]`
     Strings,
     Char,
+    /// A value of the runtime (`std.internal.http`).
+    Object,
 }
 
 /// A function of an internal module: `std.internal.json`, the runtime's
@@ -965,6 +967,9 @@ pub const NATIVES: &[Native] = {
     }
     const fn meta(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "meta", name, receiver: None, params, result, symbol }
+    }
+    const fn http(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
+        Native { module: "http", name, receiver: None, params, result, symbol }
     }
     const fn codec(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "codec", name, receiver: None, params, result, symbol }
@@ -1068,6 +1073,23 @@ pub const NATIVES: &[Native] = {
         codec("csvFields", &[String, Char], Strings, "tondo_rt_csv_fields"),
         codec("mix", &[Int, Int], Int, "tondo_rt_random_mix"),
         codec("randomBytes", &[Int, Int, Int], Bytes, "tondo_rt_random_bytes"),
+        http("client", &[Int, Int], Object, "tondo_rt_http_client"),
+        http("bodyEmpty", &[], Object, "tondo_rt_http_body_empty"),
+        http("bodyBytes", &[Bytes, String], Object, "tondo_rt_http_body_bytes"),
+        http("bodyStream", &[IoReader, Int, String], Object, "tondo_rt_http_body_stream"),
+        http("form", &[], Object, "tondo_rt_http_form"),
+        http("formText", &[Object, String, String], Unit, "tondo_rt_http_form_text"),
+        http("formBytes", &[Object, String, Bytes, String, String], Unit, "tondo_rt_http_form_bytes"),
+        http("formFile", &[Object, String, String, String], String, "tondo_rt_http_form_file"),
+        http("formStream", &[Object, String, IoReader, String, String, Int], Unit, "tondo_rt_http_form_stream"),
+        http("bodyForm", &[Object], Object, "tondo_rt_http_body_form"),
+        http("send", &[Object, String, String, Strings, Object, Int], Object, "tondo_rt_http_send"),
+        http("failure", &[Object], String, "tondo_rt_http_failure"),
+        http("status", &[Object], Int, "tondo_rt_http_status"),
+        http("head", &[Object], String, "tondo_rt_http_head"),
+        http("headers", &[Object], Strings, "tondo_rt_http_headers"),
+        http("readAll", &[Object], Bytes, "tondo_rt_http_read_all"),
+        http("body", &[Object], IoReader, "tondo_rt_http_body"),
         math("sin", &[Float], Float, "tondo_rt_math_sin"),
         math("cos", &[Float], Float, "tondo_rt_math_cos"),
         math("tan", &[Float], Float, "tondo_rt_math_tan"),

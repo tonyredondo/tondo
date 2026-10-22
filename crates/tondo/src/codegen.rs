@@ -109,6 +109,7 @@ enum Rt {
     ClockAdvance,
     ClockRelease,
     RegexRelease,
+    NativeRelease,
     ReflectBox,
     ReflectRelease,
     ReflectIs,
@@ -321,6 +322,7 @@ impl Rt {
             Rt::ClockAdvance => ("tondo_rt_clock_advance", &[I64, I64, I64], &[]),
             Rt::ClockRelease => ("tondo_rt_clock_release", &[I64], &[]),
             Rt::RegexRelease => ("tondo_rt_regex_release", &[I64], &[]),
+            Rt::NativeRelease => ("tondo_rt_native_release", &[I64], &[]),
             Rt::ReflectBox => ("tondo_rt_reflect_box", &[I64, I64, I64], &[I64]),
             Rt::ReflectRelease => ("tondo_rt_reflect_release", &[I64], &[]),
             Rt::ReflectIs => ("tondo_rt_reflect_is", &[I64, I64], &[I8]),
@@ -1715,6 +1717,7 @@ impl Emit<'_, '_> {
                         Handle::JsonWriter => Rt::JsonWriterRelease,
                         Handle::Clock => Rt::ClockRelease,
                         Handle::Regex => Rt::RegexRelease,
+                        Handle::Native => Rt::NativeRelease,
                         Handle::ReflectBox => Rt::ReflectRelease,
                         _ => Rt::SyncRelease,
                     };

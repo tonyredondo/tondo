@@ -35,9 +35,12 @@ impl Kind {
         }
     }
 
-    /// Whether a file brings the module: `std.testing` brings `std.json`.
+    /// Whether a file brings the module: by importing it, or a standard
+    /// module that imports it, as `std.http` imports `std.json`.
     fn brought(self, file: &ast::Module) -> bool {
-        file.imports.iter().any(|i| source(&i.path).is_some_and(|(n, _)| n == self.module()))
+        let import = format!("import std.{}", self.module());
+        let imports = |text: &str| text.lines().any(|l| l == import || l.starts_with(&format!("{import} ")));
+        file.imports.iter().any(|i| source(&i.path).is_some_and(|(n, text)| n == self.module() || imports(text)))
     }
 
     /// Whether an intrinsic type with these arguments has the

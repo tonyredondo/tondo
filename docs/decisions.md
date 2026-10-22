@@ -978,3 +978,21 @@ text or JSON lines, optional timestamps and context fields as
 makes atomic between tasks. A failed write loses the event rather than
 making every log call fallible; `flush` reports the stream's error. `with`
 is a keyword, so the context method is `withFields`.
+
+## 2026-10-23 — std.http on reqwest, with one handle for runtime values
+
+The API is Tondo (`std/http.to`); the transport is reqwest on a tokio
+runtime of the Tondo runtime's own, with rustls on ring, so HTTP/2, TLS,
+compression, redirects and proxies come from libraries that are used
+everywhere. A task waits for a future the way it waits for host work: the
+future runs on tokio and wakes the task when it ends or is dropped, and a
+cancelled task drops it. A response's body is a stream of `std.io` over the
+body's chunks, so `json()`, `lines()`, `events()` and `copyTo` all stream.
+The runtime's objects (client, body, form, response) reach Tondo as one
+handle type, `internal.Native`, a reference count and a boxed value, rather
+than a handle kind each. Request bodies stay Tondo data until a request
+sends them, so a `Body` is reusable except for what a stream reads. TLS
+trusts the system's roots, or Mozilla's when the system has none. Status
+400 and above is an error that carries the response. A standard module that
+imports `std.json` brings its automatic implementations, as `std.http`
+does.

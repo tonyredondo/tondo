@@ -167,6 +167,8 @@ enum StdModule {
     /// `std.internal.codec`: encodings, digests and entropy, for
     /// `std.encoding`, `std.hash`, `std.random` and `std.uuid`.
     InternalCodec,
+    /// `std.internal.http`: the runtime's HTTP client, for `std.http`.
+    InternalHttp,
 }
 
 /// The types `std.process` declares when imported.
@@ -743,6 +745,11 @@ impl<'a> Checker<'a> {
         self.prelude = module.module_paths.iter().position(|p| p == &["std", "prelude"]).map(|i| i as u32);
         for import in &module.imports {
             self.import(import);
+        }
+        // The network, through a module written in Tondo (27.7).
+        if self.meta && module.module_paths.iter().any(|p| p == &["std", "http"]) {
+            let message = "`std.http` is not available to a provider or generator, which runs while the program compiles and works only on its request";
+            self.diags.error_without_span("E2108", message);
         }
 
         self.declare_types(&module.items);
@@ -1647,6 +1654,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "math"] => StdModule::InternalMath,
             ["std", "internal", "meta"] => StdModule::InternalMeta,
             ["std", "internal", "codec"] => StdModule::InternalCodec,
+            ["std", "internal", "http"] => StdModule::InternalHttp,
             ["std", ..] => {
                 let what = format!("module `{}`", path.join("."));
                 self.diags.unsupported(import.span, &what);
@@ -1731,8 +1739,11 @@ impl<'a> Checker<'a> {
         if module == StdModule::InternalReflect {
             self.types.handle(Handle::ReflectBox, Ty::UNIT);
         }
-        if module == StdModule::InternalText || module == StdModule::InternalCodec {
+        if matches!(module, StdModule::InternalText | StdModule::InternalCodec | StdModule::InternalHttp) {
             self.types.intern(TyKind::Array(Ty::STRING));
+        }
+        if module == StdModule::InternalHttp {
+            self.types.handle(Handle::Native, Ty::UNIT);
         }
         if module == StdModule::Process && self.process.is_none() {
             let prefix = &name.name;
@@ -1844,6 +1855,9 @@ impl<'a> Checker<'a> {
             }
             (Some(ModuleName::Module(StdModule::InternalRegex)), "NativeRegex") => {
                 self.types.lookup(&TyKind::Handle(Handle::Regex, Ty::UNIT))
+            }
+            (Some(ModuleName::Module(StdModule::InternalHttp)), "Native") => {
+                self.types.lookup(&TyKind::Handle(Handle::Native, Ty::UNIT))
             }
             (Some(ModuleName::Module(StdModule::InternalReflect)), "Box") => {
                 self.types.lookup(&TyKind::Handle(Handle::ReflectBox, Ty::UNIT))
@@ -4490,6 +4504,7 @@ impl<'a> Checker<'a> {
             hir::NativeTy::ReflectBox => self.types.handle(Handle::ReflectBox, Ty::UNIT),
             hir::NativeTy::Strings => self.types.intern(TyKind::Array(Ty::STRING)),
             hir::NativeTy::Char => Ty::CHAR,
+            hir::NativeTy::Object => self.types.handle(Handle::Native, Ty::UNIT),
         }
     }
 
@@ -9892,7 +9907,8 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalText
                     | StdModule::InternalMath
                     | StdModule::InternalMeta
-                    | StdModule::InternalCodec),
+                    | StdModule::InternalCodec
+                    | StdModule::InternalHttp),
                 )),
             ) => {
                 if module == StdModule::InternalReflect && *member == "box" {
@@ -9911,6 +9927,7 @@ impl<'a> Checker<'a> {
                     StdModule::InternalMath => "math",
                     StdModule::InternalMeta => "meta",
                     StdModule::InternalCodec => "codec",
+                    StdModule::InternalHttp => "http",
                     _ => "reflect",
                 };
                 let found =

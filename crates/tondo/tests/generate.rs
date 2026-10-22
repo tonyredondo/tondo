@@ -134,6 +134,10 @@ outputs = [\"files\"]
 program = \"gen/dice.to\"
 outputs = [\"dice\"]
 
+[generators.fetch]
+program = \"gen/fetch.to\"
+outputs = [\"fetch\"]
+
 [generators.broken]
 program = \"gen/broken.to\"
 outputs = [\"broken\"]
@@ -164,6 +168,7 @@ outputs = [\"reads\"]
         ("gen/spin.to", generator("    var n = 0\n    for {\n        n += 1\n    }")),
         ("gen/files.to", format!("import std.fs\n{}", write("files", "pub const A: Int = 1"))),
         ("gen/dice.to", generator("    var dice = random.Random.new()\n    var out = request.sourceBuilder()\n    out.write(\"dice\", \"pub const A: Int = {dice.int(1..=6)}\")?\n    out.finish()").replace("import std.meta", "import std.meta\nimport std.random")),
+        ("gen/fetch.to", format!("import std.http\n{}", write("fetch", "pub const A: Int = 1"))),
         ("gen/broken.to", write("broken", "fn (")),
         ("gen/derives.to", write("derives", "derive x.Y for Z")),
         ("gen/hand.to", write("models", "pub const A: Int = 1")),
@@ -177,6 +182,7 @@ outputs = [\"reads\"]
         "error[E2107]: the generator `[generators.spin]` of the package `app`: it spent its budget of 1000 steps; `limits = { steps = \"...\" }` raises it",
         "error[E2108]: the generator `[generators.files]` of the package `app`: it uses what a generator cannot: it does not compile:\nerror[E2108]: `std.fs` is not available to a provider or generator",
         "error[E2108]: the generator `[generators.dice]` of the package `app`: it uses what a generator cannot: it does not compile:\nerror[E2108]: `Random.new`, which gives another value each time, is not available to a provider or generator",
+        "error[E2108]: `std.http` is not available to a provider or generator",
         "error[E2105]: the generator `[generators.broken]` of the package `app`: its output `broken` is not valid Tondo source; `tondo expand` shows it",
         "error[E2105]: the generator `[generators.derives]` of the package `app`: its output `derives` has a `derive`",
         "error[E2106]: the generator `[generators.hand]` of the package `app`: its output `models` would replace a module written by hand",

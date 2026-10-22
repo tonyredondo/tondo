@@ -1487,6 +1487,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.regex` | Core | — | 0.1 | Expresiones regulares Unicode con complejidad y límites declarados |
 | `std.csv` | Core | — | 0.1 | CSV RFC 4180 materializado y en streaming |
 | `std.hash` | Core | — | 0.1 | Digests SHA-1, SHA-256 y SHA-512 y HMAC |
+| `std.http` | Capability-gated | `network` | 0.1 | Cliente HTTP/1.1 y HTTP/2 con TLS, cuerpos en streaming, multipart y Server-Sent Events |
 | `std.random` | Core + gated | `entropy` para sembrar desde el sistema | 0.1 | Generadores pseudoaleatorios sembrados, mezcla, elección y bytes de entropía |
 | `std.uuid` | Core + gated | `entropy` y/o `civil-clock` para generación | 0.1 | UUID, parsing, formatting y generadores explícitos por versión |
 | `std.sync` | Core + gated | `threads` para operaciones cross-thread | 0.1 | Mutex, rwlock, condición, semáforo, once, barrier, atomics y colecciones compartidas linealizables |
@@ -3546,6 +3547,118 @@ pub fn formatRecords(records: Array[Map[String, String]], separator: Char = ',')
   ponen entre comillas el campo que contiene el separador, una comilla o un
   salto de línea. `formatRecords` escribe como cabecera los nombres del primer
   registro.
+
+### 14.24 `std.http`
+
+`std.http` es un cliente HTTP/1.1 y HTTP/2 sobre TLS. Una petición espera
+como cualquier llamada (sección 9): la tarea no ocupa un worker mientras la red
+trabaja, así que muchas tareas pueden tener peticiones en curso.
+
+~~~tondo
+import std.http
+
+let user: User = http.get("https://api.example.com/users/42")?.json()?
+
+let github = http.Client.new(
+    baseUrl: "https://api.github.com",
+    headers: ["Authorization": "Bearer {token}"],
+    timeout: time.seconds(30),
+)
+let repo: Repo = github.get("/repos/acme/tondo", query: ["ref": "main"])?.json()?
+github.post("/upload", body: http.Body.multipart([
+    http.Part.field("title", "Report"),
+    http.Part.file("report", path: "report.pdf"),
+]))?
+
+for event in github.post("/v1/chat", body: http.Body.json(prompt))?.events() {
+    console.print(event?.data)
+}
+~~~
+
+La superficie es:
+
+~~~tondo pseudocode
+pub enum HttpError {
+    InvalidUrl(String)
+    Connect(String)
+    Timeout
+    Status(Response)
+    Body(String)
+    Protocol(String)
+}
+
+pub type Client
+pub fn Client.new(baseUrl: String = "", headers: Map[String, String] = [:],
+    timeout: time.Duration? = none, connectTimeout: time.Duration? = none,
+    redirects: Int = 10): Client
+pub fn Client.get(self, url: String, query: Map[String, String] = [:],
+    headers: Map[String, String] = [:], timeout: time.Duration? = none): Response ! HttpError
+pub fn Client.head(...)                       // como get
+pub fn Client.delete(...)                     // como get
+pub fn Client.post(self, url: String, body: Body? = none, query: Map[String, String] = [:],
+    headers: Map[String, String] = [:], timeout: time.Duration? = none): Response ! HttpError
+pub fn Client.put(...)                        // como post
+pub fn Client.patch(...)                      // como post
+pub fn Client.request(self, method: String, url: String, body: Body? = none, ...): Response ! HttpError
+pub fn get(url: String, ...): Response ! HttpError   // y head, delete, post, put, patch
+
+pub type Body
+pub fn Body.text(text: String, contentType: String = "text/plain; charset=utf-8"): Body
+pub fn Body.bytes(bytes: Array[Byte], contentType: String = "application/octet-stream"): Body
+pub fn Body.json[T: json.Encode](value: T): Body
+pub fn Body.form(fields: Map[String, String]): Body
+pub fn Body.multipart(parts: Array[Part]): Body
+pub fn Body.stream(input: io.Reader, length: Int? = none,
+    contentType: String = "application/octet-stream"): Body
+
+pub type Part
+pub fn Part.field(name: String, value: String): Part
+pub fn Part.file(name: String, path: String, contentType: String = ""): Part
+pub fn Part.bytes(name: String, bytes: Array[Byte], fileName: String, contentType: String = ""): Part
+pub fn Part.stream(name: String, input: io.Reader, fileName: String,
+    contentType: String = "", length: Int? = none): Part
+
+pub type Response
+pub fn Response.status(self): Int
+pub fn Response.reason(self): String
+pub fn Response.url(self): String
+pub fn Response.version(self): String
+pub fn Response.header(self, name: String): String?
+pub fn Response.headerValues(self, name: String): Array[String]
+pub fn Response.headers(self): Map[String, String]
+pub fn Response.text(self): String ! HttpError
+pub fn Response.bytes(self): Array[Byte] ! HttpError
+pub fn Response.json[T: json.Decode](self): T ! HttpError
+pub fn Response.body(self): io.Reader
+pub fn Response.lines(self): Lines            // Iterator[String ! HttpError]
+pub fn Response.events(self): Events          // Iterator[Event ! HttpError]
+pub fn Response.copyTo(self, output: io.Writer): Int ! HttpError
+pub type Event = { event: String, data: String, id: String? }
+~~~
+
+- No hay cliente global. Las funciones del módulo abren una conexión por
+  petición; un `Client` guarda sus conexiones para las siguientes, y su
+  `baseUrl` y sus cabeceras van con cada petición, cuyas cabeceras ganan.
+  `query` se añade a la URL codificado como en `encoding.urlEncode`.
+- Una petición devuelve la respuesta cuando llega su cabecera. Un estado de
+  400 o más es `HttpError.Status`, que lleva la respuesta para leer su cuerpo;
+  así `http.get(url)?.json()?` es correcto sin comprobar el estado.
+- El cuerpo llega mientras se lee, una sola vez: entero con `text`, `bytes` o
+  `json`, que decodifica mientras llega; como `io.Reader` con `body`; por líneas
+  con `lines`; como Server-Sent Events con `events`; o hacia un stream con
+  `copyTo`. `Display` de una respuesta es su estado: `200 OK`.
+- `Body.json` usa `std.json`, cuyas implementaciones automáticas existen para
+  los tipos del programa en cuanto este importa `std.http`. `Body.stream` y
+  `Part.stream` leen el stream mientras envían; sin `length`, el cuerpo va por
+  chunks. `Part.file` lee el archivo mientras envía, con su nombre y el content
+  type de su extensión.
+- La conexión negocia HTTP/2 por ALPN cuando el servidor lo ofrece, sigue hasta
+  `redirects` redirecciones, descomprime gzip, deflate y brotli y respeta los
+  proxies del entorno. TLS confía en los certificados raíz del sistema y, si el
+  sistema no tiene ninguno, en los de Mozilla.
+- `timeout` limita la petición entera, incluido el cuerpo; `connectTimeout`,
+  solo la conexión. Una tarea cancelada abandona su petición.
+- Un provider o generador no puede importar `std.http` (`E2108`).
 
 ---
 
