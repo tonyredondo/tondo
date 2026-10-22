@@ -256,13 +256,20 @@ fn shards_globs_and_orders() {
     let dir = project("testing-shards", &tests);
     let ran = |args: &[&str]| -> Vec<String> {
         let (stdout, _, _) = tondo(&dir, &[&["test"], args].concat());
-        stdout.lines().filter_map(|l| l.strip_prefix("test ")).map(|l| l.split(' ').next().unwrap().to_string()).collect()
+        stdout
+            .lines()
+            .filter_map(|l| l.strip_prefix("test "))
+            .map(|l| l.split(' ').next().unwrap().to_string())
+            .collect()
     };
     // The shards split the tests between them.
     let mut all: Vec<String> = (1..=3).flat_map(|i| ran(&["--shard", &format!("{i}/3")])).collect();
     all.sort();
     assert_eq!(all, ran(&[]));
-    assert_eq!(ran(&["--glob", "app::unit::app::*ta"]), ["app::unit::app::beta", "app::unit::app::delta", "app::unit::app::zeta"]);
+    assert_eq!(
+        ran(&["--glob", "app::unit::app::*ta"]),
+        ["app::unit::app::beta", "app::unit::app::delta", "app::unit::app::zeta"]
+    );
     assert_eq!(ran(&["--glob", "**::group"]), ["app::unit::app::group::inner"]);
     // A seed gives its order every time; lines stay in canonical order.
     let (first, _, _) = tondo(&dir, &["test", "--order", "random", "--seed", "5eed"]);
