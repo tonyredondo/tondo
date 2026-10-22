@@ -13,6 +13,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering, fence};
 
 mod fs;
+mod io;
 mod shared;
 mod sync;
 mod tasks;
@@ -1572,44 +1573,20 @@ struct Output {
     buffer: Vec<u8>,
     /// Whether stdout is a terminal, decided on first use.
     terminal: Option<bool>,
-    /// The first delivery failure nobody has observed yet, as a `flush`
-    /// status. Output written after a failure is dropped.
-    failed: Option<i64>,
+    /// The first delivery failure nobody has observed yet. Output written
+    /// after a failure is dropped.
+    failed: Option<std::io::ErrorKind>,
 }
 
 static STDOUT: Mutex<Output> = Mutex::new(Output { buffer: Vec::new(), terminal: None, failed: None });
 const STDOUT_FLUSH_THRESHOLD: usize = 64 * 1024;
-
-/// `flush` statuses: 0 for success, 1 plus a `ConsoleError` variant without
-/// payload, or `IO_STATUS` plus the `IoError` variant of `ConsoleError.Io`.
-const CLOSED_STATUS: i64 = 2;
-const IO_STATUS: i64 = 4;
-const IO_ERRORS: [&str; 5] = ["Closed", "Cancelled", "InvalidData", "ResourceLimit", "Host"];
-
-fn status_of(error: &std::io::Error) -> i64 {
-    use std::io::ErrorKind;
-    match error.kind() {
-        ErrorKind::BrokenPipe => CLOSED_STATUS,
-        ErrorKind::StorageFull | ErrorKind::OutOfMemory => IO_STATUS + 3,
-        _ => IO_STATUS + 4,
-    }
-}
-
-fn describe_status(status: i64) -> String {
-    match status {
-        1 => "console.ConsoleError.Unavailable".into(),
-        CLOSED_STATUS => "console.ConsoleError.Closed".into(),
-        3 => "console.ConsoleError.Cancelled".into(),
-        _ => format!("console.ConsoleError.Io(io.IoError.{})", IO_ERRORS[(status - IO_STATUS) as usize]),
-    }
-}
 
 impl Output {
     fn deliver(&mut self) {
         if self.failed.is_none() && !self.buffer.is_empty() {
             let mut stdout = std::io::stdout().lock();
             if let Err(error) = stdout.write_all(&self.buffer).and_then(|()| stdout.flush()) {
-                self.failed = Some(status_of(&error));
+                self.failed = Some(error.kind());
             }
         }
         self.buffer.clear();
@@ -1620,7 +1597,7 @@ fn stdout() -> std::sync::MutexGuard<'static, Output> {
     STDOUT.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn console_append(bytes: &[u8], newline: bool) {
+pub(crate) fn console_append(bytes: &[u8], newline: bool) {
     let mut out = stdout();
     out.buffer.extend_from_slice(bytes);
     if newline {
@@ -1638,33 +1615,25 @@ pub fn flush_stdout() {
     stdout().deliver();
 }
 
+/// The first failure to deliver standard output since the last call.
+pub(crate) fn stdout_failure() -> std::io::Result<()> {
+    stdout().failed.take().map_or(Ok(()), |kind| Err(kind.into()))
+}
+
 /// Delivers pending output when the program ends. A failure nobody observed
 /// is reported on stderr and makes the process exit with status 1.
 pub fn finish_stdout() -> Option<i32> {
+    let failed = io::finish();
     let mut out = stdout();
     out.deliver();
-    let status = out.failed.take()?;
-    let _ = writeln!(std::io::stderr(), "error: standard output: {}", describe_status(status));
+    let kind = failed.or(out.failed.take())?;
+    let variant = match kind {
+        std::io::ErrorKind::NotConnected | std::io::ErrorKind::BrokenPipe => "Closed",
+        std::io::ErrorKind::InvalidData => "InvalidData",
+        _ => "Host",
+    };
+    let _ = writeln!(std::io::stderr(), "error: standard output: io.IoError.{variant}");
     Some(1)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_console_print(s: *const Str) {
-    unsafe { console_append(str_bytes(s), false) }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_console_println(s: *const Str) {
-    unsafe { console_append(str_bytes(s), true) }
-}
-
-/// `console.flush()`: delivers pending output now and returns the first
-/// failure since the last `flush` as a status (see `IO_STATUS`).
-#[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_console_flush() -> i64 {
-    let mut out = stdout();
-    out.deliver();
-    out.failed.take().unwrap_or(0)
 }
 
 // ---------------------------------------------------------------------------

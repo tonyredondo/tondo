@@ -1,4 +1,5 @@
 import std.console
+import std.io
 
 enum ParseError {
     Empty
@@ -45,7 +46,7 @@ fn show(r: Int ! ParseError): String {
     }
 }
 
-fn main(): !console.ConsoleError {
+fn main(): !io.IoError {
     console.println(show(sumTwo(1, 2)))
     console.println(show(sumTwo(1, 0)))
     console.println(show(sumTwo(-5, 1)))

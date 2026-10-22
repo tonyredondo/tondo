@@ -486,3 +486,20 @@ now takes its arguments when it is registered.
 The opposite case, work nobody should wait for, is explicit:
 `job.detach()` lets a task run on, and when `main` returns the runtime
 cancels the detached tasks still running and waits for their cleanup.
+
+## 2026-10-22 — One stream type behind files, console and memory
+
+`std.io` has a `Writer`, a `Reader` and a memory `Buffer`. Streams are
+shared handles, as in Go and .NET: copies use the same stream, every
+operation is atomic, and the stream closes with its last copy. That lets
+the console hold one: `console.setOutput(buffer.writer())` captures
+everything printed, from every task, until `console.setOutput(previous)`,
+and a file or a process pipe can stand in the same way. In the runtime a
+`File`, a `Writer` and a `Reader` are the same object, so `file.writer()`
+converts nothing. Work that may block runs on host threads, with no limit
+for reads that can wait indefinitely such as a terminal, but an operation
+the bytes already read ahead, or the room left to gather writes, can
+satisfy runs in place: reading stdin line by line is faster than Python.
+`ConsoleError` is gone; console and streams fail with `io.IoError`
+(`Closed`, `InvalidData`, `Host`), and `console.readLine()` replaces
+invalid UTF-8 rather than failing, since what a person types is text.

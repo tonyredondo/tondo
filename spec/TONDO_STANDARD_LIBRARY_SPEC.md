@@ -908,12 +908,78 @@ ni insertar caracteres de reemplazo. Otros encodings pertenecen a
 
 ### 10.3 Protocolos de I/O
 
-`std.io` reunirá los protocolos de lectura y escritura que comparten archivos,
-procesos y red. Sus operaciones esperan como cualquier llamada (sección 9) y no
-existen variantes `Async`. Leer distingue la lectura parcial de la exacta y el
-final de los datos de un error; escribir distingue lo aceptado de lo drenado.
-Los protocolos se definen cuando un segundo módulo los necesite; hasta entonces
-`std.fs.File` ofrece sus propias operaciones (10.5).
+`std.io` reúne los streams que comparten la consola, los archivos, los procesos
+y la memoria. Un `Writer` es un destino de datos y un `Reader` una fuente; los
+dos son handles compartidos (`Copy`, `Send` y `Share`): sus copias usan el mismo
+stream, cada operación es atómica frente a las demás tareas, y el stream se
+cierra cuando desaparece su última copia o con `close()`. Sus operaciones
+esperan como cualquier llamada (sección 9), sin variantes `Async`, y no ocupan un
+thread del scheduler mientras el host trabaja.
+
+~~~tondo
+import std.io
+
+let buffer = io.Buffer()
+let out = buffer.writer()
+out.writeLine("first")?
+out.write("second")?
+console.println(buffer.text()?)          // "first\nsecond"
+
+let input = io.reader("one\ntwo")
+for {
+    match input.readLine()? {
+        some(line) => console.println(line),
+        none => break,
+    }
+}
+~~~
+
+La superficie es:
+
+~~~tondo pseudocode
+pub enum IoError { Closed, InvalidData, Host }
+pub type Writer
+pub type Reader
+pub type Buffer
+
+pub fn Writer.write(self, text: String): Unit ! IoError
+pub fn Writer.writeLine(self, text: String): Unit ! IoError
+pub fn Writer.writeBytes(self, data: Array[Byte]): Unit ! IoError
+pub fn Writer.flush(self): Unit ! IoError
+pub fn Writer.close(self): Unit ! IoError
+
+pub fn Reader.readLine(self): String? ! IoError
+pub fn Reader.read(self, max: Int): Array[Byte]? ! IoError
+pub fn Reader.readText(self): String ! IoError
+pub fn Reader.close(self): Unit ! IoError
+
+pub fn Buffer(): Buffer
+pub fn Buffer.writer(self): Writer
+pub fn Buffer.reader(self): Reader
+pub fn Buffer.text(self): String ! IoError
+pub fn Buffer.bytes(self): Array[Byte]
+pub fn Buffer.length(self): Int
+pub fn Buffer.clear(self)
+
+pub fn reader(text: String): Reader
+pub fn discard(): Writer
+~~~
+
+- `readLine` devuelve la siguiente línea sin su `\n` ni `\r\n`, o `none` al
+  final; `read(max)` devuelve hasta `max` bytes, o `none` al final; `readText`
+  lee el resto. Las operaciones de texto validan UTF-8 y devuelven
+  `InvalidData`.
+- Un `Writer` de archivo acumula lo escrito y lo entrega al host al llenarse,
+  con `flush()`, con `close()` y al desaparecer su última copia; los errores de
+  ese cierre implícito se pierden.
+- Escribir en un stream cerrado, o en una pipe cuyo lector ya terminó, devuelve
+  `Closed`. `Host` reúne los fallos que el host no permite distinguir.
+- Un `Buffer` es memoria compartida: su `writer()` añade al final, su
+  `reader()` lee lo que contiene en ese momento, y `text()`, `bytes()`,
+  `length()` y `clear()` lo observan o vacían. `io.reader(text)` lee un texto
+  fijo y `io.discard()` acepta todo sin guardarlo.
+- Los archivos (10.5), la consola (19.1) y los procesos (19.2) ofrecen sus
+  streams como `Writer` y `Reader`.
 
 ### 10.4 Paths
 
@@ -1004,6 +1070,8 @@ pub fn File.write(var self, text: String): Unit ! FsError
 pub fn File.writeBytes(var self, data: Array[Byte]): Unit ! FsError
 pub fn File.flush(var self): Unit ! FsError
 pub fn File.close(self): Unit ! FsError
+pub fn File.writer(self): io.Writer
+pub fn File.reader(self): io.Reader
 ```
 
 - `readText`, `readLine`, `File.readText` y `list` validan UTF-8 y devuelven
@@ -1030,7 +1098,10 @@ pub fn File.close(self): Unit ! FsError
 - Un `File` tiene un único dueño y no es `Copy`. Se cierra solo al abandonarse
   y sus escrituras pendientes se vuelcan entonces; los errores de ese cierre
   implícito se pierden. `close()` cierra en el momento y devuelve sus errores;
-  `flush()` vuelca las escrituras pendientes sin cerrar.
+  `flush()` vuelca las escrituras pendientes sin cerrar. `writer()` y
+  `reader()` entregan el archivo como stream de `std.io` (10.3), por ejemplo
+  para redirigir la consola a él; el archivo se cierra con la última copia del
+  stream.
 - `FsError` no incluye paths ni contenido; `Host` reúne los fallos que el host
   no permite distinguir.
 
@@ -3983,57 +4054,66 @@ suite anterior por compatibilidad.
 
 ### 19.1 `std.console`
 
-`std.console` es el owner capability-gated de los tres streams del proceso.
-Importar el módulo no concede la capability `console`; un target que no la
-declare rechaza el programa estáticamente con `E1008`. La superficie pública
-única es:
+`std.console` escribe en la salida y la salida de error del programa y lee su
+entrada:
 
 ~~~tondo
-// Input and Output are concrete types with private representation.
-
-pub fn stdin(): Input ! ConsoleError
-pub fn stdout(): Output ! ConsoleError
-pub fn stderr(): Output ! ConsoleError
-pub fn readLine(input: var Input): String? ! ConsoleError
-pub fn print(value: String)
-pub fn println(value: String)
-pub fn flush(): Unit ! ConsoleError
-pub enum ConsoleError { Unavailable, Closed, Cancelled, Io(std.io.IoError) }
+console.println("hello")
+console.eprintln("warning: no config, using defaults")
+match console.readLine() {
+    some(line) => console.println("read {line}"),
+    none => console.println("no more input"),
+}
 ~~~
 
-`Input` and `Output` are concrete types with private representation. `Input`
-implements `std.io.Reader`; `Output` implements `std.io.Writer`. Their methods
-have the corresponding trait signatures. `readLine` deliberately accepts only
-`Input`: its invalid-UTF-8 behavior requires retaining the cursor, which the
-general `Reader` protocol does not guarantee. Passing `Output` is a static type
-error, not a recoverable stream-direction error.
+La superficie es:
 
-Los handles son tokens distintos y reutilizan los protocolos de `std.io`; no
-hay terminal, locale, encoding o newline ambiental implícito. `readLine` solo
-avanza el cursor después de aceptar una línea UTF-8 completa, devuelve `none`
-en EOF y devuelve un `ConsoleError` tipado sin consumir datos cuando recibe
-UTF-8 inválido. `print` y `println` solo anexan al buffer
-de salida ordenado del runtime y nunca esperan al sistema operativo; `println` añade un único LF. Como solo anexan, no pueden
-fallar y devuelven `Unit`: una llamada es una sentencia ordinaria, sin `_ =`.
+~~~tondo pseudocode
+pub fn print(text: String)
+pub fn println(text: String)
+pub fn eprint(text: String)
+pub fn eprintln(text: String)
+pub fn readLine(): String?
+pub fn flush(): Unit ! io.IoError
 
-El runtime entrega el buffer sin intervención del programa: cuando se llena,
-en cada línea si stdout es una terminal, antes de leer de stdin y al terminar
-el programa. Un programa nunca necesita llamar a `flush`. `flush` es la única
-frontera de entrega explícita, que espera y es terminal para el writer
-correspondiente: entrega lo pendiente y devuelve el primer fallo de entrega
-ocurrido desde el anterior `flush`. Un fallo que el programa no observe se
-reporta al terminar en stderr como `error: standard output: …` y el proceso
-termina con estado 1, salvo que ya termine con otro estado de error o pánico.
-Escribir en una pipe cuyo lector ya cerró termina el proceso sin mensaje, como
-cualquier herramienta del sistema. Partial I/O, límites, progreso, cancelación y
-cleanup siguen las reglas de `std.io`; el adaptador no introduce una segunda
-API sync/async ni duplica buffers. Los mensajes del host se mantienen opacos y
-nunca publican rutas o detalles dependientes del sistema operativo.
+pub fn stdout(): io.Writer
+pub fn stderr(): io.Writer
+pub fn stdin(): io.Reader
+pub fn setOutput(writer: io.Writer)
+pub fn setError(writer: io.Writer)
+pub fn setInput(reader: io.Reader)
+~~~
 
-La evidencia `STD-A-CONSOLE-EVIDENCE-001`
-debe enlazar las siete firmas con HIR/lowering, bytecode/VM, el adaptador de
-capability, partial I/O, errores atómicos, fixture, coste y documentación antes
-de la promoción de S1A.
+- `print` y `println` escriben en la salida actual; `eprint` y `eprintln`, en
+  la salida de error. `println` y `eprintln` añaden un único LF. No esperan al
+  sistema operativo ni pueden fallar: una llamada es una sentencia ordinaria.
+- `readLine` lee la siguiente línea de la entrada actual sin su `\n` ni `\r\n`,
+  o `none` al final. Los bytes que no son UTF-8 se sustituyen por `U+FFFD`; un
+  fallo del host cuenta como final de la entrada.
+- `stdout()`, `stderr()` y `stdin()` devuelven los streams actuales como
+  `io.Writer` e `io.Reader`. `setOutput`, `setError` y `setInput` los
+  reemplazan para todo el programa, todas sus tareas incluidas; lo que el
+  stream anterior tenga pendiente le llega antes:
+
+~~~tondo
+let buffer = io.Buffer()
+let previous = console.stdout()
+console.setOutput(buffer.writer())
+report()
+console.setOutput(previous)
+let captured = buffer.text()?
+~~~
+
+- La salida estándar se acumula en un buffer que el runtime entrega cuando se
+  llena, en cada línea si es una terminal, antes de leer la entrada y al
+  terminar el programa; un programa nunca necesita llamar a `flush`. La salida
+  de error no se acumula. `flush` entrega lo pendiente de la salida actual y
+  devuelve el primer fallo de entrega ocurrido desde el anterior `flush`.
+- Un fallo de entrega que el programa no observe se reporta al terminar en
+  stderr como `error: standard output: …` y el proceso termina con estado 1,
+  salvo que ya termine con otro estado de error o pánico. Escribir en una pipe
+  cuyo lector ya cerró termina el proceso sin mensaje, como cualquier
+  herramienta del sistema.
 
 ### 19.2 `std.process`
 

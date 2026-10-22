@@ -16,7 +16,8 @@
 
 use crate::ast::{BinOp, UnaryOp};
 use crate::hir::{
-    ArrayOp, AtomicOp, Callee, FnId, FsFn, LockMode, MapOp, Mutation, PathFn, Program, SharedOp, StdFn, StrOp, TaskOp,
+    ArrayOp, AtomicOp, Callee, FnId, FsFn, IoFn, LockMode, MapOp, Mutation, PathFn, Program, SharedOp, StdFn, StrOp,
+    TaskOp,
 };
 use crate::mir::{
     Body, Const, Local, Operand, Overlap, Piece, Place, Proj, Rvalue, SelectCase, Statement, Terminator, project,
@@ -77,6 +78,11 @@ enum Rt {
     ConsolePrint,
     ConsolePrintln,
     ConsoleFlush,
+    ConsoleEprint,
+    ConsoleEprintln,
+    ConsoleReadLine,
+    ConsoleStream,
+    ConsoleSet,
     Panic,
     BoxNew,
     BoxRetain,
@@ -198,7 +204,9 @@ enum Rt {
     AtomicExchange,
     AtomicAdd,
     Fs(FsFn),
-    FsFileRelease,
+    Io(IoFn),
+    StreamRelease,
+    BufferRelease,
     PathJoin,
     PathPart,
     PathIsAbsolute,
@@ -239,6 +247,11 @@ impl Rt {
             Rt::ConsolePrint => ("tondo_rt_console_print", &[I64], &[]),
             Rt::ConsolePrintln => ("tondo_rt_console_println", &[I64], &[]),
             Rt::ConsoleFlush => ("tondo_rt_console_flush", &[], &[I64]),
+            Rt::ConsoleEprint => ("tondo_rt_console_eprint", &[I64], &[]),
+            Rt::ConsoleEprintln => ("tondo_rt_console_eprintln", &[I64], &[]),
+            Rt::ConsoleReadLine => ("tondo_rt_console_read_line", &[], &[I64]),
+            Rt::ConsoleStream => ("tondo_rt_console_stream", &[I64], &[I64]),
+            Rt::ConsoleSet => ("tondo_rt_console_set", &[I64, I64], &[]),
             Rt::Panic => ("tondo_rt_panic", &[I32, I64, I64], &[]),
             Rt::BoxNew => ("tondo_rt_box_new", &[I64], &[I64]),
             Rt::BoxRetain => ("tondo_rt_box_retain", &[I64], &[]),
@@ -385,7 +398,27 @@ impl Rt {
                 FsFn::Flush => ("tondo_rt_fs_flush", &[I64], &[I64]),
                 FsFn::Close => ("tondo_rt_fs_close", &[I64], &[I64]),
             },
-            Rt::FsFileRelease => ("tondo_rt_fs_file_release", &[I64], &[]),
+            Rt::Io(function) => match function {
+                IoFn::Write => ("tondo_rt_io_write", &[I64, I64], &[I64]),
+                IoFn::WriteLine => ("tondo_rt_io_write_line", &[I64, I64], &[I64]),
+                IoFn::WriteBytes => ("tondo_rt_io_write_bytes", &[I64, I64], &[I64]),
+                IoFn::Flush => ("tondo_rt_io_flush", &[I64], &[I64]),
+                IoFn::Close => ("tondo_rt_io_close", &[I64], &[I64]),
+                IoFn::ReadLine => ("tondo_rt_io_read_line", &[I64, I64], &[I64]),
+                IoFn::Read => ("tondo_rt_io_read", &[I64, I64, I64], &[I64]),
+                IoFn::ReadText => ("tondo_rt_io_read_text", &[I64, I64], &[I64]),
+                IoFn::Reader => ("tondo_rt_io_reader", &[I64], &[I64]),
+                IoFn::Discard => ("tondo_rt_io_discard", &[], &[I64]),
+                IoFn::BufferNew => ("tondo_rt_io_buffer_new", &[], &[I64]),
+                IoFn::BufferWriter => ("tondo_rt_io_buffer_writer", &[I64], &[I64]),
+                IoFn::BufferReader => ("tondo_rt_io_buffer_reader", &[I64], &[I64]),
+                IoFn::BufferText => ("tondo_rt_io_buffer_text", &[I64, I64], &[I64]),
+                IoFn::BufferBytes => ("tondo_rt_io_buffer_bytes", &[I64], &[I64]),
+                IoFn::BufferLength => ("tondo_rt_io_buffer_length", &[I64], &[I64]),
+                IoFn::BufferClear => ("tondo_rt_io_buffer_clear", &[I64], &[]),
+            },
+            Rt::StreamRelease => ("tondo_rt_stream_release", &[I64], &[]),
+            Rt::BufferRelease => ("tondo_rt_io_buffer_release", &[I64], &[]),
             Rt::PathJoin => ("tondo_rt_path_join", &[I64, I64], &[I64]),
             Rt::PathPart => ("tondo_rt_path_part", &[I64, I8], &[I64]),
             Rt::PathIsAbsolute => ("tondo_rt_path_is_absolute", &[I64], &[I8]),
@@ -1322,7 +1355,8 @@ impl Emit<'_, '_> {
                         Handle::SyncQueue => Rt::SharedQueueRelease,
                         Handle::SyncStack => Rt::SharedStackRelease,
                         Handle::SyncArray => Rt::SharedArrayRelease,
-                        Handle::File => Rt::FsFileRelease,
+                        Handle::File | Handle::Writer | Handle::Reader => Rt::StreamRelease,
+                        Handle::Buffer => Rt::BufferRelease,
                         _ => Rt::SyncRelease,
                     };
                     self.call_rt(rt, &[pointer]);
@@ -2091,10 +2125,38 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             return;
         }
         let value = match rvalue {
+            Rvalue::Call(Callee::Std(StdFn::Fs(FsFn::Exists)), args) => {
+                let values: Vec<ir::Value> = args.iter().map(|a| self.scalar(a)).collect();
+                Val::Scalar(self.e.call_rt(Rt::Fs(FsFn::Exists), &values).unwrap())
+            }
             Rvalue::Call(Callee::Std(StdFn::Fs(function)), args) => {
-                self.fs_call(*function, args, place);
+                self.status_call(Rt::Fs(*function), args, place);
                 return;
             }
+            Rvalue::Call(Callee::Std(StdFn::Io(function)), args) if function.fails() => {
+                self.status_call(Rt::Io(*function), args, place);
+                return;
+            }
+            Rvalue::Call(Callee::Std(StdFn::ConsoleFlush), args) => {
+                self.status_call(Rt::ConsoleFlush, args, place);
+                return;
+            }
+            Rvalue::Call(Callee::Std(StdFn::Io(function)), args) => {
+                let values: Vec<ir::Value> = args.iter().map(|a| self.scalar(a)).collect();
+                Val::Scalar(self.e.call_rt(Rt::Io(*function), &values).unwrap())
+            }
+            Rvalue::Call(Callee::Std(StdFn::ConsoleReadLine), _) => {
+                let line = self.e.call_rt(Rt::ConsoleReadLine, &[]).unwrap();
+                match self.pointer_option(place, ty, Ty::STRING, line) {
+                    Some(value) => value,
+                    None => return,
+                }
+            }
+            Rvalue::Call(Callee::Std(StdFn::ConsoleStream(index)), _) => {
+                let index = self.e.fb.ins().iconst(types::I64, *index as i64);
+                Val::Scalar(self.e.call_rt(Rt::ConsoleStream, &[index]).unwrap())
+            }
+
             Rvalue::Call(Callee::Std(StdFn::Path(function)), args) => {
                 let values: Vec<ir::Value> = args.iter().map(|a| self.scalar(a)).collect();
                 match function {
@@ -2114,11 +2176,6 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         }
                     }
                 }
-            }
-            Rvalue::Call(callee @ Callee::Std(_), args) => {
-                let status = self.call(*callee, args, None).unwrap();
-                self.std_result(place, ty, status);
-                return;
             }
             Rvalue::Call(callee, args) => {
                 let result = if class == Class::Memory { Some(self.pointer_to(place, true)) } else { None };
@@ -3142,30 +3199,6 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         }
     }
 
-    /// Builds the `!ConsoleError` result of a console operation from the
-    /// runtime's status: 0 for `ok`, 1 plus a variant without payload, or 4
-    /// plus the `IoError` of `ConsoleError.Io` (variant 3).
-    fn std_result(&mut self, place: &Place, ty: Ty, status: ir::Value) {
-        const IO_VARIANT: i64 = 3;
-        let base = self.pointer_to(place, true);
-        let failed = self.e.fb.ins().icmp_imm_s(IntCC::NotEqual, status, 0);
-        self.e.fb.ins().store(flags(), failed, base, 0);
-        let TyKind::Result(_, error) = *self.e.cg.types.kind(ty) else { unreachable!() };
-        let slot = self.e.cg.slot(ty, Proj::Variant(ERR, 0));
-        let error_base = self.e.offset(base, slot.offset);
-        let io = self.e.fb.ins().icmp_imm_s(IntCC::SignedGreaterThan, status, IO_VARIANT);
-        let plain = self.e.fb.ins().iadd_imm_s(status, -1);
-        let io_tag = self.e.fb.ins().iconst(types::I64, IO_VARIANT);
-        let tag = self.e.fb.ins().select(io, io_tag, plain);
-        let tag = self.e.fb.ins().ireduce(types::I8, tag);
-        self.e.fb.ins().store(flags(), tag, error_base, 0);
-        // The payload area is unused by the other variants.
-        let payload = self.e.cg.slot(error, Proj::Variant(IO_VARIANT as u32, 0));
-        let io_error = self.e.fb.ins().iadd_imm_s(status, -(IO_VARIANT + 1));
-        let io_error = self.e.fb.ins().ireduce(types::I8, io_error);
-        self.e.fb.ins().store(flags(), io_error, error_base, payload.offset as i32);
-    }
-
     /// The option of a value a runtime function gives as a pointer, null
     /// for `none`; stored at `place` unless returned.
     fn pointer_option(&mut self, place: &Place, ty: Ty, element: Ty, pointer: ir::Value) -> Option<Val> {
@@ -3175,10 +3208,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.removal_result(place, ty, element, out, found)
     }
 
-    /// A call of `std.fs` (see the runtime's `fs`): the runtime returns 0
-    /// with the value in `out`, or the index of the `FsError` variant plus
-    /// one; this builds the `T ! FsError` at `place`.
-    fn fs_call(&mut self, function: FsFn, args: &[Operand], place: &Place) {
+    /// A call of `std.fs`, `std.io` or `console.flush` (see the runtime's
+    /// `fs` and `io`): the runtime returns 0 with the value in `out`, or the
+    /// index of the error variant plus one; this builds the `T ! E` at
+    /// `place`.
+    fn status_call(&mut self, rt: Rt, args: &[Operand], place: &Place) {
         let ty = self.place_ty(place);
         let mut values: Vec<ir::Value> = Vec::new();
         for arg in args {
@@ -3190,11 +3224,6 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             };
             values.push(value);
         }
-        if function == FsFn::Exists {
-            let found = self.e.call_rt(Rt::Fs(function), &values).unwrap();
-            self.write(place, Val::Scalar(found));
-            return;
-        }
         let TyKind::Result(success, _) = *self.e.cg.types.kind(ty) else { unreachable!("a result") };
         // Metadata comes as three words; other values as one pointer.
         let out = self.e.fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 24, 3));
@@ -3203,7 +3232,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         if returns_value {
             values.push(out);
         }
-        let status = self.e.call_rt(Rt::Fs(function), &values).unwrap();
+        let status = self.e.call_rt(rt, &values).unwrap();
         let base = self.pointer_to(place, true);
         let failed = self.e.fb.ins().icmp_imm_s(IntCC::NotEqual, status, 0);
         self.e.fb.ins().store(flags(), failed, base, 0);
@@ -3225,7 +3254,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.fb.switch_to_block(done);
     }
 
-    /// The value a successful `std.fs` call wrote at `out`.
+    /// The value a successful status call wrote at `out`.
     fn fs_value(&mut self, ty: Ty, out: ir::Value) -> Val {
         let word = |this: &mut Self, index: i32| this.e.fb.ins().load(types::I64, flags(), out, index * 8);
         match *self.e.cg.types.kind(ty) {
@@ -3438,9 +3467,22 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             Callee::Std(StdFn::ConsolePrint) => self.e.call_rt(Rt::ConsolePrint, &values),
             Callee::Std(StdFn::ConsolePrintln) => self.e.call_rt(Rt::ConsolePrintln, &values),
-            Callee::Std(StdFn::ConsoleFlush) => self.e.call_rt(Rt::ConsoleFlush, &values),
+            Callee::Std(StdFn::ConsoleSet(index)) => {
+                let index = self.e.fb.ins().iconst(types::I64, index as i64);
+                self.e.call_rt(Rt::ConsoleSet, &[index, values[0]])
+            }
+            Callee::Std(StdFn::ConsoleEprint) => self.e.call_rt(Rt::ConsoleEprint, &values),
+            Callee::Std(StdFn::ConsoleEprintln) => self.e.call_rt(Rt::ConsoleEprintln, &values),
+            Callee::Std(StdFn::Io(IoFn::BufferClear)) => self.e.call_rt(Rt::Io(IoFn::BufferClear), &values),
             Callee::Std(StdFn::TimeSleep) => self.e.call_rt(Rt::Sleep, &values),
-            Callee::Std(StdFn::Fs(_) | StdFn::Path(_)) => unreachable!("built where they are assigned"),
+            Callee::Std(
+                StdFn::Fs(_)
+                | StdFn::Path(_)
+                | StdFn::Io(_)
+                | StdFn::ConsoleFlush
+                | StdFn::ConsoleReadLine
+                | StdFn::ConsoleStream(_),
+            ) => unreachable!("built where they are assigned"),
             Callee::Trait(..) => unreachable!("trait calls are resolved by monomorphization"),
         };
         for (var, slot) in spilled {

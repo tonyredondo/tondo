@@ -1,0 +1,87 @@
+import std.console
+import std.fs
+import std.io
+
+fn report(name: String) {
+    console.println("report for {name}")
+    console.eprintln("a warning about {name}")
+}
+
+fn run(): Unit ! io.IoError {
+    let buffer = io.Buffer()
+    let out = buffer.writer()
+    out.writeLine("first")?
+    out.write("second")?
+    console.println("buffer: {buffer.text()?} ({buffer.length()} bytes)")
+
+    let input = io.reader("one\r\ntwo\nthree")
+    for {
+        match input.readLine()? {
+            some(line) => console.println("line {line}"),
+            none => break,
+        }
+    }
+
+    let captured = io.Buffer()
+    let errors = io.Buffer()
+    let previous = console.stdout()
+    let previousErrors = console.stderr()
+    console.setOutput(captured.writer())
+    console.setError(errors.writer())
+    report("tondo")
+    console.setOutput(previous)
+    console.setError(previousErrors)
+    console.println("captured: {captured.text()?.length()} chars, errors: {errors.text()?}")
+
+    console.setInput(io.reader("typed line\nsecond"))
+    console.println("readLine: {console.readLine()} {console.readLine()} {console.readLine()}")
+
+    let sink = io.discard()
+    sink.writeLine("nothing")?
+    let chunks = buffer.reader()
+    console.println("chunk {chunks.read(3)?}")
+    console.println("rest {chunks.readText()?}")
+    buffer.clear()
+    console.println("cleared {buffer.length()}")
+    console.flush()?
+    console.eprintln("to stderr")
+    return
+}
+
+fn main() {
+    match run() {
+        ok(_) => console.println("done"),
+        err(error) => console.println("failed: {error}"),
+    }
+    match fs.open("io_log.txt", fs.OpenMode.Write) {
+        ok(file) => {
+            let previous = console.stdout()
+            console.setOutput(file.writer())
+            console.println("into the file")
+            console.println("second line")
+            console.setOutput(previous)
+        },
+        err(error) => console.println("{error}"),
+    }
+    match fs.readText("io_log.txt") {
+        ok(text) => console.println("file has: {text}"),
+        err(error) => console.println("{error}"),
+    }
+}
+
+// expect-stdout: buffer: first
+// expect-stdout: second (12 bytes)
+// expect-stdout: line one
+// expect-stdout: line two
+// expect-stdout: line three
+// expect-stdout: captured: 17 chars, errors: a warning about tondo
+// expect-stdout: 
+// expect-stdout: readLine: some(typed line) some(second) none
+// expect-stdout: chunk some([102, 105, 114])
+// expect-stdout: rest st
+// expect-stdout: second
+// expect-stdout: cleared 0
+// expect-stdout: done
+// expect-stdout: file has: into the file
+// expect-stdout: second line
+// expect-stdout: 

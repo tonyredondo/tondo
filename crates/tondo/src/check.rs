@@ -36,7 +36,6 @@ pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics)
         closure_base: 0,
         closure_functions: Vec::new(),
         fn_scopes: Vec::new(),
-        console_error: None,
         duration: None,
         compare_exchange: None,
         fs: None,
@@ -47,6 +46,7 @@ pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics)
         conversion_error: Ty::ERROR,
         collection_error: Ty::ERROR,
         text_error: Ty::ERROR,
+        io_error: Ty::ERROR,
     };
     checker.declare_prelude();
     checker.program(module)
@@ -120,6 +120,7 @@ enum StdModule {
     Sync,
     Fs,
     Path,
+    Io,
 }
 
 /// The types `std.fs` declares when imported.
@@ -406,8 +407,6 @@ struct Checker<'a> {
     closure_functions: Vec<Option<hir::Function>>,
     /// The scope of each function's signature and body.
     fn_scopes: Vec<FnScope>,
-    /// `console.ConsoleError`, once `std.console` is imported.
-    console_error: Option<Ty>,
     /// `time.Duration`, once `std.time` is imported: nanoseconds.
     duration: Option<Ty>,
     /// `sync.CompareExchange`, once `std.sync` is imported: the template
@@ -429,6 +428,8 @@ struct Checker<'a> {
     collection_error: Ty,
     /// `std.text.TextError`.
     text_error: Ty,
+    /// `std.io.IoError`, which the console and files also use.
+    io_error: Ty,
 }
 
 /// Per-function checking state.
@@ -747,6 +748,18 @@ impl Checker<'_> {
             .to_vec();
         self.types.define_adt(id, AdtKind::Enum(variants));
         self.text_error = ty;
+        let (id, ty) = self.types.declare_adt("io.IoError".into());
+        let variants = ["Closed", "InvalidData", "Host"]
+            .map(|name| Variant { name: name.into(), payload: Payload::Unit })
+            .to_vec();
+        self.types.define_adt(id, AdtKind::Enum(variants));
+        self.io_error = ty;
+        for handle in [Handle::Writer, Handle::Reader, Handle::Buffer] {
+            self.types.handle(handle, Ty::UNIT);
+        }
+        for ty in [Ty::STRING, self.types.intern(TyKind::Array(Ty::BYTE))] {
+            self.types.intern(TyKind::Option(ty));
+        }
     }
 
     /// The type a numeric constructor such as `Int8(value)` names (18.6).
@@ -795,6 +808,7 @@ impl Checker<'_> {
             ["std", "sync"] => StdModule::Sync,
             ["std", "fs"] => StdModule::Fs,
             ["std", "path"] => StdModule::Path,
+            ["std", "io"] => StdModule::Io,
             ["std", ..] => {
                 let what = format!("module `{}`", path.join("."));
                 self.diags.unsupported(import.span, &what);
@@ -808,17 +822,6 @@ impl Checker<'_> {
         };
         let name = import.alias.as_ref().unwrap_or(import.path.last().unwrap());
         self.declare_module_name(name, ModuleName::Module(module));
-        if module == StdModule::Console && self.console_error.is_none() {
-            let unit = |name: &str| Variant { name: name.into(), payload: Payload::Unit };
-            let (io_id, io) = self.types.declare_adt("io.IoError".into());
-            let io_variants = ["Closed", "Cancelled", "InvalidData", "ResourceLimit", "Host"].map(unit).to_vec();
-            self.types.define_adt(io_id, AdtKind::Enum(io_variants));
-            let (id, ty) = self.types.declare_adt(format!("{}.ConsoleError", name.name));
-            let mut variants = ["Unavailable", "Closed", "Cancelled"].map(unit).to_vec();
-            variants.push(Variant { name: "Io".into(), payload: Payload::Tuple(vec![io]) });
-            self.types.define_adt(id, AdtKind::Enum(variants));
-            self.console_error = Some(ty);
-        }
         if module == StdModule::Sync && self.compare_exchange.is_none() {
             let param = self.types.declare_param("T".into());
             self.types.param_mut(param).copy = true;
@@ -875,7 +878,13 @@ impl Checker<'_> {
     /// A type of an imported standard module, such as `text.TextError`.
     fn module_type(&self, module: &str, name: &str) -> Option<Ty> {
         match (self.names.get(module), name) {
-            (Some(ModuleName::Module(StdModule::Console)), "ConsoleError") => self.console_error,
+            (Some(ModuleName::Module(StdModule::Io)), name) => match name {
+                "IoError" => Some(self.io_error),
+                "Writer" => self.types.lookup(&TyKind::Handle(Handle::Writer, Ty::UNIT)),
+                "Reader" => self.types.lookup(&TyKind::Handle(Handle::Reader, Ty::UNIT)),
+                "Buffer" => self.types.lookup(&TyKind::Handle(Handle::Buffer, Ty::UNIT)),
+                _ => None,
+            },
             (Some(ModuleName::Module(StdModule::Collections)), "CollectionError") => Some(self.collection_error),
             (Some(ModuleName::Module(StdModule::Text)), "TextError") => Some(self.text_error),
             (Some(ModuleName::Module(StdModule::Time)), "Duration") => self.duration,
@@ -1751,7 +1760,9 @@ impl Checker<'_> {
             }
             // The standard library's error enums display a human description (7.4).
             let fs_error = self.fs.as_ref().map(|fs| fs.error);
-            if [self.conversion_error, self.collection_error, self.text_error].contains(&ty) || fs_error == Some(ty) {
+            if [self.conversion_error, self.collection_error, self.text_error, self.io_error].contains(&ty)
+                || fs_error == Some(ty)
+            {
                 return true;
             }
         }
@@ -2884,6 +2895,68 @@ impl Checker<'_> {
 
     /// The methods of `fs.File` (standard library 10.5): a `var` loan of the
     /// file, except `close`, which takes it.
+    /// A method of an `io.Writer`, `io.Reader` or `io.Buffer` (10.3): shared
+    /// handles, which their methods only read.
+    fn io_method(
+        &mut self,
+        cx: &mut FnCx,
+        receiver: hir::Expr,
+        handle: Handle,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> hir::Expr {
+        let failing = |this: &mut Self, ty: Ty| this.types.intern(TyKind::Result(ty, this.io_error));
+        let bytes = self.types.intern(TyKind::Array(Ty::BYTE));
+        use hir::IoFn as I;
+        let (function, params, result) = match (handle, method.name.as_str()) {
+            (Handle::Writer, "write") => (I::Write, vec![Ty::STRING], failing(self, Ty::UNIT)),
+            (Handle::Writer, "writeLine") => (I::WriteLine, vec![Ty::STRING], failing(self, Ty::UNIT)),
+            (Handle::Writer, "writeBytes") => (I::WriteBytes, vec![bytes], failing(self, Ty::UNIT)),
+            (Handle::Writer, "flush") => (I::Flush, vec![], failing(self, Ty::UNIT)),
+            (Handle::Writer | Handle::Reader, "close") => (I::Close, vec![], failing(self, Ty::UNIT)),
+            (Handle::Reader, "readLine") => {
+                let line = self.types.intern(TyKind::Option(Ty::STRING));
+                (I::ReadLine, vec![], failing(self, line))
+            }
+            (Handle::Reader, "read") => {
+                let chunk = self.types.intern(TyKind::Option(bytes));
+                (I::Read, vec![Ty::INT], failing(self, chunk))
+            }
+            (Handle::Reader, "readText") => (I::ReadText, vec![], failing(self, Ty::STRING)),
+            (Handle::Buffer, "writer") => (I::BufferWriter, vec![], self.types.handle(Handle::Writer, Ty::UNIT)),
+            (Handle::Buffer, "reader") => (I::BufferReader, vec![], self.types.handle(Handle::Reader, Ty::UNIT)),
+            (Handle::Buffer, "text") => (I::BufferText, vec![], failing(self, Ty::STRING)),
+            (Handle::Buffer, "bytes") => (I::BufferBytes, vec![], bytes),
+            (Handle::Buffer, "length") => (I::BufferLength, vec![], Ty::INT),
+            (Handle::Buffer, "clear") => (I::BufferClear, vec![], Ty::UNIT),
+            (Handle::Buffer | Handle::Reader, "write" | "writeLine" | "writeBytes" | "flush") => {
+                let fix =
+                    if handle == Handle::Buffer { "write through `buffer.writer()`" } else { "a reader only reads" };
+                let message = format!("{} has no method `{}`: {fix}", self.display(receiver.ty), method.name);
+                self.diags.error("E1001", method.span, message);
+                return Self::error_expr(span);
+            }
+            (Handle::Buffer | Handle::Writer, "readLine" | "read" | "readText") => {
+                let fix =
+                    if handle == Handle::Buffer { "read through `buffer.reader()`" } else { "a writer only writes" };
+                let message = format!("{} has no method `{}`: {fix}", self.display(receiver.ty), method.name);
+                self.diags.error("E1001", method.span, message);
+                return Self::error_expr(span);
+            }
+            _ => return self.no_method(receiver.ty, method, span),
+        };
+        if args.len() != params.len() {
+            return self.arity_error(span, params.len(), args.len());
+        }
+        let mut values = vec![receiver];
+        for (arg, ty) in args.iter().zip(params) {
+            let value = self.expr(cx, &arg.value, Some(ty));
+            values.push(self.coerce(value, ty));
+        }
+        Self::mk(hir::ExprKind::Call(Callee::Std(StdFn::Io(function)), Vec::new(), values), result, span)
+    }
+
     fn file_method(
         &mut self,
         cx: &mut FnCx,
@@ -2897,6 +2970,12 @@ impl Checker<'_> {
         let bytes = self.types.intern(TyKind::Array(Ty::BYTE));
         use hir::FsFn as F;
         let (function, params, result) = match method.name.as_str() {
+            // The file becomes a stream of `std.io`, the same object.
+            "writer" | "reader" if args.is_empty() => {
+                let handle = if method.name == "writer" { Handle::Writer } else { Handle::Reader };
+                let ty = self.types.handle(handle, Ty::UNIT);
+                return Self::mk(hir::ExprKind::Retype(Box::new(receiver)), ty, span);
+            }
             "readLine" => {
                 let line = self.types.intern(TyKind::Option(Ty::STRING));
                 (F::ReadLine, vec![], failing(self, line))
@@ -6357,6 +6436,9 @@ impl Checker<'_> {
             if handle == Handle::File {
                 return self.file_method(cx, value, method, args, span);
             }
+            if matches!(handle, Handle::Writer | Handle::Reader | Handle::Buffer) {
+                return self.io_method(cx, value, handle, method, args, span);
+            }
             if handle.locked() || matches!(handle, Handle::Semaphore | Handle::Permit | Handle::Barrier) {
                 return self.sync_method(cx, value, handle, state, method, args, span);
             }
@@ -7344,17 +7426,27 @@ impl Checker<'_> {
             ([_, member], Some(ModuleName::Module(StdModule::Console))) => {
                 // `print` and `println` only append to the output buffer and
                 // cannot fail; delivery errors surface through `flush` (19.1).
+                let writer = self.types.handle(Handle::Writer, Ty::UNIT);
+                let reader = self.types.handle(Handle::Reader, Ty::UNIT);
                 let (function, params, result) = match *member {
                     "print" => (StdFn::ConsolePrint, vec![Ty::STRING], Ty::UNIT),
                     "println" => (StdFn::ConsolePrintln, vec![Ty::STRING], Ty::UNIT),
+                    "eprint" => (StdFn::ConsoleEprint, vec![Ty::STRING], Ty::UNIT),
+                    "eprintln" => (StdFn::ConsoleEprintln, vec![Ty::STRING], Ty::UNIT),
                     "flush" => {
-                        let error = self.console_error.unwrap();
-                        (StdFn::ConsoleFlush, Vec::new(), self.types.intern(TyKind::Result(Ty::UNIT, error)))
+                        let failing = self.types.intern(TyKind::Result(Ty::UNIT, self.io_error));
+                        (StdFn::ConsoleFlush, Vec::new(), failing)
                     }
-                    "stdin" | "stdout" | "stderr" | "readLine" => {
-                        let what = format!("`console.{member}`");
-                        return self.unsupported_expr(span, &what);
+                    "readLine" => {
+                        let line = self.types.intern(TyKind::Option(Ty::STRING));
+                        (StdFn::ConsoleReadLine, Vec::new(), line)
                     }
+                    "stdout" => (StdFn::ConsoleStream(0), Vec::new(), writer),
+                    "stderr" => (StdFn::ConsoleStream(1), Vec::new(), writer),
+                    "stdin" => (StdFn::ConsoleStream(2), Vec::new(), reader),
+                    "setOutput" => (StdFn::ConsoleSet(0), vec![writer], Ty::UNIT),
+                    "setError" => (StdFn::ConsoleSet(1), vec![writer], Ty::UNIT),
+                    "setInput" => (StdFn::ConsoleSet(2), vec![reader], Ty::UNIT),
                     _ => {
                         let message = format!("module `console` has no function `{member}`");
                         self.diags.error("E1001", segments[1].span, message);
@@ -7363,6 +7455,22 @@ impl Checker<'_> {
                 };
                 let signature = Signature::simple(params, result);
                 let target = CallTarget::new(Callee::Std(function), signature, expected);
+                self.call_signature(cx, target, None, args, span)
+            }
+            ([_, member], Some(ModuleName::Module(StdModule::Io))) => {
+                use hir::IoFn as I;
+                let (function, params, result) = match *member {
+                    "reader" => (I::Reader, vec![Ty::STRING], self.types.handle(Handle::Reader, Ty::UNIT)),
+                    "discard" => (I::Discard, Vec::new(), self.types.handle(Handle::Writer, Ty::UNIT)),
+                    "Buffer" => (I::BufferNew, Vec::new(), self.types.handle(Handle::Buffer, Ty::UNIT)),
+                    _ => {
+                        let message = format!("module `io` has no function `{member}`");
+                        self.diags.error("E1001", segments[1].span, message);
+                        return Self::error_expr(span);
+                    }
+                };
+                let signature = Signature::simple(params, result);
+                let target = CallTarget::new(Callee::Std(StdFn::Io(function)), signature, expected);
                 self.call_signature(cx, target, None, args, span)
             }
             ([_, member], Some(ModuleName::Module(StdModule::Sync))) => self.sync_new(cx, member, args, expected, span),

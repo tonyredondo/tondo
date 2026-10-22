@@ -1,0 +1,16 @@
+import std.console
+import std.io
+
+fn main() {
+    let buffer = io.Buffer()
+    buffer.write("x")
+    console.setOutput("text")
+    let reader = io.reader("a")
+    reader.writeLine("b")
+    console.print(buffer)
+}
+
+// expect-error: E1001 `io.Buffer` has no method `write`: write through `buffer.writer()`
+// expect-error: E1102 expected `io.Writer`, found `String`
+// expect-error: E1001 `io.Reader` has no method `writeLine`: a reader only reads
+// expect-error: E1102 expected `String`, found `io.Buffer`

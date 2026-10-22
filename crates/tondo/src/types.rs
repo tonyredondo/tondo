@@ -147,6 +147,11 @@ pub enum Handle {
     Guard,
     /// An open `fs.File`; its type is `Unit`.
     File,
+    /// The shared streams of `std.io` and its memory buffer; their type is
+    /// `Unit`.
+    Writer,
+    Reader,
+    Buffer,
 }
 
 impl Handle {
@@ -170,11 +175,14 @@ impl Handle {
             Handle::Barrier => "sync.Barrier",
             Handle::Guard => "lock",
             Handle::File => "fs.File",
+            Handle::Writer => "io.Writer",
+            Handle::Reader => "io.Reader",
+            Handle::Buffer => "io.Buffer",
         }
     }
 
     /// A handle to state shared by all its copies: a `std.sync` value
-    /// other than `Permit`, or a `Receiver`.
+    /// other than `Permit`, a `Receiver`, or a stream or buffer of `std.io`.
     pub fn shared(self) -> bool {
         !matches!(self, Handle::Join | Handle::Group | Handle::Sender | Handle::Permit | Handle::Guard | Handle::File)
     }
@@ -1239,7 +1247,17 @@ impl Types {
             TyKind::Set(element) => format!("Set[{}]", self.display(*element)),
             TyKind::Handle(handle, state) => {
                 let shown = match (handle, self.kind(*state)) {
-                    (Handle::Semaphore | Handle::Permit | Handle::Barrier | Handle::Guard | Handle::File, _) => {
+                    (
+                        Handle::Semaphore
+                        | Handle::Permit
+                        | Handle::Barrier
+                        | Handle::Guard
+                        | Handle::File
+                        | Handle::Writer
+                        | Handle::Reader
+                        | Handle::Buffer,
+                        _,
+                    ) => {
                         return handle.name().to_string();
                     }
                     (Handle::SyncMap, TyKind::Map(key, value)) => {

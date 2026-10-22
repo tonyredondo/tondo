@@ -630,12 +630,65 @@ pub enum StdFn {
     ConsolePrint,
     ConsolePrintln,
     ConsoleFlush,
+    ConsoleEprint,
+    ConsoleEprintln,
+    ConsoleReadLine,
+    /// `console.stdout()`, `stderr()` or `stdin()`: 0, 1 or 2.
+    ConsoleStream(u8),
+    /// `console.setOutput`, `setError` or `setInput`: 0, 1 or 2.
+    ConsoleSet(u8),
+    /// An operation of `std.io` (standard library 10.3).
+    Io(IoFn),
     /// `time.sleep(delay)`: waits without blocking the thread (14.3.3).
     TimeSleep,
     /// An operation of `std.fs` (standard library 10.5).
     Fs(FsFn),
     /// An operation of `std.path` (10.4).
     Path(PathFn),
+}
+
+/// The operations of `std.io`; those of a stream or buffer take it first.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum IoFn {
+    Write,
+    WriteLine,
+    WriteBytes,
+    Flush,
+    Close,
+    ReadLine,
+    Read,
+    ReadText,
+    /// `io.reader(text)`
+    Reader,
+    /// `io.discard()`
+    Discard,
+    /// `io.Buffer()`
+    BufferNew,
+    BufferWriter,
+    BufferReader,
+    BufferText,
+    BufferBytes,
+    BufferLength,
+    BufferClear,
+}
+
+impl IoFn {
+    /// Whether it returns `T ! IoError` from a status (see the runtime's
+    /// `io`), rather than its value.
+    pub fn fails(self) -> bool {
+        matches!(
+            self,
+            IoFn::Write
+                | IoFn::WriteLine
+                | IoFn::WriteBytes
+                | IoFn::Flush
+                | IoFn::Close
+                | IoFn::ReadLine
+                | IoFn::Read
+                | IoFn::ReadText
+                | IoFn::BufferText
+        )
+    }
 }
 
 /// The operations of `std.fs`; those of `File` take it first.
