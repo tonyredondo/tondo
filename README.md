@@ -103,7 +103,7 @@ Every milestone ends with programs that compile to native executables and run.
 | **H7** | `unsafe` functions, blocks, closures and function types; `Pointer[T]` with its six raw operations | Done |
 
 The first cut deliberately leaves out the following. They are part of the
-language and remain planned work, scheduled after H6:
+language and remain planned work, scheduled after H7:
 
 | Milestone | Scope |
 |---|---|
