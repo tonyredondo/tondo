@@ -2,6 +2,7 @@
 //! written in its comments:
 //!
 //! - `// expect-stdout: <line>` — one line of standard output, in order;
+//! - `// expect-stderr: <line>` — a line the standard error contains;
 //! - `// expect-exit: <status>` — process exit status (default 0);
 //! - `// expect-panic: <code>` — a language panic such as `P0005`;
 //! - `// expect-error: <code> [text]` — compilation fails with this
@@ -22,6 +23,7 @@ use std::process::Command;
 #[derive(Default)]
 struct Expect {
     stdout: Vec<String>,
+    stderr: Vec<String>,
     exit: Option<i32>,
     panic: Option<String>,
     errors: Vec<String>,
@@ -37,6 +39,7 @@ fn expectations(source: &str) -> Expect {
         let value = value.strip_prefix(' ').unwrap_or(value).to_string();
         match key {
             "stdout" => expect.stdout.push(value),
+            "stderr" => expect.stderr.push(value),
             "exit" => expect.exit = Some(value.trim().parse().expect("numeric exit status")),
             "panic" => expect.panic = Some(value.trim().into()),
             "error" => expect.errors.push(value.trim().into()),
@@ -117,6 +120,9 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
         && !stderr.contains(&format!("panic[{code}]"))
     {
         return Err(format!("expected panic {code}, stderr:\n{stderr}"));
+    }
+    if let Some(missing) = expect.stderr.iter().find(|line| !stderr.lines().any(|l| l == line.as_str())) {
+        return Err(format!("missing `{missing}` in stderr:\n{stderr}"));
     }
     Ok(())
 }

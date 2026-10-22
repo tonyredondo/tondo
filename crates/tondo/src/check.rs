@@ -8689,7 +8689,7 @@ impl<'a> Checker<'a> {
         let checked = self.types.intern(TyKind::Result(Ty::STRING, self.text_error));
         use hir::StrOp as S;
         let (op, params, result) = match method.name.as_str() {
-            "length" | "byteLength" | "isEmpty" | "chars" => (S::ByteLength, vec![], Ty::INT),
+            "length" | "byteLength" | "isEmpty" => (S::ByteLength, vec![], Ty::INT),
             "get" => (S::Get, vec![Ty::INT], char_option),
             "concat" => (S::Concat, vec![Ty::STRING], Ty::STRING),
             "contains" => (S::Contains, vec![Ty::STRING], Ty::BOOL),
@@ -8714,8 +8714,6 @@ impl<'a> Checker<'a> {
         }
         let kind = match method.name.as_str() {
             "length" => hir::ExprKind::Length(Box::new(values.remove(0))),
-            // A string is its own iterator of `Char` (10.2.2).
-            "chars" => return values.remove(0),
             "isEmpty" => {
                 let length = Self::mk(hir::ExprKind::StrOp(S::ByteLength, values), Ty::INT, span);
                 let zero = Self::mk(hir::ExprKind::Int(0), Ty::INT, span);

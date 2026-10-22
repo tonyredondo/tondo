@@ -1,0 +1,27 @@
+enum ConfigError {
+    Missing(String)
+}
+
+impl Display for ConfigError {
+    fn display(self): String {
+        match self {
+            ConfigError.Missing(path) => "the file `{path}` is missing"
+        }
+    }
+}
+
+enum NetworkError {
+    Down
+}
+
+fn load(path: String): Unit ! ConfigError {
+    fail ConfigError.Missing(path)
+}
+
+fn main(): !(ConfigError | NetworkError) {
+    load("app.toml")?
+}
+
+// A failing main shows its error with `Display`, when the error has one.
+// expect-exit: 1
+// expect-stderr: error: the file `app.toml` is missing

@@ -9,3 +9,4 @@ fn main(): !AppError {
 
 // A fallible main reports the error on stderr and exits with status 1.
 // expect-exit: 1
+// expect-stderr: error: AppError.Bad

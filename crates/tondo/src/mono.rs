@@ -29,6 +29,10 @@ pub fn monomorphize(program: Program, diags: &mut Diagnostics) -> Option<Program
         runaway: None,
         conversions: Vec::new(),
     };
+    // A failing `main` shows its error with `Display` (20.10).
+    if let TyKind::Result(_, error) = *mono.types.kind(functions[main.0 as usize].result) {
+        mono.collect_display(error);
+    }
     let main = mono.instance(main, Vec::new());
     while let Some((id, args, instance)) = mono.queue.pop_front() {
         let generic = &functions[id.0 as usize];
@@ -451,6 +455,7 @@ impl Mono<'_> {
                 vec![element]
             }
             TyKind::Map(key, value) | TyKind::Result(key, value) => vec![key, value],
+            TyKind::Union(members) => members,
             TyKind::Adt(_) => {
                 if !self.display.contains_key(&ty)
                     && let Resolved::Fn(id, types) = self.resolve(DISPLAY, 0, &[ty])

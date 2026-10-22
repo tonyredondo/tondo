@@ -7008,11 +7008,13 @@ en 20.11.
 - Alcanzar el final o devolver `()` termina con éxito.
 - Un éxito corresponde al código de proceso `0`.
 - Un error no manejado de `main`, explícito o implícito, corresponde a un código de fallo no cero; el valor canónico inicial es `1`.
-- El runtime escribe una representación diagnóstica del error en stderr.
+- El runtime escribe en stderr `error: ` y el error: su `Display` cuando el tipo
+  lo implementa (en una unión, el del miembro que contiene); si no, su texto
+  para un `String` o `Tipo.Variante` para un enum.
 - Un pánico utiliza un código de fallo distinto cuando la plataforma lo permita y termina solo después del unwind estructurado.
 - Antes de terminar, el scope raíz cancela y espera cualquier hijo estructurado pendiente.
 
-La representación diagnóstica por defecto incluye al menos el nombre del tipo y sus variantes, pero no constituye una interfaz de usuario estable. No obtiene por reflection acceso a campos privados ni revela contenido opaco; cualquier payload adicional requiere un contrato de formato explícito definido por la librería. Una aplicación que necesite mensajes o códigos concretos debe manejar el error dentro de `main` y utilizar la API de proceso.
+La representación sin `Display` incluye al menos el nombre del tipo y su variante, pero no constituye una interfaz de usuario estable. No obtiene por reflection acceso a campos privados ni revela contenido opaco. Una aplicación da su mensaje implementando `Display` para su error; para un código de salida concreto, maneja el error dentro de `main` y utiliza la API de proceso.
 
 ### 20.11 Perfiles de host y capacidades de target
 

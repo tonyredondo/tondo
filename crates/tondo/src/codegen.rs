@@ -1201,8 +1201,9 @@ impl Codegen<'_> {
                     }
                     _ => Val::Zero,
                 };
-                let description = e.describe(error, error_value);
+                let description = e.describe(error, error_value, true);
                 e.call_rt(Rt::ReportError, &[description]);
+                e.call_rt(Rt::StrRelease, &[description]);
                 e.refcount(result, value, true);
                 let one = e.fb.ins().iconst(types::I32, 1);
                 e.fb.ins().return_(&[one]);
@@ -1596,12 +1597,26 @@ impl Emit<'_, '_> {
 
     /// A string describing an error that reached the end of `main`: its text
     /// for a `String`, `Type.Variant` for an enum, otherwise the type name.
-    fn describe(&mut self, ty: Ty, value: Val) -> ir::Value {
+    /// With `display`, a type's own `Display` comes first, and the string
+    /// is owned.
+    fn describe(&mut self, ty: Ty, value: Val, display: bool) -> ir::Value {
+        if display && let Some(&id) = self.cg.display.get(&ty) {
+            let args: Vec<ir::Value> = match value {
+                Val::Scalar(v) | Val::Memory(v) => vec![v],
+                Val::Zero => Vec::new(),
+            };
+            let callee = self.cg.module.declare_func_in_func(self.cg.functions[id.0 as usize], self.fb.func);
+            let call = self.fb.ins().call(callee, &args);
+            return self.fb.inst_results(call)[0];
+        }
         let types = self.cg.types;
         let repr = types.repr(ty);
         if repr == Ty::STRING
             && let Val::Scalar(text) = value
         {
+            if display {
+                self.call_rt(Rt::StrRetain, &[text]);
+            }
             return text;
         }
         if let Some(members) = types.members(repr) {
@@ -1622,7 +1637,7 @@ impl Emit<'_, '_> {
                     }
                     _ => Val::Zero,
                 };
-                let description = self.describe(member, payload);
+                let description = self.describe(member, payload, display);
                 self.fb.ins().jump(done, &[description.into()]);
                 self.fb.switch_to_block(next);
             }
@@ -1854,7 +1869,7 @@ fn define_glue(cg: &mut Codegen, kind: Glue, ty: Ty, func: &mut ir::Function, fb
                     }
                     _ => Val::Zero,
                 };
-                let description = e.describe(error, error_value);
+                let description = e.describe(error, error_value, false);
                 let error_type = e.cg.types.display(error);
                 let error_type = e.string_ptr(&error_type);
                 e.call_rt(Rt::TestError, &[description, error_type]);
