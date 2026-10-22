@@ -1,0 +1,158 @@
+// std.log (standard library 14.18): structured logging through an explicit
+// logger, a line per event, as text or JSON.
+
+import std.console as __console
+import std.io as __io
+import std.json as __json
+import std.time as __time
+
+/// How much an event matters, from least to most.
+pub enum Level {
+    Trace
+    Debug
+    Info
+    Warn
+    Error
+}
+
+impl Display for Level {
+    fn display(self): String {
+        match self {
+            Level.Trace => "trace"
+            Level.Debug => "debug"
+            Level.Info => "info"
+            Level.Warn => "warn"
+            Level.Error => "error"
+        }
+    }
+}
+
+/// `Text` writes `time LEVEL message key=value ...`, quoting values with
+/// spaces; `Json` writes an object per line.
+pub enum Format {
+    Text
+    Json
+}
+
+/// Writes events of its level or above, with its context fields. There is
+/// no global logger: a program makes its own and passes it on.
+pub type Logger = {
+    priv output: __io.Writer
+    priv minimum: Level
+    priv format: Format
+    priv timestamps: Bool
+    priv context: Map[String, String]
+}
+
+/// A logger to `output`, or to standard error without one.
+/// `timestamps: false` leaves out the time, for output that tests compare.
+pub fn Logger.new(
+    output: __io.Writer? = none,
+    level: Level = Level.Info,
+    format: Format = Format.Text,
+    timestamps: Bool = true,
+): Logger {
+    let stream = match output {
+        some(stream) => stream
+        none => __console.stderr()
+    }
+    Logger { output: stream, minimum: level, format, timestamps, context: [:] }
+}
+
+/// The same logger with more fields in every event it writes.
+pub fn Logger.withFields(self, fields: Map[String, String]): Logger {
+    var context = self.context
+    for (key, value) in fields {
+        context[key] = value
+    }
+    Logger { output: self.output, minimum: self.minimum, format: self.format, timestamps: self.timestamps, context }
+}
+
+/// Whether events of this level are written: to skip building costly
+/// fields.
+pub fn Logger.isEnabled(self, level: Level): Bool {
+    rank(level) >= rank(self.minimum)
+}
+
+/// Writes an event, if its level is enabled. A stream that fails loses the
+/// event; `flush` reports it.
+pub fn Logger.log(self, level: Level, message: String, fields: Map[String, String] = [:]) {
+    if not self.isEnabled(level) {
+        return
+    }
+    var all = self.context
+    for (key, value) in fields {
+        all[key] = value
+    }
+    let time = if self.timestamps { some("{__time.utcNow()}") } else { none }
+    let line = match self.format {
+        Format.Text => text(time, level, message, all)
+        Format.Json => object(time, level, message, all)
+    }
+    _ = self.output.writeLine(line)
+}
+
+pub fn Logger.trace(self, message: String, fields: Map[String, String] = [:]) {
+    self.log(Level.Trace, message, fields)
+}
+
+pub fn Logger.debug(self, message: String, fields: Map[String, String] = [:]) {
+    self.log(Level.Debug, message, fields)
+}
+
+pub fn Logger.info(self, message: String, fields: Map[String, String] = [:]) {
+    self.log(Level.Info, message, fields)
+}
+
+pub fn Logger.warn(self, message: String, fields: Map[String, String] = [:]) {
+    self.log(Level.Warn, message, fields)
+}
+
+pub fn Logger.error(self, message: String, fields: Map[String, String] = [:]) {
+    self.log(Level.Error, message, fields)
+}
+
+/// Hands what was written to the stream's host.
+pub fn Logger.flush(self): Unit ! __io.IoError {
+    self.output.flush()?
+}
+
+fn rank(level: Level): Int {
+    match level {
+        Level.Trace => 0
+        Level.Debug => 1
+        Level.Info => 2
+        Level.Warn => 3
+        Level.Error => 4
+    }
+}
+
+fn text(time: String?, level: Level, message: String, fields: Map[String, String]): String {
+    var parts: Array[String] = []
+    match time {
+        some(at) => parts.push(at)
+        none => {}
+    }
+    parts.push("{level}".toUpper())
+    parts.push(message)
+    for (key, value) in fields {
+        let plain = not value.isEmpty() and not value.contains(" ") and not value.contains("=") and not value.contains("\"")
+            and not value.contains("\n")
+        parts.push(if plain { "{key}={value}" } else { "{key}={__json.encode(value)}" })
+    }
+    parts.join(" ")
+}
+
+fn object(time: String?, level: Level, message: String, fields: Map[String, String]): String {
+    var parts: Array[String] = []
+    match time {
+        some(at) => parts.push("\"time\":\"{at}\"")
+        none => {}
+    }
+    parts.push("\"level\":\"{level}\"")
+    parts.push("\"message\":{__json.encode(message)}")
+    for (key, value) in fields {
+        parts.push("{__json.encode(key)}:{__json.encode(value)}")
+    }
+    "{{{parts.join(",")}}}"
+}

@@ -1491,7 +1491,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.uuid` | Core + gated | `entropy` y/o `civil-clock` para generación | 0.1 | UUID, parsing, formatting y generadores explícitos por versión |
 | `std.sync` | Core + gated | `threads` para operaciones cross-thread | 0.1 | Mutex, rwlock, condición, semáforo, once, barrier, atomics y colecciones compartidas linealizables |
 | `std.executor` | Core + gated | `threads` para pools bloqueantes | 0.1 | Pools acotados, actores y bridge de trabajo bloqueante sobre las tareas del lenguaje |
-| `std.log` | Core + gated | `console`, `filesystem` o `network` por sink | 0.1 | Eventos estructurados, niveles, backpressure y sinks explícitos |
+| `std.log` | Core | — | 0.1 | Eventos estructurados con niveles, en texto o JSON, sobre un `io.Writer` |
 | `std.console` | Capability-gated | `console` | 0.1 | stdin, stdout, stderr, texto, bytes y flushing |
 | `std.env` | Hosted | — | 0.1 | Argumentos, entorno y directorio de trabajo |
 | `std.fs` | Hosted | — | 0.1 | Filesystem, metadata y archivos |
@@ -1539,20 +1539,7 @@ actualizar esta especificación y el tracker antes de implementar.
 - `std.uuid` separa representación y parsing core de cualquier generador que
   requiera `entropy` o `civil-clock`; v7 nunca usa el `clock` monotónico como
   sustituto del reloj UTC.
-- `std.log` define eventos puros en core; cada sink declara sus capabilities y
-  política de backpressure sin alterar silenciosamente el control del programa.
-  FileSink.create waits on the host: it opens its explicit path in the constructor
-  and returns opening errors there. STD-LOG-HOST-001 implements the production
-  hosted sink boundary, including both command streams and their observation
-  adapters. Native logging remains a separate gate.
-  Logging Append atomically creates a missing file or appends to an existing
-  file; Truncate creates or truncates. Neither mode creates parent directories.
-  The existing-only std.fs.OpenMode.Append contract is unchanged.
-  Builtin sinks admit explicit queued records, drained by flush, consuming close,
-  and Block on a full queue. Records are written separately without a worker.
-  Hosted commands preserve the selected stdout/stderr stream and previously
-  committed records before runtime diagnostics, including VM resource failure.
-  A terminal VM resource failure does not manufacture user cleanup.
+- `std.log` escribe sobre un `io.Writer` explícito; no existe logger global.
 - Los argumentos del programa se obtienen mediante `std.env.args()`.
 - `std.env` no lee el entorno durante la compilación.
 - `std.testing` solo existe en source sets de test y no forma parte de producción.
@@ -2078,121 +2065,6 @@ separate conformance fixtures. Its `verified-public-hosted-usage` state is
 supported by source-bound quality, the complete functional gate and
 exact-checkout publication CI. Native networking ABI/AOT and public release
 remain outside this usage promotion.
-
-#### 14.4.7 `std.encoding`
-
-`std.encoding` es el owner único de los encodings binario-texto de STD-0.1B.
-No es un facade de JSON, MessagePack, Protobuf, YAML o TOML: esos módulos
-conservan sus propios wire models y solo reutilizan la misma política Base64
-cuando una anotación lo solicita. `std.encoding` no requiere capability y su
-import no realiza I/O.
-
-El contrato machine-readable y sus checks negativos viven en
-[`testing/stdlib-encoding.json`](./testing/stdlib-encoding.json),
-[`docs/contracts/stdlib-encoding.md`](./docs/contracts/stdlib-encoding.md),
-[`scripts/stdlib-encoding-check.sh`](./scripts/stdlib-encoding-check.sh) y
-[`scripts/stdlib-encoding-test.sh`](./scripts/stdlib-encoding-test.sh). La
-frontera de fiabilidad del bloque de tests queda registrada en
-[`testing/stdlib-encoding-test.json`](./testing/stdlib-encoding-test.json),
-[`docs/contracts/stdlib-encoding-test.md`](./docs/contracts/stdlib-encoding-test.md),
-[`scripts/stdlib-encoding-test-check.sh`](./scripts/stdlib-encoding-test-check.sh),
-[`scripts/stdlib-encoding-test-test.sh`](./scripts/stdlib-encoding-test-test.sh) y
-[`scripts/stdlib-encoding-fuzz.sh`](./scripts/stdlib-encoding-fuzz.sh). La
-implementación hosted queda registrada además por
-[`scripts/stdlib-encoding-implementation-check.sh`](./scripts/stdlib-encoding-implementation-check.sh),
-[`scripts/stdlib-encoding-implementation-test.sh`](./scripts/stdlib-encoding-implementation-test.sh),
-[`scripts/stdlib-encoding-implementation.sh`](./scripts/stdlib-encoding-implementation.sh)
-y la fixture de VM. Estos artefactos cierran el diseño B0 y la ruta scalar
-hosted, pero no promocionan una API pública ni un backend nativo.
-El baseline de performance queda registrado por
-[`testing/stdlib-encoding-performance.json`](./testing/stdlib-encoding-performance.json),
-[`docs/contracts/stdlib-encoding-performance.md`](./docs/contracts/stdlib-encoding-performance.md),
-[`scripts/stdlib-encoding-performance-check.sh`](./scripts/stdlib-encoding-performance-check.sh),
-[`scripts/stdlib-encoding-performance-test.sh`](./scripts/stdlib-encoding-performance-test.sh) y
-[`scripts/stdlib-encoding-performance.sh`](./scripts/stdlib-encoding-performance.sh).
-Mide únicamente la ruta scalar del bridge VM hosted en 16 workloads; declara
-explícitamente como no medidos el ABI nativo, SIMD, multiversionado, tamaño de
-código y lowering AOT.
-La conformance VM/native queda registrada por
-[`testing/stdlib-encoding-conformance.json`](./testing/stdlib-encoding-conformance.json),
-[`docs/contracts/stdlib-encoding-conformance.md`](./docs/contracts/stdlib-encoding-conformance.md),
-[`scripts/stdlib-encoding-conformance-check.sh`](./scripts/stdlib-encoding-conformance-check.sh),
-[`scripts/stdlib-encoding-conformance-test.sh`](./scripts/stdlib-encoding-conformance-test.sh),
-[`scripts/stdlib-encoding-conformance.sh`](./scripts/stdlib-encoding-conformance.sh) y
-la fixture/sonda compartidas. Cierra seis casos de bytes, streaming, errores,
-límites y cleanup sobre VM hosted y el ABI nativo privado; no promociona
-Cranelift/AOT, layout FFI ni una ruta SIMD.
-La documentación de uso queda registrada por
-[`scripts/stdlib-encoding-doc-check.sh`](./scripts/stdlib-encoding-doc-check.sh),
-[`scripts/stdlib-encoding-doc-test.sh`](./scripts/stdlib-encoding-doc-test.sh) y
-la fixture `tests/runtime/m11-std-encoding-doc-001.to`; `STD-ENCODING-DOC-001`
-cierra una única forma por policy, errores, costes y ejemplos materializados o
-streaming sin cambiar la frontera hosted/native.
-
-La superficie canónica es:
-
-~~~tondo pseudocode
-pub enum Base64Alphabet { Standard, UrlSafe }
-pub enum Base64Padding { Required, Omitted }
-pub enum HexCase { Lower, Upper, Any }
-
-pub type EncodingError = { kind: EncodingErrorKind, offset: Int }
-pub type EncodingLimits = { maxInputBytes: Int, maxOutputBytes: Int }
-pub type Base64Options = { alphabet: Base64Alphabet, padding: Base64Padding, limits: EncodingLimits }
-pub type HexOptions = { case: HexCase, limits: EncodingLimits }
-
-pub fn EncodingLimits.defaults(): EncodingLimits
-pub fn EncodingLimits.create(maxInputBytes: Int, maxOutputBytes: Int): EncodingLimits ! EncodingError
-pub fn Base64Options.standard(limits: EncodingLimits): Base64Options
-pub fn Base64Options.urlSafe(limits: EncodingLimits): Base64Options
-pub fn Base64Options.urlSafeUnpadded(limits: EncodingLimits): Base64Options
-pub fn Base64Options.encode(self, input: Array[Byte]): Array[Byte] ! EncodingError
-pub fn Base64Options.decode(self, input: Array[Byte]): Array[Byte] ! EncodingError
-pub fn Base64Options.encodeTo(self, input: Array[Byte], var output: std.io.Writer): Unit ! EncodingError
-pub fn Base64Options.decodeFrom(self, var input: std.io.Reader): Array[Byte] ! EncodingError
-pub fn Base64Options.encoder(self): Base64Encoder ! EncodingError
-pub fn Base64Options.decoder(self): Base64Decoder ! EncodingError
-
-pub fn HexOptions.lower(limits: EncodingLimits): HexOptions
-pub fn HexOptions.upper(limits: EncodingLimits): HexOptions
-pub fn HexOptions.anyCase(limits: EncodingLimits): HexOptions
-pub fn HexOptions.encode(self, input: Array[Byte]): Array[Byte] ! EncodingError
-pub fn HexOptions.decode(self, input: Array[Byte]): Array[Byte] ! EncodingError
-pub fn HexOptions.encodeTo(self, input: Array[Byte], var output: std.io.Writer): Unit ! EncodingError
-pub fn HexOptions.decodeFrom(self, var input: std.io.Reader): Array[Byte] ! EncodingError
-pub fn HexOptions.encoder(self): HexEncoder ! EncodingError
-pub fn HexOptions.decoder(self): HexDecoder ! EncodingError
-~~~
-
-Base64 usa RFC 4648 estándar o URL-safe, con padding requerido u omitido
-seleccionado explícitamente. El encoder es siempre canónico; el decoder es
-estricto respecto al alfabeto, padding, bits de relleno, whitespace y datos
-posteriores. Hexadecimal emite dos dígitos ASCII por byte; `Lower` y `Upper`
-son estrictas y `Any` acepta ambas cases pero siempre emite lowercase. No se
-aceptan prefijos `0x`, separadores, MIME line-wrapping, autodetección ni
-reemplazo de caracteres.
-
-Las operaciones materializadas son collectors de los mismos estados
-incrementales `Base64Encoder`/`Base64Decoder`/`HexEncoder`/`HexDecoder`.
-`push` devuelve solo quanta completos, `finish` valida el carry y publica el
-último fragmento; dividir por cualquier frontera produce el mismo output y
-error. Los handles son afines y quedan terminales tras `finish` o error. Los
-límites acumulados de input/output se comprueban antes de publicar; un fallo de
-límite en `push` no cambia el carry. Los adapters `Reader`/`Writer` usan
-`std.io` y el único modelo de espera de Tondo, sin APIs `Async` duplicadas.
-
-La ruta escalar es el oráculo. SIMD y multiversionado solo pueden promoverse
-después de demostrar equivalencia de bytes, errores, offsets, límites y
-terminalidad. `STD-ENCODING-IMPL-001` ya verifica la ruta hosted scalar y
-`STD-ENCODING-TEST-001` cierra el modelo independiente, los vectores, las
-fronteras de chunk, los límites, los errores byte-exactos y el fuzz acotado.
-`STD-ENCODING-PERF-001` fija el baseline scalar hosted y
-`STD-ENCODING-CONF-001` verifica interoperabilidad VM/native mediante handles
-opacos y el mismo kernel scalar. Como no existe una ruta SIMD optimizada,
-`simd` permanece `not-measured-no-optimized-route`; native AOT sigue
-explícitamente sin reclamar. `STD-ENCODING-DOC-001` queda cerrado por la guía
-ejecutable y sus seis familias de ejemplos; el siguiente bloque del owner es
-`STD-YAML-IMPL-001`.
 
 ### 14.5 El prelude y `std.math`
 
@@ -3463,111 +3335,52 @@ pub fn Uuid.compare(self, other: Uuid): Int
 
 ### 14.18 `std.log`
 
-`std.log` separa la construcción pura de un evento de su entrega a un sink.
-`LogLevel` es el orden cerrado `Trace < Debug < Info < Warn < Error`; no existe
-`Fatal`, porque terminar el programa desde logging ocultaría control de flujo.
-`LogEvent` contiene level, target UTF-8 no vacío, mensaje, fields estructurados
-y un `DateTime?` opcional. El módulo nunca consulta el reloj por su
-cuenta: si el caller quiere timestamp debe obtenerlo explícitamente mediante
-`std.time` y pasarlo al evento.
+`std.log` escribe eventos estructurados, una línea por evento, en texto o JSON.
+No hay logger global: el programa crea el suyo y lo pasa a quien lo usa.
 
-`LogValue` admite `Null`, booleanos, enteros, floats finitos, texto, bytes,
-arrays, objects y `Redacted`. `Fields` es un mapa ordenado de claves UTF-8
-únicas; duplicados, controles, `NUL`, límites y mutaciones parciales se
-rechazan antes de publicar. `Text` escribe una única línea escapada y
-`JsonLines` usa el schema `tondo-log-event-0.1/1`, orden raíz fijo y fields en
-orden UTF-8; bytes se representan en Base64 RFC 4648 y `Redacted` nunca se
-obtiene por heurística.
+~~~tondo
+import std.log
 
-El protocolo estático `LogSink` ofrece `write`, `flush` y `close`. `Logger` es
-un owner explícito de un sink: no existe logger global, fallback implícito a
-stderr, worker detached, queue ilimitada o configuración desde environment.
-`ConsoleSink` requiere `console`, `FileSink` requiere `filesystem` y un sink
-de red implementa el mismo protocolo sobre un writer/transporte explícito con
-`network`; DNS, TLS y retry pertenecen a sus owners. `Block` espera capacidad, `Reject` devuelve `LogError.Backpressure` sin consumir el evento y
-`Drop` devuelve `LogReceipt.Dropped`. Todo sink es finito y sus llamadas
-concurrentes se linearizan por orden de commit; `flush` y `close` conservan
-errores, cancelación y cleanup visibles.
+let logger = log.Logger.new(level: log.Level.Debug)
+logger.info("server started", ["port": "8080"])
+let request = logger.withFields(["request": "{id}"])
+request.warn("slow query", ["table": "users", "took": "{elapsed}"])
+// 2026-10-23T09:12:03.5Z WARN slow query request=42 table=users took=1.2s
+~~~
 
-The protocol uses a plain `LogSink` trait. `Logger[S: LogSink + Share]`
-declares its bounds explicitly.
-`LogSink.close(sink: Self)` and `Logger[S].close(logger: Logger[S])` consume
-their values. `Logger[S].create` may wait, including for the cleanup of a
-sink when construction fails. Builtin sinks are affine; user sinks retain
-their own structural capabilities, and the logger owns one logical value.
-`LogReceipt.Filtered` identifies an event excluded by the minimum-level
-filter without sink or queue admission. Validation and formatting complete
-before any write. A later `Io` remains visible, can leave a physical prefix
-and makes the sink terminal. Cleanup errors remain visible through terminal
-logger close. These guarantees do not require transactional stdout or files.
+La superficie es:
 
-La superficie no duplica APIs async: `Logger.emit`, `flush` y `close` esperan
-como cualquier llamada; no hay
-`logAsync`, polling ni `std.log.select`. El core de eventos no requiere host,
-las capabilities solo aparecen en los constructores de sinks y la ausencia
-produce `E1008`. El oracle scalar recorre valores anidados con frames
-explícitos; SIMD y buffers especializados solo se promueven tras equivalencia
-de bytes, errores, allocations y límites.
+~~~tondo pseudocode
+pub enum Level { Trace, Debug, Info, Warn, Error }
+pub enum Format { Text, Json }
+pub type Logger
 
-El contrato machine-readable, la documentación normativa y los negativos son
-[`testing/stdlib-log.json`](./testing/stdlib-log.json),
-[`docs/contracts/stdlib-log.md`](./docs/contracts/stdlib-log.md),
-[`scripts/stdlib-log-check.sh`](./scripts/stdlib-log-check.sh) y
-[`scripts/stdlib-log-test.sh`](./scripts/stdlib-log-test.sh). El diseño B0
-queda cerrado por `STD-LOG-001`. `STD-LOG-IMPL-001` verifies 19 public ordinary
-Tondo core operations and the custom `LogSink` protocol, backed by two private
-pure construction helpers and bounded scalar formatting. Its
-[implementation register](./testing/stdlib-log-implementation.json) and
-[contract](./docs/contracts/stdlib-log-implementation.md) record immutable
-snapshots, generic affine ownership, backpressure, cancellation, terminal Io
-and bounded VM admission. Source-bound quality measures 306,695 of 334,764
-lines (91.6153%), preserves every global/risk 80% line/function/region floor
-and catches all six selected critical mutants; all 2,879 workspace Rust tests
-pass. `STD-LOG-HOST-001` implements public ConsoleSink/FileSink, explicit
-bounded record queues, short-write offsets, cancellation, terminal Io and
-caller-owned network sinks. Its [host register](./testing/stdlib-log-host.json)
-and [contract](./docs/contracts/stdlib-log-host.md) retain 307,658 of 335,744
-covered lines (91.634698%), every global/risk 80% dimension, all six critical
-mutants caught and 2,898 workspace Rust tests passing. Exact earlier implementation
-source `96cd3c62` passes all 364 strict Linux checks in CI run `37897332476`;
-normal portable/fuzz skips do not establish global portable success.
-The scheduled nightly quality job at `040a93ca` omits the target flag and fails
-the final provenance ratchet after its measurements pass. `89130e3f` declares
-the target explicitly and its renewed source-bound quality passes. Exact
-publication `97eaa29a` passes strict run `37918455600` and all three jobs in
-manual nightly run `37918521272`, with checkout, provenance and final quiet
-confirmation verified. This qualifies the unchanged nightly workflow.
-The command output correction preserves separate streams before runtime
-diagnostics and VM resource failure. Wire conformance, reliability observations
-and runtime fixtures also retain both streams. The driver/CLI regressions and
-all 25 logging tests pass. Fresh source-bound coverage and all six critical
-mutants verify the correction at `4e7a5bb0`. Exact publication `1891031a`
-passes Linux CI `37937941039` with all 364 named checks, 2,898 Rust tests,
-actual checkout and final quiet confirmation verified.
-The bounded independent values/queue reference, 34 authored rows, nine kernel
-and hosted integrations and maintained fuzz target are recorded in
-[testing/stdlib-log-test.json](testing/stdlib-log-test.json) and
-[stdlib-log-test.md](docs/contracts/stdlib-log-test.md). Reference-domain
-refusal is not Tondo ResourceLimit; finite float rendering shares a Rust
-primitive, and calendar/provider validation is not part of this oracle.
-The independent testing boundary passes consolidated source-bound quality:
-2,921 Rust tests in 80 suites, 308,646/336,737 covered lines (91.657881%), every
-global/risk 80% dimension and all six critical mutants caught. Both maintained
-fuzz graphs build; 128 runs pass with fixed seed 4113 and active sanitizers.
-Exact publication `71020bc2` passes strict Linux CI run `37955205979`: all 367
-named checks and 2,921 Rust tests, with actual checkout and final quiet
-confirmation verified. Performance, common conformance and
-usage remain separate owner blocks: `STD-LOG-PERF-001`,
-`STD-LOG-CONF-001` and `STD-LOG-DOC-001`. The full owner and native logging
-ABI/AOT are not promoted.
+pub fn Logger.new(output: io.Writer? = none, level: Level = Level.Info,
+    format: Format = Format.Text, timestamps: Bool = true): Logger
+pub fn Logger.withFields(self, fields: Map[String, String]): Logger
+pub fn Logger.isEnabled(self, level: Level): Bool
+pub fn Logger.log(self, level: Level, message: String, fields: Map[String, String] = [:])
+pub fn Logger.trace(self, message: String, fields: Map[String, String] = [:])
+pub fn Logger.debug(self, message: String, fields: Map[String, String] = [:])
+pub fn Logger.info(self, message: String, fields: Map[String, String] = [:])
+pub fn Logger.warn(self, message: String, fields: Map[String, String] = [:])
+pub fn Logger.error(self, message: String, fields: Map[String, String] = [:])
+pub fn Logger.flush(self): Unit ! io.IoError
+~~~
 
-The [logging measurement register](testing/stdlib-log-performance.json) and
-[performance contract](docs/contracts/stdlib-log-performance.md) define 18
-hosted scalar VM whole-workload routes in the qualified test profile, with
-27 retained samples each. Filtered/accepted/dropped/rejected receipts, exact
-output, queue pressure and writer failures remain observable. Actual VM/host
-counters, modeled queue high water and selected fixture storage stay separate;
-no native AOT, RSS, optimized production latency or speedup is claimed.
+- Sin `output`, el logger escribe en la salida de error. Escribe los eventos de
+  su nivel o superiores; `isEnabled` evita construir campos costosos.
+- `withFields` da el mismo logger con más campos en cada evento; los campos de
+  la llamada se añaden detrás y ganan en una clave repetida.
+- `Text` escribe `tiempo NIVEL mensaje clave=valor ...`, con el valor entre
+  comillas y escapado como JSON si está vacío o tiene espacios, `=`, comillas o
+  saltos de línea. `Json` escribe un objeto por línea con `time`, `level`,
+  `message` y los campos, en ese orden.
+- El tiempo es `time.utcNow()` en RFC 3339; `timestamps: false` lo omite, para
+  salidas que se comparan en tests.
+- Cada evento es una sola escritura en el stream, así que las líneas de tareas
+  distintas no se mezclan. Un stream que falla pierde el evento sin interrumpir
+  el programa; `flush` devuelve el error.
 
 ### 14.19 Reglas de rendimiento de codecs
 

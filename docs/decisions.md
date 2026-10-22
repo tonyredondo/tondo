@@ -966,3 +966,13 @@ record, and the Tondo side tracks lines for errors. `parse` and
 `parseRecords` read a whole text through the same iterators over
 `io.reader(text)`. The writer quotes only what needs it and ends lines with
 `\n`.
+
+## 2026-10-23 — A simple std.log
+
+The old design of sinks, backpressure modes, dynamic log values and
+redaction gave way to one `Logger` value: an `io.Writer`, a minimum level,
+text or JSON lines, optional timestamps and context fields as
+`Map[String, String]`. Each event is one `writeLine`, which `io.Writer`
+makes atomic between tasks. A failed write loses the event rather than
+making every log call fallible; `flush` reports the stream's error. `with`
+is a keyword, so the context method is `withFields`.

@@ -1,0 +1,27 @@
+// std.log: levels, fields, context, text and JSON lines.
+
+import std.console
+import std.io
+import std.log
+
+fn main() {
+    let buffer = io.Buffer()
+    let logger = log.Logger.new(buffer.writer(), level: log.Level.Debug, timestamps: false)
+    logger.trace("hidden")
+    logger.debug("starting", ["port": "8080"])
+    let request = logger.withFields(["request": "42"])
+    request.info("signed in", ["user": "ada", "note": "two words", "empty": ""])
+    request.error("failed")
+    let json = log.Logger.new(buffer.writer(), format: log.Format.Json, timestamps: false)
+    json.warn("disk \"low\"", ["free": "3%"])
+    console.print(buffer.text().unwrapOr(""))
+    console.println("{logger.isEnabled(log.Level.Trace)} {logger.isEnabled(log.Level.Error)}")
+    log.Logger.new(timestamps: false).info("to stderr", ["k": "v"])
+}
+
+// expect-stdout: DEBUG starting port=8080
+// expect-stdout: INFO signed in request=42 user=ada note="two words" empty=""
+// expect-stdout: ERROR failed request=42
+// expect-stdout: {"level":"warn","message":"disk \"low\"","free":"3%"}
+// expect-stdout: false true
+// expect-stderr: INFO to stderr k=v
