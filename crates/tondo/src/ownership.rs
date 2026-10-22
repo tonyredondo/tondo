@@ -490,6 +490,18 @@ impl Checker<'_> {
             ExprKind::ArrayOp(ArrayOp::Contains, operands) | ExprKind::MapOp(MapOp::Contains, operands) => {
                 self.all(operands, flow, false)
             }
+            ExprKind::Pointer(op, operands) => {
+                // A written value moves into the memory.
+                let mut flow = self.observe(&operands[0], flow)?;
+                if let Some(value) = operands.get(1) {
+                    flow = if *op == crate::hir::PointerOp::Write {
+                        self.consume(value, flow)?
+                    } else {
+                        self.observe(value, flow)?
+                    };
+                }
+                Some(flow)
+            }
             ExprKind::ArrayOp(_, operands) | ExprKind::MapOp(_, operands) | ExprKind::StrOp(_, operands) => {
                 self.all(operands, flow, true)
             }
@@ -672,7 +684,7 @@ impl Checker<'_> {
 
     /// The parameter modes of a callable value of type `ty`.
     fn value_modes(&mut self, ty: Ty) -> Vec<Mode> {
-        if let TyKind::Fn(_, _, _, modes) = self.types.kind(ty) {
+        if let TyKind::Fn(_, _, _, modes, _) = self.types.kind(ty) {
             return modes.clone();
         }
         match self.types.closure(ty) {

@@ -1,0 +1,3 @@
+unsafe fn main() {}
+
+// expect-error: E1803 `main` cannot be `unsafe`

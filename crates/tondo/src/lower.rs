@@ -1229,6 +1229,12 @@ impl Builder<'_> {
                 let operands = operands.iter().map(|o| self.expr(o)).collect();
                 self.temp(e.ty, Rvalue::StrOp(*op, operands, e.span), e.span)
             }
+            hir::ExprKind::Pointer(op, operands) => {
+                let types: Vec<Ty> = operands.iter().map(|o| o.ty).collect();
+                let operands: Vec<Operand> = operands.iter().map(|o| self.expr(o)).collect();
+                let retain = *op == hir::PointerOp::Write && self.move_flags(&operands[1..], &[true], &types[1..])[0];
+                self.temp(e.ty, Rvalue::Pointer(*op, operands, retain), e.span)
+            }
             hir::ExprKind::Map(entries) => {
                 let map = self.temp(e.ty, Rvalue::MapOp(hir::MapOp::New, Vec::new(), e.span), e.span);
                 let Operand::Copy(place) = map.clone() else { unreachable!() };

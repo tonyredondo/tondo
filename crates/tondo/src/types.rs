@@ -111,7 +111,11 @@ pub enum TyKind {
     /// `fn(A, mut B): R`: a uniform function value (11.7), with whether its
     /// last parameter is variadic and how each parameter is passed (16.3).
     /// Values are reference-counted callables.
-    Fn(Vec<Ty>, Ty, bool, Vec<Mode>),
+    /// `Pointer[T]`: a raw address, used only inside `unsafe` (16.12).
+    Pointer(Ty),
+    /// Parameters, result, whether the last parameter is variadic, how each
+    /// is passed, and whether calling it is `unsafe` (16.12).
+    Fn(Vec<Ty>, Ty, bool, Vec<Mode>, bool),
     /// A handle to a task or a channel (11.11 to 11.13): the task's result
     /// or the values the channel carries.
     Handle(Handle, Ty),
@@ -290,6 +294,8 @@ pub struct ClosureInfo {
     /// Whether the body changes a capture, so calls need a `var` closure
     /// (`CallMut`) and it cannot become a `fn(...)` value.
     pub mutates: bool,
+    /// `unsafe (...) { ... }`: calls need an `unsafe` region (16.12).
+    pub is_unsafe: bool,
 }
 
 /// What an intrinsic cursor of a map or set yields (10.17): such cursors
@@ -592,9 +598,12 @@ impl Types {
                 params.iter().for_each(|&t| self.opaques_in(t, out));
                 self.opaques_in(*result, out);
             }
-            TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) | TyKind::Handle(_, t) => {
-                self.opaques_in(*t, out)
-            }
+            TyKind::Option(t)
+            | TyKind::Array(t)
+            | TyKind::Deque(t)
+            | TyKind::Set(t)
+            | TyKind::Handle(_, t)
+            | TyKind::Pointer(t) => self.opaques_in(*t, out),
             TyKind::Result(a, b) | TyKind::Map(a, b) => {
                 self.opaques_in(*a, out);
                 self.opaques_in(*b, out);
@@ -624,10 +633,10 @@ impl Types {
                 let items = each(self, &items);
                 self.union(&items)
             }
-            TyKind::Fn(params, result, variadic, modes) => {
+            TyKind::Fn(params, result, variadic, modes, is_unsafe) => {
                 let params = each(self, &params);
                 let result = self.replace(result, map);
-                self.intern(TyKind::Fn(params, result, variadic, modes))
+                self.intern(TyKind::Fn(params, result, variadic, modes, is_unsafe))
             }
             TyKind::Option(t) => {
                 let t = self.replace(t, map);
@@ -636,6 +645,10 @@ impl Types {
             TyKind::Array(t) => {
                 let t = self.replace(t, map);
                 self.intern(TyKind::Array(t))
+            }
+            TyKind::Pointer(t) => {
+                let t = self.replace(t, map);
+                self.intern(TyKind::Pointer(t))
             }
             TyKind::Deque(t) => {
                 let t = self.replace(t, map);
@@ -802,6 +815,10 @@ impl Types {
                 let element = self.subst(element, map);
                 self.intern(TyKind::Array(element))
             }
+            TyKind::Pointer(element) => {
+                let element = self.subst(element, map);
+                self.intern(TyKind::Pointer(element))
+            }
             TyKind::Deque(element) => {
                 let element = self.subst(element, map);
                 self.intern(TyKind::Deque(element))
@@ -825,10 +842,10 @@ impl Types {
                 let members = each(self, &members);
                 self.union(&members)
             }
-            TyKind::Fn(params, result, variadic, modes) => {
+            TyKind::Fn(params, result, variadic, modes, is_unsafe) => {
                 let params = each(self, &params);
                 let result = self.subst(result, map);
-                self.intern(TyKind::Fn(params, result, variadic, modes))
+                self.intern(TyKind::Fn(params, result, variadic, modes, is_unsafe))
             }
             TyKind::Opaque(id, args) => {
                 let args = each(self, &args);
@@ -895,12 +912,15 @@ impl Types {
                 x.iter().zip(y).all(|(&p, &q)| each(self, p, q))
             }
             (TyKind::Opaque(i, x), TyKind::Opaque(j, y)) if i == j => x.iter().zip(y).all(|(&p, &q)| each(self, p, q)),
-            (TyKind::Fn(x, r, v, m), TyKind::Fn(y, s, w, n)) if x.len() == y.len() && v == w && m == n => {
+            (TyKind::Fn(x, r, v, m, u), TyKind::Fn(y, s, w, n, z))
+                if x.len() == y.len() && v == w && m == n && u == z =>
+            {
                 let (r, s) = (*r, *s);
                 x.iter().zip(y).all(|(&p, &q)| each(self, p, q)) && each(self, r, s)
             }
             (TyKind::Option(x), TyKind::Option(y))
             | (TyKind::Array(x), TyKind::Array(y))
+            | (TyKind::Pointer(x), TyKind::Pointer(y))
             | (TyKind::Deque(x), TyKind::Deque(y))
             | (TyKind::Set(x), TyKind::Set(y)) => each(self, *x, *y),
             (TyKind::Handle(h, x), TyKind::Handle(k, y)) if h == k => each(self, *x, *y),
@@ -930,9 +950,12 @@ impl Types {
                 params.iter().for_each(|&t| self.params_in(t, out));
                 self.params_in(*result, out);
             }
-            TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) | TyKind::Handle(_, t) => {
-                self.params_in(*t, out)
-            }
+            TyKind::Option(t)
+            | TyKind::Array(t)
+            | TyKind::Deque(t)
+            | TyKind::Set(t)
+            | TyKind::Handle(_, t)
+            | TyKind::Pointer(t) => self.params_in(*t, out),
             TyKind::Result(a, b) | TyKind::Map(a, b) => {
                 self.params_in(*a, out);
                 self.params_in(*b, out);
@@ -954,9 +977,12 @@ impl Types {
                 items.iter().any(|&t| self.has_params(t))
             }
             TyKind::Fn(params, result, ..) => params.iter().any(|&t| self.has_params(t)) || self.has_params(*result),
-            TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) | TyKind::Handle(_, t) => {
-                self.has_params(*t)
-            }
+            TyKind::Option(t)
+            | TyKind::Array(t)
+            | TyKind::Deque(t)
+            | TyKind::Set(t)
+            | TyKind::Handle(_, t)
+            | TyKind::Pointer(t) => self.has_params(*t),
             TyKind::Result(a, b) | TyKind::Map(a, b) => self.has_params(*a) || self.has_params(*b),
             TyKind::Adt(id) => self.adts[id.0 as usize]
                 .instance
@@ -970,7 +996,12 @@ impl Types {
     pub fn depth(&self, ty: Ty) -> usize {
         let children: Vec<Ty> = match self.kind(ty) {
             TyKind::Tuple(items) | TyKind::Union(items) => items.clone(),
-            TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) | TyKind::Handle(_, t) => vec![*t],
+            TyKind::Option(t)
+            | TyKind::Array(t)
+            | TyKind::Deque(t)
+            | TyKind::Set(t)
+            | TyKind::Handle(_, t)
+            | TyKind::Pointer(t) => vec![*t],
             TyKind::Result(a, b) | TyKind::Map(a, b) => vec![*a, *b],
             TyKind::Adt(id) => self.adts[id.0 as usize].instance.as_ref().map_or(Vec::new(), |(_, a)| a.clone()),
             _ => Vec::new(),
@@ -1169,6 +1200,8 @@ impl Types {
                 return false;
             }
             TyKind::Opaque(id, _) => vec![self.opaques[*id as usize].carrier],
+            // A raw address copies whatever it points to (8.10).
+            TyKind::Pointer(_) => Vec::new(),
             TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) | TyKind::Option(t) => vec![*t],
             TyKind::Map(a, b) | TyKind::Result(a, b) => vec![*a, *b],
             TyKind::Tuple(items) | TyKind::Union(items) => items.clone(),
@@ -1229,9 +1262,11 @@ impl Types {
             TyKind::Tuple(items) => items.iter().any(|&t| self.has_error(t)),
             TyKind::Option(inner) => self.has_error(*inner),
             TyKind::Result(ok, err) => self.has_error(*ok) || self.has_error(*err),
-            TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) | TyKind::Handle(_, element) => {
-                self.has_error(*element)
-            }
+            TyKind::Array(element)
+            | TyKind::Deque(element)
+            | TyKind::Set(element)
+            | TyKind::Handle(_, element)
+            | TyKind::Pointer(element) => self.has_error(*element),
             TyKind::Map(key, value) => self.has_error(*key) || self.has_error(*value),
             TyKind::Union(members) => members.iter().any(|&t| self.has_error(t)),
             TyKind::Fn(params, result, ..) => params.iter().any(|&t| self.has_error(t)) || self.has_error(*result),
@@ -1266,7 +1301,8 @@ impl Types {
                 // A closure is shown by its signature.
                 Some((template, _)) if self.closures.contains_key(template) => {
                     let info = &self.closures[template];
-                    let signature = TyKind::Fn(info.params.clone(), info.result, info.variadic, info.modes.clone());
+                    let signature =
+                        TyKind::Fn(info.params.clone(), info.result, info.variadic, info.modes.clone(), info.is_unsafe);
                     match self.map.get(&signature) {
                         Some(&ty) => format!("closure {}", self.display(ty)),
                         None => "closure".into(),
@@ -1279,6 +1315,7 @@ impl Types {
                 _ => format!("{}?", self.display(*inner)),
             },
             TyKind::Array(element) => format!("Array[{}]", self.display(*element)),
+            TyKind::Pointer(element) => format!("Pointer[{}]", self.display(*element)),
             TyKind::Deque(element) => format!("Deque[{}]", self.display(*element)),
             TyKind::Map(key, value) => format!("Map[{}, {}]", self.display(*key), self.display(*value)),
             TyKind::Set(element) => format!("Set[{}]", self.display(*element)),
@@ -1328,7 +1365,7 @@ impl Types {
             TyKind::Union(members) => members.iter().map(|&t| self.display(t)).collect::<Vec<_>>().join(" | "),
             TyKind::Param(index) => self.params[*index as usize].name.clone(),
             TyKind::Opaque(id, _) => self.opaques[*id as usize].name.clone(),
-            TyKind::Fn(params, result, variadic, modes) => {
+            TyKind::Fn(params, result, variadic, modes, is_unsafe) => {
                 let mut shown: Vec<String> = params
                     .iter()
                     .zip(modes)
@@ -1344,9 +1381,10 @@ impl Types {
                     };
                     *last = format!("...{element}");
                 }
+                let keyword = if *is_unsafe { "unsafe fn" } else { "fn" };
                 match *result {
-                    Ty::UNIT => format!("fn({})", shown.join(", ")),
-                    _ => format!("fn({}): {}", shown.join(", "), self.display(*result)),
+                    Ty::UNIT => format!("{keyword}({})", shown.join(", ")),
+                    _ => format!("{keyword}({}): {}", shown.join(", "), self.display(*result)),
                 }
             }
         }

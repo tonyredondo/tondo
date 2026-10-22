@@ -1,0 +1,20 @@
+import std.console
+
+unsafe fn shifted(pointer: Pointer[Int], count: Int): Pointer[Int] {
+    pointer.offset(count)
+}
+
+fn main() {
+    let address: UInt64 = 4096
+    let pointer = unsafe { address.toPointer[Int]() }
+    let moved = unsafe { shifted(pointer, 3) }
+    let bytes = unsafe { moved.cast[Byte]().offset(1) }
+    console.println("{unsafe { moved.address() }} {unsafe { Pointer.address(bytes) }}")
+    let reader: unsafe fn(Pointer[Int], Int): Pointer[Int] = shifted
+    let again = unsafe { reader(pointer, 1) }
+    let closure = unsafe (count: Int): UInt64 { pointer.offset(count).address() }
+    console.println("{unsafe { again.address() }} {unsafe { closure(2) }}")
+}
+
+// expect-stdout: 4120 4121
+// expect-stdout: 4104 4112

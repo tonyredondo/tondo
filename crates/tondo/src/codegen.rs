@@ -16,8 +16,8 @@
 
 use crate::ast::{BinOp, UnaryOp};
 use crate::hir::{
-    ArrayOp, AtomicOp, Callee, EnvFn, FnId, FsFn, IoFn, LockMode, MapOp, Mutation, PathFn, ProcessFn, Program,
-    SharedOp, StdFn, StrOp, TaskOp,
+    ArrayOp, AtomicOp, Callee, EnvFn, FnId, FsFn, IoFn, LockMode, MapOp, Mutation, PathFn, PointerOp, ProcessFn,
+    Program, SharedOp, StdFn, StrOp, TaskOp,
 };
 use crate::mir::{
     Body, Const, Local, Operand, Overlap, Piece, Place, Proj, Rvalue, SelectCase, Statement, Terminator, project,
@@ -665,7 +665,8 @@ impl Codegen<'_> {
             | TyKind::Map(..)
             | TyKind::Set(_)
             | TyKind::Fn(..)
-            | TyKind::Handle(..) => Class::Scalar(POINTER),
+            | TyKind::Handle(..)
+            | TyKind::Pointer(_) => Class::Scalar(POINTER),
             TyKind::Tuple(_) | TyKind::Adt(_) | TyKind::Option(_) | TyKind::Result(..) | TyKind::Union(_) => {
                 let layout = self.layout(repr);
                 match layout.shape {
@@ -2254,6 +2255,17 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 Rvalue::CallIndirect(callee, args) => {
                     self.call_indirect(callee, args, None);
                 }
+                Rvalue::Pointer(PointerOp::Write, operands, retain) => {
+                    // The memory takes the value, and one reference to a
+                    // value that was copied.
+                    let address = self.scalar(&operands[0]);
+                    let value_ty = self.operand_ty(&operands[1]);
+                    let value = self.operand(&operands[1]);
+                    if *retain {
+                        self.e.refcount(value_ty, value, false);
+                    }
+                    self.e.store_val(address, value_ty, value);
+                }
                 Rvalue::Mutate(mutation, target, operands, retain, span) => {
                     self.mutate(*mutation, target, operands, retain, place, *span);
                 }
@@ -2448,6 +2460,21 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     self.e.call_rt(Rt::ArraySlice, &[&[sequence, size, retain], &range[..]].concat()).unwrap()
                 })
             }
+            Rvalue::Pointer(PointerOp::Read, operands, _) => {
+                // A copy of the value, which the memory keeps too.
+                let address = self.scalar(&operands[0]);
+                let value = self.e.value_at(address, ty);
+                self.e.refcount(ty, value, false);
+                value
+            }
+            Rvalue::Pointer(PointerOp::Offset, operands, _) => {
+                let TyKind::Pointer(element) = *self.e.cg.types.kind(ty) else { unreachable!("a pointer") };
+                let (address, count) = (self.scalar(&operands[0]), self.scalar(&operands[1]));
+                let size = self.e.element_size(element);
+                let bytes = self.e.fb.ins().imul(count, size);
+                Val::Scalar(self.e.fb.ins().iadd(address, bytes))
+            }
+            Rvalue::Pointer(PointerOp::Write, ..) => unreachable!("a write gives `Unit`"),
             Rvalue::Length(collection) => {
                 let collection_ty = self.operand_ty(collection);
                 let value = self.scalar(collection);
@@ -3836,7 +3863,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// A call through a `fn(...)` value: its code receives the captures'
     /// address first (see `Codegen::uniform_signature`).
     fn call_indirect(&mut self, callee: &Operand, args: &[Operand], result: Option<ir::Value>) -> Option<ir::Value> {
-        let TyKind::Fn(params, result_ty, _, modes) = self.e.cg.types.kind(self.operand_ty(callee)).clone() else {
+        let TyKind::Fn(params, result_ty, _, modes, _) = self.e.cg.types.kind(self.operand_ty(callee)).clone() else {
             unreachable!("an indirect call goes through a `fn(...)` value")
         };
         let loans: Vec<bool> = modes.iter().map(|m| matches!(m, Mode::Mut | Mode::Var)).collect();

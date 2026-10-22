@@ -218,6 +218,9 @@ pub struct AliasDecl {
 #[derive(Debug)]
 pub struct FnDecl {
     pub public: bool,
+    /// `unsafe fn`: the caller guarantees preconditions the compiler cannot
+    /// check (16.12).
+    pub is_unsafe: bool,
     pub owner: Option<Ident>,
     /// The binders of a generic owner: `fn Pair[A, B].swapped(self)`.
     pub owner_generics: Vec<GenericParam>,
@@ -298,6 +301,8 @@ pub enum TypeKind {
         modes: Vec<Mode>,
         variadic: bool,
         result: Option<Box<TypeExpr>>,
+        /// `unsafe fn(...)`
+        is_unsafe: bool,
     },
 }
 
@@ -364,6 +369,8 @@ pub struct Expr {
 
 #[derive(Debug)]
 pub enum ExprKind {
+    /// `unsafe { ... }`: a region where raw operations are allowed (16.12).
+    Unsafe(Block),
     Int {
         value: u64,
         suffix: Option<&'static str>,
@@ -450,6 +457,8 @@ pub enum ExprKind {
 
 #[derive(Debug)]
 pub struct Closure {
+    /// `unsafe (...) { ... }`
+    pub is_unsafe: bool,
     pub params: Vec<ClosureParam>,
     pub result: Option<TypeExpr>,
     pub body: Block,

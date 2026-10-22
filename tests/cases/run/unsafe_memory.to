@@ -1,0 +1,32 @@
+import std.console
+import std.internal.memory as memory
+
+type Point = {
+    x: Int
+    name: String
+}
+
+fn main() {
+    let block = memory.allocate(64)
+    unsafe {
+        let numbers = block.cast[Int]()
+        numbers.write(41)
+        numbers.offset(1).write(1)
+        console.println("{numbers.read() + numbers.offset(1).read()}")
+        let points = block.cast[Point]()
+        let name = "kept"
+        points.write(Point { x: 7, name: name })
+        let copy = points.read()
+        console.println("{copy.x} {copy.name} {name}")
+        let text = block.cast[String]().offset(1)
+        _ = text
+        let bytes = block
+        bytes.write(Byte(255u8))
+        console.println("{bytes.read()} {block.cast[Int]().read()}")
+        memory.release(block, 64)
+    }
+}
+
+// expect-stdout: 42
+// expect-stdout: 7 kept kept
+// expect-stdout: 255 255

@@ -130,6 +130,8 @@ enum StdModule {
     /// `std.internal.json`: the runtime's tokenizer and emitter, for
     /// `std.json`.
     InternalJson,
+    /// `std.internal.memory`: raw memory, for tests of `unsafe` code.
+    InternalMemory,
 }
 
 /// The types `std.process` declares when imported.
@@ -319,6 +321,8 @@ struct Signature {
     /// The value of each parameter a call may omit, by parameter; empty when
     /// none has one.
     defaults: Vec<Option<hir::Expr>>,
+    /// `unsafe fn`: calls need an `unsafe` region (16.12).
+    is_unsafe: bool,
 }
 
 impl Signature {
@@ -336,6 +340,7 @@ impl Signature {
             generics: Vec::new(),
             name: String::new(),
             defaults: Vec::new(),
+            is_unsafe: false,
         }
     }
 
@@ -508,6 +513,12 @@ struct FnCx {
     /// Set while the next block checked is a function's body, whose value
     /// the function returns.
     body: bool,
+    /// Inside an `unsafe` function, closure or block: raw operations and
+    /// calls of `unsafe` functions are allowed (16.12).
+    unsafe_region: bool,
+    /// The body of an `unsafe` function or closure, which may capture raw
+    /// pointers.
+    unsafe_body: bool,
     /// Collections lent to the bindings of enclosing `for` loops (13.3),
     /// and whether exclusively.
     lent: Vec<(hir::Place, bool)>,
@@ -525,6 +536,8 @@ struct Callable {
     variadic: bool,
     mutates: bool,
     modes: Vec<ast::Mode>,
+    /// Calling it needs an `unsafe` region (16.12).
+    is_unsafe: bool,
 }
 
 /// The locked state of a `std.sync` value, inside the block `locked`
@@ -706,6 +719,7 @@ impl Checker<'_> {
             generics: vec![self_param],
             name: "Display.display".into(),
             defaults: Vec::new(),
+            is_unsafe: false,
         };
         let display = TraitMethod { name: "display".into(), signature, default: None };
         self.traits.push(TraitDef { name: "Display".into(), self_param, params: Vec::new(), methods: vec![display] });
@@ -724,6 +738,7 @@ impl Checker<'_> {
             generics: vec![self_param, element],
             name: "Iterator.next".into(),
             defaults: Vec::new(),
+            is_unsafe: false,
         };
         let next = TraitMethod { name: "next".into(), signature, default: None };
         self.traits.push(TraitDef { name: "Iterator".into(), self_param, params: vec![element], methods: vec![next] });
@@ -860,6 +875,7 @@ impl Checker<'_> {
             ["std", "env"] => StdModule::Env,
             ["std", "process"] => StdModule::Process,
             ["std", "internal", "json"] => StdModule::InternalJson,
+            ["std", "internal", "memory"] => StdModule::InternalMemory,
             ["std", ..] => {
                 let what = format!("module `{}`", path.join("."));
                 self.diags.unsupported(import.span, &what);
@@ -1541,7 +1557,18 @@ impl Checker<'_> {
         };
         self.fn_scopes.push(scope);
         let modes = f.params.iter().map(|p| p.mode).collect();
-        Signature { params, names, receiver, modes, variadic, result, generics, name, defaults: Vec::new() }
+        Signature {
+            params,
+            names,
+            receiver,
+            modes,
+            variadic,
+            result,
+            generics,
+            name,
+            defaults: Vec::new(),
+            is_unsafe: f.is_unsafe,
+        }
     }
 
     /// Declares the traits of the module: names and parameters first, so
@@ -1736,8 +1763,10 @@ impl Checker<'_> {
             self.no_defaults(f);
             let expected = &declared[index].1;
             if let Some(problem) = self.signature_mismatch(expected, &signature, &map, binders.len()) {
+                // An `unsafe` contract that differs is its own error (16.12).
+                let code = if expected.is_unsafe != signature.is_unsafe { "E1702" } else { "E1114" };
                 let message = format!("`{}` does not match `{trait_name}`: {problem}", f.name.name);
-                self.diags.error("E1114", f.name.span, message);
+                self.diags.error(code, f.name.span, message);
             }
             self.signatures.push(signature);
             bodies.push(f);
@@ -1878,6 +1907,13 @@ impl Checker<'_> {
         }
         let mut map = map.clone();
         map.extend(own_expected.iter().copied().zip(own_found.iter().copied()));
+        if expected.is_unsafe != found.is_unsafe {
+            return Some(if expected.is_unsafe {
+                "the trait declares it `unsafe fn`".into()
+            } else {
+                "the trait declares it without `unsafe`".into()
+            });
+        }
         if expected.receiver != found.receiver {
             return Some("a different receiver".into());
         }
@@ -2042,10 +2078,12 @@ impl Checker<'_> {
     /// so far. An unknown result is left to the closure (`{error}`).
     fn call_expectation(&mut self, inference: &Inference, ty: Ty) -> Option<Ty> {
         let &(_, bound) = self.call_bounds.get(&ty)?;
-        let TyKind::Fn(params, result, variadic, modes) = self.types.kind(bound).clone() else { return None };
+        let TyKind::Fn(params, result, variadic, modes, is_unsafe) = self.types.kind(bound).clone() else {
+            return None;
+        };
         let params = params.into_iter().map(|p| self.inferred(inference, p)).collect::<Option<Vec<Ty>>>()?;
         let result = self.inferred(inference, result).unwrap_or(Ty::ERROR);
-        Some(self.types.intern(TyKind::Fn(params, result, variadic, modes)))
+        Some(self.types.intern(TyKind::Fn(params, result, variadic, modes, is_unsafe)))
     }
 
     /// Why `ty` cannot be called as `signature` with the protocol a call
@@ -2053,8 +2091,8 @@ impl Checker<'_> {
     fn callable_as(&mut self, ty: Ty, mutable: bool, signature: Ty) -> Option<String> {
         let wanted = format!("`{}[{}]`", if mutable { "CallMut" } else { "Call" }, self.types.display(signature));
         match self.callable(ty) {
-            Some(Callable { params, result, variadic, mutates, modes }) => {
-                let found = self.types.intern(TyKind::Fn(params, result, variadic, modes));
+            Some(Callable { params, result, variadic, mutates, modes, is_unsafe }) => {
+                let found = self.types.intern(TyKind::Fn(params, result, variadic, modes, is_unsafe));
                 if found != signature {
                     Some(format!("{wanted} (its signature is `{}`)", self.types.display(found)))
                 } else if mutates && !mutable {
@@ -2070,14 +2108,14 @@ impl Checker<'_> {
 
     /// How a value of `ty` is called, if it can be.
     fn callable(&mut self, ty: Ty) -> Option<Callable> {
-        if let TyKind::Fn(params, result, variadic, modes) = self.types.kind(ty).clone() {
-            return Some(Callable { params, result, variadic, mutates: false, modes });
+        if let TyKind::Fn(params, result, variadic, modes, is_unsafe) = self.types.kind(ty).clone() {
+            return Some(Callable { params, result, variadic, mutates: false, modes, is_unsafe });
         }
         if let Some((mutable, signature)) = self.call_bound_of(ty) {
-            let TyKind::Fn(params, result, variadic, modes) = self.types.kind(signature).clone() else {
+            let TyKind::Fn(params, result, variadic, modes, is_unsafe) = self.types.kind(signature).clone() else {
                 unreachable!()
             };
-            return Some(Callable { params, result, variadic, mutates: mutable, modes });
+            return Some(Callable { params, result, variadic, mutates: mutable, modes, is_unsafe });
         }
         let (_, _, info) = self.types.closure(ty)?;
         Some(Callable {
@@ -2086,6 +2124,7 @@ impl Checker<'_> {
             variadic: info.variadic,
             mutates: info.mutates,
             modes: info.modes,
+            is_unsafe: info.is_unsafe,
         })
     }
 
@@ -2312,6 +2351,8 @@ impl Checker<'_> {
         let signature = &self.signatures[id.0 as usize];
         let problem = if f.public {
             Some("`main` cannot be `pub`")
+        } else if f.is_unsafe {
+            Some("`main` cannot be `unsafe`")
         } else if !f.params.is_empty() {
             Some("`main` takes no parameters")
         } else if signature.result != Ty::UNIT
@@ -2357,6 +2398,7 @@ impl Checker<'_> {
                         ("Group", [result]) if segments.len() == 1 => self.types.handle(Handle::Group, *result),
                         ("Sender", [value]) if segments.len() == 1 => self.types.handle(Handle::Sender, *value),
                         ("Receiver", [value]) if segments.len() == 1 => self.types.handle(Handle::Receiver, *value),
+                        ("Pointer", [target]) if segments.len() == 1 => self.types.intern(TyKind::Pointer(*target)),
                         ("Map", [key, value]) if segments.len() == 1 => {
                             self.require_key(*key, t.span);
                             self.map_type(*key, *value)
@@ -2367,7 +2409,7 @@ impl Checker<'_> {
                         }
                         (
                             "Option" | "Result" | "Array" | "Deque" | "Map" | "Set" | "Join" | "Group" | "Sender"
-                            | "Receiver",
+                            | "Receiver" | "Pointer",
                             _,
                         ) if segments.len() == 1 => {
                             self.diags.error("E1104", t.span, "wrong number of type arguments");
@@ -2471,13 +2513,13 @@ impl Checker<'_> {
                 self.diags.error("E0004", t.span, "`~Copy` only appears in a list of bounds");
                 Ty::ERROR
             }
-            ast::TypeKind::Fn { params, modes, variadic, result } => {
+            ast::TypeKind::Fn { params, modes, variadic, result, is_unsafe } => {
                 let mut types: Vec<Ty> = params.iter().map(|p| self.resolve_type(p)).collect();
                 if *variadic && let Some(last) = types.last_mut() {
                     *last = self.types.intern(TyKind::Array(*last));
                 }
                 let result = result.as_ref().map_or(Ty::UNIT, |r| self.resolve_type(r));
-                self.types.intern(TyKind::Fn(types, result, *variadic, modes.clone()))
+                self.types.intern(TyKind::Fn(types, result, *variadic, modes.clone(), *is_unsafe))
             }
         }
     }
@@ -2532,6 +2574,8 @@ impl Checker<'_> {
             params: Vec::new(),
             deferred: false,
             body: false,
+            unsafe_region: false,
+            unsafe_body: false,
             lent: Vec::new(),
             loan_bindings: HashSet::new(),
         }
@@ -2576,6 +2620,8 @@ impl Checker<'_> {
         }
         let success = (!cx.infer_result).then_some(cx.result);
         cx.body = true;
+        cx.unsafe_region = signature.is_unsafe;
+        cx.unsafe_body = signature.is_unsafe;
         let body = self.block(&mut cx, f.body.as_ref().expect("functions with an id have a body"), success);
         if let Some(opaque) = opaque {
             self.record_witness(&cx, opaque, &body, f);
@@ -2611,7 +2657,7 @@ impl Checker<'_> {
             .call_bounds
             .iter()
             .filter_map(|(&param, &(_, signature))| match self.types.kind(signature) {
-                TyKind::Fn(_, _, _, modes) => Some((param, modes.clone())),
+                TyKind::Fn(_, _, _, modes, _) => Some((param, modes.clone())),
                 _ => None,
             })
             .collect();
@@ -2715,6 +2761,12 @@ impl Checker<'_> {
                         (source, mutable)
                     }
                 };
+                if !cx.unsafe_body && self.holds_pointer(source.ty) {
+                    let message = format!(
+                        "a closure that captures `{name}`, which holds a raw pointer, is `unsafe`: write `unsafe (...) {{ ... }}`"
+                    );
+                    self.diags.error("E1702", span, message);
+                }
                 cx.captures.push(Capture { name: name.into(), ty: source.ty, source, mutable });
                 cx.captures.len() - 1
             }
@@ -2727,7 +2779,8 @@ impl Checker<'_> {
     /// bindings it captures; its body is a function whose first parameter
     /// is the closure, generic over the enclosing type parameters.
     fn closure(&mut self, cx: &mut FnCx, closure: &ast::Closure, expected: Option<Ty>, span: Span) -> hir::Expr {
-        self.closure_parts(cx, &closure.params, closure.result.as_ref(), &closure.body, expected, false, span)
+        let parts = (&closure.params[..], closure.result.as_ref(), &closure.body);
+        self.closure_parts(cx, parts, expected, false, closure.is_unsafe, span)
     }
 
     /// A closure from its parts; a `defer` block is a closure without
@@ -2736,11 +2789,10 @@ impl Checker<'_> {
     fn closure_parts(
         &mut self,
         cx: &mut FnCx,
-        closure_params: &[ast::ClosureParam],
-        closure_result: Option<&ast::TypeExpr>,
-        closure_body: &ast::Block,
+        (closure_params, closure_result, closure_body): (&[ast::ClosureParam], Option<&ast::TypeExpr>, &ast::Block),
         expected: Option<Ty>,
         deferred: bool,
+        is_unsafe: bool,
         span: Span,
     ) -> hir::Expr {
         let expected = expected.and_then(|t| self.callable(t));
@@ -2794,6 +2846,7 @@ impl Checker<'_> {
             variadic,
             modes: modes.clone(),
             mutates: false,
+            is_unsafe,
         };
         self.types.declare_closure(template, info);
 
@@ -2801,6 +2854,8 @@ impl Checker<'_> {
         let mut inner = self.new_cx(declared.unwrap_or(Ty::ERROR));
         inner.infer_result = declared.is_none();
         inner.deferred = deferred;
+        inner.unsafe_region = is_unsafe;
+        inner.unsafe_body = is_unsafe;
         let outer = std::mem::replace(cx, inner);
         cx.parent = Some(Box::new(outer));
         let env = self.hidden_local(cx, env_ty);
@@ -2861,8 +2916,8 @@ impl Checker<'_> {
         let closure = match deferred {
             ast::Defer::Block(block) => {
                 // A cleanup gives nothing back: its final value is dropped (11.9).
-                let unit = self.types.intern(TyKind::Fn(Vec::new(), Ty::UNIT, false, Vec::new()));
-                self.closure_parts(cx, &[], None, block, Some(unit), true, span)
+                let unit = self.types.intern(TyKind::Fn(Vec::new(), Ty::UNIT, false, Vec::new(), false));
+                self.closure_parts(cx, (&[], None, block), Some(unit), true, false, span)
             }
             ast::Defer::Call(call) => {
                 if !matches!(call.kind, ast::ExprKind::Call { .. }) {
@@ -2938,6 +2993,7 @@ impl Checker<'_> {
             variadic: false,
             modes: Vec::new(),
             mutates: false,
+            is_unsafe: false,
         };
         self.types.declare_closure(template, info);
         let env = Self::mk(hir::ExprKind::Local(LocalId(0)), env_ty, span);
@@ -3018,7 +3074,7 @@ impl Checker<'_> {
                 let result = call.ty;
                 let closure = self.call_closure(call, "spawn", span);
                 let (body, ..) = self.types.closure(closure.ty).expect("a call closure");
-                let erased = self.types.intern(TyKind::Fn(Vec::new(), result, false, Vec::new()));
+                let erased = self.types.intern(TyKind::Fn(Vec::new(), result, false, Vec::new(), false));
                 let erased = Self::mk(hir::ExprKind::Erase(Box::new(closure), FnId(body)), erased, span);
                 let join = self.types.handle(Handle::Join, result);
                 Self::mk(hir::ExprKind::Spawn(Box::new(erased)), join, span)
@@ -3105,6 +3161,102 @@ impl Checker<'_> {
         }
     }
 
+    /// A raw operation of a `Pointer[T]`, or `toPointer` of a `UInt64`
+    /// (16.12): only inside an `unsafe` region.
+    fn raw(
+        &mut self,
+        cx: &mut FnCx,
+        receiver: hir::Expr,
+        method: &ast::Ident,
+        types: Vec<Ty>,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> hir::Expr {
+        let address = Ty::int(IntTy::U64);
+        let target = match *self.types.kind(receiver.ty) {
+            TyKind::Pointer(target) => Some(target),
+            _ => None,
+        };
+        let known = matches!(
+            (target.is_some(), method.name.as_str()),
+            (true, "read" | "write" | "offset" | "cast" | "address") | (false, "toPointer")
+        );
+        if !known {
+            return self.no_method(receiver.ty, method, span);
+        }
+        if !cx.unsafe_region {
+            let message = format!(
+                "`{}` is a raw operation: write it inside `unsafe {{ ... }}`, once its preconditions hold",
+                method.name
+            );
+            self.diags.error("E1701", method.span, message);
+        }
+        let generic = matches!(method.name.as_str(), "cast" | "toPointer");
+        let ty_arg = match (generic, types.as_slice()) {
+            (true, [ty]) => Some(*ty),
+            (false, []) => None,
+            (true, _) => {
+                let example = if method.name == "cast" { "pointer.cast[Byte]()" } else { "address.toPointer[Byte]()" };
+                let message = format!("`{}` takes the type it points to: `{example}`", method.name);
+                self.diags.error("E1104", span, message);
+                return Self::error_expr(span);
+            }
+            (false, _) => {
+                let message = format!("`{}` takes no type arguments", method.name);
+                self.diags.error("E1104", span, message);
+                return Self::error_expr(span);
+            }
+        };
+        let params = match method.name.as_str() {
+            "write" => vec![target.unwrap()],
+            "offset" => vec![Ty::INT],
+            _ => Vec::new(),
+        };
+        if args.len() != params.len() {
+            return self.arity_error(span, params.len(), args.len());
+        }
+        let mut values = vec![receiver];
+        for (arg, ty) in args.iter().zip(params) {
+            let value = self.expr(cx, &arg.value, Some(ty));
+            values.push(self.coerce(value, ty));
+        }
+        let retype = |value: hir::Expr, ty: Ty| Self::mk(hir::ExprKind::Retype(Box::new(value)), ty, span);
+        let receiver_ty = values[0].ty;
+        match method.name.as_str() {
+            "read" => Self::mk(hir::ExprKind::Pointer(hir::PointerOp::Read, values), target.unwrap(), span),
+            "write" => Self::mk(hir::ExprKind::Pointer(hir::PointerOp::Write, values), Ty::UNIT, span),
+            "offset" => Self::mk(hir::ExprKind::Pointer(hir::PointerOp::Offset, values), receiver_ty, span),
+            "address" => retype(values.remove(0), address),
+            _ => {
+                let pointer = self.types.intern(TyKind::Pointer(ty_arg.unwrap()));
+                retype(values.remove(0), pointer)
+            }
+        }
+    }
+
+    /// Whether a value of `ty` may hold a raw pointer.
+    fn holds_pointer(&self, ty: Ty) -> bool {
+        fn walk(types: &Types, ty: Ty, seen: &mut Vec<Ty>) -> bool {
+            if seen.contains(&ty) {
+                return false;
+            }
+            seen.push(ty);
+            let repr = types.repr(ty);
+            match types.kind(repr) {
+                TyKind::Pointer(_) => true,
+                TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) | TyKind::Option(t) => walk(types, *t, seen),
+                TyKind::Map(a, b) | TyKind::Result(a, b) => walk(types, *a, seen) || walk(types, *b, seen),
+                TyKind::Tuple(items) | TyKind::Union(items) => items.iter().any(|&t| walk(types, t, seen)),
+                _ => match (types.components(repr), types.variants(repr)) {
+                    (Some(items), _) => items.iter().any(|&t| walk(types, t, seen)),
+                    (None, Some(variants)) => variants.concat().iter().any(|&t| walk(types, t, seen)),
+                    _ => false,
+                },
+            }
+        }
+        walk(&self.types, ty, &mut Vec::new())
+    }
+
     fn native_ty(&mut self, ty: hir::NativeTy) -> Ty {
         match ty {
             hir::NativeTy::Int => Ty::INT,
@@ -3116,6 +3268,7 @@ impl Checker<'_> {
             hir::NativeTy::JsonWriter => self.types.handle(Handle::JsonWriter, Ty::UNIT),
             hir::NativeTy::IoReader => self.types.handle(Handle::Reader, Ty::UNIT),
             hir::NativeTy::IoWriter => self.types.handle(Handle::Writer, Ty::UNIT),
+            hir::NativeTy::BytePointer => self.types.intern(TyKind::Pointer(Ty::BYTE)),
         }
     }
 
@@ -3562,7 +3715,7 @@ impl Checker<'_> {
         mode: ast::Mode,
     ) -> Option<(hir::Expr, Ty)> {
         let modes = vec![mode; params.len()];
-        let expected = self.types.intern(TyKind::Fn(params.clone(), Ty::ERROR, false, modes.clone()));
+        let expected = self.types.intern(TyKind::Fn(params.clone(), Ty::ERROR, false, modes.clone(), false));
         let value = self.expr(cx, &arg.value, Some(expected));
         if value.ty == Ty::ERROR {
             return None;
@@ -5224,7 +5377,8 @@ impl Checker<'_> {
         if let TyKind::Fn(..) = self.types.kind(expected)
             && let Some((body, _, info)) = self.types.closure(value.ty)
         {
-            let found = self.types.intern(TyKind::Fn(info.params, info.result, info.variadic, info.modes));
+            let found =
+                self.types.intern(TyKind::Fn(info.params, info.result, info.variadic, info.modes, info.is_unsafe));
             if found == expected && !info.mutates {
                 let span = value.span;
                 return Self::mk(hir::ExprKind::Erase(Box::new(value), FnId(body)), expected, span);
@@ -5408,6 +5562,13 @@ impl Checker<'_> {
             ast::ExprKind::With { base, updates } => self.with_expr(cx, base, updates, span),
             ast::ExprKind::Try(inner) => self.try_expr(cx, inner, expected, span),
             ast::ExprKind::Closure(closure) => self.closure(cx, closure, expected, span),
+            ast::ExprKind::Unsafe(block) => {
+                let outer = std::mem::replace(&mut cx.unsafe_region, true);
+                let block = self.block(cx, block, expected);
+                cx.unsafe_region = outer;
+                let ty = block.ty;
+                Self::mk(hir::ExprKind::Block(block), ty, span)
+            }
             ast::ExprKind::None => match self.union_member(expected, "none").map(|t| (t, self.types.kind(t))) {
                 Some((ty, TyKind::Option(_))) => Self::mk(hir::ExprKind::Variant(NONE, Vec::new()), ty, span),
                 _ => {
@@ -6657,6 +6818,29 @@ impl Checker<'_> {
             return self.unsupported_expr(span, "generic calls");
         };
         let names: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
+        // `pointer.cast[U]()`, `address.toPointer[T]()` and their qualified
+        // forms `Pointer.cast[U](pointer)` and `UInt64.toPointer[T](address)`.
+        if let [first, method @ ("cast" | "toPointer")] = names.as_slice() {
+            let raw = match *first {
+                "Pointer" | "UInt64" if self.lookup(cx, first).is_none() => None,
+                _ if self.lookup(cx, first).is_some() || self.visible_capture(cx, first) => {
+                    let receiver =
+                        ast::Expr { kind: ast::ExprKind::Path(vec![segments[0].clone()]), span: segments[0].span };
+                    Some(self.expr(cx, &receiver, None))
+                }
+                _ => return self.unsupported_expr(span, "generic functions"),
+            };
+            let types: Vec<Ty> = type_args.iter().map(|t| self.resolve_type(t)).collect();
+            let method = ast::Ident { name: (*method).to_string(), span: segments[1].span };
+            return match raw {
+                Some(receiver) => self.raw(cx, receiver, &method, types, args, span),
+                None => {
+                    let [first, rest @ ..] = args else { return self.arity_error(span, 1, 0) };
+                    let receiver = self.expr(cx, &first.value, None);
+                    self.raw(cx, receiver, &method, types, rest, span)
+                }
+            };
+        }
         if let [trait_name, _] = names.as_slice()
             && let Some(&trait_id) = self.trait_names.get(*trait_name)
             && !self.names.contains_key(*trait_name)
@@ -6830,6 +7014,11 @@ impl Checker<'_> {
         }
         if Some(ty) == self.duration || Some(ty) == self.instant {
             return self.time_method(cx, value, method, args, span);
+        }
+        if matches!(self.types.kind(ty), TyKind::Pointer(_))
+            || (ty == Ty::int(IntTy::U64) && method.name == "toPointer")
+        {
+            return self.raw(cx, value, method, Vec::new(), args, span);
         }
         if let Some(types) = self.process
             && ty == types.result
@@ -7081,6 +7270,7 @@ impl Checker<'_> {
             signature.result,
             signature.variadic,
             signature.modes.clone(),
+            signature.is_unsafe,
         ));
         if let Some(expected) = expected {
             self.unify(&mut inference, generic, expected);
@@ -7110,11 +7300,16 @@ impl Checker<'_> {
         if callee.ty == Ty::ERROR {
             return Self::error_expr(span);
         }
-        let Some(Callable { params, result, variadic, mutates, modes }) = self.callable(callee.ty) else {
+        let Some(Callable { params, result, variadic, mutates, modes, is_unsafe }) = self.callable(callee.ty) else {
             let message = format!("{} cannot be called", self.display(callee.ty));
             self.diags.error("E1102", callee.span, message);
             return Self::error_expr(span);
         };
+        if is_unsafe && !cx.unsafe_region {
+            let message =
+                "this function value is `unsafe`: call it inside `unsafe { ... }`, once its preconditions hold";
+            self.diags.error("E1701", span, message);
+        }
         if let Some(arg) = args.iter().find(|a| a.name.is_some()) {
             self.diags.error("E1102", arg.span, "a call through a function value takes positional arguments");
             return Self::error_expr(span);
@@ -7130,6 +7325,7 @@ impl Checker<'_> {
             generics: Vec::new(),
             name: "this function".into(),
             defaults: Vec::new(),
+            is_unsafe: false,
         };
         // A placeholder callee; the checked arguments are what matters.
         let target = CallTarget::new(Callee::Fn(FnId(u32::MAX)), signature, expected);
@@ -7706,6 +7902,18 @@ impl Checker<'_> {
             return self.call_value(cx, value, args, expected, span);
         }
         match names.as_slice() {
+            ["Pointer", operation @ ("read" | "write" | "offset" | "address")] => {
+                // The qualified form takes the pointer first (16.12).
+                let [first, rest @ ..] = args else { return self.arity_error(span, 1, 0) };
+                let receiver = self.expr(cx, &first.value, None);
+                let method = ast::Ident { name: (*operation).to_string(), span: segments[1].span };
+                if !matches!(self.types.kind(receiver.ty), TyKind::Pointer(_)) && !self.types.has_error(receiver.ty) {
+                    let message = format!("expected a `Pointer[T]`, found {}", self.display(receiver.ty));
+                    self.diags.error("E1102", receiver.span, message);
+                    return Self::error_expr(span);
+                }
+                return self.raw(cx, receiver, &method, Vec::new(), rest, span);
+            }
             ["String", "empty"] => {
                 if !args.is_empty() {
                     return self.arity_error(span, 0, args.len());
@@ -7918,8 +8126,10 @@ impl Checker<'_> {
                 let target = CallTarget::new(Callee::Std(function), signature, expected);
                 self.call_signature(cx, target, None, args, span)
             }
-            ([_, member], Some(ModuleName::Module(StdModule::InternalJson))) => {
-                let found = hir::NATIVES.iter().position(|n| n.receiver.is_none() && n.name == *member);
+            ([_, member], Some(ModuleName::Module(module @ (StdModule::InternalJson | StdModule::InternalMemory)))) => {
+                let module = if module == StdModule::InternalJson { "json" } else { "memory" };
+                let found =
+                    hir::NATIVES.iter().position(|n| n.receiver.is_none() && n.module == module && n.name == *member);
                 let Some(index) = found else {
                     let message = format!("module `{}` has no function `{member}`", segments[0].name);
                     self.diags.error("E1001", segments[1].span, message);
@@ -8148,6 +8358,13 @@ impl Checker<'_> {
     ) -> hir::Expr {
         let CallTarget { callee, signature, explicit, prebound, expected } = target;
         let signature = &signature;
+        if signature.is_unsafe && !cx.unsafe_region {
+            let message = format!(
+                "`{}` is `unsafe`: call it inside `unsafe {{ ... }}`, once its preconditions hold",
+                signature.name
+            );
+            self.diags.error("E1701", span, message);
+        }
         let first = receiver.is_some() as usize;
         let count = signature.params.len() - first;
         let fixed = count - signature.variadic as usize;
@@ -8287,9 +8504,9 @@ impl Checker<'_> {
                 self.unify(&mut inference, ty, value.ty);
                 // A callable bound to `F: Call[fn(A): B]` also fixes `A` and `B`.
                 if let Some(&(_, bound)) = self.call_bounds.get(&ty)
-                    && let Some(Callable { params, result, variadic, modes, .. }) = self.callable(value.ty)
+                    && let Some(Callable { params, result, variadic, modes, is_unsafe, .. }) = self.callable(value.ty)
                 {
-                    let found = self.types.intern(TyKind::Fn(params, result, variadic, modes));
+                    let found = self.types.intern(TyKind::Fn(params, result, variadic, modes, is_unsafe));
                     self.unify(&mut inference, bound, found);
                 }
                 values[index] = Some(value);
@@ -8874,7 +9091,11 @@ impl Checker<'_> {
             }
             BinOp::Eq | BinOp::Ne => {
                 let (left, right) = self.operands(cx, left, right, None);
-                if !self.types.is_equatable(left.ty) {
+                if matches!(self.types.kind(left.ty), TyKind::Pointer(_)) {
+                    let message =
+                        "raw pointers have no `==`: compare `left.address() == right.address()` inside `unsafe`";
+                    self.diags.error("E1102", span, message);
+                } else if !self.types.is_equatable(left.ty) {
                     operator_error(self, left.ty);
                 }
                 (left, right, Ty::BOOL)

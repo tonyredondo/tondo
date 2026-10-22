@@ -598,6 +598,7 @@ impl Linker<'_> {
                     }
                 }
             }
+            ExprKind::Unsafe(block) => self.block(block),
             ExprKind::Closure(closure) => {
                 for param in &mut closure.params {
                     self.binding(&param.name);

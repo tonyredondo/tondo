@@ -1,0 +1,40 @@
+unsafe fn danger(pointer: Pointer[Int]): Int {
+    pointer.read()
+}
+
+trait Source {
+    unsafe fn fetch(self): Int
+}
+
+type Plain = { value: Int }
+
+impl Source for Plain {
+    fn fetch(self): Int {
+        self.value
+    }
+}
+
+fn main() {
+    let address: UInt64 = 64
+    let pointer = address.toPointer[Int]()
+    let value = danger(pointer)
+    let capture = () {
+        pointer
+    }
+    let erased: fn(Pointer[Int]): Int = danger
+    let later = unsafe () {
+        1
+    }
+    let n = later()
+    let untyped = unsafe { pointer.cast() }
+    let same = unsafe { pointer == pointer }
+}
+
+// expect-error: E1702 `fetch` does not match `Source`: the trait declares it `unsafe fn`
+// expect-error: E1701 `toPointer` is a raw operation: write it inside `unsafe { ... }`, once its preconditions hold
+// expect-error: E1701 `danger` is `unsafe`: call it inside `unsafe { ... }`, once its preconditions hold
+// expect-error: E1702 a closure that captures `pointer`, which holds a raw pointer, is `unsafe`: write `unsafe (...) { ... }`
+// expect-error: E1102 expected `fn(Pointer[Int]): Int`, found `unsafe fn(Pointer[Int]): Int`
+// expect-error: E1701 this function value is `unsafe`
+// expect-error: E1104 `cast` takes the type it points to: `pointer.cast[Byte]()`
+// expect-error: E1102 raw pointers have no `==`: compare `left.address() == right.address()` inside `unsafe`

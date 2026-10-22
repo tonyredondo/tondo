@@ -211,6 +211,9 @@ pub enum ExprKind {
     Length(Box<Expr>),
     /// An intrinsic string operation; the string comes first.
     StrOp(StrOp, Vec<Expr>),
+    /// `read`, `write` or `offset` of a `Pointer[T]`, the pointer first
+    /// (16.12); casts and addresses are `Retype`s.
+    Pointer(PointerOp, Vec<Expr>),
     /// A method that changes a collection on a `var` place; the arguments
     /// follow in order.
     Mutate(Mutation, Place, Vec<Expr>),
@@ -658,6 +661,14 @@ pub enum StdFn {
     Path(PathFn),
 }
 
+/// The raw operations of a `Pointer[T]` that touch memory or move it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum PointerOp {
+    Read,
+    Write,
+    Offset,
+}
+
 /// The operations of `std.process`; those of a plan or a process take it
 /// first.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -808,11 +819,16 @@ pub enum NativeTy {
     /// A stream of `std.io`.
     IoReader,
     IoWriter,
+    /// `Pointer[Byte]`
+    BytePointer,
 }
 
-/// A function of `std.internal.json`, the runtime's JSON tokenizer and
-/// emitter that `std.json` is written on.
+/// A function of an internal module: `std.internal.json`, the runtime's
+/// JSON tokenizer and emitter that `std.json` is written on, or
+/// `std.internal.memory`, raw memory for tests of `unsafe` code.
 pub struct Native {
+    /// The internal module: `json` or `memory`.
+    pub module: &'static str,
     pub name: &'static str,
     /// The handle whose method it is, or `None` for a module function.
     pub receiver: Option<NativeTy>,
@@ -824,7 +840,10 @@ pub struct Native {
 pub const NATIVES: &[Native] = {
     use NativeTy::*;
     const fn f(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
-        Native { name, receiver: None, params, result, symbol }
+        Native { module: "json", name, receiver: None, params, result, symbol }
+    }
+    const fn memory(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
+        Native { module: "memory", name, receiver: None, params, result, symbol }
     }
     const fn m(
         receiver: NativeTy,
@@ -833,7 +852,7 @@ pub const NATIVES: &[Native] = {
         result: NativeTy,
         symbol: &'static str,
     ) -> Native {
-        Native { name, receiver: Some(receiver), params, result, symbol }
+        Native { module: "json", name, receiver: Some(receiver), params, result, symbol }
     }
     &[
         f("reader", &[String, Bool], JsonReader, "tondo_rt_json_reader"),
@@ -859,5 +878,7 @@ pub const NATIVES: &[Native] = {
         m(JsonWriter, "raw", &[String], Unit, "tondo_rt_json_write_raw"),
         m(JsonWriter, "finish", &[], String, "tondo_rt_json_finish"),
         m(JsonWriter, "error", &[], String, "tondo_rt_json_writer_error"),
+        memory("allocate", &[Int], BytePointer, "tondo_rt_memory_allocate"),
+        memory("release", &[BytePointer, Int], Unit, "tondo_rt_memory_release"),
     ]
 };

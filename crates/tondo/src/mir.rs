@@ -206,6 +206,9 @@ pub enum Rvalue {
     Length(Operand),
     /// An intrinsic string operation, string first.
     StrOp(StrOp, Vec<Operand>, Span),
+    /// A raw operation of a `Pointer[T]`, the pointer first; the flag
+    /// retains a written value that was copied rather than moved.
+    Pointer(hir::PointerOp, Vec<Operand>, bool),
     /// A map or set query, collection first.
     MapOp(MapOp, Vec<Operand>, Span),
     /// A method that changes the collection at the place (made unique

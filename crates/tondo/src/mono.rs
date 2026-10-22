@@ -213,6 +213,7 @@ impl Mono<'_> {
             | ExprKind::Set(items)
             | ExprKind::ArrayOp(_, items)
             | ExprKind::StrOp(_, items)
+            | ExprKind::Pointer(_, items)
             | ExprKind::TaskOp(_, items)
             | ExprKind::MapOp(_, items) => self.exprs(items, map),
             ExprKind::Record(fields) | ExprKind::Variant(_, fields) => {

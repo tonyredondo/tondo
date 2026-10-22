@@ -227,6 +227,12 @@ impl Parser<'_> {
         let public = self.eat_kw(Kw::Pub);
         match self.tok() {
             Tok::Kw(Kw::Fn) => Ok(Some(Item::Fn(self.function(public, start)?))),
+            Tok::Kw(Kw::Unsafe) if self.nth(1) == &Tok::Kw(Kw::Fn) => {
+                self.bump();
+                let mut f = self.function(public, start)?;
+                f.is_unsafe = true;
+                Ok(Some(Item::Fn(f)))
+            }
             Tok::Kw(Kw::Type) => Ok(Some(Item::Type(self.type_declaration(public, start)?))),
             Tok::Kw(Kw::Enum) => Ok(Some(Item::Enum(self.enum_declaration(public, start)?))),
             Tok::Kw(Kw::Trait) => Ok(Some(Item::Trait(self.trait_declaration(public, start)?))),
@@ -454,7 +460,19 @@ impl Parser<'_> {
         let body = if self.at(&Tok::LBrace) { Some(self.block()?) } else { None };
         let span = start.to(self.prev_span());
         self.end_of_statement()?;
-        Ok(FnDecl { public, owner, owner_generics, name, generics, params, result, body, span, module: 0 })
+        Ok(FnDecl {
+            public,
+            is_unsafe: false,
+            owner,
+            owner_generics,
+            name,
+            generics,
+            params,
+            result,
+            body,
+            span,
+            module: 0,
+        })
     }
 
     /// One bound of a list: a type, or `~Copy`. In an opaque result each
@@ -529,10 +547,16 @@ impl Parser<'_> {
                 return Ok(methods);
             }
             let start = self.span();
+            let is_unsafe = self.at_kw(Kw::Unsafe) && self.nth(1) == &Tok::Kw(Kw::Fn);
+            if is_unsafe {
+                self.bump();
+            }
             if !self.at_kw(Kw::Fn) {
                 return self.expected("`fn`");
             }
-            methods.push(self.function(false, start)?);
+            let mut method = self.function(false, start)?;
+            method.is_unsafe = is_unsafe;
+            methods.push(method);
         }
     }
 
@@ -639,13 +663,18 @@ impl Parser<'_> {
                 self.expect(Tok::RParen)?;
                 let result = if self.eat(&Tok::Colon) { Some(Box::new(self.result_type()?)) } else { None };
                 Ok(TypeExpr {
-                    kind: TypeKind::Fn { params, modes, variadic, result },
+                    kind: TypeKind::Fn { params, modes, variadic, result, is_unsafe: false },
                     span: start.to(self.prev_span()),
                 })
             }
-            Tok::Kw(Kw::Unsafe) => {
-                self.diags.unsupported(start, "unsafe function types");
-                Err(())
+            Tok::Kw(Kw::Unsafe) if self.nth(1) == &Tok::Kw(Kw::Fn) => {
+                self.bump();
+                let mut ty = self.type_expr()?;
+                if let TypeKind::Fn { is_unsafe, .. } = &mut ty.kind {
+                    *is_unsafe = true;
+                }
+                ty.span = start.to(ty.span);
+                Ok(ty)
             }
             _ => self.expected("type"),
         }
@@ -1408,7 +1437,7 @@ impl Parser<'_> {
         };
         Some(self.block().map(|body| {
             let span = start.to(body.span);
-            Expr { kind: ExprKind::Closure(Box::new(Closure { params, result, body })), span }
+            Expr { kind: ExprKind::Closure(Box::new(Closure { is_unsafe: false, params, result, body })), span }
         }))
     }
 
@@ -1616,10 +1645,20 @@ impl Parser<'_> {
                 self.bump();
                 ExprKind::Path(vec![Ident { name: "self".into(), span: start }])
             }
-            Tok::Kw(kw @ Kw::Unsafe) => {
-                let what = format!("`{}`", kw.as_str());
-                self.diags.unsupported(start, &what);
-                return Err(());
+            Tok::Kw(Kw::Unsafe) => {
+                self.bump();
+                if self.at(&Tok::LParen) {
+                    let Some(closure) = self.try_closure() else {
+                        return self.expected("an unsafe closure: `unsafe (parameters) { ... }`");
+                    };
+                    let mut closure = closure?;
+                    if let ExprKind::Closure(c) = &mut closure.kind {
+                        c.is_unsafe = true;
+                    }
+                    closure.span = start.to(closure.span);
+                    return Ok(closure);
+                }
+                ExprKind::Unsafe(self.block()?)
             }
             Tok::Bang => return self.error("`!` is not a prefix operator: write `not value`".to_string()),
             _ => return self.expected("expression"),

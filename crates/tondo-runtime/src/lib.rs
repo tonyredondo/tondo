@@ -16,6 +16,7 @@ mod env;
 mod fs;
 mod io;
 mod json;
+mod memory;
 mod process;
 mod shared;
 mod sync;

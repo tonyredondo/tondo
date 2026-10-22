@@ -472,7 +472,11 @@ impl Formatter<'_> {
     }
 
     fn function(&mut self, f: &FnDecl) -> Doc {
-        let mut head = vec![text(if f.public { "pub fn " } else { "fn " })];
+        let mut head = vec![text(format!(
+            "{}{}fn ",
+            if f.public { "pub " } else { "" },
+            if f.is_unsafe { "unsafe " } else { "" }
+        ))];
         if let Some(owner) = &f.owner {
             head.push(text(owner.name.clone()));
             head.push(self.generics(&f.owner_generics));
@@ -551,7 +555,7 @@ impl Formatter<'_> {
                 self.list("(", items, ")")
             }
             TypeKind::Opaque(bounds) => concat(vec![text("impl "), self.bounds(bounds)]),
-            TypeKind::Fn { params, modes, variadic, result } => {
+            TypeKind::Fn { params, modes, variadic, result, is_unsafe } => {
                 let count = params.len();
                 let items = params
                     .iter()
@@ -566,7 +570,7 @@ impl Formatter<'_> {
                         (p.span, concat(vec![text(format!("{mode}{dots}")), self.ty(p)]))
                     })
                     .collect();
-                let mut docs = vec![text("fn"), self.list("(", items, ")")];
+                let mut docs = vec![text(if *is_unsafe { "unsafe fn" } else { "fn" }), self.list("(", items, ")")];
                 if let Some(result) = result
                     && !is_unit(result)
                 {
@@ -970,7 +974,11 @@ impl Formatter<'_> {
                         (Span::new(p.name.span.start, end), doc)
                     })
                     .collect();
-                let mut docs = vec![self.list("(", params, ")")];
+                let mut docs = vec![];
+                if closure.is_unsafe {
+                    docs.push(text("unsafe "));
+                }
+                docs.push(self.list("(", params, ")"));
                 if let Some(result) = &closure.result
                     && !is_unit(result)
                 {
@@ -983,6 +991,7 @@ impl Formatter<'_> {
             }
             ExprKind::Construct(name, value) => concat(vec![text(format!("{name}(")), self.expr(value), text(")")]),
             ExprKind::Spawn(call) => concat(vec![text("spawn "), self.expr(call)]),
+            ExprKind::Unsafe(block) => concat(vec![text("unsafe "), self.value_block(block)]),
             ExprKind::SyncLiteral(path, literal) => concat(vec![text(path_text(path)), self.expr(literal)]),
         }
     }

@@ -591,3 +591,18 @@ what it dropped; `json.writerTo` hands output to an `io.Writer` every
 64 KB. `decodeFrom` and `encodeTo` are built on them, so reading a 51 MB
 document event by event peaks at the memory of an empty program. Only
 canonical output buffers, since it sorts keys at the end.
+
+## 2026-10-22 — unsafe as the spec writes it, and the flag on function types
+
+H7 implements 16.12 as written: `unsafe fn`, `unsafe { ... }` blocks,
+`unsafe (...) { ... }` closures and `unsafe fn(...)` types, and the six raw
+operations of `Pointer[T]` (`read`, `write`, `offset`, `cast[U]`,
+`address`, `UInt64.toPointer[T]`), each of them `E1701` outside a region.
+Being `unsafe` is part of a function's type, so an `unsafe fn` cannot
+become a safe `fn(...)` value and a call through one still needs a
+region; a closure that captures a pointer must be `unsafe` (`E1702`), as
+must an implementation of an `unsafe` trait method. A write retains a
+counted value it copies and a read retains what it copies out, so raw
+memory holds references like any owner. With no FFI yet, nothing gives a
+program real memory, so `std.internal.memory` allocates zeroed blocks for
+the tests of this milestone.
