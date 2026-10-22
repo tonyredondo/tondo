@@ -30,6 +30,30 @@ extern type Big = {
     c: Int
 }
 
+extern type Point = {
+    x: Float32
+    y: Float32
+    z: Float32
+}
+
+fn scale(point: Point, by: Float32): Point {
+    Point { x: point.x * by, y: point.y * by, z: point.z * by }
+}
+
+fn narrow(small: Int8, medium: Int16, subtract: Bool): Int16 {
+    if subtract { medium - small } else { medium + small }
+}
+
+fn flip(flag: Bool, byte: Byte): Bool {
+    not flag and byte == Byte(7u8)
+}
+
+// The pair no longer fits in the registers left and goes on the stack.
+fn many(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int, h: Int, pair: Pair, last: Int): Int {
+    let bonus = if pair.b > 1.0 { 1000 } else { 0 }
+    a + b + c + d + e + f + g + h + pair.a + last + bonus
+}
+
 unsafe fn descending(left: Pointer[ffi.Void], right: Pointer[ffi.Void]): ffi.CInt {
     let (a, b) = (left.cast[Int]().read(), right.cast[Int]().read())
     if a > b { -1 } else if a < b { 1 } else { 0 }
@@ -108,6 +132,17 @@ fn main() {
         let big: extern fn(Big, Int): Big = grow
         let grown = big(Big { a: 1, b: 2, c: 3 }, 10)
         console.println("{swapped.a} {swapped.b} {grown.a} {grown.b} {grown.c}")
+        let scaling: extern fn(Point, Float32): Point = scale
+        let scaled = scaling(Point { x: 1.0, y: 2.0, z: 3.0 }, 2.5)
+        let narrowing: extern fn(Int8, Int16, Bool): Int16 = narrow
+        let flipping: extern fn(Bool, Byte): Bool = flip
+        let wide: extern fn(Int, Int, Int, Int, Int, Int, Int, Int, Pair, Int): Int = many
+        console.println(
+            "{scaled.x} {scaled.y} {scaled.z} {narrowing(-3, 1000, true)} {narrowing(-3, -1000, false)}",
+        )
+        console.println(
+            "{flipping(false, Byte(7u8))} {flipping(true, Byte(7u8))} {wide(1, 2, 3, 4, 5, 6, 7, 8, Pair { a: 100, b: 1.5 }, 9)}",
+        )
 
         let counter = ffi.allocate[Int]()
         let context = ffi.context(counter)
@@ -125,4 +160,6 @@ fn main() {
 // expect-stdout: [1, 2, 3, 5, 8, 9]
 // expect-stdout: [1, 2, 3, 5, 8, 9]
 // expect-stdout: 7 7.5 11 12 13
+// expect-stdout: 2.5 5.0 7.5 1003 -1003
+// expect-stdout: true false 1145
 // expect-stdout: 0 0 83

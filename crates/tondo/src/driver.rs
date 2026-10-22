@@ -207,7 +207,11 @@ pub fn link(object: &[u8], output: &Path, libraries: &[String]) -> Result<(), St
         .args(RUNTIME_LINK_ARGS.split_whitespace())
         // Unused runtime code and the standard library's debug info would
         // otherwise make up most of every executable.
-        .args(["-Wl,--gc-sections", "-Wl,--strip-debug"])
+        .args(if cfg!(target_os = "macos") {
+            ["-Wl,-dead_strip", "-Wl,-S"]
+        } else {
+            ["-Wl,--gc-sections", "-Wl,--strip-debug"]
+        })
         .output();
     let _ = std::fs::remove_file(&object_path);
     match result {

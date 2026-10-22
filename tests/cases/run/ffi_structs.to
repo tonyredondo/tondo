@@ -32,19 +32,12 @@ extern type Time = {
     zone: ffi.CString?
 }
 
-extern type Names = {
-    @count(65)
-    system: ffi.CChar
-    @count(65)
-    node: ffi.CChar
-    @count(65)
-    release: ffi.CChar
-    @count(65)
-    version: ffi.CChar
-    @count(65)
-    machine: ffi.CChar
-    @count(65)
-    domain: ffi.CChar
+extern type Label = {
+    @count(13)
+    text: ffi.CChar
+    size: ffi.CInt
+    @count(3)
+    weights: Float32
 }
 
 @packed
@@ -68,13 +61,13 @@ extern fn csqrt(value: Complex): Complex
 
 extern fn gmtime_r(time: Pointer[ffi.CLong], into: Pointer[Time]): Pointer[Time]?
 
-extern fn uname(into: Pointer[Names]): ffi.CInt
+extern fn snprintf(buffer: Pointer[ffi.CChar], size: ffi.CSize, format: ffi.CString, ...): ffi.CInt
 
 extern fn fopen(path: ffi.CString, mode: ffi.CString): Pointer[File]?
 
 fn main() {
     console.println(
-        "{ffi.sizeOf[Time]()} {ffi.sizeOf[Names]()} {ffi.sizeOf[Packed]()} {ffi.sizeOf[Aligned]()} {ffi.alignOf[Aligned]()}",
+        "{ffi.sizeOf[Time]()} {ffi.sizeOf[Label]()} {ffi.sizeOf[Packed]()} {ffi.sizeOf[Aligned]()} {ffi.alignOf[Aligned]()}",
     )
     unsafe {
         let d = div(17, 5)
@@ -95,15 +88,17 @@ fn main() {
             }
             none => console.println("no time")
         }
-        let names = ffi.allocate[Names]()
-        let status = uname(names)
-        var copy = names.read()
-        console.println("{status} {ffi.fromCChars(copy.system)} {copy.system[0]}")
-        copy.system[0] = Byte(108u8)
-        let chars: Array[ffi.CChar] = copy.system
-        console.println("{ffi.fromCChars(chars)} {chars.length()}")
-        copy.node = ffi.toCChars("tondo", 65)
-        console.println("{ffi.fromCChars(copy.node)}")
+        // C writes the struct's first array.
+        let label = ffi.allocate[Label]()
+        let written = snprintf(label.cast[ffi.CChar](), 13u64, "%s", "Linux")
+        var copy = label.read()
+        console.println("{written} {ffi.fromCChars(copy.text)} {copy.text[0]}")
+        copy.text[0] = Byte(108u8)
+        copy.weights[2] = 2.5
+        let chars: Array[ffi.CChar] = copy.text
+        console.println("{ffi.fromCChars(chars)} {chars.length()} {copy.weights[2]}")
+        copy.text = ffi.toCChars("tondo", 13)
+        console.println("{ffi.fromCChars(copy.text)}")
         let packed = ffi.allocate[Packed]()
         packed.write(Packed { tag: Byte(1u8), value: 258 })
         console.println("{ffi.bytes(packed.cast[Byte](), 5)}")
@@ -113,16 +108,16 @@ fn main() {
         }
         ffi.free(seconds)
         ffi.free(time)
-        ffi.free(names)
+        ffi.free(label)
         ffi.free(packed)
     }
 }
 
-// expect-stdout: 56 390 5 16 16
+// expect-stdout: 56 32 5 16 16
 // expect-stdout: 3 2 -14285714285 -5 0.0 2.0
 // expect-stdout: 1971-1-1 5h 5
-// expect-stdout: 0 Linux 76
-// expect-stdout: linux 65
+// expect-stdout: 5 Linux 76
+// expect-stdout: linux 13 2.5
 // expect-stdout: tondo
 // expect-stdout: [1, 2, 1, 0, 0]
 // expect-stdout: no file

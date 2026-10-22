@@ -75,5 +75,6 @@ fn main() {
     unsafe { ffi.freeContext[sync.Barrier](context) }
 }
 
+// expect-platform: linux
 // expect-stdout: 0 0
 // expect-stdout: the timer of C called back

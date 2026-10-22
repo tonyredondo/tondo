@@ -6,7 +6,9 @@
 //! - `// expect-panic: <code>` — a language panic such as `P0005`;
 //! - `// expect-error: <code> [text]` — compilation fails with this
 //!   diagnostic, whose message contains `text` when given;
-//! - `// expect-warning: <code> [text]` — compilation reports this warning.
+//! - `// expect-warning: <code> [text]` — compilation reports this warning;
+//! - `// expect-platform: <os or arch>...` — the case runs only there, as
+//!   `linux` or `aarch64`.
 //!
 //! Executables run with `TONDO_RT_CHECK_LEAKS=1`, so every case also checks
 //! that reference counting frees each string exactly once.
@@ -24,6 +26,7 @@ struct Expect {
     panic: Option<String>,
     errors: Vec<String>,
     warnings: Vec<String>,
+    platforms: Vec<String>,
 }
 
 fn expectations(source: &str) -> Expect {
@@ -38,6 +41,7 @@ fn expectations(source: &str) -> Expect {
             "panic" => expect.panic = Some(value.trim().into()),
             "error" => expect.errors.push(value.trim().into()),
             "warning" => expect.warnings.push(value.trim().into()),
+            "platform" => expect.platforms.extend(value.split_whitespace().map(String::from)),
             other => panic!("unknown expectation `{other}`"),
         }
     }
@@ -64,6 +68,10 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
     }
     let source: String = sources.iter().map(|p| std::fs::read_to_string(p).unwrap()).collect();
     let expect = expectations(&source);
+    let here = [std::env::consts::OS, std::env::consts::ARCH];
+    if !expect.platforms.is_empty() && !expect.platforms.iter().any(|p| here.contains(&p.as_str())) {
+        return Ok(());
+    }
     let compiler = env!("CARGO_BIN_EXE_tondo");
     let binary = scratch.join(path.file_stem().unwrap());
     let build = Command::new(compiler)
@@ -94,7 +102,7 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
         return Err(format!("unexpected diagnostics:\n{diagnostics}"));
     }
 
-    let run = Command::new(&binary).env("TONDO_RT_CHECK_LEAKS", "1").current_dir(scratch).output().unwrap();
+    let run = run_with_timeout(Command::new(&binary).env("TONDO_RT_CHECK_LEAKS", "1").current_dir(scratch))?;
     let stdout = String::from_utf8_lossy(&run.stdout);
     let stderr = String::from_utf8_lossy(&run.stderr);
     let expected_stdout: String = expect.stdout.iter().map(|l| format!("{l}\n")).collect();
@@ -111,6 +119,37 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
         return Err(format!("expected panic {code}, stderr:\n{stderr}"));
     }
     Ok(())
+}
+
+/// Runs a program, failing the case when it has not finished in a minute.
+fn run_with_timeout(command: &mut Command) -> Result<std::process::Output, String> {
+    use std::io::Read;
+    use std::process::Stdio;
+    let mut child = command.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    let (mut out, mut err) = (child.stdout.take().unwrap(), child.stderr.take().unwrap());
+    let stdout = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = out.read_to_end(&mut bytes);
+        bytes
+    });
+    let stderr = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = err.read_to_end(&mut bytes);
+        bytes
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("timed out after 60s".into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    Ok(std::process::Output { status, stdout: stdout.join().unwrap(), stderr: stderr.join().unwrap() })
 }
 
 #[test]

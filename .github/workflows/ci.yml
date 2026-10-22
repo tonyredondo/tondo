@@ -2,12 +2,16 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, platforms]
   pull_request:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
