@@ -894,6 +894,10 @@ pub enum NativeTy {
     BytePointer,
     /// `Array[Byte]`
     Bytes,
+    /// `Array[Int]`
+    Ints,
+    /// The runtime's compiled regular expression (`std.internal.regex`).
+    Regex,
 }
 
 /// A function of an internal module: `std.internal.json`, the runtime's
@@ -917,6 +921,12 @@ pub const NATIVES: &[Native] = {
     }
     const fn memory(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "memory", name, receiver: None, params, result, symbol }
+    }
+    const fn regex(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
+        Native { module: "regex", name, receiver: None, params, result, symbol }
+    }
+    const fn r(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
+        Native { module: "regex", name, receiver: Some(Regex), params, result, symbol }
     }
     const fn m(
         receiver: NativeTy,
@@ -957,5 +967,17 @@ pub const NATIVES: &[Native] = {
         memory("fromCString", &[BytePointer], String, "tondo_rt_memory_from_c_string"),
         memory("bytes", &[BytePointer, Int], Bytes, "tondo_rt_memory_bytes"),
         memory("fromCChars", &[Bytes], String, "tondo_rt_memory_from_c_chars"),
+        regex("compile", &[String, Int, Int, Int, Int, Int, Int, Int, Int, Int], Regex, "tondo_rt_regex_compile"),
+        regex("errorKind", &[], Int, "tondo_rt_regex_error_kind"),
+        regex("errorOffset", &[], Int, "tondo_rt_regex_error_offset"),
+        regex("slice", &[String, Int, Int], String, "tondo_rt_regex_slice"),
+        r("pattern", &[], String, "tondo_rt_regex_pattern"),
+        r("captureCount", &[], Int, "tondo_rt_regex_capture_count"),
+        r("captureName", &[Int], String, "tondo_rt_regex_capture_name"),
+        r("captureIndex", &[String], Int, "tondo_rt_regex_capture_index"),
+        r("isMatch", &[String, Bool], Bool, "tondo_rt_regex_is_match"),
+        r("checkInput", &[String], Unit, "tondo_rt_regex_check_input"),
+        r("find", &[String, Int, Int], Ints, "tondo_rt_regex_find"),
+        r("replace", &[String, String, Bool], String, "tondo_rt_regex_replace"),
     ]
 };

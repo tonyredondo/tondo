@@ -814,3 +814,15 @@ domains is not caught; and a wait on a channel or lock shared with tasks
 outside the domain counts as one the domain brings. A `P2003` found outside
 any task cancels every task, so their cleanups run, as a panic does.
 
+## 2026-10-22 — `std.regex` on the `regex` crate
+
+The runtime links Rust's `regex` crate, built with Cargo as a static library,
+and `std.regex` is Tondo over a handful of natives. `regex-syntax` checks the
+dialect first, so each error has its kind and offset; embedded flags and
+`(?P<name>...)` are refused. Limits are the ones the engine can enforce:
+pattern, depth, captures, program size, input, matches, output and
+replacement. A step budget, a heap budget and their error kinds are gone, as
+the engine runs in O(m·n) and bounds its own memory by the program size. The
+first match is `find`, since `match` is a keyword. `findAll` and `replaceAll`
+pass over an empty match where the last one ended, as the crate does, so both
+see the same matches.

@@ -142,6 +142,8 @@ enum StdModule {
     InternalMemory,
     /// `std.testing`: what a test tells the runner (testing 11.2).
     Testing,
+    /// `std.internal.regex`: the runtime's engine, for `std.regex`.
+    InternalRegex,
 }
 
 /// The types `std.process` declares when imported.
@@ -1409,6 +1411,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "json"] => StdModule::InternalJson,
             ["std", "internal", "memory"] => StdModule::InternalMemory,
             ["std", "testing"] => StdModule::Testing,
+            ["std", "internal", "regex"] => StdModule::InternalRegex,
             ["std", ..] => {
                 let what = format!("module `{}`", path.join("."));
                 self.diags.unsupported(import.span, &what);
@@ -1472,6 +1475,10 @@ impl<'a> Checker<'a> {
         if module == StdModule::InternalJson {
             self.types.handle(Handle::JsonReader, Ty::UNIT);
             self.types.handle(Handle::JsonWriter, Ty::UNIT);
+        }
+        if module == StdModule::InternalRegex {
+            self.types.handle(Handle::Regex, Ty::UNIT);
+            self.types.intern(TyKind::Array(Ty::INT));
         }
         if module == StdModule::Process && self.process.is_none() {
             let prefix = &name.name;
@@ -1573,6 +1580,9 @@ impl<'a> Checker<'a> {
             }
             (Some(ModuleName::Module(StdModule::InternalJson)), "NativeWriter") => {
                 self.types.lookup(&TyKind::Handle(Handle::JsonWriter, Ty::UNIT))
+            }
+            (Some(ModuleName::Module(StdModule::InternalRegex)), "NativeRegex") => {
+                self.types.lookup(&TyKind::Handle(Handle::Regex, Ty::UNIT))
             }
             (Some(ModuleName::Module(StdModule::InternalMemory)), "CString") => Some(self.c_string),
             (Some(ModuleName::Module(StdModule::InternalMemory)), "Void") => Some(self.void),
@@ -4042,6 +4052,8 @@ impl<'a> Checker<'a> {
             hir::NativeTy::IoWriter => self.types.handle(Handle::Writer, Ty::UNIT),
             hir::NativeTy::BytePointer => self.types.intern(TyKind::Pointer(Ty::BYTE)),
             hir::NativeTy::Bytes => self.types.intern(TyKind::Array(Ty::BYTE)),
+            hir::NativeTy::Ints => self.types.intern(TyKind::Array(Ty::INT)),
+            hir::NativeTy::Regex => self.types.handle(Handle::Regex, Ty::UNIT),
         }
     }
 
@@ -5140,9 +5152,11 @@ impl<'a> Checker<'a> {
     }
 
     fn declare(&mut self, cx: &mut FnCx, name: &ast::Ident, ty: Ty, mutable: bool) -> LocalId {
+        // Another module's bindings may reuse the root's names, which only
+        // the root sees unprefixed; the linker checks each module's own.
         if self.lookup(cx, &name.name).is_some()
             || self.visible_capture(cx, &name.name)
-            || self.names.contains_key(&name.name)
+            || (self.module == 0 && self.names.contains_key(&name.name))
         {
             let message = format!("`{}` would shadow a visible binding with the same name", name.name);
             self.diags.error("E1003", name.span, message);
@@ -8085,9 +8099,12 @@ impl<'a> Checker<'a> {
             if matches!(handle, Handle::Command | Handle::Pipeline | Handle::Process) {
                 return self.process_method(cx, value, handle, method, args, span);
             }
-            if matches!(handle, Handle::JsonReader | Handle::JsonWriter) {
-                let receiver =
-                    if handle == Handle::JsonReader { hir::NativeTy::JsonReader } else { hir::NativeTy::JsonWriter };
+            if matches!(handle, Handle::JsonReader | Handle::JsonWriter | Handle::Regex) {
+                let receiver = match handle {
+                    Handle::JsonReader => hir::NativeTy::JsonReader,
+                    Handle::JsonWriter => hir::NativeTy::JsonWriter,
+                    _ => hir::NativeTy::Regex,
+                };
                 let found = hir::NATIVES.iter().position(|n| n.receiver == Some(receiver) && n.name == method.name);
                 let Some(index) = found else { return self.no_method(ty, method, span) };
                 let native = &hir::NATIVES[index];
@@ -9308,8 +9325,17 @@ impl<'a> Checker<'a> {
                 let target = CallTarget::new(Callee::Std(function), signature, expected);
                 self.call_signature(cx, target, None, args, span)
             }
-            ([_, member], Some(ModuleName::Module(module @ (StdModule::InternalJson | StdModule::InternalMemory)))) => {
-                let module = if module == StdModule::InternalJson { "json" } else { "memory" };
+            (
+                [_, member],
+                Some(ModuleName::Module(
+                    module @ (StdModule::InternalJson | StdModule::InternalMemory | StdModule::InternalRegex),
+                )),
+            ) => {
+                let module = match module {
+                    StdModule::InternalJson => "json",
+                    StdModule::InternalMemory => "memory",
+                    _ => "regex",
+                };
                 let found =
                     hir::NATIVES.iter().position(|n| n.receiver.is_none() && n.module == module && n.name == *member);
                 let Some(index) = found else {

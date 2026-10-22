@@ -99,7 +99,7 @@ Every milestone ends with programs that compile to native executables and run.
 | **H3** | Ownership: affine values (`~Copy`), `ref`/`mut`/`var` loans, region loans, loan patterns, loan modes in function types, `defer`, panic cleanups | Done |
 | **H4** | Projects: modules and packages, `tondo.toml`, dependencies (path, git, archives) and `tondo.lock`, canonical formatter (`tondo fmt`), JSON diagnostics | Done |
 | **H5** | Concurrency without colors: stackful tasks on all cores, `spawn`, `Join`, `Group`, channels, `select`, timeouts, cancellation | Done |
-| **H6** | Hosted standard library: shared state (`std.sync`), streams (`std.io`), filesystem and paths, processes and pipelines, environment, time, JSON with automatic encoding; fire-and-forget tasks; parameters with default values | Done |
+| **H6** | Hosted standard library: shared state (`std.sync`), streams (`std.io`), filesystem and paths, processes and pipelines, environment, time, JSON with automatic encoding, regular expressions; fire-and-forget tasks; parameters with default values | Done |
 | **H7** | `unsafe` functions, blocks, closures and function types; `Pointer[T]` with its raw operations; calling C: `extern fn` (with C's `...`), `extern type` structs by value and by pointer, callbacks into Tondo from any thread, `std.ffi`, native libraries; lossless numeric widening | Done |
 | **Targets** | Linux x86-64 and arm64 (glibc and musl), macOS on Apple silicon and Intel, each with its C calling convention; CI on all of them | Done |
 | **Bindings** | `tondo bind` writes a module of `extern` declarations and constants from C headers, a `pkg-config` package, or a library's debug information; unions, `va_list`, macros, bit fields; static and shared native libraries; `const` | Done |

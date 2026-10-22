@@ -7,27 +7,33 @@ use std::process::Command;
 
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let runtime_src = manifest.join("../tondo-runtime/src");
-    println!("cargo:rerun-if-changed={}", runtime_src.display());
+    let runtime = manifest.join("../tondo-runtime");
+    println!("cargo:rerun-if-changed={}", runtime.join("src").display());
+    println!("cargo:rerun-if-changed={}", runtime.join("Cargo.toml").display());
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let library = out_dir.join("libtondo_runtime.a");
     let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
     let target = env::var("TARGET").unwrap();
-    let output = Command::new(&rustc)
-        .args(["--crate-name", "tondo_runtime", "--crate-type", "staticlib"])
-        .args(["--edition", "2024", "--target", &target])
-        .args(["-C", "opt-level=3", "-C", "panic=abort", "-C", "debuginfo=0"])
-        .args(["--cfg", "tondo_staticlib", "--print", "native-static-libs"])
-        .arg("-o")
-        .arg(&library)
-        .arg(runtime_src.join("lib.rs"))
+    // Its own build directory, so this build does not wait for the one
+    // that runs it.
+    let target_dir = out_dir.join("runtime");
+    let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let output = Command::new(&cargo)
+        .args(["rustc", "--package", "tondo-runtime", "--lib", "--release", "--crate-type", "staticlib"])
+        .args(["--target", &target, "--target-dir"])
+        .arg(&target_dir)
+        .args(["--", "-C", "panic=abort", "-C", "debuginfo=0", "--cfg", "tondo_staticlib"])
+        .args(["--print", "native-static-libs"])
+        .current_dir(&runtime)
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .output()
-        .expect("failed to run rustc for the Tondo runtime");
+        .expect("failed to run cargo for the Tondo runtime");
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !output.status.success() {
         panic!("compiling the Tondo runtime failed:\n{stderr}");
     }
+    let library = out_dir.join("libtondo_runtime.a");
+    std::fs::copy(target_dir.join(&target).join("release/libtondo_runtime.a"), &library).unwrap();
     let link_args = stderr
         .lines()
         .find_map(|line| line.split_once("native-static-libs: ").map(|(_, libs)| libs.trim()))

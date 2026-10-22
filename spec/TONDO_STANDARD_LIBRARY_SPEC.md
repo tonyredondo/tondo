@@ -3175,87 +3175,79 @@ look-around, recursion, conditionals, código embebido, includes, clases
 dependientes de locale, flags embebidos y matching de bytes inválidos se
 rechazan con un error de compilación; no se reinterpretan silenciosamente.
 
-`Regex.compile` produces an immutable, reusable value. `isMatch`,
-`isFullMatch`, `match`, `findAll`, `replace` and `replaceAll` are
-purely synchronous and bounded; `findAll` lazily implements
-`Iterator[RegexMatch ! RegexError]`, with `next(): (RegexMatch ! RegexError)?`.
-It emits at most one error, then remains exhausted; earlier complete matches
-remain valid. Selection uses the leftmost start, alternatives in pattern order
-and local greedy/lazy priorities for each quantifier. Matches do not overlap;
-a zero-length match advances one Unicode scalar to ensure progress. Captures
-and spans use half-open UTF-8 byte offsets at scalar boundaries. A capture
-whose branch did not participate is `none`; capture zero is the whole match.
+`Regex.compile` produce un valor inmutable y reutilizable, que se copia sin
+coste y puede compartirse entre tareas. `isMatch`, `isFullMatch`, `find`,
+`findAll`, `replace` y `replaceAll` son síncronos y acotados; ninguno suspende.
+`find` devuelve la primera coincidencia (`match` es una palabra reservada).
+`findAll` implementa de forma perezosa `Iterator[RegexMatch ! RegexError]`:
+emite como mucho un error y después queda agotado; las coincidencias anteriores
+siguen siendo válidas. La selección usa el inicio más a la izquierda, las
+alternativas en el orden del patrón y la prioridad greedy/lazy local de cada
+quantifier. Las coincidencias no se solapan; tras una coincidencia vacía la
+búsqueda avanza un escalar Unicode, y una coincidencia vacía donde terminó la
+anterior se omite, igual en `findAll` que en `replaceAll`. Captures y spans usan
+offsets UTF-8 semiabiertos en fronteras de escalar. Una capture cuya rama no
+participó es `none`; la capture cero es la coincidencia completa.
 
-El replacement solo admite `$0`, `$N`, `${name}` y `$$`. `replace` modifica la
-primera coincidencia y `replaceAll` todas las no solapadas. No existen callbacks
-de replacement en 0.1: evitar código ejecutable por match mantiene visibles
-coste, ownership y errores.
+El replacement solo admite `$0`, `$N`, `${name}` y `$$`; cualquier otro `$`, o
+una capture que el patrón no tiene, es `InvalidReplacement` en su offset.
+`replace` modifica la primera coincidencia y `replaceAll` todas las no
+solapadas. No existen callbacks de replacement en 0.1: evitar código ejecutable
+por match mantiene visibles coste, ownership y errores.
 
-El engine debe usar Thompson NFA, lazy DFA, tagged automata o una técnica
-equivalente con prueba de complejidad lineal; el backtracking y la recursión de
-la pila del host están prohibidos. Parser, captures, estados y worklists son
-explícitos y acotados. `RegexLimits` controla patrón, profundidad sintáctica,
-captures, rangos, programa, input, pasos, número de matches, replacement,
-output y heap. Si se alcanza un límite no se publica un valor parcial. SIMD o
-fast paths solo se habilitan después de probar equivalencia con un oracle
-scalar.
+```tondo
+pub fn RegexOptions.defaults(): RegexOptions
+pub fn RegexLimits.defaults(): RegexLimits
+pub fn Regex.compile(pattern: String, options: RegexOptions = …, limits: RegexLimits = …): Regex ! RegexError
+pub fn Regex.pattern(self): String
+pub fn Regex.captureCount(self): Int
+pub fn Regex.captureNames(self): Array[String]
+pub fn Regex.isMatch(self, input: String): Bool ! RegexError
+pub fn Regex.isFullMatch(self, input: String): Bool ! RegexError
+pub fn Regex.find(self, input: String): RegexMatch? ! RegexError
+pub fn Regex.findAll(self, input: String): RegexFindIterator ! RegexError
+pub fn Regex.replace(self, input: String, replacement: String): String ! RegexError
+pub fn Regex.replaceAll(self, input: String, replacement: String): String ! RegexError
+pub fn RegexMatch.capture(self, index: Int): RegexCapture?
+pub fn RegexMatch.captureName(self, name: String): RegexCapture?
+pub fn RegexSpan.slice(self, input: String): String ! RegexError
+```
 
-El contrato machine-readable, la documentación normativa y los negativos son
-[`testing/stdlib-regex.json`](./testing/stdlib-regex.json),
-[`docs/contracts/stdlib-regex.md`](./docs/contracts/stdlib-regex.md),
-[`scripts/stdlib-regex-check.sh`](./scripts/stdlib-regex-check.sh) y
-[`scripts/stdlib-regex-test.sh`](./scripts/stdlib-regex-test.sh). The B0 design
-is closed by `STD-REGEX-001`. `STD-REGEX-IMPL-001` verifies the bounded
-Rust kernel with pinned `regex-syntax =0.8.10` and an ordered Thompson NFA.
-Searches have a cumulative step budget across lazy iteration and replacement;
-total enumeration is not claimed linear when suffixes are rescanned. Public
-Tondo compiler/VM registration, native ABI and AOT are not promoted by that
-kernel boundary. `STD-REGEX-TEST-001` verifies an independent bounded grammar
-and ordered path oracle, 41 valid/33 invalid retained vectors, 4,096 generated
-seeds and 128 seeded minimal fuzz runs. Thirty-two valid vectors fit the model;
-nine use separately authored Unicode expectations. The model does not claim
-complete independent Unicode property tables. Its limits are not kernel
-rejections. The middle-hyphen class admission correction and testing boundary
-pass the joint full functional and source-bound quality gates: 91.5772% global
-line coverage, every global/risk dimension at or above 80%, six critical mutants
-caught. The register and contract are
-[testing/stdlib-regex-test.json](./testing/stdlib-regex-test.json) and
-[docs/contracts/stdlib-regex-test.md](./docs/contracts/stdlib-regex-test.md).
-The performance leaf has a `verified-stdlib-kernel-baseline` contract in
-[testing/stdlib-regex-performance.json](./testing/stdlib-regex-performance.json)
-and [docs/contracts/stdlib-regex-performance.md](./docs/contracts/stdlib-regex-performance.md):
-19 direct Rust kernel workloads, three independent processes and 27 retained
-samples per workload, exact model/authored expectations, actual program/search
-counters and explicitly selected logical resources. Hosted VM, native Tondo,
-SIMD and code-size measurements are not claimed. Clean-source measurements,
-the full functional gate and source-bound quality checks pass: 292,637 of
-319,506 lines (91.5905%), every global/risk dimension at or above 80%, six
-critical mutants caught. The `STD-REGEX-CONF-001` shared protocol is recorded in
-[testing/stdlib-regex-conformance.json](./testing/stdlib-regex-conformance.json)
-and [docs/contracts/stdlib-regex-conformance.md](./docs/contracts/stdlib-regex-conformance.md).
-Its `verified-hosted-vm-adapter-and-native-stdlib-process` state compares seven
-shared case groups, including the
-41 valid and 33 invalid retained vectors, through a private bodyless VM callable
-and a fresh Rust kernel process. Unicode, captures, lazy iteration, replacement,
-nominal errors and all six main limits share exact assertions. This is not a
-public compiler/VM registration, native regex ABI or Cranelift lowering.
-The clean-source comparison and current full gate pass. Source-bound quality
-measures 292,638 of 319,506 workspace lines (91.5908%), preserves every global
-and risk-scope line/function/region floor of 80% and catches all six critical
-mutants. Example/integration-test source lines are excluded from formal
-coverage; focused and full execution separately verify the adapters.
-The `STD-REGEX-DOC-001` documentation record is `verified-rust-kernel-usage` in
-the parent register. The [executable guide](./docs/contracts/stdlib-regex.md) and
-[canonical Rust example](./crates/tondo-stdlib/examples/regex_usage.rs) cover
-patterns, Unicode/options, capture spans, lazy fallible iteration, replacement
-and limits/costs. `scripts/stdlib-regex-doc-check.sh` executes that example and
-requires its exact `regex-doc-ok` stdout. This is Rust-kernel usage; public
-Tondo/production VM/native ABI/AOT routes remain unimplemented or unclaimed.
-The full functional and current source-bound quality gates pass, including
-292,638 of 319,506 covered workspace lines (91.5908%), every global/risk 80%
-floor and all six critical mutants caught. The documentation checker covers
-171 negative records/guide fixtures and both valid progression states.
-Publication and exact-SHA CI closure are tracked separately in the live tracker.
+`RegexMatch` y `RegexCapture` tienen `span` y `text`. `RegexOptions` tiene
+`caseInsensitive` (simple case folding de Unicode), `multiLine`,
+`dotMatchesNewline`, `crlf` (con `multiLine`, `CRLF` es un solo fin de línea) y
+`ungreedy`, todos `false` en `defaults()` y en el valor por defecto de
+`compile`; Unicode siempre está activo. `RegexLimits` y sus valores por defecto:
+
+| Límite | Default | Se comprueba |
+|---|---:|---|
+| `maxPatternBytes` | 65536 | antes de parsear |
+| `maxSyntaxDepth` | 256 | al parsear |
+| `maxCaptureGroups` | 256 | al parsear |
+| `maxProgramStates` | 1000000 | al compilar: el programa ocupa hasta 16 bytes por estado |
+| `maxInputBytes` | 16777216 | antes de buscar |
+| `maxMatches` | 1000000 | antes de emitir cada coincidencia |
+| `maxOutputBytes` | 67108864 | al construir el reemplazo |
+| `maxReplacementBytes` | 65536 | antes de leer la plantilla |
+
+Si se alcanza un límite no se publica un valor parcial. `RegexError` tiene
+`kind`, `phase` (`Compile`, `Match` o `Replace`) y `offset`: el byte del patrón,
+input o plantilla donde está el error, o donde se superó el límite. Se muestra
+como `regex.<kind> at byte <offset> (<phase>)`. `RegexErrorKind` es
+`InvalidSyntax`, `UnexpectedEnd`, `InvalidEscape`, `InvalidUnicodeScalar`,
+`InvalidUnicodeProperty`, `InvalidClass`, `InvalidRange`, `InvalidQuantifier`,
+`InvalidCaptureName`, `DuplicateCaptureName`, `UnsupportedFeature`,
+`PatternLimitExceeded`, `ProgramLimitExceeded`, `InputLimitExceeded`,
+`MatchLimitExceeded`, `ReplacementLimitExceeded`, `InvalidReplacement`,
+`OutputLimitExceeded` o `InvalidBoundary`. La API no hace panic por input del
+usuario.
+
+El motor es el crate `regex` de Rust, enlazado en el runtime: autómatas finitos
+(PikeVM, DFA perezoso y un backtracker acotado con memoria de estados
+visitados), con tiempo O(m·n) en el tamaño del programa y del input, sin
+backtracking exponencial ni recursión en la pila del host. Antes de compilar,
+`regex-syntax` valida el dialecto y da el tipo y el offset de cada error. Las
+tablas Unicode son las de `regex-syntax` (16.0.0), fijadas por `Cargo.lock`.
 
 ### 14.17 `std.uuid`
 
@@ -3498,9 +3490,9 @@ Los codecs de datos:
 - mantienen frames/worklists explícitos para CBOR, validando breaks,
   longitudes indefinidas, tags y mapas arbitrarios sin consumir la pila
   recursiva del host;
-- mantienen el parser y las máquinas de estados explícitos de `std.regex`, sin
-  backtracking exponencial, con tablas Unicode versionadas y límites de pasos,
-  programa, input, matches y output comprobados antes de publicar resultados;
+- ejecutan `std.regex` con el crate `regex`, sin backtracking exponencial, con
+  tablas Unicode fijadas y límites de programa, input, matches y output
+  comprobados antes de publicar resultados;
 - pueden usar SIMD o kernels nativos bajo las reglas de 11.6; y
 - demuestran equivalencia mediante vectores oficiales, fuzzing diferencial,
   round trips, corpus adversario, implementaciones externas y comparación

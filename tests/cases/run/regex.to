@@ -1,0 +1,142 @@
+import std.console
+import std.regex
+
+fn shown(capture: regex.RegexCapture?): String {
+    match capture {
+        some(c) => "{c.text}@{c.span.start}"
+        none => "-"
+    }
+}
+
+fn compileError(pattern: String) {
+    match regex.Regex.compile(pattern) {
+        ok(_) => console.println("compiled")
+        err(error) => console.println("{error}")
+    }
+}
+
+fn report(result: String ! regex.RegexError) {
+    match result {
+        ok(value) => console.println(value)
+        err(error) => console.println("{error}")
+    }
+}
+
+fn main(): Unit ! regex.RegexError {
+    let digits = regex.Regex.compile(r"\d+")?
+    console.println("{digits.pattern()} {digits.captureCount()} {digits.isMatch("abc123")?} {digits.isMatch("abc")?}")
+    let either = regex.Regex.compile("a|ab")?
+    console.println("{either.isFullMatch("ab")?} {either.isFullMatch("abc")?}")
+    match digits.find("a12b345")? {
+        some(found) => console.println("{found.text} {found.span.start} {found.span.end}")
+        none => console.println("none")
+    }
+
+    let date = regex.Regex.compile(r"(?<year>\d{4})-(?<month>\d{2})(-(?<day>\d{2}))?")?
+    console.println("{date.captureCount()} {date.captureNames()}")
+    match date.find("on 2026-10, ok")? {
+        some(found) => {
+            console.println("{shown(found.capture(0))} {shown(found.captureName("year"))} {shown(found.capture(2))}")
+            console.println("{shown(found.captureName("day"))} {shown(found.capture(9))} {shown(found.captureName("hour"))}")
+        }
+        none => {}
+    }
+
+    var all: Array[String] = []
+    for found in digits.findAll("a1b22c333")? {
+        all.push(found?.text)
+    }
+    console.println("{all}")
+    var empty: Array[Int] = []
+    for found in regex.Regex.compile("")?.findAll("héllo")? {
+        empty.push(found?.span.start)
+    }
+    console.println("{empty}")
+    let stars = regex.Regex.compile("a*")?
+    var starts: Array[Int] = []
+    for found in stars.findAll("baaa")? {
+        starts.push(found?.span.start)
+    }
+    console.println("{starts} {stars.replaceAll("baaa", "-")?}")
+
+    console.println(digits.replaceAll("a1b22", "[$0]")?)
+    console.println(date.replace("2026-10 and 2027-01", "${{month}}/${{year}} $$")?)
+    console.println(date.replaceAll("2026-10 and 2027-01", "$2")?)
+
+    let greek = regex.Regex.compile(r"\p{Greek}+")?
+    console.println("{greek.isMatch("abc αβγ")?} {regex.Regex.compile(r"^\w+$")?.isMatch("ñandú")?}")
+    let insensitive = regex.Regex.compile("HELLO", regex.RegexOptions.defaults() with { caseInsensitive: true })?
+    console.println("{insensitive.isMatch("well, hello")?}")
+    let lines = regex.Regex.compile("^b$", regex.RegexOptions.defaults() with { multiLine: true })?
+    console.println("{lines.isMatch("a\nb\nc")?} {regex.Regex.compile("^b$")?.isMatch("a\nb\nc")?}")
+
+    compileError("(a")
+    compileError("a)")
+    compileError("[z-a]")
+    compileError(r"a{2,1}")
+    compileError(r"\q")
+    compileError("(?<1x>a)")
+    compileError("(?<n>a)(?<n>b)")
+    compileError("(?i)a")
+    compileError("(?P<n>a)")
+    compileError(r"(a)\1")
+    compileError(r"\p{Nope}")
+
+    let small = regex.RegexLimits.defaults() with { maxInputBytes: 4, maxMatches: 2, maxOutputBytes: 6 }
+    let limited = regex.Regex.compile("a", limits: small)?
+    match limited.isMatch("aaaaa") {
+        ok(_) => console.println("matched")
+        err(error) => console.println("{error}")
+    }
+    var results: Array[String] = []
+    let matches = limited.findAll("aaaa")?
+    for found in matches {
+        match found {
+            ok(next) => results.push("{next.span.start}")
+            err(error) => results.push("{error}")
+        }
+    }
+    console.println("{results}")
+    report(limited.replaceAll("aaaa", "xy"))
+    report(limited.replace("aaaa", "$1"))
+    report(limited.replace("aaa", "xyzwv"))
+    match regex.Regex.compile("abcdef", limits: regex.RegexLimits.defaults() with { maxPatternBytes: 3 }) {
+        ok(_) => console.println("compiled")
+        err(error) => console.println("{error}")
+    }
+    report((regex.RegexSpan { start: 1, end: 2 }).slice("é"))
+}
+
+// expect-stdout: \d+ 0 true false
+// expect-stdout: true false
+// expect-stdout: 12 1 3
+// expect-stdout: 4 [year, month, day]
+// expect-stdout: 2026-10@3 2026@3 10@8
+// expect-stdout: - - -
+// expect-stdout: [1, 22, 333]
+// expect-stdout: [0, 1, 3, 4, 5, 6]
+// expect-stdout: [0, 1] -b-
+// expect-stdout: a[1]b[22]
+// expect-stdout: 10/2026 $ and 2027-01
+// expect-stdout: 10 and 01
+// expect-stdout: true true
+// expect-stdout: true
+// expect-stdout: true false
+// expect-stdout: regex.UnexpectedEnd at byte 0 (Compile)
+// expect-stdout: regex.InvalidSyntax at byte 1 (Compile)
+// expect-stdout: regex.InvalidRange at byte 1 (Compile)
+// expect-stdout: regex.InvalidQuantifier at byte 1 (Compile)
+// expect-stdout: regex.InvalidEscape at byte 0 (Compile)
+// expect-stdout: regex.InvalidCaptureName at byte 3 (Compile)
+// expect-stdout: regex.DuplicateCaptureName at byte 10 (Compile)
+// expect-stdout: regex.UnsupportedFeature at byte 0 (Compile)
+// expect-stdout: regex.UnsupportedFeature at byte 0 (Compile)
+// expect-stdout: regex.UnsupportedFeature at byte 3 (Compile)
+// expect-stdout: regex.InvalidUnicodeProperty at byte 0 (Compile)
+// expect-stdout: regex.InputLimitExceeded at byte 4 (Match)
+// expect-stdout: [0, 1, regex.MatchLimitExceeded at byte 2 (Match)]
+// expect-stdout: regex.MatchLimitExceeded at byte 2 (Replace)
+// expect-stdout: regex.InvalidReplacement at byte 0 (Replace)
+// expect-stdout: regex.OutputLimitExceeded at byte 3 (Replace)
+// expect-stdout: regex.PatternLimitExceeded at byte 3 (Compile)
+// expect-stdout: regex.InvalidBoundary at byte 1 (Match)

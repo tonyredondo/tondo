@@ -1,0 +1,373 @@
+// std.regex (standard library 14.16): Unicode regular expressions that run
+// in time linear in their input, on the runtime's engine. No
+// backreferences or look-around; spans are byte offsets into the input.
+
+import std.internal.regex as native
+
+/// How a pattern matches.
+pub type RegexOptions = {
+    caseInsensitive: Bool
+    multiLine: Bool
+    dotMatchesNewline: Bool
+    crlf: Bool
+    ungreedy: Bool
+}
+
+pub fn RegexOptions.defaults(): RegexOptions {
+    RegexOptions { caseInsensitive: false, multiLine: false, dotMatchesNewline: false, crlf: false, ungreedy: false }
+}
+
+/// How much a pattern and its inputs may take.
+pub type RegexLimits = {
+    maxPatternBytes: Int
+    maxSyntaxDepth: Int
+    maxCaptureGroups: Int
+    maxProgramStates: Int
+    maxInputBytes: Int
+    maxMatches: Int
+    maxOutputBytes: Int
+    maxReplacementBytes: Int
+}
+
+pub fn RegexLimits.defaults(): RegexLimits {
+    RegexLimits {
+        maxPatternBytes: 65536
+        maxSyntaxDepth: 256
+        maxCaptureGroups: 256
+        maxProgramStates: 1000000
+        maxInputBytes: 16777216
+        maxMatches: 1000000
+        maxOutputBytes: 67108864
+        maxReplacementBytes: 65536
+    }
+}
+
+pub enum RegexErrorKind {
+    InvalidSyntax
+    UnexpectedEnd
+    InvalidEscape
+    InvalidUnicodeScalar
+    InvalidUnicodeProperty
+    InvalidClass
+    InvalidRange
+    InvalidQuantifier
+    InvalidCaptureName
+    DuplicateCaptureName
+    UnsupportedFeature
+    PatternLimitExceeded
+    ProgramLimitExceeded
+    InputLimitExceeded
+    MatchLimitExceeded
+    ReplacementLimitExceeded
+    InvalidReplacement
+    OutputLimitExceeded
+    InvalidBoundary
+}
+
+pub enum RegexPhase {
+    Compile
+    Match
+    Replace
+}
+
+/// What went wrong, in which phase, at which byte of the pattern, input or
+/// replacement.
+pub type RegexError = {
+    kind: RegexErrorKind
+    phase: RegexPhase
+    offset: Int
+}
+
+impl Display for RegexErrorKind {
+    fn display(self): String {
+        match self {
+            RegexErrorKind.InvalidSyntax => "InvalidSyntax"
+            RegexErrorKind.UnexpectedEnd => "UnexpectedEnd"
+            RegexErrorKind.InvalidEscape => "InvalidEscape"
+            RegexErrorKind.InvalidUnicodeScalar => "InvalidUnicodeScalar"
+            RegexErrorKind.InvalidUnicodeProperty => "InvalidUnicodeProperty"
+            RegexErrorKind.InvalidClass => "InvalidClass"
+            RegexErrorKind.InvalidRange => "InvalidRange"
+            RegexErrorKind.InvalidQuantifier => "InvalidQuantifier"
+            RegexErrorKind.InvalidCaptureName => "InvalidCaptureName"
+            RegexErrorKind.DuplicateCaptureName => "DuplicateCaptureName"
+            RegexErrorKind.UnsupportedFeature => "UnsupportedFeature"
+            RegexErrorKind.PatternLimitExceeded => "PatternLimitExceeded"
+            RegexErrorKind.ProgramLimitExceeded => "ProgramLimitExceeded"
+            RegexErrorKind.InputLimitExceeded => "InputLimitExceeded"
+            RegexErrorKind.MatchLimitExceeded => "MatchLimitExceeded"
+            RegexErrorKind.ReplacementLimitExceeded => "ReplacementLimitExceeded"
+            RegexErrorKind.InvalidReplacement => "InvalidReplacement"
+            RegexErrorKind.OutputLimitExceeded => "OutputLimitExceeded"
+            RegexErrorKind.InvalidBoundary => "InvalidBoundary"
+        }
+    }
+}
+
+impl Display for RegexPhase {
+    fn display(self): String {
+        match self {
+            RegexPhase.Compile => "Compile"
+            RegexPhase.Match => "Match"
+            RegexPhase.Replace => "Replace"
+        }
+    }
+}
+
+impl Display for RegexError {
+    fn display(self): String {
+        "regex.{self.kind} at byte {self.offset} ({self.phase})"
+    }
+}
+
+/// A half-open range of bytes of an input.
+pub type RegexSpan = {
+    start: Int
+    end: Int
+}
+
+/// The text of the span, which must fall between scalars of `input`.
+pub fn RegexSpan.slice(self, input: String): String ! RegexError {
+    let text = native.slice(input, self.start, self.end)
+    check(RegexPhase.Match)?
+    text
+}
+
+/// A capture that took part in a match: where, and its text.
+pub type RegexCapture = {
+    span: RegexSpan
+    text: String
+}
+
+/// A match, with its captures; capture `0` is the whole match.
+pub type RegexMatch = {
+    span: RegexSpan
+    text: String
+    priv captures: Array[RegexCapture?]
+    priv regex: Regex
+}
+
+/// A capture by index, or `none` if it took no part or does not exist.
+pub fn RegexMatch.capture(self, index: Int): RegexCapture? {
+    match self.captures.get(index) {
+        some(capture) => capture
+        none => none
+    }
+}
+
+/// A capture by name, or `none` if it took no part or does not exist.
+pub fn RegexMatch.captureName(self, name: String): RegexCapture? {
+    let index = self.regex.native.captureIndex(name)
+    if index < 0 {
+        return none
+    }
+    self.capture(index)
+}
+
+/// A compiled pattern, immutable and shared.
+pub type Regex = {
+    priv native: native.NativeRegex
+}
+
+/// The error the engine left, if any.
+fn check(phase: RegexPhase): Unit ! RegexError {
+    let code = native.errorKind()
+    if code == 0 {
+        return
+    }
+    let kinds = [
+        RegexErrorKind.InvalidSyntax,
+        RegexErrorKind.UnexpectedEnd,
+        RegexErrorKind.InvalidEscape,
+        RegexErrorKind.InvalidUnicodeScalar,
+        RegexErrorKind.InvalidUnicodeProperty,
+        RegexErrorKind.InvalidClass,
+        RegexErrorKind.InvalidRange,
+        RegexErrorKind.InvalidQuantifier,
+        RegexErrorKind.InvalidCaptureName,
+        RegexErrorKind.DuplicateCaptureName,
+        RegexErrorKind.UnsupportedFeature,
+        RegexErrorKind.PatternLimitExceeded,
+        RegexErrorKind.ProgramLimitExceeded,
+        RegexErrorKind.InputLimitExceeded,
+        RegexErrorKind.MatchLimitExceeded,
+        RegexErrorKind.ReplacementLimitExceeded,
+        RegexErrorKind.InvalidReplacement,
+        RegexErrorKind.OutputLimitExceeded,
+        RegexErrorKind.InvalidBoundary,
+    ]
+    let kind = match kinds.get(code - 1) {
+        some(kind) => kind
+        none => RegexErrorKind.InvalidSyntax
+    }
+    fail RegexError { kind, phase, offset: native.errorOffset() }
+}
+
+/// Compiles a pattern; an error says what and where in it.
+pub fn Regex.compile(
+    pattern: String,
+    options: RegexOptions = RegexOptions {
+        caseInsensitive: false
+        multiLine: false
+        dotMatchesNewline: false
+        crlf: false
+        ungreedy: false
+    },
+    limits: RegexLimits = RegexLimits {
+        maxPatternBytes: 65536
+        maxSyntaxDepth: 256
+        maxCaptureGroups: 256
+        maxProgramStates: 1000000
+        maxInputBytes: 16777216
+        maxMatches: 1000000
+        maxOutputBytes: 67108864
+        maxReplacementBytes: 65536
+    },
+): Regex ! RegexError {
+    var flags = 0
+    if options.caseInsensitive {
+        flags += 1
+    }
+    if options.multiLine {
+        flags += 2
+    }
+    if options.dotMatchesNewline {
+        flags += 4
+    }
+    if options.crlf {
+        flags += 8
+    }
+    if options.ungreedy {
+        flags += 16
+    }
+    let compiled = native.compile(
+        pattern,
+        flags,
+        limits.maxPatternBytes,
+        limits.maxSyntaxDepth,
+        limits.maxCaptureGroups,
+        limits.maxProgramStates,
+        limits.maxInputBytes,
+        limits.maxMatches,
+        limits.maxOutputBytes,
+        limits.maxReplacementBytes,
+    )
+    check(RegexPhase.Compile)?
+    Regex { native: compiled }
+}
+
+/// The pattern as written.
+pub fn Regex.pattern(self): String {
+    self.native.pattern()
+}
+
+/// The numbered captures, without the whole match.
+pub fn Regex.captureCount(self): Int {
+    self.native.captureCount()
+}
+
+/// The names of the named captures, in order.
+pub fn Regex.captureNames(self): Array[String] {
+    var names: Array[String] = []
+    for index in 1..=self.native.captureCount() {
+        let name = self.native.captureName(index)
+        if name != "" {
+            names.push(name)
+        }
+    }
+    names
+}
+
+/// Whether the pattern matches anywhere in the input.
+pub fn Regex.isMatch(self, input: String): Bool ! RegexError {
+    let found = self.native.isMatch(input, false)
+    check(RegexPhase.Match)?
+    found
+}
+
+/// Whether the pattern matches the whole input.
+pub fn Regex.isFullMatch(self, input: String): Bool ! RegexError {
+    let found = self.native.isMatch(input, true)
+    check(RegexPhase.Match)?
+    found
+}
+
+/// The match after one that ended at `last` (`-1` for none), with `found`
+/// before it.
+fn Regex.findFrom(self, input: String, last: Int, found: Int): RegexMatch? ! RegexError {
+    let spans = self.native.find(input, last, found)
+    check(RegexPhase.Match)?
+    if spans.length() == 0 {
+        return none
+    }
+    var captures: Array[RegexCapture?] = []
+    for index in 0..spans.length() / 2 {
+        let span = RegexSpan { start: spans[index * 2], end: spans[index * 2 + 1] }
+        if span.start < 0 {
+            captures.push(none)
+        } else {
+            captures.push(some(RegexCapture { span, text: span.slice(input)? }))
+        }
+    }
+    let whole = RegexSpan { start: spans[0], end: spans[1] }
+    some(RegexMatch { span: whole, text: whole.slice(input)?, captures, regex: self })
+}
+
+/// The first match, or `none`.
+pub fn Regex.find(self, input: String): RegexMatch? ! RegexError {
+    self.findFrom(input, -1, 0)
+}
+
+/// The matches, in order and without overlapping.
+pub fn Regex.findAll(self, input: String): RegexFindIterator ! RegexError {
+    self.native.checkInput(input)
+    check(RegexPhase.Match)?
+    RegexFindIterator { regex: self, input, last: -1, found: 0, done: false }
+}
+
+/// The input with the first match replaced: `$0` is the match, `$N` and
+/// `${name}` its captures, and `$$` a `$`.
+pub fn Regex.replace(self, input: String, replacement: String): String ! RegexError {
+    let text = self.native.replace(input, replacement, false)
+    check(RegexPhase.Replace)?
+    text
+}
+
+/// The input with every match replaced, as `replace` does.
+pub fn Regex.replaceAll(self, input: String, replacement: String): String ! RegexError {
+    let text = self.native.replace(input, replacement, true)
+    check(RegexPhase.Replace)?
+    text
+}
+
+/// The matches of `findAll`, found as they are asked for.
+pub type RegexFindIterator = {
+    priv regex: Regex
+    priv input: String
+    priv last: Int
+    priv found: Int
+    priv done: Bool
+}
+
+impl Iterator[RegexMatch ! RegexError] for RegexFindIterator {
+    fn next(mut self): (RegexMatch ! RegexError)? {
+        if self.done {
+            return none
+        }
+        match self.regex.findFrom(self.input, self.last, self.found) {
+            ok(some(found)) => {
+                self.last = found.span.end
+                self.found += 1
+                some(ok(found))
+            }
+            ok(none) => {
+                self.done = true
+                none
+            }
+            err(error) => {
+                self.done = true
+                some(err(error))
+            }
+        }
+    }
+}

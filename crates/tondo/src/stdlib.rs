@@ -9,7 +9,11 @@ use crate::{ast, parser};
 use std::path::Path;
 
 /// Each module, by its path after `std`, and its source.
-const SOURCES: &[(&str, &str)] = &[("json", include_str!("../std/json.to")), ("ffi", include_str!("../std/ffi.to"))];
+const SOURCES: &[(&str, &str)] = &[
+    ("json", include_str!("../std/json.to")),
+    ("ffi", include_str!("../std/ffi.to")),
+    ("regex", include_str!("../std/regex.to")),
+];
 
 fn source(path: &[ast::Ident]) -> Option<(&'static str, &'static str)> {
     match path {

@@ -172,6 +172,8 @@ pub enum Handle {
     /// `testing.VirtualTime`, which moves a test's virtual clock (testing
     /// 7.9); its type is `Unit`.
     Clock,
+    /// The runtime's compiled regular expression (`std.internal.regex`).
+    Regex,
 }
 
 impl Handle {
@@ -204,6 +206,7 @@ impl Handle {
             Handle::JsonReader => "json.NativeReader",
             Handle::JsonWriter => "json.NativeWriter",
             Handle::Clock => "testing.VirtualTime",
+            Handle::Regex => "regex.NativeRegex",
         }
     }
 
@@ -1410,7 +1413,8 @@ impl Types {
                         | Handle::Process
                         | Handle::JsonReader
                         | Handle::JsonWriter
-                        | Handle::Clock,
+                        | Handle::Clock
+                        | Handle::Regex,
                         _,
                     ) => {
                         return handle.name().to_string();

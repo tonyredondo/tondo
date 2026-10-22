@@ -106,6 +106,7 @@ enum Rt {
     ClockSettle,
     ClockAdvance,
     ClockRelease,
+    RegexRelease,
     ArrayNew,
     ArrayRetain,
     ArrayRelease,
@@ -313,6 +314,7 @@ impl Rt {
             Rt::ClockSettle => ("tondo_rt_clock_settle", &[I64], &[]),
             Rt::ClockAdvance => ("tondo_rt_clock_advance", &[I64, I64, I64], &[]),
             Rt::ClockRelease => ("tondo_rt_clock_release", &[I64], &[]),
+            Rt::RegexRelease => ("tondo_rt_regex_release", &[I64], &[]),
             Rt::ArrayNew => ("tondo_rt_array_new", &[I64, I64], &[I64]),
             Rt::ArrayRetain => ("tondo_rt_array_retain", &[I64], &[]),
             Rt::ArrayRelease => ("tondo_rt_array_release", &[I64, I64, I64], &[]),
@@ -1635,6 +1637,7 @@ impl Emit<'_, '_> {
                         Handle::JsonReader => Rt::JsonReaderRelease,
                         Handle::JsonWriter => Rt::JsonWriterRelease,
                         Handle::Clock => Rt::ClockRelease,
+                        Handle::Regex => Rt::RegexRelease,
                         _ => Rt::SyncRelease,
                     };
                     self.call_rt(rt, &[pointer]);
