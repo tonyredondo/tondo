@@ -210,6 +210,9 @@ fn declarations(module: &ModuleSource) -> Declarations {
                 Item::Alias(a) => {
                     decls.types.insert(a.name.name.clone(), a.public);
                 }
+                Item::Const(c) => {
+                    decls.values.insert(c.name.name.clone(), c.public);
+                }
                 Item::Trait(t) => {
                     decls.types.insert(t.name.name.clone(), t.public);
                 }
@@ -366,6 +369,14 @@ impl Linker<'_> {
             Item::Alias(a) => {
                 self.declared(&mut a.name);
                 self.ty(&mut a.target);
+            }
+            Item::Const(c) => {
+                c.module = module;
+                self.declared(&mut c.name);
+                if let Some(ty) = &mut c.ty {
+                    self.ty(ty);
+                }
+                self.expr(&mut c.value);
             }
             Item::Enum(e) => {
                 e.module = module;

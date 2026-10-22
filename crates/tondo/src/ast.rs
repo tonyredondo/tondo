@@ -25,6 +25,7 @@ pub struct Import {
 
 #[derive(Debug)]
 pub enum Item {
+    Const(ConstDecl),
     Fn(FnDecl),
     Type(TypeDecl),
     Alias(AliasDecl),
@@ -219,6 +220,19 @@ pub struct Annotation {
 pub enum AnnotationArg {
     Text(String),
     Int(u64),
+}
+
+/// `const Name: T = value`: a value evaluated in compilation (6.5).
+#[derive(Debug)]
+pub struct ConstDecl {
+    pub public: bool,
+    pub name: Ident,
+    pub ty: Option<TypeExpr>,
+    pub value: Expr,
+    pub span: Span,
+    /// The module that declares it, numbered when modules are linked; the
+    /// root module is 0.
+    pub module: u32,
 }
 
 /// `alias Name = T`: a transparent name for `T`.

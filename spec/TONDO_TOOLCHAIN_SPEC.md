@@ -77,7 +77,7 @@ http = { git = "https://github.com/acme/http", tag = "v1.2.0" }
 zlib = { url = "https://example.com/zlib-1.0.tar.gz" }
 
 [native]
-libraries = ["sqlite3", "vendor/libz.a"]
+libraries = ["sqlite3", "static:z", "vendor/libpng.a", "vendor/libfoo.so"]
 ~~~
 
 - `[package]` admite `name`, un identificador, y `edition`, cuyo único valor
@@ -85,9 +85,16 @@ libraries = ["sqlite3", "vendor/libz.a"]
 - `[dependencies]` asocia a cada alias su fuente (sección 4).
 - `[native]` admite `libraries`: las librerías de C que el ejecutable enlaza
   además de la del sistema, para las funciones que declaran sus `extern fn`
-  (16.16 del lenguaje). Un nombre se enlaza como `-lnombre`; una entrada con `/`
-  o que termina en `.a`, `.so` o `.dylib` es un archivo, relativo al
-  `tondo.toml`. El programa enlaza las de todos sus paquetes.
+  (16.16 del lenguaje). El programa enlaza las de todos sus paquetes:
+  - un nombre, `"sqlite3"`, se enlaza de forma dinámica desde las rutas de
+    librerías del sistema (`-lsqlite3`);
+  - `"static:z"` enlaza de forma estática `libz.a` de esas rutas;
+  - un archivo, relativo al `tondo.toml`: uno `.a` se enlaza de forma
+    estática, y uno `.so` o `.dylib` de forma dinámica, con su directorio en
+    la ruta de búsqueda del ejecutable para que lo encuentre al arrancar.
+
+  Una librería estática no arrastra las suyas: el proyecto lista también las
+  que necesita.
 - Toda otra tabla o clave es error, igual que una clave fuera de tabla.
 
 El archivo usa el subconjunto de TOML de tablas, strings, enteros, tablas en
@@ -191,6 +198,7 @@ tondo build [<project>|<file.to>] [--output <path>] [--link <library>]...
 tondo check [<project>|<file.to>] [--json]
 tondo fmt [--check] <file.to>...
 tondo update [<project>] [<dependency>...]
+tondo bind <header.h>... [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
 tondo test [<project>]
 ~~~
 
@@ -201,10 +209,37 @@ tondo test [<project>]
   para sus `extern fn`.
 - `fmt` aplica el formato canónico (21) a archivos sueltos; `--check` falla si
   alguno no lo cumple.
+- `bind` escribe un módulo con las declaraciones de C de unos headers
+  (sección 7.1) y añade cada `--library` a `[native] libraries`.
 - `test` sigue la [especificación de testing](./TONDO_TESTING_SPEC.md).
 - Estado de salida: `0` éxito; `1` diagnósticos de error o fallo de formato; `2`
   uso incorrecto; `3` error del toolchain (sección 9). `run` devuelve el estado
   del programa.
+
+### 7.1 `tondo bind`
+
+`tondo bind` expande los headers con el preprocesador de C del sistema
+(`cc -E`, con los `-I` y `-D` dados) y escribe, en formato canónico, un módulo
+del proyecto: `src/<nombre>/<nombre>.to` por el primer header, u `--output`.
+El módulo declara, como `pub`, lo que declaran los headers y los de su
+directorio que incluyen directamente:
+
+| C | Tondo |
+|---|---|
+| función | `extern fn`, con `@symbol` si su símbolo difiere |
+| `struct` | `extern type`, opaco si no tiene cuerpo |
+| `union`, `struct` con bit fields | `extern type` de sus bytes, con su alineación |
+| `typedef` | `alias` |
+| `enum` | `alias` de `ffi.CInt` y una constante por enumerador |
+| macro de un número o un texto | `const` |
+
+Los nombres de C se conservan; uno que es palabra reservada o nombre del
+prelude de Tondo recibe `_` al final. Un puntero es opcional, porque C puede
+pasar `NULL`; `const char*` es `ffi.CString?`. Un tipo de otro header se
+resuelve a lo que nombra, y un struct que solo se alcanza por puntero es
+opaco. Lo que no tiene forma en Tondo, como un `va_list`, una unión por valor
+o una macro que es un puntero, se lista al final del módulo en un comentario.
+El módulo se regenera con el mismo comando que muestra su primera línea.
 
 ## 8. Determinismo
 

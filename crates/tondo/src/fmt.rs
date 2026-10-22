@@ -329,6 +329,16 @@ impl Formatter<'_> {
                     }
                 }
             }
+            Item::Const(c) => {
+                let mut parts = vec![text(format!("{}const {}", if c.public { "pub " } else { "" }, c.name.name))];
+                if let Some(ty) = &c.ty {
+                    parts.push(text(": "));
+                    parts.push(self.ty(ty));
+                }
+                parts.push(text(" = "));
+                parts.push(self.expr(&c.value));
+                concat(parts)
+            }
             Item::Alias(a) => concat(vec![
                 text(format!("{}alias {} = ", if a.public { "pub " } else { "" }, a.name.name)),
                 self.ty(&a.target),
@@ -1313,6 +1323,7 @@ fn annotations(annotations: &[Annotation]) -> Doc {
 
 fn item_span(item: &Item) -> Span {
     match item {
+        Item::Const(c) => c.span,
         Item::Fn(f) => f.span,
         Item::Type(t) => t.span,
         Item::Alias(a) => a.span,
@@ -1362,6 +1373,7 @@ mod tests {
                 "@packed\n@align(8)\nextern type Header = {\n    @count(4)\n    name: Byte\n    next: Pointer[Header]?\n}\n\nextern type Handle\n",
             ),
             ("type Compare=extern fn(Int,Int,...):Int\n", "type Compare = extern fn(Int, Int, ...): Int\n"),
+            ("pub const  Limit:Int=1<<4\nconst Name=\"x\"\n", "pub const Limit: Int = 1 << 4\n\nconst Name = \"x\"\n"),
         ];
         for (input, output) in pairs {
             assert_eq!(format(input), output, "formatting {input:?}");

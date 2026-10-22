@@ -14,6 +14,8 @@ usage:
   tondo check [<project>|<file.to>] [--json]           report diagnostics only (as JSON)
   tondo fmt [--check] <file.to>...                     format files canonically
   tondo update [<project>] [<dependency>...]           fetch dependencies again and rewrite tondo.lock
+  tondo bind <header.h>... [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
+                                                       write a module of extern declarations for a C header
   tondo <file.to> [<argument>...]                      run a script (for #! lines)
   tondo version
 
@@ -37,6 +39,7 @@ fn main() -> ExitCode {
         "check" => check_command(&args[1..]),
         "fmt" => fmt_command(&args[1..]),
         "update" => update_command(&args[1..]),
+        "bind" => bind_command(&args[1..]),
         "version" | "--version" | "-V" => {
             println!("tondo {} (native, cranelift)", driver::VERSION);
             Ok(ExitCode::SUCCESS)
@@ -108,6 +111,55 @@ fn update_command(args: &[OsString]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// Writes a module of `extern fn`, `extern type`, aliases and constants
+/// for C headers, and adds the library to `[native] libraries`.
+fn bind_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let (mut headers, mut libraries, mut arguments) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut project, mut output) = (PathBuf::from("."), None);
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        let text = arg.to_string_lossy();
+        let mut value = |what: &str| args.next().cloned().ok_or_else(|| format!("{what} needs a value\n{USAGE}"));
+        match text.as_ref() {
+            "--library" | "--link" => libraries.push(value("--library")?.to_string_lossy().into_owned()),
+            "--project" => project = PathBuf::from(value("--project")?),
+            "--output" | "-o" => output = Some(PathBuf::from(value("--output")?)),
+            "-I" | "-D" => arguments.push(format!("{text}{}", value(&text)?.to_string_lossy())),
+            flag if flag.starts_with("-I") || flag.starts_with("-D") => arguments.push(flag.to_string()),
+            flag if flag.starts_with('-') => return Err(format!("unknown option {flag}\n{USAGE}")),
+            _ => headers.push(PathBuf::from(arg)),
+        }
+    }
+    if headers.is_empty() {
+        return Err(format!("expected a C header\n{USAGE}"));
+    }
+    let command = std::iter::once("tondo bind".to_string())
+        .chain(std::env::args().skip(2).map(|a| if a.contains(' ') { format!("{a:?}") } else { a }))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let module = tondo::bind::generate(&headers, &arguments, &command)?;
+    let mut sources = tondo::source::SourceMap::default();
+    let index = sources.add(Path::new("bound.to"), module.clone());
+    let mut diags = tondo::diag::Diagnostics::default();
+    // The canonical format, or the text as generated if the formatter rejects it.
+    let module = tondo::fmt::format(sources.file(index), &mut diags).unwrap_or(module);
+    let (name, path) = match output {
+        Some(path) => (path.file_stem().unwrap_or_default().to_string_lossy().into_owned(), path),
+        None => tondo::bind::module_path(&project, &headers[0]),
+    };
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    }
+    std::fs::write(&path, module).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    eprintln!("wrote {}: import it as a module of the project, `import <package>.{name}`", path.display());
+    for library in &libraries {
+        if tondo::bind::add_library(&project, library)? {
+            eprintln!("added {library:?} to [native] libraries in tondo.toml");
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 /// Rewrites files in the canonical format (21), or with `--check` reports
 /// those that are not.
 fn fmt_command(args: &[OsString]) -> Result<ExitCode, String> {
@@ -152,7 +204,7 @@ fn link_options(args: &[OsString]) -> Result<(Vec<String>, Vec<OsString>), Strin
         } else if arg == "--link" {
             let library = args.next().ok_or_else(|| format!("--link needs a library\n{USAGE}"))?;
             let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
-            libraries.push(tondo::deps::link_argument(&library.to_string_lossy(), &cwd));
+            libraries.push(tondo::deps::library_entry(&library.to_string_lossy(), &cwd));
         } else {
             rest.push(arg.clone());
         }

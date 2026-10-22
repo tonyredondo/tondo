@@ -1,0 +1,23 @@
+const Loop: Int = Other + 1
+
+const Other: Int = Loop
+
+const Huge: Int8 = 100 * 2
+
+const Zero: Int = 10 / (5 - 5)
+
+pub const Untyped = 1
+
+fn now(): Int {
+    1
+}
+
+const Called: Int = now()
+
+fn main() {}
+
+// expect-error: E1902 the constant `Loop` depends on itself
+// expect-error: E1903 evaluating the constant would panic: the result does not fit in its type
+// expect-error: E1903 evaluating the constant would panic: it divides by zero
+// expect-error: E1115 a public constant declares its type
+// expect-error: E1901 a constant is evaluated in compilation

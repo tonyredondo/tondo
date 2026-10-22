@@ -324,6 +324,16 @@ impl Parser<'_> {
                 Ok(Some(Item::Fn(f)))
             }
             Tok::Kw(Kw::Type) => Ok(Some(Item::Type(self.type_declaration(public, start)?))),
+            Tok::Kw(Kw::Const) => {
+                self.bump();
+                let name = self.ident()?;
+                let ty = if self.eat(&Tok::Colon) { Some(self.type_expr()?) } else { None };
+                self.expect(Tok::Eq)?;
+                let value = self.expression()?;
+                let span = start.to(self.prev_span());
+                self.end_of_statement()?;
+                Ok(Some(Item::Const(ConstDecl { public, name, ty, value, span, module: 0 })))
+            }
             Tok::Kw(Kw::Enum) => Ok(Some(Item::Enum(self.enum_declaration(public, start)?))),
             Tok::Kw(Kw::Trait) => Ok(Some(Item::Trait(self.trait_declaration(public, start)?))),
             Tok::Kw(Kw::Impl) => Ok(Some(Item::Impl(self.impl_declaration(start)?))),

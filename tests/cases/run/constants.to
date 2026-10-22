@@ -1,0 +1,38 @@
+// Constants are evaluated in compilation (6.5).
+import std.console
+
+const MaxRetries: Int = 3
+
+const Greeting = "hello"
+
+const Flags: UInt32 = 1 << 4 | 1
+
+const Limit: Int32 = -(1 << 20)
+
+const Twice = MaxRetries * 2
+
+const Origin = (0, 0)
+
+const Primes = [2, 3, 5, 7]
+
+const Missing: Int? = none
+
+type Point = {
+    x: Int
+    y: Int
+}
+
+const Corner = Point { x: Twice, y: -1 }
+
+fn retries(): Int {
+    MaxRetries
+}
+
+fn main() {
+    let wide: Int = Limit
+    console.println("{retries()} {Greeting} {Flags} {wide} {Twice} {Origin.0} {Primes} {Missing}")
+    console.println("{Corner.x} {Corner.y} {Primes.length()}")
+}
+
+// expect-stdout: 3 hello 17 -1048576 6 0 [2, 3, 5, 7] none
+// expect-stdout: 6 -1 4

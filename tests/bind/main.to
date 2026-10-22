@@ -1,0 +1,46 @@
+// A program on the module `tondo bind` writes for `sample.h`.
+import app.sample
+import std.console
+import std.ffi
+
+unsafe fn twice(context: Pointer[ffi.Void]?, value: ffi.CInt): ffi.CInt {
+    value * 2
+}
+
+fn main() {
+    unsafe {
+        let handle = sample.sample_open("tondo", 3u32)
+        let values = ffi.allocate[ffi.CInt](3)
+        values.write(1)
+        values.offset(1).write(2)
+        values.offset(2).write(39)
+        let mirrored = sample.sample_mirror(sample.sample_point { x: 1, y: 2 })
+        console.println(
+            "{sample.sample_sum(values, 3u64)} {mirrored.x} {mirrored.y} {sample.sample_visit_all(handle, twice, none)}",
+        )
+        let buffer = ffi.allocate[ffi.CChar](32)
+        sample.sample_format(buffer, 32u64, "%s-%d", "x", 42i32)
+        let record = ffi.allocate[sample.sample_record]()
+        record.write(
+            sample.sample_record {
+                name: ffi.toCChars("record", 16)
+                weights: [1.5, 0.0, 0.0, 2.0]
+                corner: sample.sample_point { x: 10, y: 0 }
+                nested: sample.sample_record_nested { inner: 3 }
+                either: sample.sample_record_either { bytes: [0u8, 0u8, 0u8, 0u8] }
+                label: none
+                visit: none
+            },
+        )
+        console.println(
+            "{ffi.fromCString(buffer)} {sample.sample_area(record)} {sample.sample_next(sample.SAMPLE_RED)}",
+        )
+        console.println(
+            "{sample.sample_renamed()} {sample.type_(41)} {sample.SAMPLE_VERSION} {sample.SAMPLE_BIG}",
+        )
+        sample.sample_close(handle)
+        ffi.free(values)
+        ffi.free(buffer)
+        ffi.free(record)
+    }
+}

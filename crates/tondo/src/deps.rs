@@ -91,7 +91,7 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
             }
             ("native", false) => {
                 for (key, value, line) in table.entries {
-                    let usage = "`libraries = [\"sqlite3\", \"vendor/libz.a\"]` lists library names or files";
+                    let usage = "`libraries = [\"sqlite3\", \"static:z\", \"vendor/libpng.a\"]` lists libraries by name or file";
                     let Value::Array(items) = value else { return Err(at(line, usage.into())) };
                     if key != "libraries" {
                         return Err(at(line, format!("unknown key `{key}` in `[native]`: {usage}")));
@@ -100,7 +100,7 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
                         let Some(library) = item.as_str().filter(|l| !l.is_empty()) else {
                             return Err(at(line, usage.into()));
                         };
-                        manifest.libraries.push(link_argument(library, dir));
+                        manifest.libraries.push(library_entry(library, dir));
                     }
                 }
             }
@@ -114,11 +114,13 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
     Ok(manifest)
 }
 
-/// How the linker receives a native library: `-lname` for a name, or the
-/// path of a library file, relative to `dir`.
-pub fn link_argument(library: &str, dir: &Path) -> String {
+/// A native library as `[native] libraries` or `--link` names it: a name,
+/// linked dynamically from the system's library paths; `static:name`,
+/// linked statically from them; or a library file, whose path, relative to
+/// `dir`, becomes absolute here.
+pub fn library_entry(library: &str, dir: &Path) -> String {
     let file = library.contains('/') || [".a", ".so", ".dylib"].iter().any(|e| library.ends_with(e));
-    if file { dir.join(library).display().to_string() } else { format!("-l{library}") }
+    if file { dir.join(library).display().to_string() } else { library.to_string() }
 }
 
 /// The source of a dependency: `{ path = ... }`, `{ git = ..., tag = ... }`

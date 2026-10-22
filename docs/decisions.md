@@ -670,3 +670,23 @@ every target, since Cranelift does not extend them for Apple. Only x86-64
 needs the runtime trampoline for `...`. CI runs on Linux x86-64, Linux
 arm64 and macOS arm64; tests can be limited to a platform.
 
+## 2026-10-22 — Constants, static and shared libraries, `tondo bind`
+
+`const` (6.5) is implemented: a constant is checked once, folded when it
+is integer arithmetic so that a would-be panic is `E1903`, and inlined
+where used; cycles are `E1902` and other runtime values `E1901`.
+
+`[native] libraries` takes a name (dynamic, `-lname`), `static:name` (the
+archive `cc -print-file-name` finds), or a file: `.a` links statically,
+`.so`/`.dylib` dynamically with its directory as the run-time path.
+
+`tondo bind` reads headers through `cc -E -dD`, so macros and platform
+`#if`s are the compiler's, and parses C declarations itself instead of
+depending on libclang. It binds the given headers and the headers of their
+directory they include directly (curl's `easy.h`, zlib's `zconf.h`, but not
+`unistd.h` from `/usr/include`). Pointers are optional, since C allows
+`NULL`; unions and structs with bit fields become their bytes with the size
+GCC and Clang give them; what cannot be bound is listed in the module. A
+test builds a C library as an archive and as a shared library, binds its
+header and runs a program against each on every CI platform.
+

@@ -102,6 +102,7 @@ Every milestone ends with programs that compile to native executables and run.
 | **H6** | Hosted standard library: shared state (`std.sync`), streams (`std.io`), filesystem and paths, processes and pipelines, environment, time, JSON with automatic encoding; fire-and-forget tasks; parameters with default values | Done |
 | **H7** | `unsafe` functions, blocks, closures and function types; `Pointer[T]` with its six raw operations; calling C: `extern fn` (with C's `...`), `extern type` structs by value and by pointer, callbacks into Tondo from any thread, `std.ffi`, native libraries; lossless numeric widening | Done |
 | **Targets** | Linux x86-64, Linux arm64 and macOS on Apple silicon, each with its C calling convention; CI on all three | Done |
+| **Bindings** | `tondo bind` writes a module of `extern` declarations and constants from C headers; static and shared native libraries; `const` | Done |
 
 The first cut deliberately leaves out the following. They are part of the
 language and remain planned work, scheduled after H7:

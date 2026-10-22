@@ -186,6 +186,40 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     std::fs::rename(&temporary, path).map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
+/// What the linker receives for a library entry (see
+/// `deps::library_entry`): `-lname`; the archive of `static:name` in the
+/// system's library paths; a static archive; or a shared library with the
+/// run-time search path set to its directory, so the executable finds it.
+fn link_arguments(linker: &str, library: &str) -> Result<Vec<String>, String> {
+    if let Some(name) = library.strip_prefix("static:") {
+        let archive = format!("lib{name}.a");
+        let found = Command::new(linker).arg(format!("-print-file-name={archive}")).output();
+        let path = found.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+        if path.is_empty() || path == archive || !Path::new(&path).is_file() {
+            return Err(format!(
+                "no static library {archive} in the system's library paths; give its file instead, as \"vendor/{archive}\""
+            ));
+        }
+        return Ok(vec![path]);
+    }
+    let path = Path::new(library);
+    let shared = library.ends_with(".so") || library.ends_with(".dylib") || library.contains(".so.");
+    if shared {
+        if !path.is_file() {
+            return Err(format!("the library {library} does not exist"));
+        }
+        let dir = path.parent().unwrap_or(Path::new("."));
+        return Ok(vec![library.to_string(), format!("-Wl,-rpath,{}", dir.display())]);
+    }
+    if library.contains('/') || library.ends_with(".a") {
+        if !path.is_file() {
+            return Err(format!("the library {library} does not exist"));
+        }
+        return Ok(vec![library.to_string()]);
+    }
+    Ok(vec![format!("-l{library}")])
+}
+
 /// Links an object file with the embedded runtime and the native
 /// libraries (`-lname` or files) into an executable.
 pub fn link(object: &[u8], output: &Path, libraries: &[String]) -> Result<(), String> {
@@ -198,11 +232,15 @@ pub fn link(object: &[u8], output: &Path, libraries: &[String]) -> Result<(), St
     let object_path = dir.join(format!("object-{}.o", std::process::id()));
     std::fs::write(&object_path, object).map_err(|e| format!("cannot write {}: {e}", object_path.display()))?;
     let linker = std::env::var("TONDO_CC").unwrap_or_else(|_| "cc".into());
+    let mut native = Vec::new();
+    for library in libraries {
+        native.extend(link_arguments(&linker, library)?);
+    }
     let result = Command::new(&linker)
         .arg("-o")
         .arg(output)
         .arg(&object_path)
-        .args(libraries)
+        .args(native)
         .arg(&runtime)
         .args(RUNTIME_LINK_ARGS.split_whitespace())
         // Unused runtime code and the standard library's debug info would

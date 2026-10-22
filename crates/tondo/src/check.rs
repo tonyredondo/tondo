@@ -14,7 +14,7 @@ use crate::types::{
 };
 use std::collections::{HashMap, HashSet};
 
-pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics) -> Option<hir::Program> {
+pub fn check<'a>(module: &'a ast::Module, sources: &'a SourceMap, diags: &'a mut Diagnostics) -> Option<hir::Program> {
     let mut checker = Checker {
         types: Types::default(),
         diags,
@@ -56,6 +56,7 @@ pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics)
         void: Ty::ERROR,
         c_arguments: false,
         extern_names: Vec::new(),
+        consts: Vec::new(),
     };
     checker.declare_prelude();
     checker.program(module)
@@ -163,6 +164,8 @@ struct FsTypes {
 #[derive(Copy, Clone)]
 enum ModuleName {
     Fn(FnId),
+    /// A constant, by its index in `consts`.
+    Const(usize),
     /// An `extern fn`, by its index in `externs`.
     Extern(u32),
     Module(StdModule),
@@ -382,6 +385,53 @@ fn constant_parts(value: &mut hir::Expr) -> Option<Vec<&mut hir::Expr>> {
     })
 }
 
+/// The integer an expression of integers evaluates to, an error where
+/// running it would panic, or `None` for anything else.
+fn fold(types: &Types, value: &hir::Expr) -> Option<Result<i128, &'static str>> {
+    let int = types.as_int(types.repr(value.ty))?;
+    let fits =
+        |n: i128| if n < int.min() || n > int.max() { Err("the result does not fit in its type") } else { Ok(n) };
+    let result = match &value.kind {
+        hir::ExprKind::Int(n) => Ok(*n),
+        hir::ExprKind::Convert(inner) | hir::ExprKind::Retype(inner) => fold(types, inner)?,
+        hir::ExprKind::Unary(UnaryOp::Neg, inner) => fold(types, inner)?.and_then(|n| fits(-n)),
+        hir::ExprKind::Unary(UnaryOp::BitNot, inner) => fold(types, inner)?.map(|n| {
+            let bits = int.bits();
+            let mask = if bits == 128 { -1 } else { (1i128 << bits) - 1 };
+            let flipped = !n & mask;
+            if int.signed() && flipped > int.max() { flipped - (1i128 << bits) } else { flipped }
+        }),
+        hir::ExprKind::Binary(op, left, right) => {
+            let (a, b) = (fold(types, left)?, fold(types, right)?);
+            let (a, b) = match (a, b) {
+                (Ok(a), Ok(b)) => (a, b),
+                (Err(e), _) | (_, Err(e)) => return Some(Err(e)),
+            };
+            match op {
+                BinOp::Add => fits(a + b),
+                BinOp::Sub => fits(a - b),
+                BinOp::Mul => a.checked_mul(b).map_or(Err("the result does not fit in its type"), fits),
+                BinOp::Div | BinOp::Rem if b == 0 => Err("it divides by zero"),
+                BinOp::Div => fits(a / b),
+                BinOp::Rem => fits(a % b),
+                BinOp::Shl | BinOp::Shr if b < 0 || b >= int.bits() as i128 => Err("the shift count is out of range"),
+                BinOp::Shl => {
+                    let bits = int.bits();
+                    let shifted = (a << b) & ((1i128 << bits) - 1);
+                    Ok(if int.signed() && shifted > int.max() { shifted - (1i128 << bits) } else { shifted })
+                }
+                BinOp::Shr => Ok(if int.signed() { a >> b } else { (a as u128 >> b) as i128 }),
+                BinOp::BitAnd => Ok(a & b),
+                BinOp::BitOr => Ok(a | b),
+                BinOp::BitXor => Ok(a ^ b),
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    Some(result)
+}
+
 /// The function other languages' names for a standard operation mean.
 fn std_alias(module: &str, member: &str) -> String {
     let function = match (module, member) {
@@ -498,6 +548,15 @@ struct Checker<'a> {
     c_arguments: bool,
     /// The parameter names of each `extern fn`, for named arguments.
     extern_names: Vec<Vec<String>>,
+    /// The module's constants (6.5), evaluated when first used.
+    consts: Vec<ConstEntry<'a>>,
+}
+
+/// A constant: its declaration, and its value once evaluated.
+struct ConstEntry<'a> {
+    decl: &'a ast::ConstDecl,
+    value: Option<hir::Expr>,
+    resolving: bool,
 }
 
 /// Per-function checking state.
@@ -618,8 +677,8 @@ struct Capture {
     mutable: bool,
 }
 
-impl Checker<'_> {
-    fn program(&mut self, module: &ast::Module) -> Option<hir::Program> {
+impl<'a> Checker<'a> {
+    fn program(&mut self, module: &'a ast::Module) -> Option<hir::Program> {
         for import in &module.imports {
             self.import(import);
         }
@@ -634,6 +693,12 @@ impl Checker<'_> {
             })
             .collect();
         self.declare_traits(&traits);
+        for item in &module.items {
+            if let ast::Item::Const(decl) = item {
+                self.consts.push(ConstEntry { decl, value: None, resolving: false });
+                self.declare_module_name(&decl.name, ModuleName::Const(self.consts.len() - 1));
+            }
+        }
         let (externs, fns): (Vec<&ast::FnDecl>, Vec<&ast::FnDecl>) = module
             .items
             .iter()
@@ -669,6 +734,11 @@ impl Checker<'_> {
             self.defaults(f, FnId(index as u32));
         }
         self.check_termination();
+        // Every constant is checked, used or not.
+        for id in 0..self.consts.len() {
+            let span = self.consts[id].decl.span;
+            self.const_value(id, span);
+        }
 
         // Closure bodies are numbered after every declared function and the
         // script's `main`.
@@ -729,6 +799,60 @@ impl Checker<'_> {
             display: HashMap::new(),
             externs: std::mem::take(&mut self.externs),
         })
+    }
+
+    /// The value of a constant, evaluated on first use (6.5): integer
+    /// arithmetic is done now, so what would panic is an error (`E1903`).
+    fn const_value(&mut self, id: usize, span: Span) -> hir::Expr {
+        if let Some(value) = &self.consts[id].value {
+            let mut value = value.clone();
+            value.span = span;
+            return value;
+        }
+        let decl = self.consts[id].decl;
+        if self.consts[id].resolving {
+            let message = format!("the constant `{}` depends on itself", decl.name.name);
+            self.diags.error("E1902", decl.name.span, message);
+            return Self::error_expr(span);
+        }
+        self.consts[id].resolving = true;
+        let module = std::mem::replace(&mut self.module, decl.module);
+        let outer_types = std::mem::take(&mut self.type_params);
+        let outer_self = self.self_type.take();
+        let ty = decl.ty.as_ref().map(|t| self.resolve_type(t));
+        if decl.public && ty.is_none() {
+            let message = format!(
+                "a public constant declares its type, which is part of the module's API: `pub const {}: Type = ...`",
+                decl.name.name
+            );
+            self.diags.error("E1115", decl.name.span, message);
+        }
+        let mut cx = self.new_cx(Ty::UNIT);
+        let value = self.expr(&mut cx, &decl.value, ty);
+        let mut value = match ty {
+            Some(ty) => self.coerce(value, ty),
+            None => value,
+        };
+        if !self.types.has_error(value.ty) {
+            match fold(&self.types, &value) {
+                Some(Ok(number)) => value.kind = hir::ExprKind::Int(number),
+                Some(Err(problem)) => {
+                    let message = format!("evaluating the constant would panic: {problem}");
+                    self.diags.error("E1903", decl.value.span, message);
+                }
+                None if !constant(&mut value) => {
+                    let message = "a constant is evaluated in compilation: build it from literals, other constants, their operators and constructors";
+                    self.diags.error("E1901", decl.value.span, message);
+                }
+                None => {}
+            }
+        }
+        self.module = module;
+        self.type_params = outer_types;
+        self.self_type = outer_self;
+        self.consts[id].value = Some(value.clone());
+        value.span = span;
+        value
     }
 
     /// An `extern fn` (FFI): a module function without body whose
@@ -1323,7 +1447,7 @@ impl Checker<'_> {
                     self.declare_type_name(&decl.name, TypeName::Alias(self.aliases.len() - 1));
                     continue;
                 }
-                ast::Item::Fn(_) | ast::Item::Trait(_) | ast::Item::Impl(_) => continue,
+                ast::Item::Fn(_) | ast::Item::Trait(_) | ast::Item::Impl(_) | ast::Item::Const(_) => continue,
             };
             let generics = match item {
                 ast::Item::Type(decl) => &decl.generics,
@@ -7293,6 +7417,20 @@ impl Checker<'_> {
         let names: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
         // `pointer.cast[U]()`, `address.toPointer[T]()` and their qualified
         // forms `Pointer.cast[U](pointer)` and `UInt64.toPointer[T](address)`.
+        // `record.field.cast[U]()`: a receiver of several segments.
+        if names.len() > 2
+            && matches!(names[names.len() - 1], "cast" | "toPointer")
+            && (self.lookup(cx, names[0]).is_some()
+                || self.visible_capture(cx, names[0])
+                || matches!(self.names.get(names[0]), Some(ModuleName::Const(_))))
+        {
+            let (method, prefix) = segments.split_last().unwrap();
+            let receiver_span = prefix[0].span.to(prefix.last().unwrap().span);
+            let receiver = ast::Expr { kind: ast::ExprKind::Path(prefix.to_vec()), span: receiver_span };
+            let receiver = self.expr(cx, &receiver, None);
+            let types: Vec<Ty> = type_args.iter().map(|t| self.resolve_type(t)).collect();
+            return self.raw(cx, receiver, method, types, args, span);
+        }
         if let [first, method @ ("cast" | "toPointer")] = names.as_slice() {
             let raw = match *first {
                 "Pointer" | "UInt64" if self.lookup(cx, first).is_none() => None,
@@ -8431,6 +8569,14 @@ impl Checker<'_> {
         }
         match self.names.get(&first.name) {
             Some(ModuleName::Fn(id)) if segments.len() == 1 => self.fn_value(*id, Vec::new(), expected, span),
+            Some(&ModuleName::Const(id)) => {
+                let mut value = self.const_value(id, first.span);
+                for segment in &segments[1..] {
+                    let span = value.span.to(segment.span);
+                    value = self.field_access(value, FieldRef::Name(&segment.name), segment.span, span);
+                }
+                value
+            }
             Some(&ModuleName::Extern(id)) if segments.len() == 1 => {
                 let declared = &self.externs[id as usize];
                 let (params, result, variadic) = (declared.params.clone(), declared.result, declared.variadic);
@@ -8492,7 +8638,8 @@ impl Checker<'_> {
             ast::ExprKind::Path(segments)
                 if segments.len() > 1
                     && (self.lookup(cx, &segments[0].name).is_some()
-                        || self.visible_capture(cx, &segments[0].name)) =>
+                        || self.visible_capture(cx, &segments[0].name)
+                        || matches!(self.names.get(&segments[0].name), Some(ModuleName::Const(_)))) =>
             {
                 let (method, prefix) = segments.split_last().unwrap();
                 let receiver_span = prefix[0].span.to(prefix.last().unwrap().span);

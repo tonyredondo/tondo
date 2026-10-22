@@ -1,6 +1,7 @@
 //! The Tondo compiler.
 
 pub mod ast;
+pub mod bind;
 pub mod check;
 pub mod codegen;
 pub mod deps;
