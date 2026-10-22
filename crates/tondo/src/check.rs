@@ -1939,7 +1939,7 @@ impl Checker<'_> {
                 TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) | TyKind::Option(element) => {
                     Some(vec![*element])
                 }
-                TyKind::Map(key, value) => Some(vec![*key, *value]),
+                TyKind::Map(key, value) | TyKind::Result(key, value) => Some(vec![*key, *value]),
                 _ => None,
             };
             if let Some(parts) = parts {
@@ -2860,16 +2860,9 @@ impl Checker<'_> {
     fn defer(&mut self, cx: &mut FnCx, deferred: &ast::Defer, span: Span) -> Option<hir::Stmt> {
         let closure = match deferred {
             ast::Defer::Block(block) => {
-                let closure = self.closure_parts(cx, &[], None, block, None, true, span);
-                let result = self.types.closure(closure.ty).map_or(Ty::UNIT, |(_, _, info)| info.result);
-                if result != Ty::UNIT && result != Ty::NEVER && !self.types.has_error(result) {
-                    let message = format!(
-                        "a defer block ends with a value of type {}; discard it with `_ =`",
-                        self.display(result)
-                    );
-                    self.diags.error("E1410", span, message);
-                }
-                closure
+                // A cleanup gives nothing back: its final value is dropped (11.9).
+                let unit = self.types.intern(TyKind::Fn(Vec::new(), Ty::UNIT, false, Vec::new()));
+                self.closure_parts(cx, &[], None, block, Some(unit), true, span)
             }
             ast::Defer::Call(call) => {
                 if !matches!(call.kind, ast::ExprKind::Call { .. }) {
@@ -4343,9 +4336,13 @@ impl Checker<'_> {
                 )
                 .then_some(Ty::UNIT);
                 let value = self.expr(cx, value, expected);
-                if ![Ty::UNIT, Ty::NEVER, Ty::ERROR].contains(&value.ty) {
-                    let message =
-                        format!("a value of type {} is not used; discard it with `_ = ...`", self.display(value.ty));
+                // Only a result or an option must be used: it may be a
+                // failure or an absence the program has to see (11.9).
+                if matches!(self.types.kind(self.types.repr(value.ty)), TyKind::Result(..) | TyKind::Option(_)) {
+                    let message = format!(
+                        "a value of type {} is not used; pass a failure on with `?`, handle it with `match`, or discard it with `_ = ...`",
+                        self.display(value.ty)
+                    );
                     self.diags.error("E1303", value.span, message);
                 }
                 cx.diverged |= value.ty == Ty::NEVER;
@@ -5204,6 +5201,21 @@ impl Checker<'_> {
     fn coerce(&mut self, value: hir::Expr, expected: Ty) -> hir::Expr {
         if value.ty == expected {
             return value;
+        }
+        // Where nothing is expected, a value is dropped, unless it is a
+        // result or an option the program has to see (11.9).
+        if expected == Ty::UNIT && value.ty != Ty::NEVER && !self.types.has_error(value.ty) {
+            if matches!(self.types.kind(self.types.repr(value.ty)), TyKind::Result(..) | TyKind::Option(_)) {
+                let message = format!(
+                    "a value of type {} is not used; pass a failure on with `?`, handle it with `match`, or discard it with `_ = ...`",
+                    self.display(value.ty)
+                );
+                self.diags.error("E1303", value.span, message);
+                return value;
+            }
+            let span = value.span;
+            let block = hir::Block { stmts: vec![hir::Stmt::Expr(value)], tail: None, ty: Ty::UNIT };
+            return Self::mk(hir::ExprKind::Block(block), Ty::UNIT, span);
         }
         // A closure becomes a `fn(...)` value when it never changes its
         // captures (11.8).

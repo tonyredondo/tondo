@@ -1153,6 +1153,31 @@ impl Emit<'_, '_> {
             return;
         }
         let types = self.cg.types;
+        if let TyKind::Result(success, failure) = *types.kind(types.repr(ty)) {
+            let tag = self.tag(ty, value);
+            let (good, bad, done) = (self.fb.create_block(), self.fb.create_block(), self.fb.create_block());
+            let is_ok = self.fb.ins().icmp_imm_s(IntCC::Equal, tag, OK as i64);
+            self.fb.ins().brif(is_ok, good, &[], bad, &[]);
+            for (block, variant, inner, name) in [(good, OK, success, "ok("), (bad, ERR, failure, "err(")] {
+                self.fb.switch_to_block(block);
+                let open = self.string_ptr(name);
+                self.call_rt(Rt::SbStr, &[builder, open]);
+                let payload = match value {
+                    Val::Memory(address) => {
+                        let slot = self.cg.slot(ty, Proj::Variant(variant, 0));
+                        let address = self.component_address(address, &slot);
+                        self.value_at(address, inner)
+                    }
+                    _ => Val::Zero,
+                };
+                self.append_display(builder, inner, payload);
+                let close = self.string_ptr(")");
+                self.call_rt(Rt::SbStr, &[builder, close]);
+                self.fb.ins().jump(done, &[]);
+            }
+            self.fb.switch_to_block(done);
+            return;
+        }
         if let TyKind::Option(inner) = *types.kind(types.repr(ty)) {
             let tag = self.tag(ty, value);
             let (some, none, done) = (self.fb.create_block(), self.fb.create_block(), self.fb.create_block());

@@ -404,7 +404,7 @@ impl Mono<'_> {
             TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) | TyKind::Option(element) => {
                 vec![element]
             }
-            TyKind::Map(key, value) => vec![key, value],
+            TyKind::Map(key, value) | TyKind::Result(key, value) => vec![key, value],
             TyKind::Adt(_) => {
                 if !self.display.contains_key(&ty)
                     && let Resolved::Fn(id, types) = self.resolve(DISPLAY, 0, &[ty])

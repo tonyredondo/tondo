@@ -1,0 +1,27 @@
+import std.console
+
+enum Problem {
+    Bad
+}
+
+impl Display for Problem {
+    fn display(self): String {
+        "bad"
+    }
+}
+
+fn risky(flag: Bool): Int ! Problem {
+    if flag {
+        fail Problem.Bad
+    }
+    5
+}
+
+fn main() {
+    console.println("{risky(false)} {risky(true)} {[risky(false)]}")
+    let text: String ! Problem = ok("hi")
+    console.println("{text}")
+}
+
+// expect-stdout: ok(5) err(bad) [ok(5)]
+// expect-stdout: ok(hi)

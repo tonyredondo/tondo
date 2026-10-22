@@ -1,0 +1,35 @@
+import std.console
+
+fn count(label: String): Int {
+    console.println(label)
+    label.length()
+}
+
+fn each(values: Array[Int], action: fn(Int): Unit) {
+    for value in values {
+        action(value)
+    }
+}
+
+// A value nobody uses is dropped, except a result or an option (11.9).
+fn main() {
+    count("statement")
+    each([1, 2], (value) {
+        count("closure {value}")
+    })
+    match [0, 1, 2].length() {
+        3 => count("arm")
+        _ => count("other arm")
+    }
+    defer {
+        count("cleanup")
+    }
+    count("tail")
+}
+
+// expect-stdout: statement
+// expect-stdout: closure 1
+// expect-stdout: closure 2
+// expect-stdout: arm
+// expect-stdout: tail
+// expect-stdout: cleanup

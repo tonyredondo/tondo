@@ -571,3 +571,14 @@ on: a fallible function may end with, or `return`, a whole `T ! E`, which
 propagates like `?`; and `call(...)?` infers the call's type arguments
 from the type its result is expected to have, so
 `let users: Array[User] = json.decode(text)?` needs no `[Array[User]]`.
+
+## 2026-10-22 — Unused values are dropped, except results and options
+
+Requiring `_ =` for every unused value made `cmd.run()?`, `cache.insert(...)`
+or a closure whose last call returns something ceremony. A value nobody
+uses is now dropped, as in Go, Kotlin or Swift; only a `Result` or an
+`Option` still has to be used, since it may hold a failure or an absence,
+as Rust's `must_use` does for its `Result`. The same holds for the final
+expression of a block whose type is `Unit`, which Tondo cannot mark as a
+statement with a semicolon. `T ! E` now displays as `ok(value)` or
+`err(error)`, like `T?`.

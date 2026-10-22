@@ -1118,6 +1118,7 @@ intrínsecos lo implementan así:
 - `Array` y `Deque`: `[a, b, c]`; `Map`: `[key: value, ...]` y `[:]` vacío;
   `Set`: `Set[a, b]`. Los elementos usan su propio `Display`.
 - `T?`: `some(value)` o `none`, con el `Display` de `T`.
+- `T ! E`: `ok(value)` o `err(error)`, con el `Display` de cada uno.
 - Los enums de error de la stdlib: su variante en palabras, como `not found`.
 
 La stdlib puede añadir formato controlado mediante `std.format`, pero:

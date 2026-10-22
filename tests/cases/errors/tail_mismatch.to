@@ -1,9 +1,25 @@
+enum Problem {
+    Bad
+}
+
 fn value(): Int { 1 }
 
-// A final expression is the block's value by position (13.1), so it must
-// match the block's type; it is never reinterpreted as a statement.
-fn main() {
+fn risky(): Int ! Problem { 1 }
+
+// A final expression is the block's value by position (13.1): where `Unit`
+// is expected its value is dropped, except a result's.
+fn quiet() {
     value()
 }
 
-// expect-error: E1102
+fn text(): String {
+    value()
+}
+
+fn main() {
+    quiet()
+    risky()
+}
+
+// expect-error: E1102 expected `String`, found `Int`
+// expect-error: E1303 a value of type `Int ! Problem` is not used

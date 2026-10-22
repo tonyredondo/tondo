@@ -3619,16 +3619,25 @@ let erased: fn(): Int = increment // requiere Call, pero el cierre es CallMut
 
 ### 11.9 Descarte de resultados
 
-Una expresión de tipo no `Unit` no puede descartarse silenciosamente como sentencia. Debe asignarse, devolverse, consumirse o descartarse explícitamente:
+Una llamada u otra expresión escrita como sentencia abandona su valor:
+
+~~~tondo
+process.command("make").run()?   // el ExitStatus se abandona
+cache.insert(key, value)
+~~~
+
+Un `Result` o un `Option`, incluidos `T ! E` y `T?`, no puede abandonarse así:
+puede contener un fallo o una ausencia que el programa debe ver. Se propaga con
+`?`, se maneja con `match` o se descarta explícitamente, lo que comunica
+intención:
 
 ~~~tondo
 _ = computeValue()
 ~~~
 
-Ignorar un `Result` o `Option` sin `_ =` es error. El descarte explícito comunica
-intención. Tondo 0.1 no tiene una marca semántica adicional tipo `must_use`; una
-futura librería o perfil de lint puede reconocer APIs concretas sin cambiar la
-validez del descarte.
+Tondo 0.1 no tiene una marca adicional tipo `must_use`; una futura librería o
+perfil de lint puede reconocer APIs concretas sin cambiar la validez del
+descarte.
 
 `_ = value` abandona el valor como al salir de su scope: un `Join` espera a su
 tarea y un recurso ejecuta su acción de salida (8.10).
@@ -4255,9 +4264,10 @@ Cada bloque crea scope. Su tipo es:
 - `Unit` cuando algún camino alcanza el final y el bloque termina en declaración, asignación u otra sentencia sin valor.
 
 Una expresión final es tail por posición sintáctica, incluso si produce `Unit` o
-no coincide con el resultado esperado. En este último caso se informa el mismatch;
-el parser no la convierte en `expression_stmt`. Una expresión anterior debe
-terminar como sentencia mediante `NL`, y si no devuelve `Unit` requiere `_ =`.
+no coincide con el resultado esperado. En este último caso se informa el
+mismatch, salvo que se espere `Unit`: entonces su valor se abandona como el de
+una sentencia, y un `Result` u `Option` exige igualmente `?`, `match` o `_ =`
+(11.9). Una expresión anterior termina como sentencia mediante `NL`.
 
 ### 13.2 `if`
 
@@ -6558,7 +6568,7 @@ reglas ordinarias de coherencia. “Intrínseco” significa aquí que la interp
 lo consulta por contrato del lenguaje, no que el compilador invente
 implementaciones para tipos de usuario.
 
-La resolución es estática. No crea un trait object ni realiza reflection. Los escalares, strings, colecciones intrínsecas y `T?` implementan `Display` cuando sus componentes también lo implementan. Records, enums y newtypes de usuario deben implementarlo explícitamente si quieren interpolarse como un valor completo.
+La resolución es estática. No crea un trait object ni realiza reflection. Los escalares, strings, colecciones intrínsecas, `T?` y `T ! E` implementan `Display` cuando sus componentes también lo implementan. Records, enums y newtypes de usuario deben implementarlo explícitamente si quieren interpolarse como un valor completo.
 
 La interpolación invoca `Display.display` mediante su receptor `self`: observa la expresión durante la llamada y no mueve un valor afín. Si la expresión es un temporal, ese temporal permanece vivo hasta terminar su conversión.
 
@@ -7565,7 +7575,7 @@ oculten un diagnóstico independiente.
 |---|---|---|
 | `E1301` | `incompatible-error-propagation` | `?` no puede representar el canal propagado en la firma envolvente. |
 | `E1302` | `invalid-fail-context` | `fail` aparece sin error compatible. |
-| `E1303` | `discarded-result` | Expresión no `Unit` se abandona sin uso ni `_ =`. |
+| `E1303` | `discarded-result` | Un `Result` u `Option` se abandona como sentencia sin uso ni `_ =`. |
 | `E1304` | `invalid-result-construction` | `ok`, `err`, `some` o `none` carece de contexto único o payload válido. |
 
 #### Ownership, préstamos y cleanup
@@ -7971,7 +7981,7 @@ Son errores obligatorios, entre otros:
 
 - Rama `match` cubierta por anteriores (`E1203`).
 - `match` no exhaustivo (`E1204`).
-- Resultado no `Unit` descartado (`E1303`).
+- `Result` u `Option` descartado como sentencia (`E1303`).
 - Declaración que produciría shadowing (`E1003`).
 - Cabeceras de `impl` que se solapan (`E1111`) o un ciclo de obligaciones que no
   supera la terminación por cambio de tamaño (`E1112`).

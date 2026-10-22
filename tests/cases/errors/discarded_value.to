@@ -1,8 +1,19 @@
+enum Problem {
+    Bad
+}
+
 fn value(): Int { 1 }
+
+fn risky(): Int ! Problem { 1 }
+
+fn maybe(): Int? { none }
 
 fn main() {
     value()
-    _ = value()
+    _ = risky()
+    risky()
+    maybe()
 }
 
-// expect-error: E1303
+// expect-error: E1303 a value of type `Int ! Problem` is not used; pass a failure on with `?`, handle it with `match`, or discard it with `_ = ...`
+// expect-error: E1303 a value of type `Int?` is not used
