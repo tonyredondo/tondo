@@ -643,6 +643,11 @@ pub enum StdFn {
     Env(EnvFn),
     /// `time.sleep(delay)`: waits without blocking the thread (14.3.3).
     TimeSleep,
+    /// `time.now()`, `unixTime()`, `utcNow()` and `utc(sinceEpoch)` (14.3).
+    TimeNow,
+    TimeUnix,
+    TimeUtcNow,
+    TimeUtc,
     /// An operation of `std.fs` (standard library 10.5).
     Fs(FsFn),
     /// An operation of `std.path` (10.4).

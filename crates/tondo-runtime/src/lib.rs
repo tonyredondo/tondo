@@ -18,6 +18,7 @@ mod io;
 mod shared;
 mod sync;
 mod tasks;
+mod time;
 
 // ---------------------------------------------------------------------------
 // Strings

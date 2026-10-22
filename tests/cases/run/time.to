@@ -1,0 +1,37 @@
+import std.console
+import std.time
+
+fn main() {
+    let started = time.now()
+    time.sleep(time.milliseconds(20))
+    let took = started.elapsed()
+    console.println("slept enough {not took.isLessThan(time.milliseconds(20))}")
+    let d = time.hours(1).add(time.minutes(2)).add(time.milliseconds(3500))
+    console.println("{d} {d.seconds()} {d.minutes()} {d.milliseconds()}")
+    console.println("{time.milliseconds(250)} {time.microseconds(1500)} {time.nanoseconds(42)} {time.seconds(0)}")
+    console.println("{time.seconds(90)} {time.milliseconds(1500)} {time.seconds(-3)} {time.nanoseconds(1500000001)}")
+    console.println("{d.multiply(2)} {time.seconds(5).subtract(time.seconds(7))} {time.seconds(0).isZero()} {time.seconds(-1).isNegative()}")
+    let later = started.add(time.seconds(1))
+    console.println("{later.since(started)} {started.since(later)}")
+    console.println("{time.utc(time.seconds(0))} {time.utc(time.milliseconds(1500))}")
+    console.println("{time.utc(time.seconds(1761114508))} {time.utc(time.seconds(951782400))}")
+    let now = time.utcNow()
+    console.println("year ok {now.year >= 2026} unix ok {time.unixTime().seconds() > 1700000000}")
+    console.println("{time.utc(time.seconds(-1))}")
+    let big = time.hours(2000000)
+    console.println("{big}")
+    _ = big.multiply(1000000)
+}
+
+// expect-stdout: slept enough true
+// expect-stdout: 1h2m3.5s 3723 62 3723500
+// expect-stdout: 250ms 1.5ms 42ns 0s
+// expect-stdout: 1m30s 1.5s -3s 1.500000001s
+// expect-stdout: 2h4m7s -2s true true
+// expect-stdout: 1s -1s
+// expect-stdout: 1970-01-01T00:00:00Z 1970-01-01T00:00:01.5Z
+// expect-stdout: 2025-10-22T06:28:28Z 2000-02-29T00:00:00Z
+// expect-stdout: year ok true unix ok true
+// expect-stdout: 1969-12-31T23:59:59Z
+// expect-stdout: 2000000h0m0s
+// expect-panic: P0005

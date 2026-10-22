@@ -66,9 +66,8 @@ Esta revisión no fija todavía:
   en `docs/contracts/stdlib-core.md`.
 - Los métodos concretos de strings, colecciones e iteradores.
 - Las declaraciones exhaustivas de consola, filesystem, procesos, concurrencia,
-  codecs adicionales, regex, UUID y logging. `std.net` y el calendario civil de
-  `std.time` son las excepciones ya cerradas por sus contratos owner en las
-  secciones 14.3.7 y 14.4.6.
+  codecs adicionales, regex, UUID y logging. `std.net` es la excepción ya
+  cerrada por su contrato owner en la sección 14.4.6.
 - Las declaraciones exhaustivas de cada operación de JSON, MessagePack y
   Protobuf; este documento sí fija sus owners, arquitectura y garantías comunes.
 - La representación interna de ningún tipo.
@@ -1552,10 +1551,8 @@ actualizar esta especificación y el tracker antes de implementar.
 
 El catálogo y sus propietarios son normativos. Las declaraciones exhaustivas de
 las veintinueve superficies permanecen pendientes, salvo el núcleo sellado que
-`TONDO_TESTING_SPEC.md` ya fija para `std.testing`, el sustrato
-monotónico y civil de `std.time`, `std.env` y los
-contratos runtime-facing de `std.net` y `std.time` civil en las secciones
-14.3.7 y 14.4.6. No existe un contrato bootstrap separado: el corpus consume
+`TONDO_TESTING_SPEC.md` ya fija para `std.testing`, `std.time`, `std.env` y el
+contrato runtime-facing de `std.net` en la sección 14.4.6. No existe un contrato bootstrap separado: el corpus consume
 siempre este borrador.
 
 La implementación usa dos gates internos sin crear versiones distintas:
@@ -1574,142 +1571,106 @@ S1A no es una release ni permite publicar una stdlib incompleta como 0.1.0.
 Todos los módulos de ambas fases comparten una distribución, PackageId y
 política de compatibilidad; Gate S1 fija sus hashes finales.
 
-### 14.3 `std.time`: time-base y calendario civil
+### 14.3 `std.time`
 
-Las subsecciones 14.3.1–14.3.6 cierran el time-base monotónico necesario para
-producción y testing. La subsección 14.3.7 cierra el calendario civil de
-STD-0.1B. Ninguna de las dos superficies introduce una dependencia implícita
-entre reloj monotónico, reloj de pared, locale o zona horaria.
+`std.time` mide intervalos, espera y lee la fecha y hora UTC:
 
-#### 14.3.1 Valores portables
+~~~tondo
+import std.time
 
-`Duration` es un valor inmutable cuyo quantum semántico es exactamente un
-nanosegundo. Su dominio es un contador firmado de 64 bits con los mismos límites
-matemáticos que `Int`; el layout físico no forma parte de la API. Puede ser
-negativo, representa cero y no contiene identidad de reloj, epoch, locale ni
-zona horaria.
+let started = time.now()
+time.sleep(time.milliseconds(250))
+console.println("took {started.elapsed()}")       // took 250.1ms
+console.println("now {time.utcNow()}")            // now 2026-10-22T06:38:28.5Z
+~~~
 
-La superficie mínima y canónica es:
+#### 14.3.1 Duraciones
+
+`Duration` es un intervalo con signo, en nanosegundos, del mismo rango que
+`Int`. Es `Copy`, `Equatable` y `Key`.
 
 ~~~tondo pseudocode
 pub type Duration
 
-pub enum DurationError {
-    Overflow
-}
+pub fn nanoseconds(count: Int): Duration
+pub fn microseconds(count: Int): Duration
+pub fn milliseconds(count: Int): Duration
+pub fn seconds(count: Int): Duration
+pub fn minutes(count: Int): Duration
+pub fn hours(count: Int): Duration
 
-pub fn Duration.fromNanoseconds(value: Int): Duration
-pub fn Duration.fromMicroseconds(value: Int): Duration ! DurationError
-pub fn Duration.fromMilliseconds(value: Int): Duration ! DurationError
-pub fn Duration.fromSeconds(value: Int): Duration ! DurationError
-
-pub fn Duration.toNanoseconds(self): Int
-pub fn Duration.add(self, other: Duration): Duration ! DurationError
-pub fn Duration.subtract(self, other: Duration): Duration ! DurationError
-pub fn Duration.multiply(self, factor: Int): Duration ! DurationError
-pub fn Duration.negate(self): Duration ! DurationError
+pub fn Duration.nanoseconds(self): Int
+pub fn Duration.microseconds(self): Int
+pub fn Duration.milliseconds(self): Int
+pub fn Duration.seconds(self): Int
+pub fn Duration.minutes(self): Int
+pub fn Duration.hours(self): Int
+pub fn Duration.add(self, other: Duration): Duration
+pub fn Duration.subtract(self, other: Duration): Duration
+pub fn Duration.multiply(self, factor: Int): Duration
 pub fn Duration.isZero(self): Bool
 pub fn Duration.isNegative(self): Bool
 pub fn Duration.isLessThan(self, other: Duration): Bool
 ~~~
 
-`DurationError` cumple `Copy`, `Discard`, `Equatable`, `Key`, `Send` y
-`Share`. `ClockError` tiene las mismas capacidades; sus variantes no contienen
-datos del host ni mensajes localizados.
+- Los constructores multiplican por un factor exacto; las lecturas dividen y
+  truncan hacia cero. Un resultado que no cabe produce el pánico `P0005`, como
+  la aritmética de `Int`.
+- `Display` usa la forma de Go: `1h2m3.5s`, `1.5s`, `250ms`, `1.5µs`, `42ns`,
+  `0s`, con `-` delante de una duración negativa.
 
-`fromNanoseconds` y `toNanoseconds` son totales porque `Int` ya tiene el mismo
-dominio. Las demás operaciones comprueban el resultado completo antes de
-publicarlo y devuelven `DurationError.Overflow`; nunca hacen wrapping,
-saturación, truncado silencioso ni pánico. Las conversiones de unidades
-multiplican por un factor exacto y no redondean. Un target no puede cambiar el
-quantum por usar un reloj con otra resolución.
-
-`Duration` cumple `Copy`, `Discard`, `Equatable`, `Key`, `Send` y `Share`. Sus
-operaciones son puras, no requieren `clock`, no asignan y no consultan al host.
-La igualdad y el hash observan únicamente el contador de nanosegundos.
-
-#### 14.3.2 Instantes y proveedor
-
-`Instant` es un valor opaco producido por un proveedor monotónico. No tiene
-epoch ni conversión implícita a `String`, fecha civil o número. Cada valor
-conserva internamente la identidad del proveedor y del dominio que lo creó;
-ninguno de esos identificadores es observable desde fuente.
+#### 14.3.2 Instantes
 
 ~~~tondo pseudocode
 pub type Instant
 
-pub enum ClockError {
-    Unavailable
-    DomainMismatch
-    InvalidDelay
-    OutOfRange
-    ResourceLimit
-}
-
-pub fn now(): Instant ! ClockError
-pub fn resolution(): Duration ! ClockError
-pub fn deadline(after: Duration): Instant ! ClockError
-
-pub fn Instant.add(self, delta: Duration): Instant ! ClockError
-pub fn Instant.subtract(self, delta: Duration): Instant ! ClockError
-pub fn Instant.durationSince(self, other: Instant): Duration ! ClockError
-pub fn Instant.isBefore(self, other: Instant): Bool ! ClockError
-pub fn Instant.isAfter(self, other: Instant): Bool ! ClockError
+pub fn now(): Instant
+pub fn Instant.elapsed(self): Duration
+pub fn Instant.since(self, earlier: Instant): Duration
+pub fn Instant.add(self, delta: Duration): Instant
 ~~~
 
-`now` no espera y devuelve instantes no decrecientes. El
-proveedor puede devolver dos veces el mismo valor cuando su resolución es más
-gruesa que un nanosegundo. `resolution` devuelve una duración positiva y
-estable para el proveedor activo; la resolución efectiva y su método de
-redondeo se declaran en la matriz del target. La representación sigue siendo
-nanosegundos aunque el host use ticks, ciclos u otra unidad.
+`now` lee un reloj monótono: sus instantes nunca retroceden, aunque cambie la
+hora del sistema, y no significan una fecha. `elapsed` es `now().since(self)`;
+`since` da la diferencia con signo. Un `Instant` es `Copy`, `Equatable` y
+`Key`, pero no tiene `Display`. Un resultado que no cabe produce `P0005`.
 
-`durationSince` devuelve la diferencia firmada `self - other`. Todas las
-operaciones entre dos `Instant` comprueban que pertenecen al mismo proveedor y
-dominio; si no, devuelven `ClockError.DomainMismatch` y nunca comparan por
-accidente sus contadores internos. El overflow de `add`, `subtract` o
-`deadline` devuelve `ClockError.OutOfRange`. Un `Instant` cumple `Copy`,
-`Discard`, `Send` y `Share`, pero no `Equatable` ni `Key`: la igualdad entre
-dominios no es una operación booleana válida y debe expresarse mediante las
-consultas anteriores.
-
-La capability `clock` garantiza un proveedor monotónico que cumple este
-contrato; no habilita reloj de pared ni calendario. Si el proveedor no puede
-consultarse, la operación devuelve `ClockError.Unavailable`, nunca usa un
-fallback wall-clock y nunca produce un pánico. Consultar el instante no
-bloquea ni crea una task.
-
-#### 14.3.3 Esperas y deadlines
+#### 14.3.3 Esperas
 
 ~~~tondo pseudocode
-pub fn milliseconds(count: Int): Duration
-pub fn seconds(count: Int): Duration
 pub fn sleep(delay: Duration)
 ~~~
 
-`sleep` detiene la tarea al menos `delay` y es una operación válida de `select`
-(11.14 de la especificación del lenguaje); un retraso cero o negativo no espera.
-`milliseconds` y `seconds` construyen duraciones y producen el pánico `P0005`
-si el valor no cabe. Un deadline es un `Instant` del proveedor activo. El reloj
-real no despierta antes del retraso y su latencia posterior pertenece al target;
-el proveedor virtual de `std.testing` observa los retrasos exactamente y
-conserva el orden estable de creación fijado en `TONDO_TESTING_SPEC.md`.
+`sleep` detiene la tarea, no el thread, al menos `delay`, y es una operación de
+`select` (11.14 del lenguaje); un retraso cero o negativo no espera. Los
+timeouts de `wait`, `receive` y `select` reciben también un `Duration`.
 
-#### 14.3.4 Sustitución virtual y separación civil
+#### 14.3.4 Fecha y hora UTC
 
-`testing.withVirtualTime` sustituye únicamente el proveedor monotónico durante
-su dominio sellado. El código probado continúa llamando a `std.time.now`,
-`deadline`, `sleep` y `Timer` con las firmas anteriores; no recibe un reloj de
-test ni una capability adicional. Un `Duration` puede pasar entre dominios,
-pero un `Instant` o `Timer` no. Los instantes creados antes de entrar al dominio
-virtual se rechazan dentro de él por `DomainMismatch`.
+~~~tondo pseudocode
+pub type DateTime = {
+    year: Int
+    month: Int
+    day: Int
+    hour: Int
+    minute: Int
+    second: Int
+    nanosecond: Int
+}
 
-El time-base no consulta `TZ`, locale, epoch Unix, hora civil ni red. `Date`,
-`Time`, `DateTime`, zonas horarias, resolución de calendario y conversiones
-entre calendario e instante están definidas en el contrato B0 de la sección
-[14.3.7](#1437-calendario-civil-y-zonas-versionadas), con datos versionados.
-Ninguna API de este sustrato puede aceptar un `Instant` donde espere una fecha
-civil o viceversa.
+pub fn utcNow(): DateTime
+pub fn unixTime(): Duration
+pub fn utc(sinceEpoch: Duration): DateTime
+~~~
+
+`utcNow` y `unixTime` leen el reloj del sistema, que puede retroceder si
+alguien lo ajusta; para medir intervalos se usa `now`. `unixTime` es el tiempo
+desde `1970-01-01T00:00:00Z` y `utc` convierte uno de esos tiempos a fecha, en
+el calendario gregoriano y sin segundos intercalares. `Display` de `DateTime`
+es RFC 3339 en UTC, con la fracción solo cuando no es cero y sin ceros finales:
+`2026-10-22T06:38:28Z`, `2026-10-22T06:38:28.5Z`. Las zonas horarias, la hora
+local y el formato de fechas en otros calendarios quedan para una versión
+posterior.
 
 #### 14.3.5 `std.env`: argumentos y entorno
 
@@ -1760,81 +1721,6 @@ pub fn syncNative()
 - `currentDirectory` y `setCurrentDirectory` leen y cambian el directorio de
   trabajo de todo el programa, contra el que se resuelven los paths relativos de
   `std.fs` y `std.process`.
-
-#### 14.3.6 Plan cerrado, hashes y disponibilidad
-
-El slice se versiona como `std.time.monotonic-0.1` dentro de la única
-distribución `toolchain:std:draft`. El plan cerrado debe contener, cada uno con
-su SHA-256 lowercase, los bytes de:
-
-1. el source set core que define `Duration` y `DurationError`;
-2. the provider source set defining `Instant`, `ClockError`, `Timer` and their
-   signatures, with `clock` required by provider operations rather than module
-   availability;
-3. la interfaz pública `std.time` resultante;
-4. la unidad privilegiada del proveedor monotónico real, con sus hashes de
-   firma, contrato de seguridad e implementación; y
-5. el descriptor y corpus del proveedor virtual usado por la conformidad,
-   que pertenece al artefacto de test y no a un bridge ambiental del frontend.
-
-These entries use the existing `tondo-toolchain` categories (`source`,
-`dependency-interface` and `privileged-unit`), without a physical path or a
-second `std.time` identity. Distribution `content_hash` and `api_hash` cover
-the whole slice. The hosted implementation provides the real/virtual provider
-and suspending boundary in `docs/contracts/stdlib-time.md`.
-`STD-TIME-BASE-CONF-001` records the completed
-bounded provider/model corpus; it does not establish the full distribution
-identity above. Until those reproducible bytes and hashes exist, the owner
-conformance and S1A promotion remain pending and `std.time` is not advertised
-as a stable distributed surface.
-
-#### 14.3.7 Calendario civil y zonas versionadas
-
-The normative civil contract for `std.time` is
-[stdlib-civil-time.md](docs/contracts/stdlib-civil-time.md), with the owner
-register [stdlib-civil-time.json](testing/stdlib-civil-time.json).
-The full contract is locked as `STD-CIVIL-TIME-001`. The shared
-[pure value core](docs/contracts/stdlib-civil-time-core.md) registers the 24
-specified Date, Time and UtcDateTime operations in the production hosted
-compiler/VM without clock capabilities. Its source-bound quality preserves
-every global/risk 80% floor and catches all six selected critical mutants.
-Exact-checkout CI on `d5b52f96` passes all 358 functional steps and 2,817 Rust
-tests in 77 suites. The complete civil owner, zones, civil providers and native
-ABI/AOT remain separate implementation and promotion boundaries.
-
-Esta superficie usa un calendario gregoriano proléptico con años `1..9999`, no
-admite leap seconds y mantiene `Date`, `Time`, `DateTime`, `UtcDateTime` y
-`UtcOffset` como
-valores puros. Parsing, formato, componentes y aritmética comprueban límites y
-no consultan capabilities. `Date.addMonths` y `Date.addYears` exigen la
-política explícita `Reject` o `Clamp`; no existe un default cultural u oculto.
-`Duration` sigue perteneciendo al owner monotónico existente y no se introduce
-un segundo tipo de intervalo.
-
-Los IDs de zona se validan como IANA canónicos o `UTC`. `zoneDatabase()` solo
-selecciona el bundle inmutable que el target declaró con `(version, sha256)`;
-no busca `TZ`, locale, filesystem, red, environment ni zona local del sistema.
-`TimeZone.offsetAt` devuelve el tipo pequeño `UtcOffset` en segundos y
-`resolve` son consultas puras sobre ese snapshot. Una
-resolución local siempre recibe `ResolvePolicy`: `Reject` informa un gap o fold,
-`Earlier`/`Later` escogen explícitamente una ocurrencia de un fold y
-`ShiftForward` avanza un gap y escoge la segunda ocurrencia. Nunca se sustituye
-una zona ausente por UTC.
-
-`CivilClock.now` y `CivilClock.sample` son las únicas lecturas del reloj de
-pared y requieren `civil-clock`; `sample` requiere además `clock`. Son llamadas
-que no esperan. La muestra devuelve un `CivilAnchor` con un
-`Instant` monotónico y un `UtcDateTime` observados en la misma frontera. Sus
-conversiones son aritmética comprobada dentro del dominio/horizonte del
-ancla, no una conversión Unix ni una lectura viva posterior. Si los dominios no
-coinciden se devuelve `CivilError.DomainMismatch`.
-
-La igualdad de un `ZonedDateTime` incluye UTC, ID de zona y versión del bundle;
-dos folds con distinto offset no se confunden. Los valores son
-`Copy + Send + Share`, no handles de host. Las operaciones son
-síncronas, acotadas y portables; un backend puede emplear tablas compactas o
-SIMD para lotes solo si conserva bytes, errores, límites y resultados
-idénticos. Los hooks privados de diagnóstico omiten payloads por defecto.
 
 ### 14.4 Concurrencia de aplicación de STD-0.1B
 
@@ -3580,7 +3466,7 @@ tracker; the next owner is `STD-NET-IMPL-001`.
 `LogLevel` es el orden cerrado `Trace < Debug < Info < Warn < Error`; no existe
 `Fatal`, porque terminar el programa desde logging ocultaría control de flujo.
 `LogEvent` contiene level, target UTF-8 no vacío, mensaje, fields estructurados
-y un `UtcDateTime?` opcional. El módulo nunca consulta `CivilClock` por su
+y un `DateTime?` opcional. El módulo nunca consulta el reloj por su
 cuenta: si el caller quiere timestamp debe obtenerlo explícitamente mediante
 `std.time` y pasarlo al evento.
 

@@ -343,6 +343,19 @@ pub struct Types {
     pub runaway: Option<String>,
     reaches: RefCell<HashMap<(Ty, Ty), bool>>,
     needs_drop: RefCell<HashMap<Ty, bool>>,
+    /// Standard library types with an intrinsic `Display`.
+    pub shown: HashMap<Ty, Shown>,
+}
+
+/// How a standard library type displays.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Shown {
+    /// An error enum: its variant in words, such as `not found`.
+    Words,
+    /// `std.time.Duration`, as Go writes it.
+    Duration,
+    /// `std.time.DateTime`, in RFC 3339.
+    DateTime,
 }
 
 /// Instantiation depth beyond which a generic type is considered to grow
@@ -382,6 +395,7 @@ impl Default for Types {
             runaway: None,
             reaches: RefCell::default(),
             needs_drop: RefCell::default(),
+            shown: HashMap::new(),
         };
         for kind in [TyKind::Error, TyKind::Unit, TyKind::Never, TyKind::Bool, TyKind::String] {
             types.intern(kind);

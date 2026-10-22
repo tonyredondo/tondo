@@ -9,7 +9,7 @@ use crate::hir::{self, Callee, FnId, LocalId, StdFn, TraitId};
 use crate::parser::CONTEXTUAL_CONSTRUCTORS;
 use crate::source::{SourceMap, Span};
 use crate::types::{
-    AdtId, AdtKind, ClosureInfo, CursorKind, ERR, Field, Handle, IntTy, NONE, OK, Payload, SOME, TemplateId, Ty,
+    AdtId, AdtKind, ClosureInfo, CursorKind, ERR, Field, Handle, IntTy, NONE, OK, Payload, SOME, Shown, TemplateId, Ty,
     TyKind, Types, Variant,
 };
 use std::collections::{HashMap, HashSet};
@@ -37,6 +37,8 @@ pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics)
         closure_functions: Vec::new(),
         fn_scopes: Vec::new(),
         duration: None,
+        instant: None,
+        datetime: None,
         compare_exchange: None,
         fs: None,
         module: 0,
@@ -377,6 +379,11 @@ fn std_alias(module: &str, member: &str) -> String {
         ("env", "unset" | "unsetenv" | "delete") => "remove",
         ("env", "cwd" | "getcwd" | "workingDirectory") => "currentDirectory",
         ("env", "chdir" | "cd") => "setCurrentDirectory",
+        ("time", "monotonic" | "instant" | "nowMonotonic") => "now",
+        ("time", "unix" | "timestamp" | "epoch") => "unixTime",
+        ("time", "utcnow" | "nowUtc" | "date" | "today") => "utcNow",
+        ("time", "ms" | "millis") => "milliseconds",
+        ("time", "secs") => "seconds",
         _ => return String::new(),
     };
     format!("; use `{module}.{function}`")
@@ -418,6 +425,10 @@ struct Checker<'a> {
     fn_scopes: Vec<FnScope>,
     /// `time.Duration`, once `std.time` is imported: nanoseconds.
     duration: Option<Ty>,
+    /// `time.Instant`: nanoseconds of the monotonic clock.
+    instant: Option<Ty>,
+    /// `time.DateTime`: seven `Int` fields, from the year down.
+    datetime: Option<Ty>,
     /// `sync.CompareExchange`, once `std.sync` is imported: the template
     /// and its instance with its own parameter.
     compare_exchange: Option<(TemplateId, Ty)>,
@@ -752,18 +763,21 @@ impl Checker<'_> {
             .map(|name| Variant { name: name.into(), payload: Payload::Unit })
             .to_vec();
         self.types.define_adt(id, AdtKind::Enum(variants));
+        self.types.shown.insert(ty, Shown::Words);
         self.collection_error = ty;
         let (id, ty) = self.types.declare_adt("text.TextError".into());
         let variants = ["InvalidIndex", "InvalidBoundary", "ResourceLimit", "InvalidData"]
             .map(|name| Variant { name: name.into(), payload: Payload::Unit })
             .to_vec();
         self.types.define_adt(id, AdtKind::Enum(variants));
+        self.types.shown.insert(ty, Shown::Words);
         self.text_error = ty;
         let (id, ty) = self.types.declare_adt("io.IoError".into());
         let variants = ["Closed", "InvalidData", "Host"]
             .map(|name| Variant { name: name.into(), payload: Payload::Unit })
             .to_vec();
         self.types.define_adt(id, AdtKind::Enum(variants));
+        self.types.shown.insert(ty, Shown::Words);
         self.io_error = ty;
         for handle in [Handle::Writer, Handle::Reader, Handle::Buffer] {
             self.types.handle(handle, Ty::UNIT);
@@ -865,6 +879,7 @@ impl Checker<'_> {
                 "Host",
             ];
             let error = declare_enum(self, "FsError", &errors);
+            self.types.shown.insert(error, Shown::Words);
             let kind = declare_enum(self, "FileKind", &["File", "Directory", "Symlink", "Other"]);
             let mode = declare_enum(self, "OpenMode", &["Read", "Write", "Append", "CreateNew", "ReadWrite"]);
             let (id, metadata) = self.types.declare_adt(format!("{}.Metadata", name.name));
@@ -886,6 +901,7 @@ impl Checker<'_> {
                 .map(|name| Variant { name: name.into(), payload: Payload::Unit })
                 .to_vec();
             self.types.define_adt(id, AdtKind::Enum(variants));
+            self.types.shown.insert(ty, Shown::Words);
             self.env_error = Some(ty);
             self.types.intern(TyKind::Map(Ty::STRING, Ty::STRING));
             self.types.intern(TyKind::Array(Ty::STRING));
@@ -893,7 +909,18 @@ impl Checker<'_> {
         if module == StdModule::Time && self.duration.is_none() {
             let (id, ty) = self.types.declare_adt(format!("{}.Duration", name.name));
             self.types.define_adt(id, AdtKind::Newtype(Ty::INT));
+            self.types.shown.insert(ty, Shown::Duration);
             self.duration = Some(ty);
+            let (id, ty) = self.types.declare_adt(format!("{}.Instant", name.name));
+            self.types.define_adt(id, AdtKind::Newtype(Ty::INT));
+            self.instant = Some(ty);
+            let (id, ty) = self.types.declare_adt(format!("{}.DateTime", name.name));
+            let fields = ["year", "month", "day", "hour", "minute", "second", "nanosecond"]
+                .map(|name| Field { name: name.into(), ty: Ty::INT })
+                .to_vec();
+            self.types.define_adt(id, AdtKind::Record(fields));
+            self.types.shown.insert(ty, Shown::DateTime);
+            self.datetime = Some(ty);
         }
     }
 
@@ -911,6 +938,8 @@ impl Checker<'_> {
             (Some(ModuleName::Module(StdModule::Collections)), "CollectionError") => Some(self.collection_error),
             (Some(ModuleName::Module(StdModule::Text)), "TextError") => Some(self.text_error),
             (Some(ModuleName::Module(StdModule::Time)), "Duration") => self.duration,
+            (Some(ModuleName::Module(StdModule::Time)), "Instant") => self.instant,
+            (Some(ModuleName::Module(StdModule::Time)), "DateTime") => self.datetime,
             (Some(ModuleName::Module(StdModule::Sync)), "CompareExchange") => self.compare_exchange.map(|(_, g)| g),
             (Some(ModuleName::Module(StdModule::Fs)), name) => {
                 let fs = self.fs?;
@@ -1781,12 +1810,9 @@ impl Checker<'_> {
             if let Some(parts) = parts {
                 return parts.into_iter().all(|part| self.satisfies_depth(part, DISPLAY, &[], depth + 1));
             }
-            // The standard library's error enums display a human description (7.4).
-            let fs_error = self.fs.as_ref().map(|fs| fs.error);
-            if [self.conversion_error, self.collection_error, self.text_error, self.io_error].contains(&ty)
-                || fs_error == Some(ty)
-                || self.env_error == Some(ty)
-            {
+            // Standard library errors display a human description (7.4);
+            // durations and dates their usual forms.
+            if self.types.shown.contains_key(&ty) {
                 return true;
             }
         }
@@ -2919,6 +2945,82 @@ impl Checker<'_> {
 
     /// The methods of `fs.File` (standard library 10.5): a `var` loan of the
     /// file, except `close`, which takes it.
+    /// Nanoseconds in a unit of `std.time`, by the name of its constructor
+    /// and reader.
+    fn time_unit(name: &str) -> Option<i128> {
+        Some(match name {
+            "nanoseconds" => 1,
+            "microseconds" => 1_000,
+            "milliseconds" => 1_000_000,
+            "seconds" => 1_000_000_000,
+            "minutes" => 60_000_000_000,
+            "hours" => 3_600_000_000_000,
+            _ => return None,
+        })
+    }
+
+    /// A method of a `time.Duration` or `time.Instant` (14.3): arithmetic
+    /// on their nanoseconds, which panics with `P0005` when it overflows.
+    fn time_method(
+        &mut self,
+        cx: &mut FnCx,
+        receiver: hir::Expr,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> hir::Expr {
+        let (duration, instant) = (self.duration.unwrap(), self.instant.unwrap());
+        let ty = receiver.ty;
+        let nanos = |value: hir::Expr| Self::mk(hir::ExprKind::Retype(Box::new(value)), Ty::INT, span);
+        let binary = |op: BinOp, left: hir::Expr, right: hir::Expr, ty: Ty| {
+            Self::mk(hir::ExprKind::Binary(op, Box::new(left), Box::new(right)), ty, span)
+        };
+        let int = |value: i128| Self::mk(hir::ExprKind::Int(value), Ty::INT, span);
+        let retype = |value: hir::Expr, ty: Ty| Self::mk(hir::ExprKind::Retype(Box::new(value)), ty, span);
+        let name = method.name.as_str();
+        let param = match (ty == duration, name) {
+            (true, "add" | "subtract" | "isLessThan") | (false, "add") => Some(duration),
+            (true, "multiply") => Some(Ty::INT),
+            (false, "since") => Some(instant),
+            _ => None,
+        };
+        let known = param.is_some()
+            || (ty == duration && (Self::time_unit(name).is_some() || matches!(name, "isZero" | "isNegative")))
+            || (ty == instant && name == "elapsed");
+        if !known {
+            return self.no_method(ty, method, span);
+        }
+        let expected = usize::from(param.is_some());
+        if args.len() != expected {
+            return self.arity_error(span, expected, args.len());
+        }
+        let argument = param.map(|param| {
+            let value = self.expr(cx, &args[0].value, Some(param));
+            self.coerce(value, param)
+        });
+        let own = nanos(receiver);
+        match (ty == duration, name, argument) {
+            (true, "add", Some(other)) => retype(binary(BinOp::Add, own, nanos(other), Ty::INT), duration),
+            (true, "subtract", Some(other)) => retype(binary(BinOp::Sub, own, nanos(other), Ty::INT), duration),
+            (true, "multiply", Some(factor)) => retype(binary(BinOp::Mul, own, factor, Ty::INT), duration),
+            (true, "isLessThan", Some(other)) => binary(BinOp::Lt, own, nanos(other), Ty::BOOL),
+            (true, "isZero", None) => binary(BinOp::Eq, own, int(0), Ty::BOOL),
+            (true, "isNegative", None) => binary(BinOp::Lt, own, int(0), Ty::BOOL),
+            (true, unit, None) => match Self::time_unit(unit).unwrap() {
+                1 => own,
+                factor => binary(BinOp::Div, own, int(factor), Ty::INT),
+            },
+            (false, "add", Some(delta)) => retype(binary(BinOp::Add, own, nanos(delta), Ty::INT), instant),
+            (false, "since", Some(earlier)) => retype(binary(BinOp::Sub, own, nanos(earlier), Ty::INT), duration),
+            (false, "elapsed", None) => {
+                let now =
+                    Self::mk(hir::ExprKind::Call(Callee::Std(StdFn::TimeNow), Vec::new(), Vec::new()), instant, span);
+                retype(binary(BinOp::Sub, nanos(now), own, Ty::INT), duration)
+            }
+            _ => unreachable!("checked above"),
+        }
+    }
+
     /// A method of an `io.Writer`, `io.Reader` or `io.Buffer` (10.3): shared
     /// handles, which their methods only read.
     fn io_method(
@@ -6435,6 +6537,9 @@ impl Checker<'_> {
         {
             return self.trait_dot_call(cx, ITERATOR, vec![element], index, value, method, args, span);
         }
+        if Some(ty) == self.duration || Some(ty) == self.instant {
+            return self.time_method(cx, value, method, args, span);
+        }
         if matches!(self.types.kind(ty), TyKind::Adt(_)) {
             // A field holding a function is called (11.5).
             if self.record_has_field(ty, &method.name) {
@@ -7585,33 +7690,38 @@ impl Checker<'_> {
                 self.call_signature(cx, target, None, args, span)
             }
             ([_, member], Some(ModuleName::Module(StdModule::Time))) => {
-                let duration = self.duration.unwrap();
-                let factor = match *member {
-                    "milliseconds" => 1_000_000,
-                    "seconds" => 1_000_000_000,
-                    "sleep" => {
-                        let signature = Signature::simple(vec![duration], Ty::UNIT);
-                        let target = CallTarget::new(Callee::Std(StdFn::TimeSleep), signature, expected);
-                        return self.call_signature(cx, target, None, args, span);
-                    }
-                    "now" | "deadline" | "resolution" => {
-                        return self.unsupported_expr(span, &format!("`time.{member}`"));
-                    }
+                let (duration, instant, datetime) =
+                    (self.duration.unwrap(), self.instant.unwrap(), self.datetime.unwrap());
+                let (function, params, result) = match *member {
+                    "sleep" => (StdFn::TimeSleep, vec![duration], Ty::UNIT),
+                    "now" => (StdFn::TimeNow, vec![], instant),
+                    "unixTime" => (StdFn::TimeUnix, vec![], duration),
+                    "utcNow" => (StdFn::TimeUtcNow, vec![], datetime),
+                    "utc" => (StdFn::TimeUtc, vec![duration], datetime),
                     _ => {
-                        let message = format!("module `time` has no function `{member}`");
-                        self.diags.error("E1001", segments[1].span, message);
-                        return Self::error_expr(span);
+                        let Some(factor) = Self::time_unit(member) else {
+                            let message =
+                                format!("module `time` has no function `{member}`{}", std_alias("time", member));
+                            self.diags.error("E1001", segments[1].span, message);
+                            return Self::error_expr(span);
+                        };
+                        // A count in nanoseconds; one that does not fit
+                        // panics with `P0005` (14.3.1).
+                        let [arg] = args else { return self.arity_error(span, 1, args.len()) };
+                        let count = self.expr(cx, &arg.value, Some(Ty::INT));
+                        let count = self.coerce(count, Ty::INT);
+                        let factor = Self::mk(hir::ExprKind::Int(factor), Ty::INT, span);
+                        let nanos = Self::mk(
+                            hir::ExprKind::Binary(BinOp::Mul, Box::new(count), Box::new(factor)),
+                            Ty::INT,
+                            span,
+                        );
+                        return Self::mk(hir::ExprKind::Retype(Box::new(nanos)), duration, span);
                     }
                 };
-                // A count of milliseconds or seconds in nanoseconds; one that
-                // does not fit panics with `P0005` (14.3.3).
-                let [arg] = args else { return self.arity_error(span, 1, args.len()) };
-                let count = self.expr(cx, &arg.value, Some(Ty::INT));
-                let count = self.coerce(count, Ty::INT);
-                let factor = Self::mk(hir::ExprKind::Int(factor), Ty::INT, span);
-                let nanos =
-                    Self::mk(hir::ExprKind::Binary(BinOp::Mul, Box::new(count), Box::new(factor)), Ty::INT, span);
-                Self::mk(hir::ExprKind::Retype(Box::new(nanos)), duration, span)
+                let signature = Signature::simple(params, result);
+                let target = CallTarget::new(Callee::Std(function), signature, expected);
+                self.call_signature(cx, target, None, args, span)
             }
             ([name], None) if Self::numeric_type(name).is_some() => {
                 let to = Self::numeric_type(name).unwrap();

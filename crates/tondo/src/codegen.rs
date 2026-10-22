@@ -23,7 +23,7 @@ use crate::mir::{
     Body, Const, Local, Operand, Overlap, Piece, Place, Proj, Rvalue, SelectCase, Statement, Terminator, project,
 };
 use crate::source::{SourceMap, Span};
-use crate::types::{AdtKind, ERR, FloatTy, Handle, IntTy, Mode, OK, SOME, Ty, TyKind, Types};
+use crate::types::{AdtKind, ERR, FloatTy, Handle, IntTy, Mode, OK, SOME, Shown, Ty, TyKind, Types};
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{
     self, AbiParam, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, TrapCode, UserFuncName, types,
@@ -149,6 +149,12 @@ enum Rt {
     SenderRelease,
     ReceiverRelease,
     Sleep,
+    TimeNow,
+    TimeUnix,
+    TimeUtc,
+    TimeUtcNow,
+    SbDuration,
+    SbDateTime,
     ReceiveTimeout,
     Select,
     Cancelled,
@@ -323,6 +329,12 @@ impl Rt {
             Rt::SenderRelease => ("tondo_rt_sender_release", &[I64], &[]),
             Rt::ReceiverRelease => ("tondo_rt_receiver_release", &[I64], &[]),
             Rt::Sleep => ("tondo_rt_sleep", &[I64], &[]),
+            Rt::TimeNow => ("tondo_rt_time_now", &[], &[I64]),
+            Rt::TimeUnix => ("tondo_rt_time_unix", &[], &[I64]),
+            Rt::TimeUtc => ("tondo_rt_time_utc", &[I64, I64], &[]),
+            Rt::TimeUtcNow => ("tondo_rt_time_utc_now", &[I64], &[]),
+            Rt::SbDuration => ("tondo_rt_sb_duration", &[I64, I64], &[]),
+            Rt::SbDateTime => ("tondo_rt_sb_datetime", &[I64, I64], &[]),
             Rt::ReceiveTimeout => ("tondo_rt_channel_receive_timeout", &[I64, I64, I64], &[I8]),
             Rt::Select => ("tondo_rt_select", &[I64, I64, I8, I64], &[I64]),
             Rt::Cancelled => ("tondo_rt_cancelled", &[], &[I8]),
@@ -1120,6 +1132,27 @@ impl Emit<'_, '_> {
             self.fb.ins().jump(done, &[]);
             self.fb.switch_to_block(done);
             return;
+        }
+        match types.shown.get(&ty) {
+            Some(Shown::Duration) => {
+                let Val::Scalar(nanos) = value else { unreachable!("a duration is a scalar") };
+                self.call_rt(Rt::SbDuration, &[builder, nanos]);
+                return;
+            }
+            Some(Shown::DateTime) => {
+                let Val::Memory(address) = value else { unreachable!("a date is in memory") };
+                let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 56, 3);
+                let slot = self.fb.create_sized_stack_slot(data);
+                let fields = self.fb.ins().stack_addr(POINTER, slot, 0);
+                for index in 0..7 {
+                    let slot = self.cg.slot(ty, Proj::Field(index));
+                    let word = self.fb.ins().load(types::I64, flags(), address, slot.offset as i32);
+                    self.fb.ins().store(flags(), word, fields, index as i32 * 8);
+                }
+                self.call_rt(Rt::SbDateTime, &[builder, fields]);
+                return;
+            }
+            _ => {}
         }
         if let TyKind::Adt(id) = *types.kind(types.repr(ty))
             && let AdtKind::Enum(variants) = &types.adt(id).kind
@@ -2186,6 +2219,24 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     }
                     _ => Val::Scalar(self.e.call_rt(rt, &values).unwrap()),
                 }
+            }
+            Rvalue::Call(Callee::Std(StdFn::TimeNow), _) => Val::Scalar(self.e.call_rt(Rt::TimeNow, &[]).unwrap()),
+            Rvalue::Call(Callee::Std(StdFn::TimeUnix), _) => Val::Scalar(self.e.call_rt(Rt::TimeUnix, &[]).unwrap()),
+            Rvalue::Call(Callee::Std(function @ (StdFn::TimeUtc | StdFn::TimeUtcNow)), args) => {
+                // Seven words, from the year down to the nanosecond.
+                let out = self.e.fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 56, 3));
+                let out = self.e.fb.ins().stack_addr(POINTER, out, 0);
+                let mut values: Vec<ir::Value> = args.iter().map(|a| self.scalar(a)).collect();
+                values.push(out);
+                let rt = if *function == StdFn::TimeUtc { Rt::TimeUtc } else { Rt::TimeUtcNow };
+                self.e.call_rt(rt, &values);
+                let address = self.scratch(ty);
+                for index in 0..7 {
+                    let word = self.e.fb.ins().load(types::I64, flags(), out, index * 8);
+                    let slot = self.e.cg.slot(ty, Proj::Field(index as u32));
+                    self.e.fb.ins().store(flags(), word, address, slot.offset as i32);
+                }
+                Val::Memory(address)
             }
             Rvalue::Call(Callee::Std(StdFn::ConsoleReadLine), _) => {
                 let line = self.e.call_rt(Rt::ConsoleReadLine, &[]).unwrap();
@@ -3522,6 +3573,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 | StdFn::Path(_)
                 | StdFn::Io(_)
                 | StdFn::Env(_)
+                | StdFn::TimeNow
+                | StdFn::TimeUnix
+                | StdFn::TimeUtc
+                | StdFn::TimeUtcNow
                 | StdFn::ConsoleFlush
                 | StdFn::ConsoleReadLine
                 | StdFn::ConsoleStream(_),
@@ -3703,6 +3758,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 _ => unreachable!("rejected by the checker"),
             };
         }
+        // A newtype computes as the integer it holds.
+        let ty = types.repr(ty);
         let signed = types.as_int(ty).is_some_and(IntTy::signed);
         match op {
             BinOp::Add | BinOp::Sub | BinOp::Mul => {

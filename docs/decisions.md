@@ -516,3 +516,15 @@ processes. Native code reached through FFI would not see the changes, so
 out the program's name, and invalid UTF-8 in arguments and variables
 becomes U+FFFD; an invalid variable name is a programming error and
 panics (`P0015`).
+
+## 2026-10-22 — Time without failure modes
+
+`time.now()` reads a monotonic clock and cannot fail; there is no clock
+domain to mismatch, no `ClockError` and no `DurationError`. A `Duration`
+overflows like the `Int` it holds: with the panic `P0005`. Durations
+display as Go writes them (`1h2m3.5s`, `250ms`), which LLM authors and
+people already read. For the wall clock there is `time.utcNow()`, a
+`DateTime` record in UTC that displays in RFC 3339, and `time.unixTime()`;
+time zones, local time and calendar arithmetic wait for a later version.
+Integer arithmetic on a newtype now follows the sign of the integer it
+holds; it used to check `time.Instant` subtraction as unsigned.

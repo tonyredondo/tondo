@@ -1,0 +1,14 @@
+import std.time
+
+fn main() {
+    let start = time.now()
+    let a = start.elapsed().add(5)
+    let b = time.timestamp()
+    let c = start.since(time.seconds(1))
+    let d = time.ms(5)
+}
+
+// expect-error: E1102 expected `time.Duration`, found `Int`
+// expect-error: E1001 module `time` has no function `timestamp`; use `time.unixTime`
+// expect-error: E1102 expected `time.Instant`, found `time.Duration`
+// expect-error: E1001 module `time` has no function `ms`; use `time.milliseconds`
