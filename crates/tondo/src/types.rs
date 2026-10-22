@@ -169,6 +169,9 @@ pub enum Handle {
     /// The runtime's JSON tokenizer and emitter (`std.internal.json`).
     JsonReader,
     JsonWriter,
+    /// `testing.VirtualTime`, which moves a test's virtual clock (testing
+    /// 7.9); its type is `Unit`.
+    Clock,
 }
 
 impl Handle {
@@ -200,6 +203,7 @@ impl Handle {
             Handle::Process => "process.Process",
             Handle::JsonReader => "json.NativeReader",
             Handle::JsonWriter => "json.NativeWriter",
+            Handle::Clock => "testing.VirtualTime",
         }
     }
 
@@ -1405,7 +1409,8 @@ impl Types {
                         | Handle::Pipeline
                         | Handle::Process
                         | Handle::JsonReader
-                        | Handle::JsonWriter,
+                        | Handle::JsonWriter
+                        | Handle::Clock,
                         _,
                     ) => {
                         return handle.name().to_string();

@@ -448,6 +448,15 @@ pub unsafe extern "C" fn tondo_rt_test_snapshot(name: *const Str, actual: *const
     }
 }
 
+/// Reports what a virtual clock did once its closure ends: where it got,
+/// and how many times it moved by itself, by `advance` and settled.
+pub(crate) fn virtual_time(now: u64, automatic: u64, explicit: u64, settles: u64) {
+    with(|r| {
+        let node = r.current();
+        r.frame("virtual", node, format!("{now} {automatic} {explicit} {settles}").as_bytes());
+    });
+}
+
 /// Reports the panic or the skip that ends the worker; whether the
 /// process runs tests.
 pub(crate) fn terminal(code: u32, text: &str) -> bool {

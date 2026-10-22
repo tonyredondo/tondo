@@ -9,6 +9,10 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 /// `time.now()`: nanoseconds of the monotonic clock since the program began.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_time_now() -> i64 {
+    // A test's virtual clock (testing 7.9).
+    if let Some(now) = super::clock::now() {
+        return now;
+    }
     static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_nanos() as i64
 }

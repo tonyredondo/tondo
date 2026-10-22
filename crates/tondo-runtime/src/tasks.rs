@@ -240,6 +240,8 @@ pub(crate) struct Task {
     main: bool,
     /// For a task that runs a callback for a thread of C, the call.
     foreign: *const ForeignCall,
+    /// Whether its clock is a test's virtual clock (testing 7.9).
+    pub(crate) in_domain: bool,
 }
 
 /// A callback a thread of C makes, which a task runs while the thread
@@ -359,6 +361,7 @@ fn notify_with(task: *mut Task, run: impl FnOnce(*mut Task)) {
         }
         if state.compare_exchange(current, next, Ordering::AcqRel, Ordering::Acquire).is_ok() {
             if current == PARKED {
+                super::clock::woke(task);
                 run(task);
             } else if current == PINNED {
                 let _lock = PINNED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -558,6 +561,9 @@ fn timers_ended(count: usize) {
 }
 
 fn add_timer(delay: Duration, wait: Arc<Wait>, index: usize) {
+    if super::clock::add_timer(delay.as_nanos() as u64, &wait, index) {
+        return;
+    }
     let mut queue = queue();
     queue.sequence += 1;
     let sequence = queue.sequence;
@@ -611,6 +617,7 @@ fn work(main: bool) -> i32 {
         unsafe { switch(home(), (*task).sp) };
         CURRENT.with(|c| c.set(std::ptr::null_mut()));
         unsafe {
+            let in_domain = (*task).in_domain;
             if (*task).finished {
                 let mut task = Box::from_raw(task);
                 let was_main = task.main;
@@ -619,6 +626,7 @@ fn work(main: bool) -> i32 {
                 }
                 tasks().remove(&(&*task as *const Task as usize));
                 drop(task);
+                super::clock::stopped(in_domain);
                 if was_main {
                     MAIN_DONE.store(true, Ordering::SeqCst);
                     // Take the queue's lock so the main thread cannot miss
@@ -626,7 +634,9 @@ fn work(main: bool) -> i32 {
                     drop(queue());
                     READY.notify_all();
                 }
-            } else if (*task).state.compare_exchange(PARKING, PARKED, Ordering::AcqRel, Ordering::Acquire).is_err() {
+            } else if (*task).state.compare_exchange(PARKING, PARKED, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+                super::clock::stopped(in_domain);
+            } else {
                 // Notified while switching out.
                 (*task).state.store(RUNNING, Ordering::Release);
                 schedule(task);
@@ -850,22 +860,8 @@ static ENDING: AtomicUsize = AtomicUsize::new(usize::MAX);
 /// finishes this one. The process then ends with `status` once the main
 /// task has finished and the other tasks with it, or after `PANIC_GRACE`.
 pub(crate) fn end_all(status: i32) -> ! {
-    let _ = ENDING.compare_exchange(usize::MAX, status as usize, Ordering::SeqCst, Ordering::SeqCst);
-    static WATCHDOG: std::sync::Once = std::sync::Once::new();
-    WATCHDOG.call_once(|| {
-        spawn_thread(Some(64 * 1024), || {
-            std::thread::sleep(PANIC_GRACE);
-            flush_stdout();
-            super::process::cancel_live();
-            std::process::exit(ENDING.load(Ordering::SeqCst) as i32)
-        });
-    });
+    abandon(status);
     let me = current();
-    for &task in tasks().iter() {
-        if task as *mut Task != me {
-            unsafe { cancel_task(task as *mut Task) };
-        }
-    }
     if me.is_null() {
         flush_stdout();
         super::process::cancel_live();
@@ -896,6 +892,28 @@ pub(crate) fn end_all(status: i32) -> ! {
         switch(&mut (*me).sp, *home());
     }
     runtime_fault("a finished task resumed")
+}
+
+/// Ends the program with `status` once its tasks have run their cleanups:
+/// cancels every task but the running one, and ends the process anyway
+/// after `PANIC_GRACE`.
+pub(crate) fn abandon(status: i32) {
+    let _ = ENDING.compare_exchange(usize::MAX, status as usize, Ordering::SeqCst, Ordering::SeqCst);
+    static WATCHDOG: std::sync::Once = std::sync::Once::new();
+    WATCHDOG.call_once(|| {
+        spawn_thread(Some(64 * 1024), || {
+            std::thread::sleep(PANIC_GRACE);
+            flush_stdout();
+            super::process::cancel_live();
+            std::process::exit(ENDING.load(Ordering::SeqCst) as i32)
+        });
+    });
+    let me = current();
+    for &task in tasks().iter() {
+        if task as *mut Task != me {
+            unsafe { cancel_task(task as *mut Task) };
+        }
+    }
 }
 
 /// When the main task has finished after a panic: waits for the other
@@ -931,8 +949,11 @@ fn new_task(stack: Stack, body: *mut u8, code: *const u8, kind: ResultKind, join
         finished: false,
         main: join.is_null(),
         foreign: std::ptr::null(),
+        // A task started on a virtual clock keeps it.
+        in_domain: !current().is_null() && unsafe { (*current()).in_domain },
     }));
     tasks().insert(task as usize);
+    super::clock::woke(task);
     task
 }
 

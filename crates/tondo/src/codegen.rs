@@ -101,6 +101,11 @@ enum Rt {
     TestWhere,
     TestAttach,
     TestSnapshot,
+    ClockBegin,
+    ClockEnd,
+    ClockSettle,
+    ClockAdvance,
+    ClockRelease,
     ArrayNew,
     ArrayRetain,
     ArrayRelease,
@@ -303,6 +308,11 @@ impl Rt {
             Rt::TestWhere => ("tondo_rt_test_where", &[I64], &[]),
             Rt::TestAttach => ("tondo_rt_test_attach", &[I64, I64, I64, I64], &[]),
             Rt::TestSnapshot => ("tondo_rt_test_snapshot", &[I64, I64, I64], &[]),
+            Rt::ClockBegin => ("tondo_rt_clock_begin", &[I64], &[I64]),
+            Rt::ClockEnd => ("tondo_rt_clock_end", &[], &[]),
+            Rt::ClockSettle => ("tondo_rt_clock_settle", &[I64], &[]),
+            Rt::ClockAdvance => ("tondo_rt_clock_advance", &[I64, I64, I64], &[]),
+            Rt::ClockRelease => ("tondo_rt_clock_release", &[I64], &[]),
             Rt::ArrayNew => ("tondo_rt_array_new", &[I64, I64], &[I64]),
             Rt::ArrayRetain => ("tondo_rt_array_retain", &[I64], &[]),
             Rt::ArrayRelease => ("tondo_rt_array_release", &[I64, I64, I64], &[]),
@@ -1624,6 +1634,7 @@ impl Emit<'_, '_> {
                         Handle::Process => Rt::ProcessRelease,
                         Handle::JsonReader => Rt::JsonReaderRelease,
                         Handle::JsonWriter => Rt::JsonWriterRelease,
+                        Handle::Clock => Rt::ClockRelease,
                         _ => Rt::SyncRelease,
                     };
                     self.call_rt(rt, &[pointer]);
@@ -4123,6 +4134,16 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Callee::Std(StdFn::TestWhere) => {
                 let location = self.location(self.span);
                 self.e.call_rt(Rt::TestWhere, &[location])
+            }
+            Callee::Std(StdFn::ClockBegin) => {
+                values.push(self.location(self.span));
+                self.e.call_rt(Rt::ClockBegin, &values)
+            }
+            Callee::Std(StdFn::ClockEnd) => self.e.call_rt(Rt::ClockEnd, &values),
+            Callee::Std(StdFn::ClockSettle) => self.e.call_rt(Rt::ClockSettle, &values),
+            Callee::Std(StdFn::ClockAdvance) => {
+                values.push(self.location(self.span));
+                self.e.call_rt(Rt::ClockAdvance, &values)
             }
             Callee::Std(function @ (StdFn::TestAttach | StdFn::TestSnapshot)) => {
                 // Their panics name where they were called.

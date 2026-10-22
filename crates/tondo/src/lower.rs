@@ -59,7 +59,10 @@ fn waiting(bodies: &[Body]) -> Vec<bool> {
         for rvalue in rvalues {
             match rvalue {
                 Rvalue::Call(hir::Callee::Fn(id), _) => calls[index].push(id.0 as usize),
-                Rvalue::Call(hir::Callee::Std(hir::StdFn::TimeSleep), _)
+                Rvalue::Call(
+                    hir::Callee::Std(hir::StdFn::TimeSleep | hir::StdFn::ClockSettle | hir::StdFn::ClockAdvance),
+                    _,
+                )
                 | Rvalue::CallIndirect(..)
                 | Rvalue::Select(..) => waits[index] = true,
                 Rvalue::TaskOp(op, ..) if op.waits() => waits[index] = true,
@@ -532,7 +535,7 @@ impl Builder<'_> {
     fn call_waits(&self, callee: hir::Callee) -> bool {
         match callee {
             hir::Callee::Fn(id) => self.waits.is_some_and(|w| w[id.0 as usize]),
-            hir::Callee::Std(hir::StdFn::TimeSleep) => true,
+            hir::Callee::Std(hir::StdFn::TimeSleep | hir::StdFn::ClockSettle | hir::StdFn::ClockAdvance) => true,
             _ => false,
         }
     }

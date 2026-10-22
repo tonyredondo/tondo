@@ -163,9 +163,9 @@ fn node_properties(
         ("tondo.attempts".into(), Value::Array(attempts)),
         ("tondo.stdout.encoding".into(), encoding("stdout")),
         ("tondo.stderr.encoding".into(), encoding("stderr")),
-        ("tondo.artifacts".into(), Value::Array(Vec::new())),
-        ("tondo.snapshots".into(), Value::Array(Vec::new())),
-        ("tondo.virtual_time".into(), Value::Array(Vec::new())),
+        ("tondo.artifacts".into(), decisive.get("artifacts").cloned().unwrap_or(Value::Null)),
+        ("tondo.snapshots".into(), decisive.get("snapshots").cloned().unwrap_or(Value::Null)),
+        ("tondo.virtual_time".into(), decisive.get("virtual_time").cloned().unwrap_or(Value::Null)),
         ("tondo.source".into(), descriptor.get("source").cloned().unwrap_or(Value::Null)),
         ("tondo.owners".into(), descriptor.get("owners").cloned().unwrap_or(Value::Null)),
     ]

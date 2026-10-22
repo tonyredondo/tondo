@@ -124,6 +124,16 @@ fn written(attempt: &Attempt) -> String {
         let tags: Vec<String> = attempt.tags.iter().map(|(k, v)| format!("{k}={v}")).collect();
         text.push_str(&format!("tags: {}\n", tags.join(", ")));
     }
+    for (index, clock) in attempt.virtual_time.iter().enumerate() {
+        let elapsed = std::time::Duration::from_nanos(clock.elapsed_ns);
+        text.push_str(&format!(
+            "virtual clock {}: at {elapsed:?} of virtual time, moved {} times by itself and {} by advance, settled {} times\n",
+            index + 1,
+            clock.automatic,
+            clock.explicit,
+            clock.settles
+        ));
+    }
     for artifact in &attempt.artifacts {
         text.push_str(&format!(
             "artifact {}: {}, {} bytes, objects/{}\n",

@@ -411,7 +411,7 @@ impl Context<'_> {
         fields.push(("tags", Value::Object(tags.into_iter().map(|(k, v)| (k, str(v))).collect())));
         fields.push(("artifacts", artifacts(attempt)));
         fields.push(("snapshots", snapshots(attempt)));
-        fields.push(("virtual_time", Value::Array(Vec::new())));
+        fields.push(("virtual_time", virtual_time(attempt)));
         fields.push(("logs", Value::Array(attempt.logs.iter().map(|l| str(l.clone())).collect())));
         fields.push(("stdout", stream(&attempt.stdout)));
         fields.push(("stderr", stream(&attempt.stderr)));
@@ -470,6 +470,20 @@ impl Context<'_> {
             ("failed", int(test_failed + suite_failed)),
         ])
     }
+}
+
+/// The virtual clocks of an attempt, in the order they ran.
+pub(super) fn virtual_time(attempt: &Attempt) -> Value {
+    let clocks = attempt.virtual_time.iter().enumerate().map(|(index, c)| {
+        obj(vec![
+            ("index", int(index + 1)),
+            ("elapsed_ns", str(c.elapsed_ns.to_string())),
+            ("automatic_advances", int(c.automatic as usize)),
+            ("explicit_advances", int(c.explicit as usize)),
+            ("settles", int(c.settles as usize)),
+        ])
+    });
+    Value::Array(clocks.collect())
 }
 
 /// An attempt's attachments, by name.

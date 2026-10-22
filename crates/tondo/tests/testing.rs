@@ -381,3 +381,59 @@ test badMedia {
     };
     assert!(stderr.contains("--update-snapshots runs with --jobs 1") && status == 2);
 }
+
+#[test]
+fn runs_on_a_virtual_clock() {
+    let tests = "\
+import std.console
+import std.testing
+import std.time
+
+fn retryAfter(delay: time.Duration): Int {
+    time.sleep(delay)
+    time.sleep(delay)
+    2
+}
+
+// Ten seconds of backoff, without waiting for them.
+test backsOff {
+    let started = time.now()
+    testing.withVirtualTime((clock) {
+        let before = time.now()
+        let job = spawn retryAfter(time.seconds(5))
+        clock.settle()
+        clock.advance(time.seconds(5))
+        assert(job.wait() == 2)
+        console.println(\"virtual {before.elapsed()}\")
+    })
+    assert(started.elapsed().isLessThan(time.seconds(1)), \"it waited\")
+}
+
+test waitsForNothing {
+    let (sender, receiver) = channel[Int]()
+    testing.withVirtualTime((clock) {
+        let value = receiver.receive()
+    })
+}
+
+test nests {
+    testing.withVirtualTime((outer) {
+        testing.withVirtualTime((inner) {})
+    })
+}
+";
+    let dir = project("testing-virtual", tests);
+    let (stdout, _, status) = tondo(&dir, &["test", "--show-output", "--timeout", "10"]);
+    assert_eq!(status, 1);
+    for part in [
+        "test app::unit::app::backsOff ... ok\n",
+        "stdout:\nvirtual 10s\nvirtual clock 1: at 10s of virtual time, moved 1 times by itself and 1 by advance, settled 1 times\n",
+        "panic[P2003]: test-virtual-time-deadlock",
+        "panic[P2004]: overlapping-test-virtual-time",
+    ] {
+        assert!(stdout.contains(part), "missing {part} in {stdout}");
+    }
+    let (stdout, _, _) = tondo(&dir, &["test", "--filter", "backsOff", "--test-format", "json"]);
+    let clock = "\"virtual_time\":[{\"index\":1,\"elapsed_ns\":\"10000000000\",\"automatic_advances\":1,\"explicit_advances\":1,\"settles\":1}]";
+    assert!(stdout.contains(clock), "{stdout}");
+}

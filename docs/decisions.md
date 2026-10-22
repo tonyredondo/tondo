@@ -800,3 +800,17 @@ it is called, and the report shows the first line that differs.
 `--update-snapshots` records them instead and publishes the store only after
 a run with nothing failed, skipped or blocked.
 
+## 2026-10-22 — Virtual time in the runtime's scheduler
+
+`testing.withVirtualTime` gives the calling task, and the tasks it starts,
+the clock of a domain: `time.now()` reads it, and `sleep`, timeouts and
+`select` set their timers on it. The scheduler counts the domain's tasks
+that run or can run and its waits on the host; when both are zero it
+finishes a `settle`, goes to the next deadline (no further than an
+`advance`'s target), or reports `P2003`. A worker runs one test at a time, so
+there is one domain at most. The closure gets the `VirtualTime` by value, a
+counted handle that only acts while its domain runs; mixing instants of two
+domains is not caught; and a wait on a channel or lock shared with tasks
+outside the domain counts as one the domain brings. A `P2003` found outside
+any task cancels every task, so their cleanups run, as a panic does.
+

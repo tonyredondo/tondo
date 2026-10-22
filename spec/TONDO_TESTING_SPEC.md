@@ -3606,9 +3606,14 @@ los ejecutan en cada plataforma de CI. El compilador nativo implementa hoy:
   `--diagnostic-format`;
 - `testing.attach` con el artifact store en `target/test-artifacts` o
   `--artifacts`, y `testing.snapshot` con el snapshot store y
-  `--update-snapshots`.
+  `--update-snapshots`;
+- `testing.withVirtualTime` con `settle` y `advance`, y los pánicos `P2003` a
+  `P2005`.
 
-Sigue pendiente el tiempo virtual: `virtual_time` queda vacío en los reportes.
+La implementación difiere todavía en tres puntos del tiempo virtual: el cierre
+recibe `VirtualTime` por valor y el valor puede copiarse; mezclar `Instant` de
+dominios distintos no se rechaza; y una espera sobre un canal o un lock
+compartido con tareas de fuera del dominio cuenta como duradera.
 
 ## 17. Referencia rápida
 

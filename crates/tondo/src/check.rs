@@ -628,6 +628,8 @@ struct ClosureKind {
     deferred: bool,
     is_unsafe: bool,
     test: bool,
+    /// Infers its errors, as the closure of `testing.withVirtualTime`.
+    infer_error: bool,
 }
 
 /// How a callable value is called (11.7, 11.8): its parameters and their
@@ -898,6 +900,85 @@ impl<'a> Checker<'a> {
         function
     }
 
+    /// `testing.withVirtualTime((clock) { ... })` (testing 7.9): the closure
+    /// runs on a new virtual clock, which ends as it returns; it infers its
+    /// errors, which the call passes on.
+    fn with_virtual_time(&mut self, cx: &mut FnCx, args: &[ast::Arg], span: Span) -> hir::Expr {
+        let [arg] = args else {
+            return self.arity_error(span, 1, args.len());
+        };
+        let ast::ExprKind::Closure(closure) = &arg.value.kind else {
+            let message = "`withVirtualTime` takes a closure: `testing.withVirtualTime((clock) { ... })`";
+            self.diags.error("E1102", arg.value.span, message);
+            return Self::error_expr(span);
+        };
+        let clock = self.types.handle(Handle::Clock, Ty::UNIT);
+        let expected = self.types.intern(TyKind::Fn(vec![clock], Ty::UNIT, false, vec![ast::Mode::Value], false));
+        let kind = ClosureKind { deferred: false, is_unsafe: closure.is_unsafe, test: false, infer_error: true };
+        let parts = (&closure.params[..], closure.result.as_ref());
+        let body = &closure.body;
+        let value =
+            self.closure_with(cx, parts, Some(expected), kind, span, |this, cx, success| this.block(cx, body, success));
+        let Some((_, _, info)) = self.types.closure(value.ty) else { return Self::error_expr(span) };
+        // `let clock = begin(); defer end(); body(clock)`
+        let local = |this: &mut Self, cx: &mut FnCx, ty: Ty| {
+            let local = this.hidden_local(cx, ty);
+            cx.mutable[local.0 as usize] = true;
+            local
+        };
+        let clock_local = local(self, cx, clock);
+        let begin = Self::mk(hir::ExprKind::Call(Callee::Std(StdFn::ClockBegin), Vec::new(), Vec::new()), clock, span);
+        let end = Self::mk(hir::ExprKind::Call(Callee::Std(StdFn::ClockEnd), Vec::new(), Vec::new()), Ty::UNIT, span);
+        let Some(cleanup) = self.deferred_call(end, span) else { return Self::error_expr(span) };
+        let cleanup_local = local(self, cx, cleanup.ty);
+        let read = Self::mk(hir::ExprKind::Local(cleanup_local), cleanup.ty, span);
+        let call = Self::mk(hir::ExprKind::CallValue(Box::new(read), Vec::new()), Ty::UNIT, span);
+        let body_ty = value.ty;
+        let body_local = local(self, cx, body_ty);
+        let stmts = vec![
+            hir::Stmt::Let(clock_local, begin),
+            hir::Stmt::Defer { local: cleanup_local, closure: cleanup, call },
+            hir::Stmt::Let(body_local, value),
+        ];
+        let callee = Self::mk(hir::ExprKind::Local(body_local), body_ty, span);
+        let argument = Self::mk(hir::ExprKind::Local(clock_local), clock, span);
+        let run = Self::mk(hir::ExprKind::CallValue(Box::new(callee), vec![argument]), info.result, span);
+        let block = hir::Block { stmts, tail: Some(Box::new(run)), ty: info.result };
+        Self::mk(hir::ExprKind::Block(block), info.result, span)
+    }
+
+    /// `clock.settle()` and `clock.advance(duration)` (testing 7.9).
+    fn clock_method(
+        &mut self,
+        cx: &mut FnCx,
+        receiver: hir::Expr,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> hir::Expr {
+        let (function, params) = match method.name.as_str() {
+            "settle" => (StdFn::ClockSettle, Vec::new()),
+            "advance" => {
+                let Some(duration) = self.duration else {
+                    let message = "`advance` takes a `time.Duration`: import std.time";
+                    self.diags.error("E1001", method.span, message);
+                    return Self::error_expr(span);
+                };
+                (StdFn::ClockAdvance, vec![duration])
+            }
+            _ => return self.no_method(receiver.ty, method, span),
+        };
+        if args.len() != params.len() {
+            return self.arity_error(span, params.len(), args.len());
+        }
+        let mut values = vec![receiver];
+        for (arg, &param) in args.iter().zip(&params) {
+            let value = self.expr(cx, &arg.value, Some(param));
+            values.push(self.coerce(value, param));
+        }
+        Self::mk(hir::ExprKind::Call(Callee::Std(function), Vec::new(), values), Ty::UNIT, span)
+    }
+
     /// The members of a suite, or of the root, each as a closure that runs
     /// it; `prefixes` gives the identity each member's name extends.
     fn test_members(
@@ -927,7 +1008,7 @@ impl<'a> Checker<'a> {
             let suite = matches!(node, ast::TestNode::Suite(_));
             self.test_nodes.push(hir::TestNodeInfo { id: id.clone(), parent, suite, span: name.span });
             let unit = self.types.intern(TyKind::Fn(Vec::new(), Ty::UNIT, false, Vec::new(), false));
-            let kind = ClosureKind { deferred: false, is_unsafe: false, test: true };
+            let kind = ClosureKind { deferred: false, is_unsafe: false, test: true, infer_error: false };
             let closure =
                 self.closure_with(cx, (&[], None), Some(unit), kind, node.span(), |this, inner, _| match node {
                     ast::TestNode::Test(t) => this.block(inner, &t.body, Some(Ty::UNIT)),
@@ -3421,7 +3502,7 @@ impl<'a> Checker<'a> {
         is_unsafe: bool,
         span: Span,
     ) -> hir::Expr {
-        let kind = ClosureKind { deferred, is_unsafe, test: false };
+        let kind = ClosureKind { deferred, is_unsafe, test: false, infer_error: false };
         let body = |this: &mut Self, cx: &mut FnCx, success| this.block(cx, closure_body, success);
         self.closure_with(cx, (closure_params, closure_result), expected, kind, span, body)
     }
@@ -3434,7 +3515,7 @@ impl<'a> Checker<'a> {
         cx: &mut FnCx,
         (closure_params, closure_result): (&[ast::ClosureParam], Option<&ast::TypeExpr>),
         expected: Option<Ty>,
-        ClosureKind { deferred, is_unsafe, test }: ClosureKind,
+        ClosureKind { deferred, is_unsafe, test, infer_error }: ClosureKind,
         span: Span,
         check_body: impl FnOnce(&mut Self, &mut FnCx, Option<Ty>) -> hir::Block,
     ) -> hir::Expr {
@@ -3508,7 +3589,7 @@ impl<'a> Checker<'a> {
         // The body is checked in its own context, nested in the current one.
         let mut inner = self.new_cx(declared.unwrap_or(Ty::ERROR));
         inner.infer_result = declared.is_none();
-        inner.infer_error = test;
+        inner.infer_error = test || infer_error;
         inner.test_member = test;
         inner.deferred = deferred;
         inner.unsafe_region = is_unsafe;
@@ -3533,7 +3614,7 @@ impl<'a> Checker<'a> {
             None => body.ty,
         };
         let result = match cx.error {
-            Some(error) if test => self.types.intern(TyKind::Result(result, error)),
+            Some(error) if test || infer_error => self.types.intern(TyKind::Result(result, error)),
             _ => result,
         };
         let parent = cx.parent.take().expect("a closure context has a parent");
@@ -8023,6 +8104,9 @@ impl<'a> Checker<'a> {
                 let callee = Callee::Std(StdFn::Native(index as u16));
                 return Self::mk(hir::ExprKind::Call(callee, Vec::new(), values), result, span);
             }
+            if handle == Handle::Clock {
+                return self.clock_method(cx, value, method, args, span);
+            }
             if handle.locked() || matches!(handle, Handle::Semaphore | Handle::Permit | Handle::Barrier) {
                 return self.sync_method(cx, value, handle, state, method, args, span);
             }
@@ -9207,6 +9291,7 @@ impl<'a> Checker<'a> {
                         let code = if *member == "failNow" { 7 } else { hir::SKIP };
                         return Self::mk(hir::ExprKind::Panic(message, code), Ty::NEVER, span);
                     }
+                    "withVirtualTime" => return self.with_virtual_time(cx, args, span),
                     "log" => (StdFn::TestLog, vec![Ty::STRING]),
                     "tags" => (StdFn::TestTags, vec![self.types.intern(TyKind::Map(Ty::STRING, Ty::STRING))]),
                     "attach" => {

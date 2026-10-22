@@ -721,6 +721,12 @@ pub enum StdFn {
     /// `testing.snapshot(name, actual)` (testing 9.7).
     TestAttach,
     TestSnapshot,
+    /// The virtual clock of `testing.withVirtualTime` (testing 7.9): its
+    /// start and end, and `VirtualTime.settle` and `advance`.
+    ClockBegin,
+    ClockEnd,
+    ClockSettle,
+    ClockAdvance,
 }
 
 /// The raw operations of a `Pointer[T]` that touch memory or move it.

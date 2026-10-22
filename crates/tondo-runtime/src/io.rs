@@ -38,6 +38,9 @@ pub(crate) fn host<R: Send + 'static>(long: bool, job: impl FnOnce() -> R + Send
     let wait = Wait::new();
     let (slot, waiting) = (result.clone(), wait.clone());
     HOST_WORK.fetch_add(1, Ordering::SeqCst);
+    // A virtual clock does not move while its tasks wait on the host.
+    let virtual_clock = super::clock::in_domain();
+    super::clock::external(true);
     submit(
         Box::new(move || {
             let value = job();
@@ -46,6 +49,9 @@ pub(crate) fn host<R: Send + 'static>(long: bool, job: impl FnOnce() -> R + Send
             // see a moment with neither and report a deadlock.
             if waiting.claim(0) {
                 notify(waiting.task);
+            }
+            if virtual_clock {
+                super::clock::external(false);
             }
             HOST_WORK.fetch_sub(1, Ordering::SeqCst);
         }),
@@ -68,6 +74,8 @@ pub(crate) fn host_cancellable<R: Send + 'static>(
     let wait = Wait::new();
     let (slot, waiting) = (result.clone(), wait.clone());
     HOST_WORK.fetch_add(1, Ordering::SeqCst);
+    let virtual_clock = super::clock::in_domain();
+    super::clock::external(true);
     submit(
         Box::new(move || {
             let value = job();
@@ -75,6 +83,9 @@ pub(crate) fn host_cancellable<R: Send + 'static>(
             slot.1.notify_all();
             if waiting.claim(0) {
                 notify(waiting.task);
+            }
+            if virtual_clock {
+                super::clock::external(false);
             }
             HOST_WORK.fetch_sub(1, Ordering::SeqCst);
         }),

@@ -169,6 +169,18 @@ pub struct Attempt {
     pub duration: Duration,
     pub artifacts: Vec<Artifact>,
     pub snapshots: Vec<Snapshot>,
+    /// The virtual clocks it ran, in order (testing 7.9).
+    pub virtual_time: Vec<VirtualClock>,
+}
+
+/// Where a virtual clock got, and how many times it moved by itself, by
+/// `advance`, and settled.
+#[derive(Clone, Debug)]
+pub struct VirtualClock {
+    pub elapsed_ns: u64,
+    pub automatic: u64,
+    pub explicit: u64,
+    pub settles: u64,
 }
 
 /// What `testing.attach` attached.
@@ -215,6 +227,7 @@ impl Attempt {
             duration: Duration::ZERO,
             artifacts: Vec::new(),
             snapshots: Vec::new(),
+            virtual_time: Vec::new(),
         }
     }
 }

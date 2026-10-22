@@ -5,7 +5,7 @@
 //! rest of the plan and runs again the setups its suites need.
 
 use super::store::{Artifacts, Snapshots};
-use super::{Artifact, Attempt, Context, Options, Snapshot, Status, Tree};
+use super::{Artifact, Attempt, Context, Options, Snapshot, Status, Tree, VirtualClock};
 use std::collections::VecDeque;
 use std::io::Read;
 use std::path::Path;
@@ -444,6 +444,14 @@ impl Session<'_> {
                             actual: actual.to_string(),
                         });
                     }
+                }
+            }
+            "virtual" => {
+                let numbers: Vec<u64> = text.split(' ').filter_map(|n| n.parse().ok()).collect();
+                if let [elapsed_ns, automatic, explicit, settles] = numbers[..]
+                    && let Some(entry) = self.running.iter_mut().rev().find(|(o, _, _)| o.node == node)
+                {
+                    entry.0.virtual_time.push(VirtualClock { elapsed_ns, automatic, explicit, settles });
                 }
             }
             "skip" | "panic" => {
