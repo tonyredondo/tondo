@@ -78,6 +78,14 @@ zlib = { url = "https://example.com/zlib-1.0.tar.gz" }
 
 [native]
 libraries = ["sqlite3", "static:z", "vendor/libpng.a", "vendor/libfoo.so"]
+
+[derive]
+Show = "derive/show.to"
+
+[generators.protos]
+program = "gen/protos.to"
+inputs = ["proto/user.proto"]
+outputs = ["proto.user"]
 ~~~
 
 - `[package]` admite `name`, un identificador, y `edition`, cuyo único valor
@@ -95,6 +103,14 @@ libraries = ["sqlite3", "static:z", "vendor/libpng.a", "vendor/libfoo.so"]
 
   Una librería estática no arrastra las suyas: el proyecto lista también las
   que necesita.
+- `[derive]` asocia a cada trait que declara el paquete el archivo de su
+  provider, relativo al `tondo.toml` (27.3 del lenguaje). Solo el paquete que
+  declara un trait puede dar su provider.
+- `[generators.<nombre>]` declara un generador (27.5 del lenguaje): `program`,
+  su archivo; `inputs`, los archivos que recibe como valores; `outputs`, los
+  módulos que produce; y opcionalmente `roots`, las declaraciones públicas que
+  puede consultar, y `limits`, una tabla en línea con `steps`, `memory` y
+  `output`.
 - Toda otra tabla o clave es error, igual que una clave fuera de tabla.
 
 El archivo usa el subconjunto de TOML de tablas, strings, enteros, tablas en
@@ -283,7 +299,7 @@ El toolchain 0.1 no define:
 
 - un registro de paquetes ni resolución de versiones semánticas;
 - workspaces de varios paquetes;
-- fuentes condicionales por plataforma ni generación de código en el build;
+- fuentes condicionales por plataforma;
 - paquetes binarios, interfaces compiladas ni enlace dinámico;
 - una ABI nativa general ni declaraciones `extern`.
 

@@ -1101,9 +1101,9 @@ Reglas:
   vez de producir un artefacto “no reproducible”.
 
 El formato de `tondo.toml`, de las dependencias y de `tondo.lock` se define en
-[`TONDO_TOOLCHAIN_SPEC.md`](./TONDO_TOOLCHAIN_SPEC.md). El toolchain 0.1 no tiene
-fuentes condicionales por plataforma ni generadores: las reglas anteriores fijan
-cómo deberán comportarse cuando existan. Un registro de paquetes y su algoritmo
+[`TONDO_TOOLCHAIN_SPEC.md`](./TONDO_TOOLCHAIN_SPEC.md), que incluye la
+declaración de generadores. El toolchain 0.1 no tiene fuentes condicionales por
+plataforma: las reglas anteriores fijan cómo deberán comportarse cuando existan. Un registro de paquetes y su algoritmo
 de versiones permanecen fuera de 0.1; ninguna de esas herramientas puede cambiar
 estas identidades ni introducir semántica fuente oculta.
 
@@ -7832,6 +7832,7 @@ oculten un diagnóstico independiente.
 | `E2107` | `generator-resource-limit` | Un provider o generador agotó un presupuesto declarado de ejecución, memoria o salida. |
 | `E2108` | `meta-capability-denied` | Código del target `meta` intenta utilizar una operación o capacidad no disponible en ese perfil. |
 | `E2109` | `generation-dependency-cycle` | Un root del snapshot meta depende transitivamente de una declaración que solo existiría como salida de la misma ronda. |
+| `E2110` | `invalid-reflection` | Con el tipo conocido al compilar, una ruta o un método literal de `std.reflect` no existe o no es visible, o `reflect.convert` une dos formas incompatibles. |
 
 #### Warnings
 
@@ -7848,6 +7849,7 @@ oculten un diagnóstico independiente.
 | `W1009` | `avoidable-cow-copy` | Detach repetido evitable con un préstamo equivalente local. |
 | `W1010` | `incomplete-public-documentation` | Documentación pública omite un contrato exigido por 21.5. |
 | `W1011` | `duplicate-set-entry` | Literal de set repite una clave constante. |
+| `W1012` | `converted-field-missing` | `reflect.convert` rellena con `none` un campo opcional del destino que el origen no tiene. |
 
 #### Pánicos del lenguaje
 
@@ -8158,6 +8160,7 @@ con condiciones cerradas:
 - Conversión explícita redundante (`W1007`).
 - Comparación con un float constante evaluado como NaN (`W1008`).
 - Literal `Set[...]` con una entrada constante repetida (`W1011`).
+- Campo opcional que `reflect.convert` rellena con `none` (`W1012`).
 
 Son errores obligatorios, entre otros:
 
@@ -9787,9 +9790,8 @@ Tondo seguro no expone lectura, escritura, offsets, casts, `malloc` ni `free` ra
 
 ### 25.15 Macros y metaprogramación
 
-No hay preprocesador, macros textuales, reescritura arbitraria del AST,
-reflection mutable, `eval` ni ejecución de código metaprogramado durante una
-llamada ordinaria.
+No hay preprocesador, macros textuales, reescritura arbitraria del AST, `eval`
+ni ejecución de código metaprogramado durante una llamada ordinaria.
 
 Tondo sí ofrece las dos formas cerradas de metaprogramación estática definidas en
 la sección 27:
@@ -9803,18 +9805,19 @@ lexer, formatter, typechecker, coherencia, visibilidad y conformidad que el
 código escrito a mano. No existe una tercera API que permita mutar el programa
 en curso.
 
-La serialización de un record de usuario nunca inspecciona valores mediante
-reflection en runtime. Se resuelve con un `impl` manual, un `derive` estático o
-código fuente producido por un generador declarado. Solo un `derive` escrito por
+Las serializaciones de la librería estándar nunca inspeccionan valores mediante
+reflection en runtime: usan implementaciones automáticas, un `impl` manual, un
+`derive` estático o código fuente producido por un generador declarado. Solo un `derive` escrito por
 el módulo propietario concede al provider la vista privada limitada descrita en
 27.4.
 
 ### 25.16 Tipo dinámico universal
 
-No existe `Any`. Datos heterogéneos usan enums o uniones cerradas. Datos externos
-sin schema usan un enum explícito como `Json`. `TypeInfo` y `TypeId`, definidos
-por la librería de reflection, describen tipos; no contienen un valor borrado ni
-permiten leerlo, escribirlo, construirlo o invocarlo dinámicamente.
+No existe `Any` en el lenguaje. Datos heterogéneos usan enums o uniones cerradas
+y datos externos sin schema usan un enum explícito como `json.Value`. La única
+excepción es `reflect.Value` (27.10), que contiene un valor cualquiera con su
+tipo para herramientas que no conocen los tipos de antemano; se vuelve a un tipo
+estático con `as()`, que lo comprueba.
 
 ### 25.17 Múltiples colecciones equivalentes
 
@@ -10126,18 +10129,28 @@ puede llamarse desde fuente de aplicación.
 
 La forma canónica es:
 
-~~~tondo pseudocode
-import std.serialization
+~~~tondo
+import show
+import sql
 
-derive serialization.Encode[Json] + serialization.Decode[Json] for User
+derive show.Show for Point
+derive show.Show + sql.Table for User
 ~~~
 
 Un tipo genérico declara sus binders una sola vez:
 
-~~~tondo pseudocode
-import std.serialization
+~~~tondo
+derive[T] show.Show for Page[T]
+~~~
 
-derive[T] serialization.Encode[Json] + serialization.Decode[Json] for Page[T]
+Para `type Point = { x: Int, y: Int }`, el provider de `show.Show` produce:
+
+~~~tondo
+impl show.Show for Point {
+    fn show(self): String {
+        "Point {{ x: {self.x}, y: {self.y} }}"
+    }
+}
 ~~~
 
 `derive` es una declaración top-level. No tiene cuerpo, `pub`, `priv`, opciones,
@@ -10155,9 +10168,9 @@ declaración en una autorización explícita del propietario.
 
 Los bounds escritos en los binders son parte de la solicitud. Además, un
 provider puede introducir únicamente los bounds positivos mínimos necesarios
-sobre esos mismos binders; por ejemplo, el `impl Encode[Json] for Page[T]`
-generado puede requerir `T: Encode[Json] + Decode[Json]` cuando la expansión lo
-necesite. Los bounds y la cabecera exacta del
+sobre esos mismos binders: para `type Page[T] = { number: Int, item: T }`, el
+provider de `show.Show` produce `impl[T: show.Show] show.Show for Page[T]`,
+porque necesita mostrar `item`. Los bounds y la cabecera exacta del
 `impl` aparecen en la expansión semántica y en la interfaz pública cuando sean
 observables. Para cada bound introducido, el compilador vuelve a comprobar la
 expansión sin ese bound; si continúa siendo válida, la salida se rechaza por
@@ -10166,12 +10179,54 @@ ocultos distintos según el entorno ni cambiar la declaración objetivo.
 
 ### 27.3 Providers y resultado de `derive`
 
-Cada trait derivable tiene exactamente un provider seleccionado por identidad
-nominal exacta. La selección procede del descriptor de la distribución estándar
-o del manifiesto raíz y siempre queda materializada en el lockfile. Un nombre
-parecido, otro `PackageId` o una versión distinta no reutiliza el provider. Los
-providers estándar se resuelven y hashean como cualquier otro input del build;
-el compilador no carga plugins nativos.
+El provider de un trait lo declara el paquete que declara el trait, en la tabla
+`[derive]` de su `tondo.toml`: el nombre del trait y el archivo Tondo del
+provider dentro del paquete.
+
+~~~toml
+# show/tondo.toml
+[package]
+name = "show"
+
+[derive]
+Show = "derive/show.to"
+~~~
+
+Ningún otro paquete puede dar el provider de ese trait, y quien escribe `derive`
+no configura nada: el lockfile ya fija el paquete por hash y, con él, su
+provider. Un trait sin provider declarado produce `E2102`. El compilador no
+carga plugins nativos.
+
+El provider es una función del archivo declarado:
+
+~~~tondo
+// show/derive/show.to
+import std.meta
+
+pub fn derive(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {
+    let target = request.target()
+    // "x: {self.x}, y: {self.y}"
+    var fields = ""
+    for field in target.fields() {
+        let comma = if fields == "" { "" } else { ", " }
+        fields = fields.concat(comma).concat(meta.code(r"$name: {self.$name}", ["name": field.name]))
+    }
+    var out = request.sourceBuilder()
+    out.add(meta.code(r"""
+        impl show.Show for $type {
+            fn show(self): String {
+                "$type {{ $fields }}"
+            }
+        }
+        """, ["type": target.name(), "fields": fields]))?
+    out.finishDerive()
+}
+~~~
+
+El toolchain compila el provider para la máquina que compila, en el perfil
+`meta` (27.7), lo ejecuta en un proceso aparte con la petición y recibe la
+fuente por un canal propio, no por su stdout. Un pánico, un cierre inesperado o
+un error devuelto se informan como `E2104` en la declaración `derive`.
 
 Por cada trait solicitado, el provider puede emitir únicamente:
 
@@ -10241,10 +10296,23 @@ entry point y versión del modelo meta. El manifiesto declara:
 - target, perfil y versión de su API meta; y
 - presupuestos de pasos, memoria y bytes de salida.
 
+Se declara en la tabla `[generators.<nombre>]` de `tondo.toml` (sección 3 del
+toolchain):
+
+~~~toml
+[generators.protos]
+program = "gen/protos.to"
+inputs = ["proto/user.proto"]
+outputs = ["proto.user"]
+~~~
+
+El programa exporta
+`pub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Error`.
 No existe sintaxis `.to` para registrar o ejecutar un generador. El toolchain
-compila el programa para el target cerrado `meta`, le entrega los inputs como
-valores y recibe un resultado estructurado con archivos o diagnósticos. `stdout`
-no es un canal de generación.
+compila el programa en el perfil `meta`, lo ejecuta en un proceso aparte, le
+entrega los inputs como valores y recibe un resultado estructurado con archivos
+o diagnósticos. `stdout` no es un canal de generación. Las salidas son módulos
+con paths lógicos; nunca se escriben en el directorio de fuentes.
 
 Cada salida declarada debe aparecer exactamente una vez. Una salida adicional,
 ausente, duplicada, con otro módulo o fuera de su path produce `E2106` y descarta
@@ -10323,8 +10391,17 @@ ofrece filesystem, red, procesos, environment, reloj, aleatoriedad, threads,
 descubrir archivos, paquetes o tipos que no estén en su request.
 
 Un run tiene presupuestos enteros declarados de pasos, memoria administrada y
-bytes de resultado. Alcanzar uno produce `E2107`; pedir una capacidad ausente
-produce `E2108`. El mismo programa, modelo, inputs, límites, toolchain y target
+bytes de resultado. Alcanzar uno produce `E2107`, que nombra el límite y cuánto
+se usó; pedir una capacidad ausente produce `E2108`, al compilar el provider o
+generador, con la operación que no está permitida.
+
+- Los pasos se cuentan, no se miden en tiempo: el compilador añade al programa
+  `meta` un contador en cada vuelta de bucle y en cada llamada, que da el mismo
+  número en cualquier máquina. Un límite de tiempo podría cumplirse en una
+  máquina y fallar en otra más lenta.
+- La memoria la cuenta el runtime y los bytes de resultado el toolchain.
+- Los providers usan límites por defecto del toolchain; un generador puede
+  declarar los suyos en el manifiesto. El mismo programa, modelo, inputs, límites, toolchain y target
 debe producir exactamente los mismos bytes o los mismos diagnósticos ordenados.
 Un proveedor que no pueda cumplirlo no es válido para un build reproducible.
 
@@ -10378,56 +10455,102 @@ Una implementación puede ejecutar productores independientes en paralelo, pero
 fusiona diagnósticos y salidas por identidad canónica. Paralelizar no cambia los
 bytes ni el primer error observable.
 
-### 27.10 Reflection conservada en runtime
+### 27.10 Reflection en runtime
 
-La librería `std.reflect` puede exponer:
+`std.reflect` (14.8 de la librería estándar) lee, escribe y llama por nombre
+sobre valores cuyo tipo una herramienta no conoce de antemano: mapear filas a
+records por nombre de columna, cargar configuración en campos, plantillas que
+leen `user.address.city`, despachar por nombre de método o comparar valores
+campo a campo en tests.
 
-~~~tondo pseudocode
-let info: TypeInfo = reflect.typeInfo[User]()
-let id: TypeId = info.id()
+~~~tondo
+import std.reflect
+
+type Address = { city: String }
+type User = { name: String, age: Int, address: Address, priv password: String }
+type UserView = { name: String, address: Address }
+
+pub fn User.greet(self, greeting: String): String { "{greeting}, {self.name}" }
+
+let city: String = reflect.get(user, "address.city")?
+reflect.set(mut user, "age", 37)?
+let text: String = reflect.call(user, "greet", "Hello")?
+
+let value = reflect.valueOf(user)
+for field in value.fields() {
+    console.println("{field.name} = {field.value}")
+}
+let back: User = value.as()?
+let view: UserView = reflect.convert(user)
 ~~~
 
-La llamada se especializa en compilación y solo conserva metadata descriptiva
-para tipos alcanzables desde una solicitud explícita. `TypeInfo` es opaco y
-puede informar:
+Reglas:
 
-- identidad, nombre calificado y clase de tipo;
-- argumentos genéricos;
-- campos **públicos** de records;
-- variantes y payloads públicos de enums;
-- tipo base de un newtype; y
-- capabilities y traits públicos demostrados.
+- `reflect.Value` contiene un valor cualquiera con su tipo. Un argumento cuyo
+  parámetro es `reflect.Value`, incluidos los elementos de un parámetro
+  variádico `...Array[reflect.Value]`, se convierte solo: `reflect.call(user,
+  "greet", "Hello")` no envuelve `"Hello"`. Es la única conversión implícita
+  hacia otro tipo y solo existe hacia `reflect.Value`.
+- La reflexión ve los campos sin `priv` y los métodos `pub`, desde cualquier
+  módulo. Un campo privado no se lee ni se escribe y un método privado no se
+  llama.
+- `set` y `callMut` reciben el valor como préstamo `mut`, así que respetan los
+  préstamos, la semántica de valor y copy-on-write.
+- Cuando el tipo es conocido al compilar y la ruta o el método es un literal, un
+  nombre que no existe o no es visible es `E2110`. En otro caso es un
+  `ReflectError` cuyo mensaje dice la corrección, por ejemplo
+  "`User` has no field `nme`; its fields are `name`, `age`, `address`".
 
-No permite obtener o modificar el campo de un valor, construir por nombre,
-invocar una función, enumerar todos los tipos del proceso, revelar miembros
-privados ni observar layout, offsets, direcciones o estado de memoria. No existe
-un `Value`, `Any` o cast dinámico asociado.
+`reflect.convert` y `Value.as()` convierten entre tipos de la misma forma, por
+nombre de campo y no por layout: `{ x: Int, y: Int }` y
+`{ width: Int, height: Int }` ocupan lo mismo en memoria pero no se mezclan.
+
+- Cada campo del destino toma el campo del mismo nombre del origen; los campos
+  del origen que el destino no tiene se descartan.
+- Un campo del destino que el origen no tiene es un error, salvo que sea
+  opcional (`T?`): entonces vale `none`.
+- Los tipos de los campos se convierten con la misma regla. Records, enums (por
+  nombre de variante), tuplas, `Option`, `Array` y `Map` se convierten elemento
+  a elemento. Escalares y newtypes tienen que ser el mismo tipo: un `UserId` no
+  se convierte en `Int`.
+- Solo cuentan los campos visibles; un destino con campos `priv` no se construye
+  fuera de su módulo, igual que con un literal.
+- `as()` devuelve el valor si ya es del tipo pedido.
+
+Con los dos tipos conocidos, `reflect.convert` se resuelve al compilar: genera
+la copia, una forma incompatible es `E2110` y cada campo rellenado con `none` es
+el warning `W1012`. `Value.as()` decide en ejecución entre conversiones que el
+compilador genera de antemano.
+
+Coste: el compilador solo conserva metadatos de los tipos que llegan a una
+operación de `std.reflect` y de los tipos de sus campos, conserva los métodos
+`pub` de esos tipos para `call` y genera de antemano las conversiones que `as()`
+puede necesitar. Un programa que no usa reflexión no paga nada. No existe una
+lista de todos los tipos ni búsqueda de un tipo por nombre.
 
 `TypeId` solo garantiza igualdad estable dentro del mismo artefacto exacto. No
 es un identificador de wire, no se serializa y puede cambiar entre builds,
-targets o versiones. La metadata no solicitada puede eliminarse; `typeInfo[T]()`
-es la raíz explícita de retención.
+targets o versiones.
 
 ### 27.11 Serialización
 
 Los serializers y deserializers de tipos estáticos se implementan como traits
-ordinarios y código especializado.
-`derive serialization.Encode[Json] + serialization.Decode[Json] for User` puede
-generar acceso directo a sus campos, validación y construcción sin tabla de
-reflection ni árbol intermedio. El mismo par de traits puede alimentar JSON y
-MessagePack; Protobuf utiliza además código schema-first generado desde
-descriptores `.proto` declarados como inputs.
+ordinarios y código especializado, sin tabla de reflection ni árbol intermedio.
+`std.json` implementa sus traits automáticamente para cada record, enum y
+newtype cuyas partes los implementan (14.10 de la librería estándar), sin
+`derive`; un `impl` manual sustituye al automático. Protobuf utiliza además
+código schema-first generado desde descriptores `.proto` declarados como inputs
+de un generador.
 
 Un codec puede ofrecer un enum de valores dinámicos para documentos sin schema,
-pero esa heterogeneidad pertenece al formato y no introduce `Any`. Los formatos,
-políticas de campos, límites de recursos y APIs concretas pertenecen a la
-especificación estándar.
+pero esa heterogeneidad pertenece al formato. Los formatos, políticas de campos,
+límites de recursos y APIs concretas pertenecen a la especificación estándar.
 
 ### 27.12 Propiedades de diseño
 
 El modelo anterior garantiza:
 
-- cero lookup reflectivo obligatorio en rutas de producción;
+- cero lookup reflectivo en rutas de producción que no usan `std.reflect`;
 - posibilidad de inline, monomorfización, dead-code elimination y SIMD igual
   que en código manual;
 - builds reproducibles y cacheables;
@@ -10591,11 +10714,11 @@ pub enum Choice {
 
 ### Derivación estática
 
-~~~tondo pseudocode
-import std.serialization
+~~~tondo
+import show
 
-derive serialization.Encode[Json] + serialization.Decode[Json] for User
-derive[T] serialization.Encode[Json] + serialization.Decode[Json] for Page[T]
+derive show.Show for User
+derive[T] show.Show for Page[T]
 ~~~
 
 ### Funciones

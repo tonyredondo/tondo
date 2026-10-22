@@ -2276,13 +2276,78 @@ mismas implementaciones automáticas y anotaciones.
 
 ### 14.8 `std.reflect`
 
-`std.reflect` implementa reflection descriptiva, estática y retenida de forma
-explícita. No es un sistema de objetos dinámico ni una puerta lateral hacia el
-compilador. Su superficie completa es:
+`std.reflect` lee, escribe y llama por nombre sobre valores cuyo tipo una
+herramienta no conoce de antemano, y describe tipos. Las reglas del lenguaje
+(conversión implícita a `Value`, visibilidad, conversión por forma, errores de
+compilación y coste) están en 27.10 de la especificación del lenguaje. Su
+superficie es:
 
 ~~~tondo pseudocode
+pub type Value
+pub type Field = { name: String, value: Value }
+
+pub fn valueOf[T](value: T): Value
+pub fn get[T, S](value: ref S, path: String): T ! ReflectError
+pub fn set[S](value: mut S, path: String, new: Value): Unit ! ReflectError
+pub fn call[R, S](target: ref S, method: String, ...args: Array[Value]): R ! ReflectError
+pub fn callMut[R, S](target: mut S, method: String, ...args: Array[Value]): R ! ReflectError
+pub fn convert[T, S](value: S): T
+pub fn typeOf[T](value: ref T): TypeInfo
 pub fn typeInfo[T](): TypeInfo
 
+pub fn Value.typeInfo(self): TypeInfo
+pub fn Value.as[T](self): T ! ReflectError
+pub fn Value.get(self, path: String): Value ! ReflectError
+pub fn Value.set(mut self, path: String, new: Value): Unit ! ReflectError
+pub fn Value.call(self, method: String, ...args: Array[Value]): Value ! ReflectError
+pub fn Value.callMut(mut self, method: String, ...args: Array[Value]): Value ! ReflectError
+pub fn Value.fields(self): Array[Field]
+pub fn Value.elements(self): Array[Value]
+pub fn Value.entries(self): Array[(Value, Value)]
+pub fn Value.variant(self): String?
+impl Display for Value
+
+pub enum ReflectErrorKind {
+    NoField
+    NoMethod
+    NoValue
+    WrongType
+    WrongArguments
+    OutOfRange
+}
+pub type ReflectError = { kind: ReflectErrorKind, path: String, message: String }
+~~~
+
+Valores:
+
+- `valueOf` toma el valor por valor, como cualquier argumento; `get`, `call` y
+  `typeOf` lo observan con un préstamo, y `set` y `callMut` lo cambian con un
+  préstamo `mut`.
+- Una ruta separa con `.` nombres de campo, índices de `Array`, `Deque`, tuplas
+  y payloads de tupla, y claves de `Map[String, V]`. Un `Option` con `some` es
+  transparente y uno con `none` da `NoValue`. Un newtype es un valor único: la
+  ruta no entra en él.
+- `get[T]` y `Value.as[T]` dan el valor si es de tipo `T`, o lo convierten por
+  forma (27.10); `as[Value]` es el propio valor. `set` acepta un valor del tipo
+  del campo o uno que se convierte a él; en un `Map` inserta o reemplaza la
+  clave.
+- `call` y `callMut` buscan un método `pub` por nombre, comprueban número y tipo
+  de argumentos y dan su resultado completo como `R`: para un método
+  `T ! E`, `R` es `T ! E`. `call` solo llama métodos con `self`; un método con
+  `mut self` o `var self` necesita `callMut`.
+- `fields()` da los campos visibles de un record o del payload record de la
+  variante activa; `elements()` los de un `Array`, `Deque`, `Set`, tupla o payload
+  de tupla; `entries()` los pares de un `Map`; `variant()` el nombre de la
+  variante activa de un enum. Una vista que no corresponde al valor está vacía.
+- `Display` escribe un escalar como su propio `Display` y un compuesto como
+  `User { name: "Ada", age: 36 }`, con los strings entre comillas dentro de un
+  compuesto y sin los campos `priv`.
+- `ReflectError` dice qué ruta o método falló y su mensaje la corrección:
+  "`User` has no field `nme`; its fields are `name`, `age`, `address`".
+
+Descripción de tipos:
+
+~~~tondo pseudocode
 pub type TypeId: Copy + Equatable + Key + Send + Share
 
 pub enum TypeKind {
@@ -2343,179 +2408,119 @@ pub enum TypeCapability {
 pub type TypeInfo
 pub type FieldInfo
 pub type VariantInfo
+pub type MethodInfo
 pub type ParameterInfo
 pub type FunctionInfo
 ~~~
 
-`TypeInfo` es un handle de valor inmutable, barato de copiar, `Send + Share` y
-respaldado por metadata read-only del artefacto. Expone exactamente:
+`TypeInfo` es un handle inmutable, barato de copiar y `Send + Share`. Expone:
 
 - `id(): TypeId`, `qualifiedName(): String` y `kind(): TypeKind`;
 - `genericArguments(): Array[TypeInfo]` en orden de declaración;
 - `capabilities(): Set[TypeCapability]` con solo capacidades demostradas;
-- `fields(): Array[FieldInfo]` para records y payloads record públicos;
-- `variants(): Array[VariantInfo]` para enums públicos;
-- `tupleElements(): Array[TypeInfo]` para tuple y union, preservando el orden
-  canónico del tipo; y
-- `function(): FunctionInfo?` para funciones.
+- `fields(): Array[FieldInfo]` de un record;
+- `variants(): Array[VariantInfo]` de un enum;
+- `methods(): Array[MethodInfo]` con los métodos `pub`;
+- `tupleElements(): Array[TypeInfo]` de una tupla o unión, en el orden canónico
+  del tipo; y
+- `function(): FunctionInfo?` de una función.
 
-Consultar una vista que no corresponde al kind devuelve la colección vacía o
-`none`; no inventa un `ReflectError`. `typeInfo[T]()` tampoco falla en runtime:
-un `T` no describible se rechaza durante compilación. Por tanto `std.reflect`
-no publica un tipo de error runtime en 0.1. Esta ausencia es parte del contrato,
-no una omisión provisional.
-
-Secondary descriptors expose query methods, with no public fields:
+Los descriptores secundarios exponen consultas, sin campos públicos:
 
 - `FieldInfo`: `name(): String`, `typeInfo(): TypeInfo`, `ordinal(): Int`,
-  `docs(): String?`. Ordinals preserve declaration positions even when private
-  fields are omitted. Documentation retains multiline text; absent docs yield
-  `none`.
+  `docs(): String?`. Los ordinales conservan la posición declarada aunque se
+  omitan campos privados.
 - `VariantInfo`: `name(): String`, `ordinal(): Int`,
-  `payloadKind(): VariantPayloadKind`, `tupleElements(): Array[TypeInfo]`,
-  `fields(): Array[FieldInfo]`. `VariantPayloadKind` is the closed enum
-  `Unit | Tuple | Record`. Inapplicable views are empty. Enum record payload
-  fields follow the enum's public payload contract.
-- `ParameterInfo`: `position(): Int`, `typeInfo(): TypeInfo`,
-  `mode(): ParameterMode`. `ParameterMode` is the closed enum
-  `Value | Ref | Mut | Var`. Positions and ordinals start at zero.
+  `payloadKind(): VariantPayloadKind` (`Unit | Tuple | Record`),
+  `tupleElements(): Array[TypeInfo]` y `fields(): Array[FieldInfo]`.
+- `MethodInfo`: `name(): String`, `receiver(): ParameterMode` y
+  `function(): FunctionInfo`.
+- `ParameterInfo`: `position(): Int`, `typeInfo(): TypeInfo` y
+  `mode(): ParameterMode` (`Value | Ref | Mut | Var`).
 - `FunctionInfo`: `parameters(): Array[ParameterInfo]`, `outcome(): TypeInfo`,
-  `variadic(): Bool`, `isUnsafe(): Bool`. A variadic tail
-  occupies the last parameter position, describes its element type and has
-  `Value` mode. The outcome includes the complete `Result` or `Option` type.
+  `variadic(): Bool` y `isUnsafe(): Bool`. El resultado incluye el `Result` o
+  `Option` completo.
 
-Todas las colecciones devueltas son valores inmutables canónicos. Sus elementos
-no dependen de direcciones, vtables ni del orden de un registro global.
+Consultar una vista que no corresponde al kind devuelve la colección vacía o
+`none`. Las colecciones están en orden canónico y no dependen de direcciones ni
+de un registro global. Los descriptores no contienen offsets, tamaño, ABI,
+direcciones ni bytes de un valor.
 
-Solo se publican fields, variants y firmas visibles desde el punto donde se
-formó `typeInfo[T]()`. Un field privado no aparece ni siquiera si la consulta
-se escribió en su propio módulo. Los descriptores nunca contienen getters,
-setters, constructores, function handles, offsets, tamaño, alineación, ABI,
-direcciones, discriminantes físicos, estado del GC ni bytes de un valor.
-
-`TypeId` es una identidad opaca por artefacto. Admite igualdad y hash para ser
-key durante esa ejecución exacta; no admite constructor desde enteros/string,
-orden total, acceso a bits ni encoding estándar. Copiarlo a disco, red,
-schemas, caches o IPC carece de significado. Dos artefactos pueden asignar IDs
-distintos al mismo fuente y dos toolchains no prometen IDs comparables.
-
-#### Retención y DCE
-
-Cada instanciación concreta de `typeInfo[T]()` crea una raíz explícita de
-metadata. La clausura conserva solo `T` y los tipos nombrados por sus
-descriptores públicos alcanzables. No conserva cuerpos, valores, private
-members ni tipos no alcanzables. Genéricos se retienen por instanciación
-concreta, no como un registro abierto de todas sus posibles aplicaciones.
-
-Si no existe una raíz `typeInfo[T]()` alcanzable, el linker puede eliminar toda
-la metadata de `T`. Si elimina el código que contenía la consulta, puede
-eliminar también su clausura. Añadir reflection sobre `A` no retiene metadata
-de un `B` no alcanzable. Estos tres casos —raíz viva, raíz eliminada y tipo no
-alcanzable— son los oracles normativos de DCE para `REFLECT-IMPL-001`.
-
-No existe `allTypes`, lookup por nombre/ID, registro global, carga dinámica,
-reflection de valores, `get`/`set`/`invoke`, construcción dinámica ni
-attributes ejecutables. El único punto de entrada es el genérico estático
-`typeInfo[T]()`. La implementación puede resolver y compactar toda su clausura
-en compile time; una consulta no ejecuta búsqueda, allocation obligatoria ni
-locking global.
-
-Los usos previstos son diagnostics de aplicación, documentación y herramientas
-que necesitan describir un tipo conocido estáticamente. JSON, MessagePack y
-Protobuf no dependen de este módulo: usan impls generados y dispatch estático.
-
-The existing records in `testing/stdlib-reflect.json` and
-`testing/stdlib-owner-evidence.json` cover the bounded Rust metadata catalog:
-explicit roots, public closure, privacy, artifact-local identity and cost limits.
-They do not establish execution of `typeInfo[T]()` from ordinary Tondo source.
-`HOST = not-applicable` only means that reflection needs no external host
-provider; public frontend, VM and native lowering still require executable
-evidence. `REFLECT-IMPL-001` and `STD-A-REFLECT-EVIDENCE-001` remain open for that
-integration, and these component records do not close global conformance or
-performance gates.
+`TypeId` es una identidad opaca por artefacto: admite igualdad y hash para ser
+key durante esa ejecución; no se construye desde enteros o strings, no tiene
+orden ni encoding estándar.
 
 ### 14.9 `std.meta`
 
-`std.meta` solo está presente en `target = tondo-meta`. Define los valores
-inmutables de `GenerateRequest`, `DeriveRequest`, `GenerateResponse`,
-`DeriveResponse`, modelo semántico, diagnostics y outputs descritos por el
-toolchain.
+`std.meta` solo está disponible en el perfil `meta` (27.7 del lenguaje), para
+providers de `derive` y generadores. Define las peticiones que reciben, el
+builder con el que escriben fuente y sus respuestas.
 
-The public request types have private fields and query methods.
-`GenerateRequest` exposes `snapshot(): Snapshot`, `inputs(): Array[Input]`,
-`outputs(): Array[OutputSpec]`, `limits(): Limits`,
-`input(name: String): Input ! Error`, and `sourceBuilder(): SourceBuilder`.
-`DeriveRequest` exposes `snapshot(): Snapshot`, `target(): String`,
-`module(): String`, `traitIdentity(): String`, `bounds(): Array[String]`,
-`span(): Span`, `limits(): Limits`, and `sourceBuilder(): SourceBuilder`. The span identifies the original derive
-request; the snapshot contains its separately authorized declaration views.
+~~~tondo pseudocode
+pub type DeriveRequest
+pub type GenerateRequest
+pub type Declaration
+pub type FieldView = { name: String, typeRef: TypeRef }
+pub type VariantView = { name: String, fields: Array[FieldView], elements: Array[TypeRef] }
+pub type GenericView = { name: String, bounds: Array[String] }
+pub type TypeRef
+pub type Input = { name: String, bytes: Array[Byte], sha256: String }
+pub type SourceBuilder
+pub type DeriveResponse
+pub type GenerateResponse
+pub enum Error {
+    UnknownInput(String)
+    UnknownOutput(String)
+    DuplicateOutput(String)
+    MissingOutput(String)
+    OutputLimit
+    Provider(String)
+    TypeRendering(String)
+}
 
-`GenerateResponse` has `outputs: Map[String, String]` and
-`diagnostics: Array[Diagnostic]`. `DeriveResponse` has `source: String`,
-`diagnostics: Array[Diagnostic]` and `mappings: Array[SourceMap]`. A diagnostic
-has `severity: DiagnosticSeverity`, `message: String` and `origin: Span?`;
-the closed severities are `Note`, `Warning`, `Error`. Error diagnostics prevent
-publication of the response. `Error` has the variants `UnknownInput(String)`,
-`UnknownOutput(String)`, `DuplicateOutput(String)`, `MissingOutput(String)`,
-`OutputLimit`, `Provider(String)` and `TypeRendering(String)`.
+pub fn DeriveRequest.target(self): Declaration
+pub fn DeriveRequest.traitName(self): String
+pub fn DeriveRequest.sourceBuilder(self): SourceBuilder
+pub fn GenerateRequest.inputs(self): Array[Input]
+pub fn GenerateRequest.input(self, name: String): Input ! Error
+pub fn GenerateRequest.outputs(self): Array[String]
+pub fn GenerateRequest.declarations(self): Array[Declaration]
+pub fn GenerateRequest.sourceBuilder(self): SourceBuilder
 
-`SourceBuilder.add(mut self, path: String, source: String): Unit ! Error`
-admits one declared output. `SourceBuilder.finish(self): GenerateResponse ! Error`
-requires the complete output set. The UTF-8 output budget applies to source
-bytes, including multibyte characters. `Input` contains a logical name, an
-`Array[Byte]` and its hash; it contains no physical path.
+pub fn Declaration.name(self): String
+pub fn Declaration.module(self): String
+pub fn Declaration.generics(self): Array[GenericView]
+pub fn Declaration.fields(self): Array[FieldView]
+pub fn Declaration.variants(self): Array[VariantView]
+pub fn Declaration.underlying(self): TypeRef?
 
-`SourceBuilder.outputs(): Array[OutputSpec]` returns its declared slots.
-A derive builder owns exactly `derive/result.to` in the request's module and
-uses `finishDerive(): DeriveResponse ! Error`. Finishing with the other request
-kind's method returns `Error.Provider`; a missing source remains an error.
-The final derive source may contain imports needed for snapshot type rendering
-followed by exactly its requested impl. Other imports, duplicate imports and
-helper declarations are rejected before publication.
+pub fn TypeRef.identity(self): String
 
-Structural records use `origin: Origin`, where `Origin.Source(Span)` identifies
-authored source and `Origin.Builtin(String)` identifies a compiler-defined
-declaration or member. A builtin has no invented span and cannot authorize
-source diagnostics or mappings. Trait operations expose method-local
-`genericParameters`, `hasDefault` and `requiresSelfSend`; their ordinals retain
-authored order and their signatures distinguish outer parameters, `Self` and
-method-local parameters.
+pub fn code(template: String, values: Map[String, String]): String
+pub fn SourceBuilder.renderType(mut self, output: String, ty: TypeRef): String ! Error
+pub fn SourceBuilder.add(mut self, output: String, source: String): Unit ! Error
+pub fn SourceBuilder.finish(self): GenerateResponse ! Error
+pub fn SourceBuilder.finishDerive(self): DeriveResponse ! Error
+pub fn SourceBuilder.error(mut self, message: String)
+~~~
 
-Fields expose `typeRef: TypeRef`; tuple payloads, newtype and alias underlying
-types, function and constant signatures, and operation signatures also use
-`TypeRef`. Function signatures include public inherent methods and associated
-functions, named `Owner.method`. Type and value declarations have separate
-namespaces. Constants expose only their declared type. The private TypeRef
-representation contains
-canonical identity and explicit source-rendering data. `identity(): String`
-compares resolved types independently of transparent aliases.
-`SourceBuilder.renderType(mut self, path: String, ty: TypeRef): String ! Error`
-returns type syntax for the output's module and stages the exact imports.
-`add` includes those imports in the source-byte budget, deduplicated and ordered
-by deterministic alias. Rendering rejects an undeclared or completed path,
-private types belonging to another module, unavailable names and dependencies
-that the output package cannot import directly. Failed rendering is atomic.
+- `DeriveRequest.target()` es la vista del tipo autorizado por la declaración
+  `derive`, con sus campos privados (27.4); `GenerateRequest.declarations()` las
+  declaraciones públicas de los roots del generador.
+- `code` sustituye cada `$nombre` de la plantilla por su valor y `$$` por `$`;
+  con una plantilla raw, la plantilla es literalmente el código generado. Un
+  `$nombre` sin valor es un pánico, que el toolchain informa como fallo del
+  provider.
+- `renderType` escribe un tipo con los nombres que ve el módulo de la salida y
+  añade los imports que necesita.
+- Un builder de `derive` solo admite su salida, y `finishDerive` exige que
+  contenga exactamente el `impl` pedido; uno de generador admite cada salida
+  declarada una vez y `finish` exige todas. `error` añade un diagnóstico, que
+  impide publicar la respuesta.
 
-Además ofrece:
-
-- recorrido canónico de la clausura de roots autorizada: módulos,
-  declarations, fields y variants;
-- renderizado canónico de identidades, tipos, strings y literals;
-- un builder de fuente que maneja escaping e indentación; y
-- asociación explícita entre spans generados e inputs de origen.
-
-No ofrece filesystem, environment, process, clock, entropy, red, compiler
-callbacks ni mutación del AST que produjo el modelo. Crear un documento fuente
-es construir un valor nuevo; el toolchain decide si lo admite, lo formatea y lo
-compila.
-
-La evidencia executable de este owner se registra en
-`testing/stdlib-meta.json` y `testing/stdlib-owner-evidence.json`. El registro
-mantiene separadas las celdas `MODEL`, `TEST` y `FUZZ`, marca `HOST` como
-`not-applicable` por la naturaleza build-only de `tondo-meta` y deja visibles
-los presupuestos de compile-time y tamaño de fuente generada hasta su captura
-de promoción. No se interpreta esta evidencia como una publicación de la
-stdlib ni como una API runtime.
+No ofrece filesystem, environment, procesos, reloj, entropía, red ni callbacks
+del compilador: todo lo que un provider o generador necesita llega en la
+petición.
 
 ### 14.10 `std.json`
 
