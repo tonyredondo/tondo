@@ -1,6 +1,7 @@
 // std.uuid.
 
 import std.console
+import std.time
 import std.uuid
 
 fn main(): !uuid.UuidError {
@@ -14,7 +15,10 @@ fn main(): !uuid.UuidError {
     var seen: Set[uuid.Uuid] = Set[]
     seen.insert(dns)
     seen.insert(parsed)
-    let (first, second) = (uuid.Uuid.v7(), uuid.Uuid.v7())
+    // v7 orders by creation between different milliseconds.
+    let first = uuid.Uuid.v7()
+    time.sleep(time.milliseconds(2))
+    let second = uuid.Uuid.v7()
     console.println("{seen.length()} {dns.compare(id)} {first.compare(second) <= 0} {[id, dns].sorted() == [dns, id]}")
 }
 
