@@ -160,16 +160,22 @@ impl Codegen<'_> {
     /// its natural alignment, as in a packed struct.
     fn c_leaves(&mut self, ty: Ty, base: u32, out: &mut Vec<(u32, ir::Type)>) -> bool {
         let repr = self.types.repr(ty);
+        // Every leaf is collected, aligned or not.
+        let mut aligned = true;
         if let TyKind::CArray(element, count) = *self.types.kind(repr) {
             let size = self.layout(element).size;
-            return (0..count).fold(true, |aligned, i| self.c_leaves(element, base + i * size, out) && aligned);
+            for i in 0..count {
+                aligned &= self.c_leaves(element, base + i * size, out);
+            }
+            return aligned;
         }
         if let Some(components) = self.types.components(repr) {
             let Shape::Struct(fields) = self.layout(repr).shape else { unreachable!("a struct") };
-            return components.iter().zip(&fields.offsets).fold(true, |aligned, (&component, &offset)| {
-                let natural = offset % self.layout(component).align == 0;
-                self.c_leaves(component, base + offset, out) && natural && aligned
-            });
+            for (&component, &offset) in components.iter().zip(&fields.offsets) {
+                aligned &= offset % self.layout(component).align == 0;
+                aligned &= self.c_leaves(component, base + offset, out);
+            }
+            return aligned;
         }
         out.push((base, self.scalar_type(ty)));
         true
