@@ -639,12 +639,28 @@ pub enum StdFn {
     ConsoleSet(u8),
     /// An operation of `std.io` (standard library 10.3).
     Io(IoFn),
+    /// An operation of `std.env` (14.3.5).
+    Env(EnvFn),
     /// `time.sleep(delay)`: waits without blocking the thread (14.3.3).
     TimeSleep,
     /// An operation of `std.fs` (standard library 10.5).
     Fs(FsFn),
     /// An operation of `std.path` (10.4).
     Path(PathFn),
+}
+
+/// The operations of `std.env`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum EnvFn {
+    Args,
+    Get,
+    Vars,
+    Set,
+    SetAll,
+    Remove,
+    CurrentDirectory,
+    SetCurrentDirectory,
+    SyncNative,
 }
 
 /// The operations of `std.io`; those of a stream or buffer take it first.

@@ -47,6 +47,7 @@ pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics)
         collection_error: Ty::ERROR,
         text_error: Ty::ERROR,
         io_error: Ty::ERROR,
+        env_error: None,
     };
     checker.declare_prelude();
     checker.program(module)
@@ -121,6 +122,7 @@ enum StdModule {
     Fs,
     Path,
     Io,
+    Env,
 }
 
 /// The types `std.fs` declares when imported.
@@ -368,6 +370,13 @@ fn std_alias(module: &str, member: &str) -> String {
         ("path", "dirname" | "dirName" | "directoryName") => "parent",
         ("path", "basename" | "baseName") => "fileName",
         ("path", "ext" | "extname") => "extension",
+        ("env", "argv" | "arguments") => "args",
+        ("env", "getenv" | "getVar" | "variable") => "get",
+        ("env", "setenv" | "setVar" | "put") => "set",
+        ("env", "environ" | "variables" | "all") => "vars",
+        ("env", "unset" | "unsetenv" | "delete") => "remove",
+        ("env", "cwd" | "getcwd" | "workingDirectory") => "currentDirectory",
+        ("env", "chdir" | "cd") => "setCurrentDirectory",
         _ => return String::new(),
     };
     format!("; use `{module}.{function}`")
@@ -430,6 +439,8 @@ struct Checker<'a> {
     text_error: Ty,
     /// `std.io.IoError`, which the console and files also use.
     io_error: Ty,
+    /// `std.env.EnvError`, once `std.env` is imported.
+    env_error: Option<Ty>,
 }
 
 /// Per-function checking state.
@@ -809,6 +820,7 @@ impl Checker<'_> {
             ["std", "fs"] => StdModule::Fs,
             ["std", "path"] => StdModule::Path,
             ["std", "io"] => StdModule::Io,
+            ["std", "env"] => StdModule::Env,
             ["std", ..] => {
                 let what = format!("module `{}`", path.join("."));
                 self.diags.unsupported(import.span, &what);
@@ -868,6 +880,16 @@ impl Checker<'_> {
             }
             self.fs = Some(FsTypes { error, kind, metadata, mode, file });
         }
+        if module == StdModule::Env && self.env_error.is_none() {
+            let (id, ty) = self.types.declare_adt(format!("{}.EnvError", name.name));
+            let variants = ["NotFound", "NotADirectory", "PermissionDenied", "Host"]
+                .map(|name| Variant { name: name.into(), payload: Payload::Unit })
+                .to_vec();
+            self.types.define_adt(id, AdtKind::Enum(variants));
+            self.env_error = Some(ty);
+            self.types.intern(TyKind::Map(Ty::STRING, Ty::STRING));
+            self.types.intern(TyKind::Array(Ty::STRING));
+        }
         if module == StdModule::Time && self.duration.is_none() {
             let (id, ty) = self.types.declare_adt(format!("{}.Duration", name.name));
             self.types.define_adt(id, AdtKind::Newtype(Ty::INT));
@@ -878,6 +900,7 @@ impl Checker<'_> {
     /// A type of an imported standard module, such as `text.TextError`.
     fn module_type(&self, module: &str, name: &str) -> Option<Ty> {
         match (self.names.get(module), name) {
+            (Some(ModuleName::Module(StdModule::Env)), "EnvError") => self.env_error,
             (Some(ModuleName::Module(StdModule::Io)), name) => match name {
                 "IoError" => Some(self.io_error),
                 "Writer" => self.types.lookup(&TyKind::Handle(Handle::Writer, Ty::UNIT)),
@@ -1762,6 +1785,7 @@ impl Checker<'_> {
             let fs_error = self.fs.as_ref().map(|fs| fs.error);
             if [self.conversion_error, self.collection_error, self.text_error, self.io_error].contains(&ty)
                 || fs_error == Some(ty)
+                || self.env_error == Some(ty)
             {
                 return true;
             }
@@ -7455,6 +7479,36 @@ impl Checker<'_> {
                 };
                 let signature = Signature::simple(params, result);
                 let target = CallTarget::new(Callee::Std(function), signature, expected);
+                self.call_signature(cx, target, None, args, span)
+            }
+            ([_, member], Some(ModuleName::Module(StdModule::Env))) => {
+                use hir::EnvFn as E;
+                let s = Ty::STRING;
+                let names = self.types.intern(TyKind::Array(s));
+                let map = self.types.intern(TyKind::Map(s, s));
+                let (function, params, result) = match *member {
+                    "args" => (E::Args, vec![], names),
+                    "get" => (E::Get, vec![("name", s)], self.types.intern(TyKind::Option(s))),
+                    "vars" => (E::Vars, vec![], map),
+                    "set" => (E::Set, vec![("name", s), ("value", s)], Ty::UNIT),
+                    "setAll" => (E::SetAll, vec![("values", map)], Ty::UNIT),
+                    "remove" => (E::Remove, vec![("name", s)], Ty::UNIT),
+                    "currentDirectory" => (E::CurrentDirectory, vec![], s),
+                    "setCurrentDirectory" => {
+                        let error = self.env_error.expect("declared with the module");
+                        (E::SetCurrentDirectory, vec![("path", s)], self.types.intern(TyKind::Result(Ty::UNIT, error)))
+                    }
+                    "syncNative" => (E::SyncNative, vec![], Ty::UNIT),
+                    _ => {
+                        let message = format!("module `env` has no function `{member}`{}", std_alias("env", member));
+                        self.diags.error("E1001", segments[1].span, message);
+                        return Self::error_expr(span);
+                    }
+                };
+                let (names, params): (Vec<&str>, Vec<Ty>) = params.into_iter().unzip();
+                let mut signature = Signature::simple(params, result);
+                signature.names = names.into_iter().map(String::from).collect();
+                let target = CallTarget::new(Callee::Std(StdFn::Env(function)), signature, expected);
                 self.call_signature(cx, target, None, args, span)
             }
             ([_, member], Some(ModuleName::Module(StdModule::Io))) => {

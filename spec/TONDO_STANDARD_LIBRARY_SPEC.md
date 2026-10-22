@@ -1482,7 +1482,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.executor` | Core + gated | `threads` para pools bloqueantes | 0.1 | Pools acotados, actores y bridge de trabajo bloqueante sobre las tareas del lenguaje |
 | `std.log` | Core + gated | `console`, `filesystem` o `network` por sink | 0.1 | Eventos estructurados, niveles, backpressure y sinks explícitos |
 | `std.console` | Capability-gated | `console` | 0.1 | stdin, stdout, stderr, texto, bytes y flushing |
-| `std.env` | Capability-gated | `environment` | 0.1 | Argumentos y environment runtime explícitos |
+| `std.env` | Hosted | — | 0.1 | Argumentos, entorno y directorio de trabajo |
 | `std.fs` | Hosted | — | 0.1 | Filesystem, metadata y archivos |
 | `std.process` | Capability-gated | `process` | 0.1 | Planes, procesos, pipes, status, output y cancelación |
 | `std.net` | Capability-gated | `network` | 0.1 | Direcciones, DNS, sockets, streams, datagrams y frontera TLS |
@@ -1542,10 +1542,8 @@ actualizar esta especificación y el tracker antes de implementar.
   Hosted commands preserve the selected stdout/stderr stream and previously
   committed records before runtime diagnostics, including VM resource failure.
   A terminal VM resource failure does not manufacture user cleanup.
-- Los argumentos del programa se obtienen mediante
-  `std.env.snapshot().arguments()`.
-- `std.env` solo expone un snapshot runtime explícito; no lee environment durante
-  compilación ni ofrece mutación implícita.
+- Los argumentos del programa se obtienen mediante `std.env.args()`.
+- `std.env` no lee el entorno durante la compilación.
 - `std.testing` solo existe en source sets de test y no forma parte de producción.
 - Streams, canales, red y sincronización solo aparecen bajo sus propietarios
   canónicos; ningún módulo existente los introduce indirectamente.
@@ -1555,7 +1553,7 @@ actualizar esta especificación y el tracker antes de implementar.
 El catálogo y sus propietarios son normativos. Las declaraciones exhaustivas de
 las veintinueve superficies permanecen pendientes, salvo el núcleo sellado que
 `TONDO_TESTING_SPEC.md` ya fija para `std.testing`, el sustrato
-monotónico y civil de `std.time`, el snapshot read-only de `std.env` y los
+monotónico y civil de `std.time`, `std.env` y los
 contratos runtime-facing de `std.net` y `std.time` civil en las secciones
 14.3.7 y 14.4.6. No existe un contrato bootstrap separado: el corpus consume
 siempre este borrador.
@@ -1713,82 +1711,55 @@ entre calendario e instante están definidas en el contrato B0 de la sección
 Ninguna API de este sustrato puede aceptar un `Instant` donde espere una fecha
 civil o viceversa.
 
-#### 14.3.5 `std.env`: snapshot runtime explícito
+#### 14.3.5 `std.env`: argumentos y entorno
 
-`std.env` es una superficie capability-gated por `environment`. Su única
-responsabilidad en STD-0.1A es leer un snapshot inmutable de argumentos y
-variables entregado por el adaptador de ejecución. No consulta el host durante
-la compilación, no convierte el environment en input implícito del proyecto y
-no ofrece mutación global. `set`, `remove`, `clear`, herencia ambiental y
-resolución de nombres mediante locale quedan fuera de esta versión.
+`std.env` da los argumentos del programa y su entorno, que el programa puede
+cambiar:
 
-El proveedor obtiene el snapshot una vez en la frontera de invocación. En un
-target de producción puede construirlo a partir del proceso, mientras que un
-adaptador sellado puede entregarlo desde un plan de inputs; la fuente Tondo ve
-la misma API y nunca distingue esas dos procedencias. Un snapshot vacío es
-válido y no es un error. La ausencia de una entrada se representa con `none`,
-no con una excepción ni con un valor vacío.
+~~~tondo
+import std.env
 
-~~~tondo pseudocode
-pub enum EnvError {
-    Unavailable
-    InvalidName
-    ResourceLimit
+let files = env.args()
+let level = match env.get("LOG_LEVEL") {
+    some(value) => value,
+    none => "info",
 }
-
-pub type Name
-
-pub enum Value {
-    Text(String)
-    Bytes(Array[Byte])
-}
-
-pub type Snapshot
-
-pub fn snapshot(): Snapshot ! EnvError
-pub fn Name.fromText(value: String): Name ! EnvError
-pub fn Name.fromBytes(value: Array[Byte]): Name ! EnvError
-pub fn Snapshot.arguments(self): Array[Value]
-pub fn Snapshot.get(self, name: Name): Option[Value] ! EnvError
-pub fn Value.asText(self): Option[String]
-pub fn Value.asBytes(self): Array[Byte]
+env.set("RUST_LOG", "debug")
+env.setAll(["CC": "clang", "CFLAGS": "-O2"])
+env.remove("TOKEN")
 ~~~
 
-`Name.fromText` codifica el nombre en UTF-8 sin normalización Unicode;
-`Name.fromBytes` permite consultar exactamente bytes que no sean UTF-8. Un nombre no puede estar
-vacío ni contener `NUL` o `=`; la validación produce `InvalidName` antes de
-consultar el proveedor. Las dos variantes que representan los mismos bytes
-identifican la misma entrada. El proveedor conserva los bytes originales del
-nombre y del valor, y devuelve `Value.Text` solo cuando los bytes del valor
-son UTF-8 válido; de lo contrario devuelve `Value.Bytes`. `asText` no intenta
-reparar ni reemplazar encoding y `asBytes` siempre devuelve una copia lógica
-independiente.
+La superficie es:
 
-`Snapshot.arguments` conserva el orden y la cardinalidad del vector de argv.
-Cada elemento usa la misma política `Text`/`Bytes`; no se elimina el elemento
-cero ni se interpreta ningún argumento como una ruta o un comando. El array y
-los bytes devueltos no son vistas mutables del snapshot. `Snapshot` es
-inmutable, `Send` y `Share`, pero no `Copy`; `Name` y `Value` son valores
-copiables cuando sus payloads lo son. Ningún método devuelve un handle al
-almacenamiento del host.
+~~~tondo pseudocode
+pub enum EnvError { NotFound, NotADirectory, PermissionDenied, Host }
 
-El proveedor aplica un límite de bytes y de entradas antes de construir el
-snapshot. Si no puede capturarlo, devuelve `Unavailable`; si supera el límite,
-devuelve `ResourceLimit` sin publicar un snapshot parcial. Dos llamadas durante
-una misma invocación observan el mismo snapshot sellado y no pueden ver
-cambios externos a mitad de ejecución. La capability `environment` es
-necesaria tanto para `snapshot` como para cualquier operación que consuma un
-snapshot; omitirla produce `E1008` en el límite de módulos. `Duration`, `Array[Byte]`
-y las conversiones de texto siguen siendo APIs independientes y no se importan
-por `std.env`.
+pub fn args(): Array[String]
+pub fn get(name: String): String?
+pub fn vars(): Map[String, String]
+pub fn set(name: String, value: String)
+pub fn setAll(values: Map[String, String])
+pub fn remove(name: String)
+pub fn currentDirectory(): String
+pub fn setCurrentDirectory(path: String): Unit ! EnvError
+pub fn syncNative()
+~~~
 
-El runner de testing materializa únicamente los inputs públicos o secretos
-declarados por el plan. Los públicos se fijan por bytes y hash; los secretos se
-materializan solo dentro del worker y se representan fuera de él por su
-descriptor/version. `std.env` no redacciona copias que el programa escriba
-explícitamente en logs, snapshots, artifacts o salida, y el runner no realiza
-redacción heurística. Un target que no ofrezca `environment` no puede importar
-`std.env`, aunque el programa se ejecute bajo tests.
+- `args` devuelve los argumentos sin el nombre del programa, en orden. Los
+  bytes que no son UTF-8 se sustituyen por `U+FFFD`, también en `get` y `vars`.
+- `vars` devuelve todo el entorno ordenado por nombre.
+- `set`, `setAll` y `remove` cambian el entorno de todo el programa, y los
+  procesos que se lancen después lo heredan; un `Command` puede además fijar el
+  entorno de un solo hijo (19.2). Un nombre vacío o con `=` o `NUL`, o un valor
+  con `NUL`, produce el pánico `P0015`.
+- El runtime guarda su propia copia del entorno y no llama a `setenv` del
+  sistema, que no es seguro con varios threads: el código nativo llamado por FFI
+  no ve los cambios. `syncNative()` los copia al entorno del sistema; se llama
+  antes de que el código nativo lo lea y nunca mientras código nativo corre en
+  otra tarea.
+- `currentDirectory` y `setCurrentDirectory` leen y cambian el directorio de
+  trabajo de todo el programa, contra el que se resuelven los paths relativos de
+  `std.fs` y `std.process`.
 
 #### 14.3.6 Plan cerrado, hashes y disponibilidad
 

@@ -16,8 +16,8 @@
 
 use crate::ast::{BinOp, UnaryOp};
 use crate::hir::{
-    ArrayOp, AtomicOp, Callee, FnId, FsFn, IoFn, LockMode, MapOp, Mutation, PathFn, Program, SharedOp, StdFn, StrOp,
-    TaskOp,
+    ArrayOp, AtomicOp, Callee, EnvFn, FnId, FsFn, IoFn, LockMode, MapOp, Mutation, PathFn, Program, SharedOp, StdFn,
+    StrOp, TaskOp,
 };
 use crate::mir::{
     Body, Const, Local, Operand, Overlap, Piece, Place, Proj, Rvalue, SelectCase, Statement, Terminator, project,
@@ -205,6 +205,7 @@ enum Rt {
     AtomicAdd,
     Fs(FsFn),
     Io(IoFn),
+    Env(EnvFn),
     StreamRelease,
     BufferRelease,
     PathJoin,
@@ -416,6 +417,17 @@ impl Rt {
                 IoFn::BufferBytes => ("tondo_rt_io_buffer_bytes", &[I64], &[I64]),
                 IoFn::BufferLength => ("tondo_rt_io_buffer_length", &[I64], &[I64]),
                 IoFn::BufferClear => ("tondo_rt_io_buffer_clear", &[I64], &[]),
+            },
+            Rt::Env(function) => match function {
+                EnvFn::Args => ("tondo_rt_env_args", &[], &[I64]),
+                EnvFn::Get => ("tondo_rt_env_get", &[I64], &[I64]),
+                EnvFn::Vars => ("tondo_rt_env_vars", &[I64], &[I64]),
+                EnvFn::Set => ("tondo_rt_env_set", &[I64, I64, I64], &[]),
+                EnvFn::SetAll => ("tondo_rt_env_set_all", &[I64, I64], &[]),
+                EnvFn::Remove => ("tondo_rt_env_remove", &[I64, I64], &[]),
+                EnvFn::CurrentDirectory => ("tondo_rt_env_current_directory", &[], &[I64]),
+                EnvFn::SetCurrentDirectory => ("tondo_rt_env_set_current_directory", &[I64], &[I64]),
+                EnvFn::SyncNative => ("tondo_rt_env_sync_native", &[], &[]),
             },
             Rt::StreamRelease => ("tondo_rt_stream_release", &[I64], &[]),
             Rt::BufferRelease => ("tondo_rt_io_buffer_release", &[I64], &[]),
@@ -2106,6 +2118,14 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             // Zero-sized values carry no data; only calls and mutations have
             // effects.
             match rvalue {
+                Rvalue::Call(Callee::Std(StdFn::Env(function)), args) => {
+                    let mut values: Vec<ir::Value> = args.iter().map(|a| self.scalar(a)).collect();
+                    // An invalid name panics where the call is.
+                    if matches!(function, EnvFn::Set | EnvFn::SetAll | EnvFn::Remove) {
+                        values.push(self.location(span));
+                    }
+                    self.e.call_rt(Rt::Env(*function), &values);
+                }
                 Rvalue::Call(callee, args) => {
                     self.call(*callee, args, None);
                 }
@@ -2144,6 +2164,28 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Rvalue::Call(Callee::Std(StdFn::Io(function)), args) => {
                 let values: Vec<ir::Value> = args.iter().map(|a| self.scalar(a)).collect();
                 Val::Scalar(self.e.call_rt(Rt::Io(*function), &values).unwrap())
+            }
+            Rvalue::Call(Callee::Std(StdFn::Env(EnvFn::SetCurrentDirectory)), args) => {
+                self.status_call(Rt::Env(EnvFn::SetCurrentDirectory), args, place);
+                return;
+            }
+            Rvalue::Call(Callee::Std(StdFn::Env(function)), args) => {
+                let values: Vec<ir::Value> = args.iter().map(|a| self.scalar(a)).collect();
+                let rt = Rt::Env(*function);
+                match function {
+                    EnvFn::Get => {
+                        let value = self.e.call_rt(rt, &values).unwrap();
+                        match self.pointer_option(place, ty, Ty::STRING, value) {
+                            Some(value) => value,
+                            None => return,
+                        }
+                    }
+                    EnvFn::Vars => {
+                        let glue = self.e.map_glue_address(ty);
+                        Val::Scalar(self.e.call_rt(rt, &[glue]).unwrap())
+                    }
+                    _ => Val::Scalar(self.e.call_rt(rt, &values).unwrap()),
+                }
             }
             Rvalue::Call(Callee::Std(StdFn::ConsoleReadLine), _) => {
                 let line = self.e.call_rt(Rt::ConsoleReadLine, &[]).unwrap();
@@ -3479,6 +3521,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 StdFn::Fs(_)
                 | StdFn::Path(_)
                 | StdFn::Io(_)
+                | StdFn::Env(_)
                 | StdFn::ConsoleFlush
                 | StdFn::ConsoleReadLine
                 | StdFn::ConsoleStream(_),

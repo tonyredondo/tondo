@@ -1,0 +1,13 @@
+import std.env
+
+fn main() {
+    let a = env.argv()
+    let b = env.getenv("HOME")
+    env.chdir("/tmp")
+    env.setAll(["A": 1])
+}
+
+// expect-error: E1001 module `env` has no function `argv`; use `env.args`
+// expect-error: E1001 module `env` has no function `getenv`; use `env.get`
+// expect-error: E1001 module `env` has no function `chdir`; use `env.setCurrentDirectory`
+// expect-error: E1102 expected `String`, found `Int`

@@ -12,6 +12,7 @@ use std::io::Write;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering, fence};
 
+mod env;
 mod fs;
 mod io;
 mod shared;
@@ -1659,6 +1660,7 @@ fn panic_name(code: u32) -> &'static str {
         12 => "closed-channel",
         13 => "deadlock",
         14 => "reentrant-lock",
+        15 => "invalid-environment-name",
         _ => "unknown",
     }
 }

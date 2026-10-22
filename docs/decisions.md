@@ -503,3 +503,16 @@ satisfy runs in place: reading stdin line by line is faster than Python.
 `ConsoleError` is gone; console and streams fail with `io.IoError`
 (`Closed`, `InvalidData`, `Host`), and `console.readLine()` replaces
 invalid UTF-8 rather than failing, since what a person types is text.
+
+## 2026-10-22 — The program owns a copy of its environment
+
+`env.set`, `env.setAll` and `env.remove` change the environment of the
+whole program, and processes it starts afterwards inherit it, as in every
+mainstream language. The runtime does not call the host's `setenv`, which
+is unsafe while other threads read the environment, and our programs
+always have several; it keeps a table of its own that it passes to child
+processes. Native code reached through FFI would not see the changes, so
+`env.syncNative()` copies them to the host explicitly. `env.args()` leaves
+out the program's name, and invalid UTF-8 in arguments and variables
+becomes U+FFFD; an invalid variable name is a programming error and
+panics (`P0015`).

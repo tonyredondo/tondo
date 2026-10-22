@@ -6658,16 +6658,9 @@ enum ScriptError {
     MissingPattern
 }
 
-let pattern = match env.snapshot()?.arguments() {
-    [] => ""
-    [value, ..] => match value.asText() {
-        some(text) => text
-        none => ""
-    }
-}
-
-if pattern.isEmpty() {
-    fail ScriptError.MissingPattern
+let pattern = match env.args() {
+    [value, ..] => value
+    [] => fail ScriptError.MissingPattern
 }
 
 let pipeline = (
@@ -7665,6 +7658,7 @@ oculten un diagnóstico independiente.
 | `P0012` | `closed-channel` | `send` sobre un canal cerrado. |
 | `P0013` | `deadlock` | Todas las tareas esperan y ninguna puede avanzar. |
 | `P0014` | `reentrant-lock` | Una tarea vuelve a tomar un lock de `std.sync` que ya tiene. |
+| `P0015` | `invalid-environment-name` | `env.set`, `setAll` o `remove` recibe un nombre vacío o con `=` o `NUL`, o un valor con `NUL`. |
 | `P2001` | `test-skip-during-cleanup` | `testing.skip` intenta omitir un nodo durante cleanup, unwind o teardown. |
 | `P2002` | `test-tag-conflict` | `testing.tags` intenta cambiar el valor ya asociado a una key en el mismo envelope. |
 | `P2003` | `test-virtual-time-deadlock` | Un dominio temporal virtual queda quiescente sin timer ni evento interno capaz de progresar. |
@@ -9322,19 +9316,13 @@ No se necesita `while`. `for condition` expresa el mismo flujo.
 import std.env
 
 enum AppError {
-    Environment(env.EnvError)
     Arguments(ArgsError)
     Config(ConfigError)
     Runtime(RuntimeError)
 }
 
 fn runApplication(): !AppError {
-    let arguments = match env.snapshot() {
-        ok(snapshot) => snapshot.arguments()
-        err(error) => fail AppError.Environment(error)
-    }
-
-    let options = match parseArgs(arguments) {
+    let options = match parseArgs(env.args()) {
         ok(options) => options
         err(error) => fail AppError.Arguments(error)
     }
