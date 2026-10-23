@@ -58,6 +58,7 @@ pub fn check<'a>(
         method_visibility: HashMap::new(),
         prelude: None,
         unrepeatable: HashMap::new(),
+        interpolating: false,
         intrinsic_owners: HashMap::new(),
         trait_modules: HashMap::new(),
         conversion_error: Ty::ERROR,
@@ -508,6 +509,9 @@ fn std_alias(module: &str, member: &str) -> String {
 struct Checker<'a> {
     /// The `meta` profile: no host capabilities (27.7).
     meta: bool,
+    /// Inside the `{...}` of a string, where an unknown name may be text
+    /// that meant a brace.
+    interpolating: bool,
     /// The standard functions whose values depend on the moment or the
     /// machine, which the `meta` profile cannot call, with their names.
     unrepeatable: HashMap<FnId, &'static str>,
@@ -9431,7 +9435,9 @@ impl<'a> Checker<'a> {
             match segment {
                 ast::StrSegment::Text(text) => out.push(hir::Segment::Text(text.clone())),
                 ast::StrSegment::Expr(e) => {
+                    let outer = std::mem::replace(&mut self.interpolating, true);
                     let value = self.expr(cx, e, None);
+                    self.interpolating = outer;
                     if !self.satisfies(value.ty, DISPLAY, &[]) {
                         let mut message = format!("{} does not implement `Display`", self.display(value.ty));
                         if self.types.members(value.ty).is_some() {
@@ -9575,6 +9581,9 @@ impl<'a> Checker<'a> {
         let message = match name {
             "Some" | "Ok" | "Err" => format!("unknown name `{name}`; Tondo writes `{}(...)`", name.to_lowercase()),
             "None" => "unknown name `None`; Tondo writes `none`".to_string(),
+            _ if self.interpolating => format!(
+                "unknown name `{name}`; inside a string, `{{{name}}}` interpolates it: write `{{{{{name}}}}}` for the braces themselves"
+            ),
             _ => format!("unknown name `{name}`"),
         };
         self.diags.error("E1001", span, message);

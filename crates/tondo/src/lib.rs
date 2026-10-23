@@ -12,6 +12,7 @@ pub mod diag;
 pub mod driver;
 pub mod exhaust;
 pub mod fmt;
+pub mod guide;
 pub mod hash;
 pub mod hir;
 pub mod lexer;

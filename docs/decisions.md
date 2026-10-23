@@ -1050,3 +1050,16 @@ dialect without braces only 5%. Words are 53% of the tokens and punctuation
 writes. So the dialect and its specification went, `tondo fmt --compact`
 prints the compact form, and `tondo api` shows a module's declarations and
 documentation, with the compiler's intrinsic modules written in `std/api`.
+
+## 2026-10-23 — The toolchain carries its guide
+
+`tondo guide` is the documentation an agent reads before writing Tondo,
+shipped in the binary so that it matches the compiler: an overview with the
+rules that differ from other languages and the commands an agent uses, and
+a topic per area, short enough to read only what a task needs. Every
+example compiles in a test, and every example of a mistake fails with the
+code it names, so the guide cannot drift. `--skill` prints the overview as
+an agent skill. Writing the mistakes down showed six that the parser and
+checker only reported as unexpected tokens or unknown names; each now says
+what to write: `if let`, `|` in patterns, `else` on its own line, a keyword
+as a name, a C-style `for`, and braces inside a string.

@@ -216,6 +216,7 @@ tondo check [<project>|<file.to>] [--json]
 tondo expand [<project>|<file.to>]
 tondo fmt [--check | --compact] <file.to>...
 tondo api [<module>|<file.to>] [--private] [--list] [--project <dir>]
+tondo guide [<topic>] [--list] [--skill]
 tondo update [<project>] [<dependency>...]
 tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
 tondo test [<project>]
@@ -236,6 +237,7 @@ tondo test [<project>]
   15 % menos de tokens; `fmt` lo devuelve a la forma canónica.
 - `api` muestra las declaraciones de un módulo con su documentación y sin
   cuerpos (sección 7.2).
+- `guide` enseña Tondo a personas y a modelos (sección 7.3).
 - `bind` escribe un módulo con las declaraciones de C de unos headers, de un
   paquete del sistema o de una librería (sección 7.1) y, en un proyecto, añade
   cada librería a `[native] libraries`.
@@ -313,6 +315,25 @@ $ tondo api --list
   declaraciones escritas en `std/api` del toolchain.
 - Escribe solo en stdout, no compila y no modifica nada; con un módulo que no
   existe es un error del toolchain (estado 3).
+
+### 7.3 `tondo guide`
+
+`tondo guide` es una guía de Tondo que viaja con el toolchain, para quien lo
+aprende y para un modelo que lo escribe: el lenguaje, la stdlib y los
+comandos, un tema cada vez para leer solo lo necesario.
+
+- Sin argumento muestra la visión general: un programa, las reglas que más
+  difieren de otros lenguajes, los comandos, cómo trabajar como agente
+  (`tondo api`, `tondo check --json`, `tondo fmt --compact`) y la lista de
+  temas. `tondo guide <tema>` muestra uno (`syntax`, `types`, `errors`,
+  `collections`, `text`, `tasks`, `projects`, `testing`, `stdlib`, `http`,
+  `meta`, `ffi`, `pitfalls`) y `--list` los nombra.
+- `pitfalls` reúne los errores que traen otros lenguajes, cada uno con el
+  diagnóstico que produce y su arreglo.
+- `--skill` da la visión general como skill de un agente, un `SKILL.md` con
+  su cabecera: `tondo guide --skill > .claude/skills/tondo/SKILL.md`.
+- Cada ejemplo de la guía compila con el toolchain que la lleva, y cada
+  ejemplo de un error falla con el código que nombra: un test lo comprueba.
 
 ## 8. Determinismo
 

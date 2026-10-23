@@ -6,6 +6,8 @@ use std::process::ExitCode;
 use tondo::driver;
 
 const USAGE: &str = "\
+New to Tondo, or a model writing it? Start with `tondo guide`.
+
 usage:
   tondo run [<project>|<file.to>] [--link <library>]... [-- <argument>...]
                                                        compile and run a program
@@ -16,6 +18,7 @@ usage:
   tondo fmt [--check | --compact] <file.to>...         format files canonically, or print them compactly
   tondo api [<module>|<file.to>] [--private] [--list] [--project <dir>]
                                                        show a module's declarations and documentation
+  tondo guide [<topic>] [--list] [--skill]             learn Tondo: the language, the library, the commands
   tondo update [<project>] [<dependency>...]           fetch dependencies again and rewrite tondo.lock
   tondo test [<project>] [--filter <text> | --glob <pattern> | --exact <id>] [--shard <i/n>]
             [--order canonical|random] [--seed <hex>] [--list] [--jobs <n>] [--timeout <seconds>]
@@ -61,6 +64,7 @@ fn main() -> ExitCode {
         "expand" => expand_command(&args[1..]),
         "fmt" => fmt_command(&args[1..]),
         "api" => api_command(&args[1..]),
+        "guide" => guide_command(&args[1..]),
         "update" => update_command(&args[1..]),
         "bind" => bind_command(&args[1..]),
         "test" => test_command(&args[1..]),
@@ -499,6 +503,27 @@ fn fmt_command(args: &[OsString]) -> Result<ExitCode, String> {
         }
     }
     Ok(status)
+}
+
+/// `tondo guide`: the overview, a topic, the topics' names, or the
+/// overview as an agent skill.
+fn guide_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let args: Vec<&str> = args.iter().filter_map(|a| a.to_str()).collect();
+    match args.as_slice() {
+        [] => print!("{}", tondo::guide::TOPICS[0].1),
+        ["--list"] => {
+            for (name, _) in tondo::guide::TOPICS {
+                println!("{name}");
+            }
+        }
+        ["--skill"] => print!("{}", tondo::guide::skill()),
+        [name] => match tondo::guide::topic(name) {
+            Some(text) => print!("{text}"),
+            None => return Err(format!("there is no topic `{name}`; `tondo guide --list` shows them")),
+        },
+        _ => return Err(format!("expected one topic\n{USAGE}")),
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// `tondo api`: the declarations of a standard module, a module of the

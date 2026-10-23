@@ -1042,6 +1042,10 @@ impl Parser<'_> {
 
     fn for_statement(&mut self) -> PResult<StmtKind> {
         self.bump();
+        if self.at(&Tok::LParen) && matches!(self.nth(1), Tok::Ident(_)) && matches!(self.nth(2), Tok::Eq) {
+            return self
+                .error("Tondo has no C-style `for`: count with a range, `for i in 0..count { ... }`".to_string());
+        }
         if self.at(&Tok::LBrace) {
             return Ok(StmtKind::For { header: ForHeader::Infinite, body: self.block()? });
         }
@@ -1127,6 +1131,9 @@ impl Parser<'_> {
 
     fn match_arm(&mut self) -> PResult<MatchArm> {
         let pattern = self.pattern()?;
+        if self.at(&Tok::Pipe) {
+            return self.error("a pattern has no `|`: write an arm for each pattern, or `_` with a guard".to_string());
+        }
         let guard = if self.eat_kw(Kw::If) { Some(self.expression()?) } else { None };
         self.expect(Tok::FatArrow)?;
         let body = self.arm_body()?;
@@ -1355,6 +1362,10 @@ impl Parser<'_> {
                     self.diags.error("E1202", start.to(self.span()), message);
                 }
                 PatternKind::Loan(mode, self.ident()?)
+            }
+            Tok::Kw(kw) => {
+                return self
+                    .error(format!("`{}` is a keyword and cannot name a binding: choose another name", kw.as_str()));
             }
             _ => return self.expected("pattern"),
         };
@@ -1864,6 +1875,13 @@ impl Parser<'_> {
                 ExprKind::Unsafe(self.block()?)
             }
             Tok::Bang => return self.error("`!` is not a prefix operator: write `not value`".to_string()),
+            Tok::Kw(Kw::Let) => {
+                let message = "`let` starts a statement, not an expression; there is no `if let`: match the value, `match value { some(x) => ..., none => ... }`";
+                return self.error(message.to_string());
+            }
+            Tok::Kw(Kw::Else) => {
+                return self.error("`else` goes on the line of the `}` before it: `} else {`".to_string());
+            }
             _ => return self.expected("expression"),
         };
         Ok(Expr { kind, span: start.to(self.prev_span()) })
