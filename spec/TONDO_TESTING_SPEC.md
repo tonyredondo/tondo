@@ -945,8 +945,12 @@ tras otra como llamadas ordinarias, entrando en sus suites y saliendo de ellas:
   de las suites que necesita.
 - Un timeout o un crash (una señal del sistema, por ejemplo desde código de C)
   termina el trabajador desde fuera, y la ejecución continúa igual.
-- Entre hojas el runner restaura el directorio de trabajo y el entorno. Si una
-  hoja deja tasks vivas, el runner cambia de trabajador.
+- Entre hojas el runner restaura el directorio de trabajo y el entorno.
+- Una hoja que termina dejando tareas vivas, más allá de una espera breve a
+  que acaben, falla si no había fallado ya: una tarea colgada suele ser un
+  error, y haría inestables las hojas siguientes. El mensaje dice, de cada
+  tarea, dónde espera o que sigue ejecutándose, y dónde se lanzó; la hoja
+  siguiente comienza en un trabajador nuevo.
 
 No existen globals mutables Tondo, así que ningún valor Tondo pasa de una hoja a
 otra. Lo que una librería de C guarde en sus globales sí persiste entre hojas de
@@ -2782,8 +2786,9 @@ infraestructura son diagnósticos del toolchain, no nuevos errores de compilaci�
 `E`. El cleanup sigue la forma general de `defer` fijada en 2.5, y las
 violaciones de ownership conservan sus códigos `E14xx`.
 
-Los diagnósticos dinámicos de carreras, fugas y crashes son trabajo posterior
-del toolchain y no forman parte de este contrato.
+Los órdenes de las tareas que un test no contempla se buscan con
+`--schedules` (8.10); las tareas que un test deja vivas lo hacen fallar (7.1);
+un crash muestra su señal y la traza que el runtime escribió.
 
 ## 15. Formato machine-readable
 

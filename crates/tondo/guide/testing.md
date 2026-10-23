@@ -46,6 +46,8 @@ suite slow {
 - `tondo test --filter text`, `--exact id`, `--list`, `--jobs n`,
   `--timeout s`, `--retry n`, `--order random --seed hex`,
   `--report junit=out.xml`.
+- A test that ends with tasks still running fails, with where each waits and
+  where it was spawned: wait for them, cancel them, or close what they wait on.
 - `tondo test --schedules 50` runs each test with its tasks in 50 orders, to
   find one that depends on which task runs first; a failure prints the
   command that runs that order again, `--schedules 1 --seed hex`.

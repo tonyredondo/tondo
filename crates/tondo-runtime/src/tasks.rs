@@ -957,6 +957,32 @@ pub(crate) fn live_tasks() -> usize {
     tasks().len()
 }
 
+/// The tasks alive now.
+pub(crate) fn alive() -> std::collections::HashSet<usize> {
+    tasks().clone()
+}
+
+/// The tasks alive now that were not in `before`: where each waits, or
+/// that it still runs, and where it was started.
+pub(crate) fn leaked(before: &std::collections::HashSet<usize>) -> Vec<String> {
+    // While the set is locked no task in it is freed.
+    let alive = tasks();
+    let mut found: Vec<usize> = alive.iter().copied().filter(|t| !before.contains(t)).collect();
+    found.sort_unstable();
+    found
+        .into_iter()
+        .map(|task| unsafe {
+            let task = task as *mut Task;
+            let origin = || super::trace::stack(super::trace::walk(0, (0, 0)), (*task).origin.as_deref(), "TITLE");
+            match (*task).state.load(Ordering::Acquire) {
+                PARKED => waiting_at(task).replacen("TITLE", "a task waits at", 1),
+                PINNED => format!("\na task waits in a call to C{}", origin()),
+                _ => format!("\na task still runs{}", origin()),
+            }
+        })
+        .collect()
+}
+
 /// How long a panic waits for the other tasks to run their cleanups.
 const PANIC_GRACE: Duration = Duration::from_secs(5);
 

@@ -1267,3 +1267,13 @@ test prints the command that runs its first failing order again, which
 repeats it exactly while the test waits only for its own tasks; the clock,
 the network and files stay real. With one worker a panic's wait for the
 other tasks' cleanups would wait for itself, so that thread runs them.
+
+## 2026-10-23 — A test that leaves tasks running fails
+
+The runner already moved to a fresh worker after a test that left tasks
+alive, and said nothing. Such a task, waiting on a channel nobody closes or
+running on, is usually a mistake, and it makes the tests after it flaky; the
+test now fails, saying for each task where it waits, or that it still
+runs, and where it was spawned, from what the runtime already keeps for
+deadlocks. Cycles of shared handles, the other way to leak, are left until
+`Ref[T]` exists and makes them common.

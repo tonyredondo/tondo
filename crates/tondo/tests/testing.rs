@@ -524,3 +524,42 @@ test firstArrivesFirst {
     assert_eq!(status, 2, "{stdout}{stderr}");
     assert!(stderr.contains("--schedules runs everything once per order; it does not go with --repeat"), "{stderr}");
 }
+
+#[test]
+fn fails_tests_that_leave_tasks_running() {
+    let tests = "\
+// It keeps a sender of its own channel, which so never closes.
+fn listen(inbox: Receiver[Int], keep: Sender[Int]) {
+    for request in inbox {
+        _ = request
+    }
+    keep.close()
+}
+
+test leavesAListener {
+    let (requests, inbox) = channel[Int]()
+    spawn detached listen(inbox, requests.copy())
+    requests.send(1)
+}
+
+test waitsForItsTasks {
+    let (requests, inbox) = channel[Int]()
+    let job = spawn listen(inbox, requests.copy())
+    requests.close()
+    job.wait()
+}
+";
+    let dir = project("leaves-tasks", tests);
+    let (stdout, stderr, status) = tondo(&dir, &["test"]);
+    assert_eq!(status, 1, "{stdout}{stderr}");
+    let report = "\
+--- app::unit::app::leavesAListener
+error: the test left 1 task running; wait for it, cancel it, or close what it waits on
+a task waits at:
+  listen  src/main_test.to:3:20
+in a task spawned at:
+  test leavesAListener  src/main_test.to:11:5
+";
+    assert!(stdout.contains(report), "{stdout}");
+    assert!(stdout.contains("test app::unit::app::waitsForItsTasks ... ok"), "{stdout}");
+}

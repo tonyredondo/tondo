@@ -183,9 +183,22 @@ pub unsafe extern "C" fn tondo_rt_test_members(members: *const Member, count: us
         if crate::tasks::cancelled() {
             return;
         }
-        let dirty = state.is_some_and(|state| state.restore());
+        let leaked = state.map(State::restore).unwrap_or_default();
+        let dirty = !leaked.is_empty();
         with(|r| {
             r.running.pop();
+            // Tasks the test left running fail it, unless it failed already.
+            if dirty && r.error.is_none() {
+                let count = match leaked.len() {
+                    1 => "1 task".to_string(),
+                    n => format!("{n} tasks"),
+                };
+                let message = format!(
+                    "the test left {count} running; wait for it, cancel it, or close what it waits on{}",
+                    leaked.join("\n")
+                );
+                r.error = Some(format!("\0{message}\0"));
+            }
             let failed = r.error.take().or_else(|| {
                 (r.suites[node as usize] && !r.reached[node as usize])
                     .then(|| "\0the setup ended before its members\0".to_string())
@@ -219,7 +232,7 @@ pub unsafe extern "C" fn tondo_rt_test_members(members: *const Member, count: us
 struct State {
     directory: Option<std::path::PathBuf>,
     environment: Vec<(OsString, OsString)>,
-    tasks: usize,
+    tasks: std::collections::HashSet<usize>,
 }
 
 impl State {
@@ -227,13 +240,13 @@ impl State {
         State {
             directory: std::env::current_dir().ok(),
             environment: std::env::vars_os().collect(),
-            tasks: crate::tasks::live_tasks(),
+            tasks: crate::tasks::alive(),
         }
     }
 
-    /// Restores the directory and the environment; whether tasks the test
-    /// started are still alive.
-    fn restore(self) -> bool {
+    /// Restores the directory and the environment; the tasks the test
+    /// started that are still alive, each where it waits and was started.
+    fn restore(self) -> Vec<String> {
         if let Some(directory) = &self.directory {
             let _ = std::env::set_current_dir(directory);
         }
@@ -254,12 +267,12 @@ impl State {
         }
         // A finished task is freed just after it ends.
         for _ in 0..100 {
-            if crate::tasks::live_tasks() <= self.tasks {
-                return false;
+            if crate::tasks::alive().iter().all(|task| self.tasks.contains(task)) {
+                return Vec::new();
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        true
+        crate::tasks::leaked(&self.tasks)
     }
 }
 
