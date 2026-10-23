@@ -89,9 +89,20 @@ fn parse(input: String): __time.DateTime ! __time.TimeError {
         }
     }
     // The years whose times since the epoch fit in a `Duration`.
-    let valid = at == chars.length() and year >= 1678 and year <= 2261 and month >= 1 and month <= 12
-        and day >= 1 and day <= daysIn(year, month) and hour >= 0 and hour <= 23 and minute >= 0
-        and minute <= 59 and second >= 0 and second <= 59
+    let valid =
+        at == chars.length() and
+            year >= 1678 and
+            year <= 2261 and
+            month >= 1 and
+            month <= 12 and
+            day >= 1 and
+            day <= daysIn(year, month) and
+            hour >= 0 and
+            hour <= 23 and
+            minute >= 0 and
+            minute <= 59 and
+            second >= 0 and
+            second <= 59
     if not valid {
         fail __time.TimeError.InvalidDateTime
     }
@@ -101,7 +112,11 @@ fn parse(input: String): __time.DateTime ! __time.TimeError {
 
 /// `DateTime.sinceEpoch()`: the inverse of `time.utc`.
 fn sinceEpoch(date: __time.DateTime): __time.Duration {
-    let seconds = days(date.year, date.month, date.day) * 86400 + date.hour * 3600 + date.minute * 60 + date.second
+    let seconds =
+        days(date.year, date.month, date.day) * 86400 +
+            date.hour * 3600 +
+            date.minute * 60 +
+            date.second
     __time.nanoseconds(seconds * 1000000000 + date.nanosecond)
 }
 

@@ -77,10 +77,17 @@ pub fn Uuid.namespaceX500(): Uuid {
 /// A UUID written `8-4-4-4-12` in hexadecimal of either case, with or
 /// without `urn:uuid:` before it.
 pub fn Uuid.parse(input: String): Uuid ! UuidError {
-    let body = if input.toLower().startsWith("urn:uuid:") { input.slice(9, input.length()).unwrapOr("") } else { input }
+    let body = if input.toLower().startsWith("urn:uuid:") {
+        input.slice(9, input.length()).unwrapOr("")
+    } else {
+        input
+    }
     let dashes = [8, 13, 18, 23].all((at) { body.get(at) == some('-') })
     let digits = body.replace("-", "")
-    if body.byteLength() != 36 or not dashes or digits.byteLength() != 32 or codecNative.hexCheck(digits) != -1 {
+    if body.byteLength() != 36 or
+        not dashes or
+        digits.byteLength() != 32 or
+        codecNative.hexCheck(digits) != -1 {
         fail UuidError.InvalidText
     }
     Uuid { hex: digits.toLower() }

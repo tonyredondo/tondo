@@ -358,7 +358,10 @@ impl Formatter<'_> {
                             VariantPayload::Tuple(types) => types.last().map_or(v.name.span.end, |t| t.span.end),
                             VariantPayload::Record(fields) => fields.last().map_or(v.name.span.end, |f| f.ty.span.end),
                         };
-                        (v.name.span.start, end, self.variant(v))
+                        // The variant's own comments come first, or its
+                        // payload would take them.
+                        let leading = self.leading(v.name.span.start);
+                        (v.name.span.start, end, concat(vec![leading, self.variant(v)]))
                     })
                     .collect();
                 concat(vec![head, self.braced_lines(variants, e.span.end)])
@@ -674,12 +677,18 @@ impl Formatter<'_> {
 
     /// `T ! E`, or `!E` when there is no success value.
     fn result_of(&mut self, ok: Option<&TypeExpr>, err: &TypeExpr) -> Doc {
+        // A union, a result or a function type inside another result keeps
+        // its parentheses: `(T ! E) ! F`.
+        let nested = |t: &TypeExpr| {
+            matches!(&t.kind, TypeKind::Union(_) | TypeKind::Result { .. } | TypeKind::Fn { .. })
+                || matches!(&t.kind, TypeKind::Path { segments, args } if path_text(segments) == "Result" && args.len() == 2)
+        };
         let err_doc = self.ty(err);
-        let err_doc =
-            if matches!(err.kind, TypeKind::Union(_)) { concat(vec![text("("), err_doc, text(")")]) } else { err_doc };
+        let err_doc = if nested(err) { concat(vec![text("("), err_doc, text(")")]) } else { err_doc };
         match ok {
             Some(ok) if !is_unit(ok) => {
                 let ok_doc = self.ty(ok);
+                let ok_doc = if nested(ok) { concat(vec![text("("), ok_doc, text(")")]) } else { ok_doc };
                 group(concat(vec![ok_doc, text(" !"), indent(concat(vec![Doc::Softline, err_doc]))]))
             }
             _ => concat(vec![text("!"), err_doc]),
@@ -1416,6 +1425,11 @@ mod tests {
                 "fn make(): impl Iterator[Int] + Send {\n    build()\n}\n",
             ),
             ("let inverse=- -value\nlet nested=value? ?\n", "let inverse = -(-value)\nlet nested = (value?)?\n"),
+            ("type Nested=(T!E)!F\n", "type Nested = (T ! E) ! F\n"),
+            (
+                "enum E {\n/// One.\nPair(Int, Int)\n/// Two.\nPlain\n}\n",
+                "enum E {\n    /// One.\n    Pair(Int, Int)\n    /// Two.\n    Plain\n}\n",
+            ),
             (
                 "let double=(n:Int):Int{n*2}\nlet larger=if a>b{a}else{b}\n",
                 "let double = (n: Int): Int { n * 2 }\nlet larger = if a > b { a } else { b }\n",
@@ -1445,6 +1459,17 @@ mod tests {
             let source = format!("let values = [{item}]\n");
             let expected = if flat { source.clone() } else { format!("let values = [\n    {item},\n]\n") };
             assert_eq!(format(&source), expected, "a list ending at column {end}");
+        }
+    }
+
+    /// The standard modules written in Tondo are formatted.
+    #[test]
+    fn standard_modules() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("std");
+        for entry in std::fs::read_dir(root).unwrap() {
+            let path = entry.unwrap().path();
+            let source = std::fs::read_to_string(&path).unwrap();
+            assert_eq!(format(&source), source, "{} is not formatted: run `tondo fmt` on it", path.display());
         }
     }
 

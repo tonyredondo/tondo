@@ -65,7 +65,13 @@ pub fn Logger.withFields(self, fields: Map[String, String]): Logger {
     for (key, value) in fields {
         context[key] = value
     }
-    Logger { output: self.output, minimum: self.minimum, format: self.format, timestamps: self.timestamps, context }
+    Logger {
+        output: self.output
+        minimum: self.minimum
+        format: self.format
+        timestamps: self.timestamps
+        context
+    }
 }
 
 /// Whether events of this level are written: to skip building costly
@@ -113,7 +119,7 @@ pub fn Logger.error(self, message: String, fields: Map[String, String] = [:]) {
 }
 
 /// Hands what was written to the stream's host.
-pub fn Logger.flush(self): Unit ! __io.IoError {
+pub fn Logger.flush(self): !__io.IoError {
     self.output.flush()?
 }
 
@@ -136,8 +142,12 @@ fn text(time: String?, level: Level, message: String, fields: Map[String, String
     parts.push("{level}".toUpper())
     parts.push(message)
     for (key, value) in fields {
-        let plain = not value.isEmpty() and not value.contains(" ") and not value.contains("=") and not value.contains("\"")
-            and not value.contains("\n")
+        let plain =
+            not value.isEmpty() and
+                not value.contains(" ") and
+                not value.contains("=") and
+                not value.contains("\"") and
+                not value.contains("\n")
         parts.push(if plain { "{key}={value}" } else { "{key}={__json.encode(value)}" })
     }
     parts.join(" ")

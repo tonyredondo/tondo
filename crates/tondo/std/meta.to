@@ -144,7 +144,14 @@ pub fn DeriveRequest.traitName(self): String {
 }
 
 pub fn DeriveRequest.sourceBuilder(self): SourceBuilder {
-    SourceBuilder { written: none, problems: [], limit: self.outputLimit, outputs: [], files: [:], size: 0 }
+    SourceBuilder {
+        written: none
+        problems: []
+        limit: self.outputLimit
+        outputs: []
+        files: [:]
+        size: 0
+    }
 }
 
 /// A file a generator is given: its name in the manifest, its bytes and
@@ -195,7 +202,14 @@ pub fn GenerateRequest.declarations(self): Array[Declaration] {
 }
 
 pub fn GenerateRequest.sourceBuilder(self): SourceBuilder {
-    SourceBuilder { written: none, problems: [], limit: self.outputLimit, outputs: self.outputList, files: [:], size: 0 }
+    SourceBuilder {
+        written: none
+        problems: []
+        limit: self.outputLimit
+        outputs: self.outputList
+        files: [:]
+        size: 0
+    }
 }
 
 /// The source a provider or generator gives back, and what went wrong.
@@ -209,7 +223,7 @@ pub type SourceBuilder = {
 }
 
 /// A module a generator declares, once.
-pub fn SourceBuilder.write(mut self, output: String, source: String): Unit ! Error {
+pub fn SourceBuilder.write(mut self, output: String, source: String): !Error {
     if not (output in self.outputs) {
         fail Error.UnknownOutput(output)
     }
@@ -249,7 +263,7 @@ pub fn SourceBuilder.renderType(mut self, ty: TypeRef): String ! Error {
 }
 
 /// The implementation, once.
-pub fn SourceBuilder.add(mut self, source: String): Unit ! Error {
+pub fn SourceBuilder.add(mut self, source: String): !Error {
     if self.written.isSome() {
         fail Error.DuplicateOutput("derive")
     }
@@ -334,7 +348,13 @@ fn typeRef(value: __json.Value): TypeRef {
 fn fieldViews(value: __json.Value): Array[FieldView] {
     var fields: Array[FieldView] = []
     for field in value.asArray().unwrapOr([]) {
-        fields.push(FieldView { name: text(field["name"]), typeRef: typeRef(field["type"]), private: field["private"].asBool().unwrapOr(false) })
+        fields.push(
+            FieldView {
+                name: text(field["name"])
+                typeRef: typeRef(field["type"])
+                private: field["private"].asBool().unwrapOr(false)
+            },
+        )
     }
     fields
 }
@@ -364,14 +384,24 @@ fn declarationOf(target: __json.Value): Declaration {
         for element in variant["elements"].asArray().unwrapOr([]) {
             elements.push(typeRef(element))
         }
-        variants.push(VariantView { name: text(variant["name"]), fields: fieldViews(variant["fields"]), elements })
+        variants.push(
+            VariantView {
+                name: text(variant["name"])
+                fields: fieldViews(variant["fields"])
+                elements
+            },
+        )
     }
     let form = match text(target["kind"]) {
         "enum" => DeclarationKind.Enum
         "newtype" => DeclarationKind.Newtype
         _ => DeclarationKind.Record
     }
-    let wrapped: TypeRef? = if target["underlying"].isNull() { none } else { some(typeRef(target["underlying"])) }
+    let wrapped: TypeRef? = if target["underlying"].isNull() {
+        none
+    } else {
+        some(typeRef(target["underlying"]))
+    }
     Declaration {
         declared: text(target["name"])
         path: text(target["module"])
@@ -395,7 +425,13 @@ fn readGenerate(source: String): GenerateRequest {
     let document = parsed(source)
     var inputs: Array[Input] = []
     for input in document["inputs"].asArray().unwrapOr([]) {
-        inputs.push(Input { name: text(input["name"]), bytes: metaNative.bytes(text(input["hex"])), sha256: text(input["sha256"]) })
+        inputs.push(
+            Input {
+                name: text(input["name"])
+                bytes: metaNative.bytes(text(input["hex"]))
+                sha256: text(input["sha256"])
+            },
+        )
     }
     var outputs: Array[String] = []
     for output in document["outputs"].asArray().unwrapOr([]) {

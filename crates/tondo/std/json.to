@@ -211,14 +211,28 @@ pub type Reader = {
     priv rejectUnknown: Bool
 }
 
-pub fn reader(text: String, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): Reader {
-    Reader { native: jsonnative.reader(text, allowDuplicateKeys), rejectUnknown: unknownFields == UnknownFields.Reject }
+pub fn reader(
+    text: String,
+    unknownFields: UnknownFields = UnknownFields.Ignore,
+    allowDuplicateKeys: Bool = false,
+): Reader {
+    Reader {
+        native: jsonnative.reader(text, allowDuplicateKeys)
+        rejectUnknown: unknownFields == UnknownFields.Reject
+    }
 }
 
 /// A JSON document read event by event from a stream, as it arrives: only
 /// the part being read is in memory.
-pub fn readerFrom(stream: jsonio.Reader, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): Reader {
-    Reader { native: jsonnative.streamReader(stream, allowDuplicateKeys), rejectUnknown: unknownFields == UnknownFields.Reject }
+pub fn readerFrom(
+    stream: jsonio.Reader,
+    unknownFields: UnknownFields = UnknownFields.Ignore,
+    allowDuplicateKeys: Bool = false,
+): Reader {
+    Reader {
+        native: jsonnative.streamReader(stream, allowDuplicateKeys)
+        rejectUnknown: unknownFields == UnknownFields.Reject
+    }
 }
 
 /// The next event, or `none` after the whole document.
@@ -237,7 +251,11 @@ pub fn Reader.next(self): Event? ! JsonError {
         9 => Event.EndObject
         10 => Event.Key(self.native.text())
         _ => {
-            let kind = if self.native.where(0).startsWith("cannot read") { ErrorKind.Io } else { ErrorKind.Syntax }
+            let kind = if self.native.where(0).startsWith("cannot read") {
+                ErrorKind.Io
+            } else {
+                ErrorKind.Syntax
+            }
             fail self.error(kind)
         }
     }
@@ -262,7 +280,7 @@ pub fn Reader.nextKey(self): String? ! JsonError {
 }
 
 /// Skips the rest of a value whose first event was `first`.
-pub fn Reader.skip(self, first: Event): Unit ! JsonError {
+pub fn Reader.skip(self, first: Event): !JsonError {
     let code = match first {
         Event.BeginArray => 6
         Event.BeginObject => 8
@@ -275,7 +293,7 @@ pub fn Reader.skip(self, first: Event): Unit ! JsonError {
 
 /// A member the type does not have: skipped, or an error when unknown
 /// fields are rejected.
-pub fn Reader.unknownField(self, key: String, first: Event): Unit ! JsonError {
+pub fn Reader.unknownField(self, key: String, first: Event): !JsonError {
     if self.rejectUnknown {
         fail self.failure(ErrorKind.Unknown, "unknown field `{key}`")
     }
@@ -283,7 +301,7 @@ pub fn Reader.unknownField(self, key: String, first: Event): Unit ! JsonError {
 }
 
 /// Checks that an object starts, for the type `name`.
-pub fn Reader.beginObject(self, first: Event, name: String): Unit ! JsonError {
+pub fn Reader.beginObject(self, first: Event, name: String): !JsonError {
     match first {
         Event.BeginObject => {}
         _ => fail self.mismatch(first, "an object for `{name}`")
@@ -291,7 +309,7 @@ pub fn Reader.beginObject(self, first: Event, name: String): Unit ! JsonError {
 }
 
 /// Checks that an array starts, for `name`.
-pub fn Reader.beginArray(self, first: Event, name: String): Unit ! JsonError {
+pub fn Reader.beginArray(self, first: Event, name: String): !JsonError {
     match first {
         Event.BeginArray => {}
         _ => fail self.mismatch(first, "an array for `{name}`")
@@ -299,7 +317,7 @@ pub fn Reader.beginArray(self, first: Event, name: String): Unit ! JsonError {
 }
 
 /// Checks that an array ends.
-pub fn Reader.endArray(self): Unit ! JsonError {
+pub fn Reader.endArray(self): !JsonError {
     match self.value()? {
         Event.EndArray => {}
         _ => fail self.failure(ErrorKind.Type, "expected the end of the array")
@@ -418,7 +436,7 @@ pub fn Writer.finish(self): String {
 
 /// Ends the document of a writer to a stream: delivers what is pending and
 /// reports a failure to write.
-pub fn Writer.flush(self): Unit ! JsonError {
+pub fn Writer.flush(self): !JsonError {
     _ = self.native.finish()
     let failure = self.native.error()
     if failure.length() > 0 {
@@ -449,7 +467,11 @@ pub fn encode[T: Encode](value: T, pretty: Bool = false, canonical: Bool = false
 }
 
 /// A value of `T` from JSON text, which must hold exactly one value.
-pub fn decode[T: Decode](text: String, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): T ! JsonError {
+pub fn decode[T: Decode](
+    text: String,
+    unknownFields: UnknownFields = UnknownFields.Ignore,
+    allowDuplicateKeys: Bool = false,
+): T ! JsonError {
     whole[T](reader(text, unknownFields, allowDuplicateKeys))
 }
 
@@ -482,12 +504,21 @@ pub fn fromValue[T: Decode](value: Value): T ! JsonError {
 }
 
 /// A value from a stream, which must hold exactly one, read as it arrives.
-pub fn decodeFrom[T: Decode](stream: jsonio.Reader, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): T ! JsonError {
+pub fn decodeFrom[T: Decode](
+    stream: jsonio.Reader,
+    unknownFields: UnknownFields = UnknownFields.Ignore,
+    allowDuplicateKeys: Bool = false,
+): T ! JsonError {
     whole[T](readerFrom(stream, unknownFields, allowDuplicateKeys))
 }
 
 /// Writes the JSON text of a value to a stream as it is produced.
-pub fn encodeTo[T: Encode](value: T, stream: jsonio.Writer, pretty: Bool = false, canonical: Bool = false): Unit ! JsonError {
+pub fn encodeTo[T: Encode](
+    value: T,
+    stream: jsonio.Writer,
+    pretty: Bool = false,
+    canonical: Bool = false,
+): !JsonError {
     let out = writerTo(stream, pretty, canonical)
     value.encodeJson(out)
     out.flush()?
@@ -628,7 +659,10 @@ impl Decode for Int {
         match first {
             Event.Number(digits) => match digits.toInt() {
                 some(value) => value
-                none => fail input.failure(ErrorKind.Range, "{digits} is not an integer that fits `Int`")
+                none => fail input.failure(
+                    ErrorKind.Range,
+                    "{digits} is not an integer that fits `Int`",
+                )
             }
             _ => fail input.mismatch(first, "an integer")
         }
@@ -708,7 +742,7 @@ impl[T: Decode] Decode for Array[T] {
     }
 }
 
-impl[T: Encode] Encode for Option[T] {
+impl[T: Encode] Encode for T? {
     fn encodeJson(self, out: Writer) {
         match self {
             some(value) => value.encodeJson(out)
@@ -717,8 +751,8 @@ impl[T: Encode] Encode for Option[T] {
     }
 }
 
-impl[T: Decode] Decode for Option[T] {
-    fn decodeJson(input: Reader, first: Event): Option[T] ! JsonError {
+impl[T: Decode] Decode for T? {
+    fn decodeJson(input: Reader, first: Event): T? ! JsonError {
         match first {
             Event.Null => none
             _ => some(Decode.decodeJson[T](input, first)?)

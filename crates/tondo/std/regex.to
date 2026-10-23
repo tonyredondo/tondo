@@ -14,7 +14,13 @@ pub type RegexOptions = {
 }
 
 pub fn RegexOptions.defaults(): RegexOptions {
-    RegexOptions { caseInsensitive: false, multiLine: false, dotMatchesNewline: false, crlf: false, ungreedy: false }
+    RegexOptions {
+        caseInsensitive: false
+        multiLine: false
+        dotMatchesNewline: false
+        crlf: false
+        ungreedy: false
+    }
 }
 
 /// How much a pattern and its inputs may take.
@@ -170,7 +176,7 @@ pub type Regex = {
 }
 
 /// The error the engine left, if any.
-fn check(phase: RegexPhase): Unit ! RegexError {
+fn check(phase: RegexPhase): !RegexError {
     let code = regexNative.errorKind()
     if code == 0 {
         return

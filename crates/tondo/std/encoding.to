@@ -36,10 +36,8 @@ pub fn base64Encode(bytes: Array[Byte], alphabet: Base64Alphabet = Base64Alphabe
 }
 
 /// The bytes a Base64 text writes, with or without its padding.
-pub fn base64Decode(
-    input: String,
-    alphabet: Base64Alphabet = Base64Alphabet.Standard,
-): Array[Byte] ! EncodingError {
+pub fn base64Decode(input: String, alphabet: Base64Alphabet = Base64Alphabet.Standard): Array[Byte] !
+    EncodingError {
     checked(input, codecNative.base64Check(input, isUrl(alphabet)))?
     codecNative.base64Decode(input, isUrl(alphabet))
 }
@@ -77,7 +75,7 @@ fn isUrl(alphabet: Base64Alphabet): Bool {
 
 /// What the runtime found: `-1` nothing, `-2` bytes that are not UTF-8, the
 /// text's length when it ends early, or the offset of a wrong character.
-fn checked(input: String, problem: Int): Unit ! EncodingError {
+fn checked(input: String, problem: Int): !EncodingError {
     if problem == -2 {
         fail EncodingError.NotUtf8
     }

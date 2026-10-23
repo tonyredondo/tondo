@@ -2,8 +2,8 @@
 // which every program has without importing anything, and the traits that
 // order and add values.
 
-import std.internal.text as textNative
 import std.internal.math as mathNative
+import std.internal.text as textNative
 import std.math as __math
 import std.text as __text
 
@@ -20,6 +20,7 @@ pub trait Ordered {
 /// A type whose values add up, from a zero.
 pub trait Numeric {
     fn zero(): Self
+
     fn plus(self, other: Self): Self
 }
 
@@ -821,11 +822,7 @@ pub fn Array[T].groupBy[K: Key](self, key: fn(T): K): Map[K, Array[T]] {
 pub fn Array[T].partition(self, predicate: fn(T): Bool): (Array[T], Array[T]) {
     var (passed, failed): (Array[T], Array[T]) = ([], [])
     for item in self {
-        if predicate(item) {
-            passed.push(item)
-        } else {
-            failed.push(item)
-        }
+        if predicate(item) { passed.push(item) } else { failed.push(item) }
     }
     (passed, failed)
 }
@@ -1413,7 +1410,15 @@ impl Iterator[Char] for CharIterator {
         }
         let c = textNative.scalarAt(self.text, self.offset)
         let code = c.code()
-        self.offset += if code < 0x80 { 1 } else if code < 0x800 { 2 } else if code < 0x10000 { 3 } else { 4 }
+        self.offset += if code < 0x80 {
+            1
+        } else if code < 0x800 {
+            2
+        } else if code < 0x10000 {
+            3
+        } else {
+            4
+        }
         some(c)
     }
 }

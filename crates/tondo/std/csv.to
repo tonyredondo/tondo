@@ -22,7 +22,8 @@ impl Display for CsvError {
         match self {
             CsvError.Malformed(at, column) => "line {at}, column {column}: a quote is out of place"
             CsvError.Unterminated(at) => "line {at}: a quoted field does not end"
-            CsvError.FieldCount(at, expected, found) => "line {at}: {found} fields where the header has {expected}"
+            CsvError.FieldCount(at, expected, found) =>
+                "line {at}: {found} fields where the header has {expected}"
             CsvError.Io(error) => "reading the input: {error}"
         }
     }
@@ -158,7 +159,7 @@ pub fn Writer.new(output: __io.Writer, separator: Char = ','): Writer {
     Writer { output, separator }
 }
 
-pub fn Writer.write(self, fields: Array[String]): Unit ! __io.IoError {
+pub fn Writer.write(self, fields: Array[String]): !__io.IoError {
     self.output.writeLine(csvLine(fields, self.separator))?
 }
 
@@ -183,7 +184,11 @@ pub fn formatRecords(entries: Array[Map[String, String]], separator: Char = ',')
 
 fn csvLine(fields: Array[String], separator: Char): String {
     let quoted = (field: String) {
-        let special = field.contains("{separator}") or field.contains("\"") or field.contains("\n") or field.contains("\r")
+        let special =
+            field.contains("{separator}") or
+                field.contains("\"") or
+                field.contains("\n") or
+                field.contains("\r")
         if special { "\"{field.replace("\"", "\"\"")}\"" } else { field }
     }
     fields.map(quoted).join("{separator}")

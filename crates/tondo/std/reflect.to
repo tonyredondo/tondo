@@ -76,7 +76,7 @@ pub trait Reflect {
     }
 
     /// Changes a field, element or key.
-    fn reflectSet(mut self, name: String, value: Value): Unit ! ReflectError {
+    fn reflectSet(mut self, name: String, value: Value): !ReflectError {
         fail ReflectError.noField(reflectNative.typeName[Self](), name, [])
     }
 
@@ -169,7 +169,7 @@ pub fn get[T: Reflect, S: Reflect](value: S, path: String): T ! ReflectError {
 
 /// Changes the value at a path, to a value of its type or one that
 /// converts to it.
-pub fn set[S: Reflect](value: mut S, path: String, new: Value): Unit ! ReflectError {
+pub fn set[S: Reflect](value: mut S, path: String, new: Value): !ReflectError {
     let parts = segments(path)
     let replacement = if parts.length() == 1 {
         new
@@ -188,7 +188,8 @@ pub fn call[R: Reflect, S: Reflect](target: S, method: String, args: ...Value): 
 }
 
 /// Calls a `pub` method by name, which may change the value.
-pub fn callMut[R: Reflect, S: Reflect](target: mut S, method: String, args: ...Value): R ! ReflectError {
+pub fn callMut[R: Reflect, S: Reflect](target: mut S, method: String, args: ...Value): R !
+    ReflectError {
     match target.reflectCallMut(method, args) {
         ok(result) => result.to()?
         err(error) => fail at(error, method)
@@ -240,7 +241,11 @@ fn at(error: ReflectError, path: String): ReflectError {
 }
 
 fn unexpected(): ReflectError {
-    ReflectError { kind: ReflectErrorKind.WrongType, path: "", message: "reflection got an answer it did not ask for" }
+    ReflectError {
+        kind: ReflectErrorKind.WrongType
+        path: ""
+        message: "reflection got an answer it did not ask for"
+    }
 }
 
 /// The value at a path of fields, indexes and map keys separated by `.`.
@@ -262,11 +267,12 @@ fn Value.step(self, segment: String, path: String): Value ! ReflectError {
 
 /// Changes the value at a path, to a value of its type or one that
 /// converts to it.
-pub fn Value.set(mut self, path: String, new: Value): Unit ! ReflectError {
+pub fn Value.set(mut self, path: String, new: Value): !ReflectError {
     self = self.replaced(segments(path), 0, new, path)?
 }
 
-fn Value.replaced(self, parts: Array[String], index: Int, new: Value, path: String): Value ! ReflectError {
+fn Value.replaced(self, parts: Array[String], index: Int, new: Value, path: String): Value !
+    ReflectError {
     let value = if index + 1 == parts.length() {
         new
     } else {
@@ -436,7 +442,8 @@ pub fn ReflectError.arguments(typeName: String, method: String, expected: Int, f
 
 /// A conversion to a type with private fields, which only it can build.
 pub fn ReflectError.privateFields(typeName: String, value: Value): ReflectError {
-    let message = "`{typeName}` has private fields, so only a `{typeName}` converts to it, not a `{value.typeName()}`"
+    let message =
+        "`{typeName}` has private fields, so only a `{typeName}` converts to it, not a `{value.typeName()}`"
     ReflectError { kind: ReflectErrorKind.WrongType, path: "", message }
 }
 
@@ -635,7 +642,7 @@ impl[T: Reflect] Reflect for Array[T] {
         valueOf(self[position(nameOf(self), name, self.length())?])
     }
 
-    fn reflectSet(mut self, name: String, value: Value): Unit ! ReflectError {
+    fn reflectSet(mut self, name: String, value: Value): !ReflectError {
         let index = position(nameOf(self), name, self.length())?
         self[index] = value.to()?
     }
@@ -669,7 +676,7 @@ impl[T: Reflect] Reflect for Array[T] {
     }
 }
 
-impl[T: Reflect] Reflect for Option[T] {
+impl[T: Reflect] Reflect for T? {
     fn reflectDescription(): TypeDescription {
         applied(AppliedKind.Option, [typeInfo[T]()])
     }
@@ -681,7 +688,7 @@ impl[T: Reflect] Reflect for Option[T] {
         }
     }
 
-    fn reflectSet(mut self, name: String, value: Value): Unit ! ReflectError {
+    fn reflectSet(mut self, name: String, value: Value): !ReflectError {
         match self {
             some(inner) => {
                 var changed = inner
@@ -733,7 +740,8 @@ fn keyOf[K: Reflect + Key](typeName: String, name: String): K ! ReflectError {
     match key {
         ok(found) => found
         err(_) => {
-            let message = "a path names a key of `{typeName}` as a string, and its keys are not strings"
+            let message =
+                "a path names a key of `{typeName}` as a string, and its keys are not strings"
             fail ReflectError { kind: ReflectErrorKind.NoField, path: name, message }
         }
     }
@@ -757,8 +765,9 @@ impl[K: Reflect + Key, V: Reflect] Reflect for Map[K, V] {
         }
     }
 
-    fn reflectSet(mut self, name: String, value: Value): Unit ! ReflectError {
-        let message = "a `{nameOf(self)}` changes as a whole: read it, change `{name}` and set the map"
+    fn reflectSet(mut self, name: String, value: Value): !ReflectError {
+        let message =
+            "a `{nameOf(self)}` changes as a whole: read it, change `{name}` and set the map"
         fail ReflectError { kind: ReflectErrorKind.WrongType, path: name, message }
     }
 
@@ -793,7 +802,7 @@ impl[K: Reflect + Key, V: Reflect] Reflect for Map[K, V] {
     }
 }
 
-impl[T: Reflect, E: Reflect] Reflect for Result[T, E] {
+impl[T: Reflect, E: Reflect] Reflect for T ! E {
     fn reflectDescription(): TypeDescription {
         applied(AppliedKind.Result, [typeInfo[T](), typeInfo[E]()])
     }
@@ -826,11 +835,11 @@ impl[T: Reflect, E: Reflect] Reflect for Result[T, E] {
         }
     }
 
-    fn reflectFrom(value: Value): Result[T, E] ! ReflectError {
+    fn reflectFrom(value: Value): (T ! E) ! ReflectError {
         match value.variant() {
             some("ok") => ok(value.elements()[0].to()?)
             some("err") => err(value.elements()[0].to()?)
-            _ => fail ReflectError.wrongType(reflectNative.typeName[Result[T, E]](), value)
+            _ => fail ReflectError.wrongType(reflectNative.typeName[T ! E](), value)
         }
     }
 }
@@ -844,7 +853,7 @@ impl[T: Reflect] Reflect for Deque[T] {
         valueOf(self[position(nameOf(self), name, self.length())?])
     }
 
-    fn reflectSet(mut self, name: String, value: Value): Unit ! ReflectError {
+    fn reflectSet(mut self, name: String, value: Value): !ReflectError {
         let index = position(nameOf(self), name, self.length())?
         self[index] = value.to()?
     }
@@ -1003,7 +1012,15 @@ pub type TypeDescription = {
 
 /// A description of a kind with nothing in it yet.
 pub fn TypeDescription.of(kind: TypeKind): TypeDescription {
-    TypeDescription { kind, generics: [], fields: [], variants: [], methods: [], elements: [], underlying: none }
+    TypeDescription {
+        kind
+        generics: []
+        fields: []
+        variants: []
+        methods: []
+        elements: []
+        underlying: none
+    }
 }
 
 /// A type: its identity, name and capabilities, and what it is made of,
@@ -1137,7 +1154,13 @@ pub fn VariantInfo.of(
     tupleElements: Array[TypeInfo],
     fields: Array[FieldInfo],
 ): VariantInfo {
-    VariantInfo { variantName: name, position: ordinal, payload: payloadKind, parts: tupleElements, named: fields }
+    VariantInfo {
+        variantName: name
+        position: ordinal
+        payload: payloadKind
+        parts: tupleElements
+        named: fields
+    }
 }
 
 pub fn VariantInfo.name(self): String {
@@ -1214,7 +1237,12 @@ pub type FunctionInfo = {
     priv unsafeCall: Bool
 }
 
-pub fn FunctionInfo.of(parameters: Array[ParameterInfo], outcome: TypeInfo, variadic: Bool, isUnsafe: Bool): FunctionInfo {
+pub fn FunctionInfo.of(
+    parameters: Array[ParameterInfo],
+    outcome: TypeInfo,
+    variadic: Bool,
+    isUnsafe: Bool,
+): FunctionInfo {
     FunctionInfo { params: parameters, result: outcome, isVariadic: variadic, unsafeCall: isUnsafe }
 }
 
