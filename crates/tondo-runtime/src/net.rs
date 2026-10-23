@@ -1,21 +1,22 @@
 //! What `std.net` does in the runtime (standard library 14.4.6): TCP
-//! connections and listeners, with TLS, UDP sockets and names, on the HTTP
-//! runtime's tokio. A connection is two streams of `std.io` in
-//! `Mode::Ready`, so a task waiting on the network holds neither a worker
-//! nor a thread. Over TCP the task reads and writes the socket itself, and
-//! a tokio task sends what the socket could not take at once; over TLS,
-//! tokio tasks move the bytes between the stream and two buffers.
+//! connections and listeners, with TLS, UDP sockets and names. A connection
+//! is two streams of `std.io` in `Mode::Ready`, so a task waiting on the
+//! network holds neither a worker nor a thread. Sockets without TLS are the
+//! workers' own (`poll`): a task reads and writes them itself, and what a
+//! socket could not take at once goes when it can. TLS and names use the
+//! HTTP runtime's tokio, whose tasks move the bytes of a TLS stream between
+//! it and two buffers.
 
 use super::http::{runtime, text};
 use super::native::{self, NativeObject};
+use super::poll::{Direction, Registered};
 use super::{ArrayHeader, Str, str_new};
 use crate::io::{Host, Mode, Ready, StreamObject, byte_array, retain, run, run_until, wait_for};
-use std::io::ErrorKind;
-use std::net::SocketAddr;
+use std::io::{ErrorKind, Read, Write};
+use std::net::{Shutdown, SocketAddr};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::Notify;
 
 /// How many bytes a direction of a connection holds before it waits.
@@ -131,8 +132,9 @@ fn port(port: i64) -> Result<u16, Failure> {
 // Connections
 // ---------------------------------------------------------------------------
 
-/// One direction of a connection: the bytes between the socket and its
-/// stream, which the tokio task moving them and the stream's host share.
+/// One direction of a TLS connection: the bytes between the TLS stream and
+/// its stream of `std.io`, which the tokio task moving them and the
+/// stream's host share.
 #[derive(Default)]
 struct Pipe {
     flow: Mutex<Flow>,
@@ -202,40 +204,9 @@ async fn receive(mut from: tokio::io::ReadHalf<Tls>, pipe: Arc<Pipe>) {
     }
 }
 
-/// Where a connection's writes go: a TLS stream, or a TCP socket the
-/// stream also writes itself.
-enum Out {
-    Tls(tokio::io::WriteHalf<Tls>),
-    Tcp(Arc<OwnedWriteHalf>),
-}
-
-impl Out {
-    async fn put(&mut self, data: &[u8]) -> std::io::Result<()> {
-        match self {
-            Out::Tls(stream) => {
-                stream.write_all(data).await?;
-                stream.flush().await
-            }
-            Out::Tcp(socket) => {
-                let mut rest = data;
-                while !rest.is_empty() {
-                    socket.writable().await?;
-                    match socket.try_write(rest) {
-                        Ok(count) => rest = &rest[count..],
-                        Err(error) if error.kind() == ErrorKind::WouldBlock => {}
-                        Err(error) => return Err(error),
-                    }
-                }
-                Ok(())
-            }
-        }
-    }
-}
-
-/// Sends what the stream leaves in `pipe`, and ends the direction after
-/// the stream is done: TLS says so, and the last copy of a TCP socket's
-/// writing half does when it goes.
-async fn send(mut to: Out, pipe: Arc<Pipe>) {
+/// Sends what the stream leaves in `pipe`, and ends the TLS stream after
+/// the stream is done.
+async fn send(mut to: tokio::io::WriteHalf<Tls>, pipe: Arc<Pipe>) {
     loop {
         pipe.until(|flow| !flow.bytes.is_empty() || flow.end).await;
         let chunk = {
@@ -247,7 +218,10 @@ async fn send(mut to: Out, pipe: Arc<Pipe>) {
             flow.sending = chunk.len();
             chunk
         };
-        let sent = to.put(&chunk).await;
+        let sent = match to.write_all(&chunk).await {
+            Ok(()) => to.flush().await,
+            failed => failed,
+        };
         let failed = sent.is_err();
         pipe.change(|flow| {
             flow.sending = 0;
@@ -259,15 +233,86 @@ async fn send(mut to: Out, pipe: Arc<Pipe>) {
             return;
         }
     }
-    if let Out::Tls(mut stream) = to {
-        let _ = stream.shutdown().await;
+    let _ = to.shutdown().await;
+}
+
+/// A TCP socket of the workers' poll, and what its writing direction holds.
+struct Tcp {
+    socket: Registered<mio::net::TcpStream>,
+    unsent: Mutex<Unsent>,
+}
+
+#[derive(Default)]
+struct Unsent {
+    /// Written and not sent yet.
+    bytes: Vec<u8>,
+    failure: Option<Failure>,
+    /// The writing stream let go of the socket with bytes to send: it ends
+    /// its direction after them, and holds it until then.
+    keep: Option<Arc<Tcp>>,
+}
+
+impl Tcp {
+    /// How much of `data` the socket takes now.
+    fn send(&self, data: &[u8]) -> std::io::Result<usize> {
+        let mut sent = 0;
+        while sent < data.len() {
+            match self.socket.attempt(Direction::Write, |mut socket| socket.write(&data[sent..])) {
+                Ok(count) => sent += count,
+                Err(error) if error.kind() == ErrorKind::WouldBlock => break,
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(sent)
     }
+
+    /// Sends what waits while the socket takes it.
+    fn push(&self, unsent: &mut Unsent) -> std::io::Result<()> {
+        failed(&unsent.failure)?;
+        match self.send(&unsent.bytes) {
+            Ok(sent) => {
+                unsent.bytes.drain(..sent);
+                Ok(())
+            }
+            Err(error) => Err(fail(unsent, error)),
+        }
+    }
+
+    /// When the socket can take more: sends what waits, and ends the
+    /// direction of a stream that let go of it once nothing does.
+    fn writable(&self) {
+        let mut unsent = lock(&self.unsent);
+        let _ = self.push(&mut unsent);
+        if unsent.keep.is_some() && (unsent.bytes.is_empty() || unsent.failure.is_some()) {
+            let _ = self.socket.io().shutdown(Shutdown::Write);
+            let keep = unsent.keep.take();
+            drop(unsent);
+            drop(keep);
+        }
+    }
+}
+
+/// Notes that sending failed, which every write after says.
+fn fail(unsent: &mut Unsent, error: std::io::Error) -> std::io::Error {
+    let failure = Failure::from(error);
+    unsent.bytes.clear();
+    unsent.failure = Some(failure.clone());
+    std::io::Error::other(failure)
 }
 
 /// The reading half of a TCP connection as the host of a stream, which
 /// reads the socket itself.
 struct TcpIn {
-    socket: Arc<OwnedReadHalf>,
+    tcp: Arc<Tcp>,
+    waiting: bool,
+    gave_up: Option<ErrorKind>,
+}
+
+/// The writing half of a TCP connection as the host of a stream, which
+/// writes the socket itself and leaves what it could not take to send when
+/// it can.
+struct TcpOut {
+    tcp: Arc<Tcp>,
     waiting: bool,
     gave_up: Option<ErrorKind>,
 }
@@ -279,11 +324,9 @@ struct Inbox {
     gave_up: Option<ErrorKind>,
 }
 
-/// The writing half of a connection as the host of a stream. Over TCP it
-/// writes the socket itself while nothing waits in `pipe`.
+/// The writing half of a TLS connection as the host of a stream.
 struct Outbox {
     pipe: Arc<Pipe>,
-    direct: Option<Arc<OwnedWriteHalf>>,
     waiting: bool,
     gave_up: Option<ErrorKind>,
 }
@@ -299,25 +342,20 @@ fn would_block(waiting: &mut bool, gave_up: Option<ErrorKind>) -> std::io::Error
         .into()
 }
 
-fn failed(flow: &Flow) -> std::io::Result<()> {
-    flow.failure.as_ref().map_or(Ok(()), |failure| Err(std::io::Error::other(failure.clone())))
+fn failed(failure: &Option<Failure>) -> std::io::Result<()> {
+    failure.as_ref().map_or(Ok(()), |failure| Err(std::io::Error::other(failure.clone())))
 }
 
 impl Host for TcpIn {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        match self.socket.try_read(buffer) {
+        match self.tcp.socket.attempt(Direction::Read, |mut socket| socket.read(buffer)) {
             Err(error) if error.kind() == ErrorKind::WouldBlock => Err(would_block(&mut self.waiting, self.gave_up)),
             read => read,
         }
     }
 
     fn blocked(&mut self) -> Option<Ready> {
-        let socket = self.socket.clone();
-        std::mem::take(&mut self.waiting).then(|| {
-            Box::pin(async move {
-                let _ = socket.readable().await;
-            }) as Ready
-        })
+        std::mem::take(&mut self.waiting).then(|| Box::pin(self.tcp.socket.ready(Direction::Read)) as Ready)
     }
 
     fn give_up(&mut self, kind: Option<ErrorKind>) {
@@ -336,7 +374,7 @@ impl Host for Inbox {
             self.pipe.changed.notify_waiters();
             return Ok(count);
         }
-        failed(&flow)?;
+        failed(&flow.failure)?;
         if flow.end {
             return Ok(0);
         }
@@ -363,34 +401,22 @@ impl Drop for Inbox {
     }
 }
 
-impl Host for Outbox {
+impl Host for TcpOut {
     fn write(&mut self, data: &[u8]) -> std::io::Result<()> {
-        let mut flow = self.pipe.flow();
-        failed(&flow)?;
-        let queued = flow.bytes.len() + flow.sending;
+        let mut unsent = lock(&self.tcp.unsent);
+        self.tcp.push(&mut unsent)?;
         let mut rest = data;
-        if queued == 0
-            && let Some(socket) = &self.direct
-        {
-            while !rest.is_empty() {
-                match socket.try_write(rest) {
-                    Ok(count) => rest = &rest[count..],
-                    Err(error) if error.kind() == ErrorKind::WouldBlock => break,
-                    Err(error) => {
-                        let failure = Failure::from(error);
-                        flow.failure = Some(failure.clone());
-                        return Err(std::io::Error::other(failure));
-                    }
-                }
-            }
-            if rest.is_empty() {
-                return Ok(());
+        if unsent.bytes.is_empty() {
+            match self.tcp.send(data) {
+                Ok(sent) => rest = &data[sent..],
+                Err(error) => return Err(fail(&mut unsent, error)),
             }
         }
-        if queued == 0 || queued + rest.len() <= HIGH {
-            flow.bytes.extend_from_slice(rest);
-            drop(flow);
-            self.pipe.changed.notify_waiters();
+        if rest.is_empty() {
+            return Ok(());
+        }
+        if unsent.bytes.is_empty() || unsent.bytes.len() + rest.len() <= HIGH {
+            unsent.bytes.extend_from_slice(rest);
             return Ok(());
         }
         Err(would_block(&mut self.waiting, self.gave_up))
@@ -398,8 +424,52 @@ impl Host for Outbox {
 
     /// Waits until the socket took everything.
     fn flush(&mut self) -> std::io::Result<()> {
+        let mut unsent = lock(&self.tcp.unsent);
+        self.tcp.push(&mut unsent)?;
+        if unsent.bytes.is_empty() {
+            return Ok(());
+        }
+        Err(would_block(&mut self.waiting, self.gave_up))
+    }
+
+    fn blocked(&mut self) -> Option<Ready> {
+        std::mem::take(&mut self.waiting).then(|| Box::pin(self.tcp.socket.ready(Direction::Write)) as Ready)
+    }
+
+    fn give_up(&mut self, kind: Option<ErrorKind>) {
+        self.gave_up = kind;
+    }
+}
+
+impl Drop for TcpOut {
+    fn drop(&mut self) {
+        let mut unsent = lock(&self.tcp.unsent);
+        if unsent.bytes.is_empty() || unsent.failure.is_some() {
+            let _ = self.tcp.socket.io().shutdown(Shutdown::Write);
+        } else {
+            unsent.keep = Some(self.tcp.clone());
+        }
+    }
+}
+
+impl Host for Outbox {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<()> {
+        let mut flow = self.pipe.flow();
+        failed(&flow.failure)?;
+        let queued = flow.bytes.len() + flow.sending;
+        if queued == 0 || queued + data.len() <= HIGH {
+            flow.bytes.extend_from_slice(data);
+            drop(flow);
+            self.pipe.changed.notify_waiters();
+            return Ok(());
+        }
+        Err(would_block(&mut self.waiting, self.gave_up))
+    }
+
+    /// Waits until the TLS stream took everything.
+    fn flush(&mut self) -> std::io::Result<()> {
         let flow = self.pipe.flow();
-        failed(&flow)?;
+        failed(&flow.failure)?;
         if flow.bytes.is_empty() && flow.sending == 0 {
             return Ok(());
         }
@@ -461,14 +531,18 @@ impl Connection {
 }
 
 /// A connection over a TCP socket.
-fn tcp(stream: tokio::net::TcpStream) -> Result<Connection, Failure> {
-    let _ = stream.set_nodelay(true);
-    let (local, remote) = (stream.local_addr()?, stream.peer_addr()?);
-    let (from, to) = stream.into_split();
-    let (to, outbox) = (Arc::new(to), Arc::new(Pipe::default()));
-    runtime().spawn(send(Out::Tcp(to.clone()), outbox.clone()));
-    let reader = TcpIn { socket: Arc::new(from), waiting: false, gave_up: None };
-    let writer = Outbox { pipe: outbox, direct: Some(to), waiting: false, gave_up: None };
+fn tcp(socket: Registered<mio::net::TcpStream>) -> Result<Connection, Failure> {
+    let _ = socket.io().set_nodelay(true);
+    let (local, remote) = (socket.io().local_addr()?, socket.io().peer_addr()?);
+    let tcp = Arc::new(Tcp { socket, unsent: Mutex::default() });
+    let weak = Arc::downgrade(&tcp);
+    tcp.socket.on_writable(Arc::new(move || {
+        if let Some(tcp) = weak.upgrade() {
+            tcp.writable();
+        }
+    }));
+    let reader = TcpIn { tcp: tcp.clone(), waiting: false, gave_up: None };
+    let writer = TcpOut { tcp, waiting: false, gave_up: None };
     Ok(Connection::new(Box::new(reader), Box::new(writer), local, remote))
 }
 
@@ -479,7 +553,7 @@ fn tls(stream: &tokio::net::TcpStream) -> Result<(Connection, Arc<Pipe>, Arc<Pip
     let (local, remote) = (stream.local_addr()?, stream.peer_addr()?);
     let (inbox, outbox) = (Arc::new(Pipe::default()), Arc::new(Pipe::default()));
     let reader = Inbox { pipe: inbox.clone(), waiting: false, gave_up: None };
-    let writer = Outbox { pipe: outbox.clone(), direct: None, waiting: false, gave_up: None };
+    let writer = Outbox { pipe: outbox.clone(), waiting: false, gave_up: None };
     Ok((Connection::new(Box::new(reader), Box::new(writer), local, remote), inbox, outbox))
 }
 
@@ -487,19 +561,50 @@ fn tls(stream: &tokio::net::TcpStream) -> Result<(Connection, Arc<Pipe>, Arc<Pip
 fn secure(stream: Tls, inbox: Arc<Pipe>, outbox: Arc<Pipe>) {
     let (from, to) = tokio::io::split(stream);
     runtime().spawn(receive(from, inbox));
-    runtime().spawn(send(Out::Tls(to), outbox));
+    runtime().spawn(send(to, outbox));
 }
 
 /// Connects to each address of `host` in turn, until one answers.
-async fn open(host: &str, port: u16) -> Result<tokio::net::TcpStream, Failure> {
+async fn open<S, F: Future<Output = std::io::Result<S>>>(
+    host: &str,
+    port: u16,
+    connect: impl Fn(SocketAddr) -> F,
+) -> Result<S, Failure> {
     let mut last = failure(NOT_FOUND, host);
     for address in lookup(host, port).await? {
-        match tokio::net::TcpStream::connect(address).await {
+        match connect(address).await {
             Ok(stream) => return Ok(stream),
             Err(error) => last = error.into(),
         }
     }
     Err(last)
+}
+
+/// A TCP connection to `address` on the workers' poll.
+async fn connect(address: SocketAddr) -> std::io::Result<Registered<mio::net::TcpStream>> {
+    let socket = Registered::new(mio::net::TcpStream::connect(address)?)?;
+    loop {
+        socket.ready(Direction::Write).await;
+        if let Some(error) = socket.io().take_error()? {
+            return Err(error);
+        }
+        // Connected once it has a peer.
+        let connected = socket.attempt(Direction::Write, |socket| match socket.peer_addr() {
+            Err(error) if error.kind() == ErrorKind::NotConnected => Err(ErrorKind::WouldBlock.into()),
+            connected => connected,
+        });
+        match connected {
+            Ok(_) => return Ok(socket),
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {}
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// A socket of the workers' poll as one of tokio's, for TLS.
+fn tokio_stream(stream: mio::net::TcpStream) -> std::io::Result<tokio::net::TcpStream> {
+    let _context = runtime().enter();
+    tokio::net::TcpStream::from_std(std::net::TcpStream::from(std::os::fd::OwnedFd::from(stream)))
 }
 
 /// `connect` and `connectTls` (`tls` 1): a connection, or why there is
@@ -526,8 +631,8 @@ pub unsafe extern "C" fn tondo_rt_net_connect(
             }
         };
         waited(within(deadline, async move {
-            let stream = open(&host, port).await?;
-            let Some((connector, name)) = verify else { return tcp(stream) };
+            let Some((connector, name)) = verify else { return tcp(open(&host, port, connect).await?) };
+            let stream = open(&host, port, tokio::net::TcpStream::connect).await?;
             let (connection, inbox, outbox) = tls(&stream)?;
             let stream = connector.connect(name, stream).await.map_err(|error| {
                 let mut why = Failure::from(&error).detail;
@@ -667,7 +772,7 @@ pub unsafe extern "C" fn tondo_rt_net_writer(object: *mut NativeObject) -> *mut 
 
 /// A listener, until it is closed, and a TLS acceptor when it has one.
 struct Listener {
-    listener: Mutex<Option<Arc<tokio::net::TcpListener>>>,
+    listener: Mutex<Option<Arc<Registered<mio::net::TcpListener>>>>,
     tls: Option<tokio_rustls::TlsAcceptor>,
     local: SocketAddr,
     closed: Arc<tokio::sync::watch::Sender<bool>>,
@@ -675,14 +780,13 @@ struct Listener {
 
 /// A listener whose queue of connections not accepted yet is as long as
 /// the system allows, so a burst of them waits instead of being dropped.
-fn bind(address: SocketAddr) -> std::io::Result<tokio::net::TcpListener> {
-    let socket = match address {
-        SocketAddr::V4(_) => tokio::net::TcpSocket::new_v4()?,
-        SocketAddr::V6(_) => tokio::net::TcpSocket::new_v6()?,
-    };
-    socket.set_reuseaddr(true)?;
-    socket.bind(address)?;
-    socket.listen(65_535)
+fn bind(address: SocketAddr) -> std::io::Result<Registered<mio::net::TcpListener>> {
+    let socket = socket2::Socket::new(socket2::Domain::for_address(address), socket2::Type::STREAM, None)?;
+    socket.set_reuse_address(true)?;
+    socket.set_nonblocking(true)?;
+    socket.bind(&address.into())?;
+    socket.listen(65_535)?;
+    Registered::new(mio::net::TcpListener::from_std(socket.into()))
 }
 
 /// `listen`: a listener on `host:port`, `0` for any free port, over TLS
@@ -710,7 +814,7 @@ pub unsafe extern "C" fn tondo_rt_net_listen(
             }
             Err(last)
         })?;
-        let local = listener.local_addr()?;
+        let local = listener.io().local_addr()?;
         let closed = Arc::new(tokio::sync::watch::channel(false).0);
         Ok(Net::Listener(Listener { listener: Mutex::new(Some(Arc::new(listener))), tls, local, closed }))
     });
@@ -738,12 +842,12 @@ pub unsafe extern "C" fn tondo_rt_net_accept(
             if *closing.borrow() {
                 return Err(failure(CLOSED, "closed"));
             }
-            let accepted = tokio::select! {
-                accepted = socket.accept() => accepted,
-                _ = closing.changed() => continue,
-            };
-            match accepted {
-                Ok(accepted) => return Ok(accepted),
+            match socket.attempt(Direction::Read, |listener| listener.accept()) {
+                Ok((stream, _)) => return Ok(stream),
+                Err(error) if error.kind() == ErrorKind::WouldBlock => tokio::select! {
+                    _ = socket.ready(Direction::Read) => {}
+                    _ = closing.changed() => {}
+                },
                 Err(error) if keep == 0 => return Err(error.into()),
                 // Out of descriptors, or a connection reset before it was
                 // accepted: the next one may work.
@@ -751,8 +855,9 @@ pub unsafe extern "C" fn tondo_rt_net_accept(
             }
         }
     }));
-    let opened = accepted.and_then(|(stream, _)| {
-        let Some(acceptor) = acceptor else { return tcp(stream).map(Net::Connection) };
+    let opened = accepted.and_then(|stream| {
+        let Some(acceptor) = acceptor else { return tcp(Registered::new(stream)?).map(Net::Connection) };
+        let stream = tokio_stream(stream)?;
         let (connection, inbox, outbox) = tls(&stream)?;
         // The handshake happens in its own task, so a slow client does not
         // hold up the next one; its failure is the first read's.
@@ -794,7 +899,7 @@ pub unsafe extern "C" fn tondo_rt_net_stop(object: *mut NativeObject) {
 
 /// A UDP socket, until it is closed.
 struct Socket {
-    socket: Mutex<Option<Arc<tokio::net::UdpSocket>>>,
+    socket: Mutex<Option<Arc<Registered<mio::net::UdpSocket>>>>,
     local: SocketAddr,
     closed: Arc<tokio::sync::watch::Sender<bool>>,
     failure: Mutex<Failure>,
@@ -808,7 +913,7 @@ pub unsafe extern "C" fn tondo_rt_net_bind(host: *const Str, port_number: i64) -
         let socket = waited(async move {
             let mut last = failure(NOT_FOUND, host.as_str());
             for address in lookup(&host, port).await? {
-                match tokio::net::UdpSocket::bind(address).await {
+                match mio::net::UdpSocket::bind(address) {
                     Ok(socket) => {
                         // macOS sends no datagram larger than the send
                         // buffer, 9 216 bytes unless raised.
@@ -816,14 +921,14 @@ pub unsafe extern "C" fn tondo_rt_net_bind(host: *const Str, port_number: i64) -
                         if options.send_buffer_size().is_ok_and(|size| size < 2 * DATAGRAM) {
                             let _ = options.set_send_buffer_size(2 * DATAGRAM);
                         }
-                        return Ok(socket);
+                        return Ok(Registered::new(socket)?);
                     }
                     Err(error) => last = error.into(),
                 }
             }
             Err(last)
         })?;
-        let local = socket.local_addr()?;
+        let local = socket.io().local_addr()?;
         let closed = Arc::new(tokio::sync::watch::channel(false).0);
         let socket = Mutex::new(Some(Arc::new(socket)));
         Ok(Net::Socket(Socket { socket, local, closed, failure: Default::default() }))
@@ -851,7 +956,15 @@ pub unsafe extern "C" fn tondo_rt_net_send_to(
             let why = format!("a datagram of {} bytes; one holds at most {DATAGRAM}", data.len());
             return Err(failure(IO, why));
         }
-        waited(async move { Ok(sending.send_to(&data, (address, port)).await?) })
+        let to = SocketAddr::new(address, port);
+        waited(async move {
+            loop {
+                match sending.attempt(Direction::Write, |socket| socket.send_to(&data, to)) {
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => sending.ready(Direction::Write).await,
+                    sent => return Ok(sent.map(|_| ())?),
+                }
+            }
+        })
     });
     let noted = sent.err().unwrap_or_default();
     let code = noted.code;
@@ -877,17 +990,22 @@ pub unsafe extern "C" fn tondo_rt_net_receive(object: *mut NativeObject, timeout
     let closed = socket.closed.clone();
     let received = waited(within(deadline(timeout_ms), async move {
         let mut closing = closed.subscribe();
-        if *closing.borrow() {
-            return Err(failure(CLOSED, "closed"));
-        }
         let mut buffer = vec![0; DATAGRAM];
-        tokio::select! {
-            received = receiving.recv_from(&mut buffer) => {
-                let (count, from) = received?;
-                buffer.truncate(count);
-                Ok(Net::Datagram(Datagram { bytes: buffer, from }))
+        loop {
+            if *closing.borrow() {
+                return Err(failure(CLOSED, "closed"));
             }
-            _ = closing.changed() => Err(failure(CLOSED, "closed")),
+            match receiving.attempt(Direction::Read, |socket| socket.recv_from(&mut buffer)) {
+                Ok((count, from)) => {
+                    buffer.truncate(count);
+                    return Ok(Net::Datagram(Datagram { bytes: buffer, from }));
+                }
+                Err(error) if error.kind() == ErrorKind::WouldBlock => tokio::select! {
+                    _ = receiving.ready(Direction::Read) => {}
+                    _ = closing.changed() => {}
+                },
+                Err(error) => return Err(error.into()),
+            }
         }
     }));
     native::new(Net::from(received))

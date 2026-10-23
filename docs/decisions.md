@@ -1277,3 +1277,24 @@ test now fails, saying for each task where it waits, or that it still
 runs, and where it was spawned, from what the runtime already keeps for
 deadlocks. Cycles of shared handles, the other way to leak, are left until
 `Ref[T]` exists and makes them common.
+
+## 2026-10-23 — Workers poll the network
+
+Sockets without TLS left tokio for an `epoll` or `kqueue` of the workers'
+own, through mio. A worker with nothing to run waits on it instead of
+sleeping, unless another worker already does, and runs the first task an
+event wakes on its own thread, waking no other worker for it, as Go's
+scheduler does; the hop from tokio's thread to a worker is gone. What a
+socket could not take at once goes when it says it can take more, from
+whichever worker sees that, and a stream that lets go of the socket
+before then ends its direction after the last byte. Two rules keep the
+network attended. A worker with tasks queued looks at it every 61
+tasks, so the tasks it wakes do not wait behind a queue that never
+empties. A watcher wakes a sleeping worker when no worker has waited on
+it for 10 ms, which is Go's `sysmon`: a server whose polling worker ran a
+handler 100 ms long answered another client after 95 ms without it, and
+after 5 ms with it. The watcher sleeps while a worker waits on the
+network. TLS and names stay on tokio. Scheduling a task no longer signals
+the condition variable when no worker sleeps. On loopback: one
+connection's round trip 12 µs (Go 12), 2 000 connections of ten round
+trips 0.13 s (Go 0.11), bulk transfer unchanged.

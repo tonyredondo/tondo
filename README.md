@@ -115,13 +115,13 @@ Every milestone ends with programs that compile to native executables and run.
 | **Stdlib 3** | `std.csv` (streaming and whole), `std.log` (levels, fields, text or JSON lines), and `std.http`: a client for HTTP/1.1 and HTTP/2 over TLS with streaming bodies, multipart, Server-Sent Events and WebSockets; a server with routes, middleware, typed handlers, OpenAPI, files with resumable downloads, resumable uploads, Server-Sent Events, WebSockets and TLS | Done |
 | **Stdlib 4** | One serialization protocol for every format (`std.serialization`): events, one error type with path, line and column, and `Encode`/`Decode` that the compiler implements for every type, generic over each format's reader and writer; JSON on top of it; `std.toml` (TOML 1.1, with dates); `std.yaml` (a safe subset of YAML 1.2, many documents, bounded aliases); `std.messagepack` (shortest forms, bytes and timestamps native); `std.cbor` (RFC 8949, preferred and deterministic serialization); `std.net` (TCP with TLS, listeners, UDP and names, a task per connection without a thread per connection, a timeout per call). | Done |
 | **H10** | Tooling for agents: `tondo guide` teaches the language, its library and its commands a topic at a time, with examples that compile and the mistakes models make, and can install itself as an agent skill; `tondo api` shows a module's declarations and documentation without bodies, about a quarter of its tokens, for the standard library, the project and its dependencies; `tondo fmt --compact` prints Tondo with about 15% fewer tokens. A separate LLM dialect was measured on seven tokenizers and dropped: it saved nothing that compact Tondo does not | Done |
+| **H11** | Diagnostics and editors: aborts, illegal instructions, arithmetic faults and faults inside C report their trace; `tondo test --schedules N` runs each test in many orders of its tasks, again with `--seed`; a test that leaves tasks running fails, saying where they wait; `tondo lsp`, a language server with diagnostics, hover, definitions, references, rename, completion, semantic highlighting, signatures, inlay types, symbols, formatting and code actions from the compiler's repairs; functions compile on every core; workers poll the network themselves, for Go's latency on a request and its answer. A cache of compiled functions between builds waits until a build is slow enough to need it | Done |
 
 The first cut deliberately leaves out the following. They are part of the
 language and remain planned work, scheduled after H7:
 
 | Milestone | Scope |
 |---|---|
-| **H11** | Race, leak and crash diagnostics; language server; incremental compilation; workers that poll the network themselves, for Go's latency on a request and its answer |
 | **H12** | Windows, and a self-contained linker |
 | **Protobuf and gRPC** | Types and codecs generated from `.proto` schemas, and gRPC clients and servers over HTTP/2, designed together |
 

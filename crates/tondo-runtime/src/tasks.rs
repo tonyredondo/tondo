@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 // ---------------------------------------------------------------------------
@@ -296,6 +296,12 @@ struct Queue {
     /// Workers started, and how many wait for a task.
     workers: usize,
     idle: usize,
+    /// A worker waits for the network's events instead (`poll`).
+    polling: bool,
+    /// Waits for the network's events, which the watcher counts.
+    polls: u64,
+    /// Tasks taken from the queue, to look at the network now and then.
+    picks: u32,
     /// Workers started for others that were long in C, which retire once
     /// those return.
     surplus: usize,
@@ -312,6 +318,9 @@ static QUEUE: Mutex<Queue> = Mutex::new(Queue {
     sequence: 0,
     workers: 1,
     idle: 0,
+    polling: false,
+    polls: 0,
+    picks: 0,
     surplus: 0,
     pinned: Vec::new(),
 });
@@ -364,14 +373,101 @@ fn home() -> *mut *mut u8 {
     HOME.with(|h| h.as_ptr())
 }
 
-fn queue() -> std::sync::MutexGuard<'static, Queue> {
+fn queue() -> MutexGuard<'static, Queue> {
     QUEUE.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Makes a new or notified task runnable.
 fn schedule(task: *mut Task) {
-    queue().runnable.push_back(task);
-    READY.notify_one();
+    let mut queue = queue();
+    queue.runnable.push_back(task);
+    if LOOKS_NEXT.with(|next| next.replace(false)) {
+        return;
+    }
+    wake_one(queue);
+}
+
+thread_local! {
+    /// This worker looks at the queue next and finds nothing before the
+    /// first task it schedules, which wakes no other worker.
+    static LOOKS_NEXT: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Wakes a worker to look at the queue: one that sleeps, or the one that
+/// waits for the network's events if none sleeps.
+fn wake_one(queue: MutexGuard<'static, Queue>) {
+    let (sleeping, polling) = (queue.idle > 0, queue.polling);
+    drop(queue);
+    if sleeping {
+        READY.notify_one();
+    } else if polling && let Some(poller) = super::poll::poller() {
+        poller.wake();
+    }
+}
+
+/// The wait for the network's events, unless no socket needs it or another
+/// worker has it.
+fn claim(queue: &mut Queue) -> Option<(&'static super::poll::Poller, MutexGuard<'static, super::poll::Polling>)> {
+    let poller = super::poll::poller().filter(|_| !queue.polling)?;
+    let poll = poller.claim()?;
+    queue.polling = true;
+    queue.polls += 1;
+    WATCHER.get_or_init(|| spawn_thread(Some(64 * 1024), watch).thread().clone());
+    Some((poller, poll))
+}
+
+/// Waits for the network's events until `deadline` and makes runnable the
+/// tasks they wake. With nothing else to run, this worker runs the first
+/// one without waking another, as Go's scheduler does.
+fn poll(
+    poller: &'static super::poll::Poller,
+    poll: MutexGuard<'static, super::poll::Polling>,
+    deadline: Option<Instant>,
+) -> MutexGuard<'static, Queue> {
+    let events = poller.wait(poll, deadline);
+    let mut queue = queue();
+    queue.polling = false;
+    let alone = queue.runnable.is_empty();
+    drop(queue);
+    if WATCHER_ASLEEP.load(Ordering::Relaxed)
+        && WATCHER_ASLEEP.swap(false, Ordering::SeqCst)
+        && let Some(watcher) = WATCHER.get()
+    {
+        watcher.unpark();
+    }
+    LOOKS_NEXT.with(|next| next.set(alone));
+    events.wake();
+    LOOKS_NEXT.with(|next| next.set(false));
+    self::queue()
+}
+
+static WATCHER: std::sync::OnceLock<std::thread::Thread> = std::sync::OnceLock::new();
+static WATCHER_ASLEEP: AtomicBool = AtomicBool::new(false);
+/// How long the network may go without a worker waiting for its events.
+const WATCH_PERIOD: Duration = Duration::from_millis(10);
+
+/// Watches the network while workers sleep: when no worker waited for its
+/// events in a period, as when the one that did runs a long task since,
+/// one that sleeps wakes to wait for them (as Go's `sysmon` polls). Sleeps
+/// while a worker waits for them.
+fn watch() {
+    let mut seen = 0;
+    loop {
+        std::thread::sleep(WATCH_PERIOD);
+        let queue = queue();
+        let unattended = !queue.polling && queue.polls == seen && queue.idle > 0;
+        seen = queue.polls;
+        if queue.polling {
+            WATCHER_ASLEEP.store(true, Ordering::SeqCst);
+            drop(queue);
+            std::thread::park();
+            continue;
+        }
+        drop(queue);
+        if unattended {
+            READY.notify_one();
+        }
+    }
 }
 
 /// Wakes a task for its current wait, or makes its next `park` return at
@@ -479,7 +575,7 @@ fn stalled(queue: &Queue) -> Stalled {
     let pinned = queue.pinned.iter().filter(|&&task| unsafe { (*task).state.load(Ordering::Acquire) } == PINNED);
     if !queue.runnable.is_empty()
         || queue.timers.peek().is_some()
-        || queue.idle + pinned.count() < queue.workers
+        || queue.idle + pinned.count() + usize::from(queue.polling) < queue.workers
         || HOST_WORK.load(Ordering::SeqCst) != 0
         || MAIN_DONE.load(Ordering::SeqCst)
     {
@@ -593,9 +689,8 @@ fn add_timer(delay: Duration, wait: Arc<Wait>, index: usize) {
     queue.sequence += 1;
     let sequence = queue.sequence;
     queue.timers.push(Timer { at: Instant::now() + delay, sequence, wait, index });
-    drop(queue);
     // An idle worker recomputes how long to sleep.
-    READY.notify_one();
+    wake_one(queue);
 }
 
 /// Runs tasks; on the main thread, until the main task finishes, wherever
@@ -619,6 +714,17 @@ fn work(main: bool) -> i32 {
                     return 0;
                 }
                 fire_timers(&mut queue);
+                // Now and then a worker with tasks to run looks at the
+                // network first, so that what it woke does not wait behind
+                // a queue that never empties.
+                queue.picks = queue.picks.wrapping_add(1);
+                if queue.picks.is_multiple_of(61)
+                    && !queue.runnable.is_empty()
+                    && let Some((poller, polled)) = claim(&mut queue)
+                {
+                    drop(queue);
+                    queue = poll(poller, polled, Some(Instant::now()));
+                }
                 let next = match exploring() {
                     Some(seed) if !queue.runnable.is_empty() => {
                         let at = (seeded(seed) % queue.runnable.len() as u64) as usize;
@@ -629,7 +735,13 @@ fn work(main: bool) -> i32 {
                 if let Some(task) = next {
                     break task;
                 }
-                queue.idle += 1;
+                // With sockets to poll, an idle worker waits for their
+                // events, unless another one does, and runs what they wake
+                // on its own thread.
+                let polling = claim(&mut queue);
+                if polling.is_none() {
+                    queue.idle += 1;
+                }
                 let mut next = queue.timers.peek().map(|t| t.at);
                 match stalled(&queue) {
                     Stalled::Deadlock => {
@@ -639,6 +751,11 @@ fn work(main: bool) -> i32 {
                     // Look again later: the threads of C may end.
                     Stalled::MaybeC => next = Some(Instant::now() + RECHECK),
                     Stalled::No => {}
+                }
+                if let Some((poller, polled)) = polling {
+                    drop(queue);
+                    queue = poll(poller, polled, next);
+                    continue;
                 }
                 queue = match next {
                     Some(at) => {
@@ -670,6 +787,9 @@ fn work(main: bool) -> i32 {
                     // the notification between its check and its wait.
                     drop(queue());
                     READY.notify_all();
+                    if let Some(poller) = super::poll::poller() {
+                        poller.wake();
+                    }
                 }
             } else if (*task).state.compare_exchange(PARKING, PARKED, Ordering::AcqRel, Ordering::Acquire).is_ok() {
                 super::clock::stopped(in_domain);
@@ -845,8 +965,9 @@ pub extern "C" fn tondo_rt_foreign_leave() {
     let state = in_c();
     state.calls.fetch_add(1, Ordering::SeqCst);
     if state.depth.fetch_sub(1, Ordering::SeqCst) == 1 && state.replaced.swap(false, Ordering::SeqCst) {
-        queue().surplus += 1;
-        READY.notify_one();
+        let mut queue = queue();
+        queue.surplus += 1;
+        wake_one(queue);
     }
 }
 
