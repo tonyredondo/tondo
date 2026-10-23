@@ -2,10 +2,11 @@
 
 ## Automatic implementations
 
-The compiler implements `json.Encode` and `json.Decode` for every record,
-enum and newtype whose parts have them, when the program uses `std.json`
-(or `std.http`), and `reflect.Reflect` when it uses `std.reflect`. Nothing
-to write.
+The compiler implements `serialization.Encode` and `serialization.Decode`
+for every record, enum and newtype whose parts have them, when the program
+uses a format (`std.json`, `std.http`) or `std.serialization`, and
+`reflect.Reflect` when it uses `std.reflect`. Nothing to write: the same
+type reads and writes every format.
 
 ## derive
 

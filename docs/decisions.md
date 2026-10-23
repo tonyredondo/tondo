@@ -1104,3 +1104,20 @@ result. Two silent mistakes are errors now: an `if` without `else` whose
 value is used, and `return value` in a function without a result. A root
 type named like a type parameter of the prelude, such as `E`, no longer
 reports errors inside the prelude.
+
+## 2026-10-23 — One serialization protocol for every format
+
+Before TOML, YAML, MessagePack and CBOR, the traits that JSON owned moved to
+`std.serialization`, as its specification foresaw: events that every
+format reads and writes (scalars, numbers as written, text, bytes, and the
+bounds of lists and maps with their keys), one error type with a path, a
+line and a column, a `Source` and a `Sink` that each format gives, and
+`Encode` and `Decode` with methods generic over them. Generic methods keep
+every call direct after monomorphization; the cost on a JSON round trip of
+100,000 records is about 3%. `Source` has three required methods and the
+helpers that generated code uses as default methods. The compiler derives
+the shared traits, so one type reads and writes every format without
+code; a format without null leaves out the members that are `none`.
+`json.JsonError` and `json.ErrorKind` remain, as aliases of the shared
+ones; `json.Encode` and `json.Decode` are gone, since the language has no
+trait aliases, and their users now name `serialization.Encode`.

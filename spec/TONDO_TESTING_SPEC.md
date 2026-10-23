@@ -1964,8 +1964,8 @@ con el archivo `<name>.snap` del test o suite que lo alcanza (15.7) y devuelve
   whitespace;
 - para cualquier otro valor, el JSON que `json.encode` escribe para él,
   indentado con dos espacios y con las claves de cada objeto ordenadas por
-  bytes UTF-8. Todo tipo cuyas partes admiten JSON implementa `json.Encode` sin
-  escribir nada (14.6 de la librería estándar); un valor sin `json.Encode` es
+  bytes UTF-8. Todo tipo cuyas partes admiten JSON implementa `serialization.Encode` sin
+  escribir nada (14.7 de la librería estándar); un valor sin `serialization.Encode` es
   un error de compilación.
 
 ```tondo
@@ -2222,7 +2222,7 @@ pub fn tags(values: Map[String, String])
 pub fn failNow(message: String): Never
 pub fn skip(reason: String): Never
 pub fn attach(name: String, mediaType: String, data: Array[Byte])
-pub fn snapshot[T: json.Encode](
+pub fn snapshot[T: serialization.Encode](
     name: String,
     value: T,
     ignore: Array[String] = [],
@@ -2273,7 +2273,7 @@ Las operaciones de control, metadata y evidencia son monomórficas salvo
 formatting ocurren antes de la llamada. `tags` recibe exactamente un
 `Map[String, String]`. `attach` recibe un `Array[Byte]` ya materializado.
 `snapshot` es genérica sobre el valor que compara: un `String`, o cualquier
-valor con `json.Encode`, que `import std.testing` trae consigo. No existen
+valor con `serialization.Encode`, que `import std.testing` trae consigo. No existen
 niveles de log, timestamps, un tipo dinámico de metadata, reflection de valores
 ni sobrecargas variádicas en Tondo 0.1.
 

@@ -1,0 +1,45 @@
+// A type written by hand for every format, here read and written as JSON:
+// a point as a list of two numbers instead of a map.
+import std.console
+import std.json
+import std.serialization
+
+type Point = { x: Int, y: Int }
+
+impl serialization.Encode for Point {
+    fn encode[S: serialization.Sink](self, out: S) {
+        out.beginList(2)
+        out.int(self.x)
+        out.int(self.y)
+        out.endList()
+    }
+}
+
+impl serialization.Decode for Point {
+    fn decode[S: serialization.Source](input: S, first: serialization.Event): Point ! serialization.Error {
+        input.beginList(first, "Point")?
+        let x = serialization.Decode.decode[Int](input, input.value()?)?
+        let y = serialization.Decode.decode[Int](input, input.value()?)?
+        input.endList()?
+        Point { x: x, y: y }
+    }
+}
+
+/// The automatic implementations use the one written by hand.
+type Path = { name: String, points: Array[Point] }
+
+fn main(): !json.JsonError {
+    let path = Path { name: "zigzag", points: [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }] }
+    let text = json.encode(path)
+    console.println(text)
+    let back = json.decode[Path](text)?
+    console.println("{back.name} {back.points.length()} {back.points[1].y}")
+    match json.decode[Path]("{{\"name\":\"bad\",\"points\":[[1]]}}") {
+        ok(_) => console.println("decoded")
+        err(error) => console.println("{error}")
+    }
+}
+
+// expect-stdout: {"name":"zigzag","points":[[1,2],[3,4]]}
+// expect-stdout: zigzag 2 4
+// expect-stdout: expected an integer, found the end of an array at $.points[0] (line 1, column 28)

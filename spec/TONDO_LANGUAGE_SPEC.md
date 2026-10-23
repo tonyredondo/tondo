@@ -10572,7 +10572,7 @@ Reglas:
 - La reflexión trabaja con los tipos que implementan `reflect.Reflect`. El
   compilador lo implementa, con código que llega directamente a cada campo y
   método, para cada record, enum y newtype cuyas partes lo implementan, igual
-  que `json.Encode` (14.10 de la librería estándar); `std.reflect` lo implementa
+  que `serialization.Encode` (14.7 de la librería estándar); `std.reflect` lo implementa
   para los tipos intrínsecos y las colecciones. Un `impl` del programa sustituye
   al automático. Los valores que se reflejan son `Copy`: `reflect.Value` se
   copia, así que no puede contener un valor afín.

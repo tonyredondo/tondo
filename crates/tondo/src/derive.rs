@@ -1,8 +1,8 @@
 //! Implementations the compiler writes as Tondo source for every record,
 //! enum and newtype whose parts allow them, unless the program writes its
-//! own: `json.Encode` and `json.Decode` when the program brings `std.json`
-//! (standard library 14.10), and `reflect.Reflect` when it imports
-//! `std.reflect` (14.8). They go into the type's module, and the rest of the
+//! own: `serialization.Encode` and `serialization.Decode` when the program
+//! brings `std.serialization`, as every format does (standard library
+//! 14.7), and `reflect.Reflect` when it imports `std.reflect` (14.8). They go into the type's module, and the rest of the
 //! compiler checks them like any other source.
 
 use crate::diag::Diagnostics;
@@ -15,7 +15,7 @@ use std::path::Path;
 /// One kind of automatic implementation.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Kind {
-    Json,
+    Serialization,
     Reflect,
 }
 
@@ -23,24 +23,23 @@ impl Kind {
     /// The standard module whose traits it implements.
     fn module(self) -> &'static str {
         match self {
-            Kind::Json => "json",
+            Kind::Serialization => "serialization",
             Kind::Reflect => "reflect",
         }
     }
 
     fn traits(self) -> &'static [&'static str] {
         match self {
-            Kind::Json => &["Encode", "Decode"],
+            Kind::Serialization => &["Encode", "Decode"],
             Kind::Reflect => &["Reflect"],
         }
     }
 
     /// Whether a file brings the module: by importing it, or a standard
-    /// module that imports it, as `std.http` imports `std.json`.
+    /// module that imports it, as `std.http` imports `std.json`, which
+    /// imports `std.serialization`.
     fn brought(self, file: &ast::Module) -> bool {
-        let import = format!("import std.{}", self.module());
-        let imports = |text: &str| text.lines().any(|l| l == import || l.starts_with(&format!("{import} ")));
-        file.imports.iter().any(|i| source(&i.path).is_some_and(|(n, text)| n == self.module() || imports(text)))
+        file.imports.iter().any(|i| source(&i.path).is_some_and(|(name, _)| crate::stdlib::brings(name, self.module())))
     }
 
     /// Whether an intrinsic type with these arguments has the
@@ -48,9 +47,9 @@ impl Kind {
     fn builtin(self, name: &str, args: &[ast::TypeExpr]) -> Option<bool> {
         let string = |ty: &ast::TypeExpr| matches!(&ty.kind, ast::TypeKind::Path { segments, args } if args.is_empty() && segments.len() == 1 && segments[0].name == "String");
         Some(match (self, name, args) {
-            (Kind::Json, "Int" | "Float" | "Bool" | "String", []) => true,
-            (Kind::Json, "Array" | "Option", [_]) => true,
-            (Kind::Json, "Map", [key, _]) => string(key),
+            (Kind::Serialization, "Int" | "Float" | "Bool" | "String", []) => true,
+            (Kind::Serialization, "Array" | "Option", [_]) => true,
+            (Kind::Serialization, "Map", [key, _]) => string(key),
             (
                 Kind::Reflect,
                 "Int" | "Int8" | "Int16" | "Int32" | "UInt8" | "UInt16" | "UInt32" | "UInt64" | "Float" | "Float32"
@@ -66,7 +65,7 @@ impl Kind {
     /// Whether a type of a standard module has the implementations.
     fn standard(self, module: &str, name: &str) -> bool {
         match (self, module) {
-            (Kind::Json, "json") => matches!(name, "Value" | "Number" | "Raw"),
+            (Kind::Serialization, "json") => matches!(name, "Value" | "Number" | "Raw"),
             (Kind::Reflect, "reflect") => name == "Value",
             _ => false,
         }
@@ -115,7 +114,7 @@ fn alias_of(file: &ast::Module, module: &str) -> Option<String> {
 
 /// Writes the automatic implementations of every kind the program asks for.
 pub fn derive(modules: &mut [ModuleSource], sources: &mut SourceMap, diags: &mut Diagnostics) {
-    for kind in [Kind::Json, Kind::Reflect] {
+    for kind in [Kind::Serialization, Kind::Reflect] {
         if modules.iter().any(|m| m.files.iter().any(|(f, _)| kind.brought(f))) {
             derive_kind(kind, modules, sources, diags);
         }
@@ -128,7 +127,7 @@ fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap
         for (file, (parsed, _)) in source.files.iter().enumerate() {
             for item in &parsed.items {
                 let (name, generics) = match item {
-                    // C structs cross to C, not to JSON or reflection.
+                    // C structs cross to C, not to other formats or reflection.
                     ast::Item::Type(t) if t.foreign => continue,
                     ast::Item::Type(t) => (&t.name.name, &t.generics),
                     ast::Item::Enum(e) => (&e.name.name, &e.generics),
@@ -156,7 +155,7 @@ fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap
             let ok = parts(file, &d.name)
                 .iter()
                 .all(|ty| context.allowed(ty, &|m, n| find(m, n).is_some_and(|i| qualifies[i])))
-                && (kind != Kind::Json
+                && (kind != Kind::Serialization
                     || fields(file, &d.name)
                         .iter()
                         .all(|f| !ignored(f) || matches!(f.ty.kind, ast::TypeKind::Optional(_))));
@@ -173,7 +172,7 @@ fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap
     let methods: Vec<Vec<Method>> = declared
         .iter()
         .map(|d| match kind {
-            Kind::Json => Vec::new(),
+            Kind::Serialization => Vec::new(),
             Kind::Reflect => {
                 let allowed = |file: &ast::Module, ty: &ast::TypeExpr| {
                     let context = Context { kind, module: d.module, file, generics: &d.generics, paths: &paths };
@@ -233,7 +232,7 @@ fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap
                 });
             }
             let name = match kind {
-                Kind::Json => format!("{}.derived.to", module.path.join(".")),
+                Kind::Serialization => format!("{}.derived.to", module.path.join(".")),
                 Kind::Reflect => format!("{}.reflect.derived.to", module.path.join(".")),
             };
             let id = sources.add(Path::new(&name), text);
@@ -420,7 +419,7 @@ impl Context<'_> {
     }
 }
 
-/// The name a field has in JSON, `@name` or its own.
+/// The name a field has in every format, `@name` or its own.
 fn wire(field: &ast::FieldDecl) -> String {
     field
         .annotations
@@ -467,24 +466,13 @@ impl Generator<'_> {
     }
 
     fn encode(&self, item: &ast::Item) -> String {
+        let s = self.alias;
         let mut out = self.header("Encode");
-        out.push_str(&format!("    fn encodeJson(self, out: {}.Writer) {{\n", self.alias));
+        out.push_str(&format!("    fn encode[__S: {s}.Sink](self, out: __S) {{\n"));
         match item {
             ast::Item::Type(t) => match &t.body {
-                ast::TypeBody::Record(fields) => {
-                    out.push_str("        out.beginObject()\n");
-                    for field in fields.iter().filter(|f| !ignored(f)) {
-                        out.push_str(&format!("        out.key({:?})\n", wire(field)));
-                        out.push_str(&format!(
-                            "        {}.Encode.encodeJson(self.{}, out)\n",
-                            self.alias, field.name.name
-                        ));
-                    }
-                    out.push_str("        out.endObject()\n");
-                }
-                ast::TypeBody::Newtype(_) => {
-                    out.push_str(&format!("        {}.Encode.encodeJson(self.value, out)\n", self.alias))
-                }
+                ast::TypeBody::Record(fields) => out.push_str(&self.write_fields(fields, "self.", "        ")),
+                ast::TypeBody::Newtype(_) => out.push_str(&format!("        {s}.Encode.encode(self.value, out)\n")),
                 ast::TypeBody::Opaque => unreachable!("extern types are not derived"),
             },
             ast::Item::Enum(e) => {
@@ -493,45 +481,29 @@ impl Generator<'_> {
                     let path = format!("{}.{}", e.name.name, variant.name.name);
                     let key = format!("{:?}", variant.name.name);
                     match &variant.payload {
-                        ast::VariantPayload::Unit => {
-                            out.push_str(&format!("            {path} => out.string({key})\n"))
-                        }
+                        ast::VariantPayload::Unit => out.push_str(&format!("            {path} => out.text({key})\n")),
                         ast::VariantPayload::Tuple(types) => {
                             let names: Vec<String> = (0..types.len()).map(|i| format!("__{i}")).collect();
                             out.push_str(&format!("            {path}({}) => {{\n", names.join(", ")));
-                            out.push_str(&format!(
-                                "                out.beginObject()\n                out.key({key})\n"
-                            ));
+                            out.push_str(&format!("                out.beginMap(1)\n                out.key({key})\n"));
                             if types.len() > 1 {
-                                out.push_str("                out.beginArray()\n");
+                                out.push_str(&format!("                out.beginList({})\n", types.len()));
                             }
                             for name in &names {
-                                out.push_str(&format!(
-                                    "                {}.Encode.encodeJson({name}, out)\n",
-                                    self.alias
-                                ));
+                                out.push_str(&format!("                {s}.Encode.encode({name}, out)\n"));
                             }
                             if types.len() > 1 {
-                                out.push_str("                out.endArray()\n");
+                                out.push_str("                out.endList()\n");
                             }
-                            out.push_str("                out.endObject()\n            }\n");
+                            out.push_str("                out.endMap()\n            }\n");
                         }
                         ast::VariantPayload::Record(fields) => {
                             let names: Vec<String> =
                                 fields.iter().map(|f| format!("{}: __{}", f.name.name, f.name.name)).collect();
                             out.push_str(&format!("            {path} {{ {} }} => {{\n", names.join(", ")));
-                            out.push_str(&format!("                out.beginObject()\n                out.key({key})\n                out.beginObject()\n"));
-                            for field in fields.iter().filter(|f| !ignored(f)) {
-                                out.push_str(&format!(
-                                    "                out.key({:?})\n                {}.Encode.encodeJson(__{}, out)\n",
-                                    wire(field),
-                                    self.alias,
-                                    field.name.name
-                                ));
-                            }
-                            out.push_str(
-                                "                out.endObject()\n                out.endObject()\n            }\n",
-                            );
+                            out.push_str(&format!("                out.beginMap(1)\n                out.key({key})\n"));
+                            out.push_str(&self.write_fields(fields, "__", "                "));
+                            out.push_str("                out.endMap()\n            }\n");
                         }
                     }
                 }
@@ -543,10 +515,47 @@ impl Generator<'_> {
         out
     }
 
-    /// The statements that read the members of an object into `__name`
+    /// The statements that write the fields of a record as a map, each
+    /// value read as `{prefix}name`. A format without null leaves out the
+    /// optional ones that are `none`.
+    fn write_fields(&self, fields: &[ast::FieldDecl], prefix: &str, indent: &str) -> String {
+        let s = self.alias;
+        let written: Vec<&ast::FieldDecl> = fields.iter().filter(|f| !ignored(f)).collect();
+        let optional = |f: &ast::FieldDecl| self.text(&f.ty).ends_with('?');
+        let mut out = String::new();
+        let count = if written.iter().any(|f| optional(f)) {
+            out.push_str(&format!("{indent}let __omits = out.omitsNone()\n{indent}var __count = {}\n", written.len()));
+            for field in written.iter().filter(|f| optional(f)) {
+                out.push_str(&format!(
+                    "{indent}if __omits and {prefix}{}.isNone() {{\n{indent}    __count -= 1\n{indent}}}\n",
+                    field.name.name
+                ));
+            }
+            "__count".to_string()
+        } else {
+            written.len().to_string()
+        };
+        out.push_str(&format!("{indent}out.beginMap({count})\n"));
+        for field in written {
+            let value = format!("{prefix}{}", field.name.name);
+            let write = format!("out.key({:?})\n{indent}{s}.Encode.encode({value}, out)", wire(field));
+            if optional(field) {
+                out.push_str(&format!(
+                    "{indent}if not (__omits and {value}.isNone()) {{\n{indent}    {}\n{indent}}}\n",
+                    write.replace(&format!("\n{indent}"), &format!("\n{indent}    "))
+                ));
+            } else {
+                out.push_str(&format!("{indent}{write}\n"));
+            }
+        }
+        out.push_str(&format!("{indent}out.endMap()\n"));
+        out
+    }
+
+    /// The statements that read the members of a map into `__name`
     /// locals, one per field, until its end.
     fn read_fields(&self, fields: &[ast::FieldDecl], indent: &str) -> String {
-        let j = self.alias;
+        let s = self.alias;
         let mut out = String::new();
         for field in fields.iter().filter(|f| !ignored(f)) {
             let ty = self.text(&field.ty);
@@ -561,7 +570,7 @@ impl Generator<'_> {
         ));
         for field in fields.iter().filter(|f| !ignored(f)) {
             out.push_str(&format!(
-                "{indent}                {:?} => {{\n{indent}                    __{} = some({j}.Decode.decodeJson[{}](input, __memberEvent)?)\n{indent}                }}\n",
+                "{indent}                {:?} => {{\n{indent}                    __{} = some({s}.Decode.decode[{}](input, __memberEvent)?)\n{indent}                }}\n",
                 wire(field),
                 field.name.name,
                 self.text(&field.ty)
@@ -592,31 +601,30 @@ impl Generator<'_> {
     }
 
     fn decode(&self, item: &ast::Item) -> String {
-        let j = self.alias;
+        let s = self.alias;
         let mut out = self.header("Decode");
         let target = self.target();
-        out.push_str(&format!("    fn decodeJson(input: {j}.Reader, first: {j}.Event): {target} ! {j}.JsonError {{\n"));
+        out.push_str(&format!(
+            "    fn decode[__S: {s}.Source](input: __S, first: {s}.Event): {target} ! {s}.Error {{\n"
+        ));
         let name = &self.declared.name;
         match item {
             ast::Item::Type(t) => match &t.body {
                 ast::TypeBody::Record(fields) => {
-                    out.push_str(&format!("        input.beginObject(first, {name:?})?\n"));
+                    out.push_str(&format!("        input.beginMap(first, {name:?})?\n"));
                     out.push_str(&self.read_fields(fields, "        "));
                     out.push_str(&format!("        {name} {{\n{}        }}\n", self.fields(fields, "            ")));
                 }
                 ast::TypeBody::Newtype(inner) => {
-                    out.push_str(&format!(
-                        "        {name}({j}.Decode.decodeJson[{}](input, first)?)\n",
-                        self.text(inner)
-                    ));
+                    out.push_str(&format!("        {name}({s}.Decode.decode[{}](input, first)?)\n", self.text(inner)));
                 }
                 ast::TypeBody::Opaque => unreachable!("extern types are not derived"),
             },
             ast::Item::Enum(e) => {
                 let unknown =
-                    format!("fail input.failure({j}.ErrorKind.Type, \"unknown variant `{{__name}}` of `{name}`\")");
+                    format!("fail input.failure({s}.ErrorKind.Type, \"unknown variant `{{__name}}` of `{name}`\")");
                 out.push_str("        match first {\n");
-                out.push_str(&format!("            {j}.Event.Text(__name) => match __name {{\n"));
+                out.push_str(&format!("            {s}.Event.Text(__name) => match __name {{\n"));
                 for variant in &e.variants {
                     if let ast::VariantPayload::Unit = variant.payload {
                         out.push_str(&format!(
@@ -634,9 +642,9 @@ impl Generator<'_> {
                     out.push_str("    }\n}\n\n");
                     return out;
                 }
-                out.push_str(&format!("            {j}.Event.BeginObject => {{\n"));
+                out.push_str(&format!("            {s}.Event.BeginMap => {{\n"));
                 out.push_str(&format!(
-                    "                let __name = match input.nextKey()? {{\n                    some(__key) => __key\n                    none => fail input.failure({j}.ErrorKind.Type, \"expected a variant of `{name}`\")\n                }}\n"
+                    "                let __name = match input.nextKey()? {{\n                    some(__key) => __key\n                    none => fail input.failure({s}.ErrorKind.Type, \"expected a variant of `{name}`\")\n                }}\n"
                 ));
                 out.push_str(
                     "                let __event = input.value()?\n                let __value = match __name {\n",
@@ -648,26 +656,30 @@ impl Generator<'_> {
                         ast::VariantPayload::Unit => {}
                         ast::VariantPayload::Tuple(types) if types.len() == 1 => {
                             out.push_str(&format!(
-                                "                    {key} => {path}({j}.Decode.decodeJson[{}](input, __event)?)\n",
+                                "                    {key} => {path}({s}.Decode.decode[{}](input, __event)?)\n",
                                 self.text(&types[0])
                             ));
                         }
                         ast::VariantPayload::Tuple(types) => {
-                            out.push_str(&format!("                    {key} => {{\n                        input.beginArray(__event, {key})?\n"));
+                            out.push_str(&format!(
+                                "                    {key} => {{\n                        input.beginList(__event, {key})?\n"
+                            ));
                             for (index, ty) in types.iter().enumerate() {
                                 out.push_str(&format!(
-                                    "                        let __{index} = {j}.Decode.decodeJson[{}](input, input.value()?)?\n",
+                                    "                        let __{index} = {s}.Decode.decode[{}](input, input.value()?)?\n",
                                     self.text(ty)
                                 ));
                             }
                             let names: Vec<String> = (0..types.len()).map(|i| format!("__{i}")).collect();
                             out.push_str(&format!(
-                                "                        input.endArray()?\n                        {path}({})\n                    }}\n",
+                                "                        input.endList()?\n                        {path}({})\n                    }}\n",
                                 names.join(", ")
                             ));
                         }
                         ast::VariantPayload::Record(fields) => {
-                            out.push_str(&format!("                    {key} => {{\n                        input.beginObject(__event, {key})?\n"));
+                            out.push_str(&format!(
+                                "                    {key} => {{\n                        input.beginMap(__event, {key})?\n"
+                            ));
                             out.push_str(&self.read_fields(fields, "                        "));
                             out.push_str(&format!(
                                 "                        {path} {{\n{}                        }}\n                    }}\n",
@@ -678,7 +690,7 @@ impl Generator<'_> {
                 }
                 out.push_str(&format!("                    _ => {unknown}\n                }}\n"));
                 out.push_str(&format!(
-                    "                match input.nextKey()? {{\n                    none => __value\n                    some(_) => fail input.failure({j}.ErrorKind.Type, \"a variant of `{name}` is an object with one key\")\n                }}\n            }}\n"
+                    "                match input.nextKey()? {{\n                    none => __value\n                    some(_) => fail input.failure({s}.ErrorKind.Type, \"a variant of `{name}` is a map with one key\")\n                }}\n            }}\n"
                 ));
                 out.push_str(&format!(
                     "            _ => fail input.mismatch(first, \"a variant of `{name}`\")\n        }}\n"

@@ -10,6 +10,7 @@ use std::path::Path;
 
 /// Each module, by its path after `std`, and its source.
 const SOURCES: &[(&str, &str)] = &[
+    ("serialization", include_str!("../std/serialization.to")),
     ("json", include_str!("../std/json.to")),
     ("ffi", include_str!("../std/ffi.to")),
     ("regex", include_str!("../std/regex.to")),
@@ -53,6 +54,29 @@ pub(crate) fn source(path: &[ast::Ident]) -> Option<(&'static str, &'static str)
         }
         _ => None,
     }
+}
+
+/// Whether the standard module `name` is `target` or imports it, directly
+/// or through another standard module.
+pub(crate) fn brings(name: &str, target: &str) -> bool {
+    let mut pending = vec![name];
+    let mut seen: Vec<&str> = Vec::new();
+    while let Some(next) = pending.pop() {
+        if next == target {
+            return true;
+        }
+        if seen.contains(&next) {
+            continue;
+        }
+        seen.push(next);
+        let Some(text) = text(next) else { continue };
+        for line in text.lines() {
+            let Some(path) = line.strip_prefix("import std.") else { continue };
+            let module = path.split([' ', '.']).next().unwrap_or_default();
+            pending.push(SOURCES.iter().find(|(n, _)| *n == module).map_or(module, |(n, _)| n));
+        }
+    }
+    false
 }
 
 /// Whether a program links with standard modules written in Tondo: always,

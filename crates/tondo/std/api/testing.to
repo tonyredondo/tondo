@@ -16,7 +16,7 @@ pub fn attach(name: String, mediaType: String, data: Array[Byte])
 /// Compares the value's JSON with the file of the snapshot `name`;
 /// `ignore` drops paths, `matches` checks them against patterns and
 /// `replace` substitutes them.
-pub fn snapshot[T: json.Encode](
+pub fn snapshot[T: serialization.Encode](
     name: String,
     value: T,
     ignore: Array[String] = [],

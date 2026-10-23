@@ -8,6 +8,7 @@ import std.encoding as __encoding
 import std.internal.http as httpNative
 import std.io as __io
 import std.json as __json
+import std.serialization as __serialization
 import std.time as __time
 
 /// Why a request has no response a program can use.
@@ -66,7 +67,7 @@ pub fn Body.bytes(bytes: Array[Byte], contentType: String = "application/octet-s
 }
 
 /// The value as JSON (`std.json`).
-pub fn Body.json[T: __json.Encode](value: T): Body {
+pub fn Body.json[T: __serialization.Encode](value: T): Body {
     Body { content: Content.Data(__json.encode(value).bytes(), "application/json") }
 }
 
@@ -227,7 +228,7 @@ pub fn Response.text(self): String ! HttpError {
 }
 
 /// The body as the JSON of a `T` (`std.json`), decoded as it arrives.
-pub fn Response.json[T: __json.Decode](self): T ! HttpError {
+pub fn Response.json[T: __serialization.Decode](self): T ! HttpError {
     match __json.decodeFrom[T](self.body()) {
         ok(value) => value
         err(error) => fail HttpError.Body("{error}")
@@ -922,7 +923,7 @@ pub fn Request.text(self): String ! Problem {
 
 /// The body as the JSON of a `T` (`std.json`), decoded as it arrives; a
 /// body that is not one is `400` with the reason.
-pub fn Request.json[T: __json.Decode](self): T ! Problem {
+pub fn Request.json[T: __serialization.Decode](self): T ! Problem {
     match __json.decodeFrom[T](self.body()) {
         ok(value) => value
         err(error) => fail Problem.badRequest("the body is not the JSON expected: {error}")
@@ -1080,7 +1081,7 @@ pub fn Reply.html(html: String, status: Int = 200): Reply {
 }
 
 /// The value as JSON (`std.json`).
-pub fn Reply.json[T: __json.Encode](value: T, status: Int = 200): Reply {
+pub fn Reply.json[T: __serialization.Encode](value: T, status: Int = 200): Reply {
     let data = __json.encode(value).bytes()
     Reply {
         code: status

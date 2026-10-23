@@ -10737,7 +10737,10 @@ impl<'a> Checker<'a> {
         for (&param, &actual) in signature.generics.iter().zip(&type_args) {
             if let Some(missing) = self.bound_holds(param, actual, &inference.map, 0) {
                 // The traits the compiler implements by itself say why it did not.
-                let automatic = matches!(missing.as_str(), "`reflect.Reflect`" | "`json.Encode`" | "`json.Decode`");
+                let automatic = matches!(
+                    missing.as_str(),
+                    "`reflect.Reflect`" | "`serialization.Encode`" | "`serialization.Decode`"
+                );
                 let message = format!(
                     "{} does not implement {missing}, which `{}` requires of `{}`{}",
                     self.display(actual),

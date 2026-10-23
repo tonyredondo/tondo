@@ -1,0 +1,393 @@
+// std.serialization (standard library 14.7): the events every format reads
+// and writes, and the traits through which a type is written to and read
+// from any of them. The compiler implements `Encode` and `Decode` for every
+// record, enum and newtype whose parts implement them; each format gives a
+// `Source` and a `Sink`.
+
+// ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
+
+/// A value as every format reads it: scalars, and the bounds of lists and
+/// maps with the keys of their members.
+pub enum Event {
+    Null
+    Bool(Bool)
+    Int(Int)
+    Float(Float)
+    /// A number as a text format writes it, which keeps its precision
+    /// until a type takes it.
+    Number(String)
+    Text(String)
+    Bytes(Array[Byte])
+    BeginList
+    EndList
+    BeginMap
+    /// The key of the next member of a map.
+    Key(String)
+    EndMap
+}
+
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+pub enum ErrorKind {
+    /// The input is not in the format.
+    Syntax
+    /// A value of another kind than the type needs.
+    Type
+    /// A field the type needs is absent.
+    Missing
+    /// A field the type does not have, when unknown fields are rejected.
+    Unknown
+    /// A number that does not fit the type.
+    Range
+    /// The stream it was read from or written to failed.
+    Io
+    /// A value the format cannot hold, as a `none` in a TOML array.
+    Unsupported
+}
+
+/// A failure to read or write a format, and where.
+pub type Error = {
+    kind: ErrorKind
+    message: String
+    /// Where in the document, as `$.users[2].age`.
+    path: String
+    line: Int
+    column: Int
+}
+
+impl Display for Error {
+    fn display(self): String {
+        "{self.message} at {self.path} (line {self.line}, column {self.column})"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Reading
+// ---------------------------------------------------------------------------
+
+/// A document read event by event: the reader of a format.
+pub trait Source {
+    /// The next event, or `none` after the whole document.
+    fn next(self): Event? ! Error
+
+    /// Skips the rest of a value whose first event was `first`.
+    fn skip(self, first: Event): !Error
+
+    /// An error at the current position, with its path, line and column.
+    fn failure(self, kind: ErrorKind, message: String): Error
+
+    /// Whether a field the type does not have is an error.
+    fn rejectsUnknown(self): Bool {
+        false
+    }
+
+    /// The value whose first event was `first` as the JSON text it was
+    /// read from, for `json.Raw`; `none` from another format.
+    fn rawJson(self, first: Event): String? {
+        none
+    }
+
+    /// What the format calls a map and a list, for messages.
+    fn mapName(self): String {
+        "a map"
+    }
+
+    fn listName(self): String {
+        "a list"
+    }
+
+    /// The next event, which must exist.
+    fn value(self): Event ! Error {
+        match self.next()? {
+            some(event) => event
+            none => fail self.failure(ErrorKind.Syntax, "unexpected end of input")
+        }
+    }
+
+    /// The next key of a map, or `none` at its end.
+    fn nextKey(self): String? ! Error {
+        match self.value()? {
+            Event.Key(key) => key
+            Event.EndMap => none
+            _ => fail self.failure(ErrorKind.Syntax, "expected a key")
+        }
+    }
+
+    /// A member the type does not have: skipped, or an error when unknown
+    /// fields are rejected.
+    fn unknownField(self, key: String, first: Event): !Error {
+        if self.rejectsUnknown() {
+            fail self.failure(ErrorKind.Unknown, "unknown field `{key}`")
+        }
+        self.skip(first)?
+    }
+
+    /// Checks that a map starts, for the type `name`.
+    fn beginMap(self, first: Event, name: String): !Error {
+        match first {
+            Event.BeginMap => {}
+            _ => fail self.mismatch(first, "{self.mapName()} for `{name}`")
+        }
+    }
+
+    /// Checks that a list starts, for `name`.
+    fn beginList(self, first: Event, name: String): !Error {
+        match first {
+            Event.BeginList => {}
+            _ => fail self.mismatch(first, "{self.listName()} for `{name}`")
+        }
+    }
+
+    /// Checks that a list ends.
+    fn endList(self): !Error {
+        match self.value()? {
+            Event.EndList => {}
+            _ => fail self.failure(ErrorKind.Type, "expected the end of {self.listName()}")
+        }
+    }
+
+    /// A field that must have been present.
+    fn required[T: ~Copy](self, value: T?, field: String): T ! Error {
+        match value {
+            some(found) => found
+            none => fail self.failure(ErrorKind.Missing, "missing field `{field}`")
+        }
+    }
+
+    /// An error for a value of the wrong kind.
+    fn mismatch(self, first: Event, expected: String): Error {
+        let found = match first {
+            Event.Null => "null"
+            Event.Bool(_) => "a boolean"
+            Event.Int(_) => "a number"
+            Event.Float(_) => "a number"
+            Event.Number(_) => "a number"
+            Event.Text(_) => "a string"
+            Event.Bytes(_) => "bytes"
+            Event.BeginList => self.listName()
+            Event.BeginMap => self.mapName()
+            Event.EndList => "the end of {self.listName()}"
+            Event.EndMap => "the end of {self.mapName()}"
+            Event.Key(_) => "a key"
+        }
+        self.failure(ErrorKind.Type, "expected {expected}, found {found}")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Writing
+// ---------------------------------------------------------------------------
+
+/// A document written value by value: the writer of a format. A value it
+/// cannot hold is an error that the format reports when it finishes.
+pub trait Sink {
+    fn null(self)
+
+    fn bool(self, value: Bool)
+
+    fn int(self, value: Int)
+
+    fn float(self, value: Float)
+
+    /// A number as a text format writes it.
+    fn number(self, digits: String)
+
+    fn text(self, value: String)
+
+    fn bytes(self, value: Array[Byte])
+
+    /// A list of `count` values follows, then its end.
+    fn beginList(self, count: Int)
+
+    fn endList(self)
+
+    /// A map of `count` members follows, each a key and a value, then its
+    /// end.
+    fn beginMap(self, count: Int)
+
+    fn key(self, name: String)
+
+    fn endMap(self)
+
+    /// Whether a map leaves out its members that are `none`, as in a
+    /// format without null.
+    fn omitsNone(self): Bool {
+        false
+    }
+
+    /// Writes JSON text as it is, for `json.Raw`; false when the format
+    /// does not take it, and the value is written event by event instead.
+    fn rawJson(self, text: String): Bool {
+        false
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Encoding and decoding
+// ---------------------------------------------------------------------------
+
+/// A type that writes itself to any format. The compiler implements it for
+/// every record, enum and newtype whose parts implement it.
+pub trait Encode {
+    fn encode[S: Sink](self, out: S)
+}
+
+/// A type that reads itself from any format, given the first event of its
+/// value. The compiler implements it as `Encode`.
+pub trait Decode {
+    fn decode[S: Source](input: S, first: Event): Self ! Error
+}
+
+impl Encode for Int {
+    fn encode[S: Sink](self, out: S) {
+        out.int(self)
+    }
+}
+
+impl Decode for Int {
+    fn decode[S: Source](input: S, first: Event): Int ! Error {
+        match first {
+            Event.Int(value) => value
+            Event.Number(digits) => match Int.parse(digits) {
+                ok(value) => value
+                err(_) => fail input.failure(
+                    ErrorKind.Range,
+                    "{digits} is not an integer that fits `Int`",
+                )
+            }
+            Event.Float(value) => fail input.failure(
+                ErrorKind.Range,
+                "{value} is not an integer that fits `Int`",
+            )
+            _ => fail input.mismatch(first, "an integer")
+        }
+    }
+}
+
+impl Encode for Float {
+    fn encode[S: Sink](self, out: S) {
+        out.float(self)
+    }
+}
+
+impl Decode for Float {
+    fn decode[S: Source](input: S, first: Event): Float ! Error {
+        match first {
+            Event.Float(value) => value
+            Event.Int(value) => Float(value)
+            Event.Number(digits) => match Float.parse(digits) {
+                ok(value) => value
+                err(_) => fail input.failure(
+                    ErrorKind.Range,
+                    "{digits} is not a number that fits `Float`",
+                )
+            }
+            _ => fail input.mismatch(first, "a number")
+        }
+    }
+}
+
+impl Encode for Bool {
+    fn encode[S: Sink](self, out: S) {
+        out.bool(self)
+    }
+}
+
+impl Decode for Bool {
+    fn decode[S: Source](input: S, first: Event): Bool ! Error {
+        match first {
+            Event.Bool(value) => value
+            _ => fail input.mismatch(first, "a boolean")
+        }
+    }
+}
+
+impl Encode for String {
+    fn encode[S: Sink](self, out: S) {
+        out.text(self)
+    }
+}
+
+impl Decode for String {
+    fn decode[S: Source](input: S, first: Event): String ! Error {
+        match first {
+            Event.Text(text) => text
+            _ => fail input.mismatch(first, "a string")
+        }
+    }
+}
+
+impl[T: Encode] Encode for Array[T] {
+    fn encode[S: Sink](self, out: S) {
+        out.beginList(self.length())
+        for item in self {
+            item.encode(out)
+        }
+        out.endList()
+    }
+}
+
+impl[T: Decode] Decode for Array[T] {
+    fn decode[S: Source](input: S, first: Event): Array[T] ! Error {
+        input.beginList(first, "Array")?
+        var items: Array[T] = []
+        for {
+            let event = input.value()?
+            match event {
+                Event.EndList => break
+                _ => items.push(Decode.decode[T](input, event)?)
+            }
+        }
+        items
+    }
+}
+
+impl[T: Encode] Encode for T? {
+    fn encode[S: Sink](self, out: S) {
+        match self {
+            some(value) => value.encode(out)
+            none => out.null()
+        }
+    }
+}
+
+impl[T: Decode] Decode for T? {
+    fn decode[S: Source](input: S, first: Event): T? ! Error {
+        match first {
+            Event.Null => none
+            _ => some(Decode.decode[T](input, first)?)
+        }
+    }
+}
+
+impl[V: Encode] Encode for Map[String, V] {
+    fn encode[S: Sink](self, out: S) {
+        out.beginMap(self.length())
+        for (key, value) in self {
+            out.key(key)
+            value.encode(out)
+        }
+        out.endMap()
+    }
+}
+
+impl[V: Decode] Decode for Map[String, V] {
+    fn decode[S: Source](input: S, first: Event): Map[String, V] ! Error {
+        input.beginMap(first, "Map")?
+        var members: Map[String, V] = [:]
+        for {
+            match input.nextKey()? {
+                some(key) => {
+                    let event = input.value()?
+                    members[key] = Decode.decode[V](input, event)?
+                }
+                none => break
+            }
+        }
+        members
+    }
+}

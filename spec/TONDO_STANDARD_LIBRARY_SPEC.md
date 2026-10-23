@@ -2249,10 +2249,90 @@ comparten parser y emisor con las demás rutas.
 
 ### 14.7 `std.serialization`
 
-Los traits de codificación viven por ahora en el único formato implementado,
-`std.json`. Cuando exista un segundo formato, `std.serialization` reunirá un
-protocolo de eventos común y los traits pasarán a ser compartidos, con las
-mismas implementaciones automáticas y anotaciones.
+`std.serialization` es el protocolo común de todos los formatos: los eventos en
+que cada uno lee y escribe sus valores, el error que todos comparten y los traits
+con los que cualquier tipo se escribe y se lee en cualquiera de ellos. Cada
+formato da un `Source` y un `Sink`; ninguno define traits propios ni convierte
+sus documentos a través de otro formato.
+
+~~~tondo pseudocode
+pub enum Event {
+    Null
+    Bool(Bool)
+    Int(Int)
+    Float(Float)
+    Number(String)          // un número tal como lo escribe un formato de texto
+    Text(String)
+    Bytes(Array[Byte])
+    BeginList
+    EndList
+    BeginMap
+    Key(String)
+    EndMap
+}
+pub enum ErrorKind { Syntax, Type, Missing, Unknown, Range, Io, Unsupported }
+pub type Error = { kind: ErrorKind, message: String, path: String, line: Int, column: Int }
+
+pub trait Source {
+    fn next(self): Event? ! Error
+    fn skip(self, first: Event): Unit ! Error
+    fn failure(self, kind: ErrorKind, message: String): Error
+    // con implementación por defecto:
+    fn rejectsUnknown(self): Bool
+    fn value(self): Event ! Error
+    fn nextKey(self): String? ! Error
+    fn unknownField(self, key: String, first: Event): Unit ! Error
+    fn beginMap(self, first: Event, name: String): Unit ! Error
+    fn beginList(self, first: Event, name: String): Unit ! Error
+    fn endList(self): Unit ! Error
+    fn required[T](self, value: T?, field: String): T ! Error
+    fn mismatch(self, first: Event, expected: String): Error
+}
+
+pub trait Sink {
+    fn null(self)
+    fn bool(self, value: Bool)
+    fn int(self, value: Int)
+    fn float(self, value: Float)
+    fn number(self, digits: String)
+    fn text(self, value: String)
+    fn bytes(self, value: Array[Byte])
+    fn beginList(self, count: Int)
+    fn endList(self)
+    fn beginMap(self, count: Int)
+    fn key(self, name: String)
+    fn endMap(self)
+    // con implementación por defecto:
+    fn omitsNone(self): Bool
+}
+
+pub trait Encode {
+    fn encode[S: Sink](self, out: S)
+}
+pub trait Decode {
+    fn decode[S: Source](input: S, first: Event): Self ! Error
+}
+~~~
+
+- `Encode` y `Decode` están implementados para `Int`, `Float`, `Bool`,
+  `String`, `T?`, `Array[T]` y `Map[String, V]`, y el compilador los implementa
+  para cada record, enum y newtype del programa cuyas partes los implementan,
+  cuando el programa trae `std.serialization` directamente o por un formato. Una
+  implementación escrita en el programa sustituye a la automática.
+- Un record es un mapa con sus campos en orden de declaración; `@name("texto")`
+  cambia la clave de un campo y `@ignore` lo omite, y debe ser opcional. `none`
+  es `Null`; un formato sin null (`omitsNone`) omite el campo, y un campo
+  opcional ausente se decodifica como `none`. Un campo obligatorio ausente da
+  `Missing`; uno desconocido se ignora salvo que el `Source` lo rechace.
+- Un newtype es su valor. Una variante sin payload es su nombre como texto; una
+  con payload es un mapa de una sola clave, el nombre, cuyo valor es el payload,
+  una lista si tiene varios componentes o un mapa si tiene campos.
+- `Decode` acepta para un número cualquiera de `Int`, `Float` y `Number`, y para
+  un entero da `Range` cuando no cabe.
+- Un `Error` lleva dónde ocurrió como camino (`$.users[2].age`), línea y
+  columna, y se muestra como `mensaje at camino (line l, column c)`.
+- Un `Sink` que no puede representar un valor lo informa al terminar el
+  documento, con `Unsupported`.
 
 ### 14.8 `std.reflect`
 
@@ -2602,16 +2682,9 @@ pub enum Value {
 }
 pub type Number
 pub type Raw
-pub enum ErrorKind { Syntax, Type, Missing, Unknown, Range, Io }
-pub type JsonError = { kind: ErrorKind, message: String, path: String, line: Int, column: Int }
+pub alias ErrorKind = serialization.ErrorKind
+pub alias JsonError = serialization.Error
 pub enum UnknownFields { Ignore, Reject }
-
-pub trait Encode {
-    fn encodeJson(self, out: Writer)
-}
-pub trait Decode {
-    fn decodeJson(input: Reader, first: Event): Self ! JsonError
-}
 
 pub fn encode[T: Encode](value: T, pretty: Bool = false, canonical: Bool = false): String
 pub fn decode[T: Decode](text: String, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): T ! JsonError
@@ -2664,17 +2737,11 @@ pub fn Writer.flush(self): Unit ! JsonError
 
 Codificación tipada:
 
-- `Encode` y `Decode` están implementados para `Int`, `Float`, `Bool`,
-  `String`, `T?`, `Array[T]`, `Map[String, V]`, `Value`, `Number` y `Raw`, y el
-  compilador los implementa para cada record, enum y newtype del programa cuyas
-  partes los implementan. Una implementación escrita en el programa sustituye a
-  la automática.
-- Un record es un objeto con sus campos en orden de declaración; `none` es
-  `null`, y un campo opcional ausente se decodifica como `none`. Un campo
-  obligatorio ausente da `Missing`.
-- Un newtype es su valor. Una variante sin payload es su nombre como string; una
-  con payload es un objeto de una sola clave, el nombre, cuyo valor es el
-  payload, un array si tiene varios componentes o un objeto si tiene campos.
+- `Encode` y `Decode` son los de `std.serialization` (14.7), con la forma que
+  allí se define: un record es un objeto, `none` es `null` y una variante con
+  payload es un objeto de una clave. `Value`, `Number` y `Raw` los implementan
+  también. Un `Reader` es un `Source` y un `Writer` es un `Sink`; los bytes se
+  escriben como un string base64.
 - Los campos desconocidos se ignoran, salvo con
   `unknownFields: UnknownFields.Reject`, que da `Unknown`.
 - `pretty` indenta con dos espacios; `canonical` escribe
@@ -2697,9 +2764,8 @@ Documentos dinámicos:
 Lectura y escritura por eventos:
 
 - Un `Reader` entrega `Event`s en orden y `none` tras el documento; un `Writer`
-  recibe valores, claves y corchetes y `finish()` da el texto. Son la base de
-  `encode` y `decode` y de las implementaciones escritas a mano, que reciben un
-  `Writer`, o un `Reader` y el primer evento de su valor.
+  recibe valores, claves y corchetes y `finish()` da el texto. Como `Source` y
+  `Sink` son la base de `encode` y `decode`.
 - `readerFrom` lee un stream de `std.io` a medida que el documento lo necesita, y
   `writerTo` le entrega la salida a medida que crece; `flush` termina el
   documento y devuelve los fallos de escritura. Solo la parte en curso del
@@ -3607,7 +3673,7 @@ pub fn get(url: String, ...): Response ! HttpError   // y head, delete, post, pu
 pub type Body
 pub fn Body.text(text: String, contentType: String = "text/plain; charset=utf-8"): Body
 pub fn Body.bytes(bytes: Array[Byte], contentType: String = "application/octet-stream"): Body
-pub fn Body.json[T: json.Encode](value: T): Body
+pub fn Body.json[T: serialization.Encode](value: T): Body
 pub fn Body.form(fields: Map[String, String]): Body
 pub fn Body.multipart(parts: Array[Part]): Body
 pub fn Body.stream(input: io.Reader, length: Int? = none,
@@ -3630,7 +3696,7 @@ pub fn Response.headerValues(self, name: String): Array[String]
 pub fn Response.headers(self): Map[String, String]
 pub fn Response.text(self): String ! HttpError
 pub fn Response.bytes(self): Array[Byte] ! HttpError
-pub fn Response.json[T: json.Decode](self): T ! HttpError
+pub fn Response.json[T: serialization.Decode](self): T ! HttpError
 pub fn Response.body(self): io.Reader
 pub fn Response.lines(self): Lines            // Iterator[String ! HttpError]
 pub fn Response.events(self): Events          // Iterator[Event ! HttpError]
@@ -3745,7 +3811,7 @@ pub fn Request.header(self, name: String): String?
 pub fn Request.headers(self): Map[String, String]
 pub fn Request.text(self): String ! Problem
 pub fn Request.bytes(self): Array[Byte] ! Problem
-pub fn Request.json[T: json.Decode](self): T ! Problem
+pub fn Request.json[T: serialization.Decode](self): T ! Problem
 pub fn Request.form(self): Map[String, String] ! Problem
 pub fn Request.uploads(self): Uploads                       // Iterator[Upload ! Problem]
 pub fn Request.body(self): io.Reader
@@ -3758,7 +3824,7 @@ pub fn Upload.saveTo(self, path: String): Int ! Problem
 pub type Reply
 pub fn Reply.text(text: String, status: Int = 200): Reply
 pub fn Reply.html(html: String, status: Int = 200): Reply
-pub fn Reply.json[T: json.Encode](value: T, status: Int = 200): Reply
+pub fn Reply.json[T: serialization.Encode](value: T, status: Int = 200): Reply
 pub fn Reply.bytes(bytes: Array[Byte], contentType: String = "application/octet-stream", status: Int = 200): Reply
 pub fn Reply.stream(input: io.Reader, contentType: String = "application/octet-stream", status: Int = 200): Reply
 pub fn Reply.file(path: String, download: String? = none): Reply

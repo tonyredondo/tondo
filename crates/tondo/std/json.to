@@ -1,9 +1,12 @@
 // std.json (standard library 14.10): JSON documents as values of `Value`,
-// and the encoding and decoding of any type through `Encode` and `Decode`,
-// on top of the runtime's tokenizer and emitter.
+// and the encoding and decoding of any type through the `Encode` and
+// `Decode` of `std.serialization`, on top of the runtime's tokenizer and
+// emitter.
 
+import std.internal.codec as jsoncodec
 import std.internal.json as jsonnative
 import std.io as jsonio
+import std.serialization
 
 // ---------------------------------------------------------------------------
 // Values
@@ -153,35 +156,12 @@ impl Display for Value {
 // Errors
 // ---------------------------------------------------------------------------
 
-pub enum ErrorKind {
-    /// The text is not JSON.
-    Syntax
-    /// A value of another kind than the type needs.
-    Type
-    /// A field the type needs is absent.
-    Missing
-    /// A field the type does not have, when unknown fields are rejected.
-    Unknown
-    /// A number that does not fit the type.
-    Range
-    /// The stream it was read from or written to failed.
-    Io
-}
+/// The kinds of failure, which every format shares.
+pub alias ErrorKind = serialization.ErrorKind
 
-pub type JsonError = {
-    kind: ErrorKind
-    message: String
-    /// Where in the document, as `$.users[2].age`.
-    path: String
-    line: Int
-    column: Int
-}
-
-impl Display for JsonError {
-    fn display(self): String {
-        "{self.message} at {self.path} (line {self.line}, column {self.column})"
-    }
-}
+/// A failure to read or write JSON, with where it happened: the error of
+/// every format.
+pub alias JsonError = serialization.Error
 
 // ---------------------------------------------------------------------------
 // Reading
@@ -445,29 +425,147 @@ pub fn Writer.flush(self): !JsonError {
 }
 
 // ---------------------------------------------------------------------------
+// Formats
+// ---------------------------------------------------------------------------
+
+/// A JSON reader is a source of the events of every format.
+impl serialization.Source for Reader {
+    fn next(self): serialization.Event? ! JsonError {
+        let event = match self.native.next() {
+            0 => return none
+            1 => serialization.Event.Null
+            2 => serialization.Event.Bool(true)
+            3 => serialization.Event.Bool(false)
+            4 => serialization.Event.Number(self.native.text())
+            5 => serialization.Event.Text(self.native.text())
+            6 => serialization.Event.BeginList
+            7 => serialization.Event.EndList
+            8 => serialization.Event.BeginMap
+            9 => serialization.Event.EndMap
+            10 => serialization.Event.Key(self.native.text())
+            _ => {
+                let kind = if self.native.where(0).startsWith("cannot read") {
+                    ErrorKind.Io
+                } else {
+                    ErrorKind.Syntax
+                }
+                fail self.error(kind)
+            }
+        }
+        some(event)
+    }
+
+    fn skip(self, first: serialization.Event): !JsonError {
+        if self.native.skip(bracket(first)) < 0 {
+            fail self.error(ErrorKind.Syntax)
+        }
+    }
+
+    fn failure(self, kind: ErrorKind, message: String): JsonError {
+        self.native.fail(message)
+        self.error(kind)
+    }
+
+    fn rejectsUnknown(self): Bool {
+        self.rejectUnknown
+    }
+
+    fn rawJson(self, first: serialization.Event): String? {
+        let json = self.native.raw(bracket(first))
+        if json.length() == 0 {
+            return none
+        }
+        json
+    }
+
+    fn mapName(self): String {
+        "an object"
+    }
+
+    fn listName(self): String {
+        "an array"
+    }
+}
+
+/// The code of the bracket a value starts with, for the native reader.
+fn bracket(first: serialization.Event): Int {
+    match first {
+        serialization.Event.BeginList => 6
+        serialization.Event.BeginMap => 8
+        _ => 0
+    }
+}
+
+/// A JSON writer is a sink of the events of every format. Bytes are
+/// written as a base64 string.
+impl serialization.Sink for Writer {
+    fn null(self) {
+        self.native.word(0)
+    }
+
+    fn bool(self, value: Bool) {
+        self.native.word(if value { 1 } else { 2 })
+    }
+
+    fn int(self, value: Int) {
+        self.native.int(value)
+    }
+
+    fn float(self, value: Float) {
+        self.native.float(value)
+    }
+
+    fn number(self, digits: String) {
+        self.native.number(digits)
+    }
+
+    fn text(self, value: String) {
+        self.native.string(value)
+    }
+
+    fn bytes(self, value: Array[Byte]) {
+        self.native.string(jsoncodec.base64Encode(value, false))
+    }
+
+    fn beginList(self, count: Int) {
+        self.native.bracket(true, false)
+    }
+
+    fn endList(self) {
+        self.native.bracket(false, false)
+    }
+
+    fn beginMap(self, count: Int) {
+        self.native.bracket(true, true)
+    }
+
+    fn key(self, name: String) {
+        self.native.key(name)
+    }
+
+    fn endMap(self) {
+        self.native.bracket(false, true)
+    }
+
+    fn rawJson(self, text: String): Bool {
+        self.native.raw(text)
+        true
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Encoding and decoding
 // ---------------------------------------------------------------------------
 
-/// A type that writes itself as JSON. The compiler implements it for every
-/// record, enum and newtype whose parts implement it.
-pub trait Encode {
-    fn encodeJson(self, out: Writer)
-}
-
-/// A type that reads itself from JSON, given the first event of its value.
-pub trait Decode {
-    fn decodeJson(input: Reader, first: Event): Self ! JsonError
-}
-
 /// The JSON text of a value.
-pub fn encode[T: Encode](value: T, pretty: Bool = false, canonical: Bool = false): String {
+pub fn encode[T: serialization.Encode](value: T, pretty: Bool = false, canonical: Bool = false): String {
     let out = writer(pretty, canonical)
-    value.encodeJson(out)
+    value.encode(out)
     out.finish()
 }
 
 /// A value of `T` from JSON text, which must hold exactly one value.
-pub fn decode[T: Decode](
+pub fn decode[T: serialization.Decode](
     text: String,
     unknownFields: UnknownFields = UnknownFields.Ignore,
     allowDuplicateKeys: Bool = false,
@@ -476,10 +574,10 @@ pub fn decode[T: Decode](
 }
 
 /// The one value a reader holds.
-fn whole[T: Decode](input: Reader): T ! JsonError {
-    let first = input.value()?
-    let value = Decode.decodeJson[T](input, first)?
-    match input.next()? {
+fn whole[T: serialization.Decode](input: Reader): T ! JsonError {
+    let first = serialization.Source.value(input)?
+    let value = serialization.Decode.decode[T](input, first)?
+    match serialization.Source.next(input)? {
         none => value
         some(_) => fail input.failure(ErrorKind.Syntax, "unexpected data after the value")
     }
@@ -491,7 +589,7 @@ pub fn parse(text: String): Value ! JsonError {
 }
 
 /// A value as a `Value`.
-pub fn toValue[T: Encode](value: T): Value {
+pub fn toValue[T: serialization.Encode](value: T): Value {
     match parse(encode(value)) {
         ok(document) => document
         err(_) => Value.Null
@@ -499,12 +597,12 @@ pub fn toValue[T: Encode](value: T): Value {
 }
 
 /// A `Value` as a value of `T`.
-pub fn fromValue[T: Decode](value: Value): T ! JsonError {
+pub fn fromValue[T: serialization.Decode](value: Value): T ! JsonError {
     decode[T](encode(value))
 }
 
 /// A value from a stream, which must hold exactly one, read as it arrives.
-pub fn decodeFrom[T: Decode](
+pub fn decodeFrom[T: serialization.Decode](
     stream: jsonio.Reader,
     unknownFields: UnknownFields = UnknownFields.Ignore,
     allowDuplicateKeys: Bool = false,
@@ -513,14 +611,14 @@ pub fn decodeFrom[T: Decode](
 }
 
 /// Writes the JSON text of a value to a stream as it is produced.
-pub fn encodeTo[T: Encode](
+pub fn encodeTo[T: serialization.Encode](
     value: T,
     stream: jsonio.Writer,
     pretty: Bool = false,
     canonical: Bool = false,
 ): !JsonError {
     let out = writerTo(stream, pretty, canonical)
-    value.encodeJson(out)
+    value.encode(out)
     out.flush()?
 }
 
@@ -550,240 +648,117 @@ impl Display for Raw {
     }
 }
 
-impl Encode for Raw {
-    fn encodeJson(self, out: Writer) {
-        out.native.raw(self.json)
+/// Written as it is to JSON, and as the value it holds to another format.
+impl serialization.Encode for Raw {
+    fn encode[S: serialization.Sink](self, out: S) {
+        if out.rawJson(self.json) {
+            return
+        }
+        match parse(self.json) {
+            ok(value) => serialization.Encode.encode(value, out)
+            err(_) => out.null()
+        }
     }
 }
 
-impl Decode for Raw {
-    fn decodeJson(input: Reader, first: Event): Raw ! JsonError {
-        let code = match first {
-            Event.BeginArray => 6
-            Event.BeginObject => 8
-            _ => 0
+/// Read as written from JSON, and as the JSON of the value from another
+/// format.
+impl serialization.Decode for Raw {
+    fn decode[S: serialization.Source](input: S, first: serialization.Event): Raw ! JsonError {
+        match input.rawJson(first) {
+            some(json) => Raw { json: json }
+            none => Raw { json: encode(serialization.Decode.decode[Value](input, first)?) }
         }
-        let json = input.native.raw(code)
-        if json.length() == 0 {
-            fail input.error(ErrorKind.Syntax)
-        }
-        Raw { json: json }
     }
 }
 
-impl Encode for Value {
-    fn encodeJson(self, out: Writer) {
+impl serialization.Encode for Value {
+    fn encode[S: serialization.Sink](self, out: S) {
         match self {
             Value.Null => out.null()
             Value.Bool(value) => out.bool(value)
-            Value.Number(digits) => out.number(digits)
-            Value.Text(text) => out.string(text)
+            Value.Number(digits) => out.number(digits.digits)
+            Value.Text(text) => out.text(text)
             Value.Array(items) => {
-                out.beginArray()
+                out.beginList(items.length())
                 for item in items {
-                    item.encodeJson(out)
+                    serialization.Encode.encode(item, out)
                 }
-                out.endArray()
+                out.endList()
             }
             Value.Object(members) => {
-                out.beginObject()
+                out.beginMap(members.length())
                 for (key, member) in members {
                     out.key(key)
-                    member.encodeJson(out)
+                    serialization.Encode.encode(member, out)
                 }
-                out.endObject()
+                out.endMap()
             }
         }
     }
 }
 
-impl Decode for Value {
-    fn decodeJson(input: Reader, first: Event): Value ! JsonError {
+impl serialization.Decode for Value {
+    fn decode[S: serialization.Source](input: S, first: serialization.Event): Value ! JsonError {
         match first {
-            Event.Null => Value.Null
-            Event.Bool(value) => Value.Bool(value)
-            Event.Number(digits) => Value.Number(digits)
-            Event.Text(text) => Value.Text(text)
-            Event.BeginArray => {
+            serialization.Event.Null => Value.Null
+            serialization.Event.Bool(value) => Value.Bool(value)
+            serialization.Event.BeginList => {
                 var items: Array[Value] = []
                 for {
                     let event = input.value()?
                     match event {
-                        Event.EndArray => break
-                        _ => items.push(Decode.decodeJson[Value](input, event)?)
+                        serialization.Event.EndList => break
+                        _ => items.push(serialization.Decode.decode[Value](input, event)?)
                     }
                 }
                 Value.Array(items)
             }
-            Event.BeginObject => {
+            serialization.Event.BeginMap => {
                 var members: Map[String, Value] = [:]
                 for {
                     match input.nextKey()? {
                         some(key) => {
                             let event = input.value()?
-                            members[key] = Decode.decodeJson[Value](input, event)?
+                            members[key] = serialization.Decode.decode[Value](input, event)?
                         }
                         none => break
                     }
                 }
                 Value.Object(members)
             }
-            _ => fail input.mismatch(first, "a value")
-        }
-    }
-}
-
-impl Encode for Number {
-    fn encodeJson(self, out: Writer) {
-        out.number(self)
-    }
-}
-
-impl Decode for Number {
-    fn decodeJson(input: Reader, first: Event): Number ! JsonError {
-        match first {
-            Event.Number(digits) => digits
-            _ => fail input.mismatch(first, "a number")
-        }
-    }
-}
-
-impl Encode for Int {
-    fn encodeJson(self, out: Writer) {
-        out.int(self)
-    }
-}
-
-impl Decode for Int {
-    fn decodeJson(input: Reader, first: Event): Int ! JsonError {
-        match first {
-            Event.Number(digits) => match digits.toInt() {
-                some(value) => value
-                none => fail input.failure(
-                    ErrorKind.Range,
-                    "{digits} is not an integer that fits `Int`",
-                )
-            }
-            _ => fail input.mismatch(first, "an integer")
-        }
-    }
-}
-
-impl Encode for Float {
-    fn encodeJson(self, out: Writer) {
-        out.float(self)
-    }
-}
-
-impl Decode for Float {
-    fn decodeJson(input: Reader, first: Event): Float ! JsonError {
-        match first {
-            Event.Number(digits) => digits.toFloat()
-            _ => fail input.mismatch(first, "a number")
-        }
-    }
-}
-
-impl Encode for Bool {
-    fn encodeJson(self, out: Writer) {
-        out.bool(self)
-    }
-}
-
-impl Decode for Bool {
-    fn decodeJson(input: Reader, first: Event): Bool ! JsonError {
-        match first {
-            Event.Bool(value) => value
-            _ => fail input.mismatch(first, "a boolean")
-        }
-    }
-}
-
-impl Encode for String {
-    fn encodeJson(self, out: Writer) {
-        out.string(self)
-    }
-}
-
-impl Decode for String {
-    fn decodeJson(input: Reader, first: Event): String ! JsonError {
-        match first {
-            Event.Text(text) => text
-            _ => fail input.mismatch(first, "a string")
-        }
-    }
-}
-
-impl[T: Encode] Encode for Array[T] {
-    fn encodeJson(self, out: Writer) {
-        out.beginArray()
-        for item in self {
-            item.encodeJson(out)
-        }
-        out.endArray()
-    }
-}
-
-impl[T: Decode] Decode for Array[T] {
-    fn decodeJson(input: Reader, first: Event): Array[T] ! JsonError {
-        match first {
-            Event.BeginArray => {}
-            _ => fail input.mismatch(first, "an array")
-        }
-        var items: Array[T] = []
-        for {
-            let event = input.value()?
-            match event {
-                Event.EndArray => break
-                _ => items.push(Decode.decodeJson[T](input, event)?)
+            serialization.Event.Text(text) => Value.Text(text)
+            serialization.Event.Bytes(bytes) => Value.Text(jsoncodec.base64Encode(bytes, false))
+            _ => match numeral(first) {
+                some(digits) => Value.Number(digits)
+                none => fail input.mismatch(first, "a value")
             }
         }
-        items
     }
 }
 
-impl[T: Encode] Encode for T? {
-    fn encodeJson(self, out: Writer) {
-        match self {
-            some(value) => value.encodeJson(out)
-            none => out.null()
-        }
+/// A number event as JSON writes it; `none` for another event, or a float
+/// that is not finite.
+fn numeral(event: serialization.Event): Number? {
+    match event {
+        serialization.Event.Int(value) => Number { digits: "{value}" }
+        serialization.Event.Float(value) if value.isFinite() => Number { digits: "{value}" }
+        serialization.Event.Number(digits) => Number { digits: digits }
+        _ => none
     }
 }
 
-impl[T: Decode] Decode for T? {
-    fn decodeJson(input: Reader, first: Event): T? ! JsonError {
-        match first {
-            Event.Null => none
-            _ => some(Decode.decodeJson[T](input, first)?)
-        }
+impl serialization.Encode for Number {
+    fn encode[S: serialization.Sink](self, out: S) {
+        out.number(self.digits)
     }
 }
 
-impl[V: Encode] Encode for Map[String, V] {
-    fn encodeJson(self, out: Writer) {
-        out.beginObject()
-        for (key, value) in self {
-            out.key(key)
-            value.encodeJson(out)
+impl serialization.Decode for Number {
+    fn decode[S: serialization.Source](input: S, first: serialization.Event): Number ! JsonError {
+        match numeral(first) {
+            some(digits) => digits
+            none => fail input.mismatch(first, "a number")
         }
-        out.endObject()
-    }
-}
-
-impl[V: Decode] Decode for Map[String, V] {
-    fn decodeJson(input: Reader, first: Event): Map[String, V] ! JsonError {
-        input.beginObject(first, "Map")?
-        var members: Map[String, V] = [:]
-        for {
-            match input.nextKey()? {
-                some(key) => {
-                    let event = input.value()?
-                    members[key] = Decode.decodeJson[V](input, event)?
-                }
-                none => break
-            }
-        }
-        members
     }
 }
