@@ -105,10 +105,36 @@ impl Parser<'_> {
 
     fn expected<T>(&mut self, what: &str) -> PResult<T> {
         let found = self.tok().describe();
-        match self.foreign_hint(what) {
+        let reported = !self.recovering;
+        let result = match self.foreign_hint(what) {
             Some(hint) => self.error(format!("expected {what}, found {found}: {hint}")),
             None => self.error(format!("expected {what}, found {found}")),
+        };
+        if reported && let Some(fix) = self.foreign_fix() {
+            self.diags.fix(fix.title, fix.safe, fix.edits);
         }
+        result
+    }
+
+    /// The repair of another language's syntax that `foreign_hint`
+    /// explains, when it is a matter of a word or two; safe when the word is
+    /// all that differs.
+    fn foreign_fix(&self) -> Option<crate::diag::Fix> {
+        let fix = |title: &str, safe, edits| crate::diag::Fix { title: title.to_string(), safe, edits };
+        let previous = (self.pos > 0).then(|| &self.tokens[self.pos - 1]);
+        if let (Tok::Minus, Tok::Gt) = (self.tok(), self.nth(1)) {
+            let span = self.span().to(self.tokens[self.pos + 1].span);
+            return Some(fix("write `:` before the result type", true, vec![(span, ":".into())]));
+        }
+        let previous = previous?;
+        let Tok::Ident(word) = &previous.tok else { return None };
+        let (title, safe, replacement) = match word.as_str() {
+            "while" => ("write `for`", true, "for"),
+            "def" | "func" | "function" | "fun" | "proc" => ("write `fn`", false, "fn"),
+            "elif" | "elsif" => ("write `else if`", false, "else if"),
+            _ => return None,
+        };
+        Some(fix(title, safe, vec![(previous.span, replacement.into())]))
     }
 
     /// What Tondo writes for the syntax of another language that the

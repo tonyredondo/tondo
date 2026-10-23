@@ -667,6 +667,9 @@ struct FnCx {
     locals: Vec<hir::Local>,
     /// For an editor: the declaration of each named local.
     local_defs: HashMap<u32, usize>,
+    /// Where the function's result type is written, which a repair may
+    /// widen, and whether the function is public.
+    result_span: Option<(Span, bool)>,
     mutable: Vec<bool>,
     scopes: Vec<Vec<(String, LocalId)>>,
     /// Success type that `return` produces.
@@ -1743,6 +1746,11 @@ impl<'a> Checker<'a> {
                     None => format!("there is no module `std.{name}`; `tondo api --list` names the standard modules"),
                 };
                 self.diags.error("E1008", import.span, message);
+                let near = closest(&name, modules.iter().filter_map(|m| m.strip_prefix("std.")));
+                if let (Some(near), Some(first), Some(last)) = (near, import.path.first(), import.path.last()) {
+                    let edit = (first.span.to(last.span), format!("std.{near}"));
+                    self.diags.fix(format!("import `std.{near}`"), false, vec![edit]);
+                }
                 return;
             }
             _ => {
@@ -3811,6 +3819,7 @@ impl<'a> Checker<'a> {
         FnCx {
             locals: Vec::new(),
             local_defs: HashMap::new(),
+            result_span: None,
             mutable: Vec::new(),
             scopes: vec![Vec::new()],
             result: success,
@@ -3883,6 +3892,7 @@ impl<'a> Checker<'a> {
             loans.push(loan);
         }
         let success = (!cx.infer_result).then_some(cx.result);
+        cx.result_span = f.result.as_ref().map(|t| (t.span, f.public));
         cx.body = true;
         cx.unsafe_region = signature.is_unsafe;
         cx.unsafe_body = signature.is_unsafe;
@@ -4375,6 +4385,8 @@ impl<'a> Checker<'a> {
         if !cx.loops.is_empty() {
             let message = "each iteration waits for this task at its end, so the tasks run one at a time; `spawn detached` lets them run at once, or add them to a `Group` and wait for all of them";
             self.diags.warning("W1013", call.span, message);
+            let start = Span::new(call.span.start, call.span.start);
+            self.diags.fix("launch it with `spawn detached`", false, vec![(start, "detached ".into())]);
         }
         let join = self.expr(cx, call, None);
         let local = self.hidden_local(cx, join.ty);
@@ -5923,6 +5935,12 @@ impl<'a> Checker<'a> {
                         self.display(value.ty)
                     );
                     self.diags.error("E1303", value.span, message);
+                    let start = Span::new(value.span.start, value.span.start);
+                    let end = Span::new(value.span.end, value.span.end);
+                    if matches!(self.types.kind(value.ty), TyKind::Result(..)) && cx.error.is_some() {
+                        self.diags.fix("pass the failure on with `?`", false, vec![(end, "?".into())]);
+                    }
+                    self.diags.fix("discard it with `_ = ...`", false, vec![(start, "_ = ".into())]);
                 }
                 cx.diverged |= value.ty == Ty::NEVER;
                 Some(hir::Stmt::Expr(value))
@@ -6399,6 +6417,7 @@ impl<'a> Checker<'a> {
                 }
             }
             self.diags.error("E1102", span, message);
+            self.offer_meant(span);
         }
         found
     }
@@ -6844,6 +6863,8 @@ impl<'a> Checker<'a> {
                     self.display(value.ty)
                 );
                 self.diags.error("E1303", value.span, message);
+                let start = Span::new(value.span.start, value.span.start);
+                self.diags.fix("discard it with `_ = ...`", false, vec![(start, "_ = ".into())]);
                 return value;
             }
             let span = value.span;
@@ -7357,6 +7378,7 @@ impl<'a> Checker<'a> {
                     None => message.push_str(&format!("; its fields are {}", listed(&names))),
                 }
                 self.diags.error("E1102", init.name.span, message);
+                self.offer_meant(init.name.span);
                 continue;
             };
             if std::mem::replace(&mut seen[index], true) {
@@ -7681,6 +7703,7 @@ impl<'a> Checker<'a> {
                     }
                 }
                 self.diags.error("E1001", variant.span, message);
+                self.offer_meant(variant.span);
                 Some(None)
             }
             None if ty == Ty::ERROR => Some(None),
@@ -8440,6 +8463,12 @@ impl<'a> Checker<'a> {
                             self.display(result)
                         );
                         self.diags.error("E1301", span, message);
+                        // Widening a public function's errors changes its interface.
+                        if let Some((written, public)) = cx.result_span {
+                            let widened = self.types.display(result);
+                            let title = format!("declare the result as `{widened}`");
+                            self.diags.fix(title, !public, vec![(written, widened)]);
+                        }
                     }
                 }
                 Self::mk(hir::ExprKind::Try(Box::new(value)), ok, span)
@@ -9623,6 +9652,9 @@ impl<'a> Checker<'a> {
             );
         } else if let Some(near) = self.closest_method(ty, &method.name) {
             message = format!("{message}; did you mean `{near}`?");
+            self.diags.error("E1001", method.span, message);
+            self.diags.fix(format!("call `{near}`"), false, vec![(method.span, near)]);
+            return Self::error_expr(span);
         }
         self.diags.error("E1001", method.span, message);
         Self::error_expr(span)
@@ -10006,6 +10038,17 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Offers to write the name the last diagnostic says the program may
+    /// have meant, in place of `span`.
+    fn offer_meant(&mut self, span: Span) {
+        let Some(last) = self.diags.list.last() else { return };
+        let Some(near) = last.message.split("did you mean `").nth(1).and_then(|rest| rest.split('`').next()) else {
+            return;
+        };
+        let near = near.to_string();
+        self.diags.fix(format!("write `{near}`"), false, vec![(span, near)]);
+    }
+
     /// Reports `E1001`, pointing habits from other languages at the canonical form.
     fn unknown_name(&mut self, cx: &FnCx, name: &str, span: Span) {
         let hint = match name {
@@ -10065,6 +10108,32 @@ impl<'a> Checker<'a> {
             false => format!("unknown name `{name}`; {hint}"),
         };
         self.diags.error("E1001", span, message);
+        let replacement = match name {
+            "Some" | "Ok" | "Err" => Some((true, name.to_lowercase())),
+            "None" | "null" | "nil" | "undefined" | "NULL" | "nullptr" | "Nothing" => Some((false, "none".into())),
+            "True" | "TRUE" => Some((true, "true".into())),
+            "False" | "FALSE" => Some((true, "false".into())),
+            "this" => Some((false, "self".into())),
+            _ => hint
+                .strip_prefix("did you mean `")
+                .and_then(|h| h.strip_suffix("`?"))
+                .map(|near| (false, near.to_string())),
+        };
+        if let Some((safe, replacement)) = replacement {
+            self.diags.fix(format!("write `{replacement}`"), safe, vec![(span, replacement)]);
+        } else if crate::api::standard_modules().contains(&format!("std.{name}")) {
+            // After the file's last import, or at its start.
+            let file = self.sources.file_of(span.start);
+            let (mut at, mut offset) = (0, 0);
+            for line in file.text.split_inclusive('\n') {
+                offset += line.len();
+                if line.starts_with("import ") {
+                    at = offset;
+                }
+            }
+            let place = Span::new(file.base + at as u32, file.base + at as u32);
+            self.diags.fix(format!("add `import std.{name}`"), true, vec![(place, format!("import std.{name}\n"))]);
+        }
     }
 
     fn call(

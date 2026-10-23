@@ -285,3 +285,34 @@ fn completion_and_highlighting() {
     assert_eq!(data[..5], [0, 0, 6, 11, 0]);
     editor.stop();
 }
+
+#[test]
+fn repairs_as_code_actions() {
+    let dir = project("lsp-repairs", &[("main.to", "fn main() {\n    let x: Int? = None\n    _ = x\n}\n")]);
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("main.to"));
+    let actions = |editor: &mut Editor, character: u64| {
+        let at = json!({ "line": 1, "character": character });
+        let params = json!({ "textDocument": { "uri": uri }, "range": { "start": at, "end": at }, "context": { "diagnostics": [] } });
+        editor.request("textDocument/codeAction", params)
+    };
+    let titles = |actions: &Value| -> Vec<String> {
+        actions.as_array().unwrap().iter().map(|a| a["title"].as_str().unwrap().to_string()).collect()
+    };
+    // `none` needs a type that context may not give: a decision.
+    let found = actions(&mut editor, 18);
+    assert_eq!(titles(&found), ["write `none`"], "{found}");
+    assert_eq!(found[0]["kind"], "quickfix");
+    assert_eq!(found[0]["isPreferred"], false);
+    assert_eq!(found[0]["edit"]["changes"][&uri][0]["newText"], "none");
+
+    // A `;` is an error of its own, which hides those that would follow it.
+    let text = "fn main() {\n    let x: Int? = None;\n    _ = x\n}\n";
+    editor.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": text }] }),
+    );
+    let found = actions(&mut editor, 22);
+    assert_eq!(titles(&found), ["remove the `;`", "Apply every safe repair"], "{found}");
+    editor.stop();
+}

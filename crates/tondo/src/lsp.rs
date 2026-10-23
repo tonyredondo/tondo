@@ -142,6 +142,7 @@ impl Server {
             "textDocument/documentSymbol" => Some(Ok(self.symbols(params).unwrap_or(json!([])))),
             "textDocument/formatting" => Some(Ok(self.formatting(params).unwrap_or(Value::Null))),
             "textDocument/completion" => Some(Ok(self.completion(params).unwrap_or(json!([])))),
+            "textDocument/codeAction" => Some(Ok(self.code_actions(params).unwrap_or(json!([])))),
             "textDocument/semanticTokens/full" => {
                 Some(Ok(self.semantic_tokens(params).unwrap_or(json!({ "data": [] }))))
             }
@@ -173,6 +174,7 @@ impl Server {
                 "documentSymbolProvider": true,
                 "documentFormattingProvider": true,
                 "completionProvider": { "triggerCharacters": ["."] },
+                "codeActionProvider": { "codeActionKinds": ["quickfix", "source.fixAll"] },
                 "semanticTokensProvider": {
                     "legend": { "tokenTypes": TOKEN_TYPES, "tokenModifiers": ["declaration", "readonly", "defaultLibrary"] },
                     "full": true,
@@ -796,6 +798,73 @@ impl Server {
             }
         }
         Some(json!({ "data": data }))
+    }
+
+    /// The repairs of the diagnostics in a range, each a quick fix, and one
+    /// action that applies every safe repair of the file.
+    fn code_actions(&mut self, params: &Value) -> Option<Value> {
+        let start = json!({ "textDocument": params["textDocument"], "position": params["range"]["start"] });
+        let end = json!({ "textDocument": params["textDocument"], "position": params["range"]["end"] });
+        self.prepare(&start)?;
+        let (analyzed, file, from) = self.at(&start)?;
+        let (_, _, to) = self.at(&end)?;
+        let source = analyzed.analysis.sources.file(file);
+        let inside = |span: Span| span.start >= source.base && span.end <= source.base + source.text.len() as u32;
+        let wanted: Vec<&str> = params["context"]["only"]
+            .as_array()
+            .map(|kinds| kinds.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        let wants = |kind: &str| wanted.is_empty() || wanted.iter().any(|w| kind.starts_with(w));
+        let mut actions = Vec::new();
+        let mut all: Vec<Value> = Vec::new();
+        let mut taken: Vec<Span> = Vec::new();
+        for diagnostic in &analyzed.analysis.diags.list {
+            let Some(span) = diagnostic.span.filter(|&span| inside(span)) else { continue };
+            for fix in &diagnostic.fixes {
+                let edits = self.edits(analyzed, &fix.edits);
+                if span.start <= to && from <= span.end && wants("quickfix") {
+                    actions.push(json!({
+                        "title": fix.title,
+                        "kind": "quickfix",
+                        "isPreferred": fix.safe,
+                        "edit": { "changes": edits },
+                    }));
+                }
+                // Safe repairs that do not touch each other.
+                let clear = fix.edits.iter().all(|(s, _)| taken.iter().all(|t| s.end < t.start || t.end < s.start));
+                if fix.safe && clear {
+                    taken.extend(fix.edits.iter().map(|(s, _)| *s));
+                    for (uri, list) in edits.as_object().into_iter().flatten() {
+                        if uri == params["textDocument"]["uri"].as_str().unwrap_or_default() {
+                            all.extend(list.as_array().into_iter().flatten().cloned());
+                        }
+                    }
+                }
+            }
+        }
+        if !all.is_empty() && wants("source.fixAll") {
+            let uri = params["textDocument"]["uri"].clone();
+            let mut changes = serde_json::Map::new();
+            changes.insert(uri.as_str().unwrap_or_default().to_string(), Value::Array(all));
+            actions.push(json!({
+                "title": "Apply every safe repair",
+                "kind": "source.fixAll.tondo",
+                "edit": { "changes": changes },
+            }));
+        }
+        Some(Value::Array(actions))
+    }
+
+    /// A repair's edits, by file.
+    fn edits(&self, analyzed: &Analyzed, edits: &[(Span, String)]) -> Value {
+        let mut changes = serde_json::Map::new();
+        for (span, replacement) in edits {
+            if let Some((path, range)) = self.place(analyzed, *span) {
+                let list = changes.entry(self.uri(&path)).or_insert_with(|| json!([]));
+                list.as_array_mut().unwrap().push(json!({ "range": range, "newText": replacement }));
+            }
+        }
+        Value::Object(changes)
     }
 
     fn formatting(&mut self, params: &Value) -> Option<Value> {

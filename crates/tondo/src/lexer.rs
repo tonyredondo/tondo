@@ -455,6 +455,14 @@ impl Lexer<'_> {
         if let Some((text, message)) = foreign.iter().find(|(text, _)| rest.starts_with(text)) {
             self.pos += text.len();
             self.error("E0002", start, self.pos, *message);
+            let span = self.span(start, self.pos);
+            match *text {
+                "&&" => self.diags.fix("write `and`", true, vec![(span, "and".into())]),
+                "||" => self.diags.fix("write `or`", true, vec![(span, "or".into())]),
+                "++" => self.diags.fix("write `+= 1`", false, vec![(span, " += 1".into())]),
+                "--" => self.diags.fix("write `-= 1`", false, vec![(span, " -= 1".into())]),
+                _ => {}
+            }
             // Parsing goes on with a binary operator in its place, so the
             // operands raise no further errors.
             match *text {
@@ -484,6 +492,10 @@ impl Lexer<'_> {
                 format!("unexpected character `{c}`")
             };
             self.error("E0002", start, self.pos, message);
+            if c == ';' {
+                let span = self.span(start, self.pos);
+                self.diags.fix("remove the `;`", true, vec![(span, String::new())]);
+            }
             return;
         };
         self.pos += text.len();

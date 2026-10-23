@@ -60,7 +60,8 @@ tondo guide <topic>                one topic of this guide
 ```
 
 Every error has a code and says how to fix it, often with the exact code to
-write; `tondo check --json` gives the same as data with spans.
+write; `tondo check --json` gives the same as data with spans, and many
+errors' repairs as edits (`fixes`), `safe` ones ready to apply.
 
 ## Working as an agent
 

@@ -363,6 +363,9 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   trait, parámetro, variable, campo, variante, función, método), de las
   palabras clave, los textos, los números y los comentarios.
 - Los símbolos de un archivo y su formato canónico (21 del lenguaje).
+- Las reparaciones de los diagnósticos (22.4 del lenguaje), cada una como
+  acción `quickfix`, preferida si es `safe`, y una acción `source.fixAll` que
+  aplica las seguras del archivo que no se tocan entre sí.
 
 Las posiciones cuentan bytes UTF-8 cuando el editor lo admite y unidades
 UTF-16 si no.
