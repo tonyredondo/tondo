@@ -37,6 +37,10 @@ pub struct Options {
     pub retry: u32,
     /// Times the whole selection runs (8.8).
     pub repeat: u32,
+    /// `--schedules count`: as many runs of the selection, each with its
+    /// tasks in another order (8.10), from a seed, and whether `tondo test`
+    /// chose it.
+    pub schedules: Option<(u32, u64, bool)>,
     pub codeowners: Codeowners,
     pub show_output: bool,
     pub allow_empty: bool,
@@ -298,6 +302,9 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     if let (Order::Random(seed, _), false) = (&options.order, options.json) {
         say!("seed {seed:016x}");
     }
+    if let (Some((count, seed, _)), false) = (options.schedules, options.json) {
+        say!("{count} orders of the tasks from seed {seed:016x}");
+    }
     let mut context = json::Context {
         tree,
         options,
@@ -480,7 +487,7 @@ fn campaign(run: &worker::Run, plan: &[u32], printer: &mut human::Printer) -> (V
     let (tree, options) = (run.tree, run.options);
     let mut attempts = Vec::new();
     let mut rounds = Vec::new();
-    for iteration in 1..=options.repeat {
+    for iteration in 1..=options.iterations() {
         printer.begin(iteration, 0, plan);
         // Each top-level suite or test is a unit of the first round.
         let mut units: Vec<Vec<u32>> = Vec::new();
@@ -560,7 +567,32 @@ fn failed(aggregates: &[Aggregate], attempts: &[Attempt], options: &Options) -> 
             || matches!(a.status, Status::Blocked(_, false))
             || (a.flaky && !options.allow_flaky)
             || (options.deny_skips && matches!(a.status, Status::Skipped(_) | Status::Blocked(_, true)))
-    }) || (options.repeat > 1 && attempts.iter().any(|a| a.status != Status::Passed))
+    }) || (options.iterations() > 1 && attempts.iter().any(|a| a.status != Status::Passed))
+}
+
+impl Options {
+    /// How many times the selection runs: `--repeat`, or `--schedules`.
+    pub(super) fn iterations(&self) -> u32 {
+        self.schedules.map_or(self.repeat, |(count, ..)| count)
+    }
+
+    /// The seed of the order of tasks an iteration runs with (8.10).
+    pub(super) fn schedule(&self, iteration: u32) -> Option<u64> {
+        self.schedules.map(|(_, seed, _)| schedule_seed(seed, iteration))
+    }
+}
+
+/// The seed of iteration `iteration` of `--schedules` from `seed`: the
+/// first is the seed itself, so `--schedules 1 --seed` repeats any one.
+pub fn schedule_seed(seed: u64, iteration: u32) -> u64 {
+    if iteration <= 1 {
+        return seed;
+    }
+    // SplitMix64 of the seed and the iteration.
+    let mut z = seed.wrapping_add(u64::from(iteration).wrapping_mul(0x9e37_79b9_7f4a_7c15));
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
 }
 
 /// Where the test build of the project at `path` is kept: a directory

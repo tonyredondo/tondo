@@ -1459,7 +1459,7 @@ selección previa no vacía es un resultado válido.
 
 `--order canonical|random` elige la prioridad de dispatch y aparece como máximo
 una vez. `canonical` es el default. `--seed hex` solo es válido con
-`--order random`; acepta de uno a dieciséis dígitos ASCII hexadecimales y se
+`--order random` o `--schedules` (8.10), y con los dos los siembra a ambos; acepta de uno a dieciséis dígitos ASCII hexadecimales y se
 normaliza en reportes como dieciséis dígitos lowercase. No admite prefijo
 `0x`, signo, separadores ni whitespace.
 
@@ -1688,6 +1688,33 @@ Tondo 0.1 no define `--fail-fast`. Detener el runner dejaría hojas
 seleccionadas sin ejecutar y exigiría otro estado y otra política de scheduling,
 especialmente bajo `--jobs N`. Una edición posterior puede añadirlo únicamente
 si reporta honestamente esos nodos y conserva una frontera determinista.
+
+### 8.10 Órdenes de las tareas
+
+En Tondo seguro no hay carreras de datos (16.15 del lenguaje), pero un test
+puede depender del orden en que corren sus tareas: qué mensaje llega antes, qué
+tarea toma un lock primero. `--schedules N`, con `N >= 1`, ejecuta la selección
+completa `N` veces, cada una en un trabajador nuevo como en 8.8, y en cada una
+las tareas corren en otro orden:
+
+- todas en un solo thread;
+- cuando varias pueden correr, la siguiente la elige un generador sembrado,
+  que también elige entre las operaciones listas de un `select`;
+- cada tarea cede el paso tras cada llamada que puede esperar (11.10 del
+  lenguaje), donde el orden entre tareas puede cambiar.
+
+La iteración `1` usa la seed de la invocación y cada iteración `i > 1` una seed
+derivada (`seeded-single-worker-v1`: SplitMix64 de `seed + i·0x9e3779b97f4a7c15`).
+La salida humana nombra la seed de cada iteración y, para cada test que falla,
+el comando que lo repite en el primer orden en que falló:
+`tondo test --exact <id> --schedules 1 --seed <seed>`. Una seed reproduce el
+mismo orden mientras el test solo espere a sus propias tareas; el reloj, la red,
+los archivos y los procesos siguen siendo los reales.
+
+`--schedules` es incompatible con `--repeat`, `--retry`, `--allow-flaky`,
+`--list` y `--update-snapshots`, y con más de una iteración sigue la política
+de campaña de 8.8: cualquier intento que no pase da exit `1`. Sin seed, el
+runner elige una y la muestra.
 
 ## 9. Resultados, diagnósticos y salida
 
@@ -2074,6 +2101,7 @@ tondo test [<project> | --project <dir>]
            [--timeout <seconds>]
            [--retry <non-negative-int>]
            [--repeat <positive-int>]
+           [--schedules <positive-int>]
            [--artifacts <path>]
            [--update-snapshots]
            [--diagnostic-format <human|json>]
@@ -2146,6 +2174,8 @@ Reglas:
   efectivo es `1`; un valor explícito `1` es válido y conserva la misma
   ejecución, policy y schema que omitirlo. La opción sigue siendo incompatible
   con `--retry` y `--allow-flaky`, incluso con valor `1`.
+- `--schedules` aparece como máximo una vez, acepta un entero decimal canónico
+  positivo y sigue 8.10.
 - `--artifacts` selecciona el root lógico de
   `tondo-test-artifacts-0.1/1`. Sin la opción se usa el directorio de artifacts
   del target declarado por el toolchain. El path efectivo nunca entra en el
@@ -2815,6 +2845,7 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
     "count": 1,
     "isolation": "fresh-worker-per-iteration-v1"
   },
+  "schedules": null,
   "artifact_store": {
     "format": "tondo-test-artifacts-0.1/1",
     "algorithm": "sha256-objects-v1"
@@ -3015,6 +3046,11 @@ elegible.
 activa la policy de campaña. Retry y repeat no pueden estar activos
 simultáneamente: `repeat.count > 1` implica
 `retry.max_additional_rounds == 0` y `retry.rounds == []`.
+
+`schedules` es `null` sin `--schedules`; si no, contiene `count`, la `seed` de
+la iteración `1` en dieciséis dígitos hexadecimales lowercase y `algorithm`,
+siempre `seeded-single-worker-v1`; la seed de cada intento se deriva de su
+`iteration` según 8.10.
 
 `artifact_store` identifica el store aunque ningún intento adjunte bytes; no
 contiene el path físico seleccionado. `snapshot_policy.mode` es `check` o

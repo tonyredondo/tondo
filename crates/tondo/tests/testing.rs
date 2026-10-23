@@ -494,3 +494,33 @@ test nests {
     let clock = "\"virtual_time\":[{\"index\":1,\"elapsed_ns\":\"10000000000\",\"automatic_advances\":1,\"explicit_advances\":1,\"settles\":1}]";
     assert!(stdout.contains(clock), "{stdout}");
 }
+
+#[test]
+fn explores_orders_of_tasks() {
+    let tests = "\
+fn worker(id: Int, out: Sender[Int]) {
+    out.send(id)
+}
+
+test firstArrivesFirst {
+    let (out, inbox) = channel[Int]()
+    spawn detached worker(1, out.copy())
+    spawn detached worker(2, out.copy())
+    assert(inbox.receive() == some(1))
+}
+";
+    let dir = project("explores-orders", tests);
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--schedules", "16", "--seed", "1"]);
+    assert_eq!(status, 1, "{stdout}{stderr}");
+    assert!(stdout.starts_with("16 orders of the tasks from seed 0000000000000001\n\norder 1, seed 1:\n"), "{stdout}");
+    let again = stdout.lines().find_map(|line| line.strip_prefix("again in that order: tondo ")).expect(&stdout);
+    let args: Vec<&str> = again.split(' ').collect();
+    // The order that failed fails again, every time.
+    for _ in 0..3 {
+        let (stdout, _, status) = tondo(&dir, &args);
+        assert_eq!(status, 1, "{stdout}");
+    }
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--schedules", "2", "--repeat", "2"]);
+    assert_eq!(status, 2, "{stdout}{stderr}");
+    assert!(stderr.contains("--schedules runs everything once per order; it does not go with --repeat"), "{stderr}");
+}

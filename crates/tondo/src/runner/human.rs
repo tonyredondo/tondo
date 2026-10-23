@@ -38,6 +38,8 @@ pub(super) struct Printer<'a> {
     known: HashMap<u32, Attempt>,
     printed: usize,
     timeout: Duration,
+    /// The seed of `--schedules`, to name each iteration's.
+    schedules: Option<u64>,
 }
 
 impl<'a> Printer<'a> {
@@ -46,13 +48,16 @@ impl<'a> Printer<'a> {
         plan.sort_by(|&a, &b| tree.id(a).cmp(tree.id(b)));
         let timeout = options.timeout;
         let quiet = options.json;
-        Printer { quiet, tree, plan, expected: Vec::new(), known: HashMap::new(), printed: 0, timeout }
+        let schedules = options.schedules.map(|(_, seed, _)| seed);
+        Printer { quiet, tree, plan, expected: Vec::new(), known: HashMap::new(), printed: 0, timeout, schedules }
     }
 
     /// A pass over `tests`: an iteration of the plan, or a retry round.
     pub(super) fn begin(&mut self, iteration: u32, round: u32, tests: &[u32]) {
         if !self.quiet && round > 0 {
             say!("\nretry round {round}:");
+        } else if let (false, Some(seed)) = (self.quiet, self.schedules) {
+            say!("\norder {iteration}, seed {:x}:", super::schedule_seed(seed, iteration));
         } else if !self.quiet && iteration > 1 {
             say!("\niteration {iteration}:");
         }
@@ -196,10 +201,11 @@ pub(super) fn report(
             text.push_str(&written(decisive));
         } else {
             for (index, attempt) in aggregate.attempts.iter().enumerate() {
-                let when = match (attempt.iteration, attempt.round) {
-                    (1, 0) => String::new(),
-                    (iteration, 0) => format!(", iteration {iteration}"),
-                    (_, round) => format!(", retry round {round}"),
+                let when = match (attempt.iteration, attempt.round, options.schedule(attempt.iteration)) {
+                    (_, 0, Some(seed)) => format!(", seed {seed:x}"),
+                    (1, 0, None) => String::new(),
+                    (iteration, 0, None) => format!(", iteration {iteration}"),
+                    (_, round, _) => format!(", retry round {round}"),
                 };
                 let status = match &attempt.status {
                     Status::Passed => "passed".to_string(),
@@ -208,6 +214,15 @@ pub(super) fn report(
                 text.push_str(&format!("attempt {}{when}: {status}\n", index + 1));
                 text.push_str(&written(attempt));
             }
+        }
+        // The first order that failed, to run again.
+        if let Some(seed) =
+            aggregate.attempts.iter().find(|a| a.status != Status::Passed).and_then(|a| options.schedule(a.iteration))
+        {
+            text.push_str(&format!(
+                "again in that order: tondo test --exact {} --schedules 1 --seed {seed:x}\n",
+                tree.id(node)
+            ));
         }
         sections.push(text);
     }

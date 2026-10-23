@@ -21,7 +21,7 @@ usage:
   tondo guide [<topic>] [--list] [--skill]             learn Tondo: the language, the library, the commands
   tondo update [<project>] [<dependency>...]           fetch dependencies again and rewrite tondo.lock
   tondo test [<project>] [--filter <text> | --glob <pattern> | --exact <id>] [--shard <i/n>]
-            [--order canonical|random] [--seed <hex>] [--list] [--jobs <n>] [--timeout <seconds>]
+            [--order canonical|random] [--schedules <n>] [--seed <hex>] [--list] [--jobs <n>] [--timeout <seconds>]
             [--retry <n>] [--allow-flaky] [--repeat <n>] [--codeowners auto|none|<path>]
             [--show-output] [--allow-empty] [--deny-skips] [--test-format human|json]
             [--report json=<path> | junit=<path>]... [--diagnostic-format human|json]
@@ -165,6 +165,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         timeout: std::time::Duration::from_secs(60),
         retry: 0,
         repeat: 1,
+        schedules: None,
         codeowners: Codeowners::Auto,
         show_output: false,
         allow_empty: false,
@@ -185,6 +186,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             .ok_or_else(|| usage(format!("{flag} takes a number written without sign or leading zeros")))
     };
     let (mut seed, mut random, mut seen) = (None, false, Vec::new());
+    let mut schedules = None;
     let mut rest = rest.iter();
     while let Some(arg) = rest.next() {
         let flag = arg.to_string_lossy().into_owned();
@@ -251,6 +253,15 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
                     .filter(|&n: &u32| n > 0)
                     .ok_or_else(|| usage("--repeat takes a positive number".into()))?
             }
+            "--schedules" => {
+                schedules = Some(
+                    count(&value()?, "--schedules")?
+                        .try_into()
+                        .ok()
+                        .filter(|&n: &u32| n > 0)
+                        .ok_or_else(|| usage("--schedules takes a positive number".into()))?,
+                )
+            }
             "--codeowners" => {
                 options.codeowners = match value()?.as_str() {
                     "auto" => Codeowners::Auto,
@@ -293,8 +304,14 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         }
     }
     let given = |flag: &str| seen.iter().any(|s| s == flag);
-    if seed.is_some() && !random {
-        return Err(usage("--seed goes with --order random".into()));
+    if seed.is_some() && !random && schedules.is_none() {
+        return Err(usage("--seed goes with --order random or --schedules".into()));
+    }
+    let campaign = ["--repeat", "--retry", "--allow-flaky", "--list", "--update-snapshots"];
+    if schedules.is_some()
+        && let Some(flag) = campaign.iter().find(|f| given(f))
+    {
+        return Err(usage(format!("--schedules runs everything once per order; it does not go with {flag}")));
     }
     if given("--repeat") && (given("--retry") || given("--allow-flaky")) {
         return Err(usage("--repeat runs everything again; it does not go with --retry or --allow-flaky".into()));
@@ -321,16 +338,17 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     if options.list && !options.reports.is_empty() {
         return Err(usage("--list writes no report; use --test-format json".into()));
     }
+    // A seed chosen now is shown, so the orders can be repeated.
+    let chosen = seed.is_none();
+    let seed = seed.unwrap_or_else(|| {
+        let entropy = format!("{:?}{}", std::time::SystemTime::now(), std::process::id());
+        let digest = tondo::hash::sha256(entropy.as_bytes());
+        u64::from_be_bytes(digest[..8].try_into().unwrap())
+    });
     if random {
-        // A seed chosen now is shown, so the order can be repeated.
-        let chosen = seed.is_none();
-        let seed = seed.unwrap_or_else(|| {
-            let entropy = format!("{:?}{}", std::time::SystemTime::now(), std::process::id());
-            let digest = tondo::hash::sha256(entropy.as_bytes());
-            u64::from_be_bytes(digest[..8].try_into().unwrap())
-        });
         options.order = Order::Random(seed, chosen);
     }
+    options.schedules = schedules.map(|count| (count, seed, chosen));
     // The build is reused while nothing it reads changes.
     let dir = runner::build_dir(&path)?;
     let (executable, tree_file) = (dir.join("tests"), dir.join("tree"));

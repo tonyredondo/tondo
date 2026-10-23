@@ -311,6 +311,17 @@ impl Context<'_> {
             obj(vec![("count", int(options.repeat as usize)), ("isolation", str("fresh-worker-per-iteration-v1"))]),
         ));
         fields.push((
+            "schedules",
+            match options.schedules {
+                Some((count, seed, _)) => obj(vec![
+                    ("count", int(count as usize)),
+                    ("seed", str(format!("{seed:016x}"))),
+                    ("algorithm", str("seeded-single-worker-v1")),
+                ]),
+                None => Value::Null,
+            },
+        ));
+        fields.push((
             "artifact_store",
             obj(vec![("format", str("tondo-test-artifacts-0.1/1")), ("algorithm", str("sha256-objects-v1"))]),
         ));

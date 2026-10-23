@@ -19,7 +19,7 @@ use std::collections::BinaryHeap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -606,7 +606,11 @@ fn work(main: bool) -> i32 {
         let task = {
             let mut queue = queue();
             loop {
-                if main && MAIN_DONE.load(Ordering::SeqCst) {
+                // Exploring orders this thread is the only worker: after a
+                // panic it runs the other tasks' cleanups itself.
+                let draining =
+                    exploring().is_some() && ENDING.load(Ordering::SeqCst) != usize::MAX && !queue.runnable.is_empty();
+                if main && MAIN_DONE.load(Ordering::SeqCst) && !draining {
                     return MAIN_STATUS.load(Ordering::SeqCst) as i32;
                 }
                 if !main && queue.surplus > 0 {
@@ -615,7 +619,14 @@ fn work(main: bool) -> i32 {
                     return 0;
                 }
                 fire_timers(&mut queue);
-                if let Some(task) = queue.runnable.pop_front() {
+                let next = match exploring() {
+                    Some(seed) if !queue.runnable.is_empty() => {
+                        let at = (seeded(seed) % queue.runnable.len() as u64) as usize;
+                        queue.runnable.remove(at)
+                    }
+                    _ => queue.runnable.pop_front(),
+                };
+                if let Some(task) = next {
                     break task;
                 }
                 queue.idle += 1;
@@ -730,6 +741,9 @@ unsafe fn waiting_at(task: *mut Task) -> String {
 /// Starts the other workers, one per core, the first time a task spawns.
 fn start_workers() {
     if STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    if exploring().is_some() {
         return;
     }
     let count = std::thread::available_parallelism().map_or(1, |n| n.get());
@@ -1186,10 +1200,56 @@ pub(crate) fn cancelled() -> bool {
 }
 
 /// Checked by compiled code after every call that may wait: a cancelled
-/// task unwinds from there.
+/// task unwinds from there. While exploring orders, the task gives way
+/// there too.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_cancelled() -> u8 {
+    if exploring().is_some() {
+        give_way();
+    }
     cancelled() as u8
+}
+
+/// `TONDO_RT_SCHEDULE`, a seed in hex (`tondo test --schedules`): the
+/// tasks run on one worker, the next one is the seed's choice among those
+/// that can run, and each gives way after every call that may wait, so
+/// each seed meets the program's tasks in another order, and the same seed
+/// in the same one.
+fn exploring() -> Option<&'static AtomicU64> {
+    static SEED: std::sync::OnceLock<Option<AtomicU64>> = std::sync::OnceLock::new();
+    SEED.get_or_init(|| {
+        let text = std::env::var("TONDO_RT_SCHEDULE").ok()?;
+        u64::from_str_radix(&text, 16).ok().map(AtomicU64::new)
+    })
+    .as_ref()
+}
+
+/// The next number of the seed's sequence (SplitMix64).
+fn seeded(state: &AtomicU64) -> u64 {
+    let mut z = state.fetch_add(0x9e37_79b9_7f4a_7c15, Ordering::Relaxed).wrapping_add(0x9e37_79b9_7f4a_7c15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
+/// Puts the running task back among those that can run, and lets the
+/// worker choose again; not with C frames on its stack, which stay on
+/// their thread.
+fn give_way() {
+    let task = current();
+    if task.is_null() {
+        return;
+    }
+    let in_c = IN_C.with(|c| c.get());
+    if !in_c.is_null() && unsafe { (*in_c).depth.load(Ordering::SeqCst) } > 0 {
+        return;
+    }
+    unsafe {
+        // The worker sees a task notified while switching out, and makes
+        // it runnable again.
+        (*task).state.store(NOTIFIED, Ordering::Release);
+        switch(&mut (*task).sp, *home());
+    }
 }
 
 /// Cancels a running task: marks it and ends the wait it is blocked in.
@@ -2124,8 +2184,12 @@ impl Case {
     }
 }
 
-/// A small generator for the random choice among ready operations.
+/// A small generator for the random choice among ready operations; the
+/// seed's, while exploring orders.
 fn random(bound: usize) -> usize {
+    if let Some(seed) = exploring() {
+        return (seeded(seed) % bound as u64) as usize;
+    }
     static STATE: AtomicUsize = AtomicUsize::new(0x9e37_79b9_7f4a_7c15);
     let mut x = STATE.load(Ordering::Relaxed);
     x ^= x << 13;

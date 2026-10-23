@@ -133,6 +133,9 @@ fn worker(
     if stores.update {
         command.env("TONDO_TEST_UPDATE", "1");
     }
+    if let Some(seed) = run.options.schedule(context.iteration) {
+        command.env("TONDO_RT_SCHEDULE", format!("{seed:x}"));
+    }
     // Its own process group, so that a timeout ends what it started too.
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
