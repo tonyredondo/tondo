@@ -1,0 +1,139 @@
+// std.sync: state shared between tasks (standard library 14.4.4). Every
+// value is a handle: copies share the state. A contended wait stops the
+// task, not the thread.
+
+/// A value behind a lock; closures see it while they hold the lock.
+pub fn Mutex(value: T): Mutex[T]
+
+pub fn Mutex.update(self, change: fn(var T): R): R
+
+/// `none` without waiting when another holds the lock.
+pub fn Mutex.tryUpdate(self, change: fn(var T): R): R?
+
+/// Waits until `ready` holds, then changes the value under the same lock.
+pub fn Mutex.updateWhen(self, ready: fn(T): Bool, change: fn(var T): R): R
+
+pub fn Mutex.get(self): T
+
+pub fn Mutex.set(self, value: T)
+
+/// Many readers or one writer.
+pub fn RwLock(value: T): RwLock[T]
+
+pub fn RwLock.read(self, observe: fn(T): R): R
+
+pub fn RwLock.update(self, change: fn(var T): R): R
+
+pub fn RwLock.get(self): T
+
+pub fn RwLock.set(self, value: T)
+
+pub fn Semaphore(permits: Int): Semaphore
+
+pub fn Semaphore.acquire(self): Permit
+
+pub fn Semaphore.tryAcquire(self): Permit?
+
+/// A permit goes back when released or abandoned.
+pub fn Permit.release(self)
+
+/// A value initialised once; failures leave it empty for the next try.
+pub fn Once.new[T](): Once[T]
+
+pub fn Once.getOrInit(self, init: fn(): T): T
+
+pub fn Once.get(self): T?
+
+pub fn Once.isReady(self): Bool
+
+/// Waits for `parties` tasks; `true` in exactly one of them per round.
+pub fn Barrier(parties: Int): Barrier
+
+pub fn Barrier.wait(self): Bool
+
+/// Sequentially consistent; lock-free for integers, `Bool`, `Char`, `Byte`.
+pub fn Atomic(value: T): Atomic[T]
+
+pub fn Atomic.load(self): T
+
+pub fn Atomic.store(self, value: T)
+
+pub fn Atomic.swap(self, value: T): T
+
+pub fn Atomic.compareExchange(self, expected: T, desired: T): CompareExchange[T]
+
+/// The new value.
+pub fn Atomic.add(self, delta: T): T
+
+pub enum CompareExchange[T] {
+    Exchanged(T)
+    Mismatch(T)
+}
+
+// Shared collections, built with literals (`sync.Map["one": 1]`), empty
+// with `sync.Queue.new[Job]()`, or from a value collection
+// (`sync.Array(values)`). `for value in shared` walks a snapshot.
+
+/// Fixed length.
+pub type Array[T]
+
+pub type Map[K: Key, V]
+
+pub type Set[K: Key]
+
+/// LIFO, the top at the end.
+pub type Stack[T]
+
+/// FIFO with many producers and consumers.
+pub type Queue[T]
+
+pub fn Array.length(self): Int
+
+pub fn Array.get(self, index: Int): T?
+
+pub fn Array.set(self, index: Int, value: T): T ! collections.CollectionError
+
+pub fn Array.compareExchange(self, index: Int, expected: T, desired: T): CompareExchange[T] ! collections.CollectionError
+
+pub fn Array.snapshot(self): Array[T]
+
+pub fn Map.length(self): Int
+
+pub fn Map.get(self, key: K): V?
+
+pub fn Map.contains(self, key: K): Bool
+
+pub fn Map.insert(self, key: K, value: V): V?
+
+pub fn Map.remove(self, key: K): V?
+
+/// `expected = none` compares with absence; `desired = none` removes.
+pub fn Map.compareExchange(self, key: K, expected: V?, desired: V?): CompareExchange[V?]
+
+pub fn Map.snapshot(self): Map[K, V]
+
+pub fn Set.length(self): Int
+
+pub fn Set.contains(self, key: K): Bool
+
+pub fn Set.insert(self, key: K): Bool
+
+pub fn Set.remove(self, key: K): Bool
+
+pub fn Set.snapshot(self): Set[K]
+
+pub fn Stack.push(self, value: T)
+
+pub fn Stack.pop(self): T?
+
+pub fn Stack.get(self, index: Int): T?
+
+pub fn Stack.snapshot(self): Array[T]
+
+pub fn Queue.push(self, value: T)
+
+pub fn Queue.popFront(self): T?
+
+pub fn Queue.get(self, index: Int): T?
+
+pub fn Queue.snapshot(self): Deque[T]

@@ -1,0 +1,10 @@
+// std.text: the error of text operations (standard library 14.1). The
+// methods of `String` and `Char` are in the prelude: `tondo api prelude`.
+
+pub enum TextError {
+    InvalidIndex
+    InvalidBoundary
+    ResourceLimit
+    /// Bytes that are not UTF-8, or text that is not a number.
+    InvalidData
+}

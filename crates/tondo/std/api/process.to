@@ -1,0 +1,118 @@
+// std.process: processes and pipelines (standard library 19.2). `Command`
+// and `Pipeline` are inert plans; `|` joins them, and running one waits
+// without blocking a worker.
+
+/// A program and its arguments, each on its own: no shell, no globbing.
+pub fn command(program: String, arguments: ...String): Command
+
+/// A command that the system's shell runs: `/bin/sh -c text`.
+pub fn shell(text: String): Command
+
+/// Delivers pending console output and ends the program, without `defer`s.
+pub fn exit(code: Int): Never
+
+pub enum Input {
+    Inherit
+    Null
+    Text(String)
+    Bytes(Array[Byte])
+    File(String)
+    Reader(io.Reader)
+    Pipe
+}
+
+pub enum Output {
+    Inherit
+    Null
+    Capture
+    File(String)
+    Append(String)
+    Writer(io.Writer)
+    Stdout
+    Pipe
+}
+
+pub type ExitStatus = {
+    code: Int
+    success: Bool
+}
+
+pub type ProcessOutput = {
+    stdout: Array[Byte]
+    stderr: Array[Byte]
+    combined: Array[Byte]
+    statuses: Array[ExitStatus]
+}
+
+pub enum ProcessError {
+    NotFound
+    PermissionDenied
+    InvalidData
+    /// From `check`: a stage did not succeed.
+    Failed(ExitStatus, ProcessOutput)
+    Host
+}
+
+/// A process started and not yet waited for.
+pub type Process
+
+pub fn Command.directory(self, path: String): Command
+
+pub fn Command.env(self, name: String, value: String): Command
+
+pub fn Command.removeEnv(self, name: String): Command
+
+pub fn Command.clearEnv(self): Command
+
+pub fn Command.stdin(self, input: Input): Command
+
+pub fn Command.stdout(self, output: Output): Command
+
+pub fn Command.stderr(self, output: Output): Command
+
+/// Sends standard error where standard output goes: `2>&1`.
+pub fn Command.mergeStderr(self): Command
+
+pub fn Pipeline.stdin(self, input: Input): Pipeline
+
+pub fn Pipeline.stdout(self, output: Output): Pipeline
+
+pub fn Pipeline.mergeStderr(self): Pipeline
+
+/// On a Command or a Pipeline: with the program's streams, waits.
+pub fn run(self): ExitStatus ! ProcessError
+
+/// On a Command or a Pipeline: without input, discarding output.
+pub fn status(self): ExitStatus ! ProcessError
+
+/// On a Command or a Pipeline: captures standard output and error.
+pub fn output(self): ProcessOutput ! ProcessError
+
+/// On a Command or a Pipeline: as `output`, failing when a stage fails.
+pub fn check(self): ProcessOutput ! ProcessError
+
+/// On a Command or a Pipeline: starts without waiting.
+pub fn start(self): Process ! ProcessError
+
+/// Standard output as UTF-8.
+pub fn ProcessOutput.text(self): String ! ProcessError
+
+pub fn Process.stdin(self): io.Writer
+
+pub fn Process.stdout(self): io.Reader
+
+pub fn Process.stderr(self): io.Reader
+
+pub fn Process.id(self): Int
+
+pub fn Process.wait(self): ExitStatus ! ProcessError
+
+pub fn Process.output(self): ProcessOutput ! ProcessError
+
+pub fn Process.check(self): ProcessOutput ! ProcessError
+
+/// Ends every stage and waits for them.
+pub fn Process.cancel(self): ExitStatus ! ProcessError
+
+/// Lets it go on without waiting, also after the program ends.
+pub fn Process.detach(self)

@@ -8133,19 +8133,14 @@ binaria estable que 8.13 excluye.
 La reproducibilidad bit a bit del artefacto es un objetivo de implementación,
 aunque metadatos de plataforma pueden requerir normalización adicional.
 
-### 22.7 Modo LLM
+### 22.7 Código para modelos
 
-Esta sección solo fija la frontera del lenguaje base: una representación externa
-para agentes no añade sintaxis, semántica ni una edición Tondo. Si existe, debe
-producir fuente `.to` ordinaria antes del lexer y ningún paso de resolución,
-type checking o lowering la recibe directamente. El compilador de `.to` no
-autodetecta representaciones alternativas.
-
-El formato TLF, su identidad, comandos, canonicalización, expansión, source
-maps, límites, diagnósticos y evaluación pertenecen exclusivamente a
-[`TONDO_LLM_FORM_SPEC.md`](./TONDO_LLM_FORM_SPEC.md) y Gate L0. La referencia es
-informativa: no incorpora ese companion al alcance normativo ni a los hashes de
-conformidad G5 de este documento.
+No existe una representación alternativa de Tondo para agentes ni modelos de
+lenguaje. Tondo con menos espacios ya es Tondo: un modelo puede escribirlo sin
+sangría ni espacios opcionales y `tondo fmt` lo normaliza, y `tondo fmt
+--compact` da esa forma de un archivo. `tondo api` muestra las declaraciones de
+un módulo con su documentación y sin cuerpos, para leer lo que se puede llamar
+con una fracción de los tokens (sección 7 del toolchain).
 
 ### 22.8 Cobertura diagnóstica y perfiles
 

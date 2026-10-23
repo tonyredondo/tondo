@@ -1033,3 +1033,20 @@ pick what `json()` decodes. The route becomes `app.route(...)` with the
 operation and schemas of OpenAPI written from the types, as `std.json`
 encodes them. Untyped routes with a literal path get their operation too.
 The AST derives `Clone` for this.
+
+## 2026-10-23 — No LLM dialect; an API inspector instead
+
+The Tondo LLM Form was measured before building it, on the repository's
+171 sources and seven tokenizers (OpenAI o200k and cl100k, Qwen2.5-Coder,
+DeepSeek-V3, Llama 3, Mistral Nemo, Gemma 3), with an encoder on the real
+lexer whose output kept every file's tokens. Against canonical Tondo without
+comments, TLF used 81–88% of the tokens, and Tondo without indentation or
+optional spaces, a statement per line, used 84–87%: the saving is the
+whitespace, which plain Tondo already allows, and the `;` line was cheaper
+only on Gemma. Tabs saved 2%, no indentation alone 8–9%, and a Python-like
+dialect without braces only 5%. Words are 53% of the tokens and punctuation
+34%, so syntax alone cannot save much more. Declarations without bodies took
+26% of the tokens, which is where an agent saves: it reads far more than it
+writes. So the dialect and its specification went, `tondo fmt --compact`
+prints the compact form, and `tondo api` shows a module's declarations and
+documentation, with the compiler's intrinsic modules written in `std/api`.

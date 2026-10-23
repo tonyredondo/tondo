@@ -1,0 +1,94 @@
+// std.fs: the filesystem (standard library 10.5). Operations wait without
+// blocking a worker.
+
+/// It names no path and no content.
+pub enum FsError {
+    NotFound
+    PermissionDenied
+    AlreadyExists
+    NotADirectory
+    IsADirectory
+    InvalidData
+    InvalidName
+    Host
+}
+
+pub enum FileKind {
+    File
+    Directory
+    Symlink
+    Other
+}
+
+/// An entry itself, without following links.
+pub type Metadata = {
+    kind: FileKind
+    size: Int
+    readOnly: Bool
+}
+
+/// `Read` an existing file; `Write` creates or empties it; `Append` creates it
+/// if missing and writes at the end; `CreateNew` fails if it exists;
+/// `ReadWrite` reads and writes an existing one.
+pub enum OpenMode {
+    Read
+    Write
+    Append
+    CreateNew
+    ReadWrite
+}
+
+/// An open file, with one owner; it closes when abandoned.
+pub type File
+
+pub fn readText(path: String): String ! FsError
+
+pub fn readBytes(path: String): Array[Byte] ! FsError
+
+/// Writes through a temporary file and a rename: readers see the old or the
+/// new content, never half of it.
+pub fn writeText(path: String, text: String): Unit ! FsError
+
+pub fn writeBytes(path: String, data: Array[Byte]): Unit ! FsError
+
+pub fn appendText(path: String, text: String): Unit ! FsError
+
+pub fn exists(path: String): Bool
+
+pub fn metadata(path: String): Metadata ! FsError
+
+/// The names of the entries, sorted by bytes.
+pub fn list(path: String): Array[String] ! FsError
+
+/// Creates the missing parents too; an existing directory is fine.
+pub fn createDirectory(path: String): Unit ! FsError
+
+pub fn rename(from: String, to: String): Unit ! FsError
+
+pub fn copy(from: String, to: String): Unit ! FsError
+
+/// A file, a link or an empty directory; with `recursive`, a directory and
+/// its content.
+pub fn remove(path: String, recursive: Bool = false): Unit ! FsError
+
+pub fn open(path: String, mode: OpenMode): File ! FsError
+
+/// The next line without its `\n` or `\r\n`, or `none` at the end.
+pub fn File.readLine(var self): String? ! FsError
+
+pub fn File.read(var self, max: Int): Array[Byte]? ! FsError
+
+pub fn File.readText(var self): String ! FsError
+
+pub fn File.write(var self, text: String): Unit ! FsError
+
+pub fn File.writeBytes(var self, data: Array[Byte]): Unit ! FsError
+
+pub fn File.flush(var self): Unit ! FsError
+
+pub fn File.close(self): Unit ! FsError
+
+/// The file as a stream of `std.io`; it closes with the stream's last copy.
+pub fn File.writer(self): io.Writer
+
+pub fn File.reader(self): io.Reader

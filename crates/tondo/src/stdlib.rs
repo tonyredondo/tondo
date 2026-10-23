@@ -28,6 +28,16 @@ const SOURCES: &[(&str, &str)] = &[
     ("http", include_str!("../std/http.to")),
 ];
 
+/// The names of the standard modules written in Tondo.
+pub fn names() -> impl Iterator<Item = &'static str> {
+    SOURCES.iter().map(|(name, _)| *name)
+}
+
+/// The source of a standard module written in Tondo.
+pub fn text(name: &str) -> Option<&'static str> {
+    SOURCES.iter().find(|(n, _)| *n == name).map(|(_, text)| *text)
+}
+
 /// The module written in Tondo an import brings.
 pub(crate) fn source(path: &[ast::Ident]) -> Option<(&'static str, &'static str)> {
     match path {

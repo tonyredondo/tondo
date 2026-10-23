@@ -13,7 +13,9 @@ usage:
                                                        compile a native executable
   tondo check [<project>|<file.to>] [--json]           report diagnostics only (as JSON)
   tondo expand [<project>|<file.to>]                   show what each `derive` expanded to
-  tondo fmt [--check] <file.to>...                     format files canonically
+  tondo fmt [--check | --compact] <file.to>...         format files canonically, or print them compactly
+  tondo api [<module>|<file.to>] [--private] [--list] [--project <dir>]
+                                                       show a module's declarations and documentation
   tondo update [<project>] [<dependency>...]           fetch dependencies again and rewrite tondo.lock
   tondo test [<project>] [--filter <text> | --glob <pattern> | --exact <id>] [--shard <i/n>]
             [--order canonical|random] [--seed <hex>] [--list] [--jobs <n>] [--timeout <seconds>]
@@ -36,6 +38,17 @@ given as <project> or with --project <dir>; the current directory by default.
 const TOOL_FAILURE: u8 = 3;
 
 fn main() -> ExitCode {
+    // Output into a closed pipe ends `tondo` quietly, as `tondo api | head`
+    // expects, instead of failing to print.
+    #[cfg(unix)]
+    {
+        unsafe extern "C" {
+            fn signal(signal: i32, handler: usize) -> usize;
+        }
+        const SIGPIPE: i32 = 13;
+        const SIG_DFL: usize = 0;
+        unsafe { signal(SIGPIPE, SIG_DFL) };
+    }
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     let Some(command) = args.first().and_then(|a| a.to_str()) else {
         eprintln!("{USAGE}");
@@ -47,6 +60,7 @@ fn main() -> ExitCode {
         "check" => check_command(&args[1..]),
         "expand" => expand_command(&args[1..]),
         "fmt" => fmt_command(&args[1..]),
+        "api" => api_command(&args[1..]),
         "update" => update_command(&args[1..]),
         "bind" => bind_command(&args[1..]),
         "test" => test_command(&args[1..]),
@@ -447,7 +461,8 @@ fn bind_command(args: &[OsString]) -> Result<ExitCode, String> {
 /// those that are not.
 fn fmt_command(args: &[OsString]) -> Result<ExitCode, String> {
     let check = args.iter().any(|a| a == "--check");
-    let files: Vec<&OsString> = args.iter().filter(|a| *a != "--check").collect();
+    let compact = args.iter().any(|a| a == "--compact");
+    let files: Vec<&OsString> = args.iter().filter(|a| *a != "--check" && *a != "--compact").collect();
     if files.is_empty() {
         return Err(format!("expected a source file\n{USAGE}"));
     }
@@ -458,6 +473,16 @@ fn fmt_command(args: &[OsString]) -> Result<ExitCode, String> {
         let mut sources = tondo::source::SourceMap::default();
         let index = sources.add(path, text.clone());
         let mut diags = tondo::diag::Diagnostics::default();
+        if compact {
+            match tondo::compact::compact(sources.file(index), &mut diags) {
+                Some(text) => print!("{text}"),
+                None => {
+                    eprint!("{}", diags.render(&sources));
+                    status = ExitCode::FAILURE;
+                }
+            }
+            continue;
+        }
         let Some(formatted) = tondo::fmt::format(sources.file(index), &mut diags) else {
             eprint!("{}", diags.render(&sources));
             status = ExitCode::FAILURE;
@@ -474,6 +499,84 @@ fn fmt_command(args: &[OsString]) -> Result<ExitCode, String> {
         }
     }
     Ok(status)
+}
+
+/// `tondo api`: the declarations of a standard module, a module of the
+/// project or its dependencies, or a file; the whole package without one.
+fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let (mut private, mut list, mut project, mut target) = (false, false, PathBuf::from("."), None);
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        match arg.to_str() {
+            Some("--private") => private = true,
+            Some("--list") => list = true,
+            Some("--project") => {
+                project = rest.next().map(PathBuf::from).ok_or(format!("--project names a directory\n{USAGE}"))?
+            }
+            Some(name) if !name.starts_with('-') && target.is_none() => target = Some(name.to_string()),
+            _ => return Err(format!("unexpected argument `{}`\n{USAGE}", arg.to_string_lossy())),
+        }
+    }
+    // The modules of the project and of its dependencies, by name.
+    let modules = || -> Result<Vec<(String, Vec<PathBuf>, bool)>, String> {
+        let packages = tondo::deps::resolve(&project, None)?;
+        let mut modules: Vec<(String, Vec<PathBuf>, bool)> = Vec::new();
+        for (index, package) in packages.iter().enumerate() {
+            let (files, _) = tondo::project::sources(&package.dir, &package.name)?;
+            for file in files {
+                let name = file.module.join(".");
+                match modules.iter_mut().find(|(n, _, _)| *n == name) {
+                    Some((_, paths, _)) => paths.push(file.path),
+                    None => modules.push((name, vec![file.path], index == 0)),
+                }
+            }
+        }
+        Ok(modules)
+    };
+    let render = |paths: &[PathBuf]| -> Result<String, String> {
+        let mut out = String::new();
+        for path in paths {
+            let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+            out.push_str(&tondo::api::render(&text, private));
+        }
+        Ok(out)
+    };
+    if list {
+        for name in tondo::api::standard_modules() {
+            println!("{name}");
+        }
+        if let Ok(modules) = modules() {
+            for (name, _, _) in modules {
+                println!("{name}");
+            }
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+    match target {
+        Some(name) if name == "prelude" || name.starts_with("std.") => match tondo::api::standard(&name) {
+            Some(text) => print!("{text}"),
+            None => return Err(format!("there is no standard module `{name}`; `tondo api --list` shows them")),
+        },
+        Some(file) if file.ends_with(".to") => print!("{}", render(&[PathBuf::from(file)])?),
+        Some(name) => {
+            let modules = modules()?;
+            let Some((_, paths, _)) = modules.iter().find(|(n, _, _)| *n == name) else {
+                return Err(format!("the project has no module `{name}`; `tondo api --list` shows them"));
+            };
+            print!("{}", render(paths)?);
+        }
+        None => {
+            let mut first = true;
+            for (name, paths, own) in modules()? {
+                let declarations = render(&paths)?;
+                if own && !declarations.is_empty() {
+                    print!("{}// module {name}\n\n{declarations}", if first { "" } else { "\n" });
+                    first = false;
+                }
+            }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// The `--link <library>` options before `--`, and the other arguments.

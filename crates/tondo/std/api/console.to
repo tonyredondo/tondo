@@ -1,0 +1,36 @@
+// std.console: the program's standard output, error and input
+// (standard library 19.1).
+
+/// Writes to standard output, which the runtime buffers and delivers; it
+/// never waits and cannot fail.
+pub fn print(text: String)
+
+/// Writes the text and one LF to standard output.
+pub fn println(text: String)
+
+/// Writes to standard error, unbuffered.
+pub fn eprint(text: String)
+
+pub fn eprintln(text: String)
+
+/// The next line of standard input without its `\n` or `\r\n`, or `none` at
+/// the end.
+pub fn readLine(): String?
+
+/// Delivers what standard output holds; the first failure since the last
+/// flush.
+pub fn flush(): Unit ! io.IoError
+
+/// The current streams, as `std.io` streams.
+pub fn stdout(): io.Writer
+
+pub fn stderr(): io.Writer
+
+pub fn stdin(): io.Reader
+
+/// Replaces a stream for the whole program, all its tasks included.
+pub fn setOutput(writer: io.Writer)
+
+pub fn setError(writer: io.Writer)
+
+pub fn setInput(reader: io.Reader)

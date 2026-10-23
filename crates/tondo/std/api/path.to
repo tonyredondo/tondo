@@ -1,0 +1,14 @@
+// std.path: lexical operations on paths, which are strings; they never
+// touch the filesystem (standard library 10.4).
+
+/// Adds a component, or gives the second path when it is absolute.
+pub fn join(base: String, part: String): String
+
+pub fn parent(path: String): String?
+
+pub fn fileName(path: String): String?
+
+/// Without the dot.
+pub fn extension(path: String): String?
+
+pub fn isAbsolute(path: String): Bool

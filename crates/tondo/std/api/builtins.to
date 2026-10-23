@@ -1,0 +1,146 @@
+// The methods of the intrinsic types that the compiler gives (language 10
+// and 11); the prelude's own methods come before these.
+
+/// The number of characters.
+pub fn String.length(self): Int
+
+pub fn String.byteLength(self): Int
+
+pub fn String.isEmpty(self): Bool
+
+/// The character at a scalar index.
+pub fn String.get(self, index: Int): Char?
+
+/// The characters from `start` up to `end`, by scalar index.
+pub fn String.slice(self, start: Int, end: Int): String ! text.TextError
+
+pub fn String.concat(self, other: String): String
+
+pub fn String.contains(self, needle: String): Bool
+
+pub fn String.startsWith(self, prefix: String): Bool
+
+pub fn String.endsWith(self, suffix: String): Bool
+
+/// The scalar index of the first `needle`.
+pub fn String.find(self, needle: String): Int?
+
+pub fn String.replace(self, from: String, to: String): String
+
+pub fn String.trim(self): String
+
+pub fn String.toLowerAscii(self): String
+
+pub fn String.toUpperAscii(self): String
+
+/// The UTF-8 bytes.
+pub fn String.bytes(self): Array[Byte]
+
+/// UTF-8 bytes as text; others are `TextError.InvalidData`.
+pub fn String.fromBytes(bytes: Array[Byte]): String ! text.TextError
+
+pub fn Array.length(self): Int
+
+pub fn Array.isEmpty(self): Bool
+
+pub fn Array.get(self, index: Int): T?
+
+/// The elements from `start` up to `end`.
+pub fn Array.slice(self, start: Int, end: Int): Array[T] ! collections.CollectionError
+
+pub fn Array.concat(self, other: Array[T]): Array[T]
+
+pub fn Array.repeat(self, count: Int): Array[T]
+
+pub fn Array.push(var self, value: T)
+
+pub fn Array.pop(var self): T?
+
+pub fn Array.insert(var self, index: Int, value: T)
+
+pub fn Array.removeAt(var self, index: Int): T
+
+pub fn Array.clear(var self)
+
+pub fn Deque.length(self): Int
+
+pub fn Deque.get(self, index: Int): T?
+
+pub fn Deque.push(var self, value: T)
+
+pub fn Deque.pushFront(var self, value: T)
+
+pub fn Deque.pop(var self): T?
+
+pub fn Deque.popFront(var self): T?
+
+pub fn Map.length(self): Int
+
+pub fn Map.get(self, key: K): V?
+
+pub fn Map.contains(self, key: K): Bool
+
+/// `map[key] = value` inserts or replaces.
+pub fn Map.insert(var self, key: K, value: V): V?
+
+pub fn Map.remove(var self, key: K): V?
+
+pub fn Map.clear(var self)
+
+/// Lazy cursors in insertion order.
+pub fn Map.keys(self): MapKeys[K, V]
+
+pub fn Map.values(self): MapValues[K, V]
+
+pub fn Map.entries(self): MapEntries[K, V]
+
+pub fn Set.length(self): Int
+
+pub fn Set.contains(self, value: T): Bool
+
+pub fn Set.insert(var self, value: T): Bool
+
+pub fn Set.remove(var self, value: T): Bool
+
+pub fn Set.values(self): SetValues[T]
+
+/// `channel[T](capacity)`: a channel's two ends; without capacity it has no
+/// limit (language 11.13).
+pub fn channel[T](capacity: Int = -1): (Sender[T], Receiver[T])
+
+/// Waits while the channel is full; sending to a closed channel panics.
+pub fn Sender.send(self, value: T)
+
+pub fn Sender.close(self)
+
+pub fn Sender.isClosed(self): Bool
+
+/// Another sender of the same channel.
+pub fn Sender.copy(self): Sender[T]
+
+/// The next value, or `none` once closed and empty, or after `timeout`.
+pub fn Receiver.receive(self, timeout: time.Duration? = none): T?
+
+pub fn Receiver.isClosed(self): Bool
+
+/// `spawn call(arguments)` starts a task (language 11.11).
+pub fn Join.wait(self): T
+
+pub fn Join.cancel(self)
+
+/// Lets the task run on without anyone waiting.
+pub fn Join.detach(self)
+
+pub fn Group.new[T](): Group[T]
+
+pub fn Group.add(var self, job: Join[T])
+
+/// Every result, in order; with `T = R ! E`, the first error cancels the rest.
+pub fn Group.wait(self): Array[T]
+
+/// The next task to finish, or `none` when the group is empty.
+pub fn Group.next(var self): T?
+
+pub fn Group.cancel(self)
+
+pub fn Group.length(self): Int

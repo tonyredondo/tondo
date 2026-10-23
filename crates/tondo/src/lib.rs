@@ -1,9 +1,11 @@
 //! The Tondo compiler.
 
+pub mod api;
 pub mod ast;
 pub mod bind;
 pub mod check;
 pub mod codegen;
+pub mod compact;
 pub mod deps;
 pub mod derive;
 pub mod diag;

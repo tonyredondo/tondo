@@ -1,0 +1,181 @@
+//! `tondo api` (toolchain 7.2): the declarations of a module with their
+//! documentation and without bodies, what a reader needs to call it. A
+//! module of the standard library that the compiler implements has its
+//! declarations written in `std/api`.
+
+use crate::ast;
+use crate::diag::Diagnostics;
+use crate::source::{SourceMap, Span};
+use std::path::Path;
+
+/// The declarations of the standard modules the compiler implements.
+const INTRINSIC: &[(&str, &str)] = &[
+    ("collections", include_str!("../std/api/collections.to")),
+    ("console", include_str!("../std/api/console.to")),
+    ("env", include_str!("../std/api/env.to")),
+    ("fs", include_str!("../std/api/fs.to")),
+    ("io", include_str!("../std/api/io.to")),
+    ("path", include_str!("../std/api/path.to")),
+    ("process", include_str!("../std/api/process.to")),
+    ("sync", include_str!("../std/api/sync.to")),
+    ("testing", include_str!("../std/api/testing.to")),
+    ("text", include_str!("../std/api/text.to")),
+    ("time", include_str!("../std/api/time.to")),
+];
+
+/// The methods of the intrinsic types the compiler gives, after the
+/// prelude's.
+const BUILTINS: &str = include_str!("../std/api/builtins.to");
+
+/// The standard modules written in Tondo that a program imports, without
+/// the ones only the toolchain uses.
+const HIDDEN: &[&str] = &["datetime"];
+
+/// The names of the standard modules, as `std.name`, and `prelude`.
+pub fn standard_modules() -> Vec<String> {
+    let mut names: Vec<String> = INTRINSIC.iter().map(|(n, _)| format!("std.{n}")).collect();
+    for name in crate::stdlib::names() {
+        if name == "prelude" {
+            names.push("prelude".into());
+        } else if !HIDDEN.contains(&name) {
+            names.push(format!("std.{name}"));
+        }
+    }
+    names.sort();
+    names
+}
+
+/// The API of a standard module: `std.http`, `std.fs` or `prelude`.
+pub fn standard(name: &str) -> Option<String> {
+    if name == "prelude" {
+        let source = crate::stdlib::text("prelude")?;
+        return Some(format!("{}\n{BUILTINS}", render(source, false)));
+    }
+    let name = name.strip_prefix("std.")?;
+    if let Some((_, text)) = INTRINSIC.iter().find(|(n, _)| *n == name) {
+        return Some(text.to_string());
+    }
+    crate::stdlib::text(name).filter(|_| !HIDDEN.contains(&name)).map(|source| render(source, false))
+}
+
+/// The declarations of a module's source: the public ones, or every one
+/// with `private`. A module's imports under another name read as the
+/// module's own name: `io.Reader`, not `__io.Reader`.
+pub fn render(source: &str, private: bool) -> String {
+    let mut sources = SourceMap::default();
+    let original = sources.add(Path::new("api.to"), source.to_string());
+    let text = crate::fmt::format(sources.file(original), &mut Diagnostics::default()).unwrap_or(source.to_string());
+    let id = sources.add(Path::new("api.to"), text.clone());
+    let file = sources.file(id);
+    let mut diags = Diagnostics::default();
+    let module = crate::parser::parse_file(file, &mut diags);
+    let (_, comments) = crate::lexer::lex_with_comments(file, None, &mut Diagnostics::default());
+    let base = file.base;
+    let slice = |span: Span| text[(span.start - base) as usize..(span.end - base) as usize].to_string();
+    // The documentation between two offsets: `///` lines, as written.
+    let docs = |from: u32, to: u32, indent: &str| -> String {
+        comments
+            .iter()
+            .filter(|c| c.start >= from && c.end <= to)
+            .map(|c| slice(*c))
+            .filter(|c| c.starts_with("///"))
+            .map(|c| format!("{indent}{}\n", c.trim_end()))
+            .collect()
+    };
+    let header = |f: &ast::FnDecl| match &f.body {
+        Some(body) => text[(f.span.start - base) as usize..(body.span.start - base) as usize].trim_end().to_string(),
+        None => slice(f.span),
+    };
+    // Up to the `{` that opens a body.
+    let opening = |span: Span| {
+        let start = (span.start - base) as usize;
+        let open = text[start..].find('{').map_or(start, |o| start + o);
+        (text[start..open].trim_end().to_string(), open as u32 + base)
+    };
+    let mut out: Vec<String> = Vec::new();
+    let mut previous = base;
+    for item in &module.items {
+        let (public, span) = match item {
+            ast::Item::Fn(f) => (f.public, f.span),
+            ast::Item::Type(t) => (t.public, t.span),
+            ast::Item::Enum(e) => (e.public, e.span),
+            ast::Item::Trait(t) => (t.public, t.span),
+            ast::Item::Alias(a) => (a.public, a.span),
+            ast::Item::Const(c) => (c.public, c.span),
+            ast::Item::Impl(i) => (true, i.span),
+            ast::Item::Derive(d) => (true, d.span),
+            ast::Item::Test(t) => (false, t.span()),
+        };
+        let documented = docs(previous, span.start, "");
+        previous = span.end;
+        if (!public && !private) || matches!(item, ast::Item::Test(_)) {
+            continue;
+        }
+        let declaration = match item {
+            ast::Item::Fn(f) => header(f),
+            ast::Item::Type(t) => match &t.body {
+                ast::TypeBody::Record(fields) if !private && fields.iter().any(|f| f.private) => {
+                    let (head, open) = opening(t.span);
+                    let mut lines = vec![format!("{head} {{")];
+                    let mut from = open;
+                    for field in fields {
+                        let end = field.ty.span.end;
+                        if !field.private {
+                            lines.push(format!(
+                                "{}    {}: {}",
+                                docs(from, field.name.span.start, "    "),
+                                field.name.name,
+                                slice(field.ty.span)
+                            ));
+                        }
+                        from = end;
+                    }
+                    lines.push("    // private fields".into());
+                    lines.push("}".into());
+                    lines.join("\n")
+                }
+                _ => slice(t.span),
+            },
+            ast::Item::Trait(t) => {
+                let (head, open) = opening(t.span);
+                let mut from = open;
+                let mut methods = Vec::new();
+                for method in &t.methods {
+                    methods.push(format!("{}    {}", docs(from, method.span.start, "    "), header(method)));
+                    from = method.span.end;
+                }
+                format!("{head} {{\n{}\n}}", methods.join("\n\n"))
+            }
+            ast::Item::Impl(i) => opening(i.span).0,
+            _ => slice(span),
+        };
+        out.push(format!("{documented}{declaration}"));
+    }
+    if out.is_empty() {
+        return String::new();
+    }
+    let mut rendered = out.join("\n\n") + "\n";
+    for import in &module.imports {
+        let (Some(alias), Some(last)) = (&import.alias, import.path.last()) else { continue };
+        if alias.name != last.name && !import.path.iter().any(|p| p.name == "internal") {
+            rendered = renamed(&rendered, &alias.name, &last.name);
+        }
+    }
+    rendered
+}
+
+/// `alias.` as `name.` where `alias` is a whole word.
+fn renamed(text: &str, alias: &str, name: &str) -> String {
+    let pattern = format!("{alias}.");
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(at) = rest.find(&pattern) {
+        let whole = rest[..at].chars().next_back().is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
+        out.push_str(&rest[..at]);
+        out.push_str(if whole { name } else { alias });
+        out.push('.');
+        rest = &rest[at + pattern.len()..];
+    }
+    out.push_str(rest);
+    out
+}

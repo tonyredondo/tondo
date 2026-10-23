@@ -1,0 +1,61 @@
+// std.io: the streams shared by the console, files, processes and memory
+// (standard library 10.3). Streams are shared handles: copies use the
+// same stream, each operation is atomic, and the last copy closes it.
+
+pub enum IoError {
+    Closed
+    InvalidData
+    Host
+}
+
+/// Where data goes.
+pub type Writer
+
+/// Where data comes from.
+pub type Reader
+
+/// Shared memory a writer appends to and a reader reads.
+pub type Buffer
+
+pub fn Writer.write(self, text: String): Unit ! IoError
+
+/// Writes the text and one LF.
+pub fn Writer.writeLine(self, text: String): Unit ! IoError
+
+pub fn Writer.writeBytes(self, data: Array[Byte]): Unit ! IoError
+
+pub fn Writer.flush(self): Unit ! IoError
+
+pub fn Writer.close(self): Unit ! IoError
+
+/// The next line without its `\n` or `\r\n`, or `none` at the end.
+pub fn Reader.readLine(self): String? ! IoError
+
+/// Up to `max` bytes, or `none` at the end.
+pub fn Reader.read(self, max: Int): Array[Byte]? ! IoError
+
+/// The rest, as UTF-8 text.
+pub fn Reader.readText(self): String ! IoError
+
+pub fn Reader.close(self): Unit ! IoError
+
+pub fn Buffer(): Buffer
+
+pub fn Buffer.writer(self): Writer
+
+/// Reads what the buffer holds at that moment.
+pub fn Buffer.reader(self): Reader
+
+pub fn Buffer.text(self): String ! IoError
+
+pub fn Buffer.bytes(self): Array[Byte]
+
+pub fn Buffer.length(self): Int
+
+pub fn Buffer.clear(self)
+
+/// A reader of a fixed text.
+pub fn reader(text: String): Reader
+
+/// A writer that keeps nothing.
+pub fn discard(): Writer

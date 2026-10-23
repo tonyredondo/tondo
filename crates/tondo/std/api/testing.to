@@ -1,0 +1,33 @@
+// std.testing: what a test tells the runner (testing 11.2); only in test
+// files.
+
+/// A line in the test's report.
+pub fn log(message: String)
+
+pub fn tags(values: Map[String, String])
+
+/// Fails the test now.
+pub fn failNow(message: String): Never
+
+pub fn skip(reason: String): Never
+
+pub fn attach(name: String, mediaType: String, data: Array[Byte])
+
+/// Compares the value's JSON with the file of the snapshot `name`;
+/// `ignore` drops paths, `matches` checks them against patterns and
+/// `replace` substitutes them.
+pub fn snapshot[T: json.Encode](
+    name: String,
+    value: T,
+    ignore: Array[String] = [],
+    matches: Map[String, String] = [:],
+    replace: Map[String, String] = [:],
+)
+
+/// Runs the body with a virtual clock that only moves when told.
+pub fn withVirtualTime[E, F: Send + CallOnce[fn(VirtualTime): Unit ! E]](body: F): ! E
+
+/// Lets every task that is ready run until all wait.
+pub fn VirtualTime.settle(self)
+
+pub fn VirtualTime.advance(self, duration: time.Duration)

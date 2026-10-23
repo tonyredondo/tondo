@@ -6,8 +6,6 @@
 
 **Especificación de testing:** [Testing Tondo 0.1](./TONDO_TESTING_SPEC.md)
 
-**Formato para LLMs:** [Tondo LLM Form](./TONDO_LLM_FORM_SPEC.md)
-
 Esta especificación define la frontera de proyecto del toolchain: layout
 convencional, `tondo.toml`, dependencias, `tondo.lock`, caché y comandos. No
 modifica la sintaxis ni la semántica de un archivo `.to`.
@@ -216,7 +214,8 @@ tondo run [<project>|<file.to>] [--link <library>]... [-- <argument>...]
 tondo build [<project>|<file.to>] [--output <path>] [--link <library>]...
 tondo check [<project>|<file.to>] [--json]
 tondo expand [<project>|<file.to>]
-tondo fmt [--check] <file.to>...
+tondo fmt [--check | --compact] <file.to>...
+tondo api [<module>|<file.to>] [--private] [--list] [--project <dir>]
 tondo update [<project>] [<dependency>...]
 tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
 tondo test [<project>]
@@ -230,7 +229,13 @@ tondo test [<project>]
 - `expand` muestra, con su formato canónico, el `impl` que dio el provider de
   cada `derive` (27.3 del lenguaje), y dónde está el `derive`.
 - `fmt` aplica el formato canónico (21) a archivos sueltos; `--check` falla si
-  alguno no lo cumple.
+  alguno no lo cumple. `--compact` escribe en stdout, sin tocar el archivo, su
+  forma compacta: los mismos tokens, comentarios incluidos, sin sangría, con
+  espacios solo donde dos tokens se unirían y una línea por línea lógica, sin
+  la que sigue a `{`. Es Tondo válido, para dar código a un modelo con unos
+  15 % menos de tokens; `fmt` lo devuelve a la forma canónica.
+- `api` muestra las declaraciones de un módulo con su documentación y sin
+  cuerpos (sección 7.2).
 - `bind` escribe un módulo con las declaraciones de C de unos headers, de un
   paquete del sistema o de una librería (sección 7.1) y, en un proyecto, añade
   cada librería a `[native] libraries`.
@@ -279,6 +284,35 @@ Sin headers, `bind` los busca:
   que alcanzan, y las constantes de sus `enum`. No tiene macros, así que no hay
   otras constantes.
 - Si nada de eso da declaraciones, es un error que pide el header.
+
+### 7.2 `tondo api`
+
+`tondo api` muestra lo que se puede llamar de un módulo sin leer su
+implementación: sus declaraciones públicas, con los comentarios de
+documentación y sin los cuerpos de funciones ni tests.
+
+~~~text
+$ tondo api std.csv
+pub fn rows(input: io.Reader, separator: Char = ','): Rows
+...
+$ tondo api app.models
+$ tondo api --list
+~~~
+
+- El argumento es un módulo de la stdlib (`std.http`, `std.fs`), `prelude`
+  (los métodos de los tipos intrínsecos), un módulo del proyecto o de sus
+  dependencias (`app.models`, `shapes`) o un archivo `.to`. Sin argumento,
+  muestra todos los módulos del paquete, cada uno tras `// module nombre`.
+  `--list` nombra los módulos disponibles.
+- Un record con campos privados muestra los públicos y `// private fields`;
+  un trait, las firmas de sus métodos; un `impl`, su cabecera. `--private`
+  muestra también lo privado, para quien trabaja dentro del paquete.
+- Un import con otro nombre se escribe con el del módulo: `io.Reader`, no
+  `__io.Reader`.
+- Los módulos de la stdlib que implementa el compilador tienen sus
+  declaraciones escritas en `std/api` del toolchain.
+- Escribe solo en stdout, no compila y no modifica nada; con un módulo que no
+  existe es un error del toolchain (estado 3).
 
 ## 8. Determinismo
 

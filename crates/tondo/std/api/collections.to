@@ -1,0 +1,9 @@
+// std.collections: the error of collection operations. The methods of
+// `Array`, `Deque`, `Map` and `Set` are in the prelude: `tondo api prelude`.
+
+pub enum CollectionError {
+    InvalidCapacity
+    InvalidIndex
+    InvalidStep
+    ResourceLimit
+}

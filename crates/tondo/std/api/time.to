@@ -1,0 +1,88 @@
+// std.time: durations, the monotonic clock, waits and UTC dates (standard
+// library 14.3).
+
+/// A signed interval in nanoseconds; it displays as Go writes it: `1h2m3.5s`.
+pub type Duration
+
+/// A moment of the monotonic clock, which never goes back.
+pub type Instant
+
+/// A date and time in UTC; it displays in RFC 3339: `2026-10-22T06:38:28Z`.
+pub type DateTime = {
+    year: Int
+    month: Int
+    day: Int
+    hour: Int
+    minute: Int
+    second: Int
+    nanosecond: Int
+}
+
+pub enum TimeError {
+    InvalidDateTime
+}
+
+pub fn nanoseconds(count: Int): Duration
+
+pub fn microseconds(count: Int): Duration
+
+pub fn milliseconds(count: Int): Duration
+
+pub fn seconds(count: Int): Duration
+
+pub fn minutes(count: Int): Duration
+
+pub fn hours(count: Int): Duration
+
+/// Readings divide and truncate toward zero.
+pub fn Duration.nanoseconds(self): Int
+
+pub fn Duration.microseconds(self): Int
+
+pub fn Duration.milliseconds(self): Int
+
+pub fn Duration.seconds(self): Int
+
+pub fn Duration.minutes(self): Int
+
+pub fn Duration.hours(self): Int
+
+pub fn Duration.add(self, other: Duration): Duration
+
+pub fn Duration.subtract(self, other: Duration): Duration
+
+pub fn Duration.multiply(self, factor: Int): Duration
+
+pub fn Duration.isZero(self): Bool
+
+pub fn Duration.isNegative(self): Bool
+
+pub fn Duration.isLessThan(self, other: Duration): Bool
+
+pub fn now(): Instant
+
+/// `now().since(self)`.
+pub fn Instant.elapsed(self): Duration
+
+pub fn Instant.since(self, earlier: Instant): Duration
+
+pub fn Instant.add(self, delta: Duration): Instant
+
+/// Stops the task, not the thread, at least `delay`; a `select` operation.
+pub fn sleep(delay: Duration)
+
+/// The system clock, which may go back when someone sets it.
+pub fn utcNow(): DateTime
+
+/// The time since 1970-01-01T00:00:00Z.
+pub fn unixTime(): Duration
+
+/// A time since the epoch as a date.
+pub fn utc(sinceEpoch: Duration): DateTime
+
+/// RFC 3339 / ISO 8601 text in UTC: `2026-10-22`, `2026-10-22T06:38:28Z`,
+/// `2026-10-22 08:38:28.5+02:00`.
+pub fn parseDateTime(text: String): DateTime ! TimeError
+
+/// The inverse of `utc`.
+pub fn DateTime.sinceEpoch(self): Duration

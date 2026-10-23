@@ -4222,7 +4222,8 @@ let captured = buffer.text()?
   stderr como `error: standard output: …` y el proceso termina con estado 1,
   salvo que ya termine con otro estado de error o pánico. Escribir en una pipe
   cuyo lector ya cerró termina el proceso sin mensaje, como cualquier
-  herramienta del sistema.
+  herramienta del sistema; en un programa que ya usó la red (14.24), esa
+  escritura falla con `Closed` en vez de terminarlo.
 
 ### 19.2 `std.process`
 
