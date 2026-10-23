@@ -676,50 +676,57 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, meta: bo
     }
     let mut context = cg.module.make_context();
     let mut builder_context = FunctionBuilderContext::new();
+    // The IR of every function is built here, in order; `compile_all`
+    // compiles them on every core.
+    let mut jobs = Vec::new();
+    let mut job = |id: FuncId, context: &mut cranelift_codegen::Context, traced: Option<&str>| {
+        let func = std::mem::replace(&mut context.func, ir::Function::new());
+        jobs.push(Job { id, func, traced: traced.map(str::to_string) });
+    };
     for (index, body) in bodies.iter().enumerate() {
         context.func.signature = cg.signature(body);
         context.func.name = UserFuncName::user(0, index as u32);
         FnCodegen::new(&mut cg, body, bodies, &mut context.func, &mut builder_context).run();
-        cg.module.define_function(cg.functions[index], &mut context).map_err(|e| format!("{e:?}"))?;
         // The body of `spawn call()` only makes the call, and a trace shows
         // the spawn as the task's origin instead; a test's ends at the test,
         // without the runner's tree that calls it.
         let runner = !program.tests.is_empty() && index == program.main.0 as usize;
-        if body.name != "spawn" && !runner && !body.name.starts_with("suite ") {
-            cg.traced(cg.functions[index], &body.name, &context);
-        }
+        let traced = body.name != "spawn" && !runner && !body.name.starts_with("suite ");
+        job(cg.functions[index], &mut context, traced.then_some(body.name.as_str()));
         cg.module.clear_context(&mut context);
     }
     let main = program.main.0 as usize;
     let trace = cg.module.declare_data("tondo_trace", Linkage::Local, false, false).map_err(|e| e.to_string())?;
-    cg.entry_point(main, bodies[main].result, &program.tests, trace, &mut context, &mut builder_context)?;
+    let entry = cg.entry_point(main, bodies[main].result, &program.tests, trace, &mut context, &mut builder_context)?;
+    job(entry, &mut context, None);
+    cg.module.clear_context(&mut context);
     while let Some((target, thunk)) = cg.pending_thunks.pop() {
         context.func.signature = cg.module.declarations().get_function_decl(thunk).signature.clone();
         context.func.name = UserFuncName::user(3, thunk.as_u32());
         define_thunk(&mut cg, &bodies[target.0 as usize], target, &mut context.func, &mut builder_context);
-        cg.module.define_function(thunk, &mut context).map_err(|e| format!("{e:?}"))?;
+        job(thunk, &mut context, None);
         cg.module.clear_context(&mut context);
     }
     while let Some(callback) = cg.pending_callbacks.pop() {
         context.func.signature = cg.module.declarations().get_function_decl(callback.adapter).signature.clone();
         context.func.name = UserFuncName::user(4, callback.adapter.as_u32());
         define_adapter(&mut cg, &callback, &mut context.func, &mut builder_context);
-        cg.module.define_function(callback.adapter, &mut context).map_err(|e| format!("{e:?}"))?;
+        job(callback.adapter, &mut context, None);
         cg.module.clear_context(&mut context);
         context.func.signature = cg.module.declarations().get_function_decl(callback.inner).signature.clone();
         context.func.name = UserFuncName::user(5, callback.inner.as_u32());
         define_inner(&mut cg, &bodies[callback.target.0 as usize], &callback, &mut context.func, &mut builder_context);
-        cg.module.define_function(callback.inner, &mut context).map_err(|e| format!("{e:?}"))?;
-        cg.traced(callback.inner, &bodies[callback.target.0 as usize].name, &context);
+        job(callback.inner, &mut context, Some(&bodies[callback.target.0 as usize].name));
         cg.module.clear_context(&mut context);
     }
     while let Some((kind, ty, id)) = cg.pending_glue.pop() {
         context.func.signature = cg.glue_signature(kind);
         context.func.name = UserFuncName::user(2, id.as_u32());
         define_glue(&mut cg, kind, ty, &mut context.func, &mut builder_context);
-        cg.module.define_function(id, &mut context).map_err(|e| format!("{e:?}"))?;
+        job(id, &mut context, None);
         cg.module.clear_context(&mut context);
     }
+    cg.compile_all(jobs)?;
 
     cg.trace_table(trace);
     let product = cg.module.finish();
@@ -770,6 +777,60 @@ struct Traced {
     name: String,
     size: u32,
     calls: Vec<(u32, u32)>,
+}
+
+/// A function whose IR is built, to compile; `traced` names it in stack
+/// traces.
+struct Job {
+    id: FuncId,
+    func: ir::Function,
+    traced: Option<String>,
+}
+
+/// A function's machine code, its relocations, and its size and calls for
+/// stack traces.
+struct Compiled {
+    alignment: u64,
+    bytes: Vec<u8>,
+    relocs: Vec<cranelift_module::ModuleReloc>,
+    size: u32,
+    calls: Vec<(u32, u32)>,
+}
+
+/// Compiles a function's IR to machine code.
+fn compile_one(
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
+    context: &mut cranelift_codegen::Context,
+    job: &mut Job,
+) -> Result<Compiled, String> {
+    context.clear();
+    context.func = std::mem::replace(&mut job.func, ir::Function::new());
+    context.compile(isa, &mut Default::default()).map_err(|e| format!("{:?}", e.inner))?;
+    let code = context.compiled_code().expect("compiled code");
+    let sources = code.buffer.get_srclocs_sorted();
+    let calls = code
+        .buffer
+        .call_sites()
+        .filter_map(|call| {
+            let at = call.ret_addr - 1;
+            let source = sources.get(sources.partition_point(|s| s.end <= at)).filter(|s| s.start <= at)?;
+            let loc = source.loc.as_abs();
+            (!loc.is_default()).then(|| (call.ret_addr, loc.bits()))
+        })
+        .collect();
+    let relocs = code
+        .buffer
+        .relocs()
+        .iter()
+        .map(|reloc| cranelift_module::ModuleReloc::from_mach_reloc(reloc, &context.func, job.id))
+        .collect();
+    Ok(Compiled {
+        alignment: code.buffer.min_alignment as u64,
+        bytes: code.buffer.data().to_vec(),
+        relocs,
+        size: code.code_info().total_size,
+        calls,
+    })
 }
 
 impl Codegen<'_> {
@@ -1107,20 +1168,34 @@ impl Codegen<'_> {
     /// whether it is a suite, and its identity.
     /// Records, for stack traces, where each call of the function just
     /// compiled returns to and the source of the statement that makes it.
-    fn traced(&mut self, id: FuncId, name: &str, context: &cranelift_codegen::Context) {
-        let Some(code) = context.compiled_code() else { return };
-        let sources = code.buffer.get_srclocs_sorted();
-        let calls = code
-            .buffer
-            .call_sites()
-            .filter_map(|call| {
-                let at = call.ret_addr - 1;
-                let source = sources.get(sources.partition_point(|s| s.end <= at)).filter(|s| s.start <= at)?;
-                let loc = source.loc.as_abs();
-                (!loc.is_default()).then(|| (call.ret_addr, loc.bits()))
-            })
-            .collect();
-        self.traced.push(Traced { id, name: name.to_string(), size: code.code_info().total_size, calls });
+    /// Compiles the functions on every core, and defines them in order, so
+    /// the object is the same each time.
+    fn compile_all(&mut self, mut jobs: Vec<Job>) -> Result<(), String> {
+        let isa = self.module.isa();
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(jobs.len().max(1));
+        let size = jobs.len().div_ceil(threads);
+        let compiled: Vec<Result<Compiled, String>> = std::thread::scope(|scope| {
+            let workers: Vec<_> = jobs
+                .chunks_mut(size.max(1))
+                .map(|chunk| {
+                    scope.spawn(move || {
+                        let mut context = cranelift_codegen::Context::new();
+                        chunk.iter_mut().map(|job| compile_one(isa, &mut context, job)).collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            workers.into_iter().flat_map(|worker| worker.join().expect("a compiling thread")).collect()
+        });
+        for (job, code) in jobs.into_iter().zip(compiled) {
+            let code = code?;
+            self.module
+                .define_function_bytes(job.id, code.alignment, &code.bytes, &code.relocs)
+                .map_err(|e| format!("{e:?}"))?;
+            if let Some(name) = job.traced {
+                self.traced.push(Traced { id: job.id, name, size: code.size, calls: code.calls });
+            }
+        }
+        Ok(())
     }
 
     /// The stack trace table (the runtime's `trace::Table`): each function's
@@ -1259,7 +1334,7 @@ impl Codegen<'_> {
         trace: DataId,
         context: &mut cranelift_codegen::Context,
         fbc: &mut FunctionBuilderContext,
-    ) -> Result<(), String> {
+    ) -> Result<FuncId, String> {
         let table = (!tests.is_empty()).then(|| self.test_table(tests));
         let mut signature = self.module.make_signature();
         signature.returns.push(AbiParam::new(types::I32));
@@ -1334,9 +1409,7 @@ impl Codegen<'_> {
             let config = e.cg.module.isa().frontend_config();
             e.fb.finalize(config);
         }
-        self.module.define_function(id, context).map_err(|e| format!("{e:?}"))?;
-        self.module.clear_context(context);
-        Ok(())
+        Ok(id)
     }
 }
 

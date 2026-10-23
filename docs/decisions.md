@@ -1242,3 +1242,15 @@ that poll the sockets themselves instead of a tokio thread waking them,
 which belongs to a later milestone. The experiment found that a worker
 spinning when `main` ended missed the notification and slept for good: any
 wait added to the scheduler must look at everything again afterwards.
+
+## 2026-10-23 — Functions compile on every core
+
+Cranelift compiling each function took two thirds of a large build: 0.95 s
+of 1.48 s for 43 000 lines in 2 400 functions. The IR of every function is
+still built in order, since building it declares what it uses, and then
+the functions compile on every core and are defined in the same order as
+before, so the executable is the same, byte for byte. That build takes
+0.67 s; a small program's, about 0.25 s, is mostly linking. A cache of
+compiled functions between builds would save the rest of the compiling,
+but with generics its invalidation is subtle, and no build is slow enough
+yet to need it.
