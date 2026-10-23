@@ -66,8 +66,7 @@ Esta revisión no fija todavía:
   en `docs/contracts/stdlib-core.md`.
 - Los métodos concretos de strings, colecciones e iteradores.
 - Las declaraciones exhaustivas de consola, filesystem, procesos, concurrencia,
-  codecs adicionales, regex, UUID y logging. `std.net` es la excepción ya
-  cerrada por su contrato owner en la sección 14.4.6.
+  codecs adicionales, regex, UUID y logging.
 - Las declaraciones exhaustivas de cada operación de JSON, MessagePack y
   Protobuf; este documento sí fija sus owners, arquitectura y garantías comunes.
 - La representación interna de ningún tipo.
@@ -1551,9 +1550,9 @@ actualizar esta especificación y el tracker antes de implementar.
 
 El catálogo y sus propietarios son normativos. Las declaraciones exhaustivas de
 las veintinueve superficies permanecen pendientes, salvo el núcleo sellado que
-`TONDO_TESTING_SPEC.md` ya fija para `std.testing`, `std.time`, `std.env` y el
-contrato runtime-facing de `std.net` en la sección 14.4.6. No existe un contrato bootstrap separado: el corpus consume
-siempre este borrador.
+`TONDO_TESTING_SPEC.md` ya fija para `std.testing`, `std.time` y `std.env`.
+No existe un contrato bootstrap separado: el corpus consume siempre este
+borrador.
 
 La implementación usa dos gates internos sin crear versiones distintas:
 
@@ -1985,87 +1984,126 @@ promoción pública siguen pendientes.
 
 #### 14.4.6 Networking
 
-The adopted hosted network provider is private Tokio 1.53.2, Hickory Resolver
-0.26.3, Rustls 0.23.45 with AWS-LC and webpki-roots 1.0.9. Targets explicitly
-supply the ordered numeric resolver endpoints in `[target.network]` of
-`tondo.toml`; these inputs enter build identity, without inheriting system DNS.
-TLS supports versions 1.2 and 1.3 with explicit suites and certificate/name
-verification. Dependency and schema adoption does not close the implementation,
-host or conformance leaves or establish native ABI/AOT coverage.
+`std.net` ofrece conexiones TCP, con TLS, listeners, sockets UDP y nombres.
+Cada operación espera como cualquier llamada (sección 9): la tarea se aparca
+sin ocupar un worker ni un thread mientras la red trabaja, así que un servidor
+puede tener una tarea por conexión. Cada operación que espera acepta su propio
+`timeout`; sin él, no hay ninguno.
 
-`std.net` es un owner capability-gated: el target debe declarar `network` y un
-import nunca abre sockets, consulta DNS, lee proxies o certificados, crea tasks
-ni toca el entorno. `clock` solo es necesario cuando el caller construye un
-`NetOptions` con un `Instant` de deadline; `none` no instala un timeout
-ambiental. Las operaciones que esperan siguen el modelo único de Tondo: una
-llamada espera sin marcas y el solapamiento usa el `spawn`/`Join`
-ordinario, sin `connectAsync`, futures o una API paralela.
+~~~tondo
+import std.net
 
-El contrato normativo y el registro único son
-[`docs/contracts/stdlib-net.md`](./docs/contracts/stdlib-net.md) y
-[`testing/stdlib-net.json`](./testing/stdlib-net.json). Fijan:
+let stream = net.connect("example.com", 80, timeout: time.seconds(5))?
+stream.write("GET / HTTP/1.0\r\nHost: example.com\r\n\r\n")?
+let reply = stream.readText()?
 
-- valores explícitos para nombres, direcciones y puertos, con DNS solo mediante
-  `resolve`, sin resolución implícita en `connect`, retries ni Happy Eyeballs
-  ambiental;
-- límites finitos y por operación (`NetLimits`/`NetOptions`), errores nominales,
-  deadlines monotónicos y cancelación cooperativa con cleanup antes de publicar
-  `Timeout` o salir del scope;
-- TCP con partial I/O observable, `ReadResult.Eof`, `TcpStream.shutdown` antes
-  de `split` y mitades afines de lectura/escritura;
-- UDP con datagrams atómicos y `DatagramTooLarge` sin truncación, sin promesas de entrega, orden o unicidad; y
-- una frontera TLS target-declared con `PlatformRoots` por defecto, SNI y
-  verificación de hostname, sin modo inseguro, downgrade a plaintext ni
-  publicación del stream antes del handshake.
+let secure = net.connectTls("example.com", 443)?
 
-Los handles son afines, no se copian ni se comparten; `close` es explícito y la
-conformance comprueba ownership, commit/rollback, límites, cancelación,
-diagnóstico privado y ausencia de efectos por import. La superficie queda
-`contract-locked`. The scalar kernel/private provider is verified separately
-from the public hosted integration. The latter implements the 40 operations,
-nominal types, explicit resolver configuration, receiving-account admission
-and scope cleanup described in
-[`stdlib-net-host.md`](docs/contracts/stdlib-net-host.md); its production hosted
-boundary is verified after the joint selection, current-source quality,
-complete functional checks and exact-source publication CI. The independent
-model, regression and bounded-fuzz testing boundary is also verified.
-Portable conformance, usage documentation and native ABI/AOT remain separate
-`STD-NET-*` owner leaves. The independent bounded test register
-is [`testing/stdlib-net-test.json`](testing/stdlib-net-test.json), with its exact
-model, controlled hosted replay and fuzz scope in
-[`stdlib-net-test.md`](docs/contracts/stdlib-net-test.md).
+let listener = net.listen("127.0.0.1", 0)?   // puerto 0: uno libre
+console.println("{listener.address()}")
+for connection in listener {
+    (spawn serve(connection)).detach()
+}
 
-The verified hosted networking performance baseline is registered in
-[testing/stdlib-net-performance.json](testing/stdlib-net-performance.json) and
-[stdlib-net-performance.md](docs/contracts/stdlib-net-performance.md). It covers
-21 controlled hosted bridge workloads and 27 retained samples each, including
-connections, partial I/O, backpressure, explicit DNS/TLS, cancellation and
-bounded refusal. Resource counters are selected logical observations; VM
-interpreter, native ABI/AOT, SIMD and code-size timing are not promoted.
+let socket = net.bind("0.0.0.0", 9000)?
+socket.sendTo(data, net.address("127.0.0.1", 9001)?)?
+let (packet, from) = socket.receive()?
 
-The public hosted networking conformance register is
-[testing/stdlib-net-conformance.json](testing/stdlib-net-conformance.json), with
-its bounded native Rust reference and VM-only integration boundary in
-[stdlib-net-conformance.md](docs/contracts/stdlib-net-conformance.md). Its
-`verified-public-hosted-vm-and-native-kernel-process` state closes its qualified
-boundary using current-source quality, clean capture and exact-checkout CI.
-The verified usage guide below completes `STD-NET-DOC-001`; the public hosted
-logging core and capability-gated hosted sinks are verified; the next owner is
-`STD-LOG-TEST-001`.
-Public release and full normative trace coverage remain
-separate gates.
-No native Tondo networking target is supplied by that reference process.
+let addresses = net.resolve("example.com")?
+~~~
 
-The executable public hosted usage guide in
-[stdlib-net.md](docs/contracts/stdlib-net.md) is bound to
-`acceptance/projects/net-usage` and checked by `scripts/stdlib-net-doc-check.sh`.
-It exercises six paths through the ordinary CLI: address values and keys,
-partial TCP I/O and EOF, whole UDP datagrams, errors/deadlines, losing selection
-arms and TLS configuration. Real TLS handshakes and successful DNS remain
-separate conformance fixtures. Its `verified-public-hosted-usage` state is
-supported by source-bound quality, the complete functional gate and
-exact-checkout publication CI. Native networking ABI/AOT and public release
-remain outside this usage promotion.
+La superficie es:
+
+~~~tondo pseudocode
+pub enum NetError {
+    NotFound(String)          // el nombre no resuelve
+    Refused
+    TimedOut
+    Reset
+    Closed
+    AddressInUse
+    Unreachable
+    InvalidAddress(String)
+    Tls(String)
+    Io(String)
+}
+
+pub type Address = { ip: String, port: Int }
+pub fn address(ip: String, port: Int): Address ! NetError
+pub fn resolve(host: String, timeout: time.Duration? = none): Array[String] ! NetError
+
+pub type Stream
+pub fn connect(host: String, port: Int, timeout: time.Duration? = none): Stream ! NetError
+pub fn connectTls(host: String, port: Int, trust: String? = none,
+    timeout: time.Duration? = none): Stream ! NetError
+pub fn Stream.read(self, max: Int = 65536, timeout: time.Duration? = none): Array[Byte]? ! NetError
+pub fn Stream.readLine(self, timeout: time.Duration? = none): String? ! NetError
+pub fn Stream.readAll(self, timeout: time.Duration? = none): Array[Byte] ! NetError
+pub fn Stream.readText(self, timeout: time.Duration? = none): String ! NetError
+pub fn Stream.write(self, text: String, timeout: time.Duration? = none): Unit ! NetError
+pub fn Stream.writeBytes(self, data: Array[Byte], timeout: time.Duration? = none): Unit ! NetError
+pub fn Stream.closeWrite(self, timeout: time.Duration? = none): Unit ! NetError
+pub fn Stream.close(self, timeout: time.Duration? = none): Unit ! NetError
+pub fn Stream.reader(self): io.Reader
+pub fn Stream.writer(self): io.Writer
+pub fn Stream.localAddress(self): Address
+pub fn Stream.remoteAddress(self): Address
+
+pub type Tls = { certificate: String, privateKey: String }
+pub fn Tls.files(certificate: String, privateKey: String): Tls
+
+pub type Listener                             // Iterator[Stream]
+pub fn listen(host: String, port: Int, tls: Tls? = none): Listener ! NetError
+pub fn Listener.address(self): Address
+pub fn Listener.accept(self, timeout: time.Duration? = none): Stream ! NetError
+pub fn Listener.close(self)
+
+pub type Socket
+pub fn bind(host: String, port: Int): Socket ! NetError
+pub fn Socket.address(self): Address
+pub fn Socket.sendTo(self, data: Array[Byte], to: Address): Unit ! NetError
+pub fn Socket.receive(self, timeout: time.Duration? = none): (Array[Byte], Address) ! NetError
+pub fn Socket.close(self)
+~~~
+
+- `connect`, `listen` y `bind` aceptan un nombre o una dirección IP;
+  `connect` prueba cada dirección del nombre, en el orden del sistema, hasta
+  que una responde. `resolve` da esas direcciones a quien quiera elegir.
+  `address` solo acepta direcciones IP, en su forma habitual; para un nombre,
+  su error indica `resolve`.
+- `Stream`, `Listener` y `Socket` son handles compartidos: sus copias usan la
+  misma conexión. Las lecturas y escrituras pasan por `reader()` y
+  `writer()`, streams de `std.io` (10.3), así que pueden mezclarse con las
+  del propio `Stream` y con `csv`, `json.decodeFrom` o cualquier consumidor
+  de streams. `read` da lo que ya llegó, hasta `max` bytes, o `none` al
+  final; `readAll` y `readText` leen hasta que el otro lado termina.
+- Una escritura vuelve cuando la conexión tiene los bytes, que salen en orden
+  mientras el programa sigue; espera solo si el otro lado no lee y ya hay
+  256 KiB pendientes. Un fallo al enviarlos es el error de la escritura o el
+  cierre siguientes. `closeWrite` envía lo pendiente y termina la dirección
+  de escritura, y el otro lado lee el final; `close` envía lo pendiente y
+  cierra la conexión. La última copia que desaparece la cierra también, y lo
+  pendiente se envía por su cuenta.
+- `timeout` limita esa operación; al vencer falla con `TimedOut` y la
+  conexión sigue utilizable. Una tarea cancelada abandona la operación que
+  espera.
+- TLS confía en los certificados raíz del sistema y, si el sistema no tiene
+  ninguno, en los de Mozilla; `trust` nombra un archivo PEM con más
+  certificados en los que confiar. `connectTls` verifica que el certificado es
+  para `host` antes de devolver la conexión. Un listener con `tls` acepta en
+  claro y cada conexión hace su handshake antes de su primera lectura o
+  escritura, cuyo error es si falla; así un cliente lento no retiene a los
+  demás. `http.Tls` es `net.Tls`.
+- Recorrer un `Listener` da cada conexión nueva hasta que se cierra,
+  esperando más allá de los fallos al aceptar; `close` hace que las esperas
+  de `accept` fallen con `Closed` y suelta el puerto. Un `Join` que nadie
+  espera se espera al final de su bloque (11.11 del lenguaje), así que un
+  servidor atiende cada conexión con `(spawn serve(connection)).detach()` o
+  un `Group`.
+- Un datagrama llega entero o no llega, en cualquier orden y como mucho una
+  vez; `sendTo` rechaza uno de más de 65 535 bytes. `Display` de una
+  dirección es `127.0.0.1:80` o `[::1]:80`.
+- Un provider o generador no puede importar `std.net` (`E2108`).
 
 ### 14.5 El prelude y `std.math`
 
@@ -3688,8 +3726,7 @@ pub type Server
 pub fn Server.address(self): String
 pub fn Server.url(self): String
 pub fn Server.stop(self)
-pub type Tls
-pub fn Tls.files(certificate: String, privateKey: String): Tls
+pub alias Tls = net.Tls
 ~~~
 
 - Una ruta es un método y un path cuyos segmentos `:nombre` son parámetros y

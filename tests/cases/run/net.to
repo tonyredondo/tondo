@@ -1,0 +1,196 @@
+import std.console
+import std.io
+import std.net
+import std.time
+
+fn note(text: String) {
+    console.println(text)
+}
+
+fn echo(connection: net.Stream): !net.NetError {
+    for {
+        match connection.readLine()? {
+            some(line) => connection.write("echo {line}\n")?
+            none => break
+        }
+    }
+    connection.close()?
+}
+
+fn serve(listener: net.Listener) {
+    for connection in listener {
+        (spawn echo(connection)).detach()
+    }
+}
+
+// Keeps each connection open without reading it.
+fn hold(listener: net.Listener) {
+    var kept: Array[net.Stream] = []
+    for connection in listener {
+        kept.push(connection)
+    }
+}
+
+fn greet(listener: net.Listener): !(io.IoError | net.NetError) {
+    let connection = listener.accept()?
+    connection.writer().writeLine("through io")?
+    connection.write("direct\n")?
+    note("server got {connection.reader().readLine()?}")
+    connection.close()?
+}
+
+fn waitLine(stream: net.Stream): String? ! net.NetError {
+    stream.readLine()
+}
+
+fn waitDatagram(socket: net.Socket): Int ! net.NetError {
+    let (data, _) = socket.receive()?
+    data.length()
+}
+
+fn main(): !(io.IoError | net.NetError) {
+    // A line protocol, with a name that resolves.
+    let listener = net.listen("127.0.0.1", 0)?
+    let port = listener.address().port
+    spawn serve(listener)
+    let stream = net.connect("localhost", port, timeout: time.seconds(5))?
+    stream.write("hello\nworld\n")?
+    console.println("{stream.readLine()?} {stream.readLine()?}")
+    stream.closeWrite()?
+    console.println("{stream.readLine()?} {stream.remoteAddress().port == port}")
+    listener.close()
+
+    // std.io streams and direct calls on one connection.
+    let greeter = net.listen("127.0.0.1", 0)?
+    spawn greet(greeter)
+    let client = net.connect("127.0.0.1", greeter.address().port)?
+    console.println("{client.readLine()?} / {client.reader().readLine()?}")
+    client.writer().writeLine("thanks")?
+    console.println("rest: {client.readAll()?.length()}")
+    client.close()?
+
+    // Timeouts, cancellation and a writer the other side does not read.
+    let quiet = net.listen("127.0.0.1", 0)?
+    spawn hold(quiet)
+    let silent = net.connect("127.0.0.1", quiet.address().port)?
+    match silent.readLine(timeout: time.milliseconds(30)) {
+        ok(line) => console.println("unexpected {line}")
+        err(error) => console.println("{error}")
+    }
+    let reading = spawn waitLine(silent)
+    time.sleep(time.milliseconds(20))
+    // Cancelling ends the wait; it would hang otherwise.
+    reading.cancel()
+    console.println("cancelled a read")
+    let flood = "y".repeat(1000000)
+    var outcome = "wrote everything"
+    for _ in 0..50 {
+        match silent.write(flood, timeout: time.milliseconds(50)) {
+            ok(_) => {}
+            err(error) => {
+                outcome = "{error}"
+                break
+            }
+        }
+    }
+    console.println(outcome)
+    match silent.close(timeout: time.milliseconds(10)) {
+        ok(_) => console.println("unexpected close")
+        err(error) => console.println("close: {error}")
+    }
+    match silent.write("again") {
+        ok(_) => console.println("unexpected write")
+        err(error) => console.println("after close: {error}")
+    }
+    match quiet.accept(timeout: time.milliseconds(20)) {
+        ok(_) => console.println("unexpected accept")
+        err(error) => console.println("accept: {error}")
+    }
+    quiet.close()
+    match quiet.accept() {
+        ok(_) => console.println("unexpected accept")
+        err(error) => console.println("accept: {error}")
+    }
+
+    // Refused, and a port in use.
+    let gone = net.listen("127.0.0.1", 0)?
+    let free = gone.address().port
+    gone.close()
+    match net.connect("127.0.0.1", free) {
+        ok(_) => console.println("unexpected connection")
+        err(error) => console.println("{error}")
+    }
+    let taken = net.listen("127.0.0.1", 0)?
+    match net.listen("127.0.0.1", taken.address().port) {
+        ok(_) => console.println("unexpected listener")
+        err(error) => console.println("{error}")
+    }
+
+    // UDP: whole datagrams.
+    let a = net.bind("127.0.0.1", 0)?
+    let b = net.bind("127.0.0.1", 0)?
+    a.sendTo("x".repeat(60000).bytes(), b.address())?
+    let (packet, from) = b.receive(timeout: time.seconds(5))?
+    console.println("datagram of {packet.length()} from a: {from == a.address()}")
+    b.sendTo("pong".bytes(), from)?
+    let (reply, _) = a.receive(timeout: time.seconds(5))?
+    console.println("{String.fromBytes(reply)}")
+    match b.receive(timeout: time.milliseconds(20)) {
+        ok(_) => console.println("unexpected datagram")
+        err(error) => console.println("udp: {error}")
+    }
+    let receiving = spawn waitDatagram(b)
+    time.sleep(time.milliseconds(20))
+    receiving.cancel()
+    console.println("cancelled a receive")
+    match a.sendTo("x".repeat(70000).bytes(), b.address()) {
+        ok(_) => console.println("unexpected datagram")
+        err(error) => console.println("{error}")
+    }
+    a.close()
+    match a.sendTo("x".bytes(), b.address()) {
+        ok(_) => console.println("unexpected datagram")
+        err(error) => console.println("udp: {error}")
+    }
+
+    // Names and addresses.
+    var local = false
+    for ip in net.resolve("localhost")? {
+        local = local or ip == "127.0.0.1" or ip == "::1"
+    }
+    console.println("localhost resolves: {local}")
+    console.println("{net.address("0:0:0:0:0:0:0:1", 80)?} {net.address("127.0.0.1", 8080)?}")
+    match net.address("example.com", 80) {
+        ok(_) => console.println("unexpected address")
+        err(error) => console.println("{error}")
+    }
+    match net.connect("127.0.0.1", 70000) {
+        ok(_) => console.println("unexpected connection")
+        err(error) => console.println("{error}")
+    }
+}
+
+// expect-stdout: some(echo hello) some(echo world)
+// expect-stdout: none true
+// expect-stdout: some(through io) / some(direct)
+// expect-stdout: server got some(thanks)
+// expect-stdout: rest: 0
+// expect-stdout: the operation timed out
+// expect-stdout: cancelled a read
+// expect-stdout: the operation timed out
+// expect-stdout: close: the operation timed out
+// expect-stdout: after close: the connection is closed
+// expect-stdout: accept: the operation timed out
+// expect-stdout: accept: the connection is closed
+// expect-stdout: the connection was refused: nothing listens at that address
+// expect-stdout: the address is in use by another socket
+// expect-stdout: datagram of 60000 from a: true
+// expect-stdout: ok(pong)
+// expect-stdout: udp: the operation timed out
+// expect-stdout: cancelled a receive
+// expect-stdout: a datagram of 70000 bytes; one holds at most 65535
+// expect-stdout: udp: the connection is closed
+// expect-stdout: localhost resolves: true
+// expect-stdout: [::1]:80 127.0.0.1:8080
+// expect-stdout: invalid address: `example.com` is not an IP address; `net.resolve` gives the addresses of a name
+// expect-stdout: invalid address: port 70000 is not between 0 and 65535

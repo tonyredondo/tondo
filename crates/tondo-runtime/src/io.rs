@@ -103,6 +103,51 @@ pub(crate) fn host_cancellable<R: Send + 'static>(
     }
 }
 
+/// What `future` gives, polled on the current task, which parks between
+/// polls without holding its worker until the future's waker notifies it;
+/// `None` when the task is cancelled first, which drops the future.
+pub(crate) fn wait_for<T>(future: impl std::future::Future<Output = T>) -> Option<T> {
+    use std::task::{Context, Poll, Wake, Waker};
+    struct Notify(Arc<Wait>);
+    impl Wake for Notify {
+        fn wake(self: Arc<Self>) {
+            if self.0.claim(0) {
+                notify(self.0.task);
+            }
+        }
+    }
+    let runtime = super::http::runtime();
+    if current().is_null() {
+        return Some(runtime.block_on(future));
+    }
+    let mut future = std::pin::pin!(future);
+    loop {
+        let wait = Wait::new();
+        let waker = Waker::from(Arc::new(Notify(wait.clone())));
+        // The runtime's context only while polling: the task may resume on
+        // another thread.
+        let polled = {
+            let _context = runtime.enter();
+            future.as_mut().poll(&mut Context::from_waker(&waker))
+        };
+        if let Poll::Ready(value) = polled {
+            return Some(value);
+        }
+        HOST_WORK.fetch_add(1, Ordering::SeqCst);
+        // A virtual clock does not move while its tasks wait on the host.
+        let virtual_clock = super::clock::in_domain();
+        super::clock::external(true);
+        let woken = wait.block();
+        if virtual_clock {
+            super::clock::external(false);
+        }
+        HOST_WORK.fetch_sub(1, Ordering::SeqCst);
+        if woken == super::tasks::CANCELLED {
+            return None;
+        }
+    }
+}
+
 fn submit(job: Job, long: bool) {
     let mut pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
     pool.jobs.push_back(job);
@@ -152,7 +197,18 @@ pub(crate) trait Host: Send {
     fn back(&mut self, _count: usize) -> std::io::Result<()> {
         Ok(())
     }
+    /// For a `Mode::Ready` host, which fails with `WouldBlock` instead of
+    /// waiting: after it did, what to wait for before trying again.
+    fn blocked(&mut self) -> Option<Ready> {
+        None
+    }
+    /// From now on a `Mode::Ready` host fails with `kind` where it would
+    /// block; `None` lets it block again.
+    fn give_up(&mut self, _kind: Option<ErrorKind>) {}
 }
+
+/// What a `Mode::Ready` host waits for.
+pub(crate) type Ready = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
 
 impl Host for std::fs::File {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
@@ -258,6 +314,10 @@ pub(crate) enum Mode {
     Host,
     /// On the host pool, possibly waiting indefinitely.
     Long,
+    /// On the calling task, with a host that never blocks: when it would,
+    /// the task waits for it without holding the stream or a thread, and
+    /// the operation runs again, so it must change nothing before then.
+    Ready,
 }
 
 /// A `File`, `Writer` or `Reader`: the host, the bytes read ahead of the
@@ -272,8 +332,11 @@ pub struct StreamObject {
 
 pub(crate) struct StreamState {
     host: Option<Box<dyn Host>>,
+    /// Bytes read ahead, `ahead[position..filled]`; the rest of `ahead` is
+    /// room for the next read, zeroed once.
     ahead: Vec<u8>,
     position: usize,
+    filled: usize,
     pending: Vec<u8>,
     /// Whether writes gather in `pending` before reaching the host.
     buffered: bool,
@@ -303,12 +366,12 @@ impl StreamState {
 
     /// Before writing: the host position goes back over unread bytes.
     fn unread(&mut self) -> std::io::Result<()> {
-        let rest = self.ahead.len() - self.position;
+        let rest = self.filled - self.position;
         if rest > 0 {
             self.host()?.back(rest)?;
         }
-        self.ahead.clear();
         self.position = 0;
+        self.filled = 0;
         Ok(())
     }
 
@@ -317,22 +380,24 @@ impl StreamState {
         if !self.pending.is_empty() {
             self.flush()?;
         }
-        if self.position == self.ahead.len() {
-            self.ahead.clear();
+        if self.position == self.filled {
             self.position = 0;
+            self.filled = 0;
         }
-        let start = self.ahead.len();
-        self.ahead.resize(start + READ_CHUNK, 0);
-        let read = self.host.as_mut().ok_or_else(closed).and_then(|h| h.read(&mut self.ahead[start..]));
-        let count = *read.as_ref().unwrap_or(&0);
-        self.ahead.truncate(start + count);
+        let start = self.filled;
+        if self.ahead.len() < start + READ_CHUNK {
+            self.ahead.resize(start + READ_CHUNK, 0);
+        }
+        let read =
+            self.host.as_mut().ok_or_else(closed).and_then(|h| h.read(&mut self.ahead[start..start + READ_CHUNK]));
+        self.filled += *read.as_ref().unwrap_or(&0);
         read.map(|n| n > 0)
     }
 
     /// The next line without its `\n` or `\r\n`, or `None` at the end.
     pub(crate) fn read_line(&mut self) -> std::io::Result<Option<Vec<u8>>> {
         loop {
-            if let Some(end) = self.ahead[self.position..].iter().position(|&b| b == b'\n') {
+            if let Some(end) = self.ahead[self.position..self.filled].iter().position(|&b| b == b'\n') {
                 let mut line = self.ahead[self.position..self.position + end].to_vec();
                 self.position += end + 1;
                 if line.last() == Some(&b'\r') {
@@ -341,34 +406,33 @@ impl StreamState {
                 return Ok(Some(line));
             }
             if !self.fill()? {
-                if self.position == self.ahead.len() {
+                if self.position == self.filled {
                     return Ok(None);
                 }
-                let line = self.ahead[self.position..].to_vec();
-                self.position = self.ahead.len();
+                let line = self.ahead[self.position..self.filled].to_vec();
+                self.position = self.filled;
                 return Ok(Some(line));
             }
         }
     }
 
     pub(crate) fn read(&mut self, max: usize) -> std::io::Result<Option<Vec<u8>>> {
-        if self.position == self.ahead.len() && !self.fill()? {
+        if self.position == self.filled && !self.fill()? {
             return Ok(None);
         }
-        let end = (self.position + max).min(self.ahead.len());
+        let end = (self.position + max).min(self.filled);
         let bytes = self.ahead[self.position..end].to_vec();
         self.position = end;
         Ok(Some(bytes))
     }
 
     pub(crate) fn read_rest(&mut self) -> std::io::Result<Vec<u8>> {
-        let mut bytes = self.ahead.split_off(self.position);
-        self.ahead.clear();
+        // What is read stays ahead until the end, so a host that would
+        // block loses nothing.
+        while self.fill()? {}
+        let bytes = self.ahead[self.position..self.filled].to_vec();
         self.position = 0;
-        while self.fill()? {
-            bytes.append(&mut self.ahead);
-            self.position = 0;
-        }
+        self.filled = 0;
         Ok(bytes)
     }
 
@@ -390,6 +454,9 @@ impl StreamState {
             return Ok(());
         }
         let flushed = self.flush();
+        if flushed.as_ref().is_err_and(|error| error.kind() == ErrorKind::WouldBlock) {
+            return flushed;
+        }
         self.host = None;
         flushed
     }
@@ -398,8 +465,15 @@ impl StreamState {
 /// A new stream over `host`, with one reference.
 pub(crate) fn stream(host: Box<dyn Host>, mode: Mode, buffered: bool) -> *mut StreamObject {
     LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
-    let state =
-        StreamState { host: Some(host), ahead: Vec::new(), position: 0, pending: Vec::new(), buffered, failed: None };
+    let state = StreamState {
+        host: Some(host),
+        ahead: Vec::new(),
+        position: 0,
+        filled: 0,
+        pending: Vec::new(),
+        buffered,
+        failed: None,
+    };
     Box::into_raw(Box::new(StreamObject { rc: AtomicUsize::new(1), mode, state: Mutex::new(state) }))
 }
 
@@ -417,13 +491,50 @@ impl Shared {
 /// Runs an operation on a stream where its mode says.
 pub(crate) fn run<R: Send + 'static>(
     stream: *mut StreamObject,
-    op: impl FnOnce(&mut StreamState) -> R + Send + 'static,
+    op: impl FnMut(&mut StreamState) -> R + Send + 'static,
+) -> R {
+    run_until(stream, None, op)
+}
+
+/// Like `run`; on a `Mode::Ready` stream the operation fails with
+/// `TimedOut` if it would wait past `deadline`.
+pub(crate) fn run_until<R: Send + 'static>(
+    stream: *mut StreamObject,
+    deadline: Option<std::time::Instant>,
+    mut op: impl FnMut(&mut StreamState) -> R + Send + 'static,
 ) -> R {
     let shared = Shared(stream);
     match unsafe { (*stream).mode } {
         Mode::Inline => op(&mut shared.state()),
         Mode::Host => host(false, move || op(&mut shared.state())),
         Mode::Long => host(true, move || op(&mut shared.state())),
+        Mode::Ready => loop {
+            let (result, blocked) = {
+                let mut state = shared.state();
+                let result = op(&mut state);
+                (result, state.host.as_mut().and_then(|host| host.blocked()))
+            };
+            let Some(blocked) = blocked else { return result };
+            let waited = wait_for(async move {
+                match deadline {
+                    Some(at) => tokio::time::timeout_at(at.into(), blocked).await.is_ok(),
+                    None => {
+                        blocked.await;
+                        true
+                    }
+                }
+            });
+            if waited == Some(true) {
+                continue;
+            }
+            // Cancelled or out of time: the operation fails where it would wait.
+            let kind = if waited.is_none() { ErrorKind::Interrupted } else { ErrorKind::TimedOut };
+            let mut state = shared.state();
+            state.give_up(Some(kind));
+            let result = op(&mut state);
+            state.give_up(None);
+            return result;
+        },
     }
 }
 
@@ -433,7 +544,7 @@ pub(crate) fn run<R: Send + 'static>(
 pub(crate) fn run_ready<R: Send + 'static>(
     stream: *mut StreamObject,
     ready: impl FnOnce(&StreamState) -> bool,
-    op: impl FnOnce(&mut StreamState) -> R + Send + 'static,
+    mut op: impl FnMut(&mut StreamState) -> R + Send + 'static,
 ) -> R {
     if let Ok(mut state) = unsafe { (*stream).state.try_lock() }
         && ready(&state)
@@ -444,21 +555,27 @@ pub(crate) fn run_ready<R: Send + 'static>(
 }
 
 impl StreamState {
+    fn give_up(&mut self, kind: Option<ErrorKind>) {
+        if let Some(host) = self.host.as_mut() {
+            host.give_up(kind);
+        }
+    }
+
     /// Whether a whole line was read ahead.
     pub(crate) fn has_line(&self) -> bool {
-        self.ahead[self.position..].contains(&b'\n')
+        self.ahead[self.position..self.filled].contains(&b'\n')
     }
 
     /// Whether bytes were read ahead.
     pub(crate) fn has_bytes(&self) -> bool {
-        self.position < self.ahead.len()
+        self.position < self.filled
     }
 
     /// Whether `count` bytes fit among the gathered writes.
     pub(crate) fn has_room(&self, count: usize) -> bool {
         self.buffered
             && self.host.is_some()
-            && self.position == self.ahead.len()
+            && self.position == self.filled
             && self.pending.len() + count < WRITE_BUFFER
     }
 }
@@ -475,9 +592,13 @@ pub unsafe extern "C" fn tondo_rt_stream_release(stream: *mut StreamObject) {
             return;
         }
         std::sync::atomic::fence(Ordering::Acquire);
-        run(stream, |state| {
-            let _ = state.close();
-        });
+        // A `Ready` host delivers what it holds on its own, so letting it
+        // go never waits on the other side of a connection.
+        if (*stream).mode != Mode::Ready {
+            run(stream, |state| {
+                let _ = state.close();
+            });
+        }
         drop(Box::from_raw(stream));
         LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
     }

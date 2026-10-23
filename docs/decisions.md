@@ -1182,3 +1182,27 @@ keys keep their order unless `deterministic: true`, which sorts them by
 their encodings as section 4.2 asks and rejects a repeated key; the
 writer buffers each container's items for that, which costs a copy per
 level. The examples of the RFC's appendix A are a test.
+
+## 2026-10-23 — The network without a thread per connection
+
+`std.net` is TCP, TLS, UDP and names over the tokio runtime HTTP already
+has. `connect` resolves its host and tries each address, which the legacy
+specification forbade; a program that wants to choose calls `resolve`.
+A connection's reads and writes go through two `std.io` streams of a new
+mode, `Ready`, whose host never blocks: when it would, the task polls a
+future in place with a waker that notifies it, so it parks without holding
+a worker or a thread, a timeout is a deadline on that future, and a
+cancelled task drops it. The stream's operations run again after the
+wait, so each changes nothing before its host says it would block;
+`read_rest` keeps what it read ahead for that. Over plain TCP the task
+reads and writes the socket itself; a write the socket cannot take whole
+leaves the rest to a tokio task that sends it in order, and waits only
+past 256 KiB pending. TLS moves its bytes in two tokio tasks, and a
+listener's handshakes run in their own, so a slow client holds up no other.
+Listeners queue as many connections as the system allows, after 2 000
+simultaneous clients were found retrying for seconds behind tokio's 1 024.
+Reads into a stream's buffer no longer zero 64 KiB each time. `http.Tls`
+became `net.Tls`. Measured on loopback against Go: bulk transfer 4.5 GB/s,
+one connection's round trip 22 µs (Go 12), 2 000 connections of ten round
+trips 0.19 s (Go 0.10); the rest is the hop from tokio's reactor thread to
+a worker, which only polling the network from the workers would remove.

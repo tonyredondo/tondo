@@ -109,8 +109,9 @@ fn response(status: i64, headers: &[String], body: Body) -> hyper::Response<Body
     builder.body(body).unwrap_or_else(|error| plain(500, &format!("a header is not valid: {error}")))
 }
 
-/// The TLS of a server: its certificate chain and private key, in PEM.
-fn acceptor(cert: &str, key: &str) -> Result<tokio_rustls::TlsAcceptor, String> {
+/// The TLS of a server: its certificate chain and private key, in PEM;
+/// ALPN offers HTTP/2 first when `http`.
+pub(crate) fn acceptor(cert: &str, key: &str, http: bool) -> Result<tokio_rustls::TlsAcceptor, String> {
     use rustls_pki_types::pem::PemObject;
     use rustls_pki_types::{CertificateDer, PrivateKeyDer};
     let certs = CertificateDer::pem_file_iter(cert)
@@ -124,7 +125,9 @@ fn acceptor(cert: &str, key: &str) -> Result<tokio_rustls::TlsAcceptor, String> 
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .map_err(|error| error.to_string())?;
-    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    if http {
+        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    }
     Ok(tokio_rustls::TlsAcceptor::from(Arc::new(config)))
 }
 
@@ -148,7 +151,7 @@ pub unsafe extern "C" fn tondo_rt_http_listen(
     let (cert, key) = (text(cert), text(key));
     let tls = match cert.is_empty() {
         true => None,
-        false => match acceptor(&cert, &key) {
+        false => match acceptor(&cert, &key, true) {
             Ok(acceptor) => Some(acceptor),
             Err(problem) => return failed(problem),
         },

@@ -8,6 +8,7 @@ import std.encoding as __encoding
 import std.internal.http as httpNative
 import std.io as __io
 import std.json as __json
+import std.net as __net
 import std.serialization as __serialization
 import std.time as __time
 
@@ -1395,15 +1396,8 @@ pub fn Server.stop(self) {
     _ = self.ended.receive()
 }
 
-/// A certificate chain and its private key, in PEM files.
-pub type Tls = {
-    priv certificate: String
-    priv privateKey: String
-}
-
-pub fn Tls.files(certificate: String, privateKey: String): Tls {
-    Tls { certificate, privateKey }
-}
+/// A server's certificate chain and private key: `net.Tls`.
+pub alias Tls = __net.Tls
 
 fn bound(host: String, port: Int, tls: Tls?): httpNative.Native ! HttpError {
     let (certificate, key) = match tls {

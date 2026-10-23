@@ -26,6 +26,7 @@ mod memory;
 mod meta;
 mod msgpack;
 mod native;
+mod net;
 mod process;
 mod reflect;
 mod regex;

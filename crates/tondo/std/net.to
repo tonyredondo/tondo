@@ -1,0 +1,331 @@
+// std.net (standard library 14.4.6): TCP connections and listeners, with
+// TLS, UDP sockets and names, on the runtime's network. Every operation
+// waits like any call, without holding a worker, and takes a timeout of its
+// own; there is none unless one is given.
+
+import std.internal.net as netNative
+import std.io as __io
+import std.time as __time
+
+/// Why a network operation failed.
+pub enum NetError {
+    /// The name does not resolve: the name.
+    NotFound(String)
+    /// Nothing listens at the address.
+    Refused
+    /// The operation took longer than its timeout.
+    TimedOut
+    /// The other side ended the connection abruptly.
+    Reset
+    /// The connection, listener or socket is closed.
+    Closed
+    /// Another socket has the address.
+    AddressInUse
+    /// No route reaches the network or the host.
+    Unreachable
+    /// An address or port that is not valid here: why.
+    InvalidAddress(String)
+    /// The TLS handshake failed, or a certificate is not trusted: why.
+    Tls(String)
+    /// Anything else the system reports: what it said.
+    Io(String)
+}
+
+impl Display for NetError {
+    fn display(self): String {
+        match self {
+            NetError.NotFound(name) => "the name `{name}` does not resolve"
+            NetError.Refused => "the connection was refused: nothing listens at that address"
+            NetError.TimedOut => "the operation timed out"
+            NetError.Reset => "the other side reset the connection"
+            NetError.Closed => "the connection is closed"
+            NetError.AddressInUse => "the address is in use by another socket"
+            NetError.Unreachable => "the network or host is unreachable"
+            NetError.InvalidAddress(why) => "invalid address: {why}"
+            NetError.Tls(why) => "TLS: {why}"
+            NetError.Io(why) => why
+        }
+    }
+}
+
+fn problem(code: Int, detail: String): NetError {
+    match code {
+        2 => NetError.NotFound(detail)
+        3 => NetError.Refused
+        4 => NetError.TimedOut
+        5 => NetError.Reset
+        6 => NetError.Closed
+        7 => NetError.AddressInUse
+        8 => NetError.Unreachable
+        9 => NetError.InvalidAddress(detail)
+        10 => NetError.Tls(detail)
+        _ => NetError.Io(detail)
+    }
+}
+
+/// The object a native made, or why it could not.
+fn made(object: netNative.Native): netNative.Native ! NetError {
+    let code = netNative.failure(object, 2)
+    if code != 0 {
+        fail problem(code, netNative.detail(object, 2))
+    }
+    object
+}
+
+fn millis(timeout: __time.Duration?): Int {
+    match timeout {
+        some(limit) => if limit.milliseconds() > 0 { limit.milliseconds() } else { 0 }
+        none => -1
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Addresses and names
+// ---------------------------------------------------------------------------
+
+/// An IP address and a port.
+pub type Address = {
+    ip: String
+    port: Int
+}
+
+/// `127.0.0.1:80`, or `[::1]:80`.
+impl Display for Address {
+    fn display(self): String {
+        if self.ip.contains(":") { "[{self.ip}]:{self.port}" } else { "{self.ip}:{self.port}" }
+    }
+}
+
+/// The address of an IP address, in its usual form, and a port.
+pub fn address(ip: String, port: Int): Address ! NetError {
+    let usual = netNative.ip(ip)
+    if usual.isEmpty() {
+        fail NetError.InvalidAddress(
+            "`{ip}` is not an IP address; `net.resolve` gives the addresses of a name",
+        )
+    }
+    if port < 0 or port > 65535 {
+        fail NetError.InvalidAddress("port {port} is not between 0 and 65535")
+    }
+    Address { ip: usual, port }
+}
+
+fn addressOf(object: netNative.Native, which: Int): Address {
+    Address { ip: netNative.addressIp(object, which), port: netNative.addressPort(object, which) }
+}
+
+/// The IP addresses of a name, in the order the system prefers them.
+pub fn resolve(host: String, timeout: __time.Duration? = none): Array[String] ! NetError {
+    netNative.names(made(netNative.resolve(host, millis(timeout)))?)
+}
+
+// ---------------------------------------------------------------------------
+// TCP
+// ---------------------------------------------------------------------------
+
+/// A TCP connection, a handle its copies share. Reads and writes go
+/// through `reader()` and `writer()`, so the two ways can be mixed; a
+/// write returns once the connection holds the bytes, and they go out in
+/// order while the program goes on.
+pub type Stream = {
+    priv native: netNative.Native
+}
+
+/// A connection to `host`, a name or an IP address, trying each of its
+/// addresses until one answers.
+pub fn connect(host: String, port: Int, timeout: __time.Duration? = none): Stream ! NetError {
+    Stream { native: made(netNative.connect(host, port, millis(timeout), false, ""))? }
+}
+
+/// A connection over TLS, which verifies that the server's certificate is
+/// for `host` and comes from a root the system trusts, or one of the PEM
+/// file `trust`.
+pub fn connectTls(host: String, port: Int, trust: String? = none, timeout: __time.Duration? = none): Stream !
+    NetError {
+    let opened = netNative.connect(host, port, millis(timeout), true, trust.unwrapOr(""))
+    Stream { native: made(opened)? }
+}
+
+/// How the last operation of a direction ended: true at the end of the
+/// data.
+fn Stream.ended(self, direction: Int): Bool ! NetError {
+    let code = netNative.failure(self.native, direction)
+    if code > 1 {
+        fail problem(code, netNative.detail(self.native, direction))
+    }
+    code == 1
+}
+
+/// Up to `max` bytes, as soon as some arrive, or `none` at the end.
+pub fn Stream.read(self, max: Int = 65536, timeout: __time.Duration? = none): Array[Byte]? !
+    NetError {
+    let bytes = netNative.read(self.native, max, millis(timeout))
+    if self.ended(0)? {
+        return none
+    }
+    bytes
+}
+
+/// The next line without its `\n` or `\r\n`, or `none` at the end.
+pub fn Stream.readLine(self, timeout: __time.Duration? = none): String? ! NetError {
+    let line = netNative.readLine(self.native, millis(timeout))
+    if self.ended(0)? {
+        return none
+    }
+    line
+}
+
+/// Everything until the other side ends the connection.
+pub fn Stream.readAll(self, timeout: __time.Duration? = none): Array[Byte] ! NetError {
+    let bytes = netNative.readAll(self.native, millis(timeout))
+    self.ended(0)?
+    bytes
+}
+
+/// Everything until the other side ends the connection, as UTF-8 text.
+pub fn Stream.readText(self, timeout: __time.Duration? = none): String ! NetError {
+    match String.fromBytes(self.readAll(timeout: timeout)?) {
+        ok(text) => text
+        err(_) => fail NetError.Io("the data is not UTF-8")
+    }
+}
+
+pub fn Stream.write(self, text: String, timeout: __time.Duration? = none): !NetError {
+    if netNative.write(self.native, text, millis(timeout)) != 0 {
+        self.ended(1)?
+    }
+}
+
+pub fn Stream.writeBytes(self, data: Array[Byte], timeout: __time.Duration? = none): !NetError {
+    if netNative.writeBytes(self.native, data, millis(timeout)) != 0 {
+        self.ended(1)?
+    }
+}
+
+/// Sends what is pending and ends the writing direction: the other side
+/// reads the end, and can still answer.
+pub fn Stream.closeWrite(self, timeout: __time.Duration? = none): !NetError {
+    if netNative.close(self.native, false, millis(timeout)) != 0 {
+        self.ended(1)?
+    }
+}
+
+/// Sends what is pending and closes the connection. The last copy of a
+/// stream that goes away closes it too, sending what is pending on its own.
+pub fn Stream.close(self, timeout: __time.Duration? = none): !NetError {
+    if netNative.close(self.native, true, millis(timeout)) != 0 {
+        self.ended(1)?
+    }
+}
+
+/// The connection's reads as a stream of `std.io`, for `csv`, `json` or
+/// `readLine` without timeouts.
+pub fn Stream.reader(self): __io.Reader {
+    netNative.reader(self.native)
+}
+
+/// The connection's writes as a stream of `std.io`.
+pub fn Stream.writer(self): __io.Writer {
+    netNative.writer(self.native)
+}
+
+pub fn Stream.localAddress(self): Address {
+    addressOf(self.native, 0)
+}
+
+pub fn Stream.remoteAddress(self): Address {
+    addressOf(self.native, 1)
+}
+
+/// A certificate chain and its private key, in PEM files, for a server.
+pub type Tls = {
+    certificate: String
+    privateKey: String
+}
+
+pub fn Tls.files(certificate: String, privateKey: String): Tls {
+    Tls { certificate, privateKey }
+}
+
+/// Accepts TCP connections. Iterating it gives each new connection until
+/// it is closed; `(spawn handle(connection)).detach()` serves each in its
+/// own task, as a `Join` nobody waits for is waited at the end of its block.
+pub type Listener = {
+    priv native: netNative.Native
+}
+
+/// A listener on `host` and `port`, port 0 for any free one, which
+/// `address()` tells. With `tls`, each connection does its handshake
+/// before its first read or write, whose error it is if it fails.
+pub fn listen(host: String, port: Int, tls: Tls? = none): Listener ! NetError {
+    let (certificate, key) = match tls {
+        some(given) => (given.certificate, given.privateKey)
+        none => ("", "")
+    }
+    Listener { native: made(netNative.listen(host, port, certificate, key))? }
+}
+
+pub fn Listener.address(self): Address {
+    addressOf(self.native, 0)
+}
+
+/// The next connection.
+pub fn Listener.accept(self, timeout: __time.Duration? = none): Stream ! NetError {
+    Stream { native: made(netNative.accept(self.native, millis(timeout), false))? }
+}
+
+/// Stops accepting: waiting `accept` calls fail with `Closed`, and
+/// iterations end.
+pub fn Listener.close(self) {
+    netNative.stop(self.native)
+}
+
+impl Iterator[Stream] for Listener {
+    /// The next connection, waiting past failures to accept one; `none`
+    /// once the listener is closed.
+    fn next(mut self): Stream? {
+        let accepted = netNative.accept(self.native, -1, true)
+        if netNative.failure(accepted, 2) != 0 {
+            return none
+        }
+        Stream { native: accepted }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// UDP
+// ---------------------------------------------------------------------------
+
+/// A UDP socket. Datagrams arrive whole or not at all, in any order, at
+/// most once.
+pub type Socket = {
+    priv native: netNative.Native
+}
+
+/// A socket on `host` and `port`, port 0 for any free one.
+pub fn bind(host: String, port: Int): Socket ! NetError {
+    Socket { native: made(netNative.bind(host, port))? }
+}
+
+pub fn Socket.address(self): Address {
+    addressOf(self.native, 0)
+}
+
+/// Sends one datagram of at most 65 535 bytes.
+pub fn Socket.sendTo(self, data: Array[Byte], to: Address): !NetError {
+    let code = netNative.sendTo(self.native, data, to.ip, to.port)
+    if code != 0 {
+        fail problem(code, netNative.detail(self.native, 1))
+    }
+}
+
+/// The next datagram, whole, and who sent it.
+pub fn Socket.receive(self, timeout: __time.Duration? = none): (Array[Byte], Address) ! NetError {
+    let datagram = made(netNative.receive(self.native, millis(timeout)))?
+    (netNative.datagram(datagram), addressOf(datagram, 1))
+}
+
+/// Closes the socket: waiting `receive` calls fail with `Closed`.
+pub fn Socket.close(self) {
+    netNative.stop(self.native)
+}

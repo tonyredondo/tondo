@@ -997,6 +997,9 @@ pub const NATIVES: &[Native] = {
     const fn cbor(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "cbor", name, receiver: None, params, result, symbol }
     }
+    const fn net(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
+        Native { module: "net", name, receiver: None, params, result, symbol }
+    }
     const fn r(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "regex", name, receiver: Some(Regex), params, result, symbol }
     }
@@ -1228,6 +1231,29 @@ pub const NATIVES: &[Native] = {
         cbor("writeClose", &[Object], Unit, "tondo_rt_cbor_write_close"),
         cbor("finish", &[Object], Bytes, "tondo_rt_cbor_finish"),
         cbor("failure", &[Object], String, "tondo_rt_cbor_failure"),
+        net("connect", &[String, Int, Int, Bool, String], Object, "tondo_rt_net_connect"),
+        net("read", &[Object, Int, Int], Bytes, "tondo_rt_net_read"),
+        net("readLine", &[Object, Int], String, "tondo_rt_net_read_line"),
+        net("readAll", &[Object, Int], Bytes, "tondo_rt_net_read_all"),
+        net("write", &[Object, String, Int], Int, "tondo_rt_net_write"),
+        net("writeBytes", &[Object, Bytes, Int], Int, "tondo_rt_net_write_bytes"),
+        net("close", &[Object, Bool, Int], Int, "tondo_rt_net_close"),
+        net("reader", &[Object], IoReader, "tondo_rt_net_reader"),
+        net("writer", &[Object], IoWriter, "tondo_rt_net_writer"),
+        net("listen", &[String, Int, String, String], Object, "tondo_rt_net_listen"),
+        net("accept", &[Object, Int, Bool], Object, "tondo_rt_net_accept"),
+        net("stop", &[Object], Unit, "tondo_rt_net_stop"),
+        net("bind", &[String, Int], Object, "tondo_rt_net_bind"),
+        net("sendTo", &[Object, Bytes, String, Int], Int, "tondo_rt_net_send_to"),
+        net("receive", &[Object, Int], Object, "tondo_rt_net_receive"),
+        net("datagram", &[Object], Bytes, "tondo_rt_net_datagram"),
+        net("resolve", &[String, Int], Object, "tondo_rt_net_resolve"),
+        net("names", &[Object], Strings, "tondo_rt_net_names"),
+        net("ip", &[String], String, "tondo_rt_net_ip"),
+        net("addressIp", &[Object, Int], String, "tondo_rt_net_address_ip"),
+        net("addressPort", &[Object, Int], Int, "tondo_rt_net_address_port"),
+        net("failure", &[Object, Int], Int, "tondo_rt_net_failure"),
+        net("detail", &[Object, Int], String, "tondo_rt_net_detail"),
         math("sin", &[Float], Float, "tondo_rt_math_sin"),
         math("cos", &[Float], Float, "tondo_rt_math_cos"),
         math("tan", &[Float], Float, "tondo_rt_math_tan"),

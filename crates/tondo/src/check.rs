@@ -180,6 +180,7 @@ enum StdModule {
     InternalYaml,
     InternalMsgpack,
     InternalCbor,
+    InternalNet,
 }
 
 /// The types `std.process` declares when imported.
@@ -771,9 +772,13 @@ impl<'a> Checker<'a> {
         for import in &module.imports {
             self.import(import);
         }
-        // The network, through a module written in Tondo (27.7).
-        if self.meta && module.module_paths.iter().any(|p| p == &["std", "http"]) {
-            let message = "`std.http` is not available to a provider or generator, which runs while the program compiles and works only on its request";
+        // The network, through a module written in Tondo (27.7); `std.http`
+        // brings `std.net`, so it is named first.
+        let network = ["http", "net"].into_iter().find(|name| module.module_paths.iter().any(|p| p == &["std", name]));
+        if let Some(name) = network.filter(|_| self.meta) {
+            let message = format!(
+                "`std.{name}` is not available to a provider or generator, which runs while the program compiles and works only on its request"
+            );
             self.diags.error_without_span("E2108", message);
         }
 
@@ -1685,10 +1690,11 @@ impl<'a> Checker<'a> {
             ["std", "internal", "yaml"] => StdModule::InternalYaml,
             ["std", "internal", "msgpack"] => StdModule::InternalMsgpack,
             ["std", "internal", "cbor"] => StdModule::InternalCbor,
+            ["std", "internal", "net"] => StdModule::InternalNet,
             ["std", rest @ ..] => {
                 let name = rest.join(".");
                 // Modules the standard library specifies and does not have yet.
-                if ["toml", "yaml", "net", "msgpack", "cbor", "protobuf"].contains(&name.as_str()) {
+                if name == "protobuf" {
                     self.diags.unsupported(import.span, &format!("module `std.{name}`"));
                     return;
                 }
@@ -1790,6 +1796,7 @@ impl<'a> Checker<'a> {
                 | StdModule::InternalYaml
                 | StdModule::InternalMsgpack
                 | StdModule::InternalCbor
+                | StdModule::InternalNet
         ) {
             self.types.handle(Handle::Native, Ty::UNIT);
         }
@@ -1910,7 +1917,8 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalToml
                     | StdModule::InternalYaml
                     | StdModule::InternalMsgpack
-                    | StdModule::InternalCbor,
+                    | StdModule::InternalCbor
+                    | StdModule::InternalNet,
                 )),
                 "Native",
             ) => self.types.lookup(&TyKind::Handle(Handle::Native, Ty::UNIT)),
@@ -10270,7 +10278,8 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalToml
                     | StdModule::InternalYaml
                     | StdModule::InternalMsgpack
-                    | StdModule::InternalCbor),
+                    | StdModule::InternalCbor
+                    | StdModule::InternalNet),
                 )),
             ) => {
                 if module == StdModule::InternalReflect && matches!(*member, "box" | "describe") {
@@ -10297,6 +10306,7 @@ impl<'a> Checker<'a> {
                     StdModule::InternalYaml => "yaml",
                     StdModule::InternalMsgpack => "msgpack",
                     StdModule::InternalCbor => "cbor",
+                    StdModule::InternalNet => "net",
                     _ => "reflect",
                 };
                 let found =

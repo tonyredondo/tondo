@@ -22,6 +22,7 @@ std.serialization  the protocol every format shares, for custom encodings
 std.csv        CSV rows and records, streaming and whole
 std.log        a logger with levels and fields, text or JSON lines
 std.http       HTTP client and server, WebSockets (`tondo guide http`)
+std.net        TCP and UDP sockets, TLS, names
 std.regex      regular expressions
 std.encoding   Base64, hexadecimal, URL text
 std.hash       SHA-1, SHA-256, SHA-512, HMAC
@@ -86,6 +87,54 @@ fn main(): !toml.TomlError {
 ```
 
 TOML has no null: a `none` field is left out when written.
+
+## The network
+
+```tondo
+import std.console
+import std.net
+import std.time
+
+fn handle(connection: net.Stream): !net.NetError {
+    for {
+        match connection.readLine(timeout: time.seconds(30))? {
+            some(line) => connection.write("echo {line}\n")?
+            none => break
+        }
+    }
+    connection.close()?
+}
+
+fn serve(listener: net.Listener) {
+    for connection in listener {
+        (spawn handle(connection)).detach()
+    }
+}
+
+fn main(): !net.NetError {
+    let listener = net.listen("127.0.0.1", 0)?
+    (spawn serve(listener)).detach()
+    let stream = net.connect("localhost", listener.address().port, timeout: time.seconds(5))?
+    stream.write("hello\n")?
+    console.println("{stream.readLine()?}")
+    stream.close()?
+    listener.close()
+
+    let socket = net.bind("127.0.0.1", 0)?
+    socket.sendTo("ping".bytes(), socket.address())?
+    let (packet, from) = socket.receive(timeout: time.seconds(1))?
+    console.println("{packet.length()} bytes from {from}")
+}
+```
+
+- A `Join` nobody waits for is waited at the end of its block: a server
+  that wrote `spawn handle(connection)` in its loop would serve one
+  connection at a time. `.detach()` it, or add it to a `Group`.
+- `connect` resolves the name and tries each address; `connectTls(host,
+  port, trust: "ca.pem")` verifies the certificate, and `listen(host, port,
+  tls: net.Tls.files("cert.pem", "key.pem"))` serves TLS.
+- Every call that waits takes its own `timeout:`; there is none otherwise.
+  `reader()` and `writer()` give the connection as `std.io` streams.
 
 ## Time, logging and CSV
 
