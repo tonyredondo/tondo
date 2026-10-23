@@ -112,13 +112,13 @@ Every milestone ends with programs that compile to native executables and run.
 | **Stdlib 1** | The prelude: the everyday methods of `String` (`split`, `lines`, `repeat`, padding, trimming, Unicode case, parsing numbers), `Char`, `Int`, `Float`, `Option`, `Result`, `Array` (`map`, `filter`, `reduce`, `sorted`, `join`, `groupBy`, ...), `Map`, `Set` and lazy `Iterator` adapters; `Ordered` and `Numeric`; `std.math` | Done |
 | **H9** | Runtime reflection (`std.reflect`: get, set, call, conversion by shape and type descriptions), `derive` with providers and generators declared in `tondo.toml`, both built for the `meta` profile, with `tondo expand` | Done |
 | **Stdlib 2** | Ranges as values and lazy `String.chars()` and `Array.iter()`, so that `(0..10).map(...)` and `text.chars().filter(...)` work; `std.format` (a text builder), `std.encoding` (Base64, hex, URLs), `std.hash` (SHA-1, SHA-256, SHA-512, HMAC), `std.random` (seeded generators, shuffle, choice, entropy), `std.uuid` (v4, v5, v7), ISO 8601 dates in `std.time`, and a failing `main` that shows its error's `Display` | Done |
+| **Stdlib 3** | `std.csv` (streaming and whole), `std.log` (levels, fields, text or JSON lines), and `std.http`: a client for HTTP/1.1 and HTTP/2 over TLS with streaming bodies, multipart, Server-Sent Events and WebSockets; a server with routes, middleware, typed handlers, OpenAPI, files with resumable downloads, resumable uploads, Server-Sent Events, WebSockets and TLS | Done |
 
 The first cut deliberately leaves out the following. They are part of the
 language and remain planned work, scheduled after H7:
 
 | Milestone | Scope |
 |---|---|
-| **Stdlib 3** | `std.log`, CSV, HTTP |
 | **H10** | Tondo LLM Form (`TONDO_LLM_FORM_SPEC.md`) |
 | **H11** | Race, leak and crash diagnostics; language server; incremental compilation |
 | **H12** | Windows, and a self-contained linker |
