@@ -47,8 +47,8 @@ const FN_HEADER: i64 = 40;
 /// Size of a box header in the runtime (`BoxHeader`).
 const BOX_HEADER: i64 = 16;
 /// The size of the header of a `Ref[T]`'s object: its strong and weak
-/// counts and the size of the value that follows.
-const REF_HEADER: i64 = 24;
+/// counts, the size of the value that follows, and whether it is garbage.
+const REF_HEADER: i64 = 32;
 /// Where the value starts in the box of a `reflect.Value` (`BoxObject`).
 const REFLECT_VALUE: i64 = 40;
 /// Size of an array header in the runtime (`ArrayHeader`): `len` is at 8 and
@@ -101,6 +101,10 @@ enum Rt {
     BoxUnique,
     RefNew,
     RefRelease,
+    WeakNew,
+    WeakRetain,
+    WeakRelease,
+    WeakGet,
     GcEdge,
     ReportError,
     TestStart,
@@ -318,6 +322,10 @@ impl Rt {
             Rt::BoxRelease => ("tondo_rt_box_release", &[I64, I64], &[]),
             Rt::RefNew => ("tondo_rt_ref_new", &[I64], &[I64]),
             Rt::RefRelease => ("tondo_rt_ref_release", &[I64, I64], &[]),
+            Rt::WeakNew => ("tondo_rt_weak_new", &[I64], &[I64]),
+            Rt::WeakRetain => ("tondo_rt_weak_retain", &[I64], &[]),
+            Rt::WeakRelease => ("tondo_rt_weak_release", &[I64], &[]),
+            Rt::WeakGet => ("tondo_rt_weak_get", &[I64], &[I64]),
             Rt::GcEdge => ("tondo_rt_gc_edge", &[I64, I64, I8, I64, I64], &[]),
             Rt::BoxUnique => ("tondo_rt_box_unique", &[I64, I64, I64], &[]),
             Rt::ReportError => ("tondo_rt_report_error", &[I64], &[]),
@@ -1901,6 +1909,9 @@ impl Emit<'_, '_> {
                 TyKind::Handle(Handle::Ref, value) if release => {
                     let glue = self.glue_or_null(Glue::Release, value);
                     self.call_rt(Rt::RefRelease, &[pointer, glue]);
+                }
+                TyKind::Handle(Handle::Weak, _) => {
+                    self.call_rt(if release { Rt::WeakRelease } else { Rt::WeakRetain }, &[pointer]);
                 }
                 TyKind::Handle(handle, _) if release => {
                     let rt = match handle {
@@ -3781,6 +3792,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let address = self.e.call_rt(Rt::SyncValue, &[cell]).unwrap();
                 self.e.store_val(address, state, value);
                 Some(Val::Scalar(cell))
+            }
+            TaskOp::WeakNew => Some(Val::Scalar(self.e.call_rt(Rt::WeakNew, &[values[0]]).unwrap())),
+            TaskOp::WeakGet => {
+                let reference = self.e.call_rt(Rt::WeakGet, &[values[0]]).unwrap();
+                let reference_ty = self.e.cg.types.lookup(&TyKind::Handle(Handle::Ref, item.unwrap())).unwrap();
+                self.pointer_option(place, ty, reference_ty, reference)
             }
             TaskOp::RefNew => {
                 // The value moves into the new identity.

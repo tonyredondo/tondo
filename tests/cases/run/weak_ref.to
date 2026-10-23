@@ -1,0 +1,54 @@
+import std.console
+import std.sync
+import std.time
+
+type Image = { name: String, pixels: Array[Int] }
+
+type Node = { name: String, next: sync.Mutex[Ref[Node]?] }
+
+fn load(cache: sync.Mutex[Map[String, WeakRef[Image]]], name: String): Ref[Image] {
+    match cache.get().get(name).map((weak) { weak.get() }) {
+        some(some(image)) => image
+        _ => {
+            let image = Ref(Image { name: name, pixels: [1, 2, 3] })
+            cache.update((entries) { entries[name] = WeakRef(image) })
+            image
+        }
+    }
+}
+
+// Two nodes that refer to each other, which nothing else holds.
+fn ring(): WeakRef[Node] {
+    let a = Ref(Node { name: "a", next: sync.Mutex(none) })
+    let b = Ref(Node { name: "b", next: sync.Mutex(some(a)) })
+    a.value.next.set(some(b))
+    WeakRef(a)
+}
+
+fn main() {
+    let cache: sync.Mutex[Map[String, WeakRef[Image]]] = sync.Mutex([:])
+    let first = load(cache, "logo")
+    let again = load(cache, "logo")
+    let weak = WeakRef(first)
+    let copy = weak
+    console.println("cached {first == again}, alive {copy.get().isSome()}")
+
+    let temporary = WeakRef(Ref(Image { name: "tmp", pixels: [] }))
+    console.println("a temporary is gone at once: {temporary.get().isNone()}")
+
+    // A cycle goes once a collection finds it; making many starts one.
+    let kept = ring()
+    for _ in 0..3000 {
+        _ = ring()
+    }
+    var waited = 0
+    for kept.get().isSome() and waited < 100 {
+        time.sleep(time.milliseconds(10))
+        waited += 1
+    }
+    console.println("a garbage cycle is gone after a collection: {kept.get().isNone()}")
+}
+
+// expect-stdout: cached true, alive true
+// expect-stdout: a temporary is gone at once: true
+// expect-stdout: a garbage cycle is gone after a collection: true

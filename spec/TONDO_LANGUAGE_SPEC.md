@@ -5851,9 +5851,11 @@ del objeto identificado. El estado compartido modificable se construye
 explícitamente con tipos como `Cell[T]`, `Mutex[T]`, `Atomic[T]` o actores, cuyos
 contratos pertenecerán a la librería estándar.
 
-Una referencia débil `WeakRef[T]` puede existir
-en la librería para caches y grafos que no deban mantener vivo el destino. No
-cambia las garantías de `Ref[T]`. Consultarla constituye una observación de
+Una referencia débil `WeakRef[T]`, en el prelude
+(26.3), sirve a caches y grafos que no deben mantener vivo su destino:
+`WeakRef(reference)` la crea desde un `Ref[T]`, y `weak.get()` devuelve
+`Ref[T]?`, la referencia mientras el objeto vive y `none` después. Cumple
+`Copy` y no tiene igualdad ni `Key`. No cambia las garantías de `Ref[T]`. Consultarla constituye una observación de
 liveness: la librería debe documentar que el resultado puede depender del progreso
 del recolector y de carreras concurrentes. `WeakRef[T]` no puede utilizarse para
 cleanup, sincronización ni para una transición de estado que deba ocurrir en un
@@ -10069,7 +10071,7 @@ UInt8 UInt16 UInt32 UInt64
 Float32 Float64
 Option Result
 Array Deque Map Set Range Iterator
-Ref Pointer Join Group Sender Receiver
+Ref WeakRef Pointer Join Group Sender Receiver
 Command Pipeline
 Copy Equatable Key Send Share
 Call CallMut CallOnce
@@ -10083,7 +10085,7 @@ También expone los intrinsics:
 panic assert channel
 ~~~
 
-`some`, `none`, `ok` y `err` son sintaxis del lenguaje, no imports. `Ref(value)` es la construcción intrínseca de una referencia con identidad nueva. Las operaciones de `Pointer[T]` permanecen inaccesibles fuera de `unsafe` aunque el nombre del tipo esté en el prelude.
+`some`, `none`, `ok` y `err` son sintaxis del lenguaje, no imports. `Ref(value)` es la construcción intrínseca de una referencia con identidad nueva, y `WeakRef(reference)` la de una referencia débil a ella (16.10). Las operaciones de `Pointer[T]` permanecen inaccesibles fuera de `unsafe` aunque el nombre del tipo esté en el prelude.
 
 El prelude no incluye I/O, colecciones especializadas, fechas, red, JSON ni utilidades de aplicación.
 

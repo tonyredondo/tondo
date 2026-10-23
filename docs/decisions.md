@@ -1350,3 +1350,17 @@ an allocation fails, as the specification also asks, is not done: on the
 supported systems allocations do not fail, the kernel ends the process
 first, and a collection inside the allocator could meet the locks of the
 code that allocates.
+
+## 2026-10-24 — `WeakRef[T]` in the prelude
+
+`WeakRef(reference)` and `weak.get(): Ref[T]?` are all there is, with the
+prelude's other names in the language specification (26.3), since the
+library's may not add any. A weak reference is the `Ref`'s own object with
+one more weak count, so making and copying one allocate nothing; `get`
+takes a strong count unless the strong ones reached zero. Garbage on a
+cycle still has counts until its cells give up their state, so the
+collector marks the `Ref`s it found dead while the workers are stopped,
+and `get` refuses those: a weak reference never gives back a half-freed
+cycle. Weak references have no equality, since what they compare by would
+be an object that may be gone; comparing what `get` gives says what is
+meant.

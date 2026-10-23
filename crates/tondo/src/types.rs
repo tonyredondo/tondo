@@ -182,6 +182,9 @@ pub enum Handle {
     /// `Ref[T]` (16.10): a value with an identity, shared by its copies,
     /// which compare and hash by that identity.
     Ref,
+    /// `WeakRef[T]`: a reference to a `Ref[T]`'s object that does not keep
+    /// it alive.
+    Weak,
 }
 
 impl Handle {
@@ -218,6 +221,7 @@ impl Handle {
             Handle::ReflectBox => "reflect.Box",
             Handle::Native => "internal.Native",
             Handle::Ref => "Ref",
+            Handle::Weak => "WeakRef",
         }
     }
 

@@ -13,6 +13,9 @@ fn main() {
     console.println("{users}")
     let size = users.length
     let earlier = users < users
+    let notRef = WeakRef(5)
+    let weak = WeakRef(users)
+    let same = weak == weak
 }
 
 // expect-error: E1406 a `Ref` keeps its value, so this value of type `T` cannot be moved out of it
@@ -22,3 +25,5 @@ fn main() {
 // expect-error: E1105 `Ref[Map[String, Int]]` does not implement `Display`: an identity has no text; show what it identifies with `.value`
 // expect-error: E1102 `Ref[Map[String, Int]]` has one field, `value`, the value it identifies
 // expect-error: E1102 operator `<` cannot be applied to `Ref[Map[String, Int]]`
+// expect-error: E1102 `WeakRef` refers to the object of a `Ref`, found `Int`; make one first: `WeakRef(Ref(value))`
+// expect-error: E1102 operator `==` cannot be applied to `WeakRef[Map[String, Int]]`: compare the references they give, `left.get() == right.get()`

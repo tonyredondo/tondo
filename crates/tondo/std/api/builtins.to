@@ -149,3 +149,11 @@ pub fn Group.length(self): Int
 /// copies share it, `==` and hashing compare identities rather than
 /// values, and `reference.value` reads the value, which never changes.
 pub fn Ref(value: T): Ref[T]
+
+/// `WeakRef(reference)`: a reference to the same object that does not keep
+/// it alive, for caches and graphs (language 16.10).
+pub fn WeakRef(reference: Ref[T]): WeakRef[T]
+
+/// The reference while its object lives, `none` after; a cycle nothing
+/// else uses dies when the collector finds it.
+pub fn WeakRef.get(self): Ref[T]?

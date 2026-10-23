@@ -10,7 +10,7 @@
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
 use std::io::Write;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering, fence};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering, fence};
 
 mod cbor;
 mod civil;
@@ -376,12 +376,14 @@ pub unsafe extern "C" fn tondo_rt_box_unique(slot: *mut *mut BoxHeader, retain: 
 /// Header of the object of a `Ref[T]` (16.10), its identity: the value
 /// follows. `weak` counts the weak references, plus one while any strong
 /// one lives; the value goes with the last strong reference and the
-/// memory with the last of either.
+/// memory with the last of either. `dead` is set by the cycle collector on
+/// garbage whose counts have not reached zero yet.
 #[repr(C)]
 pub struct RefHeader {
     rc: AtomicUsize,
     weak: AtomicUsize,
     size: usize,
+    dead: AtomicBool,
 }
 
 const REF_HEADER: usize = std::mem::size_of::<RefHeader>();
@@ -399,7 +401,7 @@ pub extern "C" fn tondo_rt_ref_new(size: usize) -> *mut RefHeader {
         if ptr.is_null() {
             handle_alloc_error(layout);
         }
-        ptr.write(RefHeader { rc: AtomicUsize::new(1), weak: AtomicUsize::new(1), size });
+        ptr.write(RefHeader { rc: AtomicUsize::new(1), weak: AtomicUsize::new(1), size, dead: AtomicBool::new(false) });
         LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
         ptr
     }
@@ -427,6 +429,50 @@ pub unsafe extern "C" fn tondo_rt_ref_release(r: *mut RefHeader, release: Option
 /// The value of a reference, for the cycle collector.
 pub(crate) fn ref_payload(r: *mut u8) -> *mut u8 {
     unsafe { r.add(REF_HEADER) }
+}
+
+/// Marks a reference the cycle collector found to be garbage: its weak
+/// references no longer give it.
+pub(crate) fn ref_mark_dead(r: *mut u8) {
+    unsafe { (*(r as *const RefHeader)).dead.store(true, Ordering::Release) };
+}
+
+/// `WeakRef(reference)`: a weak reference to the same object.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_weak_new(r: *mut RefHeader) -> *mut RefHeader {
+    unsafe { tondo_rt_weak_retain(r) };
+    r
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_weak_retain(r: *mut RefHeader) {
+    unsafe { (*r).weak.fetch_add(1, Ordering::Relaxed) };
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_weak_release(r: *mut RefHeader) {
+    if !r.is_null() {
+        unsafe { ref_forget(r) };
+    }
+}
+
+/// `weak.get()`: a strong reference while the object lives, or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_weak_get(r: *mut RefHeader) -> *mut RefHeader {
+    let header = unsafe { &*r };
+    if header.dead.load(Ordering::Acquire) {
+        return std::ptr::null_mut();
+    }
+    let mut count = header.rc.load(Ordering::Relaxed);
+    loop {
+        if count == 0 {
+            return std::ptr::null_mut();
+        }
+        match header.rc.compare_exchange_weak(count, count + 1, Ordering::Acquire, Ordering::Relaxed) {
+            Ok(_) => return r,
+            Err(seen) => count = seen,
+        }
+    }
 }
 
 /// Drops one weak count, freeing the object with the last.

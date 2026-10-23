@@ -109,7 +109,9 @@ copies it. `Ref(value)` gives a value an identity that its copies share.
 holds, and `reference.value` reads the value, which never changes. What
 changes goes in a `sync.Mutex` (see `tondo guide tasks`). Values that refer
 to each other in a cycle, such as two people in each other's list of
-friends, are freed like any other once nothing uses them.
+friends, are freed like any other once nothing uses them. `WeakRef(ref)`
+refers to the same object without keeping it alive, for caches:
+`weak.get()` gives the `Ref` while the object lives, `none` after.
 
 ```tondo
 import std.console

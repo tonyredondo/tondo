@@ -350,6 +350,10 @@ pub(crate) fn collect() -> Option<usize> {
         pending.extend(visitor.edges[edges].iter().filter(|&&n| !visitor.nodes[n].live));
     }
     let freed = visitor.nodes.iter().filter(|n| !n.live).count();
+    // Weak references no longer give what is garbage.
+    for node in visitor.nodes.iter().filter(|n| !n.live && n.kind == Kind::Ref) {
+        super::ref_mark_dead(node.address as *mut u8);
+    }
     // The next collection comes once as many cells as live objects are
     // new, so that its work stays in proportion to the program's.
     registry.threshold = SMALLEST_THRESHOLD.max(visitor.nodes.len() - freed);

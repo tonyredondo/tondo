@@ -433,6 +433,10 @@ pub enum TaskOp {
     SyncNew,
     /// `Ref(value)` (16.10): a new identity holding the value.
     RefNew,
+    /// `WeakRef(reference)`
+    WeakNew,
+    /// `weak.get()`: `Ref[T]?`
+    WeakGet,
     /// Used by `LockSync`: takes the lock and gives the guard.
     Lock(LockMode),
     /// Used by `AwaitChange`: gives the guard back once the state changed.

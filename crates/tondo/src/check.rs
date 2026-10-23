@@ -110,7 +110,7 @@ fn check_with<'a>(
 }
 
 /// Prelude type names (26.3); they cannot be redeclared unqualified.
-const PRELUDE_TYPES: [&str; 41] = [
+const PRELUDE_TYPES: [&str; 42] = [
     "NumericConversionError",
     "Bool",
     "Int",
@@ -139,6 +139,7 @@ const PRELUDE_TYPES: [&str; 41] = [
     "Range",
     "Iterator",
     "Ref",
+    "WeakRef",
     "Pointer",
     "Join",
     "Group",
@@ -3627,6 +3628,7 @@ impl<'a> Checker<'a> {
                         ("Sender", [value]) if segments.len() == 1 => self.types.handle(Handle::Sender, *value),
                         ("Receiver", [value]) if segments.len() == 1 => self.types.handle(Handle::Receiver, *value),
                         ("Ref", [value]) if segments.len() == 1 => self.types.handle(Handle::Ref, *value),
+                        ("WeakRef", [value]) if segments.len() == 1 => self.types.handle(Handle::Weak, *value),
                         ("Pointer", [target]) if segments.len() == 1 => self.types.intern(TyKind::Pointer(*target)),
                         ("Range", [element]) if segments.len() == 1 => self.range_type(*element, t.span),
                         ("Map", [key, value]) if segments.len() == 1 => {
@@ -3639,7 +3641,7 @@ impl<'a> Checker<'a> {
                         }
                         (
                             "Option" | "Result" | "Array" | "Deque" | "Map" | "Set" | "Join" | "Group" | "Sender"
-                            | "Receiver" | "Ref" | "Pointer" | "Range",
+                            | "Receiver" | "Ref" | "WeakRef" | "Pointer" | "Range",
                             _,
                         ) if segments.len() == 1 => {
                             self.diags.error("E1104", t.span, "wrong number of type arguments");
@@ -4956,6 +4958,31 @@ impl<'a> Checker<'a> {
         Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::RefNew, vec![value]), ty, span)
     }
 
+    /// `WeakRef(reference)`: a reference to the same object that does not
+    /// keep it alive.
+    fn weak_new(&mut self, cx: &mut FnCx, args: &[ast::Arg], expected: Option<Ty>, span: Span) -> hir::Expr {
+        let [arg] = args else { return self.arity_error(span, 1, args.len()) };
+        let wanted = match expected.map(|e| self.types.kind(e)) {
+            Some(&TyKind::Handle(Handle::Weak, value)) => Some(self.types.handle(Handle::Ref, value)),
+            _ => None,
+        };
+        let reference = self.expr(cx, &arg.value, wanted);
+        let value = match *self.types.kind(reference.ty) {
+            TyKind::Handle(Handle::Ref, value) => value,
+            TyKind::Error => return Self::error_expr(span),
+            _ => {
+                let message = format!(
+                    "`WeakRef` refers to the object of a `Ref`, found {}; make one first: `WeakRef(Ref(value))`",
+                    self.display(reference.ty)
+                );
+                self.diags.error("E1102", reference.span, message);
+                return Self::error_expr(span);
+            }
+        };
+        let ty = self.types.handle(Handle::Weak, value);
+        Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::WeakNew, vec![reference]), ty, span)
+    }
+
     /// `sync.Mutex(value)` and the other `std.sync` constructors: a new
     /// shared cell holding the value, or a semaphore or barrier.
     fn sync_new(
@@ -5720,6 +5747,7 @@ impl<'a> Checker<'a> {
             (Handle::Sender, "copy") => T::CopySender,
             (Handle::Sender | Handle::Receiver, "isClosed") => T::IsClosed,
             (Handle::Receiver, "receive") => T::Receive,
+            (Handle::Weak, "get") => T::WeakGet,
             _ => return self.no_method(ty, method, span),
         };
         let timeout = matches!(args, [arg] if arg.name.as_ref().is_some_and(|n| n.name == "timeout"));
@@ -5767,6 +5795,10 @@ impl<'a> Checker<'a> {
             T::GroupNext | T::Receive | T::ReceiveTimeout | T::WaitTimeout => self.types.intern(TyKind::Option(result)),
             T::CopySender => ty,
             T::IsClosed => Ty::BOOL,
+            T::WeakGet => {
+                let reference = self.types.handle(Handle::Ref, result);
+                self.types.intern(TyKind::Option(reference))
+            }
             T::GroupWait => match *self.types.kind(result) {
                 TyKind::Result(value, error) => {
                     let values = self.types.intern(TyKind::Array(value));
@@ -10398,6 +10430,11 @@ impl<'a> Checker<'a> {
         {
             return self.ref_new(cx, args, None, expected, span);
         }
+        if let ["WeakRef"] = names.as_slice()
+            && self.lookup(cx, "WeakRef").is_none()
+        {
+            return self.weak_new(cx, args, expected, span);
+        }
         if let ["channel"] = names.as_slice() {
             let message = "`channel` needs the type of its values: `channel[T]()`, or `channel[T](capacity)`";
             self.diags.error("E1101", span, message);
@@ -11652,7 +11689,10 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> hir::Expr {
         let operator_error = |this: &mut Self, ty: Ty| {
-            let message = format!("operator `{}` cannot be applied to {}", op.as_str(), this.display(ty));
+            let mut message = format!("operator `{}` cannot be applied to {}", op.as_str(), this.display(ty));
+            if let (BinOp::Eq | BinOp::Ne, TyKind::Handle(Handle::Weak, _)) = (op, this.types.kind(ty)) {
+                message.push_str(": compare the references they give, `left.get() == right.get()`");
+            }
             this.diags.error("E1102", span, message);
         };
         let (left, right, ty) = match op {
