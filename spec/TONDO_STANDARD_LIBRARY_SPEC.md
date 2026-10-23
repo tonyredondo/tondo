@@ -2885,6 +2885,12 @@ impl Display for Value                     // como JSON
 
 ### 14.12 `std.protobuf`
 
+> **Aplazado.** Protobuf se diseñará junto con gRPC, que es para lo que la
+> mayoría lo usa, cuando `std.http` exponga lo que gRPC necesita: trailers de
+> HTTP/2, streaming en los dos sentidos y deadlines. Hasta entonces
+> `import std.protobuf` es un error que lo dice, y el texto que sigue es el
+> del proyecto anterior.
+
 [Protobuf](https://protobuf.dev/programming-guides/encoding/) es schema-first.
 Un `.proto` entra al build como generator input y el programa estándar fijado
 produce tipos, codecs y metadata de schema ordinarios. La versión inicial

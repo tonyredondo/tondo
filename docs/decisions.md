@@ -1206,3 +1206,12 @@ became `net.Tls`. Measured on loopback against Go: bulk transfer 4.5 GB/s,
 one connection's round trip 22 µs (Go 12), 2 000 connections of ten round
 trips 0.19 s (Go 0.10); the rest is the hop from tokio's reactor thread to
 a worker, which only polling the network from the workers would remove.
+
+## 2026-10-23 — Protobuf waits for gRPC
+
+Serializing Protobuf without gRPC calls would serve the least common use
+of it, and the two share one generator: messages and services come from
+the same `.proto` files. gRPC also needs what `std.http` does not offer
+yet, HTTP/2 trailers, streams both ways and deadlines, since its client
+does not expose trailers. Both are a later milestone, designed together;
+the standard library's fourth milestone closes with `std.net`.
