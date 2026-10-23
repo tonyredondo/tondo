@@ -24,7 +24,9 @@ fn main() {
     }
     console.println("detached tasks ran at once: {total}")
 
-    spawn detached(1)
+    // A function named `detached`, so this is an ordinary spawn: a Join.
+    let first = spawn detached(1)
+    first.wait()
     for id in 2..4 {
         spawn detached(id)
     }
