@@ -1548,12 +1548,22 @@ impl Parser<'_> {
             Tok::Tilde => UnaryOp::BitNot,
             Tok::Kw(Kw::Spawn) => {
                 let start = self.bump().span;
+                // `detached` is a word of `spawn` only: `spawn detached(x)`
+                // still spawns a function of that name.
+                let detached = matches!(self.tok(), Tok::Ident(word) if word == "detached")
+                    && !matches!(self.nth(1), Tok::LParen | Tok::Dot);
+                if detached {
+                    self.bump();
+                }
                 let call = self.postfix()?;
                 if let ExprKind::Try(_) = call.kind {
+                    if detached {
+                        return self.error("`spawn detached` gives no result: remove the `?`");
+                    }
                     return self.error("`spawn` returns a `Join`, not a result: write `?` after `wait()`, as in `(spawn fetch(url)).wait()?`");
                 }
                 let span = start.to(call.span);
-                return Ok(Expr { kind: ExprKind::Spawn(Box::new(call)), span });
+                return Ok(Expr { kind: ExprKind::Spawn(Box::new(call), detached), span });
             }
             _ => return self.postfix(),
         };

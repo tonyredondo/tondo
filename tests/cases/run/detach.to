@@ -14,11 +14,11 @@ fn forever(name: String) {
 }
 
 fn spawner() {
-    (spawn forever("grandchild")).detach()
+    spawn detached forever("grandchild")
 }
 
 fn main() {
-    (spawn quick(1)).detach()
+    spawn detached quick(1)
     let job = spawn forever("background")
     job.detach()
     (spawn spawner()).detach()

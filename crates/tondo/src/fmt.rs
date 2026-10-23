@@ -1079,7 +1079,9 @@ impl Formatter<'_> {
                 concat(docs)
             }
             ExprKind::Construct(name, value) => concat(vec![text(format!("{name}(")), self.expr(value), text(")")]),
-            ExprKind::Spawn(call) => concat(vec![text("spawn "), self.expr(call)]),
+            ExprKind::Spawn(call, detached) => {
+                concat(vec![text(if *detached { "spawn detached " } else { "spawn " }), self.expr(call)])
+            }
             ExprKind::Unsafe(block) => concat(vec![text("unsafe "), self.value_block(block)]),
             ExprKind::SyncLiteral(path, literal) => concat(vec![text(path_text(path)), self.expr(literal)]),
         }

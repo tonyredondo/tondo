@@ -1367,7 +1367,7 @@ pub fn App.start(self, port: Int = 0, host: String = "127.0.0.1", tls: Tls? = no
     HttpError {
     let listening = bound(host, port, tls)?
     let (finished, ended) = channel[Unit](1)
-    (spawn serveThenSignal(listening, self.pipeline(), finished)).detach()
+    spawn detached serveThenSignal(listening, self.pipeline(), finished)
     Server { native: listening, secure: tls.isSome(), ended }
 }
 
@@ -1424,7 +1424,7 @@ fn serve(server: httpNative.Native, handler: fn(Request): Reply ! Problem) {
         if not httpNative.requestOpen(incoming) {
             return
         }
-        (spawn answer(incoming, handler)).detach()
+        spawn detached answer(incoming, handler)
     }
 }
 

@@ -2002,7 +2002,7 @@ let secure = net.connectTls("example.com", 443)?
 let listener = net.listen("127.0.0.1", 0)?   // puerto 0: uno libre
 console.println("{listener.address()}")
 for connection in listener {
-    (spawn serve(connection)).detach()
+    spawn detached serve(connection)
 }
 
 let socket = net.bind("0.0.0.0", 9000)?
@@ -2096,10 +2096,8 @@ pub fn Socket.close(self)
   demás. `http.Tls` es `net.Tls`.
 - Recorrer un `Listener` da cada conexión nueva hasta que se cierra,
   esperando más allá de los fallos al aceptar; `close` hace que las esperas
-  de `accept` fallen con `Closed` y suelta el puerto. Un `Join` que nadie
-  espera se espera al final de su bloque (11.11 del lenguaje), así que un
-  servidor atiende cada conexión con `(spawn serve(connection)).detach()` o
-  un `Group`.
+  de `accept` fallen con `Closed` y suelta el puerto. Un servidor atiende
+  cada conexión con `spawn detached serve(connection)` (11.11 del lenguaje).
 - Un datagrama llega entero o no llega, en cualquier orden y como mucho una
   vez; `sendTo` rechaza uno de más de 65 535 bytes. `Display` de una
   dirección es `127.0.0.1:80` o `[::1]:80`.

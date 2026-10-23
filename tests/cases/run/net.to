@@ -19,7 +19,7 @@ fn echo(connection: net.Stream): !net.NetError {
 
 fn serve(listener: net.Listener) {
     for connection in listener {
-        (spawn echo(connection)).detach()
+        spawn detached echo(connection)
     }
 }
 

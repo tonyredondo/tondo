@@ -566,8 +566,9 @@ pub enum ExprKind {
     None,
     /// `some(value)`, `ok(value)` or `err(value)`: the constructor's name.
     Construct(&'static str, Box<Expr>),
-    /// `spawn call(arguments)` (11.11).
-    Spawn(Box<Expr>),
+    /// `spawn call(arguments)`, or `spawn detached call(arguments)` when
+    /// true (11.11).
+    Spawn(Box<Expr>, bool),
     /// Placeholder after a reported syntax error.
     Error,
 }

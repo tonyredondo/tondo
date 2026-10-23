@@ -1215,3 +1215,17 @@ the same `.proto` files. gRPC also needs what `std.http` does not offer
 yet, HTTP/2 trailers, streams both ways and deadlines, since its client
 does not expose trailers. Both are a later milestone, designed together;
 the standard library's fourth milestone closes with `std.net`.
+
+## 2026-10-23 — `spawn detached`, and a warning for spawns in loops
+
+A task nobody waits for is still waited at the end of its block, which
+keeps what structured concurrency gives: a function returns after the
+work it started, and cancelling a task cancels what it started. The
+surprise was a loop: `for connection in listener { spawn serve(connection) }`
+served one connection at a time, silently, which is what a program written
+by someone used to Go or JavaScript does first. Releasing a task is now a
+form of the language, `spawn detached call()`, instead of
+`(spawn call()).detach()`, and a `spawn` whose `Join` nobody uses inside a
+loop warns (`W1013`) with both ways out. Making every unused `Join` detach
+was the alternative; its mistakes are races and lost work, which tests see
+less than a program that is slow or waits.

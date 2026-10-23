@@ -374,7 +374,7 @@ fn main(): !(http.HttpError | fs.FsError) {
     })
     app.get("/events", (request) {
         let (sender, receiver) = channel[http.Event](4)
-        (spawn produce(sender)).detach()
+        spawn detached produce(sender)
         http.Reply.events(receiver)
     })
     app.websocket("/chat", (socket) {

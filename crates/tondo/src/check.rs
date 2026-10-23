@@ -4315,6 +4315,12 @@ impl<'a> Checker<'a> {
     /// `spawn call(...)` as a statement: the task belongs to the block,
     /// which waits for it at its end.
     fn spawn_statement(&mut self, cx: &mut FnCx, call: &ast::Expr) -> hir::Stmt {
+        // In a loop the block is the iteration, so the tasks would run one
+        // at a time: almost never what a loop that spawns wants.
+        if !cx.loops.is_empty() {
+            let message = "each iteration waits for this task at its end, so the tasks run one at a time; `spawn detached` lets them run at once, or add them to a `Group` and wait for all of them";
+            self.diags.warning("W1013", call.span, message);
+        }
         let join = self.expr(cx, call, None);
         let local = self.hidden_local(cx, join.ty);
         hir::Stmt::Let(local, join)
@@ -5826,7 +5832,7 @@ impl<'a> Checker<'a> {
                 cx.diverged |= value.ty == Ty::NEVER;
                 Some(hir::Stmt::Expr(value))
             }
-            ast::StmtKind::Expr(call @ ast::Expr { kind: ast::ExprKind::Spawn(_), .. }) => {
+            ast::StmtKind::Expr(call @ ast::Expr { kind: ast::ExprKind::Spawn(_, false), .. }) => {
                 Some(self.spawn_statement(cx, call))
             }
             ast::StmtKind::Expr(value) => {
@@ -7160,11 +7166,18 @@ impl<'a> Checker<'a> {
             },
             ast::ExprKind::Construct(constructor, value) => self.construct(cx, constructor, value, expected, span),
             // A task whose `Join` nobody uses belongs to the enclosing block.
-            ast::ExprKind::Spawn(_) if expected == Some(Ty::UNIT) => {
+            ast::ExprKind::Spawn(_, false) if expected == Some(Ty::UNIT) => {
                 let stmts = vec![self.spawn_statement(cx, e)];
                 Self::mk(hir::ExprKind::Block(hir::Block { stmts, tail: None, ty: Ty::UNIT }), Ty::UNIT, span)
             }
-            ast::ExprKind::Spawn(call) => self.spawn(cx, call, span),
+            ast::ExprKind::Spawn(call, false) => self.spawn(cx, call, span),
+            ast::ExprKind::Spawn(call, true) => {
+                let join = self.spawn(cx, call, span);
+                if join.ty == Ty::ERROR {
+                    return join;
+                }
+                Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::Detach, vec![join]), Ty::UNIT, span)
+            }
             ast::ExprKind::Error => Self::error_expr(span),
         }
     }

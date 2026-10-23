@@ -248,8 +248,8 @@ pub fn Tls.files(certificate: String, privateKey: String): Tls {
 }
 
 /// Accepts TCP connections. Iterating it gives each new connection until
-/// it is closed; `(spawn handle(connection)).detach()` serves each in its
-/// own task, as a `Join` nobody waits for is waited at the end of its block.
+/// it is closed; `spawn detached handle(connection)` serves each in a task
+/// of its own.
 pub type Listener = {
     priv native: netNative.Native
 }

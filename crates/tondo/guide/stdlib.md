@@ -107,13 +107,13 @@ fn handle(connection: net.Stream): !net.NetError {
 
 fn serve(listener: net.Listener) {
     for connection in listener {
-        (spawn handle(connection)).detach()
+        spawn detached handle(connection)
     }
 }
 
 fn main(): !net.NetError {
     let listener = net.listen("127.0.0.1", 0)?
-    (spawn serve(listener)).detach()
+    spawn detached serve(listener)
     let stream = net.connect("localhost", listener.address().port, timeout: time.seconds(5))?
     stream.write("hello\n")?
     console.println("{stream.readLine()?}")
@@ -127,9 +127,8 @@ fn main(): !net.NetError {
 }
 ```
 
-- A `Join` nobody waits for is waited at the end of its block: a server
-  that wrote `spawn handle(connection)` in its loop would serve one
-  connection at a time. `.detach()` it, or add it to a `Group`.
+- `spawn detached` serves each connection in a task nobody waits for; a
+  plain `spawn` in the loop would wait for each before the next (`W1013`).
 - `connect` resolves the name and tries each address; `connectTls(host,
   port, trust: "ca.pem")` verifies the certificate, and `listen(host, port,
   tls: net.Tls.files("cert.pem", "key.pem"))` serves TLS.

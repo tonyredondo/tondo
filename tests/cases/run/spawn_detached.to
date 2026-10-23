@@ -1,0 +1,37 @@
+import std.console
+
+fn work(id: Int, out: Sender[Int], go: Receiver[Unit]) {
+    // Every task waits for the same signal, so they only finish if all of
+    // them run at once.
+    _ = go.receive()
+    out.send(id)
+}
+
+fn detached(id: Int) {
+    console.println("a function named detached: {id}")
+}
+
+fn main() {
+    let (out, results) = channel[Int]()
+    let (signal, go) = channel[Unit]()
+    for id in 0..3 {
+        spawn detached work(id, out.copy(), go)
+    }
+    signal.close()
+    var total = 0
+    for _ in 0..3 {
+        total += results.receive().unwrapOr(-100)
+    }
+    console.println("detached tasks ran at once: {total}")
+
+    spawn detached(1)
+    for id in 2..4 {
+        spawn detached(id)
+    }
+}
+
+// expect-warning: W1013 each iteration waits for this task at its end
+// expect-stdout: detached tasks ran at once: 3
+// expect-stdout: a function named detached: 1
+// expect-stdout: a function named detached: 2
+// expect-stdout: a function named detached: 3

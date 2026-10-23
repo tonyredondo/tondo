@@ -590,7 +590,7 @@ impl Linker<'_> {
             | ExprKind::TupleSlot(inner, _)
             | ExprKind::Unary(_, inner)
             | ExprKind::Try(inner)
-            | ExprKind::Spawn(inner)
+            | ExprKind::Spawn(inner, _)
             | ExprKind::Construct(_, inner) => self.expr(inner),
             ExprKind::Binary(_, left, right) => {
                 self.expr(left);

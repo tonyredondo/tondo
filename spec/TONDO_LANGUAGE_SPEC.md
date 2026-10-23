@@ -3707,19 +3707,30 @@ resultado, también cuando sale por `return`, `fail` o `?`. Así ninguna tarea q
 suelta ni hay que escribir nada para esperarla. Un `spawn` escrito como
 sentencia, o como valor de un bloque, rama o brazo de tipo `Unit`, no necesita
 `_ =`: su `Join` pertenece a ese bloque. Por eso `for id in ids { spawn
-notify(id) }` espera cada tarea al final de su iteración; para que corran a la
-vez se reúnen en un `Group`.
+notify(id) }` espera cada tarea al final de su iteración, y el compilador lo
+avisa (`W1013`): casi nunca es lo que quiere un bucle que lanza tareas.
 
-Soltar una tarea con `detach()` es la excepción explícita, para trabajo que no
-debe retener a quien lo inicia, como enviar una métrica:
+`spawn detached call(arguments)` lanza la tarea suelta: no da `Join`, su valor
+es `Unit` y nadie la espera. Es la forma de un servidor que atiende cada
+conexión a la vez, o de trabajo que no debe retener a quien lo inicia, como
+enviar una métrica:
 
 ~~~tondo
-(spawn report(metrics)).detach()
+for connection in listener {
+    spawn detached serve(connection)
+}
+spawn detached report(metrics)
 ~~~
 
+`detached` solo es una palabra del lenguaje justo después de `spawn` y antes
+de la llamada: `spawn detached(x)` lanza una función llamada `detached`.
+`job.detach()` suelta igual una tarea cuyo `Join` ya se tiene. Para esperar a
+varias tareas que corren a la vez se reúnen en un `Group` (11.12).
+
 Una tarea suelta sigue sujeta a las demás reglas: un pánico en ella termina el
-programa. Cuando `main` termina, el runtime cancela las tareas sueltas que sigan
-corriendo y espera su cleanup antes de finalizar el proceso.
+programa, y cancelar la tarea que la lanzó no la cancela. Cuando `main`
+termina, el runtime cancela las tareas sueltas que sigan corriendo y espera su
+cleanup antes de finalizar el proceso.
 
 Un pánico en cualquier tarea termina el programa: el runtime informa el pánico,
 ejecuta los `defer` pendientes de esa tarea y cancela todas las demás (11.15),
@@ -6310,6 +6321,8 @@ adyacente `??` es error léxico y nunca significa coalescencia.
 not value  negación booleana
 ~value     complemento bitwise de entero o Byte
 spawn call iniciar una tarea concurrente (11.11)
+spawn detached call
+           iniciarla suelta, sin Join (11.11)
 ~~~
 
 No existe `!value` como negación; `!` queda reservado en tipos fallibles.
@@ -7899,6 +7912,7 @@ oculten un diagnóstico independiente.
 | `W1010` | `incomplete-public-documentation` | Documentación pública omite un contrato exigido por 21.5. |
 | `W1011` | `duplicate-set-entry` | Literal de set repite una clave constante. |
 | `W1012` | `converted-field-missing` | `reflect.convert` rellena con `none` un campo opcional del destino que el origen no tiene. |
+| `W1013` | `serial-spawn-in-loop` | `spawn` cuyo `Join` nadie consume dentro de un bucle: cada iteración espera a su tarea. |
 
 #### Pánicos del lenguaje
 
@@ -8205,6 +8219,7 @@ con condiciones cerradas:
 - Comparación con un float constante evaluado como NaN (`W1008`).
 - Literal `Set[...]` con una entrada constante repetida (`W1011`).
 - Campo opcional que `reflect.convert` rellena con `none` (`W1012`).
+- `spawn` cuyo `Join` nadie consume dentro de un bucle (`W1013`).
 
 Son errores obligatorios, entre otros:
 
@@ -9014,7 +9029,7 @@ postfix_expression
                 | primary_expression, { postfix_suffix } ;
 
 spawn_expression
-                = "spawn", plain_postfix_expression ;
+                = "spawn", [ "detached" ], plain_postfix_expression ;
 
 plain_postfix_expression
                 = primary_expression, { plain_postfix_suffix } ;
@@ -9044,6 +9059,8 @@ parte del operando de `spawn`, que debe terminar en una llamada (`E1611`). Un `?
 dentro de argumentos o de una expresión agrupada conserva su significado local.
 `spawn` no admite postfix exterior directo; el `Join` se enlaza o se parentiza
 antes de cualquier operación posterior, como `(spawn fetch(url)).wait()`.
+`detached` tras `spawn` es el modificador salvo que le siga `(` o `.`; entonces es
+el nombre de lo que se lanza.
 
 La operación de un brazo `select` es la única llamada que no espera al
 evaluarse: se prepara, y solo la del brazo ganador se completa (11.14).
@@ -9899,8 +9916,8 @@ por defecto calculados a partir de otros parámetros. Los variádicos existen ú
 
 No hay `yield`, generators de sintaxis especial ni futures. Una llamada espera
 sin marcas; solo `spawn` conserva trabajo pendiente, y su `Join` se espera a más
-tardar al terminar su bloque, salvo que `detach()` suelte la tarea de forma
-explícita (11.11). `Iterator[T]` cubre también los
+tardar al terminar su bloque, salvo que `spawn detached` o `detach()` suelten la
+tarea de forma explícita (11.11). `Iterator[T]` cubre también los
 recorridos que esperan (10.18).
 
 ### 25.22 Dispatch dinámico de traits

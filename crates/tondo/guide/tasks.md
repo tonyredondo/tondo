@@ -25,12 +25,14 @@ fn main() {
     console.println("{group.wait()}")
 
     // Fire and forget.
-    (spawn fetch(9)).detach()
+    spawn detached fetch(9)
 }
 ```
 
 - A `Join` nobody waits for is waited at the end of its block, so no task is
-  left behind by accident; `detach()` lets one run on.
+  left behind by accident. In a loop that means one task at a time, which
+  warns (`W1013`): `spawn detached` launches a task nobody waits for, as a
+  server does for each connection, and a `Group` waits for many at once.
 - With `Group[T ! E]`, `wait()` gives `Array[T] ! E`: the first error cancels
   the others.
 - A panic in any task ends the program.
