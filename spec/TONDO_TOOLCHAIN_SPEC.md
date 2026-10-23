@@ -220,6 +220,7 @@ tondo guide [<topic>] [--list] [--skill]
 tondo update [<project>] [<dependency>...]
 tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
 tondo test [<project>]
+tondo lsp
 ~~~
 
 - `run` compila, guarda el ejecutable en la caché y lo ejecuta; `build` escribe
@@ -242,6 +243,7 @@ tondo test [<project>]
   paquete del sistema o de una librería (sección 7.1) y, en un proyecto, añade
   cada librería a `[native] libraries`.
 - `test` sigue la [especificación de testing](./TONDO_TESTING_SPEC.md).
+- `lsp` sirve a un editor (sección 7.4).
 - Estado de salida: `0` éxito; `1` diagnósticos de error o fallo de formato; `2`
   uso incorrecto; `3` error del toolchain (sección 9). `run` devuelve el estado
   del programa.
@@ -334,6 +336,28 @@ comandos, un tema cada vez para leer solo lo necesario.
   su cabecera: `tondo guide --skill > .claude/skills/tondo/SKILL.md`.
 - Cada ejemplo de la guía compila con el toolchain que la lleva, y cada
   ejemplo de un error falla con el código que nombra: un test lo comprueba.
+
+### 7.4 `tondo lsp`
+
+`tondo lsp` es un servidor del Language Server Protocol 3.17 por la entrada y
+la salida estándar, que el editor arranca. Analiza el proyecto de cada archivo
+abierto como su build de tests, para incluir los archivos de tests, o el
+archivo solo si no está en un proyecto, con el texto que el editor tiene aunque
+no esté guardado. Tras un cambio, cuando la escritura se detiene, analiza de
+nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
+
+- Hover: el tipo de una variable o un parámetro, la cabecera de una función o
+  un campo, la declaración de un tipo, y la documentación `///`.
+- Definición y referencias de variables, parámetros (también en argumentos con
+  nombre), funciones, métodos, tipos, campos, variantes, constantes, traits y
+  módulos; las de la librería estándar se abren desde una copia en la caché.
+- Renombrar una declaración del programa cambia cada referencia; un campo
+  escrito con el nombre de una variable, `User { name }`, pasa a
+  `User { fullName: name }`.
+- Los símbolos de un archivo y su formato canónico (21 del lenguaje).
+
+Las posiciones cuentan bytes UTF-8 cuando el editor lo admite y unidades
+UTF-16 si no.
 
 ## 8. Determinismo
 

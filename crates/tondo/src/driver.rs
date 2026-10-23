@@ -26,6 +26,28 @@ pub struct Analysis {
     pub meta: bool,
     /// What each `derive` expanded to, for `tondo expand`.
     pub expansions: Vec<crate::meta::Expansion>,
+    /// For an editor: each declaration and each name that refers to one.
+    pub index: Option<crate::index::Index>,
+}
+
+thread_local! {
+    /// The text of the files an editor has open, which may not be saved.
+    static OPEN: std::cell::RefCell<std::collections::HashMap<PathBuf, String>> = Default::default();
+}
+
+/// Reads, parses and checks a program as an editor shows it: with the text
+/// of the files it has open, and checked as far as it can be with errors,
+/// to know what each name refers to. A test file is checked with its
+/// project's test build.
+pub fn analyze_for_editor(
+    path: &Path,
+    tests: bool,
+    open: std::collections::HashMap<PathBuf, String>,
+) -> Result<Analysis, String> {
+    OPEN.with(|o| *o.borrow_mut() = open);
+    let analysis = analyze_with(path, tests, false, true);
+    OPEN.with(|o| o.borrow_mut().clear());
+    analysis
 }
 
 /// Reads, parses and checks a program: a project directory (toolchain 3)
@@ -51,14 +73,14 @@ pub fn analyze_tests(path: &Path) -> Result<Analysis, String> {
 
 /// Reads, parses and checks a provider for the `meta` profile (27.7).
 pub fn analyze_meta(path: &Path) -> Result<Analysis, String> {
-    analyze_with(path, false, true)
+    analyze_with(path, false, true, false)
 }
 
 fn analyze_build(path: &Path, tests: bool) -> Result<Analysis, String> {
-    analyze_with(path, tests, false)
+    analyze_with(path, tests, false, false)
 }
 
-fn analyze_with(path: &Path, tests: bool, meta: bool) -> Result<Analysis, String> {
+fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool) -> Result<Analysis, String> {
     let mut expansions = Vec::new();
     let mut sources = SourceMap::default();
     let mut diags = Diagnostics::default();
@@ -138,9 +160,10 @@ fn analyze_with(path: &Path, tests: bool, meta: bool) -> Result<Analysis, String
                 modules.push(modules::ModuleSource { path, package, files: vec![(parsed, false)] });
             }
         }
-        if diags.has_errors() {
+        if diags.has_errors() && !editor {
             diags.sort(&sources);
-            return Ok(Analysis { sources, diags, program: None, source_id, libraries, meta, expansions });
+            let index = None;
+            return Ok(Analysis { sources, diags, program: None, source_id, libraries, meta, expansions, index });
         }
         let mut providers: Vec<Vec<(String, PathBuf)>> = packages.iter().map(|p| p.providers.clone()).collect();
         let generators: Vec<Vec<deps::Generator>> = packages.iter().map(|p| p.generators.clone()).collect();
@@ -163,7 +186,10 @@ fn analyze_with(path: &Path, tests: bool, meta: bool) -> Result<Analysis, String
     } else {
         let module = match parse(path, &mut sources, &mut diags)? {
             Some(module) => module,
-            None => return Ok(Analysis { sources, diags, program: None, source_id, libraries, meta, expansions }),
+            None => {
+                let index = None;
+                return Ok(Analysis { sources, diags, program: None, source_id, libraries, meta, expansions, index });
+            }
         };
         if stdlib::needed(&module) {
             // The file links with the standard modules it imports.
@@ -179,15 +205,40 @@ fn analyze_with(path: &Path, tests: bool, meta: bool) -> Result<Analysis, String
             module
         }
     };
+    if editor {
+        // After errors that stop a build, checking still finds what names
+        // refer to; its own errors would only follow from them.
+        let earlier = diags.has_errors();
+        let mut checked = Diagnostics::default();
+        let index = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            check::check_indexed(&module, &sources, &mut checked).1
+        }))
+        .ok();
+        if !earlier {
+            diags.list.append(&mut checked.list);
+        }
+        diags.sort(&sources);
+        return Ok(Analysis { sources, diags, program: None, source_id, libraries, meta, expansions, index });
+    }
     let program = if diags.has_errors() { None } else { check::check(&module, &sources, &mut diags, meta) };
     let program = program.and_then(|program| mono::monomorphize(program, &mut diags));
     diags.sort(&sources);
-    Ok(Analysis { sources, diags, program, source_id, libraries, meta, expansions })
+    Ok(Analysis { sources, diags, program, source_id, libraries, meta, expansions, index: None })
 }
 
 /// Reads and parses one source file; `None` when it cannot be lexed.
 fn parse(path: &Path, sources: &mut SourceMap, diags: &mut Diagnostics) -> Result<Option<ast::Module>, String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let open = OPEN.with(|o| {
+        let open = o.borrow();
+        if open.is_empty() {
+            return None;
+        }
+        open.get(&path.canonicalize().unwrap_or_else(|_| path.to_path_buf())).cloned()
+    });
+    let bytes = match open {
+        Some(text) => text.into_bytes(),
+        None => std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?,
+    };
     let text = match String::from_utf8(bytes) {
         Ok(text) => text,
         Err(error) => {

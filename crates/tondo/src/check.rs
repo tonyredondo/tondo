@@ -3,6 +3,7 @@
 //! Checking is bidirectional: every expression receives the type its context
 //! expects, if any, which is how unsuffixed literals pick their type (5.7).
 
+mod indexing;
 mod routes;
 
 use crate::ast::{self, BinOp, UnaryOp};
@@ -24,7 +25,29 @@ pub fn check<'a>(
     diags: &'a mut Diagnostics,
     meta: bool,
 ) -> Option<hir::Program> {
+    check_with(module, sources, diags, meta, None).0
+}
+
+/// Checks a program and records, for an editor, every declaration and
+/// every name that refers to one.
+pub fn check_indexed<'a>(
+    module: &'a ast::Module,
+    sources: &'a SourceMap,
+    diags: &'a mut Diagnostics,
+) -> (Option<hir::Program>, crate::index::Index) {
+    let (program, index) = check_with(module, sources, diags, false, Some(crate::index::Index::default()));
+    (program, index.unwrap_or_default())
+}
+
+fn check_with<'a>(
+    module: &'a ast::Module,
+    sources: &'a SourceMap,
+    diags: &'a mut Diagnostics,
+    meta: bool,
+    index: Option<crate::index::Index>,
+) -> (Option<hir::Program>, Option<crate::index::Index>) {
     let mut checker = Checker {
+        index,
         meta,
         types: Types::default(),
         diags,
@@ -80,7 +103,8 @@ pub fn check<'a>(
         const_uses: HashSet::new(),
     };
     checker.declare_prelude();
-    checker.program(module)
+    let program = checker.program(module);
+    (program, checker.index)
 }
 
 /// Prelude type names (26.3); they cannot be redeclared unqualified.
@@ -516,6 +540,9 @@ fn std_alias(module: &str, member: &str) -> String {
 }
 
 struct Checker<'a> {
+    /// What an editor asks to know: each declaration and each name that
+    /// refers to one.
+    index: Option<crate::index::Index>,
     /// The `meta` profile: no host capabilities (27.7).
     meta: bool,
     /// Inside the `{...}` of a string, where an unknown name may be text
@@ -634,6 +661,8 @@ struct ConstEntry<'a> {
 /// Per-function checking state.
 struct FnCx {
     locals: Vec<hir::Local>,
+    /// For an editor: the declaration of each named local.
+    local_defs: HashMap<u32, usize>,
     mutable: Vec<bool>,
     scopes: Vec<Vec<(String, LocalId)>>,
     /// Success type that `return` produces.
@@ -799,6 +828,8 @@ impl<'a> Checker<'a> {
         self.declare_traits(&traits);
         for item in &module.items {
             if let ast::Item::Const(decl) = item {
+                let key = Some(crate::index::Key::Value(decl.name.name.clone()));
+                self.index_define(key, crate::index::DefKind::Const, &decl.name, decl.span, None);
                 self.consts.push(ConstEntry { decl, value: None, resolving: false });
                 self.declare_module_name(&decl.name, ModuleName::Const(self.consts.len() - 1));
             }
@@ -854,6 +885,7 @@ impl<'a> Checker<'a> {
                 self.implementation(decl, &mut bodies);
             }
         }
+        self.index_functions(&bodies);
         for (index, f) in fns.iter().enumerate() {
             self.defaults(f, FnId(index as u32));
         }
@@ -2018,6 +2050,7 @@ impl<'a> Checker<'a> {
         let mut declared = Vec::new();
         let mut templates = Vec::new();
         for item in items {
+            self.index_type(item);
             let owner = match item {
                 ast::Item::Type(decl) => Some((
                     decl.module,
@@ -2613,6 +2646,7 @@ impl<'a> Checker<'a> {
         }
         for (index, decl) in traits.iter().enumerate() {
             let id = TraitId(index as u32 + PRELUDE_TRAITS);
+            self.index_trait(id.0, decl);
             let (self_param, params) =
                 (self.traits[id.0 as usize].self_param, self.traits[id.0 as usize].params.clone());
             self.enter_generics(&decl.generics, &params);
@@ -2702,6 +2736,7 @@ impl<'a> Checker<'a> {
             self.diags.error("E1001", name.span, message);
             return None;
         };
+        self.index_refer(name, crate::index::Key::Trait(id.0));
         let args: Vec<Ty> = args.iter().map(|a| self.resolve_type(a)).collect();
         let expected = self.traits[id.0 as usize].params.len();
         if args.len() != expected {
@@ -2820,6 +2855,7 @@ impl<'a> Checker<'a> {
                 self.diags.error(code, f.name.span, message);
             }
             self.signatures.push(signature);
+            self.index_implemented(trait_id.0, id.0, &f.name);
             bodies.push(f);
             methods[index] = Some(id);
         }
@@ -3440,6 +3476,9 @@ impl<'a> Checker<'a> {
     /// The type an inherent method is declared on: a nominal type of this
     /// module (11.5).
     fn method_owner(&mut self, owner: &ast::Ident, module: u32) -> Ty {
+        if self.type_names.contains_key(&owner.name) {
+            self.index_refer(owner, crate::index::Key::Type(owner.name.clone()));
+        }
         // The prelude declares the methods of the intrinsic types.
         if Some(module) == self.prelude
             && let Some(key) = self.intrinsic_owner(&owner.name)
@@ -3532,6 +3571,14 @@ impl<'a> Checker<'a> {
     }
 
     fn resolve_type(&mut self, t: &ast::TypeExpr) -> Ty {
+        if let ast::TypeKind::Path { segments, .. } = &t.kind
+            && let [name] = segments.as_slice()
+            && self.index.is_some()
+            && self.type_names.contains_key(&name.name)
+            && !self.type_params.iter().any(|(n, _)| *n == name.name)
+        {
+            self.index_refer(name, crate::index::Key::Type(name.name.clone()));
+        }
         match &t.kind {
             ast::TypeKind::Path { segments, args } => {
                 if !args.is_empty() {
@@ -3757,6 +3804,7 @@ impl<'a> Checker<'a> {
         };
         FnCx {
             locals: Vec::new(),
+            local_defs: HashMap::new(),
             mutable: Vec::new(),
             scopes: vec![Vec::new()],
             result: success,
@@ -3822,7 +3870,8 @@ impl<'a> Checker<'a> {
             // `mut` and `var` parameters, receivers included, borrow the
             // caller's place (16.3); `ref` and values are read-only values.
             let loan = matches!(param.mode, ast::Mode::Mut | ast::Mode::Var);
-            let local = self.declare(&mut cx, &param.name, ty, loan);
+            let key = crate::index::Key::Param(id.0, param.name.name.clone());
+            let local = self.declare_with(&mut cx, &param.name, ty, loan, Some(key));
             cx.params[local.0 as usize] = Some(param.mode);
             params.push(local);
             loans.push(loan);
@@ -5695,6 +5744,19 @@ impl<'a> Checker<'a> {
     }
 
     fn declare(&mut self, cx: &mut FnCx, name: &ast::Ident, ty: Ty, mutable: bool) -> LocalId {
+        self.declare_with(cx, name, ty, mutable, None)
+    }
+
+    /// Declares a binding, recorded for an editor under `key` when it is a
+    /// parameter, which calls name too.
+    fn declare_with(
+        &mut self,
+        cx: &mut FnCx,
+        name: &ast::Ident,
+        ty: Ty,
+        mutable: bool,
+        key: Option<crate::index::Key>,
+    ) -> LocalId {
         // Another module's bindings may reuse the root's names, which only
         // the root sees unprefixed; the linker checks each module's own.
         if self.lookup(cx, &name.name).is_some()
@@ -5711,6 +5773,10 @@ impl<'a> Checker<'a> {
             self.diags.error("E1005", name.span, message);
         }
         let id = LocalId(cx.locals.len() as u32);
+        let kind = if key.is_some() { crate::index::DefKind::Parameter } else { crate::index::DefKind::Local };
+        if let Some(def) = self.index_define(key, kind, name, name.span, Some(ty)) {
+            cx.local_defs.insert(id.0, def);
+        }
         cx.locals.push(hir::Local { name: name.name.clone(), ty, span: name.span });
         cx.mutable.push(mutable);
         cx.params.push(None);
@@ -6280,6 +6346,9 @@ impl<'a> Checker<'a> {
         {
             let message = format!("field `{name}` of {} is private to its module", self.display(ty));
             self.diags.error("E1501", span, message);
+        }
+        if let FieldRef::Name(name) = field {
+            self.index_field(ty, name, span);
         }
         let found = match (self.types.kind(ty), field) {
             (TyKind::Error, _) => return None,
@@ -7412,6 +7481,8 @@ impl<'a> Checker<'a> {
                 return Self::error_expr(span);
             };
             let fields: Vec<(String, Ty)> = fields.into_iter().map(|f| (f.name, f.ty)).collect();
+            let owner = self.index_type_name(ty).map(|e| format!("{e}.{}", path.last().unwrap().name));
+            self.index_fields(owner, inits.iter().map(|i| (&i.name, i.value.is_none())));
             let (ty, values, seen) = self.generic_fields(cx, ty, &fields, inits, expected, span);
             self.report_missing(&fields, &seen, span);
             return Self::mk(hir::ExprKind::Variant(variant, values), ty, span);
@@ -7419,6 +7490,7 @@ impl<'a> Checker<'a> {
         let [name] = path else {
             return self.unsupported_expr(span, "qualified record literals");
         };
+        self.index_refer(name, crate::index::Key::Type(name.name.clone()));
         let ty = match self.type_names.get(&name.name) {
             Some(TypeName::Nominal(ty)) if type_args.is_empty() => *ty,
             Some(TypeName::Alias(index)) if type_args.is_empty() => {
@@ -7463,6 +7535,7 @@ impl<'a> Checker<'a> {
             );
             self.diags.error("E1502", name.span, message);
         }
+        self.index_fields(Some(name.name.clone()), inits.iter().map(|i| (&i.name, i.value.is_none())));
         let (ty, values, seen) = self.generic_fields(cx, ty, &fields, inits, expected, span);
         if self.types.c_layout(ty).is_some_and(|l| l.union) {
             return self.union_literal(cx, ty, values, span);
@@ -7570,7 +7643,13 @@ impl<'a> Checker<'a> {
             _ => None,
         };
         match found {
-            Some(Some(index)) => Some(Some((ty, index as u32))),
+            Some(Some(index)) => {
+                if let Some(owner) = self.index_type_name(ty) {
+                    self.index_refer(type_name, crate::index::Key::Type(type_name.name.clone()));
+                    self.index_refer(variant, crate::index::Key::Variant(owner, variant.name.clone()));
+                }
+                Some(Some((ty, index as u32)))
+            }
             Some(None) => {
                 let mut message = format!("enum `{}` has no variant `{}`", type_name.name, variant.name);
                 if let TyKind::Adt(id) = self.types.kind(ty)
@@ -7949,6 +8028,16 @@ impl<'a> Checker<'a> {
                     let message = mismatch(self, &format!("a `{}` pattern", Self::path_text(path)));
                     return self.pattern_error(span, message);
                 }
+                let owner = self.index_type_name(record_ty).map(|owner| match variant {
+                    Some(_) => format!("{owner}.{}", path.last().unwrap().name),
+                    None => owner,
+                });
+                if variant.is_none()
+                    && let [name] = path.as_slice()
+                {
+                    self.index_refer(name, crate::index::Key::Type(name.name.clone()));
+                }
+                self.index_fields(owner, fields.iter().map(|f| (&f.name, f.pattern.is_none())));
                 let patterns = self.field_patterns(cx, &declared, fields, *rest, context, span);
                 match variant {
                     Some(variant) => hir::PatKind::Variant(variant, patterns),
@@ -8212,6 +8301,8 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+        let owner = self.index_type_name(ty);
+        self.index_fields(owner, updates.iter().map(|u| (&u.name, false)));
         let (values, _) = self.field_values(cx, ty, &fields, updates, false, None);
         if self.types.c_layout(ty).is_some_and(|l| l.union) {
             // The fields of a union overlap: a copy, then the fields written.
@@ -8534,6 +8625,7 @@ impl<'a> Checker<'a> {
             && !self.names.contains_key(*trait_name)
         {
             let explicit: Vec<Ty> = type_args.iter().map(|t| self.resolve_type(t)).collect();
+            self.index_refer(&segments[0], crate::index::Key::Trait(trait_id.0));
             return self.trait_call(cx, trait_id, &segments[1], explicit, args, expected, span);
         }
         if let [name] = names.as_slice()
@@ -8730,6 +8822,7 @@ impl<'a> Checker<'a> {
         }
         let key = self.owner_key(ty);
         if let Some(&id) = self.methods.get(&(key, method.name.clone())) {
+            self.index_refer(method, crate::index::Key::Fn(id.0));
             self.check_method_visible(id, method.span);
             let signature = self.signatures[id.0 as usize].clone();
             return self.dot_call(cx, Callee::Fn(id), signature, HashMap::new(), value, method, args, expected, span);
@@ -9262,6 +9355,7 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> hir::Expr {
+        self.index_refer(method, crate::index::Key::TraitMethod(trait_id.0, method.name.clone()));
         // The prelude's methods of an iterator copy it (10.17).
         if trait_id == ITERATOR && index > 0 && !self.types.is_copy(value.ty) && !self.types.has_error(value.ty) {
             let message = format!(
@@ -9293,6 +9387,7 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> hir::Expr {
+        self.index_refer(method, crate::index::Key::TraitMethod(trait_id.0, method.name.clone()));
         let def = &self.traits[trait_id.0 as usize];
         let Some(index) = def.methods.iter().position(|m| m.name == method.name) else {
             let message = format!("trait `{}` has no method `{}`", def.name, method.name);
@@ -9767,6 +9862,7 @@ impl<'a> Checker<'a> {
             None => self.capture(cx, &first.name, first.span),
         };
         if let Some(mut value) = captured {
+            self.index_local(cx, first);
             for segment in &segments[1..] {
                 let span = value.span.to(segment.span);
                 value = self.field_access(value, FieldRef::Name(&segment.name), segment.span, span);
@@ -9774,6 +9870,7 @@ impl<'a> Checker<'a> {
             return value;
         }
         if let Some(local) = self.lookup(cx, &first.name) {
+            self.index_local(cx, first);
             let ty = cx.locals[local.0 as usize].ty;
             let mut value = Self::mk(hir::ExprKind::Local(local), ty, first.span);
             for segment in &segments[1..] {
@@ -9802,6 +9899,8 @@ impl<'a> Checker<'a> {
             && let Some(owner) = self.type_named(&type_name.name)
             && let Some(&id) = self.methods.get(&(owner, operation.name.clone()))
         {
+            self.index_refer(type_name, crate::index::Key::Type(type_name.name.clone()));
+            self.index_refer(operation, crate::index::Key::Fn(id.0));
             self.check_method_visible(id, operation.span);
             return self.fn_value(id, Vec::new(), expected, span);
         }
@@ -9819,8 +9918,12 @@ impl<'a> Checker<'a> {
             return Self::error_expr(span);
         }
         match self.names.get(&first.name) {
-            Some(ModuleName::Fn(id)) if segments.len() == 1 => self.fn_value(*id, Vec::new(), expected, span),
+            Some(&ModuleName::Fn(id)) if segments.len() == 1 => {
+                self.index_refer(first, crate::index::Key::Fn(id.0));
+                self.fn_value(id, Vec::new(), expected, span)
+            }
             Some(&ModuleName::Const(id)) => {
+                self.index_refer(first, crate::index::Key::Value(first.name.clone()));
                 let mut value = self.const_value(id, first.span);
                 for segment in &segments[1..] {
                     let span = value.span.to(segment.span);
@@ -10085,6 +10188,7 @@ impl<'a> Checker<'a> {
             && let Some(&trait_id) = self.trait_names.get(*trait_name)
             && !self.names.contains_key(*trait_name)
         {
+            self.index_refer(&segments[0], crate::index::Key::Trait(trait_id.0));
             return self.trait_call(cx, trait_id, &segments[1], Vec::new(), args, expected, span);
         }
         // `Type.operation(...)`: an associated operation, or a method with
@@ -10095,6 +10199,8 @@ impl<'a> Checker<'a> {
             && let Some(owner) = self.type_named(type_name)
         {
             if let Some(id) = self.methods.get(&(owner, operation.to_string())).copied() {
+                self.index_refer(&segments[0], crate::index::Key::Type(segments[0].name.clone()));
+                self.index_refer(&segments[1], crate::index::Key::Fn(id.0));
                 self.check_method_visible(id, span);
                 let signature = self.signatures[id.0 as usize].clone();
                 let target = CallTarget::new(Callee::Fn(id), signature, expected);
@@ -10197,6 +10303,7 @@ impl<'a> Checker<'a> {
                 Self::mk(hir::ExprKind::Block(block), Ty::UNIT, span)
             }
             ([_], Some(ModuleName::Newtype(ty))) => {
+                self.index_refer(&segments[0], crate::index::Key::Type(segments[0].name.clone()));
                 let [arg] = args else {
                     return self.arity_error(span, 1, args.len());
                 };
@@ -10207,6 +10314,7 @@ impl<'a> Checker<'a> {
                 Self::mk(hir::ExprKind::Retype(Box::new(value)), ty, span)
             }
             ([_], Some(ModuleName::Fn(id))) => {
+                self.index_refer(&segments[0], crate::index::Key::Fn(id.0));
                 let signature = self.signatures[id.0 as usize].clone();
                 let target = CallTarget::new(Callee::Fn(id), signature, expected);
                 self.call_signature(cx, target, None, args, span)
@@ -10594,7 +10702,12 @@ impl<'a> Checker<'a> {
                 Some(name) => {
                     named = true;
                     match signature.names[first..].iter().position(|n| *n == name.name) {
-                        Some(position) => position,
+                        Some(position) => {
+                            if let Callee::Fn(id) = callee {
+                                self.index_refer(name, crate::index::Key::Param(id.0, name.name.clone()));
+                            }
+                            position
+                        }
                         None if signature.names[first..].iter().all(String::is_empty) => {
                             let message = "a standard function takes positional arguments; remove the name";
                             self.diags.error("E1102", name.span, message);

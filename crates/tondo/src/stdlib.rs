@@ -34,6 +34,11 @@ const SOURCES: &[(&str, &str)] = &[
     ("http", include_str!("../std/http.to")),
 ];
 
+/// Each standard module's name and source.
+pub fn sources() -> &'static [(&'static str, &'static str)] {
+    SOURCES
+}
+
 /// The names of the standard modules written in Tondo.
 pub fn names() -> impl Iterator<Item = &'static str> {
     SOURCES.iter().map(|(name, _)| *name)

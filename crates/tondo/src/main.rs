@@ -27,6 +27,8 @@ usage:
             [--report json=<path> | junit=<path>]... [--diagnostic-format human|json]
             [--artifacts <dir>] [--update-snapshots]
                                                        run the tests of a project
+  tondo lsp                                            serve an editor: diagnostics, hover, definitions,
+                                                       references, rename, symbols, formatting
   tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
                                                        write a module of extern declarations for a C header
   tondo <file.to> [<argument>...]                      run a script (for #! lines)
@@ -68,6 +70,7 @@ fn main() -> ExitCode {
         "update" => update_command(&args[1..]),
         "bind" => bind_command(&args[1..]),
         "test" => test_command(&args[1..]),
+        "lsp" => tondo::lsp::serve().map(|()| ExitCode::SUCCESS),
         "version" | "--version" | "-V" => {
             println!("tondo {} (native, cranelift)", driver::VERSION);
             Ok(ExitCode::SUCCESS)

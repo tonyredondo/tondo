@@ -53,3 +53,25 @@ A dependency is imported by its alias: `import units`, `import units.si`.
 `tondo.lock` pins every download; `tondo update` refreshes it. `tondo api
 --list` shows every module of the project, its dependencies and the
 standard library.
+
+## Editors
+
+`tondo lsp` is a language server: diagnostics as you type, hover, go to
+definition, references, rename, symbols and formatting. Point any editor's
+LSP client at it for `*.to` files; in Helix, `languages.toml`:
+
+```text
+[[language]]
+name = "tondo"
+scope = "source.tondo"
+file-types = ["to"]
+roots = ["tondo.toml"]
+language-servers = ["tondo"]
+
+[language-server.tondo]
+command = "tondo"
+args = ["lsp"]
+```
+
+In Neovim: `vim.lsp.config('tondo', { cmd = { 'tondo', 'lsp' }, filetypes = { 'tondo' }, root_markers = { 'tondo.toml' } })`
+and `vim.lsp.enable('tondo')`, with `vim.filetype.add({ extension = { to = 'tondo' } })`.
