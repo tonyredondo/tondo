@@ -1487,7 +1487,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.regex` | Core | — | 0.1 | Expresiones regulares Unicode con complejidad y límites declarados |
 | `std.csv` | Core | — | 0.1 | CSV RFC 4180 materializado y en streaming |
 | `std.hash` | Core | — | 0.1 | Digests SHA-1, SHA-256 y SHA-512 y HMAC |
-| `std.http` | Capability-gated | `network` | 0.1 | Cliente HTTP/1.1 y HTTP/2 con TLS, cuerpos en streaming, multipart, Server-Sent Events y WebSockets |
+| `std.http` | Capability-gated | `network` | 0.1 | Cliente y servidor HTTP/1.1 y HTTP/2 con TLS, cuerpos en streaming, multipart, archivos con rangos, Server-Sent Events y WebSockets |
 | `std.random` | Core + gated | `entropy` para sembrar desde el sistema | 0.1 | Generadores pseudoaleatorios sembrados, mezcla, elección y bytes de entropía |
 | `std.uuid` | Core + gated | `entropy` y/o `civil-clock` para generación | 0.1 | UUID, parsing, formatting y generadores explícitos por versión |
 | `std.sync` | Core + gated | `threads` para operaciones cross-thread | 0.1 | Mutex, rwlock, condición, semáforo, once, barrier, atomics y colecciones compartidas linealizables |
@@ -3684,7 +3684,142 @@ for message in socket {
     }
 }
 ~~~
+- `trust` nombra un archivo PEM con certificados en los que el cliente confía
+  además de los del sistema, como los de la CA de una empresa o de desarrollo.
 - Un provider o generador no puede importar `std.http` (`E2108`).
+
+#### 14.24.1 Servidores
+
+Un `App` reúne rutas, middleware y documentación; `listen` sirve hasta que su
+tarea se cancela y `start` sirve en una tarea propia y devuelve el `Server`.
+Cada petición se atiende en una tarea, así que un handler puede esperar sin
+bloquear a los demás.
+
+~~~tondo
+var app = http.App.new()
+app.get("/users/:id", (request) {
+    let id = request.intParam("id")?            // 400 si no es un entero
+    match users.find(id) {
+        some(user) => http.Reply.json(user)
+        none => fail http.Problem.notFound("no user {id}")
+    }
+})
+app.post("/users", (request) {
+    let input: NewUser = request.json()?        // 400 si no es un NewUser
+    http.Reply.json(users.add(input), status: 201)
+})
+app.use((request, next) {
+    let reply = next(request)?
+    reply.header("x-served-by", "tondo")
+})
+app.files("/downloads", "public")               // GET y HEAD con rangos
+app.uploads("/downloads", "public")             // PUT reanudable y POST multipart
+app.listen(port: 8080)?
+~~~
+
+La superficie es:
+
+~~~tondo pseudocode
+pub type Problem = { status: Int, message: String }
+pub fn Problem.new(status: Int, message: String): Problem
+pub fn Problem.badRequest(message: String): Problem
+pub fn Problem.unauthorized(message: String = "authentication is required"): Problem
+pub fn Problem.forbidden(message: String = "this is not allowed"): Problem
+pub fn Problem.notFound(message: String = "not found"): Problem
+pub fn Problem.conflict(message: String): Problem
+pub fn Problem.from[E: Display](error: E): Problem          // 500
+
+pub type Request
+pub fn Request.method(self): String
+pub fn Request.path(self): String
+pub fn Request.version(self): String
+pub fn Request.remoteAddress(self): String
+pub fn Request.param(self, name: String): String
+pub fn Request.intParam(self, name: String): Int ! Problem
+pub fn Request.query(self, name: String): String?
+pub fn Request.queryValues(self, name: String): Array[String]
+pub fn Request.intQuery(self, name: String): Int? ! Problem
+pub fn Request.header(self, name: String): String?
+pub fn Request.headers(self): Map[String, String]
+pub fn Request.text(self): String ! Problem
+pub fn Request.bytes(self): Array[Byte] ! Problem
+pub fn Request.json[T: json.Decode](self): T ! Problem
+pub fn Request.form(self): Map[String, String] ! Problem
+pub fn Request.uploads(self): Uploads                       // Iterator[Upload ! Problem]
+pub fn Request.body(self): io.Reader
+pub fn Request.saveTo(self, path: String): Int ! Problem
+pub type Upload                                             // name, fileName, contentType
+pub fn Upload.text(self): String ! Problem
+pub fn Upload.bytes(self): Array[Byte] ! Problem
+pub fn Upload.saveTo(self, path: String): Int ! Problem
+
+pub type Reply
+pub fn Reply.text(text: String, status: Int = 200): Reply
+pub fn Reply.html(html: String, status: Int = 200): Reply
+pub fn Reply.json[T: json.Encode](value: T, status: Int = 200): Reply
+pub fn Reply.bytes(bytes: Array[Byte], contentType: String = "application/octet-stream", status: Int = 200): Reply
+pub fn Reply.stream(input: io.Reader, contentType: String = "application/octet-stream", status: Int = 200): Reply
+pub fn Reply.file(path: String, download: String? = none): Reply
+pub fn Reply.events(events: Receiver[Event]): Reply
+pub fn Reply.redirect(url: String, status: Int = 302): Reply
+pub fn Reply.empty(status: Int = 204): Reply
+pub fn Reply.notFound(): Reply
+pub fn Reply.header(self, name: String, value: String): Reply
+pub fn Reply.status(self): Int
+
+pub type App
+pub fn App.new(): App
+pub fn App.get(mut self, path: String, handler: fn(Request): Reply ! Problem)   // y post, put, patch, delete
+pub fn App.route(mut self, method: String, path: String, handler: fn(Request): Reply ! Problem, operation: String = "")
+pub fn App.use(mut self, middleware: fn(Request, fn(Request): Reply ! Problem): Reply ! Problem)
+pub fn App.mount(mut self, prefix: String, other: App)
+pub fn App.files(mut self, prefix: String, directory: String)
+pub fn App.uploads(mut self, prefix: String, directory: String)
+pub fn App.websocket(mut self, path: String, handler: fn(WebSocket): Unit ! HttpError)
+pub fn App.openApi(mut self, path: String = "/openapi.json", title: String = "API", version: String = "1.0")
+pub fn App.listen(self, port: Int = 8080, host: String = "0.0.0.0", tls: Tls? = none): Unit ! HttpError
+pub fn App.start(self, port: Int = 0, host: String = "127.0.0.1", tls: Tls? = none): Server ! HttpError
+pub type Server
+pub fn Server.address(self): String
+pub fn Server.url(self): String
+pub fn Server.stop(self)
+pub type Tls
+pub fn Tls.files(certificate: String, privateKey: String): Tls
+~~~
+
+- Una ruta es un método y un path cuyos segmentos `:nombre` son parámetros y
+  cuyo último puede ser `*nombre`, el resto del path. Entre las rutas que
+  encajan gana la de más segmentos fijos, así que `/users/me` gana a
+  `/users/:id`; `HEAD` usa la ruta `GET`. Un path sin ruta es `404`, y uno con
+  rutas de otros métodos, `405` con `Allow`. Los parámetros llegan
+  decodificados.
+- Un handler devuelve una `Reply` o falla con un `Problem`, que el servidor
+  envía como `application/problem+json` (RFC 9457). Con un estado de 500 o más
+  el cliente solo ve `internal server error` y el mensaje va a la salida de
+  error. Los helpers de `Request` fallan con un `Problem` 400 que explica qué
+  falta, así que `?` basta para validar la entrada.
+- El middleware rodea las rutas de su app y la respuesta a los paths sin ruta;
+  el primero añadido es el exterior. `mount` añade las rutas de otra app bajo
+  un prefijo, con el middleware de esa app solo alrededor de ellas.
+- `Reply.file` envía un archivo con el content type de su extensión, `ETag` y
+  `Last-Modified`. Responde a `Range` (también `bytes=-n`) con `206` y la parte
+  pedida, así que una descarga se reanuda, a `If-None-Match` y
+  `If-Modified-Since` con `304`, y a un rango fuera del archivo con `416`;
+  `If-Range` mantiene el rango solo si el archivo no cambió. `download` lo
+  envía como adjunto con ese nombre. `App.files` sirve así los archivos de una
+  carpeta, sin dejar salir de ella un path con `..` (`403`).
+- `App.uploads` recibe archivos en una carpeta: `PUT` escribe el cuerpo en ese
+  archivo, desde el byte que diga `Content-Range: bytes inicio-fin/total`, así
+  que una subida se reanuda tras un `HEAD` que dice cuánto llegó; `POST` con un
+  formulario multipart guarda cada parte con archivo bajo esa carpeta con su
+  nombre. Ambos responden con el JSON de lo escrito (`path` y `size`), `201`
+  para un archivo nuevo.
+- `Reply.events` envía cada `Event` del canal como Server-Sent Events hasta que
+  el canal se cierra o el cliente se va. `App.websocket` acepta WebSockets en
+  un path y el handler habla con cada uno hasta que termina.
+- `listen` y `start` sirven HTTP/1.1 y HTTP/2; con `tls`, sobre TLS con ALPN.
+  `Server.stop` deja de aceptar conexiones y espera a que el servidor pare;
+  las peticiones en curso terminan.
 
 ---
 

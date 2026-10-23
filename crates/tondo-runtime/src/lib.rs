@@ -26,6 +26,7 @@ mod native;
 mod process;
 mod reflect;
 mod regex;
+mod server;
 mod shared;
 mod snapshot;
 mod sync;

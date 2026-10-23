@@ -1,7 +1,9 @@
-// std.http (standard library 14.24): an HTTP client for HTTP/1.1 and
-// HTTP/2 over TLS, with bodies that stream both ways, multipart forms,
-// Server-Sent Events and WebSockets, on the runtime's transport.
+// std.http (standard library 14.24): an HTTP client and server for
+// HTTP/1.1 and HTTP/2 over TLS, with bodies that stream both ways,
+// multipart forms, Server-Sent Events and WebSockets, on the runtime's
+// transport.
 
+import std.console as __console
 import std.encoding as __encoding
 import std.internal.http as httpNative
 import std.io as __io
@@ -344,7 +346,9 @@ impl Iterator[Event ! HttpError] for Events {
 
 /// Sends requests and keeps their connections for the next ones, over
 /// HTTP/2 when the server offers it. Its URLs may be relative to
-/// `baseUrl`, and its headers go with every request.
+/// `baseUrl`, and its headers go with every request. `trust` names a PEM
+/// file of certificates it trusts besides the system's, such as a company's
+/// or a development certificate authority.
 pub type Client = {
     priv native: httpNative.Native
     priv base: String
@@ -358,12 +362,14 @@ pub fn Client.new(
     timeout: __time.Duration? = none,
     connectTimeout: __time.Duration? = none,
     redirects: Int = 10,
+    trust: String? = none,
 ): Client {
     let connect = match connectTimeout {
         some(limit) => limit.milliseconds()
         none => 0
     }
-    Client { native: httpNative.client(connect, redirects), base: baseUrl, defaults: headers, limit: timeout }
+    let connection = httpNative.client(connect, redirects, trust.unwrapOr(""))
+    Client { native: connection, base: baseUrl, defaults: headers, limit: timeout }
 }
 
 pub fn Client.get(
@@ -709,4 +715,811 @@ fn failed(sent: httpNative.Native): Unit ! HttpError {
         fail HttpError.Body(why)
     }
     fail HttpError.Protocol(why)
+}
+
+// ---------------------------------------------------------------------------
+// Servers: problems, requests and replies
+// ---------------------------------------------------------------------------
+
+/// Why a handler cannot answer: a status of 400 or more and a message for
+/// the client, which receives it as `application/problem+json` (RFC 9457).
+/// For a status of 500 or more the client sees only `internal server
+/// error`, and the message goes to standard error.
+pub type Problem = {
+    status: Int
+    message: String
+}
+
+impl Display for Problem {
+    fn display(self): String {
+        "{self.status} {self.message}"
+    }
+}
+
+pub fn Problem.new(status: Int, message: String): Problem {
+    Problem { status, message }
+}
+
+pub fn Problem.badRequest(message: String): Problem {
+    Problem { status: 400, message }
+}
+
+pub fn Problem.unauthorized(message: String = "authentication is required"): Problem {
+    Problem { status: 401, message }
+}
+
+pub fn Problem.forbidden(message: String = "this is not allowed"): Problem {
+    Problem { status: 403, message }
+}
+
+pub fn Problem.notFound(message: String = "not found"): Problem {
+    Problem { status: 404, message }
+}
+
+pub fn Problem.conflict(message: String): Problem {
+    Problem { status: 409, message }
+}
+
+/// A failure of the server's own, for `result.mapErr(http.Problem.from)?`.
+pub fn Problem.from[E: Display](error: E): Problem {
+    Problem { status: 500, message: "{error}" }
+}
+
+/// A request a server received.
+pub type Request = {
+    priv native: httpNative.Native
+    priv verb: String
+    priv target: String
+    priv rawQuery: String
+    priv protocol: String
+    priv peer: String
+    priv headerList: Array[String]
+    priv params: Map[String, String]
+}
+
+pub fn Request.method(self): String {
+    self.verb
+}
+
+/// The path, without the query.
+pub fn Request.path(self): String {
+    self.target
+}
+
+pub fn Request.version(self): String {
+    self.protocol
+}
+
+/// The client's address and port.
+pub fn Request.remoteAddress(self): String {
+    self.peer
+}
+
+/// A parameter of the route, decoded: `id` in `/users/:id`.
+pub fn Request.param(self, name: String): String {
+    self.params.getOr(name, "")
+}
+
+/// A parameter of the route that must be an integer.
+pub fn Request.intParam(self, name: String): Int ! Problem {
+    let text = self.param(name)
+    match Int.parse(text) {
+        ok(value) => value
+        err(_) => fail Problem.badRequest("the parameter `{name}` must be an integer, not `{text}`")
+    }
+}
+
+/// The first value of a query parameter, decoded.
+pub fn Request.query(self, name: String): String? {
+    self.queryValues(name).first()
+}
+
+/// Every value of a query parameter, decoded.
+pub fn Request.queryValues(self, name: String): Array[String] {
+    var values: Array[String] = []
+    for pair in self.rawQuery.split("&") {
+        let equals = pair.find("=").unwrapOr(pair.length())
+        let key = formDecoded(pair.slice(0, equals).unwrapOr(""))
+        if key == name {
+            values.push(formDecoded(pair.slice(equals + 1, pair.length()).unwrapOr("")))
+        }
+    }
+    values
+}
+
+/// A query parameter that must be an integer when it is there.
+pub fn Request.intQuery(self, name: String): Int? ! Problem {
+    match self.query(name) {
+        none => none
+        some(text) => match Int.parse(text) {
+            ok(value) => some(value)
+            err(_) => fail Problem.badRequest("the query parameter `{name}` must be an integer, not `{text}`")
+        }
+    }
+}
+
+/// The first value of a header, by its name in any case.
+pub fn Request.header(self, name: String): String? {
+    let wanted = name.toLower()
+    var index = 0
+    for index + 1 < self.headerList.length() {
+        if self.headerList[index] == wanted {
+            return some(self.headerList[index + 1])
+        }
+        index += 2
+    }
+    none
+}
+
+/// The headers, lowercase, with the values of a repeated one joined by
+/// `, `.
+pub fn Request.headers(self): Map[String, String] {
+    var out: Map[String, String] = [:]
+    var index = 0
+    for index + 1 < self.headerList.length() {
+        let (name, value) = (self.headerList[index], self.headerList[index + 1])
+        out[name] = match out.get(name) {
+            some(before) => "{before}, {value}"
+            none => value
+        }
+        index += 2
+    }
+    out
+}
+
+pub fn Request.bytes(self): Array[Byte] ! Problem {
+    let bytes = httpNative.requestRead(self.native)
+    let failure = httpNative.failure(self.native)
+    if not failure.isEmpty() {
+        fail Problem.badRequest("the body: {failure.removePrefix("body\t")}")
+    }
+    bytes
+}
+
+/// The body as UTF-8 text.
+pub fn Request.text(self): String ! Problem {
+    match String.fromBytes(self.bytes()?) {
+        ok(text) => text
+        err(_) => fail Problem.badRequest("the body is not UTF-8 text")
+    }
+}
+
+/// The body as the JSON of a `T` (`std.json`), decoded as it arrives; a
+/// body that is not one is `400` with the reason.
+pub fn Request.json[T: __json.Decode](self): T ! Problem {
+    match __json.decodeFrom[T](self.body()) {
+        ok(value) => value
+        err(error) => fail Problem.badRequest("the body is not the JSON expected: {error}")
+    }
+}
+
+/// The fields of a URL-encoded form body.
+pub fn Request.form(self): Map[String, String] ! Problem {
+    var fields: Map[String, String] = [:]
+    for pair in self.text()?.split("&") {
+        if pair.isEmpty() {
+            continue
+        }
+        let equals = pair.find("=").unwrapOr(pair.length())
+        fields[formDecoded(pair.slice(0, equals).unwrapOr(""))] = formDecoded(pair.slice(equals + 1, pair.length()).unwrapOr(""))
+    }
+    fields
+}
+
+/// The parts of a `multipart/form-data` body, in order, as they arrive.
+pub fn Request.uploads(self): Uploads {
+    Uploads { form: httpNative.requestForm(self.native), done: false }
+}
+
+/// The body as a stream, read as the program asks for it.
+pub fn Request.body(self): __io.Reader {
+    httpNative.requestBody(self.native)
+}
+
+/// Writes the body to a file as it arrives; how many bytes.
+pub fn Request.saveTo(self, path: String): Int ! Problem {
+    let size = httpNative.saveBody(self.native, path, 0)
+    if size < 0 {
+        fail Problem.from(httpNative.failure(self.native).removePrefix("body\t"))
+    }
+    size
+}
+
+/// A query or form value as it was meant: `+` is a space.
+fn formDecoded(text: String): String {
+    __encoding.urlDecode(text.replace("+", " ")).unwrapOr(text)
+}
+
+/// A part of a multipart body. Parts arrive in order: reading one skips
+/// what the ones before left unread.
+pub type Upload = {
+    priv native: httpNative.Native
+    priv field: String
+    priv file: String
+    priv kind: String
+}
+
+/// The form field's name.
+pub fn Upload.name(self): String {
+    self.field
+}
+
+/// The file's name the client gave, or an empty string for a field.
+pub fn Upload.fileName(self): String {
+    self.file
+}
+
+pub fn Upload.contentType(self): String {
+    self.kind
+}
+
+pub fn Upload.bytes(self): Array[Byte] ! Problem {
+    let bytes = httpNative.uploadRead(self.native)
+    let failure = httpNative.failure(self.native)
+    if not failure.isEmpty() {
+        fail Problem.badRequest("the part `{self.field}`: {failure.removePrefix("body\t")}")
+    }
+    bytes
+}
+
+pub fn Upload.text(self): String ! Problem {
+    match String.fromBytes(self.bytes()?) {
+        ok(text) => text
+        err(_) => fail Problem.badRequest("the part `{self.field}` is not UTF-8 text")
+    }
+}
+
+/// Writes the part to a file as it arrives; how many bytes.
+pub fn Upload.saveTo(self, path: String): Int ! Problem {
+    let size = httpNative.uploadSave(self.native, path)
+    if size < 0 {
+        fail Problem.from(httpNative.failure(self.native).removePrefix("body\t"))
+    }
+    size
+}
+
+/// The parts of a multipart body, as `Request.uploads()` gives them.
+pub type Uploads = {
+    priv form: httpNative.Native
+    priv done: Bool
+}
+
+impl Iterator[Upload ! Problem] for Uploads {
+    fn next(mut self): (Upload ! Problem)? {
+        if self.done {
+            return none
+        }
+        let failure = httpNative.failure(self.form)
+        if not failure.isEmpty() {
+            self.done = true
+            return some(err(Problem.badRequest(failure.removePrefix("body\t"))))
+        }
+        let part = httpNative.formNext(self.form)
+        let problem = httpNative.failure(part)
+        if not problem.isEmpty() {
+            self.done = true
+            return some(err(Problem.badRequest(problem.removePrefix("body\t"))))
+        }
+        let described = httpNative.uploadHead(part)
+        if described.isEmpty() {
+            self.done = true
+            return none
+        }
+        let parts = described.split("\t")
+        some(ok(Upload { native: part, field: parts[0], file: parts[1], kind: parts[2] }))
+    }
+}
+
+enum Payload {
+    Data(Array[Byte])
+    Stream(__io.Reader)
+    File(String, String)
+    Events(Receiver[Event])
+    Socket(fn(WebSocket): Unit ! HttpError)
+}
+
+/// What a handler answers.
+pub type Reply = {
+    priv code: Int
+    priv headerList: Array[String]
+    priv payload: Payload
+}
+
+pub fn Reply.text(text: String, status: Int = 200): Reply {
+    Reply { code: status, headerList: ["content-type", "text/plain; charset=utf-8"], payload: Payload.Data(text.bytes()) }
+}
+
+pub fn Reply.html(html: String, status: Int = 200): Reply {
+    Reply { code: status, headerList: ["content-type", "text/html; charset=utf-8"], payload: Payload.Data(html.bytes()) }
+}
+
+/// The value as JSON (`std.json`).
+pub fn Reply.json[T: __json.Encode](value: T, status: Int = 200): Reply {
+    let data = __json.encode(value).bytes()
+    Reply { code: status, headerList: ["content-type", "application/json"], payload: Payload.Data(data) }
+}
+
+pub fn Reply.bytes(bytes: Array[Byte], contentType: String = "application/octet-stream", status: Int = 200): Reply {
+    Reply { code: status, headerList: ["content-type", contentType], payload: Payload.Data(bytes) }
+}
+
+/// What a stream gives, sent as it gives it.
+pub fn Reply.stream(input: __io.Reader, contentType: String = "application/octet-stream", status: Int = 200): Reply {
+    Reply { code: status, headerList: ["content-type", contentType], payload: Payload.Stream(input) }
+}
+
+/// A file, with the content type of its extension. It answers `Range`
+/// requests with the part asked for, so downloads resume, and
+/// `If-None-Match` and `If-Modified-Since` with `304`. With `download`,
+/// the browser saves it under that name. A missing file is `404`.
+pub fn Reply.file(path: String, download: String? = none): Reply {
+    Reply { code: 200, headerList: [], payload: Payload.File(path, download.unwrapOr("")) }
+}
+
+/// Server-Sent Events: each event the channel receives, until it closes.
+pub fn Reply.events(events: Receiver[Event]): Reply {
+    Reply { code: 200, headerList: ["cache-control", "no-cache"], payload: Payload.Events(events) }
+}
+
+pub fn Reply.redirect(url: String, status: Int = 302): Reply {
+    Reply { code: status, headerList: ["location", url], payload: Payload.Data([]) }
+}
+
+/// A reply without a body: `204 No Content` unless another status.
+pub fn Reply.empty(status: Int = 204): Reply {
+    Reply { code: status, headerList: [], payload: Payload.Data([]) }
+}
+
+pub fn Reply.notFound(): Reply {
+    problemReply(Problem.notFound())
+}
+
+/// The same reply with one more header.
+pub fn Reply.header(self, name: String, value: String): Reply {
+    var headers = self.headerList
+    headers.push(name)
+    headers.push(value)
+    Reply { code: self.code, headerList: headers, payload: self.payload }
+}
+
+pub fn Reply.status(self): Int {
+    self.code
+}
+
+/// A problem as `application/problem+json`.
+fn problemReply(problem: Problem): Reply {
+    let detail = if problem.status >= 500 {
+        _ = __console.stderr().writeLine("http: {problem.status} {problem.message}")
+        "internal server error"
+    } else {
+        problem.message
+    }
+    let body = "{{\"status\":{problem.status},\"detail\":{__json.encode(detail)}}}"
+    Reply { code: problem.status, headerList: ["content-type", "application/problem+json"], payload: Payload.Data(body.bytes()) }
+}
+
+// ---------------------------------------------------------------------------
+// Servers: applications
+// ---------------------------------------------------------------------------
+
+type Route = {
+    method: String
+    pattern: Array[String]
+    handler: fn(Request): Reply ! Problem
+}
+
+/// The routes, middleware and documentation of a server. Routes match a
+/// method and a path whose `:name` segments are parameters and whose last
+/// may be `*name`, the rest of the path; a route with fixed segments wins
+/// over one with parameters.
+pub type App = {
+    priv routes: Array[Route]
+    priv layers: Array[fn(Request, fn(Request): Reply ! Problem): Reply ! Problem]
+    priv operations: Array[(String, String, String)]
+    priv docs: (String, String, String)?
+}
+
+pub fn App.new(): App {
+    App { routes: [], layers: [], operations: [], docs: none }
+}
+
+pub fn App.get(mut self, path: String, handler: fn(Request): Reply ! Problem) {
+    self.route("GET", path, handler)
+}
+
+pub fn App.post(mut self, path: String, handler: fn(Request): Reply ! Problem) {
+    self.route("POST", path, handler)
+}
+
+pub fn App.put(mut self, path: String, handler: fn(Request): Reply ! Problem) {
+    self.route("PUT", path, handler)
+}
+
+pub fn App.patch(mut self, path: String, handler: fn(Request): Reply ! Problem) {
+    self.route("PATCH", path, handler)
+}
+
+pub fn App.delete(mut self, path: String, handler: fn(Request): Reply ! Problem) {
+    self.route("DELETE", path, handler)
+}
+
+/// A route of any method; `operation` is its OpenAPI operation object.
+pub fn App.route(mut self, method: String, path: String, handler: fn(Request): Reply ! Problem, operation: String = "") {
+    self.routes.push(Route { method: method.toUpper(), pattern: segments(path), handler })
+    if not operation.isEmpty() {
+        self.operations.push((method.toLower(), path, operation))
+    }
+}
+
+/// Middleware, around every route of this app and its answers to paths
+/// with no route: it can answer by itself or call `next`. The first added
+/// is the outermost.
+pub fn App.use(mut self, middleware: fn(Request, fn(Request): Reply ! Problem): Reply ! Problem) {
+    self.layers.push(middleware)
+}
+
+/// The routes of another app under a prefix, with its middleware around
+/// them.
+pub fn App.mount(mut self, prefix: String, other: App) {
+    for route in other.routes {
+        var handler = route.handler
+        for layer in other.layers.reversed() {
+            handler = wrapped(layer, handler)
+        }
+        var pattern = segments(prefix)
+        pattern.extend(route.pattern)
+        self.routes.push(Route { method: route.method, pattern, handler })
+    }
+    for (method, path, operation) in other.operations {
+        self.operations.push((method, "{prefix.removeSuffix("/")}{path}", operation))
+    }
+}
+
+/// Serves the files under a directory at `{prefix}/...`: `GET` and `HEAD`,
+/// with ranges, so downloads resume. Paths cannot leave the directory.
+pub fn App.files(mut self, prefix: String, directory: String) {
+    self.route("GET", "{prefix.removeSuffix("/")}/*path", (request) {
+        Reply.file(inside(directory, request.param("path"))?)
+    })
+}
+
+/// Takes uploads into a directory at `{prefix}/...`: `PUT` writes its body
+/// to that file, from the byte a `Content-Range: bytes start-end/total`
+/// says, so an upload resumes after a `HEAD` of the files' route tells how
+/// much arrived; `POST` with a multipart form saves each file part under
+/// that folder by its file name. Both answer with the JSON of what they
+/// wrote, `201` for a new file.
+pub fn App.uploads(mut self, prefix: String, directory: String) {
+    let pattern = "{prefix.removeSuffix("/")}/*path"
+    self.route("PUT", pattern, (request) {
+        let relative = request.param("path")
+        let path = inside(directory, relative)?
+        let offset = match request.header("content-range") {
+            some(range) => rangeStart(range)?
+            none => 0
+        }
+        let size = httpNative.saveBody(request.native, path, offset)
+        if size < 0 {
+            fail Problem.conflict(httpNative.failure(request.native).removePrefix("body\t"))
+        }
+        Reply.bytes(savedJson([Saved { path: relative, size }]), contentType: "application/json", status: if offset == 0 { 201 } else { 200 })
+    })
+    self.route("POST", pattern, (request) {
+        let folder = request.param("path")
+        var saved: Array[Saved] = []
+        for part in request.uploads() {
+            let upload = part?
+            if upload.fileName().isEmpty() {
+                continue
+            }
+            let relative = if folder.isEmpty() { upload.fileName() } else { "{folder.removeSuffix("/")}/{upload.fileName()}" }
+            let size = upload.saveTo(inside(directory, relative)?)?
+            saved.push(Saved { path: relative, size })
+        }
+        Reply.bytes(savedJson(saved), contentType: "application/json", status: 201)
+    })
+}
+
+/// A file an upload wrote: its path under the directory and its size.
+pub type Saved = {
+    path: String
+    size: Int
+}
+
+fn savedJson(saved: Array[Saved]): Array[Byte] {
+    let items = saved.map((file) { "{{\"path\":{__json.encode(file.path)},\"size\":{file.size}}}" })
+    "[{items.join(",")}]".bytes()
+}
+
+/// Answers WebSockets at a path: the handler talks to each until it
+/// returns.
+pub fn App.websocket(mut self, path: String, handler: fn(WebSocket): Unit ! HttpError) {
+    self.route("GET", path, (request) {
+        Reply { code: 101, headerList: [], payload: Payload.Socket(handler) }
+    })
+}
+
+/// Serves the OpenAPI document of the routes the compiler described, at
+/// `path`.
+pub fn App.openApi(mut self, path: String = "/openapi.json", title: String = "API", version: String = "1.0") {
+    self.docs = some((path, title, version))
+}
+
+/// Serves until the task is cancelled or the server stops; `port` 0 takes
+/// any free port.
+pub fn App.listen(self, port: Int = 8080, host: String = "0.0.0.0", tls: Tls? = none): Unit ! HttpError {
+    let listening = bound(host, port, tls)?
+    serve(listening, self.pipeline())
+}
+
+/// Starts serving in a task of its own, for a program that goes on, such
+/// as a test; `Server.stop()` ends it.
+pub fn App.start(self, port: Int = 0, host: String = "127.0.0.1", tls: Tls? = none): Server ! HttpError {
+    let listening = bound(host, port, tls)?
+    let (finished, ended) = channel[Unit](1)
+    (spawn serveThenSignal(listening, self.pipeline(), finished)).detach()
+    Server { native: listening, secure: tls.isSome(), ended }
+}
+
+/// A server that `App.start` started.
+pub type Server = {
+    priv native: httpNative.Native
+    priv secure: Bool
+    priv ended: Receiver[Unit]
+}
+
+/// The address it listens on, with its port: `127.0.0.1:43017`.
+pub fn Server.address(self): String {
+    httpNative.serverAddress(self.native)
+}
+
+/// Its URL for a client on the same machine: `http://127.0.0.1:43017`.
+pub fn Server.url(self): String {
+    let address = self.address().replace("0.0.0.0", "127.0.0.1")
+    if self.secure { "https://{address}" } else { "http://{address}" }
+}
+
+/// Stops taking connections and waits until the server stopped; requests
+/// in flight finish.
+pub fn Server.stop(self) {
+    httpNative.serverStop(self.native)
+    _ = self.ended.receive()
+}
+
+/// A certificate chain and its private key, in PEM files.
+pub type Tls = {
+    priv certificate: String
+    priv privateKey: String
+}
+
+pub fn Tls.files(certificate: String, privateKey: String): Tls {
+    Tls { certificate, privateKey }
+}
+
+fn bound(host: String, port: Int, tls: Tls?): httpNative.Native ! HttpError {
+    let (certificate, key) = match tls {
+        some(given) => (given.certificate, given.privateKey)
+        none => ("", "")
+    }
+    let listening = httpNative.listen(host, port, certificate, key)
+    failed(listening)?
+    listening
+}
+
+fn serveThenSignal(server: httpNative.Native, handler: fn(Request): Reply ! Problem, finished: Sender[Unit]) {
+    serve(server, handler)
+    finished.send(())
+}
+
+fn serve(server: httpNative.Native, handler: fn(Request): Reply ! Problem) {
+    for {
+        let incoming = httpNative.next(server)
+        if not httpNative.requestOpen(incoming) {
+            return
+        }
+        (spawn answer(incoming, handler)).detach()
+    }
+}
+
+fn answer(incoming: httpNative.Native, handler: fn(Request): Reply ! Problem) {
+    let fields = httpNative.requestHead(incoming).split("\t")
+    let request = Request {
+        native: incoming
+        verb: fields[0]
+        target: fields[1]
+        rawQuery: fields[2]
+        protocol: fields[3]
+        peer: fields[4]
+        headerList: httpNative.requestHeaders(incoming)
+        params: [:]
+    }
+    let reply = match handler(request) {
+        ok(reply) => reply
+        err(problem) => problemReply(problem)
+    }
+    send(incoming, reply)
+}
+
+fn send(incoming: httpNative.Native, reply: Reply) {
+    match reply.payload {
+        Payload.Data(bytes) => httpNative.respond(incoming, reply.code, reply.headerList, bytes)
+        Payload.Stream(input) => httpNative.respondStream(incoming, reply.code, reply.headerList, input)
+        Payload.File(path, download) => {
+            let problem = httpNative.respondFile(incoming, reply.headerList, path, download)
+            if not problem.isEmpty() {
+                send(incoming, problemReply(Problem.notFound()))
+            }
+        }
+        Payload.Events(events) => {
+            let pipe = httpNative.pipe()
+            let output = httpNative.pipeWriter(pipe)
+            var headers = reply.headerList
+            headers.extend(["content-type", "text/event-stream"])
+            httpNative.respondStream(incoming, 200, headers, httpNative.pipeReader(pipe))
+            for event in events {
+                var lines: Array[String] = []
+                if event.event != "message" {
+                    lines.push("event: {event.event}")
+                }
+                match event.id {
+                    some(id) => lines.push("id: {id}")
+                    none => {}
+                }
+                for line in event.data.split("\n") {
+                    lines.push("data: {line}")
+                }
+                if output.write("{lines.join("\n")}\n\n").isErr() {
+                    break
+                }
+            }
+            _ = output.close()
+        }
+        Payload.Socket(handler) => {
+            let socket = WebSocket { native: httpNative.acceptWebSocket(incoming), closed: false }
+            if httpNative.failure(socket.native).isEmpty() {
+                _ = handler(socket)
+                _ = socket.close()
+            }
+        }
+    }
+}
+
+/// The handler a server runs: the routes, inside the middleware.
+fn App.pipeline(self): fn(Request): Reply ! Problem {
+    var app = self
+    match self.docs {
+        some((path, title, version)) => {
+            let document = openApiDocument(title, version, self.operations)
+            app.routes.push(Route {
+                method: "GET"
+                pattern: segments(path)
+                handler: (request) { Reply.bytes(document.bytes(), contentType: "application/json") }
+            })
+        }
+        none => {}
+    }
+    let routes = app.routes
+    var handler: fn(Request): Reply ! Problem = (request) { dispatch(routes, request)? }
+    for layer in self.layers.reversed() {
+        handler = wrapped(layer, handler)
+    }
+    handler
+}
+
+fn wrapped(
+    layer: fn(Request, fn(Request): Reply ! Problem): Reply ! Problem,
+    next: fn(Request): Reply ! Problem,
+): fn(Request): Reply ! Problem {
+    (request) { layer(request, next)? }
+}
+
+/// The route that answers a request: of its method, or `GET` for `HEAD`,
+/// the one with the most fixed segments; `405` when only other methods
+/// match, `404` when none does.
+fn dispatch(routes: Array[Route], request: Request): Reply ! Problem {
+    let path = segments(request.target)
+    var best: Route? = none
+    var bestScore = -1
+    var bestParams: Map[String, String] = [:]
+    var allowed: Array[String] = []
+    for route in routes {
+        match matching(route.pattern, path) {
+            some((params, score)) => {
+                if route.method == request.verb or (route.method == "GET" and request.verb == "HEAD") {
+                    if score > bestScore {
+                        best = some(route)
+                        bestScore = score
+                        bestParams = params
+                    }
+                } else if not (route.method in allowed) {
+                    allowed.push(route.method)
+                }
+            }
+            none => {}
+        }
+    }
+    match best {
+        some(route) => {
+            var routed = request
+            routed.params = bestParams
+            route.handler(routed)?
+        }
+        none if allowed.length() > 0 => {
+            Reply.text("the method {request.verb} is not allowed here", status: 405).header("allow", allowed.join(", "))
+        }
+        none => fail Problem.notFound("there is no route for {request.verb} {request.target}")
+    }
+}
+
+/// The parameters a pattern takes from a path and how fixed the match is:
+/// two for a fixed segment, one for a parameter.
+fn matching(pattern: Array[String], path: Array[String]): (Map[String, String], Int)? {
+    var params: Map[String, String] = [:]
+    var score = 0
+    for (index, part) in pattern.enumerate() {
+        if part.startsWith("*") {
+            let name = part.slice(1, part.length()).unwrapOr("")
+            params[name] = path.drop(index).map((segment) { __encoding.urlDecode(segment).unwrapOr(segment) }).join("/")
+            return some((params, score))
+        }
+        if index >= path.length() {
+            return none
+        }
+        if part.startsWith(":") {
+            params[part.slice(1, part.length()).unwrapOr("")] = __encoding.urlDecode(path[index]).unwrapOr(path[index])
+            score += 1
+        } else if part == path[index] {
+            score += 2
+        } else {
+            return none
+        }
+    }
+    if pattern.length() != path.length() {
+        return none
+    }
+    some((params, score))
+}
+
+fn segments(path: String): Array[String] {
+    path.split("/").filter((segment) { not segment.isEmpty() })
+}
+
+/// A path inside a directory, or `403` for one that would leave it.
+fn inside(directory: String, relative: String): String ! Problem {
+    for segment in relative.split("/") {
+        if segment == ".." or segment.contains("\\") or segment.contains("\u{0}") {
+            fail Problem.forbidden("the path `{relative}` leaves the directory")
+        }
+    }
+    "{directory.removeSuffix("/")}/{relative.removePrefix("/")}"
+}
+
+/// The first byte of `Content-Range: bytes start-end/total`.
+fn rangeStart(range: String): Int ! Problem {
+    let spec = range.removePrefix("bytes ")
+    let dash = spec.find("-").unwrapOr(0)
+    match Int.parse(spec.slice(0, dash).unwrapOr("")) {
+        ok(start) => start
+        err(_) => fail Problem.badRequest("`Content-Range: {range}` is not `bytes start-end/total`")
+    }
+}
+
+/// The OpenAPI 3.1 document of the described operations.
+fn openApiDocument(title: String, version: String, operations: Array[(String, String, String)]): String {
+    var paths: Map[String, Array[String]] = [:]
+    for (method, route, operation) in operations {
+        let parts = segments(route).map((part) {
+            if part.startsWith(":") or part.startsWith("*") { "{{{part.slice(1, part.length()).unwrapOr("")}}}" } else { part }
+        })
+        let path = "/{parts.join("/")}"
+        var entries = paths.getOr(path, [])
+        entries.push("{__json.encode(method)}:{operation}")
+        paths[path] = entries
+    }
+    var items: Array[String] = []
+    for (path, entries) in paths {
+        items.push("{__json.encode(path)}:{{{entries.join(",")}}}")
+    }
+    let info = "{{\"title\":{__json.encode(title)},\"version\":{__json.encode(version)}}}"
+    "{{\"openapi\":\"3.1.0\",\"info\":{info},\"paths\":{{{items.join(",")}}}}}"
 }

@@ -1005,3 +1005,17 @@ behind separate locks, so one task sends while another receives. Receiving
 skips pings and pongs, which the library answers, and turns a close into
 the end; a socket is an iterator of messages until then, like CSV rows and
 response lines.
+
+## 2026-10-23 — The HTTP server hands requests to Tondo tasks
+
+hyper serves on the client's tokio runtime and sends each request through a
+channel to the task that serves the app, which starts a task per request;
+the reply goes back through a one-shot channel. No Tondo code runs on a
+tokio thread and no callback crosses into Tondo. Route parameters are
+`:name` and `*name`, as in Express and Hono, because `{name}` would
+interpolate inside a Tondo string. Files, ranges, conditional requests and
+uploads to disk run in the runtime; middleware, routing and problems are
+Tondo. Networking ignores SIGPIPE once it starts, since `writev` on a closed
+connection raises it; programs without networking keep the default. A match
+now holds its scrutinee until every arm ran: a later arm that bound the
+whole value used to move it out of the frame for the earlier arms too.

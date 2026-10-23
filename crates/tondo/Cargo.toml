@@ -23,4 +23,5 @@ unicode-ident = "1"
 unicode-normalization = "0.1"
 
 [dev-dependencies]
+rcgen = { version = "0.14.10", default-features = false, features = ["ring", "pem"] }
 tungstenite = "0.30.0"

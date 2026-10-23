@@ -315,3 +315,189 @@ fn main(): !http.HttpError {
     assert_eq!(stdout, "some(echo: hola)\n[3, 2, 1]\necho: bye\nclosed none\ntrue\n", "{stderr}");
     assert!(output.status.success(), "{stderr}");
 }
+
+/// A Tondo program in a directory of its own, run with `TONDO_RT_CHECK_LEAKS`.
+fn run(name: &str, program: &str, files: &[(&str, String)]) -> (String, String, bool) {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for (path, text) in files {
+        let path = dir.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    std::fs::write(dir.join("main.to"), program).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", "main.to"])
+        .current_dir(&dir)
+        .env("TONDO_RT_CHECK_LEAKS", "1")
+        .output()
+        .unwrap();
+    let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
+    (text(&output.stdout), text(&output.stderr), output.status.success())
+}
+
+#[test]
+fn server_routes_files_and_uploads() {
+    let program = r#"import std.console
+import std.fs
+import std.http
+import std.io
+import std.time
+
+pub type NewUser = { name: String, email: String }
+pub type User = { id: Int, name: String, email: String }
+
+fn main(): !(http.HttpError | fs.FsError) {
+    var app = http.App.new()
+    app.use((request, next) {
+        let reply = next(request)?
+        reply.header("x-served-by", "tondo")
+    })
+    app.get("/users/:id", (request) {
+        let id = request.intParam("id")?
+        if id == 7 {
+            fail http.Problem.notFound("no user 7")
+        }
+        http.Reply.json(User { id, name: "ada", email: "ada@example.com" })
+    })
+    app.get("/users/me", (request) { http.Reply.text("me") })
+    app.post("/users", (request) {
+        let input: NewUser = request.json()?
+        http.Reply.json(User { id: 1, name: input.name, email: input.email }, status: 201)
+    })
+    app.get("/search", (request) {
+        http.Reply.text("{request.query("q")} {request.queryValues("tag")} {request.intQuery("page")?}")
+    })
+    app.get("/boom", (request) {
+        fail http.Problem.from("the database is down")
+    })
+    app.get("/events", (request) {
+        let (sender, receiver) = channel[http.Event](4)
+        (spawn produce(sender)).detach()
+        http.Reply.events(receiver)
+    })
+    app.websocket("/chat", (socket) {
+        for message in socket {
+            socket.sendText("echo: {message?}")?
+        }
+    })
+    var admin = http.App.new()
+    admin.use((request, next) {
+        match request.header("authorization") {
+            some(_) => next(request)?
+            none => fail http.Problem.unauthorized()
+        }
+    })
+    admin.get("/stats", (request) { http.Reply.text("stats") })
+    app.mount("/admin", admin)
+    app.files("/files", "data")
+    app.uploads("/files", "data")
+
+    let server = app.start()?
+    let client = http.Client.new(baseUrl: server.url())
+    console.println(server.url())
+
+    let ada = client.get("/users/42")?
+    console.println("{ada.status()} {ada.header("x-served-by")} {ada.text()?}")
+    console.println(client.get("/users/me")?.text()?)
+    console.println("{client.get("/users/x")}")
+    match client.get("/users/7") {
+        err(http.HttpError.Status(response)) => console.println("{response.status()} {response.header("content-type")} {response.text()?}")
+        other => console.println("unexpected {other}")
+    }
+    let created = client.post("/users", body: http.Body.json(NewUser { name: "bo", email: "bo@example.com" }))?
+    console.println("{created.status()} {created.text()?}")
+    console.println("{client.post("/users", body: http.Body.text("nope"))}")
+    console.println(client.get("/search", query: ["q": "a b", "page": "2"])?.text()?)
+    console.println(client.get("/search?tag=x&tag=y")?.text()?)
+    console.println("{client.get("/boom")}")
+    console.println("{client.get("/nowhere")}")
+    console.println("{client.delete("/users/1")}")
+    console.println("{client.get("/admin/stats")}")
+    console.println(client.get("/admin/stats", headers: ["Authorization": "Bearer x"])?.text()?)
+
+    for event in client.get("/events")?.events() {
+        let e = event?
+        console.println("event {e.event} {e.data} {e.id}")
+    }
+
+    let socket = http.WebSocket.connect("{server.url().replace("http://", "ws://")}/chat")?
+    socket.sendText("hi")?
+    console.println("{socket.receive()?}")
+    socket.close()?
+
+    let whole = client.get("/files/letters.txt")?
+    console.println("{whole.header("accept-ranges")} {whole.header("content-type")} {whole.text()?}")
+    let part = client.get("/files/letters.txt", headers: ["Range": "bytes=10-"])?
+    console.println("{part.status()} {part.header("content-range")} {part.text()?}")
+    let tail = client.get("/files/letters.txt", headers: ["Range": "bytes=-3"])?
+    console.println("{tail.status()} {tail.text()?}")
+    let etag = whole.header("etag").unwrapOr("")
+    console.println("{client.get("/files/letters.txt", headers: ["If-None-Match": etag])?.status()}")
+    console.println("{client.get("/files/letters.txt", headers: ["Range": "bytes=50-"])}")
+    console.println("{client.get("/files/missing.txt")}")
+    console.println("{client.get("/files/..%2Fsecret")}")
+    let head = client.head("/files/letters.txt")?
+    console.println("{head.header("content-length")}")
+
+    let first = client.put("/files/up/notes.txt", body: http.Body.text("hello "))?
+    console.println("{first.status()} {first.text()?}")
+    let resumed = client.put("/files/up/notes.txt", body: http.Body.text("world"), headers: ["Content-Range": "bytes 6-10/11"])?
+    console.println("{resumed.status()} {resumed.text()?}")
+    console.println(client.get("/files/up/notes.txt")?.text()?)
+    let form = http.Body.multipart([
+        http.Part.field("note", "ignored"),
+        http.Part.bytes("file", "abc".bytes(), fileName: "a.bin"),
+        http.Part.bytes("file", "defg".bytes(), fileName: "b.bin"),
+    ])
+    console.println(client.post("/files/batch", body: form)?.text()?)
+    console.println(client.get("/files/batch/b.bin")?.text()?)
+    server.stop()
+}
+
+fn produce(events: Sender[http.Event]) {
+    events.send(http.Event { event: "tick", data: "one", id: some("1") })
+    events.send(http.Event { event: "message", data: "two\nlines", id: none })
+    events.close()
+}
+"#;
+    let (stdout, stderr, success) = run("http-server", program, &[("data/letters.txt", "0123456789abcdefghij".into())]);
+    let base = stdout.lines().next().unwrap_or_default().to_string();
+    let expected = "BASE\n200 some(tondo) {\"id\":42,\"name\":\"ada\",\"email\":\"ada@example.com\"}\nme\nerr(GET BASE/users/x answered 400 Bad Request)\n404 some(application/problem+json) {\"status\":404,\"detail\":\"no user 7\"}\n201 {\"id\":1,\"name\":\"bo\",\"email\":\"bo@example.com\"}\nerr(POST BASE/users answered 400 Bad Request)\nsome(a b) [] some(2)\nnone [x, y] none\nerr(GET BASE/boom answered 500 Internal Server Error)\nerr(GET BASE/nowhere answered 404 Not Found)\nerr(DELETE BASE/users/1 answered 405 Method Not Allowed)\nerr(GET BASE/admin/stats answered 401 Unauthorized)\nstats\nevent tick one some(1)\nevent message two\nlines none\nsome(echo: hi)\nsome(bytes) some(text/plain) 0123456789abcdefghij\n206 some(bytes 10-19/20) abcdefghij\n206 hij\n304\nerr(GET BASE/files/letters.txt answered 416 Range Not Satisfiable)\nerr(GET BASE/files/missing.txt answered 404 Not Found)\nerr(GET BASE/files/..%2Fsecret answered 403 Forbidden)\nsome(20)\n201 [{\"path\":\"up/notes.txt\",\"size\":6}]\n200 [{\"path\":\"up/notes.txt\",\"size\":11}]\nhello world\n[{\"path\":\"batch/a.bin\",\"size\":3},{\"path\":\"batch/b.bin\",\"size\":4}]\ndefg\n".replace("BASE", &base);
+    assert_eq!(stdout, expected, "{stderr}");
+    assert!(success, "{stderr}");
+    assert!(stderr.contains("http: 500 the database is down"), "{stderr}");
+}
+
+#[test]
+fn server_over_tls_and_http2() {
+    use rcgen::{BasicConstraints, CertificateParams, CertifiedIssuer, IsCa, KeyPair};
+    let mut authority = CertificateParams::new(Vec::<String>::new()).unwrap();
+    authority.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    let authority = CertifiedIssuer::self_signed(authority, KeyPair::generate().unwrap()).unwrap();
+    let key = KeyPair::generate().unwrap();
+    let names = vec!["localhost".to_string(), "127.0.0.1".to_string()];
+    let certificate = CertificateParams::new(names).unwrap().signed_by(&key, &authority).unwrap();
+    let program = r#"
+import std.console
+import std.http
+
+fn main(): !http.HttpError {
+    var app = http.App.new()
+    app.get("/", (request) { http.Reply.text("secure {request.version()}") })
+    let server = app.start(tls: http.Tls.files("server.pem", "server.key"))?
+    let client = http.Client.new(trust: "authority.pem")
+    let response = client.get(server.url())?
+    console.println("{server.url().startsWith("https://")} {response.version()} {response.text()?}")
+    console.println("{"{http.get(server.url())}".startsWith("err(cannot connect")}")
+    console.println("{"{http.Client.new(trust: "missing.pem").get(server.url())}".startsWith("err(cannot connect: the trusted certificates `missing.pem`")}")
+    server.stop()
+}
+"#;
+    let files =
+        [("authority.pem", authority.pem()), ("server.pem", certificate.pem()), ("server.key", key.serialize_pem())];
+    let (stdout, stderr, success) = run("http-tls", program, &files);
+    assert_eq!(stdout, "true HTTP/2.0 secure HTTP/2.0\ntrue\ntrue\n", "{stderr}");
+    assert!(success, "{stderr}");
+}

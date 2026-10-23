@@ -13,9 +13,18 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
-fn runtime() -> &'static tokio::runtime::Runtime {
+pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
     static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| {
+        // A write to a connection the other side closed, which `writev`
+        // makes without `MSG_NOSIGNAL`, fails instead of ending the program,
+        // as in Rust programs; console programs keep the default.
+        unsafe extern "C" {
+            fn signal(signal: i32, handler: usize) -> usize;
+        }
+        const SIGPIPE: i32 = 13;
+        const SIG_IGN: usize = 1;
+        unsafe { signal(SIGPIPE, SIG_IGN) };
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .thread_name("tondo-http")
@@ -27,7 +36,7 @@ fn runtime() -> &'static tokio::runtime::Runtime {
 
 /// What a future gives when the current task waits for it on the HTTP
 /// runtime; `None` when the task is cancelled, which drops the future.
-fn wait<T: Send + 'static>(future: impl Future<Output = T> + Send + 'static) -> Option<T> {
+pub(crate) fn wait<T: Send + 'static>(future: impl Future<Output = T> + Send + 'static) -> Option<T> {
     if current().is_null() {
         return Some(runtime().block_on(future));
     }
@@ -78,11 +87,11 @@ fn wait<T: Send + 'static>(future: impl Future<Output = T> + Send + 'static) -> 
     slot.lock().unwrap_or_else(|e| e.into_inner()).take()
 }
 
-fn text(s: *const Str) -> String {
+pub(crate) fn text(s: *const Str) -> String {
     String::from_utf8_lossy(unsafe { str_bytes(s) }).into_owned()
 }
 
-fn strings(array: *mut ArrayHeader) -> Vec<String> {
+pub(crate) fn strings(array: *mut ArrayHeader) -> Vec<String> {
     if array.is_null() {
         return Vec::new();
     }
@@ -90,7 +99,7 @@ fn strings(array: *mut ArrayHeader) -> Vec<String> {
     (0..count).map(|i| text(unsafe { *(element(array, 8, i) as *const *const Str) })).collect()
 }
 
-fn string_array(items: &[String]) -> *mut ArrayHeader {
+pub(crate) fn string_array(items: &[String]) -> *mut ArrayHeader {
     let array = tondo_rt_array_new(8, items.len());
     for (index, item) in items.iter().enumerate() {
         unsafe { *(element(array, 8, index) as *mut *mut Str) = str_new(item.as_bytes()) };
@@ -98,7 +107,7 @@ fn string_array(items: &[String]) -> *mut ArrayHeader {
     array
 }
 
-fn bytes_of(array: *mut ArrayHeader) -> Vec<u8> {
+pub(crate) fn bytes_of(array: *mut ArrayHeader) -> Vec<u8> {
     if array.is_null() {
         return Vec::new();
     }
@@ -106,10 +115,10 @@ fn bytes_of(array: *mut ArrayHeader) -> Vec<u8> {
 }
 
 /// The roots TLS trusts: the system's, or Mozilla's when the system has
-/// none, as in a minimal container. ALPN offers HTTP/2 first.
-fn tls() -> rustls::ClientConfig {
-    static CONFIG: OnceLock<rustls::ClientConfig> = OnceLock::new();
-    CONFIG
+/// none, as in a minimal container.
+fn roots() -> rustls::RootCertStore {
+    static ROOTS: OnceLock<rustls::RootCertStore> = OnceLock::new();
+    ROOTS
         .get_or_init(|| {
             let mut roots = rustls::RootCertStore::empty();
             for cert in rustls_native_certs::load_native_certs().certs {
@@ -118,24 +127,46 @@ fn tls() -> rustls::ClientConfig {
             if roots.is_empty() {
                 roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
             }
-            let provider = Arc::new(rustls::crypto::ring::default_provider());
-            let mut config = rustls::ClientConfig::builder_with_provider(provider)
-                .with_safe_default_protocol_versions()
-                .expect("ring supports the default TLS versions")
-                .with_root_certificates(roots)
-                .with_no_client_auth();
-            config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-            config
+            roots
         })
         .clone()
 }
 
-/// A client: its connections, reused by its requests. `redirects` is how
-/// many it follows; a connection waits `connect_ms`, or forever with 0.
+/// A client's TLS: the roots, and the certificates of a PEM file when one is
+/// named; ALPN offers HTTP/2 first.
+pub(crate) fn tls(trust: &str) -> Result<rustls::ClientConfig, String> {
+    use rustls_pki_types::CertificateDer;
+    use rustls_pki_types::pem::PemObject;
+    let mut roots = roots();
+    if !trust.is_empty() {
+        let certs = CertificateDer::pem_file_iter(trust)
+            .and_then(|certs| certs.collect::<Result<Vec<_>, _>>())
+            .map_err(|error| format!("the trusted certificates `{trust}`: {error}"))?;
+        for cert in certs {
+            roots.add(cert).map_err(|error| format!("the trusted certificates `{trust}`: {error}"))?;
+        }
+    }
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let mut config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .expect("ring supports the default TLS versions")
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    Ok(config)
+}
+
+/// A client: its connections, reused by its requests, or why it has none.
+/// `redirects` is how many it follows; a connection waits `connect_ms`, or
+/// forever with 0; `trust` names a PEM file of more certificates to trust.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_client(connect_ms: i64, redirects: i64) -> *mut NativeObject {
+pub unsafe extern "C" fn tondo_rt_http_client(connect_ms: i64, redirects: i64, trust: *const Str) -> *mut NativeObject {
+    let config = match tls(&text(trust)) {
+        Ok(config) => config,
+        Err(problem) => return native::new(Err::<reqwest::Client, String>(problem)),
+    };
     let mut builder = reqwest::Client::builder()
-        .tls_backend_preconfigured(tls())
+        .tls_backend_preconfigured(config)
         .user_agent(concat!("tondo/", env!("CARGO_PKG_VERSION")))
         .redirect(match redirects {
             0 => reqwest::redirect::Policy::none(),
@@ -144,17 +175,15 @@ pub extern "C" fn tondo_rt_http_client(connect_ms: i64, redirects: i64) -> *mut 
     if connect_ms > 0 {
         builder = builder.connect_timeout(Duration::from_millis(connect_ms as u64));
     }
-    // Building fails only on a TLS configuration, which is fixed.
-    let client = builder.build().expect("the HTTP client builds");
-    native::new(client)
+    native::new(builder.build().map_err(|error| error.to_string()))
 }
 
 // ---------------------------------------------------------------------------
 // Request bodies
 // ---------------------------------------------------------------------------
 
-/// A stream of `std.io` that a request reads its body from.
-struct Source(*mut StreamObject);
+/// A stream of `std.io` that a body is read from; it holds a reference.
+pub(crate) struct Source(pub(crate) *mut StreamObject);
 
 unsafe impl Send for Source {}
 unsafe impl Sync for Source {}
@@ -177,18 +206,23 @@ type Form = Result<reqwest::multipart::Form, String>;
 
 /// The body's chunks, read from the stream on blocking threads.
 fn chunks(source: Source) -> reqwest::Body {
-    let shared = Arc::new(source);
-    let stream = futures_util::stream::unfold(shared, |source| async move {
+    reqwest::Body::wrap_stream(stream_of(source))
+}
+
+/// The chunks a stream of `std.io` gives, read on blocking threads.
+pub(crate) fn stream_of(
+    source: Source,
+) -> impl futures_util::Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static {
+    futures_util::stream::unfold(Arc::new(source), |source| async move {
         let reading = source.clone();
         let read = tokio::task::spawn_blocking(move || crate::io::run(reading.0, |s| s.read(64 * 1024))).await;
         match read {
-            Ok(Ok(Some(bytes))) => Some((Ok::<Bytes, std::io::Error>(Bytes::from(bytes)), source)),
+            Ok(Ok(Some(bytes))) => Some((Ok(Bytes::from(bytes)), source)),
             Ok(Ok(None)) => None,
             Ok(Err(error)) => Some((Err(error), source)),
             Err(error) => Some((Err(std::io::Error::other(error)), source)),
         }
-    });
-    reqwest::Body::wrap_stream(stream)
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -373,8 +407,10 @@ pub unsafe extern "C" fn tondo_rt_http_send(
     body: *mut NativeObject,
     timeout_ms: i64,
 ) -> *mut NativeObject {
-    let Some(client) = native::get::<reqwest::Client>(client).cloned() else {
-        return native::new(Response::failed("protocol", "not an HTTP client".into()));
+    let client = match native::get::<Result<reqwest::Client, String>>(client) {
+        Some(Ok(client)) => client.clone(),
+        Some(Err(problem)) => return native::new(Response::failed("connect", problem.clone())),
+        None => return native::new(Response::failed("protocol", "not an HTTP client".into())),
     };
     let Ok(method) = reqwest::Method::from_bytes(text(method).as_bytes()) else {
         return native::new(Response::failed("protocol", format!("`{}` is not an HTTP method", text(method))));
@@ -531,16 +567,39 @@ pub extern "C" fn tondo_rt_http_body(object: *mut NativeObject) -> *mut StreamOb
 // WebSockets
 // ---------------------------------------------------------------------------
 
-type Connection = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 type Frame = tokio_tungstenite::tungstenite::Message;
-type Failure = Mutex<Option<(&'static str, String)>>;
+type FrameSink =
+    std::pin::Pin<Box<dyn futures_util::Sink<Frame, Error = tokio_tungstenite::tungstenite::Error> + Send>>;
+type FrameStream =
+    std::pin::Pin<Box<dyn futures_util::Stream<Item = Result<Frame, tokio_tungstenite::tungstenite::Error>> + Send>>;
+pub(crate) type Failure = Mutex<Option<(&'static str, String)>>;
 
 /// A WebSocket's halves, each behind its own lock: one task can send while
 /// another receives.
-struct Socket {
-    failure: Failure,
-    sink: Option<Arc<tokio::sync::Mutex<futures_util::stream::SplitSink<Connection, Frame>>>>,
-    stream: Option<Arc<tokio::sync::Mutex<futures_util::stream::SplitStream<Connection>>>>,
+pub(crate) struct Socket {
+    pub(crate) failure: Failure,
+    sink: Option<Arc<tokio::sync::Mutex<FrameSink>>>,
+    stream: Option<Arc<tokio::sync::Mutex<FrameStream>>>,
+}
+
+impl Socket {
+    pub(crate) fn failed(kind: &'static str, message: String) -> Socket {
+        Socket { failure: Mutex::new(Some((kind, message))), sink: None, stream: None }
+    }
+}
+
+/// The socket of a connection a client opened or a server accepted.
+pub(crate) fn socket<S>(connection: tokio_tungstenite::WebSocketStream<S>) -> Socket
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    use futures_util::StreamExt;
+    let (sink, stream) = connection.split();
+    Socket {
+        failure: Mutex::new(None),
+        sink: Some(Arc::new(tokio::sync::Mutex::new(Box::pin(sink)))),
+        stream: Some(Arc::new(tokio::sync::Mutex::new(Box::pin(stream)))),
+    }
 }
 
 /// A message received: text (0), binary (1) or the end (2), or a failure.
@@ -557,6 +616,7 @@ fn failure_of<'a>(object: *mut NativeObject) -> Option<&'a Failure> {
         .map(|r| &r.failure)
         .or_else(|| native::get::<Socket>(object).map(|s| &s.failure))
         .or_else(|| native::get::<Received>(object).map(|r| &r.failure))
+        .or_else(|| super::server::failure_of(object))
 }
 
 fn ws_failure(error: tokio_tungstenite::tungstenite::Error) -> (&'static str, String) {
@@ -579,9 +639,7 @@ pub unsafe extern "C" fn tondo_rt_http_ws_connect(
 ) -> *mut NativeObject {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue};
-    let failed = |kind: &'static str, message: String| {
-        native::new(Socket { failure: Mutex::new(Some((kind, message))), sink: None, stream: None })
-    };
+    let failed = |kind: &'static str, message: String| native::new(Socket::failed(kind, message));
     let mut request = match text(url).into_client_request() {
         Ok(request) => request,
         Err(error) => return failed("url", error.to_string()),
@@ -597,7 +655,10 @@ pub unsafe extern "C" fn tondo_rt_http_ws_connect(
         }
     }
     // The WebSocket handshake is HTTP/1.1.
-    let mut config = tls();
+    let mut config = match tls("") {
+        Ok(config) => config,
+        Err(problem) => return failed("connect", problem),
+    };
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
     let connector = tokio_tungstenite::Connector::Rustls(Arc::new(config));
     let connecting = tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(connector));
@@ -613,15 +674,7 @@ pub unsafe extern "C" fn tondo_rt_http_ws_connect(
     match outcome {
         None => failed("protocol", "the task was cancelled".into()),
         Some(Err((kind, message))) => failed(kind, message),
-        Some(Ok((connection, _))) => {
-            use futures_util::StreamExt;
-            let (sink, stream) = connection.split();
-            native::new(Socket {
-                failure: Mutex::new(None),
-                sink: Some(Arc::new(tokio::sync::Mutex::new(sink))),
-                stream: Some(Arc::new(tokio::sync::Mutex::new(stream))),
-            })
-        }
+        Some(Ok((connection, _))) => native::new(socket(connection)),
     }
 }
 

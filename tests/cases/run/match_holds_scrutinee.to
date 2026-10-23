@@ -1,0 +1,29 @@
+// A match whose winning arm takes a part of the value, before an arm that
+// binds the whole value, still releases the value once.
+
+import std.console
+
+enum Problem {
+    Status(Data)
+    Other
+}
+
+pub type Data = { text: String, list: Array[String] }
+
+fn get(): Int ! Problem {
+    fail Problem.Status(Data { text: "a", list: ["x", "y"] })
+}
+
+fn main() {
+    match get() {
+        err(Problem.Status(data)) => console.println("{data.text} {data.list}")
+        other => console.println("other {other.isOk()}")
+    }
+    match get() {
+        ok(n) => console.println("{n}")
+        other => console.println("whole {other.isErr()}")
+    }
+}
+
+// expect-stdout: a [x, y]
+// expect-stdout: whole true

@@ -420,7 +420,15 @@ impl Builder<'_> {
 
     fn match_expr(&mut self, e: &hir::Expr, scrutinee: &hir::Expr, arms: &[hir::Arm]) -> Operand {
         let value = self.expr(scrutinee);
+        // The arms are lowered one after another, so a binding of the whole
+        // value must not move it: the match holds it and releases it after
+        // every arm.
+        let held = self.take_temporary(&value);
         let place = self.place_of(value, scrutinee.ty);
+        self.scopes.push(Vec::new());
+        if held {
+            self.scopes.last_mut().unwrap().push(Exit::Release(place.local));
+        }
         let has_value = e.ty != Ty::UNIT && e.ty != Ty::NEVER;
         let result = has_value.then(|| self.new_local(e.ty));
         let join = self.new_block();
@@ -455,6 +463,8 @@ impl Builder<'_> {
         // Exhaustiveness was checked; no value reaches past the last arm.
         self.terminate(Terminator::Unreachable);
         self.switch_to(join);
+        let held = self.scopes.pop().unwrap();
+        self.leave(held);
         match result {
             Some(result) => {
                 self.own(result);
