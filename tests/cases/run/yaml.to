@@ -1,0 +1,133 @@
+// YAML: a safe subset of YAML 1.2 read into any type and written back,
+// anchors and aliases, several documents, text that only looks like other
+// values, and errors with where they happened.
+import std.console
+import std.yaml
+
+type Server = {
+    host: String
+    port: Int
+    tls: Bool?
+}
+
+type Config = {
+    name: String
+    version: Float
+    tags: Array[String]
+    servers: Array[Server]
+    started: String
+    note: String?
+}
+
+fn report[T](result: T ! yaml.YamlError) {
+    match result {
+        ok(_) => console.println("ok")
+        err(error) => console.println("{error.kind}: {error}")
+    }
+}
+
+fn main(): !yaml.YamlError {
+    edges()?
+    let text = """
+        name: app
+        version: 1.5
+        tags: [a, "b"]
+        started: 2026-10-23
+        defaults: &defaults
+          host: localhost
+          port: 8080
+        servers:
+          - *defaults
+          - host: example.com
+            port: 443
+            tls: true
+        """
+    let config = yaml.decode[Config](text)?
+    console.println(
+        "{config.name} {config.servers.length()} {config.servers[0].port} {config.servers[1].tls} {config.started}",
+    )
+    console.println(yaml.encode(config))
+    let document = yaml.parse(text)?
+    console.println("{document.find("defaults.port")} {document.get("missing")}")
+    console.println(yaml.encodeAll([1, 2]))
+    console.println("{yaml.decodeAll[Int]("1\n---\n2\n")?}")
+    report(yaml.parse("a: [1, 2\n"))
+    report(yaml.decode[Config]("name: 1\nversion: x\n"))
+    report(yaml.parse("a: !custom 1\n"))
+    report(yaml.parse("a: 1\na: 2\n"))
+    report(yaml.parse("a: .inf\n"))
+    report(yaml.parse("1\n---\n2\n"))
+    report(yaml.parse("a: &x [*x]\n"))
+    report(
+        yaml
+            .parse("a: yes\nb: True\nc: ~\nd: 0x1F\ne: 1e3\nf: '12'\n")
+            .map((v) { console.println("{v}") }),
+    )
+}
+
+type Note = {
+    title: String
+    body: String
+    quote: String
+    empty: String
+    emoji: String
+}
+
+fn edges(): !yaml.YamlError {
+    let note = Note {
+        title: "key: value"
+        body: "line one\nline two\n"
+        quote: "say \"hi\""
+        empty: ""
+        emoji: "café ☕"
+    }
+    let text = yaml.encode(note)
+    console.print(text)
+    console.println("{yaml.decode[Note](text)? == note}")
+}
+
+// expect-stdout: title: "key: value"
+// expect-stdout: body: |
+// expect-stdout:   line one
+// expect-stdout:   line two
+// expect-stdout: quote: "say \"hi\""
+// expect-stdout: empty: ""
+// expect-stdout: emoji: café ☕
+// expect-stdout: true
+// expect-stdout: app 2 8080 some(true) 2026-10-23
+// expect-stdout: name: app
+// expect-stdout: version: 1.5
+// expect-stdout: tags:
+// expect-stdout:   - a
+// expect-stdout:   - b
+// expect-stdout: servers:
+// expect-stdout:   - host: localhost
+// expect-stdout:     port: 8080
+// expect-stdout:     tls: null
+// expect-stdout:   - host: example.com
+// expect-stdout:     port: 443
+// expect-stdout:     tls: true
+// expect-stdout: started: 2026-10-23
+// expect-stdout: note: null
+// expect-stdout:
+// expect-stdout: some(8080) none
+// expect-stdout: ---
+// expect-stdout: 1
+// expect-stdout: ---
+// expect-stdout: 2
+// expect-stdout:
+// expect-stdout: [1, 2]
+// expect-stdout: Syntax: while parsing a flow sequence, expected ',' or ']' at $.a[2] (line 2, column 1)
+// expect-stdout: Type: expected a string, found a number at $.name (line 1, column 7)
+// expect-stdout: Syntax: the tag `!custom` is not a core tag at $.a (line 1, column 12)
+// expect-stdout: Syntax: the key `a` appears twice in this map at $.a (line 2, column 1)
+// expect-stdout: Syntax: `.inf` is not a finite number at $.a (line 1, column 4)
+// expect-stdout: Syntax: the text holds 2 documents; `decodeAll` reads every one at $ (line 1, column 1)
+// expect-stdout: Syntax: an alias refers to an anchor that is not complete before it at $.a[0] (line 1, column 8)
+// expect-stdout: a: "yes"
+// expect-stdout: b: true
+// expect-stdout: c: null
+// expect-stdout: d: 31
+// expect-stdout: e: 1000.0
+// expect-stdout: f: "12"
+// expect-stdout: ok

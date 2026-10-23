@@ -3011,78 +3011,71 @@ los eventos y los errores de wire/build están cerrados en el [contrato fuente d
 
 ### 14.13 `std.yaml`
 
-`std.yaml` es el owner de un subset seguro y portable de YAML 1.2. No intenta
-reproducir los dialectos históricos de YAML ni convierte el parser en una
-superficie de ejecución: el schema implícito es Core, las keys dinámicas son
-textuales, los tags admitidos son únicamente los tipos core cerrados y no se
-aceptan custom tags, includes, merge keys, timestamps implícitos, mappings con
-keys no textuales o valores no finitos.
+`std.yaml` lee y escribe un subset seguro y portable de
+[YAML 1.2](https://yaml.org/spec/1.2.2/) sobre un parser y un emisor del
+runtime. No reproduce los dialectos históricos de YAML ni convierte el parser en
+una superficie de ejecución.
 
-La API expone `YamlValue`/`YamlValueView`, `YamlReader`/`YamlWriter`,
-`parse`/`parseAll`, `decode`/`decodeAll`, `validate`, `encode` y
-`encodeCanonical`. La ruta tipada usa `Encode[Yaml]`/`Decode[Yaml]` sin
-materializar el árbol dinámico; la ruta dinámica usa `Object(Map[String,
-YamlValue])` y expande anchors como copias lógicas. Los aliases se permiten solo
-con límites explícitos de cantidad y expansión, no pueden formar ciclos ni
-cruzar documentos, y `<<` no tiene semántica implícita.
+~~~tondo
+import std.yaml
 
-Los readers y writers comparten una máquina de eventos con frames explícitos,
-document boundaries, anchors y aliases. `YamlError` conserva kind, byte offset,
-línea, columna y path `Key`/`Index`; ningún límite publica un valor parcial. La
-entrada es UTF-8, la indentación usa espacios, `true`/`false` son los únicos
-booleanos implícitos y fechas/timestamps permanecen texto. El owner no requiere
-capability y no consulta el entorno.
+type Server = { host: String, port: Int, tls: Bool? }
 
-El contrato machine-readable, la documentación operativa y sus checks negativos
-son [`testing/stdlib-yaml.json`](./testing/stdlib-yaml.json),
-[`docs/contracts/stdlib-yaml.md`](./docs/contracts/stdlib-yaml.md),
-[`scripts/stdlib-yaml-check.sh`](./scripts/stdlib-yaml-check.sh) y
-[`scripts/stdlib-yaml-test.sh`](./scripts/stdlib-yaml-test.sh). El contrato de
-fiabilidad es [`testing/stdlib-yaml-test.json`](./testing/stdlib-yaml-test.json),
-con documento [`docs/contracts/stdlib-yaml-test.md`](./docs/contracts/stdlib-yaml-test.md),
-checks [`scripts/stdlib-yaml-test-check.sh`](./scripts/stdlib-yaml-test-check.sh),
-regresiones [`scripts/stdlib-yaml-test-test.sh`](./scripts/stdlib-yaml-test-test.sh)
-y fuzz [`scripts/stdlib-yaml-fuzz.sh`](./scripts/stdlib-yaml-fuzz.sh). El contrato
-queda cerrado como diseño B0. `STD-YAML-IMPL-001` verifica la ruta scalar y el
-bridge VM hosted buffered para parseo/encoding dinámico y tipado, límites,
-errores y ciclo de vida de reader/writer; sus artefactos son
-[`scripts/stdlib-yaml-implementation-check.sh`](./scripts/stdlib-yaml-implementation-check.sh),
-[`scripts/stdlib-yaml-implementation-test.sh`](./scripts/stdlib-yaml-implementation-test.sh),
-[`scripts/stdlib-yaml-implementation.sh`](./scripts/stdlib-yaml-implementation.sh),
-la fixture de VM y el informe
-`target/reliability/evidence/stdlib-yaml-implementation.json`. El cierre no
-promociona una API pública, no afirma runtime nativo ni lowering AOT
-(`native_aot_lowering: not-claimed`). `STD-YAML-TEST-001` cierra el modelo
-independiente, las regresiones scalar/hosted, los límites y el fuzz acotado.
-El contrato de rendimiento hosted
-[`testing/stdlib-yaml-performance.json`](./testing/stdlib-yaml-performance.json)
-queda cerrado por `STD-YAML-PERF-001`: la campaña observa 13 workloads y 27
-muestras por workload con latencia, tail, throughput, allocations, memoria
-lógica, bytes copiados, profundidad, aliases, expansión, rechazo adversarial y
-cleanup de handles. El baseline se limita a `tondo-vm-hosted` /
-`bytecode-vm`; runtime nativo, SIMD y lowering AOT siguen sin reclamar.
-La conformance VM/native target-qualified está cerrada por
-[`testing/stdlib-yaml-conformance.json`](./testing/stdlib-yaml-conformance.json) y
-[`docs/contracts/stdlib-yaml-conformance.md`](./docs/contracts/stdlib-yaml-conformance.md):
-se comparan seis casos en el VM hosted y en un proceso nativo que reutiliza el
-scalar stdlib, sin ABI YAML nativo ni lowering AOT. `native_aot_lowering` sigue
-`not-claimed` y no hay ruta SIMD medida.
+let servers: Array[Server] = yaml.decode(text)?
+let back = yaml.encode(servers)
+let every = yaml.decodeAll[Server](stream)?
+~~~
 
-`STD-YAML-DOC-001` cierra la guía ejecutable de uso en
-[`docs/contracts/stdlib-yaml.md`](./docs/contracts/stdlib-yaml.md). La ficha
-[`testing/stdlib-yaml.json`](./testing/stdlib-yaml.json), la fixture
-`tests/runtime/m11-std-yaml-doc-001.to` y los runners
-[`scripts/stdlib-yaml-doc-check.sh`](./scripts/stdlib-yaml-doc-check.sh) /
-[`scripts/stdlib-yaml-doc-test.sh`](./scripts/stdlib-yaml-doc-test.sh)
-verifican el subset seguro YAML 1.2 Core, la selección explícita de policies,
-los límites finitos, costes, ownership, errores y ejemplos materializados y
-streaming. La fixture usa únicamente rutas CLI hosted verificadas; la firma
-`YamlWriter.toWriter` permanece como contrato estático y cobertura
-directa del host hasta que el dispatcher async registre esa operación
-(`writer-boundary: static-contract-only-until-async-dispatch`,
-`native_aot_lowering: not-claimed`,
-`simd: not-measured-no-optimized-route`). El siguiente bloque del owner es
-`STD-TOML-TEST-001`.
+La superficie es:
+
+~~~tondo pseudocode
+pub enum Value {
+    Null
+    Bool(Bool)
+    Int(Int)
+    Float(Float)
+    Text(String)
+    Array(Array[Value])
+    Map(Map[String, Value])
+}
+pub alias YamlError = serialization.Error
+pub alias UnknownFields = serialization.UnknownFields
+
+pub fn decode[T: serialization.Decode](text: String, unknownFields: UnknownFields = UnknownFields.Ignore): T ! YamlError
+pub fn decodeAll[T: serialization.Decode](text: String, unknownFields: UnknownFields = UnknownFields.Ignore): Array[T] ! YamlError
+pub fn encode[T: serialization.Encode](value: T): String
+pub fn encodeAll[T: serialization.Encode](values: Array[T]): String
+pub fn parse(text: String): Value ! YamlError
+pub fn parseAll(text: String): Array[Value] ! YamlError
+
+pub fn Value.isNull(self): Bool
+pub fn Value.get(self, key: String): Value?
+pub fn Value.at(self, index: Int): Value?
+pub fn Value.find(self, path: String): Value?      // claves con puntos: `server.port`
+pub fn Value.asText(self): String?
+pub fn Value.asInt(self): Int?
+pub fn Value.asFloat(self): Float?                 // también de un entero
+pub fn Value.asBool(self): Bool?
+pub fn Value.asArray(self): Array[Value]?
+pub fn Value.asMap(self): Map[String, Value]?
+impl Display for Value                             // como documento YAML
+~~~
+
+- El schema implícito es Core: `null`, `~` y un escalar vacío son null; `true` y
+  `false` (también `True`, `TRUE`...) son los únicos booleanos; enteros
+  decimales, `0o` y `0x`, y floats finitos. Cualquier otro escalar, y todo escalar
+  entre comillas, es texto: `yes`, `on` y las fechas también. Un entero que no
+  cabe en `Int` es un `Number`.
+- Solo se aceptan los tags core (`!!str`, `!!int`, `!!float`, `!!bool`, `!!null`,
+  `!!seq`, `!!map`); un tag propio es un error. Las claves son texto y no se
+  repiten en un mapa; `<<` no tiene semántica de merge. `.inf` y `.nan` son un
+  error, y un float no finito se escribe `null`.
+- Un alias repite el valor de su ancla, que debe estar completa antes; un
+  documento no puede superar el millón de valores con sus alias expandidos.
+- `decode` exige exactamente un documento; `decodeAll` y `parseAll` leen todos
+  los que separa `---`, y `encodeAll` los escribe así. Un texto que necesita
+  comillas se escribe entre ellas, y uno de varias líneas como bloque `|`.
+- Los errores llevan el camino, la línea y la columna del valor.
 
 ### 14.14 `std.toml`
 

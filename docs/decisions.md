@@ -1138,3 +1138,17 @@ reads and writes; JSON writes it as text. The legacy specification of
 program needed; the section now specifies what exists: `decode`,
 `encode`, `parse` and a navigable `Value`. A program that uses TOML grows
 by about 500 KB, and one that does not by nothing.
+
+## 2026-10-23 — YAML as a safe subset
+
+`std.yaml` reads YAML 1.2 with `saphyr` and keeps the safe subset its
+specification asked for: the core schema, so `yes`, `on` and dates stay
+text; only core tags; text keys that do not repeat; no merge keys; and no
+infinities. Aliases repeat their anchor's value, as a copy of its events
+with the paths of where the alias is, and a document stops at a million
+values, so a few lines cannot expand into gigabytes. Several documents are
+read with `decodeAll` and written with `encodeAll`; `decode` asks for
+exactly one, and says how many there were otherwise. Writing uses the
+library's emitter, which quotes any text another reader would take for
+something else and writes text of several lines as a `|` block; `none` is
+written `null` rather than its `~`.

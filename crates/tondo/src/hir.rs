@@ -983,6 +983,9 @@ pub const NATIVES: &[Native] = {
     const fn toml(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "toml", name, receiver: None, params, result, symbol }
     }
+    const fn yaml(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
+        Native { module: "yaml", name, receiver: None, params, result, symbol }
+    }
     const fn r(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "regex", name, receiver: Some(Regex), params, result, symbol }
     }
@@ -1148,6 +1151,26 @@ pub const NATIVES: &[Native] = {
         toml("writeClose", &[Object], Unit, "tondo_rt_toml_write_close"),
         toml("finish", &[Object], String, "tondo_rt_toml_finish"),
         toml("failure", &[Object, Int], String, "tondo_rt_toml_failure"),
+        yaml("parse", &[String], Object, "tondo_rt_yaml_parse"),
+        yaml("documents", &[Object], Int, "tondo_rt_yaml_documents"),
+        yaml("nextDocument", &[Object], Bool, "tondo_rt_yaml_next_document"),
+        yaml("next", &[Object], Int, "tondo_rt_yaml_next"),
+        yaml("text", &[Object], String, "tondo_rt_yaml_text"),
+        yaml("int", &[Object], Int, "tondo_rt_yaml_int"),
+        yaml("float", &[Object], Float, "tondo_rt_yaml_float"),
+        yaml("skip", &[Object, Int], Int, "tondo_rt_yaml_skip"),
+        yaml("fail", &[Object, String], Unit, "tondo_rt_yaml_fail"),
+        yaml("where", &[Object, Int], String, "tondo_rt_yaml_where"),
+        yaml("writer", &[], Object, "tondo_rt_yaml_writer"),
+        yaml("writeNull", &[Object], Unit, "tondo_rt_yaml_write_null"),
+        yaml("writeBool", &[Object, Bool], Unit, "tondo_rt_yaml_write_bool"),
+        yaml("writeInt", &[Object, Int], Unit, "tondo_rt_yaml_write_int"),
+        yaml("writeFloat", &[Object, Float], Unit, "tondo_rt_yaml_write_float"),
+        yaml("writeText", &[Object, String], Unit, "tondo_rt_yaml_write_text"),
+        yaml("writeKey", &[Object, String], Unit, "tondo_rt_yaml_write_key"),
+        yaml("writeOpen", &[Object, Bool], Unit, "tondo_rt_yaml_write_open"),
+        yaml("writeClose", &[Object], Unit, "tondo_rt_yaml_write_close"),
+        yaml("finish", &[Object], String, "tondo_rt_yaml_finish"),
         math("sin", &[Float], Float, "tondo_rt_math_sin"),
         math("cos", &[Float], Float, "tondo_rt_math_cos"),
         math("tan", &[Float], Float, "tondo_rt_math_tan"),

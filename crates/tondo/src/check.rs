@@ -177,6 +177,7 @@ enum StdModule {
     /// `std.internal.http`: the runtime's HTTP client, for `std.http`.
     InternalHttp,
     InternalToml,
+    InternalYaml,
 }
 
 /// The types `std.process` declares when imported.
@@ -1679,6 +1680,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "codec"] => StdModule::InternalCodec,
             ["std", "internal", "http"] => StdModule::InternalHttp,
             ["std", "internal", "toml"] => StdModule::InternalToml,
+            ["std", "internal", "yaml"] => StdModule::InternalYaml,
             ["std", rest @ ..] => {
                 let name = rest.join(".");
                 // Modules the standard library specifies and does not have yet.
@@ -1777,7 +1779,7 @@ impl<'a> Checker<'a> {
         if matches!(module, StdModule::InternalText | StdModule::InternalCodec | StdModule::InternalHttp) {
             self.types.intern(TyKind::Array(Ty::STRING));
         }
-        if matches!(module, StdModule::InternalHttp | StdModule::InternalToml) {
+        if matches!(module, StdModule::InternalHttp | StdModule::InternalToml | StdModule::InternalYaml) {
             self.types.handle(Handle::Native, Ty::UNIT);
         }
         if module == StdModule::Process && self.process.is_none() {
@@ -1891,9 +1893,10 @@ impl<'a> Checker<'a> {
             (Some(ModuleName::Module(StdModule::InternalRegex)), "NativeRegex") => {
                 self.types.lookup(&TyKind::Handle(Handle::Regex, Ty::UNIT))
             }
-            (Some(ModuleName::Module(StdModule::InternalHttp | StdModule::InternalToml)), "Native") => {
-                self.types.lookup(&TyKind::Handle(Handle::Native, Ty::UNIT))
-            }
+            (
+                Some(ModuleName::Module(StdModule::InternalHttp | StdModule::InternalToml | StdModule::InternalYaml)),
+                "Native",
+            ) => self.types.lookup(&TyKind::Handle(Handle::Native, Ty::UNIT)),
             (Some(ModuleName::Module(StdModule::InternalReflect)), "Box") => {
                 self.types.lookup(&TyKind::Handle(Handle::ReflectBox, Ty::UNIT))
             }
@@ -10247,7 +10250,8 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalMeta
                     | StdModule::InternalCodec
                     | StdModule::InternalHttp
-                    | StdModule::InternalToml),
+                    | StdModule::InternalToml
+                    | StdModule::InternalYaml),
                 )),
             ) => {
                 if module == StdModule::InternalReflect && matches!(*member, "box" | "describe") {
@@ -10271,6 +10275,7 @@ impl<'a> Checker<'a> {
                     StdModule::InternalCodec => "codec",
                     StdModule::InternalHttp => "http",
                     StdModule::InternalToml => "toml",
+                    StdModule::InternalYaml => "yaml",
                     _ => "reflect",
                 };
                 let found =

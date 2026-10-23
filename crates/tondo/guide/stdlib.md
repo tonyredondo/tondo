@@ -15,6 +15,7 @@ std.process    run programs and pipelines, capture output
 std.time       Duration, sleep, now, UTC dates, ISO 8601
 std.json       encode and decode any type, navigate dynamic JSON
 std.toml       the same for TOML documents, with dates
+std.yaml       the same for YAML (a safe subset), one or many documents
 std.serialization  the protocol every format shares, for custom encodings
 std.csv        CSV rows and records, streaming and whole
 std.log        a logger with levels and fields, text or JSON lines

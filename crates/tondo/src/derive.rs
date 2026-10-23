@@ -66,7 +66,7 @@ impl Kind {
     fn standard(self, module: &str, name: &str) -> bool {
         match (self, module) {
             (Kind::Serialization, "json") => matches!(name, "Value" | "Number" | "Raw"),
-            (Kind::Serialization, "toml") => name == "Value",
+            (Kind::Serialization, "toml" | "yaml") => name == "Value",
             (Kind::Serialization, "time") => name == "DateTime",
             (Kind::Reflect, "reflect") => name == "Value",
             _ => false,

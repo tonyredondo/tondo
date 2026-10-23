@@ -1,0 +1,389 @@
+// std.yaml (standard library 14.13): YAML documents in a safe subset of
+// YAML 1.2 as values of `Value`, and any type read from and written to YAML
+// through the traits of `std.serialization`, on top of the runtime's parser
+// and emitter.
+
+import std.internal.codec as yamlcodec
+import std.internal.yaml as yamlnative
+import std.serialization
+
+// ---------------------------------------------------------------------------
+// Values
+// ---------------------------------------------------------------------------
+
+/// A YAML value of unknown shape.
+pub enum Value {
+    Null
+    Bool(Bool)
+    Int(Int)
+    Float(Float)
+    Text(String)
+    Array(Array[Value])
+    Map(Map[String, Value])
+}
+
+pub fn Value.isNull(self): Bool {
+    match self {
+        Value.Null => true
+        _ => false
+    }
+}
+
+/// The member `key` of a map.
+pub fn Value.get(self, key: String): Value? {
+    match self {
+        Value.Map(members) => members.get(key)
+        _ => none
+    }
+}
+
+/// The element `index` of an array.
+pub fn Value.at(self, index: Int): Value? {
+    match self {
+        Value.Array(items) => items.get(index)
+        _ => none
+    }
+}
+
+/// The value at a dotted path of keys, as `server.port`.
+pub fn Value.find(self, path: String): Value? {
+    var found = self
+    for key in path.split(".") {
+        found = found.get(key)?
+    }
+    found
+}
+
+pub fn Value.asText(self): String? {
+    match self {
+        Value.Text(text) => text
+        _ => none
+    }
+}
+
+pub fn Value.asInt(self): Int? {
+    match self {
+        Value.Int(value) => value
+        _ => none
+    }
+}
+
+/// A float, or an integer as a float.
+pub fn Value.asFloat(self): Float? {
+    match self {
+        Value.Float(value) => value
+        Value.Int(value) => Float(value)
+        _ => none
+    }
+}
+
+pub fn Value.asBool(self): Bool? {
+    match self {
+        Value.Bool(value) => value
+        _ => none
+    }
+}
+
+pub fn Value.asArray(self): Array[Value]? {
+    match self {
+        Value.Array(items) => items
+        _ => none
+    }
+}
+
+pub fn Value.asMap(self): Map[String, Value]? {
+    match self {
+        Value.Map(members) => members
+        _ => none
+    }
+}
+
+/// The value as a YAML document.
+impl Display for Value {
+    fn display(self): String {
+        encode(self).trimEnd()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+/// A failure to read YAML, with where it happened: the error of every
+/// format.
+pub alias YamlError = serialization.Error
+
+/// What reading does with a member that the type has no field for.
+pub alias UnknownFields = serialization.UnknownFields
+
+// ---------------------------------------------------------------------------
+// Encoding and decoding
+// ---------------------------------------------------------------------------
+
+/// A value of `T` from YAML text, which must hold one document.
+pub fn decode[T: serialization.Decode](
+    text: String,
+    unknownFields: UnknownFields = UnknownFields.Ignore,
+): T ! YamlError {
+    let input = reader(text, unknownFields)
+    let count = yamlnative.documents(input.native)
+    if count != 1 {
+        // A failure to parse comes first.
+        _ = serialization.Source.next(input)?
+        let held = if count == 0 { "no document" } else { "{count} documents" }
+        fail serialization.Source.failure(
+            input,
+            serialization.ErrorKind.Syntax,
+            "the text holds {held}; `decodeAll` reads every one",
+        )
+    }
+    document[T](input)?
+}
+
+/// A value of `T` from each document of YAML text, in order.
+pub fn decodeAll[T: serialization.Decode](
+    text: String,
+    unknownFields: UnknownFields = UnknownFields.Ignore,
+): Array[T] ! YamlError {
+    let input = reader(text, unknownFields)
+    var values: Array[T] = []
+    if yamlnative.documents(input.native) == 0 {
+        _ = serialization.Source.next(input)?
+        return values
+    }
+    for {
+        values.push(document[T](input)?)
+        if not yamlnative.nextDocument(input.native) {
+            break
+        }
+    }
+    values
+}
+
+/// The YAML document of a value.
+pub fn encode[T: serialization.Encode](value: T): String {
+    let out = Writer { native: yamlnative.writer() }
+    value.encode(out)
+    yamlnative.finish(out.native)
+}
+
+/// The YAML documents of values, each after `---`.
+pub fn encodeAll[T: serialization.Encode](values: Array[T]): String {
+    let out = Writer { native: yamlnative.writer() }
+    for value in values {
+        value.encode(out)
+    }
+    yamlnative.finish(out.native)
+}
+
+/// A document of unknown shape.
+pub fn parse(text: String): Value ! YamlError {
+    decode[Value](text)
+}
+
+/// Every document of the text.
+pub fn parseAll(text: String): Array[Value] ! YamlError {
+    decodeAll[Value](text)
+}
+
+fn reader(text: String, unknownFields: UnknownFields): Reader {
+    Reader { native: yamlnative.parse(text), rejectUnknown: unknownFields == UnknownFields.Reject }
+}
+
+/// The value of the document the reader is at.
+fn document[T: serialization.Decode](input: Reader): T ! YamlError {
+    let first = serialization.Source.value(input)?
+    serialization.Decode.decode[T](input, first)?
+}
+
+// ---------------------------------------------------------------------------
+// Formats
+// ---------------------------------------------------------------------------
+
+/// A YAML document read event by event: its mappings are maps and its
+/// sequences lists. An integer too large for `Int` is a `Number`.
+type Reader = {
+    native: yamlnative.Native
+    rejectUnknown: Bool
+}
+
+impl serialization.Source for Reader {
+    fn next(self): serialization.Event? ! YamlError {
+        let event = match yamlnative.next(self.native) {
+            0 => return none
+            1 => serialization.Event.Null
+            2 => serialization.Event.Bool(true)
+            3 => serialization.Event.Bool(false)
+            4 => serialization.Event.Int(yamlnative.int(self.native))
+            5 => serialization.Event.Float(yamlnative.float(self.native))
+            6 => serialization.Event.Text(yamlnative.text(self.native))
+            7 => serialization.Event.Number(yamlnative.text(self.native))
+            8 => serialization.Event.BeginList
+            9 => serialization.Event.EndList
+            10 => serialization.Event.BeginMap
+            11 => serialization.Event.EndMap
+            12 => serialization.Event.Key(yamlnative.text(self.native))
+            _ => fail self.error(serialization.ErrorKind.Syntax)
+        }
+        some(event)
+    }
+
+    fn skip(self, first: serialization.Event): !YamlError {
+        let code = match first {
+            serialization.Event.BeginList => 8
+            serialization.Event.BeginMap => 10
+            _ => 0
+        }
+        if yamlnative.skip(self.native, code) < 0 {
+            fail self.error(serialization.ErrorKind.Syntax)
+        }
+    }
+
+    fn failure(self, kind: serialization.ErrorKind, message: String): YamlError {
+        yamlnative.fail(self.native, message)
+        self.error(kind)
+    }
+
+    fn rejectsUnknown(self): Bool {
+        self.rejectUnknown
+    }
+}
+
+fn Reader.error(self, kind: serialization.ErrorKind): YamlError {
+    YamlError {
+        kind: kind
+        message: yamlnative.where(self.native, 0)
+        path: yamlnative.where(self.native, 1)
+        line: Int.parse(yamlnative.where(self.native, 2)).unwrapOr(0)
+        column: Int.parse(yamlnative.where(self.native, 3)).unwrapOr(0)
+    }
+}
+
+/// YAML documents written event by event. A float that is not finite is
+/// written `null`, and bytes as a base64 string.
+type Writer = {
+    native: yamlnative.Native
+}
+
+impl serialization.Sink for Writer {
+    fn null(self) {
+        yamlnative.writeNull(self.native)
+    }
+
+    fn bool(self, value: Bool) {
+        yamlnative.writeBool(self.native, value)
+    }
+
+    fn int(self, value: Int) {
+        yamlnative.writeInt(self.native, value)
+    }
+
+    fn float(self, value: Float) {
+        yamlnative.writeFloat(self.native, value)
+    }
+
+    fn number(self, digits: String) {
+        match Int.parse(digits) {
+            ok(value) => yamlnative.writeInt(self.native, value)
+            err(_) => yamlnative.writeFloat(self.native, Float.parse(digits).unwrapOr(0.0))
+        }
+    }
+
+    fn text(self, value: String) {
+        yamlnative.writeText(self.native, value)
+    }
+
+    fn bytes(self, value: Array[Byte]) {
+        yamlnative.writeText(self.native, yamlcodec.base64Encode(value, false))
+    }
+
+    fn beginList(self, count: Int) {
+        yamlnative.writeOpen(self.native, false)
+    }
+
+    fn endList(self) {
+        yamlnative.writeClose(self.native)
+    }
+
+    fn beginMap(self, count: Int) {
+        yamlnative.writeOpen(self.native, true)
+    }
+
+    fn key(self, name: String) {
+        yamlnative.writeKey(self.native, name)
+    }
+
+    fn endMap(self) {
+        yamlnative.writeClose(self.native)
+    }
+}
+
+impl serialization.Encode for Value {
+    fn encode[S: serialization.Sink](self, out: S) {
+        match self {
+            Value.Null => out.null()
+            Value.Bool(value) => out.bool(value)
+            Value.Int(value) => out.int(value)
+            Value.Float(value) => out.float(value)
+            Value.Text(text) => out.text(text)
+            Value.Array(items) => {
+                out.beginList(items.length())
+                for item in items {
+                    serialization.Encode.encode(item, out)
+                }
+                out.endList()
+            }
+            Value.Map(members) => {
+                out.beginMap(members.length())
+                for (key, member) in members {
+                    out.key(key)
+                    serialization.Encode.encode(member, out)
+                }
+                out.endMap()
+            }
+        }
+    }
+}
+
+impl serialization.Decode for Value {
+    fn decode[S: serialization.Source](input: S, first: serialization.Event): Value ! YamlError {
+        match first {
+            serialization.Event.Null => Value.Null
+            serialization.Event.Bool(value) => Value.Bool(value)
+            serialization.Event.Int(value) => Value.Int(value)
+            serialization.Event.Float(value) => Value.Float(value)
+            serialization.Event.Number(digits) => match Int.parse(digits) {
+                ok(value) => Value.Int(value)
+                err(_) => Value.Float(serialization.Decode.decode[Float](input, first)?)
+            }
+            serialization.Event.Text(text) => Value.Text(text)
+            serialization.Event.DateTime(text) => Value.Text(text)
+            serialization.Event.Bytes(bytes) => Value.Text(yamlcodec.base64Encode(bytes, false))
+            serialization.Event.BeginList => {
+                var items: Array[Value] = []
+                for {
+                    let event = input.value()?
+                    match event {
+                        serialization.Event.EndList => break
+                        _ => items.push(serialization.Decode.decode[Value](input, event)?)
+                    }
+                }
+                Value.Array(items)
+            }
+            serialization.Event.BeginMap => {
+                var members: Map[String, Value] = [:]
+                for {
+                    match input.nextKey()? {
+                        some(key) => {
+                            let event = input.value()?
+                            members[key] = serialization.Decode.decode[Value](input, event)?
+                        }
+                        none => break
+                    }
+                }
+                Value.Map(members)
+            }
+            _ => fail input.mismatch(first, "a YAML value")
+        }
+    }
+}

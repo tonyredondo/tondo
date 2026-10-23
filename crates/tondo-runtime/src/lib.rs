@@ -36,6 +36,7 @@ mod text;
 mod time;
 mod toml;
 mod trace;
+mod yaml;
 
 // ---------------------------------------------------------------------------
 // Strings
