@@ -3,6 +3,8 @@
 //! Checking is bidirectional: every expression receives the type its context
 //! expects, if any, which is how unsuffixed literals pick their type (5.7).
 
+mod routes;
+
 use crate::ast::{self, BinOp, UnaryOp};
 use crate::diag::Diagnostics;
 use crate::hir::{self, Callee, FnId, LocalId, StdFn, TraitId};
@@ -8527,6 +8529,9 @@ impl<'a> Checker<'a> {
     ) -> hir::Expr {
         let value = self.expr(cx, receiver, None);
         let ty = value.ty;
+        if self.is_http_route(ty, method, args) {
+            return self.http_route(cx, value, method, args, expected, span);
+        }
         let key = self.owner_key(ty);
         if let Some(&id) = self.methods.get(&(key, method.name.clone())) {
             self.check_method_visible(id, method.span);

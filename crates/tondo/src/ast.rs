@@ -38,7 +38,7 @@ pub struct Import {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Item {
     Const(ConstDecl),
     Fn(FnDecl),
@@ -53,7 +53,7 @@ pub enum Item {
 
 /// `derive[T] module.Trait + other.Trait for Type[T]`: asks each trait's
 /// provider for an `impl` for a type of this module (27.2).
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct DeriveDecl {
     pub generics: Vec<GenericParam>,
     pub traits: Vec<TypeExpr>,
@@ -62,7 +62,7 @@ pub struct DeriveDecl {
 }
 
 /// A `test` or a `suite` (testing 3).
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum TestNode {
     Test(TestDecl),
     Suite(SuiteDecl),
@@ -85,7 +85,7 @@ impl TestNode {
 }
 
 /// `test name { body }`: a leaf the runner runs.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TestDecl {
     pub name: Ident,
     pub body: Block,
@@ -98,7 +98,7 @@ pub struct TestDecl {
 
 /// `suite name { setup members }`: its setup runs before its members and
 /// its `defer`s after them.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct SuiteDecl {
     pub name: Ident,
     pub setup: Vec<Stmt>,
@@ -109,7 +109,7 @@ pub struct SuiteDecl {
 }
 
 /// `trait Name[Params] { fn ... }`: required methods have no body (12.3).
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TraitDecl {
     pub public: bool,
     pub name: Ident,
@@ -122,7 +122,7 @@ pub struct TraitDecl {
 }
 
 /// `impl[Binders] Trait[Args] for Target { fn ... }` (12.4).
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ImplDecl {
     pub generics: Vec<GenericParam>,
     pub trait_ref: TypeExpr,
@@ -141,7 +141,7 @@ pub struct GenericParam {
     pub bounds: Vec<TypeExpr>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct EnumDecl {
     pub public: bool,
     pub name: Ident,
@@ -153,26 +153,26 @@ pub struct EnumDecl {
     pub module: u32,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct VariantDecl {
     pub name: Ident,
     pub payload: VariantPayload,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum VariantPayload {
     Unit,
     Tuple(Vec<TypeExpr>),
     Record(Vec<FieldDecl>),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Pattern {
     pub kind: PatternKind,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum PatternKind {
     Wildcard,
     Binding(Ident),
@@ -211,14 +211,14 @@ pub enum PatternKind {
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct FieldPattern {
     pub name: Ident,
     /// `None` for the shorthand `name`, which binds `name`.
     pub pattern: Option<Pattern>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct MatchArm {
     pub pattern: Pattern,
     pub guard: Option<Expr>,
@@ -228,7 +228,7 @@ pub struct MatchArm {
 
 /// An arm of `select` (11.14): `let pattern = operation => body`,
 /// `operation => body` or `else => body`.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct SelectArm {
     pub pattern: Option<Pattern>,
     /// The operation it waits for; `None` for `else`.
@@ -237,7 +237,7 @@ pub struct SelectArm {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ArmBody {
     Expr(Expr),
     /// A statement written directly after `=>`: `return`, `fail`, `break`,
@@ -247,7 +247,7 @@ pub enum ArmBody {
 
 /// `type Name = { fields }` (record) or `type Name = T` (newtype); with
 /// `extern`, a C struct or, without a body, an opaque C type.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TypeDecl {
     pub public: bool,
     /// `extern type`: laid out as C lays out the struct.
@@ -263,7 +263,7 @@ pub struct TypeDecl {
     pub module: u32,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum TypeBody {
     Record(Vec<FieldDecl>),
     Newtype(TypeExpr),
@@ -271,7 +271,7 @@ pub enum TypeBody {
     Opaque,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct FieldDecl {
     pub private: bool,
     pub name: Ident,
@@ -297,7 +297,7 @@ pub enum AnnotationArg {
 }
 
 /// `const Name: T = value`: a value evaluated in compilation (6.5).
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ConstDecl {
     pub public: bool,
     pub name: Ident,
@@ -310,7 +310,7 @@ pub struct ConstDecl {
 }
 
 /// `alias Name = T`: a transparent name for `T`.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct AliasDecl {
     pub public: bool,
     pub name: Ident,
@@ -318,7 +318,7 @@ pub struct AliasDecl {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct FnDecl {
     pub public: bool,
     /// `unsafe fn`: the caller guarantees preconditions the compiler cannot
@@ -351,7 +351,7 @@ pub struct Foreign {
     pub variadic: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Param {
     pub name: Ident,
     /// `None` for a receiver: `self`, `mut self` or `var self`.
@@ -423,20 +423,20 @@ pub enum TypeKind {
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Block {
     pub stmts: Vec<Stmt>,
     pub tail: Option<Box<Expr>>,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Stmt {
     pub kind: StmtKind,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum StmtKind {
     Let {
         mutable: bool,
@@ -465,26 +465,26 @@ pub enum StmtKind {
     Expr(Expr),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Defer {
     Call(Expr),
     Block(Block),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ForHeader {
     Infinite,
     Condition(Expr),
     In { pattern: Pattern, source: Expr },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Expr {
     pub kind: ExprKind,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ExprKind {
     /// `unsafe { ... }`: a region where raw operations are allowed (16.12).
     Unsafe(Block),
@@ -572,7 +572,7 @@ pub enum ExprKind {
     Error,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Closure {
     /// `unsafe (...) { ... }`
     pub is_unsafe: bool,
@@ -581,7 +581,7 @@ pub struct Closure {
     pub body: Block,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ClosureParam {
     pub name: Ident,
     /// May be omitted, with its mode, when an expected function type gives
@@ -591,20 +591,20 @@ pub struct ClosureParam {
     pub variadic: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct FieldInit {
     pub name: Ident,
     /// `None` for the shorthand `name`, which reads the binding `name`.
     pub value: Option<Expr>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum StrSegment {
     Text(String),
     Expr(Expr),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Arg {
     pub name: Option<Ident>,
     pub value: Expr,

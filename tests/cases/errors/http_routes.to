@@ -1,0 +1,14 @@
+import std.http
+
+pub type Item = { name: String }
+
+fn main() {
+    var app = http.App.new()
+    app.get("/items", (item: Item) { item.name })
+    app.post("/items", (first: Item, second: Item) { first.name })
+    app.get("/flags/:on", (on: Bool) { "{on}" })
+}
+
+// expect-error: E1102 a GET request has no body, which `item` would be read from: take it from the path or the query, or take `http.Request`
+// expect-error: E1102 a handler reads one body, as `first`; `second` would be read from it too: put both in one type
+// expect-error: E1102 the path parameter `on` is a `String` or an `Int`, not `Bool`; take `http.Request` to read it

@@ -1019,3 +1019,17 @@ Tondo. Networking ignores SIGPIPE once it starts, since `writev` on a closed
 connection raises it; programs without networking keep the default. A match
 now holds its scrutinee until every arm ran: a later arm that bound the
 whole value used to move it out of the frame for the earlier arms too.
+
+## 2026-10-23 — Typed route handlers are written by the checker
+
+`app.get("/users/:id", (id: Int) { ... })` cannot be typed with a function
+type, since handlers take any parameters and Tondo has no overloading. The
+checker recognises the routing methods of `http.App` with a literal path:
+it checks a typed handler on its own, binds it to a hidden local and checks
+an adapter it writes as syntax, `(·request) { http.Reply.json(·handler(
+·request.intParam("id")?, ·request.json()?)) }`, so every rule and error of
+the language applies to it; the expected types of the handler's parameters
+pick what `json()` decodes. The route becomes `app.route(...)` with the
+operation and schemas of OpenAPI written from the types, as `std.json`
+encodes them. Untyped routes with a literal path get their operation too.
+The AST derives `Clone` for this.

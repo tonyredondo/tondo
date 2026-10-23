@@ -501,3 +501,86 @@ fn main(): !http.HttpError {
     assert_eq!(stdout, "true HTTP/2.0 secure HTTP/2.0\ntrue\ntrue\n", "{stderr}");
     assert!(success, "{stderr}");
 }
+
+#[test]
+fn typed_handlers_and_openapi() {
+    let program = r##"import std.console
+import std.http
+
+pub type NewUser = { name: String, email: String? }
+pub type User = { id: Int, name: String, email: String?, role: Role }
+pub enum Role {
+    Admin
+    Member
+}
+
+pub enum StoreError {
+    Down
+}
+
+impl Display for StoreError {
+    fn display(self): String {
+        "the store is down"
+    }
+}
+
+fn find(id: Int): User? {
+    if id == 7 { none } else { some(User { id, name: "ada", email: none, role: Role.Admin }) }
+}
+
+fn listUsers(page: Int?, search: String): Array[User] {
+    [User { id: page.unwrapOr(1), name: search, email: none, role: Role.Member }]
+}
+
+fn main(): !http.HttpError {
+    var app = http.App.new()
+    app.get("/users/:id", (id: Int) { find(id) })
+    app.get("/users", listUsers)
+    app.post("/users", (input: NewUser, request: http.Request) {
+        User { id: 2, name: input.name, email: input.email, role: Role.Member }
+    })
+    app.delete("/users/:id", (id: Int) {
+        console.println("deleting {id}")
+    })
+    app.get("/hello/:name", (name: String) { "hello {name}" })
+    app.get("/store", (): String ! StoreError {
+        fail StoreError.Down
+    })
+    app.get("/raw", (request) { http.Reply.text("raw {request.path()}") })
+    app.openApi(title: "Users", version: "2.0")
+    let server = app.start()?
+    let client = http.Client.new(baseUrl: server.url())
+    console.println(server.url())
+    console.println(client.get("/users/3")?.text()?)
+    console.println("{client.get("/users/7")}")
+    console.println("{client.get("/users/x")}")
+    console.println(client.get("/users", query: ["page": "4", "search": "bo"])?.text()?)
+    console.println("{client.get("/users")}")
+    console.println(client.post("/users", body: http.Body.json(NewUser { name: "cy", email: some("cy@x") }))?.text()?)
+    console.println("{client.delete("/users/9")?.status()}")
+    console.println(client.get("/hello/world")?.text()?)
+    console.println("{client.get("/store")}")
+    console.println(client.get("/raw")?.text()?)
+    console.println(client.get("/openapi.json")?.text()?)
+    server.stop()
+}
+"##;
+    let (stdout, stderr, success) = run("http-typed", program, &[]);
+    let base = stdout.lines().next().unwrap_or_default().to_string();
+    let expected = r##"BASE
+{"id":3,"name":"ada","email":null,"role":"Admin"}
+err(GET BASE/users/7 answered 404 Not Found)
+err(GET BASE/users/x answered 400 Bad Request)
+[{"id":4,"name":"bo","email":null,"role":"Member"}]
+err(GET BASE/users answered 400 Bad Request)
+{"id":2,"name":"cy","email":"cy@x","role":"Member"}
+deleting 9
+204
+hello world
+err(GET BASE/store answered 500 Internal Server Error)
+raw /raw
+{"openapi":"3.1.0","info":{"title":"Users","version":"2.0"},"paths":{"/users/{id}":{"get":{"parameters":[{"name":"id","in":"path","required":true,"schema":{"type":"integer"}}],"responses":{"400":{"description":"Bad Request","content":{"application/problem+json":{"schema":{}}}},"200":{"description":"OK","content":{"application/json":{"schema":{"$ref":"#/components/schemas/User"}}}},"404":{"description":"Not Found","content":{"application/problem+json":{"schema":{}}}}}},"delete":{"parameters":[{"name":"id","in":"path","required":true,"schema":{"type":"integer"}}],"responses":{"400":{"description":"Bad Request","content":{"application/problem+json":{"schema":{}}}},"204":{"description":"No Content"}}}},"/users":{"get":{"parameters":[{"name":"page","in":"query","required":false,"schema":{"type":"integer"}},{"name":"search","in":"query","required":true,"schema":{"type":"string"}}],"responses":{"400":{"description":"Bad Request","content":{"application/problem+json":{"schema":{}}}},"200":{"description":"OK","content":{"application/json":{"schema":{"type":"array","items":{"$ref":"#/components/schemas/User"}}}}}}},"post":{"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/NewUser"}}}},"responses":{"400":{"description":"Bad Request","content":{"application/problem+json":{"schema":{}}}},"200":{"description":"OK","content":{"application/json":{"schema":{"$ref":"#/components/schemas/User"}}}}}}},"/hello/{name}":{"get":{"parameters":[{"name":"name","in":"path","required":true,"schema":{"type":"string"}}],"responses":{"200":{"description":"OK","content":{"text/plain":{"schema":{"type":"string"}}}}}}},"/store":{"get":{"responses":{"default":{"description":"A problem (RFC 9457)","content":{"application/problem+json":{"schema":{}}}},"200":{"description":"OK","content":{"text/plain":{"schema":{"type":"string"}}}}}}},"/raw":{"get":{"responses":{"default":{"description":"The reply"}}}}},"components":{"schemas":{"Role":{"type":"string","enum":["Admin","Member"]},"User":{"type":"object","properties":{"id":{"type":"integer"},"name":{"type":"string"},"email":{"anyOf":[{"type":"string"},{"type":"null"}]},"role":{"$ref":"#/components/schemas/Role"}},"required":["id","name","role"]},"NewUser":{"type":"object","properties":{"name":{"type":"string"},"email":{"anyOf":[{"type":"string"},{"type":"null"}]}},"required":["name"]}}}}
+"##.replace("BASE", &base);
+    assert_eq!(stdout, expected, "{stderr}");
+    assert!(success, "{stderr}");
+}

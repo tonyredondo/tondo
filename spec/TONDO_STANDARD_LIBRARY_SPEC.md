@@ -3821,6 +3821,39 @@ pub fn Tls.files(certificate: String, privateKey: String): Tls
   `Server.stop` deja de aceptar conexiones y espera a que el servidor pare;
   las peticiones en curso terminan.
 
+#### 14.24.2 Handlers tipados y OpenAPI
+
+Un handler de `get`, `post`, `put`, `patch` o `delete` con path literal puede
+tomar parámetros con tipo en vez de la petición. El compilador escribe el
+adaptador que los lee y convierte el resultado en una respuesta, así que la
+validación es la del tipo y sus errores son `400`:
+
+~~~tondo
+app.get("/users/:id", (id: Int) { users.find(id) })                 // User?: 404 sin valor
+app.get("/users", (page: Int?, search: String) { users.list(page, search) })
+app.post("/users", (input: NewUser) { users.add(input) })          // el cuerpo JSON
+app.delete("/users/:id", (id: Int) { users.remove(id) })           // Unit: 204
+app.get("/report", report)                                         // una función con nombre
+app.openApi(title: "Users", version: "1.0")                        // GET /openapi.json
+~~~
+
+- Un parámetro de tipo `http.Request` es la petición. Uno que se llama como un
+  segmento `:nombre` de la ruta es ese parámetro, `String` o `Int`. Uno
+  `String` o `Int`, u opcional de ellos, es un parámetro de query: sin `?` es
+  obligatorio. Cualquier otro tipo es el cuerpo JSON (`std.json`), uno por
+  handler y nunca en `GET` ni en `DELETE`; un parámetro que no encaja es un
+  error de compilación que dice de dónde se puede leer.
+- El resultado se convierte: una `Reply` se envía tal cual; un `String`, como
+  texto; `Unit`, como `204`; `T?`, como `T` o `404` sin valor; cualquier otro,
+  como JSON. Un handler `T ! http.Problem` falla con su problema, y uno
+  `T ! E` con otro error lo envía como `Problem.from(error)`, un `500`. Un
+  closure sin tipo esperado declara su resultado para poder fallar:
+  `(): String ! StoreError { ... }`.
+- Cada ruta con path literal, tipada o no, lleva su operación OpenAPI 3.1:
+  parámetros, cuerpo y respuestas, con los JSON Schemas de sus tipos tal como
+  `std.json` los escribe. `App.openApi` sirve el documento de todas, también
+  las de las apps montadas, en `path`.
+
 ---
 
 ## 15. Contrato exigido a cada módulo

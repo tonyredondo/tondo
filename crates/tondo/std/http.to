@@ -827,6 +827,22 @@ pub fn Request.queryValues(self, name: String): Array[String] {
     values
 }
 
+/// A query parameter that must be there.
+pub fn Request.requiredQuery(self, name: String): String ! Problem {
+    match self.query(name) {
+        some(value) => value
+        none => fail Problem.badRequest("the query parameter `{name}` is missing")
+    }
+}
+
+/// A query parameter that must be there and be an integer.
+pub fn Request.requiredIntQuery(self, name: String): Int ! Problem {
+    match self.intQuery(name)? {
+        some(value) => value
+        none => fail Problem.badRequest("the query parameter `{name}` is missing")
+    }
+}
+
 /// A query parameter that must be an integer when it is there.
 pub fn Request.intQuery(self, name: String): Int? ! Problem {
     match self.query(name) {
@@ -1116,11 +1132,12 @@ pub type App = {
     priv routes: Array[Route]
     priv layers: Array[fn(Request, fn(Request): Reply ! Problem): Reply ! Problem]
     priv operations: Array[(String, String, String)]
+    priv schemas: Map[String, String]
     priv docs: (String, String, String)?
 }
 
 pub fn App.new(): App {
-    App { routes: [], layers: [], operations: [], docs: none }
+    App { routes: [], layers: [], operations: [], schemas: [:], docs: none }
 }
 
 pub fn App.get(mut self, path: String, handler: fn(Request): Reply ! Problem) {
@@ -1143,11 +1160,23 @@ pub fn App.delete(mut self, path: String, handler: fn(Request): Reply ! Problem)
     self.route("DELETE", path, handler)
 }
 
-/// A route of any method; `operation` is its OpenAPI operation object.
-pub fn App.route(mut self, method: String, path: String, handler: fn(Request): Reply ! Problem, operation: String = "") {
+/// A route of any method; `operation` is its OpenAPI operation object and
+/// `schemas` the JSON Schemas it refers to by name. The compiler writes both
+/// for a route with a literal path.
+pub fn App.route(
+    mut self,
+    method: String,
+    path: String,
+    handler: fn(Request): Reply ! Problem,
+    operation: String = "",
+    schemas: Map[String, String] = [:],
+) {
     self.routes.push(Route { method: method.toUpper(), pattern: segments(path), handler })
     if not operation.isEmpty() {
         self.operations.push((method.toLower(), path, operation))
+    }
+    for (name, schema) in schemas {
+        self.schemas[name] = schema
     }
 }
 
@@ -1172,6 +1201,9 @@ pub fn App.mount(mut self, prefix: String, other: App) {
     }
     for (method, path, operation) in other.operations {
         self.operations.push((method, "{prefix.removeSuffix("/")}{path}", operation))
+    }
+    for (name, schema) in other.schemas {
+        self.schemas[name] = schema
     }
 }
 
@@ -1389,7 +1421,7 @@ fn App.pipeline(self): fn(Request): Reply ! Problem {
     var app = self
     match self.docs {
         some((path, title, version)) => {
-            let document = openApiDocument(title, version, self.operations)
+            let document = openApiDocument(title, version, self.operations, self.schemas)
             app.routes.push(Route {
                 method: "GET"
                 pattern: segments(path)
@@ -1505,7 +1537,12 @@ fn rangeStart(range: String): Int ! Problem {
 }
 
 /// The OpenAPI 3.1 document of the described operations.
-fn openApiDocument(title: String, version: String, operations: Array[(String, String, String)]): String {
+fn openApiDocument(
+    title: String,
+    version: String,
+    operations: Array[(String, String, String)],
+    schemas: Map[String, String],
+): String {
     var paths: Map[String, Array[String]] = [:]
     for (method, route, operation) in operations {
         let parts = segments(route).map((part) {
@@ -1521,5 +1558,10 @@ fn openApiDocument(title: String, version: String, operations: Array[(String, St
         items.push("{__json.encode(path)}:{{{entries.join(",")}}}")
     }
     let info = "{{\"title\":{__json.encode(title)},\"version\":{__json.encode(version)}}}"
-    "{{\"openapi\":\"3.1.0\",\"info\":{info},\"paths\":{{{items.join(",")}}}}}"
+    var components: Array[String] = []
+    for (name, schema) in schemas {
+        components.push("{__json.encode(name)}:{schema}")
+    }
+    let documented = "\"paths\":{{{items.join(",")}}},\"components\":{{\"schemas\":{{{components.join(",")}}}}}"
+    "{{\"openapi\":\"3.1.0\",\"info\":{info},{documented}}}"
 }
