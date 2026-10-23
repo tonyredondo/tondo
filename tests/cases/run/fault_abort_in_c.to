@@ -1,0 +1,21 @@
+// A C function that aborts ends the program with the trace of the calls
+// that reached C.
+extern fn abort(): Never
+
+fn give(up: Bool) {
+    if up {
+        unsafe { abort() }
+    }
+}
+
+fn main() {
+    let job = spawn give(true)
+    job.wait()
+}
+
+// expect-crash
+// expect-stderr: fatal: SIGABRT: the program aborted, inside a function of C
+// expect-stderr: stack:
+// expect-stderr:   give  fault_abort_in_c.to:7:18
+// expect-stderr: in a task spawned at:
+// expect-stderr:   main  fault_abort_in_c.to:12:15

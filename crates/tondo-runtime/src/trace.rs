@@ -370,8 +370,9 @@ thread_local! {
 }
 
 /// Prepares the running thread, which runs tasks, to report a fault of the
-/// program: a task's stack that overflows, or memory C touched that it
-/// should not. The first call installs the handler.
+/// program: a task's stack that overflows, memory C touched that it should
+/// not, an abort, an illegal instruction or an arithmetic fault, as C may
+/// make. The first call installs the handler.
 pub(crate) fn guard_thread() {
     static INSTALLED: std::sync::Once = std::sync::Once::new();
     INSTALLED.call_once(|| unsafe {
@@ -379,8 +380,9 @@ pub(crate) fn guard_thread() {
         action.sa_sigaction = fault as *const () as usize;
         action.sa_flags = libc::SA_SIGINFO | libc::SA_ONSTACK;
         libc::sigemptyset(&mut action.sa_mask);
-        libc::sigaction(libc::SIGSEGV, &action, std::ptr::null_mut());
-        libc::sigaction(libc::SIGBUS, &action, std::ptr::null_mut());
+        for signal in [libc::SIGSEGV, libc::SIGBUS, libc::SIGABRT, libc::SIGILL, libc::SIGFPE] {
+            libc::sigaction(signal, &action, std::ptr::null_mut());
+        }
     });
     SIGNAL.with_borrow_mut(|signal| {
         if signal.is_some() {
@@ -439,7 +441,7 @@ unsafe fn faulted(info: *const libc::siginfo_t, context: *const libc::c_void) ->
 
 /// Reports a fault with the trace of the code that made it, and ends the
 /// process as the signal does: the handler goes back to the default one,
-/// and the instruction faults again.
+/// and the instruction faults again, or the signal comes again.
 extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc::c_void) {
     unsafe {
         let (address, pc, fp, link) = faulted(info, context);
@@ -457,8 +459,13 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
             let whose = if !task.is_null() && crate::tasks::is_main(task) { "the main task" } else { "a task" };
             let _ = write!(out, "fatal: stack overflow: {whose} used all of its {size} MiB stack");
         } else {
-            let name = if signal == libc::SIGBUS { "SIGBUS" } else { "SIGSEGV" };
-            let _ = write!(out, "fatal: {name}: invalid memory access at {address:#x}");
+            let _ = match signal {
+                libc::SIGABRT => write!(out, "fatal: SIGABRT: the program aborted"),
+                libc::SIGILL => write!(out, "fatal: SIGILL: illegal instruction at {pc:#x}"),
+                libc::SIGFPE => write!(out, "fatal: SIGFPE: arithmetic fault at {pc:#x}"),
+                libc::SIGBUS => write!(out, "fatal: SIGBUS: invalid memory access at {address:#x}"),
+                _ => write!(out, "fatal: SIGSEGV: invalid memory access at {address:#x}"),
+            };
             if in_c {
                 let _ = write!(out, ", inside a function of C");
             }
@@ -478,5 +485,10 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
         let mut action: libc::sigaction = std::mem::zeroed();
         action.sa_sigaction = libc::SIG_DFL;
         libc::sigaction(signal, &action, std::ptr::null_mut());
+        // An abort is not an instruction that faults again when the handler
+        // returns: it is raised once more, and ends the process then.
+        if signal == libc::SIGABRT {
+            libc::raise(signal);
+        }
     }
 }

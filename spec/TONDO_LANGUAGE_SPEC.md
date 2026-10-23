@@ -5333,11 +5333,13 @@ repeticiones. Una tarea añade dónde se lanzó, y la tarea que la lanzó el suy
 hasta `main`; un callback que hace un thread de C lo indica. Un deadlock (`P0013`)
 lista dónde espera cada tarea y dónde se lanzó.
 
-Un stack overflow o un acceso inválido a memoria, fuera de este modelo, se
-reportan antes de que la señal termine el proceso, con la misma traza:
+Un stack overflow, un acceso inválido a memoria, un aborto, una instrucción
+ilegal o un fallo aritmético, fuera de este modelo, se reportan antes de que la
+señal termine el proceso, con la misma traza:
 `fatal: stack overflow: a task used all of its 8 MiB stack`, o
 `fatal: SIGSEGV: invalid memory access at 0x0, inside a function of C` con la
-traza desde la llamada del programa a C.
+traza desde la llamada del programa a C; `SIGABRT`, `SIGILL` y `SIGFPE`, que
+solo puede provocar C, se nombran igual.
 
 Todos los pánicos definidos por el lenguaje —incluidos bounds, overflow, división
 entera por cero, solapamiento dinámico, `assert` y `panic(...)`— siguen esas
