@@ -22,8 +22,11 @@ fn main() {
         .args(["rustc", "--package", "tondo-runtime", "--lib", "--release", "--crate-type", "staticlib"])
         .args(["--target", &target, "--target-dir"])
         .arg(&target_dir)
-        // Frame pointers let a panic walk the stack through the runtime.
+        // Frame pointers let a panic walk the stack through the runtime; one
+        // codegen unit inlines across the whole runtime, so adding a module
+        // does not change how another's hot paths are compiled.
         .args(["--", "-C", "panic=abort", "-C", "debuginfo=0", "-C", "force-frame-pointers=yes"])
+        .args(["-C", "codegen-units=1"])
         .args(["--cfg", "tondo_staticlib"])
         .args(["--print", "native-static-libs"])
         .current_dir(&runtime)

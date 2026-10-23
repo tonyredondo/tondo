@@ -1018,6 +1018,8 @@ pub const NATIVES: &[Native] = {
         f("parseInt", &[String], Int, "tondo_rt_json_parse_int"),
         f("parseFloat", &[String], Float, "tondo_rt_json_parse_float"),
         m(JsonReader, "next", &[], Int, "tondo_rt_json_next"),
+        m(JsonReader, "nextEvent", &[], Int, "tondo_rt_json_next_event"),
+        m(JsonReader, "integer", &[], Int, "tondo_rt_json_integer"),
         m(JsonReader, "text", &[], String, "tondo_rt_json_text"),
         m(JsonReader, "skip", &[Int], Int, "tondo_rt_json_skip"),
         m(JsonReader, "fail", &[String], Unit, "tondo_rt_json_fail"),

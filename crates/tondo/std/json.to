@@ -429,7 +429,7 @@ pub fn Writer.flush(self): !JsonError {
 /// A JSON reader is a source of the events of every format.
 impl serialization.Source for Reader {
     fn next(self): serialization.Event? ! JsonError {
-        let event = match self.native.next() {
+        let event = match self.native.nextEvent() {
             0 => return none
             1 => serialization.Event.Null
             2 => serialization.Event.Bool(true)
@@ -441,6 +441,7 @@ impl serialization.Source for Reader {
             8 => serialization.Event.BeginMap
             9 => serialization.Event.EndMap
             10 => serialization.Event.Key(self.native.text())
+            11 => serialization.Event.Int(self.native.integer())
             _ => {
                 let kind = if self.native.where(0).startsWith("cannot read") {
                     ErrorKind.Io

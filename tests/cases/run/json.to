@@ -11,6 +11,9 @@ fn main(): !json.JsonError {
     let map: Map[String, Float] = json.decode(r"""{"a": 1.5, "b": 2}""")?
     console.println(json.encode(map, pretty: true))
     console.println(json.encode(doc, canonical: true))
+    let escaped = "say \"hi\"\\ \n\t\u{1}ñ"
+    console.println(json.encode([escaped: escaped]))
+    console.println(json.encode([escaped: escaped], canonical: true))
     match json.parse(r"""{"a": [1, 2,]}""") {
         ok(_) => console.println("unexpected"),
         err(error) => console.println("error: {error}"),
@@ -30,5 +33,7 @@ fn main(): !json.JsonError {
 // expect-stdout:   "b": 2
 // expect-stdout: }
 // expect-stdout: {"address":{"city":"Madrid"},"age":31,"name":"ana","none":null,"ok":true,"score":9.5,"tags":["a","b"]}
+// expect-stdout: {"say \"hi\"\\ \n\t\u0001ñ":"say \"hi\"\\ \n\t\u0001ñ"}
+// expect-stdout: {"say \"hi\"\\ \n\t\u0001ñ":"say \"hi\"\\ \n\t\u0001ñ"}
 // expect-stdout: error: unexpected character at $.a[2] (line 1, column 13)
 // expect-stdout: error: expected an integer, found a string at $[1] (line 1, column 10)

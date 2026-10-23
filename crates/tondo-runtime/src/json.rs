@@ -23,6 +23,8 @@ const END_ARRAY: i64 = 7;
 const BEGIN_OBJECT: i64 = 8;
 const END_OBJECT: i64 = 9;
 const KEY: i64 = 10;
+/// A number that is an integer fitting `Int`, as `next_event` tells it.
+const INTEGER: i64 = 11;
 const ERROR: i64 = -1;
 
 /// Where the reader is inside a container.
@@ -63,6 +65,8 @@ struct Reader {
     frames: Vec<Frame>,
     /// The text of the last string, key or number.
     text: String,
+    /// The last number, when it is an integer that fits `Int`.
+    integer: Option<i64>,
     done: bool,
     root_seen: bool,
     error: Option<(String, usize)>,
@@ -91,6 +95,7 @@ impl Reader {
             pinned: None,
             frames: Vec::new(),
             text: String::new(),
+            integer: None,
             done: false,
             root_seen: false,
             error: None,
@@ -314,6 +319,8 @@ impl Reader {
             }
             b'-' | b'0'..=b'9' => match self.number() {
                 Ok(text) => {
+                    let integral = !text.contains(['.', 'e', 'E']);
+                    self.integer = if integral { text.parse().ok() } else { None };
                     self.text = text;
                     self.after_value(NUMBER)
                 }
@@ -464,6 +471,22 @@ pub unsafe extern "C" fn tondo_rt_json_next(object: *mut ReaderObject) -> i64 {
     reader(object).next()
 }
 
+/// The next event as `next`, but `INTEGER` for a number that is an
+/// integer fitting `Int`, whose value `integer` gives without its text.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_json_next_event(object: *mut ReaderObject) -> i64 {
+    let mut reader = reader(object);
+    match reader.next() {
+        NUMBER if reader.integer.is_some() => INTEGER,
+        event => event,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_json_integer(object: *mut ReaderObject) -> i64 {
+    reader(object).integer.unwrap_or(0)
+}
+
 /// The text of the last string, key or number.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_text(object: *mut ReaderObject) -> *mut Str {
@@ -565,19 +588,29 @@ pub struct WriterObject {
 
 fn quote(out: &mut String, text: &str) {
     out.push('"');
-    for c in text.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{8}' => out.push_str("\\b"),
-            '\u{c}' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 => write!(out, "\\u{:04x}", c as u32).unwrap(),
-            c => out.push(c),
+    // The runs that need no escape go in whole.
+    let mut run = 0;
+    for (at, byte) in text.bytes().enumerate() {
+        let escape = match byte {
+            b'"' => "\\\"",
+            b'\\' => "\\\\",
+            b'\n' => "\\n",
+            b'\r' => "\\r",
+            b'\t' => "\\t",
+            0x08 => "\\b",
+            0x0c => "\\f",
+            0x00..=0x1f => "",
+            _ => continue,
+        };
+        out.push_str(&text[run..at]);
+        if escape.is_empty() {
+            write!(out, "\\u{byte:04x}").unwrap();
+        } else {
+            out.push_str(escape);
         }
+        run = at + 1;
     }
+    out.push_str(&text[run..]);
     out.push('"');
 }
 
@@ -627,8 +660,16 @@ impl Writer {
             self.add(Tree::Leaf(text));
             return;
         }
+        self.leaf_text(&text);
+    }
+
+    /// A leaf written as it is, without a copy of its text.
+    fn leaf_text(&mut self, text: &str) {
+        if self.canonical {
+            return self.add(Tree::Leaf(text.to_string()));
+        }
         self.separator();
-        self.out.push_str(&text);
+        self.out.push_str(text);
     }
 
     fn add(&mut self, tree: Tree) {
@@ -814,12 +855,32 @@ pub unsafe extern "C" fn tondo_rt_json_writer_error(object: *mut WriterObject) -
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_write_word(object: *mut WriterObject, word: i64) {
     let text = ["null", "true", "false"][word as usize];
-    writer(object).leaf(text.into());
+    writer(object).leaf_text(text);
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_write_int(object: *mut WriterObject, value: i64) {
-    writer(object).leaf(value.to_string());
+    let mut digits = [0u8; 20];
+    writer(object).leaf_text(decimal(value, &mut digits));
+}
+
+/// The decimal digits of an integer, written from the end of `buffer`.
+fn decimal(value: i64, buffer: &mut [u8; 20]) -> &str {
+    let mut magnitude = value.unsigned_abs();
+    let mut at = buffer.len();
+    loop {
+        at -= 1;
+        buffer[at] = b'0' + (magnitude % 10) as u8;
+        magnitude /= 10;
+        if magnitude == 0 {
+            break;
+        }
+    }
+    if value < 0 {
+        at -= 1;
+        buffer[at] = b'-';
+    }
+    std::str::from_utf8(&buffer[at..]).unwrap_or("0")
 }
 
 #[unsafe(no_mangle)]
@@ -840,9 +901,15 @@ pub unsafe extern "C" fn tondo_rt_json_write_number(object: *mut WriterObject, t
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_write_string(object: *mut WriterObject, text: *const Str) {
     let text = String::from_utf8_lossy(unsafe { str_bytes(text) });
-    let mut quoted = String::new();
-    quote(&mut quoted, &text);
-    writer(object).leaf(quoted);
+    let mut w = writer(object);
+    if w.canonical {
+        let mut quoted = String::new();
+        quote(&mut quoted, &text);
+        return w.leaf(quoted);
+    }
+    // Quoted straight into the output.
+    w.separator();
+    quote(&mut w.out, &text);
 }
 
 #[unsafe(no_mangle)]

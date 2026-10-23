@@ -5,6 +5,7 @@
 // `Source` and a `Sink`.
 
 import std.internal.codec as serialcodec
+import std.internal.text as serialtext
 
 // ---------------------------------------------------------------------------
 // Events
@@ -318,13 +319,8 @@ impl Decode for Float {
         match first {
             Event.Float(value) => value
             Event.Int(value) => Float(value)
-            Event.Number(digits) => match Float.parse(digits) {
-                ok(value) => value
-                err(_) => fail input.failure(
-                    ErrorKind.Range,
-                    "{digits} is not a number that fits `Float`",
-                )
-            }
+            // A number a format read is valid; its text needs no checking.
+            Event.Number(digits) => serialtext.parseFloat(digits)
             _ => fail input.mismatch(first, "a number")
         }
     }

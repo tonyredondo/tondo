@@ -526,12 +526,14 @@ impl Generator<'_> {
         let written: Vec<&ast::FieldDecl> = fields.iter().filter(|f| !ignored(f)).collect();
         let optional = |f: &ast::FieldDecl| self.text(&f.ty).ends_with('?');
         let mut out = String::new();
+        // A `none` asks the format whether it leaves the member out; a
+        // value asks nothing.
         let count = if written.iter().any(|f| optional(f)) {
-            out.push_str(&format!("{indent}let __omits = out.omitsNone()\n{indent}var __count = {}\n", written.len()));
+            out.push_str(&format!("{indent}var __count = {}\n", written.len()));
             for field in written.iter().filter(|f| optional(f)) {
+                let name = &field.name.name;
                 out.push_str(&format!(
-                    "{indent}if __omits and {prefix}{}.isNone() {{\n{indent}    __count -= 1\n{indent}}}\n",
-                    field.name.name
+                    "{indent}let __skip_{name} = match {prefix}{name} {{\n{indent}    none => out.omitsNone()\n{indent}    _ => false\n{indent}}}\n{indent}if __skip_{name} {{\n{indent}    __count -= 1\n{indent}}}\n"
                 ));
             }
             "__count".to_string()
@@ -544,7 +546,8 @@ impl Generator<'_> {
             let write = format!("out.key({:?})\n{indent}{s}.Encode.encode({value}, out)", wire(field));
             if optional(field) {
                 out.push_str(&format!(
-                    "{indent}if not (__omits and {value}.isNone()) {{\n{indent}    {}\n{indent}}}\n",
+                    "{indent}if not __skip_{} {{\n{indent}    {}\n{indent}}}\n",
+                    field.name.name,
                     write.replace(&format!("\n{indent}"), &format!("\n{indent}    "))
                 ));
             } else {
