@@ -34,6 +34,7 @@ mod tasks;
 mod testing;
 mod text;
 mod time;
+mod toml;
 mod trace;
 
 // ---------------------------------------------------------------------------

@@ -1121,3 +1121,20 @@ code; a format without null leaves out the members that are `none`.
 `json.JsonError` and `json.ErrorKind` remain, as aliases of the shared
 ones; `json.Encode` and `json.Decode` are gone, since the language has no
 trait aliases, and their users now name `serialization.Encode`.
+
+## 2026-10-23 — TOML on the shared protocol
+
+`std.toml` reads TOML 1.1 with `toml_edit`, the reference parser of the
+Rust ecosystem, into the events of `std.serialization`, each with the path,
+line and column of its value, and writes documents from events through the
+same library, so quoting, escaping and the order of tables are right by
+construction. The writer chooses the form: a map in a map is a `[table]`,
+a list of maps `[[tables]]`, and a map in another list an inline table.
+TOML has no null, so formats now say whether they leave out `none`
+members, and a `none` elsewhere is an `Unsupported` error with its path.
+Dates and times are a shared event, `DateTime`, which `time.DateTime`
+reads and writes; JSON writes it as text. The legacy specification of
+`std.toml` described views, validators and canonical encoders that no
+program needed; the section now specifies what exists: `decode`,
+`encode`, `parse` and a navigable `Value`. A program that uses TOML grows
+by about 500 KB, and one that does not by nothing.

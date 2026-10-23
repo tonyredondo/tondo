@@ -19,6 +19,9 @@ pub enum Event {
     /// until a type takes it.
     Number(String)
     Text(String)
+    /// A date, a time or both, as RFC 3339 writes them, in a format that
+    /// has them: `1979-05-27T07:32:00Z`, `1979-05-27`, `07:32:00`.
+    DateTime(String)
     Bytes(Array[Byte])
     BeginList
     EndList
@@ -49,6 +52,28 @@ pub enum ErrorKind {
     Unsupported
 }
 
+/// The kind's name, as `Syntax`.
+impl Display for ErrorKind {
+    fn display(self): String {
+        match self {
+            ErrorKind.Syntax => "Syntax"
+            ErrorKind.Type => "Type"
+            ErrorKind.Missing => "Missing"
+            ErrorKind.Unknown => "Unknown"
+            ErrorKind.Range => "Range"
+            ErrorKind.Io => "Io"
+            ErrorKind.Unsupported => "Unsupported"
+        }
+    }
+}
+
+/// What reading does with a member of a map that the type has no field
+/// for.
+pub enum UnknownFields {
+    Ignore
+    Reject
+}
+
 /// A failure to read or write a format, and where.
 pub type Error = {
     kind: ErrorKind
@@ -59,8 +84,13 @@ pub type Error = {
     column: Int
 }
 
+/// `message at path (line l, column c)`, without the position when there
+/// is none, as for what could not be written.
 impl Display for Error {
     fn display(self): String {
+        if self.line == 0 {
+            return "{self.message} at {self.path}"
+        }
         "{self.message} at {self.path} (line {self.line}, column {self.column})"
     }
 }
@@ -167,6 +197,7 @@ pub trait Source {
             Event.Float(_) => "a number"
             Event.Number(_) => "a number"
             Event.Text(_) => "a string"
+            Event.DateTime(_) => "a date-time"
             Event.Bytes(_) => "bytes"
             Event.BeginList => self.listName()
             Event.BeginMap => self.mapName()
@@ -199,6 +230,12 @@ pub trait Sink {
     fn text(self, value: String)
 
     fn bytes(self, value: Array[Byte])
+
+    /// A date, a time or both, as RFC 3339 writes them; as text in a
+    /// format without them.
+    fn dateTime(self, text: String) {
+        self.text(text)
+    }
 
     /// A list of `count` values follows, then its end.
     fn beginList(self, count: Int)
@@ -316,6 +353,7 @@ impl Decode for String {
     fn decode[S: Source](input: S, first: Event): String ! Error {
         match first {
             Event.Text(text) => text
+            Event.DateTime(text) => text
             _ => fail input.mismatch(first, "a string")
         }
     }

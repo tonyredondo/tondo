@@ -57,6 +57,7 @@ pub fn check<'a>(
         owners: HashMap::new(),
         method_visibility: HashMap::new(),
         prelude: None,
+        datetime_module: None,
         unrepeatable: HashMap::new(),
         interpolating: false,
         naming: String::new(),
@@ -175,6 +176,7 @@ enum StdModule {
     InternalCodec,
     /// `std.internal.http`: the runtime's HTTP client, for `std.http`.
     InternalHttp,
+    InternalToml,
 }
 
 /// The types `std.process` declares when imported.
@@ -582,6 +584,9 @@ struct Checker<'a> {
     /// The module `std.prelude`, which declares the methods of the intrinsic
     /// types, and their keys by name.
     prelude: Option<u32>,
+    /// The module `std.datetime`, the part of `std.time` written in Tondo,
+    /// which owns the types of `std.time` as their module would.
+    datetime_module: Option<u32>,
     intrinsic_owners: HashMap<String, Ty>,
     /// The module of each user trait.
     trait_modules: HashMap<TraitId, u32>,
@@ -759,6 +764,7 @@ struct Capture {
 impl<'a> Checker<'a> {
     fn program(&mut self, module: &'a ast::Module) -> Option<hir::Program> {
         self.prelude = module.module_paths.iter().position(|p| p == &["std", "prelude"]).map(|i| i as u32);
+        self.datetime_module = module.module_paths.iter().position(|p| p == &["std", "datetime"]).map(|i| i as u32);
         for import in &module.imports {
             self.import(import);
         }
@@ -1672,6 +1678,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "meta"] => StdModule::InternalMeta,
             ["std", "internal", "codec"] => StdModule::InternalCodec,
             ["std", "internal", "http"] => StdModule::InternalHttp,
+            ["std", "internal", "toml"] => StdModule::InternalToml,
             ["std", rest @ ..] => {
                 let name = rest.join(".");
                 // Modules the standard library specifies and does not have yet.
@@ -1770,7 +1777,7 @@ impl<'a> Checker<'a> {
         if matches!(module, StdModule::InternalText | StdModule::InternalCodec | StdModule::InternalHttp) {
             self.types.intern(TyKind::Array(Ty::STRING));
         }
-        if module == StdModule::InternalHttp {
+        if matches!(module, StdModule::InternalHttp | StdModule::InternalToml) {
             self.types.handle(Handle::Native, Ty::UNIT);
         }
         if module == StdModule::Process && self.process.is_none() {
@@ -1884,7 +1891,7 @@ impl<'a> Checker<'a> {
             (Some(ModuleName::Module(StdModule::InternalRegex)), "NativeRegex") => {
                 self.types.lookup(&TyKind::Handle(Handle::Regex, Ty::UNIT))
             }
-            (Some(ModuleName::Module(StdModule::InternalHttp)), "Native") => {
+            (Some(ModuleName::Module(StdModule::InternalHttp | StdModule::InternalToml)), "Native") => {
                 self.types.lookup(&TyKind::Handle(Handle::Native, Ty::UNIT))
             }
             (Some(ModuleName::Module(StdModule::InternalReflect)), "Box") => {
@@ -2692,7 +2699,9 @@ impl<'a> Checker<'a> {
         let target_name = self.types.display(target);
         // Coherence (12.6): the module owns the trait or the target's nominal type.
         let local_trait = self.trait_modules.get(&trait_id) == Some(&decl.module);
-        let local_target = self.owner(target).is_some_and(|o| o.module == decl.module);
+        let local_target = self.owner(target).is_some_and(|o| o.module == decl.module)
+            || (self.datetime_module == Some(decl.module)
+                && [self.datetime, self.duration, self.instant].contains(&Some(target)));
         if !local_trait && !local_target {
             let message = format!(
                 "`impl {trait_name} for {target_name}` implements a trait for a type, neither of which this module declares; implement it in the module of one of them, or wrap the type in a newtype, such as `type Name = {target_name}`"
@@ -10237,7 +10246,8 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalMath
                     | StdModule::InternalMeta
                     | StdModule::InternalCodec
-                    | StdModule::InternalHttp),
+                    | StdModule::InternalHttp
+                    | StdModule::InternalToml),
                 )),
             ) => {
                 if module == StdModule::InternalReflect && matches!(*member, "box" | "describe") {
@@ -10260,6 +10270,7 @@ impl<'a> Checker<'a> {
                     StdModule::InternalMeta => "meta",
                     StdModule::InternalCodec => "codec",
                     StdModule::InternalHttp => "http",
+                    StdModule::InternalToml => "toml",
                     _ => "reflect",
                 };
                 let found =

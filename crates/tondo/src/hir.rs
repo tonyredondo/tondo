@@ -980,6 +980,9 @@ pub const NATIVES: &[Native] = {
     const fn codec(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "codec", name, receiver: None, params, result, symbol }
     }
+    const fn toml(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
+        Native { module: "toml", name, receiver: None, params, result, symbol }
+    }
     const fn r(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "regex", name, receiver: Some(Regex), params, result, symbol }
     }
@@ -1125,6 +1128,26 @@ pub const NATIVES: &[Native] = {
         http("pipe", &[], Object, "tondo_rt_http_pipe"),
         http("pipeReader", &[Object], IoReader, "tondo_rt_http_pipe_reader"),
         http("pipeWriter", &[Object], IoWriter, "tondo_rt_http_pipe_writer"),
+        toml("parse", &[String], Object, "tondo_rt_toml_parse"),
+        toml("next", &[Object], Int, "tondo_rt_toml_next"),
+        toml("text", &[Object], String, "tondo_rt_toml_text"),
+        toml("int", &[Object], Int, "tondo_rt_toml_int"),
+        toml("float", &[Object], Float, "tondo_rt_toml_float"),
+        toml("skip", &[Object, Int], Int, "tondo_rt_toml_skip"),
+        toml("fail", &[Object, String], Unit, "tondo_rt_toml_fail"),
+        toml("where", &[Object, Int], String, "tondo_rt_toml_where"),
+        toml("writer", &[], Object, "tondo_rt_toml_writer"),
+        toml("writeNull", &[Object], Unit, "tondo_rt_toml_write_null"),
+        toml("writeBool", &[Object, Bool], Unit, "tondo_rt_toml_write_bool"),
+        toml("writeInt", &[Object, Int], Unit, "tondo_rt_toml_write_int"),
+        toml("writeFloat", &[Object, Float], Unit, "tondo_rt_toml_write_float"),
+        toml("writeText", &[Object, String], Unit, "tondo_rt_toml_write_text"),
+        toml("writeDateTime", &[Object, String], Unit, "tondo_rt_toml_write_datetime"),
+        toml("writeKey", &[Object, String], Unit, "tondo_rt_toml_write_key"),
+        toml("writeOpen", &[Object, Bool], Unit, "tondo_rt_toml_write_open"),
+        toml("writeClose", &[Object], Unit, "tondo_rt_toml_write_close"),
+        toml("finish", &[Object], String, "tondo_rt_toml_finish"),
+        toml("failure", &[Object, Int], String, "tondo_rt_toml_failure"),
         math("sin", &[Float], Float, "tondo_rt_math_sin"),
         math("cos", &[Float], Float, "tondo_rt_math_cos"),
         math("tan", &[Float], Float, "tondo_rt_math_tan"),

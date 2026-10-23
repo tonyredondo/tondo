@@ -180,10 +180,8 @@ pub enum Event {
     Key(String)
 }
 
-pub enum UnknownFields {
-    Ignore
-    Reject
-}
+/// What reading does with a member that the type has no field for.
+pub alias UnknownFields = serialization.UnknownFields
 
 /// A JSON document read event by event.
 pub type Reader = {
@@ -728,6 +726,7 @@ impl serialization.Decode for Value {
                 Value.Object(members)
             }
             serialization.Event.Text(text) => Value.Text(text)
+            serialization.Event.DateTime(text) => Value.Text(text)
             serialization.Event.Bytes(bytes) => Value.Text(jsoncodec.base64Encode(bytes, false))
             _ => match numeral(first) {
                 some(digits) => Value.Number(digits)

@@ -12,6 +12,7 @@ use std::path::Path;
 const SOURCES: &[(&str, &str)] = &[
     ("serialization", include_str!("../std/serialization.to")),
     ("json", include_str!("../std/json.to")),
+    ("toml", include_str!("../std/toml.to")),
     ("ffi", include_str!("../std/ffi.to")),
     ("regex", include_str!("../std/regex.to")),
     ("reflect", include_str!("../std/reflect.to")),

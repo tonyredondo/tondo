@@ -2263,6 +2263,7 @@ pub enum Event {
     Float(Float)
     Number(String)          // un número tal como lo escribe un formato de texto
     Text(String)
+    DateTime(String)        // fecha, hora o ambas en RFC 3339, en un formato que las tiene
     Bytes(Array[Byte])
     BeginList
     EndList
@@ -2271,6 +2272,7 @@ pub enum Event {
     EndMap
 }
 pub enum ErrorKind { Syntax, Type, Missing, Unknown, Range, Io, Unsupported }
+pub enum UnknownFields { Ignore, Reject }
 pub type Error = { kind: ErrorKind, message: String, path: String, line: Int, column: Int }
 
 pub trait Source {
@@ -2297,6 +2299,7 @@ pub trait Sink {
     fn number(self, digits: String)
     fn text(self, value: String)
     fn bytes(self, value: Array[Byte])
+    fn dateTime(self, text: String)    // por defecto, como texto
     fn beginList(self, count: Int)
     fn endList(self)
     fn beginMap(self, count: Int)
@@ -2315,7 +2318,8 @@ pub trait Decode {
 ~~~
 
 - `Encode` y `Decode` están implementados para `Int`, `Float`, `Bool`,
-  `String`, `T?`, `Array[T]` y `Map[String, V]`, y el compilador los implementa
+  `String`, `T?`, `Array[T]`, `Map[String, V]` y `time.DateTime` (texto RFC 3339
+  en UTC, o el `DateTime` del formato), y el compilador los implementa
   para cada record, enum y newtype del programa cuyas partes los implementan,
   cuando el programa trae `std.serialization` directamente o por un formato. Una
   implementación escrita en el programa sustituye a la automática.
@@ -2330,7 +2334,9 @@ pub trait Decode {
 - `Decode` acepta para un número cualquiera de `Int`, `Float` y `Number`, y para
   un entero da `Range` cuando no cabe.
 - Un `Error` lleva dónde ocurrió como camino (`$.users[2].age`), línea y
-  columna, y se muestra como `mensaje at camino (line l, column c)`.
+  columna, y se muestra como `mensaje at camino (line l, column c)`, sin la
+  posición cuando no la hay, como al escribir. `ErrorKind` se muestra con su
+  nombre.
 - Un `Sink` que no puede representar un valor lo informa al terminar el
   documento, con `Unsupported`.
 
@@ -3080,78 +3086,64 @@ directa del host hasta que el dispatcher async registre esa operación
 
 ### 14.14 `std.toml`
 
-`std.toml` es el codec de datos de TOML 1.1.0 y no el parser del toolchain.
-Acepta una única raíz TOML UTF-8, claves bare/quoted/dotted, los cuatro tipos
-de string, números con bases/underscores, floats finitos y no finitos,
-booleanos, fecha/hora civil, arrays heterogéneos, inline tables cerradas,
-tables y arrays-of-tables. Los comentarios se descartan y no hay includes,
-interpolación de environment, locale, TZ ni ejecución.
+`std.toml` lee y escribe documentos [TOML 1.1](https://toml.io/en/v1.1.0) UTF-8
+para datos de aplicación, sobre un parser y un escritor del runtime. No es el
+parser de `tondo.toml` del toolchain. Los comentarios se descartan y no hay
+includes, interpolación de entorno ni ejecución.
 
-La API expone `TomlValue`/`TomlValueView`, `TomlReader`/`TomlWriter`,
-`parse`/`parseView`, `decode`, `validate`, `encode` y `encodeCanonical`. Las
-fechas usan `std.time`; un offset fijo se conserva en `TomlOffsetDateTime` y
-no se convierte implícitamente en zona horaria. La precisión se limita a
-nanosegundos: fracciones superiores a nueve dígitos producen un error para no
-perder datos. Tables, dotted keys y arrays-of-tables se resuelven con paths
-explícitos; duplicados, colisiones scalar/table y extensión de inline tables
-se rechazan antes de publicar un valor.
+~~~tondo
+import std.toml
 
-El reader/writer usa eventos con frames y worklists acotados. Los spans son
-half-open en bytes UTF-8, con línea/columna y path `Key`/`Index`; el parser es
-invariante al chunking y no publica resultados parciales. Solo la frontera de
-`std.io.Reader`/`Writer` espera y no existe una API duplicada.
+type Server = { host: String, port: Int, tls: Bool? }
+type Config = { name: String, started: time.DateTime, servers: Array[Server] }
 
-El kernel Rust de tondo-stdlib queda verificado por STD-TOML-IMPL-001 con
-TomlValue/TomlValueView, parser con spans, fechas civiles de nanosegundo,
-duplicados y tablas/AOT, encoder canónico, eventos y reader/writer atómicos.
-La identidad serialization::Toml se registra sin añadir un intrinsic del
-compilador. El estado es verified-stdlib-kernel; host/compiler,
-native_aot_lowering: not-claimed y public_api_promoted: false. No se reclama
-ejecución hosted ni runtime nativo hasta disponer del ABI TOML correspondiente.
-STD-TOML-TEST-001 queda verificado por el modelo canónico independiente, la
-matriz hosted, el corpus negativo, el reader common con fragmentos de un byte y
-el fuzz bounded. La evidencia está en
-[testing/stdlib-toml-test.json](./testing/stdlib-toml-test.json) y
-[docs/contracts/stdlib-toml-test.md](./docs/contracts/stdlib-toml-test.md);
-no promueve compiler/VM/AOT ni claims de rendimiento. La campaña posterior
-STD-TOML-PERF-001 fija un baseline reproducible del kernel Rust en
-`x86_64-unknown-linux-gnu` cubre trece cargas con 27 muestras cada una,
-parse/view, encode normal/canónico, eventos y rechazos acotados. El contrato
-[`testing/stdlib-toml-performance.json`](./testing/stdlib-toml-performance.json)
-y la guía [`docs/contracts/stdlib-toml-performance.md`](./docs/contracts/stdlib-toml-performance.md)
-definen latencia, throughput y contadores lógicos. La medición no promociona
-un bridge VM, ABI nativo, SIMD ni AOT; `parseView` todavía materializa y
-descarta el valor durante la validación. `STD-TOML-CONF-001` ejecuta seis casos
-con bytes compartidos mediante un callable host privado en el bytecode VM y un
-proceso nativo separado que llama al mismo kernel Rust. Comprueba typed/dynamic,
-TOML 1.1, orden canónico, streaming fragmentado, path/span y rechazo atómico;
-el contrato está en
-[`testing/stdlib-toml-conformance.json`](./testing/stdlib-toml-conformance.json)
-y el límite en
-[`docs/contracts/stdlib-toml-conformance.md`](./docs/contracts/stdlib-toml-conformance.md).
-El callable es solo de prueba: todavía no existe una API `std.toml` ejecutable
-desde Tondo, registro hosted de producción, ABI TOML nativo ni lowering AOT.
-`STD-TOML-DOC-001` closes an executable usage guide for the Rust stdlib kernel
-in [`docs/contracts/stdlib-toml.md`](./docs/contracts/stdlib-toml.md), backed
-by `crates/tondo-stdlib/examples/toml_usage.rs` and
-`scripts/stdlib-toml-doc-check.sh`. It separates application TOML from the
-toolchain's `tondo.toml`, fixes explicit limits, ownership, error and
-buffering costs, and shows materialized, typed, view and event usage. The
-example does not claim a source-level Tondo API. The following CBOR owner
-section records its verified kernel and remaining owner gates.
+let config: Config = toml.decode(text)?
+let back = toml.encode(config)?
+let port = toml.parse(text)?.find("servers")
+~~~
 
-El contrato machine-readable, la documentación y los checks negativos son
-[testing/stdlib-toml.json](./testing/stdlib-toml.json),
-[docs/contracts/stdlib-toml.md](./docs/contracts/stdlib-toml.md),
-[testing/stdlib-toml-test.json](./testing/stdlib-toml-test.json),
-[docs/contracts/stdlib-toml-test.md](./docs/contracts/stdlib-toml-test.md),
-[testing/stdlib-toml-conformance.json](./testing/stdlib-toml-conformance.json),
-[docs/contracts/stdlib-toml-conformance.md](./docs/contracts/stdlib-toml-conformance.md),
-[scripts/stdlib-toml-check.sh](./scripts/stdlib-toml-check.sh) y
-[scripts/stdlib-toml-test.sh](./scripts/stdlib-toml-test.sh). El contrato
-queda cerrado como diseño B0 y la conformance acotada está verificada. La
-guía de uso del kernel queda cerrada por `STD-TOML-DOC-001`; la API pública
-compiler/host y el ABI/AOT nativo siguen fuera de esta promoción.
+La superficie es:
+
+~~~tondo pseudocode
+pub enum Value {
+    Text(String)
+    Int(Int)
+    Float(Float)
+    Bool(Bool)
+    DateTime(String)        // tal como se escribió: `1979-05-27T07:32:00Z`
+    Array(Array[Value])
+    Table(Map[String, Value])
+}
+pub alias TomlError = serialization.Error
+pub alias UnknownFields = serialization.UnknownFields
+
+pub fn decode[T: serialization.Decode](text: String, unknownFields: UnknownFields = UnknownFields.Ignore): T ! TomlError
+pub fn encode[T: serialization.Encode](value: T): String ! TomlError
+pub fn parse(text: String): Value ! TomlError
+
+pub fn Value.get(self, key: String): Value?
+pub fn Value.at(self, index: Int): Value?
+pub fn Value.find(self, path: String): Value?      // claves con puntos: `server.port`
+pub fn Value.asText(self): String?
+pub fn Value.asInt(self): Int?
+pub fn Value.asFloat(self): Float?                 // también de un entero
+pub fn Value.asBool(self): Bool?
+pub fn Value.asDateTime(self): String?
+pub fn Value.asArray(self): Array[Value]?
+pub fn Value.asTable(self): Map[String, Value]?
+impl Display for Value                             // una tabla como documento
+~~~
+
+- Cualquier tipo con `serialization.Encode`/`Decode` se lee y se escribe con la
+  forma de 14.7: un record es una tabla y un array de records un array de tablas
+  (`[[name]]`); un mapa dentro de otra lista es una tabla inline. Las fechas y
+  horas de TOML son eventos `DateTime`, que `time.DateTime` lee y escribe; una
+  fecha local es medianoche UTC.
+- Un documento es una tabla, así que `encode` solo escribe records y mapas. TOML
+  no tiene null: un campo `none` se omite, y un `none` en otro lugar es un error
+  `Unsupported`.
+- Los errores de lectura llevan el camino, la línea y la columna del valor; los de
+  escritura, el camino.
 
 ### 14.15 `std.cbor`
 

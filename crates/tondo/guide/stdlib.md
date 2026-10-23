@@ -14,6 +14,8 @@ std.env        args, environment, current directory
 std.process    run programs and pipelines, capture output
 std.time       Duration, sleep, now, UTC dates, ISO 8601
 std.json       encode and decode any type, navigate dynamic JSON
+std.toml       the same for TOML documents, with dates
+std.serialization  the protocol every format shares, for custom encodings
 std.csv        CSV rows and records, streaming and whole
 std.log        a logger with levels and fields, text or JSON lines
 std.http       HTTP client and server, WebSockets (`tondo guide http`)
@@ -55,7 +57,32 @@ fn main(): !(fs.FsError | json.JsonError | process.ProcessError) {
 ```
 
 Any record or enum encodes as JSON when its fields do; `json.Value` handles
-JSON of unknown shape.
+JSON of unknown shape. The same types read and write every format:
+
+```tondo
+import std.console
+import std.time
+import std.toml
+
+type Server = { host: String, port: Int, tls: Bool? }
+type Config = { name: String, started: time.DateTime, servers: Array[Server] }
+
+fn main(): !toml.TomlError {
+    let text = """
+        name = "app"
+        started = 2026-10-23T08:00:00Z
+
+        [[servers]]
+        host = "localhost"
+        port = 8080
+        """
+    let config = toml.decode[Config](text)?
+    console.println("{config.servers[0].port} {toml.parse(text)?.find("name")}")
+    console.print(toml.encode(config with { name: "copy" })?)
+}
+```
+
+TOML has no null: a `none` field is left out when written.
 
 ## Time, logging and CSV
 

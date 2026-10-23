@@ -1,0 +1,372 @@
+// std.toml (standard library 14.11): TOML documents as values of `Value`,
+// and any type read from and written to TOML through the traits of
+// `std.serialization`, on top of the runtime's parser and writer (TOML 1.1).
+
+import std.internal.codec as tomlcodec
+import std.internal.toml as tomlnative
+import std.serialization
+
+// ---------------------------------------------------------------------------
+// Values
+// ---------------------------------------------------------------------------
+
+/// A TOML value of unknown shape; a document is a `Table`.
+pub enum Value {
+    Text(String)
+    Int(Int)
+    Float(Float)
+    Bool(Bool)
+    /// A date, a time or both, as written: `1979-05-27T07:32:00Z`.
+    DateTime(String)
+    Array(Array[Value])
+    Table(Map[String, Value])
+}
+
+/// The member `key` of a table.
+pub fn Value.get(self, key: String): Value? {
+    match self {
+        Value.Table(members) => members.get(key)
+        _ => none
+    }
+}
+
+/// The element `index` of an array.
+pub fn Value.at(self, index: Int): Value? {
+    match self {
+        Value.Array(items) => items.get(index)
+        _ => none
+    }
+}
+
+/// The value at a dotted path of keys, as `server.port`.
+pub fn Value.find(self, path: String): Value? {
+    var found = self
+    for key in path.split(".") {
+        found = found.get(key)?
+    }
+    found
+}
+
+pub fn Value.asText(self): String? {
+    match self {
+        Value.Text(text) => text
+        _ => none
+    }
+}
+
+pub fn Value.asInt(self): Int? {
+    match self {
+        Value.Int(value) => value
+        _ => none
+    }
+}
+
+/// A float, or an integer as a float.
+pub fn Value.asFloat(self): Float? {
+    match self {
+        Value.Float(value) => value
+        Value.Int(value) => Float(value)
+        _ => none
+    }
+}
+
+pub fn Value.asBool(self): Bool? {
+    match self {
+        Value.Bool(value) => value
+        _ => none
+    }
+}
+
+pub fn Value.asDateTime(self): String? {
+    match self {
+        Value.DateTime(text) => text
+        _ => none
+    }
+}
+
+pub fn Value.asArray(self): Array[Value]? {
+    match self {
+        Value.Array(items) => items
+        _ => none
+    }
+}
+
+pub fn Value.asTable(self): Map[String, Value]? {
+    match self {
+        Value.Table(members) => members
+        _ => none
+    }
+}
+
+/// A table as a TOML document, and any other value as TOML writes it
+/// after `=`.
+impl Display for Value {
+    fn display(self): String {
+        match self {
+            Value.Table(_) => encode(self).unwrapOr("")
+            _ => {
+                let line = encode(Value.Table(["v": self])).unwrapOr("v = ")
+                line.removePrefix("v = ").trimEnd()
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+/// A failure to read or write TOML, with where it happened: the error of
+/// every format.
+pub alias TomlError = serialization.Error
+
+/// What reading does with a member that the type has no field for.
+pub alias UnknownFields = serialization.UnknownFields
+
+// ---------------------------------------------------------------------------
+// Encoding and decoding
+// ---------------------------------------------------------------------------
+
+/// A value of `T` from a TOML document.
+pub fn decode[T: serialization.Decode](
+    text: String,
+    unknownFields: UnknownFields = UnknownFields.Ignore,
+): T ! TomlError {
+    let input = Reader {
+        native: tomlnative.parse(text)
+        rejectUnknown: unknownFields == UnknownFields.Reject
+    }
+    let first = serialization.Source.value(input)?
+    serialization.Decode.decode[T](input, first)?
+}
+
+/// The TOML document of a value, which must be a record or a map: a
+/// document is a table. A `none` field is left out; one inside an array
+/// cannot be written.
+pub fn encode[T: serialization.Encode](value: T): String ! TomlError {
+    let out = Writer { native: tomlnative.writer() }
+    value.encode(out)
+    let failure = tomlnative.failure(out.native, 0)
+    if failure.length() > 0 {
+        fail TomlError {
+            kind: serialization.ErrorKind.Unsupported
+            message: failure
+            path: tomlnative.failure(out.native, 1)
+            line: 0
+            column: 0
+        }
+    }
+    tomlnative.finish(out.native)
+}
+
+/// A document of unknown shape.
+pub fn parse(text: String): Value ! TomlError {
+    decode[Value](text)
+}
+
+// ---------------------------------------------------------------------------
+// Formats
+// ---------------------------------------------------------------------------
+
+/// A TOML document read event by event: its tables are maps, its arrays
+/// and arrays of tables lists, and its dates and times `DateTime`s.
+type Reader = {
+    native: tomlnative.Native
+    rejectUnknown: Bool
+}
+
+impl serialization.Source for Reader {
+    fn next(self): serialization.Event? ! TomlError {
+        let event = match tomlnative.next(self.native) {
+            0 => return none
+            2 => serialization.Event.Bool(true)
+            3 => serialization.Event.Bool(false)
+            4 => serialization.Event.Int(tomlnative.int(self.native))
+            5 => serialization.Event.Float(tomlnative.float(self.native))
+            6 => serialization.Event.Text(tomlnative.text(self.native))
+            7 => serialization.Event.DateTime(tomlnative.text(self.native))
+            8 => serialization.Event.BeginList
+            9 => serialization.Event.EndList
+            10 => serialization.Event.BeginMap
+            11 => serialization.Event.EndMap
+            12 => serialization.Event.Key(tomlnative.text(self.native))
+            _ => fail self.error(serialization.ErrorKind.Syntax)
+        }
+        some(event)
+    }
+
+    fn skip(self, first: serialization.Event): !TomlError {
+        let code = match first {
+            serialization.Event.BeginList => 8
+            serialization.Event.BeginMap => 10
+            _ => 0
+        }
+        if tomlnative.skip(self.native, code) < 0 {
+            fail self.error(serialization.ErrorKind.Syntax)
+        }
+    }
+
+    fn failure(self, kind: serialization.ErrorKind, message: String): TomlError {
+        tomlnative.fail(self.native, message)
+        self.error(kind)
+    }
+
+    fn rejectsUnknown(self): Bool {
+        self.rejectUnknown
+    }
+
+    fn mapName(self): String {
+        "a table"
+    }
+
+    fn listName(self): String {
+        "an array"
+    }
+}
+
+fn Reader.error(self, kind: serialization.ErrorKind): TomlError {
+    TomlError {
+        kind: kind
+        message: tomlnative.where(self.native, 0)
+        path: tomlnative.where(self.native, 1)
+        line: Int.parse(tomlnative.where(self.native, 2)).unwrapOr(0)
+        column: Int.parse(tomlnative.where(self.native, 3)).unwrapOr(0)
+    }
+}
+
+/// A TOML document written event by event. A map in a map is a table, a
+/// list of maps an array of tables, and a map in any other list an inline
+/// table. Bytes are written as a base64 string.
+type Writer = {
+    native: tomlnative.Native
+}
+
+impl serialization.Sink for Writer {
+    fn null(self) {
+        tomlnative.writeNull(self.native)
+    }
+
+    fn bool(self, value: Bool) {
+        tomlnative.writeBool(self.native, value)
+    }
+
+    fn int(self, value: Int) {
+        tomlnative.writeInt(self.native, value)
+    }
+
+    fn float(self, value: Float) {
+        tomlnative.writeFloat(self.native, value)
+    }
+
+    fn number(self, digits: String) {
+        match Int.parse(digits) {
+            ok(value) => tomlnative.writeInt(self.native, value)
+            err(_) => tomlnative.writeFloat(self.native, Float.parse(digits).unwrapOr(0.0))
+        }
+    }
+
+    fn text(self, value: String) {
+        tomlnative.writeText(self.native, value)
+    }
+
+    fn bytes(self, value: Array[Byte]) {
+        tomlnative.writeText(self.native, tomlcodec.base64Encode(value, false))
+    }
+
+    fn dateTime(self, text: String) {
+        tomlnative.writeDateTime(self.native, text)
+    }
+
+    fn beginList(self, count: Int) {
+        tomlnative.writeOpen(self.native, false)
+    }
+
+    fn endList(self) {
+        tomlnative.writeClose(self.native)
+    }
+
+    fn beginMap(self, count: Int) {
+        tomlnative.writeOpen(self.native, true)
+    }
+
+    fn key(self, name: String) {
+        tomlnative.writeKey(self.native, name)
+    }
+
+    fn endMap(self) {
+        tomlnative.writeClose(self.native)
+    }
+
+    fn omitsNone(self): Bool {
+        true
+    }
+}
+
+impl serialization.Encode for Value {
+    fn encode[S: serialization.Sink](self, out: S) {
+        match self {
+            Value.Text(text) => out.text(text)
+            Value.Int(value) => out.int(value)
+            Value.Float(value) => out.float(value)
+            Value.Bool(value) => out.bool(value)
+            Value.DateTime(text) => out.dateTime(text)
+            Value.Array(items) => {
+                out.beginList(items.length())
+                for item in items {
+                    serialization.Encode.encode(item, out)
+                }
+                out.endList()
+            }
+            Value.Table(members) => {
+                out.beginMap(members.length())
+                for (key, member) in members {
+                    out.key(key)
+                    serialization.Encode.encode(member, out)
+                }
+                out.endMap()
+            }
+        }
+    }
+}
+
+impl serialization.Decode for Value {
+    fn decode[S: serialization.Source](input: S, first: serialization.Event): Value ! TomlError {
+        match first {
+            serialization.Event.Text(text) => Value.Text(text)
+            serialization.Event.Int(value) => Value.Int(value)
+            serialization.Event.Float(value) => Value.Float(value)
+            serialization.Event.Number(digits) => match Int.parse(digits) {
+                ok(value) => Value.Int(value)
+                err(_) => Value.Float(serialization.Decode.decode[Float](input, first)?)
+            }
+            serialization.Event.Bool(value) => Value.Bool(value)
+            serialization.Event.DateTime(text) => Value.DateTime(text)
+            serialization.Event.Bytes(bytes) => Value.Text(tomlcodec.base64Encode(bytes, false))
+            serialization.Event.BeginList => {
+                var items: Array[Value] = []
+                for {
+                    let event = input.value()?
+                    match event {
+                        serialization.Event.EndList => break
+                        _ => items.push(serialization.Decode.decode[Value](input, event)?)
+                    }
+                }
+                Value.Array(items)
+            }
+            serialization.Event.BeginMap => {
+                var members: Map[String, Value] = [:]
+                for {
+                    match input.nextKey()? {
+                        some(key) => {
+                            let event = input.value()?
+                            members[key] = serialization.Decode.decode[Value](input, event)?
+                        }
+                        none => break
+                    }
+                }
+                Value.Table(members)
+            }
+            _ => fail input.mismatch(first, "a TOML value")
+        }
+    }
+}

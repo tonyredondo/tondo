@@ -1,0 +1,104 @@
+// TOML: typed documents with tables and arrays of tables, dates, documents
+// of unknown shape, errors with where they happened, and the same types
+// written as JSON.
+import std.console
+import std.json
+import std.time
+import std.toml
+
+enum Mode {
+    Fast
+    Careful
+    Limited(Int)
+}
+
+type Server = { host: String, port: Int, tls: Bool? }
+type Database = { url: String, pool: Int }
+type Config = {
+    name: String
+    version: Float
+    tags: Array[String]
+    started: time.DateTime
+    mode: Mode
+    server: Server
+    databases: Array[Database]
+}
+
+const Text: String = """
+    # The service.
+    name = "app"
+    version = 1.5
+    tags = ["a", "b"]
+    started = 1979-05-27T07:32:00Z
+    mode = "Careful"
+
+    [server]
+    host = "localhost"
+    port = 8080
+
+    [[databases]]
+    url = "postgres://a"
+    pool = 4
+
+    [[databases]]
+    url = "postgres://b"
+    pool = 8
+    """
+
+fn report[T](result: T ! toml.TomlError) {
+    match result {
+        ok(_) => console.println("ok")
+        err(error) => console.println("{error.kind}: {error}")
+    }
+}
+
+fn main(): !(toml.TomlError | time.TimeError) {
+    let config = toml.decode[Config](Text)?
+    console.println("{config.name} {config.server.port} {config.databases[1].pool} {config.started}")
+    // A `none` is left out, since TOML has no null.
+    let written = toml.encode(config with { mode: Mode.Limited(3) })?
+    console.print(written)
+    console.println(json.encode(toml.decode[Config](written)?))
+
+    let document = toml.parse(Text)?
+    let pools = document.find("databases").map((d) { d.asArray().map((a) { a.length() }) })
+    console.println("{document.find("server.host")} {pools}")
+    console.println("{document.get("version").map((v) { v.asFloat() })} {document.find("server.missing")}")
+    console.println("{toml.Value.Array([toml.Value.Int(1), toml.Value.Text("two")])}")
+
+    report(toml.parse("name = \n"))
+    report(toml.decode[Config]("name = 1\n"))
+    report(toml.decode[Server]("host = \"h\"\nport = 1\nextra = 2\n", unknownFields: toml.UnknownFields.Reject))
+    report(toml.encode([1, 2]))
+    report(toml.encode(["values": [some(1), none]]))
+}
+
+// expect-stdout: app 8080 8 1979-05-27T07:32:00Z
+// expect-stdout: name = "app"
+// expect-stdout: version = 1.5
+// expect-stdout: tags = ["a", "b"]
+// expect-stdout: started = 1979-05-27T07:32:00Z
+// expect-stdout:
+// expect-stdout: [mode]
+// expect-stdout: Limited = 3
+// expect-stdout:
+// expect-stdout: [server]
+// expect-stdout: host = "localhost"
+// expect-stdout: port = 8080
+// expect-stdout:
+// expect-stdout: [[databases]]
+// expect-stdout: url = "postgres://a"
+// expect-stdout: pool = 4
+// expect-stdout:
+// expect-stdout: [[databases]]
+// expect-stdout: url = "postgres://b"
+// expect-stdout: pool = 8
+// expect-stdout: {"name":"app","version":1.5,"tags":["a","b"],"started":"1979-05-27T07:32:00Z","mode":{"Limited":3},"server":{"host":"localhost","port":8080,"tls":null},"databases":[{"url":"postgres://a","pool":4},{"url":"postgres://b","pool":8}]}
+// expect-stdout: some("localhost") some(some(2))
+// expect-stdout: some(some(1.5)) none
+// expect-stdout: [1, "two"]
+// expect-stdout: Syntax: string values must be quoted, expected literal string at $ (line 1, column 8)
+// expect-stdout: Type: expected a string, found a number at $.name (line 1, column 8)
+// expect-stdout: Unknown: unknown field `extra` at $.extra (line 3, column 9)
+// expect-stdout: Unsupported: a TOML document is a table, so it cannot be an array at $
+// expect-stdout: Unsupported: TOML has no null to write this `none` at $.values[1]

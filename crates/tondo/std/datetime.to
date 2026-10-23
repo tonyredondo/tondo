@@ -2,6 +2,7 @@
 // a program that imports std.time links with: ISO 8601 text and dates as
 // times since the Unix epoch.
 
+import std.serialization
 import std.time as __time
 
 /// `time.parseDateTime`: `2026-10-22`, `2026-10-22T06:38:28Z`,
@@ -139,5 +140,30 @@ fn daysIn(year: Int, month: Int): Int {
         30
     } else {
         31
+    }
+}
+
+/// A date and time, as RFC 3339 writes it in UTC.
+impl serialization.Encode for __time.DateTime {
+    fn encode[S: serialization.Sink](self, out: S) {
+        out.dateTime("{self}")
+    }
+}
+
+impl serialization.Decode for __time.DateTime {
+    fn decode[S: serialization.Source](input: S, first: serialization.Event): __time.DateTime !
+        serialization.Error {
+        let text = match first {
+            serialization.Event.DateTime(text) => text
+            serialization.Event.Text(text) => text
+            _ => fail input.mismatch(first, "a date and time")
+        }
+        match parse(text) {
+            ok(value) => value
+            err(_) => fail input.failure(
+                serialization.ErrorKind.Type,
+                "`{text}` is not a date and time",
+            )
+        }
     }
 }
