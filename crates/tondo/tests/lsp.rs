@@ -316,3 +316,56 @@ fn repairs_as_code_actions() {
     assert_eq!(titles(&found), ["remove the `;`", "Apply every safe repair"], "{found}");
     editor.stop();
 }
+
+#[test]
+fn highlights_symbols_signatures_hints() {
+    let dir = project(
+        "lsp-assist",
+        &[("tondo.toml", "[package]\nname = \"app\"\n"), ("src/models/models.to", MODELS), ("src/main.to", MAIN)],
+    );
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("src/main.to"));
+
+    let highlights =
+        editor.at("textDocument/documentHighlight", &uri, MAIN, "console.println(ada.name)", "ada", json!({}));
+    let kinds: Vec<u64> = highlights.as_array().unwrap().iter().map(|h| h["kind"].as_u64().unwrap()).collect();
+    assert_eq!(kinds, [3, 2, 2], "{highlights}");
+
+    let symbols = editor.request("workspace/symbol", json!({ "query": "gre" }));
+    let names: Vec<&str> = symbols.as_array().unwrap().iter().map(|s| s["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["greet"]);
+
+    // The runtime's functions show what `tondo api` says of them.
+    let hover = editor.at("textDocument/hover", &uri, MAIN, "console.println(ada.name)", "println", json!({}));
+    let value = hover["contents"]["value"].as_str().unwrap();
+    assert!(value.starts_with("```tondo\npub fn println(text: String)"), "{value}");
+
+    let signature = |editor: &mut Editor, typed: &str| -> Value {
+        let text =
+            MAIN.replace("    console.println(ada.name)\n", &format!("    console.println(ada.name)\n    {typed}\n"));
+        editor.notify(
+            "textDocument/didChange",
+            json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": text }] }),
+        );
+        let line = text.lines().position(|l| l == format!("    {typed}")).unwrap();
+        let position = json!({ "line": line, "character": 4 + typed.len() });
+        editor.request("textDocument/signatureHelp", json!({ "textDocument": { "uri": uri }, "position": position }))
+    };
+    let help = signature(&mut editor, "greet(ada, ");
+    assert_eq!(help["signatures"][0]["label"], "fn greet(user: models.User, times: Int): String");
+    assert_eq!(help["activeParameter"], 1);
+    let help = signature(&mut editor, "models.make(\"Grace\", ");
+    assert_eq!(help["signatures"][0]["parameters"][1]["label"], "age: Int = 30");
+    let help = signature(&mut editor, "console.println(");
+    assert_eq!(help["signatures"][0]["label"], "fn println(text: String)");
+
+    editor.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 3 }, "contentChanges": [{ "text": MAIN }] }),
+    );
+    let range = json!({ "start": { "line": 0, "character": 0 }, "end": { "line": 30, "character": 0 } });
+    let hints = editor.request("textDocument/inlayHint", json!({ "textDocument": { "uri": uri }, "range": range }));
+    let labels: Vec<&str> = hints.as_array().unwrap().iter().map(|h| h["label"].as_str().unwrap()).collect();
+    assert_eq!(labels, [": String", ": models.User", ": Int"], "{hints}");
+    editor.stop();
+}

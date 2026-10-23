@@ -50,14 +50,30 @@ pub fn builtin_methods(owner: &str) -> Vec<&'static str> {
 /// The declaration and documentation of a method the runtime implements,
 /// as `tondo api` shows them: `pub fn Array.length(self): Int`.
 pub fn builtin_doc(owner: &str, name: &str) -> Option<(String, String)> {
-    let lines: Vec<&str> = BUILTINS.lines().collect();
-    let found = lines.iter().position(|line| {
+    declaration(BUILTINS, |line| {
         line.strip_prefix("pub fn ").and_then(|rest| rest.strip_prefix(owner)).is_some_and(|rest| {
             let rest = rest.strip_prefix('[').map_or(rest, |g| g.find(']').map_or(g, |end| &g[end + 1..]));
             rest.strip_prefix('.')
                 .is_some_and(|rest| rest.starts_with(name) && rest[name.len()..].starts_with(['(', '[']))
         })
-    })?;
+    })
+}
+
+/// The function `name` of a standard module, as `tondo api` shows it:
+/// `pub fn println(text: String)` of `std.console`, and its documentation.
+pub fn function_doc(module: &str, name: &str) -> Option<(String, String)> {
+    let text = standard(module)?;
+    declaration(&text, |line| {
+        line.strip_prefix("pub fn ")
+            .is_some_and(|rest| rest.starts_with(name) && rest[name.len()..].starts_with(['(', '[']))
+    })
+}
+
+/// The first line of `text` that `wanted` accepts, and the `///` lines
+/// above it.
+fn declaration(text: &str, wanted: impl Fn(&str) -> bool) -> Option<(String, String)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let found = lines.iter().position(|line| wanted(line))?;
     let docs: Vec<&str> = lines[..found]
         .iter()
         .rev()

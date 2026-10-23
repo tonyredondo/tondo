@@ -347,7 +347,14 @@ no esté guardado. Tras un cambio, cuando la escritura se detiene, analiza de
 nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
 
 - Hover: el tipo de una variable o un parámetro, la cabecera de una función o
-  un campo, la declaración de un tipo, y la documentación `///`.
+  un campo, la declaración de un tipo, y la documentación `///`; de lo que
+  implementa el runtime, como `text.length()` o `console.println`, lo que
+  muestra `tondo api`.
+- Las apariciones en el archivo de lo que está bajo el cursor, y los símbolos
+  del proyecto cuyo nombre contiene lo que se busca.
+- La firma de la llamada que se escribe, con su documentación y el argumento
+  en que está el cursor.
+- El tipo de cada variable declarada sin escribirlo, como pista en línea.
 - Definición y referencias de variables, parámetros (también en argumentos con
   nombre), funciones, métodos, tipos, campos, variantes, constantes, traits y
   módulos; las de la librería estándar se abren desde una copia en la caché.

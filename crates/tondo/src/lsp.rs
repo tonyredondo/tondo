@@ -143,6 +143,10 @@ impl Server {
             "textDocument/formatting" => Some(Ok(self.formatting(params).unwrap_or(Value::Null))),
             "textDocument/completion" => Some(Ok(self.completion(params).unwrap_or(json!([])))),
             "textDocument/codeAction" => Some(Ok(self.code_actions(params).unwrap_or(json!([])))),
+            "textDocument/documentHighlight" => Some(Ok(self.highlights(params).unwrap_or(json!([])))),
+            "workspace/symbol" => Some(Ok(self.workspace_symbols(params))),
+            "textDocument/signatureHelp" => Some(Ok(self.signature_help(params).unwrap_or(Value::Null))),
+            "textDocument/inlayHint" => Some(Ok(self.inlay_hints(params).unwrap_or(json!([])))),
             "textDocument/semanticTokens/full" => {
                 Some(Ok(self.semantic_tokens(params).unwrap_or(json!({ "data": [] }))))
             }
@@ -175,6 +179,10 @@ impl Server {
                 "documentFormattingProvider": true,
                 "completionProvider": { "triggerCharacters": ["."] },
                 "codeActionProvider": { "codeActionKinds": ["quickfix", "source.fixAll"] },
+                "documentHighlightProvider": true,
+                "workspaceSymbolProvider": true,
+                "signatureHelpProvider": { "triggerCharacters": ["(", ","] },
+                "inlayHintProvider": true,
                 "semanticTokensProvider": {
                     "legend": { "tokenTypes": TOKEN_TYPES, "tokenModifiers": ["declaration", "readonly", "defaultLibrary"] },
                     "full": true,
@@ -364,7 +372,7 @@ impl Server {
             );
         }
         let utf8 = self.utf8;
-        let (analyzed, def, span) = self.def_at(params)?;
+        let Some((analyzed, def, span)) = self.def_at(params) else { return self.builtin_hover(params) };
         let index = analyzed.analysis.index.as_ref()?;
         let def = &index.defs[def];
         let sources = &analyzed.analysis.sources;
@@ -412,6 +420,217 @@ impl Server {
             json!({ "start": position(&file.text, start, utf8), "end": position(&file.text, end, utf8) })
         };
         Some(json!({ "contents": { "kind": "markdown", "value": value }, "range": range }))
+    }
+
+    /// What the runtime implements, which the program does not declare:
+    /// `text.length()`, `console.println(...)`, from `tondo api`.
+    fn builtin_hover(&self, params: &Value) -> Option<Value> {
+        let (analyzed, file, offset) = self.at(params)?;
+        let source = analyzed.analysis.sources.file(file);
+        let text = &source.text;
+        let at = (offset - source.base) as usize;
+        let is_name = |c: char| c.is_alphanumeric() || c == '_';
+        let start = text[..at].rfind(|c: char| !is_name(c)).map_or(0, |i| i + 1);
+        let end = text[at..].find(|c: char| !is_name(c)).map_or(text.len(), |i| at + i);
+        let name = &text[start..end];
+        let (header, docs) = self.builtin(analyzed, file, start, name)?;
+        let mut value = format!("```tondo\n{header}\n```");
+        if !docs.is_empty() {
+            value.push_str(&format!("\n\n{docs}"));
+        }
+        let span = Span::new(source.base + start as u32, source.base + end as u32);
+        Some(json!({ "contents": { "kind": "markdown", "value": value }, "range": self.range(source, span) }))
+    }
+
+    /// The declaration and documentation of `name`, written at `start` after
+    /// a dot, when the runtime implements it.
+    fn builtin(&self, analyzed: &Analyzed, file: usize, start: usize, name: &str) -> Option<(String, String)> {
+        let source = analyzed.analysis.sources.file(file);
+        let text = &source.text;
+        let dot = start.checked_sub(1).filter(|&d| text[d..].starts_with('.'))?;
+        let receiver_start = text[..dot].rfind(|c: char| !(c.is_alphanumeric() || c == '_')).map_or(0, |i| i + 1);
+        let receiver = &text[receiver_start..dot];
+        // A standard module the file imports.
+        let imported = text.lines().filter_map(|line| line.strip_prefix("import ")).find_map(|rest| {
+            let mut words = rest.split_whitespace();
+            let path = words.next()?;
+            let alias = match (words.next(), words.next()) {
+                (Some("as"), Some(alias)) => alias,
+                _ => path.rsplit('.').next()?,
+            };
+            (alias == receiver).then_some(path)
+        });
+        if let Some(module) = imported {
+            return crate::api::function_doc(module, name);
+        }
+        // A value: its type's member.
+        let index = analyzed.analysis.index.as_ref()?;
+        let end = source.base + dot as u32;
+        let (_, shape) = index.types.iter().filter(|(s, _)| s.end == end).min_by_key(|(s, _)| s.end - s.start)?;
+        let member = index.shapes[*shape].members.iter().find(|m| m.name == name)?;
+        crate::api::builtin_doc(member.builtin.as_ref()?, name)
+    }
+
+    fn highlights(&mut self, params: &Value) -> Option<Value> {
+        self.prepare(params)?;
+        let (analyzed, file, _) = self.at(params)?;
+        let (_, def, _) = self.def_at(params)?;
+        let index = analyzed.analysis.index.as_ref()?;
+        let source = analyzed.analysis.sources.file(file);
+        let own = index.defs[def].name_span;
+        let highlights: Vec<Value> = index
+            .references(def)
+            .into_iter()
+            .filter(|span| span.start >= source.base && span.end <= source.base + source.text.len() as u32)
+            .map(|span| json!({ "range": self.range(source, span), "kind": if span == own { 3 } else { 2 } }))
+            .collect();
+        Some(Value::Array(highlights))
+    }
+
+    /// The program's declarations whose names contain the query, in every
+    /// project the editor has open.
+    fn workspace_symbols(&mut self, params: &Value) -> Value {
+        self.refresh();
+        let query = params["query"].as_str().unwrap_or_default().to_lowercase();
+        let std = self.std.clone();
+        let mut symbols = Vec::new();
+        for analyzed in self.analyses.values() {
+            let Some(index) = analyzed.analysis.index.as_ref() else { continue };
+            for def in &index.defs {
+                let kind = match def.kind {
+                    DefKind::Function => 12,
+                    DefKind::Method => 6,
+                    DefKind::Type => 23,
+                    DefKind::Enum => 10,
+                    DefKind::Trait => 11,
+                    DefKind::Const => 14,
+                    _ => continue,
+                };
+                if !def.name.to_lowercase().contains(&query) {
+                    continue;
+                }
+                let Some((path, range)) = self.place(analyzed, def.name_span) else { continue };
+                if std.as_ref().is_some_and(|std| path.starts_with(std)) {
+                    continue;
+                }
+                symbols.push(
+                    json!({ "name": def.name, "kind": kind, "location": { "uri": self.uri(&path), "range": range } }),
+                );
+                if symbols.len() >= 500 {
+                    return Value::Array(symbols);
+                }
+            }
+        }
+        Value::Array(symbols)
+    }
+
+    /// The signature of the call being written, and which argument the
+    /// cursor is in.
+    fn signature_help(&mut self, params: &Value) -> Option<Value> {
+        self.prepare(params)?;
+        let (analyzed, file, offset) = self.at(params)?;
+        let source = analyzed.analysis.sources.file(file);
+        let text = &source.text;
+        let cursor = (offset - source.base) as usize;
+        // The innermost parenthesis still open before the cursor.
+        let (mut depth, mut commas, mut open) = (0usize, 0usize, None);
+        for (i, c) in text[..cursor].char_indices().rev() {
+            match c {
+                ')' | ']' | '}' => depth += 1,
+                '(' | '[' | '{' if depth > 0 => depth -= 1,
+                '(' => {
+                    open = Some(i);
+                    break;
+                }
+                '[' | '{' => return None,
+                ',' if depth == 0 => commas += 1,
+                _ => {}
+            }
+        }
+        let open = open?;
+        let is_name = |c: char| c.is_alphanumeric() || c == '_';
+        let name_start = text[..open].rfind(|c: char| !is_name(c)).map_or(0, |i| i + 1);
+        let name = &text[name_start..open];
+        if name.is_empty() {
+            return None;
+        }
+        let index = analyzed.analysis.index.as_ref()?;
+        let callee = Span::new(source.base + name_start as u32, source.base + open as u32);
+        let declared =
+            index.uses.iter().find(|(span, _)| *span == callee).map(|&(_, def)| &index.defs[def]).or_else(|| {
+                index.defs.iter().find(|d| matches!(d.kind, DefKind::Function | DefKind::Method) && d.name == name)
+            });
+        let (header, docs) = match declared.filter(|d| matches!(d.kind, DefKind::Function | DefKind::Method)) {
+            Some(def) => {
+                let file = analyzed.analysis.sources.file_of(def.decl_span.start);
+                (header(file.slice(def.decl_span)), docs_before(file, def.decl_span.start))
+            }
+            None => self.builtin(analyzed, file, name_start, name)?,
+        };
+        let header = header.trim_start_matches("pub ").to_string();
+        // The parameters, as written between the header's parentheses.
+        let start = header.find('(')? + 1;
+        let (mut depth, mut from, mut parameters) = (0usize, start, Vec::new());
+        for (i, c) in header[start..].char_indices().map(|(i, c)| (i + start, c)) {
+            match c {
+                '(' | '[' | '{' => depth += 1,
+                ')' if depth == 0 => {
+                    parameters.push(header[from..i].trim().to_string());
+                    break;
+                }
+                ')' | ']' | '}' => depth -= 1,
+                ',' if depth == 0 => {
+                    parameters.push(header[from..i].trim().to_string());
+                    from = i + 1;
+                }
+                _ => {}
+            }
+        }
+        // A method called on a value takes it as `self`.
+        if text[..name_start].ends_with('.')
+            && parameters
+                .first()
+                .is_some_and(|p| p.starts_with("self") || p.starts_with("mut self") || p.starts_with("var self"))
+        {
+            parameters.remove(0);
+        }
+        parameters.retain(|p| !p.is_empty());
+        let parameters: Vec<Value> = parameters.iter().map(|p| json!({ "label": p })).collect();
+        let active = commas.min(parameters.len().saturating_sub(1));
+        let mut signature = json!({ "label": header, "parameters": parameters, "activeParameter": active });
+        if !docs.is_empty() {
+            signature["documentation"] = json!({ "kind": "markdown", "value": docs });
+        }
+        Some(json!({ "signatures": [signature], "activeSignature": 0, "activeParameter": active }))
+    }
+
+    /// The type of each binding the file declares without writing it.
+    fn inlay_hints(&mut self, params: &Value) -> Option<Value> {
+        let start = json!({ "textDocument": params["textDocument"], "position": params["range"]["start"] });
+        let end = json!({ "textDocument": params["textDocument"], "position": params["range"]["end"] });
+        self.prepare(&start)?;
+        let (analyzed, file, from) = self.at(&start)?;
+        let to = self.at(&end).map_or(u32::MAX, |(_, _, to)| to);
+        let index = analyzed.analysis.index.as_ref()?;
+        let source = analyzed.analysis.sources.file(file);
+        let mut hints = Vec::new();
+        for def in &index.defs {
+            let (Some(ty), DefKind::Local) = (&def.ty, def.kind) else { continue };
+            let span = def.name_span;
+            if def.name == "_" || span.start < from.max(source.base) || span.end > to {
+                continue;
+            }
+            if span.end > source.base + source.text.len() as u32 {
+                continue;
+            }
+            let after = &source.text[(span.end - source.base) as usize..];
+            if after.trim_start_matches([' ', '\t']).starts_with(':') {
+                continue;
+            }
+            let position = position(&source.text, (span.end - source.base) as usize, self.utf8);
+            hints.push(json!({ "position": position, "label": format!(": {ty}"), "kind": 1 }));
+        }
+        Some(Value::Array(hints))
     }
 
     fn definition(&mut self, params: &Value) -> Option<Value> {
