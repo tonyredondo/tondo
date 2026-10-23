@@ -1258,11 +1258,11 @@ yet to need it.
 ## 2026-10-23 — Tests in many orders of their tasks
 
 Safe Tondo has no data races, but a test can still depend on which task
-runs first. \`tondo test --schedules N\` runs the selection N times, each in
+runs first. `tondo test --schedules N` runs the selection N times, each in
 a fresh worker whose tasks run on one thread: whenever several can run, a
 seeded generator picks the next, and each task gives way after every call
 that may wait, the points where the order between tasks can change. The
-generator also picks among the ready operations of a \`select\`. A failing
+generator also picks among the ready operations of a `select`. A failing
 test prints the command that runs its first failing order again, which
 repeats it exactly while the test waits only for its own tasks; the clock,
 the network and files stay real. With one worker a panic's wait for the
