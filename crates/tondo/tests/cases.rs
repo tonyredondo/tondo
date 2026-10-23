@@ -10,7 +10,8 @@
 //!   diagnostic, whose message contains `text` when given;
 //! - `// expect-warning: <code> [text]` — compilation reports this warning;
 //! - `// expect-platform: <os or arch>...` — the case runs only there, as
-//!   `linux` or `aarch64`.
+//!   `linux` or `aarch64`;
+//! - `// expect-env: <NAME>=<value>` — the executable runs with it set.
 //!
 //! Executables run with `TONDO_RT_CHECK_LEAKS=1`, so every case also checks
 //! that reference counting frees each string exactly once.
@@ -31,6 +32,7 @@ struct Expect {
     errors: Vec<String>,
     warnings: Vec<String>,
     platforms: Vec<String>,
+    env: Vec<(String, String)>,
 }
 
 fn expectations(source: &str) -> Expect {
@@ -48,6 +50,10 @@ fn expectations(source: &str) -> Expect {
             "error" => expect.errors.push(value.trim().into()),
             "warning" => expect.warnings.push(value.trim().into()),
             "platform" => expect.platforms.extend(value.split_whitespace().map(String::from)),
+            "env" => {
+                let (name, value) = value.split_once('=').expect("`NAME=value`");
+                expect.env.push((name.trim().into(), value.trim().into()));
+            }
             other => panic!("unknown expectation `{other}`"),
         }
     }
@@ -116,6 +122,7 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
         command = Command::new("sh");
         command.args(["-c", "ulimit -c 0; exec \"$0\""]).arg(&binary);
     }
+    command.envs(expect.env.iter().map(|(name, value)| (name, value)));
     let run = run_with_timeout(command.env("TONDO_RT_CHECK_LEAKS", "1").current_dir(scratch))?;
     let stdout = String::from_utf8_lossy(&run.stdout);
     let stderr = String::from_utf8_lossy(&run.stderr);

@@ -572,32 +572,48 @@ static RESUMED_LOCK: Mutex<()> = Mutex::new(());
 static IN_TONDO: Mutex<Vec<&'static AtomicBool>> = Mutex::new(Vec::new());
 
 thread_local! {
-    static IN_TONDO_HERE: &'static AtomicBool = {
+    static IN_TONDO_HERE: Cell<Option<&'static AtomicBool>> = const { Cell::new(None) };
+}
+
+/// This thread's flag, registered the first time it runs Tondo code.
+fn running_here() -> &'static AtomicBool {
+    IN_TONDO_HERE.with(|here| {
+        if let Some(running) = here.get() {
+            return running;
+        }
         let running: &'static AtomicBool = Box::leak(Box::new(AtomicBool::new(false)));
         IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).push(running);
+        here.set(Some(running));
         running
-    };
+    })
 }
 
 /// From now on this thread runs Tondo code, once no collection runs.
-fn enter_tondo() {
-    IN_TONDO_HERE.with(|running| {
-        loop {
-            running.store(true, Ordering::SeqCst);
-            if !STOPPING.load(Ordering::SeqCst) {
-                return;
-            }
-            running.store(false, Ordering::SeqCst);
-            let mut resumed = RESUMED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            while STOPPING.load(Ordering::SeqCst) {
-                resumed = RESUMED.wait(resumed).unwrap_or_else(|e| e.into_inner());
-            }
+pub(crate) fn enter_tondo() {
+    let running = running_here();
+    loop {
+        running.store(true, Ordering::SeqCst);
+        if !STOPPING.load(Ordering::SeqCst) {
+            return;
         }
-    });
+        running.store(false, Ordering::SeqCst);
+        let mut resumed = RESUMED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        while STOPPING.load(Ordering::SeqCst) {
+            resumed = RESUMED.wait(resumed).unwrap_or_else(|e| e.into_inner());
+        }
+    }
 }
 
 fn leave_tondo() {
-    IN_TONDO_HERE.with(|running| running.store(false, Ordering::SeqCst));
+    running_here().store(false, Ordering::SeqCst);
+}
+
+/// Takes this thread out of Tondo code where it is, as when it waits for
+/// memory inside an allocation; whether it was in, to `enter_tondo` again.
+/// Allocates nothing.
+#[cfg_attr(not(tondo_staticlib), allow(dead_code))]
+pub(crate) fn pause_here() -> bool {
+    IN_TONDO_HERE.with(|here| here.get()).is_some_and(|running| running.swap(false, Ordering::SeqCst))
 }
 
 /// Where a running task lets a collection run: between two steps.

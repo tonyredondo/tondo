@@ -85,12 +85,23 @@ pub fn start() {
 
 #[cfg(tondo_staticlib)]
 unsafe impl GlobalAlloc for Counting {
+    /// Memory runs short only after a collection of garbage cycles found
+    /// none to free (language 16.7); the collector itself may go past the
+    /// budget while it frees.
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let limit = LIMIT.load(Ordering::Relaxed);
-        if limit != usize::MAX && HELD.fetch_add(layout.size(), Ordering::Relaxed) + layout.size() > limit {
+        if limit != usize::MAX
+            && HELD.fetch_add(layout.size(), Ordering::Relaxed) + layout.size() > limit
+            && !super::cycles::collecting_here()
+            && !(super::cycles::collect_for_memory() && HELD.load(Ordering::Relaxed) <= limit)
+        {
             over("memory");
         }
-        unsafe { System.alloc(layout) }
+        let block = unsafe { System.alloc(layout) };
+        if block.is_null() && super::cycles::collect_for_memory() {
+            return unsafe { System.alloc(layout) };
+        }
+        block
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {

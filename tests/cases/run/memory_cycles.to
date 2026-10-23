@@ -1,0 +1,23 @@
+// Before memory runs out, the garbage cycles go (language 16.7): with a
+// budget of 200 MB the program makes 1.6 GB of cycles, which reference
+// counting alone would keep.
+import std.console
+import std.sync
+
+type Blob = { data: Array[Int], next: sync.Mutex[Ref[Blob]?] }
+
+// A blob of 16 MB that refers to itself through a cell.
+fn waste() {
+    let blob = Ref(Blob { data: [0].repeat(2_000_000), next: sync.Mutex(none) })
+    blob.value.next.set(some(blob))
+}
+
+fn main() {
+    for _ in 0..100 {
+        waste()
+    }
+    console.println("made 100 cycles of 16 MB")
+}
+
+// expect-env: TONDO_META_MEMORY=200000000
+// expect-stdout: made 100 cycles of 16 MB

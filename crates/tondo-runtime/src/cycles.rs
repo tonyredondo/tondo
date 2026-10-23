@@ -101,6 +101,8 @@ fn registry() -> MutexGuard<'static, Registry> {
 
 /// Registers a new cell whose state may refer back to it.
 pub(crate) fn remember(cell: *const u8, kind: Kind) {
+    // The collector's thread exists before memory may run short.
+    start_collector();
     let mut registry = registry();
     registry.cells.insert(cell as usize, kind);
     registry.created += 1;
@@ -310,6 +312,15 @@ const STOP_TIMEOUT: Duration = Duration::from_millis(2);
 /// when the workers did not stop in time.
 pub(crate) fn collect() -> Option<usize> {
     let _one = COLLECTING.lock().unwrap_or_else(|e| e.into_inner());
+    // An allocation failing while it collects does not wait for itself.
+    let _busy = Busy::enter();
+    let freed = count_and_free()?;
+    *DONE.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+    CAUGHT_UP.notify_all();
+    Some(freed)
+}
+
+fn count_and_free() -> Option<usize> {
     if registry().cells.is_empty() {
         return Some(0);
     }
@@ -367,8 +378,6 @@ pub(crate) fn collect() -> Option<usize> {
     for release in taken {
         release();
     }
-    *DONE.lock().unwrap_or_else(|e| e.into_inner()) += 1;
-    CAUGHT_UP.notify_all();
     Some(freed)
 }
 
@@ -385,6 +394,69 @@ pub(crate) fn collect_all() {
 }
 
 // ---------------------------------------------------------------------------
+// Running short of memory
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    /// This thread collects, or waits for memory: an allocation that fails
+    /// meanwhile fails for good.
+    static BUSY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether this thread collects, which may then go past a memory budget
+/// to free memory.
+#[cfg_attr(not(tondo_staticlib), allow(dead_code))]
+pub(crate) fn collecting_here() -> bool {
+    BUSY.with(|busy| busy.get())
+}
+
+struct Busy(bool);
+
+impl Busy {
+    fn enter() -> Busy {
+        Busy(BUSY.with(|busy| busy.replace(true)))
+    }
+}
+
+impl Drop for Busy {
+    fn drop(&mut self) {
+        BUSY.with(|busy| busy.set(self.0));
+    }
+}
+
+/// For an allocation that failed, or a budget exceeded: frees the garbage
+/// cycles before memory counts as exhausted (16.7), and tells whether one
+/// collection finished. The collector's thread collects while this one
+/// waits out of Tondo code, so that no lock this thread holds stops it;
+/// not for long, since a task that runs long without a safe point holds it
+/// back.
+#[cfg_attr(not(tondo_staticlib), allow(dead_code))]
+pub(crate) fn collect_for_memory() -> bool {
+    if collecting_here() || COLLECTOR.get().is_none() {
+        return false;
+    }
+    let _busy = Busy::enter();
+    let paused = super::tasks::pause_here();
+    let mut done = DONE.lock().unwrap_or_else(|e| e.into_inner());
+    let seen = *done;
+    wake_collector();
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while *done == seen {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            break;
+        }
+        done = CAUGHT_UP.wait_timeout(done, left).unwrap_or_else(|e| e.into_inner()).0;
+    }
+    let collected = *done != seen;
+    drop(done);
+    if paused {
+        super::tasks::enter_tondo();
+    }
+    collected
+}
+
+// ---------------------------------------------------------------------------
 // The collector's thread
 // ---------------------------------------------------------------------------
 
@@ -392,16 +464,21 @@ static WANTED: Mutex<bool> = Mutex::new(false);
 static WANT: Condvar = Condvar::new();
 static COLLECTOR: OnceLock<()> = OnceLock::new();
 
-/// Asks the collector's thread to collect, starting it the first time.
-fn wake_collector() {
+fn start_collector() {
     COLLECTOR.get_or_init(|| {
         super::tasks::spawn_thread(Some(256 * 1024), collector);
     });
+}
+
+/// Asks the collector's thread to collect.
+fn wake_collector() {
+    start_collector();
     *WANTED.lock().unwrap_or_else(|e| e.into_inner()) = true;
     WANT.notify_one();
 }
 
 fn collector() {
+    let _busy = Busy::enter();
     loop {
         let mut wanted = WANTED.lock().unwrap_or_else(|e| e.into_inner());
         while !*wanted {

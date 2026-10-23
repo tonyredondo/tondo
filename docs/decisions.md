@@ -1345,11 +1345,17 @@ cycles outran the collector's thread, and pauses grew to 42 ms; a thread
 that registers cells four thresholds ahead now waits for the collector at
 its next safe point, and the same run paused at most 0.9 ms. Channels,
 spawning and network round trips measured the same as before. Garbage
-found is released after the workers resume. Running a collection before
-an allocation fails, as the specification also asks, is not done: on the
-supported systems allocations do not fail, the kernel ends the process
-first, and a collection inside the allocator could meet the locks of the
-code that allocates.
+found is released after the workers resume.
+
+Memory runs out only after a collection: when an allocation fails, or a
+`meta` program's budget would be passed, the allocating thread steps out
+of Tondo code where it is and waits, up to a second, for the collector's
+thread to finish a collection, then tries again. The collection does not
+run on the allocating thread, which may hold a lock that freeing garbage
+needs; the collector's thread starts with the first registered cell, so
+it exists before memory is short, and may itself go past a budget while
+it frees. A program making 1.6 GB of cycles runs in a budget of 200 MB,
+or under `ulimit -v` of 1.5 GB, where it used to stop.
 
 ## 2026-10-24 — `WeakRef[T]` in the prelude
 
