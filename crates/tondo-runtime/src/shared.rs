@@ -7,6 +7,7 @@
 //! operation pins the current epoch while it reads, and what a writer
 //! removes is freed once every thread pinned at that point has moved on.
 
+use super::cycles::{self, Kind, Taken, Visit, Visitor};
 use super::{
     ArrayHeader, EqualGlue, Glue, LIVE_OBJECTS, MapGlue, MapObject, element, tondo_rt_array_new,
     tondo_rt_array_release, tondo_rt_map_entry, tondo_rt_map_insert, tondo_rt_map_len, tondo_rt_map_new,
@@ -420,8 +421,40 @@ pub unsafe extern "C" fn tondo_rt_shared_map_from(
             tondo_rt_shared_map_insert(map, key, value, old, 0);
         }
         tondo_rt_map_release(source, glue);
+        if (*glue).key_visit.is_some() || (*glue).value_visit.is_some() {
+            cycles::remember(map as *const u8, Kind::SharedMap);
+        }
     }
     map
+}
+
+/// Visits the keys and values for the cycle collector.
+pub(crate) unsafe fn visit_map(visitor: &mut Visitor, map: *mut u8) {
+    unsafe {
+        let m = &*(map as *const SharedMap);
+        let (key, value) = (m.glue().key_visit, m.glue().value_visit);
+        for bucket in (&*m.table.load(Ordering::Acquire)).buckets.iter() {
+            let mut node = bucket.load(Ordering::Acquire);
+            while !node.is_null() {
+                visitor.visit(key, key_of(node));
+                visitor.visit(value, m.value_of(node));
+                node = (*node).next.load(Ordering::Acquire);
+            }
+        }
+    }
+}
+
+/// Takes the entries out of a garbage map.
+pub(crate) unsafe fn clear_map(map: *mut u8) -> Option<Taken> {
+    let m = unsafe { &*(map as *const SharedMap) };
+    let length = unsafe { &*m.table.load(Ordering::Acquire) }.buckets.len();
+    let buckets = (0..length).map(|_| AtomicPtr::new(std::ptr::null_mut())).collect();
+    let old = m.table.swap(Box::into_raw(Box::new(Table { buckets })), Ordering::AcqRel) as usize;
+    for stripe in m.stripes.iter() {
+        stripe.count.store(0, Ordering::Relaxed);
+    }
+    let (glue, layout, offset) = (m.glue, m.node_layout(), m.value_offset);
+    Some(Box::new(move || unsafe { free_table(old as *mut Table, glue, layout, offset, true) }))
 }
 
 /// `get` (with `out`) or `contains` (without): 1 when the key is present,
@@ -630,6 +663,9 @@ pub unsafe extern "C" fn tondo_rt_shared_map_release(map: *mut SharedMap) {
             return;
         }
         fence(Ordering::Acquire);
+        if (*(*map).glue).key_visit.is_some() || (*(*map).glue).value_visit.is_some() {
+            cycles::forget(map as *const u8);
+        }
         let m = Box::from_raw(map);
         free_table(m.table.load(Ordering::Relaxed), m.glue, m.node_layout(), m.value_offset, true);
         LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
@@ -653,6 +689,7 @@ pub struct SharedQueue {
     size: usize,
     retain: Option<Glue>,
     release: Option<Glue>,
+    visit: Option<Visit>,
 }
 
 struct Segment {
@@ -796,6 +833,7 @@ pub unsafe extern "C" fn tondo_rt_shared_queue_from(
     size: usize,
     retain: Option<Glue>,
     release: Option<Glue>,
+    visit: Option<Visit>,
 ) -> *mut SharedQueue {
     let segment = Segment::new(FIRST_SEGMENT, 0, size);
     LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
@@ -806,7 +844,11 @@ pub unsafe extern "C" fn tondo_rt_shared_queue_from(
         size,
         retain,
         release,
+        visit,
     }));
+    if visit.is_some() {
+        cycles::remember(queue as *const u8, Kind::SharedQueue);
+    }
     unsafe {
         let value = scratch(size);
         for index in 0..(*source).len {
@@ -911,6 +953,9 @@ pub unsafe extern "C" fn tondo_rt_shared_queue_release(queue: *mut SharedQueue) 
             return;
         }
         fence(Ordering::Acquire);
+        if (*queue).visit.is_some() {
+            cycles::forget(queue as *const u8);
+        }
         let q = Box::from_raw(queue);
         let mut segment = q.head.load(Ordering::Relaxed);
         while !segment.is_null() {
@@ -920,6 +965,39 @@ pub unsafe extern "C" fn tondo_rt_shared_queue_release(queue: *mut SharedQueue) 
         }
         LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
     }
+}
+
+/// Visits the values the segments hold for the cycle collector.
+pub(crate) unsafe fn visit_queue(visitor: &mut Visitor, queue: *mut u8) {
+    unsafe {
+        let q = &*(queue as *const SharedQueue);
+        let mut segment = q.head.load(Ordering::Acquire);
+        while !segment.is_null() {
+            let s = &*segment;
+            for index in 0..s.capacity {
+                if s.filled(index).load(Ordering::Acquire) != 0 {
+                    visitor.visit(q.visit, s.value(index));
+                }
+            }
+            segment = s.next.load(Ordering::Acquire);
+        }
+    }
+}
+
+/// Takes the segments out of a garbage queue.
+pub(crate) unsafe fn clear_queue(queue: *mut u8) -> Option<Taken> {
+    let q = unsafe { &*(queue as *const SharedQueue) };
+    let head = q.head.swap(std::ptr::null_mut(), Ordering::AcqRel) as usize;
+    q.tail.store(std::ptr::null_mut(), Ordering::Release);
+    let release = q.release;
+    Some(Box::new(move || unsafe {
+        let mut segment = head as *mut Segment;
+        while !segment.is_null() {
+            let next = (*segment).next.load(Ordering::Relaxed);
+            free_segment(segment, release);
+            segment = next;
+        }
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -936,6 +1014,7 @@ pub struct SharedStack {
     size: usize,
     retain: Option<Glue>,
     release: Option<Glue>,
+    visit: Option<Visit>,
 }
 
 #[repr(C)]
@@ -990,6 +1069,7 @@ pub unsafe extern "C" fn tondo_rt_shared_stack_from(
     size: usize,
     retain: Option<Glue>,
     release: Option<Glue>,
+    visit: Option<Visit>,
 ) -> *mut SharedStack {
     LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
     let stack = Box::into_raw(Box::new(SharedStack {
@@ -998,7 +1078,11 @@ pub unsafe extern "C" fn tondo_rt_shared_stack_from(
         size,
         retain,
         release,
+        visit,
     }));
+    if visit.is_some() {
+        cycles::remember(stack as *const u8, Kind::SharedStack);
+    }
     unsafe {
         let value = scratch(size);
         for index in 0..(*source).len {
@@ -1095,6 +1179,9 @@ pub unsafe extern "C" fn tondo_rt_shared_stack_release(stack: *mut SharedStack) 
             return;
         }
         fence(Ordering::Acquire);
+        if (*stack).visit.is_some() {
+            cycles::forget(stack as *const u8);
+        }
         let s = Box::from_raw(stack);
         for node in s.nodes() {
             if let Some(release) = s.release {
@@ -1104,6 +1191,32 @@ pub unsafe extern "C" fn tondo_rt_shared_stack_release(stack: *mut SharedStack) 
         }
         LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
     }
+}
+
+/// Visits the values for the cycle collector.
+pub(crate) unsafe fn visit_stack(visitor: &mut Visitor, stack: *mut u8) {
+    let s = unsafe { &*(stack as *const SharedStack) };
+    for node in s.nodes() {
+        unsafe { visitor.visit(s.visit, stack_value(node)) };
+    }
+}
+
+/// Takes the nodes out of a garbage stack.
+pub(crate) unsafe fn clear_stack(stack: *mut u8) -> Option<Taken> {
+    let s = unsafe { &*(stack as *const SharedStack) };
+    let nodes: Vec<usize> = s.nodes().into_iter().map(|node| node as usize).collect();
+    s.top.store(std::ptr::null_mut(), Ordering::Release);
+    let (release, layout) = (s.release, s.layout());
+    Some(Box::new(move || {
+        for node in nodes {
+            unsafe {
+                if let Some(release) = release {
+                    release(stack_value(node as *mut StackNode));
+                }
+                dealloc(node as *mut u8, layout);
+            }
+        }
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -1121,6 +1234,7 @@ pub struct SharedArray {
     release: Option<Glue>,
     stripes: Box<[Padded<AtomicBool>]>,
     values: *mut u8,
+    visit: Option<Visit>,
 }
 
 impl SharedArray {
@@ -1143,6 +1257,7 @@ pub unsafe extern "C" fn tondo_rt_shared_array_from(
     size: usize,
     retain: Option<Glue>,
     release: Option<Glue>,
+    visit: Option<Visit>,
 ) -> *mut SharedArray {
     unsafe {
         let length = (*source).len;
@@ -1153,7 +1268,20 @@ pub unsafe extern "C" fn tondo_rt_shared_array_from(
         }
         tondo_rt_array_release(source, size, release);
         LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
-        Box::into_raw(Box::new(SharedArray { rc: AtomicUsize::new(1), length, size, retain, release, stripes, values }))
+        let array = Box::into_raw(Box::new(SharedArray {
+            rc: AtomicUsize::new(1),
+            length,
+            size,
+            retain,
+            release,
+            stripes,
+            values,
+            visit,
+        }));
+        if visit.is_some() {
+            cycles::remember(array as *const u8, Kind::SharedArray);
+        }
+        array
     }
 }
 
@@ -1266,6 +1394,9 @@ pub unsafe extern "C" fn tondo_rt_shared_array_release(array: *mut SharedArray) 
             return;
         }
         fence(Ordering::Acquire);
+        if (*array).visit.is_some() {
+            cycles::forget(array as *const u8);
+        }
         let a = Box::from_raw(array);
         if let Some(release) = a.release {
             for index in 0..a.length {
@@ -1275,4 +1406,26 @@ pub unsafe extern "C" fn tondo_rt_shared_array_release(array: *mut SharedArray) 
         dealloc(a.values, a.layout());
         LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
     }
+}
+
+/// Visits the values for the cycle collector.
+pub(crate) unsafe fn visit_array(visitor: &mut Visitor, array: *mut u8) {
+    let a = unsafe { &*(array as *const SharedArray) };
+    for index in 0..a.length {
+        unsafe { visitor.visit(a.visit, a.slot(index)) };
+    }
+}
+
+/// Takes the values out of a garbage array.
+pub(crate) unsafe fn clear_array(array: *mut u8) -> Option<Taken> {
+    let a = unsafe { &mut *(array as *mut SharedArray) };
+    let release = a.release.take()?;
+    let (size, length) = (a.size, a.length);
+    let mut values = vec![0u64; (size * length).div_ceil(8).max(1)];
+    unsafe { std::ptr::copy_nonoverlapping(a.values, values.as_mut_ptr() as *mut u8, size * length) };
+    Some(Box::new(move || {
+        for index in 0..length {
+            unsafe { release((values.as_mut_ptr() as *mut u8).add(index * size)) };
+        }
+    }))
 }

@@ -16,6 +16,7 @@ mod cbor;
 mod civil;
 mod clock;
 mod codec;
+mod cycles;
 mod env;
 mod fs;
 mod http;
@@ -318,6 +319,11 @@ fn box_value(b: *mut BoxHeader) -> *mut u8 {
     unsafe { (b as *mut u8).add(BOX_HEADER) }
 }
 
+/// The value of a box, for the cycle collector.
+pub(crate) fn box_payload(b: *mut u8) -> *mut u8 {
+    box_value(b as *mut BoxHeader)
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_box_retain(b: *mut BoxHeader) {
     unsafe { (*b).rc.fetch_add(1, Ordering::Relaxed) };
@@ -418,6 +424,11 @@ pub unsafe extern "C" fn tondo_rt_ref_release(r: *mut RefHeader, release: Option
     }
 }
 
+/// The value of a reference, for the cycle collector.
+pub(crate) fn ref_payload(r: *mut u8) -> *mut u8 {
+    unsafe { r.add(REF_HEADER) }
+}
+
 /// Drops one weak count, freeing the object with the last.
 unsafe fn ref_forget(r: *mut RefHeader) {
     unsafe {
@@ -442,6 +453,9 @@ pub struct FnObject {
     release: Option<Glue>,
     code: *const u8,
     size: usize,
+    /// Visits the captures for the cycle collector, when they may refer
+    /// to a cycle.
+    visit: Option<cycles::Visit>,
 }
 
 const FN_HEADER: usize = std::mem::size_of::<FnObject>();
@@ -452,14 +466,19 @@ fn fn_layout(size: usize) -> Layout {
 
 /// A function value whose `size` bytes of captures the caller initializes.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_fn_new(code: *const u8, size: usize, release: Option<Glue>) -> *mut FnObject {
+pub extern "C" fn tondo_rt_fn_new(
+    code: *const u8,
+    size: usize,
+    release: Option<Glue>,
+    visit: Option<cycles::Visit>,
+) -> *mut FnObject {
     let layout = fn_layout(size);
     unsafe {
         let ptr = alloc(layout) as *mut FnObject;
         if ptr.is_null() {
             handle_alloc_error(layout);
         }
-        ptr.write(FnObject { rc: AtomicUsize::new(1), release, code, size });
+        ptr.write(FnObject { rc: AtomicUsize::new(1), release, code, size, visit });
         LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
         ptr
     }
@@ -495,6 +514,14 @@ pub unsafe extern "C" fn tondo_rt_fn_release(f: *mut FnObject) {
         }
         0 => runtime_fault("function value released after it was freed"),
         _ => {}
+    }
+}
+
+/// Visits a closure's captures for the cycle collector.
+pub(crate) unsafe fn visit_fn(visitor: &mut cycles::Visitor, f: *mut u8) {
+    unsafe {
+        let f = f as *mut FnObject;
+        visitor.visit((*f).visit, (f as *mut u8).add(FN_HEADER));
     }
 }
 
@@ -535,6 +562,14 @@ unsafe fn position(a: *mut ArrayHeader, size: usize, position: usize) -> *mut u8
 
 pub(crate) unsafe fn element(a: *mut ArrayHeader, size: usize, index: usize) -> *mut u8 {
     unsafe { position(a, size, (*a).head + index) }
+}
+
+/// Visits an array's elements for the cycle collector.
+pub(crate) unsafe fn visit_array(visitor: &mut cycles::Visitor, a: *mut u8, size: usize, visit: Option<cycles::Visit>) {
+    let a = a as *mut ArrayHeader;
+    for index in 0..unsafe { (*a).len } {
+        unsafe { visitor.visit(visit, element(a, size, index)) };
+    }
 }
 
 /// Allocates an array of `len` uninitialized elements and room for `cap`.
@@ -1303,6 +1338,23 @@ pub struct MapObject {
     table: Vec<usize>,
 }
 
+/// Visits a map's keys and values for the cycle collector.
+pub(crate) unsafe fn visit_map(
+    visitor: &mut cycles::Visitor,
+    map: *mut u8,
+    key: Option<cycles::Visit>,
+    value: Option<cycles::Visit>,
+) {
+    let map = unsafe { &*(map as *const MapObject) };
+    for index in 0..map.len() {
+        let entry = map.entry(index) as *mut u8;
+        unsafe {
+            visitor.visit(key, entry);
+            visitor.visit(value, entry.add(map.value_offset));
+        }
+    }
+}
+
 /// The glue functions of a map's key and value types.
 #[repr(C)]
 pub struct MapGlue {
@@ -1312,6 +1364,9 @@ pub struct MapGlue {
     pub(crate) key_release: Option<Glue>,
     pub(crate) value_retain: Option<Glue>,
     pub(crate) value_release: Option<Glue>,
+    /// For the cycle collector, when keys or values may refer to a cycle.
+    pub(crate) key_visit: Option<cycles::Visit>,
+    pub(crate) value_visit: Option<cycles::Visit>,
 }
 
 impl MapObject {
@@ -1962,6 +2017,8 @@ pub const LEAK_EXIT_CODE: i32 = 99;
 pub fn check_leaks() -> Option<usize> {
     std::env::var_os("TONDO_RT_CHECK_LEAKS")?;
     tasks::wait_foreign_calls();
+    // Garbage cycles are not leaks: the collector frees them.
+    cycles::collect_all();
     let live = LIVE_OBJECTS.load(Ordering::Relaxed);
     (live != 0).then_some(live)
 }

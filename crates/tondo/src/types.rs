@@ -236,6 +236,28 @@ impl Handle {
         )
     }
 
+    /// Whether it refers to values of its type: an identity, shared state,
+    /// a channel's end, a task's result.
+    pub fn holds(self) -> bool {
+        matches!(
+            self,
+            Handle::Ref
+                | Handle::Mutex
+                | Handle::RwLock
+                | Handle::Atomic
+                | Handle::Once
+                | Handle::SyncArray
+                | Handle::SyncMap
+                | Handle::SyncSet
+                | Handle::SyncStack
+                | Handle::SyncQueue
+                | Handle::Sender
+                | Handle::Receiver
+                | Handle::Join
+                | Handle::Group
+        )
+    }
+
     /// One of the five shared collections of `std.sync`.
     pub fn collection(self) -> bool {
         matches!(self, Handle::SyncArray | Handle::SyncMap | Handle::SyncSet | Handle::SyncStack | Handle::SyncQueue)
@@ -396,6 +418,7 @@ pub struct Types {
     pub runaway: Option<String>,
     reaches: RefCell<HashMap<(Ty, Ty), bool>>,
     needs_drop: RefCell<HashMap<Ty, bool>>,
+    can_cycle: RefCell<HashMap<Ty, bool>>,
     /// Standard library types with an intrinsic `Display`.
     pub shown: HashMap<Ty, Shown>,
     /// The `extern type`s, laid out as C lays out their structs.
@@ -463,6 +486,7 @@ impl Default for Types {
             runaway: None,
             reaches: RefCell::default(),
             needs_drop: RefCell::default(),
+            can_cycle: RefCell::default(),
             shown: HashMap::new(),
             foreign: HashMap::new(),
         };
@@ -1354,6 +1378,66 @@ impl Types {
         };
         self.needs_drop.borrow_mut().insert(ty, result);
         result
+    }
+
+    /// Whether a value of this type may refer to an object on a cycle of
+    /// references, which only reference counting would never free (16.7):
+    /// it reaches a function value or a reflected value, which may hold
+    /// anything, or shared state whose own state can reach it again. Only
+    /// such values are visited by the cycle collector.
+    pub fn can_cycle(&self, ty: Ty) -> bool {
+        if let Some(&known) = self.can_cycle.borrow().get(&ty) {
+            return known;
+        }
+        let reached = self.reach(ty);
+        let result = reached.iter().any(|&t| match self.kind(t) {
+            TyKind::Fn(..) | TyKind::Handle(Handle::ReflectBox, _) => true,
+            // A `Ref` never changes, so only shared state closes a cycle.
+            TyKind::Handle(handle, state) if handle.holds() && *handle != Handle::Ref => {
+                let cell = self.cell_key(t);
+                self.reach(*state).iter().any(|&inner| self.cell_key(inner) == cell)
+            }
+            _ => false,
+        });
+        self.can_cycle.borrow_mut().insert(ty, result);
+        result
+    }
+
+    /// The types a value of this type can refer to, itself included.
+    fn reach(&self, ty: Ty) -> Vec<Ty> {
+        let (mut seen, mut pending) = (vec![ty], vec![ty]);
+        while let Some(current) = pending.pop() {
+            let repr = self.repr(current);
+            let parts = match self.kind(repr) {
+                TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) => vec![*t],
+                TyKind::Map(k, v) => vec![*k, *v],
+                TyKind::Handle(handle, state) if handle.holds() => vec![*state],
+                TyKind::Handle(..) | TyKind::Fn(..) | TyKind::CFn(..) | TyKind::Pointer(_) | TyKind::CArray(..) => {
+                    Vec::new()
+                }
+                _ => match (self.components(repr), self.variants(repr)) {
+                    (Some(items), _) => items,
+                    (None, Some(variants)) => variants.concat(),
+                    (None, None) => Vec::new(),
+                },
+            };
+            for part in parts {
+                if !seen.contains(&part) {
+                    seen.push(part);
+                    pending.push(part);
+                }
+            }
+        }
+        seen
+    }
+
+    /// The same runtime object for the two ends of a channel.
+    fn cell_key(&self, ty: Ty) -> (u8, Ty) {
+        match self.kind(ty) {
+            TyKind::Handle(Handle::Sender | Handle::Receiver, state) => (1, *state),
+            TyKind::Handle(Handle::Join | Handle::Group, state) => (2, *state),
+            _ => (0, ty),
+        }
     }
 
     /// The closed `Key` capability (8.12): equality is total and hashing is

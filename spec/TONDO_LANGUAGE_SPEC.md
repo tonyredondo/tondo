@@ -5731,22 +5731,27 @@ recorrer el heap ni simular cleanup de recursos.
 
 #### Estrategia de la implementación de referencia (no normativo)
 
-El target de referencia Tondo 0.1 utiliza una VM con collector **mark-and-sweep
-preciso, no móvil y stop-the-world**. El bytecode verificado aporta descriptores
-cerrados de trazado para cada forma administrada; frames, tareas y registros
-del host publican sus roots de manera
-explícita. El collector no ejecuta código Tondo y recupera ciclos
-inalcanzables.
+La implementación de referencia compila a código nativo y utiliza **conteo de
+referencias atómico con recolección de ciclos**. El conteo libera cada valor
+cuando desaparece su última referencia. Un ciclo solo puede cerrarse a través
+de estado compartido que cambia después de crearse (`sync.Mutex`, canales,
+colecciones de `std.sync`, el resultado de un `Join`), porque valores, cierres
+y `Ref[T]` no cambian una vez construidos. Esas celdas se registran cuando su
+estado puede volver a alcanzarlas, y el collector parte de ellas: cuenta, para
+cada objeto alcanzado, las referencias que provienen de otros objetos
+alcanzados; uno con más referencias que esas está retenido desde fuera y vive
+con todo lo que alcanza, y el resto es basura cuyas celdas renuncian a su
+estado para que el conteo libere lo demás. Mientras cuenta, los workers se
+detienen en puntos seguros. El collector no ejecuta código Tondo.
 
-`String`, `Array[T]`, `Map[K, V]` y `Set[T]` pueden compartir buffers mediante
-copy-on-write cuando su representación lo permite. Esa optimización no
-sustituye al tracing de identidades administradas ni cambia el contrato de
-copia lógica.
+`String`, `Array[T]`, `Map[K, V]` y `Set[T]` comparten buffers mediante
+copy-on-write cuando su representación lo permite. Esa optimización no cambia
+el contrato de copia lógica.
 
-Un backend nativo futuro puede utilizar ARC con recolección de ciclos, escape
-analysis u otra estrategia. Tal elección pertenece a la implementación: no
-puede alterar `Copy`, `Send`, `Share`, liveness, identidad, COW, cleanup ni
-ningún resultado observable definido por esta edición.
+Otra implementación puede utilizar tracing GC, escape analysis u otra
+estrategia. Tal elección le pertenece: no puede alterar `Copy`, `Send`,
+`Share`, liveness, identidad, COW, cleanup ni ningún resultado observable
+definido por esta edición.
 
 ### 16.8 Recursos externos
 

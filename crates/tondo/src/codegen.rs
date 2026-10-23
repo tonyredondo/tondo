@@ -43,14 +43,14 @@ const POINTER: ir::Type = types::I64;
 const IMMORTAL: u64 = u64::MAX;
 /// Size of a function value's header in the runtime (`FnObject`): the code
 /// is at 16 and the captures follow the header.
-const FN_HEADER: i64 = 32;
+const FN_HEADER: i64 = 40;
 /// Size of a box header in the runtime (`BoxHeader`).
 const BOX_HEADER: i64 = 16;
 /// The size of the header of a `Ref[T]`'s object: its strong and weak
 /// counts and the size of the value that follows.
 const REF_HEADER: i64 = 24;
 /// Where the value starts in the box of a `reflect.Value` (`BoxObject`).
-const REFLECT_VALUE: i64 = 32;
+const REFLECT_VALUE: i64 = 40;
 /// Size of an array header in the runtime (`ArrayHeader`): `len` is at 8 and
 /// a deque's `head` at 24. An array's `head` is always 0.
 const ARRAY_HEADER: i64 = 32;
@@ -101,6 +101,7 @@ enum Rt {
     BoxUnique,
     RefNew,
     RefRelease,
+    GcEdge,
     ReportError,
     TestStart,
     TestMembers,
@@ -317,6 +318,7 @@ impl Rt {
             Rt::BoxRelease => ("tondo_rt_box_release", &[I64, I64], &[]),
             Rt::RefNew => ("tondo_rt_ref_new", &[I64], &[I64]),
             Rt::RefRelease => ("tondo_rt_ref_release", &[I64, I64], &[]),
+            Rt::GcEdge => ("tondo_rt_gc_edge", &[I64, I64, I8, I64, I64], &[]),
             Rt::BoxUnique => ("tondo_rt_box_unique", &[I64, I64, I64], &[]),
             Rt::ReportError => ("tondo_rt_report_error", &[I64], &[]),
             Rt::TestStart => ("tondo_rt_test_start", &[I64, I64], &[]),
@@ -334,7 +336,7 @@ impl Rt {
             Rt::ClockRelease => ("tondo_rt_clock_release", &[I64], &[]),
             Rt::RegexRelease => ("tondo_rt_regex_release", &[I64], &[]),
             Rt::NativeRelease => ("tondo_rt_native_release", &[I64], &[]),
-            Rt::ReflectBox => ("tondo_rt_reflect_box", &[I64, I64, I64], &[I64]),
+            Rt::ReflectBox => ("tondo_rt_reflect_box", &[I64, I64, I64, I64], &[I64]),
             Rt::ReflectRelease => ("tondo_rt_reflect_release", &[I64], &[]),
             Rt::ReflectIs => ("tondo_rt_reflect_is", &[I64, I64], &[I8]),
             Rt::MetaStep => ("tondo_rt_meta_step", &[], &[]),
@@ -374,14 +376,14 @@ impl Rt {
             Rt::MapUnique => ("tondo_rt_map_unique", &[I64, I64], &[]),
             Rt::MapEq => ("tondo_rt_map_eq", &[I64, I64, I64, I64], &[I8]),
             Rt::MapClear => ("tondo_rt_map_clear", &[I64, I64], &[]),
-            Rt::FnNew => ("tondo_rt_fn_new", &[I64, I64, I64], &[I64]),
+            Rt::FnNew => ("tondo_rt_fn_new", &[I64, I64, I64, I64], &[I64]),
             Rt::FnRetain => ("tondo_rt_fn_retain", &[I64], &[]),
             Rt::FnRelease => ("tondo_rt_fn_release", &[I64], &[]),
             Rt::DeferPush => ("tondo_rt_defer_push", &[I64, I64], &[]),
             Rt::DeferPop => ("tondo_rt_defer_pop", &[], &[]),
             Rt::SbMap => ("tondo_rt_sb_map", &[I64, I64, I64, I64], &[]),
             Rt::StrHash => ("tondo_rt_str_hash", &[I64], &[I64]),
-            Rt::Spawn => ("tondo_rt_spawn", &[I64, I8, I64, I64, I64], &[I64]),
+            Rt::Spawn => ("tondo_rt_spawn", &[I64, I8, I64, I64, I64, I64], &[I64]),
             Rt::JoinWait => ("tondo_rt_join_wait", &[I64, I64], &[]),
             Rt::JoinRelease => ("tondo_rt_join_release", &[I64], &[]),
             Rt::HandleRetain => ("tondo_rt_handle_retain", &[I64], &[]),
@@ -392,7 +394,7 @@ impl Rt {
             Rt::GroupSettle => ("tondo_rt_group_settle", &[I64], &[I64]),
             Rt::GroupTake => ("tondo_rt_group_take", &[I64, I64, I64], &[I8]),
             Rt::GroupRelease => ("tondo_rt_group_release", &[I64], &[]),
-            Rt::ChannelNew => ("tondo_rt_channel_new", &[I64, I8, I64, I64, I64, I64], &[I64]),
+            Rt::ChannelNew => ("tondo_rt_channel_new", &[I64, I8, I64, I64, I64, I64, I64], &[I64]),
             Rt::SenderNew => ("tondo_rt_sender_new", &[I64], &[I64]),
             Rt::SenderCopy => ("tondo_rt_sender_copy", &[I64], &[I64]),
             Rt::ChannelSend => ("tondo_rt_channel_send", &[I64, I64, I64], &[]),
@@ -415,7 +417,7 @@ impl Rt {
             Rt::JoinCancel => ("tondo_rt_join_cancel", &[I64], &[]),
             Rt::JoinDetach => ("tondo_rt_join_detach", &[I64], &[]),
             Rt::GroupCancel => ("tondo_rt_group_cancel", &[I64], &[]),
-            Rt::SyncNew => ("tondo_rt_sync_new", &[I64, I64, I64], &[I64]),
+            Rt::SyncNew => ("tondo_rt_sync_new", &[I64, I64, I64, I64], &[I64]),
             Rt::SyncValue => ("tondo_rt_sync_value", &[I64], &[I64]),
             Rt::SyncLock => ("tondo_rt_sync_lock", &[I64, I8, I64], &[I64]),
             Rt::SyncUnlock => ("tondo_rt_sync_unlock", &[I64], &[]),
@@ -436,21 +438,21 @@ impl Rt {
             Rt::SharedMapLength => ("tondo_rt_shared_map_length", &[I64], &[I64]),
             Rt::SharedMapSnapshot => ("tondo_rt_shared_map_snapshot", &[I64], &[I64]),
             Rt::SharedMapRelease => ("tondo_rt_shared_map_release", &[I64], &[]),
-            Rt::SharedQueueFrom => ("tondo_rt_shared_queue_from", &[I64, I64, I64, I64], &[I64]),
+            Rt::SharedQueueFrom => ("tondo_rt_shared_queue_from", &[I64, I64, I64, I64, I64], &[I64]),
             Rt::SharedQueuePush => ("tondo_rt_shared_queue_push", &[I64, I64], &[]),
             Rt::SharedQueuePop => ("tondo_rt_shared_queue_pop", &[I64, I64], &[I8]),
             Rt::SharedQueueGet => ("tondo_rt_shared_queue_get", &[I64, I64, I64], &[I8]),
             Rt::SharedQueueLength => ("tondo_rt_shared_queue_length", &[I64], &[I64]),
             Rt::SharedQueueSnapshot => ("tondo_rt_shared_queue_snapshot", &[I64], &[I64]),
             Rt::SharedQueueRelease => ("tondo_rt_shared_queue_release", &[I64], &[]),
-            Rt::SharedStackFrom => ("tondo_rt_shared_stack_from", &[I64, I64, I64, I64], &[I64]),
+            Rt::SharedStackFrom => ("tondo_rt_shared_stack_from", &[I64, I64, I64, I64, I64], &[I64]),
             Rt::SharedStackPush => ("tondo_rt_shared_stack_push", &[I64, I64], &[]),
             Rt::SharedStackPop => ("tondo_rt_shared_stack_pop", &[I64, I64], &[I8]),
             Rt::SharedStackGet => ("tondo_rt_shared_stack_get", &[I64, I64, I64], &[I8]),
             Rt::SharedStackLength => ("tondo_rt_shared_stack_length", &[I64], &[I64]),
             Rt::SharedStackSnapshot => ("tondo_rt_shared_stack_snapshot", &[I64], &[I64]),
             Rt::SharedStackRelease => ("tondo_rt_shared_stack_release", &[I64], &[]),
-            Rt::SharedArrayFrom => ("tondo_rt_shared_array_from", &[I64, I64, I64, I64], &[I64]),
+            Rt::SharedArrayFrom => ("tondo_rt_shared_array_from", &[I64, I64, I64, I64, I64], &[I64]),
             Rt::SharedArrayGet => ("tondo_rt_shared_array_get", &[I64, I64, I64], &[I8]),
             Rt::SharedArraySet => ("tondo_rt_shared_array_set", &[I64, I64, I64, I64], &[I8]),
             Rt::SharedArrayExchange => ("tondo_rt_shared_array_exchange", &[I64, I64, I64, I64, I64, I64], &[I8]),
@@ -617,6 +619,8 @@ enum Glue {
     /// Runs a member of the test tree, a `fn()` value, and reports the
     /// error it returns.
     Test,
+    /// Reports the references a value holds to the cycle collector.
+    Visit,
 }
 
 fn int_type(int: IntTy) -> ir::Type {
@@ -1046,7 +1050,7 @@ impl Codegen<'_> {
     fn glue_signature(&mut self, kind: Glue) -> ir::Signature {
         let mut signature = self.module.make_signature();
         signature.params.push(AbiParam::new(POINTER));
-        if kind == Glue::Display {
+        if matches!(kind, Glue::Display | Glue::Visit) {
             signature.params.push(AbiParam::new(POINTER));
         }
         if kind == Glue::Equal {
@@ -1095,7 +1099,7 @@ impl Codegen<'_> {
         let name = format!("tondo_map_glue{}", self.map_glue.len());
         let id = self.module.declare_data(&name, Linkage::Local, false, false).expect("glue table");
         let mut data = DataDescription::new();
-        data.define(vec![0u8; 48].into_boxed_slice());
+        data.define(vec![0u8; 64].into_boxed_slice());
         data.set_align(8);
         let entries = [
             (Glue::Hash, key, true),
@@ -1104,6 +1108,8 @@ impl Codegen<'_> {
             (Glue::Release, key, self.types.needs_drop(key)),
             (Glue::Retain, value, self.types.needs_drop(value)),
             (Glue::Release, value, self.types.needs_drop(value)),
+            (Glue::Visit, key, self.types.can_cycle(key)),
+            (Glue::Visit, value, self.types.can_cycle(value)),
         ];
         for (index, (kind, ty, present)) in entries.into_iter().enumerate() {
             if present {
@@ -1450,7 +1456,9 @@ impl Emit<'_, '_> {
     /// A glue function's address, or null when a retain or release of `ty`
     /// has nothing to do.
     fn glue_or_null(&mut self, kind: Glue, ty: Ty) -> ir::Value {
-        if matches!(kind, Glue::Retain | Glue::Release) && !self.cg.types.needs_drop(ty) {
+        if matches!(kind, Glue::Retain | Glue::Release) && !self.cg.types.needs_drop(ty)
+            || kind == Glue::Visit && !self.cg.types.can_cycle(ty)
+        {
             return self.fb.ins().iconst(POINTER, 0);
         }
         self.glue_address(kind, ty)
@@ -1962,6 +1970,78 @@ impl Emit<'_, '_> {
         }
     }
 
+    /// Reports to the cycle collector's `visitor` the references inside
+    /// `value` that may lead to a cycle (see `Types::can_cycle`).
+    fn visit(&mut self, ty: Ty, value: Val, visitor: ir::Value) {
+        if !self.cg.types.can_cycle(ty) {
+            return;
+        }
+        match (value, self.cg.layout(ty).shape) {
+            (Val::Scalar(pointer), _) => {
+                let zero = self.fb.ins().iconst(POINTER, 0);
+                // The kinds of `cycles::Kind` in the runtime.
+                let (kind, a, b) = match *self.cg.types.kind(self.cg.types.repr(ty)) {
+                    TyKind::Array(element) | TyKind::Deque(element) => {
+                        (2, self.element_size(element), self.glue_or_null(Glue::Visit, element))
+                    }
+                    TyKind::Map(..) | TyKind::Set(_) => {
+                        let (key, value) = self.cg.map_parts(ty);
+                        (3, self.glue_or_null(Glue::Visit, key), self.glue_or_null(Glue::Visit, value))
+                    }
+                    TyKind::Fn(..) => (4, zero, zero),
+                    TyKind::Handle(Handle::Ref, inner) => (1, self.glue_or_null(Glue::Visit, inner), zero),
+                    TyKind::Handle(handle, _) => {
+                        let kind = match handle {
+                            Handle::Mutex | Handle::RwLock | Handle::Atomic | Handle::Once => 5,
+                            Handle::Receiver => 6,
+                            Handle::Sender => 7,
+                            Handle::Join => 8,
+                            Handle::Group => 9,
+                            Handle::SyncMap | Handle::SyncSet => 10,
+                            Handle::SyncQueue => 11,
+                            Handle::SyncStack => 12,
+                            Handle::SyncArray => 13,
+                            Handle::ReflectBox => 14,
+                            _ => return,
+                        };
+                        (kind, zero, zero)
+                    }
+                    _ => return,
+                };
+                let kind = self.fb.ins().iconst(types::I8, kind);
+                self.call_rt(Rt::GcEdge, &[visitor, pointer, kind, a, b]);
+            }
+            (Val::Memory(base), Shape::Struct(_)) => {
+                let count = self.cg.types.components(ty).unwrap().len() as u32;
+                for index in 0..count {
+                    let slot = self.cg.slot(ty, Proj::Field(index));
+                    self.visit_slot(base, &slot, visitor);
+                }
+            }
+            (Val::Memory(address), Shape::Enum { .. }) => {
+                self.call_glue(Glue::Visit, ty, &[address, visitor]);
+            }
+            _ => {}
+        }
+    }
+
+    fn visit_slot(&mut self, base: ir::Value, slot: &Slot, visitor: ir::Value) {
+        if !self.cg.types.can_cycle(slot.ty) {
+            return;
+        }
+        if slot.boxed {
+            let cell = self.fb.ins().load(POINTER, flags(), base, slot.offset as i32);
+            let glue = self.glue_address(Glue::Visit, slot.ty);
+            let kind = self.fb.ins().iconst(types::I8, 0);
+            let zero = self.fb.ins().iconst(POINTER, 0);
+            self.call_rt(Rt::GcEdge, &[visitor, cell, kind, glue, zero]);
+        } else {
+            let address = self.offset(base, slot.offset);
+            let value = self.value_at(address, slot.ty);
+            self.visit(slot.ty, value, visitor);
+        }
+    }
+
     /// Structural equality (8.11): 1 when equal, 0 otherwise.
     fn equal(&mut self, ty: Ty, a: Val, b: Val) -> ir::Value {
         match (a, b) {
@@ -2125,6 +2205,11 @@ fn define_glue(cg: &mut Codegen, kind: Glue, ty: Ty, func: &mut ir::Function, fb
             e.refcount(ty, value, kind == Glue::Release);
             e.fb.ins().return_(&[]);
         }
+        (Glue::Visit, None) => {
+            let value = e.value_at(params[0], ty);
+            e.visit(ty, value, params[1]);
+            e.fb.ins().return_(&[]);
+        }
         (Glue::Equal, None) => {
             let (a, b) = (e.value_at(params[0], ty), e.value_at(params[1], ty));
             let result = e.equal(ty, a, b);
@@ -2157,6 +2242,12 @@ fn define_glue(cg: &mut Codegen, kind: Glue, ty: Ty, func: &mut ir::Function, fb
                         result = e.fb.ins().band(result, same);
                     }
                     e.fb.ins().return_(&[result]);
+                } else if kind == Glue::Visit {
+                    for index in 0..components {
+                        let slot = e.cg.slot(ty, Proj::Variant(variant, index));
+                        e.visit_slot(params[0], &slot, params[1]);
+                    }
+                    e.fb.ins().return_(&[]);
                 } else {
                     for index in 0..components {
                         let slot = e.cg.slot(ty, Proj::Variant(variant, index));
@@ -3219,7 +3310,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         }
                         let size = self.e.fb.ins().iconst(POINTER, self.e.cg.layout(*ty).size as i64);
                         let release = self.e.glue_or_null(Glue::Release, *ty);
-                        let object = self.e.call_rt(Rt::ReflectBox, &[size, release, identity]).unwrap();
+                        let visit = self.e.glue_or_null(Glue::Visit, *ty);
+                        let object = self.e.call_rt(Rt::ReflectBox, &[size, release, identity, visit]).unwrap();
                         let address = self.e.fb.ins().iadd_imm_s(object, REFLECT_VALUE);
                         self.e.store_val(address, *ty, value);
                         Val::Scalar(object)
@@ -3273,7 +3365,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let code = self.e.fb.ins().func_addr(POINTER, callee);
                 let size = self.e.fb.ins().iconst(POINTER, self.e.cg.layout(env).size as i64);
                 let release = self.e.glue_or_null(Glue::Release, env);
-                let object = self.e.call_rt(Rt::FnNew, &[code, size, release]).unwrap();
+                let visit = self.e.glue_or_null(Glue::Visit, env);
+                let object = self.e.call_rt(Rt::FnNew, &[code, size, release, visit]).unwrap();
                 let captures = self.e.fb.ins().iadd_imm_s(object, FN_HEADER);
                 self.e.store_val(captures, env, value);
                 Val::Scalar(object)
@@ -3304,7 +3397,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let size = self.e.fb.ins().iconst(POINTER, size as i64);
                 let align = self.e.fb.ins().iconst(POINTER, layout.align as i64);
                 let release = self.e.glue_or_null(Glue::Release, result);
-                Val::Scalar(self.e.call_rt(Rt::Spawn, &[object, kind, size, align, release]).unwrap())
+                let visit = self.e.glue_or_null(Glue::Visit, result);
+                Val::Scalar(self.e.call_rt(Rt::Spawn, &[object, kind, size, align, release, visit]).unwrap())
             }
             Rvalue::Select(cases, blocking, span) => Val::Scalar(self.select(cases, *blocking, *span)),
             Rvalue::Cancelled => Val::Scalar(self.e.call_rt(Rt::Cancelled, &[]).unwrap()),
@@ -3624,9 +3718,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let size = self.e.fb.ins().iconst(POINTER, layout.size as i64);
                 let align = self.e.fb.ins().iconst(POINTER, layout.align as i64);
                 let release = self.e.glue_or_null(Glue::Release, value);
+                let visit = self.e.glue_or_null(Glue::Visit, value);
                 let location = self.location(span);
-                let channel =
-                    self.e.call_rt(Rt::ChannelNew, &[capacity, bounded, size, align, release, location]).unwrap();
+                let channel = self
+                    .e
+                    .call_rt(Rt::ChannelNew, &[capacity, bounded, size, align, release, visit, location])
+                    .unwrap();
                 let sender = self.e.call_rt(Rt::SenderNew, &[channel]).unwrap();
                 let pair = self.scratch(ty);
                 for (index, end) in [sender, channel].into_iter().enumerate() {
@@ -3679,7 +3776,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let size = self.e.fb.ins().iconst(POINTER, layout.size as i64);
                 let align = self.e.fb.ins().iconst(POINTER, layout.align as i64);
                 let release = self.e.glue_or_null(Glue::Release, state);
-                let cell = self.e.call_rt(Rt::SyncNew, &[size, align, release]).unwrap();
+                let visit = self.e.glue_or_null(Glue::Visit, state);
+                let cell = self.e.call_rt(Rt::SyncNew, &[size, align, release, visit]).unwrap();
                 let address = self.e.call_rt(Rt::SyncValue, &[cell]).unwrap();
                 self.e.store_val(address, state, value);
                 Some(Val::Scalar(cell))
@@ -3883,12 +3981,13 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let size = self.e.element_size(element);
         let retain = self.e.glue_or_null(Glue::Retain, element);
         let release = self.e.glue_or_null(Glue::Release, element);
+        let visit = self.e.glue_or_null(Glue::Visit, element);
         let rt = match handle {
             Handle::SyncQueue => Rt::SharedQueueFrom,
             Handle::SyncStack => Rt::SharedStackFrom,
             _ => Rt::SharedArrayFrom,
         };
-        self.e.call_rt(rt, &[pointer, size, retain, release]).unwrap()
+        self.e.call_rt(rt, &[pointer, size, retain, release, visit]).unwrap()
     }
 
     /// `present` and the address of the payload of an option value, or of

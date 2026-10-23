@@ -107,7 +107,9 @@ Values have no identity: two equal records are the same, and copying one
 copies it. `Ref(value)` gives a value an identity that its copies share.
 `==` and hashing compare identities, so a `Ref` is a map key whatever it
 holds, and `reference.value` reads the value, which never changes. What
-changes goes in a `sync.Mutex` (see `tondo guide tasks`).
+changes goes in a `sync.Mutex` (see `tondo guide tasks`). Values that refer
+to each other in a cycle, such as two people in each other's list of
+friends, are freed like any other once nothing uses them.
 
 ```tondo
 import std.console

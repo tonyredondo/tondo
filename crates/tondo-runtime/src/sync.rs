@@ -1,6 +1,7 @@
 //! `std.sync` (standard library 14.4.4): shared state behind locks that
 //! park tasks instead of blocking threads, semaphores and barriers.
 
+use super::cycles::{self, Kind, Taken, Visit, Visitor};
 use super::tasks::{CANCELLED, Task, Wait, cancelled, current, lock, notify, unlock};
 use super::{Glue, LIVE_OBJECTS, Str};
 use std::collections::VecDeque;
@@ -35,6 +36,9 @@ pub struct SyncObject {
     size: usize,
     align: usize,
     release: Option<Glue>,
+    /// Visits the state for the cycle collector, when it may refer back
+    /// to the cell, which is then registered with it.
+    visit: Option<Visit>,
 }
 
 const WRITER: usize = 1;
@@ -56,11 +60,16 @@ const SPIN_ROUNDS: u32 = 8;
 /// A new cell for a value of `size` bytes, which compiled code stores at
 /// `tondo_rt_sync_value`.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_sync_new(size: usize, align: usize, release: Option<Glue>) -> *mut SyncObject {
+pub extern "C" fn tondo_rt_sync_new(
+    size: usize,
+    align: usize,
+    release: Option<Glue>,
+    visit: Option<Visit>,
+) -> *mut SyncObject {
     let align = align.max(8);
     let layout = std::alloc::Layout::from_size_align(size.max(1), align).unwrap();
     LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
-    Box::into_raw(Box::new(SyncObject {
+    let cell = Box::into_raw(Box::new(SyncObject {
         rc: AtomicUsize::new(1),
         state: AtomicUsize::new(0),
         queue: AtomicBool::new(false),
@@ -70,7 +79,27 @@ pub extern "C" fn tondo_rt_sync_new(size: usize, align: usize, release: Option<G
         size,
         align,
         release,
-    }))
+        visit,
+    }));
+    if visit.is_some() {
+        cycles::remember(cell as *const u8, Kind::Sync);
+    }
+    cell
+}
+
+/// Visits the state for the cycle collector.
+pub(crate) unsafe fn visit(visitor: &mut Visitor, cell: *mut u8) {
+    let o = unsafe { &*(cell as *const SyncObject) };
+    unsafe { visitor.visit(o.visit, o.value) };
+}
+
+/// Takes the state out of a garbage cell.
+pub(crate) unsafe fn clear(cell: *mut u8) -> Option<Taken> {
+    let o = unsafe { &mut *(cell as *mut SyncObject) };
+    let release = o.release.take()?;
+    let mut state = vec![0u64; o.size.div_ceil(8).max(1)];
+    unsafe { std::ptr::copy_nonoverlapping(o.value, state.as_mut_ptr() as *mut u8, o.size) };
+    Some(Box::new(move || unsafe { release(state.as_mut_ptr() as *mut u8) }))
 }
 
 /// A guard is the object's address, plus 1 when it holds it to read.
@@ -344,6 +373,9 @@ pub unsafe extern "C" fn tondo_rt_sync_release(object: *mut SyncObject) {
             return;
         }
         std::sync::atomic::fence(Ordering::Acquire);
+        if (*object).visit.is_some() {
+            cycles::forget(object as *const u8);
+        }
         let o = Box::from_raw(object);
         if let Some(release) = o.release {
             release(o.value);

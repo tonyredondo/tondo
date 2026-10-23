@@ -3,6 +3,7 @@
 //! Everything else reflection does is code the compiler generates for each
 //! type.
 
+use super::cycles::{Visit, Visitor};
 use super::{Glue, LIVE_OBJECTS, Str, str_bytes, str_new};
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
 use std::sync::atomic::{AtomicUsize, Ordering, fence};
@@ -20,6 +21,9 @@ pub struct BoxObject {
     size: usize,
     release: Option<Glue>,
     identity: *const Identity,
+    /// Visits the value for the cycle collector, when it may refer to a
+    /// cycle.
+    visit: Option<Visit>,
 }
 
 /// Where the value starts, after the header.
@@ -36,6 +40,7 @@ pub extern "C" fn tondo_rt_reflect_box(
     size: usize,
     release: Option<Glue>,
     identity: *const Identity,
+    visit: Option<Visit>,
 ) -> *mut BoxObject {
     let layout = layout(size);
     unsafe {
@@ -43,7 +48,7 @@ pub extern "C" fn tondo_rt_reflect_box(
         if object.is_null() {
             handle_alloc_error(layout);
         }
-        object.write(BoxObject { rc: AtomicUsize::new(1), size, release, identity });
+        object.write(BoxObject { rc: AtomicUsize::new(1), size, release, identity, visit });
         LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
         object
     }
@@ -62,6 +67,11 @@ pub unsafe extern "C" fn tondo_rt_reflect_release(object: *mut BoxObject) {
         dealloc(object as *mut u8, layout((*object).size));
     }
     LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+}
+
+/// Visits the value for the cycle collector.
+pub(crate) unsafe fn visit(visitor: &mut Visitor, object: *mut u8) {
+    unsafe { visitor.visit((*(object as *const BoxObject)).visit, object.add(VALUE_OFFSET)) };
 }
 
 /// Whether the box holds a value of the type `identity`.

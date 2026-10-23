@@ -1311,3 +1311,42 @@ does. Nothing writes through it: an assignment or a method that changes its
 receiver says that the value never changes and points to `sync.Mutex`,
 and moving an affine value out of it says to use it in place. Encoding a
 `Ref` is refused like any handle, since identities are not serialized.
+
+## 2026-10-24 — Cycles of references are collected
+
+Reference counting kept every cycle forever, which the specification
+forbids (16.7): a `sync.Mutex` holding a closure that captures it was
+three objects lost. A cycle needs something that changes after it is made,
+since values, closures and `Ref`s never change, so it passes through
+shared state: a `std.sync` cell, a channel's buffer, a task's result. The
+compiler works out which types can reach a cycle (a closure, or a cell
+whose state can reach a cell of its own type again) and generates, for
+those only, a function that reports a value's references, as it already
+generates one that releases them. Cells whose state is such a type
+register with the collector, closures and reflected values keep the
+function for what they hold, and nothing else changes for other types.
+
+A collection starts from the registered cells and counts, for each object
+it reaches, the references coming from the others; an object with more is
+held from outside, by a task, a variable or the runtime, and lives with
+all it reaches. The rest is garbage: its cells give up their state, and
+counting frees everything else, so there is no second way to free. A task
+still running holds its join and its group without a count, and says so.
+The counts must not change while they are read, and a task walking a
+graph could move a reference between two reads, so the workers stop at
+safe points: between tasks, after calls that may wait and around calls
+of C. A task that runs long without one makes the collection give up
+after 2 ms and try again. The runtime's own threads never follow the
+references of Tondo values; one that frees a registered cell waits.
+
+A collection comes once as many cells were created as objects stayed
+alive in the last one, at least 1 024. Six tasks doing nothing but making
+cycles outran the collector's thread, and pauses grew to 42 ms; a thread
+that registers cells four thresholds ahead now waits for the collector at
+its next safe point, and the same run paused at most 0.9 ms. Channels,
+spawning and network round trips measured the same as before. Garbage
+found is released after the workers resume. Running a collection before
+an allocation fails, as the specification also asks, is not done: on the
+supported systems allocations do not fail, the kernel ends the process
+first, and a collection inside the allocator could meet the locks of the
+code that allocates.

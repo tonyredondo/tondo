@@ -12,6 +12,7 @@
 //! completes one of those operations first claims the wait, under that
 //! object's lock, and then notifies the task.
 
+use super::cycles::{self, Kind, Taken, Visit, Visitor};
 use super::trace::Origin;
 use super::{Glue, LIVE_OBJECTS, Str, flush_stdout, runtime_fault};
 use std::cell::Cell;
@@ -541,6 +542,8 @@ fn wait_pinned(task: *mut Task) {
         queue.pinned.push(task);
         check(&queue);
     }
+    // Waiting, the thread runs no Tondo code that a collection could meet.
+    leave_tondo();
     loop {
         let lock = PINNED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         if state.load(Ordering::Acquire) == RUNNING {
@@ -553,7 +556,85 @@ fn wait_pinned(task: *mut Task) {
         drop(lock);
         check(&queue());
     }
+    enter_tondo();
     queue().pinned.retain(|&t| t != task);
+}
+
+// ---------------------------------------------------------------------------
+// Stopping the world
+// ---------------------------------------------------------------------------
+
+/// Set while the cycle collector needs every thread out of Tondo code.
+static STOPPING: AtomicBool = AtomicBool::new(false);
+static RESUMED: Condvar = Condvar::new();
+static RESUMED_LOCK: Mutex<()> = Mutex::new(());
+/// Whether each thread that ever ran Tondo code runs it now.
+static IN_TONDO: Mutex<Vec<&'static AtomicBool>> = Mutex::new(Vec::new());
+
+thread_local! {
+    static IN_TONDO_HERE: &'static AtomicBool = {
+        let running: &'static AtomicBool = Box::leak(Box::new(AtomicBool::new(false)));
+        IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).push(running);
+        running
+    };
+}
+
+/// From now on this thread runs Tondo code, once no collection runs.
+fn enter_tondo() {
+    IN_TONDO_HERE.with(|running| {
+        loop {
+            running.store(true, Ordering::SeqCst);
+            if !STOPPING.load(Ordering::SeqCst) {
+                return;
+            }
+            running.store(false, Ordering::SeqCst);
+            let mut resumed = RESUMED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            while STOPPING.load(Ordering::SeqCst) {
+                resumed = RESUMED.wait(resumed).unwrap_or_else(|e| e.into_inner());
+            }
+        }
+    });
+}
+
+fn leave_tondo() {
+    IN_TONDO_HERE.with(|running| running.store(false, Ordering::SeqCst));
+}
+
+/// Where a running task lets a collection run: between two steps.
+fn safe_point() {
+    if STOPPING.load(Ordering::Relaxed) {
+        leave_tondo();
+        enter_tondo();
+    }
+    if cycles::owed() {
+        leave_tondo();
+        cycles::assist();
+        enter_tondo();
+    }
+}
+
+/// Stops every thread at its next safe point, for the cycle collector;
+/// gives up after `timeout`, when a task runs long without one.
+pub(crate) fn stop_world(timeout: Duration) -> bool {
+    STOPPING.store(true, Ordering::SeqCst);
+    let deadline = Instant::now() + timeout;
+    let threads = IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    loop {
+        if threads.iter().all(|running| !running.load(Ordering::SeqCst)) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            resume_world();
+            return false;
+        }
+        std::thread::yield_now();
+    }
+}
+
+pub(crate) fn resume_world() {
+    STOPPING.store(false, Ordering::SeqCst);
+    let _resumed = RESUMED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    RESUMED.notify_all();
 }
 
 /// What it means that no task can run: nothing yet, a deadlock (`P0013`),
@@ -768,7 +849,9 @@ fn work(main: bool) -> i32 {
             }
         };
         CURRENT.with(|c| c.set(task));
+        enter_tondo();
         unsafe { switch(home(), (*task).sp) };
+        leave_tondo();
         CURRENT.with(|c| c.set(std::ptr::null_mut()));
         unsafe {
             let in_domain = (*task).in_domain;
@@ -931,6 +1014,8 @@ fn in_c() -> &'static InC {
 /// worker runs nothing else, so the monitor may start another in its place.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_foreign_enter() {
+    // C follows no references of Tondo values.
+    leave_tondo();
     let state = in_c();
     state.calls.fetch_add(1, Ordering::SeqCst);
     let depth = state.depth.fetch_add(1, Ordering::SeqCst);
@@ -962,6 +1047,7 @@ pub(crate) fn c_frame() -> Option<(usize, usize)> {
 /// one worker retire.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_foreign_leave() {
+    enter_tondo();
     let state = in_c();
     state.calls.fetch_add(1, Ordering::SeqCst);
     if state.depth.fetch_sub(1, Ordering::SeqCst) == 1 && state.replaced.swap(false, Ordering::SeqCst) {
@@ -1218,7 +1304,11 @@ fn new_task(stack: Stack, body: *mut u8, code: *const u8, kind: ResultKind, join
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_callback(inner: unsafe extern "C" fn(*mut u8), frame: *mut u8) {
     if !current().is_null() {
-        return unsafe { inner(frame) };
+        // A call back from C on a worker: Tondo code again until it returns.
+        enter_tondo();
+        unsafe { inner(frame) };
+        leave_tondo();
+        return;
     }
     let call = ForeignCall { inner, frame, done: Mutex::new(false), finished: Condvar::new() };
     let task =
@@ -1351,6 +1441,7 @@ pub(crate) fn cancelled() -> bool {
 /// there too.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_cancelled() -> u8 {
+    safe_point();
     if exploring().is_some() {
         give_way();
     }
@@ -1461,6 +1552,9 @@ pub struct JoinObject {
     task: *mut Task,
     /// Let go with `detach()`: the task holds a reference until it ends.
     detached: bool,
+    /// Visits the result for the cycle collector, when it may refer back
+    /// to the join, which is then registered with it.
+    visit: Option<Visit>,
 }
 
 /// Starts a task that calls the closure `body`, a `fn` object it takes,
@@ -1473,6 +1567,7 @@ pub unsafe extern "C" fn tondo_rt_spawn(
     size: usize,
     align: usize,
     release: Option<Glue>,
+    visit: Option<Visit>,
 ) -> *mut JoinObject {
     start_workers();
     let align = align.max(8);
@@ -1496,7 +1591,11 @@ pub unsafe extern "C" fn tondo_rt_spawn(
         index: 0,
         task: std::ptr::null_mut(),
         detached: false,
+        visit,
     }));
+    if visit.is_some() {
+        cycles::remember(join as *const u8, Kind::Join);
+    }
     let code = unsafe { *(body.add(16) as *const *const u8) };
     let kind = match kind {
         0 => ResultKind::Nothing,
@@ -1689,8 +1788,47 @@ pub unsafe extern "C" fn tondo_rt_join_release(join: *mut JoinObject) {
     }
 }
 
+/// Visits a finished task's result for the cycle collector; a task still
+/// running holds its join.
+pub(crate) unsafe fn visit_join(visitor: &mut Visitor, join: *mut u8) {
+    let j = unsafe { &*(join as *const JoinObject) };
+    if !j.done {
+        visitor.hold();
+    } else if !j.taken {
+        unsafe { visitor.visit(j.visit, j.result) };
+    }
+}
+
+/// Takes the result out of a garbage join.
+pub(crate) unsafe fn clear_join(join: *mut u8) -> Option<Taken> {
+    let j = unsafe { &mut *(join as *mut JoinObject) };
+    if !j.done || j.taken {
+        return None;
+    }
+    let release = j.release?;
+    j.taken = true;
+    let mut result = vec![0u64; j.size.div_ceil(8).max(1)];
+    unsafe { std::ptr::copy_nonoverlapping(j.result, result.as_mut_ptr() as *mut u8, j.size) };
+    Some(Box::new(move || unsafe { release(result.as_mut_ptr() as *mut u8) }))
+}
+
+/// Visits a group's joins for the cycle collector; tasks still running
+/// hold their group.
+pub(crate) unsafe fn visit_group(visitor: &mut Visitor, group: *mut u8) {
+    let g = unsafe { &*(group as *const GroupObject) };
+    if g.running > 0 {
+        visitor.hold();
+    }
+    for &join in &g.joins {
+        visitor.edge(join as *const u8, Kind::Join, 0, 0);
+    }
+}
+
 unsafe fn free_join(join: *mut JoinObject) {
     unsafe {
+        if (*join).visit.is_some() {
+            cycles::forget(join as *const u8);
+        }
         // A cancelled task cancels the tasks it still owns (11.15).
         if cancelled() {
             cancel_join(join);
@@ -1971,6 +2109,9 @@ pub struct ChannelObject {
     size: usize,
     align: usize,
     release: Option<Glue>,
+    /// Visits a value for the cycle collector, when it may refer back to
+    /// the channel, which is then registered with it.
+    visit: Option<Visit>,
     /// The buffered values' bytes, `count` values of `size` bytes each.
     buffer: VecDeque<u8>,
     count: usize,
@@ -1995,6 +2136,7 @@ pub unsafe extern "C" fn tondo_rt_channel_new(
     size: usize,
     align: usize,
     release: Option<Glue>,
+    visit: Option<Visit>,
     location: *const Str,
 ) -> *mut ChannelObject {
     if bounded != 0 && capacity < 0 {
@@ -2005,7 +2147,7 @@ pub unsafe extern "C" fn tondo_rt_channel_new(
         );
     }
     LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
-    Box::into_raw(Box::new(ChannelObject {
+    let channel = Box::into_raw(Box::new(ChannelObject {
         rc: AtomicUsize::new(1),
         lock: AtomicBool::new(false),
         closed: false,
@@ -2014,10 +2156,48 @@ pub unsafe extern "C" fn tondo_rt_channel_new(
         size,
         align: align.max(1),
         release,
+        visit,
         buffer: VecDeque::new(),
         count: 0,
         receiving: VecDeque::new(),
         sending: VecDeque::new(),
+    }));
+    if visit.is_some() {
+        cycles::remember(channel as *const u8, Kind::Channel);
+    }
+    channel
+}
+
+/// Visits the buffered values for the cycle collector.
+pub(crate) unsafe fn visit_channel(visitor: &mut Visitor, channel: *mut u8) {
+    let c = unsafe { &*(channel as *const ChannelObject) };
+    let mut value = vec![0u64; c.size.div_ceil(8).max(1)];
+    for index in 0..c.count {
+        let bytes = c.buffer.range(index * c.size..(index + 1) * c.size);
+        for (at, &byte) in bytes.enumerate() {
+            unsafe { *(value.as_mut_ptr() as *mut u8).add(at) = byte };
+        }
+        unsafe { visitor.visit(c.visit, value.as_mut_ptr() as *mut u8) };
+    }
+}
+
+/// The channel a sender sends to, for the cycle collector.
+pub(crate) unsafe fn visit_sender(visitor: &mut Visitor, sender: *mut u8) {
+    let channel = unsafe { (*(sender as *const SenderObject)).channel };
+    visitor.edge(channel as *const u8, Kind::Channel, 0, 0);
+}
+
+/// Takes the buffered values out of a garbage channel.
+pub(crate) unsafe fn clear_channel(channel: *mut u8) -> Option<Taken> {
+    let c = unsafe { &mut *(channel as *mut ChannelObject) };
+    let release = c.release?;
+    let (mut buffer, count, size) = (std::mem::take(&mut c.buffer), std::mem::take(&mut c.count), c.size);
+    Some(Box::new(move || {
+        let mut value = vec![0u64; size.div_ceil(8).max(1)];
+        for _ in 0..count {
+            pop_bytes(&mut buffer, value.as_mut_ptr() as *mut u8, size);
+            unsafe { release(value.as_mut_ptr() as *mut u8) };
+        }
     }))
 }
 
@@ -2276,6 +2456,9 @@ pub unsafe extern "C" fn tondo_rt_receiver_release(channel: *mut ChannelObject) 
             return;
         }
         std::sync::atomic::fence(Ordering::Acquire);
+        if (*channel).visit.is_some() {
+            cycles::forget(channel as *const u8);
+        }
         let mut c = Box::from_raw(channel);
         if let Some(release) = c.release
             && c.size > 0

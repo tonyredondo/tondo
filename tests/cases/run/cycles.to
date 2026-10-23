@@ -1,0 +1,78 @@
+// Cycles of references through every kind of shared state are collected
+// (language 16.7): the run checks that nothing leaks, and live cycles stay
+// intact while tasks make enough garbage for collections to run.
+import std.console
+import std.sync
+
+type Person = { name: String, friends: sync.Mutex[Array[Ref[Person]]] }
+
+type Message = { text: String, reply: Sender[Message]? }
+
+type Holder = { job: Join[Holder]? }
+
+fn person(name: String): Ref[Person] {
+    Ref(Person { name: name, friends: sync.Mutex([]) })
+}
+
+fn befriend(a: Ref[Person], b: Ref[Person]) {
+    a.value.friends.update((list) { list.push(b) })
+    b.value.friends.update((list) { list.push(a) })
+}
+
+// Pairs of friends that nothing else holds.
+fn churn(rounds: Int): Int {
+    for i in 0..rounds {
+        befriend(person("a{i}"), person("b{i}"))
+    }
+    rounds
+}
+
+fn keep(inbox: Receiver[Join[Holder]]): Holder {
+    Holder { job: inbox.receive() }
+}
+
+fn garbage(i: Int) {
+    // A buffered message holds a sender of its own channel.
+    let (sender, receiver) = channel[Message]()
+    sender.send(Message { text: "hello {i}", reply: some(sender.copy()) })
+
+    // Closures in shared collections that capture the collection.
+    let handlers: sync.Map[String, fn(): Int] = sync.Map[:]
+    _ = handlers.insert("size", () { handlers.length() })
+    let queue: sync.Queue[fn(): Int] = sync.Queue[]
+    queue.push(() { queue.get(0).map((f) { 1 }).unwrapOr(0) })
+    let stack: sync.Stack[fn(): Int] = sync.Stack[]
+    stack.push(() { stack.get(0).map((f) { 1 }).unwrapOr(0) })
+    let slots: sync.Array[fn(): Int] = sync.Array([() { 0 }])
+    _ = slots.set(0, () { slots.length() })
+
+    // A task's result holds its own join.
+    let (give, take) = channel[Join[Holder]]()
+    give.send(spawn keep(take))
+}
+
+fn main() {
+    let ana = person("Ana")
+    let luis = person("Luis")
+    befriend(ana, luis)
+    let handlers: sync.Map[String, fn(): Int] = sync.Map[:]
+    _ = handlers.insert("size", () { handlers.length() })
+
+    for i in 0..500 {
+        garbage(i)
+    }
+    var group = Group.new[Int]()
+    for _ in 0..4 {
+        group.add(spawn churn(2000))
+    }
+    var pairs = 0
+    for made in group.wait() {
+        pairs += made
+    }
+
+    let friend = ana.value.friends.get()[0]
+    let size = handlers.get("size").map((f) { f() }).unwrapOr(-1)
+    console.println("{pairs} pairs; {friend.value.name} {friend.value.friends.get()[0] == ana} {size}")
+}
+
+// expect-stdout: 8000 pairs; Luis true 1
