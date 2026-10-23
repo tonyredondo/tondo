@@ -236,9 +236,12 @@ impl Mono<'_> {
             | ExprKind::ExternFn(_)
             | ExprKind::Error => {}
             ExprKind::Layout(ty, _) => *ty = self.ty(*ty, map),
-            ExprKind::Reflect(_, ty, values) => {
+            ExprKind::Reflect(op, ty, values) => {
                 *ty = self.ty(*ty, map);
                 self.exprs(values, map);
+                if *op == crate::hir::ReflectOp::Describe {
+                    self.collect_display(*ty);
+                }
             }
             ExprKind::Aggregate(items)
             | ExprKind::Array(items)

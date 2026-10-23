@@ -3134,6 +3134,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     // The identity holds the name, an immortal string.
                     ReflectOp::Name => Val::Scalar(self.e.fb.ins().load(POINTER, flags(), identity, 0)),
                     ReflectOp::Identity => Val::Scalar(identity),
+                    ReflectOp::Describe => {
+                        let value = self.operand(&operands[0]);
+                        Val::Scalar(self.e.describe(*ty, value, true))
+                    }
                     ReflectOp::Capabilities => {
                         let types = self.e.cg.types;
                         let bits = types.is_copy(*ty) as i64

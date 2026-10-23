@@ -1764,7 +1764,11 @@ fn run_cleanups() {
 pub unsafe extern "C" fn tondo_rt_panic(mut code: u32, message: *const Str, location: *const Str) -> ! {
     flush_stdout();
     let message = (!message.is_null()).then(|| String::from_utf8_lossy(unsafe { str_bytes(message) }).into_owned());
-    let location = String::from_utf8_lossy(unsafe { str_bytes(location) });
+    let mut location = String::from_utf8_lossy(unsafe { str_bytes(location) }).into_owned();
+    // A panic inside the standard library points at the program's call.
+    if location.starts_with("<std>/") {
+        location = trace::caller().unwrap_or(location);
+    }
     let suppressed = PANICKING.fetch_add(1, Ordering::SeqCst) > 0;
     // `testing.skip(reason)` ends a test as skipped, unless cleanup runs.
     if code == testing::SKIP && suppressed {

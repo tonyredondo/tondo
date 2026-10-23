@@ -1,0 +1,19 @@
+// `expect` on an error says the message and the error, and a panic inside
+// the standard library points at the program's call.
+enum LoadError {
+    Missing(String)
+    Broken
+}
+
+fn load(name: String): Int ! LoadError {
+    fail LoadError.Missing(name)
+}
+
+fn main() {
+    let count = load("app.toml").expect("loading the app")
+}
+
+// expect-panic: P0008
+// expect-stderr: panic[P0008]: explicit-panic: loading the app: LoadError.Missing
+// expect-stderr:  --> panic_expect_error.to:13:17
+// expect-stderr:   main                           panic_expect_error.to:13:17

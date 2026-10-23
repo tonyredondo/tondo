@@ -285,6 +285,13 @@ fn write_stack<I: Iterator<Item = usize>>(
     }
 }
 
+/// Where the program's own code is in the running task's stack: the first
+/// frame outside the standard library, which a panic inside it points at.
+pub(crate) fn caller() -> Option<String> {
+    let frame = here().filter_map(resolve).find(|frame| !frame.file.starts_with("<std>/"))?;
+    Some(format!("{}:{}:{}", frame.file, frame.line, frame.column))
+}
+
 /// The trace of the running task from here, and where it was started, as
 /// the lines that follow a report.
 pub(crate) fn report() -> String {

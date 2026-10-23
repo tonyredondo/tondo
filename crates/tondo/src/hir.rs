@@ -748,6 +748,10 @@ pub enum ReflectOp {
     /// The capabilities the compiler demonstrates of the type, as bits:
     /// 1 `Copy`, 2 `Equatable`, 4 `Key`.
     Capabilities,
+    /// A value of any type as text, as the report of an error that ends
+    /// `main` shows it: its `Display`, a string, `Type.Variant`, or the
+    /// type's name.
+    Describe,
 }
 
 /// The raw operations of a `Pointer[T]` that touch memory or move it.

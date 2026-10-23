@@ -3,6 +3,7 @@
 // order and add values.
 
 import std.internal.math as mathNative
+import std.internal.reflect as reflectNative
 import std.internal.text as textNative
 import std.math as __math
 import std.text as __text
@@ -547,11 +548,11 @@ pub fn Result[T, E].err(self): E? {
     }
 }
 
-/// The value; an error panics with the message.
+/// The value; an error panics with the message and the error.
 pub fn Result[T, E].expect(self, message: String): T {
     match self {
         ok(value) => value
-        err(_) => panic(message)
+        err(error) => panic("{message}: {reflectNative.describe(error)}")
     }
 }
 

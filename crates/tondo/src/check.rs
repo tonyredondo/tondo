@@ -10240,13 +10240,16 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalHttp),
                 )),
             ) => {
-                if module == StdModule::InternalReflect && *member == "box" {
+                if module == StdModule::InternalReflect && matches!(*member, "box" | "describe") {
                     let [arg] = args else {
                         return self.arity_error(span, 1, args.len());
                     };
                     let value = self.expr(cx, &arg.value, None);
-                    let boxed = self.types.handle(Handle::ReflectBox, Ty::UNIT);
-                    return Self::mk(hir::ExprKind::Reflect(hir::ReflectOp::Box, value.ty, vec![value]), boxed, span);
+                    let (op, result) = match *member {
+                        "box" => (hir::ReflectOp::Box, self.types.handle(Handle::ReflectBox, Ty::UNIT)),
+                        _ => (hir::ReflectOp::Describe, Ty::STRING),
+                    };
+                    return Self::mk(hir::ExprKind::Reflect(op, value.ty, vec![value]), result, span);
                 }
                 let module = match module {
                     StdModule::InternalJson => "json",

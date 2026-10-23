@@ -2130,7 +2130,9 @@ Int): String` y `compare`.
 `okOr(error: E): T ! E` y `expect(message: String): T`, que hace pánico con el
 mensaje si no hay valor. `Result[T, E]`: `isOk`, `isErr`, `map(fn(T): U): U ! E`,
 `mapErr(fn(E): F): T ! F`, `andThen(fn(T): U ! E): U ! E`, `unwrapOr`, `ok(): T?`,
-`err(): E?` y `expect`.
+`err(): E?` y `expect`, cuyo pánico dice el mensaje y el error: `loading the app:
+LoadError.Missing`. Un pánico dentro de la librería estándar se ubica en la
+llamada del programa que llegó a él; la traza conserva el frame de la librería.
 
 `Array[T]`, que da arrays nuevos salvo los métodos `mut` y `var`:
 
