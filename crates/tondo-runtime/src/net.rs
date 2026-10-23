@@ -809,7 +809,15 @@ pub unsafe extern "C" fn tondo_rt_net_bind(host: *const Str, port_number: i64) -
             let mut last = failure(NOT_FOUND, host.as_str());
             for address in lookup(&host, port).await? {
                 match tokio::net::UdpSocket::bind(address).await {
-                    Ok(socket) => return Ok(socket),
+                    Ok(socket) => {
+                        // macOS sends no datagram larger than the send
+                        // buffer, 9 216 bytes unless raised.
+                        let options = socket2::SockRef::from(&socket);
+                        if options.send_buffer_size().is_ok_and(|size| size < 2 * DATAGRAM) {
+                            let _ = options.set_send_buffer_size(2 * DATAGRAM);
+                        }
+                        return Ok(socket);
+                    }
                     Err(error) => last = error.into(),
                 }
             }
