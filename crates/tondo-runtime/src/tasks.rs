@@ -751,11 +751,14 @@ fn start_worker() {
 
 /// A worker's calls of C: how deeply it is inside them, and a count of
 /// entries and exits that changes whenever a call starts or ends; and, for
-/// stack traces, the frame of the runtime that each call entered from.
+/// stack traces, where the program made each call.
 struct InC {
     depth: AtomicUsize,
     calls: AtomicUsize,
+    /// For each call deep, the frame of the code that called C, and where
+    /// it called from.
     frames: [AtomicUsize; 8],
+    returns: [AtomicUsize; 8],
     /// Whether another worker took this one's place during the current call.
     replaced: AtomicBool,
 }
@@ -782,6 +785,7 @@ fn in_c() -> &'static InC {
         depth: AtomicUsize::new(0),
         calls: AtomicUsize::new(0),
         frames: Default::default(),
+        returns: Default::default(),
         replaced: AtomicBool::new(false),
     }));
     CALLERS.lock().unwrap_or_else(|e| e.into_inner()).push(new);
@@ -796,8 +800,13 @@ pub extern "C" fn tondo_rt_foreign_enter() {
     let state = in_c();
     state.calls.fetch_add(1, Ordering::SeqCst);
     let depth = state.depth.fetch_add(1, Ordering::SeqCst);
-    if let Some(frame) = state.frames.get(depth) {
-        frame.store(super::trace::frame_pointer(), Ordering::Relaxed);
+    if let (Some(frame), Some(returns)) = (state.frames.get(depth), state.returns.get(depth)) {
+        // The caller's frame lives while C runs; this function's own is gone
+        // once it returns, and C may write over it.
+        let fp = super::trace::frame_pointer();
+        let (caller, address) = unsafe { (*(fp as *const usize), *((fp + 8) as *const usize)) };
+        frame.store(caller, Ordering::Relaxed);
+        returns.store(address, Ordering::Relaxed);
     }
     let monitor = MONITOR.get_or_init(|| spawn_thread(Some(64 * 1024), monitor).thread().clone());
     if MONITOR_ASLEEP.load(Ordering::SeqCst) && MONITOR_ASLEEP.swap(false, Ordering::SeqCst) {
@@ -805,13 +814,14 @@ pub extern "C" fn tondo_rt_foreign_enter() {
     }
 }
 
-/// The frame a fault inside C goes back to: the runtime's, as the running
-/// worker's innermost call of C started.
-pub(crate) fn c_frame() -> Option<usize> {
+/// Where a fault inside C goes back to: the frame of the code that made the
+/// running worker's innermost call of C, and the address it called from.
+pub(crate) fn c_frame() -> Option<(usize, usize)> {
     let state = unsafe { IN_C.with(|c| c.get()).as_ref()? };
-    let depth = state.depth.load(Ordering::Relaxed);
-    let frame = state.frames.get(depth.checked_sub(1)?)?.load(Ordering::Relaxed);
-    (frame != 0).then_some(frame)
+    let depth = state.depth.load(Ordering::Relaxed).checked_sub(1)?;
+    let frame = state.frames.get(depth)?.load(Ordering::Relaxed);
+    let address = state.returns.get(depth)?.load(Ordering::Relaxed);
+    (frame != 0).then_some((frame, address))
 }
 
 /// After a C function returns: a worker that was replaced meanwhile makes

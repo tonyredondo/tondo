@@ -473,7 +473,7 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
         // A fault inside C starts the trace where the program called it;
         // one in compiled code, at the call it may have been making.
         let (fp, link) = match crate::tasks::c_frame() {
-            Some(frame) if in_c => (frame, 0),
+            Some(called) if in_c => called,
             _ => (fp, link),
         };
         let walk = walk(fp, bounds);
