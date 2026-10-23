@@ -97,6 +97,10 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool) -> Result<An
         let mut modules: Vec<modules::ModuleSource> = Vec::new();
         let mut root = 0;
         for (package_index, package) in packages.iter().enumerate() {
+            // The program's build leaves out what only its tests use.
+            if package.tests_only && !tests {
+                continue;
+            }
             let (files, root_file) = project::sources(&package.dir, &package.name)?;
             for (index, file) in files.iter().enumerate() {
                 let parsed = parse(&file.path, &mut sources, &mut diags)?;
@@ -169,11 +173,17 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool) -> Result<An
         let generators: Vec<Vec<deps::Generator>> = packages.iter().map(|p| p.generators.clone()).collect();
         let mut packages: Vec<modules::PackageInfo> = packages
             .into_iter()
-            .map(|p| modules::PackageInfo { name: p.name, dependencies: p.dependencies.into_iter().collect() })
+            .map(|p| modules::PackageInfo {
+                name: p.name,
+                dependencies: p.dependencies.into_iter().collect(),
+                dev_dependencies: p.dev_dependencies.into_iter().collect(),
+            })
             .collect();
         if tests {
+            // The integration tests see the project and its dev-dependencies.
             let dependencies = [(tested.clone(), 0)].into_iter().collect();
-            packages.push(modules::PackageInfo { name: format!("{tested}_tests"), dependencies });
+            let dev_dependencies = packages[0].dev_dependencies.clone();
+            packages.push(modules::PackageInfo { name: format!("{tested}_tests"), dependencies, dev_dependencies });
             providers.push(Vec::new());
         }
         expansions = crate::meta::generate(&mut modules, &packages, &generators, &mut sources, &mut diags);
@@ -196,7 +206,11 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool) -> Result<An
             let name = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
             let mut modules =
                 vec![modules::ModuleSource { path: vec![name.clone()], package: 0, files: vec![(module, true)] }];
-            let mut packages = vec![modules::PackageInfo { name, dependencies: Default::default() }];
+            let mut packages = vec![modules::PackageInfo {
+                name,
+                dependencies: Default::default(),
+                dev_dependencies: Default::default(),
+            }];
             expansions = crate::meta::expand(&mut modules, &packages, &[], &mut sources, &mut diags);
             crate::derive::derive(&mut modules, &mut sources, &mut diags);
             stdlib::add(&mut modules, &mut packages, &mut sources, &mut diags);

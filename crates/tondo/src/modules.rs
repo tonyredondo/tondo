@@ -51,6 +51,8 @@ enum Position {
 pub struct PackageInfo {
     pub name: String,
     pub dependencies: HashMap<String, usize>,
+    /// What only its tests may import (`[dev-dependencies]`).
+    pub dev_dependencies: HashMap<String, usize>,
 }
 
 /// Merges the modules into one. Declarations record their module's
@@ -127,9 +129,20 @@ pub fn link(mut modules: Vec<ModuleSource>, root: usize, packages: &[PackageInfo
                     continue;
                 }
                 // The first segment names this package or a dependency.
-                let (target_package, inner) = match package.dependencies.get(path[0]) {
+                let found = package.dependencies.get(path[0]).or_else(|| {
+                    package.dev_dependencies.get(path[0]).filter(|_| file.class != SourceClass::Production)
+                });
+                let (target_package, inner) = match found {
                     _ if path[0] == package.name => (module.package, path[1..].to_vec()),
                     Some(&dependency) => (dependency, path[1..].to_vec()),
+                    None if package.dev_dependencies.contains_key(path[0]) => {
+                        let message = format!(
+                            "`{}` is a dev-dependency, which only tests import: a `_test.to` file or a file under `tests/`; to use it in the program, declare it under `[dependencies]`",
+                            path[0]
+                        );
+                        diags.error("E1008", import.span, message);
+                        continue;
+                    }
                     None => {
                         let mut names: Vec<String> = package.dependencies.keys().map(|k| format!("`{k}`")).collect();
                         names.sort();

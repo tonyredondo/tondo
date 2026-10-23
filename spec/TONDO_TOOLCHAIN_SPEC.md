@@ -74,6 +74,9 @@ units = { path = "libs/units" }
 http = { git = "https://github.com/acme/http", tag = "v1.2.0" }
 zlib = { url = "https://example.com/zlib-1.0.tar.gz" }
 
+[dev-dependencies]
+fixtures = { path = "libs/fixtures" }
+
 [native]
 libraries = ["sqlite3", "static:z", "vendor/libpng.a", "vendor/libfoo.so"]
 
@@ -89,6 +92,12 @@ outputs = ["proto.user"]
 - `[package]` admite `name`, un identificador, y `edition`, cuyo único valor
   es `"0.1"`, el que se usa por defecto.
 - `[dependencies]` asocia a cada alias su fuente (sección 4).
+- `[dev-dependencies]` declara del mismo modo las dependencias que solo usan
+  las pruebas del proyecto (5.5 de la especificación de testing): los
+  archivos `_test.to` y los de `tests/` las importan, el programa no, y
+  importarlas desde él produce `E1008`. Un alias no puede estar en las dos
+  tablas. Las dev-dependencies de una dependencia no se descargan, y un build
+  del programa no carga los paquetes a los que solo llegan las pruebas.
 - `[native]` admite `libraries`: las librerías de C que el ejecutable enlaza
   además de la del sistema, para las funciones que declaran sus `extern fn`
   (16.16 del lenguaje). El programa enlaza las de todos sus paquetes:
@@ -112,7 +121,9 @@ outputs = ["proto.user"]
   (bytes) y `output` (bytes de fuente), cada uno un número positivo en un
   string: `limits = { steps = "1000000" }`. Los archivos son relativos al
   `tondo.toml`.
-- Toda otra tabla o clave es error, igual que una clave fuera de tabla.
+- Toda otra tabla o clave es error, igual que una clave fuera de tabla. El
+  manifiesto de 0.1 no declara target, perfil de host ni capacidades: solo
+  existe el perfil `hosted`, con todas ellas (20.11 del lenguaje).
 
 El archivo usa el subconjunto de TOML de tablas, strings, enteros, tablas en
 línea de strings y arrays en una línea.

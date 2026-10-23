@@ -15,6 +15,12 @@ pub struct Package {
     pub dir: PathBuf,
     /// Its dependencies by alias, as indices into the graph.
     pub dependencies: Vec<(String, usize)>,
+    /// The project's dependencies that only its tests import
+    /// (`[dev-dependencies]`); a dependency's are not fetched.
+    pub dev_dependencies: Vec<(String, usize)>,
+    /// Reached only through dev-dependencies: a build of the program does
+    /// not load it.
+    pub tests_only: bool,
     /// What `[native] libraries` links: `-lname`, or a library file.
     pub libraries: Vec<String>,
     /// The provider of each trait it declares that `derive` can ask for
@@ -76,6 +82,7 @@ impl Source {
 struct Manifest {
     name: Option<String>,
     dependencies: Vec<(String, Source)>,
+    dev_dependencies: Vec<(String, Source)>,
     libraries: Vec<String>,
     providers: Vec<(String, PathBuf)>,
     generators: Vec<Generator>,
@@ -87,6 +94,7 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
     let mut manifest = Manifest {
         name: None,
         dependencies: Vec::new(),
+        dev_dependencies: Vec::new(),
         libraries: Vec::new(),
         providers: Vec::new(),
         generators: Vec::new(),
@@ -114,10 +122,17 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
                     }
                 }
             }
-            ("dependencies", false) => {
+            (table_name @ ("dependencies" | "dev-dependencies"), false) => {
                 for (alias, value, line) in table.entries {
                     let source = dependency(&alias, &value).map_err(|e| at(line, e))?;
-                    manifest.dependencies.push((alias, source));
+                    let declared = manifest.dependencies.iter().chain(&manifest.dev_dependencies);
+                    if declared.clone().any(|(other, _)| *other == alias) {
+                        return Err(at(line, format!("`{alias}` is declared twice; a dependency has one alias")));
+                    }
+                    match table_name {
+                        "dependencies" => manifest.dependencies.push((alias, source)),
+                        _ => manifest.dev_dependencies.push((alias, source)),
+                    }
                 }
             }
             ("native", false) => {
@@ -157,7 +172,7 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
             }
             (name, _) => {
                 let message = format!(
-                    "unknown table `[{name}]`: tondo.toml has `[package]`, `[dependencies]`, `[native]`, `[derive]` and `[generators.<name>]`"
+                    "unknown table `[{name}]`: tondo.toml has `[package]`, `[dependencies]`, `[dev-dependencies]`, `[native]`, `[derive]` and `[generators.<name>]`"
                 );
                 return Err(at(table.line, message));
             }
@@ -289,6 +304,17 @@ pub fn resolve(dir: &Path, update: Option<&[String]>) -> Result<Vec<Package>, St
     let pins = read_lock(&lock_path)?;
     let mut resolver = Resolver { pins, update, used: BTreeMap::new(), packages: Vec::new(), visiting: Vec::new() };
     resolver.visit(dir, None)?;
+    // What the program's dependencies do not reach only the tests use.
+    let mut reached = vec![false; resolver.packages.len()];
+    let mut pending = vec![0];
+    while let Some(index) = pending.pop() {
+        if !std::mem::replace(&mut reached[index], true) {
+            pending.extend(resolver.packages[index].dependencies.iter().map(|&(_, d)| d));
+        }
+    }
+    for (package, reached) in resolver.packages.iter_mut().zip(reached) {
+        package.tests_only = !reached;
+    }
     let text = write_lock(&resolver.used);
     let current = std::fs::read_to_string(&lock_path).ok();
     if current.as_deref() != Some(text.as_str()) && (current.is_some() || !resolver.used.is_empty()) {
@@ -345,6 +371,8 @@ impl Resolver<'_> {
             name: name.clone(),
             dir: dir.clone(),
             dependencies: Vec::new(),
+            dev_dependencies: Vec::new(),
+            tests_only: false,
             libraries: manifest.libraries,
             providers: manifest.providers,
             generators: manifest.generators,
@@ -357,6 +385,17 @@ impl Resolver<'_> {
             let fetched = self.fetch(&dir, &dependency, &source)?;
             let target = self.visit(&fetched, Some(&dependency))?;
             self.packages[index].dependencies.push((dependency, target));
+        }
+        // Only the project's tests have dev-dependencies.
+        if alias.is_none() {
+            for (dependency, source) in manifest.dev_dependencies {
+                if dependency == name {
+                    return Err(format!("dependency `{dependency}` has the name of its package `{name}`; rename one"));
+                }
+                let fetched = self.fetch(&dir, &dependency, &source)?;
+                let target = self.visit(&fetched, Some(&dependency))?;
+                self.packages[index].dev_dependencies.push((dependency, target));
+            }
         }
         self.visiting.pop();
         Ok(index)

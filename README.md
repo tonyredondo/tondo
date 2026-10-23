@@ -124,8 +124,10 @@ language and remain planned work, scheduled after H7:
 
 | Milestone | Scope |
 |---|---|
-| **H12** | Windows, and a self-contained linker |
+| **H12** | A self-contained linker: `tondo` builds executables without a C toolchain installed |
+| **H13** | Diagnostics of running programs: memory dumps and a reader for them, a debugger, live counters and traces of the runtime, in the manner of `dotnet-dump`, `dotnet-counters` and `dotnet-trace` |
 | **Protobuf and gRPC** | Types and codecs generated from `.proto` schemas, and gRPC clients and servers over HTTP/2, designed together |
+| **Windows** | Its calling convention, exceptions, network polling and executables |
 
 What the specifications define and Tondo does not do yet, found by
 compiling every example they contain and reading the rest against the
@@ -146,13 +148,9 @@ code (2026-10-24):
   (`E1505`), a misplaced shebang (`E1805`) and an invalid source form
   (`E0006`), which come out today under other codes.
 - **Tools:** `tondo doc-test`, which checks the examples of a document
-  (21.6); the structured queries of 22.5 beyond what `tondo lsp` and
-  `tondo check --json` answer.
+  (21.6).
 - **Testing:** interrupting `tondo test`, which should cancel the running
   tests cooperatively and exit with `4` (7.10).
-- **Specifications that disagree:** the language's manifest declares a
-  target, a host profile and capabilities (20.11), and testing has
-  dev-dependencies (5.5); the toolchain's `tondo.toml` has neither.
 
 ## Working rules
 

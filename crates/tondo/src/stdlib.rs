@@ -120,7 +120,11 @@ pub fn add(
             wanted(file, &mut pending);
         }
     }
-    packages.push(PackageInfo { name: "std".into(), dependencies: Default::default() });
+    packages.push(PackageInfo {
+        name: "std".into(),
+        dependencies: Default::default(),
+        dev_dependencies: Default::default(),
+    });
     let mut done = 0;
     while done < pending.len() {
         let name = pending[done];

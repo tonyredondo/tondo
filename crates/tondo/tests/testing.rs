@@ -563,3 +563,22 @@ in a task spawned at:
     assert!(stdout.contains(report), "{stdout}");
     assert!(stdout.contains("test app::unit::app::waitsForItsTasks ... ok"), "{stdout}");
 }
+
+#[test]
+fn dev_dependencies_are_for_tests() {
+    let tests = "import helpers\n\ntest usesHelpers {\n    assert(helpers.twice(3) == 6)\n}\n";
+    let dir = project("testing-dev-dependencies", tests);
+    let helpers = dir.join("helpers");
+    std::fs::create_dir_all(&helpers).unwrap();
+    std::fs::write(helpers.join("main.to"), "pub fn twice(n: Int): Int {\n    n * 2\n}\n").unwrap();
+    let manifest = "[package]\nname = \"app\"\n\n[dev-dependencies]\nhelpers = { path = \"helpers\" }\n";
+    std::fs::write(dir.join("tondo.toml"), manifest).unwrap();
+    let (stdout, _, status) = tondo(&dir, &["test"]);
+    assert_eq!(status, 0, "{stdout}");
+    assert!(stdout.contains("test app::unit::app::usesHelpers ... ok"), "{stdout}");
+    // The program does not see it.
+    std::fs::write(dir.join("src/main.to"), "import helpers\n\nfn main() {}\n").unwrap();
+    let (_, stderr, status) = tondo(&dir, &["build"]);
+    assert_ne!(status, 0);
+    assert!(stderr.contains("error[E1008]: `helpers` is a dev-dependency, which only tests import"), "{stderr}");
+}

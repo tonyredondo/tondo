@@ -7094,8 +7094,11 @@ especificado por separado. WASI, una VM o un entorno embebido sí pueden
 implementar `hosted` si ofrecen semántica equivalente, sin necesidad de imitar
 internamente un proceso POSIX.
 
-El manifiesto declara el target, su perfil de host y un conjunto cerrado de
-capacidades. Los IDs canónicos iniciales son:
+Tondo 0.1 solo tiene el perfil `hosted`, y todos sus targets ofrecen todas las
+capacidades siguientes, de modo que el manifiesto todavía no los declara
+(sección 3 de la especificación del toolchain). Cuando existan targets distintos,
+el manifiesto declarará el target, su perfil de host y un conjunto cerrado de
+capacidades, con estas reglas. Los IDs canónicos iniciales son:
 
 ~~~text
 process
@@ -8155,6 +8158,15 @@ El tooling debe poder consultar de forma estructurada:
 - Regiones `unsafe` y operación que exige cada una.
 - Expansión de azúcar como `T?`, `T ! E` y dot-call.
 - AST formateada.
+
+En 0.1 estas consultas se cubren con las herramientas existentes: `tondo lsp`
+da el tipo de una expresión, el símbolo al que resuelve un nombre, las
+referencias de una declaración, los miembros de un tipo y la firma de cada
+llamada; `tondo expand` da la expansión de cada `derive`; `tondo fmt`, la
+forma canónica; y `tondo check --json`, los diagnósticos con sus reparaciones.
+Las demás consultas de esta lista, como los préstamos activos o el estado de
+ownership de cada valor, esperan a una interfaz de consultas de una edición
+posterior.
 
 ### 22.6 Builds deterministas
 
