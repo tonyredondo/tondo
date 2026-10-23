@@ -35,3 +35,4 @@ fn main() {
 // expect-stdout: 1969-12-31T23:59:59Z
 // expect-stdout: 2000000h0m0s
 // expect-panic: P0005
+// expect-stderr: panic[P0005]: checked-overflow: 7200000000000000000 * 1000000 does not fit in Int (-9223372036854775808 to 9223372036854775807)

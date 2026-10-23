@@ -704,7 +704,13 @@ impl Builder<'_> {
                 let (overlap, next) = (self.new_block(), self.new_block());
                 self.terminate(Terminator::Branch(same, overlap, next));
                 self.switch_to(overlap);
-                self.terminate(Terminator::Panic { code: 4, message: None, span });
+                let pieces = vec![
+                    Piece::Text("one call cannot lend an element twice: two of its arguments reach index ".into()),
+                    Piece::Value(Operand::local(a), Ty::INT),
+                    Piece::Text(" of the same array".into()),
+                ];
+                let message = self.temp(Ty::STRING, Rvalue::Concat(pieces), span);
+                self.terminate(Terminator::Panic { code: 4, message: Some(message), span });
                 self.switch_to(next);
             }
         }
@@ -1444,18 +1450,24 @@ impl Builder<'_> {
                 self.terminate(Terminator::Panic { code: *code, message: Some(message), span: e.span });
                 Operand::Const(Const::Unit)
             }
-            hir::ExprKind::Assert { condition, parts, source } => {
+            hir::ExprKind::Assert { condition, parts, source, detail } => {
                 let condition = self.expr(condition);
                 let parts: Vec<Operand> = parts.iter().map(|p| self.expr(p)).collect();
                 let (ok, failed) = (self.new_block(), self.new_block());
                 self.terminate(Terminator::Branch(condition, ok, failed));
                 self.switch_to(failed);
-                let message = if parts.is_empty() {
-                    Operand::Const(Const::Str(source.clone()))
+                // The message, or the condition, then the condition's sides.
+                let mut pieces: Vec<Piece> = if parts.is_empty() {
+                    vec![Piece::Text(source.clone())]
                 } else {
-                    let pieces = parts.into_iter().map(|p| Piece::Value(p, Ty::STRING)).collect();
-                    self.temp(Ty::STRING, Rvalue::Concat(pieces), e.span)
+                    let mut pieces: Vec<Piece> = parts.into_iter().map(|p| Piece::Value(p, Ty::STRING)).collect();
+                    pieces.push(Piece::Text(format!("\n  condition: {source}")));
+                    pieces
                 };
+                if let Some(detail) = detail {
+                    pieces.push(Piece::Value(self.expr(detail), Ty::STRING));
+                }
+                let message = self.temp(Ty::STRING, Rvalue::Concat(pieces), e.span);
                 self.terminate(Terminator::Panic { code: 7, message: Some(message), span: e.span });
                 self.switch_to(ok);
                 Operand::Const(Const::Unit)

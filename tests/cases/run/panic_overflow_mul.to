@@ -4,3 +4,4 @@ fn main() {
 }
 
 // expect-panic: P0005
+// expect-stderr: panic[P0005]: checked-overflow: 4611686018427387904 * 2 does not fit in Int (-9223372036854775808 to 9223372036854775807)

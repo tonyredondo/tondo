@@ -5,3 +5,4 @@ fn main() {
 }
 
 // expect-panic: P0003
+// expect-stderr: panic[P0003]: integer-division-by-zero: 1 % 0

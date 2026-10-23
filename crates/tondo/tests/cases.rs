@@ -5,6 +5,7 @@
 //! - `// expect-stderr: <line>` — a line the standard error contains;
 //! - `// expect-exit: <status>` — process exit status (default 0);
 //! - `// expect-panic: <code>` — a language panic such as `P0005`;
+//! - `// expect-crash` — a signal ends the process, as a fault does;
 //! - `// expect-error: <code> [text]` — compilation fails with this
 //!   diagnostic, whose message contains `text` when given;
 //! - `// expect-warning: <code> [text]` — compilation reports this warning;
@@ -26,6 +27,7 @@ struct Expect {
     stderr: Vec<String>,
     exit: Option<i32>,
     panic: Option<String>,
+    crash: bool,
     errors: Vec<String>,
     warnings: Vec<String>,
     platforms: Vec<String>,
@@ -42,6 +44,7 @@ fn expectations(source: &str) -> Expect {
             "stderr" => expect.stderr.push(value),
             "exit" => expect.exit = Some(value.trim().parse().expect("numeric exit status")),
             "panic" => expect.panic = Some(value.trim().into()),
+            "crash" => expect.crash = true,
             "error" => expect.errors.push(value.trim().into()),
             "warning" => expect.warnings.push(value.trim().into()),
             "platform" => expect.platforms.extend(value.split_whitespace().map(String::from)),
@@ -77,9 +80,11 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
     }
     let compiler = env!("CARGO_BIN_EXE_tondo");
     let binary = scratch.join(path.file_stem().unwrap());
+    // From its directory, so that locations read `case.to:4:5`.
     let build = Command::new(compiler)
+        .current_dir(path.parent().unwrap())
         .arg("build")
-        .arg(path)
+        .arg(path.file_name().unwrap())
         .arg("--output")
         .arg(&binary)
         .env("XDG_CACHE_HOME", scratch.join("cache"))
@@ -105,7 +110,13 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
         return Err(format!("unexpected diagnostics:\n{diagnostics}"));
     }
 
-    let run = run_with_timeout(Command::new(&binary).env("TONDO_RT_CHECK_LEAKS", "1").current_dir(scratch))?;
+    // A crash writes no core file, which takes the system a while.
+    let mut command = Command::new(&binary);
+    if expect.crash {
+        command = Command::new("sh");
+        command.args(["-c", "ulimit -c 0; exec \"$0\""]).arg(&binary);
+    }
+    let run = run_with_timeout(command.env("TONDO_RT_CHECK_LEAKS", "1").current_dir(scratch))?;
     let stdout = String::from_utf8_lossy(&run.stdout);
     let stderr = String::from_utf8_lossy(&run.stderr);
     let expected_stdout: String = expect.stdout.iter().map(|l| format!("{l}\n")).collect();
@@ -113,7 +124,12 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
         return Err(format!("stdout differs\n--- expected\n{expected_stdout}--- actual\n{stdout}--- stderr\n{stderr}"));
     }
     let expected_exit = expect.exit.unwrap_or(if expect.panic.is_some() { 101 } else { 0 });
-    if run.status.code() != Some(expected_exit) {
+    if expect.crash {
+        use std::os::unix::process::ExitStatusExt;
+        if run.status.signal().is_none() {
+            return Err(format!("exit status {:?}, expected a signal\n{stderr}", run.status.code()));
+        }
+    } else if run.status.code() != Some(expected_exit) {
         return Err(format!("exit status {:?}, expected {expected_exit}\n{stderr}", run.status.code()));
     }
     if let Some(code) = &expect.panic

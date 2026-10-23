@@ -1,0 +1,55 @@
+// A stack trace names every frame of compiled code, folds a recursion,
+// goes through the runtime calling back into the program, and follows each
+// task back to where it was spawned.
+import std.console
+
+type Cell = { value: Int }
+
+impl Display for Cell {
+    fn display(self): String {
+        let digits = [1, 2]
+        "{digits[self.value]}"
+    }
+}
+
+fn apply(f: fn(Int): Int, value: Int): Int {
+    f(value)
+}
+
+fn depth(n: Int): Int {
+    if n == 0 {
+        let cells = [Cell { value: 7 }]
+        console.println("{cells}")
+        return 0
+    }
+    depth(n - 1)
+}
+
+fn worker(): Int {
+    apply((v) { depth(v) }, 3)
+}
+
+fn start(): Int {
+    let job = spawn worker()
+    job.wait()
+}
+
+fn main() {
+    let job = spawn start()
+    console.println("{job.wait()}")
+}
+
+// expect-panic: P0001
+// expect-stderr: panic[P0001]: bounds: index 7 is out of bounds for an array of length 2: valid indices are 0 to 1, and -2 to -1 from the end
+// expect-stderr:  --> panic_trace.to:11:11
+// expect-stderr: stack:
+// expect-stderr:   Cell.display       panic_trace.to:11:11
+// expect-stderr:   depth              panic_trace.to:22:25
+// expect-stderr:   depth              panic_trace.to:25:5  (3 times)
+// expect-stderr:   closure in worker  panic_trace.to:29:17
+// expect-stderr:   apply              panic_trace.to:16:5
+// expect-stderr:   worker             panic_trace.to:29:5
+// expect-stderr: in a task spawned at:
+// expect-stderr:   start  panic_trace.to:33:15
+// expect-stderr: in a task spawned at:
+// expect-stderr:   main  panic_trace.to:38:15

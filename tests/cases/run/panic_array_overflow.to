@@ -4,3 +4,4 @@ fn main() {
 }
 
 // expect-panic: P0005
+// expect-stderr: panic[P0005]: checked-overflow: 100 * 2 in arithmetic on arrays does not fit in Int8 (-128 to 127)

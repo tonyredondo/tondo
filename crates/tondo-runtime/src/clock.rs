@@ -206,8 +206,7 @@ fn deadlock() {
 }
 
 fn fail(code: u32, message: &str, location: *const super::Str) -> ! {
-    let message = super::str_new(message.as_bytes());
-    unsafe { super::tondo_rt_panic(code, message, location) }
+    super::panic_with(code, message, location)
 }
 
 /// The value a `VirtualTime` holds: a count of its copies, since its

@@ -5,3 +5,4 @@ fn main() {
 }
 
 // expect-panic: P0006
+// expect-stderr: panic[P0006]: array-shape-mismatch: arrays of lengths 2 and 3 cannot go element by element: they must have the same length

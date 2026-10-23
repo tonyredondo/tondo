@@ -1063,3 +1063,24 @@ an agent skill. Writing the mistakes down showed six that the parser and
 checker only reported as unexpected tokens or unknown names; each now says
 what to write: `if let`, `|` in patterns, `else` on its own line, a keyword
 as a name, a C-style `for`, and braces inside a string.
+
+## 2026-10-23 — Panics say what failed and how the program got there
+
+A panic that only named its class (`bounds`) left the reader to rebuild the
+values and the path. Now each message carries the values: the index and the
+length with the valid range, the operands and the type of an overflow, the
+divisor, the shift count, both sides of an asserted comparison, where a
+reentrant lock was first taken. And every report has a stack trace. The
+compiled code and the runtime keep frame pointers, and the compiler writes a
+table from each call's return address to its function and line, so a walk
+of the frame chain costs nothing until something fails and needs no debug
+information or unwinder. A spawn records the stack it was called from (a
+loop spawning from one place shares one record, so spawns cost what they
+did), and a task's trace continues through the tasks that started it up to
+`main`. A deadlock lists where each task waits, from the frame pointer it
+saved when it parked. Stack overflows and invalid memory accesses, which
+stay outside the panic model, print the same trace from a signal handler on
+an alternate stack before the signal ends the process; a crash inside C is
+traced from the program's call into it. Reading a trace allocates nothing,
+so the handler cannot deadlock on an allocator the crash interrupted. The
+test runner's JSON report fills `stack` from the trace.

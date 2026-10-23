@@ -30,12 +30,26 @@ fn text(bytes: &[u8]) -> *mut Str {
     str_new(String::from_utf8_lossy(bytes).as_bytes())
 }
 
-fn valid(name: &[u8], value: &[u8]) -> bool {
-    !name.is_empty() && !name.contains(&b'=') && !name.contains(&0) && !value.contains(&0)
+/// What is wrong with a variable, or nothing (`P0015`).
+fn invalid(name: &[u8], value: &[u8]) -> Option<String> {
+    let shown = String::from_utf8_lossy(name);
+    if name.is_empty() {
+        Some("an environment variable needs a name, and this one is empty".into())
+    } else if name.contains(&b'=') {
+        Some(format!("the environment variable name `{shown}` has a `=`, which ends a name"))
+    } else if name.contains(&0) {
+        Some(format!("the environment variable name `{shown}` has a zero byte"))
+    } else if value.contains(&0) {
+        Some(format!("the value of the environment variable `{shown}` has a zero byte"))
+    } else {
+        None
+    }
 }
 
-fn invalid(location: *const Str) -> ! {
-    unsafe { super::tondo_rt_panic(15, std::ptr::null(), location) }
+fn check(name: &[u8], value: &[u8], location: *const Str) {
+    if let Some(message) = invalid(name, value) {
+        super::panic_with(15, &message, location)
+    }
 }
 
 /// `env.args()`: without the program's name.
@@ -79,9 +93,7 @@ pub unsafe extern "C" fn tondo_rt_env_vars(glue: *const MapGlue) -> *mut MapObje
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_env_set(name: *const Str, value: *const Str, location: *const Str) {
     let (name, value) = unsafe { (str_bytes(name), str_bytes(value)) };
-    if !valid(name, value) {
-        invalid(location);
-    }
+    check(name, value, location);
     table().as_mut().unwrap().insert(name.to_vec(), value.to_vec());
 }
 
@@ -95,8 +107,8 @@ pub unsafe extern "C" fn tondo_rt_env_set_all(values: *mut MapObject, location: 
             (str_bytes(*entry).to_vec(), str_bytes(*entry.add(1)).to_vec())
         })
         .collect();
-    if entries.iter().any(|(name, value)| !valid(name, value)) {
-        invalid(location);
+    for (name, value) in &entries {
+        check(name, value, location);
     }
     table().as_mut().unwrap().extend(entries);
 }
@@ -104,9 +116,7 @@ pub unsafe extern "C" fn tondo_rt_env_set_all(values: *mut MapObject, location: 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_env_remove(name: *const Str, location: *const Str) {
     let name = unsafe { str_bytes(name) };
-    if !valid(name, b"") {
-        invalid(location);
-    }
+    check(name, b"", location);
     table().as_mut().unwrap().remove(name);
 }
 

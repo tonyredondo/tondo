@@ -17,3 +17,9 @@ fn main() {
 // expect-panic: P0008
 // expect-stdout: task cleanup
 // expect-stdout: main cleanup
+// expect-stderr: panic[P0008]: explicit-panic: in a task
+// expect-stderr:  --> panic_in_task.to:7:5
+// expect-stderr: stack:
+// expect-stderr:   boom  panic_in_task.to:7:5
+// expect-stderr: in a task spawned at:
+// expect-stderr:   main  panic_in_task.to:12:15

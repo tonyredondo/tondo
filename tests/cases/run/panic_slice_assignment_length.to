@@ -4,3 +4,4 @@ fn main() {
 }
 
 // expect-panic: P0006
+// expect-stderr: panic[P0006]: array-shape-mismatch: the slice selects 2 elements and the array assigned to it has 3: they must have the same length

@@ -103,12 +103,16 @@ impl SourceMap {
     /// `file:line:column` of the start of a span: the file's path in its
     /// package, or as given for a file on its own.
     pub fn location(&self, span: Span) -> String {
-        let file = self.file_of(span.start);
-        let (line, column) = file.line_col(span.start);
-        if file.logical != file.name {
-            return format!("{}:{line}:{column}", file.logical);
-        }
-        format!("{}:{line}:{column}", file.path.display())
+        let (file, line, column) = self.position(span.start);
+        format!("{file}:{line}:{column}")
+    }
+
+    /// The file, as locations name it, the line and the column of an offset.
+    pub fn position(&self, offset: u32) -> (String, usize, usize) {
+        let file = self.file_of(offset);
+        let (line, column) = file.line_col(offset);
+        let name = if file.logical != file.name { file.logical.clone() } else { file.path.display().to_string() };
+        (name, line, column)
     }
 
     pub fn slice(&self, span: Span) -> &str {

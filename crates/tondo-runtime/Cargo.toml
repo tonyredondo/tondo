@@ -20,6 +20,7 @@ http-body-util = "0.1.5"
 httpdate = "1.0.3"
 hyper = { version = "1.12.0", features = ["server", "http1", "http2"] }
 hyper-util = { version = "0.1.21", features = ["server", "server-auto", "tokio", "http1", "http2"] }
+libc = "0.2.191"
 mime_guess = "2.0.5"
 multer = "3.1.0"
 regex = "1"

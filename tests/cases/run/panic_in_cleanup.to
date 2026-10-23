@@ -13,3 +13,12 @@ fn main() {
 // expect-stdout: cleanup that panics
 // expect-stdout: outer cleanup still runs
 // expect-panic: P0008
+// expect-stderr: panic[P0008]: explicit-panic: first
+// expect-stderr:  --> panic_in_cleanup.to:10:5
+// expect-stderr: stack:
+// expect-stderr:   main  panic_in_cleanup.to:10:5
+// expect-stderr: suppressed while unwinding: panic[P0001]: bounds: index 3 is out of bounds for an array of length 1: the only valid indices are 0 and -1
+// expect-stderr:  --> panic_in_cleanup.to:8:17
+// expect-stderr: stack:
+// expect-stderr:   defer in main  panic_in_cleanup.to:8:17
+// expect-stderr:   main           panic_in_cleanup.to:10:5

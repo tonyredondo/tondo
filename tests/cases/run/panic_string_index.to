@@ -4,3 +4,4 @@ fn main() {
 }
 
 // expect-panic: P0001
+// expect-stderr: panic[P0001]: bounds: index 2 is out of bounds for a string of length 2: valid indices are 0 to 1, and -2 to -1 from the end

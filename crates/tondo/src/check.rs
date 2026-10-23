@@ -59,6 +59,8 @@ pub fn check<'a>(
         prelude: None,
         unrepeatable: HashMap::new(),
         interpolating: false,
+        naming: String::new(),
+        closure_name: None,
         intrinsic_owners: HashMap::new(),
         trait_modules: HashMap::new(),
         conversion_error: Ty::ERROR,
@@ -512,6 +514,10 @@ struct Checker<'a> {
     /// Inside the `{...}` of a string, where an unknown name may be text
     /// that meant a brace.
     interpolating: bool,
+    /// The function whose body is checked, as stack traces name it, and
+    /// the name the next closure takes instead of `closure in` it.
+    naming: String,
+    closure_name: Option<String>,
     /// The standard functions whose values depend on the moment or the
     /// machine, which the `meta` profile cannot call, with their names.
     unrepeatable: HashMap<FnId, &'static str>,
@@ -1251,6 +1257,7 @@ impl<'a> Checker<'a> {
             self.test_nodes.push(hir::TestNodeInfo { id: id.clone(), parent, suite, span: name.span });
             let unit = self.types.intern(TyKind::Fn(Vec::new(), Ty::UNIT, false, Vec::new(), false));
             let kind = ClosureKind { deferred: false, is_unsafe: false, test: true, infer_error: false };
+            self.closure_name = Some(format!("{} {}", if suite { "suite" } else { "test" }, name.name));
             let closure =
                 self.closure_with(cx, (&[], None), Some(unit), kind, node.span(), |this, inner, _| match node {
                     ast::TestNode::Test(t) => this.block(inner, &t.body, Some(Ty::UNIT)),
@@ -3725,6 +3732,15 @@ impl<'a> Checker<'a> {
     fn function(&mut self, f: &ast::FnDecl, id: FnId) -> hir::Function {
         let signature = self.signatures[id.0 as usize].clone();
         let scope = self.fn_scopes[id.0 as usize].clone();
+        // A trace names a trait's method by the type: `Cell.display`, and
+        // `Box.display[Int]` once monomorphized.
+        self.naming = match (&scope.implementing, scope.self_type) {
+            (Some(_), Some(target)) => {
+                let target = self.types.display(target);
+                format!("{}.{}", target.split('[').next().unwrap_or(&target), f.name.name)
+            }
+            _ => signature.name.clone(),
+        };
         let outer_types = std::mem::replace(&mut self.type_params, scope.types);
         let outer_self = std::mem::replace(&mut self.self_type, scope.self_type);
         let outer_implementing = std::mem::replace(&mut self.implementing, scope.implementing);
@@ -3771,7 +3787,7 @@ impl<'a> Checker<'a> {
         self.self_type = outer_self;
         self.implementing = outer_implementing;
         let mut function = hir::Function {
-            name: signature.name,
+            name: self.naming.clone(),
             generics: signature.generics,
             params,
             loans,
@@ -3812,6 +3828,7 @@ impl<'a> Checker<'a> {
     /// The implicit `main` of a root script (spec 20.3). Its error type is
     /// inferred from the `?` and `fail` in its statements.
     fn script_main(&mut self, statements: &[ast::Stmt]) -> hir::Function {
+        self.naming = "main".into();
         let mut cx = self.new_cx(Ty::UNIT);
         cx.infer_error = true;
         let stmts = self.statements(&mut cx, statements);
@@ -4044,6 +4061,13 @@ impl<'a> Checker<'a> {
         };
         self.types.declare_closure(template, info);
 
+        let name = match self.closure_name.take() {
+            Some(name) => name,
+            None if deferred => format!("defer in {}", self.naming),
+            None => format!("closure in {}", self.naming),
+        };
+        // The closures of a test are in the test.
+        let outer_naming = test.then(|| std::mem::replace(&mut self.naming, name.clone()));
         // The body is checked in its own context, nested in the current one.
         let mut inner = self.new_cx(declared.unwrap_or(Ty::ERROR));
         inner.infer_result = declared.is_none();
@@ -4066,6 +4090,9 @@ impl<'a> Checker<'a> {
         }
         let success = (!cx.infer_result).then_some(cx.result);
         let body = check_body(self, cx, success);
+        if let Some(outer) = outer_naming {
+            self.naming = outer;
+        }
         let result = match declared {
             Some(declared) => declared,
             None if cx.result != Ty::ERROR => cx.result,
@@ -4089,7 +4116,7 @@ impl<'a> Checker<'a> {
         let mut params = inner.params;
         params[locals[0].0 as usize] = Some(ast::Mode::Mut);
         let mut function = hir::Function {
-            name: "closure".into(),
+            name,
             generics,
             params: locals,
             loans,
@@ -4163,7 +4190,8 @@ impl<'a> Checker<'a> {
             self.diags.error("E1410", span, "a deferred call cannot borrow: loans end before the scope does");
             return None;
         }
-        Some(self.call_closure(call, "defer", span))
+        let name = format!("defer in {}", self.naming);
+        Some(self.call_closure(call, &name, span))
     }
 
     /// A closure that makes `call` later with its callee and arguments,
@@ -9426,6 +9454,58 @@ impl<'a> Checker<'a> {
         Self::mk(hir::ExprKind::Float(if negative { -value } else { value }), ty, span)
     }
 
+    /// A comparison asserted, with each side bound first so that a failure
+    /// can show both (15.8): the bindings, the condition on them and what
+    /// the failure adds. Sides that cannot be displayed are left alone.
+    fn compared(&mut self, cx: &mut FnCx, condition: hir::Expr) -> (Vec<hir::Stmt>, hir::Expr, Option<Box<hir::Expr>>) {
+        let hir::ExprKind::Binary(op, left, right) = &condition.kind else {
+            return (Vec::new(), condition, None);
+        };
+        let comparison = matches!(op, BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge);
+        let shown = |this: &mut Self, ty: Ty| !this.types.has_error(ty) && this.satisfies(ty, DISPLAY, &[]);
+        if !comparison || !shown(self, left.ty) || !shown(self, right.ty) {
+            return (Vec::new(), condition, None);
+        }
+        let hir::ExprKind::Binary(op, left, right) = condition.kind else { unreachable!() };
+        let (span, ty) = (condition.span, condition.ty);
+        let mut sides = Vec::new();
+        let mut reads = Vec::new();
+        let mut segments = Vec::new();
+        for (label, side) in [("\n  left:  ", *left), ("\n  right: ", *right)] {
+            let (side_ty, side_span) = (side.ty, side.span);
+            let local = self.hidden_local(cx, side_ty);
+            sides.push(hir::Stmt::Let(local, side));
+            let read = Self::mk(hir::ExprKind::Local(local), side_ty, side_span);
+            reads.push(read.clone());
+            segments.push(hir::Segment::Text(label.into()));
+            // Quotes show where a string starts and ends.
+            let quoted = side_ty == Ty::STRING;
+            if quoted {
+                segments.push(hir::Segment::Text("\"".into()));
+            }
+            segments.push(hir::Segment::Value(self.displayed(read)));
+            if quoted {
+                segments.push(hir::Segment::Text("\"".into()));
+            }
+        }
+        let [left, right] = <[hir::Expr; 2]>::try_from(reads).ok().expect("two sides");
+        let condition = Self::mk(hir::ExprKind::Binary(op, Box::new(left), Box::new(right)), ty, span);
+        let detail = Self::mk(hir::ExprKind::Interpolate(segments), Ty::STRING, span);
+        (sides, condition, Some(Box::new(detail)))
+    }
+
+    /// A value to interpolate: a user type or a type parameter through
+    /// `Display.display`, any other as it is.
+    fn displayed(&mut self, value: hir::Expr) -> hir::Expr {
+        if matches!(self.types.kind(value.ty), TyKind::Adt(_) | TyKind::Param(_) | TyKind::Opaque(..)) {
+            let (ty, span) = (value.ty, value.span);
+            let call = hir::ExprKind::Call(Callee::Trait(DISPLAY, 0), vec![ty], vec![value]);
+            Self::mk(call, Ty::STRING, span)
+        } else {
+            value
+        }
+    }
+
     fn string(&mut self, cx: &mut FnCx, segments: &[ast::StrSegment], span: Span) -> hir::Expr {
         if let [ast::StrSegment::Text(text)] = segments {
             return Self::mk(hir::ExprKind::Str(text.clone()), Ty::STRING, span);
@@ -9452,18 +9532,7 @@ impl<'a> Checker<'a> {
                         out.push(hir::Segment::Value(value));
                         continue;
                     }
-                    // A user type or a type parameter is displayed by `Display.display`.
-                    let value = if matches!(
-                        self.types.kind(value.ty),
-                        TyKind::Adt(_) | TyKind::Param(_) | TyKind::Opaque(..)
-                    ) {
-                        let (ty, span) = (value.ty, value.span);
-                        let call = hir::ExprKind::Call(Callee::Trait(DISPLAY, 0), vec![ty], vec![value]);
-                        Self::mk(call, Ty::STRING, span)
-                    } else {
-                        value
-                    };
-                    out.push(hir::Segment::Value(value));
+                    out.push(hir::Segment::Value(self.displayed(value)));
                 }
             }
         }
@@ -9820,8 +9889,13 @@ impl<'a> Checker<'a> {
                     return self.arity_error(span, 1, 0);
                 };
                 let source = self.sources.slice(condition.value.span).to_string();
+                let written = matches!(condition.value.kind, ast::ExprKind::Binary(..));
                 let condition = self.expr(cx, &condition.value, Some(Ty::BOOL));
-                let condition = Box::new(self.coerce(condition, Ty::BOOL));
+                let condition = self.coerce(condition, Ty::BOOL);
+                let (sides, condition, detail) = match written {
+                    true => self.compared(cx, condition),
+                    false => (Vec::new(), condition, None),
+                };
                 let parts = parts
                     .iter()
                     .map(|p| {
@@ -9829,7 +9903,13 @@ impl<'a> Checker<'a> {
                         self.coerce(part, Ty::STRING)
                     })
                     .collect();
-                Self::mk(hir::ExprKind::Assert { condition, parts, source }, Ty::UNIT, span)
+                let condition = Box::new(condition);
+                let assert = Self::mk(hir::ExprKind::Assert { condition, parts, source, detail }, Ty::UNIT, span);
+                if sides.is_empty() {
+                    return assert;
+                }
+                let block = hir::Block { stmts: sides, tail: Some(Box::new(assert)), ty: Ty::UNIT };
+                Self::mk(hir::ExprKind::Block(block), Ty::UNIT, span)
             }
             ([_], Some(ModuleName::Newtype(ty))) => {
                 let [arg] = args else {

@@ -43,7 +43,12 @@ error: ParseError.Empty
 
 --- sample::unit::sample::failsAnAssertion
 panic[P0007]: assertion-failed: twice(2) is 4
+  condition: twice(2) == 5
+  left:  4
+  right: 5
  --> src/main_test.to:11:5
+stack:
+  test failsAnAssertion  src/main_test.to:11:5
 stdout:
 about to fail
 
@@ -130,6 +135,10 @@ test tasks::unit::tasks::service::runsAfter ... ok
 --- tasks::unit::tasks::service::panicsInATask
 panic[P0008]: explicit-panic: in a task
  --> src/main_test.to:4:5
+stack:
+  boom  src/main_test.to:4:5
+in a task spawned at:
+  test panicsInATask  src/main_test.to:12:19
 stdout:
 test cleanup
 stop service
@@ -224,7 +233,10 @@ test app::unit::app::flaky ... ok
 --- app::unit::app::flaky (flaky: it passed after failing)
 owners: @testers
 attempt 1: panic[P0007]: assertion-failed: first run
+  condition: false
  --> src/main_test.to:7:9
+stack:
+  test flaky  src/main_test.to:7:9
 attempt 2, retry round 1: passed
 
 FAILED. 1 passed; 1 flaky; 0 failed; 0 skipped; 0 blocked
@@ -303,6 +315,7 @@ fn writes_json_and_junit_reports() {
     for part in [
         "{\"format\":\"tondo-test-report-0.1/1\",\"edition\":\"0.1\",",
         "\"compiled\":true,\"selection\":{\"kind\":\"all\",\"value\":null},",
+        "\"stack\":[{\"function\":\"test failsAnAssertion\",\"source\":{\"file\":\"src/main_test.to\",\"line\":11,\"column\":5},\"task\":0,\"times\":1}]",
         "\"failure\":{\"kind\":\"error\",\"code\":null,\"error_type\":\"ParseError\",\"message\":\"ParseError.Empty\",\"source\":{\"file\":\"src/main_test.to\",\"line\":15,\"column\":18},\"stack\":[]}",
         "\"blocked_by\":{\"id\":\"sample::unit::sample::brokenSetup\",\"attempt\":1}",
         "\"skip\":{\"reason\":\"needs a database\",\"source\":{\"file\":\"src/main_test.to\",\"line\":20,\"column\":5}}",

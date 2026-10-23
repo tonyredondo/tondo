@@ -240,7 +240,10 @@ fn failed_outcome(attempt: &Attempt, options: &Options) -> Option<(&'static str,
     };
     let kind = field("kind")?;
     let element = if matches!(kind.as_str(), "error" | "panic") { "failure" } else { "error" };
-    Some((element, field("code").unwrap_or(kind), field("message").unwrap_or_default(), failure.text_for_xml()))
+    // The attribute has the message's first line; the body has the rest.
+    let message = field("message").unwrap_or_default();
+    let message = message.lines().next().unwrap_or_default().to_string();
+    Some((element, field("code").unwrap_or(kind), message, failure.text_for_xml()))
 }
 
 fn synthetic(

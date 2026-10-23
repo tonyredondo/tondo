@@ -9,3 +9,4 @@ fn main() {
 }
 
 // expect-panic: P0016
+// expect-stderr: panic[P0016]: nul-in-c-string: the text has a zero byte at 1, so C would see it end there

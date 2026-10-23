@@ -264,7 +264,18 @@ fn kill(child: &mut std::process::Child) {
 fn describe(status: std::process::ExitStatus) -> String {
     #[cfg(unix)]
     if let Some(signal) = std::os::unix::process::ExitStatusExt::signal(&status) {
-        return format!("the test process ended by signal {signal}");
+        let name = match signal {
+            4 => "SIGILL",
+            6 => "SIGABRT",
+            7 if cfg!(target_os = "linux") => "SIGBUS",
+            10 if cfg!(target_os = "macos") => "SIGBUS",
+            8 => "SIGFPE",
+            9 => "SIGKILL",
+            11 => "SIGSEGV",
+            15 => "SIGTERM",
+            _ => return format!("the test process ended by signal {signal}"),
+        };
+        return format!("the test process ended by signal {signal} ({name})");
     }
     format!("the test process exited with status {}", status.code().unwrap_or(-1))
 }
@@ -321,6 +332,9 @@ impl Session<'_> {
 
     /// Output left when the worker ends belongs to what ran last.
     fn flush_output(&mut self) {
+        // What stderr kept back in case a marker started there.
+        let rest = std::mem::take(&mut self.stderr);
+        self.give_stderr(&rest);
         let rest = std::mem::take(&mut self.stdout);
         self.pending.push((self.owners.len() as u64, rest));
         self.assign_output();

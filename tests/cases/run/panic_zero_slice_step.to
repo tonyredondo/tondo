@@ -5,3 +5,4 @@ fn main() {
 }
 
 // expect-panic: P0002
+// expect-stderr: panic[P0002]: zero-slice-step: the step of a slice is 0: a slice steps forwards with a positive step and backwards with a negative one

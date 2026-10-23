@@ -16,3 +16,10 @@ fn main() {
 
 // expect-stdout: got 1
 // expect-panic: P0013
+// expect-stderr: panic[P0013]: deadlock: every task waits and none of them can wake the others
+// expect-stderr: the main task waits at:
+// expect-stderr:   main  panic_deadlock.to:14:5
+// expect-stderr: a task waits at:
+// expect-stderr:   drain  panic_deadlock.to:4:18
+// expect-stderr: in a task spawned at:
+// expect-stderr:   main  panic_deadlock.to:13:15

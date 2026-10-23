@@ -398,9 +398,12 @@ impl Mono<'_> {
                     }
                 }
             }
-            ExprKind::Assert { condition, parts, .. } => {
+            ExprKind::Assert { condition, parts, detail, .. } => {
                 self.expr(condition, map);
                 self.exprs(parts, map);
+                if let Some(detail) = detail {
+                    self.expr(detail, map);
+                }
             }
         }
     }

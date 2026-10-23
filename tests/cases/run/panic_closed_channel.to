@@ -13,3 +13,4 @@ fn main() {
 
 // expect-stdout: kept
 // expect-panic: P0012
+// expect-stderr: panic[P0012]: closed-channel: cannot send on this channel: it was closed

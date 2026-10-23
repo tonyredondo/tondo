@@ -3216,6 +3216,9 @@ exactamente:
 - `source` es una ubicación lógica o `null`: la del pánico, o la del `?` o
   `fail` por el que el error salió del test o del setup.
 - `stack` es un array posiblemente vacío de frames Tondo, sin paths físicos.
+  Cada frame es `{"function": "depth", "source": {...}, "task": 0, "times": 3}`:
+  `task` es `0` en la tarea que falló y crece en cada tarea que la lanzó, y
+  `times` cuenta las repeticiones seguidas del mismo frame.
 
 Un intento `blocked-setup` explica su causa únicamente mediante `blocked_by`;
 el intento de suite señalado contiene el único objeto `failure` normativo. Un

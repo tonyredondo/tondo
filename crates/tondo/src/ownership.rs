@@ -338,7 +338,7 @@ impl Checker<'_> {
     /// whose first parameter is the closure itself.
     fn capture_name(&self, base: &Expr, index: u32) -> Option<String> {
         let ExprKind::Local(local) = base.kind else { return None };
-        if self.function.name != "closure" || self.function.params.first() != Some(&local) {
+        if self.function.params.first() != Some(&local) || !self.types.is_closure(base.ty) {
             return None;
         }
         let TyKind::Adt(id) = self.types.kind(base.ty) else { return None };
@@ -680,9 +680,13 @@ impl Checker<'_> {
                 }
                 Some(flow)
             }
-            ExprKind::Assert { condition, parts, .. } => {
+            ExprKind::Assert { condition, parts, detail, .. } => {
                 let flow = self.consume(condition, flow)?;
-                self.all(parts, flow, false)
+                let flow = self.all(parts, flow, false)?;
+                match detail {
+                    Some(detail) => self.observe(detail, flow),
+                    None => Some(flow),
+                }
             }
         };
         flow.filter(|_| expr.ty != Ty::NEVER)

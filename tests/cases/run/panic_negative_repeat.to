@@ -3,3 +3,4 @@ fn main() {
 }
 
 // expect-panic: P0011
+// expect-stderr: panic[P0011]: invalid-repeat-count: an array cannot repeat -1 times: the count must not be negative

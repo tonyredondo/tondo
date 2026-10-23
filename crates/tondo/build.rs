@@ -22,7 +22,9 @@ fn main() {
         .args(["rustc", "--package", "tondo-runtime", "--lib", "--release", "--crate-type", "staticlib"])
         .args(["--target", &target, "--target-dir"])
         .arg(&target_dir)
-        .args(["--", "-C", "panic=abort", "-C", "debuginfo=0", "--cfg", "tondo_staticlib"])
+        // Frame pointers let a panic walk the stack through the runtime.
+        .args(["--", "-C", "panic=abort", "-C", "debuginfo=0", "-C", "force-frame-pointers=yes"])
+        .args(["--cfg", "tondo_staticlib"])
         .args(["--print", "native-static-libs"])
         .current_dir(&runtime)
         .env_remove("CARGO_ENCODED_RUSTFLAGS")

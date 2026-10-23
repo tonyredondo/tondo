@@ -5297,6 +5297,37 @@ Un pánico:
 - Si alcanza el scope raíz, termina el proceso después del cleanup estructurado.
 - Debe producir un diagnóstico con ubicación y una traza cuando el runtime disponga de símbolos.
 
+El diagnóstico dice qué falló con los valores implicados, no solo la clase del
+pánico: el índice y la longitud, los operandos y el tipo de un overflow, el
+divisor cero, el conteo de shift y su rango válido. Su forma es:
+
+~~~text
+panic[P0001]: bounds: index 5 is out of bounds for an array of length 3: valid indices are 0 to 2, and -3 to -1 from the end
+ --> src/main.to:6:5
+stack:
+  Cell.display       src/main.to:6:5
+  depth              src/main.to:22:5  (3 times)
+  closure in worker  src/main.to:29:17
+  worker             src/main.to:29:5
+in a task spawned at:
+  main  src/main.to:38:15
+~~~
+
+La traza nombra cada frame de código compilado, del más interno al más
+externo: funciones, métodos como `Tipo.método`, closures como `closure in f`,
+cleanups como `defer in f` y tests como `test nombre`, con la ubicación lógica de
+la llamada que hacía. Atraviesa el runtime cuando este llama al programa, y una
+racha del mismo frame, como en una recursión, aparece una vez con su número de
+repeticiones. Una tarea añade dónde se lanzó, y la tarea que la lanzó el suyo,
+hasta `main`; un callback que hace un thread de C lo indica. Un deadlock (`P0013`)
+lista dónde espera cada tarea y dónde se lanzó.
+
+Un stack overflow o un acceso inválido a memoria, fuera de este modelo, se
+reportan antes de que la señal termine el proceso, con la misma traza:
+`fatal: stack overflow: a task used all of its 8 MiB stack`, o
+`fatal: SIGSEGV: invalid memory access at 0x0, inside a function of C` con la
+traza desde la llamada del programa a C.
+
 Todos los pánicos definidos por el lenguaje —incluidos bounds, overflow, división
 entera por cero, solapamiento dinámico, `assert` y `panic(...)`— siguen esas
 mismas reglas y los códigos `P` de 22.2 en todas las implementaciones conformes.
@@ -5323,7 +5354,15 @@ Esos casos son errores recuperables.
 fn assert(condition: Bool, messageParts: ...String)
 ~~~
 
-Produce pánico si la condición es falsa. Sin partes de mensaje, el runtime utiliza la ubicación y una representación de la condición; con una o más, las concatena en orden sin separador. Así `assert(condition)` y `assert(condition, message)` no requieren sobrecarga ni parámetros por defecto.
+Produce pánico si la condición es falsa. Sin partes de mensaje, el runtime utiliza la ubicación y una representación de la condición; con una o más, las concatena en orden sin separador y añade la condición en una línea `condition:`. Así `assert(condition)` y `assert(condition, message)` no requieren sobrecarga ni parámetros por defecto.
+
+Cuando la condición escrita es una comparación (`==`, `!=`, `<`, `<=`, `>`, `>=`) cuyos lados implementan `Display`, cada lado se evalúa una vez y un fallo muestra ambos valores, los textos entre comillas:
+
+~~~text
+panic[P0007]: assertion-failed: name == "Ada"
+  left:  "Ada "
+  right: "Ada"
+~~~
 
 La condición y las partes siguen la evaluación ordinaria de argumentos de izquierda a derecha; los mensajes no son cierres lazy implícitos.
 

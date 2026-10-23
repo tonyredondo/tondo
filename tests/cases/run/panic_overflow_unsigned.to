@@ -4,3 +4,4 @@ fn main() {
 }
 
 // expect-panic: P0005
+// expect-stderr: panic[P0005]: checked-overflow: 3 - 4 does not fit in UInt8 (0 to 255)

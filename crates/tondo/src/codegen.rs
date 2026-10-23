@@ -90,6 +90,8 @@ enum Rt {
     ConsoleStream,
     ConsoleSet,
     Panic,
+    PanicValues,
+    Trace,
     BoxNew,
     BoxRetain,
     BoxRelease,
@@ -303,6 +305,8 @@ impl Rt {
             Rt::ConsoleStream => ("tondo_rt_console_stream", &[I64], &[I64]),
             Rt::ConsoleSet => ("tondo_rt_console_set", &[I64, I64], &[]),
             Rt::Panic => ("tondo_rt_panic", &[I32, I64, I64], &[]),
+            Rt::PanicValues => ("tondo_rt_panic_values", &[I32, I32, I64, I64, I64, I64], &[]),
+            Rt::Trace => ("tondo_rt_trace", &[I64], &[]),
             Rt::BoxNew => ("tondo_rt_box_new", &[I64], &[I64]),
             Rt::BoxRetain => ("tondo_rt_box_retain", &[I64], &[]),
             Rt::BoxRelease => ("tondo_rt_box_release", &[I64, I64], &[]),
@@ -659,6 +663,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, meta: bo
         c_functions: HashMap::new(),
         callbacks: HashMap::new(),
         pending_callbacks: Vec::new(),
+        traced: Vec::new(),
     };
 
     for (index, body) in bodies.iter().enumerate() {
@@ -676,10 +681,18 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, meta: bo
         context.func.name = UserFuncName::user(0, index as u32);
         FnCodegen::new(&mut cg, body, bodies, &mut context.func, &mut builder_context).run();
         cg.module.define_function(cg.functions[index], &mut context).map_err(|e| format!("{e:?}"))?;
+        // The body of `spawn call()` only makes the call, and a trace shows
+        // the spawn as the task's origin instead; a test's ends at the test,
+        // without the runner's tree that calls it.
+        let runner = !program.tests.is_empty() && index == program.main.0 as usize;
+        if body.name != "spawn" && !runner && !body.name.starts_with("suite ") {
+            cg.traced(cg.functions[index], &body.name, &context);
+        }
         cg.module.clear_context(&mut context);
     }
     let main = program.main.0 as usize;
-    cg.entry_point(main, bodies[main].result, &program.tests, &mut context, &mut builder_context)?;
+    let trace = cg.module.declare_data("tondo_trace", Linkage::Local, false, false).map_err(|e| e.to_string())?;
+    cg.entry_point(main, bodies[main].result, &program.tests, trace, &mut context, &mut builder_context)?;
     while let Some((target, thunk)) = cg.pending_thunks.pop() {
         context.func.signature = cg.module.declarations().get_function_decl(thunk).signature.clone();
         context.func.name = UserFuncName::user(3, thunk.as_u32());
@@ -697,6 +710,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, meta: bo
         context.func.name = UserFuncName::user(5, callback.inner.as_u32());
         define_inner(&mut cg, &bodies[callback.target.0 as usize], &callback, &mut context.func, &mut builder_context);
         cg.module.define_function(callback.inner, &mut context).map_err(|e| format!("{e:?}"))?;
+        cg.traced(callback.inner, &bodies[callback.target.0 as usize].name, &context);
         cg.module.clear_context(&mut context);
     }
     while let Some((kind, ty, id)) = cg.pending_glue.pop() {
@@ -707,6 +721,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, meta: bo
         cg.module.clear_context(&mut context);
     }
 
+    cg.trace_table(trace);
     let product = cg.module.finish();
     product.emit().map_err(|e| e.to_string())
 }
@@ -744,6 +759,17 @@ struct Codegen<'a> {
     /// function that makes the call from a frame.
     callbacks: HashMap<(FnId, Ty), FuncId>,
     pending_callbacks: Vec<Callback>,
+    /// The functions of the stack trace table, with their calls.
+    traced: Vec<Traced>,
+}
+
+/// A compiled function for stack traces: its name, size and, for each
+/// call, the offset it returns to and where its source starts.
+struct Traced {
+    id: FuncId,
+    name: String,
+    size: u32,
+    calls: Vec<(u32, u32)>,
 }
 
 impl Codegen<'_> {
@@ -1079,6 +1105,91 @@ impl Codegen<'_> {
 
     /// The tree of a test build for the runner: for each node, its parent,
     /// whether it is a suite, and its identity.
+    /// Records, for stack traces, where each call of the function just
+    /// compiled returns to and the source of the statement that makes it.
+    fn traced(&mut self, id: FuncId, name: &str, context: &cranelift_codegen::Context) {
+        let Some(code) = context.compiled_code() else { return };
+        let sources = code.buffer.get_srclocs_sorted();
+        let calls = code
+            .buffer
+            .call_sites()
+            .filter_map(|call| {
+                let at = call.ret_addr - 1;
+                let source = sources.get(sources.partition_point(|s| s.end <= at)).filter(|s| s.start <= at)?;
+                let loc = source.loc.as_abs();
+                (!loc.is_default()).then(|| (call.ret_addr, loc.bits()))
+            })
+            .collect();
+        self.traced.push(Traced { id, name: name.to_string(), size: code.code_info().total_size, calls });
+    }
+
+    /// The stack trace table (the runtime's `trace::Table`): each function's
+    /// code and size, and in one blob its name and calls, then the files.
+    fn trace_table(&mut self, id: DataId) {
+        let pad = |blob: &mut Vec<u8>| blob.resize(blob.len().next_multiple_of(4), 0);
+        let mut blob = Vec::new();
+        let mut files: Vec<String> = Vec::new();
+        let mut entries = vec![0u8; self.traced.len() * 16];
+        for (index, function) in self.traced.iter().enumerate() {
+            let meta = blob.len() as u32;
+            entries[index * 16 + 8..index * 16 + 12].copy_from_slice(&function.size.to_le_bytes());
+            entries[index * 16 + 12..index * 16 + 16].copy_from_slice(&meta.to_le_bytes());
+            blob.extend_from_slice(&(function.name.len() as u32).to_le_bytes());
+            blob.extend_from_slice(&(function.calls.len() as u32).to_le_bytes());
+            blob.extend_from_slice(function.name.as_bytes());
+            pad(&mut blob);
+            for &(offset, source) in &function.calls {
+                let (file, line, column) = self.sources.position(source);
+                let file = match files.iter().position(|f| *f == file) {
+                    Some(found) => found,
+                    None => {
+                        files.push(file);
+                        files.len() - 1
+                    }
+                };
+                for value in [offset, line as u32, column as u32, file as u32] {
+                    blob.extend_from_slice(&value.to_le_bytes());
+                }
+            }
+        }
+        let files_at = blob.len() as u64;
+        blob.extend_from_slice(&(files.len() as u32).to_le_bytes());
+        for file in &files {
+            blob.extend_from_slice(&(file.len() as u32).to_le_bytes());
+            blob.extend_from_slice(file.as_bytes());
+            pad(&mut blob);
+        }
+        let define = |module: &mut ObjectModule, name: &str, bytes: Vec<u8>| {
+            let id = module.declare_data(name, Linkage::Local, false, false).expect("trace data");
+            let mut data = DataDescription::new();
+            data.define(bytes.into_boxed_slice());
+            data.set_align(8);
+            module.define_data(id, &data).expect("trace data definition");
+            id
+        };
+        let blob = define(&mut self.module, "tondo_trace_blob", blob);
+        let functions = self.module.declare_data("tondo_trace_functions", Linkage::Local, false, false).unwrap();
+        let mut data = DataDescription::new();
+        data.define(entries.into_boxed_slice());
+        data.set_align(8);
+        for (index, function) in self.traced.iter().enumerate() {
+            let code = self.module.declare_func_in_data(function.id, &mut data);
+            data.write_function_addr(index as u32 * 16, code);
+        }
+        self.module.define_data(functions, &data).expect("trace functions");
+        let mut header = vec![0u8; 32];
+        header[8..16].copy_from_slice(&(self.traced.len() as u64).to_le_bytes());
+        header[24..32].copy_from_slice(&files_at.to_le_bytes());
+        let mut data = DataDescription::new();
+        data.define(header.into_boxed_slice());
+        data.set_align(8);
+        let functions = self.module.declare_data_in_data(functions, &mut data);
+        let blob = self.module.declare_data_in_data(blob, &mut data);
+        data.write_data_addr(0, functions, 0);
+        data.write_data_addr(16, blob, 0);
+        self.module.define_data(id, &data).expect("trace table");
+    }
+
     fn test_table(&mut self, tests: &[crate::hir::TestNodeInfo]) -> DataId {
         let names: Vec<DataId> = tests.iter().map(|t| self.string(&t.id)).collect();
         let id = self.module.declare_data("tondo_tests", Linkage::Local, false, false).expect("test table");
@@ -1145,6 +1256,7 @@ impl Codegen<'_> {
         main: usize,
         result: Ty,
         tests: &[crate::hir::TestNodeInfo],
+        trace: DataId,
         context: &mut cranelift_codegen::Context,
         fbc: &mut FunctionBuilderContext,
     ) -> Result<(), String> {
@@ -1159,6 +1271,9 @@ impl Codegen<'_> {
             let mut e = Emit { cg: self, fb };
             let block = e.fb.create_block();
             e.fb.switch_to_block(block);
+            let trace = e.cg.module.declare_data_in_func(trace, e.fb.func);
+            let trace = e.fb.ins().symbol_value(POINTER, trace);
+            e.call_rt(Rt::Trace, &[trace]);
             // A test build hands the runner its tree before `main` runs it.
             if let Some(table) = table {
                 let table = e.cg.module.declare_data_in_func(table, e.fb.func);
@@ -2180,7 +2295,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let address = base.expect("a C array lives in memory");
                 let index = self.scalar(&Operand::local(index));
                 let outside = self.e.fb.ins().icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, index, count as i64);
-                self.panic_if(outside, 1, span);
+                self.panic_values_if(outside, 1, span, |this| {
+                    let count = this.e.fb.ins().iconst(types::I64, count as i64);
+                    (1 << 16 | 0x140, index, count, ty)
+                });
                 let size = self.e.cg.layout(element).size;
                 let offset = self.e.fb.ins().imul_imm_u(index, size as i64);
                 base = Some(self.e.fb.ins().iadd(address, offset));
@@ -2230,7 +2348,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     fn element_address(&mut self, sequence: ir::Value, ty: Ty, index: ir::Value, span: Span) -> ir::Value {
         let (position, inside) = self.position(sequence, index);
         let outside = self.e.fb.ins().bxor_imm_u(inside, 1);
-        self.panic_if(outside, 1, span);
+        let deque = self.e.cg.sequence_parts(ty).1;
+        self.panic_values_if(outside, 1, span, |this| {
+            let length = this.e.fb.ins().load(types::I64, flags(), sequence, 8);
+            ((deque as u32) << 17 | 0x140, index, length, ty)
+        });
         self.element_at(sequence, ty, position)
     }
 
@@ -2476,6 +2598,16 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         }
     }
 
+    /// Compiles what follows as the source at `span`: runtime panics report
+    /// it, and stack traces map the calls to it.
+    fn at(&mut self, span: Span) {
+        self.span = span;
+        // A statement the compiler made up stays at the last one's.
+        if span != Span::default() {
+            self.e.fb.set_srcloc(ir::SourceLoc::new(span.start));
+        }
+    }
+
     fn location(&mut self, span: Span) -> ir::Value {
         let location = self.e.cg.sources.location(span);
         self.e.string_ptr(&location)
@@ -2486,7 +2618,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     fn statement(&mut self, stmt: &Statement) {
         match stmt {
             Statement::Assign(place, rvalue, span) => {
-                self.span = *span;
+                self.at(*span);
                 self.assign(place, rvalue, *span)
             }
             Statement::DeferPush(body, place) => {
@@ -2946,7 +3078,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         let array = self.scalar(value);
                         let length = self.e.fb.ins().load(types::I64, flags(), array, 8);
                         let differs = self.e.fb.ins().icmp_imm_u(IntCC::NotEqual, length, count as i64);
-                        self.panic_if(differs, 6, *span);
+                        self.panic_values_if(differs, 6, *span, |this| {
+                            let count = this.e.fb.ins().iconst(types::I64, count as i64);
+                            (0x140, length, count, ty)
+                        });
                         let destination = self.pointer_to(place, true);
                         let source = self.e.fb.ins().iadd_imm_s(array, ARRAY_HEADER);
                         let size = self.e.cg.layout(element).size * count;
@@ -4417,6 +4552,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
             },
             Terminator::Panic { code, message, span } => {
+                self.at(*span);
                 let message = match message {
                     Some(message) => self.scalar(message),
                     None => self.e.fb.ins().iconst(POINTER, 0),
@@ -4432,19 +4568,51 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     fn emit_panic(&mut self, code: u32, message: ir::Value, span: Span) {
         let code = self.e.fb.ins().iconst(types::I32, code as i64);
         let location = self.location(span);
+        let outer = self.e.fb.srcloc();
+        self.e.fb.set_srcloc(ir::SourceLoc::new(span.start));
         self.e.call_rt(Rt::Panic, &[code, message, location]);
         self.e.fb.ins().trap(TrapCode::user(1).unwrap());
+        self.e.fb.set_srcloc(outer);
     }
 
-    /// Branches to a cold block that panics with `code` when `condition` holds.
-    fn panic_if(&mut self, condition: ir::Value, code: u32, span: Span) {
+    /// Branches to a cold block that panics with `code` when `condition`
+    /// holds, with a message the runtime writes from the values `values`
+    /// gives there: the detail, two values and the type they are about (see
+    /// `tondo_rt_panic_values`).
+    fn panic_values_if(
+        &mut self,
+        condition: ir::Value,
+        code: u32,
+        span: Span,
+        values: impl FnOnce(&mut Self) -> (u32, ir::Value, ir::Value, Ty),
+    ) {
         let (failed, next) = (self.e.fb.create_block(), self.e.fb.create_block());
         self.e.fb.set_cold_block(failed);
         self.e.fb.ins().brif(condition, failed, &[], next, &[]);
         self.e.fb.switch_to_block(failed);
-        let null = self.e.fb.ins().iconst(POINTER, 0);
-        self.emit_panic(code, null, span);
+        let (detail, a, b, ty) = values(self);
+        let a = self.wide(a, detail & 0x100 != 0);
+        let b = self.wide(b, detail & 0x200 != 0);
+        let name = self.e.cg.types.display(ty);
+        let name = self.e.string_ptr(&name);
+        let code = self.e.fb.ins().iconst(types::I32, code as i64);
+        let detail = self.e.fb.ins().iconst(types::I32, detail as i64);
+        let location = self.location(span);
+        let outer = self.e.fb.srcloc();
+        self.e.fb.set_srcloc(ir::SourceLoc::new(span.start));
+        self.e.call_rt(Rt::PanicValues, &[code, detail, a, b, name, location]);
+        self.e.fb.ins().trap(TrapCode::user(1).unwrap());
+        self.e.fb.set_srcloc(outer);
         self.e.fb.switch_to_block(next);
+    }
+
+    /// An integer as 64 bits.
+    fn wide(&mut self, value: ir::Value, signed: bool) -> ir::Value {
+        match self.e.fb.func.dfg.value_type(value) {
+            types::I64 => value,
+            _ if signed => self.e.fb.ins().sextend(types::I64, value),
+            _ => self.e.fb.ins().uextend(types::I64, value),
+        }
     }
 
     // ---- operators -----------------------------------------------------------
@@ -4460,7 +4628,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let clif = self.e.cg.scalar_type(ty);
                 let zero = self.e.fb.ins().iconst(clif, 0);
                 let (result, overflow) = self.e.fb.ins().ssub_overflow(zero, value);
-                self.panic_if(overflow, 5, span);
+                let ty = self.e.cg.types.repr(ty);
+                self.panic_values_if(overflow, 5, span, |_| (5 << 16 | 0x100 | clif.bits(), value, value, ty));
                 result
             }
         }
@@ -4519,6 +4688,22 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         // A newtype computes as the integer it holds.
         let ty = types.repr(ty);
         let signed = types.as_int(ty).is_some_and(IntTy::signed);
+        let right_signed = types.as_int(types.repr(right_ty)).is_some_and(IntTy::signed);
+        // What the runtime needs to tell the operation in a panic.
+        let operation = |op: BinOp| {
+            let code = match op {
+                BinOp::Add => 0,
+                BinOp::Sub => 1,
+                BinOp::Mul => 2,
+                BinOp::Div => 3,
+                BinOp::Rem => 4,
+                BinOp::Shl => 6,
+                _ => 7,
+            };
+            let bits = self.e.cg.types.as_int(ty).map_or(8, IntTy::bits);
+            code << 16 | (right_signed as u32) << 9 | (signed as u32) << 8 | bits
+        };
+        let detail = operation(op);
         match op {
             BinOp::Add | BinOp::Sub | BinOp::Mul => {
                 let ins = self.e.fb.ins();
@@ -4530,12 +4715,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     (_, true) => ins.smul_overflow(a, b),
                     (_, false) => ins.umul_overflow(a, b),
                 };
-                self.panic_if(overflow, 5, span);
+                self.panic_values_if(overflow, 5, span, |_| (detail, a, b, ty));
                 result
             }
             BinOp::Div | BinOp::Rem => {
                 let zero = self.e.fb.ins().icmp_imm_s(IntCC::Equal, b, 0);
-                self.panic_if(zero, 3, span);
+                self.panic_values_if(zero, 3, span, |_| (detail, a, b, ty));
                 if !signed {
                     return if op == BinOp::Div { self.e.fb.ins().udiv(a, b) } else { self.e.fb.ins().urem(a, b) };
                 }
@@ -4545,7 +4730,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let is_minus_one = self.e.fb.ins().icmp_imm_s(IntCC::Equal, b, -1);
                 let both = self.e.fb.ins().band(is_min, is_minus_one);
                 if op == BinOp::Div {
-                    self.panic_if(both, 5, span);
+                    self.panic_values_if(both, 5, span, |_| (detail, a, b, ty));
                     self.e.fb.ins().sdiv(a, b)
                 } else {
                     let one = self.e.fb.ins().iconst(int_type(int), 1);
@@ -4560,10 +4745,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let width = self.e.cg.scalar_type(ty).bits() as i64;
                 if types.as_int(right_ty).is_some_and(IntTy::signed) {
                     let negative = self.e.fb.ins().icmp_imm_s(IntCC::SignedLessThan, b, 0);
-                    self.panic_if(negative, 10, span);
+                    self.panic_values_if(negative, 10, span, |_| (detail, a, b, ty));
                 }
                 let too_wide = self.e.fb.ins().icmp_imm_s(IntCC::UnsignedGreaterThanOrEqual, b, width);
-                self.panic_if(too_wide, 10, span);
+                self.panic_values_if(too_wide, 10, span, |_| (detail, a, b, ty));
                 match (op, signed) {
                     (BinOp::Shl, _) => self.e.fb.ins().ishl(a, b),
                     (_, true) => self.e.fb.ins().sshr(a, b),

@@ -11,3 +11,8 @@ fn main() {
 }
 
 // expect-panic: P0014
+// expect-stderr: panic[P0014]: reentrant-lock: this task already holds this lock to change its value, so taking it again to read it would wait for itself forever: it took it at panic_reentrant_lock.to:6:5
+// expect-stderr:  --> panic_reentrant_lock.to:8:18
+// expect-stderr: stack:
+// expect-stderr:   closure in main  panic_reentrant_lock.to:8:18
+// expect-stderr:   main             panic_reentrant_lock.to:6:5

@@ -11,3 +11,4 @@ fn main() {
 }
 
 // expect-panic: P0004
+// expect-stderr: panic[P0004]: overlapping-borrow: one call lends two slices of an array that share the element at index 1

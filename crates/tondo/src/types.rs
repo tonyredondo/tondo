@@ -748,6 +748,16 @@ impl Types {
 
     /// For the type of a closure: its body and its signature with the
     /// enclosing type parameters replaced by the instance's arguments.
+    /// Whether `ty` is the type of a closure.
+    pub fn is_closure(&self, ty: Ty) -> bool {
+        match self.kind(ty) {
+            TyKind::Adt(id) => {
+                matches!(self.adt(*id).instance, Some((template, _)) if self.closures.contains_key(&template))
+            }
+            _ => false,
+        }
+    }
+
     pub fn closure(&mut self, ty: Ty) -> Option<(u32, Vec<Ty>, ClosureInfo)> {
         let (template, args) = self.instance_of(ty)?;
         let mut info = self.closures.get(&template)?.clone();

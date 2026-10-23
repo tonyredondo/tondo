@@ -4,3 +4,4 @@ fn main() {
 }
 
 // expect-panic: P0001
+// expect-stderr: panic[P0001]: bounds: a channel cannot hold -1 values: its capacity must not be negative

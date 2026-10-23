@@ -9,3 +9,10 @@ fn main() {
 
 // expect-stdout: before
 // expect-panic: P0007
+// expect-stderr: panic[P0007]: assertion-failed: x is 3
+// expect-stderr:   condition: x > 5
+// expect-stderr:   left:  3
+// expect-stderr:   right: 5
+// expect-stderr:  --> panic_assert.to:7:5
+// expect-stderr: stack:
+// expect-stderr:   main  panic_assert.to:7:5

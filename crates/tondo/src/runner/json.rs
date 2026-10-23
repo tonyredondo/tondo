@@ -541,15 +541,18 @@ pub(super) fn status_name(status: &Status) -> &'static str {
 
 /// The failure of an attempt (15.3), or `null`.
 pub(super) fn failure(status: &Status, options: &Options) -> Value {
+    let mut stack = Vec::new();
     let (kind, code, error_type, message, location) = match status {
         Status::Error { message, error_type, location } => {
             ("error", None, Some(error_type.clone()), message.clone(), location.clone())
         }
         Status::Panic(text) => {
-            // `panic[P0007]: name: message`, then ` --> location`.
+            // `panic[P0007]: name: message`, then ` --> location` and the
+            // stack trace.
             let (first, location) = located(text);
             let code = first.strip_prefix("panic[").and_then(|r| r.split_once(']')).map(|(c, _)| c.to_string());
             let message = first.split_once("]: ").map_or(first, |(_, m)| m).to_string();
+            stack = frames(text);
             ("panic", code, None, message, location.map(str::to_string))
         }
         Status::Timeout => ("timeout", None, None, format!("timed out after {}s", options.timeout.as_secs_f64()), None),
@@ -562,8 +565,38 @@ pub(super) fn failure(status: &Status, options: &Options) -> Value {
         ("error_type", opt(error_type.as_deref())),
         ("message", str(message)),
         ("source", source(location.as_deref())),
-        ("stack", Value::Array(Vec::new())),
+        ("stack", Value::Array(stack)),
     ])
+}
+
+/// The frames of a panic's stack trace: each `  function  file:line:column`
+/// line, maybe with `  (n times)`, with `task` 0 for the stack of the task
+/// that panicked and one more for each `in a task spawned at:` before it.
+fn frames(text: &str) -> Vec<Value> {
+    let mut task = None;
+    let mut frames = Vec::new();
+    for line in text.lines() {
+        match line {
+            "stack:" => task = Some(0),
+            "in a task spawned at:" => task = Some(task.map_or(1, |t| t + 1)),
+            _ if line.starts_with("  ") => {
+                let Some(task) = task else { continue };
+                let (line, times) = match line.strip_suffix(" times)").and_then(|l| l.rsplit_once("  (")) {
+                    Some((line, times)) => (line, times.parse().unwrap_or(1)),
+                    None => (line, 1),
+                };
+                let Some((function, location)) = line.trim_start().rsplit_once("  ") else { continue };
+                frames.push(obj(vec![
+                    ("function", str(function.trim_end())),
+                    ("source", source(Some(location))),
+                    ("task", Value::Int(task)),
+                    ("times", Value::Int(times)),
+                ]));
+            }
+            _ => {}
+        }
+    }
+    frames
 }
 
 #[cfg(test)]

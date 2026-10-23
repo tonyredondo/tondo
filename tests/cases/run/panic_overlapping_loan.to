@@ -11,3 +11,4 @@ fn main() {
 }
 
 // expect-panic: P0004
+// expect-stderr: panic[P0004]: overlapping-borrow: one call cannot lend an element twice: two of its arguments reach index 2 of the same array

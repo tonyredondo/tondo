@@ -7,3 +7,4 @@ fn main() {
 }
 
 // expect-panic: P0005
+// expect-stderr: panic[P0005]: checked-overflow: 127 + 1 does not fit in Int8 (-128 to 127)

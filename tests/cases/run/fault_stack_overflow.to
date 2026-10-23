@@ -1,0 +1,22 @@
+// A task whose stack overflows ends the program with its trace: the
+// recursion folded into one line, then where it began and where the task
+// was spawned.
+fn down(n: Int): Int {
+    if n == 0 { 0 } else { down(n - 1) + 1 }
+}
+
+fn start(): Int {
+    down(100000000)
+}
+
+fn main() {
+    let job = spawn start()
+    job.wait()
+}
+
+// expect-crash
+// expect-stderr: fatal: stack overflow: a task used all of its 8 MiB stack
+// expect-stderr: stack:
+// expect-stderr:   start  fault_stack_overflow.to:9:5
+// expect-stderr: in a task spawned at:
+// expect-stderr:   main  fault_stack_overflow.to:13:15

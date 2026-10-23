@@ -29,3 +29,4 @@ fn main() {
 }
 
 // expect-panic: P0013
+// expect-stderr: panic[P0013]: deadlock: every task waits and none of them can wake the others

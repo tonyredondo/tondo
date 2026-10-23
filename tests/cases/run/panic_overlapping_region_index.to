@@ -7,3 +7,4 @@ fn main() {
 }
 
 // expect-panic: P0004
+// expect-stderr: panic[P0004]: overlapping-borrow: one call lends the element at index 1 of an array twice: alone and inside a slice

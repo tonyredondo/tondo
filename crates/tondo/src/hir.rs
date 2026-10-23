@@ -311,11 +311,13 @@ pub enum ExprKind {
     /// setup is done: each node with the closure, erased to a `fn()`, that
     /// runs it (testing 7.3).
     TestMembers(Vec<(u32, Expr)>),
-    /// `assert(condition, parts...)`; `source` is the condition's text.
+    /// `assert(condition, parts...)`; `source` is the condition's text,
+    /// and `detail` what a failure adds to the message, evaluated then.
     Assert {
         condition: Box<Expr>,
         parts: Vec<Expr>,
         source: String,
+        detail: Option<Box<Expr>>,
     },
     Error,
 }

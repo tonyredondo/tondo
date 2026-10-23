@@ -18,3 +18,4 @@ fn main() {
 // expect-stdout: block cleanup
 // expect-stdout: main cleanup
 // expect-panic: P0001
+// expect-stderr: panic[P0001]: bounds: index 5 is out of bounds for an array of length 2: valid indices are 0 to 1, and -2 to -1 from the end

@@ -2,7 +2,7 @@
 //! park tasks instead of blocking threads, semaphores and barriers.
 
 use super::tasks::{CANCELLED, Task, Wait, cancelled, current, lock, notify, unlock};
-use super::{Glue, LIVE_OBJECTS, Str, tondo_rt_panic};
+use super::{Glue, LIVE_OBJECTS, Str};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -107,7 +107,7 @@ fn try_take(o: &SyncObject, exclusive: bool) -> bool {
 }
 
 /// The locks the current task holds.
-fn held() -> &'static mut Vec<(usize, bool)> {
+fn held() -> &'static mut Vec<(usize, bool, *const Str)> {
     unsafe { &mut (*current()).held }
 }
 
@@ -123,8 +123,18 @@ pub unsafe extern "C" fn tondo_rt_sync_lock(object: *mut SyncObject, mode: u8, l
     let exclusive = mode != SHARED;
     let address = object as usize;
     let holds = held();
-    if holds.iter().any(|&(o, alone)| o == address && (exclusive || alone)) {
-        unsafe { tondo_rt_panic(14, std::ptr::null(), location) };
+    if let Some(&(_, alone, taken)) = holds.iter().find(|&&(o, alone, _)| o == address && (exclusive || alone)) {
+        let how = |exclusive: bool| if exclusive { "to change its value" } else { "to read it" };
+        let mut message = format!(
+            "this task already holds this lock {}, so taking it again {} would wait for itself forever",
+            how(alone),
+            how(exclusive)
+        );
+        if !taken.is_null() {
+            message
+                .push_str(&format!(": it took it at {}", String::from_utf8_lossy(unsafe { super::str_bytes(taken) })));
+        }
+        super::panic_with(14, &message, location);
     }
     let guard = address | (!exclusive) as usize;
     let o = unsafe { &mut *object };
@@ -133,7 +143,7 @@ pub unsafe extern "C" fn tondo_rt_sync_lock(object: *mut SyncObject, mode: u8, l
     let mut woken = false;
     loop {
         if try_take(o, exclusive) {
-            held().push((address, exclusive));
+            held().push((address, exclusive, location));
             return guard;
         }
         if mode == TRY {
@@ -152,7 +162,7 @@ pub unsafe extern "C" fn tondo_rt_sync_lock(object: *mut SyncObject, mode: u8, l
         o.state.fetch_or(PARKED, Ordering::AcqRel);
         if try_take(o, exclusive) {
             unlock(&o.queue);
-            held().push((address, exclusive));
+            held().push((address, exclusive, location));
             return guard;
         }
         // A task woken before goes first, and starves the lock once it
@@ -175,7 +185,7 @@ pub unsafe extern "C" fn tondo_rt_sync_lock(object: *mut SyncObject, mode: u8, l
                 return 0;
             }
             HANDED => {
-                held().push((address, exclusive));
+                held().push((address, exclusive, location));
                 return guard;
             }
             _ => {
@@ -269,7 +279,7 @@ pub unsafe extern "C" fn tondo_rt_sync_unlock(guard: usize) {
     let exclusive = guard & 1 == 0;
     let address = object(guard) as usize;
     let holds = held();
-    if let Some(index) = holds.iter().position(|&(o, _)| o == address) {
+    if let Some(index) = holds.iter().position(|&(o, _, _)| o == address) {
         holds.swap_remove(index);
     }
     unsafe {
@@ -308,8 +318,9 @@ pub unsafe extern "C" fn tondo_rt_sync_await(guard: usize) -> usize {
         woken.extend(wake_lockers(o));
         unlock(&o.queue);
         let holds = held();
-        if let Some(index) = holds.iter().position(|&(h, _)| h == object as usize) {
-            holds.swap_remove(index);
+        let mut location = std::ptr::null();
+        if let Some(index) = holds.iter().position(|&(h, _, _)| h == object as usize) {
+            location = holds.swap_remove(index).2;
         }
         woken.into_iter().for_each(notify);
         if wait.block() == CANCELLED {
@@ -318,7 +329,7 @@ pub unsafe extern "C" fn tondo_rt_sync_await(guard: usize) -> usize {
             unlock(&o.queue);
             return 0;
         }
-        tondo_rt_sync_lock(object, 1, std::ptr::null())
+        tondo_rt_sync_lock(object, 1, location)
     }
 }
 
@@ -366,7 +377,7 @@ pub struct PermitObject {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_semaphore_new(permits: i64, location: *const Str) -> *mut SemaphoreObject {
     if permits <= 0 {
-        unsafe { tondo_rt_panic(1, std::ptr::null(), location) };
+        super::panic_with(1, &format!("a semaphore needs at least 1 permit, and this one has {permits}"), location);
     }
     LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
     Box::into_raw(Box::new(SemaphoreObject {
@@ -483,7 +494,7 @@ pub struct BarrierObject {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_barrier_new(parties: i64, location: *const Str) -> *mut BarrierObject {
     if parties <= 0 {
-        unsafe { tondo_rt_panic(1, std::ptr::null(), location) };
+        super::panic_with(1, &format!("a barrier needs at least 1 party, and this one has {parties}"), location);
     }
     LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
     Box::into_raw(Box::new(BarrierObject {
@@ -628,7 +639,14 @@ pub unsafe extern "C" fn tondo_rt_atomic_add(
         let current = unsafe { tondo_rt_atomic_load(object, width) };
         let next = decode(current) + delta;
         if next < low || next > high {
-            unsafe { tondo_rt_panic(5, std::ptr::null(), location) };
+            let name = match (signed != 0, bits) {
+                (true, 64) => "Int".to_string(),
+                (true, _) => format!("Int{bits}"),
+                (false, _) => format!("UInt{bits}"),
+            };
+            let message =
+                format!("the atomic {} + {} does not fit in {name} ({low} to {high})", decode(current), delta);
+            super::panic_with(5, &message, location);
         }
         let next = next as u64 & (u64::MAX >> (64 - bits));
         if unsafe { tondo_rt_atomic_exchange(object, width, current, next) } == current {

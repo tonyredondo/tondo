@@ -12,7 +12,8 @@
 //! completes one of those operations first claims the wait, under that
 //! object's lock, and then notifies the task.
 
-use super::{Glue, LIVE_OBJECTS, Str, flush_stdout, runtime_fault, tondo_rt_panic};
+use super::trace::Origin;
+use super::{Glue, LIVE_OBJECTS, Str, flush_stdout, runtime_fault};
 use std::cell::Cell;
 use std::collections::BinaryHeap;
 use std::collections::HashMap;
@@ -129,7 +130,7 @@ const MAP_FLAGS: i32 = 0x02 | 0x20 | 0x4000; // PRIVATE | ANONYMOUS | NORESERVE
 #[cfg(not(target_os = "linux"))]
 const MAP_FLAGS: i32 = 0x02 | 0x1000; // PRIVATE | ANON
 /// Covers the largest page size of the supported targets.
-const GUARD: usize = 64 * 1024;
+pub(crate) const GUARD: usize = 64 * 1024;
 #[cfg_attr(not(tondo_staticlib), allow(dead_code))]
 const MAIN_STACK: usize = 64 * 1024 * 1024;
 const TASK_STACK: usize = 8 * 1024 * 1024;
@@ -234,14 +235,17 @@ pub(crate) struct Task {
     /// guarded by `waiting_lock`.
     waiting: *const Wait,
     waiting_lock: AtomicBool,
-    /// The `std.sync` locks it holds, and whether exclusively.
-    pub(crate) held: Vec<(usize, bool)>,
+    /// The `std.sync` locks it holds, whether exclusively, and where it
+    /// took them.
+    pub(crate) held: Vec<(usize, bool, *const Str)>,
     finished: bool,
     main: bool,
     /// For a task that runs a callback for a thread of C, the call.
     foreign: *const ForeignCall,
     /// Whether its clock is a test's virtual clock (testing 7.9).
     pub(crate) in_domain: bool,
+    /// Where it was started, for stack traces.
+    origin: Option<Arc<Origin>>,
 }
 
 /// A callback a thread of C makes, which a task runs while the thread
@@ -332,6 +336,27 @@ thread_local! {
 #[inline(never)]
 pub(crate) fn current() -> *mut Task {
     CURRENT.with(|c| c.get())
+}
+
+/// The bounds of the running task's stack, above its guard.
+pub(crate) fn stack_bounds() -> Option<(usize, usize)> {
+    let task = current();
+    let stack = unsafe { task.as_ref()?.stack.as_ref()? };
+    Some((stack.base as usize + GUARD, stack.top() as usize))
+}
+
+/// Where the running task was started.
+pub(crate) fn origin() -> Option<Arc<Origin>> {
+    unsafe { origin_of(current()) }
+}
+
+/// Where a task was started.
+pub(crate) unsafe fn origin_of(task: *mut Task) -> Option<Arc<Origin>> {
+    unsafe { task.as_ref()?.origin.clone() }
+}
+
+pub(crate) unsafe fn is_main(task: *mut Task) -> bool {
+    unsafe { (*task).main }
 }
 
 #[inline(never)]
@@ -576,6 +601,7 @@ fn add_timer(delay: Duration, wait: Arc<Wait>, index: usize) {
 /// Runs tasks; on the main thread, until the main task finishes, wherever
 /// it ran, and then returns its exit status.
 fn work(main: bool) -> i32 {
+    super::trace::guard_thread();
     loop {
         let task = {
             let mut queue = queue();
@@ -654,8 +680,51 @@ fn deadlock() -> ! {
         }
     }
     flush_stdout();
-    let _ = writeln!(std::io::stderr(), "panic[P0013]: deadlock: every task is waiting");
+    let mut report = String::from("panic[P0013]: deadlock: every task waits and none of them can wake the others");
+    // Where each task waits, the same place once, with the main task first.
+    let mut waits: Vec<(String, usize)> = Vec::new();
+    let mut all: Vec<*mut Task> = tasks().iter().map(|&t| t as *mut Task).collect();
+    all.sort_by_key(|&t| unsafe { (!(*t).main, t as usize) });
+    for task in all {
+        let text = unsafe { waiting_at(task) };
+        match waits.iter_mut().find(|(t, _)| *t == text) {
+            Some((_, count)) => *count += 1,
+            None => waits.push((text, unsafe { !(*task).main } as usize)),
+        }
+    }
+    for (text, count) in waits {
+        let title = match count {
+            0 => "the main task waits at".to_string(),
+            1 => "a task waits at".to_string(),
+            _ => format!("{count} tasks wait at"),
+        };
+        report.push_str(&text.replacen("TITLE", &title, 1));
+    }
+    let _ = writeln!(std::io::stderr(), "{report}");
     std::process::exit(super::PANIC_EXIT_CODE)
+}
+
+/// The trace of a task that waits, under a `TITLE` to fill in: from the
+/// frame pointer it saved when it switched out, or from here for the
+/// running one.
+unsafe fn waiting_at(task: *mut Task) -> String {
+    unsafe {
+        let Some(stack) = (*task).stack.as_ref() else { return String::new() };
+        let bounds = (stack.base as usize + GUARD, stack.top() as usize);
+        let fp = if task == current() {
+            super::trace::frame_pointer()
+        } else if (*task).state.load(Ordering::Acquire) == PARKED {
+            let sp = (*task).sp as *const usize;
+            #[cfg(target_arch = "x86_64")]
+            let fp = *sp.add(5);
+            #[cfg(target_arch = "aarch64")]
+            let fp = *sp.add(10);
+            fp
+        } else {
+            return "\nTITLE: a call to C".into();
+        };
+        super::trace::stack(super::trace::walk(fp, bounds), (*task).origin.as_deref(), "TITLE")
+    }
 }
 
 /// Starts the other workers, one per core, the first time a task spawns.
@@ -681,10 +750,12 @@ fn start_worker() {
 // ---------------------------------------------------------------------------
 
 /// A worker's calls of C: how deeply it is inside them, and a count of
-/// entries and exits that changes whenever a call starts or ends.
+/// entries and exits that changes whenever a call starts or ends; and, for
+/// stack traces, the frame of the runtime that each call entered from.
 struct InC {
     depth: AtomicUsize,
     calls: AtomicUsize,
+    frames: [AtomicUsize; 8],
     /// Whether another worker took this one's place during the current call.
     replaced: AtomicBool,
 }
@@ -710,6 +781,7 @@ fn in_c() -> &'static InC {
     let new: &'static InC = Box::leak(Box::new(InC {
         depth: AtomicUsize::new(0),
         calls: AtomicUsize::new(0),
+        frames: Default::default(),
         replaced: AtomicBool::new(false),
     }));
     CALLERS.lock().unwrap_or_else(|e| e.into_inner()).push(new);
@@ -723,11 +795,23 @@ fn in_c() -> &'static InC {
 pub extern "C" fn tondo_rt_foreign_enter() {
     let state = in_c();
     state.calls.fetch_add(1, Ordering::SeqCst);
-    state.depth.fetch_add(1, Ordering::SeqCst);
+    let depth = state.depth.fetch_add(1, Ordering::SeqCst);
+    if let Some(frame) = state.frames.get(depth) {
+        frame.store(super::trace::frame_pointer(), Ordering::Relaxed);
+    }
     let monitor = MONITOR.get_or_init(|| spawn_thread(Some(64 * 1024), monitor).thread().clone());
     if MONITOR_ASLEEP.load(Ordering::SeqCst) && MONITOR_ASLEEP.swap(false, Ordering::SeqCst) {
         monitor.unpark();
     }
+}
+
+/// The frame a fault inside C goes back to: the runtime's, as the running
+/// worker's innermost call of C started.
+pub(crate) fn c_frame() -> Option<usize> {
+    let state = unsafe { IN_C.with(|c| c.get()).as_ref()? };
+    let depth = state.depth.load(Ordering::Relaxed);
+    let frame = state.frames.get(depth.checked_sub(1)?)?.load(Ordering::Relaxed);
+    (frame != 0).then_some(frame)
 }
 
 /// After a C function returns: a worker that was replaced meanwhile makes
@@ -951,6 +1035,7 @@ fn new_task(stack: Stack, body: *mut u8, code: *const u8, kind: ResultKind, join
         foreign: std::ptr::null(),
         // A task started on a virtual clock keeps it.
         in_domain: !current().is_null() && unsafe { (*current()).in_domain },
+        origin: None,
     }));
     tasks().insert(task as usize);
     super::clock::woke(task);
@@ -970,6 +1055,7 @@ pub unsafe extern "C" fn tondo_rt_callback(inner: unsafe extern "C" fn(*mut u8),
     unsafe {
         (*task).main = false;
         (*task).foreign = &call;
+        (*task).origin = Some(Arc::new(Origin::Foreign));
     }
     start_workers();
     FOREIGN_WAITING.fetch_add(1, Ordering::SeqCst);
@@ -1203,7 +1289,10 @@ pub unsafe extern "C" fn tondo_rt_spawn(
         _ => ResultKind::Memory,
     };
     let task = new_task(task_stack(), body, code, kind, join);
-    unsafe { (*join).task = task };
+    unsafe {
+        (*join).task = task;
+        (*task).origin = Some(super::trace::spawned(origin()));
+    }
     schedule(task);
     join
 }
@@ -1692,7 +1781,11 @@ pub unsafe extern "C" fn tondo_rt_channel_new(
     location: *const Str,
 ) -> *mut ChannelObject {
     if bounded != 0 && capacity < 0 {
-        unsafe { tondo_rt_panic(1, std::ptr::null(), location) };
+        super::panic_with(
+            1,
+            &format!("a channel cannot hold {capacity} values: its capacity must not be negative"),
+            location,
+        );
     }
     LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
     Box::into_raw(Box::new(ChannelObject {
@@ -1768,7 +1861,7 @@ unsafe fn close_waits(c: &mut ChannelObject) -> Vec<*mut Task> {
 }
 
 fn closed_panic(location: *const Str) -> ! {
-    unsafe { tondo_rt_panic(12, std::ptr::null(), location) }
+    super::panic_with(12, "cannot send on this channel: it was closed", location)
 }
 
 /// Moves the value at `value` into the channel if it can without waiting,
