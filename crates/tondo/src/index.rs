@@ -45,6 +45,26 @@ pub enum Key {
     Module(String),
 }
 
+/// A field or method a value has, for completion: its declaration when
+/// the program has one, or the intrinsic type that documents it.
+#[derive(Clone, Debug)]
+pub struct Member {
+    pub name: String,
+    pub method: bool,
+    /// A field's type.
+    pub ty: Option<String>,
+    pub def: Option<usize>,
+    /// `Array`, `String`: the intrinsic type whose documentation has it.
+    pub builtin: Option<String>,
+}
+
+/// A type the program's expressions have, and its members.
+#[derive(Clone, Debug)]
+pub struct Shape {
+    pub name: String,
+    pub members: Vec<Member>,
+}
+
 #[derive(Default)]
 pub struct Index {
     pub defs: Vec<Def>,
@@ -53,6 +73,9 @@ pub struct Index {
     /// Fields written by the name of a binding, `User { name }`: renaming
     /// either one writes both.
     pub shorthands: Vec<Span>,
+    /// The type of each expression of the program's own files.
+    pub types: Vec<(Span, usize)>,
+    pub shapes: Vec<Shape>,
     keys: HashMap<Key, usize>,
 }
 

@@ -57,7 +57,8 @@ standard library.
 ## Editors
 
 `tondo lsp` is a language server: diagnostics as you type, hover, go to
-definition, references, rename, symbols and formatting. Point any editor's
+definition, references, rename, completion, semantic highlighting, symbols
+and formatting. Point any editor's
 LSP client at it for `*.to` files; in Helix, `languages.toml`:
 
 ```text

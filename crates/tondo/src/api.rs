@@ -47,6 +47,27 @@ pub fn builtin_methods(owner: &str) -> Vec<&'static str> {
         .collect()
 }
 
+/// The declaration and documentation of a method the runtime implements,
+/// as `tondo api` shows them: `pub fn Array.length(self): Int`.
+pub fn builtin_doc(owner: &str, name: &str) -> Option<(String, String)> {
+    let lines: Vec<&str> = BUILTINS.lines().collect();
+    let found = lines.iter().position(|line| {
+        line.strip_prefix("pub fn ").and_then(|rest| rest.strip_prefix(owner)).is_some_and(|rest| {
+            let rest = rest.strip_prefix('[').map_or(rest, |g| g.find(']').map_or(g, |end| &g[end + 1..]));
+            rest.strip_prefix('.')
+                .is_some_and(|rest| rest.starts_with(name) && rest[name.len()..].starts_with(['(', '[']))
+        })
+    })?;
+    let docs: Vec<&str> = lines[..found]
+        .iter()
+        .rev()
+        .take_while(|line| line.starts_with("///"))
+        .map(|line| line.trim_start_matches("///").trim_start())
+        .collect();
+    let docs: Vec<&str> = docs.into_iter().rev().collect();
+    Some((lines[found].to_string(), docs.join("\n")))
+}
+
 /// The names of the standard modules, as `std.name`, and `prelude`.
 pub fn standard_modules() -> Vec<String> {
     let mut names: Vec<String> = INTRINSIC.iter().map(|(n, _)| format!("std.{n}")).collect();

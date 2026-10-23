@@ -3,9 +3,11 @@
 
 use super::{Checker, FnCx};
 use crate::ast;
-use crate::index::{Def, DefKind, Key};
+use crate::index::{Def, DefKind, Key, Member, Shape};
 use crate::source::Span;
+use crate::types::AdtKind;
 use crate::types::{Ty, TyKind};
+use std::collections::HashMap;
 
 impl Checker<'_> {
     /// The identifier a name ends with, and the module alias written before
@@ -186,6 +188,97 @@ impl Checker<'_> {
         let Some(def) = index.of(&Key::TraitMethod(trait_id, name.name.clone())) else { return };
         index.alias(Key::Fn(id), def);
         index.refer(name.span, def);
+    }
+
+    /// The types of the expressions, with the members of each.
+    pub(super) fn index_finish(&mut self) {
+        if self.index.is_none() || self.index_exprs.is_empty() {
+            return;
+        }
+        let mut shapes: HashMap<Ty, usize> = HashMap::new();
+        let mut types = Vec::new();
+        let mut found = Vec::new();
+        for (span, ty) in std::mem::take(&mut self.index_exprs) {
+            let shape = match shapes.get(&ty) {
+                Some(&shape) => shape,
+                None => {
+                    let shape = Shape { name: self.types.display(ty), members: self.index_members(ty) };
+                    found.push(shape);
+                    shapes.insert(ty, found.len() - 1);
+                    found.len() - 1
+                }
+            };
+            types.push((span, shape));
+        }
+        if let Some(index) = self.index.as_mut() {
+            index.types = types;
+            index.shapes = found;
+        }
+    }
+
+    /// The fields and methods of a value of type `ty`.
+    fn index_members(&mut self, ty: Ty) -> Vec<Member> {
+        let mut members: Vec<Member> = Vec::new();
+        let owner = self.index_type_name(ty);
+        let index = self.index.as_ref();
+        if let TyKind::Adt(id) = self.types.kind(ty) {
+            match &self.types.adt(*id).kind {
+                AdtKind::Record(fields) => {
+                    for field in fields {
+                        let key = owner.clone().map(|o| Key::Field(o, field.name.clone()));
+                        members.push(Member {
+                            name: field.name.clone(),
+                            method: false,
+                            ty: Some(self.types.display(field.ty)),
+                            def: key.and_then(|key| index?.of(&key)),
+                            builtin: None,
+                        });
+                    }
+                }
+                AdtKind::Newtype(inner) => members.push(Member {
+                    name: "value".into(),
+                    method: false,
+                    ty: Some(self.types.display(*inner)),
+                    def: None,
+                    builtin: None,
+                }),
+                AdtKind::Enum(_) => {}
+            }
+        }
+        let key = self.owner_key(ty);
+        let mut methods: Vec<(String, u32)> = self
+            .methods
+            .iter()
+            .filter(|((owner, _), _)| *owner == key)
+            .map(|((_, name), id)| (name.clone(), id.0))
+            .collect();
+        methods.sort();
+        for (name, id) in methods {
+            let def = self.index.as_ref().and_then(|index| index.of(&Key::Fn(id)));
+            members.push(Member { name, method: true, ty: None, def, builtin: None });
+        }
+        // What the runtime implements, as `tondo api` documents it.
+        let shown = self.types.display(ty);
+        let intrinsic = shown.split('[').next().unwrap_or_default().to_string();
+        for name in crate::api::builtin_methods(&intrinsic) {
+            if !members.iter().any(|m| m.name == name) {
+                let builtin = Some(intrinsic.clone());
+                members.push(Member { name: name.to_string(), method: true, ty: None, def: None, builtin });
+            }
+        }
+        for implementation in &self.impls {
+            if implementation.target != key && implementation.target != ty {
+                continue;
+            }
+            let id = implementation.trait_id;
+            for method in &self.traits[id.0 as usize].methods {
+                if !members.iter().any(|m| m.name == method.name) {
+                    let def = self.index.as_ref().and_then(|i| i.of(&Key::TraitMethod(id.0, method.name.clone())));
+                    members.push(Member { name: method.name.clone(), method: true, ty: None, def, builtin: None });
+                }
+            }
+        }
+        members
     }
 
     /// Records the field `name` of a value of type `owner`.

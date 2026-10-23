@@ -91,6 +91,10 @@ struct Server {
     utf8: bool,
     open: HashMap<PathBuf, Document>,
     analyses: HashMap<PathBuf, Analyzed>,
+    /// The analyses before the last of each root, newest first: while a
+    /// line is being written it does not parse, and what came before the
+    /// cursor is found in them.
+    earlier: HashMap<PathBuf, Vec<Analyzed>>,
     /// Roots whose files changed since their analysis.
     dirty: HashSet<PathBuf>,
     /// The files of each root that the editor shows diagnostics for.
@@ -137,6 +141,10 @@ impl Server {
             "textDocument/rename" => Some(self.rename(params)),
             "textDocument/documentSymbol" => Some(Ok(self.symbols(params).unwrap_or(json!([])))),
             "textDocument/formatting" => Some(Ok(self.formatting(params).unwrap_or(Value::Null))),
+            "textDocument/completion" => Some(Ok(self.completion(params).unwrap_or(json!([])))),
+            "textDocument/semanticTokens/full" => {
+                Some(Ok(self.semantic_tokens(params).unwrap_or(json!({ "data": [] }))))
+            }
             _ if id.is_some() => Some(Err((-32601, format!("`{method}` is not supported")))),
             _ => None,
         };
@@ -164,6 +172,11 @@ impl Server {
                 "renameProvider": { "prepareProvider": true },
                 "documentSymbolProvider": true,
                 "documentFormattingProvider": true,
+                "completionProvider": { "triggerCharacters": ["."] },
+                "semanticTokensProvider": {
+                    "legend": { "tokenTypes": TOKEN_TYPES, "tokenModifiers": ["declaration", "readonly", "defaultLibrary"] },
+                    "full": true,
+                },
             },
             "serverInfo": { "name": "tondo", "version": driver::VERSION },
         })
@@ -196,7 +209,18 @@ impl Server {
 
     fn analyze(&mut self, root: &Path) {
         let open = self.open.iter().map(|(path, document)| (path.clone(), document.text.clone())).collect();
-        let Ok(analysis) = driver::analyze_for_editor(root, root.is_dir(), open) else { return };
+        let Some(analyzed) = self.analyzed(root, open) else { return };
+        self.publish(root, &analyzed);
+        if let Some(previous) = self.analyses.insert(root.to_path_buf(), analyzed) {
+            let earlier = self.earlier.entry(root.to_path_buf()).or_default();
+            earlier.insert(0, previous);
+            earlier.truncate(3);
+        }
+    }
+
+    /// An analysis of a root with the given text of open files.
+    fn analyzed(&mut self, root: &Path, open: HashMap<PathBuf, String>) -> Option<Analyzed> {
+        let analysis = driver::analyze_for_editor(root, root.is_dir(), open).ok()?;
         let std = self.std_dir();
         let paths = (0..analysis.sources.len())
             .map(|index| {
@@ -208,9 +232,7 @@ impl Server {
                 }
             })
             .collect();
-        let analyzed = Analyzed { analysis, paths };
-        self.publish(root, &analyzed);
-        self.analyses.insert(root.to_path_buf(), analyzed);
+        Some(Analyzed { analysis, paths })
     }
 
     /// Sends the diagnostics of each file of a root, and clears those of
@@ -313,8 +335,32 @@ impl Server {
         Some((analyzed, def, span))
     }
 
+    /// The module an `import` line names, when the request points at it:
+    /// its path, its first file when it has one, and the span of the path.
+    fn imported(&self, params: &Value) -> Option<(&Analyzed, String, Option<usize>, Span)> {
+        let (analyzed, file, offset) = self.at(params)?;
+        let source = analyzed.analysis.sources.file(file);
+        let at = (offset - source.base) as usize;
+        let start = source.text[..at].rfind('\n').map_or(0, |i| i + 1);
+        let line = source.text[start..].lines().next()?;
+        let path = line.strip_prefix("import ")?.split_whitespace().next()?;
+        let sources = &analyzed.analysis.sources;
+        let target = (0..sources.len()).find(|&i| {
+            let candidate = sources.file(i);
+            candidate.module == path && analyzed.paths[i].is_some()
+        });
+        let span = Span::new(source.base + start as u32 + 7, source.base + (start + 7 + path.len()) as u32);
+        Some((analyzed, path.to_string(), target, span))
+    }
+
     fn hover(&mut self, params: &Value) -> Option<Value> {
         self.prepare(params)?;
+        if let Some((analyzed, module, _, span)) = self.imported(params) {
+            let (_, range) = self.place(analyzed, span)?;
+            return Some(
+                json!({ "contents": { "kind": "markdown", "value": format!("```tondo\nmodule {module}\n```") }, "range": range }),
+            );
+        }
         let utf8 = self.utf8;
         let (analyzed, def, span) = self.def_at(params)?;
         let index = analyzed.analysis.index.as_ref()?;
@@ -368,6 +414,10 @@ impl Server {
 
     fn definition(&mut self, params: &Value) -> Option<Value> {
         self.prepare(params)?;
+        if let Some((analyzed, _, target, _)) = self.imported(params) {
+            let base = analyzed.analysis.sources.file(target?).base;
+            return self.location(analyzed, Span::new(base, base));
+        }
         let (analyzed, def, _) = self.def_at(params)?;
         let def = &analyzed.analysis.index.as_ref()?.defs[def];
         let span = if def.kind == DefKind::Module { def.decl_span } else { def.name_span };
@@ -490,6 +540,264 @@ impl Server {
         Some(Value::Array(symbols))
     }
 
+    fn completion(&mut self, params: &Value) -> Option<Value> {
+        self.prepare(params)?;
+        let path = uri_path(params["textDocument"]["uri"].as_str()?)?;
+        let root = root_of(&path).0;
+        let (latest, file, offset) = self.at(params)?;
+        let source = latest.analysis.sources.file(file);
+        let text = source.text.clone();
+        let cursor = (offset - source.base) as usize;
+        let start = text[..cursor].rfind(|c: char| !(c.is_alphanumeric() || c == '_')).map_or(0, |i| i + 1);
+        if !text[..start].ends_with('.') {
+            return Some(json!({ "isIncomplete": false, "items": self.names(latest, offset) }));
+        }
+        let end = start - 1;
+        // A module alias the program uses: its public declarations.
+        let alias_start = text[..end].rfind(|c: char| !(c.is_alphanumeric() || c == '_')).map_or(0, |i| i + 1);
+        let alias = &text[alias_start..end];
+        let analyses = std::iter::once(latest).chain(self.earlier.get(&root).into_iter().flatten());
+        for analyzed in analyses {
+            if let Some(items) = self.module_members(analyzed, alias) {
+                return Some(json!({ "isIncomplete": false, "items": items }));
+            }
+        }
+        // A value: what is before the dot parses once a name follows it.
+        let mut written = text.clone();
+        if start == cursor {
+            written.insert_str(cursor, "completed");
+        }
+        let mut open: HashMap<PathBuf, String> =
+            self.open.iter().map(|(path, document)| (path.clone(), document.text.clone())).collect();
+        open.insert(path.clone(), written);
+        let analyzed = self.analyzed(&root, open)?;
+        let file = analyzed.paths.iter().position(|p| p.as_deref() == Some(path.as_path()))?;
+        let base = analyzed.analysis.sources.file(file).base;
+        let items = self.members(&analyzed, base + end as u32).unwrap_or_default();
+        Some(json!({ "isIncomplete": false, "items": items }))
+    }
+
+    /// The public declarations of the module the program knows as `alias`.
+    fn module_members(&self, analyzed: &Analyzed, alias: &str) -> Option<Vec<Value>> {
+        let index = analyzed.analysis.index.as_ref()?;
+        let sources = &analyzed.analysis.sources;
+        let module = index.defs.iter().find(|d| d.kind == DefKind::Module && d.name == alias)?;
+        let module = sources.file_of(module.decl_span.start).module.clone();
+        let items = index
+            .defs
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| {
+                matches!(d.kind, DefKind::Function | DefKind::Type | DefKind::Enum | DefKind::Trait | DefKind::Const)
+                    && sources.file_of(d.decl_span.start).module == module
+                    && sources.slice(d.decl_span).starts_with("pub ")
+            })
+            .map(|(id, d)| self.item(analyzed, &d.name, d.kind, Some(id)))
+            .collect();
+        Some(items)
+    }
+
+    /// The members of the type of the innermost expression that ends at
+    /// `end`, before a dot.
+    fn members(&self, analyzed: &Analyzed, end: u32) -> Option<Vec<Value>> {
+        let index = analyzed.analysis.index.as_ref()?;
+        let (_, shape) =
+            index.types.iter().filter(|(span, _)| span.end == end).min_by_key(|(span, _)| span.end - span.start)?;
+        let shape = &index.shapes[*shape];
+        let items = shape
+            .members
+            .iter()
+            .map(|member| {
+                let kind = if member.method { DefKind::Method } else { DefKind::Field };
+                let mut item = self.item(analyzed, &member.name, kind, member.def);
+                if let (None, Some(ty)) = (member.def, &member.ty) {
+                    item["detail"] = json!(ty);
+                }
+                if let Some(owner) = &member.builtin
+                    && let Some((header, docs)) = crate::api::builtin_doc(owner, &member.name)
+                {
+                    item["detail"] = json!(header);
+                    item["documentation"] = json!({ "kind": "markdown", "value": docs });
+                }
+                item
+            })
+            .collect();
+        Some(items)
+    }
+
+    /// The names visible at `offset`: the bindings of its function before
+    /// it, the declarations of its module, the modules it uses, keywords.
+    fn names(&self, analyzed: &Analyzed, offset: u32) -> Vec<Value> {
+        let Some(index) = analyzed.analysis.index.as_ref() else { return Vec::new() };
+        let sources = &analyzed.analysis.sources;
+        let here = sources.file_of(offset);
+        let function = index
+            .defs
+            .iter()
+            .filter(|d| matches!(d.kind, DefKind::Function | DefKind::Method))
+            .filter(|d| d.decl_span.start <= offset && offset <= d.decl_span.end)
+            .min_by_key(|d| d.decl_span.end - d.decl_span.start);
+        let mut seen = HashSet::new();
+        let mut items = Vec::new();
+        for (id, def) in index.defs.iter().enumerate().rev() {
+            let visible = match def.kind {
+                DefKind::Local | DefKind::Parameter => {
+                    function.is_some_and(|f| f.decl_span.start <= def.name_span.start && def.name_span.end <= offset)
+                }
+                DefKind::Function | DefKind::Type | DefKind::Enum | DefKind::Trait | DefKind::Const => {
+                    sources.file_of(def.decl_span.start).module == here.module
+                }
+                _ => false,
+            };
+            if visible && seen.insert(def.name.clone()) {
+                items.push(self.item(analyzed, &def.name, def.kind, Some(id)));
+            }
+        }
+        // The modules this file names.
+        let (start, end) = (here.base, here.base + here.text.len() as u32);
+        for &(span, def) in &index.uses {
+            let found = &index.defs[def];
+            if found.kind == DefKind::Module
+                && span.start >= start
+                && span.end <= end
+                && seen.insert(found.name.clone())
+            {
+                items.push(self.item(analyzed, &found.name, DefKind::Module, Some(def)));
+            }
+        }
+        for keyword in KEYWORDS {
+            items.push(json!({ "label": keyword, "kind": 14 }));
+        }
+        items
+    }
+
+    /// A completion item, with the declaration's header and documentation.
+    fn item(&self, analyzed: &Analyzed, name: &str, kind: DefKind, def: Option<usize>) -> Value {
+        let number = match kind {
+            DefKind::Function => 3,
+            DefKind::Method => 2,
+            DefKind::Type => 22,
+            DefKind::Enum => 13,
+            DefKind::Trait => 8,
+            DefKind::Field => 5,
+            DefKind::Variant => 20,
+            DefKind::Const => 21,
+            DefKind::Local | DefKind::Parameter => 6,
+            DefKind::Module => 9,
+        };
+        let mut item = json!({ "label": name, "kind": number });
+        let Some(def) = def.and_then(|d| analyzed.analysis.index.as_ref().map(|i| &i.defs[d])) else { return item };
+        let file = analyzed.analysis.sources.file_of(def.decl_span.start);
+        let detail = match def.kind {
+            DefKind::Local | DefKind::Parameter => def.ty.clone().unwrap_or_default(),
+            DefKind::Function | DefKind::Method => header(file.slice(def.decl_span)),
+            DefKind::Module => format!("module {}", file.module),
+            _ => file.slice(def.decl_span).lines().next().unwrap_or_default().trim().to_string(),
+        };
+        item["detail"] = json!(detail);
+        let docs = docs_before(file, def.decl_span.start);
+        if !docs.is_empty() {
+            item["documentation"] = json!({ "kind": "markdown", "value": docs });
+        }
+        item
+    }
+
+    fn semantic_tokens(&mut self, params: &Value) -> Option<Value> {
+        let start = json!({ "textDocument": params["textDocument"], "position": { "line": 0, "character": 0 } });
+        self.prepare(&start)?;
+        let (analyzed, file, _) = self.at(&start)?;
+        let source = analyzed.analysis.sources.file(file);
+        let (base, end) = (source.base, source.base + source.text.len() as u32);
+        let std = self.std.as_deref();
+        let mut tokens: Vec<(u32, u32, usize, u32)> = Vec::new();
+        if let Some(index) = analyzed.analysis.index.as_ref() {
+            for &(span, def) in index.uses.iter().filter(|(s, _)| s.start >= base && s.end <= end) {
+                let found = &index.defs[def];
+                let kind = match found.kind {
+                    DefKind::Module => 0,
+                    DefKind::Type => 1,
+                    DefKind::Enum => 2,
+                    DefKind::Trait => 3,
+                    DefKind::Parameter => 5,
+                    DefKind::Local => 6,
+                    DefKind::Field => 7,
+                    DefKind::Variant => 8,
+                    DefKind::Function => 9,
+                    DefKind::Method => 10,
+                    DefKind::Const => 6,
+                };
+                let mut modifiers = 0;
+                if span == found.name_span {
+                    modifiers |= 1;
+                }
+                if found.kind == DefKind::Const {
+                    modifiers |= 2;
+                }
+                let library =
+                    self.place(analyzed, found.name_span).is_some_and(|(p, _)| std.is_some_and(|s| p.starts_with(s)));
+                if library {
+                    modifiers |= 4;
+                }
+                tokens.push((span.start - base, span.end - base, kind, modifiers));
+            }
+        }
+        let names: Vec<(u32, u32)> = tokens.iter().map(|t| (t.0, t.1)).collect();
+        let (lexed, comments) = crate::lexer::lex_with_comments(source, None, &mut crate::diag::Diagnostics::default());
+        let mut add = |start: u32, end: u32, kind: usize| {
+            // A string's interpolated names are tokens of their own.
+            let mut at = start;
+            for &(s, e) in names.iter().filter(|(s, e)| *s >= start && *e <= end) {
+                if s > at {
+                    tokens.push((at, s, kind, 0));
+                }
+                at = at.max(e);
+            }
+            if at < end {
+                tokens.push((at, end, kind, 0));
+            }
+        };
+        for token in &lexed {
+            let (start, end) = (token.span.start - base, token.span.end - base);
+            match &token.tok {
+                crate::lexer::Tok::Kw(_) => add(start, end, 11),
+                crate::lexer::Tok::Str(_) | crate::lexer::Tok::Char(_) => add(start, end, 13),
+                crate::lexer::Tok::Int { .. } | crate::lexer::Tok::Float { .. } => add(start, end, 14),
+                // A type the program does not declare, as `Int` or `Array`.
+                crate::lexer::Tok::Ident(name) if name.starts_with(char::is_uppercase) => add(start, end, 1),
+                _ => {}
+            }
+        }
+        for comment in &comments {
+            add(comment.start - base, comment.end - base, 12);
+        }
+        tokens.sort_by_key(|t| (t.0, t.1));
+        tokens.dedup_by_key(|t| t.0);
+        // One line each, as relative positions.
+        let text = &source.text;
+        let mut data = Vec::new();
+        let (mut last_line, mut last_column) = (0, 0);
+        for (start, end, kind, modifiers) in tokens {
+            let mut from = start as usize;
+            let end = end as usize;
+            while from < end {
+                let line_end = text[from..end].find('\n').map_or(end, |i| from + i);
+                if line_end > from {
+                    let line_start = text[..from].rfind('\n').map_or(0, |i| i + 1);
+                    let line = text[..from].matches('\n').count();
+                    let units = |s: &str| if self.utf8 { s.len() } else { s.encode_utf16().count() };
+                    let column = units(&text[line_start..from]);
+                    let length = units(&text[from..line_end]);
+                    let delta_line = line - last_line;
+                    let delta_column = if delta_line == 0 { column - last_column } else { column };
+                    data.extend([delta_line, delta_column, length, kind, modifiers as usize]);
+                    (last_line, last_column) = (line, column);
+                }
+                from = line_end + 1;
+            }
+        }
+        Some(json!({ "data": data }))
+    }
+
     fn formatting(&mut self, params: &Value) -> Option<Value> {
         let path = uri_path(params["textDocument"]["uri"].as_str()?)?;
         let text = match self.open.get(&path) {
@@ -506,6 +814,32 @@ impl Server {
         Some(json!([{ "range": { "start": { "line": 0, "character": 0 }, "end": end }, "newText": formatted }]))
     }
 }
+
+/// The token types of semantic highlighting, by number.
+const TOKEN_TYPES: [&str; 16] = [
+    "namespace",
+    "type",
+    "enum",
+    "interface",
+    "typeParameter",
+    "parameter",
+    "variable",
+    "property",
+    "enumMember",
+    "function",
+    "method",
+    "keyword",
+    "comment",
+    "string",
+    "number",
+    "operator",
+];
+
+/// The keywords completion offers.
+const KEYWORDS: [&str; 24] = [
+    "let", "var", "fn", "pub", "type", "enum", "trait", "impl", "const", "import", "if", "else", "for", "in", "match",
+    "return", "break", "continue", "fail", "spawn", "defer", "select", "none", "some",
+];
 
 /// The root a file is analyzed under: the project around it, or the file
 /// itself; and whether it is a project.

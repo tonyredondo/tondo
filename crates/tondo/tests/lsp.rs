@@ -249,3 +249,39 @@ fn diagnostics_follow_the_edits() {
     assert_eq!(found(&editor), Some(json!([])));
     editor.stop();
 }
+
+#[test]
+fn completion_and_highlighting() {
+    let dir = project(
+        "lsp-completion",
+        &[("tondo.toml", "[package]\nname = \"app\"\n"), ("src/models/models.to", MODELS), ("src/main.to", MAIN)],
+    );
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("src/main.to"));
+    let complete = |editor: &mut Editor, typed: &str| -> Vec<String> {
+        // The line is being written: it does not parse yet.
+        let text =
+            MAIN.replace("    console.println(ada.name)\n", &format!("    console.println(ada.name)\n    {typed}\n"));
+        editor.notify(
+            "textDocument/didChange",
+            json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": text }] }),
+        );
+        let line = text.lines().position(|l| l == format!("    {typed}")).unwrap();
+        let position = json!({ "line": line, "character": 4 + typed.len() });
+        let result =
+            editor.request("textDocument/completion", json!({ "textDocument": { "uri": uri }, "position": position }));
+        result["items"].as_array().unwrap().iter().map(|i| i["label"].as_str().unwrap().to_string()).collect()
+    };
+    assert_eq!(complete(&mut editor, "ada."), ["name", "age", "describe"]);
+    assert_eq!(complete(&mut editor, "models."), ["User", "Role", "make"]);
+    let strings = complete(&mut editor, "\"text\".");
+    assert!(strings.contains(&"length".to_string()) && strings.contains(&"split".to_string()), "{strings:?}");
+    let names = complete(&mut editor, "gr");
+    assert!(names.contains(&"greet".to_string()) && names.contains(&"ada".to_string()), "{names:?}");
+
+    let tokens = editor.request("textDocument/semanticTokens/full", json!({ "textDocument": { "uri": uri } }));
+    let data: Vec<u64> = tokens["data"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap()).collect();
+    // `import` first: a keyword at the start of the file.
+    assert_eq!(data[..5], [0, 0, 6, 11, 0]);
+    editor.stop();
+}

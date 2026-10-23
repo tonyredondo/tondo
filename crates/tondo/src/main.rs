@@ -28,7 +28,7 @@ usage:
             [--artifacts <dir>] [--update-snapshots]
                                                        run the tests of a project
   tondo lsp                                            serve an editor: diagnostics, hover, definitions,
-                                                       references, rename, symbols, formatting
+                                                       references, rename, completion, highlighting
   tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
                                                        write a module of extern declarations for a C header
   tondo <file.to> [<argument>...]                      run a script (for #! lines)

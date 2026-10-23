@@ -48,6 +48,7 @@ fn check_with<'a>(
 ) -> (Option<hir::Program>, Option<crate::index::Index>) {
     let mut checker = Checker {
         index,
+        index_exprs: Vec::new(),
         meta,
         types: Types::default(),
         diags,
@@ -104,6 +105,7 @@ fn check_with<'a>(
     };
     checker.declare_prelude();
     let program = checker.program(module);
+    checker.index_finish();
     (program, checker.index)
 }
 
@@ -543,6 +545,8 @@ struct Checker<'a> {
     /// What an editor asks to know: each declaration and each name that
     /// refers to one.
     index: Option<crate::index::Index>,
+    /// For an editor: the type of each expression of the program's own files.
+    index_exprs: Vec<(Span, Ty)>,
     /// The `meta` profile: no host capabilities (27.7).
     meta: bool,
     /// Inside the `{...}` of a string, where an unknown name may be text
@@ -969,6 +973,8 @@ impl<'a> Checker<'a> {
                 methods: i.methods.clone(),
             })
             .collect();
+        // Before the program takes the types.
+        self.index_finish();
         Some(hir::Program {
             types: std::mem::take(&mut self.types),
             functions,
@@ -7092,6 +7098,19 @@ impl<'a> Checker<'a> {
     }
 
     fn expr(&mut self, cx: &mut FnCx, e: &ast::Expr, expected: Option<Ty>) -> hir::Expr {
+        let value = self.expr_kind(cx, e, expected);
+        self.index_expr(e.span, value.ty);
+        value
+    }
+
+    /// For an editor: the type of an expression of the program's own files.
+    fn index_expr(&mut self, span: Span, ty: Ty) {
+        if self.index.is_some() && ty != Ty::ERROR && !self.sources.file_of(span.start).logical.starts_with("<std>/") {
+            self.index_exprs.push((span, ty));
+        }
+    }
+
+    fn expr_kind(&mut self, cx: &mut FnCx, e: &ast::Expr, expected: Option<Ty>) -> hir::Expr {
         let span = e.span;
         match &e.kind {
             ast::ExprKind::Int { value, suffix } => self.int_literal(*value as i128, *suffix, expected, span),
@@ -9864,6 +9883,7 @@ impl<'a> Checker<'a> {
         if let Some(mut value) = captured {
             self.index_local(cx, first);
             for segment in &segments[1..] {
+                self.index_expr(value.span, value.ty);
                 let span = value.span.to(segment.span);
                 value = self.field_access(value, FieldRef::Name(&segment.name), segment.span, span);
             }
@@ -9874,6 +9894,7 @@ impl<'a> Checker<'a> {
             let ty = cx.locals[local.0 as usize].ty;
             let mut value = Self::mk(hir::ExprKind::Local(local), ty, first.span);
             for segment in &segments[1..] {
+                self.index_expr(value.span, value.ty);
                 let span = value.span.to(segment.span);
                 value = self.field_access(value, FieldRef::Name(&segment.name), segment.span, span);
             }
