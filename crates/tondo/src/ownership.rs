@@ -580,25 +580,15 @@ impl Checker<'_> {
             ExprKind::Block(block) => self.block(block, flow),
             ExprKind::Call(callee, _, args) => {
                 let modes = (self.modes)(*callee);
-                let mut flow = flow;
-                for (index, arg) in args.iter().enumerate() {
-                    flow = match modes.get(index) {
-                        Some(Mode::Value) | None => self.consume(arg, flow)?,
-                        Some(_) => self.observe(arg, flow)?,
-                    };
-                }
-                Some(flow)
+                let taken =
+                    args.iter().enumerate().map(|(i, arg)| (arg, matches!(modes.get(i), Some(Mode::Value) | None)));
+                self.call_operands(taken, flow)
             }
             ExprKind::CallValue(callee, args) => {
                 let modes = self.value_modes(callee.ty);
-                let mut flow = self.observe(callee, flow)?;
-                for (index, arg) in args.iter().enumerate() {
-                    flow = match modes.get(index) {
-                        Some(Mode::Value) | None => self.consume(arg, flow)?,
-                        Some(_) => self.observe(arg, flow)?,
-                    };
-                }
-                Some(flow)
+                let taken =
+                    args.iter().enumerate().map(|(i, arg)| (arg, matches!(modes.get(i), Some(Mode::Value) | None)));
+                self.call_operands(std::iter::once((&**callee, false)).chain(taken), flow)
             }
             ExprKind::Loan(place) | ExprKind::CursorNext(place, _) => {
                 let flow = self.indices(&place.path, flow)?;
@@ -684,11 +674,7 @@ impl Checker<'_> {
                 out
             }
             ExprKind::TaskOp(op, operands) => {
-                let mut flow = flow;
-                for (index, operand) in operands.iter().enumerate() {
-                    flow = if op.takes(index) { self.consume(operand, flow)? } else { self.observe(operand, flow)? };
-                }
-                Some(flow)
+                self.call_operands(operands.iter().enumerate().map(|(i, operand)| (operand, op.takes(i))), flow)
             }
             ExprKind::Assert { condition, parts, detail, .. } => {
                 let flow = self.consume(condition, flow)?;
@@ -719,6 +705,37 @@ impl Checker<'_> {
             Some((_, _, info)) => info.modes,
             None => self.bound_modes.get(&ty).cloned().unwrap_or_default(),
         }
+    }
+
+    /// Evaluates the operands of a call in order, taking those `take` says.
+    /// One that moves a binding an earlier operand lends is an error: the
+    /// call reads the loan when it runs, after the move.
+    fn call_operands<'e>(&mut self, operands: impl IntoIterator<Item = (&'e Expr, bool)>, flow: Flow) -> Option<Flow> {
+        let mut flow = flow;
+        let mut lent: Vec<LocalId> = Vec::new();
+        for (operand, take) in operands {
+            if !take {
+                lent.extend(Self::root(operand));
+                flow = self.observe(operand, flow)?;
+                continue;
+            }
+            let before: Vec<bool> = lent.iter().map(|local| flow.moved.contains_key(local)).collect();
+            flow = self.consume(operand, flow)?;
+            let moved = lent.iter().zip(before).find(|&(local, was)| !was && flow.moved.contains_key(local));
+            if let Some((&local, _)) = moved {
+                let local = self.local(local);
+                let hint = match self.types.kind(local.ty) {
+                    TyKind::Handle(Handle::Sender, _) => format!(": pass `{}.copy()` instead", local.name),
+                    _ => self.copy_hint(local.ty).into(),
+                };
+                let message = format!(
+                    "`{}` moves into this call, which also lends it and would use it after the move{hint}",
+                    local.name
+                );
+                self.error("E1406", operand.span, message);
+            }
+        }
+        Some(flow)
     }
 
     fn all(&mut self, values: &[Expr], flow: Flow, take: bool) -> Option<Flow> {

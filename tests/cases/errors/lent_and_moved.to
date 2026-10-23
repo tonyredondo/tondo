@@ -1,0 +1,19 @@
+// A call reads what it lends when it runs, after its other arguments: one
+// of them cannot move the same binding.
+type Message = { text: String, reply: Sender[Message]? }
+
+fn both[T: ~Copy](seen: ref T, taken: T): T {
+    taken
+}
+
+fn main() {
+    let (sender, receiver) = channel[Message]()
+    sender.send(Message { text: "hello", reply: some(sender) })
+}
+
+fn generic[T: ~Copy](value: T): T {
+    both(ref value, value)
+}
+
+// expect-error: E1406 `sender` moves into this call, which also lends it and would use it after the move: pass `sender.copy()` instead
+// expect-error: E1406 `value` moves into this call, which also lends it and would use it after the move, or remove `~Copy` from its type parameter
