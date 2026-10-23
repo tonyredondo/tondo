@@ -1229,3 +1229,16 @@ form of the language, `spawn detached call()`, instead of
 loop warns (`W1013`) with both ways out. Making every unused `Join` detach
 was the alternative; its mistakes are races and lost work, which tests see
 less than a program that is slow or waits.
+
+## 2026-10-23 — Idle workers do not spin
+
+A task woken by the network waits for a worker to wake, which is most of
+what separates a round trip over loopback (20 µs) from Go's (12 µs). Idle
+workers that spin 20 µs before sleeping, two at most, took a quarter to a
+third off that round trip, and cost 3 to 11 % on channels between tasks,
+spawning and many connections, whether they spun busily or yielding; that
+trade was not taken. The way to Go's latency is the one Go takes, workers
+that poll the sockets themselves instead of a tokio thread waking them,
+which belongs to a later milestone. The experiment found that a worker
+spinning when `main` ended missed the notification and slept for good: any
+wait added to the scheduler must look at everything again afterwards.

@@ -121,7 +121,7 @@ language and remain planned work, scheduled after H7:
 
 | Milestone | Scope |
 |---|---|
-| **H11** | Race, leak and crash diagnostics; language server; incremental compilation |
+| **H11** | Race, leak and crash diagnostics; language server; incremental compilation; workers that poll the network themselves, for Go's latency on a request and its answer |
 | **H12** | Windows, and a self-contained linker |
 | **Protobuf and gRPC** | Types and codecs generated from `.proto` schemas, and gRPC clients and servers over HTTP/2, designed together |
 
