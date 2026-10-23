@@ -126,6 +126,36 @@ language and remain planned work, scheduled after H7:
 | **H12** | Windows, and a self-contained linker |
 | **Protobuf and gRPC** | Types and codecs generated from `.proto` schemas, and gRPC clients and servers over HTTP/2, designed together |
 
+What the specifications define and Tondo does not do yet, found by
+compiling every example they contain and reading the rest against the
+code (2026-10-24):
+
+- **Language:** multiple assignment, `(a, b) = (b, a)`, with `E1405` for a
+  repeated destination (13.8); a spread after single variadic arguments,
+  `decorate("> ", "one", ...rest)` (24.12); the union of errors a script's
+  implicit `main` infers from its `fail`s and `?`s (20.3); `defer` of a call
+  through a function value, `defer release()` (13.7); `Send` and `Share`,
+  which nothing checks, so a `Pointer` can reach another task (16.13,
+  `E1605`).
+- **Diagnostics:** the `core` warnings for unused imports, bindings and
+  parameters, naming conventions, confusable identifiers, redundant
+  conversions, comparisons with NaN and repeated `Set[...]` entries
+  (`W1001` to `W1005`, `W1007`, `W1008`, `W1011`, 22.8); the registry's
+  codes for a method of a foreign type (`E1504`), a member that clashes
+  (`E1505`), a misplaced shebang (`E1805`) and an invalid source form
+  (`E0006`), which come out today under other codes.
+- **Tools:** `tondo doc-test`, which checks the examples of a document
+  (21.6); the structured queries of 22.5 beyond what `tondo lsp` and
+  `tondo check --json` answer.
+- **Testing:** `testing.withVirtualTime(...)?` when the closure cannot fail,
+  the canonical form (7.9); interrupting `tondo test`, which should cancel
+  the running tests cooperatively and exit with `4` (7.10).
+- **Library:** `std.executor`, pools with capacity and shutdown, actors with
+  typed mailboxes and a bridge for blocking work (14.4.5).
+- **Specifications that disagree:** the language's manifest declares a
+  target, a host profile and capabilities (20.11), and testing has
+  dev-dependencies (5.5); the toolchain's `tondo.toml` has neither.
+
 ## Working rules
 
 - Keep it small: a feature lands with its tests and nothing else.

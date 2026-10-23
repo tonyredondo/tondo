@@ -4077,7 +4077,8 @@ No forman parte de STD-0.1:
 - Priority queues.
 - Decimal, BigInt y Complex.
 - Matrices, tensors y álgebra lineal.
-- `WeakRef`, `Cell` y mutabilidad interior general.
+- `Cell` y mutabilidad interior general; `WeakRef[T]` pertenece al prelude
+  de la edición (26.3 del lenguaje).
 - Dynamic linking y plugins.
 - Package manager y acceso a registries.
 
