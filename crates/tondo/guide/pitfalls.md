@@ -3,6 +3,24 @@
 Mistakes that come from other languages, the error each gives, and the fix.
 Every error message says what to write; `tondo check --json` has it as data.
 
+| Elsewhere | Tondo |
+|---|---|
+| `let mut x = 0` | `var x = 0` |
+| `while c { }`, `loop { }` | `for c { }`, `for { }` |
+| `fn f() -> Int`, `fn(Int) -> Int` | `fn f(): Int`, `fn(Int): Int` |
+| `fn id<T>(x: T)`, `Vec<T>`, `[T]` | `fn id[T](x: T)`, `Array[T]` |
+| `HashMap<K, V>`, `{}` | `Map[K, V]`, `[:]` |
+| `null`, `nil`, `None`, `Some(x)` | `none`, `some(x)` |
+| `x as Int` | `Int(x)` |
+| `\|x\| x * 2`, `x => x * 2` | `(x) { x * 2 }` |
+| `struct P { }` and `impl P { fn m() }` | `type P = { }` and `fn P.m(self)` |
+| `try`, `catch`, `throw` | `T ! E`, `?`, `match`, `fail error` |
+| `async`, `await` | plain calls; `spawn f()` and `.wait()` |
+| `switch` | `match` |
+| `&&`, `\|\|`, `!x` | `and`, `or`, `not x` |
+| `len(x)`, `x.len()`, `x.length` | `x.length()` |
+| `` `${x}` ``, `"{}".format(x)` | `"{x}"` |
+
 No semicolons; a newline ends a statement.
 
 ```tondo error E0002

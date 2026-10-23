@@ -1,0 +1,35 @@
+// A name, field, method, variant or module that looks like a typo of one
+// in sight gets a suggestion.
+import std.jsn
+
+type User = { name: String, email: String }
+
+enum Color {
+    Red
+    Green
+}
+
+fn total(values: Array[Int]): Int {
+    var sum = 0
+    for value in values {
+        sum += vaule
+    }
+    sum
+}
+
+fn main() {
+    let user = User { name: "Ada", emial: "a@b" }
+    let shown = user.nmae
+    var xs = [1]
+    xs.psuh(2)
+    let color = Color.Gren
+    let n = totl([1])
+}
+
+// expect-error: E1008 there is no module `std.jsn`; did you mean `std.json`?
+// expect-error: E1001 unknown name `vaule`; did you mean `value`?
+// expect-error: E1102 `User` has no field `emial`; did you mean `email`?
+// expect-error: E1102 `User` has no field `nmae`; did you mean `name`?
+// expect-error: E1001 `Array[Int]` has no method `psuh`; did you mean `push`?
+// expect-error: E1001 enum `Color` has no variant `Gren`; did you mean `Green`?
+// expect-error: E1001 unknown name `totl`; did you mean `total`?

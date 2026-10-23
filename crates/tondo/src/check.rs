@@ -60,6 +60,7 @@ pub fn check<'a>(
         unrepeatable: HashMap::new(),
         interpolating: false,
         naming: String::new(),
+        comparing: None,
         closure_name: None,
         intrinsic_owners: HashMap::new(),
         trait_modules: HashMap::new(),
@@ -517,6 +518,9 @@ struct Checker<'a> {
     /// The function whose body is checked, as stack traces name it, and
     /// the name the next closure takes instead of `closure in` it.
     naming: String,
+    /// While the operands of a comparison meet, whose mismatch is one:
+    /// whether the value coerced is the left one.
+    comparing: Option<bool>,
     closure_name: Option<String>,
     /// The standard functions whose values depend on the moment or the
     /// machine, which the `meta` profile cannot call, with their names.
@@ -1668,9 +1672,20 @@ impl<'a> Checker<'a> {
             ["std", "internal", "meta"] => StdModule::InternalMeta,
             ["std", "internal", "codec"] => StdModule::InternalCodec,
             ["std", "internal", "http"] => StdModule::InternalHttp,
-            ["std", ..] => {
-                let what = format!("module `{}`", path.join("."));
-                self.diags.unsupported(import.span, &what);
+            ["std", rest @ ..] => {
+                let name = rest.join(".");
+                // Modules the standard library specifies and does not have yet.
+                if ["toml", "yaml", "net", "msgpack", "cbor", "protobuf"].contains(&name.as_str()) {
+                    self.diags.unsupported(import.span, &format!("module `std.{name}`"));
+                    return;
+                }
+                let modules = crate::api::standard_modules();
+                let names = modules.iter().filter_map(|m| m.strip_prefix("std."));
+                let message = match closest(&name, names) {
+                    Some(near) => format!("there is no module `std.{name}`; did you mean `std.{near}`?"),
+                    None => format!("there is no module `std.{name}`; `tondo api --list` names the standard modules"),
+                };
+                self.diags.error("E1008", import.span, message);
                 return;
             }
             _ => {
@@ -2024,12 +2039,12 @@ impl<'a> Checker<'a> {
                     self.diags.unsupported(name.span, "generic newtypes");
                     continue;
                 }
-                let params = self.declare_generics(generics, false);
                 let module = match item {
                     ast::Item::Type(decl) => decl.module,
                     ast::Item::Enum(decl) => decl.module,
                     _ => unreachable!(),
                 };
+                let params = self.declare_generics(generics, false, module);
                 let template = self.types.declare_template(self.shown_type_name(&name.name, module), params.clone());
                 self.declare_type_name(name, TypeName::Template(template));
                 templates.push((item, name, template, generics, params));
@@ -2078,12 +2093,14 @@ impl<'a> Checker<'a> {
     /// Declares type parameters. Those of functions, methods and impls are
     /// `Copy` unless they say `~Copy`; a type's parameters assume nothing
     /// (12.1).
-    fn declare_generics(&mut self, generics: &[ast::GenericParam], code: bool) -> Vec<Ty> {
+    fn declare_generics(&mut self, generics: &[ast::GenericParam], code: bool, module: u32) -> Vec<Ty> {
         let mut params = Vec::new();
         for generic in generics {
-            if self.type_named(&generic.name.name).is_some()
-                || self.type_params.iter().any(|(n, _)| *n == generic.name.name)
-            {
+            // Outside the root, the root's types are out of sight: other
+            // modules' are renamed, and only the prelude's keep their names.
+            let name = generic.name.name.as_str();
+            let visible = module == 0 || PRELUDE_TYPES.contains(&name);
+            if (visible && self.type_named(name).is_some()) || self.type_params.iter().any(|(n, _)| n == name) {
                 let message = format!("type parameter `{}` would shadow a visible type", generic.name.name);
                 self.diags.error("E1003", generic.name.span, message);
             }
@@ -2452,7 +2469,7 @@ impl<'a> Checker<'a> {
         let outer_count = outer.types.len();
         self.type_params.extend(outer.types.iter().cloned());
         let saved_self = std::mem::replace(&mut self.self_type, outer.self_type);
-        let binders = self.declare_generics(&f.owner_generics, true);
+        let binders = self.declare_generics(&f.owner_generics, true, f.module);
         self.enter_generics(&f.owner_generics, &binders);
         let owner = match owner {
             Some(key) => Some(self.receiver_type(key, &binders, f)),
@@ -2462,7 +2479,7 @@ impl<'a> Checker<'a> {
             // `Self` names the owner in an inherent method (12.3).
             self.self_type = owner;
         }
-        let own = self.declare_generics(&f.generics, true);
+        let own = self.declare_generics(&f.generics, true, f.module);
         self.enter_generics(&f.generics, &own);
         let (mut params, mut names, mut receiver, mut variadic) = (Vec::new(), Vec::new(), None, false);
         for (index, param) in f.params.iter().enumerate() {
@@ -2662,7 +2679,7 @@ impl<'a> Checker<'a> {
 
     /// Checks an implementation's header and registers its methods (12.4).
     fn implementation<'d>(&mut self, decl: &'d ast::ImplDecl, bodies: &mut Vec<&'d ast::FnDecl>) {
-        let binders = self.declare_generics(&decl.generics, true);
+        let binders = self.declare_generics(&decl.generics, true, decl.module);
         self.enter_generics(&decl.generics, &binders);
         let resolved = self.trait_ref(&decl.trait_ref);
         let target = self.resolve_type(&decl.target);
@@ -3418,8 +3435,7 @@ impl<'a> Checker<'a> {
                 Ty::ERROR
             }
             None => {
-                let message = format!("unknown type `{}`", owner.name);
-                self.diags.error("E1001", owner.span, message);
+                self.diags.error("E1001", owner.span, unknown_type(&owner.name));
                 Ty::ERROR
             }
         }
@@ -3589,8 +3605,7 @@ impl<'a> Checker<'a> {
                         }
                     },
                     _ => {
-                        let message = format!("unknown type `{}`", names.join("."));
-                        self.diags.error("E1001", t.span, message);
+                        self.diags.error("E1001", t.span, unknown_type(&names.join(".")));
                         Ty::ERROR
                     }
                 }
@@ -5643,7 +5658,10 @@ impl<'a> Checker<'a> {
             || self.visible_capture(cx, &name.name)
             || (self.module == 0 && self.names.contains_key(&name.name))
         {
-            let message = format!("`{}` would shadow a visible binding with the same name", name.name);
+            let message = format!(
+                "`{0}` would shadow a visible binding with the same name: choose another name, or assign `{0} = ...` if it is a `var`",
+                name.name
+            );
             self.diags.error("E1003", name.span, message);
         } else if INTRINSICS.contains(&name.name.as_str()) {
             let message = format!("`{}` is a reserved intrinsic name", name.name);
@@ -5678,14 +5696,33 @@ impl<'a> Checker<'a> {
         let ty = match &tail {
             _ if cx.diverged => Ty::NEVER,
             Some(tail) => tail.ty,
-            None => {
-                if let Some(expected) = expected.filter(|&t| t != Ty::UNIT && t != Ty::ERROR) {
-                    let message = format!("expected {}, found `Unit`", self.display(expected));
+            None => match expected.filter(|&t| t != Ty::UNIT && t != Ty::ERROR) {
+                Some(expected) => {
+                    let mut message = match body {
+                        true => format!(
+                            "this function returns {}, but its body ends without a value: end it with one, or `return` one",
+                            self.display(expected)
+                        ),
+                        false => format!("expected {}, found `Unit`", self.display(expected)),
+                    };
+                    // `{}` written for an empty collection.
+                    let empty = match self.types.kind(expected) {
+                        _ if !stmts.is_empty() => None,
+                        TyKind::Map(..) => Some("an empty map is `[:]`"),
+                        TyKind::Set(_) => Some("an empty set is `Set[]`"),
+                        TyKind::Array(_) => Some("an empty array is `[]`"),
+                        _ => None,
+                    };
+                    if let Some(empty) = empty {
+                        message.push_str(&format!(": `{{}}` is an empty block; {empty}"));
+                    }
                     let end = Span::new(b.span.end - 1, b.span.end);
                     self.diags.error("E1102", end, message);
+                    // Reported once, here.
+                    Ty::ERROR
                 }
-                Ty::UNIT
-            }
+                None => Ty::UNIT,
+            },
         };
         cx.diverged = outer;
         cx.scopes.pop();
@@ -5801,6 +5838,13 @@ impl<'a> Checker<'a> {
                     }
                     Some(value) => {
                         let value = self.expr(cx, value, Some(result));
+                        if result == Ty::UNIT && ![Ty::UNIT, Ty::NEVER, Ty::ERROR].contains(&value.ty) {
+                            let message = format!(
+                                "this function has no result, so its `return` takes no value: declare one, as `: {}` after the parameters, or write `return` alone",
+                                self.display(value.ty).trim_matches('`')
+                            );
+                            self.diags.error("E1102", value.span, message);
+                        }
                         Some(self.returned(cx, value, result))
                     }
                     None => {
@@ -5949,7 +5993,10 @@ impl<'a> Checker<'a> {
                     // Assigning a capture changes the closure's own copy (11.8).
                     let hir::ExprKind::Field(_, index) = captured.kind else { unreachable!() };
                     if !cx.captures[index as usize].mutable {
-                        let message = format!("cannot assign to `{}`: it is not declared with `var`", root.name);
+                        let message = format!(
+                            "cannot assign to `{0}`: it is not declared with `var`; declare it as `var {0}`",
+                            root.name
+                        );
                         self.diags.error("E1411", root.span, message);
                     }
                     cx.mutates = true;
@@ -5979,6 +6026,9 @@ impl<'a> Checker<'a> {
                             "cannot assign to `{0}`: it is a `ref` binding that only observes its part; borrow it with `mut {0}` in a `for` header",
                             root.name
                         ),
+                        Some(ast::Mode::Ref) if root.name == "self" => {
+                            "cannot assign to `self`: it is a shared loan; take it as `mut self` to change the caller's value".to_string()
+                        }
                         Some(ast::Mode::Ref) => format!(
                             "cannot assign to `{0}`: it is a `ref` loan; take it as `{0}: mut {ty}` to change the caller's value",
                             root.name
@@ -5987,7 +6037,10 @@ impl<'a> Checker<'a> {
                             "cannot assign to `{0}`: parameters are immutable; take it as `{0}: mut {ty}` to change the caller's value, or copy it into a `var`",
                             root.name
                         ),
-                        None => format!("cannot assign to `{}`: it is not declared with `var`", root.name),
+                        None => format!(
+                            "cannot assign to `{0}`: it is not declared with `var`; declare it as `var {0}`",
+                            root.name
+                        ),
                     };
                     self.diags.error("E1411", root.span, message);
                 }
@@ -6202,7 +6255,31 @@ impl<'a> Checker<'a> {
                 FieldRef::Name(name) => format!("field `{name}`"),
                 FieldRef::Slot(slot) => format!("element {slot}"),
             };
-            let message = format!("{} has no {what}", self.display(ty));
+            let mut message = format!("{} has no {what}", self.display(ty));
+            if let FieldRef::Name(name) = field {
+                let fields: Vec<String> = match self.types.kind(ty) {
+                    TyKind::Adt(id) => match &self.types.adt(*id).kind {
+                        AdtKind::Record(fields) => fields.iter().map(|f| f.name.clone()).collect(),
+                        _ => Vec::new(),
+                    },
+                    _ => Vec::new(),
+                };
+                // `values.length`: a method read as a field.
+                let intrinsic = ["length", "isEmpty", "byteLength", "keys", "values", "entries", "chars", "bytes"];
+                let key = (self.owner_key(ty), name.to_string());
+                if intrinsic.contains(&name) || self.methods.contains_key(&key) {
+                    message.push_str(&format!("; `{name}` is a method: call it, `value.{name}()`"));
+                } else if let TyKind::Option(inner) = *self.types.kind(ty) {
+                    let inner = self.display(inner);
+                    message.push_str(&format!(
+                        "; it may be `none`: reach the {inner} inside with `match`, `?`, or `.map((value) {{ value.{name} }})`"
+                    ));
+                } else if let Some(near) = closest(name, fields.iter().map(String::as_str)) {
+                    message.push_str(&format!("; did you mean `{near}`?"));
+                } else if !fields.is_empty() {
+                    message.push_str(&format!("; its fields are {}", listed(&fields)));
+                }
+            }
             self.diags.error("E1102", span, message);
         }
         found
@@ -6351,7 +6428,7 @@ impl<'a> Checker<'a> {
                     cx.scopes.pop();
                     return Some(hir::Stmt::ForEach { pattern, source, body });
                 };
-                let (start, end) = self.operands(cx, start, end, None);
+                let (start, end) = self.operands(cx, start, end, None, false);
                 // Characters count through the prelude's `Range`.
                 if start.ty == Ty::CHAR {
                     let range = self.range_value(start, end, *op == BinOp::RangeInclusive, source.span);
@@ -6748,11 +6825,28 @@ impl<'a> Checker<'a> {
                         ),
                     }
                 }
-                _ if wrapped => format!(
-                    "expected {}, found {}: add `?` to pass the failure on, or handle it with `match`",
+                _ if wrapped && matches!(self.types.kind(value.ty), TyKind::Option(_)) => format!(
+                    "expected {}, found {}, which may be `none`: give a fallback with `.unwrapOr(value)`, handle it with `match`, or pass it on with `?` in a function that returns an option",
                     self.display(expected),
                     self.display(value.ty)
                 ),
+                _ if wrapped => format!(
+                    "expected {}, found {}: add `?` to pass the failure on, give a fallback with `.unwrapOr(value)`, or handle it with `match`",
+                    self.display(expected),
+                    self.display(value.ty)
+                ),
+
+                _ if self.comparing.is_some() => {
+                    let (found, other) = (self.display(value.ty), self.display(expected));
+                    let (left, right) = if self.comparing == Some(true) { (found, other) } else { (other, found) };
+                    format!("cannot compare {left} with {right}: both sides of a comparison have one type")
+                }
+                _ if expected == Ty::STRING && value.ty == Ty::CHAR => {
+                    "expected `String`, found `Char`: interpolate it, as `\"{c}\"`, for a `String`".to_string()
+                }
+                _ if expected == Ty::CHAR && value.ty == Ty::STRING => {
+                    "expected `Char`, found `String`: a `Char` literal is in single quotes, `'a'`".to_string()
+                }
                 _ => format!("expected {}, found {}", self.display(expected), self.display(value.ty)),
             };
             self.diags.error("E1102", value.span, message);
@@ -7118,7 +7212,12 @@ impl<'a> Checker<'a> {
                 }
             };
             let Some(index) = index else {
-                let message = format!("{} has no field `{}`", self.display(record), init.name.name);
+                let mut message = format!("{} has no field `{}`", self.display(record), init.name.name);
+                let names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
+                match closest(&init.name.name, names.iter().map(String::as_str)) {
+                    Some(near) => message.push_str(&format!("; did you mean `{near}`?")),
+                    None => message.push_str(&format!("; its fields are {}", listed(&names))),
+                }
                 self.diags.error("E1102", init.name.span, message);
                 continue;
             };
@@ -7294,8 +7393,7 @@ impl<'a> Checker<'a> {
                 return Self::error_expr(span);
             }
             None => {
-                let message = format!("unknown type `{}`", name.name);
-                self.diags.error("E1001", name.span, message);
+                self.diags.error("E1001", name.span, unknown_type(&name.name));
                 return Self::error_expr(span);
             }
         };
@@ -7376,7 +7474,14 @@ impl<'a> Checker<'a> {
     fn report_missing(&mut self, fields: &[(String, Ty)], seen: &[bool], span: Span) {
         let missing: Vec<&str> = fields.iter().zip(seen).filter(|(_, s)| !**s).map(|((n, _), _)| n.as_str()).collect();
         if !missing.is_empty() {
-            let message = format!("construction is missing fields: {}", missing.join(", "));
+            let typed: Vec<String> = fields
+                .iter()
+                .zip(seen)
+                .filter(|(_, s)| !**s)
+                .map(|((n, t), _)| format!("{n}: {}", self.types.display(*t)))
+                .collect();
+            let what = if missing.len() == 1 { "the field" } else { "the fields" };
+            let message = format!("this value is missing {what} {}", listed(&typed));
             self.diags.error("E1102", span, message);
         }
     }
@@ -7417,7 +7522,16 @@ impl<'a> Checker<'a> {
         match found {
             Some(Some(index)) => Some(Some((ty, index as u32))),
             Some(None) => {
-                let message = format!("enum `{}` has no variant `{}`", type_name.name, variant.name);
+                let mut message = format!("enum `{}` has no variant `{}`", type_name.name, variant.name);
+                if let TyKind::Adt(id) = self.types.kind(ty)
+                    && let AdtKind::Enum(variants) = &self.types.adt(*id).kind
+                {
+                    let names: Vec<String> = variants.iter().map(|v| v.name.clone()).collect();
+                    match closest(&variant.name, names.iter().map(String::as_str)) {
+                        Some(near) => message.push_str(&format!("; did you mean `{near}`?")),
+                        None => message.push_str(&format!("; its variants are {}", listed(&names))),
+                    }
+                }
                 self.diags.error("E1001", variant.span, message);
                 Some(None)
             }
@@ -9343,9 +9457,29 @@ impl<'a> Checker<'a> {
                 "{message}: `{0}` comes from the trait `{trait_name}`; call `{trait_name}.{0}(value, ...)`",
                 method.name
             );
+        } else if let Some(near) = self.closest_method(ty, &method.name) {
+            message = format!("{message}; did you mean `{near}`?");
         }
         self.diags.error("E1001", method.span, message);
         Self::error_expr(span)
+    }
+
+    /// The method of `ty` whose name looks like a typo of `name`: one the
+    /// prelude or the program declares, or one the compiler implements.
+    fn closest_method(&mut self, ty: Ty, name: &str) -> Option<String> {
+        let key = self.owner_key(ty);
+        let owner = match self.types.kind(ty) {
+            TyKind::String => "String".to_string(),
+            TyKind::Array(_) => "Array".to_string(),
+            TyKind::Deque(_) => "Deque".to_string(),
+            TyKind::Map(..) => "Map".to_string(),
+            TyKind::Set(_) => "Set".to_string(),
+            _ => self.types.display(ty),
+        };
+        let declared = self.methods.keys().filter(|(k, _)| *k == key).map(|(_, n)| n.clone());
+        let names: Vec<String> =
+            declared.chain(crate::api::builtin_methods(&owner).into_iter().map(String::from)).collect();
+        closest(name, names.iter().map(String::as_str)).map(String::from)
     }
 
     /// A trait with a method named `name` that `ty` implements, if any.
@@ -9362,6 +9496,41 @@ impl<'a> Checker<'a> {
     /// differently (10.2.3).
     fn method_hint(&self, ty: Ty, name: &str) -> Option<&'static str> {
         let hint = match (self.types.kind(ty), name) {
+            (TyKind::Option(_), "unwrap" | "get" | "value" | "orElseThrow") => {
+                "use `expect(message)`, which panics with the message on `none`; or `unwrapOr(fallback)`, `?` or `match`"
+            }
+            (TyKind::Option(_) | TyKind::Result(..), "unwrap_or" | "getOrElse" | "orElseGet" | "valueOr") => {
+                "use `unwrapOr(fallback)`"
+            }
+            (TyKind::Option(_), "isPresent" | "is_some" | "hasValue") => "use `isSome()`",
+            (TyKind::Option(_), "is_none" | "isEmpty" | "isAbsent") => "use `isNone()`",
+            (TyKind::Result(..), "unwrap" | "get" | "value") => {
+                "use `expect(message)`, which panics with the message on an error; or `unwrapOr(fallback)`, `?` or `match`"
+            }
+            (TyKind::Result(..), "is_ok" | "isSuccess") => "use `isOk()`",
+            (TyKind::Result(..), "is_err" | "isFailure" | "isError") => "use `isErr()`",
+            (TyKind::Result(..), "map_err" | "mapError") => "use `mapErr(transform)`",
+            (TyKind::String, "toInt" | "parseInt" | "toInteger" | "toNumber" | "parse" | "atoi" | "toLong") => {
+                "use `Int.parse(text)`, which gives `Int ! TextError`, or `Float.parse(text)`"
+            }
+            (TyKind::String, "toFloat" | "toDouble" | "parseFloat") => "use `Float.parse(text)`",
+            (TyKind::String, "toLowerCase" | "lower" | "to_lowercase" | "downcase" | "lowercased") => "use `toLower()`",
+            (TyKind::String, "toUpperCase" | "upper" | "to_uppercase" | "upcase" | "uppercased") => "use `toUpper()`",
+            (TyKind::String, "strip" | "trimmed") => "use `trim()`, `trimStart()` or `trimEnd()`",
+            (TyKind::String, "indexOf" | "index" | "firstIndex") => "use `find(text)`, which gives `Int?`",
+            (TyKind::String, "includes" | "has") => "use `contains(text)`",
+            (TyKind::String, "starts_with" | "hasPrefix") => "use `startsWith(prefix)`",
+            (TyKind::String, "ends_with" | "hasSuffix") => "use `endsWith(suffix)`",
+            (TyKind::String, "format") => "interpolate the values: `\"{first} and {second}\"`",
+            (TyKind::String, "equalsIgnoreCase") => "compare `a.toLower() == b.toLower()`",
+            (_, "toString" | "to_string" | "str" | "toStr" | "description") => "interpolate it: `\"{value}\"`",
+            (_, "equals" | "eq" | "isEqual") => "compare with `==`",
+            (_, "clone" | "copy" | "dup" | "deepCopy") => "values are copied on assignment: `let copy = value`",
+            (TyKind::Array(_), "forEach" | "for_each" | "each") => "use `for value in array { ... }`",
+            (TyKind::Array(_), "sort_by" | "sortWith" | "sorted_by") => "use `sortBy(key)`, or `sortedWith(compare)`",
+            (TyKind::Array(_), "addAll" | "append_all" | "push_all") => "use `extend(other)`",
+            (TyKind::Map(..), "forEach" | "each" | "items" | "iter") => "use `for (key, value) in map { ... }`",
+            (TyKind::Map(..), "getOrDefault" | "get_or_default" | "get_or") => "use `getOr(key, fallback)`",
             (_, "size" | "count" | "len") => "use `length()`",
             (_, "empty") => "use `isEmpty()`",
             (TyKind::String, "charAt" | "at") => "use `text[index]`, or `get(index)` for a `Char?`",
@@ -9515,7 +9684,9 @@ impl<'a> Checker<'a> {
             match segment {
                 ast::StrSegment::Text(text) => out.push(hir::Segment::Text(text.clone())),
                 ast::StrSegment::Expr(e) => {
-                    let outer = std::mem::replace(&mut self.interpolating, true);
+                    // Only a lone name in braces may have meant the braces.
+                    let lone = matches!(&e.kind, ast::ExprKind::Path(segments) if segments.len() == 1);
+                    let outer = std::mem::replace(&mut self.interpolating, lone);
                     let value = self.expr(cx, e, None);
                     self.interpolating = outer;
                     if !self.satisfies(value.ty, DISPLAY, &[]) {
@@ -9639,21 +9810,85 @@ impl<'a> Checker<'a> {
                 Self::error_expr(span)
             }
             None => {
-                self.unknown_name(&first.name, first.span);
+                self.unknown_path(cx, segments, span);
                 Self::error_expr(span)
             }
         }
     }
 
+    /// Reports a path whose first name is unknown as a value: a method
+    /// called on its type, as `Array.repeat(...)`, or an unknown name.
+    fn unknown_path(&mut self, cx: &FnCx, segments: &[ast::Ident], span: Span) {
+        let first = &segments[0];
+        if segments.len() > 1 && (self.intrinsic_owner(&first.name).is_some() || self.type_named(&first.name).is_some())
+        {
+            let (owner, member) = (&first.name, &segments[1].name);
+            let message = format!(
+                "`{owner}` has no function `{member}`; if `{member}` is a method, call it on a value: `value.{member}(...)`"
+            );
+            self.diags.error("E1001", span, message);
+        } else {
+            self.unknown_name(cx, &first.name, first.span);
+        }
+    }
+
     /// Reports `E1001`, pointing habits from other languages at the canonical form.
-    fn unknown_name(&mut self, name: &str, span: Span) {
-        let message = match name {
-            "Some" | "Ok" | "Err" => format!("unknown name `{name}`; Tondo writes `{}(...)`", name.to_lowercase()),
-            "None" => "unknown name `None`; Tondo writes `none`".to_string(),
+    fn unknown_name(&mut self, cx: &FnCx, name: &str, span: Span) {
+        let hint = match name {
+            "Some" | "Ok" | "Err" => format!("Tondo writes `{}(...)`", name.to_lowercase()),
+            "None" | "null" | "nil" | "undefined" | "NULL" | "nullptr" | "Nothing" => {
+                "Tondo writes `none`, the `T?` without a value".into()
+            }
+            "True" | "TRUE" => "Tondo writes `true`".into(),
+            "False" | "FALSE" => "Tondo writes `false`".into(),
+            "println" | "print" | "printf" | "puts" | "echo" | "printLn" | "log" => {
+                "`console.println(text)` writes a line, after `import std.console`".into()
+            }
+            "range" => "a range is `0..10`, or `0..=10` with its end".into(),
+            "len" | "length" | "size" | "count" | "sizeof" | "strlen" => "use `value.length()`".into(),
+            "self" => "a method takes `self` as its first parameter: `fn Type.name(self)`".into(),
+            "this" => "a method's receiver is `self`, its first parameter: `fn Type.name(self)`".into(),
+            "await" => {
+                "there is no `await`: call the function, which waits, or `spawn f()` and later `wait()` its `Join`"
+                    .into()
+            }
+            "HashMap" | "Dictionary" | "dict" | "Dict" | "TreeMap" | "BTreeMap" => {
+                "a map is `Map[K, V]`: `[:]` is an empty one, `[\"a\": 1]` one with an entry".into()
+            }
+            "Vec" | "List" | "ArrayList" | "vector" | "Vector" | "list" => {
+                "an array is `Array[T]`: `[]` is an empty one, `[1, 2]` one with elements".into()
+            }
+            "HashSet" | "TreeSet" | "BTreeSet" => "a set is `Set[T]`, as in `Set[1, 2]`".into(),
+            "str" | "toString" | "string" => "interpolate the value: `\"{value}\"`".into(),
+            "int" | "float" => format!("a conversion is a call of the type: `{}(value)`", capitalized(name)),
+            "assert_eq" | "assertEquals" | "assertEqual" | "expect" => {
+                "`assert(actual == expected)` shows both sides when it fails".into()
+            }
+            "sleep" => "`time.sleep(time.milliseconds(10))` waits, after `import std.time`".into(),
+            "exit" => "`process.exit(code)` ends the program, after `import std.process`".into(),
+            _ if crate::api::standard_modules().contains(&format!("std.{name}")) => {
+                format!("`{name}` is a standard module: add `import std.{name}` at the top of the file")
+            }
             _ if self.interpolating => format!(
-                "unknown name `{name}`; inside a string, `{{{name}}}` interpolates it: write `{{{{{name}}}}}` for the braces themselves"
+                "inside a string, `{{{name}}}` interpolates it: write `{{{{{name}}}}}` for the braces themselves"
             ),
-            _ => format!("unknown name `{name}`"),
+            _ => {
+                // The bindings in sight and the module's names.
+                let mut names: Vec<&str> = self.names.keys().map(String::as_str).collect();
+                let mut scope = Some(cx);
+                while let Some(found) = scope {
+                    names.extend(found.scopes.iter().flatten().map(|(n, _)| n.as_str()));
+                    scope = found.parent.as_deref();
+                }
+                match closest(name, names) {
+                    Some(near) => format!("did you mean `{near}`?"),
+                    None => String::new(),
+                }
+            }
+        };
+        let message = match hint.is_empty() {
+            true => format!("unknown name `{name}`"),
+            false => format!("unknown name `{name}`; {hint}"),
         };
         self.diags.error("E1001", span, message);
     }
@@ -10234,7 +10469,7 @@ impl<'a> Checker<'a> {
                 }
             }
             (_, None) => {
-                self.unknown_name(names[0], segments[0].span);
+                self.unknown_path(cx, segments, span);
                 Self::error_expr(span)
             }
             _ => self.unsupported_expr(callee.span, "calling this expression"),
@@ -10242,7 +10477,8 @@ impl<'a> Checker<'a> {
     }
 
     fn arity_error(&mut self, span: Span, expected: usize, found: usize) -> hir::Expr {
-        let message = format!("expected {expected} argument(s), found {found}");
+        let noun = if expected == 1 { "argument" } else { "arguments" };
+        let message = format!("expected {expected} {noun}, found {found}");
         self.diags.error("E1102", span, message);
         Self::error_expr(span)
     }
@@ -10889,6 +11125,11 @@ impl<'a> Checker<'a> {
         if self.number_leaf(left.ty).1 > 0 || self.number_leaf(right.ty).1 > 0 || left.ty == Ty::NEVER {
             return (left, right);
         }
+        // A left operand that is not a number: the operator's error says
+        // so, without another for the right operand.
+        if !matches!(self.types.kind(left.ty), TyKind::Int(_) | TyKind::Float(_) | TyKind::Error) {
+            return (left, right);
+        }
         self.common(left, right)
     }
 
@@ -10925,6 +11166,13 @@ impl<'a> Checker<'a> {
                 }
                 (BinOp::Add, 1.., 1..) => message.push_str(": to join arrays use `a.concat(b)`"),
                 (BinOp::Mul, 1.., 0) if right == Ty::INT => message.push_str(": to repeat an array use `a.repeat(n)`"),
+                (BinOp::Mul, 0, 0) if left == Ty::STRING => message.push_str(": to repeat a string use `text.repeat(n)`"),
+                (BinOp::Rem, 0, 0) if matches!(self.types.kind(left), TyKind::Float(_)) => message.push_str(
+                    ": floats have no `%`, since remainders follow several conventions; the truncated one is `a - b * (a / b).truncate()`",
+                ),
+                _ if matches!(self.types.kind(left), TyKind::Result(..) | TyKind::Option(_)) => message.push_str(
+                    ": the value may be missing or an error; get the number first with `?`, `.unwrapOr(value)` or `match`",
+                ),
                 _ => {}
             }
             self.diags.error("E1102", span, message);
@@ -10962,22 +11210,32 @@ impl<'a> Checker<'a> {
 
     /// Types two operands that must share a type. An unsuffixed literal on
     /// the left adopts the right operand's type; evaluation order is unchanged.
+    /// Two operands of one type; `comparison` says that a mismatch is one.
     fn operands(
         &mut self,
         cx: &mut FnCx,
         left: &ast::Expr,
         right: &ast::Expr,
         expected: Option<Ty>,
+        comparison: bool,
     ) -> (hir::Expr, hir::Expr) {
         if Self::is_untyped_literal(left) && !Self::is_untyped_literal(right) {
             let right = self.expr(cx, right, expected);
             let left = self.expr(cx, left, Some(right.ty));
+            let outer = std::mem::replace(&mut self.comparing, comparison.then_some(true));
             let left = self.coerce(left, right.ty);
+            self.comparing = outer;
             (left, right)
         } else {
             let left = self.expr(cx, left, expected);
             let right = self.expr(cx, right, Some(left.ty));
-            if left.ty == Ty::NEVER { (left, right) } else { self.common(left, right) }
+            if left.ty == Ty::NEVER {
+                return (left, right);
+            }
+            let outer = std::mem::replace(&mut self.comparing, comparison.then_some(false));
+            let operands = self.common(left, right);
+            self.comparing = outer;
+            operands
         }
     }
 
@@ -11048,7 +11306,7 @@ impl<'a> Checker<'a> {
                 (left, right, ty)
             }
             BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => {
-                let (left, right) = self.operands(cx, left, right, expected);
+                let (left, right) = self.operands(cx, left, right, expected, false);
                 let allowed =
                     matches!(self.types.kind(left.ty), TyKind::Int(_) | TyKind::Byte | TyKind::Error | TyKind::Never);
                 if !allowed {
@@ -11058,7 +11316,7 @@ impl<'a> Checker<'a> {
                 (left, right, ty)
             }
             BinOp::Eq | BinOp::Ne => {
-                let (left, right) = self.operands(cx, left, right, None);
+                let (left, right) = self.operands(cx, left, right, None, true);
                 if matches!(self.types.kind(left.ty), TyKind::Pointer(_)) {
                     let message =
                         "raw pointers have no `==`: compare `left.address() == right.address()` inside `unsafe`";
@@ -11069,7 +11327,7 @@ impl<'a> Checker<'a> {
                 (left, right, Ty::BOOL)
             }
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
-                let (left, right) = self.operands(cx, left, right, None);
+                let (left, right) = self.operands(cx, left, right, None, true);
                 let ordered = matches!(
                     self.types.kind(left.ty),
                     TyKind::Int(_)
@@ -11125,7 +11383,7 @@ impl<'a> Checker<'a> {
             }
             BinOp::Range | BinOp::RangeInclusive => {
                 let hint = expected.and_then(|ty| self.range_element(ty));
-                let (start, end) = self.operands(cx, left, right, hint);
+                let (start, end) = self.operands(cx, left, right, hint, false);
                 return self.range_value(start, end, op == BinOp::RangeInclusive, span);
             }
         };
@@ -11144,7 +11402,13 @@ impl<'a> Checker<'a> {
         let condition = self.expr(cx, condition, Some(Ty::BOOL));
         let condition = Box::new(self.coerce(condition, Ty::BOOL));
         let Some(otherwise) = otherwise else {
-            let then = self.block(cx, then, Some(Ty::UNIT));
+            // Its value is used, but there is none when the condition is false.
+            let used = expected != Some(Ty::UNIT);
+            let then = self.block(cx, then, if used { None } else { Some(Ty::UNIT) });
+            if used && ![Ty::UNIT, Ty::NEVER, Ty::ERROR].contains(&then.ty) {
+                let message = "an `if` without `else` has no value when its condition is false: add `else { ... }` with a value of the same type";
+                self.diags.error("E1102", span, message);
+            }
             return Self::mk(hir::ExprKind::If(condition, then, None), Ty::UNIT, span);
         };
         let then = self.block(cx, then, expected);
@@ -11222,4 +11486,95 @@ fn lent_conflict<'c>(cx: &'c FnCx, place: &hir::Place) -> Option<(&'c hir::Place
             })
     };
     cx.lent.iter().filter(|(lent, _)| overlaps(lent)).max_by_key(|(_, exclusive)| *exclusive).map(|(l, e)| (l, *e))
+}
+
+/// `E1001` for an unknown type, pointing names of other languages at
+/// Tondo's.
+fn unknown_type(name: &str) -> String {
+    let hint = match name {
+        "int" | "integer" | "Integer" | "long" | "Long" | "i64" | "isize" | "number" | "Number" => "Tondo writes `Int`",
+        "i8" => "Tondo writes `Int8`",
+        "i16" | "short" => "Tondo writes `Int16`",
+        "i32" => "Tondo writes `Int32`",
+        "u8" | "byte" => "Tondo writes `Byte`, or `UInt8` for arithmetic",
+        "u16" => "Tondo writes `UInt16`",
+        "u32" | "uint" => "Tondo writes `UInt32`",
+        "u64" | "usize" | "ulong" => "Tondo writes `UInt64`",
+        "float" | "double" | "Double" | "f64" => "Tondo writes `Float`",
+        "f32" => "Tondo writes `Float32`",
+        "string" | "str" | "&str" => "Tondo writes `String`",
+        "char" | "rune" | "Character" => "Tondo writes `Char`",
+        "bool" | "boolean" | "Boolean" => "Tondo writes `Bool`",
+        "void" | "unit" | "None" => "Tondo writes `Unit`, or leaves out the result type",
+        "Vec" | "List" | "ArrayList" | "vector" | "Vector" | "list" | "Slice" => "an array is `Array[T]`",
+        "HashMap" | "Dictionary" | "dict" | "Dict" | "TreeMap" | "BTreeMap" | "Hashtable" => "a map is `Map[K, V]`",
+        "HashSet" | "TreeSet" | "BTreeSet" => "a set is `Set[T]`",
+        "VecDeque" | "Queue" | "LinkedList" | "ArrayDeque" => "a double-ended queue is `Deque[T]`",
+        "Option" | "Optional" | "Maybe" => "an optional value is `T?`",
+        "Result" | "Either" => "a value or an error is `T ! E`",
+        "Box" | "Rc" | "Arc" | "RefCell" | "Cell" => {
+            "write the type itself: values are copied, and their storage is shared, by the language"
+        }
+        "any" | "Any" | "object" | "Object" | "dynamic" | "interface{}" => {
+            "Tondo has no dynamic type: use a type parameter with a bound, as in `fn show[T: Display](value: T)`"
+        }
+        _ if name.len() <= 2 && name.chars().all(|c| c.is_ascii_uppercase()) => {
+            "a type parameter is declared in brackets after the function's name: `fn first[T](values: Array[T]): T`"
+        }
+        _ => return format!("unknown type `{name}`"),
+    };
+    format!("unknown type `{name}`: {hint}")
+}
+
+/// `int` as `Int`.
+fn capitalized(name: &str) -> String {
+    let mut chars = name.chars();
+    chars.next().map_or_else(String::new, |first| first.to_uppercase().chain(chars).collect())
+}
+
+/// The candidate closest to `name` when it looks like a typo of it: a few
+/// edits away, fewer for a short name.
+fn closest<'n>(name: &str, candidates: impl IntoIterator<Item = &'n str>) -> Option<&'n str> {
+    let limit = match name.chars().count() {
+        0..=2 => 0,
+        3..=5 => 1,
+        6..=8 => 2,
+        _ => 3,
+    };
+    candidates
+        .into_iter()
+        .filter(|c| *c != name)
+        .map(|c| (distance(name, c), c))
+        .filter(|&(d, _)| d <= limit)
+        .min_by_key(|&(d, _)| d)
+        .map(|(_, c)| c)
+}
+
+/// The edits, as insertions, deletions, substitutions and swaps of two
+/// neighbours, that turn `a` into `b`; a different case is no edit.
+fn distance(a: &str, b: &str) -> usize {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let same = |x: char, y: char| x.eq_ignore_ascii_case(&y);
+    let mut d: Vec<Vec<usize>> =
+        (0..=a.len()).map(|i| (0..=b.len()).map(|j| if i == 0 { j } else { i }).collect()).collect();
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            let cost = usize::from(!same(a[i - 1], b[j - 1]));
+            d[i][j] = (d[i - 1][j] + 1).min(d[i][j - 1] + 1).min(d[i - 1][j - 1] + cost);
+            if i > 1 && j > 1 && same(a[i - 1], b[j - 2]) && same(a[i - 2], b[j - 1]) {
+                d[i][j] = d[i][j].min(d[i - 2][j - 2] + 1);
+            }
+        }
+    }
+    d[a.len()][b.len()]
+}
+
+/// `a`, `a and b`, or `a, b and c`, each in backticks.
+fn listed(items: &[String]) -> String {
+    let quoted: Vec<String> = items.iter().map(|i| format!("`{i}`")).collect();
+    match quoted.as_slice() {
+        [] => String::new(),
+        [only] => only.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
 }

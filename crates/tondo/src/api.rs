@@ -31,6 +31,22 @@ const BUILTINS: &str = include_str!("../std/api/builtins.to");
 /// the ones only the toolchain uses.
 const HIDDEN: &[&str] = &["datetime"];
 
+/// The methods `std/api/builtins.to` gives `owner`, such as `String`.
+pub fn builtin_methods(owner: &str) -> Vec<&'static str> {
+    BUILTINS
+        .lines()
+        .filter_map(|line| {
+            let rest = line.strip_prefix("pub fn ")?.strip_prefix(owner)?;
+            let rest = match rest.strip_prefix('[') {
+                Some(generic) => &generic[generic.find(']')? + 1..],
+                None => rest,
+            };
+            let rest = rest.strip_prefix('.')?;
+            Some(&rest[..rest.find(['(', '['])?])
+        })
+        .collect()
+}
+
 /// The names of the standard modules, as `std.name`, and `prelude`.
 pub fn standard_modules() -> Vec<String> {
     let mut names: Vec<String> = INTRINSIC.iter().map(|(n, _)| format!("std.{n}")).collect();

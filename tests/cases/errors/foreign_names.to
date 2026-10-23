@@ -1,0 +1,35 @@
+// Names, types and methods of other languages, each with Tondo's.
+fn describe(value: int): string {
+    ""
+}
+
+fn main() {
+    let missing: Int? = null
+    let flag = True
+    println("hi")
+    console.println("hi")
+    var map = HashMap.new()
+    for i in range(3) {}
+    let n = len([1])
+    let parsed = "1".toInt()
+    let lower = "A".toLowerCase()
+    let some: Int? = some(1)
+    let value = some.unwrap()
+    let size = [1].length
+    let empty: Map[String, Int] = {}
+}
+
+// expect-error: E1001 unknown type `int`: Tondo writes `Int`
+// expect-error: E1001 unknown type `string`: Tondo writes `String`
+// expect-error: E1001 unknown name `null`; Tondo writes `none`
+// expect-error: E1001 unknown name `True`; Tondo writes `true`
+// expect-error: E1001 unknown name `println`; `console.println(text)` writes a line, after `import std.console`
+// expect-error: E1001 `console` is a standard module: add `import std.console`
+// expect-error: E1001 a map is `Map[K, V]`
+// expect-error: E1001 a range is `0..10`
+// expect-error: E1001 unknown name `len`; use `value.length()`
+// expect-error: E1001 use `Int.parse(text)`
+// expect-error: E1001 use `toLower()`
+// expect-error: E1001 use `expect(message)`
+// expect-error: E1102 `length` is a method: call it, `value.length()`
+// expect-error: E1102 `{}` is an empty block; an empty map is `[:]`

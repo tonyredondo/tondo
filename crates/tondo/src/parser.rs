@@ -105,7 +105,35 @@ impl Parser<'_> {
 
     fn expected<T>(&mut self, what: &str) -> PResult<T> {
         let found = self.tok().describe();
-        self.error(format!("expected {what}, found {found}"))
+        match self.foreign_hint(what) {
+            Some(hint) => self.error(format!("expected {what}, found {found}: {hint}")),
+            None => self.error(format!("expected {what}, found {found}")),
+        }
+    }
+
+    /// What Tondo writes for the syntax of another language that the
+    /// parser just stumbled on, judging by the tokens around it.
+    fn foreign_hint(&self, what: &str) -> Option<String> {
+        let previous = if self.pos > 0 { &self.tokens[self.pos - 1].tok } else { &Tok::Eof };
+        let hint = match (previous, self.tok(), self.nth(1)) {
+            (_, Tok::Minus, Tok::Gt) => {
+                "a result type follows `:`, as in `fn name(value: Int): Int` and the function type `fn(Int): Int`"
+            }
+            (_, Tok::Kw(Kw::As), _) => {
+                "`as` only renames an import; a conversion is a call, as in `Int(value)` or `Float(value)`"
+            }
+            (Tok::Ident(_), Tok::Lt, _) => {
+                "type parameters and arguments go in brackets, as in `Array[Int]` and `fn first[T](values: Array[T]): T`"
+            }
+            (Tok::Ident(_) | Tok::RParen, Tok::FatArrow, _) | (_, Tok::Pipe, _) => {
+                "a closure is `(x) { x * 2 }`, with types when the context does not give them: `(x: Int): Int { x * 2 }`"
+            }
+            (Tok::EqEq, Tok::Eq, _) | (Tok::NotEq, Tok::Eq, _) => "`==` and `!=` compare values; Tondo has no `===`",
+            (_, Tok::LBracket, _) if what == "type" => "an array type is `Array[Int]`; a C array of four is `Int[4]`",
+            (Tok::Ident(word), _, _) => return foreign_word(word, self.tok()),
+            _ => return None,
+        };
+        Some(hint.to_string())
     }
 
     fn expect(&mut self, tok: Tok) -> PResult<Span> {
@@ -469,6 +497,10 @@ impl Parser<'_> {
         self.bump();
         let name = self.ident()?;
         let generics = self.generic_params()?;
+        if self.at(&Tok::LBrace) {
+            return self
+                .error(format!("expected `=`, found `{{`: a record is `type {} = {{ field: Type }}`", name.name));
+        }
         // `extern type Name` declares an opaque C type.
         let body = if foreign && !self.at(&Tok::Eq) {
             TypeBody::Opaque
@@ -701,6 +733,11 @@ impl Parser<'_> {
         self.bump();
         let generics = self.generic_params()?;
         let trait_ref = self.type_expr()?;
+        if self.at(&Tok::LBrace) {
+            return self.error(
+                "expected `for`, found `{`: `impl Trait for Type { ... }` implements a trait; a type's own methods are declared apart, as `fn Type.method(self): Result { ... }`",
+            );
+        }
         self.expect(Tok::Kw(Kw::For))?;
         let no_brace = std::mem::replace(&mut self.no_brace, true);
         let target = self.type_expr();
@@ -931,6 +968,24 @@ impl Parser<'_> {
             self.tok(),
             Tok::Kw(Kw::Let | Kw::Var | Kw::Return | Kw::Fail | Kw::Break | Kw::Continue | Kw::For | Kw::Defer)
         ) || matches!(self.tok(), Tok::Ident(name) if name == "_")
+            || self.foreign_block().is_some()
+    }
+
+    /// A block that another language opens with a word, and what Tondo
+    /// writes instead.
+    fn foreign_block(&self) -> Option<&'static str> {
+        let Tok::Ident(word) = self.tok() else { return None };
+        if self.nth(1) != &Tok::LBrace {
+            return None;
+        }
+        match word.as_str() {
+            "loop" => Some("a loop until `break` is `for { ... }`"),
+            "try" => Some(
+                "there is no `try`: a function that can fail returns `T ! E`; `?` passes a failure on and `match` handles it",
+            ),
+            "do" => Some("a loop that runs at least once is `for { ... }` with `if done { break }` at its end"),
+            _ => None,
+        }
     }
 
     fn statement(&mut self) -> PResult<Stmt> {
@@ -938,6 +993,9 @@ impl Parser<'_> {
         let kind = match self.tok().clone() {
             Tok::Kw(kw @ (Kw::Let | Kw::Var)) => {
                 self.bump();
+                if kw == Kw::Let && self.at_kw(Kw::Mut) && matches!(self.nth(1), Tok::Ident(_)) {
+                    return self.error("`let mut` declares nothing in Tondo: a variable is `var name = value`");
+                }
                 let pattern = self.pattern()?;
                 let ty = if self.eat(&Tok::Colon) { Some(self.type_expr()?) } else { None };
                 let value = if self.eat(&Tok::Eq) { Some(self.expression()?) } else { None };
@@ -957,6 +1015,10 @@ impl Parser<'_> {
                 self.bump();
                 self.bump();
                 StmtKind::Discard(self.expression()?)
+            }
+            Tok::Ident(_) if self.foreign_block().is_some() => {
+                let message = self.foreign_block().unwrap_or_default();
+                return self.error(message);
             }
             _ => {
                 let expr = self.expression()?;
@@ -1981,4 +2043,39 @@ impl Parser<'_> {
         }
         Ok(segments)
     }
+}
+
+/// What Tondo writes for a word another language begins a statement or
+/// declaration with, when the token after it does not fit.
+fn foreign_word(word: &str, next: &Tok) -> Option<String> {
+    let name = match next {
+        Tok::Ident(name) => name.as_str(),
+        _ => "Name",
+    };
+    let hint = match (word, next) {
+        ("struct" | "class" | "record" | "data" | "object", Tok::Ident(_)) => format!(
+            "a record is `type {name} = {{ field: Type }}`, and its methods are declared apart, as `fn {name}.method(self): Type {{ ... }}`"
+        ),
+        ("interface" | "protocol", Tok::Ident(_)) => {
+            format!("an interface is a trait: `trait {name} {{ fn method(self): Type }}`")
+        }
+        ("use" | "using" | "require" | "include" | "from", _) => {
+            "a module is imported at the top of the file, as `import std.console`".into()
+        }
+        ("async", Tok::Kw(Kw::Fn)) => {
+            "there is no `async`: any function can wait, and `spawn f()` runs one as a task".into()
+        }
+        ("await", _) => {
+            "there is no `await`: call the function, which waits, or `spawn f()` and later `wait()` its `Join`".into()
+        }
+        ("while", _) => "a loop while a condition holds is `for condition { ... }`".into(),
+        ("switch" | "when", _) => "use `match value { pattern => result }`, one arm per line".into(),
+        ("throw" | "raise", _) => "a function that returns `T ! E` fails with `fail error`".into(),
+        ("def" | "func" | "function" | "fun" | "proc", Tok::Ident(_)) => {
+            format!("a function is `fn {name}(value: Type): Result {{ ... }}`")
+        }
+        ("elif" | "elsif", _) => "write `} else if condition {`".into(),
+        _ => return None,
+    };
+    Some(hint)
 }

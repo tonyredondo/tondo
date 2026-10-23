@@ -1,0 +1,37 @@
+// Declarations as other languages write them, each with what Tondo writes.
+struct Point {
+    x: Int
+}
+
+type Size {
+    width: Int
+}
+
+impl Size {
+}
+
+async fn load(): Int {
+    1
+}
+
+fn first<T>(values: Array[T]): T {
+    values[0]
+}
+
+fn parse(text: String) -> Int {
+    0
+}
+
+fn sum(values: [Int]): Int {
+    0
+}
+
+fn main() {}
+
+// expect-error: E0004 a record is `type Point = { field: Type }`, and its methods are declared apart
+// expect-error: E0004 expected `=`, found `{`: a record is `type Size = { field: Type }`
+// expect-error: E0004 expected `for`, found `{`: `impl Trait for Type { ... }` implements a trait
+// expect-error: E0004 there is no `async`
+// expect-error: E0004 type parameters and arguments go in brackets
+// expect-error: E0004 a result type follows `:`
+// expect-error: E0004 an array type is `Array[Int]`

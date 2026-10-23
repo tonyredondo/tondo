@@ -329,7 +329,8 @@ impl Linker<'_> {
             return;
         }
         if self.decls[self.module].values.contains_key(&name.name) || self.imports.contains_key(&name.name) {
-            let message = format!("`{}` would shadow a visible binding with the same name", name.name);
+            let message =
+                format!("`{}` would shadow a visible binding with the same name: choose another name", name.name);
             self.diags.error("E1003", name.span, message);
         }
     }

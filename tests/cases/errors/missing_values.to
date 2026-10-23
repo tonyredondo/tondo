@@ -1,0 +1,26 @@
+// Values that are missing where the program uses them.
+fn pick(flag: Bool): Int {
+    let value = if flag { 1 }
+    0
+}
+
+fn log() {
+    return 1
+}
+
+fn count(): Int {
+    let x = 1
+}
+
+fn main() {
+    let bad = UInt8(5) + 1u8
+    let ok = 1 == "1"
+    let text: String = "abc"[0]
+}
+
+// expect-error: E1102 an `if` without `else` has no value when its condition is false
+// expect-error: E1102 this function has no result, so its `return` takes no value: declare one, as `: Int`
+// expect-error: E1102 this function returns `Int`, but its body ends without a value
+// expect-error: E1102 the value may be missing or an error; get the number first
+// expect-error: E1102 cannot compare `Int` with `String`
+// expect-error: E1102 expected `String`, found `Char`: interpolate it

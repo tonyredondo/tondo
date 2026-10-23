@@ -449,7 +449,7 @@ impl Lexer<'_> {
             ("||", "`||` is not a Tondo operator: write `or`"),
             (
                 "??",
-                "`??` is not a Tondo operator: for a fallback write `match value { some(x) => x, none => fallback }`; to propagate twice, `(value?)?`; a nested option type is `(T?)?`",
+                "`??` is not a Tondo operator: for a fallback write `value.unwrapOr(fallback)`; to propagate twice, `(value?)?`; a nested option type is `(T?)?`",
             ),
         ];
         if let Some((text, message)) = foreign.iter().find(|(text, _)| rest.starts_with(text)) {
@@ -464,10 +464,25 @@ impl Lexer<'_> {
             }
             return;
         }
+        // A template string of other languages, as one error.
+        if c == '`' {
+            let end = rest[1..]
+                .find(['`', '\n'])
+                .map_or(rest.len(), |at| at + 1 + usize::from(rest[at + 1..].starts_with('`')));
+            self.pos += end;
+            let message = "strings use double quotes, and `{name}` inside one interpolates: \"total: {total}\"";
+            self.error("E0002", start, self.pos, message);
+            // An empty string in its place parses on.
+            self.push(Tok::Str(Vec::new()), start);
+            return;
+        }
         let Some((text, tok)) = PUNCTUATION.iter().find(|(text, _)| rest.starts_with(text)) else {
             self.pos += c.len_utf8();
-            let message =
-                if c == ';' { "`;` is not a Tondo token".to_string() } else { format!("unexpected character `{c}`") };
+            let message = if c == ';' {
+                "`;` is not a Tondo token: a new line ends a statement".to_string()
+            } else {
+                format!("unexpected character `{c}`")
+            };
             self.error("E0002", start, self.pos, message);
             return;
         };
@@ -570,7 +585,8 @@ impl Lexer<'_> {
         match u64::from_str_radix(&cleaned, radix) {
             Ok(value) => self.push(Tok::Int { value, suffix }, start),
             Err(_) => {
-                self.error("E0003", start, self.pos, "integer literal is too large");
+                let message = "integer literal is too large: an `Int` holds up to 9223372036854775807, and a `UInt64` (`u64` suffix) up to 18446744073709551615";
+                self.error("E0003", start, self.pos, message);
                 self.push(Tok::Int { value: 0, suffix }, start);
             }
         }

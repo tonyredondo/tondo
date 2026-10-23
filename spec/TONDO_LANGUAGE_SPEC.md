@@ -7719,6 +7719,12 @@ Un diagnóstico debe responder:
 
 Mensajes vagos como “type mismatch” sin tipos concretos no son conformes.
 
+Cuando lo escrito es la forma de otro lenguaje (`let mut`, `while`, `->`,
+`null`, `HashMap`, `x as Int`, `xs.len()`), el diagnóstico nombra la forma Tondo
+que corresponde. Un nombre, campo, método, variante o módulo desconocido que
+parece una errata de uno visible lo sugiere (`did you mean`); si no, el
+diagnóstico enumera los que existen cuando son pocos.
+
 ### 22.2 Códigos estables
 
 Este es el registro normativo de la edición 0.1. `E` identifica errores de

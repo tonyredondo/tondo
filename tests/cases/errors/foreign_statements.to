@@ -1,0 +1,29 @@
+// Statements as other languages write them, each with what Tondo writes.
+fn main() {
+    let mut count = 0
+    var x = 0
+    while x < 3 {
+        x += 1
+    }
+    loop {
+        break
+    }
+    try {
+        x = 1
+    }
+    switch x {
+    }
+    let same = x === 1
+    let doubled = [1].map(|v| v * 2)
+    let tripled = [1].map(v => v * 3)
+    let y = x as Float
+}
+
+// expect-error: E0004 `let mut` declares nothing in Tondo: a variable is `var name = value`
+// expect-error: E0004 a loop while a condition holds is `for condition { ... }`
+// expect-error: E0004 a loop until `break` is `for { ... }`
+// expect-error: E0004 there is no `try`
+// expect-error: E0004 use `match value { pattern => result }`
+// expect-error: E0004 Tondo has no `===`
+// expect-error: E0004 a closure is `(x) { x * 2 }`
+// expect-error: E0004 `as` only renames an import; a conversion is a call

@@ -1084,3 +1084,23 @@ an alternate stack before the signal ends the process; a crash inside C is
 traced from the program's call into it. Reading a trace allocates nothing,
 so the handler cannot deadlock on an allocator the crash interrupted. The
 test runner's JSON report fills `stack` from the trace.
+
+## 2026-10-23 — Errors name the fix
+
+A battery of the mistakes that people and models bring from Rust,
+TypeScript, Go, Python, Java and C# showed which errors only said
+"expected end of line, found `-`" or "unknown name `null`". The parser now
+looks at the tokens around a syntax error and names the Tondo form: `->`,
+`as`, `<T>`, `[Int]`, `===`, closures with `|x|` or `=>`, `struct`, `class`,
+`interface`, `impl P {`, `use`, `async`, `await`, `while`, `loop`, `do`,
+`try`, `switch`, `throw`, `let mut` and template strings. The checker does
+the same for names, types and methods of other languages (`null`, `True`,
+`println`, `HashMap`, `int`, `toInt`, `unwrap`, `forEach`), suggests a
+close name for a typo of a binding, function, field, method, variant or
+standard module, lists the fields or variants otherwise, and says when a
+standard module is not imported. Errors that cascaded are reported once:
+`{}` for an empty map, an operator on a value still in an option or a
+result. Two silent mistakes are errors now: an `if` without `else` whose
+value is used, and `return value` in a function without a result. A root
+type named like a type parameter of the prelude, such as `E`, no longer
+reports errors inside the prelude.

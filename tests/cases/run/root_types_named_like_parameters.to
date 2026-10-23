@@ -1,0 +1,22 @@
+// The root may name its types as the prelude names its type parameters.
+import std.console
+
+enum E {
+    A
+    B
+}
+
+type T = { value: Int }
+
+fn main() {
+    let found: Int? = some(2)
+    let t = T { value: found.unwrapOr(0) }
+    let e = E.B
+    let name = match e {
+        E.A => "a"
+        E.B => "b"
+    }
+    console.println("{t.value} {name}")
+}
+
+// expect-stdout: 2 b
