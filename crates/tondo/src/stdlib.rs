@@ -15,6 +15,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("toml", include_str!("../std/toml.to")),
     ("yaml", include_str!("../std/yaml.to")),
     ("messagepack", include_str!("../std/messagepack.to")),
+    ("cbor", include_str!("../std/cbor.to")),
     ("ffi", include_str!("../std/ffi.to")),
     ("regex", include_str!("../std/regex.to")),
     ("reflect", include_str!("../std/reflect.to")),

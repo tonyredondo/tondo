@@ -17,6 +17,7 @@ std.json       encode and decode any type, navigate dynamic JSON
 std.toml       the same for TOML documents, with dates
 std.yaml       the same for YAML (a safe subset), one or many documents
 std.messagepack  the same for MessagePack bytes
+std.cbor       the same for CBOR (RFC 8949), deterministic if asked
 std.serialization  the protocol every format shares, for custom encodings
 std.csv        CSV rows and records, streaming and whole
 std.log        a logger with levels and fields, text or JSON lines

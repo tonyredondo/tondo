@@ -179,6 +179,7 @@ enum StdModule {
     InternalToml,
     InternalYaml,
     InternalMsgpack,
+    InternalCbor,
 }
 
 /// The types `std.process` declares when imported.
@@ -1683,6 +1684,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "toml"] => StdModule::InternalToml,
             ["std", "internal", "yaml"] => StdModule::InternalYaml,
             ["std", "internal", "msgpack"] => StdModule::InternalMsgpack,
+            ["std", "internal", "cbor"] => StdModule::InternalCbor,
             ["std", rest @ ..] => {
                 let name = rest.join(".");
                 // Modules the standard library specifies and does not have yet.
@@ -1783,7 +1785,11 @@ impl<'a> Checker<'a> {
         }
         if matches!(
             module,
-            StdModule::InternalHttp | StdModule::InternalToml | StdModule::InternalYaml | StdModule::InternalMsgpack
+            StdModule::InternalHttp
+                | StdModule::InternalToml
+                | StdModule::InternalYaml
+                | StdModule::InternalMsgpack
+                | StdModule::InternalCbor
         ) {
             self.types.handle(Handle::Native, Ty::UNIT);
         }
@@ -1903,7 +1909,8 @@ impl<'a> Checker<'a> {
                     StdModule::InternalHttp
                     | StdModule::InternalToml
                     | StdModule::InternalYaml
-                    | StdModule::InternalMsgpack,
+                    | StdModule::InternalMsgpack
+                    | StdModule::InternalCbor,
                 )),
                 "Native",
             ) => self.types.lookup(&TyKind::Handle(Handle::Native, Ty::UNIT)),
@@ -10262,7 +10269,8 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalHttp
                     | StdModule::InternalToml
                     | StdModule::InternalYaml
-                    | StdModule::InternalMsgpack),
+                    | StdModule::InternalMsgpack
+                    | StdModule::InternalCbor),
                 )),
             ) => {
                 if module == StdModule::InternalReflect && matches!(*member, "box" | "describe") {
@@ -10288,6 +10296,7 @@ impl<'a> Checker<'a> {
                     StdModule::InternalToml => "toml",
                     StdModule::InternalYaml => "yaml",
                     StdModule::InternalMsgpack => "msgpack",
+                    StdModule::InternalCbor => "cbor",
                     _ => "reflect",
                 };
                 let found =

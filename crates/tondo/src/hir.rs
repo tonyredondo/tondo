@@ -994,6 +994,9 @@ pub const NATIVES: &[Native] = {
     ) -> Native {
         Native { module: "msgpack", name, receiver: None, params, result, symbol }
     }
+    const fn cbor(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
+        Native { module: "cbor", name, receiver: None, params, result, symbol }
+    }
     const fn r(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "regex", name, receiver: Some(Regex), params, result, symbol }
     }
@@ -1201,6 +1204,28 @@ pub const NATIVES: &[Native] = {
         msgpack("writeClose", &[Object], Unit, "tondo_rt_msgpack_write_close"),
         msgpack("finish", &[Object], Bytes, "tondo_rt_msgpack_finish"),
         msgpack("failure", &[Object], String, "tondo_rt_msgpack_failure"),
+        cbor("parse", &[Bytes], Object, "tondo_rt_cbor_parse"),
+        cbor("next", &[Object], Int, "tondo_rt_cbor_next"),
+        cbor("text", &[Object], String, "tondo_rt_cbor_text"),
+        cbor("int", &[Object], Int, "tondo_rt_cbor_int"),
+        cbor("float", &[Object], Float, "tondo_rt_cbor_float"),
+        cbor("bytes", &[Object], Bytes, "tondo_rt_cbor_bytes"),
+        cbor("skip", &[Object, Int], Int, "tondo_rt_cbor_skip"),
+        cbor("fail", &[Object, String], Unit, "tondo_rt_cbor_fail"),
+        cbor("where", &[Object, Int], String, "tondo_rt_cbor_where"),
+        cbor("writer", &[Bool], Object, "tondo_rt_cbor_writer"),
+        cbor("writeNull", &[Object], Unit, "tondo_rt_cbor_write_null"),
+        cbor("writeBool", &[Object, Bool], Unit, "tondo_rt_cbor_write_bool"),
+        cbor("writeInt", &[Object, Int], Unit, "tondo_rt_cbor_write_int"),
+        cbor("writeFloat", &[Object, Float], Unit, "tondo_rt_cbor_write_float"),
+        cbor("writeText", &[Object, String], Unit, "tondo_rt_cbor_write_text"),
+        cbor("writeBytes", &[Object, Bytes], Unit, "tondo_rt_cbor_write_bytes"),
+        cbor("writeDateTime", &[Object, String], Unit, "tondo_rt_cbor_write_datetime"),
+        cbor("writeKey", &[Object, String], Unit, "tondo_rt_cbor_write_key"),
+        cbor("writeOpen", &[Object, Bool, Int], Unit, "tondo_rt_cbor_write_open"),
+        cbor("writeClose", &[Object], Unit, "tondo_rt_cbor_write_close"),
+        cbor("finish", &[Object], Bytes, "tondo_rt_cbor_finish"),
+        cbor("failure", &[Object], String, "tondo_rt_cbor_failure"),
         math("sin", &[Float], Float, "tondo_rt_math_sin"),
         math("cos", &[Float], Float, "tondo_rt_math_cos"),
         math("tan", &[Float], Float, "tondo_rt_math_tan"),

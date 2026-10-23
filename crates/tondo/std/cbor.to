@@ -1,0 +1,373 @@
+// std.cbor (standard library 14.15): CBOR (RFC 8949) as values of `Value`,
+// and any type read from and written to CBOR through the traits of
+// `std.serialization`, on top of the runtime's decoder and encoder.
+
+import std.internal.cbor as cbornative
+import std.json as cborjson
+import std.serialization
+
+// ---------------------------------------------------------------------------
+// Values
+// ---------------------------------------------------------------------------
+
+/// A CBOR data item of unknown shape. Map keys are text, or integers as
+/// their digits; `undefined` is `Null`.
+pub enum Value {
+    Null
+    Bool(Bool)
+    Int(Int)
+    Float(Float)
+    Text(String)
+    Bytes(Array[Byte])
+    /// A date and time (tag 0 or 1), as RFC 3339 text in UTC.
+    DateTime(String)
+    Array(Array[Value])
+    Map(Map[String, Value])
+}
+
+pub fn Value.isNull(self): Bool {
+    match self {
+        Value.Null => true
+        _ => false
+    }
+}
+
+/// The member `key` of a map.
+pub fn Value.get(self, key: String): Value? {
+    match self {
+        Value.Map(members) => members.get(key)
+        _ => none
+    }
+}
+
+/// The element `index` of an array.
+pub fn Value.at(self, index: Int): Value? {
+    match self {
+        Value.Array(items) => items.get(index)
+        _ => none
+    }
+}
+
+/// The value at a dotted path of keys, as `user.name`.
+pub fn Value.find(self, path: String): Value? {
+    var found = self
+    for key in path.split(".") {
+        found = found.get(key)?
+    }
+    found
+}
+
+pub fn Value.asText(self): String? {
+    match self {
+        Value.Text(text) => text
+        _ => none
+    }
+}
+
+pub fn Value.asInt(self): Int? {
+    match self {
+        Value.Int(value) => value
+        _ => none
+    }
+}
+
+/// A float, or an integer as a float.
+pub fn Value.asFloat(self): Float? {
+    match self {
+        Value.Float(value) => value
+        Value.Int(value) => Float(value)
+        _ => none
+    }
+}
+
+pub fn Value.asBool(self): Bool? {
+    match self {
+        Value.Bool(value) => value
+        _ => none
+    }
+}
+
+pub fn Value.asBytes(self): Array[Byte]? {
+    match self {
+        Value.Bytes(bytes) => bytes
+        _ => none
+    }
+}
+
+pub fn Value.asDateTime(self): String? {
+    match self {
+        Value.DateTime(text) => text
+        _ => none
+    }
+}
+
+pub fn Value.asArray(self): Array[Value]? {
+    match self {
+        Value.Array(items) => items
+        _ => none
+    }
+}
+
+pub fn Value.asMap(self): Map[String, Value]? {
+    match self {
+        Value.Map(members) => members
+        _ => none
+    }
+}
+
+/// The value as JSON text: bytes in base64, dates as text.
+impl Display for Value {
+    fn display(self): String {
+        cborjson.encode(self)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+/// A failure to read CBOR, with where it happened: the error of every
+/// format.
+pub alias CborError = serialization.Error
+
+/// What reading does with a member that the type has no field for.
+pub alias UnknownFields = serialization.UnknownFields
+
+// ---------------------------------------------------------------------------
+// Encoding and decoding
+// ---------------------------------------------------------------------------
+
+/// A value of `T` from CBOR bytes, which must hold exactly one data item.
+pub fn decode[T: serialization.Decode](
+    input: Array[Byte],
+    unknownFields: UnknownFields = UnknownFields.Ignore,
+): T ! CborError {
+    let reader = Reader {
+        native: cbornative.parse(input)
+        rejectUnknown: unknownFields == UnknownFields.Reject
+    }
+    let first = serialization.Source.value(reader)?
+    serialization.Decode.decode[T](reader, first)?
+}
+
+/// The CBOR bytes of a value in the preferred serialization: the shortest
+/// heads and floats, and definite lengths. `deterministic` orders the keys
+/// of every map by their encoding (RFC 8949, 4.2). An `Encode` written by
+/// hand that declares another count of items than it writes panics.
+pub fn encode[T: serialization.Encode](value: T, deterministic: Bool = false): Array[Byte] {
+    let out = Writer { native: cbornative.writer(deterministic) }
+    value.encode(out)
+    let failure = cbornative.failure(out.native)
+    if failure.length() > 0 {
+        panic("CBOR cannot be written: {failure}")
+    }
+    cbornative.finish(out.native)
+}
+
+/// A value of unknown shape.
+pub fn parse(input: Array[Byte]): Value ! CborError {
+    decode[Value](input)
+}
+
+// ---------------------------------------------------------------------------
+// Formats
+// ---------------------------------------------------------------------------
+
+/// CBOR read event by event: text strings are text, byte strings bytes, and
+/// tags 0 and 1 dates and times.
+type Reader = {
+    native: cbornative.Native
+    rejectUnknown: Bool
+}
+
+impl serialization.Source for Reader {
+    fn next(self): serialization.Event? ! CborError {
+        let event = match cbornative.next(self.native) {
+            0 => return none
+            1 => serialization.Event.Null
+            2 => serialization.Event.Bool(true)
+            3 => serialization.Event.Bool(false)
+            4 => serialization.Event.Int(cbornative.int(self.native))
+            5 => serialization.Event.Float(cbornative.float(self.native))
+            6 => serialization.Event.Text(cbornative.text(self.native))
+            7 => serialization.Event.Number(cbornative.text(self.native))
+            8 => serialization.Event.BeginList
+            9 => serialization.Event.EndList
+            10 => serialization.Event.BeginMap
+            11 => serialization.Event.EndMap
+            12 => serialization.Event.Key(cbornative.text(self.native))
+            13 => serialization.Event.Bytes(cbornative.bytes(self.native))
+            14 => serialization.Event.DateTime(cbornative.text(self.native))
+            _ => fail self.error(serialization.ErrorKind.Syntax)
+        }
+        some(event)
+    }
+
+    fn skip(self, first: serialization.Event): !CborError {
+        let code = match first {
+            serialization.Event.BeginList => 8
+            serialization.Event.BeginMap => 10
+            _ => 0
+        }
+        if cbornative.skip(self.native, code) < 0 {
+            fail self.error(serialization.ErrorKind.Syntax)
+        }
+    }
+
+    fn failure(self, kind: serialization.ErrorKind, message: String): CborError {
+        cbornative.fail(self.native, message)
+        self.error(kind)
+    }
+
+    fn rejectsUnknown(self): Bool {
+        self.rejectUnknown
+    }
+
+    fn listName(self): String {
+        "an array"
+    }
+}
+
+fn Reader.error(self, kind: serialization.ErrorKind): CborError {
+    CborError {
+        kind: kind
+        message: cbornative.where(self.native, 0)
+        path: cbornative.where(self.native, 1)
+        line: 0
+        column: 0
+    }
+}
+
+/// CBOR written event by event.
+type Writer = {
+    native: cbornative.Native
+}
+
+impl serialization.Sink for Writer {
+    fn null(self) {
+        cbornative.writeNull(self.native)
+    }
+
+    fn bool(self, value: Bool) {
+        cbornative.writeBool(self.native, value)
+    }
+
+    fn int(self, value: Int) {
+        cbornative.writeInt(self.native, value)
+    }
+
+    fn float(self, value: Float) {
+        cbornative.writeFloat(self.native, value)
+    }
+
+    fn number(self, digits: String) {
+        match Int.parse(digits) {
+            ok(value) => cbornative.writeInt(self.native, value)
+            err(_) => cbornative.writeFloat(self.native, Float.parse(digits).unwrapOr(0.0))
+        }
+    }
+
+    fn text(self, value: String) {
+        cbornative.writeText(self.native, value)
+    }
+
+    fn bytes(self, value: Array[Byte]) {
+        cbornative.writeBytes(self.native, value)
+    }
+
+    fn dateTime(self, text: String) {
+        cbornative.writeDateTime(self.native, text)
+    }
+
+    fn beginList(self, count: Int) {
+        cbornative.writeOpen(self.native, false, count)
+    }
+
+    fn endList(self) {
+        cbornative.writeClose(self.native)
+    }
+
+    fn beginMap(self, count: Int) {
+        cbornative.writeOpen(self.native, true, count)
+    }
+
+    fn key(self, name: String) {
+        cbornative.writeKey(self.native, name)
+    }
+
+    fn endMap(self) {
+        cbornative.writeClose(self.native)
+    }
+}
+
+impl serialization.Encode for Value {
+    fn encode[S: serialization.Sink](self, out: S) {
+        match self {
+            Value.Null => out.null()
+            Value.Bool(value) => out.bool(value)
+            Value.Int(value) => out.int(value)
+            Value.Float(value) => out.float(value)
+            Value.Text(text) => out.text(text)
+            Value.Bytes(bytes) => out.bytes(bytes)
+            Value.DateTime(text) => out.dateTime(text)
+            Value.Array(items) => {
+                out.beginList(items.length())
+                for item in items {
+                    serialization.Encode.encode(item, out)
+                }
+                out.endList()
+            }
+            Value.Map(members) => {
+                out.beginMap(members.length())
+                for (key, member) in members {
+                    out.key(key)
+                    serialization.Encode.encode(member, out)
+                }
+                out.endMap()
+            }
+        }
+    }
+}
+
+impl serialization.Decode for Value {
+    fn decode[S: serialization.Source](input: S, first: serialization.Event): Value ! CborError {
+        match first {
+            serialization.Event.Null => Value.Null
+            serialization.Event.Bool(value) => Value.Bool(value)
+            serialization.Event.Int(value) => Value.Int(value)
+            serialization.Event.Float(value) => Value.Float(value)
+            serialization.Event.Number(digits) => match Int.parse(digits) {
+                ok(value) => Value.Int(value)
+                err(_) => Value.Float(serialization.Decode.decode[Float](input, first)?)
+            }
+            serialization.Event.Text(text) => Value.Text(text)
+            serialization.Event.Bytes(bytes) => Value.Bytes(bytes)
+            serialization.Event.DateTime(text) => Value.DateTime(text)
+            serialization.Event.BeginList => {
+                var items: Array[Value] = []
+                for {
+                    let event = input.value()?
+                    match event {
+                        serialization.Event.EndList => break
+                        _ => items.push(serialization.Decode.decode[Value](input, event)?)
+                    }
+                }
+                Value.Array(items)
+            }
+            serialization.Event.BeginMap => {
+                var members: Map[String, Value] = [:]
+                for {
+                    match input.nextKey()? {
+                        some(key) => {
+                            let event = input.value()?
+                            members[key] = serialization.Decode.decode[Value](input, event)?
+                        }
+                        none => break
+                    }
+                }
+                Value.Map(members)
+            }
+            _ => fail input.mismatch(first, "a CBOR value")
+        }
+    }
+}

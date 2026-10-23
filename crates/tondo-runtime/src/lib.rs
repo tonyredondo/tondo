@@ -12,6 +12,7 @@ use std::io::Write;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering, fence};
 
+mod cbor;
 mod civil;
 mod clock;
 mod codec;

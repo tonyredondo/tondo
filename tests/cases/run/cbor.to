@@ -1,0 +1,105 @@
+// CBOR: the examples of RFC 8949's appendix A, malformed items, any type
+// written in the preferred serialization and read back, and keys in the
+// deterministic order.
+import std.cbor
+import std.console
+import std.encoding
+import std.json
+import std.serialization
+import std.time
+
+type Point = { x: Int, y: Int }
+enum Shape {
+    Empty
+    Circle(Float)
+    Polygon { name: String, points: Array[Point] }
+}
+type Packet = {
+    id: Int
+    name: String
+    shapes: Array[Shape]
+    data: serialization.Bytes
+    at: time.DateTime
+    note: String?
+}
+
+fn main(): !(cbor.CborError | time.TimeError) {
+    let vectors = [
+        "00", "17", "1818", "1903e8", "1b000000e8d4a51000", "1bffffffffffffffff", "20", "3863", "3903e7",
+        "f90000", "f98000", "f93c00", "fb3ff199999999999a", "f93e00", "f97bff", "fa47c35000", "f90001",
+        "f9c400", "f97c00", "f97e00", "f4", "f5", "f6", "f7",
+        "c074323031332d30332d32315432303a30343a30305a", "c11a514b67b0", "c1fb41d452d9ec200000",
+        "40", "4401020304", "60", "6449455446", "62c3bc", "63e6b0b4",
+        "80", "8301820203820405", "a26161016162820203", "a201020304",
+        "5f42010243030405ff", "7f657374726561646d696e67ff", "9fff", "9f018202039f0405ffff",
+        "bf61610161629f0203ffff", "c249010000000000000000", "ff", "8201", "1c",
+    ]
+    for vector in vectors {
+        match cbor.parse(encoding.hexDecode(vector).unwrapOr([])) {
+            ok(value) => console.println("{vector} {value}")
+            err(error) => console.println("{vector} {error}")
+        }
+    }
+    let packet = Packet {
+        id: 7
+        name: "café"
+        shapes: [Shape.Empty, Shape.Circle(1.5), Shape.Polygon { name: "tri", points: [Point { x: 1, y: -2 }] }]
+        data: serialization.Bytes("hi".bytes())
+        at: time.parseDateTime("2013-03-21T20:04:00Z")?
+        note: none
+    }
+    let bytes = cbor.encode(packet)
+    console.println(encoding.hexEncode(bytes))
+    console.println(json.encode(cbor.decode[Packet](bytes)?))
+    let keys = ["b": 1, "a": 2, "aa": 3]
+    console.println("{encoding.hexEncode(cbor.encode(keys))} {encoding.hexEncode(cbor.encode(keys, deterministic: true))}")
+}
+// expect-stdout: 00 0
+// expect-stdout: 17 23
+// expect-stdout: 1818 24
+// expect-stdout: 1903e8 1000
+// expect-stdout: 1b000000e8d4a51000 1000000000000
+// expect-stdout: 1bffffffffffffffff 18446744073709552000
+// expect-stdout: 20 -1
+// expect-stdout: 3863 -100
+// expect-stdout: 3903e7 -1000
+// expect-stdout: f90000 0
+// expect-stdout: f98000 0
+// expect-stdout: f93c00 1
+// expect-stdout: fb3ff199999999999a 1.1
+// expect-stdout: f93e00 1.5
+// expect-stdout: f97bff 65504
+// expect-stdout: fa47c35000 100000
+// expect-stdout: f90001 5.960464477539063e-8
+// expect-stdout: f9c400 -4
+// expect-stdout: f97c00 null
+// expect-stdout: f97e00 null
+// expect-stdout: f4 false
+// expect-stdout: f5 true
+// expect-stdout: f6 null
+// expect-stdout: f7 null
+// expect-stdout: c074323031332d30332d32315432303a30343a30305a "2013-03-21T20:04:00Z"
+// expect-stdout: c11a514b67b0 "2013-03-21T20:04:00Z"
+// expect-stdout: c1fb41d452d9ec200000 "2013-03-21T20:04:00.5Z"
+// expect-stdout: 40 ""
+// expect-stdout: 4401020304 "AQIDBA=="
+// expect-stdout: 60 ""
+// expect-stdout: 6449455446 "IETF"
+// expect-stdout: 62c3bc "ü"
+// expect-stdout: 63e6b0b4 "水"
+// expect-stdout: 80 []
+// expect-stdout: 8301820203820405 [1,[2,3],[4,5]]
+// expect-stdout: a26161016162820203 {"a":1,"b":[2,3]}
+// expect-stdout: a201020304 {"1":2,"3":4}
+// expect-stdout: 5f42010243030405ff "AQIDBAU="
+// expect-stdout: 7f657374726561646d696e67ff "streaming"
+// expect-stdout: 9fff []
+// expect-stdout: 9f018202039f0405ffff [1,[2,3],[4,5]]
+// expect-stdout: bf61610161629f0203ffff {"a":1,"b":[2,3]}
+// expect-stdout: c249010000000000000000 an integer (tag 2) is larger than 64 bits (byte 0) at $
+// expect-stdout: ff a break outside an indefinite container (byte 0) at $
+// expect-stdout: 8201 the input ends inside a data item (byte 2) at $[1]
+// expect-stdout: 1c additional information 28 is reserved (byte 0) at $
+// expect-stdout: a662696407646e616d6565636166c3a9667368617065738365456d707479a166436972636c65f93e00a167506f6c79676f6ea2646e616d656374726966706f696e747381a26178016179216464617461426869626174c074323031332d30332d32315432303a30343a30305a646e6f7465f6
+// expect-stdout: {"id":7,"name":"café","shapes":["Empty",{"Circle":1.5},{"Polygon":{"name":"tri","points":[{"x":1,"y":-2}]}}],"data":"aGk=","at":"2013-03-21T20:04:00Z","note":null}
+// expect-stdout: a361620161610262616103 a361610261620162616103

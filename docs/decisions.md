@@ -1169,3 +1169,16 @@ legacy specification's maps of any keys, raw views and canonical encoder
 were left out until a program needs them. Generating the decoding of an
 enum used a local that a field named `name` shadowed; it is `__variant`
 now.
+
+## 2026-10-23 — CBOR in its preferred serialization
+
+`std.cbor` needs no library: the decoder reads every major type with
+definite and indefinite lengths, half, single and double floats, the date
+tags 0 and 1 as the shared `DateTime`, and the integer tags 2 and 3 when
+they fit 64 bits, passing any other tag through to the item it holds; the
+encoder writes the preferred serialization of RFC 8949, the shortest head
+and the shortest float that keeps the value, with definite lengths. Map
+keys keep their order unless `deterministic: true`, which sorts them by
+their encodings as section 4.2 asks and rejects a repeated key; the
+writer buffers each container's items for that, which costs a copy per
+level. The examples of the RFC's appendix A are a test.

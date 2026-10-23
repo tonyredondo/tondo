@@ -3057,122 +3057,57 @@ impl Display for Value                             // una tabla como documento
 
 ### 14.15 `std.cbor`
 
-`std.cbor` implementa el modelo de datos de CBOR de RFC 8949. Es un codec
-binario general y no un protocolo de aplicación, un compilador CDDL ni una
-facade de MessagePack. El documento de la API fija un único data item por
-entrada materializada: trailing data se rechaza, aunque un transporte externo
-pueda concatenar items con su propio framing.
+`std.cbor` lee y escribe el modelo de datos de CBOR de
+[RFC 8949](https://www.rfc-editor.org/rfc/rfc8949.html) sobre un decodificador y
+un codificador del runtime. Una entrada es un único data item: el trailing data
+es un error.
 
-El wire model acepta los major types 0 a 7: `UInt`, negativos representados
-como magnitud `-1 - n`, byte strings, text strings UTF-8, arrays, maps, tags y
-simples/floats. Se aceptan longitudes definidas e indefinidas para bytes,
-texto, arrays y maps; el break solo cierra el frame indefinido actual. Los
-valores `null`, `undefined`, `true` y `false` son variantes distintas, los
-simples no asignados se conservan y `Float16` conserva sus bits mediante
-`CborFloat16`. Un `CborTag` conserva el número `UInt64` y el item anidado; no
-hay resolución implícita de tags de tiempo, bignum, decimal, contenido CBOR o
-tags privados.
+~~~tondo
+import std.cbor
 
-La ruta dinámica usa `CborValue` con `Array[CborEntry]` para maps, de forma que
-las claves pueden ser cualquier data item y el orden/duplicados son
-observables. A standalone `CborValueView` borrows validated encoded input;
-its owner must outlive the view. This lifetime is independent of a Reader
-cursor. The specified public Reader payloads borrow until its next event;
-the current Rust kernel instead returns owned events.
-`CborRaw` conserva bytes exactos, incluida la forma de longitud y el float
-original. `parse`, `parseView`, `validate`, `decode`, `encode`,
-`encodeDeterministic` y `raw` comparten el contrato de
-`std.serialization`; typed encode/decode se generan en compile time sin DOM
-dinámico intermedio.
+let bytes = cbor.encode(packet, deterministic: true)
+let back: Packet = cbor.decode(bytes)?
+~~~
 
-`CborReader` y `CborWriter` exponen eventos para tags, simples, floats,
-containers y chunks indefinidos (`StartBytes`/`ByteChunk`/`EndBytes` y sus
-equivalentes de texto). Usan frames/worklists explícitos, son invariantes al
-fragmentar la entrada y quedan terminales tras `finish`, EOF inválido, límite
-o error de I/O. Solo las fronteras `std.io.Reader`/`Writer` esperan; no hay
-API async duplicada.
+La superficie es la de `std.messagepack` (14.11) con estos nombres:
 
-El modo ordinario acepta formas no mínimas y conserva bits de NaN. El modo
-`encodeDeterministic` aplica los requisitos core de RFC 8949: additional
-information y floats en la forma preferida más corta, longitudes definidas,
-NaN quieto binario-16 estable, arrays/tags en orden semántico y claves de map
-ordenadas por los bytes de su encoding determinista. Una colisión o una clave
-fuera de orden se rechaza; la API no presenta esta policy como una
-canonicalización universal de todos los protocolos CBOR.
+~~~tondo pseudocode
+pub enum Value {
+    Null                    // también `undefined`
+    Bool(Bool)
+    Int(Int)
+    Float(Float)
+    Text(String)
+    Bytes(Array[Byte])
+    DateTime(String)        // tags 0 y 1, como RFC 3339 en UTC
+    Array(Array[Value])
+    Map(Map[String, Value])
+}
+pub alias CborError = serialization.Error
+pub alias UnknownFields = serialization.UnknownFields
 
-Los límites cubren bytes de documento/output, profundidad, items de arrays,
-pares de maps, bytes de texto/bytes, chunks, tags, simples y eventos. Los
-errores incluyen `CborErrorKind`, span half-open de bytes y path estable de
-`ArrayIndex`/`MapEntry`/`MapKey`/`MapValue`/`Tag`; nunca se publica un valor
-parcial ni se consume la pila recursiva del host. No hay includes, environment,
-locale, timezone lookup, reflection registry ni schema discovery.
+pub fn decode[T: serialization.Decode](input: Array[Byte], unknownFields: UnknownFields = UnknownFields.Ignore): T ! CborError
+pub fn encode[T: serialization.Encode](value: T, deterministic: Bool = false): Array[Byte]
+pub fn parse(input: Array[Byte]): Value ! CborError
+// Value.isNull, get, at, find, asText, asInt, asFloat, asBool, asBytes,
+// asDateTime, asArray y asMap, y `Display` como JSON
+~~~
 
-El contrato machine-readable, la documentación y los negativos ejecutables
-son [`testing/stdlib-cbor.json`](./testing/stdlib-cbor.json),
-[`docs/contracts/stdlib-cbor.md`](./docs/contracts/stdlib-cbor.md),
-[`scripts/stdlib-cbor-check.sh`](./scripts/stdlib-cbor-check.sh) y
-[`scripts/stdlib-cbor-test.sh`](./scripts/stdlib-cbor-test.sh). El diseño B0
-queda cerrado por `STD-CBOR-001`. `STD-CBOR-IMPL-001` has a bounded Rust scalar
-kernel for dynamic values, static primitive/collection codecs, event
-reader/writer, and deterministic encoding. The task closes at that bounded
-kernel boundary: focused checks, the full functional gate and provenance-bound
-coverage/mutation checks pass. Every global and risk-scope coverage dimension
-meets the unchanged 80% floor, and all six selected critical mutants are caught.
-Public compiler API, production VM host registration, native ABI and native AOT
-lowering remain unclaimed. `STD-CBOR-TEST-001` verifies the independent bounded
-model, retained corpus, Rust-kernel regressions and bounded fuzz. Performance
-has its bounded Rust scalar baseline, and `STD-CBOR-CONF-001` verifies the
-private VM/native Rust process comparison. `STD-CBOR-DOC-001` verifies
-executable Rust-kernel usage after the full functional and quality gates.
-
-The independent bounded model and Rust-kernel test/fuzz boundary are registered
-in [testing/stdlib-cbor-test.json](./testing/stdlib-cbor-test.json) and defined
-in [docs/contracts/stdlib-cbor-test.md](./docs/contracts/stdlib-cbor-test.md).
-Their evidence does not promote public compiler, production VM, ABI or AOT
-integration. Every two-byte simple encoding with a value below 32 is malformed
-under RFC 8949 section 3.3, regardless of the non-minimal decode policy.
-
-The bounded Rust scalar performance protocol is registered in
-[testing/stdlib-cbor-performance.json](./testing/stdlib-cbor-performance.json)
-and defined in
-[docs/contracts/stdlib-cbor-performance.md](./docs/contracts/stdlib-cbor-performance.md).
-`STD-CBOR-PERF-001` verifies fifteen target-qualified kernel routes on
-`x86_64-unknown-linux-gnu`, using three independent processes and 27 retained
-samples per workload. Exact independent oracles, errors and terminal stream
-states are checked before timing. Latency and throughput are measured; copies,
-allocations and memory describe the explicitly bounded logical resource model.
-The register is `verified-stdlib-kernel-baseline` after clean-source capture,
-the full functional gate and current quality checks. The unoptimized Rust
-test profile does not promote the public Tondo API, production VM bridge,
-native ABI/AOT, SIMD or conformance.
-
-The bounded CBOR VM/native-process conformance protocol is registered in
-[testing/stdlib-cbor-conformance.json](./testing/stdlib-cbor-conformance.json)
-and defined in
-[docs/contracts/stdlib-cbor-conformance.md](./docs/contracts/stdlib-cbor-conformance.md).
-Its seven shared cases use 61 valid and 30 invalid retained wire vectors,
-the independent bounded model, a private verified-bytecode host callable and
-a native Rust kernel process. The register is
-`verified-hosted-vm-adapter-and-native-stdlib-process` after clean-source exact
-comparison, report/owner negatives and the full functional/quality gates.
-It verifies typed/dynamic round trips, raw/views, 270 events under fragments
-of one, two and seven bytes, exact error spans/paths, atomic limits, terminal
-streams, 59 deterministic outputs and two rejected key collisions. The
-conformance campaign measures 91.5681% global lines, every coverage dimension
-meets the unchanged 80% floor, and all six critical mutants are caught.
-This does not promote source-level `std.cbor`, production host registration,
-native CBOR ABI or Cranelift lowering.
-
-The [executable Rust-kernel guide](./docs/contracts/stdlib-cbor.md#executable-usage-guide-for-stdcbor)
-records tags, preservation and deterministic policy, exact errors, finite
-limits, borrowed-input lifetimes, owned buffered events, terminal states and
-retention costs. Six paths in
-[cbor_usage.rs](./crates/tondo-stdlib/examples/cbor_usage.rs) run through
-`scripts/stdlib-cbor-doc-check.sh` with successful stdout `cbor-doc-ok`.
-Codec errors never publish a successful partial result; external I/O can
-irreversibly accept a prefix or fail to flush, as the example demonstrates.
-This `verified-rust-kernel-usage` documentation does not claim public Tondo execution,
-production VM registration, native CBOR ABI, native AOT or SIMD.
+- Se leen los major types 0 a 7 con longitudes definidas e indefinidas; el texto
+  debe ser UTF-8. Los tags 0 (texto RFC 3339) y 1 (segundos desde la época) son
+  un `DateTime`; 2 y 3 son enteros cuando caben en 64 bits; cualquier otro tag se
+  lee como el item que contiene. Los floats de 16, 32 y 64 bits se leen; un
+  simple no asignado es un error. Un contenedor no puede anidarse más de 512
+  niveles.
+- Las claves de un mapa son texto, o enteros leídos como sus dígitos. Un entero
+  que no cabe en `Int` es un `Number`.
+- `encode` escribe la serialización preferida: cabeceras y floats en su forma
+  más corta que conserva el valor, NaN como `f97e00`, longitudes definidas y un
+  `DateTime` como tag 0. Con `deterministic`, además, las claves de cada mapa
+  siguen el orden de sus codificaciones (RFC 8949, 4.2) y no pueden repetirse.
+- Un `Encode` escrito a mano que declara otro número de elementos de los que
+  escribe hace que `encode` haga pánico con lo ocurrido.
+- Los errores de lectura llevan el camino y el byte donde ocurrieron.
 
 ### 14.16 `std.regex`
 
