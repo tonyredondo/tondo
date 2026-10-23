@@ -46,6 +46,9 @@ const IMMORTAL: u64 = u64::MAX;
 const FN_HEADER: i64 = 32;
 /// Size of a box header in the runtime (`BoxHeader`).
 const BOX_HEADER: i64 = 16;
+/// The size of the header of a `Ref[T]`'s object: its strong and weak
+/// counts and the size of the value that follows.
+const REF_HEADER: i64 = 24;
 /// Where the value starts in the box of a `reflect.Value` (`BoxObject`).
 const REFLECT_VALUE: i64 = 32;
 /// Size of an array header in the runtime (`ArrayHeader`): `len` is at 8 and
@@ -96,6 +99,8 @@ enum Rt {
     BoxRetain,
     BoxRelease,
     BoxUnique,
+    RefNew,
+    RefRelease,
     ReportError,
     TestStart,
     TestMembers,
@@ -310,6 +315,8 @@ impl Rt {
             Rt::BoxNew => ("tondo_rt_box_new", &[I64], &[I64]),
             Rt::BoxRetain => ("tondo_rt_box_retain", &[I64], &[]),
             Rt::BoxRelease => ("tondo_rt_box_release", &[I64, I64], &[]),
+            Rt::RefNew => ("tondo_rt_ref_new", &[I64], &[I64]),
+            Rt::RefRelease => ("tondo_rt_ref_release", &[I64, I64], &[]),
             Rt::BoxUnique => ("tondo_rt_box_unique", &[I64, I64, I64], &[]),
             Rt::ReportError => ("tondo_rt_report_error", &[I64], &[]),
             Rt::TestStart => ("tondo_rt_test_start", &[I64, I64], &[]),
@@ -1883,6 +1890,10 @@ impl Emit<'_, '_> {
                 TyKind::Fn(..) => {
                     self.call_rt(if release { Rt::FnRelease } else { Rt::FnRetain }, &[pointer]);
                 }
+                TyKind::Handle(Handle::Ref, value) if release => {
+                    let glue = self.glue_or_null(Glue::Release, value);
+                    self.call_rt(Rt::RefRelease, &[pointer, glue]);
+                }
                 TyKind::Handle(handle, _) if release => {
                     let rt = match handle {
                         Handle::Join => Rt::JoinRelease,
@@ -2376,6 +2387,27 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let offset = self.e.fb.ins().imul_imm_u(index, size as i64);
                 base = Some(self.e.fb.ins().iadd(address, offset));
                 ty = element;
+                continue;
+            }
+            if let Proj::Deref = proj {
+                assert!(!write, "the value of a `Ref` is never written");
+                let reference = match base {
+                    Some(address) => self.e.fb.ins().load(POINTER, flags(), address, 0),
+                    None => {
+                        let Storage::Var(var) = self.storage[place.local.0 as usize] else { unreachable!() };
+                        self.e.fb.use_var(var)
+                    }
+                };
+                base = Some(self.e.fb.ins().iadd_imm_s(reference, REF_HEADER));
+                ty = project(self.e.cg.types, ty, proj);
+                continue;
+            }
+            // The value inside an option of a reference is the option.
+            if base.is_none()
+                && let Proj::Variant(SOME, 0) = proj
+                && let Shape::Niche = self.e.cg.layout(ty).shape
+            {
+                ty = project(self.e.cg.types, ty, proj);
                 continue;
             }
             if let Proj::Index(index, span) = proj {
@@ -3544,7 +3576,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         // where it is used.
         let scalars = match op {
             TaskOp::Send => &operands[..1],
-            TaskOp::SyncNew => &operands[..0],
+            TaskOp::SyncNew | TaskOp::RefNew => &operands[..0],
             _ => operands,
         };
         let values: Vec<ir::Value> = scalars.iter().map(|o| self.scalar(o)).collect();
@@ -3651,6 +3683,19 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let address = self.e.call_rt(Rt::SyncValue, &[cell]).unwrap();
                 self.e.store_val(address, state, value);
                 Some(Val::Scalar(cell))
+            }
+            TaskOp::RefNew => {
+                // The value moves into the new identity.
+                let inner = self.e.cg.types.handle_result(ty);
+                let value = self.operand(&operands[0]);
+                if retain[0] {
+                    self.e.refcount(inner, value, false);
+                }
+                let size = self.e.fb.ins().iconst(POINTER, self.e.cg.layout(inner).size as i64);
+                let object = self.e.call_rt(Rt::RefNew, &[size]).unwrap();
+                let address = self.e.fb.ins().iadd_imm_s(object, REF_HEADER);
+                self.e.store_val(address, inner, value);
+                Some(Val::Scalar(object))
             }
             TaskOp::Lock(mode) => {
                 let mode = match mode {

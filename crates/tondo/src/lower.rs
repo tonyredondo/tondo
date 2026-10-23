@@ -1212,6 +1212,10 @@ impl Builder<'_> {
             },
             // Newtypes share their value's representation.
             hir::ExprKind::Retype(inner) => self.expr(inner),
+            hir::ExprKind::RefValue(reference) => {
+                let value = self.expr(reference);
+                Operand::Copy(self.place_of(value, reference.ty).deref())
+            }
             hir::ExprKind::Variant(variant, values) => {
                 let count = self.types.variants(e.ty).expect("enum")[*variant as usize].len();
                 let mut components = vec![Operand::Const(Const::Unit); count];

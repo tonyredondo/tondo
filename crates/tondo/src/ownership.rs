@@ -364,7 +364,7 @@ impl Checker<'_> {
                 self.use_local(*local, expr.span, &flow);
                 Some(flow)
             }
-            ExprKind::Field(base, _) | ExprKind::Retype(base) => self.observe(base, flow),
+            ExprKind::Field(base, _) | ExprKind::Retype(base) | ExprKind::RefValue(base) => self.observe(base, flow),
             ExprKind::Index(base, index) => {
                 let flow = self.observe(base, flow)?;
                 self.consume(index, flow)
@@ -467,6 +467,16 @@ impl Checker<'_> {
                     self.consume(base, flow)
                 }
             }
+            ExprKind::RefValue(base) if !copy => {
+                let message = format!(
+                    "a `Ref` keeps its value, so this value of type {} cannot be moved out of it; use it where it is, as in `reference.value.method()` or `inspect(ref reference.value)`{}",
+                    self.display(expr.ty),
+                    self.copy_hint(expr.ty)
+                );
+                self.error("E1406", expr.span, message);
+                self.observe(base, flow)
+            }
+            ExprKind::RefValue(base) => self.observe(base, flow),
             ExprKind::Index(base, index) => {
                 let flow = self.copy_out(expr, base, flow)?;
                 self.consume(index, flow)

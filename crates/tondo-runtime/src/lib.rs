@@ -364,6 +364,72 @@ pub unsafe extern "C" fn tondo_rt_box_unique(slot: *mut *mut BoxHeader, retain: 
 }
 
 // ---------------------------------------------------------------------------
+// References
+// ---------------------------------------------------------------------------
+
+/// Header of the object of a `Ref[T]` (16.10), its identity: the value
+/// follows. `weak` counts the weak references, plus one while any strong
+/// one lives; the value goes with the last strong reference and the
+/// memory with the last of either.
+#[repr(C)]
+pub struct RefHeader {
+    rc: AtomicUsize,
+    weak: AtomicUsize,
+    size: usize,
+}
+
+const REF_HEADER: usize = std::mem::size_of::<RefHeader>();
+
+fn ref_layout(size: usize) -> Layout {
+    Layout::from_size_align(REF_HEADER + size, 8).expect("reference too large")
+}
+
+/// A new identity with one reference; the caller stores the value.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_ref_new(size: usize) -> *mut RefHeader {
+    let layout = ref_layout(size);
+    unsafe {
+        let ptr = alloc(layout) as *mut RefHeader;
+        if ptr.is_null() {
+            handle_alloc_error(layout);
+        }
+        ptr.write(RefHeader { rc: AtomicUsize::new(1), weak: AtomicUsize::new(1), size });
+        LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+        ptr
+    }
+}
+
+/// Releases a reference; the last one releases the value's contents.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_ref_release(r: *mut RefHeader, release: Option<Glue>) {
+    if r.is_null() {
+        return;
+    }
+    match unsafe { (*r).rc.fetch_sub(1, Ordering::Release) } {
+        1 => {
+            fence(Ordering::Acquire);
+            if let Some(release) = release {
+                unsafe { release((r as *mut u8).add(REF_HEADER)) };
+            }
+            unsafe { ref_forget(r) };
+        }
+        0 => runtime_fault("reference released after it was freed"),
+        _ => {}
+    }
+}
+
+/// Drops one weak count, freeing the object with the last.
+unsafe fn ref_forget(r: *mut RefHeader) {
+    unsafe {
+        if (*r).weak.fetch_sub(1, Ordering::Release) == 1 {
+            fence(Ordering::Acquire);
+            LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+            dealloc(r as *mut u8, ref_layout((*r).size));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Function values
 // ---------------------------------------------------------------------------
 

@@ -144,3 +144,8 @@ pub fn Group.next(var self): T?
 pub fn Group.cancel(self)
 
 pub fn Group.length(self): Int
+
+/// `Ref(value)`: a new identity holding the value (language 16.10). Its
+/// copies share it, `==` and hashing compare identities rather than
+/// values, and `reference.value` reads the value, which never changes.
+pub fn Ref(value: T): Ref[T]

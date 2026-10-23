@@ -101,6 +101,30 @@ fn main() {
 }
 ```
 
+## Identity with `Ref[T]`
+
+Values have no identity: two equal records are the same, and copying one
+copies it. `Ref(value)` gives a value an identity that its copies share.
+`==` and hashing compare identities, so a `Ref` is a map key whatever it
+holds, and `reference.value` reads the value, which never changes. What
+changes goes in a `sync.Mutex` (see `tondo guide tasks`).
+
+```tondo
+import std.console
+
+type Module = { name: String, imports: Array[Ref[Module]] }
+
+fn main() {
+    let util = Ref(Module { name: "util", imports: [] })
+    let http = Ref(Module { name: "http", imports: [util] })
+    let json = Ref(Module { name: "json", imports: [util] })
+    // `util` is one module with two importers, not two equal copies.
+    console.println("{http.value.imports[0] == json.value.imports[0]}")
+    let other = Ref(Module { name: "util", imports: [] })
+    console.println("{util == other} {util.value.name == other.value.name}")
+}
+```
+
 ## Generics and traits
 
 ```tondo

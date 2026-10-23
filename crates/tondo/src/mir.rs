@@ -23,6 +23,8 @@ pub enum Proj {
     /// An array element at the index held by the local; out-of-bounds
     /// accesses panic at the span.
     Index(Local, Span),
+    /// The value a `Ref[T]` identifies, which is only read.
+    Deref,
 }
 
 /// A local or a path inside it.
@@ -54,6 +56,10 @@ impl Place {
     pub fn index(&self, index: Local, span: Span) -> Place {
         self.with(Proj::Index(index, span))
     }
+
+    pub fn deref(&self) -> Place {
+        self.with(Proj::Deref)
+    }
 }
 
 /// The type of the component a projection selects inside `ty`.
@@ -73,6 +79,7 @@ pub fn project(types: &Types, ty: Ty, proj: Proj) -> Ty {
             }
             _ => unreachable!("index of a non-collection"),
         },
+        Proj::Deref => types.handle_result(ty),
     }
 }
 

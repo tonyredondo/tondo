@@ -1,0 +1,102 @@
+import std.console
+
+type User = { name: String, age: Int }
+
+type Module = { name: String, imports: Array[Ref[Module]] }
+
+type Node = { name: String, next: Ref[Node]? }
+
+enum Shape {
+    Circle(Float),
+    Square(Float),
+}
+
+// Each module once, however many import it.
+fn count(module: Ref[Module], seen: var Set[Ref[Module]]): Int {
+    if seen.contains(module) {
+        return 0
+    }
+    seen.insert(module)
+    var total = 1
+    for child in module.value.imports {
+        total += count(child, var seen)
+    }
+    total
+}
+
+fn length(node: Ref[Node]): Int {
+    match node.value.next {
+        some(next) => 1 + length(next)
+        none => 1
+    }
+}
+
+fn describe(shape: ref Shape): String {
+    match shape {
+        Shape.Circle(r) => "circle {r}"
+        Shape.Square(s) => "square {s}"
+    }
+}
+
+fn sum(numbers: Ref[Array[Int]]): Int {
+    var total = 0
+    for n in numbers.value {
+        total += n
+    }
+    total
+}
+
+fn keep[T: ~Copy](value: T): Ref[T] {
+    Ref(value)
+}
+
+fn main() {
+    let users: Ref[Map[String, User]] = Ref(["ana": User { name: "Ana", age: 30 }])
+    let same = users
+    let other = Ref(["ana": User { name: "Ana", age: 30 }])
+    console.println("{users == same} {users != other} {users.value == other.value}")
+    console.println("{users.value.length()} {users.value.get("ana").map((u) { u.name }).unwrapOr("-")}")
+
+    var labels: Map[Ref[Map[String, User]], String] = [:]
+    labels[users] = "primary"
+    labels[other] = "secondary"
+    console.println("{labels.length()} {labels.get(same).unwrapOr("-")}")
+
+    let util = Ref(Module { name: "util", imports: [] })
+    let http = Ref(Module { name: "http", imports: [util] })
+    let json = Ref(Module { name: "json", imports: [util] })
+    let app = Ref(Module { name: "app", imports: [http, json] })
+    var seen: Set[Ref[Module]] = Set[]
+    console.println("modules {count(app, var seen)}, first import {app.value.imports[0].value.name}")
+
+    let tail = Ref(Node { name: "c", next: none })
+    let list = Ref(Node { name: "a", next: some(Ref(Node { name: "b", next: some(tail) })) })
+    console.println("length {length(list)}")
+
+    let shape = Ref(Shape.Circle(2.0))
+    console.println(describe(ref shape.value))
+
+    let maybe: Ref[Int]? = some(Ref(41))
+    match maybe {
+        some(r) => console.println("some {r.value + 1}")
+        none => console.println("none")
+    }
+
+    let numbers = Ref([1, 2, 3, 4])
+    let a = spawn sum(numbers)
+    let b = spawn sum(numbers)
+    console.println("sums {a.wait()} {b.wait()}")
+
+    let kept = keep([5, 6])
+    console.println("kept {kept.value.length()}")
+}
+
+// expect-stdout: true true true
+// expect-stdout: 1 Ana
+// expect-stdout: 2 primary
+// expect-stdout: modules 4, first import http
+// expect-stdout: length 3
+// expect-stdout: circle 2.0
+// expect-stdout: some 42
+// expect-stdout: sums 10 10
+// expect-stdout: kept 2

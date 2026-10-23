@@ -434,6 +434,9 @@ impl Signature {
 
 const INTRINSICS: [&str; 3] = ["panic", "assert", "channel"];
 
+/// Why nothing changes the value of a `Ref` (16.10), and what to do.
+const REF_UNCHANGED: &str = "the value of a `Ref` never changes: make a new `Ref`, or keep what changes in a `sync.Mutex`, which every copy shares";
+
 /// Whether a value is the same at every evaluation and has no effects, as a
 /// default value must be.
 fn constant(value: &mut hir::Expr) -> bool {
@@ -3623,6 +3626,7 @@ impl<'a> Checker<'a> {
                         ("Group", [result]) if segments.len() == 1 => self.types.handle(Handle::Group, *result),
                         ("Sender", [value]) if segments.len() == 1 => self.types.handle(Handle::Sender, *value),
                         ("Receiver", [value]) if segments.len() == 1 => self.types.handle(Handle::Receiver, *value),
+                        ("Ref", [value]) if segments.len() == 1 => self.types.handle(Handle::Ref, *value),
                         ("Pointer", [target]) if segments.len() == 1 => self.types.intern(TyKind::Pointer(*target)),
                         ("Range", [element]) if segments.len() == 1 => self.range_type(*element, t.span),
                         ("Map", [key, value]) if segments.len() == 1 => {
@@ -3635,7 +3639,7 @@ impl<'a> Checker<'a> {
                         }
                         (
                             "Option" | "Result" | "Array" | "Deque" | "Map" | "Set" | "Join" | "Group" | "Sender"
-                            | "Receiver" | "Pointer" | "Range",
+                            | "Receiver" | "Ref" | "Pointer" | "Range",
                             _,
                         ) if segments.len() == 1 => {
                             self.diags.error("E1104", t.span, "wrong number of type arguments");
@@ -4925,6 +4929,33 @@ impl<'a> Checker<'a> {
         Self::mk(hir::ExprKind::Call(Callee::Std(StdFn::Fs(function)), Vec::new(), values), result, span)
     }
 
+    /// `Ref(value)` (16.10): a new identity holding the value, copied when
+    /// it is `Copy` and moved otherwise.
+    fn ref_new(
+        &mut self,
+        cx: &mut FnCx,
+        args: &[ast::Arg],
+        explicit: Option<Ty>,
+        expected: Option<Ty>,
+        span: Span,
+    ) -> hir::Expr {
+        let [arg] = args else { return self.arity_error(span, 1, args.len()) };
+        let wanted = explicit.or_else(|| match expected.map(|e| self.types.kind(e)) {
+            Some(&TyKind::Handle(Handle::Ref, value)) => Some(value),
+            _ => None,
+        });
+        let value = self.expr(cx, &arg.value, wanted);
+        let value = match wanted {
+            Some(wanted) => self.coerce(value, wanted),
+            None => value,
+        };
+        if value.ty == Ty::ERROR {
+            return Self::error_expr(span);
+        }
+        let ty = self.types.handle(Handle::Ref, value.ty);
+        Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::RefNew, vec![value]), ty, span)
+    }
+
     /// `sync.Mutex(value)` and the other `std.sync` constructors: a new
     /// shared cell holding the value, or a semaphore or barrier.
     fn sync_new(
@@ -6024,6 +6055,10 @@ impl<'a> Checker<'a> {
         value: &ast::Expr,
         span: Span,
     ) -> Option<hir::Stmt> {
+        if let Some(at) = self.ref_value_target(cx, target) {
+            self.diags.error("E1411", at, REF_UNCHANGED);
+            return None;
+        }
         if let ast::ExprKind::Slice { base, start, end, step } = &target.kind {
             return self.assign_slice(cx, base, [start, end, step], op, value, span);
         }
@@ -6113,6 +6148,76 @@ impl<'a> Checker<'a> {
         };
         cx.diverged |= value.ty == Ty::NEVER;
         Some(hir::Stmt::Assign { local, path, op, value, span })
+    }
+
+    /// Where an assignment target reaches into the value of a `Ref`, which
+    /// never changes (16.10).
+    fn ref_value_target(&self, cx: &FnCx, target: &ast::Expr) -> Option<Span> {
+        match &target.kind {
+            ast::ExprKind::Path(segments) => {
+                let local = self.lookup(cx, &segments[0].name)?;
+                let mut ty = cx.locals[local.0 as usize].ty;
+                for segment in &segments[1..] {
+                    if let TyKind::Handle(Handle::Ref, _) = self.types.kind(ty) {
+                        return (segment.name == "value").then_some(segment.span);
+                    }
+                    ty = self.field_type(ty, &segment.name)?;
+                }
+                None
+            }
+            ast::ExprKind::Field(base, name) => {
+                if name.name == "value"
+                    && let Some(ty) = self.target_type(cx, base)
+                    && let TyKind::Handle(Handle::Ref, _) = self.types.kind(ty)
+                {
+                    return Some(name.span);
+                }
+                self.ref_value_target(cx, base)
+            }
+            ast::ExprKind::Index { base, .. }
+            | ast::ExprKind::Slice { base, .. }
+            | ast::ExprKind::TupleSlot(base, _) => self.ref_value_target(cx, base),
+            _ => None,
+        }
+    }
+
+    /// The type of an assignment target, without reporting anything.
+    fn target_type(&self, cx: &FnCx, target: &ast::Expr) -> Option<Ty> {
+        let ty = match &target.kind {
+            ast::ExprKind::Path(segments) => {
+                let local = self.lookup(cx, &segments[0].name)?;
+                let mut ty = cx.locals[local.0 as usize].ty;
+                for segment in &segments[1..] {
+                    ty = self.field_type(ty, &segment.name)?;
+                }
+                return Some(ty);
+            }
+            ast::ExprKind::Field(base, name) => return self.field_type(self.target_type(cx, base)?, &name.name),
+            ast::ExprKind::TupleSlot(base, slot) => match self.types.kind(self.target_type(cx, base)?) {
+                TyKind::Tuple(items) => return items.get(*slot as usize).copied(),
+                _ => return None,
+            },
+            ast::ExprKind::Index { base, .. } => self.target_type(cx, base)?,
+            _ => return None,
+        };
+        match self.types.kind(self.types.repr(ty)) {
+            TyKind::Array(element) | TyKind::Deque(element) => Some(*element),
+            TyKind::Map(_, value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// The type of a field, of `value` of a newtype or a `Ref`.
+    fn field_type(&self, ty: Ty, name: &str) -> Option<Ty> {
+        match self.types.kind(ty) {
+            TyKind::Handle(Handle::Ref, value) if name == "value" => Some(*value),
+            TyKind::Adt(id) => match &self.types.adt(*id).kind {
+                AdtKind::Record(fields) => fields.iter().find(|f| f.name == name).map(|f| f.ty),
+                AdtKind::Newtype(inner) if name == "value" => Some(*inner),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     /// Resolves an assignment target to a `var` binding and a field path.
@@ -7292,6 +7397,14 @@ impl<'a> Checker<'a> {
     }
 
     fn field_access(&mut self, base: hir::Expr, field: FieldRef, field_span: Span, span: Span) -> hir::Expr {
+        if let TyKind::Handle(Handle::Ref, value) = *self.types.kind(base.ty) {
+            if let FieldRef::Name("value") = field {
+                return Self::mk(hir::ExprKind::RefValue(Box::new(base)), value, span);
+            }
+            let message = format!("{} has one field, `value`, the value it identifies", self.display(base.ty));
+            self.diags.error("E1102", field_span, message);
+            return Self::error_expr(span);
+        }
         let Some((index, ty)) = self.field_of(base.ty, field, field_span) else {
             return Self::error_expr(span);
         };
@@ -8690,6 +8803,16 @@ impl<'a> Checker<'a> {
         {
             return self.channel(cx, type_args, args, span);
         }
+        if let ["Ref"] = names.as_slice()
+            && self.lookup(cx, "Ref").is_none()
+        {
+            let [value] = type_args else {
+                self.diags.error("E1104", span, "`Ref` takes one type argument: `Ref[T](value)`");
+                return Self::error_expr(span);
+            };
+            let value = self.resolve_type(value);
+            return self.ref_new(cx, args, Some(value), expected, span);
+        }
         // `memory.take[T](pointer)`: the value, moved out of the memory.
         if let [module, "take"] = names.as_slice()
             && self.lookup(cx, module).is_none()
@@ -9889,6 +10012,8 @@ impl<'a> Checker<'a> {
                         let mut message = format!("{} does not implement `Display`", self.display(value.ty));
                         if self.types.members(value.ty).is_some() {
                             message.push_str(": `match` on its members to format each one");
+                        } else if let TyKind::Handle(Handle::Ref, _) = self.types.kind(value.ty) {
+                            message.push_str(": an identity has no text; show what it identifies with `.value`");
                         } else if matches!(self.types.kind(value.ty), TyKind::Adt(_)) {
                             let name = self.types.display(value.ty);
                             message.push_str(&format!(
@@ -10267,6 +10392,11 @@ impl<'a> Checker<'a> {
             let message = format!("`{0}.{1}` needs its element type: `{0}.{1}[T](...)`", names[0], names[1]);
             self.diags.error("E1101", span, message);
             return Self::error_expr(span);
+        }
+        if let ["Ref"] = names.as_slice()
+            && self.lookup(cx, "Ref").is_none()
+        {
+            return self.ref_new(cx, args, None, expected, span);
         }
         if let ["channel"] = names.as_slice() {
             let message = "`channel` needs the type of its values: `channel[T]()`, or `channel[T](capacity)`";
@@ -11195,6 +11325,10 @@ impl<'a> Checker<'a> {
                     current = *base;
                 }
                 hir::ExprKind::Error => return None,
+                hir::ExprKind::RefValue(_) => {
+                    self.diags.error("E1411", span, format!("{operation} would change it, but {REF_UNCHANGED}"));
+                    return None;
+                }
                 _ => {
                     let message =
                         format!("{operation} changes its receiver, which must be a `var` binding or part of one");

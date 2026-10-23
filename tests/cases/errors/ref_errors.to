@@ -1,0 +1,24 @@
+import std.console
+
+fn take[T: ~Copy](value: T): T {
+    let reference = Ref(value)
+    reference.value
+}
+
+fn main() {
+    let users = Ref(["a": 1])
+    users.value = ["b": 2]
+    users.value["b"] = 2
+    users.value.insert("b", 2)
+    console.println("{users}")
+    let size = users.length
+    let earlier = users < users
+}
+
+// expect-error: E1406 a `Ref` keeps its value, so this value of type `T` cannot be moved out of it
+// expect-error: E1411 the value of a `Ref` never changes: make a new `Ref`, or keep what changes in a `sync.Mutex`, which every copy shares
+// expect-error: E1411 the value of a `Ref` never changes
+// expect-error: E1411 `insert` would change it, but the value of a `Ref` never changes
+// expect-error: E1105 `Ref[Map[String, Int]]` does not implement `Display`: an identity has no text; show what it identifies with `.value`
+// expect-error: E1102 `Ref[Map[String, Int]]` has one field, `value`, the value it identifies
+// expect-error: E1102 operator `<` cannot be applied to `Ref[Map[String, Int]]`

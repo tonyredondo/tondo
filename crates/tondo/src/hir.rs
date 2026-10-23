@@ -223,6 +223,9 @@ pub enum ExprKind {
     With(Box<Expr>, Vec<(u32, Expr)>),
     /// Newtype construction or `.value`: same representation, new type.
     Retype(Box<Expr>),
+    /// `reference.value` of a `Ref[T]` (16.10): the value it identifies,
+    /// which can be read but neither moved out nor changed.
+    RefValue(Box<Expr>),
     /// An enum value: the variant and its payload as `(component, value)`
     /// in source order.
     Variant(u32, Vec<(u32, Expr)>),
@@ -428,6 +431,8 @@ pub enum TaskOp {
     GroupCancel,
     /// A new `std.sync` value holding its state; the state comes first.
     SyncNew,
+    /// `Ref(value)` (16.10): a new identity holding the value.
+    RefNew,
     /// Used by `LockSync`: takes the lock and gives the guard.
     Lock(LockMode),
     /// Used by `AwaitChange`: gives the guard back once the state changed.
@@ -501,6 +506,7 @@ impl TaskOp {
             | TaskOp::Detach
             | TaskOp::GroupCancel
             | TaskOp::SyncNew
+            | TaskOp::RefNew
             | TaskOp::PermitRelease => index == 0,
             TaskOp::GroupWait | TaskOp::Channel => true,
             op => op.moves_in(index),
@@ -512,7 +518,7 @@ impl TaskOp {
     pub fn moves_in(self, index: usize) -> bool {
         match self {
             TaskOp::GroupAdd | TaskOp::Send | TaskOp::Shared(SharedOp::Push) => index == 1,
-            TaskOp::SyncNew => index == 0,
+            TaskOp::SyncNew | TaskOp::RefNew => index == 0,
             TaskOp::Shared(SharedOp::Insert) => index >= 1,
             TaskOp::Shared(SharedOp::Set) => index == 2,
             TaskOp::Shared(SharedOp::Exchange) => index == 3,

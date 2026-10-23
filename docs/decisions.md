@@ -1298,3 +1298,16 @@ network. TLS and names stay on tokio. Scheduling a task no longer signals
 the condition variable when no worker sleeps. On loopback: one
 connection's round trip 12 µs (Go 12), 2 000 connections of ten round
 trips 0.13 s (Go 0.11), bulk transfer unchanged.
+
+## 2026-10-23 — `Ref[T]`
+
+A `Ref` is a handle to an object that holds its value after a header of
+two counts, strong and weak, so `WeakRef` needs no other object, and the
+value's size. `==` compares addresses and hashing takes the address, which
+never moves. `reference.value` is a projection through the handle, a place
+that compiled code reads where it is, so observing a large or affine value
+copies nothing; a read that keeps the value retains it as reading a field
+does. Nothing writes through it: an assignment or a method that changes its
+receiver says that the value never changes and points to `sync.Mutex`,
+and moving an affine value out of it says to use it in place. Encoding a
+`Ref` is refused like any handle, since identities are not serialized.

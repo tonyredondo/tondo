@@ -264,6 +264,7 @@ impl Mono<'_> {
             }
             ExprKind::Field(inner, _)
             | ExprKind::Retype(inner)
+            | ExprKind::RefValue(inner)
             | ExprKind::Fixed(inner)
             | ExprKind::Length(inner)
             | ExprKind::Try(inner)

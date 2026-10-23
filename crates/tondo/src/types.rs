@@ -179,6 +179,9 @@ pub enum Handle {
     /// A value of the runtime, such as an HTTP client or response
     /// (`std.internal.http`).
     Native,
+    /// `Ref[T]` (16.10): a value with an identity, shared by its copies,
+    /// which compare and hash by that identity.
+    Ref,
 }
 
 impl Handle {
@@ -214,6 +217,7 @@ impl Handle {
             Handle::Regex => "regex.NativeRegex",
             Handle::ReflectBox => "reflect.Box",
             Handle::Native => "internal.Native",
+            Handle::Ref => "Ref",
         }
     }
 
@@ -1373,6 +1377,8 @@ impl Types {
             | TyKind::Unit
             | TyKind::Never
             | TyKind::Error => true,
+            // An identity is a key whatever it holds (16.10).
+            TyKind::Handle(Handle::Ref, _) => true,
             TyKind::Float(_)
             | TyKind::Array(_)
             | TyKind::Deque(_)
@@ -1463,6 +1469,8 @@ impl Types {
             }
             TyKind::Map(key, value) => self.equatable_in(*key, visiting) && self.equatable_in(*value, visiting),
             TyKind::Param(index) => self.params[*index as usize].equatable || self.params[*index as usize].key,
+            // References compare by identity (16.10).
+            TyKind::Handle(Handle::Ref, _) => true,
             // A C array compares as the `Array` it converts to; a union's
             // fields overlap.
             TyKind::Fn(..) | TyKind::CFn(..) | TyKind::CArray(..) | TyKind::Handle(..) => false,
