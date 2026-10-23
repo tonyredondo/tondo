@@ -31,6 +31,7 @@ std.uuid       UUID v4, v5, v7
 std.format     a text builder
 std.math       floating-point math and integers' gcd and lcm
 std.sync       Mutex, Atomic, shared collections (`tondo guide tasks`)
+std.executor   pools that bound work, actors with a mailbox (`tondo guide tasks`)
 std.reflect    values by name at run time (`tondo guide meta`)
 std.ffi        C types and memory (`tondo guide ffi`)
 std.testing    what a test tells the runner (`tondo guide testing`)

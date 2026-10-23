@@ -180,6 +180,7 @@ enum Rt {
     SenderNew,
     SenderCopy,
     ChannelSend,
+    ChannelOffer,
     ChannelReceive,
     ChannelClose,
     ChannelClosed,
@@ -406,6 +407,7 @@ impl Rt {
             Rt::SenderNew => ("tondo_rt_sender_new", &[I64], &[I64]),
             Rt::SenderCopy => ("tondo_rt_sender_copy", &[I64], &[I64]),
             Rt::ChannelSend => ("tondo_rt_channel_send", &[I64, I64, I64], &[]),
+            Rt::ChannelOffer => ("tondo_rt_channel_offer", &[I64, I64, I8], &[I64]),
             Rt::ChannelReceive => ("tondo_rt_channel_receive", &[I64, I64], &[I8]),
             Rt::ChannelClose => ("tondo_rt_channel_close", &[I64], &[]),
             Rt::ChannelClosed => ("tondo_rt_channel_closed", &[I64, I8], &[I8]),
@@ -3680,7 +3682,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         // Handles and indices are scalars; the value `send` moves is read
         // where it is used.
         let scalars = match op {
-            TaskOp::Send => &operands[..1],
+            TaskOp::Send | TaskOp::Offer | TaskOp::TryOffer => &operands[..1],
             TaskOp::SyncNew | TaskOp::RefNew => &operands[..0],
             _ => operands,
         };
@@ -3753,6 +3755,16 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let location = self.location(span);
                 self.e.call_rt(Rt::ChannelSend, &[values[0], source, location]);
                 None
+            }
+            TaskOp::Offer | TaskOp::TryOffer => {
+                let item = item.expect("a sender");
+                let value = self.operand(&operands[1]);
+                if retain[1] {
+                    self.e.refcount(item, value, false);
+                }
+                let source = self.copy_to_stack(item, value);
+                let wait = self.e.fb.ins().iconst(types::I8, (op == TaskOp::Offer) as i64);
+                Some(Val::Scalar(self.e.call_rt(Rt::ChannelOffer, &[values[0], source, wait]).unwrap()))
             }
             TaskOp::Receive | TaskOp::ReceiveTimeout | TaskOp::WaitTimeout => {
                 let item = item.expect("a receiver or a join");

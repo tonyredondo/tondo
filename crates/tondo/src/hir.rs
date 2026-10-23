@@ -437,6 +437,11 @@ pub enum TaskOp {
     WeakNew,
     /// `weak.get()`: `Ref[T]?`
     WeakGet,
+    /// `std.internal.channel`'s `offer(sender, value)`, which waits for
+    /// room, and `tryOffer`, which does not: 0 when sent, 1 when full, 2
+    /// once closed; a value not sent is dropped. For `std.executor`.
+    Offer,
+    TryOffer,
     /// Used by `LockSync`: takes the lock and gives the guard.
     Lock(LockMode),
     /// Used by `AwaitChange`: gives the guard back once the state changed.
@@ -521,7 +526,9 @@ impl TaskOp {
     /// caller retains for it when it is not a temporary.
     pub fn moves_in(self, index: usize) -> bool {
         match self {
-            TaskOp::GroupAdd | TaskOp::Send | TaskOp::Shared(SharedOp::Push) => index == 1,
+            TaskOp::GroupAdd | TaskOp::Send | TaskOp::Offer | TaskOp::TryOffer | TaskOp::Shared(SharedOp::Push) => {
+                index == 1
+            }
             TaskOp::SyncNew | TaskOp::RefNew => index == 0,
             TaskOp::Shared(SharedOp::Insert) => index >= 1,
             TaskOp::Shared(SharedOp::Set) => index == 2,
@@ -540,6 +547,7 @@ impl TaskOp {
                 | TaskOp::GroupNext
                 | TaskOp::GroupSettle
                 | TaskOp::Send
+                | TaskOp::Offer
                 | TaskOp::Receive
                 | TaskOp::ReceiveTimeout
                 | TaskOp::Lock(LockMode::Shared | LockMode::Exclusive)

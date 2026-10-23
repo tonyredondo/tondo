@@ -1,0 +1,242 @@
+// std.executor (standard library 14.4.5): pools that bound how much work
+// runs at once and how much waits, and actors that own state behind a
+// mailbox. Both build on `spawn`, `Join` and channels, which stay the only
+// tasks: a job is an ordinary task whose `Join` the caller owns, waits for
+// and cancels as any other.
+
+import std.internal.channel as __channel
+import std.sync as __sync
+
+/// Why a pool or an actor cannot be made.
+pub enum ExecutorError {
+    /// A pool runs at least one job at a time: the number given.
+    InvalidWorkers(Int)
+    /// A capacity cannot be negative: the number given.
+    InvalidCapacity(Int)
+}
+
+impl Display for ExecutorError {
+    fn display(self): String {
+        match self {
+            ExecutorError.InvalidWorkers(workers) =>
+                "a pool needs at least one worker, not {workers}"
+            ExecutorError.InvalidCapacity(capacity) => "a capacity cannot be negative: {capacity}"
+        }
+    }
+}
+
+/// Why a pool did not take a job.
+pub enum SubmitError {
+    /// Every worker is busy and the queue is full; only `trySubmit` says it.
+    Saturated
+    /// The pool was shut down.
+    Closed
+}
+
+impl Display for SubmitError {
+    fn display(self): String {
+        match self {
+            SubmitError.Saturated => "the pool is full"
+            SubmitError.Closed => "the pool is shut down"
+        }
+    }
+}
+
+/// Why an actor did not take a message.
+pub enum SendError {
+    /// The mailbox is full; only `trySend` says it.
+    Saturated
+    /// The actor stopped: `stop`, the end of its owner's block, or an
+    /// error of its handler.
+    Stopped
+}
+
+impl Display for SendError {
+    fn display(self): String {
+        match self {
+            SendError.Saturated => "the mailbox is full"
+            SendError.Stopped => "the actor stopped"
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pools
+// ---------------------------------------------------------------------------
+
+/// Runs at most `workers` jobs at a time and keeps at most `capacity` more
+/// waiting for a worker; a handle its copies share. Jobs are tasks whose
+/// `Join` the caller owns: the block that holds one waits for it, and
+/// `job.cancel()` or a `Group` cancel it, also while it waits for a worker.
+pub type Pool = {
+    priv admission: __sync.Semaphore
+    priv workers: __sync.Semaphore
+    priv closed: __sync.Atomic[Bool]
+    priv size: Int
+}
+
+pub fn pool(workers: Int, capacity: Int): Pool ! ExecutorError {
+    if workers < 1 {
+        fail ExecutorError.InvalidWorkers(workers)
+    }
+    if capacity < 0 {
+        fail ExecutorError.InvalidCapacity(capacity)
+    }
+    Pool {
+        admission: __sync.Semaphore(workers + capacity)
+        workers: __sync.Semaphore(workers)
+        closed: __sync.Atomic(false)
+        size: workers + capacity
+    }
+}
+
+/// Starts `job` as a task that runs once a worker is free, waiting first
+/// while the pool is full: its `Join`.
+pub fn Pool.submit[T](self, job: fn(): T): Join[T] ! SubmitError {
+    if self.closed.load() {
+        fail SubmitError.Closed
+    }
+    let admitted = self.admission.acquire()
+    if self.closed.load() {
+        fail SubmitError.Closed
+    }
+    spawn run(self.workers, admitted, job)
+}
+
+/// Like `submit`, without waiting: `SubmitError.Saturated` while the pool
+/// is full.
+pub fn Pool.trySubmit[T](self, job: fn(): T): Join[T] ! SubmitError {
+    if self.closed.load() {
+        fail SubmitError.Closed
+    }
+    match self.admission.tryAcquire() {
+        some(admitted) => spawn run(self.workers, admitted, job)
+        none => fail SubmitError.Saturated
+    }
+}
+
+/// Takes no more jobs, and waits until those it took have finished; a
+/// `submit` that waited for room fails with `SubmitError.Closed`.
+pub fn Pool.shutdown(self) {
+    self.closed.store(true)
+    var held: Array[__sync.Permit] = []
+    for _ in 0..self.size {
+        held.push(self.admission.acquire())
+    }
+}
+
+// A job holds its place in the pool, and then a worker, until it ends.
+fn run[T](workers: __sync.Semaphore, admitted: __sync.Permit, job: fn(): T): T {
+    let worker = workers.acquire()
+    job()
+}
+
+// ---------------------------------------------------------------------------
+// Actors
+// ---------------------------------------------------------------------------
+
+/// State of its own that one task changes, a message at a time and in the
+/// order they arrived. `stop` ends it; so does the end of the block that
+/// owns it, as that block waits for a `Join` nobody consumed: the actor
+/// handles what its mailbox holds, and the block waits for that.
+pub type Actor[M, E] = {
+    priv mailbox: Ref[
+        Sender[
+            // Released first, so that the end of the owner's block closes the
+            // mailbox before it waits for the task.
+            M,
+        ],
+    ]
+    priv outcome: __sync.Mutex[(!E)?]
+    priv task: Join[Unit]
+}
+
+/// Where an actor's messages go, a handle its copies share; it does not
+/// keep the actor alive.
+pub type ActorRef[M] = {
+    priv mailbox: WeakRef[Sender[M]]
+}
+
+/// An actor that starts with `state` and changes it with `handle`, one
+/// message at a time, keeping at most `capacity` messages waiting. An
+/// error of `handle` stops it, and `stop` gives that error.
+pub fn actor[S, M, E](state: S, capacity: Int, handle: fn(var S, M): !E): Actor[M, E] !
+    ExecutorError {
+    if capacity < 0 {
+        fail ExecutorError.InvalidCapacity(capacity)
+    }
+    let (sender, inbox) = channel[M](capacity)
+    let mailbox = Ref(sender)
+    let outcome: __sync.Mutex[(!E)?] = __sync.Mutex(none)
+    let task = spawn serve(state, inbox, WeakRef(mailbox), outcome, handle)
+    Actor { mailbox, outcome, task }
+}
+
+fn serve[S, M, E](
+    state: S,
+    inbox: Receiver[M],
+    mailbox: WeakRef[Sender[M]],
+    outcome: __sync.Mutex[(!E)?],
+    handle: fn(var S, M): !E,
+) {
+    // However it ends, its mailbox closes, so that senders learn it.
+    defer close(mailbox)
+    let result = handleAll(state, inbox, handle)
+    outcome.set(some(result))
+}
+
+fn handleAll[S, M, E](state: S, inbox: Receiver[M], handle: fn(var S, M): !E): !E {
+    var current = state
+    for message in inbox {
+        handle(var current, message)?
+    }
+}
+
+fn close[M](mailbox: WeakRef[Sender[M]]) {
+    match mailbox.get() {
+        some(sender) => sender.value.close()
+        none => {}
+    }
+}
+
+pub fn Actor[M, E].reference(self): ActorRef[M] {
+    ActorRef { mailbox: WeakRef(self.mailbox) }
+}
+
+/// Handles the messages already in the mailbox, then ends: the error of the
+/// handler, if one stopped it. Stopping it again gives the same.
+pub fn Actor[M, E].stop(self): !E {
+    self.mailbox.value.close()
+    let ended = self.outcome.updateWhen((result) { result.isSome() }, (result) { result })
+    match ended {
+        some(result) => result?
+        none => {}
+    }
+}
+
+/// Puts `message` in the mailbox, waiting while it is full.
+pub fn ActorRef[M].send(self, message: M): !SendError {
+    match self.mailbox.get() {
+        some(sender) => {
+            if __channel.offer(sender.value, message) != 0 {
+                fail SendError.Stopped
+            }
+        }
+        none => fail SendError.Stopped
+    }
+}
+
+/// Like `send`, without waiting: `SendError.Saturated` while the mailbox
+/// is full.
+pub fn ActorRef[M].trySend(self, message: M): !SendError {
+    match self.mailbox.get() {
+        some(sender) => {
+            match __channel.tryOffer(sender.value, message) {
+                0 => {}
+                1 => fail SendError.Saturated
+                _ => fail SendError.Stopped
+            }
+        }
+        none => fail SendError.Stopped
+    }
+}

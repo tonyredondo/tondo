@@ -1370,3 +1370,33 @@ and `get` refuses those: a weak reference never gives back a half-freed
 cycle. Weak references have no equality, since what they compare by would
 be an object that may be gone; comparing what `get` gives says what is
 meant.
+
+## 2026-10-24 — `std.executor`, on tasks the language already has
+
+The legacy contract was written for the old language: `scope`, `await`,
+`suspends`, a `Join[T, E]`, pools a program had to close or cancel, a pool
+for blocking work. Here a job is an ordinary task, `pool.submit(job)` gives
+its `Join`, and the block that owns the `Join` waits for it or cancels it
+as any, so a pool needs neither a cancellation of its own nor closing: it
+is a handle of two semaphores and a flag, written in Tondo. A job holds
+its place and then a worker as permits, which return as the task ends,
+also when it is cancelled waiting for a worker. Which waiting job starts
+first is not promised. There is no blocking pool, since a call of C that
+stays in the system already gets another worker in its place.
+
+An actor is a task reading a channel. Its `Actor` holds the only strong
+`Ref` to the sender, its `ActorRef`s weak ones, so `send` cannot find a
+channel closed under it, and the end of the owner's block releases the
+`Ref` first, which closes the mailbox, and then the `Join`, which waits
+for the messages to be handled. Sending uses a private operation of
+`std.internal.channel` that reports a closed channel instead of panicking.
+`ref` is a keyword, so the handle comes from `reference()`; and since a
+library's `self` is a loan, `stop` does not consume the actor: it closes
+the mailbox and waits for the outcome the task records, which stopping
+again gives as well.
+
+A closure that cannot fail now fits `fn(...): !E`: inferring it with the
+error unknown makes it infer its errors, `Never` when there are none, and
+`?` on a `T ! Never` only takes the value. The same made the testing
+specification's canonical `testing.withVirtualTime(...)?` compile, and a
+result that cannot fail may be dropped like `Unit`.

@@ -2363,6 +2363,56 @@ pub unsafe extern "C" fn tondo_rt_channel_send(sender: *mut SenderObject, value:
     }
 }
 
+/// `std.internal.channel`'s `offer` (`wait` 1) and `tryOffer`: sends the
+/// value, waiting for room only when `wait` is set, and gives 0 when sent,
+/// 1 when the channel is full and it did not wait, 2 once the channel is
+/// closed or the task cancelled. A value not sent is released.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_channel_offer(sender: *mut SenderObject, value: *mut u8, wait: u8) -> i64 {
+    const SENT: i64 = 0;
+    const FULL: i64 = 1;
+    const SHUT: i64 = 2;
+    unsafe {
+        let c = &mut *(*sender).channel;
+        if cancelled() {
+            drop_unsent(c, value);
+            return SHUT;
+        }
+        lock(&c.lock);
+        if c.closed {
+            unlock(&c.lock);
+            drop_unsent(c, value);
+            return SHUT;
+        }
+        if let Some(woken) = try_send(c, value) {
+            unlock(&c.lock);
+            woken.into_iter().for_each(notify);
+            return SENT;
+        }
+        if wait == 0 {
+            unlock(&c.lock);
+            drop_unsent(c, value);
+            return FULL;
+        }
+        let blocked = Wait::new();
+        let mut waiter = Waiter { wait: Arc::as_ptr(&blocked), index: 0, value, state: 0 };
+        c.sending.push_back(&mut waiter);
+        unlock(&c.lock);
+        if blocked.block() == CANCELLED {
+            lock(&c.lock);
+            c.sending.retain(|w| *w != &raw mut waiter);
+            unlock(&c.lock);
+            drop_unsent(c, value);
+            return SHUT;
+        }
+        if std::ptr::read_volatile(&waiter.state) == CLOSED {
+            drop_unsent(c, value);
+            return SHUT;
+        }
+        SENT
+    }
+}
+
 /// A value a cancelled task did not send: it was the channel's to release.
 unsafe fn drop_unsent(c: &ChannelObject, value: *mut u8) {
     if let Some(release) = c.release {

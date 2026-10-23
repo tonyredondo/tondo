@@ -116,6 +116,7 @@ Every milestone ends with programs that compile to native executables and run.
 | **Stdlib 4** | One serialization protocol for every format (`std.serialization`): events, one error type with path, line and column, and `Encode`/`Decode` that the compiler implements for every type, generic over each format's reader and writer; JSON on top of it; `std.toml` (TOML 1.1, with dates); `std.yaml` (a safe subset of YAML 1.2, many documents, bounded aliases); `std.messagepack` (shortest forms, bytes and timestamps native); `std.cbor` (RFC 8949, preferred and deterministic serialization); `std.net` (TCP with TLS, listeners, UDP and names, a task per connection without a thread per connection, a timeout per call). | Done |
 | **H10** | Tooling for agents: `tondo guide` teaches the language, its library and its commands a topic at a time, with examples that compile and the mistakes models make, and can install itself as an agent skill; `tondo api` shows a module's declarations and documentation without bodies, about a quarter of its tokens, for the standard library, the project and its dependencies; `tondo fmt --compact` prints Tondo with about 15% fewer tokens. A separate LLM dialect was measured on seven tokenizers and dropped: it saved nothing that compact Tondo does not | Done |
 | **H11** | Diagnostics and editors: aborts, illegal instructions, arithmetic faults and faults inside C report their trace; `tondo test --schedules N` runs each test in many orders of its tasks, again with `--seed`; a test that leaves tasks running fails, saying where they wait; `tondo lsp`, a language server with diagnostics, hover, definitions, references, rename, completion, semantic highlighting, signatures, inlay types, symbols, formatting and code actions from the compiler's repairs; functions compile on every core; workers poll the network themselves, for Go's latency on a request and its answer. A cache of compiled functions between builds waits until a build is slow enough to need it | Done |
+| **std.executor** | Pools that bound how many jobs run and how many wait, whose jobs are ordinary tasks with their `Join`; actors that own state behind a bounded mailbox, stopped by their owner or by the end of its block. A closure that cannot fail fits a parameter that may, `fn(...): !E`, with `E` inferred as `Never` | Done |
 | **Identity and cycles** | `Ref[T]`, values with an identity that compare and hash by it, read in place and never changed; a collector of the cycles of references that counting alone would keep, which starts from the shared state every cycle passes through and stops the workers briefly at safe points; `WeakRef[T]` for caches | Done |
 
 The first cut deliberately leaves out the following. They are part of the
@@ -147,11 +148,8 @@ code (2026-10-24):
 - **Tools:** `tondo doc-test`, which checks the examples of a document
   (21.6); the structured queries of 22.5 beyond what `tondo lsp` and
   `tondo check --json` answer.
-- **Testing:** `testing.withVirtualTime(...)?` when the closure cannot fail,
-  the canonical form (7.9); interrupting `tondo test`, which should cancel
-  the running tests cooperatively and exit with `4` (7.10).
-- **Library:** `std.executor`, pools with capacity and shutdown, actors with
-  typed mailboxes and a bridge for blocking work (14.4.5).
+- **Testing:** interrupting `tondo test`, which should cancel the running
+  tests cooperatively and exit with `4` (7.10).
 - **Specifications that disagree:** the language's manifest declares a
   target, a host profile and capabilities (20.11), and testing has
   dev-dependencies (5.5); the toolchain's `tondo.toml` has neither.

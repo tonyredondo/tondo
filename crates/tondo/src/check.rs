@@ -203,6 +203,9 @@ enum StdModule {
     InternalCodec,
     /// `std.internal.http`: the runtime's HTTP client, for `std.http`.
     InternalHttp,
+    /// `std.internal.channel`: sends that report a closed channel instead
+    /// of panicking, for `std.executor`'s actors.
+    InternalChannel,
     InternalToml,
     InternalYaml,
     InternalMsgpack,
@@ -1087,8 +1090,17 @@ impl<'a> Checker<'a> {
         let callee = Self::mk(hir::ExprKind::Local(body_local), body_ty, span);
         let argument = Self::mk(hir::ExprKind::Local(clock_local), clock, span);
         let run = Self::mk(hir::ExprKind::CallValue(Box::new(callee), vec![argument]), info.result, span);
-        let block = hir::Block { stmts, tail: Some(Box::new(run)), ty: info.result };
-        Self::mk(hir::ExprKind::Block(block), info.result, span)
+        // Always a result, so that `?` follows the call as the canonical
+        // form writes it; one that cannot fail fails with `Never`.
+        let (run, ty) = match self.types.kind(info.result) {
+            TyKind::Result(..) => (run, info.result),
+            _ => {
+                let ty = self.types.intern(TyKind::Result(info.result, Ty::NEVER));
+                (Self::mk(hir::ExprKind::Variant(OK, vec![(0, run)]), ty, span), ty)
+            }
+        };
+        let block = hir::Block { stmts, tail: Some(Box::new(run)), ty };
+        Self::mk(hir::ExprKind::Block(block), ty, span)
     }
 
     /// `testing.snapshot(name, value, ignore:, matches:, replace:)` (testing
@@ -1736,6 +1748,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "msgpack"] => StdModule::InternalMsgpack,
             ["std", "internal", "cbor"] => StdModule::InternalCbor,
             ["std", "internal", "net"] => StdModule::InternalNet,
+            ["std", "internal", "channel"] => StdModule::InternalChannel,
             ["std", rest @ ..] => {
                 let name = rest.join(".");
                 // Modules the standard library specifies and does not have yet.
@@ -3179,6 +3192,22 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// The result a closure is checked against: what inference knows, or
+    /// `T ! {error}` when only `T` is known, so that the closure infers its
+    /// errors, none when it cannot fail; `{error}` when nothing is known.
+    fn expected_result(&mut self, inference: &Inference, result: Ty) -> Ty {
+        if let Some(result) = self.inferred(inference, result) {
+            return result;
+        }
+        match self.types.kind(result).clone() {
+            TyKind::Result(success, _) => match self.inferred(inference, success) {
+                Some(success) => self.types.intern(TyKind::Result(success, Ty::ERROR)),
+                None => Ty::ERROR,
+            },
+            _ => Ty::ERROR,
+        }
+    }
+
     /// What a closure passed for the type parameter `ty` with a call bound
     /// should look like: the bound's signature with the arguments inferred
     /// so far. An unknown result is left to the closure (`{error}`).
@@ -3188,19 +3217,23 @@ impl<'a> Checker<'a> {
             return None;
         };
         let params = params.into_iter().map(|p| self.inferred(inference, p)).collect::<Option<Vec<Ty>>>()?;
-        let result = self.inferred(inference, result).unwrap_or(Ty::ERROR);
+        let result = self.expected_result(inference, result);
         Some(self.types.intern(TyKind::Fn(params, result, variadic, modes, is_unsafe)))
     }
 
     /// What a closure for a `fn(A): B` parameter is checked against when
     /// its parameters are known and its result is not yet: `B` comes from
     /// the closure's body.
-    fn fn_expectation(&mut self, inference: &Inference, ty: Ty) -> Option<Ty> {
+    fn fn_expectation(&mut self, inference: &Inference, ty: Ty, annotated: bool) -> Option<Ty> {
         let TyKind::Fn(params, result, variadic, modes, is_unsafe) = self.types.kind(ty).clone() else {
             return None;
         };
-        let params = params.into_iter().map(|p| self.inferred(inference, p)).collect::<Option<Vec<Ty>>>()?;
-        let result = self.inferred(inference, result).unwrap_or(Ty::ERROR);
+        // A closure that writes its parameters' types needs only the result.
+        let params = params
+            .into_iter()
+            .map(|p| self.inferred(inference, p).or(annotated.then_some(Ty::ERROR)))
+            .collect::<Option<Vec<Ty>>>()?;
+        let result = self.expected_result(inference, result);
         Some(self.types.intern(TyKind::Fn(params, result, variadic, modes, is_unsafe)))
     }
 
@@ -4167,6 +4200,10 @@ impl<'a> Checker<'a> {
         let declared = closure_result
             .map(|t| self.resolve_type(t))
             .or(expected.as_ref().map(|e| e.result).filter(|&r| r != Ty::ERROR));
+        // Expected to give `T ! E` with `E` not known yet, it infers its
+        // errors, none when it cannot fail.
+        let infer_failure =
+            declared.is_some_and(|d| matches!(self.types.kind(d), TyKind::Result(_, e) if *e == Ty::ERROR));
         let generics: Vec<Ty> = self.type_params.iter().map(|&(_, t)| t).collect();
         let template = self.types.declare_template("closure".into(), generics.clone());
         let env_ty = self.types.instantiate(template, generics.clone());
@@ -4194,7 +4231,10 @@ impl<'a> Checker<'a> {
         // The body is checked in its own context, nested in the current one.
         let mut inner = self.new_cx(declared.unwrap_or(Ty::ERROR));
         inner.infer_result = declared.is_none();
-        inner.infer_error = test || infer_error;
+        inner.infer_error = test || infer_error || infer_failure;
+        if infer_failure {
+            inner.error = None;
+        }
         inner.test_member = test;
         inner.deferred = deferred;
         inner.unsafe_region = is_unsafe;
@@ -4222,6 +4262,10 @@ impl<'a> Checker<'a> {
             None => body.ty,
         };
         let result = match cx.error {
+            _ if infer_failure => {
+                let success = cx.result;
+                self.types.intern(TyKind::Result(success, cx.error.unwrap_or(Ty::NEVER)))
+            }
             Some(error) if test || infer_error => self.types.intern(TyKind::Result(result, error)),
             _ => result,
         };
@@ -4243,7 +4287,7 @@ impl<'a> Checker<'a> {
             generics,
             params: locals,
             loans,
-            fallible: inner.error.is_some(),
+            fallible: inner.error.is_some() || infer_failure,
             locals: inner.locals,
             result,
             body,
@@ -5992,7 +6036,7 @@ impl<'a> Checker<'a> {
                 let value = self.expr(cx, value, expected);
                 // Only a result or an option must be used: it may be a
                 // failure or an absence the program has to see (11.9).
-                if matches!(self.types.kind(self.types.repr(value.ty)), TyKind::Result(..) | TyKind::Option(_)) {
+                if self.must_use(value.ty) {
                     let message = format!(
                         "a value of type {} is not used; pass a failure on with `?`, handle it with `match`, or discard it with `_ = ...`",
                         self.display(value.ty)
@@ -6981,6 +7025,16 @@ impl<'a> Checker<'a> {
         hir::Expr { kind, ty, span }
     }
 
+    /// Whether a value may be a failure or an absence the program must see
+    /// (11.9): an option, or a result that can fail.
+    fn must_use(&self, ty: Ty) -> bool {
+        match self.types.kind(self.types.repr(ty)) {
+            TyKind::Result(_, error) => *error != Ty::NEVER,
+            TyKind::Option(_) => true,
+            _ => false,
+        }
+    }
+
     fn error_expr(span: Span) -> hir::Expr {
         Self::mk(hir::ExprKind::Error, Ty::ERROR, span)
     }
@@ -6994,7 +7048,7 @@ impl<'a> Checker<'a> {
         // Where nothing is expected, a value is dropped, unless it is a
         // result or an option the program has to see (11.9).
         if expected == Ty::UNIT && value.ty != Ty::NEVER && !self.types.has_error(value.ty) {
-            if matches!(self.types.kind(self.types.repr(value.ty)), TyKind::Result(..) | TyKind::Option(_)) {
+            if self.must_use(value.ty) {
                 let message = format!(
                     "a value of type {} is not used; pass a failure on with `?`, handle it with `match`, or discard it with `_ = ...`",
                     self.display(value.ty)
@@ -7572,9 +7626,14 @@ impl<'a> Checker<'a> {
             | (TyKind::Pointer(a), TyKind::Pointer(b))
             | (TyKind::Deque(a), TyKind::Deque(b))
             | (TyKind::Set(a), TyKind::Set(b)) => self.unify(inference, a, b),
-            (TyKind::Handle(h, a), TyKind::Handle(k, b)) if h == k => self.unify(inference, a, b),
+            (TyKind::Handle(h, a), TyKind::Handle(k, b)) if h == k => self.unify_argument(inference, a, b),
             // A value lifts into an option.
             (TyKind::Option(a), _) => self.unify(inference, a, actual),
+            // An error type of `Never` is one: what cannot fail.
+            (TyKind::Result(a, b), TyKind::Result(c, Ty::NEVER)) if inference.vars.contains(&b) => {
+                self.unify(inference, a, c);
+                inference.map.entry(b).or_insert(Ty::NEVER);
+            }
             (TyKind::Result(a, b), TyKind::Result(c, d)) | (TyKind::Map(a, b), TyKind::Map(c, d)) => {
                 self.unify(inference, a, c);
                 self.unify(inference, b, d);
@@ -7595,11 +7654,21 @@ impl<'a> Checker<'a> {
                 {
                     let pairs: Vec<(Ty, Ty)> = args.iter().copied().zip(values.iter().copied()).collect();
                     for (arg, value) in pairs {
-                        self.unify(inference, arg, value);
+                        self.unify_argument(inference, arg, value);
                     }
                 }
             }
             _ => {}
+        }
+    }
+
+    /// `unify` for a type argument, where `Never` is a type like any other
+    /// rather than the type of an expression that does not finish.
+    fn unify_argument(&mut self, inference: &mut Inference, pattern: Ty, actual: Ty) {
+        if actual == Ty::NEVER && inference.vars.contains(&pattern) {
+            inference.map.entry(pattern).or_insert(Ty::NEVER);
+        } else {
+            self.unify(inference, pattern, actual);
         }
     }
 
@@ -8586,6 +8655,8 @@ impl<'a> Checker<'a> {
                 }
                 Self::mk(hir::ExprKind::Try(Box::new(value)), payload, span)
             }
+            // What cannot fail propagates nothing: its success comes out.
+            TyKind::Result(ok, Ty::NEVER) => Self::mk(hir::ExprKind::Try(Box::new(value)), ok, span),
             TyKind::Result(ok, error) => {
                 if let Some(channel) = self.error_channel(cx, error, span, "E1301")
                     && channel != error
@@ -10641,6 +10712,19 @@ impl<'a> Checker<'a> {
                 let target = CallTarget::new(Callee::Std(function), signature, expected);
                 self.call_signature(cx, target, None, args, span)
             }
+            ([_, member @ ("offer" | "tryOffer")], Some(ModuleName::Module(StdModule::InternalChannel))) => {
+                let [sender, value] = args else { return self.arity_error(span, 2, args.len()) };
+                let sender = self.expr(cx, &sender.value, None);
+                let TyKind::Handle(Handle::Sender, item) = *self.types.kind(sender.ty) else {
+                    let message = format!("`{member}` sends through a `Sender`, found {}", self.display(sender.ty));
+                    self.diags.error("E1102", sender.span, message);
+                    return Self::error_expr(span);
+                };
+                let value = self.expr(cx, &value.value, Some(item));
+                let value = self.coerce(value, item);
+                let op = if *member == "offer" { hir::TaskOp::Offer } else { hir::TaskOp::TryOffer };
+                Self::mk(hir::ExprKind::TaskOp(op, vec![sender, value]), Ty::INT, span)
+            }
             (
                 [_, member],
                 Some(ModuleName::Module(
@@ -11090,7 +11174,10 @@ impl<'a> Checker<'a> {
                     false => self
                         .inferred(&inference, ty)
                         .or_else(|| self.call_expectation(&inference, ty))
-                        .or_else(|| if waits { None } else { self.fn_expectation(&inference, ty) }),
+                        .or_else(|| {
+                            let annotated = matches!(&arg.value.kind, ast::ExprKind::Closure(c) if c.params.iter().all(|p| p.ty.is_some()));
+                            if waits { None } else { self.fn_expectation(&inference, ty, annotated) }
+                        }),
                 };
                 if pass == 0 && expected.is_none() && self.needs_context(&arg.value) {
                     continue;

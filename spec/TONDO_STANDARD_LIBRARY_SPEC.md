@@ -1927,60 +1927,67 @@ pueden contar unas y no otras. Las demás operaciones son linealizables.
 
 #### 14.4.5 Executors, pools y actores
 
-`std.executor` construye políticas de ejecución sobre `spawn`, `Group`, canales
-y sincronización; no publica otro handle de tarea. Sus pools
-tienen capacidad y shutdown explícitos. El bridge bloqueante mueve trabajo a
-workers host acotados y su operación lógica espera como cualquier llamada, de
-modo que el caller la llama secuencialmente o usa el `spawn` ordinario para solaparla.
+`std.executor` construye políticas de ejecución sobre `spawn`, `Join` y
+canales, que siguen siendo las únicas tareas: no publica otro handle de tarea,
+ni un executor global, ni una segunda forma de esperar o cancelar.
 
-Un actor es un owner de estado con mailbox tipado y ciclo de vida estructurado,
-no una excepción al ownership. Shutdown, cancelación, saturación, pánico del
-worker y rechazo de nuevo trabajo tienen outcomes nominales y drenan el cleanup
-antes de completar. Ningún pool hereda capabilities o ambiente que el plan no
-haya declarado.
+~~~tondo
+import std.executor
 
-El contrato exhaustivo de este owner está en
-[`docs/contracts/stdlib-executor.md`](./docs/contracts/stdlib-executor.md) y su
-registro machine-readable en
-[`testing/stdlib-executor.json`](./testing/stdlib-executor.json). Ese registro
-fija capacidad, backpressure, actores, bridge bloqueante, lifecycle,
-capabilities y eventos privados. `STD-EXEC-IMPL-001` queda cerrado para la
-implementación cooperativa hosted de pools, `Join`, lifecycle, actores y envíos; `STD-EXEC-HOST-001` queda cerrado para el bridge hosted de
-`BlockingPool` y la lane privada de tokens del runtime nativo target-qualified
-`x86_64-unknown-linux-gnu`; el informe queda en
-`target/reliability/evidence/stdlib-executor-implementation.json`.
-`STD-EXEC-TEST-001` queda cerrado para el modelo independiente, las regresiones
-hosted, el stress de workers y el smoke fuzz acotado; su manifiesto es
-[`testing/stdlib-executor-test.json`](./testing/stdlib-executor-test.json).
-`STD-EXEC-PERF-001` queda cerrado por el presupuesto
-[`docs/contracts/stdlib-executor-performance.md`](./docs/contracts/stdlib-executor-performance.md)
-y el registro
-[`testing/stdlib-executor-performance.json`](./testing/stdlib-executor-performance.json):
-sus 27 muestras por workload mantienen separados el target hosted, el lane
-nativo privado y cualquier lowering AOT que todavía no esté promocionado. El
-`STD-EXEC-CONF-001` queda cerrado por el corpus común VM/native y la frontera
-estática de `threads`, con contrato
-[`testing/stdlib-executor-conformance.json`](./testing/stdlib-executor-conformance.json)
-y guía [`docs/contracts/stdlib-executor-conformance.md`](./docs/contracts/stdlib-executor-conformance.md).
-`STD-EXEC-DOC-001` queda cerrado por la guía ejecutable de scopes, pools,
-actores, trabajo bloqueante, cancelación, shutdown, costes y cinco patrones de
-composición. El contrato machine-readable, la fixture
-`tests/runtime/m11-std-executor-doc-001.to`, sus sidecars y los checkers
-`scripts/stdlib-executor-doc-check.sh` y
-`scripts/stdlib-executor-doc-test.sh` mantienen la salida `executor-doc-ok`.
-El siguiente leaf del owner es `DIAG-RUNTIME-001`.
-El cierre no reclama ABI público ni lowering native AOT de callables. La VM
-hosted ya verifica la
-adquisición explícita `Actor.ref(ref self): ActorRef[M]` como proyección de
-identidad no consumidora y ejecuta handlers cooperativos con mailbox FIFO,
-estado mutable conservado y propagación terminal de `E` por `Actor.stop`.
-También verifica `ActorRef.send` como operación transaccional:
-`prepare` no muta ni consume el mensaje, un único `commit` lo linealiza en la
-mailbox y `rollback` desregistra el waiter conservando el payload afín para el
-perdedor o `else`. Esta observación mantiene la frontera target-qualified: el
-runtime nativo sólo intercambia tokens opacos y los workers host ejecutan cada
-job en un `Engine` hijo aislado; el lowering native AOT de callables y la
-promoción pública siguen pendientes.
+let pool = executor.pool(4, 16)?                    // ! ExecutorError
+let job = pool.submit(() { fetch(url) })?           // Join[T] ! SubmitError
+match pool.trySubmit(() { work() }) {
+    ok(other) => other.wait()
+    err(executor.SubmitError.Saturated) => retryLater()
+    err(executor.SubmitError.Closed) => {}
+}
+let page = job.wait()
+pool.shutdown()
+
+let counter = executor.actor(0, 8, (total: var Int, amount: Int) { total += amount })?
+let address = counter.reference()                    // ActorRef[Int]
+address.send(5)?                                     // ! SendError
+address.trySend(5)?
+counter.stop()?                                      // ! E del handler
+~~~
+
+Un `Pool` ejecuta como mucho `workers` trabajos a la vez y mantiene como mucho
+`capacity` más esperando un worker; es un handle que comparten sus copias.
+`executor.pool(workers, capacity)` falla con `ExecutorError.InvalidWorkers`
+si `workers < 1` y con `InvalidCapacity` si `capacity < 0`. `submit(job)`
+inicia `job`, un `fn(): T`, como tarea que corre cuando hay un worker libre,
+y devuelve su `Join[T]`; mientras el pool está lleno, espera. `trySubmit` no
+espera y falla con `SubmitError.Saturated`. Tras `shutdown()`, ambos fallan con
+`SubmitError.Closed`, también un `submit` que ya esperaba sitio. `shutdown()`
+deja de admitir trabajos y espera a que terminen los admitidos. Los trabajos
+arrancan según se liberan workers, sin un orden garantizado entre los que
+esperan.
+
+Cada trabajo es una tarea ordinaria cuyo `Join` posee quien la envía: el
+bloque que la posee la espera al terminar, como a cualquier `Join` (11.11 del
+lenguaje), y se cancela con `job.cancel()` o con un `Group`; un trabajo que
+espera un worker se cancela en esa espera y no llega a empezar. Por eso el pool
+no ofrece una cancelación propia ni exige cerrarse: lo que posee un trabajo es
+su `Join`.
+
+Un actor es un dueño de estado con buzón acotado. `executor.actor(state,
+capacity, handle)` crea una tarea que empieza con `state` y lo cambia con
+`handle: fn(var S, M): !E`, un mensaje cada vez y en el orden en que llegaron;
+`capacity` negativa falla con `InvalidCapacity`. `actor.reference()` da un
+`ActorRef[M]`, un handle `Copy` y `Send` que no mantiene vivo al actor.
+`send(message)` espera mientras el buzón está lleno; `trySend` no espera y
+falla con `SendError.Saturated`. Ambos fallan con `SendError.Stopped` cuando
+el actor ya paró. Un error de `handle` para al actor.
+
+`actor.stop()` cierra el buzón, deja que el actor procese los mensajes que ya
+contiene y espera a que termine; devuelve el error de `handle` si uno lo paró.
+Pararlo otra vez devuelve lo mismo. Si su dueño no lo para, el final del bloque
+que posee el `Actor` lo hace del mismo modo y espera, igual que con un `Join`
+que nadie consumió.
+
+No existe un pool para trabajo bloqueante: cuando una llamada a C se queda en
+el sistema, el runtime pone otro worker en su lugar, de modo que una llamada
+bloqueante no detiene las tareas (16.16 del lenguaje).
 
 #### 14.4.6 Networking
 

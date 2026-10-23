@@ -104,3 +104,36 @@ fn record(stats: sync.Mutex[Stats], counter: sync.Atomic[Int]) {
     _ = counter.add(1)
 }
 ```
+
+## Pools and actors
+
+`std.executor` bounds work: a pool runs at most `workers` jobs at a time
+and keeps at most `capacity` waiting, so `submit` waits while it is full
+(`trySubmit` fails instead). A job is an ordinary task: its `Join` is
+waited for and cancelled as any. An actor owns state that one task changes,
+a message at a time; `reference()` gives the handle to send to it, and the
+end of the block that owns the actor stops it after its mailbox.
+
+```tondo
+import std.console
+import std.executor
+
+fn main(): !(executor.ExecutorError | executor.SubmitError | executor.SendError) {
+    let pool = executor.pool(2, 8)?
+    var group = Group.new[Int]()
+    for n in 1..=5 {
+        group.add(pool.submit(() { n * n })?)
+    }
+    console.println("{group.wait()}")
+    pool.shutdown()
+
+    let counter = executor.actor(0, 16, (total: var Int, amount: Int) {
+        total += amount
+        console.println("total {total}")
+    })?
+    let address = counter.reference()
+    address.send(2)?
+    address.send(3)?
+    counter.stop()?
+}
+```

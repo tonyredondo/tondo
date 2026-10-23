@@ -32,6 +32,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("csv", include_str!("../std/csv.to")),
     ("log", include_str!("../std/log.to")),
     ("http", include_str!("../std/http.to")),
+    ("executor", include_str!("../std/executor.to")),
 ];
 
 /// Each standard module's name and source.

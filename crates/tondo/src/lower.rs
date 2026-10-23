@@ -1310,6 +1310,9 @@ impl Builder<'_> {
             hir::ExprKind::Try(inner) => {
                 let value = self.expr(inner);
                 let place = self.place_of(value, inner.ty);
+                if let TyKind::Result(_, Ty::NEVER) = *self.types.kind(inner.ty) {
+                    return Operand::Copy(place.variant_field(OK, 0));
+                }
                 let is_option = matches!(self.types.kind(inner.ty), TyKind::Option(_));
                 let (failure, success) = if is_option { (NONE, SOME) } else { (ERR, OK) };
                 let tag_ty = self.types.tag_ty(inner.ty);
