@@ -1,0 +1,90 @@
+// MessagePack: any type written in the shortest forms and read back, bytes
+// and timestamps native, values of unknown shape, forms that other encoders
+// write, and errors with where they happened.
+import std.console
+import std.encoding
+import std.json
+import std.messagepack
+import std.serialization
+import std.time
+
+type Point = { x: Int, y: Int }
+enum Shape {
+    Empty
+    Circle(Float)
+    Polygon { name: String, points: Array[Point] }
+}
+type Packet = {
+    id: Int
+    big: Int
+    name: String
+    tags: Array[String]
+    shapes: Array[Shape]
+    data: serialization.Bytes
+    at: time.DateTime
+    note: String?
+}
+
+fn main(): !(messagepack.MessagePackError | time.TimeError) {
+    vectors()
+    let packet = Packet {
+        id: 7
+        big: -9000000000
+        name: "café"
+        tags: ["a", "b"]
+        shapes: [Shape.Empty, Shape.Circle(1.5), Shape.Polygon { name: "tri", points: [Point { x: 1, y: 2 }] }]
+        data: serialization.Bytes("hi".bytes())
+        at: time.parseDateTime("2026-10-23T08:00:00.5Z")?
+        note: none
+    }
+    let bytes = messagepack.encode(packet)
+    console.println("{bytes.length()} {encoding.hexEncode(bytes)}")
+    let back = messagepack.decode[Packet](bytes)?
+    console.println("{json.encode(back)}")
+    console.println("{messagepack.parse(bytes)?}")
+    console.println("{messagepack.encode(1)} {messagepack.encode(-1)} {messagepack.encode(300)} {messagepack.encode("")}")
+    match messagepack.decode[Packet](encoding.hexDecode("81a26964a178").unwrapOr([])) {
+        ok(_) => console.println("decoded")
+        err(error) => console.println("{error}")
+    }
+    match messagepack.parse(encoding.hexDecode("9201").unwrapOr([])) {
+        ok(_) => console.println("parsed")
+        err(error) => console.println("{error}")
+    }
+    match messagepack.parse(encoding.hexDecode("c1").unwrapOr([])) {
+        ok(_) => console.println("parsed")
+        err(error) => console.println("{error}")
+    }
+}
+
+/// Forms of the specification that are not the shortest, as other encoders
+/// write them.
+fn vectors() {
+    let forms = [
+        "cd012c", "d1fed4", "ca3fc00000", "d90161", "c40100", "dc000101", "de0001a161c0",
+        "d6ff00000000", "c70cff000000000000000000000001", "cf8000000000000000",
+    ]
+    for form in forms {
+        match messagepack.parse(encoding.hexDecode(form).unwrapOr([])) {
+            ok(value) => console.println("{form} {value}")
+            err(error) => console.println("{form} {error}")
+        }
+    }
+}
+// expect-stdout: cd012c 300
+// expect-stdout: d1fed4 -300
+// expect-stdout: ca3fc00000 1.5
+// expect-stdout: d90161 "a"
+// expect-stdout: c40100 "AA=="
+// expect-stdout: dc000101 [1]
+// expect-stdout: de0001a161c0 {"a":null}
+// expect-stdout: d6ff00000000 "1970-01-01T00:00:00Z"
+// expect-stdout: c70cff000000000000000000000001 "1970-01-01T00:00:01Z"
+// expect-stdout: cf8000000000000000 9223372036854776000
+// expect-stdout: 132 88a2696407a3626967d3fffffffde78ee600a46e616d65a5636166c3a9a47461677392a161a162a673686170657393a5456d70747981a6436972636c65cb3ff800000000000081a7506f6c79676f6e82a46e616d65a3747269a6706f696e74739182a17801a17902a464617461c4026869a26174d7ff773594006adb1400a46e6f7465c0
+// expect-stdout: {"id":7,"big":-9000000000,"name":"café","tags":["a","b"],"shapes":["Empty",{"Circle":1.5},{"Polygon":{"name":"tri","points":[{"x":1,"y":2}]}}],"data":"aGk=","at":"2026-10-23T08:00:00.5Z","note":null}
+// expect-stdout: {"id":7,"big":-9000000000,"name":"café","tags":["a","b"],"shapes":["Empty",{"Circle":1.5},{"Polygon":{"name":"tri","points":[{"x":1,"y":2}]}}],"data":"aGk=","at":"2026-10-23T08:00:00.5Z","note":null}
+// expect-stdout: [1] [255] [205, 1, 44] [160]
+// expect-stdout: expected an integer, found a string at $.id
+// expect-stdout: the input ends inside a value (byte 2) at $[1]
+// expect-stdout: 0xc1 is not a MessagePack value (byte 0) at $

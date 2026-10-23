@@ -12,6 +12,7 @@ use std::io::Write;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering, fence};
 
+mod civil;
 mod clock;
 mod codec;
 mod env;
@@ -22,6 +23,7 @@ mod json;
 mod math;
 mod memory;
 mod meta;
+mod msgpack;
 mod native;
 mod process;
 mod reflect;

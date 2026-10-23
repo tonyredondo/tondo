@@ -1,0 +1,374 @@
+// std.messagepack (standard library 14.11): MessagePack as values of
+// `Value`, and any type read from and written to MessagePack through the
+// traits of `std.serialization`, on top of the runtime's decoder and
+// encoder.
+
+import std.internal.msgpack as packnative
+import std.json as packjson
+import std.serialization
+
+// ---------------------------------------------------------------------------
+// Values
+// ---------------------------------------------------------------------------
+
+/// A MessagePack value of unknown shape. Map keys are text, or integers as
+/// their digits.
+pub enum Value {
+    Nil
+    Bool(Bool)
+    Int(Int)
+    Float(Float)
+    Text(String)
+    Bytes(Array[Byte])
+    /// The timestamp extension, as RFC 3339 text in UTC.
+    Timestamp(String)
+    Array(Array[Value])
+    Map(Map[String, Value])
+}
+
+pub fn Value.isNil(self): Bool {
+    match self {
+        Value.Nil => true
+        _ => false
+    }
+}
+
+/// The member `key` of a map.
+pub fn Value.get(self, key: String): Value? {
+    match self {
+        Value.Map(members) => members.get(key)
+        _ => none
+    }
+}
+
+/// The element `index` of an array.
+pub fn Value.at(self, index: Int): Value? {
+    match self {
+        Value.Array(items) => items.get(index)
+        _ => none
+    }
+}
+
+/// The value at a dotted path of keys, as `user.name`.
+pub fn Value.find(self, path: String): Value? {
+    var found = self
+    for key in path.split(".") {
+        found = found.get(key)?
+    }
+    found
+}
+
+pub fn Value.asText(self): String? {
+    match self {
+        Value.Text(text) => text
+        _ => none
+    }
+}
+
+pub fn Value.asInt(self): Int? {
+    match self {
+        Value.Int(value) => value
+        _ => none
+    }
+}
+
+/// A float, or an integer as a float.
+pub fn Value.asFloat(self): Float? {
+    match self {
+        Value.Float(value) => value
+        Value.Int(value) => Float(value)
+        _ => none
+    }
+}
+
+pub fn Value.asBool(self): Bool? {
+    match self {
+        Value.Bool(value) => value
+        _ => none
+    }
+}
+
+pub fn Value.asBytes(self): Array[Byte]? {
+    match self {
+        Value.Bytes(bytes) => bytes
+        _ => none
+    }
+}
+
+pub fn Value.asTimestamp(self): String? {
+    match self {
+        Value.Timestamp(text) => text
+        _ => none
+    }
+}
+
+pub fn Value.asArray(self): Array[Value]? {
+    match self {
+        Value.Array(items) => items
+        _ => none
+    }
+}
+
+pub fn Value.asMap(self): Map[String, Value]? {
+    match self {
+        Value.Map(members) => members
+        _ => none
+    }
+}
+
+/// The value as JSON text: bytes in base64, timestamps as text.
+impl Display for Value {
+    fn display(self): String {
+        packjson.encode(self)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+/// A failure to read MessagePack, with where it happened: the error of
+/// every format.
+pub alias MessagePackError = serialization.Error
+
+/// What reading does with a member that the type has no field for.
+pub alias UnknownFields = serialization.UnknownFields
+
+// ---------------------------------------------------------------------------
+// Encoding and decoding
+// ---------------------------------------------------------------------------
+
+/// A value of `T` from MessagePack bytes, which must hold exactly one.
+pub fn decode[T: serialization.Decode](
+    input: Array[Byte],
+    unknownFields: UnknownFields = UnknownFields.Ignore,
+): T ! MessagePackError {
+    let reader = Reader {
+        native: packnative.parse(input)
+        rejectUnknown: unknownFields == UnknownFields.Reject
+    }
+    let first = serialization.Source.value(reader)?
+    serialization.Decode.decode[T](reader, first)?
+}
+
+/// The MessagePack bytes of a value, every integer and length in its
+/// shortest form. An `Encode` written by hand that declares another count
+/// of items than it writes panics.
+pub fn encode[T: serialization.Encode](value: T): Array[Byte] {
+    let out = Writer { native: packnative.writer() }
+    value.encode(out)
+    let failure = packnative.failure(out.native)
+    if failure.length() > 0 {
+        panic("MessagePack cannot be written: {failure}")
+    }
+    packnative.finish(out.native)
+}
+
+/// A value of unknown shape.
+pub fn parse(input: Array[Byte]): Value ! MessagePackError {
+    decode[Value](input)
+}
+
+// ---------------------------------------------------------------------------
+// Formats
+// ---------------------------------------------------------------------------
+
+/// MessagePack read event by event: `str` is text, `bin` bytes and the
+/// timestamp extension a date and time.
+type Reader = {
+    native: packnative.Native
+    rejectUnknown: Bool
+}
+
+impl serialization.Source for Reader {
+    fn next(self): serialization.Event? ! MessagePackError {
+        let event = match packnative.next(self.native) {
+            0 => return none
+            1 => serialization.Event.Null
+            2 => serialization.Event.Bool(true)
+            3 => serialization.Event.Bool(false)
+            4 => serialization.Event.Int(packnative.int(self.native))
+            5 => serialization.Event.Float(packnative.float(self.native))
+            6 => serialization.Event.Text(packnative.text(self.native))
+            7 => serialization.Event.Number(packnative.text(self.native))
+            8 => serialization.Event.BeginList
+            9 => serialization.Event.EndList
+            10 => serialization.Event.BeginMap
+            11 => serialization.Event.EndMap
+            12 => serialization.Event.Key(packnative.text(self.native))
+            13 => serialization.Event.Bytes(packnative.bytes(self.native))
+            14 => serialization.Event.DateTime(packnative.text(self.native))
+            _ => fail self.error(serialization.ErrorKind.Syntax)
+        }
+        some(event)
+    }
+
+    fn skip(self, first: serialization.Event): !MessagePackError {
+        let code = match first {
+            serialization.Event.BeginList => 8
+            serialization.Event.BeginMap => 10
+            _ => 0
+        }
+        if packnative.skip(self.native, code) < 0 {
+            fail self.error(serialization.ErrorKind.Syntax)
+        }
+    }
+
+    fn failure(self, kind: serialization.ErrorKind, message: String): MessagePackError {
+        packnative.fail(self.native, message)
+        self.error(kind)
+    }
+
+    fn rejectsUnknown(self): Bool {
+        self.rejectUnknown
+    }
+
+    fn listName(self): String {
+        "an array"
+    }
+}
+
+fn Reader.error(self, kind: serialization.ErrorKind): MessagePackError {
+    MessagePackError {
+        kind: kind
+        message: packnative.where(self.native, 0)
+        path: packnative.where(self.native, 1)
+        line: 0
+        column: 0
+    }
+}
+
+/// MessagePack written event by event.
+type Writer = {
+    native: packnative.Native
+}
+
+impl serialization.Sink for Writer {
+    fn null(self) {
+        packnative.writeNull(self.native)
+    }
+
+    fn bool(self, value: Bool) {
+        packnative.writeBool(self.native, value)
+    }
+
+    fn int(self, value: Int) {
+        packnative.writeInt(self.native, value)
+    }
+
+    fn float(self, value: Float) {
+        packnative.writeFloat(self.native, value)
+    }
+
+    fn number(self, digits: String) {
+        match Int.parse(digits) {
+            ok(value) => packnative.writeInt(self.native, value)
+            err(_) => packnative.writeFloat(self.native, Float.parse(digits).unwrapOr(0.0))
+        }
+    }
+
+    fn text(self, value: String) {
+        packnative.writeText(self.native, value)
+    }
+
+    fn bytes(self, value: Array[Byte]) {
+        packnative.writeBytes(self.native, value)
+    }
+
+    fn dateTime(self, text: String) {
+        packnative.writeDateTime(self.native, text)
+    }
+
+    fn beginList(self, count: Int) {
+        packnative.writeOpen(self.native, false, count)
+    }
+
+    fn endList(self) {
+        packnative.writeClose(self.native)
+    }
+
+    fn beginMap(self, count: Int) {
+        packnative.writeOpen(self.native, true, count)
+    }
+
+    fn key(self, name: String) {
+        packnative.writeKey(self.native, name)
+    }
+
+    fn endMap(self) {
+        packnative.writeClose(self.native)
+    }
+}
+
+impl serialization.Encode for Value {
+    fn encode[S: serialization.Sink](self, out: S) {
+        match self {
+            Value.Nil => out.null()
+            Value.Bool(value) => out.bool(value)
+            Value.Int(value) => out.int(value)
+            Value.Float(value) => out.float(value)
+            Value.Text(text) => out.text(text)
+            Value.Bytes(bytes) => out.bytes(bytes)
+            Value.Timestamp(text) => out.dateTime(text)
+            Value.Array(items) => {
+                out.beginList(items.length())
+                for item in items {
+                    serialization.Encode.encode(item, out)
+                }
+                out.endList()
+            }
+            Value.Map(members) => {
+                out.beginMap(members.length())
+                for (key, member) in members {
+                    out.key(key)
+                    serialization.Encode.encode(member, out)
+                }
+                out.endMap()
+            }
+        }
+    }
+}
+
+impl serialization.Decode for Value {
+    fn decode[S: serialization.Source](input: S, first: serialization.Event): Value !
+        MessagePackError {
+        match first {
+            serialization.Event.Null => Value.Nil
+            serialization.Event.Bool(value) => Value.Bool(value)
+            serialization.Event.Int(value) => Value.Int(value)
+            serialization.Event.Float(value) => Value.Float(value)
+            serialization.Event.Number(digits) => match Int.parse(digits) {
+                ok(value) => Value.Int(value)
+                err(_) => Value.Float(serialization.Decode.decode[Float](input, first)?)
+            }
+            serialization.Event.Text(text) => Value.Text(text)
+            serialization.Event.Bytes(bytes) => Value.Bytes(bytes)
+            serialization.Event.DateTime(text) => Value.Timestamp(text)
+            serialization.Event.BeginList => {
+                var items: Array[Value] = []
+                for {
+                    let event = input.value()?
+                    match event {
+                        serialization.Event.EndList => break
+                        _ => items.push(serialization.Decode.decode[Value](input, event)?)
+                    }
+                }
+                Value.Array(items)
+            }
+            serialization.Event.BeginMap => {
+                var members: Map[String, Value] = [:]
+                for {
+                    match input.nextKey()? {
+                        some(key) => {
+                            let event = input.value()?
+                            members[key] = serialization.Decode.decode[Value](input, event)?
+                        }
+                        none => break
+                    }
+                }
+                Value.Map(members)
+            }
+            _ => fail input.mismatch(first, "a MessagePack value")
+        }
+    }
+}

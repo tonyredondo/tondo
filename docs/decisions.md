@@ -1152,3 +1152,20 @@ exactly one, and says how many there were otherwise. Writing uses the
 library's emitter, which quotes any text another reader would take for
 something else and writes text of several lines as a `|` block; `none` is
 written `null` rather than its `~`.
+
+## 2026-10-23 — MessagePack, and bytes for every format
+
+`std.messagepack` decodes with a reader of its own, small enough to give
+each failure its byte and path, and encodes with `rmp`, which writes the
+shortest form of every integer and length. Because MessagePack writes the
+count of a list or map before its items, the shared `Sink` receives counts,
+and the writer checks each against the items written: a count that does
+not match can only come from an `Encode` written by hand, so it panics
+with what happened instead of making every `encode` fallible. Bytes became
+a shared type, `serialization.Bytes`, written natively by binary formats
+and as base64 by text ones, and the timestamp extension is the shared
+`DateTime` event. Keys are text, or integers read as their digits; the
+legacy specification's maps of any keys, raw views and canonical encoder
+were left out until a program needs them. Generating the decoding of an
+enum used a local that a field named `name` shadowed; it is `__variant`
+now.

@@ -986,6 +986,14 @@ pub const NATIVES: &[Native] = {
     const fn yaml(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "yaml", name, receiver: None, params, result, symbol }
     }
+    const fn msgpack(
+        name: &'static str,
+        params: &'static [NativeTy],
+        result: NativeTy,
+        symbol: &'static str,
+    ) -> Native {
+        Native { module: "msgpack", name, receiver: None, params, result, symbol }
+    }
     const fn r(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "regex", name, receiver: Some(Regex), params, result, symbol }
     }
@@ -1171,6 +1179,28 @@ pub const NATIVES: &[Native] = {
         yaml("writeOpen", &[Object, Bool], Unit, "tondo_rt_yaml_write_open"),
         yaml("writeClose", &[Object], Unit, "tondo_rt_yaml_write_close"),
         yaml("finish", &[Object], String, "tondo_rt_yaml_finish"),
+        msgpack("parse", &[Bytes], Object, "tondo_rt_msgpack_parse"),
+        msgpack("next", &[Object], Int, "tondo_rt_msgpack_next"),
+        msgpack("text", &[Object], String, "tondo_rt_msgpack_text"),
+        msgpack("int", &[Object], Int, "tondo_rt_msgpack_int"),
+        msgpack("float", &[Object], Float, "tondo_rt_msgpack_float"),
+        msgpack("bytes", &[Object], Bytes, "tondo_rt_msgpack_bytes"),
+        msgpack("skip", &[Object, Int], Int, "tondo_rt_msgpack_skip"),
+        msgpack("fail", &[Object, String], Unit, "tondo_rt_msgpack_fail"),
+        msgpack("where", &[Object, Int], String, "tondo_rt_msgpack_where"),
+        msgpack("writer", &[], Object, "tondo_rt_msgpack_writer"),
+        msgpack("writeNull", &[Object], Unit, "tondo_rt_msgpack_write_null"),
+        msgpack("writeBool", &[Object, Bool], Unit, "tondo_rt_msgpack_write_bool"),
+        msgpack("writeInt", &[Object, Int], Unit, "tondo_rt_msgpack_write_int"),
+        msgpack("writeFloat", &[Object, Float], Unit, "tondo_rt_msgpack_write_float"),
+        msgpack("writeText", &[Object, String], Unit, "tondo_rt_msgpack_write_text"),
+        msgpack("writeBytes", &[Object, Bytes], Unit, "tondo_rt_msgpack_write_bytes"),
+        msgpack("writeDateTime", &[Object, String], Unit, "tondo_rt_msgpack_write_datetime"),
+        msgpack("writeKey", &[Object, String], Unit, "tondo_rt_msgpack_write_key"),
+        msgpack("writeOpen", &[Object, Bool, Int], Unit, "tondo_rt_msgpack_write_open"),
+        msgpack("writeClose", &[Object], Unit, "tondo_rt_msgpack_write_close"),
+        msgpack("finish", &[Object], Bytes, "tondo_rt_msgpack_finish"),
+        msgpack("failure", &[Object], String, "tondo_rt_msgpack_failure"),
         math("sin", &[Float], Float, "tondo_rt_math_sin"),
         math("cos", &[Float], Float, "tondo_rt_math_cos"),
         math("tan", &[Float], Float, "tondo_rt_math_tan"),

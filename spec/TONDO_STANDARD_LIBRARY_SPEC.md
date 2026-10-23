@@ -2785,148 +2785,65 @@ copia el documento ni el valor de un campo.
 
 ### 14.11 `std.messagepack`
 
-`std.messagepack` implementa la
+`std.messagepack` lee y escribe la
 [especificación MessagePack](https://github.com/msgpack/msgpack/blob/master/spec.md)
-binaria completa: nil, booleanos, enteros signed/unsigned, floats, strings
-UTF-8, binary, arrays, maps y extension values. Un objeto `str` con bytes UTF-8
-inválidos produce error; `bin` conserva cualquier secuencia de bytes.
+binaria sobre un decodificador y un codificador del runtime.
 
-La ruta tipada comparte `Encode`/`Decode` y escribe directamente al
-buffer o writer. `Value` representa uso dinámico. Como una key
-MessagePack puede ser cualquier valor, un map dinámico conserva sus pares como
-secuencia ordenada en lugar de imponer artificialmente `Map[String, Value]`;
-así también puede detectar duplicados según la política del caller.
+~~~tondo
+import std.messagepack
 
-El encoder usa siempre la representación válida más corta para enteros y
-longitudes. Conserva orden de entrada en modo ordinario. La operación canónica
-define además, de forma propia de Tondo:
-
-- `float32` solo cuando conserva exactamente el valor y sus signos relevantes;
-  en otro caso usa `float64`;
-- un único bit pattern quiet NaN, manteniendo distintos `-0.0` y `0.0`;
-- maps ordenados lexicográficamente por los bytes del encoding canónico de cada
-  key; y
-- rechazo de dos keys con el mismo encoding canónico, por lo que no existe un
-  desempate dependiente del layout.
-
-Así, dos layouts internos no alteran el resultado. Esta operación no se presenta
-como parte de la especificación MessagePack ni como compatible con un modo
-canónico externo sin nombre.
-
-Extension values conservan type code y payload exactos. La extensión timestamp
-estándar puede convertirse explícitamente a un `MessagePackTimestamp` de
-segundos Unix y nanosegundos; no adelanta calendario civil ni se convierte en
-`Instant`. Una extensión desconocida no se pierde ni se interpreta por
-reflection.
-
-La API fuente única de 0.1 es:
-
-~~~tondo pseudocode
-pub fn parse(input: Array[Byte], options: MessagePackDecodeOptions): Value ! MessagePackError
-pub fn parseView(input: Array[Byte], options: MessagePackDecodeOptions): ValueView ! MessagePackError
-pub fn decode[T: Decode[MessagePack]](input: Array[Byte], options: MessagePackDecodeOptions): T ! MessagePackError
-pub fn encode(value: Value, options: MessagePackEncodeOptions): Array[Byte] ! MessagePackError
-pub fn encode[T: Encode[MessagePack]](value: T, options: MessagePackEncodeOptions): Array[Byte] ! MessagePackError
-pub fn validate(input: Array[Byte], options: MessagePackDecodeOptions): Unit ! MessagePackError
-pub fn encodeDeterministic(value: Value, limits: MessagePackLimits): Array[Byte] ! MessagePackError
-pub fn raw(input: Array[Byte], options: MessagePackDecodeOptions): Raw ! MessagePackError
-pub unsafe fn rawUnchecked(input: Array[Byte]): Raw
-pub fn MessagePackReader.next(var self): MessagePackEvent? ! MessagePackError
-pub fn MessagePackReader.own(var self, event: MessagePackEvent): MessagePackEvent ! MessagePackError
-pub fn MessagePackWriter.write(var self, event: MessagePackEvent): Unit ! MessagePackError
-pub fn MessagePackWriter.finish(var self): Unit ! MessagePackError
+let bytes = messagepack.encode(packet)
+let back: Packet = messagepack.decode(bytes)?
+let document = messagepack.parse(bytes)?
 ~~~
 
-El catálogo completo de `Value`, ext/timestamp, policies, limits,
-paths y errores está en el [contrato fuente de `std.messagepack`](./docs/contracts/stdlib-messagepack.md).
+La superficie es:
 
-La implementación portable de `std.messagepack` reside en
-`crates/tondo-stdlib/src/messagepack_api.rs`: `encode_static`/`decode_static`
-son la única frontera del ABI `Encode[MessagePack]`/`Decode[MessagePack]` y
-`encode_typed`/`decode_typed` quedan limitados al bridge Rust. El owner mantiene
-las alias `Value`, `ValueView` y `Raw` y no publica una segunda superficie por
-formato.
+~~~tondo pseudocode
+pub enum Value {
+    Nil
+    Bool(Bool)
+    Int(Int)
+    Float(Float)
+    Text(String)
+    Bytes(Array[Byte])
+    Timestamp(String)       // RFC 3339 en UTC
+    Array(Array[Value])
+    Map(Map[String, Value])
+}
+pub alias MessagePackError = serialization.Error
+pub alias UnknownFields = serialization.UnknownFields
 
-La evidencia ejecutable de `std.messagepack` es
-`STD-A-MSGPACK-EVIDENCE-001`. Cubre el modelo wire completo, formas no
-mínimas, enteros signed/unsigned, bits de floats, UTF-8 frente a binary,
-claves arbitrarias, ext/timestamp, policies de duplicados, streaming,
-determinismo y límites finitos. La suite verifica que el chunking de un byte no
-altera eventos, preserva extensiones desconocidas y compara en ambas
-direcciones con `rmpv`. `HOST` es `not-applicable`: el bridge del compilador no
-añade capabilities ni semántica de wire dependiente del target.
+pub fn decode[T: serialization.Decode](input: Array[Byte], unknownFields: UnknownFields = UnknownFields.Ignore): T ! MessagePackError
+pub fn encode[T: serialization.Encode](value: T): Array[Byte]
+pub fn parse(input: Array[Byte]): Value ! MessagePackError
 
-`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
-`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
+pub fn Value.isNil(self): Bool
+pub fn Value.get(self, key: String): Value?
+pub fn Value.at(self, index: Int): Value?
+pub fn Value.find(self, path: String): Value?
+pub fn Value.asText(self): String?
+pub fn Value.asInt(self): Int?
+pub fn Value.asFloat(self): Float?
+pub fn Value.asBool(self): Bool?
+pub fn Value.asBytes(self): Array[Byte]?
+pub fn Value.asTimestamp(self): String?
+pub fn Value.asArray(self): Array[Value]?
+pub fn Value.asMap(self): Map[String, Value]?
+impl Display for Value                     // como JSON
+~~~
 
-La evidencia ejecutable de `std.protobuf` es `STD-A-PROTOBUF-EVIDENCE-001`.
-Combina el wire portable con la frontera build-only schema-first: TOML
-declarativo, grafo cerrado de imports, proto3, presencia, repeated/packed,
-maps, oneof, enums abiertos, unknown fields/grupos, evolución segura e
-incompatible, descriptor raíz, reader/writer schema-bound, determinismo y
-límites finitos. La suite comprueba fragmentación de un byte y compatibilidad
-bidireccional con `prost`, además de que el generator produzca identidades
-estables y errores de schema sin inputs ambientales. `HOST` es
-`not-applicable`.
-
-`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
-`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
-
-La evidencia ejecutable de `std.testing` es `STD-A-TESTING-EVIDENCE-001`.
-El módulo es test-only y su bridge `HOST` verificado pertenece al worker del
-runner: no concede capabilities ni puede importarse desde producción. La
-evidencia enlaza las 25 firmas públicas con assertions de ownership prestado,
-diffs acotados, tolerancias finitas, consumo explícito de `Option`/`Result`,
-temporales afines bajo raíz privada, generators replayables, shrinking sellado,
-control terminal, virtual time y los fixtures de dogfooding del runner.
-
-`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
-`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
-
-`testing/stdlib-test-coordination.json` links 22 owners, 301 public signatures
-and 171 requirements to 66 model laws and their test/campaign references. The
-generator preserves each signature's public implementation status and missing
-evidence separately from model coverage. A verified model law does not prove
-execution of that API from Tondo. The audit reopened `STD-A-FUZZ-001` to verify
-the actual dispatch and oracle of each owner campaign; recorded references do
-not close that task or global conformance.
-
-The current owner fuzz audit records eight constant frontend checks, three
-Rust-reference routes, nine bounded kernel-invariant routes and two compiler
-models. All 22 whole-owner FUZZ cells remain partial; the nine component
-assertions are retained separately. `STD-TEST-001` remains
-open until its declared laws and commands establish the required public
-coverage. `stdlib-owner-evidence-generate.sh` synchronizes FUZZ and CONF from
-their source contracts without promoting declared cases into observations.
-
-La coordinación `STD-CONF-001` queda registrada en
-`testing/stdlib-conformance-coordination.json`: contiene los 22 owners de
-`STD-0.1A` y una fila `CONF` explícita para cada firma o requisito de la matriz
-(301 firmas y 171 requisitos). Cada fila conserva el estado actual de la
-matriz, una razón obligatoria para `partial`/`pending`, referencias
-reproducibles y comandos. El registro cruza la matriz normativa, la auditoría
-de API, la evidencia de owners, la coordinación de modelos y el harness
-externo de codecs; no permite declarar `verified` sin la observación de la
-fila ni convierte la coordinación en promoción.
-
-The public meta/reflection boundary additionally has an explicit row plan in
-`testing/stdlib-meta-reflect-conformance.json`: 25 ordinary companion callables,
-27 hosted descriptor callables and six requirements per owner. Its checker
-requires current draft execution observations for every referenced test, with
-exact source, inventory and manifest identities. `--plan` validates declarations
-only. This scoped conformance does not change the separate FUZZ or performance
-cells and cannot promote the other standard-library owners or the S1A seal.
-
-`STD-DOC-001` is recorded in `testing/stdlib-documentation.json`. Each owner
-has normative contracts and separate kernel, bridge and public API boundaries.
-The API field describes static callable traceability; missing signatures keep
-an owner partial, including intrinsic and build-only surfaces. The current
-record links 34 examples: 28 runtime cases with exact sidecars, four external
-codec cases and two compiler cases. Reflection executes through ordinary
-Tondo runtime examples. The meta companion executes provider programs during
-compilation and has no runtime host adapter. Documentation coverage describes
-the unpublished draft; it does not promote implementation, test/fuzz,
-performance or conformance.
+- El codificador usa la forma más corta de cada entero y longitud; el
+  decodificador acepta todas las formas. Un `str` es texto y debe ser UTF-8; un
+  `bin` son bytes (`serialization.Bytes` en un tipo); la extensión timestamp
+  (-1) es un `DateTime`, que `time.DateTime` lee y escribe. Otra extensión es un
+  error.
+- Las claves de un mapa son texto, o enteros leídos como sus dígitos. Un entero
+  sin signo que no cabe en `Int` es un `Number`: un error para un campo `Int`, un
+  `Float` en `Value`.
+- Un `Encode` escrito a mano que declara otro número de elementos de los que
+  escribe es un error de programa: `encode` hace pánico con lo ocurrido.
+- Los errores de lectura llevan el camino y el byte donde ocurrieron.
 
 ### 14.12 `std.protobuf`
 

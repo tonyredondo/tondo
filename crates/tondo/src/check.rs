@@ -178,6 +178,7 @@ enum StdModule {
     InternalHttp,
     InternalToml,
     InternalYaml,
+    InternalMsgpack,
 }
 
 /// The types `std.process` declares when imported.
@@ -1681,6 +1682,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "http"] => StdModule::InternalHttp,
             ["std", "internal", "toml"] => StdModule::InternalToml,
             ["std", "internal", "yaml"] => StdModule::InternalYaml,
+            ["std", "internal", "msgpack"] => StdModule::InternalMsgpack,
             ["std", rest @ ..] => {
                 let name = rest.join(".");
                 // Modules the standard library specifies and does not have yet.
@@ -1779,7 +1781,10 @@ impl<'a> Checker<'a> {
         if matches!(module, StdModule::InternalText | StdModule::InternalCodec | StdModule::InternalHttp) {
             self.types.intern(TyKind::Array(Ty::STRING));
         }
-        if matches!(module, StdModule::InternalHttp | StdModule::InternalToml | StdModule::InternalYaml) {
+        if matches!(
+            module,
+            StdModule::InternalHttp | StdModule::InternalToml | StdModule::InternalYaml | StdModule::InternalMsgpack
+        ) {
             self.types.handle(Handle::Native, Ty::UNIT);
         }
         if module == StdModule::Process && self.process.is_none() {
@@ -1894,7 +1899,12 @@ impl<'a> Checker<'a> {
                 self.types.lookup(&TyKind::Handle(Handle::Regex, Ty::UNIT))
             }
             (
-                Some(ModuleName::Module(StdModule::InternalHttp | StdModule::InternalToml | StdModule::InternalYaml)),
+                Some(ModuleName::Module(
+                    StdModule::InternalHttp
+                    | StdModule::InternalToml
+                    | StdModule::InternalYaml
+                    | StdModule::InternalMsgpack,
+                )),
                 "Native",
             ) => self.types.lookup(&TyKind::Handle(Handle::Native, Ty::UNIT)),
             (Some(ModuleName::Module(StdModule::InternalReflect)), "Box") => {
@@ -10251,7 +10261,8 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalCodec
                     | StdModule::InternalHttp
                     | StdModule::InternalToml
-                    | StdModule::InternalYaml),
+                    | StdModule::InternalYaml
+                    | StdModule::InternalMsgpack),
                 )),
             ) => {
                 if module == StdModule::InternalReflect && matches!(*member, "box" | "describe") {
@@ -10276,6 +10287,7 @@ impl<'a> Checker<'a> {
                     StdModule::InternalHttp => "http",
                     StdModule::InternalToml => "toml",
                     StdModule::InternalYaml => "yaml",
+                    StdModule::InternalMsgpack => "msgpack",
                     _ => "reflect",
                 };
                 let found =

@@ -66,7 +66,8 @@ impl Kind {
     fn standard(self, module: &str, name: &str) -> bool {
         match (self, module) {
             (Kind::Serialization, "json") => matches!(name, "Value" | "Number" | "Raw"),
-            (Kind::Serialization, "toml" | "yaml") => name == "Value",
+            (Kind::Serialization, "toml" | "yaml" | "messagepack") => name == "Value",
+            (Kind::Serialization, "serialization") => name == "Bytes",
             (Kind::Serialization, "time") => name == "DateTime",
             (Kind::Reflect, "reflect") => name == "Value",
             _ => false,
@@ -624,9 +625,9 @@ impl Generator<'_> {
             },
             ast::Item::Enum(e) => {
                 let unknown =
-                    format!("fail input.failure({s}.ErrorKind.Type, \"unknown variant `{{__name}}` of `{name}`\")");
+                    format!("fail input.failure({s}.ErrorKind.Type, \"unknown variant `{{__variant}}` of `{name}`\")");
                 out.push_str("        match first {\n");
-                out.push_str(&format!("            {s}.Event.Text(__name) => match __name {{\n"));
+                out.push_str(&format!("            {s}.Event.Text(__variant) => match __variant {{\n"));
                 for variant in &e.variants {
                     if let ast::VariantPayload::Unit = variant.payload {
                         out.push_str(&format!(
@@ -646,10 +647,10 @@ impl Generator<'_> {
                 }
                 out.push_str(&format!("            {s}.Event.BeginMap => {{\n"));
                 out.push_str(&format!(
-                    "                let __name = match input.nextKey()? {{\n                    some(__key) => __key\n                    none => fail input.failure({s}.ErrorKind.Type, \"expected a variant of `{name}`\")\n                }}\n"
+                    "                let __variant = match input.nextKey()? {{\n                    some(__key) => __key\n                    none => fail input.failure({s}.ErrorKind.Type, \"expected a variant of `{name}`\")\n                }}\n"
                 ));
                 out.push_str(
-                    "                let __event = input.value()?\n                let __value = match __name {\n",
+                    "                let __event = input.value()?\n                let __value = match __variant {\n",
                 );
                 for variant in &e.variants {
                     let path = format!("{name}.{}", variant.name.name);

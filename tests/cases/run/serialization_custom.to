@@ -34,6 +34,9 @@ fn main(): !json.JsonError {
     console.println(text)
     let back = json.decode[Path](text)?
     console.println("{back.name} {back.points.length()} {back.points[1].y}")
+    // Bytes are base64 in a text format.
+    let blob = json.encode(serialization.Bytes("hi!".bytes()))
+    console.println("{blob} {json.decode[serialization.Bytes](blob)?.value}")
     match json.decode[Path]("{{\"name\":\"bad\",\"points\":[[1]]}}") {
         ok(_) => console.println("decoded")
         err(error) => console.println("{error}")
@@ -42,4 +45,5 @@ fn main(): !json.JsonError {
 
 // expect-stdout: {"name":"zigzag","points":[[1,2],[3,4]]}
 // expect-stdout: zigzag 2 4
+// expect-stdout: "aGkh" [104, 105, 33]
 // expect-stdout: expected an integer, found the end of an array at $.points[0] (line 1, column 28)

@@ -4,6 +4,8 @@
 // record, enum and newtype whose parts implement them; each format gives a
 // `Source` and a `Sink`.
 
+import std.internal.codec as serialcodec
+
 // ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
@@ -427,5 +429,33 @@ impl[V: Decode] Decode for Map[String, V] {
             }
         }
         members
+    }
+}
+
+/// Bytes as every format holds them: natively in a binary format, as a
+/// base64 string in a text one.
+pub type Bytes = Array[Byte]
+
+impl Encode for Bytes {
+    fn encode[S: Sink](self, out: S) {
+        out.bytes(self.value)
+    }
+}
+
+impl Decode for Bytes {
+    fn decode[S: Source](input: S, first: Event): Bytes ! Error {
+        match first {
+            Event.Bytes(bytes) => Bytes(bytes)
+            Event.Text(text) => {
+                if serialcodec.base64Check(text, false) != -1 {
+                    fail input.failure(
+                        ErrorKind.Type,
+                        "expected bytes as base64, found text that is not",
+                    )
+                }
+                Bytes(serialcodec.base64Decode(text, false))
+            }
+            _ => fail input.mismatch(first, "bytes")
+        }
     }
 }
