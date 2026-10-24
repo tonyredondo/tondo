@@ -85,12 +85,26 @@ struct Block {
     objects: AtomicI64,
     /// The block made before this one.
     next: *const Block,
+    /// The next spare block, while this one is.
+    spare: AtomicPtr<Block>,
 }
 
 /// The last block made, from which every block can be reached.
 static BLOCKS: AtomicPtr<Block> = AtomicPtr::new(std::ptr::null_mut());
-/// Blocks whose threads ended, for the next ones.
-static SPARE: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+/// Blocks whose threads ended, for the next ones, behind a lock that
+/// allocates nothing: a thread takes one while it allocates, and a
+/// `Mutex` may allocate when it is first locked, as on macOS.
+static SPARE: AtomicPtr<Block> = AtomicPtr::new(std::ptr::null_mut());
+static SPARE_LOCK: AtomicBool = AtomicBool::new(false);
+
+fn with_spare<R>(f: impl FnOnce(&AtomicPtr<Block>) -> R) -> R {
+    while SPARE_LOCK.swap(true, Ordering::Acquire) {
+        std::hint::spin_loop();
+    }
+    let result = f(&SPARE);
+    SPARE_LOCK.store(false, Ordering::Release);
+    result
+}
 /// The block of a thread whose memory does not count: one that serves the
 /// tools, so that looking at a program does not change what it shows.
 const UNCOUNTED: *const Block = std::ptr::dangling::<Block>();
@@ -113,8 +127,15 @@ fn block() -> Option<&'static Block> {
 /// nothing.
 #[cold]
 fn new_block() -> *const Block {
-    if let Some(block) = SPARE.lock().unwrap_or_else(|e| e.into_inner()).pop() {
-        return block as *const Block;
+    let spare = with_spare(|head| {
+        let block = head.load(Ordering::Relaxed);
+        if let Some(taken) = unsafe { block.as_ref() } {
+            head.store(taken.spare.load(Ordering::Relaxed), Ordering::Relaxed);
+        }
+        block
+    });
+    if !spare.is_null() {
+        return spare;
     }
     let layout = std::alloc::Layout::new::<Block>();
     let block = unsafe { std::alloc::GlobalAlloc::alloc(&std::alloc::System, layout) } as *mut Block;
@@ -124,8 +145,14 @@ fn new_block() -> *const Block {
     let mut head = BLOCKS.load(Ordering::Acquire);
     loop {
         let zero = || AtomicU64::new(0);
-        let new =
-            Block { allocated: zero(), freed: zero(), allocations: zero(), objects: AtomicI64::new(0), next: head };
+        let new = Block {
+            allocated: zero(),
+            freed: zero(),
+            allocations: zero(),
+            objects: AtomicI64::new(0),
+            next: head,
+            spare: AtomicPtr::new(std::ptr::null_mut()),
+        };
         unsafe { block.write(new) };
         match BLOCKS.compare_exchange_weak(head, block, Ordering::AcqRel, Ordering::Acquire) {
             Ok(_) => return block,
@@ -154,8 +181,11 @@ fn bump(counter: &AtomicU64, by: u64) {
 /// the threads that serve the tools.
 pub(crate) fn retire_here() {
     let block = BLOCK.with(|cell| cell.replace(UNCOUNTED));
-    if !block.is_null() && block != UNCOUNTED {
-        SPARE.lock().unwrap_or_else(|e| e.into_inner()).push(block as usize);
+    if let Some(retired) = unsafe { block.as_ref() }.filter(|_| block != UNCOUNTED) {
+        with_spare(|head| {
+            retired.spare.store(head.load(Ordering::Relaxed), Ordering::Relaxed);
+            head.store(block as *mut Block, Ordering::Relaxed);
+        });
     }
 }
 
@@ -357,7 +387,7 @@ fn descriptors() -> Descriptors {
                 // Those of the diagnostics themselves, whose address is
                 // their socket's path, do not count.
                 let path = unsafe { &*(&raw const address).cast::<libc::sockaddr_un>() }.sun_path;
-                let path: Vec<u8> = path.iter().take_while(|&&c| c != 0).map(|&c| c as u8).collect();
+                let path: Vec<u8> = path.iter().take_while(|&&c| c != 0).map(|c| c.to_ne_bytes()[0]).collect();
                 match () {
                     _ if address.ss_family as i32 == libc::AF_UNIX && ours == Some(&path[..]) => open.total -= 1,
                     _ if address.ss_family as i32 == libc::AF_UNIX => open.unix += 1,
