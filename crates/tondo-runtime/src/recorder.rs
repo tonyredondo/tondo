@@ -195,7 +195,9 @@ extern "C" fn sample(_: i32, info: *mut libc::siginfo_t, context: *mut libc::c_v
     let (_, pc, fp, _) = unsafe { crate::trace::faulted(info, context) };
     // A dump asks a thread that runs on where it is with this signal too.
     crate::tasks::answer_where(pc, fp);
-    if !on() {
+    // On macOS a worker is signalled whether it runs or waits: only one
+    // that runs a task makes a sample.
+    if !on() || (cfg!(target_os = "macos") && crate::tasks::current().is_null()) {
         unsafe { *errno = saved };
         return;
     }
@@ -275,7 +277,19 @@ pub(crate) fn install() {
 pub(crate) fn start() {
     install();
     ON.store(true, Ordering::SeqCst);
-    timer(1000);
+    // macOS sends the signal of the process's processor time to whichever
+    // thread it likes, mostly the main one, however idle; a thread of the
+    // runtime signals each worker every millisecond instead.
+    if cfg!(target_os = "macos") {
+        let _ = crate::tasks::try_spawn_thread(Some(64 * 1024), || {
+            while on() {
+                crate::tasks::signal_workers(libc::SIGPROF);
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        });
+    } else {
+        timer(1000);
+    }
 }
 
 pub(crate) fn stop() {

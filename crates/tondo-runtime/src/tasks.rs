@@ -1061,6 +1061,14 @@ pub(crate) fn answer_where(pc: usize, fp: usize) {
     runner.asked.store(false, Ordering::Release);
 }
 
+/// Sends `signal` to every thread that has run Tondo code.
+pub(crate) fn signal_workers(signal: i32) {
+    let runners: Vec<&Runner> = IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    for runner in runners {
+        unsafe { libc::pthread_kill(runner.thread, signal) };
+    }
+}
+
 /// Asks the threads that still run Tondo code where they are, a while.
 fn ask_where(runners: &[&Runner]) -> Vec<(*mut Task, Vec<usize>)> {
     super::recorder::install();
