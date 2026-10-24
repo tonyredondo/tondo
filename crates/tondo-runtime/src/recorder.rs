@@ -1,0 +1,284 @@
+//! What `tondo trace` records (toolchain 7.5): while a tool traces the
+//! program, the runtime's events, each kept by the thread it happens on,
+//! and every millisecond of processor time a sample of where a thread is,
+//! for a profile. Recording nothing costs a load where each event would be.
+
+use std::cell::{Cell, UnsafeCell};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+
+static ON: AtomicBool = AtomicBool::new(false);
+
+/// Whether a tool traces the program now.
+#[inline]
+pub(crate) fn on() -> bool {
+    ON.load(Ordering::Relaxed)
+}
+
+/// Nanoseconds of the monotonic clock, which a signal handler may read.
+pub(crate) fn now() -> u64 {
+    let mut time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut time) };
+    time.tv_sec as u64 * 1_000_000_000 + time.tv_nsec as u64
+}
+
+/// The frames of a stack a trace keeps: return addresses, innermost first.
+#[derive(Clone, Copy)]
+pub(crate) struct Stack {
+    frames: [usize; DEPTH],
+    count: usize,
+}
+
+const DEPTH: usize = 64;
+
+impl Stack {
+    pub(crate) const EMPTY: Stack = Stack { frames: [0; DEPTH], count: 0 };
+
+    pub(crate) fn of(addresses: impl Iterator<Item = usize>) -> Stack {
+        let mut stack = Stack::EMPTY;
+        for address in addresses.take(DEPTH) {
+            stack.frames[stack.count] = address;
+            stack.count += 1;
+        }
+        stack
+    }
+
+    pub(crate) fn frames(&self) -> &[usize] {
+        &self.frames[..self.count]
+    }
+}
+
+/// The frames an event keeps, as many as it has.
+pub(crate) fn frames(addresses: impl Iterator<Item = usize>) -> Box<[usize]> {
+    addresses.take(DEPTH).collect()
+}
+
+pub(crate) enum Event {
+    /// A task started to run on this thread.
+    Run {
+        task: u64,
+    },
+    /// It stopped: it finished, waits where the stack says, or let others
+    /// run.
+    Stop {
+        task: u64,
+        why: Stop,
+    },
+    /// A task started another, whose code is at `code`, from `at`.
+    Spawn {
+        task: u64,
+        parent: u64,
+        code: usize,
+        at: Box<[usize]>,
+    },
+    /// The collector stopped the workers for `took` nanoseconds.
+    Pause {
+        took: u64,
+    },
+    /// A call of C that took `took` nanoseconds, made from `at`.
+    Call {
+        task: u64,
+        took: u64,
+        at: Box<[usize]>,
+    },
+    Panic {
+        task: u64,
+        message: String,
+    },
+}
+
+pub(crate) enum Stop {
+    Done,
+    Waits(Box<[usize]>),
+    Yields,
+}
+
+/// A thread's events since the tool last took them.
+struct Buffer {
+    thread: u32,
+    events: Mutex<Vec<(u64, Event)>>,
+}
+
+static BUFFERS: Mutex<Vec<&'static Buffer>> = Mutex::new(Vec::new());
+static THREADS: AtomicU32 = AtomicU32::new(0);
+/// Events a thread keeps between two reads of the tool; more are dropped,
+/// and counted.
+const KEPT: usize = 1 << 20;
+static DROPPED: AtomicU64 = AtomicU64::new(0);
+
+thread_local! {
+    static BUFFER: Cell<Option<&'static Buffer>> = const { Cell::new(None) };
+    static THREAD: Cell<u32> = const { Cell::new(0) };
+}
+
+/// This thread's number in a trace, from 1, which the main thread takes
+/// first.
+pub(crate) fn thread() -> u32 {
+    THREAD.with(|thread| {
+        if thread.get() == 0 {
+            thread.set(THREADS.fetch_add(1, Ordering::Relaxed) + 1);
+        }
+        thread.get()
+    })
+}
+
+pub(crate) fn record(event: Event) {
+    let at = now();
+    let buffer = BUFFER.with(|cell| {
+        if let Some(buffer) = cell.get() {
+            return buffer;
+        }
+        let buffer: &'static Buffer = Box::leak(Box::new(Buffer { thread: thread(), events: Mutex::new(Vec::new()) }));
+        BUFFERS.lock().unwrap_or_else(|e| e.into_inner()).push(buffer);
+        cell.set(Some(buffer));
+        buffer
+    });
+    let mut events = buffer.events.lock().unwrap_or_else(|e| e.into_inner());
+    if events.len() < KEPT {
+        events.push((at, event));
+    } else {
+        DROPPED.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// The events recorded since the last time, each with its time and
+/// thread, and how many were dropped.
+pub(crate) fn take_events() -> (Vec<(u64, u32, Event)>, u64) {
+    let mut out = Vec::new();
+    for buffer in BUFFERS.lock().unwrap_or_else(|e| e.into_inner()).iter() {
+        let events = std::mem::take(&mut *buffer.events.lock().unwrap_or_else(|e| e.into_inner()));
+        out.extend(events.into_iter().map(|(at, event)| (at, buffer.thread, event)));
+    }
+    out.sort_by_key(|(at, ..)| *at);
+    (out, DROPPED.swap(0, Ordering::Relaxed))
+}
+
+// ---------------------------------------------------------------------------
+// Samples
+// ---------------------------------------------------------------------------
+
+/// A sample: where a thread was, when. The signal handler that writes it
+/// may not allocate or lock, so samples go in a ring made in advance, each
+/// slot marked with the sequence number of the sample it holds.
+struct Slot {
+    written: AtomicU64,
+    thread: UnsafeCell<u32>,
+    at: UnsafeCell<u64>,
+    stack: UnsafeCell<Stack>,
+}
+
+unsafe impl Sync for Slot {}
+
+const SLOTS: usize = 8192;
+static RING: [Slot; SLOTS] = [const {
+    Slot {
+        written: AtomicU64::new(0),
+        thread: UnsafeCell::new(0),
+        at: UnsafeCell::new(0),
+        stack: UnsafeCell::new(Stack::EMPTY),
+    }
+}; SLOTS];
+/// The sequence number of the next sample, and of the next one to read.
+static NEXT: AtomicU64 = AtomicU64::new(0);
+static READ: Mutex<u64> = Mutex::new(0);
+const BUSY: u64 = u64::MAX;
+
+/// The handler of `SIGPROF`, which the processor time of the process
+/// raises every millisecond on the thread that runs.
+extern "C" fn sample(_: i32, info: *mut libc::siginfo_t, context: *mut libc::c_void) {
+    if !on() {
+        return;
+    }
+    // A handler leaves `errno` as it found it.
+    #[cfg(target_os = "linux")]
+    let errno = unsafe { libc::__errno_location() };
+    #[cfg(target_os = "macos")]
+    let errno = unsafe { libc::__error() };
+    let saved = unsafe { *errno };
+    let (_, pc, fp, _) = unsafe { crate::trace::faulted(info, context) };
+    let bounds = crate::tasks::stack_bounds().unwrap_or((0, 0));
+    // In C, which may keep no frame pointers, the trace goes on from where
+    // the program called it.
+    let stack = match crate::tasks::c_frame() {
+        Some((called, from)) if !crate::trace::compiled(pc) => {
+            Stack::of([pc, from].into_iter().chain(crate::trace::walk(called, bounds)))
+        }
+        _ => Stack::of(std::iter::once(pc).chain(crate::trace::walk(fp, bounds))),
+    };
+    let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
+    let slot = &RING[sequence as usize % SLOTS];
+    slot.written.store(BUSY, Ordering::Relaxed);
+    std::sync::atomic::fence(Ordering::Release);
+    unsafe {
+        *slot.thread.get() = thread();
+        *slot.at.get() = now();
+        *slot.stack.get() = stack;
+    }
+    slot.written.store(sequence + 1, Ordering::Release);
+    unsafe { *errno = saved };
+}
+
+/// The samples taken since the last time, and how many were lost because
+/// the ring went round before the tool took them.
+pub(crate) fn take_samples() -> (Vec<(u64, u32, Stack)>, u64) {
+    let mut read = READ.lock().unwrap_or_else(|e| e.into_inner());
+    let next = NEXT.load(Ordering::Acquire);
+    let mut lost = 0;
+    if next - *read > SLOTS as u64 {
+        lost = next - *read - SLOTS as u64;
+        *read = next - SLOTS as u64;
+    }
+    let mut out = Vec::new();
+    while *read < next {
+        let slot = &RING[*read as usize % SLOTS];
+        let before = slot.written.load(Ordering::Acquire);
+        if before != *read + 1 {
+            // Still being written: the next time.
+            if before == BUSY || before <= *read {
+                break;
+            }
+            lost += 1;
+            *read += 1;
+            continue;
+        }
+        let copied = unsafe { (*slot.at.get(), *slot.thread.get(), *slot.stack.get()) };
+        std::sync::atomic::fence(Ordering::Acquire);
+        if slot.written.load(Ordering::Relaxed) == before {
+            out.push(copied);
+        } else {
+            lost += 1;
+        }
+        *read += 1;
+    }
+    (out, lost)
+}
+
+// ---------------------------------------------------------------------------
+// Starting and stopping
+// ---------------------------------------------------------------------------
+
+pub(crate) fn start() {
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(|| unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = sample as *const () as usize;
+        action.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_ONSTACK;
+        libc::sigemptyset(&mut action.sa_mask);
+        libc::sigaction(libc::SIGPROF, &action, std::ptr::null_mut());
+    });
+    ON.store(true, Ordering::SeqCst);
+    timer(1000);
+}
+
+pub(crate) fn stop() {
+    timer(0);
+    ON.store(false, Ordering::SeqCst);
+}
+
+/// Raises `SIGPROF` every `micros` of the process's processor time, or
+/// never with 0.
+fn timer(micros: i64) {
+    let every = libc::timeval { tv_sec: 0, tv_usec: micros as _ };
+    let timer = libc::itimerval { it_interval: every, it_value: every };
+    unsafe { libc::setitimer(libc::ITIMER_PROF, &timer, std::ptr::null_mut()) };
+}

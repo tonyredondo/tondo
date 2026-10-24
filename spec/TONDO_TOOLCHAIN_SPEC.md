@@ -240,6 +240,8 @@ tondo test [<project>] [--static]
 tondo lsp
 tondo ps [--json]
 tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--json]
+tondo trace <pid|name> [--duration <seconds>] [--output <path>]
+tondo trace [--duration <seconds>] [--output <path>] -- <program> [<argument>...]
 ~~~
 
 - `run` compila, guarda el ejecutable en la caché y lo ejecuta; `build` escribe
@@ -274,7 +276,8 @@ tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--json]
   cada librería a `[native] libraries`.
 - `test` sigue la [especificación de testing](./TONDO_TESTING_SPEC.md).
 - `lsp` sirve a un editor (sección 7.4).
-- `ps` y `counters` observan los programas en ejecución (sección 7.5).
+- `ps`, `counters` y `trace` observan los programas en ejecución (sección
+  7.5).
 - Estado de salida: `0` éxito; `1` diagnósticos de error o fallo de formato; `2`
   uso incorrecto; `3` error del toolchain (sección 9). `run` devuelve el estado
   del programa.
@@ -446,6 +449,26 @@ Los contadores del runtime, por grupos:
 Los del programa (14.25 de la librería estándar) forman el grupo `program`.
 Los sockets del propio canal no cuentan, ni la memoria de su hilo, así que
 observar un programa no cambia lo que muestra.
+
+`trace` graba lo que hace un programa en ejecución, nombrado como en
+`counters`, o uno que arranca tras `--`: un ejecutable, o un archivo `.to` o
+un proyecto, que compila como `run`. Un programa que arranca espera a la
+herramienta antes de `main`, así que la traza lo cubre entero. Graba hasta
+que el programa termina, pasa `--duration` o llega Ctrl-C, que termina
+también el programa que arrancó, y escribe dos archivos, `<output>.json` y
+`<output>.folded`, con `<programa>-<pid>` como `<output>` si no se da:
+
+- una línea de tiempo en Trace Event Format, que abre Perfetto: una pista por
+  hilo, con un tramo por cada vez que una tarea corrió, nombrado por la
+  función que la tarea ejecuta y con el lugar donde esperó al parar; los
+  `spawn`, con su lugar; las llamadas a C de un milisegundo o más; los
+  pánicos; y las pausas del colector, en una pista propia;
+- un perfil de CPU en *folded stacks*, una línea por pila con cuántas muestras
+  la tuvieron: el runtime mira dónde está el hilo que corre con cada
+  milisegundo de procesador, tan a menudo como lo permite el reloj del
+  sistema.
+
+Mientras nada traza el programa, grabar no cuesta más que comprobarlo.
 
 ## 8. Determinismo
 

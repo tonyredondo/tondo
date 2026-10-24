@@ -31,6 +31,7 @@ mod native;
 mod net;
 mod poll;
 mod process;
+mod recorder;
 mod reflect;
 mod regex;
 mod server;
@@ -1961,6 +1962,10 @@ pub unsafe extern "C" fn tondo_rt_panic(mut code: u32, message: *const Str, loca
         text.push_str(&message);
     }
     let prefix = if suppressed { "suppressed while unwinding: " } else { "" };
+    if recorder::on() {
+        let task = tasks::current_id();
+        recorder::record(recorder::Event::Panic { task, message: format!("{text}\n --> {location}") });
+    }
     let report = format!("{prefix}{text}\n --> {location}{}", trace::report());
     // A test build reports it to `tondo test` instead.
     if !testing::terminal(code, &report) {

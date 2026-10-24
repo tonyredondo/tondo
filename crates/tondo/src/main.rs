@@ -35,6 +35,10 @@ usage:
   tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--json]
                                                        watch a running program's counters, the runtime's
                                                        and its own (std.diagnostics)
+  tondo trace <pid|name> [--duration <seconds>] [--output <path>]
+  tondo trace [--duration <seconds>] [--output <path>] -- <program> [<argument>...]
+                                                       record what a program's tasks do, for Perfetto,
+                                                       and a profile of where it spends its time
   tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
                                                        write a module of extern declarations for a C header
   tondo <file.to> [<argument>...]                      run a script (for #! lines)
@@ -80,6 +84,7 @@ fn main() -> ExitCode {
         "lsp" => tondo::lsp::serve().map(|()| ExitCode::SUCCESS),
         "ps" => ps_command(&args[1..]),
         "counters" => counters_command(&args[1..]),
+        "trace" => trace_command(&args[1..]),
         "version" | "--version" | "-V" => {
             println!("tondo {} (native, cranelift)", driver::VERSION);
             Ok(ExitCode::SUCCESS)
@@ -484,6 +489,51 @@ fn counters_command(args: &[OsString]) -> Result<ExitCode, String> {
     tondo::observe::counters(&name, interval, count, json).map(|()| ExitCode::SUCCESS)
 }
 
+/// Traces a running program, or one it starts.
+fn trace_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let usage = |message: &str| format!("{message}\n{USAGE}");
+    let (mut name, mut duration, mut output, mut program) = (None, None, None, None);
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        match arg.to_str().unwrap_or_default() {
+            "--" => {
+                program = Some(rest.by_ref().cloned().collect::<Vec<_>>());
+                break;
+            }
+            "--duration" => {
+                let seconds = rest.next().and_then(|s| s.to_str()?.parse::<f64>().ok()).filter(|s| *s > 0.0);
+                let seconds = seconds.ok_or_else(|| usage("--duration takes seconds, as --duration 10"))?;
+                duration = Some(std::time::Duration::from_secs_f64(seconds));
+            }
+            "--output" => output = Some(PathBuf::from(rest.next().ok_or_else(|| usage("--output takes a path"))?)),
+            other if !other.starts_with('-') && name.is_none() => name = Some(other.to_string()),
+            other => return Err(usage(&format!("trace does not take `{other}`"))),
+        }
+    }
+    let target = match (name, program) {
+        (Some(name), None) => tondo::observe::Traced::Running(name),
+        (None, Some(program)) if !program.is_empty() => {
+            // A Tondo program is built first, as `tondo run` builds it.
+            let first = Path::new(&program[0]);
+            let source = first.extension().is_some_and(|e| e == "to") || first.join("tondo.toml").is_file();
+            let executable = match source {
+                true => match cached_executable(first, &[], false)? {
+                    Some(executable) => executable,
+                    None => return Ok(ExitCode::FAILURE),
+                },
+                false => first.to_path_buf(),
+            };
+            tondo::observe::Traced::Started(executable, program[1..].to_vec())
+        }
+        _ => {
+            return Err(usage(
+                "trace takes a running program, its process ID or its name, or a program to start after `--`",
+            ));
+        }
+    };
+    tondo::observe::trace(target, duration, output).map(|()| ExitCode::SUCCESS)
+}
+
 /// Resolves the named dependencies, or all of them, again instead of
 /// using `tondo.lock`.
 fn update_command(args: &[OsString]) -> Result<ExitCode, String> {
@@ -777,6 +827,15 @@ fn run_command(args: &[OsString]) -> Result<ExitCode, String> {
 
 /// Compiles (or reuses a cached build of) `path` and executes it.
 fn run(path: &Path, program_args: &[OsString], libraries: &[String], statically: bool) -> Result<ExitCode, String> {
+    match cached_executable(path, libraries, statically)? {
+        Some(executable) => exec(&executable, program_args),
+        None => Ok(ExitCode::FAILURE),
+    }
+}
+
+/// The executable of `path` in the cache, built if it is not there; none
+/// when the program does not compile, whose diagnostics are printed.
+fn cached_executable(path: &Path, libraries: &[String], statically: bool) -> Result<Option<PathBuf>, String> {
     let identity = driver::compiler_identity();
     let linking = if statically { "static" } else { "" };
     let mut parts = vec![identity.into_bytes(), libraries.join("\n").into_bytes(), linking.as_bytes().to_vec()];
@@ -789,7 +848,7 @@ fn run(path: &Path, program_args: &[OsString], libraries: &[String], statically:
     let executable = dir.join(program_name(path)?);
     if !executable.exists() {
         let Some(analysis) = analyze(path)? else {
-            return Ok(ExitCode::FAILURE);
+            return Ok(None);
         };
         let object = driver::object(&analysis)?;
         std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
@@ -798,7 +857,7 @@ fn run(path: &Path, program_args: &[OsString], libraries: &[String], statically:
         driver::link(&object, &partial, &libraries, driver::Linking { strip: false, statically })?;
         std::fs::rename(&partial, &executable).map_err(|e| e.to_string())?;
     }
-    exec(&executable, program_args)
+    Ok(Some(executable))
 }
 
 #[cfg(unix)]

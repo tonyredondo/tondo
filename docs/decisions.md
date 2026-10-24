@@ -1596,3 +1596,23 @@ block; a runtime thread's block goes to the next one that starts. That
 program now takes 170 ms where it took 275 ms, against 160 ms counting
 nothing. The leak check still counts objects in one atomic, so that the
 count at exit is exact.
+
+## 2026-10-24 — Traces of running programs (H13, second part)
+
+While a tool traces it, the runtime records each run of a task on its
+thread, where the task waits when it stops, each spawn with the function
+the task runs, the collector's pauses, calls of C of a millisecond or more
+and panics, every thread into a buffer of its own; while nothing traces,
+each of those costs a load. Every millisecond of processor time, `SIGPROF`
+samples the stack of the thread that runs into a ring made in advance,
+which a signal handler can write without allocating or locking; samples
+come as often as the kernel's clock lets them, every 4 ms at 250 Hz. The
+tool takes what was recorded ten times a second, over the same socket, and
+writes Trace Event Format, which Perfetto opens, and folded stacks, which
+flame graph tools read: formats that people and models already know. The
+runtime names the program's frames from its table of functions; other
+frames carry the file and offset `dladdr` gives, and the tool names them
+from the file's symbols. The body of `spawn f()` is now named `spawn f` and
+kept in that table, so a trace names a task by its function; panic traces
+still skip it. A program that `tondo trace -- program` starts waits for the
+tool before `main`, up to five seconds, so the trace covers all of it.

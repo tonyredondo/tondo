@@ -122,6 +122,25 @@ fn resolve(address: usize) -> Option<Frame> {
     }
 }
 
+/// Whether the instruction at `pc` is compiled code's.
+pub(crate) fn compiled(pc: usize) -> bool {
+    find(pc + 1).is_some()
+}
+
+/// What a trace shows for an address of compiled code: the function, and
+/// the file and line when it is where the function calls another.
+pub(crate) fn describe(address: usize) -> Option<(&'static str, Option<(&'static str, u32)>)> {
+    if let Some(frame) = resolve(address) {
+        return Some((frame.function, Some((frame.file, frame.line))));
+    }
+    let (_, index) = find(address).or_else(|| find(address + 1))?;
+    unsafe {
+        let table = &*TABLE.load(Ordering::Acquire);
+        let meta = (*table.functions.add(index)).meta as usize;
+        Some((text_at(table.blob, meta + 8, u32_at(table.blob, meta) as usize), None))
+    }
+}
+
 /// The frame pointer of the function this inlines into.
 #[inline(always)]
 pub(crate) fn frame_pointer() -> usize {
@@ -178,6 +197,16 @@ pub(crate) enum Origin {
     Foreign,
 }
 
+impl Origin {
+    /// The return addresses of the spawn, innermost first.
+    pub(crate) fn frames(&self) -> &[usize] {
+        match self {
+            Origin::Spawned { addresses, count, .. } => &addresses[..*count],
+            Origin::Foreign => &[],
+        }
+    }
+}
+
 /// The frames a spawn keeps, in the origin itself: one allocation a spawn.
 const SPAWN_DEPTH: usize = 30;
 
@@ -220,7 +249,9 @@ pub(crate) fn spawned(parent: Option<Arc<Origin>>) -> Arc<Origin> {
 /// The runs of the same frame of compiled code in a stack, innermost
 /// first, as in a recursion: each frame and how many times it repeats.
 fn runs(addresses: impl Iterator<Item = usize>) -> impl Iterator<Item = (Frame, usize)> {
-    let mut frames = addresses.filter_map(resolve).peekable();
+    // The body of `spawn call()` only makes the call, and a trace shows the
+    // spawn as the task's origin instead.
+    let mut frames = addresses.filter_map(resolve).filter(|f| !spawn_body(f.function)).peekable();
     std::iter::from_fn(move || {
         let frame = frames.next()?;
         let mut times = 1;
@@ -229,6 +260,12 @@ fn runs(addresses: impl Iterator<Item = usize>) -> impl Iterator<Item = (Frame, 
         }
         Some((frame, times))
     })
+}
+
+/// Whether a function is the body of a `spawn`, which the compiler names
+/// `spawn` and the function it calls.
+fn spawn_body(function: &str) -> bool {
+    function == "spawn" || function.starts_with("spawn ")
 }
 
 /// The lines a long trace shows from its start and from its end.
@@ -405,7 +442,10 @@ pub(crate) fn guard_thread() {
 /// The fault's address, and the instruction, frame pointer and return
 /// address of the code that faulted: the link register, or the top of the
 /// stack, which holds one when a call was being made.
-unsafe fn faulted(info: *const libc::siginfo_t, context: *const libc::c_void) -> (usize, usize, usize, usize) {
+pub(crate) unsafe fn faulted(
+    info: *const libc::siginfo_t,
+    context: *const libc::c_void,
+) -> (usize, usize, usize, usize) {
     unsafe {
         let context = context as *const libc::ucontext_t;
         #[cfg(target_os = "linux")]

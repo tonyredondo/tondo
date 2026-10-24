@@ -708,11 +708,10 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, meta: bo
         context.func.signature = cg.signature(body);
         context.func.name = UserFuncName::user(0, index as u32);
         FnCodegen::new(&mut cg, body, bodies, &mut context.func, &mut builder_context).run();
-        // The body of `spawn call()` only makes the call, and a trace shows
-        // the spawn as the task's origin instead; a test's ends at the test,
-        // without the runner's tree that calls it.
+        // A test's trace ends at the test, without the runner's tree that
+        // calls it.
         let runner = !program.tests.is_empty() && index == program.main.0 as usize;
-        let traced = body.name != "spawn" && !runner && !body.name.starts_with("suite ");
+        let traced = !runner && !body.name.starts_with("suite ");
         job(cg.functions[index], &mut context, traced.then_some(body.name.as_str()));
         cg.module.clear_context(&mut context);
     }

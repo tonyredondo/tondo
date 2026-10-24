@@ -181,3 +181,9 @@ fn main() {
 A name gives the same counter from any task, so nothing is passed around.
 A `Counter` only grows (its rate shows per second); a `Gauge` goes up and
 down.
+
+`tondo trace app --duration 10`, or `tondo trace -- app.to` from its start,
+records what the tasks do: `app-<pid>.json`, a timeline for
+https://ui.perfetto.dev with each run of a task and where it waited, and
+`app-<pid>.folded`, a CPU profile, one stack a line with its samples, which
+shows where the time goes.

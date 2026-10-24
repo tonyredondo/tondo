@@ -83,3 +83,44 @@ fn ps_and_counters() {
     drop(child.stdin.take());
     child.wait().unwrap();
 }
+
+const TRACED: &str = r#"import std.console
+
+fn fib(n: Int): Int {
+    if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+fn crunch(): Int {
+    var total = 0
+    for i in 0..300 {
+        total = total + fib(20 + i % 4)
+    }
+    total
+}
+
+fn main() {
+    let job = spawn crunch()
+    console.println("{job.wait()}")
+}
+"#;
+
+#[test]
+fn trace_of_a_started_program() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("trace");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("traced.to"), TRACED).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["trace", "--output", "out", "--", "traced.to"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let timeline: Value = serde_json::from_slice(&std::fs::read(dir.join("out.json")).unwrap()).unwrap();
+    let events = timeline["traceEvents"].as_array().unwrap();
+    let named = |name: &str| events.iter().any(|e| e["name"] == name);
+    assert!(named("crunch") && named("main") && named("spawns crunch"));
+    let waits = events.iter().find(|e| e["name"] == "main" && e["args"]["then"] != "finished").unwrap();
+    assert_eq!(waits["args"]["then"], "waits at traced.to:17 in main");
+    let profile = std::fs::read_to_string(dir.join("out.folded")).unwrap();
+    assert!(profile.lines().any(|line| line.contains(";crunch;fib")), "{profile}");
+}

@@ -376,6 +376,9 @@ fn count_and_free() -> Option<usize> {
     let paused = stopped.elapsed().as_micros() as i64;
     super::diagnostics::COLLECTOR_PAUSED.add(paused);
     super::diagnostics::COLLECTOR_LONGEST.max(paused);
+    if super::recorder::on() {
+        super::recorder::record(super::recorder::Event::Pause { took: paused as u64 * 1000 });
+    }
     drop(registry);
     // Nothing reaches the garbage, so the workers may run meanwhile; no
     // other collection does. Releasing the cells' states frees the cycles,

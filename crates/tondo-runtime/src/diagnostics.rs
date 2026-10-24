@@ -451,6 +451,7 @@ fn directory() -> PathBuf {
 #[cfg_attr(not(tondo_staticlib), allow(dead_code))]
 pub(crate) fn start() {
     STARTED.get_or_init(Instant::now);
+    super::recorder::thread();
     if std::env::var_os("TONDO_RT_CHECK_LEAKS").is_some() {
         EXACT.store(true, Ordering::Relaxed);
     }
@@ -474,13 +475,25 @@ pub(crate) fn start() {
         fn __cxa_atexit(function: extern "C" fn(*mut u8), argument: *mut u8, object: *mut u8) -> i32;
     }
     extern "C" fn remove(_: *mut u8) {
+        end_trace(&mut SESSION.lock().unwrap_or_else(|e| e.into_inner()), "exit");
         if let Some(path) = SOCKET.get() {
             let _ = std::fs::remove_file(path);
         }
     }
     unsafe { __cxa_atexit(remove, std::ptr::null_mut(), std::ptr::null_mut()) };
     // A runtime thread, which a deadlock does not take for one of C.
-    let _ = super::tasks::try_spawn_thread(Some(128 * 1024), move || serve(listener));
+    if super::tasks::try_spawn_thread(Some(128 * 1024), move || serve(listener)).is_err() {
+        return;
+    }
+    // `tondo trace -- program` traces from the start: the program waits
+    // for it, a while, before `main`. Its own programs are not traced.
+    if std::env::var_os("TONDO_TRACE").is_some_and(|value| value == "1") {
+        unsafe { std::env::remove_var("TONDO_TRACE") };
+        super::recorder::start();
+        let session = SESSION.lock().unwrap_or_else(|e| e.into_inner());
+        let waited = TRACED.wait_timeout_while(session, std::time::Duration::from_secs(5), |s| s.is_none());
+        drop(waited);
+    }
 }
 
 /// Answers every tool from this one thread: each line one sends, with a
@@ -493,11 +506,26 @@ fn serve(listener: UnixListener) {
         let descriptors = std::iter::once(listener.as_raw_fd()).chain(clients.iter().map(|(c, _)| c.as_raw_fd()));
         let mut polled: Vec<libc::pollfd> =
             descriptors.map(|fd| libc::pollfd { fd, events: libc::POLLIN, revents: 0 }).collect();
-        if unsafe { libc::poll(polled.as_mut_ptr(), polled.len() as libc::nfds_t, -1) } < 0 {
+        // While a tool traces, what was recorded goes to it ten times a
+        // second.
+        let tracing = SESSION.lock().unwrap_or_else(|e| e.into_inner()).is_some();
+        let timeout = if tracing { 100 } else { -1 };
+        if unsafe { libc::poll(polled.as_mut_ptr(), polled.len() as libc::nfds_t, timeout) } < 0 {
             continue;
         }
         let mut ready = polled[1..].iter().map(|p| p.revents != 0);
-        clients.retain_mut(|(client, pending)| !ready.next().unwrap_or(false) || answer(client, pending));
+        clients.retain_mut(|(client, pending)| {
+            let kept = !ready.next().unwrap_or(false) || answer(client, pending);
+            if !kept {
+                let mut session = SESSION.lock().unwrap_or_else(|e| e.into_inner());
+                if session.as_ref().is_some_and(|s| s.fd == client.as_raw_fd()) {
+                    super::recorder::stop();
+                    *session = None;
+                }
+            }
+            kept
+        });
+        push(&mut SESSION.lock().unwrap_or_else(|e| e.into_inner()));
         if polled[0].revents != 0 {
             while let Ok((client, _)) = listener.accept() {
                 let _ = client.set_nonblocking(false);
@@ -522,6 +550,15 @@ fn answer(client: &mut UnixStream, pending: &mut Vec<u8>) -> bool {
         let reply = match String::from_utf8_lossy(&line).trim() {
             "info" => info(),
             "counters" => counters(),
+            "trace" => trace(client),
+            "stop" => {
+                let mut session = SESSION.lock().unwrap_or_else(|e| e.into_inner());
+                if session.as_ref().is_some_and(|s| s.fd == client.as_raw_fd()) {
+                    end_trace(&mut session, "stop");
+                    continue;
+                }
+                "{\"error\":\"this tool does not trace the program\"}".to_string()
+            }
             other => format!("{{\"error\":{}}}", quoted(&format!("unknown request `{other}`"))),
         };
         if writeln!(client, "{reply}").is_err() {
@@ -529,6 +566,155 @@ fn answer(client: &mut UnixStream, pending: &mut Vec<u8>) -> bool {
         }
     }
     pending.len() < 4096
+}
+
+// ---------------------------------------------------------------------------
+// Tracing
+// ---------------------------------------------------------------------------
+
+/// The tool that traces the program, and the addresses it knows the frames
+/// of.
+struct Session {
+    stream: UnixStream,
+    fd: i32,
+    described: std::collections::HashSet<usize>,
+}
+
+static SESSION: Mutex<Option<Session>> = Mutex::new(None);
+static TRACED: std::sync::Condvar = std::sync::Condvar::new();
+
+fn trace(client: &UnixStream) -> String {
+    let mut session = SESSION.lock().unwrap_or_else(|e| e.into_inner());
+    if session.is_some() {
+        return "{\"error\":\"another tool traces this program\"}".into();
+    }
+    let Ok(stream) = client.try_clone() else { return "{\"error\":\"cannot trace\"}".into() };
+    *session = Some(Session { stream, fd: client.as_raw_fd(), described: Default::default() });
+    if !super::recorder::on() {
+        super::recorder::start();
+    }
+    TRACED.notify_all();
+    format!("{{\"tracing\":true,\"clock\":{}}}", super::recorder::now())
+}
+
+/// Sends the tool what was recorded since the last time; a tool that is
+/// gone ends the trace.
+fn push(session: &mut Option<Session>) {
+    let Some(tracer) = session.as_mut() else { return };
+    let line = recorded(tracer);
+    if writeln!(tracer.stream, "{line}").is_err() {
+        super::recorder::stop();
+        *session = None;
+    }
+}
+
+/// Ends the trace: what is left goes to the tool, and then why it ended.
+fn end_trace(session: &mut Option<Session>, why: &str) {
+    if session.is_none() {
+        return;
+    }
+    super::recorder::stop();
+    push(session);
+    if let Some(mut tracer) = session.take() {
+        let _ = writeln!(tracer.stream, "{{\"end\":\"{why}\"}}");
+    }
+}
+
+/// A line of JSON with the events and samples recorded since the last one,
+/// and the frames of the addresses they hold that the tool does not know.
+fn recorded(session: &mut Session) -> String {
+    use super::recorder::{Event, Stop};
+    let (events, dropped) = super::recorder::take_events();
+    let (samples, lost) = super::recorder::take_samples();
+    let mut frames = String::new();
+    let mut stack = |addresses: &[usize]| {
+        let mut out = String::from("[");
+        for (index, &address) in addresses.iter().enumerate() {
+            let comma = if index == 0 { "" } else { "," };
+            let _ = write!(out, "{comma}\"{address:x}\"");
+            if session.described.insert(address) {
+                let comma = if frames.is_empty() { "" } else { "," };
+                let _ = write!(frames, "{comma}\"{address:x}\":{}", frame(address));
+            }
+        }
+        out.push(']');
+        out
+    };
+    let mut out = String::from("{\"events\":[");
+    for (index, (at, thread, event)) in events.iter().enumerate() {
+        let comma = if index == 0 { "" } else { "," };
+        let _ = match event {
+            Event::Run { task } => write!(out, "{comma}[\"run\",{at},{thread},{task}]"),
+            Event::Stop { task, why: Stop::Done } => write!(out, "{comma}[\"stop\",{at},{thread},{task},\"done\"]"),
+            Event::Stop { task, why: Stop::Yields } => {
+                write!(out, "{comma}[\"stop\",{at},{thread},{task},\"yields\"]")
+            }
+            Event::Stop { task, why: Stop::Waits(at_stack) } => {
+                let frames = stack(at_stack);
+                write!(out, "{comma}[\"stop\",{at},{thread},{task},\"waits\",{frames}]")
+            }
+            Event::Spawn { task, parent, code, at: from } => {
+                let code = stack(&[*code + 1]);
+                let frames = stack(from);
+                write!(out, "{comma}[\"spawn\",{at},{thread},{task},{parent},{code},{frames}]")
+            }
+            Event::Pause { took } => write!(out, "{comma}[\"pause\",{at},{thread},{took}]"),
+            Event::Call { task, took, at: from } => {
+                let frames = stack(from);
+                write!(out, "{comma}[\"call\",{at},{thread},{task},{took},{frames}]")
+            }
+            Event::Panic { task, message } => {
+                write!(out, "{comma}[\"panic\",{at},{thread},{task},{}]", quoted(message))
+            }
+        };
+    }
+    out.push_str("],\"samples\":[");
+    for (index, (at, thread, sampled)) in samples.iter().enumerate() {
+        let comma = if index == 0 { "" } else { "," };
+        let frames = stack(sampled.frames());
+        let _ = write!(out, "{comma}[{at},{thread},{frames}]");
+    }
+    let _ = write!(out, "],\"frames\":{{{frames}}},\"dropped\":{dropped},\"lost\":{lost}}}");
+    out
+}
+
+/// What the tool shows for an address: a function of the program, with its
+/// file and line where it calls another; or else the file loaded there, the
+/// program's own as `""`, and how far into it the address is, which the
+/// tool finds in the file's symbols.
+fn frame(address: usize) -> String {
+    if let Some((function, line)) = super::trace::describe(address) {
+        return match line {
+            Some((file, line)) => {
+                format!("{{\"function\":{},\"file\":{},\"line\":{line}}}", quoted(function), quoted(file))
+            }
+            None => format!("{{\"function\":{}}}", quoted(function)),
+        };
+    }
+    match loaded(address) {
+        Some((image, offset)) => format!("{{\"image\":{},\"offset\":{offset}}}", quoted(&image)),
+        None => "{}".into(),
+    }
+}
+
+/// The file loaded where `address` is, and the address's offset from where
+/// it was loaded. A static executable has no loader to ask: its code is all
+/// the program's, loaded where its ELF header is.
+fn loaded(address: usize) -> Option<(String, usize)> {
+    let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
+    if unsafe { libc::dladdr(address as *const libc::c_void, &mut info) } == 0 || info.dli_fname.is_null() {
+        #[cfg(target_os = "linux")]
+        {
+            unsafe extern "C" {
+                static __ehdr_start: u8;
+            }
+            return Some((String::new(), address.wrapping_sub(&raw const __ehdr_start as usize)));
+        }
+        #[cfg(not(target_os = "linux"))]
+        return None;
+    }
+    let image = unsafe { std::ffi::CStr::from_ptr(info.dli_fname) }.to_string_lossy().into_owned();
+    Some((image, address.wrapping_sub(info.dli_fbase as usize)))
 }
 
 fn uptime_ms() -> u128 {

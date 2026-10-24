@@ -13,6 +13,7 @@
 //! object's lock, and then notifies the task.
 
 use super::cycles::{self, Kind, Taken, Visit, Visitor};
+use super::recorder;
 use super::trace::Origin;
 use super::{Glue, LIVE_OBJECTS, Str, flush_stdout, runtime_fault};
 use std::cell::Cell;
@@ -220,6 +221,8 @@ static PINNED_WAKE: Condvar = Condvar::new();
 pub(crate) struct Task {
     /// The stack pointer saved when the task is not running.
     sp: *mut u8,
+    /// Its number in a trace, from 1 for the main task.
+    id: u64,
     stack: Option<Stack>,
     /// The closure the task runs: a `fn` object, released afterwards.
     body: *mut u8,
@@ -363,6 +366,11 @@ pub(crate) fn origin() -> Option<Arc<Origin>> {
 /// Where a task was started.
 pub(crate) unsafe fn origin_of(task: *mut Task) -> Option<Arc<Origin>> {
     unsafe { task.as_ref()?.origin.clone() }
+}
+
+/// The running task's number in a trace, or 0 outside any task.
+pub(crate) fn current_id() -> u64 {
+    unsafe { current().as_ref().map_or(0, |task| task.id) }
 }
 
 pub(crate) unsafe fn is_main(task: *mut Task) -> bool {
@@ -876,10 +884,27 @@ fn work(main: bool) -> i32 {
             }
         };
         CURRENT.with(|c| c.set(task));
+        let traced = recorder::on();
+        if traced {
+            recorder::record(recorder::Event::Run { task: unsafe { (*task).id } });
+        }
         enter_tondo();
         unsafe { switch(home(), (*task).sp) };
         leave_tondo();
         CURRENT.with(|c| c.set(std::ptr::null_mut()));
+        if traced {
+            // Nothing runs the task until it is parked or scheduled again.
+            let why = unsafe {
+                match (*task).finished {
+                    true => recorder::Stop::Done,
+                    false if (*task).state.load(Ordering::Acquire) == PARKING => {
+                        recorder::Stop::Waits(recorder::frames(parked_walk(task)))
+                    }
+                    false => recorder::Stop::Yields,
+                }
+            };
+            recorder::record(recorder::Event::Stop { task: unsafe { (*task).id }, why });
+        }
         unsafe {
             let in_domain = (*task).in_domain;
             if (*task).finished {
@@ -950,21 +975,30 @@ fn deadlock() -> ! {
 /// running one.
 unsafe fn waiting_at(task: *mut Task) -> String {
     unsafe {
-        let Some(stack) = (*task).stack.as_ref() else { return String::new() };
-        let bounds = (stack.base as usize + GUARD, stack.top() as usize);
-        let fp = if task == current() {
-            super::trace::frame_pointer()
+        let walk = if task == current() {
+            let Some(stack) = (*task).stack.as_ref() else { return String::new() };
+            let bounds = (stack.base as usize + GUARD, stack.top() as usize);
+            super::trace::walk(super::trace::frame_pointer(), bounds)
         } else if (*task).state.load(Ordering::Acquire) == PARKED {
-            let sp = (*task).sp as *const usize;
-            #[cfg(target_arch = "x86_64")]
-            let fp = *sp.add(5);
-            #[cfg(target_arch = "aarch64")]
-            let fp = *sp.add(10);
-            fp
+            parked_walk(task)
         } else {
             return "\nTITLE: a call to C".into();
         };
-        super::trace::stack(super::trace::walk(fp, bounds), (*task).origin.as_deref(), "TITLE")
+        super::trace::stack(walk, (*task).origin.as_deref(), "TITLE")
+    }
+}
+
+/// The stack of a task that switched out, from the frame pointer it saved.
+unsafe fn parked_walk(task: *mut Task) -> super::trace::Walk {
+    unsafe {
+        let Some(stack) = (*task).stack.as_ref() else { return super::trace::walk(0, (0, 0)) };
+        let bounds = (stack.base as usize + GUARD, stack.top() as usize);
+        let sp = (*task).sp as *const usize;
+        #[cfg(target_arch = "x86_64")]
+        let fp = *sp.add(5);
+        #[cfg(target_arch = "aarch64")]
+        let fp = *sp.add(10);
+        super::trace::walk(fp, bounds)
     }
 }
 
@@ -1003,6 +1037,8 @@ struct InC {
     /// it called from.
     frames: [AtomicUsize; 8],
     returns: [AtomicUsize; 8],
+    /// When each call started, while a tool traces the program.
+    started: [AtomicU64; 8],
     /// Whether another worker took this one's place during the current call.
     replaced: AtomicBool,
 }
@@ -1030,6 +1066,7 @@ fn in_c() -> &'static InC {
         calls: AtomicUsize::new(0),
         frames: Default::default(),
         returns: Default::default(),
+        started: Default::default(),
         replaced: AtomicBool::new(false),
     }));
     CALLERS.lock().unwrap_or_else(|e| e.into_inner()).push(new);
@@ -1053,6 +1090,7 @@ pub extern "C" fn tondo_rt_foreign_enter() {
         let (caller, address) = unsafe { (*(fp as *const usize), *((fp + 8) as *const usize)) };
         frame.store(caller, Ordering::Relaxed);
         returns.store(address, Ordering::Relaxed);
+        state.started[depth].store(if recorder::on() { recorder::now() } else { 0 }, Ordering::Relaxed);
     }
     let monitor = MONITOR.get_or_init(|| spawn_thread(Some(64 * 1024), monitor).thread().clone());
     if MONITOR_ASLEEP.load(Ordering::SeqCst) && MONITOR_ASLEEP.swap(false, Ordering::SeqCst) {
@@ -1070,12 +1108,30 @@ pub(crate) fn c_frame() -> Option<(usize, usize)> {
     (frame != 0).then_some((frame, address))
 }
 
+/// A call of C a trace shows: one of a millisecond or more, in nanoseconds.
+const LONG_CALL: u64 = 1_000_000;
+
 /// After a C function returns: a worker that was replaced meanwhile makes
 /// one worker retire.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_foreign_leave() {
     enter_tondo();
     let state = in_c();
+    let depth = state.depth.load(Ordering::Relaxed).wrapping_sub(1);
+    if let Some(started) = state.started.get(depth).map(|s| s.load(Ordering::Relaxed))
+        && started != 0
+        && recorder::on()
+    {
+        let took = recorder::now().saturating_sub(started);
+        if took >= LONG_CALL {
+            let (frame, from) =
+                (state.frames[depth].load(Ordering::Relaxed), state.returns[depth].load(Ordering::Relaxed));
+            let walk = super::trace::walk(frame, stack_bounds().unwrap_or((0, 0)));
+            let at = recorder::frames(std::iter::once(from).chain(walk));
+            let task = unsafe { current().as_ref().map_or(0, |task| task.id) };
+            recorder::record(recorder::Event::Call { task, took, at });
+        }
+    }
     state.calls.fetch_add(1, Ordering::SeqCst);
     if state.depth.fetch_sub(1, Ordering::SeqCst) == 1 && state.replaced.swap(false, Ordering::SeqCst) {
         let mut queue = queue();
@@ -1328,9 +1384,11 @@ pub(crate) fn ending() -> Option<i32> {
 
 fn new_task(stack: Stack, body: *mut u8, code: *const u8, kind: ResultKind, join: *mut JoinObject) -> *mut Task {
     super::diagnostics::TASKS_SPAWNED.add(1);
+    static IDS: AtomicU64 = AtomicU64::new(1);
     let sp = unsafe { initial_stack(stack.top()) };
     let task = Box::into_raw(Box::new(Task {
         sp,
+        id: IDS.fetch_add(1, Ordering::Relaxed),
         stack: Some(stack),
         body,
         code,
@@ -1662,7 +1720,13 @@ pub unsafe extern "C" fn tondo_rt_spawn(
     let task = new_task(task_stack(), body, code, kind, join);
     unsafe {
         (*join).task = task;
-        (*task).origin = Some(super::trace::spawned(origin()));
+        let spawned = super::trace::spawned(origin());
+        if recorder::on() {
+            let parent = current().as_ref().map_or(0, |parent| parent.id);
+            let at = recorder::frames(spawned.frames().iter().copied());
+            recorder::record(recorder::Event::Spawn { task: (*task).id, parent, code: code as usize, at });
+        }
+        (*task).origin = Some(spawned);
     }
     schedule(task);
     join

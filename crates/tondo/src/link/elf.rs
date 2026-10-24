@@ -251,6 +251,8 @@ enum Synthetic {
     FiniArrayEnd,
     GlobalOffsetTable,
     Dynamic,
+    /// The ELF header, where the executable is loaded.
+    HeaderStart,
 }
 
 fn synthetic(name: &[u8]) -> Option<Synthetic> {
@@ -261,6 +263,7 @@ fn synthetic(name: &[u8]) -> Option<Synthetic> {
         b"__fini_array_end" => Synthetic::FiniArrayEnd,
         b"_GLOBAL_OFFSET_TABLE_" => Synthetic::GlobalOffsetTable,
         b"_DYNAMIC" => Synthetic::Dynamic,
+        b"__ehdr_start" => Synthetic::HeaderStart,
         _ => return None,
     })
 }
@@ -1015,6 +1018,7 @@ impl<'a> Linker<'a> {
                     Synthetic::FiniArrayEnd => end(Out::FiniArray),
                     Synthetic::GlobalOffsetTable => self.addr[Out::Got as usize],
                     Synthetic::Dynamic => self.addr[Out::Dynamic as usize],
+                    Synthetic::HeaderStart => BASE,
                 }
             }
             Def::Undefined => 0,

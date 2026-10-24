@@ -4638,7 +4638,14 @@ impl<'a> Checker<'a> {
                     return Self::error_expr(span);
                 }
                 let result = call.ty;
-                let closure = self.call_closure(call, "spawn", span);
+                // A trace names the task by the function it runs.
+                let name = match &call.kind {
+                    hir::ExprKind::Call(hir::Callee::Fn(id), ..) if (id.0 as usize) < self.signatures.len() => {
+                        format!("spawn {}", self.signatures[id.0 as usize].name)
+                    }
+                    _ => "spawn".to_string(),
+                };
+                let closure = self.call_closure(call, &name, span);
                 let (body, ..) = self.types.closure(closure.ty).expect("a call closure");
                 let erased = self.types.intern(TyKind::Fn(Vec::new(), result, false, Vec::new(), false));
                 let erased = Self::mk(hir::ExprKind::Erase(Box::new(closure), FnId(body)), erased, span);
