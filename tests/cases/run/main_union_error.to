@@ -9,7 +9,7 @@ fn parse(): Int ! ParseError {
 }
 
 fn main(): !(ConfigError | ParseError) {
-    let value = parse()?
+    _ = parse()?
 }
 
 // expect-exit: 1

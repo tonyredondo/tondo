@@ -10,7 +10,7 @@
 use crate::ast::*;
 use crate::diag::Diagnostics;
 use crate::source::Span;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct ModuleSource {
     /// The module path, starting with the package name.
@@ -73,7 +73,7 @@ pub fn link(mut modules: Vec<ModuleSource>, root: usize, packages: &[PackageInfo
     };
     let mut prefixes: Vec<Option<String>> =
         modules.iter().enumerate().map(|(i, m)| (i != root).then(|| prefix(m, false))).collect();
-    let mut distinct = std::collections::HashSet::new();
+    let mut distinct = HashSet::new();
     if !prefixes.iter().flatten().all(|p| distinct.insert(p.clone())) {
         prefixes = modules.iter().enumerate().map(|(i, m)| (i != root).then(|| prefix(m, true))).collect();
     }
@@ -188,11 +188,37 @@ pub fn link(mut modules: Vec<ModuleSource>, root: usize, packages: &[PackageInfo
     let mut merged = Module { imports: std_imports, module_paths, ..Module::default() };
     let paths: Vec<String> = modules.iter().map(|m| m.path.join(".")).collect();
     for (index, module) in modules.into_iter().enumerate() {
+        let package = &packages[module.package].name;
+        // The names the module declares and imports share its scope.
+        let files = module.files.iter().map(|(file, _)| file);
+        let names: Vec<&Ident> = files
+            .flat_map(|file| {
+                let aliases = file.imports.iter().map(|i| i.alias.as_ref().unwrap_or(i.path.last().unwrap()));
+                aliases.chain(file.items.iter().filter_map(declared_name))
+            })
+            .collect();
+        confusables(&names, diags);
+        let outer: Vec<(String, String)> = names.iter().map(|n| (skeleton(&n.name), n.name.clone())).collect();
         for ((file, is_root), imports) in module.files.into_iter().zip(&file_imports[index]) {
             let class = file.class;
-            let mut linker =
-                Linker { module: index, class, imports, decls: &decls, prefixes: &prefixes, paths: &paths, diags };
-            let Module { items, statements, .. } = file;
+            let mut linker = Linker {
+                module: index,
+                class,
+                conventions: !file.bound,
+                imports,
+                decls: &decls,
+                prefixes: &prefixes,
+                paths: &paths,
+                used: HashSet::new(),
+                outer: &outer,
+                visible: Vec::new(),
+                diags,
+            };
+            if let Some(shebang) = file.shebang.filter(|_| !is_root || file.statements.is_empty()) {
+                let message = "only a root script, whose code is at the top level, starts with `#!`: remove this line";
+                linker.diags.error("E1805", shebang, message);
+            }
+            let Module { items, statements, imports: written, .. } = file;
             for mut item in items {
                 linker.item(&mut item);
                 merged.items.push(item);
@@ -204,6 +230,14 @@ pub fn link(mut modules: Vec<ModuleSource>, root: usize, packages: &[PackageInfo
             } else if let Some(first) = statements.first() {
                 let message = "top-level statements belong in the root file of the program; move them into a function";
                 linker.diags.error("E1804", first.span, message);
+            }
+            // The names of this package's modules.
+            for import in written.iter().filter(|i| i.path[0].name == *package) {
+                import.path[1..].iter().for_each(|segment| linker.convention(segment, Case::Camel));
+            }
+            for import in written.iter().filter(|i| !linker.used.contains(i.alias_name())) {
+                let message = format!("`{}` is imported but never used: remove the import", import.alias_name());
+                linker.diags.warning("W1001", import.span, message);
             }
         }
     }
@@ -311,10 +345,112 @@ impl Import {
     }
 }
 
+/// The name a declaration gives the module's scope.
+fn declared_name(item: &Item) -> Option<&Ident> {
+    match item {
+        Item::Fn(f) if f.owner.is_none() => Some(&f.name),
+        Item::Type(t) => Some(&t.name),
+        Item::Alias(a) => Some(&a.name),
+        Item::Const(c) => Some(&c.name),
+        Item::Enum(e) => Some(&e.name),
+        Item::Trait(t) => Some(&t.name),
+        Item::Fn(_) | Item::Impl(_) | Item::Test(_) | Item::Derive(_) => None,
+    }
+}
+
+/// The confusable skeleton of a name (UTS #39, 5.4).
+fn skeleton(name: &str) -> String {
+    unicode_security::skeleton(name).collect()
+}
+
+/// The warning for `name` when it looks the same as a name of `seen`: they
+/// have the same skeleton, and one of them is not ASCII, as in `pаth` with a
+/// Cyrillic `а`. Two ASCII names are told apart, as `modern` and `modem`.
+fn confusable<'a>(
+    mut seen: impl Iterator<Item = &'a (String, String)>,
+    skeleton: &str,
+    name: &Ident,
+) -> Option<String> {
+    let (_, other) =
+        seen.find(|(s, other)| s == skeleton && *other != name.name && !(other.is_ascii() && name.name.is_ascii()))?;
+    let unusual = if name.name.is_ascii() { other } else { &name.name };
+    let points: Vec<String> =
+        unusual.chars().filter(|c| !c.is_ascii()).map(|c| format!("U+{:04X}", c as u32)).collect();
+    Some(format!(
+        "`{}` looks the same as `{other}` in this scope (`{unusual}` has {}): rename one of them",
+        name.name,
+        points.join(", ")
+    ))
+}
+
+/// Warns of each name of `names` that looks the same as an earlier one.
+fn confusables(names: &[&Ident], diags: &mut Diagnostics) {
+    let mut seen: Vec<(String, String)> = Vec::new();
+    for name in names {
+        let skeleton = skeleton(&name.name);
+        if let Some(warning) = confusable(seen.iter(), &skeleton, name) {
+            diags.warning("W1005", name.span, warning);
+        }
+        seen.push((skeleton, name.name.clone()));
+    }
+}
+
+#[derive(Copy, Clone)]
+enum Case {
+    Pascal,
+    Camel,
+}
+
+/// `name` in `case`, its acronyms written as words: `HttpClient` for
+/// `HTTPClient` or `http_client`. Leading and trailing underscores stay.
+fn conventional(name: &str, case: Case) -> String {
+    let core = name.trim_matches('_');
+    if core.is_empty() {
+        return name.to_string();
+    }
+    let chars: Vec<char> = core.chars().collect();
+    let mut words: Vec<String> = Vec::new();
+    let mut word = String::new();
+    for (i, &c) in chars.iter().enumerate() {
+        let previous = i.checked_sub(1).map(|i| chars[i]);
+        let next = chars.get(i + 1);
+        // A word starts after `_`, at a capital after a lowercase letter or
+        // a digit, and at the last capital of an acronym before a word.
+        let starts = c.is_uppercase()
+            && previous.is_some_and(|p| {
+                p.is_lowercase() || p.is_ascii_digit() || (p.is_uppercase() && next.is_some_and(|n| n.is_lowercase()))
+            });
+        if c == '_' || starts {
+            words.extend((!word.is_empty()).then(|| std::mem::take(&mut word)));
+        }
+        if c != '_' {
+            word.push(c);
+        }
+    }
+    words.push(word);
+    let mut out = String::from(&name[..name.len() - name.trim_start_matches('_').len()]);
+    for (index, word) in words.iter().enumerate() {
+        let lower = word.to_lowercase();
+        match (index, case) {
+            (0, Case::Camel) => out.push_str(&lower),
+            _ => {
+                let mut chars = lower.chars();
+                out.extend(chars.next().map(|c| c.to_uppercase().collect::<String>()));
+                out.push_str(chars.as_str());
+            }
+        }
+    }
+    out.push_str(&name[name.trim_end_matches('_').len()..]);
+    out
+}
+
 struct Linker<'a> {
     module: usize,
     /// The class of the file being linked.
     class: SourceClass,
+    /// Whether its names follow the conventions of 5.4, unless it keeps
+    /// those of C.
+    conventions: bool,
     /// This file's imports of the package's modules.
     imports: &'a HashMap<String, usize>,
     decls: &'a [Declarations],
@@ -323,6 +459,12 @@ struct Linker<'a> {
     prefixes: &'a [Option<String>],
     /// The path of each module.
     paths: &'a [String],
+    /// The first segments of the file's paths, which its imports must name.
+    used: HashSet<String>,
+    /// The names of the module's scope, and the bindings visible where the
+    /// linker is, with their skeletons.
+    outer: &'a [(String, String)],
+    visible: Vec<(String, String)>,
     diags: &'a mut Diagnostics,
 }
 
@@ -338,6 +480,15 @@ impl Linker<'_> {
     /// declares or imports. The checker reports that in the root module,
     /// whose names keep their spelling; elsewhere they are renamed by now.
     fn binding(&mut self, name: &Ident) {
+        self.convention(name, Case::Camel);
+        if name.name != "_" {
+            let skeleton = skeleton(&name.name);
+            let seen = self.outer.iter().chain(&self.visible);
+            if let Some(warning) = confusable(seen, &skeleton, name) {
+                self.diags.warning("W1005", name.span, warning);
+            }
+            self.visible.push((skeleton, name.name.clone()));
+        }
         if self.prefixes[self.module].is_none() || name.name == "self" {
             return;
         }
@@ -345,6 +496,20 @@ impl Linker<'_> {
             let message =
                 format!("`{}` would shadow a visible binding with the same name: choose another name", name.name);
             self.diags.error("E1003", name.span, message);
+        }
+    }
+
+    /// Warns of a name that does not follow 5.4 (`W1004`), giving the one
+    /// that does.
+    fn convention(&mut self, name: &Ident, case: Case) {
+        let conventional = conventional(&name.name, case);
+        if self.conventions && conventional != name.name {
+            let kind = match case {
+                Case::Pascal => "types, traits, variants and constants are `PascalCase`",
+                Case::Camel => "functions, fields, bindings and modules are `camelCase`",
+            };
+            let message = format!("`{}` should be `{conventional}`: {kind}, with acronyms written as words", name.name);
+            self.diags.warning("W1004", name.span, message);
         }
     }
 
@@ -356,6 +521,9 @@ impl Linker<'_> {
     /// Resolves the module part of a path: `alias.Name` through an import,
     /// or a name this module declares.
     fn path(&mut self, segments: &mut Vec<Ident>, position: Position) {
+        if let Some(first) = segments.first() {
+            self.used.insert(first.name.clone());
+        }
         if segments.len() >= 2
             && let Some(&target) = self.imports.get(&segments[0].name)
         {
@@ -400,6 +568,15 @@ impl Linker<'_> {
             Item::Fn(f) => self.function(f, true),
             Item::Type(t) => {
                 t.module = module;
+                if let TypeBody::Record(fields) = &t.body {
+                    confusables(&fields.iter().map(|f| &f.name).collect::<Vec<_>>(), self.diags);
+                }
+                if !t.foreign {
+                    self.convention(&t.name, Case::Pascal);
+                    if let TypeBody::Record(fields) = &t.body {
+                        fields.iter().for_each(|f| self.convention(&f.name, Case::Camel));
+                    }
+                }
                 self.declared(&mut t.name);
                 self.generics(&mut t.generics);
                 match &mut t.body {
@@ -409,11 +586,13 @@ impl Linker<'_> {
                 }
             }
             Item::Alias(a) => {
+                self.convention(&a.name, Case::Pascal);
                 self.declared(&mut a.name);
                 self.ty(&mut a.target);
             }
             Item::Const(c) => {
                 c.module = module;
+                self.convention(&c.name, Case::Pascal);
                 self.declared(&mut c.name);
                 if let Some(ty) = &mut c.ty {
                     self.ty(ty);
@@ -422,9 +601,15 @@ impl Linker<'_> {
             }
             Item::Enum(e) => {
                 e.module = module;
+                self.convention(&e.name, Case::Pascal);
+                confusables(&e.variants.iter().map(|v| &v.name).collect::<Vec<_>>(), self.diags);
                 self.declared(&mut e.name);
                 self.generics(&mut e.generics);
                 for variant in &mut e.variants {
+                    self.convention(&variant.name, Case::Pascal);
+                    if let VariantPayload::Record(fields) = &variant.payload {
+                        fields.iter().for_each(|f| self.convention(&f.name, Case::Camel));
+                    }
                     match &mut variant.payload {
                         VariantPayload::Unit => {}
                         VariantPayload::Tuple(types) => types.iter_mut().for_each(|t| self.ty(t)),
@@ -434,6 +619,7 @@ impl Linker<'_> {
             }
             Item::Trait(t) => {
                 t.module = module;
+                self.convention(&t.name, Case::Pascal);
                 self.declared(&mut t.name);
                 self.generics(&mut t.generics);
                 t.methods.iter_mut().for_each(|m| self.function(m, false));
@@ -461,8 +647,10 @@ impl Linker<'_> {
             }
             TestNode::Suite(s) => {
                 (s.module, s.class) = (self.module as u32, self.class);
-                s.setup.iter_mut().for_each(|stmt| self.stmt(stmt));
-                s.members.iter_mut().for_each(|member| self.test_node(member));
+                self.scoped(|linker| {
+                    s.setup.iter_mut().for_each(|stmt| linker.stmt(stmt));
+                    s.members.iter_mut().for_each(|member| linker.test_node(member));
+                });
             }
         }
     }
@@ -471,6 +659,10 @@ impl Linker<'_> {
     /// module, and a method's owner is one of its types.
     fn function(&mut self, f: &mut FnDecl, top: bool) {
         f.module = self.module as u32;
+        // A C function keeps its names.
+        let (conventions, visible) = (self.conventions, self.visible.len());
+        self.conventions &= f.foreign.is_none();
+        self.convention(&f.name, Case::Camel);
         match &mut f.owner {
             Some(owner) => {
                 let mut path = vec![owner.clone()];
@@ -497,6 +689,16 @@ impl Linker<'_> {
         if let Some(body) = &mut f.body {
             self.block(body);
         }
+        self.conventions = conventions;
+        self.visible.truncate(visible);
+    }
+
+    /// Links what `link` does in a scope of its own, whose bindings are not
+    /// visible after it.
+    fn scoped(&mut self, link: impl FnOnce(&mut Self)) {
+        let visible = self.visible.len();
+        link(self);
+        self.visible.truncate(visible);
     }
 
     fn generics(&mut self, generics: &mut [GenericParam]) {
@@ -532,10 +734,12 @@ impl Linker<'_> {
     }
 
     fn block(&mut self, block: &mut Block) {
-        block.stmts.iter_mut().for_each(|s| self.stmt(s));
-        if let Some(tail) = &mut block.tail {
-            self.expr(tail);
-        }
+        self.scoped(|linker| {
+            block.stmts.iter_mut().for_each(|s| linker.stmt(s));
+            if let Some(tail) = &mut block.tail {
+                linker.expr(tail);
+            }
+        });
     }
 
     fn stmt(&mut self, stmt: &mut Stmt) {
@@ -560,17 +764,17 @@ impl Linker<'_> {
                 }
             }
             StmtKind::Break | StmtKind::Continue => {}
-            StmtKind::For { header, body } => {
+            StmtKind::For { header, body } => self.scoped(|linker| {
                 match header {
                     ForHeader::Infinite => {}
-                    ForHeader::Condition(condition) => self.expr(condition),
+                    ForHeader::Condition(condition) => linker.expr(condition),
                     ForHeader::In { pattern, source } => {
-                        self.pattern(pattern);
-                        self.expr(source);
+                        linker.pattern(pattern);
+                        linker.expr(source);
                     }
                 }
-                self.block(body);
-            }
+                linker.block(body);
+            }),
             StmtKind::Defer(Defer::Call(call)) => self.expr(call),
             StmtKind::Defer(Defer::Block(block)) => self.block(block),
         }
@@ -630,29 +834,33 @@ impl Linker<'_> {
             ExprKind::Match { scrutinee, arms } => {
                 self.expr(scrutinee);
                 for arm in arms {
-                    self.pattern(&mut arm.pattern);
-                    if let Some(guard) = &mut arm.guard {
-                        self.expr(guard);
-                    }
-                    match &mut arm.body {
-                        ArmBody::Expr(body) => self.expr(body),
-                        ArmBody::Statement(stmt) => self.stmt(stmt),
-                    }
+                    self.scoped(|linker| {
+                        linker.pattern(&mut arm.pattern);
+                        if let Some(guard) = &mut arm.guard {
+                            linker.expr(guard);
+                        }
+                        match &mut arm.body {
+                            ArmBody::Expr(body) => linker.expr(body),
+                            ArmBody::Statement(stmt) => linker.stmt(stmt),
+                        }
+                    });
                 }
             }
             ExprKind::SyncLiteral(_, literal) => self.expr(literal),
             ExprKind::Select(arms) => {
                 for arm in arms {
-                    if let Some(pattern) = &mut arm.pattern {
-                        self.pattern(pattern);
-                    }
-                    if let Some(operation) = &mut arm.operation {
-                        self.expr(operation);
-                    }
-                    match &mut arm.body {
-                        ArmBody::Expr(body) => self.expr(body),
-                        ArmBody::Statement(stmt) => self.stmt(stmt),
-                    }
+                    self.scoped(|linker| {
+                        if let Some(pattern) = &mut arm.pattern {
+                            linker.pattern(pattern);
+                        }
+                        if let Some(operation) = &mut arm.operation {
+                            linker.expr(operation);
+                        }
+                        match &mut arm.body {
+                            ArmBody::Expr(body) => linker.expr(body),
+                            ArmBody::Statement(stmt) => linker.stmt(stmt),
+                        }
+                    });
                 }
             }
             ExprKind::Tuple(items) | ExprKind::Array(items) | ExprKind::Set(items) => {
@@ -672,18 +880,18 @@ impl Linker<'_> {
                 }
             }
             ExprKind::Unsafe(block) => self.block(block),
-            ExprKind::Closure(closure) => {
+            ExprKind::Closure(closure) => self.scoped(|linker| {
                 for param in &mut closure.params {
-                    self.binding(&param.name);
+                    linker.binding(&param.name);
                     if let Some(ty) = &mut param.ty {
-                        self.ty(ty);
+                        linker.ty(ty);
                     }
                 }
                 if let Some(result) = &mut closure.result {
-                    self.ty(result);
+                    linker.ty(result);
                 }
-                self.block(&mut closure.body);
-            }
+                linker.block(&mut closure.body);
+            }),
             ExprKind::Int { .. }
             | ExprKind::Float { .. }
             | ExprKind::Bool(_)

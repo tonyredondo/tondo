@@ -1,6 +1,6 @@
 //! Compiler diagnostics (spec 22).
 
-use crate::source::{SourceMap, Span};
+use crate::source::{SourceFile, SourceMap, Span};
 use std::fmt::Write;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -89,9 +89,20 @@ impl Diagnostics {
         self.list.iter().any(|d| d.severity == Severity::Error)
     }
 
+    /// Drops the warnings about the files `foreign` names: the standard
+    /// library's and the dependencies', which their authors see.
+    pub fn drop_warnings(&mut self, sources: &SourceMap, foreign: impl Fn(&SourceFile) -> bool) {
+        self.list.retain(|d| {
+            d.severity != Severity::Warning || d.span.is_none_or(|span| !foreign(sources.file_of(span.start)))
+        });
+    }
+
     /// Orders the diagnostics as 22.6 requires: by module, file, start and
-    /// end, errors first, then code and message. Merges repeated ones.
+    /// end, errors first, then code and message. Merges repeated ones. The
+    /// warnings about the standard library and about what derives and
+    /// generators wrote are not the program's.
     pub fn sort(&mut self, sources: &SourceMap) {
+        self.drop_warnings(sources, |file| file.logical.starts_with('<'));
         let key = |d: &Diagnostic| {
             let location = d.span.map(|span| {
                 let file = sources.file_of(span.start);

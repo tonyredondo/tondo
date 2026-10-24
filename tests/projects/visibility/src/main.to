@@ -7,6 +7,10 @@ impl Display for accounts.Plain {
     }
 }
 
+fn accounts.Plain.doubled(self): Int {
+    self.value * 2
+}
+
 fn main() {
     let user = accounts.User.new("ada")
     console.println(user.secret)
@@ -25,3 +29,4 @@ fn main() {
 // expect-error: E1502 `accounts.User` has private fields, so only its module can build it with a literal
 // expect-error: E1501 `accounts.User` has private fields; end the pattern with `..`
 // expect-error: E1501 `accounts.User.check` is private to its module; declare it `pub` to use it here
+// expect-error: E1504 `accounts.Plain` is declared in another module, which alone declares its methods

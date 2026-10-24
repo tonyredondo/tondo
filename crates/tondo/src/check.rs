@@ -474,6 +474,44 @@ fn constant_parts(value: &mut hir::Expr) -> Option<Vec<&mut hir::Expr>> {
     })
 }
 
+/// The literal an expression is, if it is one.
+fn literal(value: &hir::Expr) -> Option<hir::Literal> {
+    match &value.kind {
+        hir::ExprKind::Int(v) => Some(hir::Literal::Int(*v)),
+        hir::ExprKind::Str(s) => Some(hir::Literal::Str(s.clone())),
+        hir::ExprKind::Bool(b) => Some(hir::Literal::Bool(*b)),
+        hir::ExprKind::Char(c) => Some(hir::Literal::Char(*c)),
+        _ => None,
+    }
+}
+
+/// The float a constant expression of floats evaluates to.
+fn fold_float(types: &Types, value: &hir::Expr) -> Option<f64> {
+    if !matches!(types.kind(types.repr(value.ty)), TyKind::Float(_)) {
+        return None;
+    }
+    match &value.kind {
+        hir::ExprKind::Float(x) => Some(*x),
+        hir::ExprKind::Convert(inner) => match inner.kind {
+            hir::ExprKind::Int(n) => Some(n as f64),
+            _ => fold_float(types, inner),
+        },
+        hir::ExprKind::Unary(UnaryOp::Neg, inner) => Some(-fold_float(types, inner)?),
+        hir::ExprKind::Binary(op, left, right) => {
+            let (a, b) = (fold_float(types, left)?, fold_float(types, right)?);
+            match op {
+                BinOp::Add => Some(a + b),
+                BinOp::Sub => Some(a - b),
+                BinOp::Mul => Some(a * b),
+                BinOp::Div => Some(a / b),
+                BinOp::Rem => Some(a % b),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 /// The integer an expression of integers evaluates to, an error where
 /// running it would panic, or `None` for anything else.
 fn fold(types: &Types, value: &hir::Expr) -> Option<Result<i128, &'static str>> {
@@ -738,6 +776,9 @@ struct FnCx {
     test_member: bool,
     /// The setup of a suite, which `return` cannot leave (testing 4.1).
     setup: bool,
+    /// The bindings the program names, and those it reads (22.8).
+    named: Vec<LocalId>,
+    reads: HashSet<LocalId>,
 }
 
 /// What a closure is: a `defer` block, `unsafe`, or the closure of a test
@@ -2310,7 +2351,7 @@ impl<'a> Checker<'a> {
                     for variant in &decl.variants {
                         if !seen.insert(variant.name.name.as_str()) {
                             let message = format!("variant `{}` is declared more than once", variant.name.name);
-                            self.diags.error("E1002", variant.name.span, message);
+                            self.diags.error("E1505", variant.name.span, message);
                         }
                         let payload = match &variant.payload {
                             ast::VariantPayload::Unit => Payload::Unit,
@@ -2392,7 +2433,7 @@ impl<'a> Checker<'a> {
         for field in fields {
             if !seen.insert(field.name.name.as_str()) {
                 let message = format!("field `{}` is declared more than once", field.name.name);
-                self.diags.error("E1002", field.name.span, message);
+                self.diags.error("E1505", field.name.span, message);
             }
             let mut ty = self.resolve_type(&field.ty);
             if !self.require_c_type(ty, field.ty.span) {
@@ -2426,7 +2467,7 @@ impl<'a> Checker<'a> {
         for field in fields {
             if !seen.insert(field.name.name.as_str()) {
                 let message = format!("field `{}` is declared more than once", field.name.name);
-                self.diags.error("E1002", field.name.span, message);
+                self.diags.error("E1505", field.name.span, message);
             }
             let ty = self.resolve_type(&field.ty);
             for annotation in &field.annotations {
@@ -2717,7 +2758,7 @@ impl<'a> Checker<'a> {
             for f in &decl.methods {
                 if !seen.insert(f.name.name.as_str()) {
                     let message = format!("`{}` declares `{}` more than once", decl.name.name, f.name.name);
-                    self.diags.error("E1002", f.name.span, message);
+                    self.diags.error("E1505", f.name.span, message);
                     continue;
                 }
                 let mut signature = self.signature(f, None, scope.clone());
@@ -3566,18 +3607,29 @@ impl<'a> Checker<'a> {
             None => None,
         };
         match nominal {
+            Some(Some(ty)) if self.owner(ty).is_some_and(|o| o.module != module) => {
+                let message = format!(
+                    "`{0}` is declared in another module, which alone declares its methods: move this method there, or write a function that takes a `{0}`",
+                    owner.name
+                );
+                self.diags.error("E1504", owner.span, message);
+                Ty::ERROR
+            }
             Some(Some(ty)) if !PRELUDE_TYPES.contains(&owner.name.as_str()) => ty,
             Some(_) => {
                 let message = format!(
                     "methods can only be declared on records, enums and newtypes of this module, not `{}`",
                     owner.name
                 );
-                self.diags.error("E1002", owner.span, message);
+                self.diags.error("E1504", owner.span, message);
                 Ty::ERROR
             }
             None if PRELUDE_TYPES.contains(&owner.name.as_str()) || self.type_named(&owner.name).is_some() => {
-                let message = format!("methods cannot be added to the intrinsic type `{}`", owner.name);
-                self.diags.error("E1002", owner.span, message);
+                let message = format!(
+                    "methods cannot be added to the intrinsic type `{}`: write a function that takes one",
+                    owner.name
+                );
+                self.diags.error("E1504", owner.span, message);
                 Ty::ERROR
             }
             None => {
@@ -3607,7 +3659,7 @@ impl<'a> Checker<'a> {
             None
         };
         match clash {
-            Some(message) => self.diags.error("E1002", f.name.span, message),
+            Some(message) => self.diags.error("E1505", f.name.span, message),
             None => {
                 self.methods.insert((owner, name.clone()), id);
                 self.method_visibility.insert(id, (f.module, f.public));
@@ -3899,6 +3951,8 @@ impl<'a> Checker<'a> {
             loan_bindings: HashSet::new(),
             test_member: false,
             setup: false,
+            named: Vec::new(),
+            reads: HashSet::new(),
         }
     }
 
@@ -3958,6 +4012,7 @@ impl<'a> Checker<'a> {
         if let Some(opaque) = opaque {
             self.record_witness(&cx, opaque, &body, f);
         }
+        self.unused(&cx, &params);
         self.type_params = outer_types;
         self.self_type = outer_self;
         self.implementing = outer_implementing;
@@ -4007,6 +4062,7 @@ impl<'a> Checker<'a> {
         let mut cx = self.new_cx(Ty::UNIT);
         cx.infer_error = true;
         let stmts = self.statements(&mut cx, statements);
+        self.unused(&cx, &[]);
         let ty = if cx.diverged { Ty::NEVER } else { Ty::UNIT };
         let body = hir::Block { stmts, tail: None, ty };
         let result = match cx.error {
@@ -4072,6 +4128,9 @@ impl<'a> Checker<'a> {
             Some(index) => index,
             None => {
                 let parent = cx.parent.as_deref_mut()?;
+                if let Some(local) = self.lookup(parent, name) {
+                    parent.reads.insert(local);
+                }
                 if test_member && let Some(local) = self.lookup(parent, name) {
                     let index = local.0 as usize;
                     let ty = parent.locals[index].ty;
@@ -4296,6 +4355,7 @@ impl<'a> Checker<'a> {
         };
         let parent = cx.parent.take().expect("a closure context has a parent");
         let inner = std::mem::replace(cx, *parent);
+        self.unused(&inner, &locals);
 
         let fields = inner.captures.iter().map(|c| Field { name: c.name.clone(), ty: c.ty, private: false }).collect();
         self.types.define_template(template, AdtKind::Record(fields));
@@ -5939,11 +5999,14 @@ impl<'a> Checker<'a> {
         mutable: bool,
         key: Option<crate::index::Key>,
     ) -> LocalId {
+        // `_` takes a value without binding it (5.4).
+        let discard = name.name == "_";
         // Another module's bindings may reuse the root's names, which only
         // the root sees unprefixed; the linker checks each module's own.
-        if self.lookup(cx, &name.name).is_some()
-            || self.visible_capture(cx, &name.name)
-            || (self.module == 0 && self.names.contains_key(&name.name))
+        if !discard
+            && (self.lookup(cx, &name.name).is_some()
+                || self.visible_capture(cx, &name.name)
+                || (self.module == 0 && self.names.contains_key(&name.name)))
         {
             let message = format!(
                 "`{0}` would shadow a visible binding with the same name: choose another name, or assign `{0} = ...` if it is a `var`",
@@ -5962,8 +6025,33 @@ impl<'a> Checker<'a> {
         cx.locals.push(hir::Local { name: name.name.clone(), ty, span: name.span });
         cx.mutable.push(mutable);
         cx.params.push(None);
-        cx.scopes.last_mut().unwrap().push((name.name.clone(), id));
+        if !discard {
+            cx.scopes.last_mut().unwrap().push((name.name.clone(), id));
+            cx.named.push(id);
+        }
         id
+    }
+
+    /// Warns of the bindings and parameters a body never reads (`W1002`,
+    /// `W1003`); `self` and names that start with `_` are exempt.
+    fn unused(&mut self, cx: &FnCx, params: &[LocalId]) {
+        for &local in &cx.named {
+            let hir::Local { name, span, .. } = &cx.locals[local.0 as usize];
+            if cx.reads.contains(&local) || name == "self" || !name.starts_with(char::is_alphabetic) {
+                continue;
+            }
+            if params.contains(&local) {
+                let message = format!(
+                    "the parameter `{name}` is never used: write `_` instead, or `_{name}` to hold its value until the function ends"
+                );
+                self.diags.warning("W1003", *span, message);
+            } else {
+                let message = format!(
+                    "`{name}` is never used: write `_` instead, or `_{name}` to hold its value until the block ends"
+                );
+                self.diags.warning("W1002", *span, message);
+            }
+        }
     }
 
     // ---- statements ------------------------------------------------------
@@ -6530,6 +6618,10 @@ impl<'a> Checker<'a> {
                     self.diags.error(code, root.span, message);
                     return None;
                 };
+                // Writing a loan is what it is for.
+                if matches!(cx.params[local.0 as usize], Some(ast::Mode::Mut | ast::Mode::Var)) {
+                    cx.reads.insert(local);
+                }
                 if !cx.mutable[local.0 as usize] {
                     let ty = self.types.display(cx.locals[local.0 as usize].ty);
                     let message = match cx.params[local.0 as usize] {
@@ -8966,14 +9058,7 @@ impl<'a> Checker<'a> {
                     k
                 }
             };
-            let constant = match &k.kind {
-                hir::ExprKind::Int(v) => Some(hir::Literal::Int(*v)),
-                hir::ExprKind::Str(s) => Some(hir::Literal::Str(s.clone())),
-                hir::ExprKind::Bool(b) => Some(hir::Literal::Bool(*b)),
-                hir::ExprKind::Char(c) => Some(hir::Literal::Char(*c)),
-                _ => None,
-            };
-            if let Some(constant) = constant {
+            if let Some(constant) = literal(&k) {
                 if constants.iter().any(|(c, _)| *c == constant) {
                     self.diags.error("E1116", k.span, "this key appears more than once in the literal");
                 }
@@ -9004,6 +9089,7 @@ impl<'a> Checker<'a> {
             _ => None,
         };
         let mut values = Vec::new();
+        let mut constants = Vec::new();
         for item in items {
             let value = self.expr(cx, item, element);
             let value = match element {
@@ -9013,6 +9099,12 @@ impl<'a> Checker<'a> {
                     value
                 }
             };
+            if let Some(constant) = literal(&value) {
+                if constants.contains(&constant) {
+                    self.diags.warning("W1011", value.span, "this entry appears earlier in the set: remove it");
+                }
+                constants.push(constant);
+            }
             values.push(value);
         }
         let Some(element) = element else {
@@ -10383,6 +10475,7 @@ impl<'a> Checker<'a> {
         }
         if let Some(local) = self.lookup(cx, &first.name) {
             self.index_local(cx, first);
+            cx.reads.insert(local);
             let ty = cx.locals[local.0 as usize].ty;
             let mut value = Self::mk(hir::ExprKind::Local(local), ty, first.span);
             for segment in &segments[1..] {
@@ -11198,6 +11291,10 @@ impl<'a> Checker<'a> {
                     return self.arity_error(span, 1, args.len());
                 };
                 let value = self.expr(cx, &arg.value, None);
+                if value.ty == to {
+                    let message = format!("the value is already `{name}`: remove `{name}(...)` around it");
+                    self.diags.warning("W1007", span, message);
+                }
                 match self.conversion_checked(value.ty, to) {
                     _ if value.ty == Ty::ERROR => Self::error_expr(span),
                     Some(false) => Self::mk(hir::ExprKind::Convert(Box::new(value)), to, span),
@@ -12016,6 +12113,14 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Warns of a comparison with a constant that is NaN (`W1008`).
+    fn nan_comparison(&mut self, left: &hir::Expr, right: &hir::Expr, span: Span) {
+        if [left, right].into_iter().any(|side| fold_float(&self.types, side).is_some_and(f64::is_nan)) {
+            let message = "NaN is not equal to any value, itself included, nor less or greater than one: test it with `value.isNaN()`";
+            self.diags.warning("W1008", span, message);
+        }
+    }
+
     fn binary(
         &mut self,
         cx: &mut FnCx,
@@ -12104,6 +12209,7 @@ impl<'a> Checker<'a> {
                 } else if !self.types.is_equatable(left.ty) {
                     operator_error(self, left.ty);
                 }
+                self.nan_comparison(&left, &right, span);
                 (left, right, Ty::BOOL)
             }
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
@@ -12121,6 +12227,7 @@ impl<'a> Checker<'a> {
                 if !ordered {
                     operator_error(self, left.ty);
                 }
+                self.nan_comparison(&left, &right, span);
                 (left, right, Ty::BOOL)
             }
             BinOp::In => {

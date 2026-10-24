@@ -9,7 +9,7 @@ extern fn qsort(
     compare: extern fn(Pointer[ffi.Void], Pointer[ffi.Void]): ffi.CInt,
 )
 
-unsafe fn stuck(left: Pointer[ffi.Void], right: Pointer[ffi.Void]): ffi.CInt {
+unsafe fn stuck(_: Pointer[ffi.Void], _: Pointer[ffi.Void]): ffi.CInt {
     let (sender, receiver) = channel[Int]()
     _ = receiver.receive()
     sender.close()

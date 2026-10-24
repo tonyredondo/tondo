@@ -78,7 +78,7 @@ fn main() {
     console.println("total {total}")
 
     // A send that does not complete leaves the value with its owner.
-    let (rendezvous, nobody) = channel[String](0)
+    let (rendezvous, _nobody) = channel[String](0)
     let text = "kept {total}"
     let sent = select {
         rendezvous.send(text) => true

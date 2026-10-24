@@ -1,6 +1,6 @@
 fn main() {
     let capacity = -1
-    let (sender, receiver) = channel[Int](capacity)
+    _ = channel[Int](capacity)
 }
 
 // expect-panic: P0001

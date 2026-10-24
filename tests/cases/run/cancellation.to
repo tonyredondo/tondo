@@ -113,12 +113,12 @@ fn main() {
     _ = acks.receive()
     nested.cancel()
 
-    let (full, rest) = channel[String](1)
+    let (full, _rest) = channel[String](1)
     let blocked = spawn blockedSend(full)
     blocked.cancel()
 
-    let (nobody, never) = channel[String](0)
-    let (quiet, empty) = channel[String]()
+    let (nobody, _never) = channel[String](0)
+    let (_quiet, empty) = channel[String]()
     let waiting = spawn selecting(nobody, empty)
     waiting.cancel()
 

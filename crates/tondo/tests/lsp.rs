@@ -224,7 +224,7 @@ fn hover_definitions_references_and_rename() {
 
 #[test]
 fn diagnostics_follow_the_edits() {
-    let dir = project("lsp-diagnostics", &[("main.to", "fn main() {\n    let x: Int = \"text\"\n}\n")]);
+    let dir = project("lsp-diagnostics", &[("main.to", "fn main() {\n    let x: Int = \"text\"\n    _ = x\n}\n")]);
     let mut editor = Editor::start();
     let uri = editor.open(&dir.join("main.to"));
     let formatted = editor.request("textDocument/formatting", json!({ "textDocument": { "uri": uri } }));

@@ -19,7 +19,7 @@ fn hit(stats: sync.Mutex[Stats], counter: sync.Atomic[Int]) {
 }
 
 // A permit moved into the task returns when the task ends.
-fn fetch(id: Int, permit: sync.Permit, active: sync.Atomic[Int], peak: sync.Atomic[Int]): Int {
+fn fetch(id: Int, _permit: sync.Permit, active: sync.Atomic[Int], peak: sync.Atomic[Int]): Int {
     let now = active.add(1)
     var best = peak.load()
     for now > best {

@@ -1,7 +1,7 @@
 fn main() {
     // The shape is checked before any element overflows.
     let big = [9223372036854775807, 1]
-    let sum = big + [1, 2, 3]
+    _ = big + [1, 2, 3]
 }
 
 // expect-panic: P0006

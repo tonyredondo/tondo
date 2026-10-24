@@ -204,7 +204,7 @@ fn main() {
 
 A method cannot share its name with a field: `fn User.displayName(self)`.
 
-```tondo error E1002
+```tondo error E1505
 type User = { name: String }
 
 fn User.name(self): String {

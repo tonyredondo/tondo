@@ -1,6 +1,6 @@
-fn pair(left: mut Array[Int], right: mut Array[Int]) {}
+fn pair(_left: mut Array[Int], _right: mut Array[Int]) {}
 
-fn one(values: mut Array[Int], value: mut Int) {}
+fn one(_values: mut Array[Int], _value: mut Int) {}
 
 fn main() {
     var ints = [1, 2, 3, 4]

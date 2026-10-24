@@ -38,7 +38,7 @@ fn main() {
         empty.push("item {i}")
     }
     var removed = 0
-    for i in 0..500 {
+    for _ in 0..500 {
         if empty.pop() != none {
             removed += 1
         }

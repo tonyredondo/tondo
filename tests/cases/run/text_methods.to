@@ -29,7 +29,7 @@ fn main() {
         err(_) => "?"
     }
     var count = 0
-    for c in built.chars() {
+    for _ in built.chars() {
         count += 1
     }
     console.println("{built} {count}")

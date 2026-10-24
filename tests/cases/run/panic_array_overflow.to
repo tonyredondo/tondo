@@ -1,6 +1,6 @@
 fn main() {
     let values: Array[Int8] = [100, 27]
-    let doubled = values * 2
+    _ = values * 2
 }
 
 // expect-panic: P0005

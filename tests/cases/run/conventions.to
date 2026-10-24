@@ -1,0 +1,36 @@
+import std.console
+
+const MAX_SIZE = 3
+
+type HTTPClient = {
+    base_url: String
+}
+
+enum Shape {
+    circle(Float)
+}
+
+// Acronyms are words, and a single capital is one: `UInt8`, `vec2D`.
+fn describe(client: HTTPClient, shape: Shape): String {
+    let userID = 7
+    let vec2D = 2
+    let vаlue = 1
+    let value = 2
+    match shape {
+        Shape.circle(radius) => "{client.base_url} {radius} {userID} {vec2D} {vаlue} {value}"
+    }
+}
+
+fn main() {
+    console.println(describe(HTTPClient { base_url: "x" }, Shape.circle(1.5)))
+    console.println("{MAX_SIZE}")
+}
+
+// expect-stdout: x 1.5 7 2 1 2
+// expect-stdout: 3
+// expect-warning: W1004 `MAX_SIZE` should be `MaxSize`
+// expect-warning: W1004 `HTTPClient` should be `HttpClient`
+// expect-warning: W1004 `base_url` should be `baseUrl`
+// expect-warning: W1004 `circle` should be `Circle`
+// expect-warning: W1004 `userID` should be `userId`
+// expect-warning: W1005 `value` looks the same as `vаlue` in this scope (`vаlue` has U+0430)

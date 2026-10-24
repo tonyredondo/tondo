@@ -875,7 +875,12 @@ impl Builder<'_> {
                 self.temp(Ty::UNIT, Rvalue::AssignSlice(place, bounds, value, *span), *span);
             }
             hir::Stmt::Expr(value) => {
-                self.expr(value);
+                // A discarded place is still read, for its checks.
+                if let Operand::Copy(place) = self.expr(value)
+                    && !place.path.is_empty()
+                {
+                    self.temp(value.ty, Rvalue::Use(Operand::Copy(place)), value.span);
+                }
             }
             hir::Stmt::Defer { local, closure, call } => {
                 // The closure is stored now; the runtime keeps its body and

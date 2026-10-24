@@ -1,0 +1,7 @@
+fn String.shout(self): String {
+    self
+}
+
+fn main() {}
+
+// expect-error: E1504 methods cannot be added to the intrinsic type `String`

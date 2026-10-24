@@ -26,7 +26,7 @@ fn main() {
     let v = p.length()
 }
 
-// expect-error: E1002 `x` is a field of `Point`
+// expect-error: E1505 `x` is a field of `Point`
 // expect-error: E1411 `shift` changes `p`, which is not declared with `var`: declare it as `var p`
 // expect-error: E1001 `origin` is an operation of `Point` without a receiver: call it as `Point.origin(...)`
 // expect-error: E1001 no parameter is named `prt`; the parameters are `host`, `port`

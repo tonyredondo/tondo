@@ -27,7 +27,7 @@ fn main() {
     }
     // An inclusive range up to the type's maximum must not overflow.
     var steps = 0
-    for b in 250u8..=255u8 {
+    for _ in 250u8..=255u8 {
         steps += 1
     }
     let label = { classify(-5) }

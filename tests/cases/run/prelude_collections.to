@@ -27,7 +27,7 @@ fn main() {
     console.println("{items}")
     // Map and Set
     let ages = ["ada": 36, "bo": 20]
-    console.println("{ages.getOr("cy", 0)} {ages.mapValues((a) { a + 1 })} {ages.filter((k, v) { v > 30 })} {ages.merge(["bo": 21, "cy": 5])}")
+    console.println("{ages.getOr("cy", 0)} {ages.mapValues((a) { a + 1 })} {ages.filter((_, v) { v > 30 })} {ages.merge(["bo": 21, "cy": 5])}")
     let a = Set[1, 2, 3]
     let b = Set[2, 3, 4]
     console.println("{a.union(b)} {a.intersection(b)} {a.difference(b)} {Set[2].isSubset(a)} {a.isSubset(b)}")

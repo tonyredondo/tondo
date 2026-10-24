@@ -33,16 +33,16 @@ fn keep(inbox: Receiver[Join[Holder]]): Holder {
 
 fn garbage(i: Int) {
     // A buffered message holds a sender of its own channel.
-    let (sender, receiver) = channel[Message]()
+    let (sender, _receiver) = channel[Message]()
     sender.send(Message { text: "hello {i}", reply: some(sender.copy()) })
 
     // Closures in shared collections that capture the collection.
     let handlers: sync.Map[String, fn(): Int] = sync.Map[:]
     _ = handlers.insert("size", () { handlers.length() })
     let queue: sync.Queue[fn(): Int] = sync.Queue[]
-    queue.push(() { queue.get(0).map((f) { 1 }).unwrapOr(0) })
+    queue.push(() { queue.get(0).map((_) { 1 }).unwrapOr(0) })
     let stack: sync.Stack[fn(): Int] = sync.Stack[]
-    stack.push(() { stack.get(0).map((f) { 1 }).unwrapOr(0) })
+    stack.push(() { stack.get(0).map((_) { 1 }).unwrapOr(0) })
     let slots: sync.Array[fn(): Int] = sync.Array([() { 0 }])
     _ = slots.set(0, () { slots.length() })
 

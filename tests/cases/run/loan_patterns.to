@@ -17,7 +17,7 @@ fn bump(value: mut Int) {
 
 fn count[T: ~Copy](values: ref Array[T]): Int {
     var n = 0
-    for ref value in values {
+    for ref _value in values {
         n += 1
     }
     n
@@ -25,7 +25,7 @@ fn count[T: ~Copy](values: ref Array[T]): Int {
 
 fn describe[T: ~Copy](value: ref T?): String {
     match value {
-        some(ref inner) => "some"
+        some(ref _inner) => "some"
         none => "none"
     }
 }

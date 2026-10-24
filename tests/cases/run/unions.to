@@ -74,7 +74,7 @@ fn main() {
     for shape in shapes {
         console.println(kind(shape))
     }
-    let small: Int32 | String = 7
+    let _small: Int32 | String = 7
     let picked: Int | String = if c == "changed" { 1 } else { "one" }
     console.println("{render(picked)} {render(c)}")
     console.println("{explain(retry("file"))} {explain(retry(""))} {explain(retry("bad"))} {explain(fallback())}")

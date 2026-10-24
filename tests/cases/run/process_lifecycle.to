@@ -1,5 +1,4 @@
 import std.console
-import std.fs
 import std.io
 import std.process
 import std.time
@@ -43,7 +42,7 @@ fn main(): !process.ProcessError {
     console.println("pid known {dropped.id() > 0}")
     let quick = time.now()
     {
-        let scoped = process.command("sleep", "0.2").start()?
+        let _scoped = process.command("sleep", "0.2").start()?
     }
     console.println("scope waited {not quick.elapsed().isLessThan(time.milliseconds(150))}")
     let cancelled = process.command("sleep", "5").start()?.cancel()?

@@ -1,0 +1,10 @@
+#!/usr/bin/env tondo
+import std.console
+
+fn main() {
+    console.println("x")
+}
+#!/usr/bin/env tondo
+
+// expect-error: E1805 only a root script, whose code is at the top level, starts with `#!`
+// expect-error: E1805 a shebang goes on the first line of the root script

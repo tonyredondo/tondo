@@ -31,7 +31,7 @@ fn main() {
     unsafe {
         let through: extern fn(Single): Single = twice
         console.println("{through(Single { b: 1.25 }).a}")
-        let null = 0u64.toFunction[extern fn(ffi.CInt): ffi.CInt]()
+        _ = 0u64.toFunction[extern fn(ffi.CInt): ffi.CInt]()
         let pointer: Pointer[ffi.Void] = ffi.allocate[Int]()
         console.println("{ffi.sizeOf[extern fn(ffi.CInt): ffi.CInt]()}")
         ffi.free(pointer)

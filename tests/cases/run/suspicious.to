@@ -1,0 +1,14 @@
+import std.console
+
+const Missing = Float.nan
+
+fn main() {
+    let x = 1.5
+    let tags = Set["a", "b", "a"]
+    console.println("{x == Missing} {x < 0.0 / 0.0} {Float(x)} {tags.length()}")
+}
+
+// expect-stdout: false false 1.5 2
+// expect-warning: W1008 NaN is not equal to any value
+// expect-warning: W1007 the value is already `Float`
+// expect-warning: W1011 this entry appears earlier in the set

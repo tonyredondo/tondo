@@ -1,6 +1,6 @@
 fn main() {
     let a: UInt8 = 3
-    let b = a - 4
+    _ = a - 4
 }
 
 // expect-panic: P0005

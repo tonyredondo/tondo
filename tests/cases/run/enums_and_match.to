@@ -23,7 +23,7 @@ fn area(s: Shape): Int {
         Shape.Circle(r) => 3 * r * r
         Shape.Rect(w, h) => w * h
         Shape.Labeled { sides, .. } if sides > 10 => -1
-        Shape.Labeled { name, sides } => sides
+        Shape.Labeled { name: _, sides } => sides
         Shape.Point => 0
     }
 }

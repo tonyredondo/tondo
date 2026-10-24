@@ -10,10 +10,10 @@ fn load(name: String): Int ! LoadError {
 }
 
 fn main() {
-    let count = load("app.toml").expect("loading the app")
+    _ = load("app.toml").expect("loading the app")
 }
 
 // expect-panic: P0008
 // expect-stderr: panic[P0008]: explicit-panic: loading the app: LoadError.Missing
-// expect-stderr:  --> panic_expect_error.to:13:17
-// expect-stderr:   main                           panic_expect_error.to:13:17
+// expect-stderr:  --> panic_expect_error.to:13:9
+// expect-stderr:   main                           panic_expect_error.to:13:9

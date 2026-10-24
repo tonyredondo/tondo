@@ -1,4 +1,4 @@
-fn one(values: mut Array[Int], value: mut Int) {}
+fn one(_values: mut Array[Int], _value: mut Int) {}
 
 fn main() {
     var ints = [1, 2, 3, 4]

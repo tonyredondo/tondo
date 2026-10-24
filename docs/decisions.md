@@ -1422,3 +1422,35 @@ takes and gives back, a channel's values, a closure that becomes a
 parameter declared `T: Send`. Only a `Pointer` and what holds one fail it
 in 0.1, and a type parameter without the bound is taken as `Send`, so
 generic code instantiated with a pointer is not caught.
+
+## 2026-10-24 — The `core` warnings
+
+A warning is for the code its reader can change: those about the standard
+library, the dependencies, and what derives and generators wrote are
+dropped. Imports, naming and confusable names are checked as the linker
+walks each file, before declarations are renamed; unused bindings and
+parameters as the checker resolves names, where a read is a use of the
+binding by name and an assignment is not, except through a `mut` or `var`
+loan. A name that starts with `_` is not reported, so a binding or a
+parameter that holds a permit or a lock until its scope ends has a way to
+say so; `_` alone binds nothing, as 5.4 says, so a function may take
+several.
+
+Names follow 5.4 with acronyms as words: a run of capitals before a word
+ends one word at its last capital (`HTTPClient` is `Http` and `Client`,
+`UInt8` is `U` and `Int8`), and the warning gives the conventional name.
+What mirrors C keeps its names: `extern` functions and types, and a module
+`tondo bind` wrote, known by the line it starts with. Two names are
+confusable when their UTS #39 skeletons match and one is not ASCII, as
+`unicode-security` computes them for Unicode 16.0.0; between two ASCII
+names the skeleton would confuse `modern` with `modem`.
+
+Writing the cases found that a discarded index, `_ = values[9]`, did not
+check its bounds, because a place that is never read was never loaded;
+lowering now reads it.
+
+`E1504` replaces `E1002` for a method on a type the module does not
+declare, which a qualified owner, `fn models.User.greet`, now reports
+instead of a syntax error, and `E1505` for fields, variants and methods
+that clash. A `#!` below the first line, or one starting a file that is
+not a root script, is `E1805`.

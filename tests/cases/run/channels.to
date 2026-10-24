@@ -101,7 +101,7 @@ fn main() {
     }
 
     // Values nobody receives are released with the channel.
-    let (spare, unread) = channel[String]()
+    let (spare, _unread) = channel[String]()
     spare.send("never read")
 }
 

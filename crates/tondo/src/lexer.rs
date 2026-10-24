@@ -472,6 +472,13 @@ impl Lexer<'_> {
             }
             return;
         }
+        // A shebang below the first line, skipped as a whole.
+        if rest.starts_with("#!") {
+            self.pos += rest.find('\n').unwrap_or(rest.len());
+            let message = "a shebang goes on the first line of the root script: move it there";
+            self.error("E1805", start, self.pos, message);
+            return;
+        }
         // A template string of other languages, as one error.
         if c == '`' {
             let end = rest[1..]

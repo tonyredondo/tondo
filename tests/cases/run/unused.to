@@ -1,0 +1,23 @@
+import std.console
+import std.math
+
+// `_` and names that start with it are exempt; `_held` holds its value
+// until the function ends.
+fn ignore(value: Int, _: Int, _held: Int) {}
+
+fn main() {
+    let unused = 1
+    let _kept = 2
+    var written = 0
+    written = 3
+    for i in 0..2 {}
+    ignore(1, 2, 3)
+    console.println("done")
+}
+
+// expect-stdout: done
+// expect-warning: W1001 `math` is imported but never used
+// expect-warning: W1003 the parameter `value` is never used
+// expect-warning: W1002 `unused` is never used
+// expect-warning: W1002 `written` is never used
+// expect-warning: W1002 `i` is never used

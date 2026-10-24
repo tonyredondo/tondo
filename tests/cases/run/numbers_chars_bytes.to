@@ -34,7 +34,7 @@ fn main(): !NumericConversionError {
     let f = Float(wide)
     console.println("{small} {wide} {f} {Float32(1.0e40) == err(NumericConversionError.OutOfRange)} {Int(2.0e18)?}")
     console.println("{convert(100.0)} {convert(1000.0)} {convert(nan)} {convert(1.5)} {convert(-128.0)} {convert(inf)}")
-    let u: UInt8 = UInt8(-1)?
+    _ = UInt8(-1)?
 }
 
 // expect-stdout: 3.0 0.1 0.5 -1.5 1e-7 1e21 100.0

@@ -5,7 +5,7 @@ fn main() {
     defer {
         let values = [1]
         console.println("cleanup that panics")
-        let x = values[3]
+        _ = values[3]
     }
     panic("first")
 }
@@ -18,7 +18,7 @@ fn main() {
 // expect-stderr: stack:
 // expect-stderr:   main  panic_in_cleanup.to:10:5
 // expect-stderr: suppressed while unwinding: panic[P0001]: bounds: index 3 is out of bounds for an array of length 1: the only valid indices are 0 and -1
-// expect-stderr:  --> panic_in_cleanup.to:8:17
+// expect-stderr:  --> panic_in_cleanup.to:8:13
 // expect-stderr: stack:
-// expect-stderr:   defer in main  panic_in_cleanup.to:8:17
+// expect-stderr:   defer in main  panic_in_cleanup.to:8:13
 // expect-stderr:   main           panic_in_cleanup.to:10:5

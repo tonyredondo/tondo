@@ -86,8 +86,11 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool) -> Result<An
     let mut diags = Diagnostics::default();
     let mut source_id = format!("root:{}", path.file_name().unwrap_or_default().to_string_lossy());
     let mut libraries: Vec<String> = Vec::new();
+    // The dependencies, whose warnings their authors see, not this program's.
+    let mut dependencies: Vec<String> = Vec::new();
     let module = if path.is_dir() {
         let packages = deps::resolve(path, None)?;
+        dependencies = packages[1..].iter().map(|p| p.name.clone()).collect();
         for library in packages.iter().flat_map(|p| &p.libraries) {
             if !libraries.contains(library) {
                 libraries.push(library.clone());
@@ -165,6 +168,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool) -> Result<An
             }
         }
         if diags.has_errors() && !editor {
+            drop_dependency_warnings(&mut diags, &sources, &dependencies);
             diags.sort(&sources);
             let index = None;
             return Ok(Analysis { sources, diags, program: None, source_id, libraries, meta, expansions, index });
@@ -231,13 +235,22 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool) -> Result<An
         if !earlier {
             diags.list.append(&mut checked.list);
         }
+        drop_dependency_warnings(&mut diags, &sources, &dependencies);
         diags.sort(&sources);
         return Ok(Analysis { sources, diags, program: None, source_id, libraries, meta, expansions, index });
     }
     let program = if diags.has_errors() { None } else { check::check(&module, &sources, &mut diags, meta) };
     let program = program.and_then(|program| mono::monomorphize(program, &mut diags));
+    drop_dependency_warnings(&mut diags, &sources, &dependencies);
     diags.sort(&sources);
     Ok(Analysis { sources, diags, program, source_id, libraries, meta, expansions, index: None })
+}
+
+fn drop_dependency_warnings(diags: &mut Diagnostics, sources: &SourceMap, dependencies: &[String]) {
+    diags.drop_warnings(sources, |file| {
+        let module = &file.module;
+        dependencies.iter().any(|d| module == d || module.strip_prefix(d.as_str()).is_some_and(|r| r.starts_with('.')))
+    });
 }
 
 /// Reads and parses one source file; `None` when it cannot be lexed.

@@ -21,6 +21,10 @@ pub struct Module {
     pub module_paths: Vec<Vec<String>>,
     /// In a test build, the name of the package under test.
     pub test_package: Option<String>,
+    /// Written by `tondo bind`, which keeps the names of C (toolchain 7.1).
+    pub bound: bool,
+    /// The `#!` line the file starts with.
+    pub shebang: Option<Span>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

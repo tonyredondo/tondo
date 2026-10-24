@@ -18,7 +18,7 @@ fn main() {
         console.println("{count}: {c}")
         count += 1
     }
-    for c in "" {
+    for _ in "" {
         console.println("never")
     }
     let joined = text[:1].concat(text[-1:])
