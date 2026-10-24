@@ -1,12 +1,13 @@
-//! Links ELF executables: the program's objects and the archives of the
-//! runtime and of native libraries, whose members come in as they are
-//! needed, against shared libraries the system has installed. The
-//! executable is position independent, so the system loads it anywhere:
-//! when it starts, its own addresses are moved to where it is, packed as
-//! `DT_RELR` where the C library reads that, and what shared libraries
-//! define is bound, all at once. A static executable relocates itself.
-//! Sections nothing reaches are dropped, thread-local accesses are relaxed
-//! to the executable's own model, and `.eh_frame_hdr` indexes the unwind
+//! Links ELF executables and shared libraries: the program's objects and
+//! the archives of the runtime and of native libraries, whose members come
+//! in as they are needed, against shared libraries the system has
+//! installed. The output is position independent, so the system loads it
+//! anywhere: when it starts, its own addresses are moved to where it is,
+//! packed as `DT_RELR` where the C library reads that, and what shared
+//! libraries define is bound, all at once. A static executable relocates
+//! itself. Sections nothing reaches are dropped, thread-local accesses are
+//! relaxed to an executable's own model or, in a shared library, ask the
+//! loader for the library's block, and `.eh_frame_hdr` indexes the unwind
 //! tables.
 
 use object::elf::*;
@@ -52,6 +53,14 @@ impl Arch {
             Arch::Aarch64 => R_AARCH64_RELATIVE,
         }
     }
+
+    /// The offset from the thread pointer, which the loader writes.
+    fn tp_off(self) -> RelocationType {
+        match self {
+            Arch::X86_64 => R_X86_64_TPOFF64,
+            Arch::Aarch64 => R_AARCH64_TLS_TPREL,
+        }
+    }
 }
 
 /// Where the executable would be if it were not moved: anywhere will do.
@@ -75,6 +84,9 @@ pub struct Inputs<'a> {
     /// The dynamic loader; none for a static executable.
     pub interpreter: Option<String>,
     pub entry: String,
+    /// A shared library instead of an executable: the name it is loaded by
+    /// and the symbols it publishes, which keep the rest.
+    pub library: Option<(String, Vec<String>)>,
     /// Without a symbol table.
     pub strip: bool,
 }
@@ -329,11 +341,17 @@ enum Target {
     Local { input: u32, symbol: u32 },
 }
 
-/// What an entry of the GOT holds: an address, or a thread-local offset.
+/// What an entry of the GOT holds: an address, or a thread-local offset;
+/// in a shared library, the pairs the loader fills for its thread-local
+/// block: its module and an offset, or a TLS descriptor.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 enum Slot {
     Address(Target),
     TpOff(Target),
+    Module(Option<Target>),
+    DtpOff(Option<Target>),
+    Descriptor(Target),
+    DescriptorArgument(Target),
 }
 
 struct Relocation {
@@ -370,6 +388,8 @@ struct Linker<'a> {
     unaligned_words: usize,
     /// Whether the C library reads `DT_RELR`.
     relr: bool,
+    /// A shared library, not an executable.
+    library: bool,
 }
 
 fn error(input: &str, message: impl std::fmt::Display) -> String {
@@ -399,9 +419,16 @@ pub fn link(inputs: Inputs) -> Result<Vec<u8>, String> {
         aligned_words: 0,
         unaligned_words: 0,
         relr: false,
+        library: inputs.library.is_some(),
     };
-    let entry = linker.intern(inputs.entry.as_bytes());
-    linker.globals[entry].required = true;
+    // What the output starts from: the entry, or what a library publishes.
+    let roots: Vec<usize> = match &inputs.library {
+        Some((_, exports)) => exports.iter().map(|name| linker.intern(name.as_bytes())).collect(),
+        None => vec![linker.intern(inputs.entry.as_bytes())],
+    };
+    for &root in &roots {
+        linker.globals[root].required = true;
+    }
     for (name, data) in &inputs.objects {
         linker.add(name.clone(), data)?;
     }
@@ -411,13 +438,23 @@ pub fn link(inputs: Inputs) -> Result<Vec<u8>, String> {
         library.needed = index < inputs.always_needed;
         linker.libraries.push(library);
     }
-    linker.dynamic = inputs.interpreter.is_some();
+    linker.dynamic = inputs.interpreter.is_some() || linker.library;
     linker.relr = linker.dynamic && linker.libraries.iter().any(|l| l.soname == "libc.so.6" && l.relr);
     linker.resolve()?;
-    linker.collect(entry);
+    linker.collect(&roots);
+    if linker.library {
+        for &root in &roots {
+            if !matches!(linker.globals[root].def, Def::Section { .. }) {
+                let name = String::from_utf8_lossy(linker.globals[root].name);
+                return Err(format!("the library does not define `{name}`, which it publishes"));
+            }
+            linker.dynsyms.push(root);
+            linker.globals[root].dynsym = Some(linker.dynsyms.len() as u32);
+        }
+    }
     linker.scan()?;
     linker.layout(&inputs);
-    linker.write(&inputs, entry)
+    linker.write(&inputs, roots[0])
 }
 
 impl<'a> Linker<'a> {
@@ -582,11 +619,13 @@ impl<'a> Linker<'a> {
     }
 
     /// The symbols nothing references keep their sections out: marks what
-    /// the entry, the constructors and what they reach need.
-    fn collect(&mut self, entry: usize) {
+    /// the roots, the constructors and what they reach need.
+    fn collect(&mut self, roots: &[usize]) {
         let mut work: Vec<(u32, u32)> = Vec::new();
-        if let Def::Section { input, section, .. } = self.globals[entry].def {
-            work.push((input, section));
+        for &root in roots {
+            if let Def::Section { input, section, .. } = self.globals[root].def {
+                work.push((input, section));
+            }
         }
         for (i, input) in self.inputs.iter().enumerate() {
             for section in input.file.sections() {
@@ -648,7 +687,9 @@ impl<'a> Linker<'a> {
                 }
             }
         }
-        self.globals[entry].used = true;
+        for &root in roots {
+            self.globals[root].used = true;
+        }
     }
 
     /// The relocations of a section that `read_relocations` read, by
@@ -708,6 +749,17 @@ impl<'a> Linker<'a> {
                     let Some(target) = reloc.target else { continue };
                     let shared = self.shared(target);
                     match (self.arch, reloc.kind) {
+                        // A library keeps the call to `__tls_get_addr`, with
+                        // a pair of entries the loader fills.
+                        (Arch::X86_64, R_X86_64_TLSGD) if self.library => {
+                            self.pair(Slot::Module(Some(target)), Slot::DtpOff(Some(target)))
+                        }
+                        (Arch::X86_64, R_X86_64_TLSLD) if self.library => {
+                            self.pair(Slot::Module(None), Slot::DtpOff(None))
+                        }
+                        (Arch::Aarch64, R_AARCH64_TLSDESC_ADR_PAGE21) if self.library => {
+                            self.pair(Slot::Descriptor(target), Slot::DescriptorArgument(target))
+                        }
                         (Arch::X86_64, R_X86_64_TLSGD) => skip = Some(reloc.offset + 8),
                         (Arch::X86_64, R_X86_64_TLSLD) => skip = Some(reloc.offset + 5),
                         (Arch::X86_64, R_X86_64_GOTPCREL | R_X86_64_GOTPCRELX | R_X86_64_REX_GOTPCRELX)
@@ -785,6 +837,14 @@ impl<'a> Linker<'a> {
         self.got.push(slot);
         self.slots.insert(slot, self.got.len() as u32 - 1);
         self.got.len() as u32 - 1
+    }
+
+    /// Two entries next to each other.
+    fn pair(&mut self, first: Slot, second: Slot) {
+        if !self.slots.contains_key(&first) {
+            self.slot(first);
+            self.slot(second);
+        }
     }
 
     fn import(&mut self, target: Target) {
@@ -867,7 +927,14 @@ impl<'a> Linker<'a> {
             true => (self.aligned_words + moved, self.unaligned_words),
             false => (0, self.aligned_words + self.unaligned_words + moved),
         };
-        sizes[Out::RelaDyn as usize] = 24 * (bound + self.dynamic_words + listed) as u64;
+        // What the loader writes of a library's thread-local block.
+        let block = self.got.iter().filter(|s| match s {
+            Slot::Module(_) | Slot::Descriptor(_) => true,
+            Slot::TpOff(_) => self.library,
+            _ => false,
+        });
+        let block = block.count();
+        sizes[Out::RelaDyn as usize] = 24 * (bound + block + self.dynamic_words + listed) as u64;
         // At most a word for each; the bitmaps make it less.
         sizes[Out::Relr as usize] = 8 * packed as u64;
         sizes[Out::Plt as usize] = PLT_ENTRY * self.plt.len() as u64;
@@ -926,8 +993,8 @@ impl<'a> Linker<'a> {
         let tls = self.size[Out::Tdata as usize] + self.size[Out::Tbss as usize] > 0;
         let eh = self.size[Out::EhFrameHdr as usize] > 0;
         // Three loads, the header table, the dynamic section and the stack;
-        // the loader unless it is static.
-        6 + usize::from(self.dynamic) + usize::from(tls) + usize::from(eh)
+        // the loader unless it is static or a library.
+        6 + usize::from(self.dynamic && !self.library) + usize::from(tls) + usize::from(eh)
     }
 
     /// The versions each needed library is asked for, `DT_RELR`'s among
@@ -976,7 +1043,18 @@ impl<'a> Linker<'a> {
         if !inputs.runpath.is_empty() {
             add(inputs.runpath.join(":").as_bytes());
         }
+        if let Some((soname, _)) = &inputs.library {
+            add(soname.as_bytes());
+        }
         (table, at)
+    }
+
+    /// The number of an output's section header, as `headers` writes them.
+    fn section_index(&self, wanted: Out) -> u16 {
+        let written = OUTS.iter().filter(|&&out| {
+            self.size[out as usize] > 0 || (self.dynamic && matches!(out, Out::Dynamic | Out::Dynsym | Out::Dynstr))
+        });
+        written.take_while(|&&out| out != wanted).count() as u16 + 1
     }
 
     fn section_address(&self, input: u32, section: u32) -> u64 {
@@ -1033,6 +1111,11 @@ impl<'a> Linker<'a> {
             Arch::X86_64 => offset - size.next_multiple_of(align) as i64,
             Arch::Aarch64 => offset + 16u64.next_multiple_of(align) as i64,
         }
+    }
+
+    /// The offset of a thread-local variable in the block of its module.
+    fn dtp_offset(&self, target: Target) -> i64 {
+        self.address(target).wrapping_sub(self.tls.0) as i64
     }
 
     fn slot_address(&self, slot: Slot) -> u64 {
@@ -1224,9 +1307,19 @@ impl<'a> Linker<'a> {
         }
         for (n, &id) in self.dynsyms.iter().enumerate() {
             let global = &self.globals[id];
-            let Def::Shared { library, .. } = global.def else { continue };
-            let export = self.libraries[library as usize].exports[global.name];
             let entry_at = at(Out::Dynsym) + 24 * (n as u64 + 1);
+            // What a library publishes: its functions, in its code.
+            let Def::Shared { library, .. } = global.def else {
+                image.u32(entry_at, strings[global.name]);
+                image.put(entry_at + 4, &[(STB_GLOBAL.0 << 4) | STT_FUNC.0, 0]);
+                image.u16(entry_at + 6, self.section_index(Out::Text));
+                image.u64(entry_at + 8, self.global_address(id));
+                if self.size[Out::Versym as usize] > 0 {
+                    image.u16(at(Out::Versym) + 2 * (n as u64 + 1), VER_NDX_GLOBAL.0);
+                }
+                continue;
+            };
+            let export = self.libraries[library as usize].exports[global.name];
             let binding = if global.required { STB_GLOBAL } else { STB_WEAK };
             let kind = if export.kind == STT_GNU_IFUNC { STT_FUNC } else { export.kind };
             image.u32(entry_at, strings[global.name]);
@@ -1237,7 +1330,7 @@ impl<'a> Linker<'a> {
             }
         }
         let dynsyms = self.dynsyms.len() as u32 + 1;
-        // One bucket: the loader looks nothing up here.
+        // One bucket, which a library's few functions share.
         let hash = at(Out::Hash);
         image.u32(hash, 1);
         image.u32(hash + 4, dynsyms);
@@ -1280,7 +1373,23 @@ impl<'a> Linker<'a> {
                     }
                     self.address(target)
                 }
+                // A library's thread-local variables are where the loader
+                // puts its block.
+                Slot::TpOff(target) if self.library => {
+                    relocations.push((entry_addr, self.arch.tp_off(), 0, self.dtp_offset(target)));
+                    0
+                }
                 Slot::TpOff(target) => self.tp_offset(target) as u64,
+                Slot::Module(_) => {
+                    relocations.push((entry_addr, R_X86_64_DTPMOD64, 0, 0));
+                    0
+                }
+                Slot::DtpOff(target) => target.map_or(0, |t| self.dtp_offset(t) as u64),
+                Slot::Descriptor(target) => {
+                    relocations.push((entry_addr, R_AARCH64_TLSDESC, 0, self.dtp_offset(target)));
+                    0
+                }
+                Slot::DescriptorArgument(_) => 0,
             };
             image.u64(at(Out::Got) + 8 * n as u64, value);
         }
@@ -1357,6 +1466,9 @@ impl<'a> Linker<'a> {
         if !inputs.runpath.is_empty() {
             dynamic.push((DT_RUNPATH, strings[inputs.runpath.join(":").as_bytes()] as u64));
         }
+        if let Some((soname, _)) = &inputs.library {
+            dynamic.push((DT_SONAME, strings[soname.as_bytes()] as u64));
+        }
         if self.dynamic {
             dynamic.extend([
                 (DT_HASH, addr(Out::Hash)),
@@ -1377,10 +1489,17 @@ impl<'a> Linker<'a> {
             (DT_INIT_ARRAYSZ, self.size[Out::InitArray as usize]),
             (DT_FINI_ARRAY, addr(Out::FiniArray)),
             (DT_FINI_ARRAYSZ, self.size[Out::FiniArray as usize]),
-            (DT_DEBUG, 0),
-            (DT_FLAGS, DF_BIND_NOW.0),
-            (DT_FLAGS_1, DF_1_NOW.0 | DF_1_PIE.0),
         ]);
+        // A library stays loaded: its runtime's threads run its code.
+        let static_tls = self.library && self.got.iter().any(|s| matches!(s, Slot::TpOff(_)));
+        dynamic.extend(match self.library {
+            true => [
+                (DT_FLAGS, DF_BIND_NOW.0 | if static_tls { DF_STATIC_TLS.0 } else { 0 }),
+                (DT_FLAGS_1, DF_1_NOW.0 | DF_1_NODELETE.0),
+            ]
+            .to_vec(),
+            false => [(DT_DEBUG, 0), (DT_FLAGS, DF_BIND_NOW.0), (DT_FLAGS_1, DF_1_NOW.0 | DF_1_PIE.0)].to_vec(),
+        });
         if self.size[Out::Versym as usize] > 0 {
             dynamic.extend([
                 (DT_VERSYM, addr(Out::Versym)),
@@ -1465,6 +1584,16 @@ impl<'a> Linker<'a> {
                         pc32(image, self.slot_address(Slot::Address(target)) as i64 + a - p as i64)?
                     }
                     R_X86_64_GOTTPOFF => pc32(image, self.slot_address(Slot::TpOff(target)) as i64 + a - p as i64)?,
+                    R_X86_64_TLSGD if self.library => {
+                        let pair = self.slot_address(Slot::Module(Some(target)));
+                        pc32(image, pair as i64 + a - p as i64)?
+                    }
+                    R_X86_64_TLSLD if self.library => {
+                        pc32(image, self.slot_address(Slot::Module(None)) as i64 + a - p as i64)?
+                    }
+                    R_X86_64_DTPOFF32 if self.library => pc32(image, self.dtp_offset(target) + a)?,
+                    R_X86_64_DTPOFF64 if self.library => image.u64(f, (self.dtp_offset(target) + a) as u64),
+                    R_X86_64_TPOFF32 | R_X86_64_TPOFF64 if self.library => return Err(fail(TLS)),
                     R_X86_64_TPOFF32 | R_X86_64_DTPOFF32 => pc32(image, self.tp_offset(target) + a)?,
                     R_X86_64_TPOFF64 => image.u64(f, (self.tp_offset(target) + a) as u64),
                     R_X86_64_GOTPC32 => pc32(image, addr_got(self) as i64 + a - p as i64)?,
@@ -1561,6 +1690,25 @@ impl<'a> Linker<'a> {
                         R_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC => {
                             lo12(image, self.slot_address(Slot::TpOff(target)) as i64, 3)
                         }
+                        R_AARCH64_TLSLE_ADD_TPREL_HI12
+                        | R_AARCH64_TLSLE_ADD_TPREL_LO12
+                        | R_AARCH64_TLSLE_ADD_TPREL_LO12_NC
+                            if self.library =>
+                        {
+                            return Err(fail(TLS));
+                        }
+                        // A library keeps the descriptor's call: the loader
+                        // fills the descriptor.
+                        R_AARCH64_TLSDESC_ADR_PAGE21 if self.library => {
+                            adrp(image, page(self.slot_address(Slot::Descriptor(target)) as i64) - page(p as i64))?
+                        }
+                        R_AARCH64_TLSDESC_LD64_LO12 if self.library => {
+                            lo12(image, self.slot_address(Slot::Descriptor(target)) as i64, 3)
+                        }
+                        R_AARCH64_TLSDESC_ADD_LO12 if self.library => {
+                            lo12(image, self.slot_address(Slot::Descriptor(target)) as i64, 0)
+                        }
+                        R_AARCH64_TLSDESC_CALL if self.library => {}
                         R_AARCH64_TLSLE_ADD_TPREL_HI12 => lo12(image, (self.tp_offset(target) + a) >> 12, 0),
                         R_AARCH64_TLSLE_ADD_TPREL_LO12 | R_AARCH64_TLSLE_ADD_TPREL_LO12_NC => {
                             lo12(image, self.tp_offset(target) + a, 0)
@@ -1643,7 +1791,7 @@ impl<'a> Linker<'a> {
         // The program headers.
         let mut headers: Vec<(ProgramType, ProgramFlags, u64, u64, u64, u64)> = Vec::new();
         headers.push((PT_PHDR, PF_R, 64, BASE + 64, 56 * phnum as u64, 8));
-        if self.dynamic {
+        if self.dynamic && !self.library {
             headers.push((PT_INTERP, PF_R, at(Out::Interp), addr(Out::Interp), size(Out::Interp), 1));
         }
         let segments: [(ProgramFlags, Out, Out); 3] = [
@@ -1799,7 +1947,7 @@ impl<'a> Linker<'a> {
         image.u16(16, ET_DYN.0);
         image.u16(18, self.arch.machine().0);
         image.u32(20, EV_CURRENT.0 as u32);
-        image.u64(24, self.global_address(entry));
+        image.u64(24, if self.library { 0 } else { self.global_address(entry) });
         image.u64(32, 64);
         image.u64(40, offset);
         image.u32(48, 0);
@@ -1863,6 +2011,9 @@ impl<'a> Linker<'a> {
 fn addr_got(linker: &Linker) -> u64 {
     linker.addr[Out::Got as usize]
 }
+
+/// Why a library cannot hold a thread-local access.
+const TLS: &str = "a shared library reaches its thread-local variables through the loader; compile the object as position-independent (`-fPIC`)";
 
 /// Why an absolute address cannot be relocated in code.
 const PIC: &str = "a position-independent executable cannot hold this absolute address; compile the object as position-independent (`-fPIC`)";

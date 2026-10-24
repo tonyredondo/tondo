@@ -444,42 +444,60 @@ pub fn test_inputs(path: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(inputs)
 }
 
-/// Writes a library for C (toolchain 7) into `dir`: `lib<name>.a`, with
-/// the program's object and the runtime, and `<name>.h`, which declares
-/// what it publishes. Gives how a C program links it.
+/// Writes a library for C (toolchain 7.7) into `dir`: the shared library
+/// `lib<name>.so` (`.dylib` on macOS) and the static `lib<name>.a`, each
+/// with the program's object and the runtime, and `<name>.h`, which
+/// declares what they publish. Gives how a C program links them.
 pub fn library(analysis: &Analysis, object: &[u8], dir: &Path, name: &str) -> Result<String, String> {
     let program = analysis.program.as_ref().expect("library() requires a checked program");
-    let archive = format!("lib{name}.a");
+    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    let (archive, shared) =
+        (format!("lib{name}.a"), format!("lib{name}.{}", if cfg!(target_os = "macos") { "dylib" } else { "so" }));
+    let path = carried("libtondo_runtime", RUNTIME)?;
+    // With musl, the runtime's unwinder comes with the compiler.
+    let mut runtime_args: Vec<String> = RUNTIME_LINK_ARGS.split_whitespace().map(String::from).collect();
+    let mut archives = vec![path];
+    if !UNWIND.is_empty() {
+        runtime_args.retain(|a| a != "-lunwind");
+        archives.push(carried("libunwind", UNWIND)?);
+    }
+    // The shared library, which publishes the functions alone.
+    let exports: Vec<String> = program.c_api.functions.iter().map(|f| f.symbol.clone()).collect();
+    let product = crate::link::Product::Library { exports: &exports };
+    crate::link::link(object, &archives, &runtime_args, &analysis.libraries, &dir.join(&shared), product)?;
+    // The static one, whose host links what it needs.
+    let mut contents = Vec::new();
+    for path in &archives {
+        contents.push(std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?);
+    }
+    let mut members = vec![(format!("{name}.o"), object)];
+    for content in &contents {
+        let parsed = object::read::archive::ArchiveFile::parse(&content[..]).map_err(|e| e.to_string())?;
+        for member in parsed.members() {
+            let member = member.map_err(|e| e.to_string())?;
+            let data = member.data(&content[..]).map_err(|e| e.to_string())?;
+            members.push((String::from_utf8_lossy(member.name()).into_owned(), data));
+        }
+    }
+    write_atomic(&dir.join(&archive), &crate::link::archive(&members, cfg!(target_os = "macos")))?;
     let mut native: Vec<String> = Vec::new();
     for library in &analysis.libraries {
-        native.extend(
-            match library.strip_prefix("static:") {
-                Some(name) => format!("-l{name}"),
-                None if library.contains('/') => library.clone(),
-                None => format!("-l{library}"),
-            }
-            .split(' ')
-            .map(str::to_string),
-        );
+        native.push(match library.strip_prefix("static:") {
+            Some(name) => format!("-l{name}"),
+            None if library.contains('/') => library.clone(),
+            None => format!("-l{library}"),
+        });
     }
+    let absolute = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
     let strip = if cfg!(target_os = "macos") { "-Wl,-dead_strip" } else { "-Wl,--gc-sections" };
+    let system: Vec<&str> = native.iter().map(String::as_str).chain(runtime_args.iter().map(String::as_str)).collect();
     let linking = format!(
-        "Link it: cc app.c {} {strip} {}",
+        "Link the shared library: cc app.c -L{0} -l{name} -Wl,-rpath,{1}\nor the static one: cc app.c {2} {strip} {3}",
+        dir.display(),
+        absolute.display(),
         dir.join(&archive).display(),
-        native.iter().map(String::as_str).chain(RUNTIME_LINK_ARGS.split_whitespace()).collect::<Vec<_>>().join(" ")
+        system.join(" ")
     );
-    let path = carried("libtondo_runtime", RUNTIME)?;
-    let runtime = std::fs::read(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    let parsed = object::read::archive::ArchiveFile::parse(&runtime[..]).map_err(|e| e.to_string())?;
-    let mut members = vec![(format!("{name}.o"), object)];
-    for member in parsed.members() {
-        let member = member.map_err(|e| e.to_string())?;
-        let data = member.data(&runtime[..]).map_err(|e| e.to_string())?;
-        members.push((String::from_utf8_lossy(member.name()).into_owned(), data));
-    }
-    let bytes = crate::link::archive(&members, cfg!(target_os = "macos"));
-    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    write_atomic(&dir.join(&archive), &bytes)?;
     write_atomic(&dir.join(format!("{name}.h")), crate::header::header(name, &program.c_api, &linking).as_bytes())?;
     Ok(linking)
 }
@@ -580,7 +598,8 @@ pub fn link(object: &[u8], output: &Path, libraries: &[String], linking: Linking
             return Err(why.into());
         }
         let archives = STATIC.iter().map(|(name, bytes)| carried(name, bytes)).collect::<Result<Vec<_>, _>>()?;
-        return crate::link::link(object, &archives, &[], libraries, output, linking.strip, true);
+        let product = crate::link::Product::Executable { strip: linking.strip, statically: true };
+        return crate::link::link(object, &archives, &[], libraries, output, product);
     }
     let runtime = carried("libtondo_runtime", RUNTIME)?;
     let mut runtime_args: Vec<String> = RUNTIME_LINK_ARGS.split_whitespace().map(String::from).collect();
@@ -597,7 +616,8 @@ pub fn link(object: &[u8], output: &Path, libraries: &[String], linking: Linking
         let mut archives = vec![runtime];
         let unwind = runtime_args.iter().position(|a| a.ends_with(".a")).map(|i| runtime_args.remove(i));
         archives.extend(unwind.map(PathBuf::from));
-        return crate::link::link(object, &archives, &runtime_args, libraries, output, linking.strip, false);
+        let product = crate::link::Product::Executable { strip: linking.strip, statically: false };
+        return crate::link::link(object, &archives, &runtime_args, libraries, output, product);
     };
     let dir = cache_dir().join("runtime");
     let object_path = dir.join(format!("object-{}.o", std::process::id()));

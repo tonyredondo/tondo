@@ -15,8 +15,8 @@ usage:
                                                        compile a native executable (static on Linux;
                                                        without its symbol table)
   tondo build --library [<project>|<file.to>] [--output <dir>] [--debug]
-                                                       compile a library for C, lib<name>.a, with its
-                                                       header <name>.h
+                                                       compile a library for C, lib<name>.so (.dylib)
+                                                       and lib<name>.a, with its header <name>.h
   tondo check [<project>|<file.to>] [--library] [--json]
                                                        report diagnostics only (of a library; as JSON)
   tondo expand [<project>|<file.to>]                   show what each `derive` expanded to
@@ -944,7 +944,9 @@ fn library_command(args: &[OsString]) -> Result<ExitCode, String> {
     let object = driver::object(&analysis, debug)?;
     let dir = output.unwrap_or_else(|| PathBuf::from("."));
     let linking = driver::library(&analysis, &object, &dir, &name)?;
-    println!("wrote {} and {}", dir.join(format!("lib{name}.a")).display(), dir.join(format!("{name}.h")).display());
+    let shared = format!("lib{name}.{}", if cfg!(target_os = "macos") { "dylib" } else { "so" });
+    let wrote = [shared, format!("lib{name}.a"), format!("{name}.h")].map(|f| dir.join(f).display().to_string());
+    println!("wrote {}, {} and {}", wrote[0], wrote[1], wrote[2]);
     println!("{linking}");
     Ok(ExitCode::SUCCESS)
 }

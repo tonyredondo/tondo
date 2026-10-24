@@ -1,6 +1,6 @@
-//! Links Mach-O executables for macOS. Sections of objects built with
-//! subsections are cut into atoms at their symbols, and only the atoms the
-//! entry reaches stay. What the system's libraries define is bound when
+//! Links Mach-O executables and dynamic libraries for macOS. Sections of
+//! objects built with subsections are cut into atoms at their symbols, and
+//! only the atoms the entry, or what a library publishes, reaches stay. What the system's libraries define is bound when
 //! the program starts by name, looked up in every library it loads (flat
 //! lookup), so linking needs no SDK. The executable is position
 //! independent, as macOS requires: every pointer it holds is rebased when
@@ -37,6 +37,7 @@ mod raw {
     pub const N_STAB: u8 = 0xe0;
     pub const N_TYPE: u8 = 0x0e;
     pub const N_EXT: u8 = 0x01;
+    pub const N_PEXT: u8 = 0x10;
     pub const N_UNDF: u8 = 0x0;
     pub const N_ABS: u8 = 0x2;
     pub const N_SECT: u8 = 0xe;
@@ -47,6 +48,7 @@ mod raw {
     pub const DYNAMIC_LOOKUP_ORDINAL: u8 = 0xfe;
     pub const MH_MAGIC_64: u32 = 0xfeed_facf;
     pub const MH_EXECUTE: u32 = 0x2;
+    pub const MH_DYLIB: u32 = 0x6;
     pub const MH_DYLDLINK: u32 = 0x4;
     pub const MH_TWOLEVEL: u32 = 0x80;
     pub const MH_SUBSECTIONS_VIA_SYMBOLS: u32 = 0x2000;
@@ -59,6 +61,7 @@ mod raw {
     pub const LC_SYMTAB: u32 = 0x2;
     pub const LC_DYSYMTAB: u32 = 0xb;
     pub const LC_LOAD_DYLIB: u32 = 0xc;
+    pub const LC_ID_DYLIB: u32 = 0xd;
     pub const LC_LOAD_DYLINKER: u32 = 0xe;
     pub const LC_SEGMENT_64: u32 = 0x19;
     pub const LC_UUID: u32 = 0x1b;
@@ -124,6 +127,9 @@ pub struct Inputs<'a> {
     pub dylibs: Vec<String>,
     pub rpaths: Vec<String>,
     pub entry: String,
+    /// A dynamic library instead of an executable: its install name and the
+    /// symbols it publishes, which keep the rest.
+    pub library: Option<(String, Vec<String>)>,
     pub strip: bool,
     /// The file's name, which the signature identifies it by.
     pub identifier: String,
@@ -259,6 +265,11 @@ struct Linker<'a> {
     /// What each function's unwind descriptions refer to: personality,
     /// LSDA and what its `__eh_frame` records use.
     unwind_refs: HashMap<(u32, usize), Vec<Target>>,
+    /// Where the image is if it is not moved: an executable leaves the
+    /// first 4 GiB unmapped, a library starts at 0.
+    base: u64,
+    /// What a library publishes; none for an executable.
+    exports: Option<Vec<usize>>,
 }
 
 fn error(input: &str, message: impl std::fmt::Display) -> String {
@@ -287,14 +298,22 @@ pub fn link(inputs: Inputs) -> Result<Vec<u8>, String> {
         imports: Vec::new(),
         import_of: HashMap::new(),
         unwind_refs: HashMap::new(),
+        base: if inputs.library.is_some() { 0 } else { BASE },
+        exports: None,
     };
-    let entry = linker.intern(inputs.entry.as_bytes());
-    linker.globals[entry].required = true;
+    let roots: Vec<usize> = match &inputs.library {
+        Some((_, exports)) => exports.iter().map(|name| linker.intern(name.as_bytes())).collect(),
+        None => vec![linker.intern(inputs.entry.as_bytes())],
+    };
+    for &root in &roots {
+        linker.globals[root].required = true;
+    }
+    let entry = roots[0];
     for (name, data) in &inputs.objects {
         linker.add(name.clone(), data)?;
     }
     linker.archives(&inputs.archives)?;
-    for name in [b"__mh_execute_header".as_slice(), b"___dso_handle"] {
+    for name in [b"__mh_execute_header".as_slice(), b"__mh_dylib_header", b"___dso_handle"] {
         if let Some(&id) = linker.names.get(name)
             && linker.globals[id].def == Def::Undefined
         {
@@ -302,7 +321,16 @@ pub fn link(inputs: Inputs) -> Result<Vec<u8>, String> {
         }
     }
     linker.unwind_references();
-    linker.collect(entry);
+    linker.collect(&roots);
+    if inputs.library.is_some() {
+        for &root in &roots {
+            if !matches!(linker.globals[root].def, Def::Atom { .. }) {
+                let name = String::from_utf8_lossy(&linker.globals[root].name[1..]);
+                return Err(format!("the library does not define `{name}`, which it publishes"));
+            }
+        }
+        linker.exports = Some(roots);
+    }
     linker.scan()?;
     let image = linker.layout_and_write(&inputs, entry)?;
     Ok(image)
@@ -542,11 +570,14 @@ impl<'a> Linker<'a> {
         Some(Target::Local { input: input as u32, section: symbol - 1, address })
     }
 
-    /// The live roots: the entry, initializers and what must not go.
-    fn collect(&mut self, entry: usize) {
+    /// The live roots: the entry or what a library publishes, initializers
+    /// and what must not go.
+    fn collect(&mut self, roots: &[usize]) {
         let mut work: Vec<(u32, usize)> = Vec::new();
-        if let Def::Atom { input, atom, .. } = self.globals[entry].def {
-            work.push((input, atom as usize));
+        for &root in roots {
+            if let Def::Atom { input, atom, .. } = self.globals[root].def {
+                work.push((input, atom as usize));
+            }
         }
         for (i, input) in self.inputs.iter().enumerate() {
             for section in &input.sections {
@@ -1002,7 +1033,7 @@ impl<'a> Linker<'a> {
                 let bss = self.out_index[&(DATA, b"__common".to_vec())];
                 self.outs[bss].addr + self.globals[id].common
             }
-            Def::Header => BASE,
+            Def::Header => self.base,
             Def::Undefined => match self.stub_of.get(&id) {
                 Some(&stub) => {
                     let stubs = self.out_index[&(TEXT, b"__stubs".to_vec())];
@@ -1123,10 +1154,10 @@ impl<'a> Linker<'a> {
         let order: Vec<usize> =
             order.into_iter().filter(|&o| self.outs[o].size > 0 || self.outs[o].sectname == b"__text").collect();
         let dylibs = &inputs.dylibs;
-        let commands_size = self.commands_size(&order, dylibs, &inputs.rpaths);
+        let commands_size = self.commands_size(&order, dylibs, &inputs.rpaths, inputs.library.as_ref().map(|l| &l.0));
         let header_size = 32 + commands_size;
         let mut offset = header_size as u64;
-        let mut addr = BASE + offset;
+        let mut addr = self.base + offset;
         let mut segments: Vec<(&'static str, u64, u64, u64, u64)> = Vec::new();
         for segment in [TEXT, DATA_CONST, DATA] {
             let sections: Vec<usize> = order.iter().copied().filter(|&o| self.outs[o].segname == segment).collect();
@@ -1137,7 +1168,7 @@ impl<'a> Linker<'a> {
                 offset = offset.next_multiple_of(PAGE);
                 addr = addr.next_multiple_of(PAGE);
             }
-            let (start_offset, start_addr) = if segment == TEXT { (0, BASE) } else { (offset, addr) };
+            let (start_offset, start_addr) = if segment == TEXT { (0, self.base) } else { (offset, addr) };
             for o in sections {
                 let out = &mut self.outs[o];
                 let zerofill = matches!(out.kind, S_ZEROFILL | S_GB_ZEROFILL | S_THREAD_LOCAL_ZEROFILL);
@@ -1259,10 +1290,13 @@ impl<'a> Linker<'a> {
         let info = self.unwind_info(&frames, &fde_at);
         image.put(self.outs[unwind].offset, &info);
 
-        // __LINKEDIT: rebases, binds, the symbol table and the signature.
+        // __LINKEDIT: rebases, binds, what a library exports, the symbol
+        // table and the signature. Segments count from `__PAGEZERO`, which a
+        // library has none of.
+        let library = self.exports.is_some();
         let segment_of = |address: u64| -> (u8, u64) {
             let n = segments.iter().position(|s| address >= s.1 && address < s.1 + s.2).unwrap_or(0);
-            ((n + 1) as u8, address - segments[n].1)
+            ((n + usize::from(!library)) as u8, address - segments[n].1)
         };
         rebases.sort();
         rebases.dedup();
@@ -1296,6 +1330,14 @@ impl<'a> Linker<'a> {
         let pad8 = |v: &mut Vec<u8>| v.resize(v.len().next_multiple_of(8), 0);
         pad8(&mut rebase);
         pad8(&mut bind);
+        let published: Vec<(&[u8], u64)> = match &self.exports {
+            Some(exports) => {
+                exports.iter().map(|&id| (self.globals[id].name, self.global_address(id) - self.base)).collect()
+            }
+            None => Vec::new(),
+        };
+        let mut exported = if published.is_empty() { Vec::new() } else { export_trie(&published) };
+        pad8(&mut exported);
         // The symbol table: what the program defines, unless stripped, and
         // what it imports, which the indirect table refers to.
         let (symtab, strtab, locals, externals, undefined, indirect) = self.symbol_table(inputs.strip);
@@ -1304,6 +1346,8 @@ impl<'a> Linker<'a> {
         linkedit.extend_from_slice(&rebase);
         let bind_off = linkedit_offset + linkedit.len() as u64;
         linkedit.extend_from_slice(&bind);
+        let export_off = linkedit_offset + linkedit.len() as u64;
+        linkedit.extend_from_slice(&exported);
         let symtab_off = linkedit_offset + linkedit.len() as u64;
         linkedit.extend_from_slice(&symtab);
         let indirect_off = linkedit_offset + linkedit.len() as u64;
@@ -1329,7 +1373,7 @@ impl<'a> Linker<'a> {
 
         // The header and load commands.
         let text_segment = segments[0];
-        let entry_offset = self.global_address(entry) - BASE;
+        let entry_offset = self.global_address(entry).wrapping_sub(self.base);
         let tlv = template.is_some();
         let mut commands = Vec::new();
         let mut ncmds = 0u32;
@@ -1337,7 +1381,9 @@ impl<'a> Linker<'a> {
             commands.extend_from_slice(&bytes);
             ncmds += 1;
         };
-        command(segment_command("__PAGEZERO", 0, BASE, 0, 0, 0, 0, &[]));
+        if !library {
+            command(segment_command("__PAGEZERO", 0, BASE, 0, 0, 0, 0, &[]));
+        }
         for &(name, vmaddr, vmsize, fileoff, filesize) in &segments {
             let sections: Vec<&OutSection> =
                 order.iter().map(|&o| &self.outs[o]).filter(|o| o.segname == name).collect();
@@ -1358,19 +1404,24 @@ impl<'a> Linker<'a> {
                 &sections_with_indirect(&sections, &self.stubs, &self.got, self.stub_size()),
             ));
         }
-        command(dyld_info(rebase_off, rebase.len(), bind_off, bind.len()));
+        command(dyld_info(rebase_off, rebase.len(), bind_off, bind.len(), export_off, exported.len()));
         command(symtab_command(symtab_off, (symtab.len() / 16) as u32, strtab_off, strtab.len() as u32));
         command(dysymtab_command(locals, externals, undefined, indirect_off, indirect.len() as u32));
-        command(path_command(LC_LOAD_DYLINKER, "/usr/lib/dyld"));
-        let mut main = vec![0u8; 24];
-        main[0..4].copy_from_slice(&LC_MAIN.to_le_bytes());
-        main[4..8].copy_from_slice(&24u32.to_le_bytes());
-        main[8..16].copy_from_slice(&entry_offset.to_le_bytes());
-        command(main);
+        match &inputs.library {
+            Some((install_name, _)) => command(dylib_command(LC_ID_DYLIB, install_name)),
+            None => {
+                command(path_command(LC_LOAD_DYLINKER, "/usr/lib/dyld"));
+                let mut main = vec![0u8; 24];
+                main[0..4].copy_from_slice(&LC_MAIN.to_le_bytes());
+                main[4..8].copy_from_slice(&24u32.to_le_bytes());
+                main[8..16].copy_from_slice(&entry_offset.to_le_bytes());
+                command(main);
+            }
+        }
         command(build_version());
         command(uuid(&image.bytes));
         for dylib in dylibs {
-            command(dylib_command(dylib));
+            command(dylib_command(LC_LOAD_DYLIB, dylib));
         }
         for rpath in &inputs.rpaths {
             command(path_command(LC_RPATH, rpath));
@@ -1388,14 +1439,14 @@ impl<'a> Linker<'a> {
             Arch::Arm64 => (CPU_TYPE_ARM64, CPU_SUBTYPE_ARM64_ALL),
             Arch::X86_64 => (CPU_TYPE_X86_64, CPU_SUBTYPE_X86_64_ALL),
         };
-        let mut flags = MH_DYLDLINK | MH_TWOLEVEL | MH_PIE;
+        let mut flags = MH_DYLDLINK | MH_TWOLEVEL | if library { 0 } else { MH_PIE };
         if tlv {
             flags |= MH_HAS_TLV_DESCRIPTORS;
         }
         image.u32(0, MH_MAGIC_64);
         image.u32(4, cputype);
         image.u32(8, cpusubtype);
-        image.u32(12, MH_EXECUTE);
+        image.u32(12, if library { MH_DYLIB } else { MH_EXECUTE });
         image.u32(16, ncmds);
         image.u32(20, commands.len() as u32);
         image.u32(24, flags);
@@ -1407,6 +1458,84 @@ impl<'a> Linker<'a> {
         image.bytes.extend_from_slice(&signature);
         Ok(image.bytes)
     }
+}
+
+/// The trie of what a library exports, which dyld looks names up in: each
+/// node a terminal, when a name ends there, with its flags and offset from
+/// the image's start, then the edges to its children. Offsets of children
+/// take five bytes each, so that sizes do not depend on them.
+fn export_trie(symbols: &[(&[u8], u64)]) -> Vec<u8> {
+    #[derive(Default)]
+    struct Node {
+        terminal: Option<u64>,
+        edges: Vec<(Vec<u8>, Node)>,
+    }
+    fn insert(node: &mut Node, name: &[u8], value: u64) {
+        if name.is_empty() {
+            node.terminal = Some(value);
+            return;
+        }
+        for (edge, child) in &mut node.edges {
+            let common = edge.iter().zip(name).take_while(|(a, b)| a == b).count();
+            if common == 0 {
+                continue;
+            }
+            if common < edge.len() {
+                // The edge splits where the names part.
+                let rest = edge.split_off(common);
+                let old = std::mem::take(child);
+                child.edges.push((rest, old));
+            }
+            return insert(child, &name[common..], value);
+        }
+        let mut leaf = Node::default();
+        insert(&mut leaf, &[], value);
+        node.edges.push((name.to_vec(), leaf));
+    }
+    fn terminal(node: &Node) -> Vec<u8> {
+        let mut out = Vec::new();
+        if let Some(value) = node.terminal {
+            uleb(&mut out, 0);
+            uleb(&mut out, value);
+        }
+        out
+    }
+    fn size(node: &Node) -> usize {
+        let info = terminal(node).len();
+        let mut length = Vec::new();
+        uleb(&mut length, info as u64);
+        length.len() + info + 1 + node.edges.iter().map(|(edge, _)| edge.len() + 1 + 5).sum::<usize>()
+    }
+    fn write(node: &Node, at: usize, out: &mut Vec<u8>) {
+        let info = terminal(node);
+        uleb(out, info.len() as u64);
+        out.extend_from_slice(&info);
+        out.push(node.edges.len() as u8);
+        let mut next = at + size(node);
+        let mut children = Vec::new();
+        for (edge, child) in &node.edges {
+            out.extend_from_slice(edge);
+            out.push(0);
+            let n = next as u64;
+            let seven = |shift: u32| ((n >> shift) & 0x7f) as u8;
+            out.extend_from_slice(&[seven(0) | 0x80, seven(7) | 0x80, seven(14) | 0x80, seven(21) | 0x80, seven(28)]);
+            children.push((child, next));
+            next += subtree(child);
+        }
+        for (child, at) in children {
+            write(child, at, out);
+        }
+    }
+    fn subtree(node: &Node) -> usize {
+        size(node) + node.edges.iter().map(|(_, child)| subtree(child)).sum::<usize>()
+    }
+    let mut root = Node::default();
+    for &(name, value) in symbols {
+        insert(&mut root, name, value);
+    }
+    let mut out = Vec::new();
+    write(&root, 0, &mut out);
+    out
 }
 
 /// A stub: a jump through the GOT entry at `slot`.
@@ -1563,9 +1692,9 @@ impl Linker<'_> {
 
 /// The size of the load commands.
 impl Linker<'_> {
-    fn commands_size(&self, order: &[usize], dylibs: &[String], rpaths: &[String]) -> usize {
+    fn commands_size(&self, order: &[usize], dylibs: &[String], rpaths: &[String], library: Option<&String>) -> usize {
         let segments = [TEXT, DATA_CONST, DATA];
-        let mut size = 72; // __PAGEZERO
+        let mut size = if library.is_some() { 0 } else { 72 }; // __PAGEZERO
         for segment in segments {
             let count = order.iter().filter(|&&o| self.outs[o].segname == segment).count();
             if count > 0 || segment == TEXT {
@@ -1573,10 +1702,14 @@ impl Linker<'_> {
             }
         }
         size += 72; // __LINKEDIT
-        // DYLD_INFO, SYMTAB, DYSYMTAB, the loader, MAIN, BUILD_VERSION, UUID
-        // and CODE_SIGNATURE.
-        size += 48 + 24 + 80 + path_command(LC_LOAD_DYLINKER, "/usr/lib/dyld").len() + 24 + 24 + 24 + 16;
-        size += dylibs.iter().map(|d| dylib_command(d).len()).sum::<usize>();
+        // DYLD_INFO, SYMTAB, DYSYMTAB, BUILD_VERSION, UUID and CODE_SIGNATURE;
+        // the loader and MAIN, or a library's ID.
+        size += 48 + 24 + 80 + 24 + 24 + 16;
+        size += match library {
+            Some(name) => dylib_command(LC_ID_DYLIB, name).len(),
+            None => path_command(LC_LOAD_DYLINKER, "/usr/lib/dyld").len() + 24,
+        };
+        size += dylibs.iter().map(|d| dylib_command(LC_LOAD_DYLIB, d).len()).sum::<usize>();
         size += rpaths.iter().map(|r| path_command(LC_RPATH, r).len()).sum::<usize>();
         size
     }
@@ -1649,8 +1782,16 @@ fn segment_command(
     c
 }
 
-fn dyld_info(rebase_off: u64, rebase_size: usize, bind_off: u64, bind_size: usize) -> Vec<u8> {
+fn dyld_info(
+    rebase_off: u64,
+    rebase_size: usize,
+    bind_off: u64,
+    bind_size: usize,
+    export_off: u64,
+    export_size: usize,
+) -> Vec<u8> {
     let mut c = Vec::new();
+    let export_off = if export_size == 0 { 0 } else { export_off as u32 };
     for v in [
         LC_DYLD_INFO_ONLY,
         48,
@@ -1662,8 +1803,8 @@ fn dyld_info(rebase_off: u64, rebase_size: usize, bind_off: u64, bind_size: usiz
         0,
         0,
         0,
-        0,
-        0,
+        export_off,
+        export_size as u32,
     ] {
         c.extend_from_slice(&v.to_le_bytes());
     }
@@ -1726,10 +1867,10 @@ fn path_command(cmd: u32, path: &str) -> Vec<u8> {
     c
 }
 
-fn dylib_command(name: &str) -> Vec<u8> {
+fn dylib_command(cmd: u32, name: &str) -> Vec<u8> {
     let size = (24 + name.len() + 1).next_multiple_of(8);
     let mut c = Vec::new();
-    c.extend_from_slice(&LC_LOAD_DYLIB.to_le_bytes());
+    c.extend_from_slice(&cmd.to_le_bytes());
     c.extend_from_slice(&(size as u32).to_le_bytes());
     c.extend_from_slice(&24u32.to_le_bytes());
     // Timestamp, current and compatibility versions: any library will do.
@@ -1857,12 +1998,14 @@ impl Linker<'_> {
                     && let Some((out, _)) = self.inputs[input as usize].atoms[atom as usize].place
                 {
                     let sect = section_number.get(&out).copied().unwrap_or(0);
+                    // What a library does not publish stays its own.
+                    let private = self.exports.as_ref().is_some_and(|e| !e.contains(&global));
                     add(
                         &mut entries,
                         &mut counts,
                         1,
                         self.globals[global].name,
-                        N_SECT | N_EXT,
+                        N_SECT | N_EXT | if private { N_PEXT } else { 0 },
                         sect,
                         0,
                         self.global_address(global),
@@ -2107,7 +2250,7 @@ impl Linker<'_> {
         let mut encoded: Vec<(u32, u32)> = Vec::new();
         let mut lsdas: Vec<(u32, u32)> = Vec::new();
         for &(start, _, encoding, personality, lsda) in &entries {
-            let function = start.wrapping_sub(BASE) as u32;
+            let function = start.wrapping_sub(self.base) as u32;
             let mut encoding = encoding;
             if let Some(personality) = personality {
                 let index = match personalities.iter().position(|&p| p == personality) {
@@ -2121,7 +2264,7 @@ impl Linker<'_> {
             }
             if let Some(lsda) = lsda {
                 encoding |= 0x4000_0000;
-                lsdas.push((function, self.address(lsda).wrapping_sub(BASE) as u32));
+                lsdas.push((function, self.address(lsda).wrapping_sub(self.base) as u32));
             }
             encoded.push((function, encoding));
         }
@@ -2143,8 +2286,10 @@ impl Linker<'_> {
         w(&mut out, index_offset);
         w(&mut out, index_count);
         for &personality in &personalities {
-            let slot =
-                self.slots.get(&personality).map_or(0, |_| self.slot_address(personality).wrapping_sub(BASE) as u32);
+            let slot = self
+                .slots
+                .get(&personality)
+                .map_or(0, |_| self.slot_address(personality).wrapping_sub(self.base) as u32);
             w(&mut out, slot);
         }
         let mut page_offset = pages_offset;
@@ -2156,7 +2301,7 @@ impl Linker<'_> {
             lsda_index += lsdas.iter().filter(|l| l.0 >= page[0].0 && l.0 <= page.last().unwrap().0).count();
             page_offset += 8 + 8 * page.len() as u32;
         }
-        let end = entries.last().map_or(0, |e| (e.0.wrapping_sub(BASE) as u32).wrapping_add(e.1));
+        let end = entries.last().map_or(0, |e| (e.0.wrapping_sub(self.base) as u32).wrapping_add(e.1));
         w(&mut out, end);
         w(&mut out, 0);
         w(&mut out, lsda_offset + 8 * lsdas.len() as u32);
@@ -2174,5 +2319,64 @@ impl Linker<'_> {
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Looks a name up as dyld does: down the edge the name starts with.
+    fn lookup(trie: &[u8], name: &[u8]) -> Option<u64> {
+        let uleb = |at: &mut usize| {
+            let (mut value, mut shift) = (0u64, 0);
+            loop {
+                let byte = trie[*at];
+                *at += 1;
+                value |= ((byte & 0x7f) as u64) << shift;
+                shift += 7;
+                if byte & 0x80 == 0 {
+                    return value;
+                }
+            }
+        };
+        let (mut node, mut rest) = (0usize, name);
+        loop {
+            let mut at = node;
+            let size = uleb(&mut at) as usize;
+            if rest.is_empty() {
+                return (size > 0).then(|| {
+                    uleb(&mut at);
+                    uleb(&mut at)
+                });
+            }
+            at += size;
+            let count = trie[at];
+            at += 1;
+            let mut next = None;
+            for _ in 0..count {
+                let end = at + trie[at..].iter().position(|&b| b == 0).unwrap();
+                let edge = &trie[at..end];
+                at = end + 1;
+                let child = uleb(&mut at) as usize;
+                if next.is_none() && rest.starts_with(edge) {
+                    next = Some((child, edge.len()));
+                }
+            }
+            let (child, length) = next?;
+            node = child;
+            rest = &rest[length..];
+        }
+    }
+
+    #[test]
+    fn exports_are_found_by_name() {
+        let names: [&[u8]; 5] = [b"_words_count", b"_words_count2", b"_words_each", b"_wc", b"_other"];
+        let symbols: Vec<(&[u8], u64)> =
+            names.iter().enumerate().map(|(n, &name)| (name, 0x1000 * n as u64 + 300)).collect();
+        let trie = super::export_trie(&symbols);
+        for (name, value) in &symbols {
+            assert_eq!(lookup(&trie, name), Some(*value), "{}", String::from_utf8_lossy(name));
+        }
+        assert_eq!(lookup(&trie, b"_words"), None);
+        assert_eq!(lookup(&trie, b"_missing"), None);
     }
 }

@@ -24,9 +24,10 @@ fn main() {
 
 ## Libraries for C
 
-`tondo build --library` compiles a project without `main` into a static
-library, `lib<name>.a`, and its header, `<name>.h`. C calls its
-`pub extern fn`s, which have a body, by their names:
+`tondo build --library` compiles a project without `main` into a shared
+library, `lib<name>.so` (`.dylib` on macOS), a static one, `lib<name>.a`,
+and their header, `<name>.h`. C calls its `pub extern fn`s, which have a
+body, by their names:
 
 ```tondo library
 import std.ffi
@@ -40,7 +41,9 @@ pub extern fn words_count(text: ffi.CString): ffi.CSize {
 
 - Their parameters and results are C's types, as for an `extern fn`; a
   Tondo value goes to C as `ffi.context(value)`.
-- The build prints how to link the library: `cc app.c libwords.a ...`.
+- The build prints how to link each: `cc app.c -L. -lwords ...` or
+  `cc app.c libwords.a ...`. A program may also load the shared one with
+  `dlopen`.
 - Each call runs as a task on the thread that calls; it may wait, and the
   tasks it spawns go on after it returns.
 - `tondo check --library` and `tondo test --library` check and test it.

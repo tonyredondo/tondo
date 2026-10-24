@@ -1735,3 +1735,17 @@ the library's tasks and code go to the handlers the process had before,
 since hosts such as Java's take faults on purpose; and a thread of C keeps
 the signal stack it has. Two Tondo archives in one program would bring two
 runtimes with the same symbols, so a program links one.
+
+## 2026-10-24 — Shared libraries for C (H14, second part)
+
+The toolchain's own linker makes the shared library, as it makes
+executables: the roots are what the library publishes, which its dynamic
+table holds and nothing else of the runtime, so a process loads several
+Tondo libraries, each with its own runtime and none in another's way. The
+library reaches its thread-local variables through the loader, with
+`__tls_get_addr` on x86-64 and TLS descriptors on arm64, rather than in
+the block a program reserves when it starts, so `dlopen` loads it at any
+time. It is never unloaded: the runtime's threads run its code. On macOS
+it is a `MH_DYLIB` whose install name is `@rpath/lib<name>.dylib`, with an
+export trie of what it publishes. The shared library of the example
+program takes 1.2 MB, as its executable does.

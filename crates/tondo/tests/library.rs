@@ -1,6 +1,7 @@
-//! Libraries for C (toolchain 7): `tondo build --library` writes a static
-//! library and its header, which a C program compiles and links with the
-//! system's C compiler, and calls from its threads.
+//! Libraries for C (toolchain 7.7): `tondo build --library` writes a
+//! shared and a static library and their header, which a C program
+//! compiles and links with the system's C compiler, or loads as it runs,
+//! and calls from its threads.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -113,24 +114,53 @@ fn a_c_program_calls_a_library() {
     ] {
         assert!(header.contains(declaration), "{declaration} in\n{header}");
     }
-    // The line the build prints links it.
-    let line = said.lines().find_map(|l| l.strip_prefix("Link it: cc app.c ")).unwrap();
+    // The lines the build prints link it, shared or static.
     std::fs::write(dir.join("app.c"), PROGRAM).unwrap();
-    let compiled = Command::new("cc")
-        .args(["app.c", "-Iout", "-o", "app"])
-        .args(line.split(' '))
-        .current_dir(&dir)
-        .output()
-        .unwrap();
+    for (prefix, program) in
+        [("Link the shared library: cc app.c ", "shared"), ("or the static one: cc app.c ", "static")]
+    {
+        let line = said.lines().find_map(|l| l.strip_prefix(prefix)).unwrap();
+        let compiled = Command::new("cc")
+            .args(["app.c", "-Iout", "-o", program])
+            .args(line.split(' '))
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+        let run = Command::new(dir.join(program)).output().unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout),
+            "count 3\ndistance 5\nvisit 1\nvisit 2\nhello, C\nthreads 4\n",
+            "{program}: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
+    // A program that loads it when it runs finds what it publishes, and
+    // nothing else.
+    let shared = dir.join(if cfg!(target_os = "macos") { "out/libwords.dylib" } else { "out/libwords.so" });
+    std::fs::write(dir.join("load.c"), LOADER).unwrap();
+    let compiled = Command::new("cc").args(["load.c", "-o", "load"]).current_dir(&dir).output().unwrap();
     assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
-    let run = Command::new(dir.join("app")).output().unwrap();
-    assert_eq!(
-        String::from_utf8_lossy(&run.stdout),
-        "count 3\ndistance 5\nvisit 1\nvisit 2\nhello, C\nthreads 4\n",
-        "{}",
-        String::from_utf8_lossy(&run.stderr)
-    );
+    let run = Command::new(dir.join("load")).arg(&shared).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "5050 2 hidden\n", "{}", String::from_utf8_lossy(&run.stderr));
 }
+
+const LOADER: &str = r#"#include <dlfcn.h>
+#include <stdio.h>
+
+int main(int argc, char **argv) {
+    void *library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
+    if (!library) {
+        printf("%s\n", dlerror());
+        return 1;
+    }
+    long long (*sum)(long long) = (long long (*)(long long))dlsym(library, "words_sum");
+    size_t (*count)(const char *) = (size_t (*)(const char *))dlsym(library, "words_count");
+    void *runtime = dlsym(library, "tondo_rt_callback");
+    printf("%lld %zu %s\n", sum(100), count("x y"), runtime ? "visible" : "hidden");
+    return 0;
+}
+"#;
 
 #[test]
 fn a_library_publishes_functions_and_is_checked_and_tested_as_one() {

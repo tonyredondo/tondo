@@ -1,6 +1,7 @@
-//! Tondo's own linker (toolchain, H12): executables without a C toolchain.
-//! It finds the shared libraries the program needs where the system keeps
-//! them to run programs, so it needs no development packages either.
+//! Tondo's own linker (toolchain, H12): executables and shared libraries
+//! without a C toolchain. It finds the shared libraries the program needs
+//! where the system keeps them to run programs, so it needs no development
+//! packages either.
 
 mod archive;
 mod elf;
@@ -9,6 +10,15 @@ pub mod macho;
 pub use archive::archive;
 
 use std::path::{Path, PathBuf};
+
+/// What the linker makes.
+pub enum Product<'a> {
+    /// An executable: without its symbol table, or static, with the C
+    /// library in it.
+    Executable { strip: bool, statically: bool },
+    /// A shared library that publishes `exports` (toolchain 7.7).
+    Library { exports: &'a [String] },
+}
 
 /// Links the program's object with archives (the runtime first), the
 /// system libraries the runtime needs (`-lname` and files, as Rust lists
@@ -20,11 +30,19 @@ pub fn link(
     runtime: &[String],
     native: &[String],
     output: &Path,
-    strip: bool,
-    statically: bool,
+    product: Product,
 ) -> Result<(), String> {
+    let (strip, statically) = match product {
+        Product::Executable { strip, statically } => (strip, statically),
+        Product::Library { .. } => (false, false),
+    };
+    let exports = match product {
+        Product::Library { exports } => Some(exports.to_vec()),
+        Product::Executable { .. } => None,
+    };
+    let name = output.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned());
     if cfg!(target_os = "macos") {
-        return link_macho(object, archives, runtime, native, output, strip);
+        return link_macho(object, archives, runtime, native, output, strip, exports);
     }
     let arch = if cfg!(target_arch = "aarch64") { elf::Arch::Aarch64 } else { elf::Arch::X86_64 };
     let dirs = search_dirs(arch);
@@ -103,9 +121,10 @@ pub fn link(
         shared: shared_data.iter().map(|(n, d)| (n.clone(), d.as_slice())).collect(),
         always_needed: shared.len(),
         runpath,
-        interpreter: (!statically).then(|| interpreter(arch).into()),
+        interpreter: (!statically && exports.is_none()).then(|| interpreter(arch).into()),
         // musl's start file relocates a static executable before `main`.
         entry: if statically { "_start" } else { "tondo_rt_start" }.into(),
+        library: exports.map(|exports| (name, exports)),
         strip,
     };
     let bytes = elf::link(inputs).map_err(|message| match message.strip_prefix("undefined: ") {
@@ -267,6 +286,7 @@ fn link_macho(
     native: &[String],
     output: &Path,
     strip: bool,
+    exports: Option<Vec<String>>,
 ) -> Result<(), String> {
     let arch = if cfg!(target_arch = "aarch64") { macho::Arch::Arm64 } else { macho::Arch::X86_64 };
     let mut archive_paths: Vec<PathBuf> = archives.to_vec();
@@ -339,6 +359,9 @@ fn link_macho(
         dylibs,
         rpaths,
         entry: "_main".into(),
+        // Mach-O names C's symbols with a leading underscore.
+        library: exports
+            .map(|exports| (format!("@rpath/{identifier}"), exports.iter().map(|e| format!("_{e}")).collect())),
         strip,
         identifier,
     };

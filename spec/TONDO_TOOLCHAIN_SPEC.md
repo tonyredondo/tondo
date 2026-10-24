@@ -552,9 +552,10 @@ editor.
 ### 7.7 Librerías para C
 
 `tondo build --library` compila un proyecto, o un archivo, como una librería
-que un programa de C enlaza: escribe en el directorio de `--output`, o en el
-actual, `lib<nombre>.a` y su header `<nombre>.h`, con el nombre del paquete o
-del archivo. La librería no tiene `main` ni script; publica las `pub extern fn`
+que un programa de C enlaza o carga: escribe en el directorio de `--output`, o
+en el actual, la librería compartida `lib<nombre>.so` (`lib<nombre>.dylib` en
+macOS), la estática `lib<nombre>.a` y su header `<nombre>.h`, con el nombre
+del paquete o del archivo. La librería no tiene `main` ni script; publica las `pub extern fn`
 con cuerpo de su paquete (16.16 del lenguaje), y sin ninguna es `E1807`.
 `check --library` y `test --library` la comprueban y la prueban sin pedir
 `main`.
@@ -564,9 +565,10 @@ El header declara, con su documentación `///`, las funciones publicadas y los
 C (`int`, `size_t`, `char*` para `ffi.CString`), los números de Tondo con los
 de `stdint.h`, `Bool` como `bool`, un `Pointer[T]` como `T*`, un
 `extern fn(...)` como puntero a función y un `extern type` opaco como
-`typedef struct Nombre Nombre`. El build imprime cómo enlazarla, línea que
-también lleva el header: la librería, las del sistema que el runtime usa y
-las de `[native] libraries`.
+`typedef struct Nombre Nombre`. El build imprime cómo enlazar cada una, líneas
+que también lleva el header: la compartida con su directorio en la ruta de
+búsqueda del programa, y la estática con las librerías del sistema que el
+runtime usa y las de `[native] libraries`.
 
 El runtime arranca con la primera llamada, sin función de inicio, y cada
 llamada corre en el thread que llama (16.16). Las tareas que lanza siguen tras
@@ -574,9 +576,11 @@ volver la llamada. Lo que la librería escribe en la salida estándar se entrega
 al terminar cada llamada, y al terminar el proceso. Un pánico termina el
 proceso, como en un programa; un fallo de memoria, una instrucción ilegal o un
 aborto fuera de sus tareas y de su código va al handler que el proceso tenía.
-La librería contiene el runtime, así que un programa enlaza una sola librería
-de Tondo. `--static` y `--link` construyen ejecutables: con `--library` son
-error.
+Cada librería contiene el runtime. La compartida solo publica sus funciones,
+así que un proceso carga varias de Tondo, cada una con el suyo, y no se
+descarga, porque sus threads siguen ejecutando su código; de la estática, un
+programa enlaza una sola. `--static` y `--link` construyen ejecutables: con
+`--library` son error.
 
 ## 8. Determinismo
 
@@ -604,8 +608,7 @@ El toolchain 0.1 no define:
 - un registro de paquetes ni resolución de versiones semánticas;
 - workspaces de varios paquetes;
 - fuentes condicionales por plataforma;
-- paquetes binarios, interfaces compiladas ni enlace dinámico entre paquetes;
-- librerías compartidas para C, solo estáticas (7.7).
+- paquetes binarios, interfaces compiladas ni enlace dinámico entre paquetes.
 
 Añadir cualquiera de ellos no puede volver no reproducible un build fijado por
 `tondo.lock`.

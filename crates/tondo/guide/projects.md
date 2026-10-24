@@ -60,8 +60,9 @@ standard library.
 links itself: no C compiler is needed. On Linux, `--static` makes it
 static, with musl, for a container with nothing else in it; its native
 libraries must then be static too, `"static:z"` or a `.a` file.
-`--strip` leaves out the symbol table. `tondo build --library` writes a
-static library for C instead, with its header (topic `ffi`).
+`--strip` leaves out the symbol table. `tondo build --library` writes
+libraries for C instead, shared and static, with their header (topic
+`ffi`).
 
 ## Editors
 
