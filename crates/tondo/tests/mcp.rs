@@ -212,3 +212,47 @@ fn runs_tests_and_debugs() {
     assert_eq!(ended["output"], " 42\n");
     agent.stop();
 }
+
+/// `tondo setup` writes the skill for Claude Code and Codex and registers
+/// the server with their commands, here ones that say how they were run.
+#[test]
+fn setup_readies_the_agents() {
+    let dir = project("mcp_setup", &[]);
+    let (home, commands) = (dir.join("home"), dir.join("commands"));
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&commands).unwrap();
+    for agent in ["claude", "codex"] {
+        let script = format!("#!/bin/sh\necho \"{agent} $*\" >> {}\n", dir.join("calls").display());
+        std::fs::write(commands.join(agent), script).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(commands.join(agent), std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path = std::env::join_paths(
+        std::iter::once(commands).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())),
+    )
+    .unwrap();
+    let setup = || {
+        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .arg("setup")
+            .env("HOME", &home)
+            .env("PATH", &path)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let said = setup();
+    assert!(said.contains("it compiles and runs a program, and its MCP server answers"), "{said}");
+    assert!(said.contains("start a new session of Claude Code and Codex"), "{said}");
+    for skill in [".claude/skills/tondo/SKILL.md", ".agents/skills/tondo/SKILL.md"] {
+        assert_eq!(std::fs::read_to_string(home.join(skill)).unwrap(), tondo::guide::skill());
+    }
+    let tondo = Path::new(env!("CARGO_BIN_EXE_tondo")).canonicalize().unwrap();
+    let calls = std::fs::read_to_string(dir.join("calls")).unwrap();
+    assert!(calls.contains(&format!("claude mcp add --scope user tondo -- {} mcp\n", tondo.display())), "{calls}");
+    assert!(calls.contains(&format!("codex mcp add tondo -- {} mcp\n", tondo.display())), "{calls}");
+    // Again, it replaces what it registered.
+    setup();
+    let calls = std::fs::read_to_string(dir.join("calls")).unwrap();
+    assert_eq!(calls.matches("claude mcp remove --scope user tondo\n").count(), 2, "{calls}");
+}

@@ -96,9 +96,13 @@ and `vim.lsp.enable('tondo')`, with `vim.filetype.add({ extension = { to = 'tond
 
 ## Agents
 
+`tondo setup` checks that `tondo` works and sets up Claude Code and Codex,
+those installed: it writes this guide's skill where they read skills and
+registers `tondo mcp` for every project. Running it again updates them.
+
 `tondo mcp` is a Model Context Protocol server: every command as a tool
 with structured results, the language server's navigation and rename, and
-debugging sessions. Add it to Claude Code with
+debugging sessions. By hand, add it to Claude Code with
 `claude mcp add --scope user tondo -- tondo mcp`, to Codex with
 `codex mcp add tondo -- tondo mcp`, or to any client that reads this:
 

@@ -20,24 +20,23 @@ in this order.
    It builds `tondo` with Rust and installs it in `~/.cargo/bin`; without
    Rust, it downloads the latest build of `main` that passed CI, with
    GitHub's `gh` signed in, and installs it in `~/.local/bin`; or in the
-   directory given as its argument. Then it checks that `tondo` compiles
-   and runs a program and that its MCP server answers, writes the Tondo
-   skill for Claude Code (`~/.claude/skills/tondo`) and for Codex and the
-   other agents of the Agent Skills standard (`~/.agents/skills/tondo`),
-   and registers `tondo mcp` with Claude Code and Codex for every project,
-   for those of them that are installed. Each line it prints says what it
-   did; when it stops, its last line says what is missing and how to get
-   it. Running it again updates everything.
+   directory given as its argument. Then it runs `tondo setup`, which
+   checks that `tondo` compiles and runs a program and that its MCP server
+   answers, writes the Tondo skill for Claude Code
+   (`~/.claude/skills/tondo`) and for Codex and the other agents of the
+   Agent Skills standard (`~/.agents/skills/tondo`), and registers
+   `tondo mcp` with Claude Code and Codex for every project, for those of
+   them that are installed. Each line printed says what was done; when it
+   stops, its last line says what is missing and how to get it. Running it
+   again updates everything.
 
-   The same by hand, when the script cannot run:
+   With a `tondo` already installed, as one downloaded from CI,
+   `tondo setup` alone does the rest. By hand, when the script cannot run:
 
    ```sh
    cargo build --release --locked -p tondo     # Rust from https://rustup.rs, and a C compiler
    cp target/release/tondo ~/.cargo/bin/
-   mkdir -p ~/.claude/skills/tondo && tondo guide --skill > ~/.claude/skills/tondo/SKILL.md
-   mkdir -p ~/.agents/skills/tondo && tondo guide --skill > ~/.agents/skills/tondo/SKILL.md
-   claude mcp add --scope user tondo -- tondo mcp
-   codex mcp add tondo -- tondo mcp
+   tondo setup
    ```
 
    Any other MCP client runs it over standard input and output:

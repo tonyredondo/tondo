@@ -29,11 +29,11 @@ sh dist/install.sh
 
 The script builds `tondo` with Rust (from [rustup](https://rustup.rs)) and
 a C compiler, or without Rust downloads the latest build that passed CI
-with GitHub's `gh`; installs it; checks that it compiles and runs a
-program; and sets it up for the coding agents it finds: the Tondo skill
-for Claude Code and Codex, and `tondo mcp`, an MCP server whose tools do
-everything `tondo` does, registered with both. Then `tondo guide` teaches
-the language.
+with GitHub's `gh`, and installs it. Then it runs `tondo setup`, which
+checks that it compiles and runs a program, and sets it up for the coding
+agents it finds: the Tondo skill for Claude Code and Codex, and
+`tondo mcp`, an MCP server whose tools do everything `tondo` does,
+registered with both. Then `tondo guide` teaches the language.
 
 With an agent, open this repository in it and ask it to set Tondo up:
 [`AGENTS.md`](AGENTS.md) tells it how, and how to check that it works.
@@ -145,7 +145,7 @@ Every milestone ends with programs that compile to native executables and run.
 | **H13** | Diagnostics of running programs, all off unless a program starts with `TONDO_DIAGNOSTICS=1`: `tondo ps`; `tondo counters`, the runtime's counters and the program's own (`std.diagnostics`); `tondo trace`, a timeline of the tasks for Perfetto and a CPU profile; `tondo dump` and its reader, every task with its stack and locks and the live memory by site and type, also at a crash with `TONDO_DUMP`; and for `--debug` builds, `tondo debug` and `tondo dap`, with breakpoints, steps, bindings, and every object with what keeps it alive | Done |
 | **H14** | Libraries for C: a `pub extern fn` with a body is a function C calls by its symbol; `tondo build --library` writes a shared library that publishes only those, which the toolchain's own linker makes as ELF and Mach-O, a static library, and a header of what they publish with its documentation; the runtime starts at the first call, and each call runs on the thread that makes it | Done |
 | **Targets 2** | `--target x86_64-linux` and `aarch64-linux` from any machine: static executables, with another architecture's runtime in a pack that `tondo target pack` writes; `tondo run` and `tondo test` run them under qemu; CI builds `tondo` across and tests it under emulation | Done |
-| **Agents** | `tondo mcp`, a Model Context Protocol server in both eras of the protocol: every command as a tool with structured results, the compiler's fixes applied, the language server's navigation and rename, runs with input and a timeout, tests with their report, running programs observed and debugging sessions; the guide, the skill and the standard modules' APIs as resources | Done |
+| **Agents** | `tondo setup`, which gives Claude Code and Codex the skill and the server; `tondo mcp`, a Model Context Protocol server in both eras of the protocol: every command as a tool with structured results, the compiler's fixes applied, the language server's navigation and rename, runs with input and a timeout, tests with their report, running programs observed and debugging sessions; the guide, the skill and the standard modules' APIs as resources | Done |
 
 The first cut deliberately leaves out the following. They are part of the
 language and remain planned work, scheduled after H7:

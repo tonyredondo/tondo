@@ -40,6 +40,8 @@ usage:
                                                        references, rename, completion, highlighting
   tondo mcp                                            serve an agent, with the Model Context Protocol:
                                                        every command above as its tools
+  tondo setup                                          set up Claude Code and Codex: the skill, and tondo
+                                                       mcp for every project; checked
   tondo ps [--json]                                    list the running Tondo programs
   tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--json]
                                                        watch a running program's counters, the runtime's
@@ -103,6 +105,10 @@ fn main() -> ExitCode {
         "doc-test" => doc_test_command(&args[1..]),
         "lsp" => tondo::lsp::serve().map(|()| ExitCode::SUCCESS),
         "mcp" => tondo::mcp::serve().map(|()| ExitCode::SUCCESS),
+        "setup" => match args.len() {
+            1 => tondo::setup::setup().map(|()| ExitCode::SUCCESS),
+            _ => Err(format!("setup takes no arguments\n{USAGE}")),
+        },
         "ps" => ps_command(&args[1..]),
         "counters" => counters_command(&args[1..]),
         "trace" => trace_command(&args[1..]),

@@ -22,12 +22,6 @@ tondo test app              # run a project's tests
 tondo help                  # every command
 ```
 
-For a coding agent, the skill and the MCP server, whose tools do all of
-the above:
-
-```sh
-mkdir -p ~/.claude/skills/tondo && tondo guide --skill > ~/.claude/skills/tondo/SKILL.md
-mkdir -p ~/.agents/skills/tondo && tondo guide --skill > ~/.agents/skills/tondo/SKILL.md
-claude mcp add --scope user tondo -- tondo mcp     # Claude Code
-codex mcp add tondo -- tondo mcp                   # Codex
-```
+`tondo setup` checks that it works and sets up Claude Code and Codex:
+the Tondo skill, and `tondo mcp`, an MCP server whose tools do all of the
+above, for every project.

@@ -1,10 +1,9 @@
 #!/bin/sh
 # Installs `tondo` from this repository and sets it up for the coding
 # agents of this machine: builds it, or without Rust downloads the latest
-# build of main that passed CI, puts it in a directory of programs,
-# checks that it compiles and runs a program, installs the Tondo skill
-# and registers `tondo mcp` with Claude Code and Codex where they are
-# installed. Running it again updates all of it.
+# build of main that passed CI, puts it in a directory of programs, and
+# runs `tondo setup`, which checks it and gives Claude Code and Codex the
+# Tondo skill and `tondo mcp`. Running it again updates all of it.
 #
 #   sh dist/install.sh [<bin dir>]
 #
@@ -53,52 +52,5 @@ mkdir -p "$bin"
 cp "$built" "$bin/tondo.new"
 mv "$bin/tondo.new" "$bin/tondo"
 tondo="$bin/tondo"
-say "installed $tondo, $("$tondo" version)"
-
-printf 'import std.console\n\nfn main() {\n    console.println("hello from tondo")\n}\n' >"$work/hello.to"
-ran=$("$tondo" run "$work/hello.to" 2>&1) || true
-[ "$ran" = "hello from tondo" ] || fail "tondo is installed, but running a program gave: $ran"
-say "it compiles and runs a program"
-
-request='{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}'
-case $(printf '%s\n' "$request" | "$tondo" mcp 2>&1) in
-*'"supportedVersions"'*) say "its MCP server answers" ;;
-*) fail "tondo mcp did not answer; run \`tondo mcp\` and send it: $request" ;;
-esac
-
-skill() {
-    mkdir -p "$1/tondo"
-    "$tondo" guide --skill >"$1/tondo/SKILL.md"
-    say "$2: the skill is in $1/tondo/SKILL.md"
-}
-agents=""
-if command -v claude >/dev/null || [ -d "$HOME/.claude" ]; then
-    skill "$HOME/.claude/skills" "Claude Code"
-    agents="Claude Code"
-fi
-if command -v codex >/dev/null || [ -d "$HOME/.codex" ]; then
-    # Where Codex and the other agents of the Agent Skills standard look.
-    skill "$HOME/.agents/skills" "Codex"
-    agents="${agents:+$agents and }Codex"
-fi
-if command -v claude >/dev/null; then
-    claude mcp remove --scope user tondo >/dev/null 2>&1 || true
-    claude mcp add --scope user tondo -- "$tondo" mcp >/dev/null
-    say "Claude Code: tondo mcp serves every project"
-fi
-if command -v codex >/dev/null; then
-    codex mcp remove tondo >/dev/null 2>&1 || true
-    codex mcp add tondo -- "$tondo" mcp >/dev/null
-    say "Codex: tondo mcp serves every project"
-fi
-
-case ":$PATH:" in
-*":$bin:"*) ;;
-*) say "$bin is not on PATH: add it, as export PATH=\"$bin:\$PATH\" in your shell's profile" ;;
-esac
-if [ -n "$agents" ]; then
-    say "done: start a new session of $agents to load the skill and the MCP server"
-else
-    say "done; for an agent, \`tondo guide --skill\` prints the skill, and \`$tondo mcp\` is the MCP server"
-fi
-say "new to Tondo? \`tondo guide\`"
+say "installed $tondo"
+"$tondo" setup

@@ -1828,3 +1828,18 @@ interrupts the debugger as Ctrl-C does. The results carry their data
 without an `outputSchema`, since the JSON of the commands is what the
 specifications define. `std.mcp`, for programs to serve their own tools,
 and reloading a running program for agents are later milestones.
+
+## 2026-10-25 — Setting agents up
+
+`tondo setup` gives the coding agents of a machine the skill and the
+MCP server, and checks that `tondo` compiles, runs a program and serves:
+a `tondo` downloaded alone has no repository and no script to do it, and
+the repository's script now only builds or downloads it and calls the
+command. It registers the server with the agents' own commands, `claude`
+and `codex`, since their configuration files are theirs to write, and
+with the path of the `tondo` that runs it, since an agent started from a
+desktop does not see the shell's `PATH`. It finds an agent by its command
+or by its directory in the home, writes the skill where each reads
+skills, and replaces what it registered before, so that running it again
+updates everything.
+

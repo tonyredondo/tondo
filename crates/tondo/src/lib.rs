@@ -34,6 +34,7 @@ pub mod ownership;
 pub mod parser;
 pub mod project;
 pub mod runner;
+pub mod setup;
 pub mod source;
 pub mod stdlib;
 pub mod target;

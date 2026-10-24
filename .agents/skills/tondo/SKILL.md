@@ -79,7 +79,7 @@ errors' repairs as edits (`fixes`), `safe` ones ready to apply.
 
 `tondo mcp` gives an agent all of this as MCP tools, and more: applying
 the fixes, navigating, running with input, testing, observing and debugging
-programs (`tondo guide projects` says how to add it).
+programs; `tondo setup` adds it, and the skill, to Claude Code and Codex.
 
 ## Topics
 
