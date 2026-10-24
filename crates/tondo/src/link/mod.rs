@@ -84,19 +84,25 @@ pub fn link(
         system.push(loader);
     }
     let read = |path: &Path| std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()));
-    let archive_data: Vec<(String, Vec<u8>)> =
+    let files: Vec<(String, Vec<u8>)> =
         archive_paths.iter().map(|p| Ok((p.display().to_string(), read(p)?))).collect::<Result<_, String>>()?;
+    // An object among them, as the start file of a static executable,
+    // comes in whole.
+    let (archive_data, object_data): (Vec<_>, Vec<_>) = files.into_iter().partition(|(_, d)| d.starts_with(b"!<arch>"));
     let shared_data: Vec<(String, Vec<u8>)> =
         shared.iter().chain(&system).map(|p| Ok((p.display().to_string(), read(p)?))).collect::<Result<_, String>>()?;
     let inputs = elf::Inputs {
         arch,
-        objects: vec![("the program".into(), object)],
+        objects: std::iter::once(("the program".to_string(), object))
+            .chain(object_data.iter().map(|(n, d)| (n.clone(), d.as_slice())))
+            .collect(),
         archives: archive_data.iter().map(|(n, d)| (n.clone(), d.as_slice())).collect(),
         shared: shared_data.iter().map(|(n, d)| (n.clone(), d.as_slice())).collect(),
         always_needed: shared.len(),
         runpath,
         interpreter: (!statically).then(|| interpreter(arch).into()),
-        entry: "tondo_rt_start".into(),
+        // musl's start file relocates a static executable before `main`.
+        entry: if statically { "_start" } else { "tondo_rt_start" }.into(),
         strip,
     };
     let bytes = elf::link(inputs).map_err(|message| match message.strip_prefix("undefined: ") {

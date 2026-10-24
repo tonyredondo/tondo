@@ -1,11 +1,13 @@
 //! Links ELF executables: the program's objects and the archives of the
 //! runtime and of native libraries, whose members come in as they are
 //! needed, against shared libraries the system has installed. The
-//! executable is not position independent, so every address is known when
-//! it links; only what shared libraries define is bound when it starts, all
-//! at once. Sections nothing reaches are dropped, thread-local accesses are
-//! relaxed to the executable's own model, and `.eh_frame_hdr` indexes the
-//! unwind tables.
+//! executable is position independent, so the system loads it anywhere:
+//! when it starts, its own addresses are moved to where it is, packed as
+//! `DT_RELR` where the C library reads that, and what shared libraries
+//! define is bound, all at once. A static executable relocates itself.
+//! Sections nothing reaches are dropped, thread-local accesses are relaxed
+//! to the executable's own model, and `.eh_frame_hdr` indexes the unwind
+//! tables.
 
 use object::elf::*;
 use object::read::elf::{ElfFile64, SectionHeader as _};
@@ -43,9 +45,17 @@ impl Arch {
             Arch::Aarch64 => R_AARCH64_GLOB_DAT,
         }
     }
+
+    fn relative(self) -> RelocationType {
+        match self {
+            Arch::X86_64 => R_X86_64_RELATIVE,
+            Arch::Aarch64 => R_AARCH64_RELATIVE,
+        }
+    }
 }
 
-const BASE: u64 = 0x40_0000;
+/// Where the executable would be if it were not moved: anywhere will do.
+const BASE: u64 = 0;
 const PLT_ENTRY: u64 = 16;
 
 /// What the executable links.
@@ -80,6 +90,7 @@ enum Out {
     Versym,
     Verneed,
     RelaDyn,
+    Relr,
     Rodata,
     EhFrameHdr,
     EhFrame,
@@ -96,7 +107,7 @@ enum Out {
     Bss,
 }
 
-const OUTS: [Out; 21] = [
+const OUTS: [Out; 22] = [
     Out::Interp,
     Out::Hash,
     Out::Dynsym,
@@ -104,6 +115,7 @@ const OUTS: [Out; 21] = [
     Out::Versym,
     Out::Verneed,
     Out::RelaDyn,
+    Out::Relr,
     Out::Rodata,
     Out::EhFrameHdr,
     Out::EhFrame,
@@ -130,6 +142,7 @@ impl Out {
             Out::Versym => ".gnu.version",
             Out::Verneed => ".gnu.version_r",
             Out::RelaDyn => ".rela.dyn",
+            Out::Relr => ".relr.dyn",
             Out::Rodata => ".rodata",
             Out::EhFrameHdr => ".eh_frame_hdr",
             Out::EhFrame => ".eh_frame",
@@ -170,6 +183,7 @@ impl Out {
             Out::Versym => (SHT_GNU_VERSYM, SHF_ALLOC),
             Out::Verneed => (SHT_GNU_VERNEED, SHF_ALLOC),
             Out::RelaDyn => (SHT_RELA, SHF_ALLOC),
+            Out::Relr => (SHT_RELR, SHF_ALLOC),
             Out::Plt | Out::Text => (SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR),
             Out::Tdata => (SHT_PROGBITS, SHF_ALLOC | SHF_WRITE | SHF_TLS),
             Out::Tbss => (SHT_NOBITS, SHF_ALLOC | SHF_WRITE | SHF_TLS),
@@ -276,6 +290,8 @@ struct Library<'a> {
     soname: String,
     exports: HashMap<&'a [u8], Export<'a>>,
     needed: bool,
+    /// Whether it defines `GLIBC_ABI_DT_RELR`: its loader reads `DT_RELR`.
+    relr: bool,
 }
 
 /// A record of an input's `.eh_frame`: where it is, how long, and for a
@@ -345,6 +361,12 @@ struct Linker<'a> {
     tls: (u64, u64, u64),
     /// Whether shared libraries load it, or it is static.
     dynamic: bool,
+    /// The words holding the executable's own addresses, which move with
+    /// it: those `DT_RELR` can pack, and the others.
+    aligned_words: usize,
+    unaligned_words: usize,
+    /// Whether the C library reads `DT_RELR`.
+    relr: bool,
 }
 
 fn error(input: &str, message: impl std::fmt::Display) -> String {
@@ -371,6 +393,9 @@ pub fn link(inputs: Inputs) -> Result<Vec<u8>, String> {
         align: [1; OUTS.len()],
         tls: (0, 0, 1),
         dynamic: true,
+        aligned_words: 0,
+        unaligned_words: 0,
+        relr: false,
     };
     let entry = linker.intern(inputs.entry.as_bytes());
     linker.globals[entry].required = true;
@@ -384,6 +409,7 @@ pub fn link(inputs: Inputs) -> Result<Vec<u8>, String> {
         linker.libraries.push(library);
     }
     linker.dynamic = inputs.interpreter.is_some();
+    linker.relr = linker.dynamic && linker.libraries.iter().any(|l| l.soname == "libc.so.6" && l.relr);
     linker.resolve()?;
     linker.collect(entry);
     linker.scan()?;
@@ -532,8 +558,7 @@ impl<'a> Linker<'a> {
                 continue;
             }
             let name = self.globals[id].name;
-            // A static C library asks for `_DYNAMIC` to know it is static.
-            if let Some(synthetic) = synthetic(name).filter(|&s| self.dynamic || s != Synthetic::Dynamic) {
+            if let Some(synthetic) = synthetic(name) {
                 self.globals[id].def = Def::Linker(synthetic);
                 continue;
             }
@@ -700,6 +725,17 @@ impl<'a> Linker<'a> {
                             self.dynamic_words += 1;
                             self.import(target);
                         }
+                        (Arch::X86_64, R_X86_64_64) | (Arch::Aarch64, R_AARCH64_ABS64) if self.defined(target) => {
+                            let align = self.inputs[i]
+                                .file
+                                .section_by_index(object::SectionIndex(section))
+                                .map_or(1, |s| s.align());
+                            if reloc.offset % 8 == 0 && align >= 8 {
+                                self.aligned_words += 1;
+                            } else {
+                                self.unaligned_words += 1;
+                            }
+                        }
                         _ if shared => {
                             // A call, or the address of a function: its PLT entry.
                             self.import(target);
@@ -724,6 +760,15 @@ impl<'a> Linker<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Whether a target has an address of the executable's: not a shared
+    /// library's, nor a weak one nothing defines.
+    fn defined(&self, target: Target) -> bool {
+        match target {
+            Target::Global(id) => !matches!(self.globals[id].def, Def::Shared { .. } | Def::Undefined),
+            Target::Local { .. } => true,
+        }
     }
 
     fn shared(&self, target: Target) -> bool {
@@ -813,15 +858,22 @@ impl<'a> Linker<'a> {
         sizes[Out::Versym as usize] = 2 * dynsyms;
         sizes[Out::Verneed as usize] = 16 * versions.iter().filter(|(_, v)| !v.is_empty()).count() as u64
             + 16 * versions.iter().map(|(_, v)| v.len() as u64).sum::<u64>();
-        let relocations = self.got.iter().filter(|s| matches!(s, Slot::Address(t) if self.shared(*t))).count();
-        sizes[Out::RelaDyn as usize] = 24 * (relocations + self.dynamic_words) as u64;
+        let bound = self.got.iter().filter(|s| matches!(s, Slot::Address(t) if self.shared(*t))).count();
+        let moved = self.got.iter().filter(|s| matches!(s, Slot::Address(t) if self.defined(*t))).count();
+        let (packed, listed) = match self.relr {
+            true => (self.aligned_words + moved, self.unaligned_words),
+            false => (0, self.aligned_words + self.unaligned_words + moved),
+        };
+        sizes[Out::RelaDyn as usize] = 24 * (bound + self.dynamic_words + listed) as u64;
+        // At most a word for each; the bitmaps make it less.
+        sizes[Out::Relr as usize] = 8 * packed as u64;
         sizes[Out::Plt as usize] = PLT_ENTRY * self.plt.len() as u64;
         sizes[Out::Got as usize] = 8 * self.got.len() as u64;
-        sizes[Out::Dynamic as usize] = 16 * (libraries + u64::from(!inputs.runpath.is_empty()) + 20);
+        sizes[Out::Dynamic as usize] = 16 * (libraries + u64::from(!inputs.runpath.is_empty()) + 24);
         for out in [Out::Hash, Out::Versym, Out::Verneed, Out::Got] {
             self.align[out as usize] = 8;
         }
-        for out in [Out::Dynsym, Out::RelaDyn, Out::Dynamic, Out::Got, Out::EhFrame, Out::EhFrameHdr] {
+        for out in [Out::Dynsym, Out::RelaDyn, Out::Relr, Out::Dynamic, Out::Got, Out::EhFrame, Out::EhFrameHdr] {
             self.align[out as usize] = self.align[out as usize].max(8);
         }
         self.align[Out::Plt as usize] = 16;
@@ -829,8 +881,10 @@ impl<'a> Linker<'a> {
             sizes[Out::Versym as usize] = 0;
             sizes[Out::Verneed as usize] = 0;
         }
+        // A static executable relocates itself: it keeps the relocations
+        // and the dynamic section that lists them.
         if !self.dynamic {
-            for out in [Out::Hash, Out::Dynsym, Out::Dynstr, Out::RelaDyn, Out::Dynamic] {
+            for out in [Out::Hash, Out::Dynsym, Out::Dynstr, Out::Versym, Out::Verneed] {
                 sizes[out as usize] = 0;
             }
         }
@@ -868,14 +922,20 @@ impl<'a> Linker<'a> {
     fn program_headers(&self) -> usize {
         let tls = self.size[Out::Tdata as usize] + self.size[Out::Tbss as usize] > 0;
         let eh = self.size[Out::EhFrameHdr as usize] > 0;
-        // The header table, the loader and the dynamic section, which a
-        // static executable has none of.
-        4 + 3 * usize::from(self.dynamic) + usize::from(tls) + usize::from(eh)
+        // Three loads, the header table, the dynamic section and the stack;
+        // the loader unless it is static.
+        6 + usize::from(self.dynamic) + usize::from(tls) + usize::from(eh)
     }
 
-    /// The versions each needed library is asked for.
+    /// The versions each needed library is asked for, `DT_RELR`'s among
+    /// them when it is used.
     fn versions(&self) -> Vec<(usize, Vec<&'a [u8]>)> {
         let mut out: Vec<(usize, Vec<&'a [u8]>)> = Vec::new();
+        if self.relr
+            && let Some(libc) = self.libraries.iter().position(|l| l.soname == "libc.so.6")
+        {
+            out.push((libc, vec![RELR_VERSION]));
+        }
         for &id in &self.dynsyms {
             let Def::Shared { library, .. } = self.globals[id].def else { continue };
             let Some(version) = self.libraries[library as usize].exports[self.globals[id].name].version else {
@@ -1061,8 +1121,16 @@ fn library<'a>(name: &str, data: &'a [u8]) -> Result<Library<'a>, String> {
             }
         }
     }
-    Ok(Library { soname, exports, needed: false })
+    let relr = file
+        .section_by_name(".dynstr")
+        .and_then(|s| s.data().ok())
+        .is_some_and(|strings| strings.windows(RELR_VERSION.len()).any(|w| w == RELR_VERSION));
+    Ok(Library { soname, exports, needed: false, relr })
 }
+
+/// The version a program that packs its relocations as `DT_RELR` asks
+/// glibc for, so that an older one refuses it.
+const RELR_VERSION: &[u8] = b"GLIBC_ABI_DT_RELR";
 
 /// The ELF hash of a name.
 fn elf_hash(name: &[u8]) -> u32 {
@@ -1202,7 +1270,12 @@ impl<'a> Linker<'a> {
                     relocations.push((entry_addr, self.arch.glob_dat(), self.globals[id].dynsym.unwrap(), 0));
                     0
                 }
-                Slot::Address(target) => self.address(target),
+                Slot::Address(target) => {
+                    if self.defined(target) {
+                        relocations.push((entry_addr, self.arch.relative(), 0, self.address(target) as i64));
+                    }
+                    self.address(target)
+                }
                 Slot::TpOff(target) => self.tp_offset(target) as u64,
             };
             image.u64(at(Out::Got) + 8 * n as u64, value);
@@ -1247,7 +1320,24 @@ impl<'a> Linker<'a> {
                 image.u32(h + 16 + 8 * n as u64, *fde as u32);
             }
         }
-        // The dynamic relocations, bound when the program starts.
+        // The executable's own addresses move with it: packed where the C
+        // library reads `DT_RELR` and the word is aligned, listed first
+        // otherwise; then what is bound.
+        let relative = self.arch.relative();
+        let (moved, mut relocations): (Vec<_>, Vec<_>) = relocations.into_iter().partition(|r| r.1 == relative);
+        let (packed, listed): (Vec<_>, Vec<_>) = moved.into_iter().partition(|r| self.relr && r.0 % 8 == 0);
+        let relr = relr(&packed.iter().map(|r| r.0).collect::<Vec<_>>());
+        if relr.len() as u64 * 8 > self.size[Out::Relr as usize] {
+            return Err(format!("{} packed relocations take more than the room left for them", relr.len()));
+        }
+        for (n, word) in relr.iter().enumerate() {
+            image.u64(at(Out::Relr) + 8 * n as u64, *word);
+        }
+        let listed_count = listed.len();
+        relocations.splice(0..0, listed);
+        if relocations.len() as u64 * 24 > self.size[Out::RelaDyn as usize] {
+            return Err(format!("{} relocations take more than the room left for them", relocations.len()));
+        }
         for (n, &(offset, kind, symbol, addend)) in relocations.iter().enumerate() {
             let entry_at = at(Out::RelaDyn) + 24 * n as u64;
             image.u64(entry_at, offset);
@@ -1255,6 +1345,7 @@ impl<'a> Linker<'a> {
             image.u64(entry_at + 16, addend as u64);
         }
         // The dynamic section.
+        let _ = listed_count;
         let mut dynamic: Vec<(DynamicTag, u64)> = Vec::new();
         for library in self.libraries.iter().filter(|l| l.needed) {
             dynamic.push((DT_NEEDED, strings[library.soname.as_bytes()] as u64));
@@ -1262,12 +1353,19 @@ impl<'a> Linker<'a> {
         if !inputs.runpath.is_empty() {
             dynamic.push((DT_RUNPATH, strings[inputs.runpath.join(":").as_bytes()] as u64));
         }
+        if self.dynamic {
+            dynamic.extend([
+                (DT_HASH, addr(Out::Hash)),
+                (DT_STRTAB, addr(Out::Dynstr)),
+                (DT_SYMTAB, addr(Out::Dynsym)),
+                (DT_STRSZ, dynstr.len() as u64),
+                (DT_SYMENT, 24),
+            ]);
+        }
+        if !relr.is_empty() {
+            dynamic.extend([(DT_RELR, addr(Out::Relr)), (DT_RELRSZ, 8 * relr.len() as u64), (DT_RELRENT, 8)]);
+        }
         dynamic.extend([
-            (DT_HASH, addr(Out::Hash)),
-            (DT_STRTAB, addr(Out::Dynstr)),
-            (DT_SYMTAB, addr(Out::Dynsym)),
-            (DT_STRSZ, dynstr.len() as u64),
-            (DT_SYMENT, 24),
             (DT_RELA, addr(Out::RelaDyn)),
             (DT_RELASZ, 24 * relocations.len() as u64),
             (DT_RELAENT, 24),
@@ -1277,7 +1375,7 @@ impl<'a> Linker<'a> {
             (DT_FINI_ARRAYSZ, self.size[Out::FiniArray as usize]),
             (DT_DEBUG, 0),
             (DT_FLAGS, DF_BIND_NOW.0),
-            (DT_FLAGS_1, DF_1_NOW.0),
+            (DT_FLAGS_1, DF_1_NOW.0 | DF_1_PIE.0),
         ]);
         if self.size[Out::Versym as usize] > 0 {
             dynamic.extend([
@@ -1287,9 +1385,6 @@ impl<'a> Linker<'a> {
             ]);
         }
         dynamic.push((DT_NULL, 0));
-        if !self.dynamic {
-            dynamic.clear();
-        }
         for (n, (tag, value)) in dynamic.iter().enumerate() {
             image.u64(at(Out::Dynamic) + 16 * n as u64, tag.0 as u64);
             image.u64(at(Out::Dynamic) + 16 * n as u64 + 8, *value);
@@ -1353,11 +1448,15 @@ impl<'a> Linker<'a> {
                         dynamic.push((p, R_X86_64_64, self.globals[id].dynsym.unwrap(), a));
                         image.u64(f, 0);
                     }
-                    R_X86_64_64 => image.u64(f, (s + a) as u64),
+                    R_X86_64_64 => {
+                        if self.defined(target) {
+                            dynamic.push((p, R_X86_64_RELATIVE, 0, s + a));
+                        }
+                        image.u64(f, (s + a) as u64);
+                    }
                     R_X86_64_PC32 | R_X86_64_PLT32 => pc32(image, s + a - p as i64)?,
                     R_X86_64_PC64 => image.u64(f, (s + a - p as i64) as u64),
-                    R_X86_64_32 => image.u32(f, u32::try_from(s + a).map_err(|_| fail("out of range"))?),
-                    R_X86_64_32S => image.u32(f, i32::try_from(s + a).map_err(|_| fail("out of range"))? as u32),
+                    R_X86_64_32 | R_X86_64_32S => return Err(fail(PIC)),
                     R_X86_64_GOTPCREL | R_X86_64_GOTPCRELX | R_X86_64_REX_GOTPCRELX => {
                         pc32(image, self.slot_address(Slot::Address(target)) as i64 + a - p as i64)?
                     }
@@ -1417,8 +1516,13 @@ impl<'a> Linker<'a> {
                             dynamic.push((p, R_AARCH64_ABS64, self.globals[id].dynsym.unwrap(), a));
                             image.u64(f, 0);
                         }
-                        R_AARCH64_ABS64 => image.u64(f, (s + a) as u64),
-                        R_AARCH64_ABS32 => image.u32(f, u32::try_from(s + a).map_err(|_| fail("out of range"))?),
+                        R_AARCH64_ABS64 => {
+                            if self.defined(target) {
+                                dynamic.push((p, R_AARCH64_RELATIVE, 0, s + a));
+                            }
+                            image.u64(f, (s + a) as u64);
+                        }
+                        R_AARCH64_ABS32 => return Err(fail(PIC)),
                         R_AARCH64_PREL64 => image.u64(f, (s + a - p as i64) as u64),
                         R_AARCH64_PREL32 => pc32(image, s + a - p as i64)?,
                         R_AARCH64_CALL26 | R_AARCH64_JUMP26 => branch(image, 26, 0)?,
@@ -1442,11 +1546,7 @@ impl<'a> Linker<'a> {
                         | R_AARCH64_MOVW_UABS_G1_NC
                         | R_AARCH64_MOVW_UABS_G2
                         | R_AARCH64_MOVW_UABS_G2_NC
-                        | R_AARCH64_MOVW_UABS_G3 => {
-                            let shift = 16 * ((reloc.kind.0 - R_AARCH64_MOVW_UABS_G0.0) / 2);
-                            let imm = (((s + a) as u64 >> shift) & 0xffff) as u32;
-                            set(image, (insn & !(0xffff << 5)) | (imm << 5));
-                        }
+                        | R_AARCH64_MOVW_UABS_G3 => return Err(fail(PIC)),
                         R_AARCH64_ADR_GOT_PAGE => {
                             adrp(image, page(self.slot_address(Slot::Address(target)) as i64) - page(p as i64))?
                         }
@@ -1538,8 +1638,8 @@ impl<'a> Linker<'a> {
         let phnum = self.program_headers();
         // The program headers.
         let mut headers: Vec<(ProgramType, ProgramFlags, u64, u64, u64, u64)> = Vec::new();
+        headers.push((PT_PHDR, PF_R, 64, BASE + 64, 56 * phnum as u64, 8));
         if self.dynamic {
-            headers.push((PT_PHDR, PF_R, 64, BASE + 64, 56 * phnum as u64, 8));
             headers.push((PT_INTERP, PF_R, at(Out::Interp), addr(Out::Interp), size(Out::Interp), 1));
         }
         let segments: [(ProgramFlags, Out, Out); 3] = [
@@ -1563,9 +1663,7 @@ impl<'a> Linker<'a> {
         for (kind, flags, offset, vaddr, filesz, memsz) in loads {
             headers.push((kind, flags, offset, vaddr, filesz, memsz));
         }
-        if self.dynamic {
-            headers.push((PT_DYNAMIC, PF_R | PF_W, at(Out::Dynamic), addr(Out::Dynamic), size(Out::Dynamic), 8));
-        }
+        headers.push((PT_DYNAMIC, PF_R | PF_W, at(Out::Dynamic), addr(Out::Dynamic), size(Out::Dynamic), 8));
         let (tls_start, tls_size, tls_align) = self.tls;
         if size(Out::Tdata) + size(Out::Tbss) > 0 {
             let filesz = size(Out::Tdata);
@@ -1618,7 +1716,7 @@ impl<'a> Linker<'a> {
                 Out::Dynamic => 16,
                 Out::Hash => 4,
                 Out::Versym => 2,
-                Out::Got | Out::InitArray | Out::FiniArray => 8,
+                Out::Got | Out::InitArray | Out::FiniArray | Out::Relr => 8,
                 _ => 0,
             };
             sections.push([
@@ -1694,7 +1792,7 @@ impl<'a> Linker<'a> {
         let mut header = vec![0x7f, b'E', b'L', b'F', ELFCLASS64.0, ELFDATA2LSB.0, EV_CURRENT.0, ELFOSABI_NONE.0];
         header.resize(16, 0);
         image.put(0, &header);
-        image.u16(16, ET_EXEC.0);
+        image.u16(16, ET_DYN.0);
         image.u16(18, self.arch.machine().0);
         image.u32(20, EV_CURRENT.0 as u32);
         image.u64(24, self.global_address(entry));
@@ -1762,9 +1860,40 @@ fn addr_got(linker: &Linker) -> u64 {
     linker.addr[Out::Got as usize]
 }
 
+/// Why an absolute address cannot be relocated in code.
+const PIC: &str = "a position-independent executable cannot hold this absolute address; compile the object as position-independent (`-fPIC`)";
+
 const DW_EH_PE_PCREL_SDATA4: u8 = 0x1b;
 const DW_EH_PE_UDATA4: u8 = 0x03;
 const DW_EH_PE_DATAREL_SDATA4: u8 = 0x3b;
+
+/// The addresses of words to move, in `DT_RELR`'s form: an address, then
+/// bitmaps of which of the next 63 words also move.
+fn relr(addresses: &[u64]) -> Vec<u64> {
+    let mut sorted = addresses.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < sorted.len() {
+        out.push(sorted[i]);
+        let mut next = sorted[i] + 8;
+        i += 1;
+        loop {
+            let mut bitmap = 0u64;
+            while i < sorted.len() && sorted[i] >= next && sorted[i] - next < 63 * 8 {
+                bitmap |= 1 << ((sorted[i] - next) / 8);
+                i += 1;
+            }
+            if bitmap == 0 {
+                break;
+            }
+            out.push((bitmap << 1) | 1);
+            next += 63 * 8;
+        }
+    }
+    out
+}
 
 /// A PLT entry: an indirect jump through the GOT entry at `slot`.
 fn plt_entry(arch: Arch, stub: u64, slot: u64) -> Vec<u8> {

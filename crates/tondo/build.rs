@@ -1,8 +1,8 @@
 //! Compiles the runtime as a staticlib and embeds it in the compiler,
 //! compressed, so a single `tondo` binary can link native executables. On
 //! Linux it embeds as well what a static executable links (`--static`):
-//! the runtime built for musl, and musl's C library and unwinder, which
-//! Rust ships for that target.
+//! the runtime built for musl, and musl's C library, unwinder and start
+//! file, which Rust ships for that target.
 
 use std::env;
 use std::io::Write;
@@ -41,6 +41,7 @@ fn main() {
         ("libtondo_runtime-static.a.gz", None),
         ("libc-static.a.gz", Some("libc.a")),
         ("libunwind-static.a.gz", Some("libunwind.a")),
+        ("rcrt1-static.o.gz", Some("rcrt1.o")),
     ];
     let available = target.contains("linux") && self_contained(&musl).join("libc.a").is_file();
     for (name, file) in parts {

@@ -16,11 +16,13 @@ const RUNTIME_HASH: &str = include_str!(concat!(env!("OUT_DIR"), "/runtime-hash.
 /// elsewhere.
 const UNWIND: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libunwind.a.gz"));
 /// What a static executable links on Linux (`--static`): the runtime built
-/// for musl, musl's C library and its unwinder; empty elsewhere.
-const STATIC: [(&str, &[u8]); 3] = [
+/// for musl, musl's C library, its unwinder and the start file that
+/// relocates the executable; empty elsewhere.
+const STATIC: [(&str, &[u8]); 4] = [
     ("libtondo_runtime-static", include_bytes!(concat!(env!("OUT_DIR"), "/libtondo_runtime-static.a.gz"))),
     ("libunwind-static", include_bytes!(concat!(env!("OUT_DIR"), "/libunwind-static.a.gz"))),
     ("libc-static", include_bytes!(concat!(env!("OUT_DIR"), "/libc-static.a.gz"))),
+    ("rcrt1-static", include_bytes!(concat!(env!("OUT_DIR"), "/rcrt1-static.o.gz"))),
 ];
 
 /// The archive `name` of the compiler, in the cache.

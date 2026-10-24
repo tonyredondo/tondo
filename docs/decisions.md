@@ -1519,6 +1519,15 @@ which calls the C library's `__libc_start_main` with a function that runs
 the constructors, as the C toolchain's start files do. `tondo build
 --strip` leaves out the symbol table; Tondo's traces use their own table.
 
+Executables are position independent, as a C toolchain makes them, so
+the system loads them anywhere and attacks cannot rely on where their
+code is. The code costs nothing more, since it is already position
+independent; the words that hold the executable's own addresses move
+with it when it starts, listed as `DT_RELR` bitmaps where glibc reads
+them (it defines `GLIBC_ABI_DT_RELR`, which the executable then asks
+for) and as relocations otherwise. A static executable starts in musl's
+`rcrt1.o`, which relocates it before `main`.
+
 Until it links by default, `TONDO_LINKER=tondo` chooses it, and CI runs
 the cases and the binding tests with it on every Linux.
 
