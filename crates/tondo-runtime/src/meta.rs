@@ -80,6 +80,7 @@ static HELD: AtomicUsize = AtomicUsize::new(0);
 pub fn start() {
     if let Some(limit) = std::env::var("TONDO_META_MEMORY").ok().and_then(|s| s.parse().ok()) {
         LIMIT.store(limit, Ordering::Relaxed);
+        super::diagnostics::hook(super::diagnostics::BUDGET);
     }
 }
 
@@ -89,29 +90,44 @@ unsafe impl GlobalAlloc for Counting {
     /// none to free (language 16.7); the collector itself may go past the
     /// budget while it frees.
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let limit = LIMIT.load(Ordering::Relaxed);
-        if limit != usize::MAX
-            && HELD.fetch_add(layout.size(), Ordering::Relaxed) + layout.size() > limit
-            && !super::cycles::collecting_here()
-            && !(super::cycles::collect_for_memory() && HELD.load(Ordering::Relaxed) <= limit)
-        {
-            over("memory");
+        use super::diagnostics::{BUDGET, WATCHED, hooks};
+        let hooks = hooks();
+        if hooks & BUDGET != 0 {
+            budget(layout.size());
         }
         let mut block = unsafe { System.alloc(layout) };
         if block.is_null() && super::cycles::collect_for_memory() {
             block = unsafe { System.alloc(layout) };
         }
-        if !block.is_null() {
+        if hooks & WATCHED != 0 && !block.is_null() {
             super::diagnostics::allocated(block, layout.size());
         }
         block
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        if LIMIT.load(Ordering::Relaxed) != usize::MAX {
+        use super::diagnostics::{BUDGET, WATCHED, hooks};
+        let hooks = hooks();
+        if hooks & BUDGET != 0 {
             HELD.fetch_sub(layout.size(), Ordering::Relaxed);
         }
-        super::diagnostics::freed(ptr, layout.size());
+        if hooks & WATCHED != 0 {
+            super::diagnostics::freed(ptr, layout.size());
+        }
         unsafe { System.dealloc(ptr, layout) }
+    }
+}
+
+/// Counts an allocation of a `meta` program against its budget; one that
+/// goes past it ends the program, unless a collection makes room.
+#[cfg(tondo_staticlib)]
+#[cold]
+fn budget(size: usize) {
+    let limit = LIMIT.load(Ordering::Relaxed);
+    if HELD.fetch_add(size, Ordering::Relaxed) + size > limit
+        && !super::cycles::collecting_here()
+        && !(super::cycles::collect_for_memory() && HELD.load(Ordering::Relaxed) <= limit)
+    {
+        over("memory");
     }
 }

@@ -1594,10 +1594,22 @@ The count of live objects that the leak check reads already was one
 atomic for the whole process, and a program that allocates on four tasks
 ran 40% faster without it. Each thread now counts in a block that only it
 writes, with no atomic operation, and the tools read the sum of every
-block; a runtime thread's block goes to the next one that starts. That
-program now takes 163 ms where it took 275 ms, and 177 ms when it is
-watched, against 159 ms counting nothing. The leak check still counts
-objects in one atomic, so that the count at exit is exact.
+block; a runtime thread's block goes to the next one that starts. While
+nothing watches the program, an allocation, a free and each object read
+one word of flags inline, the same word that says whether a `meta`
+program keeps to a budget of memory, and nothing else runs: a call to
+code that would return at once, or two flags read apart, had cost that
+program 4%. Watched, it runs about a fifth slower, every allocation
+counted and some sampled. The leak check still counts objects in one
+atomic, so that the count at exit is exact.
+
+Measuring it showed that the program's time on four cores changes by
+nearly half with where its memory lies: a single allocation of a few
+bytes before `main`, as reading an environment variable makes, moves it
+from 150 ms to 280 ms, while on one core it does not change. Something
+the threads share in a cache line, depending on addresses, slows them;
+it is the runtime's, not the counters', and figures here compare runs
+with the same layout.
 
 ## 2026-10-24 — Traces of running programs (H13, second part)
 

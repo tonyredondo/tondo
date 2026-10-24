@@ -11,18 +11,35 @@ use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicPtr, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicPtr, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
-/// Whether the program serves the tools and counts for them: only when it
-/// starts with `TONDO_DIAGNOSTICS=1`, or traced or to leave a dump at a
-/// crash, so that a program nobody watches pays for nothing but this load.
-static ENABLED: AtomicBool = AtomicBool::new(false);
+/// What allocations and the counts of objects do beyond their work, a bit
+/// each in one word that their fast path reads once: keep to a budget of
+/// memory (a `meta` program), count for the tools (a program that starts
+/// with `TONDO_DIAGNOSTICS=1`, is traced, or leaves a dump at a crash), or
+/// count objects exactly (the leak check). A program nobody watches pays
+/// for nothing but that load.
+static HOOKS: AtomicU8 = AtomicU8::new(if cfg!(tondo_staticlib) { 0 } else { EXACT });
+#[cfg_attr(not(tondo_staticlib), allow(dead_code))]
+pub(crate) const BUDGET: u8 = 1;
+pub(crate) const WATCHED: u8 = 2;
+const EXACT: u8 = 4;
+
+#[inline(always)]
+pub(crate) fn hooks() -> u8 {
+    HOOKS.load(Ordering::Relaxed)
+}
+
+/// Turns a hook on, before the program starts.
+pub(crate) fn hook(bit: u8) {
+    HOOKS.fetch_or(bit, Ordering::Relaxed);
+}
 
 #[inline]
 pub(crate) fn enabled() -> bool {
-    ENABLED.load(Ordering::Relaxed)
+    hooks() & WATCHED != 0
 }
 
 /// A count of the runtime: a total that only grows, or a level.
@@ -203,11 +220,10 @@ pub(crate) fn retire_here() {
     }
 }
 
+/// After an allocation of a program that is watched.
+#[cold]
 #[cfg_attr(not(tondo_staticlib), allow(dead_code))]
 pub(crate) fn allocated(address: *mut u8, size: usize) {
-    if !enabled() {
-        return;
-    }
     if let Some(block) = block() {
         bump(&block.allocated, size as u64);
         bump(&block.allocations, 1);
@@ -216,11 +232,10 @@ pub(crate) fn allocated(address: *mut u8, size: usize) {
     }
 }
 
+/// Before a program that is watched frees memory.
+#[cold]
 #[cfg_attr(not(tondo_staticlib), allow(dead_code))]
 pub(crate) fn freed(address: *mut u8, size: usize) {
-    if !enabled() {
-        return;
-    }
     super::heap::freed(address as usize);
     super::heap::untrack(address as usize);
     if let Some(block) = block() {
@@ -228,29 +243,33 @@ pub(crate) fn freed(address: *mut u8, size: usize) {
     }
 }
 
-static OBJECTS: AtomicI64 = AtomicI64::new(0);
-/// Objects count in one place with `TONDO_RT_CHECK_LEAKS`, so that the
+/// Objects counted in one place: with `TONDO_RT_CHECK_LEAKS`, so that the
 /// count at exit is exact, and in the runtime's own tests.
-static EXACT: AtomicBool = AtomicBool::new(!cfg!(tondo_staticlib));
+static OBJECTS: AtomicI64 = AtomicI64::new(0);
 
 /// The heap objects of the program, strings and boxes, that are alive.
 pub(crate) struct Objects;
 
 impl Objects {
+    #[inline(always)]
     pub(crate) fn made(&self) {
-        self.change(1);
+        if hooks() & (EXACT | WATCHED) != 0 {
+            self.count(1);
+        }
     }
 
+    #[inline(always)]
     pub(crate) fn gone(&self) {
-        self.change(-1);
+        if hooks() & (EXACT | WATCHED) != 0 {
+            self.count(-1);
+        }
     }
 
-    fn change(&self, by: i64) {
-        if EXACT.load(Ordering::Relaxed) {
+    #[cold]
+    fn count(&self, by: i64) {
+        if hooks() & EXACT != 0 {
             OBJECTS.fetch_add(by, Ordering::Relaxed);
-        } else if enabled()
-            && let Some(block) = block()
-        {
+        } else if let Some(block) = block() {
             block.objects.store(block.objects.load(Ordering::Relaxed) + by, Ordering::Relaxed);
         }
     }
@@ -493,14 +512,14 @@ pub(crate) fn start() {
     STARTED.get_or_init(Instant::now);
     super::recorder::thread();
     if std::env::var_os("TONDO_RT_CHECK_LEAKS").is_some() {
-        EXACT.store(true, Ordering::Relaxed);
+        hook(EXACT);
     }
     let on = |name: &str| std::env::var_os(name).is_some_and(|value| value == "1");
     let debugged = on("TONDO_DEBUG");
     if !on("TONDO_DIAGNOSTICS") && !on("TONDO_TRACE") && !debugged && std::env::var_os("TONDO_DUMP").is_none() {
         return;
     }
-    ENABLED.store(true, Ordering::Relaxed);
+    hook(WATCHED);
     // `tondo debug -- program` debugs that program, not those it starts.
     if debugged {
         unsafe { std::env::remove_var("TONDO_DEBUG") };

@@ -134,13 +134,13 @@ fn resolve(address: usize) -> Option<Frame> {
 /// without frame pointers in between, as Rust's standard library, used the
 /// register for its own values. Then the stack above is searched for the
 /// first return to a call of compiled code, whose frame record lies below
-/// it.
+/// it: a few kilobytes above, where the runtime's own calls end.
 pub(crate) fn through(fp: usize, bounds: (usize, usize)) -> usize {
     if walk(fp, bounds).any(|address| resolve(address).is_some()) {
         return fp;
     }
     let start = fp.max(bounds.0).next_multiple_of(8);
-    for slot in (start..bounds.1.saturating_sub(8)).step_by(8).take(1 << 14) {
+    for slot in (start..bounds.1.saturating_sub(8)).step_by(8).take(1024) {
         let word = unsafe { *(slot as *const usize) };
         if resolve(word).is_some() {
             return slot - 8;

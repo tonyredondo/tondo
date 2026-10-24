@@ -111,8 +111,13 @@ fn take(address: usize, size: usize) {
 
 #[cold]
 fn forget(bucket: usize, address: usize) {
+    // A read first: a compare-and-swap that fails still takes the line
+    // from every other core, and most frees of a bucket's addresses are
+    // not its samples.
     for slot in &ADDRESSES[bucket * WAYS..(bucket + 1) * WAYS] {
-        if slot.compare_exchange(address, EMPTY, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
+        if slot.load(Ordering::Relaxed) == address
+            && slot.compare_exchange(address, EMPTY, Ordering::AcqRel, Ordering::Relaxed).is_ok()
+        {
             OCCUPIED[bucket].fetch_sub(1, Ordering::Relaxed);
             return;
         }
