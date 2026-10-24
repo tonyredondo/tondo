@@ -2043,10 +2043,7 @@ impl Linker<'_> {
 
     /// Each live function's start, length and unwind encoding, with its
     /// personality and LSDA.
-    fn unwind_entries(
-        &self,
-        fde_at: &HashMap<(u32, usize), u64>,
-    ) -> Vec<UnwindEntry> {
+    fn unwind_entries(&self, fde_at: &HashMap<(u32, usize), u64>) -> Vec<UnwindEntry> {
         let mut entries = Vec::new();
         let mut covered: HashSet<(u32, usize)> = HashSet::new();
         for i in 0..self.inputs.len() {
