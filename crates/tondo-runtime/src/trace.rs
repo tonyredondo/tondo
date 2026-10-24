@@ -14,8 +14,9 @@ use std::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 /// The table the compiler writes: one entry per function of the program,
 /// whose `meta` offset in `blob` holds its name's length, its number of
 /// calls, the name and, 4-aligned, the calls as `[return offset, line,
-/// column, file]`. At `files` in `blob`: the count of files and each one's
-/// length and name, 4-aligned.
+/// column, file, type]`. At `files` in `blob`: the count of the names the
+/// calls refer to, their files and the types they assign, and each one's
+/// length and text, 4-aligned. No type is `u32::MAX`.
 #[repr(C)]
 pub struct Table {
     functions: *const Function,
@@ -39,13 +40,15 @@ pub extern "C" fn tondo_rt_trace(table: *const Table) {
     TABLE.store(table as *mut Table, Ordering::Release);
 }
 
-/// A frame of compiled code: the function and the line it is at.
+/// A frame of compiled code: the function and the line it is at, and the
+/// type the statement there assigns.
 #[derive(PartialEq)]
 struct Frame {
     function: &'static str,
     file: &'static str,
     line: u32,
     column: u32,
+    ty: Option<&'static str>,
 }
 
 fn entries() -> &'static [Function] {
@@ -107,19 +110,43 @@ fn resolve(address: usize) -> Option<Frame> {
         let function = text_at(blob, meta + 8, name_len);
         let sites = aligned(meta + 8, name_len);
         let offset = (address - start) as u32;
-        let site = (0..calls).map(|k| sites + k * 16).find(|&site| u32_at(blob, site) == offset)?;
-        let file = u32_at(blob, site + 12) as usize;
-        let mut cursor = table.files as usize + 4;
-        for _ in 0..file {
-            cursor = aligned(cursor + 4, u32_at(blob, cursor) as usize);
-        }
+        let site = (0..calls).map(|k| sites + k * 20).find(|&site| u32_at(blob, site) == offset)?;
+        let name = |index: u32| {
+            let mut cursor = table.files as usize + 4;
+            for _ in 0..index {
+                cursor = aligned(cursor + 4, u32_at(blob, cursor) as usize);
+            }
+            text_at(blob, cursor + 4, u32_at(blob, cursor) as usize)
+        };
+        let ty = u32_at(blob, site + 16);
         Some(Frame {
             function,
-            file: text_at(blob, cursor + 4, u32_at(blob, cursor) as usize),
+            file: name(u32_at(blob, site + 12)),
             line: u32_at(blob, site + 4),
             column: u32_at(blob, site + 8),
+            ty: (ty != u32::MAX).then(|| name(ty)),
         })
     }
+}
+
+/// Where a walk of the stack from `fp` should start to reach compiled code:
+/// at `fp`, unless no frame of compiled code follows it, because code
+/// without frame pointers in between, as Rust's standard library, used the
+/// register for its own values. Then the stack above is searched for the
+/// first return to a call of compiled code, whose frame record lies below
+/// it.
+pub(crate) fn through(fp: usize, bounds: (usize, usize)) -> usize {
+    if walk(fp, bounds).any(|address| resolve(address).is_some()) {
+        return fp;
+    }
+    let start = fp.max(bounds.0).next_multiple_of(8);
+    for slot in (start..bounds.1.saturating_sub(8)).step_by(8).take(1 << 14) {
+        let word = unsafe { *(slot as *const usize) };
+        if resolve(word).is_some() {
+            return slot - 8;
+        }
+    }
+    fp
 }
 
 /// Whether the instruction at `pc` is compiled code's.
@@ -128,16 +155,24 @@ pub(crate) fn compiled(pc: usize) -> bool {
 }
 
 /// What a trace shows for an address of compiled code: the function, and
-/// the file and line when it is where the function calls another.
-pub(crate) fn describe(address: usize) -> Option<(&'static str, Option<(&'static str, u32)>)> {
+/// where the function calls another, the file and line and the type the
+/// statement there assigns.
+pub(crate) struct Described {
+    pub function: &'static str,
+    pub at: Option<(&'static str, u32)>,
+    pub ty: Option<&'static str>,
+}
+
+pub(crate) fn describe(address: usize) -> Option<Described> {
     if let Some(frame) = resolve(address) {
-        return Some((frame.function, Some((frame.file, frame.line))));
+        return Some(Described { function: frame.function, at: Some((frame.file, frame.line)), ty: frame.ty });
     }
     let (_, index) = find(address).or_else(|| find(address + 1))?;
     unsafe {
         let table = &*TABLE.load(Ordering::Acquire);
         let meta = (*table.functions.add(index)).meta as usize;
-        Some((text_at(table.blob, meta + 8, u32_at(table.blob, meta) as usize), None))
+        let function = text_at(table.blob, meta + 8, u32_at(table.blob, meta) as usize);
+        Some(Described { function, at: None, ty: None })
     }
 }
 

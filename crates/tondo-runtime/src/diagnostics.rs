@@ -713,12 +713,12 @@ fn recorded(session: &mut Session) -> String {
 /// program's own as `""`, and how far into it the address is, which the
 /// tool finds in the file's symbols.
 fn frame(address: usize) -> String {
-    if let Some((function, line)) = super::trace::describe(address) {
-        return match line {
-            Some((file, line)) => {
-                format!("{{\"function\":{},\"file\":{},\"line\":{line}}}", quoted(function), quoted(file))
-            }
-            None => format!("{{\"function\":{}}}", quoted(function)),
+    if let Some(described) = super::trace::describe(address) {
+        let function = quoted(described.function);
+        let ty = described.ty.map_or(String::new(), |ty| format!(",\"type\":{}", quoted(ty)));
+        return match described.at {
+            Some((file, line)) => format!("{{\"function\":{function},\"file\":{},\"line\":{line}{ty}}}", quoted(file)),
+            None => format!("{{\"function\":{function}}}"),
         };
     }
     match loaded(address) {

@@ -700,50 +700,50 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, meta: bo
     // The IR of every function is built here, in order; `compile_all`
     // compiles them on every core.
     let mut jobs = Vec::new();
-    let mut job = |id: FuncId, context: &mut cranelift_codegen::Context, traced: Option<&str>| {
+    let mut job = |id: FuncId, context: &mut cranelift_codegen::Context, traced: Option<&str>, sites| {
         let func = std::mem::replace(&mut context.func, ir::Function::new());
-        jobs.push(Job { id, func, traced: traced.map(str::to_string) });
+        jobs.push(Job { id, func, traced: traced.map(str::to_string), sites });
     };
     for (index, body) in bodies.iter().enumerate() {
         context.func.signature = cg.signature(body);
         context.func.name = UserFuncName::user(0, index as u32);
-        FnCodegen::new(&mut cg, body, bodies, &mut context.func, &mut builder_context).run();
+        let sites = FnCodegen::new(&mut cg, body, bodies, &mut context.func, &mut builder_context).run();
         // A test's trace ends at the test, without the runner's tree that
         // calls it.
         let runner = !program.tests.is_empty() && index == program.main.0 as usize;
         let traced = !runner && !body.name.starts_with("suite ");
-        job(cg.functions[index], &mut context, traced.then_some(body.name.as_str()));
+        job(cg.functions[index], &mut context, traced.then_some(body.name.as_str()), sites);
         cg.module.clear_context(&mut context);
     }
     let main = program.main.0 as usize;
     let trace = cg.module.declare_data("tondo_trace", Linkage::Local, false, false).map_err(|e| e.to_string())?;
     let entry = cg.entry_point(main, bodies[main].result, &program.tests, trace, &mut context, &mut builder_context)?;
-    job(entry, &mut context, None);
+    job(entry, &mut context, None, Vec::new());
     cg.module.clear_context(&mut context);
     while let Some((target, thunk)) = cg.pending_thunks.pop() {
         context.func.signature = cg.module.declarations().get_function_decl(thunk).signature.clone();
         context.func.name = UserFuncName::user(3, thunk.as_u32());
         define_thunk(&mut cg, &bodies[target.0 as usize], target, &mut context.func, &mut builder_context);
-        job(thunk, &mut context, None);
+        job(thunk, &mut context, None, Vec::new());
         cg.module.clear_context(&mut context);
     }
     while let Some(callback) = cg.pending_callbacks.pop() {
         context.func.signature = cg.module.declarations().get_function_decl(callback.adapter).signature.clone();
         context.func.name = UserFuncName::user(4, callback.adapter.as_u32());
         define_adapter(&mut cg, &callback, &mut context.func, &mut builder_context);
-        job(callback.adapter, &mut context, None);
+        job(callback.adapter, &mut context, None, Vec::new());
         cg.module.clear_context(&mut context);
         context.func.signature = cg.module.declarations().get_function_decl(callback.inner).signature.clone();
         context.func.name = UserFuncName::user(5, callback.inner.as_u32());
         define_inner(&mut cg, &bodies[callback.target.0 as usize], &callback, &mut context.func, &mut builder_context);
-        job(callback.inner, &mut context, Some(&bodies[callback.target.0 as usize].name));
+        job(callback.inner, &mut context, Some(&bodies[callback.target.0 as usize].name), Vec::new());
         cg.module.clear_context(&mut context);
     }
     while let Some((kind, ty, id)) = cg.pending_glue.pop() {
         context.func.signature = cg.glue_signature(kind);
         context.func.name = UserFuncName::user(2, id.as_u32());
         define_glue(&mut cg, kind, ty, &mut context.func, &mut builder_context);
-        job(id, &mut context, None);
+        job(id, &mut context, None, Vec::new());
         cg.module.clear_context(&mut context);
     }
     cg.compile_all(jobs)?;
@@ -797,6 +797,7 @@ struct Traced {
     name: String,
     size: u32,
     calls: Vec<(u32, u32)>,
+    sites: Vec<(u32, Option<Ty>)>,
 }
 
 /// A function whose IR is built, to compile; `traced` names it in stack
@@ -805,6 +806,10 @@ struct Job {
     id: FuncId,
     func: ir::Function,
     traced: Option<String>,
+    /// Where each statement's code is in the source, and the type of the
+    /// local it assigns, so that a sample of the memory it allocates names
+    /// its type: the source location of an instruction indexes this, from 1.
+    sites: Vec<(u32, Option<Ty>)>,
 }
 
 /// A function's machine code, its relocations, and its size and calls for
@@ -1214,18 +1219,26 @@ impl Codegen<'_> {
                 .define_function_bytes(job.id, code.alignment, &code.bytes, &code.relocs)
                 .map_err(|e| format!("{e:?}"))?;
             if let Some(name) = job.traced {
-                self.traced.push(Traced { id: job.id, name, size: code.size, calls: code.calls });
+                self.traced.push(Traced { id: job.id, name, size: code.size, calls: code.calls, sites: job.sites });
             }
         }
         Ok(())
     }
 
     /// The stack trace table (the runtime's `trace::Table`): each function's
-    /// code and size, and in one blob its name and calls, then the files.
+    /// code and size, and in one blob its name and calls, then the names
+    /// the calls refer to: their files, and the types they assign.
     fn trace_table(&mut self, id: DataId) {
         let pad = |blob: &mut Vec<u8>| blob.resize(blob.len().next_multiple_of(4), 0);
         let mut blob = Vec::new();
         let mut files: Vec<String> = Vec::new();
+        let name = |files: &mut Vec<String>, text: String| match files.iter().position(|f| *f == text) {
+            Some(found) => found as u32,
+            None => {
+                files.push(text);
+                files.len() as u32 - 1
+            }
+        };
         let mut entries = vec![0u8; self.traced.len() * 16];
         for (index, function) in self.traced.iter().enumerate() {
             let meta = blob.len() as u32;
@@ -1235,16 +1248,15 @@ impl Codegen<'_> {
             blob.extend_from_slice(&(function.calls.len() as u32).to_le_bytes());
             blob.extend_from_slice(function.name.as_bytes());
             pad(&mut blob);
-            for &(offset, source) in &function.calls {
+            for &(offset, site) in &function.calls {
+                let (source, ty) = function.sites[site as usize - 1];
                 let (file, line, column) = self.sources.position(source);
-                let file = match files.iter().position(|f| *f == file) {
-                    Some(found) => found,
-                    None => {
-                        files.push(file);
-                        files.len() - 1
-                    }
+                let file = name(&mut files, file);
+                let ty = match ty {
+                    Some(ty) => name(&mut files, self.types.display(ty)),
+                    None => u32::MAX,
                 };
-                for value in [offset, line as u32, column as u32, file as u32] {
+                for value in [offset, line as u32, column as u32, file, ty] {
                     blob.extend_from_slice(&value.to_le_bytes());
                 }
             }
@@ -2327,6 +2339,7 @@ struct FnCodegen<'a, 'b> {
     storage: Vec<Storage>,
     /// Where the statement being compiled is, for panics of the runtime.
     span: Span,
+    sites: Vec<(u32, Option<Ty>)>,
 }
 
 impl<'a, 'b> FnCodegen<'a, 'b> {
@@ -2368,10 +2381,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
             });
         }
-        FnCodegen { e: Emit { cg, fb }, body, bodies, blocks, storage, span: Span::default() }
+        FnCodegen { e: Emit { cg, fb }, body, bodies, blocks, storage, span: Span::default(), sites: Vec::new() }
     }
 
-    fn run(mut self) {
+    /// Builds the function's IR; gives where its statements are, which the
+    /// source locations of its instructions index.
+    fn run(mut self) -> Vec<(u32, Option<Ty>)> {
         let entry = self.blocks[0];
         self.e.fb.append_block_params_for_function_params(entry);
         self.e.fb.switch_to_block(entry);
@@ -2414,6 +2429,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.fb.seal_all_blocks();
         let config = self.e.cg.module.isa().frontend_config();
         self.e.fb.finalize(config);
+        self.sites
     }
 
     // ---- places and values ---------------------------------------------------
@@ -2809,11 +2825,23 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// Compiles what follows as the source at `span`: runtime panics report
     /// it, and stack traces map the calls to it.
     fn at(&mut self, span: Span) {
+        self.at_typed(span, None);
+    }
+
+    /// The same for a statement that assigns a local of type `ty`.
+    fn at_typed(&mut self, span: Span, ty: Option<Ty>) {
         self.span = span;
         // A statement the compiler made up stays at the last one's.
         if span != Span::default() {
-            self.e.fb.set_srcloc(ir::SourceLoc::new(span.start));
+            let site = self.site(span.start, ty);
+            self.e.fb.set_srcloc(site);
         }
+    }
+
+    /// The source location of code at `start` that assigns `ty`.
+    fn site(&mut self, start: u32, ty: Option<Ty>) -> ir::SourceLoc {
+        self.sites.push((start, ty));
+        ir::SourceLoc::new(self.sites.len() as u32)
     }
 
     fn location(&mut self, span: Span) -> ir::Value {
@@ -2826,7 +2854,13 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     fn statement(&mut self, stmt: &Statement) {
         match stmt {
             Statement::Assign(place, rvalue, span) => {
-                self.at(*span);
+                // What it allocates: the collection a method changes, or the
+                // value it makes.
+                let made = match &**rvalue {
+                    Rvalue::Mutate(_, target, ..) | Rvalue::AssignSlice(target, ..) => target,
+                    _ => place,
+                };
+                self.at_typed(*span, Some(self.body.place_ty(self.e.cg.types, made)));
                 self.assign(place, rvalue, *span)
             }
             Statement::DeferPush(body, place) => {
@@ -4818,7 +4852,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let code = self.e.fb.ins().iconst(types::I32, code as i64);
         let location = self.location(span);
         let outer = self.e.fb.srcloc();
-        self.e.fb.set_srcloc(ir::SourceLoc::new(span.start));
+        let site = self.site(span.start, None);
+        self.e.fb.set_srcloc(site);
         self.e.call_rt(Rt::Panic, &[code, message, location]);
         self.e.fb.ins().trap(TrapCode::user(1).unwrap());
         self.e.fb.set_srcloc(outer);
@@ -4848,7 +4883,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let detail = self.e.fb.ins().iconst(types::I32, detail as i64);
         let location = self.location(span);
         let outer = self.e.fb.srcloc();
-        self.e.fb.set_srcloc(ir::SourceLoc::new(span.start));
+        let site = self.site(span.start, None);
+        self.e.fb.set_srcloc(site);
         self.e.call_rt(Rt::PanicValues, &[code, detail, a, b, name, location]);
         self.e.fb.ins().trap(TrapCode::user(1).unwrap());
         self.e.fb.set_srcloc(outer);

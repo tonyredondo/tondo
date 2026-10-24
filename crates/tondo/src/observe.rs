@@ -555,11 +555,14 @@ fn functions(path: &str) -> Vec<Function> {
     let Ok(data) = std::fs::read(path) else { return Vec::new() };
     let Ok(file) = object::File::parse(data.as_slice()) else { return Vec::new() };
     let base = file.relative_address_base();
+    // Mach-O writes every symbol with an underscore before its name.
+    let macho = file.format() == object::BinaryFormat::MachO;
+    let name = |raw: &str| demangled(if macho { raw.strip_prefix('_').unwrap_or(raw) } else { raw });
     let mut out: Vec<Function> = file
         .symbols()
         .chain(file.dynamic_symbols())
         .filter(|s| s.kind() == object::SymbolKind::Text && s.address() >= base)
-        .filter_map(|s| Some((s.address() - base, s.size(), demangled(s.name().ok()?))))
+        .filter_map(|s| Some((s.address() - base, s.size(), name(s.name().ok()?))))
         .collect();
     out.sort();
     out.dedup_by_key(|(address, ..)| *address);
@@ -573,7 +576,6 @@ fn round(micros: f64) -> f64 {
 
 /// A symbol as Rust or C would write it: without the hash Rust adds.
 fn demangled(symbol: &str) -> String {
-    let symbol = symbol.strip_prefix('_').filter(|s| s.starts_with("_R") || s.starts_with("_ZN")).unwrap_or(symbol);
     format!("{:#}", rustc_demangle::demangle(symbol))
 }
 
@@ -732,10 +734,11 @@ fn heap(dump: &Value) -> Value {
         // site where the program's own code was, past the standard
         // library's.
         let first = stack.iter().position(|a| placed(dump, a));
-        let kind = first
-            .and_then(|i| i.checked_sub(1))
-            .and_then(|i| frame_text(dump, stack[i]))
-            .map_or("other".into(), |f| kind(&f));
+        // The type the program's statement assigned, as the compiler wrote
+        // it, or else what the runtime's function makes.
+        let typed = first.and_then(|i| dump["frames"][stack[i].as_str()?]["type"].as_str()).map(str::to_string);
+        let made = || first.and_then(|i| i.checked_sub(1)).and_then(|i| frame_text(dump, stack[i])).map(|f| kind(&f));
+        let kind = typed.or_else(made).unwrap_or_else(|| "other".into());
         let own = stack.iter().position(|a| {
             placed(dump, a)
                 && !dump["frames"][a.as_str().unwrap_or_default()]["file"]
@@ -776,19 +779,21 @@ fn kind(function: &str) -> String {
 }
 
 fn heap_text(heap: &Value) -> String {
+    let rows: Vec<&Value> = heap["sites"].as_array().into_iter().flatten().collect();
+    let width = rows.iter().filter_map(|r| r["site"].as_str()).map(str::len).max().unwrap_or(4).max(4);
     let mut out = format!(
         "live memory: about {}, from samples of one allocation every {} on average\n",
         bytes(heap["bytes"].as_f64().unwrap_or(0.0)),
         bytes(heap["rate"].as_f64().unwrap_or(0.0))
     );
-    out.push_str(&format!("{:>12} {:>10}  {:<10} SITE\n", "BYTES", "OBJECTS", "KIND"));
-    for row in heap["sites"].as_array().into_iter().flatten() {
+    out.push_str(&format!("{:>12} {:>10}  {:<width$}  TYPE\n", "BYTES", "OBJECTS", "SITE"));
+    for row in rows {
         out.push_str(&format!(
-            "{:>12} {:>10}  {:<10} {}\n",
+            "{:>12} {:>10}  {:<width$}  {}\n",
             bytes(row["bytes"].as_f64().unwrap_or(0.0)),
             row["objects"].as_f64().unwrap_or(0.0) as u64,
-            row["kind"].as_str().unwrap_or_default(),
-            row["site"].as_str().unwrap_or_default()
+            row["site"].as_str().unwrap_or_default(),
+            row["kind"].as_str().unwrap_or_default()
         ));
     }
     if heap["dropped"].as_u64().unwrap_or(0) > 0 {
@@ -839,10 +844,10 @@ fn summary(dump: &Value) -> String {
     out.push_str(&format!("live memory, sampled: about {}\n", bytes(heap["bytes"].as_f64().unwrap_or(0.0))));
     for row in heap["sites"].as_array().into_iter().flatten().take(5) {
         out.push_str(&format!(
-            "  {:>10}  {:<8} {}\n",
+            "  {:>10}  {}  {}\n",
             bytes(row["bytes"].as_f64().unwrap_or(0.0)),
-            row["kind"].as_str().unwrap_or_default(),
-            row["site"].as_str().unwrap_or_default()
+            row["site"].as_str().unwrap_or_default(),
+            row["kind"].as_str().unwrap_or_default()
         ));
     }
     out

@@ -488,14 +488,16 @@ se nombra al leerlo, con el ejecutable del programa.
 `dump read` muestra un volcado: sin más, un resumen, con por qué se tomó, la
 memoria, las tareas por estado y dónde esperan, y dónde se asignó la memoria
 viva; `tasks`, cada tarea con los marcos del programa; `task <id>`, una con
-todos sus marcos; y `heap`, la memoria viva por sitio y clase. Con `--json`,
+todos sus marcos; y `heap`, la memoria viva por sitio y tipo. Con `--json`,
 la misma vista como JSON.
 
 La memoria viva sale de muestras que el runtime toma siempre, como Go: una
 asignación por cada 512 KiB de media, a intervalos al azar, con la pila que
 la hizo, mientras vive. Una muestra de `n` bytes cuenta por
 `n / (1 − e^(−n / 512 KiB))`, así que sus cifras son estimaciones; el sitio
-es el código del programa que asignó, pasando por la librería estándar.
+es el código del programa que asignó, pasando por la librería estándar, y el
+tipo, el del valor que hacía la sentencia o la colección que cambiaba, que el
+compilador anota junto a cada llamada sin coste al ejecutar.
 
 ## 8. Determinismo
 

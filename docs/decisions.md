@@ -1638,5 +1638,8 @@ intervals so that no size is favoured, with the stack that made it, kept
 in a table of four entries by address while it lives. An allocation costs
 a thread-local countdown, and a free a byte read of its bucket. A sample of `n`
 bytes stands for `n / (1 − e^(−n / 512 KiB))` of them, and its site is the
-program's code past the standard library. Objects carry no type, so a dump
-does not yet say who holds them.
+program's code past the standard library. Its type is the one the statement
+made, or the collection it changed: the compiler gives each statement its
+own source location and writes the type beside each call in the table of
+traces, so naming it costs nothing when the program runs. Objects carry no
+type, so who holds one waits for debug builds, where a header can say.

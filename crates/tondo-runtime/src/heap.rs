@@ -89,7 +89,8 @@ fn interval() -> i64 {
 #[cold]
 fn take(address: usize, size: usize) {
     let mut frames = [0; FRAMES];
-    let walk = super::trace::walk(super::trace::frame_pointer(), super::tasks::stack_bounds().unwrap_or((0, 0)));
+    let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
+    let walk = super::trace::walk(super::trace::through(super::trace::frame_pointer(), bounds), bounds);
     for (slot, frame) in frames.iter_mut().zip(walk) {
         *slot = frame;
     }

@@ -185,7 +185,8 @@ fn dumps_of_a_running_program_and_at_a_panic() {
     assert_eq!(task("sleeper")["spawned"][0], "dumped.to:13 in main");
     // About 2 MiB of strings, from where the program made them.
     let heap = read(&["heap"]);
-    let strings = heap["sites"].as_array().unwrap().iter().find(|s| s["kind"] == "String").unwrap();
+    let strings = heap["sites"].as_array().unwrap().iter().find(|s| s["kind"] == "String");
+    let strings = strings.unwrap_or_else(|| panic!("no strings in {heap}"));
     assert_eq!(strings["site"], "dumped.to:10 in main");
     assert!(heap["bytes"].as_f64().unwrap() > 500_000.0, "{heap}");
 
