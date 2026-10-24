@@ -2097,6 +2097,15 @@ pub fn check_leaks() -> Option<usize> {
 #[global_allocator]
 static ALLOCATOR: meta::Counting = meta::Counting;
 
+/// `count` values of `T` in memory of their own, zeroed, which the system
+/// gives a page at a time as they are written; null if it has none.
+pub(crate) fn zeroed<T>(count: usize) -> *mut T {
+    let size = count * std::mem::size_of::<T>();
+    let flags = libc::MAP_PRIVATE | libc::MAP_ANON;
+    let memory = unsafe { libc::mmap(std::ptr::null_mut(), size, libc::PROT_READ | libc::PROT_WRITE, flags, -1, 0) };
+    if memory == libc::MAP_FAILED { std::ptr::null_mut() } else { memory.cast() }
+}
+
 /// Set in a library, whose host has its own `main`.
 static LIBRARY: AtomicBool = AtomicBool::new(false);
 

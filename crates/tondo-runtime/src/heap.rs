@@ -4,7 +4,7 @@
 //! lives. A dump shows them: where the live memory was allocated.
 
 use std::cell::{Cell, UnsafeCell};
-use std::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 
 /// The mean number of bytes between two samples.
 pub(crate) const RATE: u64 = 512 * 1024;
@@ -34,9 +34,25 @@ unsafe impl Sync for Sample {}
 /// How many samples each bucket holds, which a free reads first.
 static OCCUPIED: [AtomicU8; BUCKETS] = [const { AtomicU8::new(0) }; BUCKETS];
 static ADDRESSES: [AtomicUsize; BUCKETS * WAYS] = [const { AtomicUsize::new(EMPTY) }; BUCKETS * WAYS];
-static SAMPLES: [Sample; BUCKETS * WAYS] =
-    [const { Sample { size: UnsafeCell::new(0), frames: UnsafeCell::new([0; FRAMES]) } }; BUCKETS * WAYS];
+/// Each sample's size and stack: 4 MiB, made when the program is first
+/// watched, which a program nobody watches does without.
+static SAMPLES: AtomicPtr<Sample> = AtomicPtr::new(std::ptr::null_mut());
 static DROPPED: AtomicU64 = AtomicU64::new(0);
+
+/// Makes the samples' table, before any sample is taken.
+pub(crate) fn prepare() {
+    if SAMPLES.load(Ordering::Acquire).is_null() {
+        SAMPLES.store(super::zeroed(BUCKETS * WAYS), Ordering::Release);
+    }
+}
+
+fn samples() -> &'static [Sample] {
+    let table = SAMPLES.load(Ordering::Acquire);
+    match table.is_null() {
+        true => &[],
+        false => unsafe { std::slice::from_raw_parts(table, BUCKETS * WAYS) },
+    }
+}
 
 fn bucket(address: usize) -> usize {
     ((address >> 4).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 52) % BUCKETS
@@ -95,11 +111,12 @@ fn take(address: usize, size: usize) {
         *slot = frame;
     }
     let bucket = bucket(address);
-    for slot in bucket * WAYS..(bucket + 1) * WAYS {
+    let samples = samples();
+    for slot in (bucket * WAYS..(bucket + 1) * WAYS).filter(|&slot| slot < samples.len()) {
         if ADDRESSES[slot].compare_exchange(EMPTY, BUSY, Ordering::Acquire, Ordering::Relaxed).is_ok() {
             unsafe {
-                *SAMPLES[slot].size.get() = size;
-                *SAMPLES[slot].frames.get() = frames;
+                *samples[slot].size.get() = size;
+                *samples[slot].frames.get() = frames;
             }
             ADDRESSES[slot].store(address, Ordering::Release);
             OCCUPIED[bucket].fetch_add(1, Ordering::Relaxed);
@@ -128,7 +145,7 @@ fn forget(bucket: usize, address: usize) {
 /// innermost first; and how many were not kept.
 pub(crate) fn alive() -> (Vec<(usize, Vec<usize>)>, u64) {
     let mut out = Vec::new();
-    for (slot, sample) in SAMPLES.iter().enumerate() {
+    for (slot, sample) in samples().iter().enumerate() {
         let before = ADDRESSES[slot].load(Ordering::Acquire);
         if before == EMPTY || before == BUSY {
             continue;

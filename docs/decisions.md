@@ -1749,3 +1749,23 @@ time. It is never unloaded: the runtime's threads run its code. On macOS
 it is a `MH_DYLIB` whose install name is `@rpath/lib<name>.dylib`, with an
 export trie of what it publishes. The shared library of the example
 program takes 1.2 MB, as its executable does.
+
+## 2026-10-24 — A lighter runtime
+
+Asked how heavy a library's runtime is, the measure was: 1.1 ms for the
+first call, 31 threads and 6 MB more than the C program had, all for a
+call that adds two numbers. Three things made it so, and none was needed.
+The first call started a worker for each core; now a call from C starts
+them only if it waits, as a spawn already did, and a call that returns at
+once leaves the process with no thread of the runtime's. The samples of
+live memory and the ring of a trace's samples were 8 MB of static tables
+in every program; they are mapped when a program is first watched. And
+where the system backs memory with huge pages whenever it can, the top of
+a task's stack took a 2 MB page for the few kilobytes it uses; stacks now
+ask for small pages. The library's first call takes 46 µs, it adds 0.8 MB
+to its host, and nothing runs while it waits for calls; a program that
+prints a line takes 3 MB instead of 7, and one with a thousand tasks that
+wait, 8 MB instead of 63 to 84. The four-task program that allocates went
+from 146 ms to 157; builds that differ from this one only in code that
+does not run take from 157 to 163, since Rust's standard library comes
+compiled and where its functions fall moves with the code before them.

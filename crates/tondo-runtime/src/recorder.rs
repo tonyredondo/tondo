@@ -170,14 +170,16 @@ struct Slot {
 unsafe impl Sync for Slot {}
 
 const SLOTS: usize = 8192;
-static RING: [Slot; SLOTS] = [const {
-    Slot {
-        written: AtomicU64::new(0),
-        thread: UnsafeCell::new(0),
-        at: UnsafeCell::new(0),
-        stack: UnsafeCell::new(Stack::EMPTY),
+/// 4 MiB, made when the first trace starts.
+static RING: std::sync::atomic::AtomicPtr<Slot> = std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+fn ring() -> &'static [Slot] {
+    let ring = RING.load(Ordering::Acquire);
+    match ring.is_null() {
+        true => &[],
+        false => unsafe { std::slice::from_raw_parts(ring, SLOTS) },
     }
-}; SLOTS];
+}
 /// The sequence number of the next sample, and of the next one to read.
 static NEXT: AtomicU64 = AtomicU64::new(0);
 static READ: Mutex<u64> = Mutex::new(0);
@@ -210,8 +212,13 @@ extern "C" fn sample(_: i32, info: *mut libc::siginfo_t, context: *mut libc::c_v
         }
         _ => Stack::of(std::iter::once(pc).chain(crate::trace::walk(fp, bounds))),
     };
+    let ring = ring();
+    if ring.is_empty() {
+        unsafe { *errno = saved };
+        return;
+    }
     let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
-    let slot = &RING[sequence as usize % SLOTS];
+    let slot = &ring[sequence as usize % SLOTS];
     slot.written.store(BUSY, Ordering::Relaxed);
     std::sync::atomic::fence(Ordering::Release);
     unsafe {
@@ -234,8 +241,9 @@ pub(crate) fn take_samples() -> (Vec<(u64, u32, Stack)>, u64) {
         *read = next - SLOTS as u64;
     }
     let mut out = Vec::new();
-    while *read < next {
-        let slot = &RING[*read as usize % SLOTS];
+    let ring = ring();
+    while *read < next && !ring.is_empty() {
+        let slot = &ring[*read as usize % SLOTS];
         let before = slot.written.load(Ordering::Acquire);
         if before != *read + 1 {
             // Still being written: the next time.
@@ -276,6 +284,9 @@ pub(crate) fn install() {
 
 pub(crate) fn start() {
     install();
+    if RING.load(Ordering::Acquire).is_null() {
+        RING.store(crate::zeroed(SLOTS), Ordering::Release);
+    }
     ON.store(true, Ordering::SeqCst);
     // macOS sends the signal of the process's processor time to whichever
     // thread it likes, mostly the main one, however idle; a thread of the

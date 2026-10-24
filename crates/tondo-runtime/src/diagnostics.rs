@@ -519,6 +519,7 @@ pub(crate) fn start() {
     if !on("TONDO_DIAGNOSTICS") && !on("TONDO_TRACE") && !debugged && std::env::var_os("TONDO_DUMP").is_none() {
         return;
     }
+    super::heap::prepare();
     hook(WATCHED);
     // `tondo debug -- program` debugs that program, not those it starts.
     if debugged {

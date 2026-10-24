@@ -152,6 +152,10 @@ impl Stack {
                 runtime_fault("cannot map a task stack");
             }
             mprotect(base, GUARD, PROT_NONE);
+            // A task uses a few pages of its stack: a huge page for the top
+            // would hold 2 MiB.
+            #[cfg(target_os = "linux")]
+            libc::madvise(base.cast(), size, libc::MADV_NOHUGEPAGE);
             Stack { base, size }
         }
     }
@@ -1195,7 +1199,8 @@ unsafe fn parked_walk(task: *mut Task) -> super::trace::Walk {
     }
 }
 
-/// Starts the other workers, one per core, the first time a task spawns.
+/// Starts the other workers, one per core, the first time a task spawns or
+/// a call from C waits.
 fn start_workers() {
     if STARTED.swap(true, Ordering::SeqCst) {
         return;
@@ -1644,9 +1649,13 @@ pub unsafe extern "C" fn tondo_rt_callback(
         (*task).foreign = &call;
         (*task).origin = Some(Arc::new(Origin::Foreign));
     }
-    start_workers();
     FOREIGN_WAITING.fetch_add(1, Ordering::SeqCst);
     run(task);
+    // The workers start when a call first waits: one that returns at once
+    // needs none.
+    if !*call.done.lock().unwrap_or_else(|e| e.into_inner()) {
+        start_workers();
+    }
     let mut done = call.done.lock().unwrap_or_else(|e| e.into_inner());
     while !*done {
         done = call.finished.wait(done).unwrap_or_else(|e| e.into_inner());
