@@ -30,6 +30,7 @@ fn main() {
     let parts = ["a", "b"]
     console.println(log("Spread: ", ...parts))
     console.println(log(prefix: "Named: ", parts: ...parts))
+    console.println(log("Mixed: ", "x", ...parts))
     // Arguments are evaluated in the order they are written.
     console.println(pair(second: trace("second", 2), first: trace("first", 1)))
 }
@@ -41,6 +42,7 @@ fn main() {
 // expect-stdout: Empty (0)
 // expect-stdout: Spread: ab (2)
 // expect-stdout: Named: ab (2)
+// expect-stdout: Mixed: xab (3)
 // expect-stdout: evaluating second
 // expect-stdout: evaluating first
 // expect-stdout: 1,2

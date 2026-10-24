@@ -1,0 +1,25 @@
+// A script fails with the union of what its `fail`s and `?`s propagate
+// (language 20.3).
+import std.console
+import std.text
+
+enum ScriptError {
+    Missing
+}
+
+fn number(digits: String): Int ! text.TextError {
+    Int.parse(digits)?
+}
+
+let first = number("41")?
+let pattern = match [first] {
+    [value] => value + 1
+    _ => fail ScriptError.Missing
+}
+console.println("{pattern}")
+let second = number("x")?
+console.println("not reached {second}")
+
+// expect-stdout: 42
+// expect-exit: 1
+// expect-stderr: error: text.TextError.InvalidData

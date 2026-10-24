@@ -364,6 +364,9 @@ pub struct ParamDef {
     pub key: bool,
     /// `Copy` (8.10).
     pub copy: bool,
+    /// Declared `Send` or `Share` (16.13), which an argument must then be.
+    pub send: bool,
+    pub share: bool,
 }
 
 #[derive(Clone)]
@@ -583,7 +586,7 @@ impl Types {
     }
 
     pub fn declare_param(&mut self, name: String) -> Ty {
-        self.params.push(ParamDef { name, equatable: false, key: false, copy: false });
+        self.params.push(ParamDef { name, equatable: false, key: false, copy: false, send: false, share: false });
         self.intern(TyKind::Param(self.params.len() as u32 - 1))
     }
 
@@ -1526,6 +1529,57 @@ impl Types {
             },
         };
         let result = parts.iter().all(|&t| self.copy_in(t, visiting));
+        visiting.pop();
+        result
+    }
+
+    /// The closed `Send` capability (16.13): a value may move or be copied
+    /// to another task. A raw `Pointer` is not, nor what holds one; a type
+    /// parameter is checked where it is given a type.
+    pub fn is_send(&self, ty: Ty) -> bool {
+        self.capable(ty, false, &mut Vec::new())
+    }
+
+    /// The closed `Share` capability (16.13): several tasks may observe a
+    /// value at once. A `Join` or a `Group` is not.
+    pub fn is_share(&self, ty: Ty) -> bool {
+        self.capable(ty, true, &mut Vec::new())
+    }
+
+    fn capable(&self, ty: Ty, share: bool, visiting: &mut Vec<Ty>) -> bool {
+        if visiting.contains(&ty) {
+            return true;
+        }
+        visiting.push(ty);
+        let repr = self.repr(ty);
+        let parts: Vec<Ty> = match self.kind(repr) {
+            TyKind::Pointer(_) => {
+                visiting.pop();
+                return false;
+            }
+            TyKind::Handle(Handle::Join | Handle::Group, _) if share => {
+                visiting.pop();
+                return false;
+            }
+            TyKind::Handle(Handle::Ref, value) => {
+                let result = self.capable(*value, false, visiting) && self.capable(*value, true, visiting);
+                visiting.pop();
+                return result;
+            }
+            TyKind::Handle(Handle::Join | Handle::Group | Handle::Sender | Handle::Receiver, value) => vec![*value],
+            // Function values, C functions, other handles and parameters.
+            TyKind::Handle(..) | TyKind::Fn(..) | TyKind::CFn(..) | TyKind::Param(_) => Vec::new(),
+            TyKind::Opaque(id, _) => vec![self.opaques[*id as usize].carrier],
+            TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) | TyKind::Option(t) | TyKind::CArray(t, _) => vec![*t],
+            TyKind::Map(a, b) | TyKind::Result(a, b) => vec![*a, *b],
+            TyKind::Tuple(items) | TyKind::Union(items) => items.clone(),
+            _ => match (self.components(repr), self.variants(repr)) {
+                (Some(items), _) => items,
+                (None, Some(variants)) => variants.concat(),
+                (None, None) => Vec::new(),
+            },
+        };
+        let result = parts.iter().all(|&t| self.capable(t, share, visiting));
         visiting.pop();
         result
     }

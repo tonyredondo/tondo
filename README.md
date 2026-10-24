@@ -133,13 +133,6 @@ What the specifications define and Tondo does not do yet, found by
 compiling every example they contain and reading the rest against the
 code (2026-10-24):
 
-- **Language:** multiple assignment, `(a, b) = (b, a)`, with `E1405` for a
-  repeated destination (13.8); a spread after single variadic arguments,
-  `decorate("> ", "one", ...rest)` (24.12); the union of errors a script's
-  implicit `main` infers from its `fail`s and `?`s (20.3); `defer` of a call
-  through a function value, `defer release()` (13.7); `Send` and `Share`,
-  which nothing checks, so a `Pointer` can reach another task (16.13,
-  `E1605`).
 - **Diagnostics:** the `core` warnings for unused imports, bindings and
   parameters, naming conventions, confusable identifiers, redundant
   conversions, comparisons with NaN and repeated `Set[...]` entries

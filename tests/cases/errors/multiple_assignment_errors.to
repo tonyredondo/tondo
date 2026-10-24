@@ -1,0 +1,17 @@
+fn main() {
+    var value = 0
+    (value, value) = (1, 2)
+    var point = (1, 2)
+    (point, point.0) = ((3, 4), 5)
+    var values = [1, 2]
+    (values[0], values[0]) = (3, 4)
+    (value, values[1]) += (1, 2)
+    var other = 0
+    (value, other) = 3
+}
+
+// expect-error: E1405 this place overlaps another one assigned in the same statement, inside `value`
+// expect-error: E1405 this place overlaps another one assigned in the same statement, inside `point`
+// expect-error: E1405 this place overlaps another one assigned in the same statement, inside `values`
+// expect-error: E1411 a tuple of places has no `+=`; assign each place on its own
+// expect-error: E1102 2 places are assigned a value of type `Int`; the value must be a tuple of 2 components

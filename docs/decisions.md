@@ -1400,3 +1400,25 @@ error unknown makes it infer its errors, `Never` when there are none, and
 `?` on a `T ! Never` only takes the value. The same made the testing
 specification's canonical `testing.withVirtualTime(...)?` compile, and a
 result that cannot fail may be dropped like `Unit`.
+
+## 2026-10-24 — What the language review found missing
+
+Multiple assignment is lowered to what exists: the places are resolved
+left to right with their indices held in temporaries, the value is
+destructured into hidden bindings, and each place is written in turn, so
+swapping values that are not `Copy` works because writing a moved
+binding fills it again. Places that overlap before the program runs (the
+same binding, field or constant index, or one inside the other) are
+`E1405`; swapping affine elements of a collection is not offered. Single
+variadic arguments may come before a spread, which concatenates them
+with it when the elements are `Copy`. A script, a test or a closure that
+infers its errors now infers the union of all it propagates, where the
+first one used to fix it. `defer` takes calls through function values,
+as `spawn` already did.
+
+`Send` is checked where a value crosses between tasks: what `spawn`
+takes and gives back, a channel's values, a closure that becomes a
+`fn(...)` value, which any task may call, and a type argument for a
+parameter declared `T: Send`. Only a `Pointer` and what holds one fail it
+in 0.1, and a type parameter without the bound is taken as `Send`, so
+generic code instantiated with a pointer is not caught.

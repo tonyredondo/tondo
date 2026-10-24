@@ -1,0 +1,36 @@
+import std.console
+
+type Point = { x: Int, y: Int }
+
+fn readPerson(): (String, Int) {
+    ("Ada", 36)
+}
+
+fn swap[T: ~Copy](pair: (T, T)): (T, T) {
+    var (left, right) = pair
+    (left, right) = (right, left)
+    (left, right)
+}
+
+fn main() {
+    var a = 1
+    var b = 2
+    (a, b) = (b, a)
+    var values = [10, 20, 30]
+    (values[0], values[2]) = (values[2], values[0])
+    var point = Point { x: 1, y: 2 }
+    (point.x, point.y) = (point.y, point.x)
+    var name = ""
+    var age = 0
+    (name, age) = readPerson()
+    var kept = 0
+    (kept, _) = (5, 6)
+    // Indices are resolved before the value: `i` is 0 when the place is found.
+    var i = 0
+    (values[i], i) = (99, 1)
+    console.println("{a} {b} {values} {point.x},{point.y} {name} {age} {kept} {i}")
+    console.println("{swap(("x", "y"))}")
+}
+
+// expect-stdout: 2 1 [99, 20, 10] 2,1 Ada 36 5 1
+// expect-stdout: (y, x)

@@ -37,6 +37,11 @@ fn main() {
     {
         defer log("inner: 1")
         defer log("inner: 2")
+        // A call through a function value, whose closure is taken now.
+        let release = () {
+            log("inner: released")
+        }
+        defer release()
         log("inner: body")
     }
     for i in 0..3 {
@@ -59,6 +64,7 @@ fn main() {
 }
 
 // expect-stdout: inner: body
+// expect-stdout: inner: released
 // expect-stdout: inner: 2
 // expect-stdout: inner: 1
 // expect-stdout: body 0

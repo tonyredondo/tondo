@@ -1,0 +1,29 @@
+// A raw pointer stays in the task that has it (language 16.13).
+import std.ffi
+
+fn read(p: Pointer[Int]): Int {
+    unsafe { p.read() }
+}
+
+fn make(): Pointer[Int] {
+    ffi.allocate[Int](1)
+}
+
+fn hand[T: Send](value: T): T {
+    value
+}
+
+fn main() {
+    let p = ffi.allocate[Int](1)
+    let job = spawn read(p)
+    let (sender, receiver) = channel[Pointer[Int]]()
+    let reader: unsafe fn(): Int = unsafe () { p.read() }
+    let made = spawn make()
+    let kept = hand(p)
+}
+
+// expect-error: E1605 `spawn` moves this value into another task, but it holds `Pointer[Int]`, which is not `Send`
+// expect-error: E1605 a channel carries its values between tasks, but `Pointer[Int]` is not `Send`
+// expect-error: E1605 this closure captures `Pointer[Int]`, which is not `Send`, so it cannot become `unsafe fn(): Int`
+// expect-error: E1605 the task's result goes back to its `Join`, but it holds `Pointer[Int]`, which is not `Send`
+// expect-error: E1105 `Pointer[Int]` does not implement `Send`, which `hand` requires of `T`

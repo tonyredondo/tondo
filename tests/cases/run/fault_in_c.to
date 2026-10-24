@@ -4,18 +4,20 @@ import std.ffi
 
 extern fn strlen(text: Pointer[UInt8]?): ffi.CSize
 
-fn measure(text: Pointer[UInt8]?): ffi.CSize {
+// The pointer is made in the task: it is not `Send`.
+fn measure(): ffi.CSize {
+    let text: Pointer[UInt8]? = none
     unsafe { strlen(text) }
 }
 
 fn main() {
-    let job = spawn measure(none)
+    let job = spawn measure()
     job.wait()
 }
 
 // expect-crash
 // expect-stderr: fatal: SIGSEGV: invalid memory access at 0x0, inside a function of C
 // expect-stderr: stack:
-// expect-stderr:   measure  fault_in_c.to:8:14
+// expect-stderr:   measure  fault_in_c.to:10:14
 // expect-stderr: in a task spawned at:
-// expect-stderr:   main  fault_in_c.to:12:15
+// expect-stderr:   main  fault_in_c.to:14:15

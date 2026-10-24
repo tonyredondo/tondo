@@ -438,6 +438,19 @@ impl Signature {
 
 const INTRINSICS: [&str; 3] = ["panic", "assert", "channel"];
 
+/// A place an assignment writes: the binding, the path in it, the type.
+type Target = (LocalId, Vec<hir::PlaceStep>, Ty);
+
+/// A step to a place, as far as two places can be told apart before the
+/// program runs (13.8).
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum PlaceKey {
+    Field(u32),
+    Constant(i128),
+    Binding(LocalId),
+    Unknown,
+}
+
 /// Why nothing changes the value of a `Ref` (16.10), and what to do.
 const REF_UNCHANGED: &str = "the value of a `Ref` never changes: make a new `Ref`, or keep what changes in a `sync.Mutex`, which every copy shares";
 
@@ -2238,8 +2251,8 @@ impl<'a> Checker<'a> {
             ([name], true) if name.name == "Equatable" => self.types.param_mut(param).equatable = true,
             ([name], true) if name.name == "Key" => self.types.param_mut(param).key = true,
             ([name], true) if name.name == "Copy" => self.types.param_mut(param).copy = true,
-            // `Send` and `Share` matter once there is concurrency (H5).
-            ([name], true) if matches!(name.name.as_str(), "Send" | "Share") => {}
+            ([name], true) if name.name == "Send" => self.types.param_mut(param).send = true,
+            ([name], true) if name.name == "Share" => self.types.param_mut(param).share = true,
             ([name], false) if matches!(name.name.as_str(), "Call" | "CallMut" | "CallOnce") => {
                 let [signature] = args.as_slice() else {
                     self.diags.error("E1104", bound.span, "a call bound takes one function type: `Call[fn(A): B]`");
@@ -3128,9 +3141,15 @@ impl<'a> Checker<'a> {
     /// meet, as text for a diagnostic.
     fn bound_holds(&mut self, param: Ty, actual: Ty, map: &HashMap<Ty, Ty>, depth: usize) -> Option<String> {
         let def = self.types.param(param)?;
-        let (equatable, key, copy) = (def.equatable, def.key, def.copy);
+        let (equatable, key, copy, send, share) = (def.equatable, def.key, def.copy, def.send, def.share);
         if copy && !self.types.is_copy(actual) {
             return Some("`Copy` (type parameters are `Copy` unless declared `~Copy`)".into());
+        }
+        if send && !self.types.is_send(actual) {
+            return Some("`Send`".into());
+        }
+        if share && !self.types.is_share(actual) {
+            return Some("`Share`".into());
         }
         if key && !self.types.is_key(actual) {
             return Some("`Key`".into());
@@ -4014,11 +4033,17 @@ impl<'a> Checker<'a> {
     /// root script; `None` in an infallible function.
     fn error_channel(&mut self, cx: &mut FnCx, produced: Ty, span: Span, code: &'static str) -> Option<Ty> {
         match cx.error {
-            Some(error) => Some(error),
-            None if cx.infer_error => {
-                cx.error = Some(produced);
-                Some(produced)
+            // What infers its errors fails with the union of what it
+            // propagates (20.3).
+            _ if cx.infer_error => {
+                let channel = match cx.error {
+                    Some(error) => self.types.union(&[error, produced]),
+                    None => produced,
+                };
+                cx.error = Some(channel);
+                Some(channel)
             }
+            Some(error) => Some(error),
             None => {
                 self.diags.error(code, span, "this function cannot fail; declare its result as `T ! E`");
                 None
@@ -4346,7 +4371,7 @@ impl<'a> Checker<'a> {
     /// and the call is made at the end of the scope.
     fn deferred_call(&mut self, call: hir::Expr, span: Span) -> Option<hir::Expr> {
         let args = match &call.kind {
-            hir::ExprKind::Call(_, _, args) => args,
+            hir::ExprKind::Call(_, _, args) | hir::ExprKind::CallValue(_, args) => args,
             hir::ExprKind::Error => return None,
             _ => {
                 self.diags.error("E1410", span, "this call cannot be deferred; write it in a `defer { ... }` block");
@@ -4479,6 +4504,30 @@ impl<'a> Checker<'a> {
                 if args.iter().any(|a| matches!(a.kind, hir::ExprKind::Loan(_) | hir::ExprKind::Region(..))) {
                     let message = "a task cannot borrow: this call lends a place with `mut` or `var`; make the task return the new value instead";
                     self.diags.error("E1609", span, message);
+                    return Self::error_expr(span);
+                }
+                // What enters the task, and its result that comes back, cross
+                // between tasks (16.13).
+                let crossing = match &call.kind {
+                    hir::ExprKind::CallValue(callee, args) => std::iter::once(&**callee).chain(args).collect(),
+                    _ => args.iter().collect::<Vec<_>>(),
+                };
+                for value in crossing {
+                    if let Some(part) = self.not_send(value.ty) {
+                        let message = format!(
+                            "`spawn` moves this value into another task, but it holds {}, which is not `Send`: it stays in the task that has it",
+                            self.display(part)
+                        );
+                        self.diags.error("E1605", value.span, message);
+                        return Self::error_expr(span);
+                    }
+                }
+                if let Some(part) = self.not_send(call.ty) {
+                    let message = format!(
+                        "the task's result goes back to its `Join`, but it holds {}, which is not `Send`",
+                        self.display(part)
+                    );
+                    self.diags.error("E1605", span, message);
                     return Self::error_expr(span);
                 }
                 let result = call.ty;
@@ -5743,6 +5792,14 @@ impl<'a> Checker<'a> {
             return Self::error_expr(span);
         };
         let value = self.resolve_type(value);
+        if let Some(part) = self.not_send(value) {
+            let what = match part == value {
+                true => format!("{} is not `Send`", self.display(value)),
+                false => format!("{} holds {}, which is not `Send`", self.display(value), self.display(part)),
+            };
+            let message = format!("a channel carries its values between tasks, but {what}");
+            self.diags.error("E1605", span, message);
+        }
         let capacity = match args {
             [] => None,
             [arg] if arg.name.as_ref().is_none_or(|n| n.name == "capacity") => {
@@ -6135,6 +6192,9 @@ impl<'a> Checker<'a> {
             self.diags.error("E1411", at, REF_UNCHANGED);
             return None;
         }
+        if let ast::ExprKind::Tuple(targets) = &target.kind {
+            return self.multiple_assign(cx, targets, op, value, span);
+        }
         if let ast::ExprKind::Slice { base, start, end, step } = &target.kind {
             return self.assign_slice(cx, base, [start, end, step], op, value, span);
         }
@@ -6169,6 +6229,143 @@ impl<'a> Checker<'a> {
         }
         let place = self.place(cx, target)?;
         self.assign_to(cx, place, op, value, span)
+    }
+
+    /// `(a, b) = value` (13.8): the places are resolved left to right, with
+    /// their indices evaluated then; the value is evaluated whole into
+    /// temporaries; and each place is written, left to right. `_` drops its
+    /// component. Swapping values that are not `Copy` works, as writing a
+    /// moved binding fills it again.
+    fn multiple_assign(
+        &mut self,
+        cx: &mut FnCx,
+        targets: &[ast::Expr],
+        op: Option<BinOp>,
+        value: &ast::Expr,
+        span: Span,
+    ) -> Option<hir::Stmt> {
+        if let Some(op) = op {
+            let message = format!("a tuple of places has no `{}=`; assign each place on its own", op.as_str());
+            self.diags.error("E1411", span, message);
+            return None;
+        }
+        let mut stmts = Vec::new();
+        // Each place, and how it is reached, to find places assigned twice.
+        let mut places: Vec<Option<(Target, Vec<PlaceKey>, Span)>> = Vec::new();
+        for target in targets {
+            if matches!(&target.kind, ast::ExprKind::Path(segments) if segments.len() == 1 && segments[0].name == "_") {
+                places.push(None);
+                continue;
+            }
+            if let Some(at) = self.ref_value_target(cx, target) {
+                self.diags.error("E1411", at, REF_UNCHANGED);
+                return None;
+            }
+            let (local, path, ty) = match &target.kind {
+                ast::ExprKind::Index { base, index } => {
+                    let base_place = self.place(cx, base)?;
+                    if let TyKind::Map(..) = self.types.kind(base_place.2) {
+                        let message =
+                            "a map entry cannot be one of several places assigned at once; assign it on its own";
+                        self.diags.error("E1411", target.span, message);
+                        return None;
+                    }
+                    self.index_place(cx, base_place, index, base.span)?
+                }
+                ast::ExprKind::Slice { .. } => {
+                    let message = "a slice cannot be one of several places assigned at once; assign it on its own";
+                    self.diags.error("E1411", target.span, message);
+                    return None;
+                }
+                _ => self.place(cx, target)?,
+            };
+            let keys = path
+                .iter()
+                .map(|step| match step {
+                    hir::PlaceStep::Field(index) => PlaceKey::Field(*index),
+                    hir::PlaceStep::Index(index) => match &index.kind {
+                        hir::ExprKind::Int(value) => PlaceKey::Constant(*value),
+                        hir::ExprKind::Local(local) => PlaceKey::Binding(*local),
+                        _ => PlaceKey::Unknown,
+                    },
+                })
+                .collect();
+            // Indices are evaluated now, before the value.
+            let path = path
+                .into_iter()
+                .map(|step| match step {
+                    hir::PlaceStep::Index(index) => {
+                        let held = self.hidden_local(cx, Ty::INT);
+                        let read = Self::mk(hir::ExprKind::Local(held), Ty::INT, index.span);
+                        stmts.push(hir::Stmt::Let(held, index));
+                        hir::PlaceStep::Index(read)
+                    }
+                    step => step,
+                })
+                .collect();
+            places.push(Some(((local, path, ty), keys, target.span)));
+        }
+        for (index, first) in places.iter().enumerate() {
+            let Some(((local, _, _), keys, _)) = first else { continue };
+            for second in places[index + 1..].iter().flatten() {
+                let ((other, _, _), other_keys, at) = second;
+                let same = keys.iter().zip(other_keys).all(|(a, b)| a == b && *a != PlaceKey::Unknown);
+                if local == other && same {
+                    let name = &cx.locals[local.0 as usize].name;
+                    let message = format!(
+                        "this place overlaps another one assigned in the same statement, inside `{name}`; give each component its own place"
+                    );
+                    self.diags.error("E1405", *at, message);
+                    return None;
+                }
+            }
+        }
+        let wanted: Option<Vec<Ty>> = places.iter().map(|p| p.as_ref().map(|((_, _, ty), _, _)| *ty)).collect();
+        let expected = wanted.map(|items| self.types.intern(TyKind::Tuple(items)));
+        let value = self.expr(cx, value, expected);
+        let value = match expected {
+            Some(expected) if matches!(self.types.kind(value.ty), TyKind::Tuple(items) if items.len() == targets.len()) => {
+                self.coerce(value, expected)
+            }
+            _ => value,
+        };
+        let items = match self.types.kind(value.ty).clone() {
+            TyKind::Tuple(items) if items.len() == targets.len() => items,
+            TyKind::Error => return None,
+            _ => {
+                let message = format!(
+                    "{} places are assigned a value of type {}; the value must be a tuple of {} components",
+                    targets.len(),
+                    self.display(value.ty),
+                    targets.len()
+                );
+                self.diags.error("E1102", value.span, message);
+                return None;
+            }
+        };
+        // `let (t0, t1, ...) = value`, then each place from its temporary.
+        let mut parts = Vec::new();
+        let mut writes = Vec::new();
+        for (place, &ty) in places.into_iter().zip(&items) {
+            let pattern_span = place.as_ref().map_or(value.span, |(_, _, at)| *at);
+            let kind = match place {
+                Some(((local, path, place_ty), _, at)) => {
+                    let held = self.hidden_local(cx, ty);
+                    let read = Self::mk(hir::ExprKind::Local(held), ty, at);
+                    let read = self.coerce(read, place_ty);
+                    self.check_lent_write(cx, local, &path, at);
+                    writes.push(hir::Stmt::Assign { local, path, op: None, value: read, span: at });
+                    hir::PatKind::Binding(held)
+                }
+                None => hir::PatKind::Wildcard,
+            };
+            parts.push(hir::Pattern { kind, ty, span: pattern_span });
+        }
+        let pattern = hir::Pattern { kind: hir::PatKind::Fields(parts), ty: value.ty, span: value.span };
+        stmts.push(hir::Stmt::Destructure(pattern, value));
+        stmts.extend(writes);
+        let block = hir::Block { stmts, tail: None, ty: Ty::UNIT };
+        Some(hir::Stmt::Expr(Self::mk(hir::ExprKind::Block(block), Ty::UNIT, span)))
     }
 
     /// `place op= value` once the target is resolved.
@@ -7025,6 +7222,28 @@ impl<'a> Checker<'a> {
         hir::Expr { kind, ty, span }
     }
 
+    /// The part of a type that is not `Send`, if any: a `Pointer`, or a
+    /// value holding one.
+    fn not_send(&self, ty: Ty) -> Option<Ty> {
+        if self.types.is_send(ty) {
+            return None;
+        }
+        let repr = self.types.repr(ty);
+        let parts = match self.types.kind(repr) {
+            TyKind::Pointer(_) => return Some(ty),
+            TyKind::Handle(_, value) => vec![*value],
+            TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) | TyKind::Option(t) | TyKind::CArray(t, _) => vec![*t],
+            TyKind::Map(a, b) | TyKind::Result(a, b) => vec![*a, *b],
+            TyKind::Tuple(items) | TyKind::Union(items) => items.clone(),
+            _ => match (self.types.components(repr), self.types.variants(repr)) {
+                (Some(items), _) => items,
+                (None, Some(variants)) => variants.concat(),
+                (None, None) => Vec::new(),
+            },
+        };
+        parts.into_iter().find_map(|part| self.not_send(part)).or(Some(ty))
+    }
+
     /// Whether a value may be a failure or an absence the program must see
     /// (11.9): an option, or a result that can fail.
     fn must_use(&self, ty: Ty) -> bool {
@@ -7069,6 +7288,19 @@ impl<'a> Checker<'a> {
         {
             let found =
                 self.types.intern(TyKind::Fn(info.params, info.result, info.variadic, info.modes, info.is_unsafe));
+            // Any task may call a `fn(...)` value (16.13).
+            if found == expected
+                && !info.mutates
+                && let Some(part) = self.not_send(value.ty)
+            {
+                let message = format!(
+                    "this closure captures {}, which is not `Send`, so it cannot become {}, which any task may call; call the closure where it is instead",
+                    self.display(part),
+                    self.display(expected)
+                );
+                self.diags.error("E1605", value.span, message);
+                return value;
+            }
             if found == expected && !info.mutates {
                 let span = value.span;
                 return Self::mk(hir::ExprKind::Erase(Box::new(value), FnId(body)), expected, span);
@@ -11069,8 +11301,10 @@ impl<'a> Checker<'a> {
                 }
             };
             if position >= fixed && signature.variadic {
-                if spread.is_some() || (arg.spread && !pack.is_empty()) {
-                    self.diags.error("E1102", arg.span, "a spread `...values` must be the only variadic argument");
+                // Single values may come first; one spread goes last (11.3).
+                if spread.is_some() {
+                    let message = "a spread `...values` is the last argument, and a call has one at most";
+                    self.diags.error("E1102", arg.span, message);
                     return Self::error_expr(span);
                 }
                 if arg.name.is_some() && !arg.spread {
@@ -11310,14 +11544,30 @@ impl<'a> Checker<'a> {
         }
         if let Some(array) = signature.variadic.then(|| signature.params[signature.params.len() - 1]) {
             let array = self.types.subst(array, &inference.map);
+            let items: Vec<hir::Expr> = pack.iter().map(|&i| values[i].take().unwrap()).collect();
             let value = match spread {
-                Some(index) => values[index].take().unwrap(),
-                None => {
-                    let items: Vec<hir::Expr> = pack.iter().map(|&i| values[i].take().unwrap()).collect();
-                    Self::mk(hir::ExprKind::Array(items), array, span)
+                Some(index) if items.is_empty() => values[index].take().unwrap(),
+                // The single values, then the spread array's.
+                Some(index) => {
+                    let rest = values[index].take().unwrap();
+                    let element = match self.types.kind(array) {
+                        TyKind::Array(element) => *element,
+                        _ => Ty::ERROR,
+                    };
+                    if !self.types.is_copy(element) {
+                        let message = format!(
+                            "a spread of {} values, which are not `Copy`, is the only variadic argument: put the single values into its array first",
+                            self.display(element)
+                        );
+                        self.diags.error("E1102", rest.span, message);
+                        return Self::error_expr(span);
+                    }
+                    let front = Self::mk(hir::ExprKind::Array(items), array, span);
+                    Self::mk(hir::ExprKind::ArrayOp(hir::ArrayOp::Concat, vec![front, rest]), array, span)
                 }
+                None => Self::mk(hir::ExprKind::Array(items), array, span),
             };
-            ordered.push((spread.or(pack.first().copied()), value));
+            ordered.push((pack.first().copied().or(spread), value));
         }
         // Named arguments out of declaration order are evaluated into
         // temporaries first, in the order they are written.
