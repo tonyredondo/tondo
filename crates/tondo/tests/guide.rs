@@ -63,3 +63,17 @@ fn examples_compile() {
     });
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// The repository carries the skill for the agents that work in it, where
+/// Claude Code and the Agent Skills standard look; it stays the guide's.
+#[test]
+fn the_repository_has_the_skill() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for path in [".agents/skills/tondo/SKILL.md", ".claude/skills/tondo/SKILL.md"] {
+        let carried = std::fs::read_to_string(root.join(path)).unwrap_or_default();
+        assert!(
+            carried == tondo::guide::skill(),
+            "{path} is not the guide's skill: write it again with `cargo run -q -p tondo -- guide --skill > .agents/skills/tondo/SKILL.md`"
+        );
+    }
+}

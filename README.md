@@ -5,9 +5,9 @@ management: *small by design, complete in practice*. The normative definition
 lives in [`spec/`](spec/); this repository is a fresh, native-first
 implementation of it.
 
-**Status:** early development, nothing is released. The first milestone (H0)
-compiles a small subset of the language to native executables with
-[Cranelift](https://cranelift.dev).
+**Status:** early development; nothing is released yet. It compiles to
+native executables with [Cranelift](https://cranelift.dev), on Linux and
+macOS, and the roadmap below says what works.
 
 ```text
 $ cat hello.to
@@ -19,6 +19,25 @@ fn main() {
 $ tondo run hello.to
 Hello, world
 ```
+
+## Getting started
+
+```sh
+git clone https://github.com/tonyredondo/tondo && cd tondo
+sh dist/install.sh
+```
+
+The script builds `tondo` with Rust (from [rustup](https://rustup.rs)) and
+a C compiler, or without Rust downloads the latest build that passed CI
+with GitHub's `gh`; installs it; checks that it compiles and runs a
+program; and sets it up for the coding agents it finds: the Tondo skill
+for Claude Code and Codex, and `tondo mcp`, an MCP server whose tools do
+everything `tondo` does, registered with both. Then `tondo guide` teaches
+the language.
+
+With an agent, open this repository in it and ask it to set Tondo up:
+[`AGENTS.md`](AGENTS.md) tells it how, and how to check that it works.
+Editors use `tondo lsp`; `tondo guide projects` says how to set one up.
 
 ## Using it
 

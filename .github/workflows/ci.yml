@@ -52,6 +52,8 @@ jobs:
           $run debian:stable-slim sh -c "! command -v cc && $cases cases projects"
           $run -e TONDO_CASES_STATIC=1 debian:stable-slim sh -c "! command -v cc && $cases cases"
       - run: dist/package.sh ${{ matrix.target }}
+      # The way in that the README and AGENTS.md give.
+      - run: sh dist/install.sh "$RUNNER_TEMP/bin"
       - uses: actions/upload-artifact@v4
         with:
           name: tondo-${{ matrix.target }}

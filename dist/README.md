@@ -21,3 +21,13 @@ tondo build app --output app # a native executable from a project
 tondo test app              # run a project's tests
 tondo help                  # every command
 ```
+
+For a coding agent, the skill and the MCP server, whose tools do all of
+the above:
+
+```sh
+mkdir -p ~/.claude/skills/tondo && tondo guide --skill > ~/.claude/skills/tondo/SKILL.md
+mkdir -p ~/.agents/skills/tondo && tondo guide --skill > ~/.agents/skills/tondo/SKILL.md
+claude mcp add --scope user tondo -- tondo mcp     # Claude Code
+codex mcp add tondo -- tondo mcp                   # Codex
+```

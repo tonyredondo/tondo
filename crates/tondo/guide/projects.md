@@ -98,13 +98,18 @@ and `vim.lsp.enable('tondo')`, with `vim.filetype.add({ extension = { to = 'tond
 
 `tondo mcp` is a Model Context Protocol server: every command as a tool
 with structured results, the language server's navigation and rename, and
-debugging sessions. Add it to Claude Code with `claude mcp add tondo --
-tondo mcp`, to Codex with `codex mcp add tondo -- tondo mcp`, or to any
-client that reads this:
+debugging sessions. Add it to Claude Code with
+`claude mcp add --scope user tondo -- tondo mcp`, to Codex with
+`codex mcp add tondo -- tondo mcp`, or to any client that reads this:
 
 ```text
 { "mcpServers": { "tondo": { "command": "tondo", "args": ["mcp"] } } }
 ```
+
+`tondo guide --skill` prints the overview of this guide as an agent
+skill: save it as `~/.claude/skills/tondo/SKILL.md` for Claude Code, or as
+`~/.agents/skills/tondo/SKILL.md` for Codex and the other agents of the
+Agent Skills standard.
 
 `check` reports each diagnostic with its fixes, and `fix` applies the safe
 ones; `run` takes the program's input and ends it after a timeout; `test`
