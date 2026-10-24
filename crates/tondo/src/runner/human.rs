@@ -77,6 +77,19 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// After an interruption: the lines known that wait for a line before
+    /// them, in canonical order.
+    pub(super) fn rest(&mut self) {
+        if self.quiet {
+            return;
+        }
+        for test in &self.expected[self.printed..] {
+            if let Some(attempt) = self.known.get(test) {
+                say!("test {} ... {}", self.tree.id(attempt.node), short(self.tree, &attempt.status));
+            }
+        }
+    }
+
     pub(super) fn timeout(&self) -> Duration {
         self.timeout
     }

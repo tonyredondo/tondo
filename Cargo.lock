@@ -2038,6 +2038,7 @@ dependencies = [
  "cranelift-native",
  "cranelift-object",
  "gimli",
+ "libc",
  "object",
  "rcgen",
  "serde_json",

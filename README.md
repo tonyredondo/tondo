@@ -119,6 +119,7 @@ Every milestone ends with programs that compile to native executables and run.
 | **std.executor** | Pools that bound how many jobs run and how many wait, whose jobs are ordinary tasks with their `Join`; actors that own state behind a bounded mailbox, stopped by their owner or by the end of its block. A closure that cannot fail fits a parameter that may, `fn(...): !E`, with `E` inferred as `Never` | Done |
 | **Identity and cycles** | `Ref[T]`, values with an identity that compare and hash by it, read in place and never changed; a collector of the cycles of references that counting alone would keep, which starts from the shared state every cycle passes through and stops the workers briefly at safe points; `WeakRef[T]` for caches | Done |
 | **Warnings** | The `core` profile of 22.8 for the program's own code: unused imports, bindings and parameters (`_name` holds a value to the end of its scope), names against the conventions with the conventional one, confusable identifiers by their Unicode skeletons, redundant conversions, comparisons with NaN, repeated `Set[...]` entries, unreachable code, serial spawns in loops | Done |
+| **Interruption** | Ctrl-C stops `tondo test`: no more tests start, the running ones are cancelled and run their `defer`s, a worker that does not stop is killed, and the run exits with `4` (`3` if it had to kill) without reports | Done |
 
 The first cut deliberately leaves out the following. They are part of the
 language and remain planned work, scheduled after H7:
@@ -136,8 +137,6 @@ code (2026-10-24):
 
 - **Tools:** `tondo doc-test`, which checks the examples of a document
   (21.6), and its `E0006` for an example of no valid source form.
-- **Testing:** interrupting `tondo test`, which should cancel the running
-  tests cooperatively and exit with `4` (7.10).
 
 ## Working rules
 

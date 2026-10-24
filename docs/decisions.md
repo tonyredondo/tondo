@@ -1454,3 +1454,17 @@ declare, which a qualified owner, `fn models.User.greet`, now reports
 instead of a syntax error, and `E1505` for fields, variants and methods
 that clash. A `#!` below the first line, or one starting a file that is
 not a root script, is `E1805`.
+
+## 2026-10-24 — Interrupting `tondo test`
+
+Each worker runs in a process group of its own, so a Ctrl-C reaches only
+`tondo test`. It stops dispatching tests and sends each worker `SIGTERM`,
+which a test build answers by cancelling all its tasks, the one running
+the test too: their `defer`s run at their next wait, and the worker
+starts no other test. A worker that ignores it, in a loop that never
+waits, ends when its own grace after a cancellation does (5 seconds,
+killing the processes it started) or when the runner's does (10 seconds,
+killing its group), or at a second Ctrl-C. Exit `4` says the workers
+ended by themselves, `3` that one was killed. What the interruption cut
+has no outcome, the human output shows what ran and says it was
+interrupted, and no report, JUnit file or snapshot is written.

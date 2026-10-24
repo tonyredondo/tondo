@@ -4,6 +4,7 @@
 //! skip, a timeout or a crash ends the worker; another starts with the
 //! rest of the plan and runs again the setups its suites need.
 
+use super::interrupt;
 use super::store::{Artifacts, Snapshots};
 use super::{Artifact, Attempt, Context, Options, Snapshot, Status, Tree, VirtualClock};
 use std::collections::VecDeque;
@@ -43,7 +44,9 @@ pub(super) fn execute(run: &Run, units: Vec<(Vec<u32>, Context)>, mut report: im
         for _ in 0..threads {
             let (sender, queue) = (sender.clone(), &queue);
             scope.spawn(move || {
-                while let Some((plan, context)) = queue.lock().unwrap_or_else(|e| e.into_inner()).pop_front() {
+                while let Some((plan, context)) = queue.lock().unwrap_or_else(|e| e.into_inner()).pop_front()
+                    && !interrupt::requested()
+                {
                     lane(run, plan, context, &sender);
                 }
             });
@@ -61,9 +64,13 @@ pub(super) fn execute(run: &Run, units: Vec<(Vec<u32>, Context)>, mut report: im
 /// outcome.
 fn lane(run: &Run, plan: Vec<u32>, context: Context, sender: &mpsc::Sender<Attempt>) {
     let mut remaining: VecDeque<u32> = plan.into();
-    while !remaining.is_empty() {
+    while !remaining.is_empty() && !interrupt::requested() {
         let before = remaining.len();
-        if let Err(message) = worker(run, &mut remaining, context, sender) {
+        let started = worker(run, &mut remaining, context, sender);
+        if interrupt::requested() {
+            break;
+        }
+        if let Err(message) = started {
             // The worker could not start: every test fails alike.
             for test in remaining.drain(..) {
                 let _ = sender.send(Attempt::new(test, Status::Crashed(message.clone()), context));
@@ -139,7 +146,8 @@ fn worker(
     // Its own process group, so that a timeout ends what it started too.
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
-    let mut child = command.spawn().map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
+    let Some(child) = interrupt::start(&mut command) else { return Ok(()) };
+    let mut child = child.map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
     let (events, received) = mpsc::channel();
     let readers = [
         child.stdout.take().map(|s| (Box::new(s) as Box<dyn Read + Send>, true)),
@@ -196,10 +204,19 @@ fn worker(
         }
     }
     let status = child.wait().map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    let killed = std::os::unix::process::ExitStatusExt::signal(&status) == Some(libc::SIGKILL);
+    #[cfg(not(unix))]
+    let killed = false;
+    interrupt::ended(&child, killed);
     let _ = std::fs::remove_file(&plan);
     session.flush_output();
     for (outcome, _) in std::mem::take(&mut session.done) {
         send(tree, remaining, outcome, sender);
+    }
+    // What the interruption cut has no outcome.
+    if interrupt::requested() {
+        return Ok(());
     }
     // The entry that was running when the worker ended.
     if let Some((mut outcome, reached, started)) = session.running.pop() {

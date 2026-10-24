@@ -582,3 +582,44 @@ fn dev_dependencies_are_for_tests() {
     assert_ne!(status, 0);
     assert!(stderr.contains("error[E1008]: `helpers` is a dev-dependency, which only tests import"), "{stderr}");
 }
+
+#[cfg(unix)]
+#[test]
+fn an_interrupted_run_cancels_its_tests() {
+    let tests = "\
+import std.fs
+import std.time
+
+test early {
+    assert(true)
+}
+
+test waits {
+    defer {
+        _ = fs.writeText(\"cleaned\", \"yes\")
+    }
+    _ = fs.writeText(\"started\", \"yes\")
+    time.sleep(time.seconds(60))
+}
+";
+    let dir = project("interrupted", tests);
+    let child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["test", "--jobs", "1", "--report", "json=report.json"])
+        .current_dir(&dir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    while !dir.join("started").exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    Command::new("kill").args(["-INT", &child.id().to_string()]).status().unwrap();
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(4), "{stdout}{}", String::from_utf8_lossy(&output.stderr));
+    assert!(stdout.starts_with("test app::unit::app::early ... ok\n"), "{stdout}");
+    assert!(stdout.contains("interrupted: 1 of 2 tests ran; no report was written"), "{stdout}");
+    assert!(dir.join("cleaned").exists(), "the test's defer did not run");
+    assert!(!dir.join("report.json").exists());
+}

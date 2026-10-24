@@ -11,6 +11,7 @@ macro_rules! say {
 }
 
 mod human;
+mod interrupt;
 mod json;
 mod junit;
 mod owners;
@@ -338,8 +339,25 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         update: options.update_snapshots,
     };
     let run = worker::Run { executable, dir, tree, options, stores };
+    interrupt::listen();
     let (attempts, rounds) = campaign(&run, &plan, &mut printer);
     let _ = std::fs::remove_file(&entries);
+    // Tests did not run, so there is no report, and snapshots stay (7.10).
+    if interrupt::requested() {
+        let ran: std::collections::HashSet<u32> = attempts.iter().map(|a| a.node).filter(|&n| !tree.suite(n)).collect();
+        printer.rest();
+        let message = format!(
+            "interrupted: {} of {} tests ran; no report was written and no snapshot changed",
+            ran.len(),
+            plan.len()
+        );
+        if options.json {
+            eprintln!("tondo: {message}");
+        } else {
+            say!("\n{message}");
+        }
+        return Err(Failure::Interrupted(interrupt::forced()));
+    }
     let aggregates = aggregates(tree, &attempts);
     let failed = failed(&aggregates, &attempts, options);
     // Updated snapshots are published only after a run without failures,
@@ -477,6 +495,8 @@ pub enum Failure {
     Input(String),
     Empty(String),
     Output(String),
+    /// The run was interrupted; `true` when a worker had to be killed.
+    Interrupted(bool),
 }
 
 /// Runs the plan once per iteration, then the retry rounds.
@@ -487,7 +507,7 @@ fn campaign(run: &worker::Run, plan: &[u32], printer: &mut human::Printer) -> (V
     let (tree, options) = (run.tree, run.options);
     let mut attempts = Vec::new();
     let mut rounds = Vec::new();
-    for iteration in 1..=options.iterations() {
+    for iteration in (1..=options.iterations()).take_while(|_| !interrupt::requested()) {
         printer.begin(iteration, 0, plan);
         // Each top-level suite or test is a unit of the first round.
         let mut units: Vec<Vec<u32>> = Vec::new();
@@ -503,7 +523,7 @@ fn campaign(run: &worker::Run, plan: &[u32], printer: &mut human::Printer) -> (V
     }
     for round in 1..=options.retry {
         let units = retry_units(tree, plan, &attempts);
-        if units.is_empty() {
+        if units.is_empty() || interrupt::requested() {
             break;
         }
         let tests: Vec<u32> = units.iter().flat_map(|(_, tests)| tests.iter().copied()).collect();

@@ -393,6 +393,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             eprintln!("tondo: {message}");
             Ok(ExitCode::from(TOOL_FAILURE))
         }
+        Err(runner::Failure::Interrupted(forced)) => Ok(ExitCode::from(if forced { TOOL_FAILURE } else { 4 })),
     }
 }
 
