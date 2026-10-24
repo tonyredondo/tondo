@@ -1,0 +1,37 @@
+import std.ffi
+
+extern fn twice(value: Int): Int {
+    value * 2
+}
+
+@symbol("twice")
+extern fn again(value: Int): Int {
+    value
+}
+
+extern fn tondo_hidden() {}
+
+@symbol("main")
+extern fn start() {}
+
+extern fn texts(text: String): Int {
+    text.length()
+}
+
+extern fn parsed(_text: ffi.CString): Int ! ffi.CInt {
+    0
+}
+
+extern fn formatted(_format: ffi.CString, ...) {}
+
+extern fn generic[T](_value: T) {}
+
+fn main() {}
+
+// expect-error: E1706 C already calls another function `twice`
+// expect-error: E1706 `tondo_hidden` is a symbol of the program itself
+// expect-error: E1706 `main` is a symbol of the program itself
+// expect-error: E1703 `String` cannot cross to C: text crosses as `ffi.CString`
+// expect-error: E1703
+// expect-error: E1704 Tondo cannot read C's `...`
+// expect-error: E1704 an `extern fn` takes no type parameters

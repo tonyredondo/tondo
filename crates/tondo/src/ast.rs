@@ -26,8 +26,10 @@ pub struct Module {
     /// The `#!` line the file starts with.
     pub shebang: Option<Span>,
     /// Checked as a library, without `main`: an example of documentation
-    /// that declares none (21.6).
+    /// that declares none (21.6), or a library for C.
     pub library: bool,
+    /// Built as a library for C (toolchain 7), which publishes functions.
+    pub c_library: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

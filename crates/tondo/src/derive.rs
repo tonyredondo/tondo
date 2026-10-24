@@ -286,7 +286,7 @@ fn callable(
 }
 
 /// The `///` lines just before a declaration, without their markers.
-fn docs(sources: &SourceMap, span: crate::source::Span) -> Option<String> {
+pub(crate) fn docs(sources: &SourceMap, span: crate::source::Span) -> Option<String> {
     let file = sources.file_of(span.start);
     let before = &file.text[..(span.start - file.base) as usize];
     // The text before the name on its own line, such as `priv `, goes first.

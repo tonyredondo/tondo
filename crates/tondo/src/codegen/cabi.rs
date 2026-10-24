@@ -289,17 +289,36 @@ impl Codegen<'_> {
         if let Some(&id) = self.callbacks.get(&(target, ty)) {
             return id;
         }
+        let name = format!("tondo_callback{}", self.callbacks.len());
+        self.declare_callback(target, ty, closure, &name, Linkage::Local, &format!("{name}_body"))
+            .expect("callback declaration")
+    }
+
+    /// The C function `symbol` of an `extern fn` with a body, the same
+    /// one where the program passes the function to C.
+    pub(super) fn export(&mut self, index: usize, export: &crate::hir::Export) -> Result<(), String> {
+        let body = format!("tondo_export{index}_body");
+        self.declare_callback(export.function, export.ty, false, &export.symbol, Linkage::Export, &body).map(|_| ())
+    }
+
+    fn declare_callback(
+        &mut self,
+        target: FnId,
+        ty: Ty,
+        closure: bool,
+        name: &str,
+        linkage: Linkage,
+        body: &str,
+    ) -> Result<FuncId, String> {
         let TyKind::CFn(params, result, _) = self.types.kind(ty).clone() else { unreachable!("a C function type") };
         let signature = self.c_signature(&params, result);
-        let name = format!("tondo_callback{}", self.callbacks.len());
-        let adapter = self.module.declare_function(&name, Linkage::Local, &signature).expect("callback declaration");
+        let adapter = self.module.declare_function(name, linkage, &signature).map_err(|e| e.to_string())?;
         let mut frame = self.module.make_signature();
         frame.params.push(AbiParam::new(POINTER));
-        let inner =
-            self.module.declare_function(&format!("{name}_body"), Linkage::Local, &frame).expect("callback body");
+        let inner = self.module.declare_function(body, Linkage::Local, &frame).map_err(|e| e.to_string())?;
         self.callbacks.insert((target, ty), adapter);
         self.pending_callbacks.push(Callback { target, ty, closure, adapter, inner });
-        adapter
+        Ok(adapter)
     }
 
     /// Where the result, then each argument, of a callback of `ty` lives in
@@ -576,7 +595,15 @@ pub(super) fn define_adapter(
     }
     let inner = e.cg.module.declare_func_in_func(callback.inner, e.fb.func);
     let inner = e.fb.ins().func_addr(POINTER, inner);
-    e.call_rt(Rt::Callback, &[inner, frame]);
+    // A library starts at the first call from C.
+    let start = match e.cg.library {
+        Some(start) => {
+            let start = e.cg.module.declare_func_in_func(start, e.fb.func);
+            e.fb.ins().func_addr(POINTER, start)
+        }
+        None => e.fb.ins().iconst(POINTER, 0),
+    };
+    e.call_rt(Rt::Callback, &[inner, frame, start]);
     let at = e.offset(frame, offsets[0]);
     match plan.returned {
         Returned::Scalar(abi) => {

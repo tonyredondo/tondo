@@ -1701,3 +1701,37 @@ stacks for the objects they hold, so `tondo dump read <file> object
 stack. Pointers are found by their value, so a number that equals an
 address counts as one; for a debugging tool that errs on the side of
 keeping, which is the side that answers "why is this still here".
+
+## 2026-10-24 — Libraries for C (H14, first part)
+
+A Tondo package can be a library that a C program links. What C calls is
+an `extern fn` with a body: the keyword already means C's calling
+convention and a symbol, and `pub` already means published, so a library
+publishes the `pub` ones of its package and nothing else needs a name.
+Their types are those that cross to C as callbacks already do, and the
+adapter that runs a callback runs them, with the symbol exported. A
+library is asked for with `--library` rather than inferred from a missing
+`main`, which scripts are to have a use for.
+
+`tondo build --library` writes `lib<name>.a`, the program's object with the
+whole runtime, and `<name>.h`, written from the signatures: C's names for
+`std.ffi`'s aliases, `stdint.h`'s for Tondo's numbers, the `extern type`s
+the functions reach, after those they hold, and the `///` documentation.
+The archive is the runtime's as Rust builds it, 65 MB; linked with
+`--gc-sections`, as the line the build prints does, a program that calls
+it takes 1.2 MB without debug information, as a Tondo executable does.
+A runtime in an archive brings no `main` of its own: the compiler writes
+an executable's `main`, and the start code that the toolchain's own
+linker uses refers to `main` and to `__init_array_start` weakly, through
+the GOT, so a shared library made with the C toolchain links it too.
+
+The runtime starts at the first call. A call from a thread of C used to
+become a task that a worker ran while the thread waited; now the task
+starts on the calling thread and moves to a worker only if it waits: a
+call that returns a sum takes about half a microsecond, where the trip to
+a worker and back took 7. The output a library writes is delivered when each call
+returns, so it comes before what its caller prints next. Faults outside
+the library's tasks and code go to the handlers the process had before,
+since hosts such as Java's take faults on purpose; and a thread of C keeps
+the signal stack it has. Two Tondo archives in one program would bring two
+runtimes with the same symbols, so a program links one.

@@ -100,6 +100,10 @@ fn check_with<'a>(
         void: Ty::ERROR,
         c_arguments: false,
         extern_names: Vec::new(),
+        exports: Vec::new(),
+        export_symbols: HashMap::new(),
+        c_functions: Vec::new(),
+        c_decls: HashMap::new(),
         consts: Vec::new(),
         const_uses: HashSet::new(),
     };
@@ -707,6 +711,13 @@ struct Checker<'a> {
     c_arguments: bool,
     /// The parameter names of each `extern fn`, for named arguments.
     extern_names: Vec<Vec<String>>,
+    /// The functions C calls by their symbol, and where each symbol is
+    /// defined.
+    exports: Vec<hir::Export>,
+    export_symbols: HashMap<String, Span>,
+    /// What a library's header declares, and each `extern type` with a body.
+    c_functions: Vec<hir::CFunction>,
+    c_decls: HashMap<crate::types::AdtId, &'a ast::TypeDecl>,
     /// The module's constants (6.5), evaluated when first used.
     consts: Vec<ConstEntry<'a>>,
     /// Where an integer constant is used: its value fits any integer type
@@ -920,7 +931,7 @@ impl<'a> Checker<'a> {
                 ast::Item::Fn(f) => Some(f),
                 _ => None,
             })
-            .partition(|f| f.foreign.is_some());
+            .partition(|f| f.foreign.is_some() && f.body.is_none());
         // A fixture's operations come last, after the toolchain's own.
         fns.sort_by_key(|f| self.fixture(f.span));
         for f in externs {
@@ -951,6 +962,9 @@ impl<'a> Checker<'a> {
             let signature = self.signature(f, owner, FnScope::default());
             let receiver = signature.receiver;
             self.signatures.push(signature);
+            if f.foreign.is_some() {
+                self.declare_export(f, id, &module.module_paths);
+            }
             bodies.push(f);
             match owner {
                 Some(owner) => self.declare_method(f, owner, receiver.is_some(), id),
@@ -1006,29 +1020,34 @@ impl<'a> Checker<'a> {
                 self.diags.error("E1802", span, "a script with top-level statements cannot also declare `main`");
             }
             functions.push(self.script_main(&module.statements));
-            FnId(functions.len() as u32 - 1)
+            Some(FnId(functions.len() as u32 - 1))
         } else if let Some(id) = explicit_main {
             self.validate_main(fns[id.0 as usize], id);
-            id
+            Some(id)
         } else if testing {
-            FnId(0)
+            Some(FnId(0))
         } else if module.library {
-            // Checked, with nothing to run.
-            return None;
+            // A library runs what C calls.
+            None
         } else {
-            self.diags.error_without_span("E1806", "the program has no `main` function and no top-level statements");
+            let message = "the program has no `main` function and no top-level statements; a library for C builds with `--library`";
+            self.diags.error_without_span("E1806", message);
             return None;
         };
         // A test build runs its tests instead of `main`.
         let main = match &module.test_package {
             Some(package) => {
                 functions.push(self.tests(module, package));
-                FnId(functions.len() as u32 - 1)
+                Some(FnId(functions.len() as u32 - 1))
             }
             None => main,
         };
         functions.extend(std::mem::take(&mut self.closure_functions).into_iter().map(|f| f.expect("checked closure")));
 
+        if module.c_library && self.c_functions.is_empty() {
+            let message = "the library publishes no function: C calls a `pub extern fn name(...) { ... }` of the package by its name";
+            self.diags.error_without_span("E1807", message);
+        }
         if self.diags.has_errors() {
             return None;
         }
@@ -1055,6 +1074,7 @@ impl<'a> Checker<'a> {
             .collect();
         // Before the program takes the types.
         self.index_finish();
+        let c_api = hir::CApi { structs: self.c_structs(), functions: std::mem::take(&mut self.c_functions) };
         Some(hir::Program {
             types: std::mem::take(&mut self.types),
             functions,
@@ -1063,6 +1083,8 @@ impl<'a> Checker<'a> {
             impls,
             display: HashMap::new(),
             externs: std::mem::take(&mut self.externs),
+            exports: std::mem::take(&mut self.exports),
+            c_api,
             tests: std::mem::take(&mut self.test_nodes),
         })
     }
@@ -1500,16 +1522,205 @@ impl<'a> Checker<'a> {
         self.meta_denied(f.span, "`extern fn`");
         let module = std::mem::replace(&mut self.module, f.module);
         let foreign = f.foreign.clone().expect("an extern fn");
+        let (params, result) = self.c_parts(f).unwrap_or_else(|| (vec![Ty::ERROR; f.params.len()], Ty::ERROR));
+        let by_value = |this: &Self, ty: Ty| matches!(this.types.kind(this.types.repr(ty)), TyKind::Adt(_));
+        if foreign.variadic && (params.iter().any(|&p| by_value(self, p)) || by_value(self, result)) {
+            let message =
+                "a C function with `...` takes and returns numbers and pointers; pass a `Pointer` to the struct";
+            self.diags.error("E1704", f.name.span, message);
+        }
+        let id = self.externs.len() as u32;
+        self.externs.push(hir::Extern {
+            name: f.name.name.clone(),
+            symbol: foreign.symbol,
+            params,
+            result,
+            variadic: foreign.variadic,
+        });
+        self.extern_names.push(f.params.iter().map(|p| p.name.name.clone()).collect());
+        self.declare_module_name(&f.name, ModuleName::Extern(id));
+        self.module = module;
+    }
+
+    /// An `extern fn` with a body: a function of Tondo that C calls by its
+    /// symbol (16.16), with the parameters and result of a C function.
+    fn declare_export(&mut self, f: &ast::FnDecl, id: FnId, paths: &[Vec<String>]) {
+        self.meta_denied(f.span, "`extern fn`");
+        let module = std::mem::replace(&mut self.module, f.module);
+        let foreign = f.foreign.clone().expect("an extern fn");
+        let parts = self.c_parts(f);
+        self.module = module;
+        if foreign.variadic {
+            let message = "Tondo cannot read C's `...`: give the function fixed parameters";
+            self.diags.error("E1704", f.name.span, message);
+        }
+        let symbol = foreign.symbol;
+        let taken = match self.export_symbols.get(&symbol) {
+            Some(&at) => Some(format!(
+                "C already calls another function `{symbol}`, at {}: give one of them another `@symbol(\"...\")`",
+                self.sources.location(at)
+            )),
+            None if symbol == "main" || symbol.starts_with("tondo_") => Some(format!(
+                "`{symbol}` is a symbol of the program itself: give the function another name, or `@symbol(\"...\")`"
+            )),
+            None => None,
+        };
+        if let Some(message) = taken {
+            self.diags.error("E1706", f.name.span, message);
+            return;
+        }
+        self.export_symbols.insert(symbol.clone(), f.name.span);
+        let Some((params, result)) = parts else { return };
+        // A library publishes the `pub` ones of the package it builds.
+        let published = f.public && paths[f.module as usize].first() == paths[0].first();
+        if published {
+            let named = f.params.iter().zip(&params);
+            self.c_functions.push(hir::CFunction {
+                symbol: symbol.clone(),
+                params: named.map(|(p, &ty)| (p.name.name.clone(), self.c_type(p.ty.as_ref(), ty))).collect(),
+                result: self.c_type(f.result.as_ref(), result),
+                docs: crate::derive::docs(self.sources, f.span),
+            });
+        }
+        let ty = self.types.intern(TyKind::CFn(params, result, false));
+        self.exports.push(hir::Export { function: id, symbol, ty, published });
+    }
+
+    /// How a header spells a type that crosses to C, from how it is
+    /// written: `std.ffi`'s aliases keep their C names.
+    fn c_type(&self, written: Option<&ast::TypeExpr>, ty: Ty) -> hir::CType {
+        use crate::types::{FloatTy, IntTy};
+        use hir::CType;
+        if ty == self.c_string {
+            return CType::Pointer(Box::new(CType::Named("char")));
+        }
+        let repr = self.types.repr(ty);
+        let kind = self.types.kind(repr).clone();
+        // The last name of the path: `CInt` of `ffi.CInt`.
+        let (name, args) = match written.map(|w| &w.kind) {
+            Some(ast::TypeKind::Path { segments, args }) => {
+                (segments.last().and_then(|s| s.name.rsplit('.').next()), &args[..])
+            }
+            _ => (None, &[][..]),
+        };
+        let alias = match name {
+            Some("CChar") => Some(("char", TyKind::Byte)),
+            Some("CShort") => Some(("short", TyKind::Int(IntTy::I16))),
+            Some("CUShort") => Some(("unsigned short", TyKind::Int(IntTy::U16))),
+            Some("CInt") => Some(("int", TyKind::Int(IntTy::I32))),
+            Some("CUInt") => Some(("unsigned int", TyKind::Int(IntTy::U32))),
+            Some("CLong") => Some(("long", TyKind::Int(IntTy::I64))),
+            Some("CULong") => Some(("unsigned long", TyKind::Int(IntTy::U64))),
+            Some("CLongLong") => Some(("long long", TyKind::Int(IntTy::I64))),
+            Some("CULongLong") => Some(("unsigned long long", TyKind::Int(IntTy::U64))),
+            Some("CSize") => Some(("size_t", TyKind::Int(IntTy::U64))),
+            Some("CSSize") => Some(("ssize_t", TyKind::Int(IntTy::I64))),
+            Some("CFloat") => Some(("float", TyKind::Float(FloatTy::F32))),
+            Some("CDouble") => Some(("double", TyKind::Float(FloatTy::F64))),
+            Some("CBool") => Some(("bool", TyKind::Bool)),
+            _ => None,
+        };
+        if let Some((c, aliased)) = alias
+            && kind == aliased
+        {
+            return CType::Named(c);
+        }
+        match kind {
+            TyKind::Int(int) => CType::Named(match int {
+                IntTy::I8 => "int8_t",
+                IntTy::I16 => "int16_t",
+                IntTy::I32 => "int32_t",
+                IntTy::I64 => "int64_t",
+                IntTy::U8 => "uint8_t",
+                IntTy::U16 => "uint16_t",
+                IntTy::U32 => "uint32_t",
+                IntTy::U64 => "uint64_t",
+            }),
+            TyKind::Byte => CType::Named("uint8_t"),
+            TyKind::Float(FloatTy::F32) => CType::Named("float"),
+            TyKind::Float(FloatTy::F64) => CType::Named("double"),
+            TyKind::Bool => CType::Named("bool"),
+            TyKind::Pointer(inner) => CType::Pointer(Box::new(self.c_type(args.first(), inner))),
+            TyKind::Option(inner) => {
+                let written = match written.map(|w| &w.kind) {
+                    Some(ast::TypeKind::Optional(inner)) => Some(&**inner),
+                    _ => None,
+                };
+                self.c_type(written, inner)
+            }
+            TyKind::CFn(params, result, _) => {
+                let (written_params, written_result) = match written.map(|w| &w.kind) {
+                    Some(ast::TypeKind::Fn { params, result, .. }) => (&params[..], result.as_deref()),
+                    _ => (&[][..], None),
+                };
+                let params = params.iter().enumerate().map(|(i, &p)| self.c_type(written_params.get(i), p)).collect();
+                CType::Function(params, Box::new(self.c_type(written_result, result)))
+            }
+            TyKind::CArray(inner, count) => CType::Array(Box::new(self.c_type(written, inner)), count),
+            TyKind::Adt(_) if repr == self.void => CType::Named("void"),
+            TyKind::Adt(id) => CType::Struct(self.types.adt(id).name.clone()),
+            _ => CType::Named("void"),
+        }
+    }
+
+    /// The `extern type`s the published functions reach, each after those
+    /// it holds by value.
+    fn c_structs(&self) -> Vec<hir::CStruct> {
+        fn reach(this: &Checker, ty: &hir::CType, seen: &mut HashSet<String>, out: &mut Vec<hir::CStruct>) {
+            match ty {
+                hir::CType::Named(_) => {}
+                hir::CType::Pointer(inner) | hir::CType::Array(inner, _) => reach(this, inner, seen, out),
+                hir::CType::Function(params, result) => {
+                    for ty in params.iter().chain([&**result]) {
+                        reach(this, ty, seen, out);
+                    }
+                }
+                hir::CType::Struct(name) => {
+                    if !seen.insert(name.clone()) {
+                        return;
+                    }
+                    let found = this.c_decls.iter().find(|(id, _)| this.types.adt(**id).name == *name);
+                    let Some((&id, decl)) = found else { return };
+                    let written: Vec<&ast::FieldDecl> = match &decl.body {
+                        ast::TypeBody::Record(fields) => fields.iter().collect(),
+                        _ => Vec::new(),
+                    };
+                    let fields: Vec<(String, hir::CType)> = match &this.types.adt(id).kind {
+                        crate::types::AdtKind::Record(fields) => fields
+                            .iter()
+                            .zip(&written)
+                            .map(|(field, decl)| (field.name.clone(), this.c_type(Some(&decl.ty), field.ty)))
+                            .collect(),
+                        _ => Vec::new(),
+                    };
+                    for (_, field) in &fields {
+                        reach(this, field, seen, out);
+                    }
+                    out.push(hir::CStruct {
+                        name: name.clone(),
+                        fields,
+                        layout: this.types.foreign.get(&id).cloned().unwrap_or_default(),
+                        docs: crate::derive::docs(this.sources, decl.span),
+                    });
+                }
+            }
+        }
+        let mut seen = HashSet::new();
+        let mut out = Vec::new();
+        for function in &self.c_functions {
+            for ty in function.params.iter().map(|(_, ty)| ty).chain([&function.result]) {
+                reach(self, ty, &mut seen, &mut out);
+            }
+        }
+        out
+    }
+
+    /// The parameters and result of a C function's declaration, which
+    /// cross to C; none for one with type parameters.
+    fn c_parts(&mut self, f: &ast::FnDecl) -> Option<(Vec<Ty>, Ty)> {
         if !f.generics.is_empty() {
             self.diags.error("E1704", f.generics[0].name.span, "an `extern fn` takes no type parameters: C has none");
-            let id = self.externs.len() as u32;
-            let params = vec![Ty::ERROR; f.params.len()];
-            let (name, symbol) = (f.name.name.clone(), foreign.symbol);
-            self.externs.push(hir::Extern { name, symbol, params, result: Ty::ERROR, variadic: foreign.variadic });
-            self.extern_names.push(f.params.iter().map(|p| p.name.name.clone()).collect());
-            self.declare_module_name(&f.name, ModuleName::Extern(id));
-            self.module = module;
-            return;
+            return None;
         }
         if let Some(owner) = &f.owner {
             let message = "an `extern fn` is a module function, not a method: remove the type before its name";
@@ -1524,7 +1735,7 @@ impl<'a> Checker<'a> {
                 }
                 (name, _) => {
                     let message = format!(
-                        "unknown annotation `@{name}`; an `extern fn` takes `@symbol(\"name\")`, the C function it calls"
+                        "unknown annotation `@{name}`; an `extern fn` takes `@symbol(\"name\")`, the name C knows it by"
                     );
                     self.diags.error("E1001", annotation.span, message);
                 }
@@ -1564,23 +1775,7 @@ impl<'a> Checker<'a> {
             }
             None => Ty::UNIT,
         };
-        let by_value = |this: &Self, ty: Ty| matches!(this.types.kind(this.types.repr(ty)), TyKind::Adt(_));
-        if foreign.variadic && (params.iter().any(|&p| by_value(self, p)) || by_value(self, result)) {
-            let message =
-                "a C function with `...` takes and returns numbers and pointers; pass a `Pointer` to the struct";
-            self.diags.error("E1704", f.name.span, message);
-        }
-        let id = self.externs.len() as u32;
-        self.externs.push(hir::Extern {
-            name: f.name.name.clone(),
-            symbol: foreign.symbol,
-            params,
-            result,
-            variadic: foreign.variadic,
-        });
-        self.extern_names.push(f.params.iter().map(|p| p.name.name.clone()).collect());
-        self.declare_module_name(&f.name, ModuleName::Extern(id));
-        self.module = module;
+        Some((params, result))
     }
 
     /// Reports a type that cannot cross to C (`E1703`): C's numbers,
@@ -2147,7 +2342,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn declare_types(&mut self, items: &[ast::Item]) {
+    fn declare_types(&mut self, items: &'a [ast::Item]) {
         let mut declared = Vec::new();
         let mut templates = Vec::new();
         for item in items {
@@ -2225,6 +2420,7 @@ impl<'a> Checker<'a> {
             {
                 let layout = self.c_layout(decl);
                 self.types.foreign.insert(id, layout);
+                self.c_decls.insert(id, decl);
             }
             self.declare_type_name(name, TypeName::Nominal(ty));
             if let ast::Item::Type(ast::TypeDecl { body: ast::TypeBody::Newtype(_), .. }) = item {

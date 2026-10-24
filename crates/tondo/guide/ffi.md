@@ -21,3 +21,26 @@ fn main() {
   library. `tondo bind header.h` writes the `extern` declarations of a
   header for you.
 - `Pointer[T]` and raw memory exist only inside `unsafe`.
+
+## Libraries for C
+
+`tondo build --library` compiles a project without `main` into a static
+library, `lib<name>.a`, and its header, `<name>.h`. C calls its
+`pub extern fn`s, which have a body, by their names:
+
+```tondo library
+import std.ffi
+
+/// The words of `text`, separated by spaces.
+pub extern fn words_count(text: ffi.CString): ffi.CSize {
+    let words = unsafe { ffi.fromCString(text) }.split(" ")
+    UInt64(words.length()).unwrapOr(0u64)
+}
+```
+
+- Their parameters and results are C's types, as for an `extern fn`; a
+  Tondo value goes to C as `ffi.context(value)`.
+- The build prints how to link the library: `cc app.c libwords.a ...`.
+- Each call runs as a task on the thread that calls; it may wait, and the
+  tasks it spawns go on after it returns.
+- `tondo check --library` and `tondo test --library` check and test it.

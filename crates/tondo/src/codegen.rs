@@ -279,6 +279,8 @@ enum Rt {
     CVariadic,
     /// Runs the body of a callback C made.
     Callback,
+    /// Runs the program, from the process's `main`.
+    Main,
 }
 
 impl Rt {
@@ -555,7 +557,8 @@ impl Rt {
             Rt::CString => ("tondo_rt_c_string", &[I64, I64], &[I64]),
             Rt::CStringFree => ("tondo_rt_c_string_free", &[I64], &[]),
             Rt::CVariadic => ("tondo_rt_c_variadic", &[I64, I64], &[]),
-            Rt::Callback => ("tondo_rt_callback", &[I64, I64], &[]),
+            Rt::Callback => ("tondo_rt_callback", &[I64, I64, I64], &[]),
+            Rt::Main => ("tondo_rt_main", &[I64], &[I32]),
             Rt::JsonReaderRelease => ("tondo_rt_json_reader_release", &[I64], &[]),
             Rt::JsonWriterRelease => ("tondo_rt_json_writer_release", &[I64], &[]),
             Rt::PlanRelease => ("tondo_rt_process_plan_release", &[I64], &[]),
@@ -700,6 +703,7 @@ pub fn compile(
         c_functions: HashMap::new(),
         callbacks: HashMap::new(),
         pending_callbacks: Vec::new(),
+        library: None,
         traced: Vec::new(),
         debug: None,
         debug_functions: Vec::new(),
@@ -718,6 +722,9 @@ pub fn compile(
             .map_err(|e| e.to_string())?;
         cg.functions.push(id);
     }
+    for (index, export) in program.exports.iter().enumerate() {
+        cg.export(index, export)?;
+    }
     let mut context = cg.module.make_context();
     let mut builder_context = FunctionBuilderContext::new();
     // The IR of every function is built here, in order; `compile_all`
@@ -733,15 +740,28 @@ pub fn compile(
         let sites = FnCodegen::new(&mut cg, body, bodies, &mut context.func, &mut builder_context).run();
         // A test's trace ends at the test, without the runner's tree that
         // calls it.
-        let runner = !program.tests.is_empty() && index == program.main.0 as usize;
+        let runner = !program.tests.is_empty() && program.main.is_some_and(|main| index == main.0 as usize);
         let traced = !runner && !body.name.starts_with("suite ");
         job(cg.functions[index], &mut context, traced.then_some(body.name.as_str()), sites);
         cg.module.clear_context(&mut context);
     }
-    let main = program.main.0 as usize;
     let trace = cg.module.declare_data("tondo_trace", Linkage::Local, false, false).map_err(|e| e.to_string())?;
-    let entry = cg.entry_point(main, bodies[main].result, &program.tests, trace, &mut context, &mut builder_context)?;
-    job(entry, &mut context, None, Vec::new());
+    match program.main {
+        Some(main) => {
+            let main = main.0 as usize;
+            let entry =
+                cg.entry_point(main, bodies[main].result, &program.tests, trace, &mut context, &mut builder_context)?;
+            job(entry, &mut context, None, Vec::new());
+            cg.module.clear_context(&mut context);
+            let start = cg.process_main(entry, &mut context, &mut builder_context)?;
+            job(start, &mut context, None, Vec::new());
+        }
+        None => {
+            let init = cg.library_start(trace, &mut context, &mut builder_context)?;
+            job(init, &mut context, None, Vec::new());
+            cg.library = Some(init);
+        }
+    }
     cg.module.clear_context(&mut context);
     while let Some((target, thunk)) = cg.pending_thunks.pop() {
         context.func.signature = cg.module.declarations().get_function_decl(thunk).signature.clone();
@@ -812,6 +832,8 @@ struct Codegen<'a> {
     /// function that makes the call from a frame.
     callbacks: HashMap<(FnId, Ty), FuncId>,
     pending_callbacks: Vec<Callback>,
+    /// In a library, what starts it: the first call from C runs it.
+    library: Option<FuncId>,
     /// The functions of the stack trace table, with their calls.
     traced: Vec<Traced>,
     /// A debug build's probes (toolchain 7.6): each function's name and
@@ -1435,6 +1457,67 @@ impl Codegen<'_> {
     /// `tondo_main`, called by the runtime's C `main`. It returns the process
     /// status: 0, or 1 after reporting an error that a fallible `main`
     /// returned (20.10).
+    /// What a library runs before the first call from C: it hands the
+    /// runtime its tables.
+    fn library_start(
+        &mut self,
+        trace: DataId,
+        context: &mut cranelift_codegen::Context,
+        fbc: &mut FunctionBuilderContext,
+    ) -> Result<FuncId, String> {
+        let signature = self.module.make_signature();
+        let id =
+            self.module.declare_function("tondo_library", Linkage::Local, &signature).map_err(|e| e.to_string())?;
+        context.func.signature = signature;
+        context.func.name = UserFuncName::user(1, 2);
+        let fb = FunctionBuilder::new(&mut context.func, fbc);
+        let mut e = Emit { cg: self, fb };
+        let block = e.fb.create_block();
+        e.fb.switch_to_block(block);
+        let trace = e.cg.module.declare_data_in_func(trace, e.fb.func);
+        let trace = e.fb.ins().symbol_value(POINTER, trace);
+        e.call_rt(Rt::Trace, &[trace]);
+        if let Some(debug) = e.cg.debug {
+            let debug = e.cg.module.declare_data_in_func(debug, e.fb.func);
+            let debug = e.fb.ins().symbol_value(POINTER, debug);
+            e.call_rt(Rt::DebugTable, &[debug]);
+        }
+        e.fb.ins().return_(&[]);
+        e.fb.seal_all_blocks();
+        let config = e.cg.module.isa().frontend_config();
+        e.fb.finalize(config);
+        Ok(id)
+    }
+
+    /// The process's `main`, which C's start calls: the runtime runs
+    /// `tondo_main` and gives its status.
+    fn process_main(
+        &mut self,
+        entry: FuncId,
+        context: &mut cranelift_codegen::Context,
+        fbc: &mut FunctionBuilderContext,
+    ) -> Result<FuncId, String> {
+        let mut signature = self.module.make_signature();
+        signature.params = vec![AbiParam::new(types::I32), AbiParam::new(POINTER)];
+        signature.returns.push(AbiParam::new(types::I32));
+        let id = self.module.declare_function("main", Linkage::Export, &signature).map_err(|e| e.to_string())?;
+        context.func.signature = signature;
+        context.func.name = UserFuncName::user(1, 1);
+        let fb = FunctionBuilder::new(&mut context.func, fbc);
+        let mut e = Emit { cg: self, fb };
+        let block = e.fb.create_block();
+        e.fb.append_block_params_for_function_params(block);
+        e.fb.switch_to_block(block);
+        let entry = e.cg.module.declare_func_in_func(entry, e.fb.func);
+        let entry = e.fb.ins().func_addr(POINTER, entry);
+        let status = e.call_rt(Rt::Main, &[entry]).expect("an exit status");
+        e.fb.ins().return_(&[status]);
+        e.fb.seal_all_blocks();
+        let config = e.cg.module.isa().frontend_config();
+        e.fb.finalize(config);
+        Ok(id)
+    }
+
     fn entry_point(
         &mut self,
         main: usize,

@@ -2,6 +2,10 @@
 //! `tondo_rt_start`, where the kernel enters, hands the arguments to the C
 //! library's `__libc_start_main`, which calls `main`. A system linker
 //! brings its own `_start` from the C toolchain instead, and drops these.
+//!
+//! A library has no `main`, and the C toolchain makes a shared library
+//! without `__init_array_start`: weak references, through the GOT, let the
+//! library's code be linked anywhere.
 
 type Constructor = unsafe extern "C" fn(i32, *const *const u8, *const *const u8);
 
@@ -40,12 +44,14 @@ std::arch::global_asm!(
     // The end of the stack.
     "push rsp",
     "xor r8d, r8d",
-    "lea rcx, [rip + {init}]",
-    "lea rdi, [rip + {main}]",
+    "mov rcx, qword ptr [rip + {init}@GOTPCREL]",
+    "mov rdi, qword ptr [rip + main@GOTPCREL]",
     "call qword ptr [rip + __libc_start_main@GOTPCREL]",
     "hlt",
+    ".weak main",
+    ".weak __init_array_start",
+    ".weak __init_array_end",
     init = sym tondo_rt_init,
-    main = sym crate::main,
 );
 
 #[cfg(target_arch = "aarch64")]
@@ -61,13 +67,15 @@ std::arch::global_asm!(
     "ldr x1, [sp]",
     "add x2, sp, #8",
     "mov x6, sp",
-    "adrp x0, {main}",
-    "add x0, x0, :lo12:{main}",
-    "adrp x3, {init}",
-    "add x3, x3, :lo12:{init}",
+    "adrp x0, :got:main",
+    "ldr x0, [x0, :got_lo12:main]",
+    "adrp x3, :got:{init}",
+    "ldr x3, [x3, :got_lo12:{init}]",
     "mov x4, #0",
     "bl __libc_start_main",
     "brk #0",
+    ".weak main",
+    ".weak __init_array_start",
+    ".weak __init_array_end",
     init = sym tondo_rt_init,
-    main = sym crate::main,
 );

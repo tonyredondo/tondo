@@ -6266,6 +6266,33 @@ que el runtime no haya creado. Si existe, C podría llamar a una función que
 guarda, como hace un timer o una librería con threads propios, y el runtime
 vuelve a mirar cada poco en lugar de terminar el programa.
 
+#### Funciones que C llama por su símbolo
+
+Un `extern fn` con cuerpo es una función de Tondo que C llama por su símbolo:
+el nombre declarado, o el de `@symbol("nombre")`. Sus parámetros y su
+resultado siguen las reglas de un `extern fn` declarado: tipos que cruzan, y
+`Unit` o `Never` como resultado; no tiene parámetros de tipo, receptor, modos,
+valores por defecto ni `...` (`E1704`).
+
+~~~tondo
+import std.ffi
+
+/// Las palabras de `text`, separadas por espacios.
+pub extern fn words_count(text: ffi.CString): ffi.CSize {
+    let words = unsafe { ffi.fromCString(text) }.split(" ")
+    UInt64(words.length()).unwrapOr(0u64)
+}
+~~~
+
+Tondo la llama como a cualquier función, sin `unsafe`, y nombrada como valor es
+su dirección, de tipo `extern fn(...)`. C la llama como a las funciones de la
+sección anterior: corre en la tarea que llamó a C o, cuando la llama un thread
+de C, como una tarea nueva que empieza en ese thread y sigue en un worker si
+espera, mientras el thread espera a que termine. Dos funciones no pueden tener
+el mismo símbolo, ni uno del propio programa: `main` y los que empiezan por
+`tondo_` (`E1706`). Una librería para C (toolchain 7.7) publica las `pub` de su
+paquete.
+
 #### Llamadas largas y enlace
 
 Una función de C ocupa su worker mientras dura. Si una llamada sigue en C
@@ -7874,12 +7901,14 @@ oculten un diagnóstico independiente.
 | `E1703` | `invalid-c-type` | Un tipo que no cruza a C en una declaración de C, o un tipo opaco que se construye o se lee (16.16). |
 | `E1704` | `invalid-extern-declaration` | Un `extern fn` o `extern type` con genéricos, receptor, modos, valores por defecto o anotaciones que no le corresponden. |
 | `E1705` | `invalid-callback` | Un valor que C no puede llamar, como un cierre con capturas, donde se espera un `extern fn(...)`. |
+| `E1706` | `duplicate-c-symbol` | Dos funciones que C llama por su símbolo tienen el mismo, o una tiene uno del propio programa: `main` o uno que empieza por `tondo_`. |
 | `E1801` | `script-imported-as-module` | Un archivo con statements se importa como módulo. |
 | `E1802` | `duplicate-main` | El target contiene más de un entry point. |
 | `E1803` | `invalid-main` | Existe `main`, pero el target, visibilidad, parámetros, modificadores u outcome no lo permiten. |
 | `E1804` | `invalid-top-level-statement` | Un módulo contiene ejecución superior. |
 | `E1805` | `invalid-shebang` | Shebang ausente de la primera línea o usado fuera de un script raíz. |
 | `E1806` | `missing-main` | Un target ejecutable hosted no contiene `main` válido ni script raíz. |
+| `E1807` | `library-without-functions` | Una librería para C (toolchain 7.7) no publica ninguna `pub extern fn` con cuerpo. |
 | `E1901` | `nonconstant-expression` | Un `const` usa una operación no evaluable en compilación. |
 | `E1902` | `constant-cycle` | Dependencias entre constantes forman un ciclo. |
 | `E1903` | `constant-panic` | La evaluación constante produciría un pánico. |

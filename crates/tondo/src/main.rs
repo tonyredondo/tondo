@@ -14,7 +14,11 @@ usage:
   tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--debug]
                                                        compile a native executable (static on Linux;
                                                        without its symbol table)
-  tondo check [<project>|<file.to>] [--json]           report diagnostics only (as JSON)
+  tondo build --library [<project>|<file.to>] [--output <dir>] [--debug]
+                                                       compile a library for C, lib<name>.a, with its
+                                                       header <name>.h
+  tondo check [<project>|<file.to>] [--library] [--json]
+                                                       report diagnostics only (of a library; as JSON)
   tondo expand [<project>|<file.to>]                   show what each `derive` expanded to
   tondo fmt [--check | --compact] <file.to>...         format files canonically, or print them compactly
   tondo api [<module>|<file.to>] [--private] [--list] [--project <dir>]
@@ -26,8 +30,8 @@ usage:
             [--retry <n>] [--allow-flaky] [--repeat <n>] [--codeowners auto|none|<path>]
             [--show-output] [--allow-empty] [--deny-skips] [--test-format human|json]
             [--report json=<path> | junit=<path>]... [--diagnostic-format human|json]
-            [--artifacts <dir>] [--update-snapshots] [--static] [--debug]
-                                                       run the tests of a project
+            [--artifacts <dir>] [--update-snapshots] [--static] [--debug] [--library]
+                                                       run the tests of a project (of a library)
   tondo doc-test [--edition 0.1] <markdown>            check the examples of a document (as JSON)
   tondo lsp                                            serve an editor: diagnostics, hover, definitions,
                                                        references, rename, completion, highlighting
@@ -136,8 +140,8 @@ fn program_name(path: &Path) -> Result<PathBuf, String> {
 }
 
 /// Prints diagnostics; returns the analysis only when it has no errors.
-fn analyze(path: &Path) -> Result<Option<driver::Analysis>, String> {
-    let analysis = driver::analyze(path)?;
+fn analyze(path: &Path, library: bool) -> Result<Option<driver::Analysis>, String> {
+    let analysis = if library { driver::analyze_library(path)? } else { driver::analyze(path)? };
     if !analysis.diags.list.is_empty() {
         eprint!("{}", analysis.diags.render(&analysis.sources));
     }
@@ -145,18 +149,18 @@ fn analyze(path: &Path) -> Result<Option<driver::Analysis>, String> {
 }
 
 fn check_command(args: &[OsString]) -> Result<ExitCode, String> {
-    let (path, rest) = source_argument(args);
-    let json = match rest {
-        [] => false,
-        [flag] if flag == "--json" => true,
-        _ => return Err(format!("unexpected arguments\n{USAGE}")),
-    };
+    let (json, library) = (args.iter().any(|a| a == "--json"), args.iter().any(|a| a == "--library"));
+    let args: Vec<OsString> = args.iter().filter(|a| *a != "--json" && *a != "--library").cloned().collect();
+    let (path, rest) = source_argument(&args);
+    if !rest.is_empty() {
+        return Err(format!("unexpected arguments\n{USAGE}"));
+    }
     if json {
-        let analysis = driver::analyze(&path)?;
+        let analysis = if library { driver::analyze_library(&path)? } else { driver::analyze(&path)? };
         print!("{}", analysis.diags.render_json(&analysis.sources, &analysis.source_id));
         return Ok(if analysis.program.is_some() { ExitCode::SUCCESS } else { ExitCode::FAILURE });
     }
-    Ok(if analyze(&path)?.is_some() { ExitCode::SUCCESS } else { ExitCode::FAILURE })
+    Ok(if analyze(&path, library)?.is_some() { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }
 
 /// Shows the `impl` each `derive` of the program expanded to (27.3).
@@ -206,7 +210,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         update_snapshots: false,
     };
     let mut diagnostics_json = false;
-    let (mut statically, mut debug) = (false, false);
+    let (mut statically, mut debug, mut library) = (false, false, false);
     let usage = |message: String| format!("{message}\n{USAGE}");
     // A count written canonically: `0` or digits without a leading zero.
     let count = |text: &str, flag: &str| {
@@ -304,6 +308,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             "--allow-empty" => options.allow_empty = true,
             "--static" => statically = true,
             "--debug" => debug = true,
+            "--library" => library = true,
             "--deny-skips" => options.deny_skips = true,
             "--allow-flaky" => options.allow_flaky = true,
             "--update-snapshots" => options.update_snapshots = true,
@@ -387,7 +392,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     let tree = match runner::Tree::load(&tree_file).filter(|_| executable.is_file()) {
         Some(tree) => tree,
         None => {
-            let analysis = driver::analyze_tests(&path)?;
+            let analysis = driver::analyze_tests(&path, library)?;
             if diagnostics_json {
                 eprint!("{}", analysis.diags.render_json(&analysis.sources, &analysis.source_id));
             } else if !analysis.diags.list.is_empty() {
@@ -876,6 +881,10 @@ fn link_options(args: &[OsString]) -> Result<(BuildOptions, Vec<OsString>), Stri
 }
 
 fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
+    if let Some(at) = args.iter().position(|a| a == "--library") {
+        let args = [&args[..at], &args[at + 1..]].concat();
+        return library_command(&args);
+    }
     let (path, rest) = source_argument(args);
     let (options, rest) = link_options(rest)?;
     let BuildOptions { libraries, statically, debug } = options;
@@ -896,11 +905,47 @@ fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
         Some(output) => output,
         None => program_name(&path)?,
     };
-    let Some(analysis) = analyze(&path)? else {
+    let Some(analysis) = analyze(&path, false)? else {
         return Ok(ExitCode::FAILURE);
     };
     let libraries = [analysis.libraries.clone(), libraries].concat();
     driver::link(&driver::object(&analysis, debug)?, &output, &libraries, driver::Linking { strip, statically })?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `tondo build --library`: a library for C (toolchain 7).
+fn library_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let (path, rest) = source_argument(args);
+    let (mut output, mut debug) = (None, false);
+    let mut rest = rest.iter();
+    while let Some(arg) = rest.next() {
+        match arg.to_str() {
+            Some("--output" | "-o") if output.is_none() => match rest.next() {
+                Some(dir) => output = Some(PathBuf::from(dir)),
+                None => return Err(format!("--output needs a directory\n{USAGE}")),
+            },
+            Some("--debug") if !debug => debug = true,
+            Some("--static") => {
+                return Err("--static builds executables; a library is linked into its host, as the host is".into());
+            }
+            Some("--link" | "--strip") => {
+                return Err(format!(
+                    "{} builds executables: a library lists its C libraries for its host",
+                    arg.display()
+                ));
+            }
+            _ => return Err(format!("unexpected arguments\n{USAGE}")),
+        }
+    }
+    let name = program_name(&path)?.to_string_lossy().into_owned();
+    let Some(analysis) = analyze(&path, true)? else {
+        return Ok(ExitCode::FAILURE);
+    };
+    let object = driver::object(&analysis, debug)?;
+    let dir = output.unwrap_or_else(|| PathBuf::from("."));
+    let linking = driver::library(&analysis, &object, &dir, &name)?;
+    println!("wrote {} and {}", dir.join(format!("lib{name}.a")).display(), dir.join(format!("{name}.h")).display());
+    println!("{linking}");
     Ok(ExitCode::SUCCESS)
 }
 
@@ -938,7 +983,7 @@ fn cached_executable(path: &Path, options: &BuildOptions) -> Result<Option<PathB
     let dir = driver::cache_entry("run", &key);
     let executable = dir.join(program_name(path)?);
     if !executable.exists() {
-        let Some(analysis) = analyze(path)? else {
+        let Some(analysis) = analyze(path, false)? else {
             return Ok(None);
         };
         let object = driver::object(&analysis, *debug)?;

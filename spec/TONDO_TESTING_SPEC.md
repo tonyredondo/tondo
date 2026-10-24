@@ -897,7 +897,8 @@ Tondo.
 
 Un target de test no busca ni ejecuta `main`. Si el módulo probado contiene un
 `main` válido, se comprueba como código de producción pero no actúa como entry
-point del test.
+point del test. Con `--library`, el código de producción se comprueba como una
+librería para C (toolchain 7.7), sin `main`.
 
 Una fuente de test no puede contener sentencias top-level ni un script raíz. Los
 helpers son declaraciones y los efectos comienzan dentro del setup de una suite

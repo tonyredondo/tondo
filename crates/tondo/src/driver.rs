@@ -111,7 +111,7 @@ pub fn analyze_for_editor(
     open: std::collections::HashMap<PathBuf, String>,
 ) -> Result<Analysis, String> {
     OPEN.with(|o| *o.borrow_mut() = open);
-    let analysis = analyze_with(path, tests, false, true);
+    let analysis = analyze_with(path, tests, false, true, false);
     OPEN.with(|o| o.borrow_mut().clear());
     analysis
 }
@@ -119,34 +119,36 @@ pub fn analyze_for_editor(
 /// Reads, parses and checks a program: a project directory (toolchain 3)
 /// or a single source file.
 pub fn analyze(path: &Path) -> Result<Analysis, String> {
-    analyze_build(path, false)
+    analyze_with(path, false, false, false, false)
+}
+
+/// Reads, parses and checks a library for C (toolchain 7): without `main`,
+/// it publishes `pub extern fn`s.
+pub fn analyze_library(path: &Path) -> Result<Analysis, String> {
+    analyze_with(path, false, false, false, true)
 }
 
 /// Reads, parses and checks the test build of a project (testing 5): its
 /// sources, its unit test companions and its integration test roots. The
-/// sources are checked first on their own, so tests cannot make code that
-/// is wrong without them build.
-pub fn analyze_tests(path: &Path) -> Result<Analysis, String> {
+/// sources are checked first on their own, as a program or as a library,
+/// so tests cannot make code that is wrong without them build.
+pub fn analyze_tests(path: &Path, library: bool) -> Result<Analysis, String> {
     if !path.is_dir() {
         return Err(format!("{} is not a project: `tondo test` runs the tests of a project directory", path.display()));
     }
-    let production = analyze(path)?;
+    let production = analyze_with(path, false, false, false, library)?;
     if production.diags.has_errors() {
         return Ok(production);
     }
-    analyze_build(path, true)
+    analyze_with(path, true, false, false, false)
 }
 
 /// Reads, parses and checks a provider for the `meta` profile (27.7).
 pub fn analyze_meta(path: &Path) -> Result<Analysis, String> {
-    analyze_with(path, false, true, false)
+    analyze_with(path, false, true, false, false)
 }
 
-fn analyze_build(path: &Path, tests: bool) -> Result<Analysis, String> {
-    analyze_with(path, tests, false, false)
-}
-
-fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool) -> Result<Analysis, String> {
+fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, library: bool) -> Result<Analysis, String> {
     let mut expansions = Vec::new();
     let mut sources = SourceMap::default();
     let mut diags = Diagnostics::default();
@@ -305,6 +307,9 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool) -> Result<An
         diags.sort(&sources);
         return Ok(Analysis { sources, diags, program: None, source_id, libraries, meta, expansions, index });
     }
+    let mut module = module;
+    module.library |= library;
+    module.c_library = library;
     let program = if diags.has_errors() { None } else { check::check(&module, &sources, &mut diags, meta) };
     let program = program.and_then(|program| mono::monomorphize(program, &mut diags));
     drop_dependency_warnings(&mut diags, &sources, &dependencies);
@@ -437,6 +442,46 @@ pub fn test_inputs(path: &Path) -> Result<Vec<PathBuf>, String> {
     let (companions, roots) = project::test_sources(path, "")?;
     inputs.extend(companions.into_iter().chain(roots).map(|f| f.path));
     Ok(inputs)
+}
+
+/// Writes a library for C (toolchain 7) into `dir`: `lib<name>.a`, with
+/// the program's object and the runtime, and `<name>.h`, which declares
+/// what it publishes. Gives how a C program links it.
+pub fn library(analysis: &Analysis, object: &[u8], dir: &Path, name: &str) -> Result<String, String> {
+    let program = analysis.program.as_ref().expect("library() requires a checked program");
+    let archive = format!("lib{name}.a");
+    let mut native: Vec<String> = Vec::new();
+    for library in &analysis.libraries {
+        native.extend(
+            match library.strip_prefix("static:") {
+                Some(name) => format!("-l{name}"),
+                None if library.contains('/') => library.clone(),
+                None => format!("-l{library}"),
+            }
+            .split(' ')
+            .map(str::to_string),
+        );
+    }
+    let strip = if cfg!(target_os = "macos") { "-Wl,-dead_strip" } else { "-Wl,--gc-sections" };
+    let linking = format!(
+        "Link it: cc app.c {} {strip} {}",
+        dir.join(&archive).display(),
+        native.iter().map(String::as_str).chain(RUNTIME_LINK_ARGS.split_whitespace()).collect::<Vec<_>>().join(" ")
+    );
+    let path = carried("libtondo_runtime", RUNTIME)?;
+    let runtime = std::fs::read(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let parsed = object::read::archive::ArchiveFile::parse(&runtime[..]).map_err(|e| e.to_string())?;
+    let mut members = vec![(format!("{name}.o"), object)];
+    for member in parsed.members() {
+        let member = member.map_err(|e| e.to_string())?;
+        let data = member.data(&runtime[..]).map_err(|e| e.to_string())?;
+        members.push((String::from_utf8_lossy(member.name()).into_owned(), data));
+    }
+    let bytes = crate::link::archive(&members, cfg!(target_os = "macos"));
+    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    write_atomic(&dir.join(&archive), &bytes)?;
+    write_atomic(&dir.join(format!("{name}.h")), crate::header::header(name, &program.c_api, &linking).as_bytes())?;
+    Ok(linking)
 }
 
 /// Lowers a checked program to a native object file; a debug build has

@@ -14,7 +14,8 @@ pub struct LocalId(pub u32);
 pub struct Program {
     pub types: Types,
     pub functions: Vec<Function>,
-    pub main: FnId,
+    /// None in a library, which runs what C calls.
+    pub main: Option<FnId>,
     pub traits: Vec<TraitInfo>,
     pub impls: Vec<ImplInfo>,
     /// After monomorphization: the user `Display.display` of each type whose
@@ -22,6 +23,10 @@ pub struct Program {
     pub display: HashMap<Ty, FnId>,
     /// The `extern fn` declarations, by `Callee::Extern` index.
     pub externs: Vec<Extern>,
+    /// The `extern fn`s with a body, which C calls by their symbols.
+    pub exports: Vec<Export>,
+    /// What a library publishes, for its header.
+    pub c_api: CApi,
     /// In a test build, the tree of suites and tests, the root first;
     /// `main` then runs the root's members.
     pub tests: Vec<TestNodeInfo>,
@@ -40,6 +45,57 @@ pub struct TestNodeInfo {
     pub parent: u32,
     pub suite: bool,
     pub span: Span,
+}
+
+/// What a library's header declares (toolchain 7): the functions it
+/// publishes, and the C structs they reach, each after those it holds.
+#[derive(Clone, Default)]
+pub struct CApi {
+    pub functions: Vec<CFunction>,
+    pub structs: Vec<CStruct>,
+}
+
+#[derive(Clone)]
+pub struct CFunction {
+    pub symbol: String,
+    pub params: Vec<(String, CType)>,
+    pub result: CType,
+    /// Its `///` documentation.
+    pub docs: Option<String>,
+}
+
+/// An `extern type`, as C declares it.
+#[derive(Clone)]
+pub struct CStruct {
+    pub name: String,
+    pub fields: Vec<(String, CType)>,
+    pub layout: crate::types::CLayout,
+    pub docs: Option<String>,
+}
+
+/// A type that crosses to C, as a header spells it: `std.ffi`'s aliases by
+/// their C names, Tondo's numbers by `stdint.h`'s.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CType {
+    Named(&'static str),
+    /// An `extern type`, by name.
+    Struct(String),
+    Pointer(Box<CType>),
+    /// The address of a function: its parameters and result.
+    Function(Vec<CType>, Box<CType>),
+    /// A `@count(n)` field.
+    Array(Box<CType>, u32),
+}
+
+/// An `extern fn` with a body: a function C calls by its symbol (16.16).
+#[derive(Clone)]
+pub struct Export {
+    pub function: FnId,
+    pub symbol: String,
+    /// The function as C calls it: an `extern fn(...)` type.
+    pub ty: Ty,
+    /// `pub`, in the package a library builds: the library publishes it.
+    pub published: bool,
 }
 
 /// An `extern fn`: a C function the program calls by its symbol.

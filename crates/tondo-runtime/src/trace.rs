@@ -446,26 +446,42 @@ thread_local! {
     static SIGNAL: std::cell::RefCell<Option<SignalStack>> = const { std::cell::RefCell::new(None) };
 }
 
+const FAULTS: [i32; 5] = [libc::SIGSEGV, libc::SIGBUS, libc::SIGABRT, libc::SIGILL, libc::SIGFPE];
+
+/// The handlers there were before, which in a library get the faults that
+/// are not its own.
+static PREVIOUS: std::sync::OnceLock<[libc::sigaction; 5]> = std::sync::OnceLock::new();
+
 /// Prepares the running thread, which runs tasks, to report a fault of the
 /// program: a task's stack that overflows, memory C touched that it should
 /// not, an abort, an illegal instruction or an arithmetic fault, as C may
-/// make. The first call installs the handler.
-pub(crate) fn guard_thread() {
+/// make. The first call installs the handler. A thread of C that calls a
+/// library keeps the signal stack it has.
+pub(crate) fn guard_thread(runtime: bool) {
     static INSTALLED: std::sync::Once = std::sync::Once::new();
     INSTALLED.call_once(|| unsafe {
         let mut action: libc::sigaction = std::mem::zeroed();
         action.sa_sigaction = fault as *const () as usize;
         action.sa_flags = libc::SA_SIGINFO | libc::SA_ONSTACK;
         libc::sigemptyset(&mut action.sa_mask);
-        for signal in [libc::SIGSEGV, libc::SIGBUS, libc::SIGABRT, libc::SIGILL, libc::SIGFPE] {
-            libc::sigaction(signal, &action, std::ptr::null_mut());
+        let mut previous: [libc::sigaction; 5] = std::mem::zeroed();
+        for (signal, previous) in FAULTS.into_iter().zip(&mut previous) {
+            libc::sigaction(signal, &action, previous);
         }
+        let _ = PREVIOUS.set(previous);
     });
     SIGNAL.with_borrow_mut(|signal| {
         if signal.is_some() {
             return;
         }
         unsafe {
+            if !runtime {
+                let mut current: libc::stack_t = std::mem::zeroed();
+                libc::sigaltstack(std::ptr::null(), &mut current);
+                if current.ss_flags & libc::SS_DISABLE == 0 {
+                    return;
+                }
+            }
             let flags = libc::MAP_PRIVATE | libc::MAP_ANON;
             let stack =
                 libc::mmap(std::ptr::null_mut(), SIGNAL_STACK, libc::PROT_READ | libc::PROT_WRITE, flags, -1, 0);
@@ -477,6 +493,33 @@ pub(crate) fn guard_thread() {
             *signal = Some(SignalStack(stack));
         }
     });
+}
+
+/// Hands a fault to the handler there was before, as if it had come to it.
+unsafe fn forward(signal: i32, info: *mut libc::siginfo_t, context: *mut libc::c_void) {
+    let Some(index) = FAULTS.iter().position(|&s| s == signal) else { return };
+    let Some(previous) = PREVIOUS.get().map(|p| p[index]) else { return };
+    unsafe {
+        match previous.sa_sigaction {
+            libc::SIG_IGN => {}
+            // The instruction faults again, or the abort comes again, and
+            // ends the process as it would have.
+            libc::SIG_DFL => {
+                libc::sigaction(signal, &previous, std::ptr::null_mut());
+                if signal == libc::SIGABRT {
+                    libc::raise(signal);
+                }
+            }
+            handler if previous.sa_flags & libc::SA_SIGINFO != 0 => {
+                let handler: extern "C" fn(i32, *mut libc::siginfo_t, *mut libc::c_void) = std::mem::transmute(handler);
+                handler(signal, info, context);
+            }
+            handler => {
+                let handler: extern "C" fn(i32) = std::mem::transmute(handler);
+                handler(signal);
+            }
+        }
+    }
 }
 
 /// The fault's address, and the instruction, frame pointer and return
@@ -525,6 +568,11 @@ pub(crate) unsafe fn faulted(
 extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc::c_void) {
     unsafe {
         let (address, pc, fp, link) = faulted(info, context);
+        // In a library, a fault outside its tasks and code is its host's.
+        if crate::library() && crate::tasks::current().is_null() && find(pc).is_none() {
+            forward(signal, info, context);
+            return;
+        }
         // The output the program wrote so far comes first.
         if let Some(mut stdout) = crate::try_stdout() {
             write_all(1, &stdout.buffer);

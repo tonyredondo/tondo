@@ -371,11 +371,7 @@ impl Parser<'_> {
         let item = match self.tok() {
             Tok::Kw(Kw::Extern) if self.nth(1) == &Tok::Kw(Kw::Fn) => {
                 self.bump();
-                let f = self.function(public, start, true)?;
-                if let Some(body) = &f.body {
-                    self.diags.error("E0004", body.span, "an `extern fn` has no body: C defines it");
-                }
-                Item::Fn(f)
+                Item::Fn(self.function(public, start, true)?)
             }
             Tok::Kw(Kw::Extern) if self.nth(1) == &Tok::Kw(Kw::Type) => {
                 self.bump();

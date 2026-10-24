@@ -16,7 +16,7 @@ use std::collections::{HashMap, VecDeque};
 const MAX_DEPTH: usize = 32;
 
 pub fn monomorphize(program: Program, diags: &mut Diagnostics) -> Option<Program> {
-    let Program { mut types, functions, main, traits, impls, externs, tests, .. } = program;
+    let Program { mut types, functions, main, traits, impls, externs, mut exports, c_api, tests, .. } = program;
     let mut mono = Mono {
         types: &mut types,
         functions: &functions,
@@ -30,10 +30,16 @@ pub fn monomorphize(program: Program, diags: &mut Diagnostics) -> Option<Program
         conversions: Vec::new(),
     };
     // A failing `main` shows its error with `Display` (20.10).
-    if let TyKind::Result(_, error) = *mono.types.kind(functions[main.0 as usize].result) {
+    if let Some(main) = main
+        && let TyKind::Result(_, error) = *mono.types.kind(functions[main.0 as usize].result)
+    {
         mono.collect_display(error);
     }
-    let main = mono.instance(main, Vec::new());
+    let main = main.map(|main| mono.instance(main, Vec::new()));
+    // What C calls is reached from C.
+    for export in &mut exports {
+        export.function = mono.instance(export.function, Vec::new());
+    }
     while let Some((id, args, instance)) = mono.queue.pop_front() {
         let generic = &functions[id.0 as usize];
         let map: HashMap<Ty, Ty> = generic.generics.iter().copied().zip(args).collect();
@@ -65,7 +71,7 @@ pub fn monomorphize(program: Program, diags: &mut Diagnostics) -> Option<Program
     }
     let display = std::mem::take(&mut mono.display);
     let functions = mono.out.into_iter().map(|f| f.expect("every instance is generated")).collect();
-    Some(Program { types, functions, main, traits, impls, display, externs, tests })
+    Some(Program { types, functions, main, traits, impls, display, externs, exports, c_api, tests })
 }
 
 /// The trait whose method interpolation uses (see the checker).

@@ -2,8 +2,11 @@
 //! It finds the shared libraries the program needs where the system keeps
 //! them to run programs, so it needs no development packages either.
 
+mod archive;
 mod elf;
 pub mod macho;
+
+pub use archive::archive;
 
 use std::path::{Path, PathBuf};
 

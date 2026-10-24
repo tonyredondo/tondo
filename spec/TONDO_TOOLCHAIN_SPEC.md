@@ -229,14 +229,15 @@ completos no se ejecuta ninguna.
 ~~~text
 tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug] [-- <argument>...]
 tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--debug]
-tondo check [<project>|<file.to>] [--json]
+tondo build --library [<project>|<file.to>] [--output <dir>] [--debug]
+tondo check [<project>|<file.to>] [--library] [--json]
 tondo expand [<project>|<file.to>]
 tondo fmt [--check | --compact] <file.to>...
 tondo api [<module>|<file.to>] [--private] [--list] [--project <dir>]
 tondo guide [<topic>] [--list] [--skill]
 tondo update [<project>] [<dependency>...]
 tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
-tondo test [<project>] [--static] [--debug]
+tondo test [<project>] [--static] [--debug] [--library]
 tondo lsp
 tondo ps [--json]
 tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--json]
@@ -265,6 +266,8 @@ tondo dap
 - `--strip` deja fuera del ejecutable la tabla de símbolos. Las trazas de
   Tondo no la usan; los depuradores y profilers externos, sí.
 - `--debug` compila un build de depuración para `tondo debug` (sección 7.6).
+- `--library` compila, comprueba o prueba una librería para C, sin `main`
+  (sección 7.7).
 - `expand` muestra, con su formato canónico, el `impl` que dio el provider de
   cada `derive` (27.3 del lenguaje), y dónde está el `derive`.
 - `fmt` aplica el formato canónico (21) a archivos sueltos; `--check` falla si
@@ -546,6 +549,35 @@ nombre. Los breakpoints, con su condición, los pasos, la pausa, las tareas
 son las órdenes de `tondo debug`; la salida del programa va a la consola del
 editor.
 
+### 7.7 Librerías para C
+
+`tondo build --library` compila un proyecto, o un archivo, como una librería
+que un programa de C enlaza: escribe en el directorio de `--output`, o en el
+actual, `lib<nombre>.a` y su header `<nombre>.h`, con el nombre del paquete o
+del archivo. La librería no tiene `main` ni script; publica las `pub extern fn`
+con cuerpo de su paquete (16.16 del lenguaje), y sin ninguna es `E1807`.
+`check --library` y `test --library` la comprueban y la prueban sin pedir
+`main`.
+
+El header declara, con su documentación `///`, las funciones publicadas y los
+`extern type` que alcanzan sus firmas: los alias de `std.ffi` con su nombre de
+C (`int`, `size_t`, `char*` para `ffi.CString`), los números de Tondo con los
+de `stdint.h`, `Bool` como `bool`, un `Pointer[T]` como `T*`, un
+`extern fn(...)` como puntero a función y un `extern type` opaco como
+`typedef struct Nombre Nombre`. El build imprime cómo enlazarla, línea que
+también lleva el header: la librería, las del sistema que el runtime usa y
+las de `[native] libraries`.
+
+El runtime arranca con la primera llamada, sin función de inicio, y cada
+llamada corre en el thread que llama (16.16). Las tareas que lanza siguen tras
+volver la llamada. Lo que la librería escribe en la salida estándar se entrega
+al terminar cada llamada, y al terminar el proceso. Un pánico termina el
+proceso, como en un programa; un fallo de memoria, una instrucción ilegal o un
+aborto fuera de sus tareas y de su código va al handler que el proceso tenía.
+La librería contiene el runtime, así que un programa enlaza una sola librería
+de Tondo. `--static` y `--link` construyen ejecutables: con `--library` son
+error.
+
 ## 8. Determinismo
 
 Con las mismas fuentes, `tondo.toml`, `tondo.lock` y versión de compilador:
@@ -572,8 +604,8 @@ El toolchain 0.1 no define:
 - un registro de paquetes ni resolución de versiones semánticas;
 - workspaces de varios paquetes;
 - fuentes condicionales por plataforma;
-- paquetes binarios, interfaces compiladas ni enlace dinámico;
-- una ABI nativa general ni declaraciones `extern`.
+- paquetes binarios, interfaces compiladas ni enlace dinámico entre paquetes;
+- librerías compartidas para C, solo estáticas (7.7).
 
 Añadir cualquiera de ellos no puede volver no reproducible un build fijado por
 `tondo.lock`.

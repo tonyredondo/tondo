@@ -1,5 +1,6 @@
-//! Every example of `tondo guide` compiles, and every example of a mistake
-//! fails with the error it names.
+//! Every example of `tondo guide` compiles, as a library for C when its
+//! info string says `library`, and every example of a mistake fails with
+//! the error it names.
 
 use std::path::Path;
 use std::process::Command;
@@ -40,6 +41,7 @@ fn examples_compile() {
                     for (name, info, case, code) in chunk {
                         let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
                             .args(["check", "main.to"])
+                            .args(info.ends_with(" library").then_some("--library"))
                             .current_dir(case)
                             .output()
                             .unwrap();

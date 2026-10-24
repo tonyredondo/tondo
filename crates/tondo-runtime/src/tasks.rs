@@ -845,7 +845,7 @@ fn add_timer(delay: Duration, wait: Arc<Wait>, index: usize) {
 /// Runs tasks; on the main thread, until the main task finishes, wherever
 /// it ran, and then returns its exit status.
 fn work(main: bool) -> i32 {
-    super::trace::guard_thread();
+    super::trace::guard_thread(true);
     loop {
         let task = {
             let mut queue = queue();
@@ -916,56 +916,62 @@ fn work(main: bool) -> i32 {
                 queue.idle -= 1;
             }
         };
-        CURRENT.with(|c| c.set(task));
-        let traced = recorder::on();
-        if traced {
-            recorder::record(recorder::Event::Run { task: unsafe { (*task).id } });
-        }
-        enter_tondo();
-        unsafe { switch(home(), (*task).sp) };
-        leave_tondo();
-        CURRENT.with(|c| c.set(std::ptr::null_mut()));
-        if traced {
-            // Nothing runs the task until it is parked or scheduled again.
-            let why = unsafe {
-                match (*task).finished {
-                    true => recorder::Stop::Done,
-                    false if (*task).state.load(Ordering::Acquire) == PARKING => {
-                        recorder::Stop::Waits(recorder::frames(parked_walk(task)))
-                    }
-                    false => recorder::Stop::Yields,
+        run(task);
+    }
+}
+
+/// Runs a task on this thread until it waits, yields or ends; a task that
+/// ends is freed.
+fn run(task: *mut Task) {
+    CURRENT.with(|c| c.set(task));
+    let traced = recorder::on();
+    if traced {
+        recorder::record(recorder::Event::Run { task: unsafe { (*task).id } });
+    }
+    enter_tondo();
+    unsafe { switch(home(), (*task).sp) };
+    leave_tondo();
+    CURRENT.with(|c| c.set(std::ptr::null_mut()));
+    if traced {
+        // Nothing runs the task until it is parked or scheduled again.
+        let why = unsafe {
+            match (*task).finished {
+                true => recorder::Stop::Done,
+                false if (*task).state.load(Ordering::Acquire) == PARKING => {
+                    recorder::Stop::Waits(recorder::frames(parked_walk(task)))
                 }
-            };
-            recorder::record(recorder::Event::Stop { task: unsafe { (*task).id }, why });
-        }
-        unsafe {
-            let in_domain = (*task).in_domain;
-            if (*task).finished {
-                let mut task = Box::from_raw(task);
-                let was_main = task.main;
-                if let Some(stack) = task.stack.take() {
-                    recycle(stack);
-                }
-                tasks().remove(&(&*task as *const Task as usize));
-                drop(task);
-                super::clock::stopped(in_domain);
-                if was_main {
-                    MAIN_DONE.store(true, Ordering::SeqCst);
-                    // Take the queue's lock so the main thread cannot miss
-                    // the notification between its check and its wait.
-                    drop(queue());
-                    READY.notify_all();
-                    if let Some(poller) = super::poll::poller() {
-                        poller.wake();
-                    }
-                }
-            } else if (*task).state.compare_exchange(PARKING, PARKED, Ordering::AcqRel, Ordering::Acquire).is_ok() {
-                super::clock::stopped(in_domain);
-            } else {
-                // Notified while switching out.
-                (*task).state.store(RUNNING, Ordering::Release);
-                schedule(task);
+                false => recorder::Stop::Yields,
             }
+        };
+        recorder::record(recorder::Event::Stop { task: unsafe { (*task).id }, why });
+    }
+    unsafe {
+        let in_domain = (*task).in_domain;
+        if (*task).finished {
+            let mut task = Box::from_raw(task);
+            let was_main = task.main;
+            if let Some(stack) = task.stack.take() {
+                recycle(stack);
+            }
+            tasks().remove(&(&*task as *const Task as usize));
+            drop(task);
+            super::clock::stopped(in_domain);
+            if was_main {
+                MAIN_DONE.store(true, Ordering::SeqCst);
+                // Take the queue's lock so the main thread cannot miss
+                // the notification between its check and its wait.
+                drop(queue());
+                READY.notify_all();
+                if let Some(poller) = super::poll::poller() {
+                    poller.wake();
+                }
+            }
+        } else if (*task).state.compare_exchange(PARKING, PARKED, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+            super::clock::stopped(in_domain);
+        } else {
+            // Notified while switching out.
+            (*task).state.store(RUNNING, Ordering::Release);
+            schedule(task);
         }
     }
 }
@@ -1382,7 +1388,10 @@ extern "C" fn trampoline() -> ! {
         if !(*task).foreign.is_null() {
             let call = &*(*task).foreign;
             (call.inner)(call.frame);
-            *call.done.lock().unwrap_or_else(|e| e.into_inner()) = true;
+            // Under the lock: the thread of C may free the call once it
+            // sees it done.
+            let mut done = call.done.lock().unwrap_or_else(|e| e.into_inner());
+            *done = true;
             call.finished.notify_one();
         } else if (*task).main {
             let main: unsafe extern "C" fn() -> i32 = std::mem::transmute(code);
@@ -1518,7 +1527,8 @@ pub(crate) fn end_all(status: i32) -> ! {
         } else if !(*me).foreign.is_null() {
             // The thread of C that waits for the callback goes on.
             let call = &*(*me).foreign;
-            *call.done.lock().unwrap_or_else(|e| e.into_inner()) = true;
+            let mut done = call.done.lock().unwrap_or_else(|e| e.into_inner());
+            *done = true;
             call.finished.notify_one();
         } else if !join.is_null() {
             // Its join completes without a result, so whoever waits for
@@ -1605,10 +1615,16 @@ fn new_task(stack: Stack, body: *mut u8, code: *const u8, kind: ResultKind, join
     task
 }
 
-/// Runs the body of a callback C made: on this worker when C called back
-/// inside a task, or as a new task while a thread of C waits for it.
+/// Runs the body of a function C calls: on this worker when C called back
+/// inside a task, or as a new task, which starts on the calling thread of
+/// C and goes on on a worker if it waits, while that thread waits for it.
+/// A library passes what starts it, for the first call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_callback(inner: unsafe extern "C" fn(*mut u8), frame: *mut u8) {
+pub unsafe extern "C" fn tondo_rt_callback(
+    inner: unsafe extern "C" fn(*mut u8),
+    frame: *mut u8,
+    library: Option<unsafe extern "C" fn()>,
+) {
     if !current().is_null() {
         // A call back from C on a worker: Tondo code again until it returns.
         enter_tondo();
@@ -1616,6 +1632,10 @@ pub unsafe extern "C" fn tondo_rt_callback(inner: unsafe extern "C" fn(*mut u8),
         leave_tondo();
         return;
     }
+    if let Some(start) = library {
+        super::start_library(start);
+    }
+    super::trace::guard_thread(false);
     let call = ForeignCall { inner, frame, done: Mutex::new(false), finished: Condvar::new() };
     let task =
         new_task(task_stack(), std::ptr::null_mut(), std::ptr::null(), ResultKind::Nothing, std::ptr::null_mut());
@@ -1626,12 +1646,17 @@ pub unsafe extern "C" fn tondo_rt_callback(inner: unsafe extern "C" fn(*mut u8),
     }
     start_workers();
     FOREIGN_WAITING.fetch_add(1, Ordering::SeqCst);
-    schedule(task);
+    run(task);
     let mut done = call.done.lock().unwrap_or_else(|e| e.into_inner());
     while !*done {
         done = call.finished.wait(done).unwrap_or_else(|e| e.into_inner());
     }
+    drop(done);
     FOREIGN_WAITING.fetch_sub(1, Ordering::SeqCst);
+    // What a library wrote comes before what its caller writes next.
+    if library.is_some() {
+        super::flush_stdout();
+    }
 }
 
 /// Runs `tondo_main` as the first task on the calling thread, which becomes

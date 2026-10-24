@@ -1,0 +1,42 @@
+// Functions with a body that C calls by their symbol (FFI): Tondo calls
+// them as any function, and passes them to C as functions C calls.
+import std.console
+import std.ffi
+
+extern fn qsort(
+    base: Pointer[ffi.Void],
+    count: ffi.CSize,
+    size: ffi.CSize,
+    compare: extern fn(Pointer[ffi.Void], Pointer[ffi.Void]): ffi.CInt,
+)
+
+/// Twice a number.
+extern fn twice(value: ffi.CInt): ffi.CInt {
+    value * 2
+}
+
+/// Larger numbers first.
+@symbol("test_descending")
+pub extern fn descending(left: Pointer[ffi.Void], right: Pointer[ffi.Void]): ffi.CInt {
+    let (a, b) = unsafe { (left.cast[Int]().read(), right.cast[Int]().read()) }
+    if a > b { -1 } else if a < b { 1 } else { 0 }
+}
+
+fn main() {
+    console.println("{twice(21)}")
+    let f: extern fn(ffi.CInt): ffi.CInt = twice
+    console.println("{unsafe { f(4) }}")
+    let values = ffi.allocate[Int](4)
+    unsafe {
+        for (index, value) in [3, 9, 1, 5].enumerate() {
+            values.offset(index).write(value)
+        }
+        qsort(values, 4u64, 8u64, descending)
+        console.println("{values.read()} {values.offset(1).read()} {values.offset(2).read()} {values.offset(3).read()}")
+        ffi.free(values)
+    }
+}
+
+// expect-stdout: 42
+// expect-stdout: 8
+// expect-stdout: 9 5 3 1
