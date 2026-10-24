@@ -1149,6 +1149,24 @@ pub(crate) fn snapshot(here: Option<Vec<usize>>) -> Vec<Shot> {
         .collect()
 }
 
+/// Each task's number and the part of its stack in use, for a dump that
+/// looks for the objects it points to: from where a task that switched
+/// out saved its registers, or all of it for one that runs.
+pub(crate) fn stacks() -> Vec<(u64, usize, usize)> {
+    let all: Vec<*mut Task> = tasks().iter().map(|&t| t as *mut Task).collect();
+    let mut out = Vec::new();
+    for task in all {
+        unsafe {
+            let Some(stack) = (*task).stack.as_ref() else { continue };
+            let (low, high) = (stack.base as usize + GUARD, stack.top() as usize);
+            let parked = (*task).state.load(Ordering::Acquire) == PARKED;
+            let low = if parked { ((*task).sp as usize).clamp(low, high) } else { low };
+            out.push(((*task).id, low, high));
+        }
+    }
+    out
+}
+
 /// The stack of a task that switched out, from the frame pointer it saved.
 unsafe fn parked_walk(task: *mut Task) -> super::trace::Walk {
     unsafe {

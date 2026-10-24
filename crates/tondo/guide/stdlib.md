@@ -193,7 +193,9 @@ shows where the time goes.
 runs, where it was spawned and the locks it holds, the counters, and the
 live memory by where it was allocated. `tondo dump read <file>` shows it
 (`tasks`, `task <id>`, `heap`, `--json`). With `TONDO_DUMP=<dir>`, a
-program that panics, crashes or deadlocks leaves its dump there.
+program that panics, crashes or deadlocks leaves its dump there. The dump
+of a `--debug` build has every object: `objects` by type, and `object
+<address>` with what keeps it alive, `task 1 -> Map[...] -> String`.
 
 ## Debugging
 

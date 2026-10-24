@@ -341,3 +341,51 @@ fn debug_adapter() {
     drop(input);
     child.wait().unwrap();
 }
+
+#[test]
+fn every_object_of_a_debug_build() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("objects");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("dumped.to"), DUMPED).unwrap();
+    let executable = dir.join("dumped");
+    let status = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["build", "dumped.to", "--debug", "--output"])
+        .arg(&executable)
+        .current_dir(&dir)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let mut child = Command::new(&executable)
+        .env("TONDO_DIAGNOSTICS", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut line).unwrap();
+    let file = dir.join("objects.dump.json");
+    let pid = child.id().to_string();
+    let output =
+        Command::new(env!("CARGO_BIN_EXE_tondo")).args(["dump", &pid, "--output"]).arg(&file).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    drop(child.stdin.take());
+    child.wait().unwrap();
+
+    let file = file.to_str().unwrap();
+    let types = tondo(&["dump", "read", file, "objects", "--json"]);
+    let strings = types["types"].as_array().unwrap().iter().find(|t| t["type"] == "String").unwrap();
+    assert!(strings["objects"].as_u64().unwrap() >= 20000, "{types}");
+    // One of the strings the array keeps, and what keeps it.
+    let dump: Value = serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
+    let entry = dump["objects"]["list"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["text"] == "entry 7 entry 7 entry 7 entry 7 entry 7 entry 7 entry 7 entry 7 entry 7 entry 7 ");
+    let address = entry.unwrap()["address"].as_str().unwrap();
+    let object = tondo(&["dump", "read", file, "object", address, "--json"]);
+    assert_eq!(object["type"], "String");
+    let chain = object["chain"].as_array().unwrap();
+    assert_eq!(chain[0], "task 1");
+    assert!(chain[1].as_str().unwrap().starts_with("Array[String]"), "{object}");
+}

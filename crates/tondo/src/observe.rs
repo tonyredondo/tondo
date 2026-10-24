@@ -608,6 +608,9 @@ pub enum View {
     Tasks,
     Task(u64),
     Heap,
+    /// Every object of a debug build, by type, or one and what holds it.
+    Objects,
+    Object(String),
 }
 
 /// `tondo dump read <file> [tasks | task <id> | heap] [--json]`.
@@ -632,6 +635,20 @@ pub fn read(path: &std::path::Path, view: View, json: bool) -> Result<(), String
         }
         View::Heap if json => heap(&dump).to_string(),
         View::Heap => heap_text(&heap(&dump)),
+        View::Objects | View::Object(_) if dump.get("objects").is_none() => {
+            return Err("this dump has no objects: a dump of a build with --debug has every object".into());
+        }
+        View::Objects if json => objects_by_type(&dump).to_string(),
+        View::Objects => objects_text(&objects_by_type(&dump)),
+        View::Object(address) => {
+            let object = object(&dump, &address).ok_or_else(|| {
+                format!(
+                    "the dump has no object at {address}; `tondo dump read {} objects` lists them by type",
+                    path.display()
+                )
+            })?;
+            if json { object.to_string() } else { object_text(&object) }
+        }
     };
     println!("{}", out.trim_end());
     Ok(())
@@ -849,6 +866,129 @@ fn summary(dump: &Value) -> String {
             row["site"].as_str().unwrap_or_default(),
             row["kind"].as_str().unwrap_or_default()
         ));
+    }
+    out
+}
+
+/// The type an object's call wrote, or the call's place.
+fn object_type(dump: &Value, object: &Value) -> String {
+    let site = object["site"][0].as_str().unwrap_or_default();
+    let frame = &dump["frames"][site];
+    match frame["type"].as_str() {
+        Some(ty) => ty.to_string(),
+        None => frame_text(dump, &object["site"][0]).map_or("unknown".into(), |at| format!("made at {at}")),
+    }
+}
+
+/// Every object by type: how many and how many bytes, most first.
+fn objects_by_type(dump: &Value) -> Value {
+    let mut types: std::collections::HashMap<String, (u64, u64)> = std::collections::HashMap::new();
+    for object in dump["objects"]["list"].as_array().into_iter().flatten() {
+        let entry = types.entry(object_type(dump, object)).or_default();
+        entry.0 += 1;
+        entry.1 += object["size"].as_u64().unwrap_or(0);
+    }
+    let mut rows: Vec<Value> =
+        types.into_iter().map(|(ty, (count, bytes))| json!({ "type": ty, "objects": count, "bytes": bytes })).collect();
+    rows.sort_by(|a, b| b["bytes"].as_u64().cmp(&a["bytes"].as_u64()));
+    json!({ "types": rows })
+}
+
+fn objects_text(by_type: &Value) -> String {
+    let mut out = format!("{:>12} {:>10}  TYPE\n", "BYTES", "OBJECTS");
+    for row in by_type["types"].as_array().into_iter().flatten() {
+        out.push_str(&format!(
+            "{:>12} {:>10}  {}\n",
+            bytes(row["bytes"].as_f64().unwrap_or(0.0)),
+            row["objects"].as_u64().unwrap_or(0),
+            row["type"].as_str().unwrap_or_default()
+        ));
+    }
+    out.push_str("`object <address>` shows one and what holds it; `--json` lists them\n");
+    out
+}
+
+/// One object: its type, size, where it was made and, for a string, its
+/// text; the objects that point to it; and the shortest chain from a
+/// task's stack that holds it.
+fn object(dump: &Value, address: &str) -> Option<Value> {
+    let objects = &dump["objects"];
+    let list = objects["list"].as_array()?;
+    let wanted = u64::from_str_radix(address.trim_start_matches("0x"), 16).ok()?;
+    let target = list.iter().position(|o| {
+        u64::from_str_radix(o["address"].as_str().unwrap_or_default().trim_start_matches("0x"), 16).ok() == Some(wanted)
+    })?;
+    let pair = |e: &Value| Some((e[0].as_u64()? as usize, e[1].as_u64()? as usize));
+    let edges: Vec<(usize, usize)> = objects["edges"].as_array().into_iter().flatten().filter_map(pair).collect();
+    let roots: Vec<(usize, usize)> = objects["roots"].as_array().into_iter().flatten().filter_map(pair).collect();
+    let describe = |index: usize| {
+        let object = &list[index];
+        format!("{} {}", object_type(dump, object), object["address"].as_str().unwrap_or_default())
+    };
+    let holders: Vec<String> = edges.iter().filter(|&&(_, to)| to == target).map(|&(from, _)| describe(from)).collect();
+    // Breadth first from what the tasks' stacks point to.
+    let mut parent: std::collections::HashMap<usize, Option<usize>> = std::collections::HashMap::new();
+    let mut task_of: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    let mut queue = std::collections::VecDeque::new();
+    for &(task, object) in &roots {
+        if parent.insert(object, None).is_none() {
+            task_of.insert(object, task);
+            queue.push_back(object);
+        }
+    }
+    let mut next: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+    for &(from, to) in &edges {
+        next.entry(from).or_default().push(to);
+    }
+    while let Some(at) = queue.pop_front() {
+        if at == target {
+            break;
+        }
+        for &to in next.get(&at).into_iter().flatten() {
+            if let std::collections::hash_map::Entry::Vacant(entry) = parent.entry(to) {
+                entry.insert(Some(at));
+                queue.push_back(to);
+            }
+        }
+    }
+    let chain = parent.contains_key(&target).then(|| {
+        let mut chain = vec![describe(target)];
+        let mut at = target;
+        while let Some(Some(up)) = parent.get(&at) {
+            chain.push(describe(*up));
+            at = *up;
+        }
+        chain.push(format!("task {}", task_of.get(&at).copied().unwrap_or(0)));
+        chain.reverse();
+        chain
+    });
+    let object = &list[target];
+    Some(json!({
+        "address": object["address"], "type": object_type(dump, object), "size": object["size"],
+        "made": frame_text(dump, &object["site"][0]), "text": object["text"], "held_by": holders, "chain": chain,
+    }))
+}
+
+fn object_text(object: &Value) -> String {
+    let mut out = format!(
+        "{} at {}, {} bytes, made at {}\n",
+        object["type"].as_str().unwrap_or_default(),
+        object["address"].as_str().unwrap_or_default(),
+        object["size"],
+        object["made"].as_str().unwrap_or("an unknown place")
+    );
+    if let Some(text) = object["text"].as_str() {
+        out.push_str(&format!("  text: {text:?}\n"));
+    }
+    for holder in object["held_by"].as_array().into_iter().flatten() {
+        out.push_str(&format!("  held by {}\n", holder.as_str().unwrap_or_default()));
+    }
+    match object["chain"].as_array() {
+        Some(chain) => {
+            let chain: Vec<&str> = chain.iter().filter_map(Value::as_str).collect();
+            out.push_str(&format!("  kept alive by {}\n", chain.join(" -> ")));
+        }
+        None => out.push_str("  no task's stack reaches it: the runtime holds it, or it is garbage of a cycle\n"),
     }
     out
 }

@@ -136,3 +136,105 @@ pub(crate) fn alive() -> (Vec<(usize, Vec<usize>)>, u64) {
     }
     (out, DROPPED.load(Ordering::Relaxed))
 }
+
+// ---------------------------------------------------------------------------
+// Every object, in a debug build
+// ---------------------------------------------------------------------------
+
+/// In a debug build that is watched, every live allocation the program's
+/// code made, by address: its size and the call of compiled code that
+/// made it, whose type the table of traces names. A dump finds who holds
+/// each one from them.
+static OBJECTS_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+const SHARDS: usize = 16;
+static OBJECTS: [std::sync::Mutex<std::collections::BTreeMap<usize, (usize, usize)>>; SHARDS] =
+    [const { std::sync::Mutex::new(std::collections::BTreeMap::new()) }; SHARDS];
+
+thread_local! {
+    /// Inside the registry, whose own allocations do not count.
+    static TRACKING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// A debug build tracks every object from now on.
+pub(crate) fn track_objects() {
+    OBJECTS_ON.store(true, Ordering::Relaxed);
+}
+
+fn shard(address: usize) -> std::sync::MutexGuard<'static, std::collections::BTreeMap<usize, (usize, usize)>> {
+    OBJECTS[(address >> 4) % SHARDS].lock().unwrap_or_else(|e| e.into_inner())
+}
+
+pub(crate) fn track(address: usize, size: usize) {
+    if !OBJECTS_ON.load(Ordering::Relaxed) || TRACKING.with(|t| t.replace(true)) {
+        return;
+    }
+    let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
+    let fp = super::trace::through(super::trace::frame_pointer(), bounds);
+    let site = super::trace::walk(fp, bounds).find(|&a| super::trace::describe(a).is_some_and(|d| d.at.is_some()));
+    if let Some(site) = site {
+        shard(address).insert(address, (size, site));
+    }
+    TRACKING.with(|t| t.set(false));
+}
+
+pub(crate) fn untrack(address: usize) {
+    if !OBJECTS_ON.load(Ordering::Relaxed) || TRACKING.with(|t| t.replace(true)) {
+        return;
+    }
+    shard(address).remove(&address);
+    TRACKING.with(|t| t.set(false));
+}
+
+/// What a dump knows of every object: its address, size and the call that
+/// made it, with the first bytes of a string; which objects each points
+/// to; and which ones the tasks' stacks point to. Pointers are found by
+/// reading every word, so a number that equals an address counts too.
+pub(crate) struct Objects {
+    pub list: Vec<(usize, usize, usize, Option<String>)>,
+    pub edges: Vec<(usize, usize)>,
+    pub roots: Vec<(u64, usize)>,
+}
+
+pub(crate) fn objects() -> Option<Objects> {
+    if !OBJECTS_ON.load(Ordering::Relaxed) {
+        return None;
+    }
+    TRACKING.with(|t| t.set(true));
+    let mut all: Vec<(usize, (usize, usize))> = Vec::new();
+    for shard in &OBJECTS {
+        all.extend(shard.lock().unwrap_or_else(|e| e.into_inner()).iter().map(|(&a, &v)| (a, v)));
+    }
+    all.sort_unstable_by_key(|&(address, _)| address);
+    let index = |word: usize| all.binary_search_by_key(&word, |&(a, _)| a).ok();
+    let mut edges = Vec::new();
+    let mut list = Vec::with_capacity(all.len());
+    for (from, &(address, (size, site))) in all.iter().enumerate() {
+        for offset in (0..size / 8).map(|w| w * 8) {
+            let word = unsafe { *((address + offset) as *const usize) };
+            if let Some(to) = index(word).filter(|&to| to != from) {
+                edges.push((from, to));
+            }
+        }
+        // A string's header is its count and length, then its bytes.
+        let is_string = super::trace::describe(site).and_then(|d| d.ty) == Some("String");
+        let text = is_string.then(|| {
+            let length = unsafe { *((address + 8) as *const usize) }.min(size.saturating_sub(16)).min(200);
+            let bytes = unsafe { std::slice::from_raw_parts((address + 16) as *const u8, length) };
+            String::from_utf8_lossy(bytes).into_owned()
+        });
+        list.push((address, size, site, text));
+    }
+    let mut roots = Vec::new();
+    for (task, low, high) in super::tasks::stacks() {
+        for slot in (low.next_multiple_of(8)..high.saturating_sub(8)).step_by(8) {
+            let word = unsafe { *(slot as *const usize) };
+            if let Some(to) = index(word) {
+                roots.push((task, to));
+            }
+        }
+    }
+    roots.sort_unstable();
+    roots.dedup();
+    TRACKING.with(|t| t.set(false));
+    Some(Objects { list, edges, roots })
+}

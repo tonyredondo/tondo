@@ -1666,3 +1666,17 @@ Adapter Protocol of an editor into the same commands. A program that
 `tondo debug` starts waits before `main` from the moment the debugger
 attaches, so that its first `continue`, however soon it comes, is the one
 that lets it go.
+
+## 2026-10-24 — Every object in the dump of a debug build (H13)
+
+A release build's dump samples the live memory and names each sample's
+type at no cost when the program runs; who holds an object needs every
+object, which only a debug build pays for. While it is watched, its
+allocator notes each allocation that compiled code made, with the call
+that made it, whose type the table of traces names. A dump then reads
+every object word by word for pointers to the others, and the tasks'
+stacks for the objects they hold, so `tondo dump read <file> object
+<address>` gives the shortest chain that keeps one alive, from a task's
+stack. Pointers are found by their value, so a number that equals an
+address counts as one; for a debugging tool that errs on the side of
+keeping, which is the side that answers "why is this still here".

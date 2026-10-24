@@ -41,7 +41,7 @@ usage:
   tondo dap                                            debug for an editor, with the Debug Adapter Protocol
   tondo dump <pid|name> [--output <path>]           write a dump of a running program: its tasks and
                                                        where they are, its counters, its live memory
-  tondo dump read <file> [tasks | task <id> | heap] [--json]
+  tondo dump read <file> [tasks | task <id> | heap | objects | object <address>] [--json]
                                                        show a dump, as one written at a crash with
                                                        TONDO_DUMP=<dir>
   tondo trace <pid|name> [--duration <seconds>] [--output <path>]
@@ -552,10 +552,12 @@ fn dump_command(args: &[OsString]) -> Result<ExitCode, String> {
                 [] => tondo::observe::View::Summary,
                 ["tasks"] => tondo::observe::View::Tasks,
                 ["heap"] => tondo::observe::View::Heap,
+                ["objects"] => tondo::observe::View::Objects,
+                ["object", address] => tondo::observe::View::Object(address.to_string()),
                 ["task", id] => {
                     tondo::observe::View::Task(id.parse().map_err(|_| usage("task takes a task's number"))?)
                 }
-                _ => return Err(usage("dump read shows tasks, task <id> or heap")),
+                _ => return Err(usage("dump read shows tasks, task <id>, heap, objects or object <address>")),
             };
             tondo::observe::read(Path::new(file), view, json).map(|()| ExitCode::SUCCESS)
         }

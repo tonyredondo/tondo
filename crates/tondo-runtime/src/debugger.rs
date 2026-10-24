@@ -81,6 +81,7 @@ pub unsafe extern "C" fn tondo_rt_debug_table(raw: *const Raw) {
     }
     let marked = sites.iter().map(|_| AtomicBool::new(false)).collect();
     let _ = TABLE.set(Table { functions, sites, marked });
+    super::heap::track_objects();
     if WAIT.load(Ordering::Relaxed) {
         start_stopped();
     }

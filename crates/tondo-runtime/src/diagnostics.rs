@@ -212,6 +212,7 @@ pub(crate) fn allocated(address: *mut u8, size: usize) {
         bump(&block.allocated, size as u64);
         bump(&block.allocations, 1);
         super::heap::allocated(address as usize, size);
+        super::heap::track(address as usize, size);
     }
 }
 
@@ -221,6 +222,7 @@ pub(crate) fn freed(address: *mut u8, size: usize) {
         return;
     }
     super::heap::freed(address as usize);
+    super::heap::untrack(address as usize);
     if let Some(block) = block() {
         bump(&block.freed, size as u64);
     }
@@ -849,7 +851,24 @@ fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: Option<std:
         let comma = if index == 0 { "" } else { "," };
         let _ = write!(out, "{comma}{{\"size\":{size},\"stack\":{}}}", frames.list(stack));
     }
-    let _ = write!(out, "]}},\"frames\":{{{}}}}}", frames.json);
+    out.push_str("]}");
+    // A debug build knows every object, and the dump who holds each.
+    if let Some(objects) = super::heap::objects() {
+        out.push_str(",\"objects\":{\"list\":[");
+        for (index, (address, size, site, text)) in objects.list.iter().enumerate() {
+            let comma = if index == 0 { "" } else { "," };
+            let text = text.as_ref().map_or(String::new(), |t| format!(",\"text\":{}", quoted(t)));
+            let _ = write!(
+                out,
+                "{comma}{{\"address\":\"{address:#x}\",\"size\":{size},\"site\":{}{text}}}",
+                frames.list(&[*site])
+            );
+        }
+        let edges: Vec<String> = objects.edges.iter().map(|(from, to)| format!("[{from},{to}]")).collect();
+        let roots: Vec<String> = objects.roots.iter().map(|(task, to)| format!("[{task},{to}]")).collect();
+        let _ = write!(out, "],\"edges\":[{}],\"roots\":[{}]}}", edges.join(","), roots.join(","));
+    }
+    let _ = write!(out, ",\"frames\":{{{}}}}}", frames.json);
     out
 }
 
