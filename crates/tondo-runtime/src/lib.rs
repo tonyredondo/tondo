@@ -2107,6 +2107,8 @@ static ALLOCATOR: meta::Counting = meta::Counting;
 #[cfg(tondo_staticlib)]
 #[unsafe(no_mangle)]
 pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    meta::own_cache();
     meta::start();
     diagnostics::start();
     let mut status = tasks::run_main(tondo_main);

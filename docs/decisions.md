@@ -1603,13 +1603,22 @@ program 4%. Watched, it runs about a fifth slower, every allocation
 counted and some sampled. The leak check still counts objects in one
 atomic, so that the count at exit is exact.
 
-Measuring it showed that the program's time on four cores changes by
-nearly half with where its memory lies: a single allocation of a few
-bytes before `main`, as reading an environment variable makes, moves it
-from 150 ms to 280 ms, while on one core it does not change. Something
-the threads share in a cache line, depending on addresses, slows them;
-it is the runtime's, not the counters', and figures here compare runs
-with the same layout.
+Measuring it showed that the program's time on four cores changed by
+nearly half with where its memory lay: a single allocation of a few
+bytes before `main`, as reading an environment variable makes, moved it
+from 150 ms to 280 ms, while on one core it did not change. glibc makes
+a thread's cache of freed blocks, whose counts change at every
+allocation, at the thread's first free, right after the block freed.
+That block, allocated again, became the closure of the first task, which
+the thread that ran the task freed and then reused for a text builder at
+every interpolation; when the counts and the block shared a cache line,
+the main thread and that one took it from each other at every
+allocation. The runtime now frees a block and allocates it again before
+anything else, and keeps it, so the main thread's counts follow a block
+nobody uses. The time also moved by a tenth with where the runtime's
+functions lay, whenever one of them changed; each now starts a cache
+line, which costs an executable 8 KB, and that program takes 147 ms
+whatever its layout.
 
 ## 2026-10-24 — Traces of running programs (H13, second part)
 

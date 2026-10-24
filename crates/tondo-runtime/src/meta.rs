@@ -84,6 +84,24 @@ pub fn start() {
     }
 }
 
+/// glibc makes a thread's cache of freed blocks, whose counts change at
+/// every allocation, at the thread's first free, right after the block
+/// freed. Allocated again, that block can be the closure of a task, freed
+/// on the thread that runs the task and reused there at every allocation:
+/// two cores then write one cache line, and both run up to twice as slow.
+/// The main thread makes its cache before anything else and keeps the
+/// block before it.
+#[cfg(all(tondo_staticlib, target_os = "linux", target_env = "gnu"))]
+pub fn own_cache() {
+    // Opaque, or the compiler drops calls whose blocks nothing reads.
+    use std::hint::black_box;
+    unsafe {
+        libc::free(black_box(libc::malloc(1)));
+        // Never freed, so never another thread's.
+        black_box(libc::malloc(1));
+    }
+}
+
 #[cfg(tondo_staticlib)]
 unsafe impl GlobalAlloc for Counting {
     /// Memory runs short only after a collection of garbage cycles found

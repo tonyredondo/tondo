@@ -76,9 +76,11 @@ fn build_runtime(runtime: &Path, out_dir: &Path, target: &str) -> (PathBuf, Stri
         .arg(&target_dir)
         // Frame pointers let a panic walk the stack through the runtime; one
         // codegen unit inlines across the whole runtime, so adding a module
-        // does not change how another's hot paths are compiled.
+        // does not change how another's hot paths are compiled; and each
+        // function starts a cache line, so that changing one does not move
+        // the others' code across lines.
         .args(["--", "-C", "panic=abort", "-C", "debuginfo=0", "-C", "force-frame-pointers=yes"])
-        .args(["-C", "codegen-units=1"])
+        .args(["-C", "codegen-units=1", "-C", "llvm-args=-align-all-functions=6"])
         .args(["--cfg", "tondo_staticlib"])
         .args(["--print", "native-static-libs"])
         .current_dir(runtime)
