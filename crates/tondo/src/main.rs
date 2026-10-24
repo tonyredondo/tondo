@@ -170,12 +170,13 @@ fn check_command(args: &[OsString]) -> Result<ExitCode, String> {
     if !rest.is_empty() {
         return Err(format!("unexpected arguments\n{USAGE}"));
     }
+    let analysis = if library { driver::analyze_library(&path)? } else { driver::check(&path)? };
     if json {
-        let analysis = if library { driver::analyze_library(&path)? } else { driver::analyze(&path)? };
         print!("{}", analysis.diags.render_json(&analysis.sources, &analysis.source_id));
-        return Ok(if analysis.program.is_some() { ExitCode::SUCCESS } else { ExitCode::FAILURE });
+    } else if !analysis.diags.list.is_empty() {
+        eprint!("{}", analysis.diags.render(&analysis.sources));
     }
-    Ok(if analyze(&path, library)?.is_some() { ExitCode::SUCCESS } else { ExitCode::FAILURE })
+    Ok(if analysis.program.is_some() { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }
 
 /// Shows the `impl` each `derive` of the program expanded to (27.3).
@@ -184,7 +185,7 @@ fn expand_command(args: &[OsString]) -> Result<ExitCode, String> {
     if !rest.is_empty() {
         return Err(format!("unexpected arguments\n{USAGE}"));
     }
-    let analysis = driver::analyze(&path)?;
+    let analysis = driver::check(&path)?;
     for expansion in &analysis.expansions {
         println!("// {} ({})\n{}", expansion.request, expansion.location, expansion.source.trim_end());
         println!();

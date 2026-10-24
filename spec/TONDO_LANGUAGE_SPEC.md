@@ -6930,8 +6930,10 @@ fn main(): !AppError {
 - No puede sobrecargarse.
 
 Un target `hosted` ejecutable sin `main` explícito válido ni script raíz produce
-`E1806`. Es un diagnóstico de target sin span y utiliza la ubicación nula definida
-en 22.3. Si existe una declaración `main` pero incumple cualquiera de estas reglas,
+`E1806` al construirlo o ejecutarlo. Es un diagnóstico de target sin span y
+utiliza la ubicación nula definida en 22.3. Comprobar un módulo, como hacen
+`tondo check`, un editor o un target de test (6.3 de testing), no pide punto de
+entrada: uno de solo declaraciones, como una librería, es válido. Si existe una declaración `main` pero incumple cualquiera de estas reglas,
 el diagnóstico es `E1803`; la presencia de varias entradas continúa siendo
 `E1802`.
 

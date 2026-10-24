@@ -1041,7 +1041,8 @@ impl<'a> Checker<'a> {
             // A library runs what C calls.
             None
         } else {
-            let message = "the program has no `main` function and no top-level statements; a library for C builds with `--library`";
+            let message = "nothing to run: the program has no `main` and no top-level statements; add `fn main() { ... }`, \
+                or statements at the top of the file; a library for C builds with `--library`";
             self.diags.error_without_span("E1806", message);
             return None;
         };

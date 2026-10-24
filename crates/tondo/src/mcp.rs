@@ -379,7 +379,7 @@ impl Args<'_> {
 fn analyze(args: &Args) -> Result<Analysis, String> {
     match args.flag("library") {
         true => driver::analyze_library(&args.path()),
-        false => driver::analyze(&args.path()),
+        false => driver::check(&args.path()),
     }
 }
 

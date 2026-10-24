@@ -1843,3 +1843,14 @@ or by its directory in the home, writes the skill where each reads
 skills, and replaces what it registered before, so that running it again
 updates everything.
 
+## 2026-10-25 — Packages without `main`
+
+A package of declarations only, as one others depend on, gave E1806 to
+`tondo check`, to editors and, against testing 6.3, to `tondo test`,
+whose check of the tested sources on their own asked for `main`. Only
+building or running a program needs an entry point now: `check`, the
+language server, `tondo mcp` and the tests check such a package as it
+is, and `run` and `build` still say there is nothing to run, and that
+`fn main() { ... }` or statements at the top of the file give it
+something.
+

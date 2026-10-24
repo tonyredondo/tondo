@@ -168,7 +168,7 @@ fn a_library_publishes_functions_and_is_checked_and_tested_as_one() {
     let checked = tondo(&dir, &["check", "--library"]);
     assert!(!checked.status.success());
     assert!(String::from_utf8_lossy(&checked.stderr).contains("E1807"));
-    let program = tondo(&dir, &["check"]);
+    let program = tondo(&dir, &["build"]);
     assert!(String::from_utf8_lossy(&program.stderr).contains("a library for C builds with `--library`"));
 
     let dir = project("tested", "pub extern fn tested_one(): Int {\n    1\n}\n");

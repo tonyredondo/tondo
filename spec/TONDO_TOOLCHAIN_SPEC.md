@@ -254,6 +254,8 @@ tondo dap
 
 - `run` compila, guarda el ejecutable en la caché y lo ejecuta; `build` escribe
   el ejecutable; `check` solo informa diagnósticos, en JSON con `--json` (22.3).
+  `check` no pide `main`: un paquete de solo declaraciones, como una librería
+  de la que otros dependen, se comprueba sin `E1806`, que dan `run` y `build`.
 - `--link` enlaza una librería de C más, por nombre o archivo como en
   `[native] libraries`; un archivo suelto, que no tiene `tondo.toml`, la usa
   para sus `extern fn`.

@@ -115,7 +115,7 @@ pub fn analyze_for_editor(
     open: std::collections::HashMap<PathBuf, String>,
 ) -> Result<Analysis, String> {
     OPEN.with(|o| *o.borrow_mut() = open);
-    let analysis = analyze_with(path, tests, false, true, Root::Program);
+    let analysis = analyze_with(path, tests, false, true, Root::Checked);
     OPEN.with(|o| o.borrow_mut().clear());
     analysis
 }
@@ -124,6 +124,12 @@ pub fn analyze_for_editor(
 /// or a single source file.
 pub fn analyze(path: &Path) -> Result<Analysis, String> {
     analyze_with(path, false, false, false, Root::Program)
+}
+
+/// Reads, parses and checks a program or a package as `tondo check` does:
+/// without asking for `main`, which only what runs needs.
+pub fn check(path: &Path) -> Result<Analysis, String> {
+    analyze_with(path, false, false, false, Root::Checked)
 }
 
 /// Reads, parses and checks a library for C (toolchain 7): without `main`,
@@ -141,7 +147,7 @@ pub fn analyze_tests(path: &Path, library: bool) -> Result<Analysis, String> {
     if !path.is_dir() {
         return Err(format!("{} is not a project: `tondo test` runs the tests of a project directory", path.display()));
     }
-    let root = if library { Root::CLibrary } else { Root::Tested };
+    let root = if library { Root::CLibrary } else { Root::Checked };
     let production = analyze_with(path, false, false, false, root)?;
     if production.diags.has_errors() {
         return Ok(production);
@@ -160,8 +166,9 @@ enum Root {
     /// A program, which runs `main` or its script; or a test build, which
     /// runs its tests.
     Program,
-    /// The sources a test build tests, which need no `main`.
-    Tested,
+    /// Sources checked without being run, which need no `main`: what
+    /// `tondo check` and editors see, and what a test build tests.
+    Checked,
     /// A library for C (toolchain 7).
     CLibrary,
 }
@@ -309,6 +316,9 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
             module
         }
     };
+    let mut module = module;
+    module.library |= root != Root::Program;
+    module.c_library = root == Root::CLibrary;
     if editor {
         // After errors that stop a build, checking still finds what names
         // refer to; its own errors would only follow from them.
@@ -325,9 +335,6 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
         diags.sort(&sources);
         return Ok(Analysis { sources, diags, program: None, source_id, libraries, meta, expansions, index });
     }
-    let mut module = module;
-    module.library |= root != Root::Program;
-    module.c_library = root == Root::CLibrary;
     let program = if diags.has_errors() { None } else { check::check(&module, &sources, &mut diags, meta) };
     let program = program.and_then(|program| mono::monomorphize(program, &mut diags));
     drop_dependency_warnings(&mut diags, &sources, &dependencies);

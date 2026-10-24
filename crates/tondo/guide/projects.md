@@ -50,6 +50,9 @@ libraries = ["sqlite3"]               # C libraries for `extern fn`
 ```
 
 A dependency is imported by its alias: `import units`, `import units.si`.
+A package of declarations only, with no `main` and no statements, is a
+library: `tondo check` and `tondo test` work on it, and only `run` and
+`build` need something to run.
 `tondo.lock` pins every download; `tondo update` refreshes it. `tondo api
 --list` shows every module of the project, its dependencies and the
 standard library.
