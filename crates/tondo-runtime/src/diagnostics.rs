@@ -392,7 +392,7 @@ fn descriptors() -> Descriptors {
                     _ if address.ss_family as i32 == libc::AF_UNIX && ours == Some(&path[..]) => open.total -= 1,
                     _ if address.ss_family as i32 == libc::AF_UNIX => open.unix += 1,
                     _ if option(libc::SO_TYPE) == libc::SOCK_DGRAM => open.udp += 1,
-                    _ if option(libc::SO_ACCEPTCONN) != 0 => open.listening += 1,
+                    _ if listening(fd) => open.listening += 1,
                     _ => open.tcp += 1,
                 }
             }
@@ -400,6 +400,23 @@ fn descriptors() -> Descriptors {
         }
     }
     open
+}
+
+/// Whether a stream socket listens for connections.
+#[cfg(target_os = "linux")]
+fn listening(fd: i32) -> bool {
+    let (mut value, mut size): (libc::c_int, libc::socklen_t) = (0, 4);
+    unsafe { libc::getsockopt(fd, libc::SOL_SOCKET, libc::SO_ACCEPTCONN, (&raw mut value).cast(), &mut size) };
+    value != 0
+}
+
+/// macOS does not answer `SO_ACCEPTCONN`: a stream socket with no peer
+/// listens, or is about to connect.
+#[cfg(not(target_os = "linux"))]
+fn listening(fd: i32) -> bool {
+    let mut address: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+    let mut size = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+    unsafe { libc::getpeername(fd, (&raw mut address).cast(), &mut size) != 0 }
 }
 
 /// The processor time the process used, in microseconds.
