@@ -442,7 +442,11 @@ impl<'a> Linker<'a> {
                     Def::Section { input: index, section: section.0 as u32, value: symbol.address() }
                 }
                 SymbolSection::Absolute => Def::Absolute(symbol.address()),
-                SymbolSection::Common => Def::Common { size: symbol.size(), align: symbol.address().max(1) },
+                // A tentative definition keeps its alignment in its value.
+                SymbolSection::Common => {
+                    let align = symbol.elf_symbol().st_value.get(file.endian()).max(1);
+                    Def::Common { size: symbol.size(), align }
+                }
                 _ => {
                     // `__tls_get_addr` is called only by accesses that
                     // linking relaxes.
