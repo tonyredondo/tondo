@@ -160,8 +160,9 @@ fn main(): !(csv.CsvError | time.TimeError) {
 
 ## Watching a running program
 
-`tondo ps` lists the Tondo programs running; `tondo counters app` (a name
-or a process ID) shows theirs every second: memory, the cycle collector,
+A program started with `TONDO_DIAGNOSTICS=1` can be watched; without it,
+it pays nothing for it. `tondo ps` lists those running; `tondo counters
+app` (a name or a process ID) shows theirs every second: memory, the cycle collector,
 tasks, workers, calls of C, sockets, files, HTTP requests, CPU. `--json`
 writes a line per second for a script or a model. A program adds its own:
 

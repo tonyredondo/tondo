@@ -415,12 +415,14 @@ UTF-16 si no.
 
 ### 7.5 Programas en ejecución
 
-Cada programa de Tondo atiende a las herramientas que lo observan en un socket
-Unix, `$TMPDIR/tondo-<uid>/<pid>`, dentro de un directorio que solo su usuario
-puede abrir. Lo sirve un hilo propio del runtime, así que responde aunque sus
-workers estén ocupados o bloqueados. `TONDO_DIAGNOSTICS=0` lo apaga. Un
-programa que termina borra su socket, y `tondo ps` borra los de los que
-terminaron sin hacerlo.
+Un programa de Tondo que arranca con `TONDO_DIAGNOSTICS=1` atiende a las
+herramientas que lo observan en un socket Unix, `$TMPDIR/tondo-<uid>/<pid>`,
+dentro de un directorio que solo su usuario puede abrir. Lo sirve un hilo
+propio del runtime, así que responde aunque sus workers estén ocupados o
+bloqueados. Sin esa variable el programa no abre el socket ni cuenta nada para
+las herramientas, así que no paga por ellas; `tondo trace -- <program>` y
+`TONDO_DUMP` la dan por puesta. Un programa que termina borra su socket, y
+`tondo ps` borra los de los que terminaron sin hacerlo.
 
 - `ps` lista los programas del usuario en ejecución: su proceso, cuánto llevan
   en marcha y su línea de órdenes; con `--json`, como un array.

@@ -47,7 +47,12 @@ fn ps_and_counters() {
         .unwrap();
     assert!(status.success());
 
-    let mut child = Command::new(&executable).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut child = Command::new(&executable)
+        .env("TONDO_DIAGNOSTICS", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
     let mut line = String::new();
     BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut line).unwrap();
     assert_eq!(line, "ready\n");
@@ -70,13 +75,8 @@ fn ps_and_counters() {
     assert!(child.wait().unwrap().success());
     assert!(!listed(child.id()));
 
-    // Turned off.
-    let mut child = Command::new(&executable)
-        .env("TONDO_DIAGNOSTICS", "0")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+    // Off unless asked for.
+    let mut child = Command::new(&executable).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
     let mut line = String::new();
     BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut line).unwrap();
     assert!(!listed(child.id()));
@@ -160,7 +160,12 @@ fn dumps_of_a_running_program_and_at_a_panic() {
         .status()
         .unwrap();
     assert!(status.success());
-    let mut child = Command::new(&executable).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut child = Command::new(&executable)
+        .env("TONDO_DIAGNOSTICS", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
     let mut line = String::new();
     BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut line).unwrap();
     let pid = child.id().to_string();

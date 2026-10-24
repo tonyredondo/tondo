@@ -1246,7 +1246,9 @@ pub extern "C" fn tondo_rt_foreign_enter() {
     leave_tondo();
     let state = in_c();
     state.calls.fetch_add(1, Ordering::SeqCst);
-    state.task.store(current(), Ordering::Relaxed);
+    if super::diagnostics::enabled() {
+        state.task.store(current(), Ordering::Relaxed);
+    }
     let depth = state.depth.fetch_add(1, Ordering::SeqCst);
     if let (Some(frame), Some(returns)) = (state.frames.get(depth), state.returns.get(depth)) {
         // The caller's frame lives while C runs; this function's own is gone

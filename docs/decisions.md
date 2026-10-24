@@ -1571,9 +1571,11 @@ compiler's preprocessor.
 
 ## 2026-10-24 — Counters of running programs (H13, first part)
 
-Every Tondo program serves the tools that watch it on a Unix socket,
-`$TMPDIR/tondo-<uid>/<pid>`, in a directory only its user can open, as
-.NET's diagnostics do. Attaching from outside, with `ptrace` or
+A Tondo program started with `TONDO_DIAGNOSTICS=1` serves the tools that
+watch it on a Unix socket, `$TMPDIR/tondo-<uid>/<pid>`, in a directory only
+its user can open, as .NET's diagnostics do; without it, the program opens
+no socket and counts nothing for them, so that one nobody watches pays for
+nothing but a load where each count would be. Attaching from outside, with `ptrace` or
 `task_for_pid`, needs permissions that macOS does not give and Linux
 restricts. A runtime thread of its own answers every tool with `poll`, so
 a program whose workers are busy or stuck still answers, and neither its
@@ -1593,9 +1595,9 @@ atomic for the whole process, and a program that allocates on four tasks
 ran 40% faster without it. Each thread now counts in a block that only it
 writes, with no atomic operation, and the tools read the sum of every
 block; a runtime thread's block goes to the next one that starts. That
-program now takes 170 ms where it took 275 ms, against 160 ms counting
-nothing. The leak check still counts objects in one atomic, so that the
-count at exit is exact.
+program now takes 163 ms where it took 275 ms, and 177 ms when it is
+watched, against 159 ms counting nothing. The leak check still counts
+objects in one atomic, so that the count at exit is exact.
 
 ## 2026-10-24 — Traces of running programs (H13, second part)
 
@@ -1630,12 +1632,11 @@ loop that only computes, is asked with `SIGPROF` and answers from the
 frame the signal interrupted. A task inside C shows the frame that called
 it.
 
-Live memory comes from samples that the runtime always takes, as Go does:
-an allocation for every 512 KiB on average, at random intervals so that no
-size is favoured, with the stack that made it, kept in a table of four
-entries by address while it lives. An allocation costs a thread-local
-countdown, and a free a byte read of its bucket; the program that
-allocates on four tasks takes 180 ms where it took 169 ms. A sample of `n`
+Live memory comes from samples that the runtime takes while it is
+watched, as Go does: an allocation for every 512 KiB on average, at random
+intervals so that no size is favoured, with the stack that made it, kept
+in a table of four entries by address while it lives. An allocation costs
+a thread-local countdown, and a free a byte read of its bucket. A sample of `n`
 bytes stands for `n / (1 − e^(−n / 512 KiB))` of them, and its site is the
 program's code past the standard library. Objects carry no type, so a dump
 does not yet say who holds them.

@@ -71,7 +71,7 @@ pub fn ps(json: bool) -> Result<(), String> {
         return Ok(());
     }
     if programs.is_empty() {
-        println!("no Tondo program is running");
+        println!("no Tondo program started with TONDO_DIAGNOSTICS=1 is running");
         return Ok(());
     }
     println!("{:<9} {:>9}  PROGRAM", "PID", "UPTIME");
@@ -97,7 +97,9 @@ fn target(name: &str) -> Result<u32, String> {
         running().iter().filter(|info| program_name(info) == name).filter_map(|info| info["pid"].as_u64()).collect();
     match matching.as_slice() {
         [pid] => Ok(*pid as u32),
-        [] => Err(format!("no running Tondo program is named `{name}`; `tondo ps` lists them")),
+        [] => Err(format!(
+            "no running Tondo program is named `{name}`; `tondo ps` lists those started with TONDO_DIAGNOSTICS=1"
+        )),
         pids => {
             let pids: Vec<String> = pids.iter().map(u64::to_string).collect();
             Err(format!("{} programs are named `{name}`: give a process ID, one of {}", pids.len(), pids.join(", ")))
@@ -109,7 +111,7 @@ fn connect(name: &str) -> Result<Program, String> {
     let pid = target(name)?;
     Program::connect(pid).map_err(|_| {
         format!(
-            "no Tondo program with process ID {pid} answers: `tondo ps` lists those that do (a program started with TONDO_DIAGNOSTICS=0 does not)"
+            "no Tondo program with process ID {pid} answers: a program serves the tools when it starts with TONDO_DIAGNOSTICS=1, and `tondo ps` lists those that do"
         )
     })
 }
@@ -362,10 +364,7 @@ fn started(executable: &std::path::Path, pid: u32) -> Result<Program, String> {
             return Err(format!("{} ended before it could be traced", executable.display()));
         }
         if std::time::Instant::now() > deadline {
-            return Err(format!(
-                "{} does not answer: it is not a Tondo program, or it runs with TONDO_DIAGNOSTICS=0",
-                executable.display()
-            ));
+            return Err(format!("{} does not answer: it is not a Tondo program", executable.display()));
         }
         std::thread::sleep(Duration::from_millis(5));
     }

@@ -15,6 +15,16 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicPtr, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
+/// Whether the program serves the tools and counts for them: only when it
+/// starts with `TONDO_DIAGNOSTICS=1`, or traced or to leave a dump at a
+/// crash, so that a program nobody watches pays for nothing but this load.
+static ENABLED: AtomicBool = AtomicBool::new(false);
+
+#[inline]
+pub(crate) fn enabled() -> bool {
+    ENABLED.load(Ordering::Relaxed)
+}
+
 /// A count of the runtime: a total that only grows, or a level.
 pub(crate) struct Count(AtomicI64);
 
@@ -24,11 +34,15 @@ impl Count {
     }
 
     pub(crate) fn add(&self, amount: i64) {
-        self.0.fetch_add(amount, Ordering::Relaxed);
+        if enabled() {
+            self.0.fetch_add(amount, Ordering::Relaxed);
+        }
     }
 
     pub(crate) fn max(&self, value: i64) {
-        self.0.fetch_max(value, Ordering::Relaxed);
+        if enabled() {
+            self.0.fetch_max(value, Ordering::Relaxed);
+        }
     }
 
     fn get(&self) -> i64 {
@@ -191,6 +205,9 @@ pub(crate) fn retire_here() {
 
 #[cfg_attr(not(tondo_staticlib), allow(dead_code))]
 pub(crate) fn allocated(address: *mut u8, size: usize) {
+    if !enabled() {
+        return;
+    }
     if let Some(block) = block() {
         bump(&block.allocated, size as u64);
         bump(&block.allocations, 1);
@@ -200,6 +217,9 @@ pub(crate) fn allocated(address: *mut u8, size: usize) {
 
 #[cfg_attr(not(tondo_staticlib), allow(dead_code))]
 pub(crate) fn freed(address: *mut u8, size: usize) {
+    if !enabled() {
+        return;
+    }
     super::heap::freed(address as usize);
     if let Some(block) = block() {
         bump(&block.freed, size as u64);
@@ -224,13 +244,12 @@ impl Objects {
     }
 
     fn change(&self, by: i64) {
-        match block() {
-            Some(block) if !EXACT.load(Ordering::Relaxed) => {
-                block.objects.store(block.objects.load(Ordering::Relaxed) + by, Ordering::Relaxed);
-            }
-            _ => {
-                OBJECTS.fetch_add(by, Ordering::Relaxed);
-            }
+        if EXACT.load(Ordering::Relaxed) {
+            OBJECTS.fetch_add(by, Ordering::Relaxed);
+        } else if enabled()
+            && let Some(block) = block()
+        {
+            block.objects.store(block.objects.load(Ordering::Relaxed) + by, Ordering::Relaxed);
         }
     }
 
@@ -474,9 +493,11 @@ pub(crate) fn start() {
     if std::env::var_os("TONDO_RT_CHECK_LEAKS").is_some() {
         EXACT.store(true, Ordering::Relaxed);
     }
-    if std::env::var_os("TONDO_DIAGNOSTICS").is_some_and(|value| value == "0") {
+    let on = |name: &str| std::env::var_os(name).is_some_and(|value| value == "1");
+    if !on("TONDO_DIAGNOSTICS") && !on("TONDO_TRACE") && std::env::var_os("TONDO_DUMP").is_none() {
         return;
     }
+    ENABLED.store(true, Ordering::Relaxed);
     use std::os::unix::fs::{DirBuilderExt, MetadataExt};
     let directory = directory();
     let _ = std::fs::DirBuilder::new().mode(0o700).create(&directory);
