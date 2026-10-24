@@ -123,13 +123,13 @@ Every milestone ends with programs that compile to native executables and run.
 | **Interruption** | Ctrl-C stops `tondo test`: no more tests start, the running ones are cancelled and run their `defer`s, a worker that does not stop is killed, and the run exits with `4` (`3` if it had to kill) without reports | Done |
 | **Examples of documents** | `tondo doc-test` checks the examples of a Markdown document as 21.6 says, as syntax, as fragments and scripts against the fixtures of Appendix C, or as failing with the errors they name, and records each as JSON; closures that give a capture away are called once (`CallOnce`) | Done |
 | **H12** | A self-contained linker: `tondo` links ELF and Mach-O executables itself, against the libraries the system has to run programs, with no C toolchain or development packages; position-independent executables, with `DT_RELR` where glibc reads it; `--static` for static executables with musl on Linux; `--strip`; unwind information for C++ exceptions; ad-hoc signatures on macOS | Done |
+| **H13** | Diagnostics of running programs, all off unless a program starts with `TONDO_DIAGNOSTICS=1`: `tondo ps`; `tondo counters`, the runtime's counters and the program's own (`std.diagnostics`); `tondo trace`, a timeline of the tasks for Perfetto and a CPU profile; `tondo dump` and its reader, every task with its stack and locks and the live memory by site and type, also at a crash with `TONDO_DUMP`; and for `--debug` builds, `tondo debug` and `tondo dap`, with breakpoints, steps, bindings, and every object with what keeps it alive | Done |
 
 The first cut deliberately leaves out the following. They are part of the
 language and remain planned work, scheduled after H7:
 
 | Milestone | Scope |
 |---|---|
-| **H13** | Diagnostics of running programs: memory dumps and a reader for them, a debugger, live counters and traces of the runtime, in the manner of `dotnet-dump`, `dotnet-counters` and `dotnet-trace` |
 | **Protobuf and gRPC** | Types and codecs generated from `.proto` schemas, and gRPC clients and servers over HTTP/2, designed together |
 | **Windows** | Its calling convention, exceptions, network polling and executables |
 

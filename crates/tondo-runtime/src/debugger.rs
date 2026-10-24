@@ -260,6 +260,22 @@ fn place(site: usize) -> String {
     format!("{}:{} in {}", at.file, at.line, table.functions[at.function].name)
 }
 
+/// How the program goes on once the debugger has the answer that says it
+/// runs: a program that ends at once would end before the answer went.
+static AFTER_ANSWER: Mutex<Option<Mode>> = Mutex::new(None);
+
+fn go_after_answer(mode: Mode) {
+    *AFTER_ANSWER.lock().unwrap_or_else(|e| e.into_inner()) = Some(mode);
+}
+
+/// Called once an answer went to the debugger.
+pub(crate) fn answered() {
+    let mode = AFTER_ANSWER.lock().unwrap_or_else(|e| e.into_inner()).take();
+    if let Some(mode) = mode {
+        resume(mode);
+    }
+}
+
 /// Goes on as `mode` says.
 fn resume(mode: Mode) {
     let mut state = state();
@@ -406,7 +422,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
             format!("{{\"deleted\":{id}}}")
         }
         "continue" => {
-            resume(Mode::Run);
+            go_after_answer(Mode::Run);
             "{\"running\":true}".into()
         }
         "step" | "next" | "finish" => {
@@ -416,7 +432,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
                 "next" => Mode::Next { task: stop.task, frame: stop.frame },
                 _ => Mode::Finish { task: stop.task, frame: stop.frame },
             };
-            resume(mode);
+            go_after_answer(mode);
             "{\"running\":true}".into()
         }
         "pause" => {

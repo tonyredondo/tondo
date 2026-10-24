@@ -624,6 +624,7 @@ fn answer(client: &mut UnixStream, pending: &mut Vec<u8>) -> bool {
         if writeln!(client, "{reply}").is_err() {
             return false;
         }
+        super::debugger::answered();
     }
     pending.len() < 4096
 }
