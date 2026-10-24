@@ -187,3 +187,9 @@ records what the tasks do: `app-<pid>.json`, a timeline for
 https://ui.perfetto.dev with each run of a task and where it waited, and
 `app-<pid>.folded`, a CPU profile, one stack a line with its samples, which
 shows where the time goes.
+
+`tondo dump app` writes `app-<pid>.dump.json`: every task, where it waits or
+runs, where it was spawned and the locks it holds, the counters, and the
+live memory by where it was allocated. `tondo dump read <file>` shows it
+(`tasks`, `task <id>`, `heap`, `--json`). With `TONDO_DUMP=<dir>`, a
+program that panics, crashes or deadlocks leaves its dump there.

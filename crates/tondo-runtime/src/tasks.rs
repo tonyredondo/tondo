@@ -576,44 +576,77 @@ fn wait_pinned(task: *mut Task) {
 static STOPPING: AtomicBool = AtomicBool::new(false);
 static RESUMED: Condvar = Condvar::new();
 static RESUMED_LOCK: Mutex<()> = Mutex::new(());
-/// Whether each thread that ever ran Tondo code runs it now.
-static IN_TONDO: Mutex<Vec<&'static AtomicBool>> = Mutex::new(Vec::new());
-
-thread_local! {
-    static IN_TONDO_HERE: Cell<Option<&'static AtomicBool>> = const { Cell::new(None) };
+/// A thread that ever ran Tondo code: whether it runs it now, and while
+/// it stands still for a stop, its task and the frame it stopped in, for a
+/// dump.
+struct Runner {
+    running: AtomicBool,
+    task: std::sync::atomic::AtomicPtr<Task>,
+    frame: AtomicUsize,
+    /// For a dump, a thread that runs on is asked where it is with a
+    /// signal, and answers here.
+    thread: libc::pthread_t,
+    asked: AtomicBool,
+    answer: [AtomicUsize; ANSWER],
+    answered: AtomicUsize,
 }
 
-/// This thread's flag, registered the first time it runs Tondo code.
-fn running_here() -> &'static AtomicBool {
+const ANSWER: usize = 64;
+
+// The thread's handle, a pointer with musl and on macOS, only goes to
+// `pthread_kill`.
+unsafe impl Send for Runner {}
+unsafe impl Sync for Runner {}
+
+static IN_TONDO: Mutex<Vec<&'static Runner>> = Mutex::new(Vec::new());
+
+thread_local! {
+    static IN_TONDO_HERE: Cell<Option<&'static Runner>> = const { Cell::new(None) };
+}
+
+/// This thread's state, registered the first time it runs Tondo code.
+fn running_here() -> &'static Runner {
     IN_TONDO_HERE.with(|here| {
-        if let Some(running) = here.get() {
-            return running;
+        if let Some(runner) = here.get() {
+            return runner;
         }
-        let running: &'static AtomicBool = Box::leak(Box::new(AtomicBool::new(false)));
-        IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).push(running);
-        here.set(Some(running));
-        running
+        let runner: &'static Runner = Box::leak(Box::new(Runner {
+            running: AtomicBool::new(false),
+            task: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
+            frame: AtomicUsize::new(0),
+            thread: unsafe { libc::pthread_self() },
+            asked: AtomicBool::new(false),
+            answer: [const { AtomicUsize::new(0) }; ANSWER],
+            answered: AtomicUsize::new(0),
+        }));
+        IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).push(runner);
+        here.set(Some(runner));
+        runner
     })
 }
 
 /// From now on this thread runs Tondo code, once no collection runs.
 pub(crate) fn enter_tondo() {
-    let running = running_here();
+    let runner = running_here();
     loop {
-        running.store(true, Ordering::SeqCst);
+        runner.running.store(true, Ordering::SeqCst);
         if !STOPPING.load(Ordering::SeqCst) {
             return;
         }
-        running.store(false, Ordering::SeqCst);
+        runner.task.store(current(), Ordering::SeqCst);
+        runner.frame.store(super::trace::frame_pointer(), Ordering::SeqCst);
+        runner.running.store(false, Ordering::SeqCst);
         let mut resumed = RESUMED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         while STOPPING.load(Ordering::SeqCst) {
             resumed = RESUMED.wait(resumed).unwrap_or_else(|e| e.into_inner());
         }
+        drop(resumed);
+        runner.task.store(std::ptr::null_mut(), Ordering::SeqCst);
     }
 }
 
 fn leave_tondo() {
-    running_here().store(false, Ordering::SeqCst);
+    running_here().running.store(false, Ordering::SeqCst);
 }
 
 /// Takes this thread out of Tondo code where it is, as when it waits for
@@ -621,7 +654,7 @@ fn leave_tondo() {
 /// Allocates nothing.
 #[cfg_attr(not(tondo_staticlib), allow(dead_code))]
 pub(crate) fn pause_here() -> bool {
-    IN_TONDO_HERE.with(|here| here.get()).is_some_and(|running| running.swap(false, Ordering::SeqCst))
+    IN_TONDO_HERE.with(|here| here.get()).is_some_and(|runner| runner.running.swap(false, Ordering::SeqCst))
 }
 
 /// Where a running task lets a collection run: between two steps.
@@ -644,7 +677,7 @@ pub(crate) fn stop_world(timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     let threads = IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).clone();
     loop {
-        if threads.iter().all(|running| !running.load(Ordering::SeqCst)) {
+        if threads.iter().all(|runner| !runner.running.load(Ordering::SeqCst)) {
             return true;
         }
         if Instant::now() >= deadline {
@@ -967,6 +1000,12 @@ fn deadlock() -> ! {
         report.push_str(&text.replacen("TITLE", &title, 1));
     }
     let _ = writeln!(std::io::stderr(), "{report}");
+    super::diagnostics::crash_dump(
+        "deadlock",
+        "every task waits and none of them can wake the others",
+        Vec::new(),
+        true,
+    );
     std::process::exit(super::PANIC_EXIT_CODE)
 }
 
@@ -986,6 +1025,128 @@ unsafe fn waiting_at(task: *mut Task) -> String {
         };
         super::trace::stack(walk, (*task).origin.as_deref(), "TITLE")
     }
+}
+
+/// A task as a dump shows it.
+pub(crate) struct Shot {
+    pub id: u64,
+    pub main: bool,
+    /// `waits`, `ready`, `runs` or `in C`.
+    pub state: &'static str,
+    /// Where it is, innermost first: empty for one that runs and did not
+    /// stop.
+    pub stack: Vec<usize>,
+    /// Where it was spawned.
+    pub spawned: Vec<usize>,
+    /// Where it took each `std.sync` lock it holds.
+    pub locks: Vec<String>,
+    pub cancelled: bool,
+}
+
+/// In the handler of `SIGPROF`: answers a dump that asked this thread where
+/// it is, from the instruction and frame the signal interrupted.
+pub(crate) fn answer_where(pc: usize, fp: usize) {
+    let Some(runner) = IN_TONDO_HERE.with(|here| here.get()) else { return };
+    if !runner.asked.load(Ordering::Acquire) {
+        return;
+    }
+    runner.task.store(current(), Ordering::Relaxed);
+    let bounds = stack_bounds().unwrap_or((0, 0));
+    let mut count = 0;
+    for (slot, address) in runner.answer.iter().zip(std::iter::once(pc).chain(super::trace::walk(fp, bounds))) {
+        slot.store(address, Ordering::Relaxed);
+        count += 1;
+    }
+    runner.answered.store(count, Ordering::Relaxed);
+    runner.asked.store(false, Ordering::Release);
+}
+
+/// Asks the threads that still run Tondo code where they are, a while.
+fn ask_where(runners: &[&Runner]) -> Vec<(*mut Task, Vec<usize>)> {
+    super::recorder::install();
+    let asked: Vec<&&Runner> = runners.iter().filter(|r| r.running.load(Ordering::SeqCst)).collect();
+    for runner in &asked {
+        runner.answered.store(0, Ordering::Relaxed);
+        runner.asked.store(true, Ordering::Release);
+        unsafe { libc::pthread_kill(runner.thread, libc::SIGPROF) };
+    }
+    let deadline = Instant::now() + Duration::from_millis(100);
+    while asked.iter().any(|r| r.asked.load(Ordering::Acquire)) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let mut out = Vec::new();
+    for runner in asked {
+        if runner.asked.swap(false, Ordering::AcqRel) {
+            continue;
+        }
+        let count = runner.answered.load(Ordering::Relaxed);
+        let stack = runner.answer[..count].iter().map(|a| a.load(Ordering::Relaxed)).collect();
+        out.push((runner.task.swap(std::ptr::null_mut(), Ordering::Relaxed), stack));
+    }
+    out
+}
+
+/// Every task and where it is, for a dump: best while the world stands
+/// still, when the running ones are stopped at a known frame; one that
+/// runs on is asked with a signal. The running task of this thread, if
+/// any, is where `here` says.
+pub(crate) fn snapshot(here: Option<Vec<usize>>) -> Vec<Shot> {
+    let runners: Vec<&Runner> = IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let me_runner = IN_TONDO_HERE.with(|here| here.get());
+    let others: Vec<&Runner> = runners
+        .iter()
+        .copied()
+        .filter(|r| Some(*r).map(|r| r as *const Runner) != me_runner.map(|r| r as *const Runner))
+        .collect();
+    let answers = ask_where(&others);
+    let callers: Vec<&InC> = CALLERS.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let ready: std::collections::HashSet<usize> = queue().runnable.iter().map(|&t| t as usize).collect();
+    let mut all: Vec<*mut Task> = tasks().iter().map(|&t| t as *mut Task).collect();
+    all.sort_by_key(|&t| unsafe { (*t).id });
+    let me = current();
+    let mut here = here;
+    all.into_iter()
+        .map(|task| unsafe {
+            let shown = &*task;
+            let bounds = shown.stack.as_ref().map_or((0, 0), |s| (s.base as usize + GUARD, s.top() as usize));
+            let paused = runners.iter().find(|r| r.task.load(Ordering::SeqCst) == task);
+            let in_c =
+                callers.iter().find(|c| c.depth.load(Ordering::SeqCst) > 0 && c.task.load(Ordering::SeqCst) == task);
+            let answered = answers.iter().find(|(t, _)| *t == task);
+            let (state, stack): (&str, Vec<usize>) = if task == me {
+                ("runs", here.take().unwrap_or_default())
+            } else if let Some((_, stack)) = answered {
+                ("runs", stack.clone())
+            } else if let Some(caller) = in_c {
+                let depth = (caller.depth.load(Ordering::SeqCst) - 1).min(caller.frames.len() - 1);
+                let (frame, from) =
+                    (caller.frames[depth].load(Ordering::Relaxed), caller.returns[depth].load(Ordering::Relaxed));
+                ("in C", std::iter::once(from).chain(super::trace::walk(frame, bounds)).collect())
+            } else if let Some(runner) = paused {
+                ("runs", super::trace::walk(runner.frame.load(Ordering::SeqCst), bounds).collect())
+            } else if shown.state.load(Ordering::Acquire) == PARKED {
+                ("waits", parked_walk(task).collect())
+            } else if ready.contains(&(task as usize)) {
+                ("ready", parked_walk(task).collect())
+            } else {
+                ("runs", Vec::new())
+            };
+            let locks = shown
+                .held
+                .iter()
+                .map(|&(_, _, at)| String::from_utf8_lossy(super::str_bytes(at)).into_owned())
+                .collect();
+            Shot {
+                id: shown.id,
+                main: shown.main,
+                state,
+                stack,
+                spawned: shown.origin.as_deref().map(|o| o.frames().to_vec()).unwrap_or_default(),
+                locks,
+                cancelled: shown.cancelled.load(Ordering::Relaxed),
+            }
+        })
+        .collect()
 }
 
 /// The stack of a task that switched out, from the frame pointer it saved.
@@ -1039,6 +1200,8 @@ struct InC {
     returns: [AtomicUsize; 8],
     /// When each call started, while a tool traces the program.
     started: [AtomicU64; 8],
+    /// The task that made the calls.
+    task: std::sync::atomic::AtomicPtr<Task>,
     /// Whether another worker took this one's place during the current call.
     replaced: AtomicBool,
 }
@@ -1067,6 +1230,7 @@ fn in_c() -> &'static InC {
         frames: Default::default(),
         returns: Default::default(),
         started: Default::default(),
+        task: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
         replaced: AtomicBool::new(false),
     }));
     CALLERS.lock().unwrap_or_else(|e| e.into_inner()).push(new);
@@ -1082,6 +1246,7 @@ pub extern "C" fn tondo_rt_foreign_enter() {
     leave_tondo();
     let state = in_c();
     state.calls.fetch_add(1, Ordering::SeqCst);
+    state.task.store(current(), Ordering::Relaxed);
     let depth = state.depth.fetch_add(1, Ordering::SeqCst);
     if let (Some(frame), Some(returns)) = (state.frames.get(depth), state.returns.get(depth)) {
         // The caller's frame lives while C runs; this function's own is gone

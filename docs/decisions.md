@@ -1616,3 +1616,26 @@ from the file's symbols. The body of `spawn f()` is now named `spawn f` and
 kept in that table, so a trace names a task by its function; panic traces
 still skip it. A program that `tondo trace -- program` starts waits for the
 tool before `main`, up to five seconds, so the trace covers all of it.
+
+## 2026-10-24 — Dumps of running programs (H13, third part)
+
+`tondo dump` asks a program for its tasks, counters and live memory, and
+`TONDO_DUMP=<dir>` makes a program that panics, faults or deadlocks leave
+the same dump there; `tondo dump read` shows one. It is JSON in a format of
+Tondo's own: an operating system's core dump on macOS needs entitlements,
+and reading one would need to know the runtime's structures anyway. To show
+where a running task is, the workers stop at their next safe point, each
+noting its frame, as for a collection; a worker that reaches none, as a
+loop that only computes, is asked with `SIGPROF` and answers from the
+frame the signal interrupted. A task inside C shows the frame that called
+it.
+
+Live memory comes from samples that the runtime always takes, as Go does:
+an allocation for every 512 KiB on average, at random intervals so that no
+size is favoured, with the stack that made it, kept in a table of four
+entries by address while it lives. An allocation costs a thread-local
+countdown, and a free a byte read of its bucket; the program that
+allocates on four tasks takes 180 ms where it took 169 ms. A sample of `n`
+bytes stands for `n / (1 − e^(−n / 512 KiB))` of them, and its site is the
+program's code past the standard library. Objects carry no type, so a dump
+does not yet say who holds them.

@@ -35,6 +35,11 @@ usage:
   tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--json]
                                                        watch a running program's counters, the runtime's
                                                        and its own (std.diagnostics)
+  tondo dump <pid|name> [--output <path>]           write a dump of a running program: its tasks and
+                                                       where they are, its counters, its live memory
+  tondo dump read <file> [tasks | task <id> | heap] [--json]
+                                                       show a dump, as one written at a crash with
+                                                       TONDO_DUMP=<dir>
   tondo trace <pid|name> [--duration <seconds>] [--output <path>]
   tondo trace [--duration <seconds>] [--output <path>] -- <program> [<argument>...]
                                                        record what a program's tasks do, for Perfetto,
@@ -85,6 +90,7 @@ fn main() -> ExitCode {
         "ps" => ps_command(&args[1..]),
         "counters" => counters_command(&args[1..]),
         "trace" => trace_command(&args[1..]),
+        "dump" => dump_command(&args[1..]),
         "version" | "--version" | "-V" => {
             println!("tondo {} (native, cranelift)", driver::VERSION);
             Ok(ExitCode::SUCCESS)
@@ -487,6 +493,31 @@ fn counters_command(args: &[OsString]) -> Result<ExitCode, String> {
     let name = name
         .ok_or_else(|| usage("counters takes a running program: its process ID, or its name; `tondo ps` lists them"))?;
     tondo::observe::counters(&name, interval, count, json).map(|()| ExitCode::SUCCESS)
+}
+
+/// Dumps a running program, or reads a dump.
+fn dump_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let args: Vec<String> = args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+    let usage = |message: &str| format!("{message}\n{USAGE}");
+    let json = args.iter().any(|a| a == "--json");
+    let rest: Vec<&str> = args.iter().map(String::as_str).filter(|a| *a != "--json").collect();
+    match rest.as_slice() {
+        ["read", file, view @ ..] => {
+            let view = match view {
+                [] => tondo::observe::View::Summary,
+                ["tasks"] => tondo::observe::View::Tasks,
+                ["heap"] => tondo::observe::View::Heap,
+                ["task", id] => {
+                    tondo::observe::View::Task(id.parse().map_err(|_| usage("task takes a task's number"))?)
+                }
+                _ => return Err(usage("dump read shows tasks, task <id> or heap")),
+            };
+            tondo::observe::read(Path::new(file), view, json).map(|()| ExitCode::SUCCESS)
+        }
+        [name] if !name.starts_with('-') => tondo::observe::dump(name, None).map(|()| ExitCode::SUCCESS),
+        [name, "--output", path] => tondo::observe::dump(name, Some(PathBuf::from(path))).map(|()| ExitCode::SUCCESS),
+        _ => Err(usage("dump takes a running program, its process ID or its name, or `read <file>`")),
+    }
 }
 
 /// Traces a running program, or one it starts.

@@ -308,6 +308,13 @@ static COLLECTING: Mutex<()> = Mutex::new(());
 /// and tries again later.
 const STOP_TIMEOUT: Duration = Duration::from_millis(2);
 
+/// Runs `f` while no collection does, as a dump that stops the workers
+/// itself.
+pub(crate) fn without_collections<R>(f: impl FnOnce() -> R) -> R {
+    let _one = COLLECTING.lock().unwrap_or_else(|e| e.into_inner());
+    f()
+}
+
 /// Frees the garbage cycles; returns how many objects they held, or `None`
 /// when the workers did not stop in time.
 pub(crate) fn collect() -> Option<usize> {

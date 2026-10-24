@@ -186,9 +186,6 @@ const BUSY: u64 = u64::MAX;
 /// The handler of `SIGPROF`, which the processor time of the process
 /// raises every millisecond on the thread that runs.
 extern "C" fn sample(_: i32, info: *mut libc::siginfo_t, context: *mut libc::c_void) {
-    if !on() {
-        return;
-    }
     // A handler leaves `errno` as it found it.
     #[cfg(target_os = "linux")]
     let errno = unsafe { libc::__errno_location() };
@@ -196,6 +193,12 @@ extern "C" fn sample(_: i32, info: *mut libc::siginfo_t, context: *mut libc::c_v
     let errno = unsafe { libc::__error() };
     let saved = unsafe { *errno };
     let (_, pc, fp, _) = unsafe { crate::trace::faulted(info, context) };
+    // A dump asks a thread that runs on where it is with this signal too.
+    crate::tasks::answer_where(pc, fp);
+    if !on() {
+        unsafe { *errno = saved };
+        return;
+    }
     let bounds = crate::tasks::stack_bounds().unwrap_or((0, 0));
     // In C, which may keep no frame pointers, the trace goes on from where
     // the program called it.
@@ -257,7 +260,8 @@ pub(crate) fn take_samples() -> (Vec<(u64, u32, Stack)>, u64) {
 // Starting and stopping
 // ---------------------------------------------------------------------------
 
-pub(crate) fn start() {
+/// Installs the handler of `SIGPROF`, once.
+pub(crate) fn install() {
     static INSTALLED: std::sync::Once = std::sync::Once::new();
     INSTALLED.call_once(|| unsafe {
         let mut action: libc::sigaction = std::mem::zeroed();
@@ -266,6 +270,10 @@ pub(crate) fn start() {
         libc::sigemptyset(&mut action.sa_mask);
         libc::sigaction(libc::SIGPROF, &action, std::ptr::null_mut());
     });
+}
+
+pub(crate) fn start() {
+    install();
     ON.store(true, Ordering::SeqCst);
     timer(1000);
 }

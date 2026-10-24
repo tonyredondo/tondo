@@ -183,6 +183,11 @@ impl Iterator for Walk {
     }
 }
 
+/// The return addresses of the running task's stack from here.
+pub(crate) fn here_frames() -> Vec<usize> {
+    here().collect()
+}
+
 /// The running task's stack from here.
 fn here() -> Walk {
     let fp = frame_pointer();
@@ -522,6 +527,16 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
         write_stack(&mut out, "stack", || first.into_iter().chain(walk.clone()), origin.as_deref());
         let _ = writeln!(out);
         out.flush();
+        // A dump at a fault is as good as the memory it reads.
+        let message = match signal {
+            libc::SIGABRT => "SIGABRT: the program aborted".to_string(),
+            libc::SIGILL => format!("SIGILL: illegal instruction at {pc:#x}"),
+            libc::SIGFPE => format!("SIGFPE: arithmetic fault at {pc:#x}"),
+            libc::SIGBUS => format!("SIGBUS: invalid memory access at {address:#x}"),
+            _ => format!("SIGSEGV: invalid memory access at {address:#x}"),
+        };
+        let frames = std::iter::once(pc).chain(first).chain(walk).collect();
+        crate::diagnostics::crash_dump("fault", &message, frames, false);
         let mut action: libc::sigaction = std::mem::zeroed();
         action.sa_sigaction = libc::SIG_DFL;
         libc::sigaction(signal, &action, std::ptr::null_mut());

@@ -242,6 +242,8 @@ tondo ps [--json]
 tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--json]
 tondo trace <pid|name> [--duration <seconds>] [--output <path>]
 tondo trace [--duration <seconds>] [--output <path>] -- <program> [<argument>...]
+tondo dump <pid|name> [--output <path>]
+tondo dump read <file> [tasks | task <id> | heap] [--json]
 ~~~
 
 - `run` compila, guarda el ejecutable en la caché y lo ejecuta; `build` escribe
@@ -276,8 +278,8 @@ tondo trace [--duration <seconds>] [--output <path>] -- <program> [<argument>...
   cada librería a `[native] libraries`.
 - `test` sigue la [especificación de testing](./TONDO_TESTING_SPEC.md).
 - `lsp` sirve a un editor (sección 7.4).
-- `ps`, `counters` y `trace` observan los programas en ejecución (sección
-  7.5).
+- `ps`, `counters`, `trace` y `dump` observan los programas en ejecución
+  (sección 7.5).
 - Estado de salida: `0` éxito; `1` diagnósticos de error o fallo de formato; `2`
   uso incorrecto; `3` error del toolchain (sección 9). `run` devuelve el estado
   del programa.
@@ -469,6 +471,29 @@ también el programa que arrancó, y escribe dos archivos, `<output>.json` y
   sistema.
 
 Mientras nada traza el programa, grabar no cuesta más que comprobarlo.
+
+`dump` escribe un volcado de un programa en ejecución, nombrado como en
+`counters`, en `<output>` o en `<programa>-<pid>.dump.json`: un JSON con sus
+contadores, cada tarea con su estado (`waits`, `ready`, `runs` o `in C`), la
+pila de donde está, dónde se lanzó y dónde tomó los locks que tiene, y su
+memoria viva. Para ver dónde están las tareas que corren, los workers se
+paran un momento, y el que no llega a un punto donde pararse da su pila por
+una señal. Con `TONDO_DUMP=<dir>`, un programa que acaba en un pánico, en una
+señal fatal o en un deadlock deja su volcado allí antes de terminar. `dump`
+nombra cada marco, así que su volcado se lee en otra máquina; uno al fallar
+se nombra al leerlo, con el ejecutable del programa.
+
+`dump read` muestra un volcado: sin más, un resumen, con por qué se tomó, la
+memoria, las tareas por estado y dónde esperan, y dónde se asignó la memoria
+viva; `tasks`, cada tarea con los marcos del programa; `task <id>`, una con
+todos sus marcos; y `heap`, la memoria viva por sitio y clase. Con `--json`,
+la misma vista como JSON.
+
+La memoria viva sale de muestras que el runtime toma siempre, como Go: una
+asignación por cada 512 KiB de media, a intervalos al azar, con la pila que
+la hizo, mientras vive. Una muestra de `n` bytes cuenta por
+`n / (1 − e^(−n / 512 KiB))`, así que sus cifras son estimaciones; el sitio
+es el código del programa que asignó, pasando por la librería estándar.
 
 ## 8. Determinismo
 

@@ -577,3 +577,274 @@ fn demangled(symbol: &str) -> String {
     let symbol = symbol.strip_prefix('_').filter(|s| s.starts_with("_R") || s.starts_with("_ZN")).unwrap_or(symbol);
     format!("{:#}", rustc_demangle::demangle(symbol))
 }
+
+// ---------------------------------------------------------------------------
+// Dumps
+// ---------------------------------------------------------------------------
+
+/// `tondo dump <pid|name>`: asks a running program for a dump and writes
+/// it, with every frame named, so that it reads anywhere.
+pub fn dump(name: &str, output: Option<PathBuf>) -> Result<(), String> {
+    let mut program = connect(name)?;
+    let _ = program.reader.get_ref().set_read_timeout(Some(Duration::from_secs(60)));
+    let mut dump = program.ask("dump")?;
+    if dump.get("dump").is_none() {
+        return Err(format!("the program {} gave no dump: {dump}", program.pid));
+    }
+    name_frames(&mut dump);
+    let path =
+        output.unwrap_or_else(|| PathBuf::from(format!("{}-{}.dump.json", program_name(&dump["info"]), program.pid)));
+    let text = serde_json::to_string_pretty(&dump).unwrap_or_default();
+    std::fs::write(&path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    print!("{}", summary(&dump));
+    eprintln!("tondo: the dump is in {}; `tondo dump read {}` shows it", path.display(), path.display());
+    Ok(())
+}
+
+/// What `tondo dump read` shows of a dump.
+pub enum View {
+    Summary,
+    Tasks,
+    Task(u64),
+    Heap,
+}
+
+/// `tondo dump read <file> [tasks | task <id> | heap] [--json]`.
+pub fn read(path: &std::path::Path, view: View, json: bool) -> Result<(), String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let mut dump: Value = serde_json::from_str(&text).map_err(|e| format!("{} is not a dump: {e}", path.display()))?;
+    if dump.get("dump").is_none() {
+        return Err(format!("{} is not a dump of a Tondo program", path.display()));
+    }
+    name_frames(&mut dump);
+    let tasks = tasks(&dump);
+    let out = match view {
+        View::Summary if json => json!({ "summary": summary(&dump) }).to_string(),
+        View::Summary => summary(&dump),
+        View::Tasks if json => Value::Array(tasks).to_string(),
+        View::Tasks => tasks.iter().map(|task| task_text(task, false)).collect::<Vec<_>>().join("\n"),
+        View::Task(id) => {
+            let task = tasks.iter().find(|t| t["id"] == id).ok_or_else(|| {
+                format!("the dump has no task {id}; `tondo dump read {} tasks` lists them", path.display())
+            })?;
+            if json { task.to_string() } else { task_text(task, true) }
+        }
+        View::Heap if json => heap(&dump).to_string(),
+        View::Heap => heap_text(&heap(&dump)),
+    };
+    println!("{}", out.trim_end());
+    Ok(())
+}
+
+/// Names each frame the program did not, from the symbols of its files.
+fn name_frames(dump: &mut Value) {
+    let program = dump["info"]["program"].as_str().unwrap_or_default().to_string();
+    let Some(frames) = dump.get_mut("frames").and_then(Value::as_object_mut) else { return };
+    let original = frames.clone();
+    let names = Names::new(&original, &program);
+    for (address, frame) in frames.iter_mut() {
+        if frame.get("function").is_none() && frame.get("name").is_none() {
+            frame["name"] = json!(names.function(address));
+        }
+    }
+}
+
+/// A frame as a dump shows it: the program's as `file:line in function`,
+/// others by name.
+fn frame_text(dump: &Value, address: &Value) -> Option<String> {
+    let frame = &dump["frames"][address.as_str()?];
+    match (frame["function"].as_str(), frame["file"].as_str()) {
+        (Some(function), Some(file)) => Some(format!("{file}:{} in {function}", frame["line"])),
+        (Some(function), None) => Some(function.to_string()),
+        _ => frame["name"].as_str().map(str::to_string),
+    }
+}
+
+/// Whether a frame is the program's own, with a place in its source.
+fn placed(dump: &Value, address: &Value) -> bool {
+    address.as_str().is_some_and(|a| dump["frames"][a]["file"].is_string())
+}
+
+/// Whether a frame is compiled Tondo code, the program's or the standard
+/// library's.
+fn compiled(dump: &Value, address: &Value) -> bool {
+    address.as_str().is_some_and(|a| dump["frames"][a]["function"].is_string())
+}
+
+/// The tasks with what each runs, where it is and its stack in words.
+fn tasks(dump: &Value) -> Vec<Value> {
+    let mut out = Vec::new();
+    for task in dump["tasks"].as_array().into_iter().flatten() {
+        let stack: Vec<&Value> = task["stack"].as_array().into_iter().flatten().collect();
+        let runs = if task["main"] == true {
+            "main".to_string()
+        } else {
+            let outermost = stack.iter().rev().find_map(|a| dump["frames"][a.as_str()?]["function"].as_str());
+            outermost.map_or("a task".to_string(), |f| f.strip_prefix("spawn ").unwrap_or(f).to_string())
+        };
+        let at = stack.iter().find(|a| compiled(dump, a)).and_then(|a| frame_text(dump, a));
+        let words = |list: &Value| -> Vec<String> {
+            list.as_array().into_iter().flatten().filter_map(|a| frame_text(dump, a)).collect()
+        };
+        out.push(json!({
+            "id": task["id"], "runs": runs, "state": task["state"], "at": at, "cancelled": task["cancelled"],
+            "stack": words(&task["stack"]), "spawned": words(&task["spawned"]), "locks": task["locks"],
+        }));
+    }
+    out
+}
+
+fn task_text(task: &Value, whole: bool) -> String {
+    let state = task["state"].as_str().unwrap_or_default();
+    let mut out = format!("task {} ({}) {state}", task["id"], task["runs"].as_str().unwrap_or_default());
+    if let Some(at) = task["at"].as_str() {
+        out.push_str(&format!(" at {at}"));
+    }
+    if task["cancelled"] == true {
+        out.push_str(", cancelled");
+    }
+    out.push('\n');
+    // A short view shows the program's frames; the whole one, every frame.
+    let lines: Vec<&str> = task["stack"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    let shown: Vec<&&str> = lines.iter().filter(|l| whole || l.contains(" in ")).collect();
+    for line in shown {
+        out.push_str(&format!("    {line}\n"));
+    }
+    if let Some(spawned) = task["spawned"].as_array().and_then(|s| s.iter().find_map(Value::as_str)) {
+        out.push_str(&format!("  spawned at {spawned}\n"));
+    }
+    for lock in task["locks"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+        out.push_str(&format!("  holds a lock it took at {lock}\n"));
+    }
+    out
+}
+
+/// The live memory the samples stand for, by where it was allocated and
+/// by kind: a sample of `size` bytes stands for `size / (1 - e^(-size /
+/// rate))` of them, as in Go.
+fn heap(dump: &Value) -> Value {
+    let rate = dump["heap"]["rate"].as_f64().unwrap_or(524_288.0);
+    let mut sites: std::collections::HashMap<(String, String), (f64, f64, u64)> = std::collections::HashMap::new();
+    for sample in dump["heap"]["samples"].as_array().into_iter().flatten() {
+        let size = sample["size"].as_f64().unwrap_or(0.0).max(1.0);
+        let weight = size / (1.0 - (-size / rate).exp());
+        let stack: Vec<&Value> = sample["stack"].as_array().into_iter().flatten().collect();
+        // The kind from the runtime's function that Tondo code called; the
+        // site where the program's own code was, past the standard
+        // library's.
+        let first = stack.iter().position(|a| placed(dump, a));
+        let kind = first
+            .and_then(|i| i.checked_sub(1))
+            .and_then(|i| frame_text(dump, stack[i]))
+            .map_or("other".into(), |f| kind(&f));
+        let own = stack.iter().position(|a| {
+            placed(dump, a)
+                && !dump["frames"][a.as_str().unwrap_or_default()]["file"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .starts_with("<std>/")
+        });
+        let site = own
+            .or(first)
+            .and_then(|i| frame_text(dump, stack[i]))
+            .unwrap_or_else(|| "outside the program's code".into());
+        let entry = sites.entry((site, kind)).or_default();
+        entry.0 += weight;
+        entry.1 += weight / size;
+        entry.2 += 1;
+    }
+    let mut rows: Vec<Value> = sites
+        .into_iter()
+        .map(|((site, kind), (bytes, objects, samples))| {
+            json!({ "site": site, "kind": kind, "bytes": bytes.round(), "objects": objects.round(), "samples": samples })
+        })
+        .collect();
+    rows.sort_by(|a, b| b["bytes"].as_f64().partial_cmp(&a["bytes"].as_f64()).unwrap_or(std::cmp::Ordering::Equal));
+    let total = rows.iter().filter_map(|r| r["bytes"].as_f64()).fold(0.0, |sum, bytes| sum + bytes);
+    json!({ "bytes": total, "rate": rate, "dropped": dump["heap"]["dropped"], "sites": rows })
+}
+
+/// What a runtime function allocates, by its name.
+fn kind(function: &str) -> String {
+    let name = function.strip_prefix("tondo_rt_").unwrap_or(function);
+    let kinds =
+        [("str", "String"), ("text", "String"), ("array", "Array"), ("deque", "Deque"), ("map", "Map"), ("set", "Set")];
+    let found = kinds.iter().find(|(prefix, _)| name.starts_with(prefix)).map(|(_, kind)| kind.to_string());
+    found.unwrap_or_else(|| match function.starts_with("tondo_rt_") {
+        true => name.to_string(),
+        false => "other".to_string(),
+    })
+}
+
+fn heap_text(heap: &Value) -> String {
+    let mut out = format!(
+        "live memory: about {}, from samples of one allocation every {} on average\n",
+        bytes(heap["bytes"].as_f64().unwrap_or(0.0)),
+        bytes(heap["rate"].as_f64().unwrap_or(0.0))
+    );
+    out.push_str(&format!("{:>12} {:>10}  {:<10} SITE\n", "BYTES", "OBJECTS", "KIND"));
+    for row in heap["sites"].as_array().into_iter().flatten() {
+        out.push_str(&format!(
+            "{:>12} {:>10}  {:<10} {}\n",
+            bytes(row["bytes"].as_f64().unwrap_or(0.0)),
+            row["objects"].as_f64().unwrap_or(0.0) as u64,
+            row["kind"].as_str().unwrap_or_default(),
+            row["site"].as_str().unwrap_or_default()
+        ));
+    }
+    if heap["dropped"].as_u64().unwrap_or(0) > 0 {
+        out.push_str(&format!("({} samples were not kept, too many alive at once)\n", heap["dropped"]));
+    }
+    out
+}
+
+/// A dump at a glance: why it was taken, memory, tasks by state and where
+/// most wait, and where the live memory was allocated.
+fn summary(dump: &Value) -> String {
+    let info = &dump["info"];
+    let uptime = duration(info["uptime_ms"].as_f64().unwrap_or(0.0) / 1000.0);
+    let reason = match dump["reason"].as_str().unwrap_or_default() {
+        "request" => "on request".to_string(),
+        reason => format!("at a {reason}"),
+    };
+    let mut out = format!("{} (pid {}), dumped {reason}, after {uptime}\n", program_name(info), info["pid"]);
+    for line in dump["message"].as_str().unwrap_or_default().lines() {
+        out.push_str(&format!("  {line}\n"));
+    }
+    let counter = |name: &str| {
+        dump["counters"].as_array().into_iter().flatten().find(|c| c["name"] == name).and_then(|c| c["value"].as_f64())
+    };
+    out.push_str(&format!(
+        "memory: {} held, {} objects, {} resident\n",
+        bytes(counter("memory.held").unwrap_or(0.0)),
+        counter("memory.objects").unwrap_or(0.0),
+        bytes(counter("os.resident").unwrap_or(0.0))
+    ));
+    let tasks = tasks(dump);
+    let mut states: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut places: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for task in &tasks {
+        *states.entry(task["state"].as_str().unwrap_or_default().to_string()).or_default() += 1;
+        if let Some(at) = task["at"].as_str() {
+            *places.entry(format!("{} {at}", task["state"].as_str().unwrap_or_default())).or_default() += 1;
+        }
+    }
+    let states: Vec<String> = states.iter().map(|(state, n)| format!("{n} {state}")).collect();
+    out.push_str(&format!("tasks: {} ({})\n", tasks.len(), states.join(", ")));
+    let mut places: Vec<(String, usize)> = places.into_iter().collect();
+    places.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    for (place, count) in places.iter().take(5) {
+        out.push_str(&format!("  {count} {place}\n"));
+    }
+    let heap = heap(dump);
+    out.push_str(&format!("live memory, sampled: about {}\n", bytes(heap["bytes"].as_f64().unwrap_or(0.0))));
+    for row in heap["sites"].as_array().into_iter().flatten().take(5) {
+        out.push_str(&format!(
+            "  {:>10}  {:<8} {}\n",
+            bytes(row["bytes"].as_f64().unwrap_or(0.0)),
+            row["kind"].as_str().unwrap_or_default(),
+            row["site"].as_str().unwrap_or_default()
+        ));
+    }
+    out
+}

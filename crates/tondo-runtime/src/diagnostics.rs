@@ -190,15 +190,17 @@ pub(crate) fn retire_here() {
 }
 
 #[cfg_attr(not(tondo_staticlib), allow(dead_code))]
-pub(crate) fn allocated(size: usize) {
+pub(crate) fn allocated(address: *mut u8, size: usize) {
     if let Some(block) = block() {
         bump(&block.allocated, size as u64);
         bump(&block.allocations, 1);
+        super::heap::allocated(address as usize, size);
     }
 }
 
 #[cfg_attr(not(tondo_staticlib), allow(dead_code))]
-pub(crate) fn freed(size: usize) {
+pub(crate) fn freed(address: *mut u8, size: usize) {
+    super::heap::freed(address as usize);
     if let Some(block) = block() {
         bump(&block.freed, size as u64);
     }
@@ -568,6 +570,7 @@ fn answer(client: &mut UnixStream, pending: &mut Vec<u8>) -> bool {
             "info" => info(),
             "counters" => counters(),
             "trace" => trace(client),
+            "dump" => dump("request", "", None, Some(std::time::Duration::from_millis(250))),
             "stop" => {
                 let mut session = SESSION.lock().unwrap_or_else(|e| e.into_inner());
                 if session.as_ref().is_some_and(|s| s.fd == client.as_raw_fd()) {
@@ -643,20 +646,8 @@ fn recorded(session: &mut Session) -> String {
     use super::recorder::{Event, Stop};
     let (events, dropped) = super::recorder::take_events();
     let (samples, lost) = super::recorder::take_samples();
-    let mut frames = String::new();
-    let mut stack = |addresses: &[usize]| {
-        let mut out = String::from("[");
-        for (index, &address) in addresses.iter().enumerate() {
-            let comma = if index == 0 { "" } else { "," };
-            let _ = write!(out, "{comma}\"{address:x}\"");
-            if session.described.insert(address) {
-                let comma = if frames.is_empty() { "" } else { "," };
-                let _ = write!(frames, "{comma}\"{address:x}\":{}", frame(address));
-            }
-        }
-        out.push(']');
-        out
-    };
+    let mut frames = Frames { described: std::mem::take(&mut session.described), json: String::new() };
+    let mut stack = |addresses: &[usize]| frames.list(addresses);
     let mut out = String::from("{\"events\":[");
     for (index, (at, thread, event)) in events.iter().enumerate() {
         let comma = if index == 0 { "" } else { "," };
@@ -691,7 +682,8 @@ fn recorded(session: &mut Session) -> String {
         let frames = stack(sampled.frames());
         let _ = write!(out, "{comma}[{at},{thread},{frames}]");
     }
-    let _ = write!(out, "],\"frames\":{{{frames}}},\"dropped\":{dropped},\"lost\":{lost}}}");
+    session.described = std::mem::take(&mut frames.described);
+    let _ = write!(out, "],\"frames\":{{{}}},\"dropped\":{dropped},\"lost\":{lost}}}", frames.json);
     out
 }
 
@@ -751,7 +743,12 @@ fn info() -> String {
 }
 
 fn counters() -> String {
-    let mut out = format!("{{\"uptime_ms\":{},\"counters\":[", uptime_ms());
+    format!("{{\"uptime_ms\":{},\"counters\":{}}}", uptime_ms(), counter_list())
+}
+
+/// The counters as a JSON array.
+fn counter_list() -> String {
+    let mut out = String::from("[");
     for (index, sample) in sample().iter().enumerate() {
         let comma = if index == 0 { "" } else { "," };
         let kind = if sample.gauge { "gauge" } else { "counter" };
@@ -763,8 +760,102 @@ fn counters() -> String {
             sample.value
         );
     }
-    out.push_str("]}");
+    out.push(']');
     out
+}
+
+// ---------------------------------------------------------------------------
+// Dumps
+// ---------------------------------------------------------------------------
+
+/// A dump of the program, as JSON: its counters, every task and where it
+/// is, and the samples of its live memory. The workers stop for it a while
+/// when `wait` says, so that the running tasks show where they are; `here`
+/// is the stack of this thread's own task.
+fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: Option<std::time::Duration>) -> String {
+    let (stopped, tasks) = super::cycles::without_collections(|| {
+        let stopped = wait.is_some_and(super::tasks::stop_world);
+        let tasks = super::tasks::snapshot(here);
+        if stopped {
+            super::tasks::resume_world();
+        }
+        (stopped, tasks)
+    });
+    let (samples, dropped) = super::heap::alive();
+    let mut frames = Frames::default();
+    let time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
+    let mut out = format!(
+        "{{\"dump\":1,\"reason\":{},\"message\":{},\"info\":{},\"time_ms\":{time},\"stopped\":{stopped},\"counters\":{},\"tasks\":[",
+        quoted(reason),
+        quoted(message),
+        info(),
+        counter_list()
+    );
+    for (index, task) in tasks.iter().enumerate() {
+        let comma = if index == 0 { "" } else { "," };
+        let locks: Vec<String> = task.locks.iter().map(|l| quoted(l)).collect();
+        let _ = write!(
+            out,
+            "{comma}{{\"id\":{},\"main\":{},\"state\":\"{}\",\"cancelled\":{},\"stack\":{},\"spawned\":{},\"locks\":[{}]}}",
+            task.id,
+            task.main,
+            task.state,
+            task.cancelled,
+            frames.list(&task.stack),
+            frames.list(&task.spawned),
+            locks.join(",")
+        );
+    }
+    let _ = write!(out, "],\"heap\":{{\"rate\":{},\"dropped\":{dropped},\"samples\":[", super::heap::RATE);
+    for (index, (size, stack)) in samples.iter().enumerate() {
+        let comma = if index == 0 { "" } else { "," };
+        let _ = write!(out, "{comma}{{\"size\":{size},\"stack\":{}}}", frames.list(stack));
+    }
+    let _ = write!(out, "]}},\"frames\":{{{}}}}}", frames.json);
+    out
+}
+
+/// With `TONDO_DUMP=<dir>`, a program that panics, faults or deadlocks
+/// leaves a dump there before it ends, named after it and its process.
+pub(crate) fn crash_dump(reason: &str, message: &str, here: Vec<usize>, stop: bool) {
+    let Some(dir) = std::env::var_os("TONDO_DUMP") else { return };
+    let program = std::env::current_exe().ok().and_then(|p| Some(p.file_name()?.to_string_lossy().into_owned()));
+    let name = format!("{}-{}.dump.json", program.unwrap_or_else(|| "tondo".into()), std::process::id());
+    let path = PathBuf::from(dir).join(name);
+    // This thread stands still too while the others stop.
+    let paused = super::tasks::pause_here();
+    let text = dump(reason, message, Some(here), stop.then_some(std::time::Duration::from_millis(100)));
+    if paused {
+        super::tasks::enter_tondo();
+    }
+    let _ = match std::fs::write(&path, text) {
+        Ok(()) => writeln!(std::io::stderr(), "tondo runtime: a dump of the program is in {}", path.display()),
+        Err(e) => writeln!(std::io::stderr(), "tondo runtime: cannot write a dump to {}: {e}", path.display()),
+    };
+}
+
+/// The frames a document refers to by address, each described once.
+#[derive(Default)]
+struct Frames {
+    described: std::collections::HashSet<usize>,
+    json: String,
+}
+
+impl Frames {
+    /// The addresses as a JSON array, describing the new ones.
+    fn list(&mut self, addresses: &[usize]) -> String {
+        let mut out = String::from("[");
+        for (index, &address) in addresses.iter().enumerate() {
+            let comma = if index == 0 { "" } else { "," };
+            let _ = write!(out, "{comma}\"{address:x}\"");
+            if self.described.insert(address) {
+                let comma = if self.json.is_empty() { "" } else { "," };
+                let _ = write!(self.json, "{comma}\"{address:x}\":{}", frame(address));
+            }
+        }
+        out.push(']');
+        out
+    }
 }
 
 fn quoted(text: &str) -> String {

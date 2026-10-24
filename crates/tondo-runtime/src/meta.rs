@@ -102,7 +102,7 @@ unsafe impl GlobalAlloc for Counting {
             block = unsafe { System.alloc(layout) };
         }
         if !block.is_null() {
-            super::diagnostics::allocated(layout.size());
+            super::diagnostics::allocated(block, layout.size());
         }
         block
     }
@@ -111,7 +111,7 @@ unsafe impl GlobalAlloc for Counting {
         if LIMIT.load(Ordering::Relaxed) != usize::MAX {
             HELD.fetch_sub(layout.size(), Ordering::Relaxed);
         }
-        super::diagnostics::freed(layout.size());
+        super::diagnostics::freed(ptr, layout.size());
         unsafe { System.dealloc(ptr, layout) }
     }
 }

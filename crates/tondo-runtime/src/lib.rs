@@ -20,6 +20,7 @@ mod cycles;
 mod diagnostics;
 mod env;
 mod fs;
+mod heap;
 mod http;
 mod io;
 mod json;
@@ -1970,6 +1971,9 @@ pub unsafe extern "C" fn tondo_rt_panic(mut code: u32, message: *const Str, loca
     // A test build reports it to `tondo test` instead.
     if !testing::terminal(code, &report) {
         let _ = writeln!(std::io::stderr(), "{report}");
+        if !suppressed {
+            diagnostics::crash_dump("panic", &format!("{text}\n --> {location}"), trace::here_frames(), true);
+        }
     }
     run_cleanups();
     // The other tasks run their cleanups too, before the process ends.
