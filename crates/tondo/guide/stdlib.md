@@ -194,3 +194,18 @@ runs, where it was spawned and the locks it holds, the counters, and the
 live memory by where it was allocated. `tondo dump read <file>` shows it
 (`tasks`, `task <id>`, `heap`, `--json`). With `TONDO_DUMP=<dir>`, a
 program that panics, crashes or deadlocks leaves its dump there.
+
+## Debugging
+
+`tondo debug app.to` builds it with `--debug` (unoptimized, with a probe at
+each line; a build without it has none) and stops before `main`. Commands,
+one a line, typed or piped, `--json` for a line of JSON each:
+
+```text
+break app.to:12 if count > 3    stop where line 12 starts, when count > 3
+continue | step | next | finish run, into calls, over them, out
+locals | print user | stack     the bindings that hold a value, the calls
+tasks | pause | delete 1 | quit
+```
+
+When one task stops, all stop at their next line, and go on together.

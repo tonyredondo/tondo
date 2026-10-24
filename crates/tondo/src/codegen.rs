@@ -95,6 +95,10 @@ enum Rt {
     Panic,
     PanicValues,
     Trace,
+    /// A debug build's table of probes, and each probe (toolchain 7.6).
+    DebugTable,
+    DebugLine,
+    SbQuoted,
     BoxNew,
     BoxRetain,
     BoxRelease,
@@ -318,6 +322,9 @@ impl Rt {
             Rt::Panic => ("tondo_rt_panic", &[I32, I64, I64], &[]),
             Rt::PanicValues => ("tondo_rt_panic_values", &[I32, I32, I64, I64, I64, I64], &[]),
             Rt::Trace => ("tondo_rt_trace", &[I64], &[]),
+            Rt::DebugTable => ("tondo_rt_debug_table", &[I64], &[]),
+            Rt::DebugLine => ("tondo_rt_debug_line", &[I64, I64, I64], &[]),
+            Rt::SbQuoted => ("tondo_rt_sb_quoted", &[I64, I64], &[]),
             Rt::BoxNew => ("tondo_rt_box_new", &[I64], &[I64]),
             Rt::BoxRetain => ("tondo_rt_box_retain", &[I64], &[]),
             Rt::BoxRelease => ("tondo_rt_box_release", &[I64, I64], &[]),
@@ -631,6 +638,8 @@ enum Glue {
     Test,
     /// Reports the references a value holds to the cycle collector.
     Visit,
+    /// Appends a value as a debugger shows it to a string builder.
+    Show,
 }
 
 fn int_type(int: IntTy) -> ir::Type {
@@ -653,9 +662,16 @@ fn flags() -> MemFlagsData {
 
 /// Compiles the program to an object file; `meta` counts a step at each
 /// call and each turn of a loop, for a provider or generator (27.7).
-pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, meta: bool) -> Result<Vec<u8>, String> {
+pub fn compile(
+    program: &Program,
+    bodies: &[Body],
+    sources: &SourceMap,
+    meta: bool,
+    debug: bool,
+) -> Result<Vec<u8>, String> {
     let mut flags = settings::builder();
-    flags.set("opt_level", "speed").map_err(|e| e.to_string())?;
+    // A debug build keeps the code as written, statement after statement.
+    flags.set("opt_level", if debug { "none" } else { "speed" }).map_err(|e| e.to_string())?;
     flags.set("is_pic", "true").map_err(|e| e.to_string())?;
     let isa = cranelift_native::builder()
         .map_err(|e| format!("unsupported host: {e}"))?
@@ -685,8 +701,15 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, meta: bo
         callbacks: HashMap::new(),
         pending_callbacks: Vec::new(),
         traced: Vec::new(),
+        debug: None,
+        debug_functions: Vec::new(),
+        debug_sites: Vec::new(),
     };
 
+    if debug {
+        let table = cg.module.declare_data("tondo_debug", Linkage::Local, false, false).map_err(|e| e.to_string())?;
+        cg.debug = Some(table);
+    }
     for (index, body) in bodies.iter().enumerate() {
         let signature = cg.signature(body);
         let id = cg
@@ -749,6 +772,9 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, meta: bo
     cg.compile_all(jobs)?;
 
     cg.trace_table(trace);
+    if let Some(debug) = cg.debug {
+        cg.debug_table(debug);
+    }
     let product = cg.module.finish();
     product.emit().map_err(|e| e.to_string())
 }
@@ -788,7 +814,16 @@ struct Codegen<'a> {
     pending_callbacks: Vec<Callback>,
     /// The functions of the stack trace table, with their calls.
     traced: Vec<Traced>,
+    /// A debug build's probes (toolchain 7.6): each function's name and
+    /// the bindings it shows, and each probe's source and function.
+    debug: Option<DataId>,
+    debug_functions: Vec<(String, Vec<DebugBinding>)>,
+    debug_sites: Vec<(u32, u32)>,
 }
+
+/// A binding a debug build's probe shows: its name, its type and the glue
+/// that shows it.
+type DebugBinding = (String, Ty, FuncId);
 
 /// A compiled function for stack traces: its name, size and, for each
 /// call, the offset it returns to and where its source starts.
@@ -1064,7 +1099,7 @@ impl Codegen<'_> {
     fn glue_signature(&mut self, kind: Glue) -> ir::Signature {
         let mut signature = self.module.make_signature();
         signature.params.push(AbiParam::new(POINTER));
-        if matches!(kind, Glue::Display | Glue::Visit) {
+        if matches!(kind, Glue::Display | Glue::Visit | Glue::Show) {
             signature.params.push(AbiParam::new(POINTER));
         }
         if kind == Glue::Equal {
@@ -1299,6 +1334,46 @@ impl Codegen<'_> {
         self.module.define_data(id, &data).expect("trace table");
     }
 
+    /// A debug build's table (the runtime's `debugger::Table`): a text of
+    /// lines, `F` and a function's name, `L` a binding's name and type for
+    /// each it shows, and `S` a probe's file, line and function; and the
+    /// glue that shows each binding, in the order of the `L` lines.
+    fn debug_table(&mut self, id: DataId) {
+        let mut text = String::new();
+        let mut glues = Vec::new();
+        for (name, bindings) in &self.debug_functions {
+            text.push_str(&format!("F\t{name}\n"));
+            for &(ref binding, ty, glue) in bindings {
+                text.push_str(&format!("L\t{binding}\t{}\n", self.types.display(ty)));
+                glues.push(glue);
+            }
+        }
+        for &(start, function) in &self.debug_sites {
+            let (file, line, _) = self.sources.position(start);
+            text.push_str(&format!("S\t{file}\t{line}\t{function}\n"));
+        }
+        let text = self.string(&text);
+        let array = self.module.declare_data("tondo_debug_glue", Linkage::Local, false, false).expect("debug glue");
+        let mut data = DataDescription::new();
+        data.define(vec![0u8; glues.len().max(1) * 8].into_boxed_slice());
+        data.set_align(8);
+        for (index, &glue) in glues.iter().enumerate() {
+            let code = self.module.declare_func_in_data(glue, &mut data);
+            data.write_function_addr(index as u32 * 8, code);
+        }
+        self.module.define_data(array, &data).expect("debug glue definition");
+        let mut header = vec![0u8; 24];
+        header[16..24].copy_from_slice(&(glues.len() as u64).to_le_bytes());
+        let mut data = DataDescription::new();
+        data.define(header.into_boxed_slice());
+        data.set_align(8);
+        let text = self.module.declare_data_in_data(text, &mut data);
+        let array = self.module.declare_data_in_data(array, &mut data);
+        data.write_data_addr(0, text, 0);
+        data.write_data_addr(8, array, 0);
+        self.module.define_data(id, &data).expect("debug table");
+    }
+
     fn test_table(&mut self, tests: &[crate::hir::TestNodeInfo]) -> DataId {
         let names: Vec<DataId> = tests.iter().map(|t| self.string(&t.id)).collect();
         let id = self.module.declare_data("tondo_tests", Linkage::Local, false, false).expect("test table");
@@ -1383,6 +1458,11 @@ impl Codegen<'_> {
             let trace = e.cg.module.declare_data_in_func(trace, e.fb.func);
             let trace = e.fb.ins().symbol_value(POINTER, trace);
             e.call_rt(Rt::Trace, &[trace]);
+            if let Some(debug) = e.cg.debug {
+                let debug = e.cg.module.declare_data_in_func(debug, e.fb.func);
+                let debug = e.fb.ins().symbol_value(POINTER, debug);
+                e.call_rt(Rt::DebugTable, &[debug]);
+            }
             // A test build hands the runner its tree before `main` runs it.
             if let Some(table) = table {
                 let table = e.cg.module.declare_data_in_func(table, e.fb.func);
@@ -1725,6 +1805,132 @@ impl Emit<'_, '_> {
                 self.call_rt(Rt::SbMap, &[builder, value, element, none]);
             }
             ref other => unreachable!("no Display for {other:?}"),
+        }
+    }
+
+    /// Appends a value as a debugger shows it: its structure, whatever
+    /// `Display` it has, with texts in quotes. `address` is where it is.
+    /// Components that are not scalars go through their own glue, so a
+    /// recursive type does not expand forever.
+    fn append_show(&mut self, builder: ir::Value, ty: Ty, value: Val, address: ir::Value) {
+        let types = self.cg.types;
+        let repr = types.repr(ty);
+        let text = |e: &mut Self, text: &str| {
+            let text = e.string_ptr(text);
+            e.call_rt(Rt::SbStr, &[builder, text]);
+        };
+        // A component: scalars here, the rest by its glue.
+        let part = |e: &mut Self, ty: Ty, slot: &Slot| {
+            let at = e.component_address(address, slot);
+            match e.cg.class(slot.ty) {
+                Class::Zero => text(e, "()"),
+                _ => {
+                    e.call_glue(Glue::Show, slot.ty, &[builder, at]);
+                }
+            }
+            let _ = ty;
+        };
+        match types.kind(repr).clone() {
+            TyKind::String => {
+                let Val::Scalar(value) = value else { unreachable!("a string is a pointer") };
+                self.call_rt(Rt::SbQuoted, &[builder, value]);
+            }
+            TyKind::Char => {
+                text(self, "'");
+                self.append_display(builder, ty, value);
+                text(self, "'");
+            }
+            TyKind::Bool | TyKind::Int(_) | TyKind::Float(_) | TyKind::Byte => self.append_display(builder, ty, value),
+            TyKind::Unit => text(self, "()"),
+            TyKind::Tuple(items) => {
+                text(self, "(");
+                for index in 0..items.len() {
+                    if index > 0 {
+                        text(self, ", ");
+                    }
+                    let slot = self.cg.slot(ty, Proj::Field(index as u32));
+                    part(self, ty, &slot);
+                }
+                text(self, ")");
+            }
+            TyKind::Array(element) | TyKind::Deque(element) => {
+                let Val::Scalar(value) = value else { unreachable!("a sequence is a pointer") };
+                let size = self.element_size(element);
+                let show = self.glue_address(Glue::Show, element);
+                self.call_rt(Rt::SbArray, &[builder, value, size, show]);
+            }
+            TyKind::Map(key, entry) => {
+                let Val::Scalar(value) = value else { unreachable!("a map is a pointer") };
+                let (key, entry) = (self.glue_address(Glue::Show, key), self.glue_address(Glue::Show, entry));
+                self.call_rt(Rt::SbMap, &[builder, value, key, entry]);
+            }
+            TyKind::Set(element) => {
+                let Val::Scalar(value) = value else { unreachable!("a set is a pointer") };
+                let element = self.glue_address(Glue::Show, element);
+                let none = self.fb.ins().iconst(POINTER, 0);
+                self.call_rt(Rt::SbMap, &[builder, value, element, none]);
+            }
+            TyKind::Option(_) | TyKind::Result(..) | TyKind::Union(_) | TyKind::Adt(_)
+                if !matches!(value, Val::Zero) || types.variants(ty).is_some() =>
+            {
+                // Each variant by its name, then its payload.
+                let names: Vec<String> = match types.kind(repr) {
+                    TyKind::Option(_) => vec!["none".into(), "some".into()],
+                    TyKind::Result(..) => vec!["ok".into(), "err".into()],
+                    TyKind::Union(members) => members.iter().map(|&m| format!("{}: ", types.display(m))).collect(),
+                    TyKind::Adt(id) => match &types.adt(*id).kind {
+                        AdtKind::Enum(variants) => {
+                            variants.iter().map(|v| format!("{}.{}", types.adt(*id).name, v.name)).collect()
+                        }
+                        AdtKind::Record(fields) => {
+                            text(self, &format!("{} {{ ", types.adt(*id).name));
+                            for (index, field) in fields.iter().enumerate() {
+                                text(self, &format!("{}{}: ", if index > 0 { ", " } else { "" }, field.name));
+                                let slot = self.cg.slot(ty, Proj::Field(index as u32));
+                                part(self, ty, &slot);
+                            }
+                            text(self, " }");
+                            return;
+                        }
+                        AdtKind::Newtype(_) => Vec::new(),
+                    },
+                    _ => Vec::new(),
+                };
+                let Some(variants) = types.variants(ty) else {
+                    text(self, &types.display(ty));
+                    return;
+                };
+                let tag = self.tag(ty, value);
+                let done = self.fb.create_block();
+                let union = matches!(types.kind(repr), TyKind::Union(_));
+                for (variant, components) in variants.iter().enumerate() {
+                    let (this, next) = (self.fb.create_block(), self.fb.create_block());
+                    let is_this = self.fb.ins().icmp_imm_s(IntCC::Equal, tag, variant as i64);
+                    self.fb.ins().brif(is_this, this, &[], next, &[]);
+                    self.fb.switch_to_block(this);
+                    text(self, &names[variant]);
+                    if !components.is_empty() {
+                        if !union {
+                            text(self, "(");
+                        }
+                        for index in 0..components.len() {
+                            if index > 0 {
+                                text(self, ", ");
+                            }
+                            let slot = self.cg.slot(ty, Proj::Variant(variant as u32, index as u32));
+                            part(self, ty, &slot);
+                        }
+                        if !union {
+                            text(self, ")");
+                        }
+                    }
+                    self.fb.ins().jump(done, &[]);
+                    self.fb.switch_to_block(next);
+                }
+                self.fb.ins().jump(done, &[]);
+                self.fb.switch_to_block(done);
+            }
+            _ => text(self, &types.display(ty)),
         }
     }
 
@@ -2190,6 +2396,11 @@ fn define_glue(cg: &mut Codegen, kind: Glue, ty: Ty, func: &mut ir::Function, fb
             e.append_display(params[0], ty, value);
             e.fb.ins().return_(&[]);
         }
+        (Glue::Show, _) => {
+            let value = e.value_at(params[1], ty);
+            e.append_show(params[0], ty, value, params[1]);
+            e.fb.ins().return_(&[]);
+        }
         (Glue::Hash, None) => {
             let value = e.value_at(params[0], ty);
             let hash = e.hash(ty, value);
@@ -2340,6 +2551,21 @@ struct FnCodegen<'a, 'b> {
     /// Where the statement being compiled is, for panics of the runtime.
     span: Span,
     sites: Vec<(u32, Option<Ty>)>,
+    /// In a debug build, what its probes show.
+    debug: Option<DebugFrame>,
+}
+
+/// What a function of a debug build keeps for its probes (toolchain 7.6):
+/// its index among the debug table's functions; each binding it shows, and
+/// for one in a variable the slot its value is copied to when a probe
+/// runs; a bit for each that holds a value now; their addresses, for the
+/// probe; and the line the last probe was for, in the block.
+struct DebugFrame {
+    function: u32,
+    shown: Vec<(Local, Option<ir::StackSlot>)>,
+    alive: ir::StackSlot,
+    addresses: ir::StackSlot,
+    line: Option<(String, usize)>,
 }
 
 impl<'a, 'b> FnCodegen<'a, 'b> {
@@ -2381,7 +2607,30 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
             });
         }
-        FnCodegen { e: Emit { cg, fb }, body, bodies, blocks, storage, span: Span::default(), sites: Vec::new() }
+        let debug = cg.debug.is_some().then(|| {
+            let mut shown = Vec::new();
+            let mut described = Vec::new();
+            for (index, name) in body.names.iter().enumerate() {
+                let (Some(name), local) = (name, Local(index as u32)) else { continue };
+                let copy = match storage[index] {
+                    Storage::Zero => continue,
+                    Storage::Var(_) => {
+                        Some(fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3)))
+                    }
+                    Storage::Slot(_) | Storage::Pointer(_) => None,
+                };
+                shown.push((local, copy));
+                let ty = body.locals[index];
+                described.push((name.clone(), ty, cg.glue(Glue::Show, ty)));
+            }
+            let words = shown.len().div_ceil(64).max(1) as u32;
+            let alive = fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, words * 8, 3));
+            let size = (shown.len().max(1) * 8) as u32;
+            let addresses = fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size, 3));
+            cg.debug_functions.push((body.name.clone(), described));
+            DebugFrame { function: cg.debug_functions.len() as u32 - 1, shown, alive, addresses, line: None }
+        });
+        FnCodegen { e: Emit { cg, fb }, body, bodies, blocks, storage, span: Span::default(), sites: Vec::new(), debug }
     }
 
     /// Builds the function's IR; gives where its statements are, which the
@@ -2406,11 +2655,23 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 Storage::Zero | Storage::Slot(_) => {}
             }
         }
+        if let Some(debug) = &self.debug {
+            let zero = self.e.fb.ins().iconst(types::I64, 0);
+            for word in 0..debug.shown.len().div_ceil(64) {
+                self.e.fb.ins().stack_store(POINTER, zero, debug.alive, word as i32 * 8);
+            }
+            for &param in &self.body.params {
+                self.mark(param, true);
+            }
+        }
         for (index, block) in self.body.blocks.iter().enumerate() {
             if index > 0 {
                 self.e.fb.switch_to_block(self.blocks[index]);
             } else if self.e.cg.meta {
                 self.e.call_rt(Rt::MetaStep, &[]);
+            }
+            if let Some(debug) = &mut self.debug {
+                debug.line = None;
             }
             for stmt in &block.stmts {
                 self.statement(stmt);
@@ -2844,6 +3105,46 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         ir::SourceLoc::new(self.sites.len() as u32)
     }
 
+    /// In a debug build, notes whether a binding holds a value: a probe
+    /// shows only those that do, and none whose value went away.
+    fn mark(&mut self, local: Local, holds: bool) {
+        let Some(debug) = &self.debug else { return };
+        let Some(index) = debug.shown.iter().position(|(l, _)| *l == local) else { return };
+        let (alive, offset, bit) = (debug.alive, (index / 64) as i32 * 8, 1i64 << (index % 64));
+        let word = self.e.fb.ins().stack_load(POINTER, types::I64, alive, offset);
+        let word = if holds { self.e.fb.ins().bor_imm_s(word, bit) } else { self.e.fb.ins().band_imm_s(word, !bit) };
+        self.e.fb.ins().stack_store(POINTER, word, alive, offset);
+    }
+
+    /// In a debug build, a probe where a line starts: the debugger stops
+    /// there when it is asked to, and reads the bindings.
+    fn probe(&mut self, span: Span) {
+        let Some(mut debug) = self.debug.take() else { return };
+        let (file, line, _) = self.e.cg.sources.position(span.start);
+        if span != Span::default() && debug.line.as_ref() != Some(&(file.clone(), line)) {
+            debug.line = Some((file, line));
+            for (index, &(local, copy)) in debug.shown.iter().enumerate() {
+                let address = match (self.storage[local.0 as usize], copy) {
+                    (Storage::Var(var), Some(slot)) => {
+                        let value = self.e.fb.use_var(var);
+                        self.e.fb.ins().stack_store(POINTER, value, slot, 0);
+                        self.e.fb.ins().stack_addr(POINTER, slot, 0)
+                    }
+                    (Storage::Slot(slot), _) => self.e.fb.ins().stack_addr(POINTER, slot, 0),
+                    (Storage::Pointer(var), _) => self.e.fb.use_var(var),
+                    _ => self.e.fb.ins().iconst(POINTER, 0),
+                };
+                self.e.fb.ins().stack_store(POINTER, address, debug.addresses, index as i32 * 8);
+            }
+            self.e.cg.debug_sites.push((span.start, debug.function));
+            let site = self.e.fb.ins().iconst(types::I64, self.e.cg.debug_sites.len() as i64 - 1);
+            let addresses = self.e.fb.ins().stack_addr(POINTER, debug.addresses, 0);
+            let alive = self.e.fb.ins().stack_addr(POINTER, debug.alive, 0);
+            self.e.call_rt(Rt::DebugLine, &[site, addresses, alive]);
+        }
+        self.debug = Some(debug);
+    }
+
     fn location(&mut self, span: Span) -> ir::Value {
         let location = self.e.cg.sources.location(span);
         self.e.string_ptr(&location)
@@ -2861,7 +3162,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     _ => place,
                 };
                 self.at_typed(*span, Some(self.body.place_ty(self.e.cg.types, made)));
-                self.assign(place, rvalue, *span)
+                self.probe(*span);
+                self.assign(place, rvalue, *span);
+                if place.path.is_empty() {
+                    self.mark(place.local, true);
+                }
             }
             Statement::DeferPush(body, place) => {
                 let callee =
@@ -2875,6 +3180,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.call_rt(Rt::DeferPop, &[]);
             }
             Statement::Clear(local) => {
+                self.mark(*local, false);
                 let place = Place::local(*local);
                 let ty = self.place_ty(&place);
                 match self.e.cg.class(ty) {
@@ -2916,6 +3222,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
             }
             Statement::Retain(place) | Statement::Release(place) => {
+                if matches!(stmt, Statement::Release(_)) && place.path.is_empty() {
+                    self.mark(place.local, false);
+                }
                 let ty = self.place_ty(place);
                 if !self.e.cg.types.needs_drop(ty) {
                     return;

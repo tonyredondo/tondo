@@ -1643,3 +1643,23 @@ made, or the collection it changed: the compiler gives each statement its
 own source location and writes the type beside each call in the table of
 traces, so naming it costs nothing when the program runs. Objects carry no
 type, so who holds one waits for debug builds, where a header can say.
+
+## 2026-10-24 — A debugger for debug builds (H13, fourth part)
+
+`--debug` compiles a debug build: unoptimized, with a probe where each line
+starts, and a table the runtime reads that names each function's bindings
+and their types, with a function that shows each type: texts in quotes,
+records with their fields, enums with their variant, collections with
+their elements. A build without `--debug` has none of it. A probe passes
+the addresses of the function's bindings and a bit for each that holds a
+value: the code sets it when a binding is assigned and clears it when its
+value moves or is released, so the debugger never reads memory that is
+gone. A binding in a variable is copied to the stack when a probe runs.
+While no debugger is attached a probe reads one flag; a stopped task waits
+outside Tondo code, so collections and dumps go on, and the others stop at
+their next probe. The debugger lives in the program and speaks over the
+diagnostics socket, so it needs no `ptrace` or Mach ports, knows the tasks
+for what they are, and shows values as Tondo writes them; gdb and lldb see
+neither. `tondo debug` reads commands from a person or from its input,
+with `--json` answers for tools and models; an editor's adapter can speak
+the same commands.

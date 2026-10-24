@@ -9,9 +9,9 @@ const USAGE: &str = "\
 New to Tondo, or a model writing it? Start with `tondo guide`.
 
 usage:
-  tondo run [<project>|<file.to>] [--link <library>]... [--static] [-- <argument>...]
+  tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug] [-- <argument>...]
                                                        compile and run a program
-  tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip]
+  tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--debug]
                                                        compile a native executable (static on Linux;
                                                        without its symbol table)
   tondo check [<project>|<file.to>] [--json]           report diagnostics only (as JSON)
@@ -26,7 +26,7 @@ usage:
             [--retry <n>] [--allow-flaky] [--repeat <n>] [--codeowners auto|none|<path>]
             [--show-output] [--allow-empty] [--deny-skips] [--test-format human|json]
             [--report json=<path> | junit=<path>]... [--diagnostic-format human|json]
-            [--artifacts <dir>] [--update-snapshots] [--static]
+            [--artifacts <dir>] [--update-snapshots] [--static] [--debug]
                                                        run the tests of a project
   tondo doc-test [--edition 0.1] <markdown>            check the examples of a document (as JSON)
   tondo lsp                                            serve an editor: diagnostics, hover, definitions,
@@ -35,6 +35,9 @@ usage:
   tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--json]
                                                        watch a running program's counters, the runtime's
                                                        and its own (std.diagnostics)
+  tondo debug [--json] <file.to|project|executable|pid|name> [-- <argument>...]
+                                                       debug a program built with --debug: breakpoints,
+                                                       steps, bindings, stacks, tasks
   tondo dump <pid|name> [--output <path>]           write a dump of a running program: its tasks and
                                                        where they are, its counters, its live memory
   tondo dump read <file> [tasks | task <id> | heap] [--json]
@@ -91,6 +94,7 @@ fn main() -> ExitCode {
         "counters" => counters_command(&args[1..]),
         "trace" => trace_command(&args[1..]),
         "dump" => dump_command(&args[1..]),
+        "debug" => debug_command(&args[1..]),
         "version" | "--version" | "-V" => {
             println!("tondo {} (native, cranelift)", driver::VERSION);
             Ok(ExitCode::SUCCESS)
@@ -99,7 +103,7 @@ fn main() -> ExitCode {
             println!("{USAGE}");
             Ok(ExitCode::SUCCESS)
         }
-        file if file.ends_with(".to") => run(Path::new(file), &args[1..], &[], false),
+        file if file.ends_with(".to") => run(Path::new(file), &args[1..], &BuildOptions::default()),
         other => Err(format!("unknown command `{other}`\n{USAGE}")),
     };
     result.unwrap_or_else(|message| {
@@ -197,7 +201,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         update_snapshots: false,
     };
     let mut diagnostics_json = false;
-    let mut statically = false;
+    let (mut statically, mut debug) = (false, false);
     let usage = |message: String| format!("{message}\n{USAGE}");
     // A count written canonically: `0` or digits without a leading zero.
     let count = |text: &str, flag: &str| {
@@ -294,6 +298,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             "--show-output" => options.show_output = true,
             "--allow-empty" => options.allow_empty = true,
             "--static" => statically = true,
+            "--debug" => debug = true,
             "--deny-skips" => options.deny_skips = true,
             "--allow-flaky" => options.allow_flaky = true,
             "--update-snapshots" => options.update_snapshots = true,
@@ -372,7 +377,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     options.schedules = schedules.map(|count| (count, seed, chosen));
     // The build is reused while nothing it reads changes.
-    let dir = runner::build_dir(&path, statically)?;
+    let dir = runner::build_dir(&path, statically, debug)?;
     let (executable, tree_file) = (dir.join("tests"), dir.join("tree"));
     let tree = match runner::Tree::load(&tree_file).filter(|_| executable.is_file()) {
         Some(tree) => tree,
@@ -399,7 +404,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             // Linked aside and renamed, so another run of the same tests keeps its own.
             let partial = executable.with_extension(format!("partial-{}", std::process::id()));
             driver::link(
-                &driver::object(&analysis)?,
+                &driver::object(&analysis, debug)?,
                 &partial,
                 &analysis.libraries,
                 driver::Linking { strip: false, statically },
@@ -495,6 +500,41 @@ fn counters_command(args: &[OsString]) -> Result<ExitCode, String> {
     tondo::observe::counters(&name, interval, count, json).map(|()| ExitCode::SUCCESS)
 }
 
+/// Debugs a program it builds or starts, or a running debug build.
+fn debug_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let usage = |message: &str| format!("{message}\n{USAGE}");
+    let (mut json, mut target, mut program_args) = (false, None, Vec::new());
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        match arg.to_str().unwrap_or_default() {
+            "--json" => json = true,
+            "--" => program_args = rest.by_ref().cloned().collect(),
+            other if !other.starts_with('-') && target.is_none() => target = Some(arg.clone()),
+            other => return Err(usage(&format!("debug does not take `{other}`"))),
+        }
+    }
+    let target = target.ok_or_else(|| {
+        usage("debug takes a program: a .to file, a project, an executable, or a running one's process ID or name")
+    })?;
+    let path = PathBuf::from(&target);
+    let debugged = if path.extension().is_some_and(|e| e == "to")
+        || path.join("tondo.toml").is_file()
+        || path.join("src/main.to").is_file()
+    {
+        let options = BuildOptions { debug: true, ..BuildOptions::default() };
+        match cached_executable(&path, &options)? {
+            Some(executable) => tondo::debug::Debugged::Started(executable, program_args),
+            None => return Ok(ExitCode::FAILURE),
+        }
+    } else if path.is_file() {
+        tondo::debug::Debugged::Started(path, program_args)
+    } else {
+        tondo::debug::Debugged::Running(target.to_string_lossy().into_owned())
+    };
+    let status = tondo::debug::debug(debugged, json)?;
+    Ok(ExitCode::from(status.clamp(0, 255) as u8))
+}
+
 /// Dumps a running program, or reads a dump.
 fn dump_command(args: &[OsString]) -> Result<ExitCode, String> {
     let args: Vec<String> = args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
@@ -548,7 +588,7 @@ fn trace_command(args: &[OsString]) -> Result<ExitCode, String> {
             let first = Path::new(&program[0]);
             let source = first.extension().is_some_and(|e| e == "to") || first.join("tondo.toml").is_file();
             let executable = match source {
-                true => match cached_executable(first, &[], false)? {
+                true => match cached_executable(first, &BuildOptions::default())? {
                     Some(executable) => executable,
                     None => return Ok(ExitCode::FAILURE),
                 },
@@ -797,12 +837,23 @@ fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
 /// The `--link <library>` options before `--`, and the other arguments.
 /// The native libraries `--link` adds, whether `--static` asks for a
 /// static executable, and the other arguments.
-fn link_options(args: &[OsString]) -> Result<(Vec<String>, bool, Vec<OsString>), String> {
-    let (mut libraries, mut statically, mut rest) = (Vec::new(), false, Vec::new());
+/// How a program builds: its extra libraries, whether static, and whether a
+/// debug build (toolchain 7.6).
+#[derive(Default)]
+struct BuildOptions {
+    libraries: Vec<String>,
+    statically: bool,
+    debug: bool,
+}
+
+fn link_options(args: &[OsString]) -> Result<(BuildOptions, Vec<OsString>), String> {
+    let (mut libraries, mut statically, mut debug, mut rest) = (Vec::new(), false, false, Vec::new());
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         if arg == "--static" && !statically {
             statically = true;
+        } else if arg == "--debug" && !debug {
+            debug = true;
         } else if arg == "--" {
             rest.push(arg.clone());
             rest.extend(args.by_ref().cloned());
@@ -814,12 +865,13 @@ fn link_options(args: &[OsString]) -> Result<(Vec<String>, bool, Vec<OsString>),
             rest.push(arg.clone());
         }
     }
-    Ok((libraries, statically, rest))
+    Ok((BuildOptions { libraries, statically, debug }, rest))
 }
 
 fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
     let (path, rest) = source_argument(args);
-    let (libraries, statically, rest) = link_options(rest)?;
+    let (options, rest) = link_options(rest)?;
+    let BuildOptions { libraries, statically, debug } = options;
     let mut output = None;
     let mut strip = false;
     let mut rest = rest.iter();
@@ -841,24 +893,24 @@ fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
         return Ok(ExitCode::FAILURE);
     };
     let libraries = [analysis.libraries.clone(), libraries].concat();
-    driver::link(&driver::object(&analysis)?, &output, &libraries, driver::Linking { strip, statically })?;
+    driver::link(&driver::object(&analysis, debug)?, &output, &libraries, driver::Linking { strip, statically })?;
     Ok(ExitCode::SUCCESS)
 }
 
 fn run_command(args: &[OsString]) -> Result<ExitCode, String> {
     let (path, rest) = source_argument(args);
-    let (libraries, statically, rest) = link_options(rest)?;
+    let (options, rest) = link_options(rest)?;
     let program_args = match rest.as_slice() {
         [] => &[][..],
         [separator, rest @ ..] if separator == "--" => rest,
         _ => return Err(format!("program arguments go after `--`\n{USAGE}")),
     };
-    run(&path, program_args, &libraries, statically)
+    run(&path, program_args, &options)
 }
 
 /// Compiles (or reuses a cached build of) `path` and executes it.
-fn run(path: &Path, program_args: &[OsString], libraries: &[String], statically: bool) -> Result<ExitCode, String> {
-    match cached_executable(path, libraries, statically)? {
+fn run(path: &Path, program_args: &[OsString], options: &BuildOptions) -> Result<ExitCode, String> {
+    match cached_executable(path, options)? {
         Some(executable) => exec(&executable, program_args),
         None => Ok(ExitCode::FAILURE),
     }
@@ -866,10 +918,11 @@ fn run(path: &Path, program_args: &[OsString], libraries: &[String], statically:
 
 /// The executable of `path` in the cache, built if it is not there; none
 /// when the program does not compile, whose diagnostics are printed.
-fn cached_executable(path: &Path, libraries: &[String], statically: bool) -> Result<Option<PathBuf>, String> {
+fn cached_executable(path: &Path, options: &BuildOptions) -> Result<Option<PathBuf>, String> {
+    let BuildOptions { libraries, statically, debug } = options;
     let identity = driver::compiler_identity();
-    let linking = if statically { "static" } else { "" };
-    let mut parts = vec![identity.into_bytes(), libraries.join("\n").into_bytes(), linking.as_bytes().to_vec()];
+    let linking = format!("{}{}", if *statically { "static" } else { "" }, if *debug { "debug" } else { "" });
+    let mut parts = vec![identity.into_bytes(), libraries.join("\n").into_bytes(), linking.into_bytes()];
     for input in driver::inputs(path)? {
         parts.push(input.as_os_str().as_encoded_bytes().to_vec());
         parts.push(std::fs::read(&input).map_err(|e| format!("cannot read {}: {e}", input.display()))?);
@@ -881,11 +934,11 @@ fn cached_executable(path: &Path, libraries: &[String], statically: bool) -> Res
         let Some(analysis) = analyze(path)? else {
             return Ok(None);
         };
-        let object = driver::object(&analysis)?;
+        let object = driver::object(&analysis, *debug)?;
         std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
         let partial = dir.join(format!(".partial-{}", std::process::id()));
         let libraries = [analysis.libraries.clone(), libraries.to_vec()].concat();
-        driver::link(&object, &partial, &libraries, driver::Linking { strip: false, statically })?;
+        driver::link(&object, &partial, &libraries, driver::Linking { strip: false, statically: *statically })?;
         std::fs::rename(&partial, &executable).map_err(|e| e.to_string())?;
     }
     Ok(Some(executable))

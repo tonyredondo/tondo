@@ -103,6 +103,7 @@ struct Builder<'a> {
     types: &'a Types,
     function: &'a hir::Function,
     locals: Vec<Ty>,
+    names: Vec<Option<String>>,
     blocks: Vec<(Vec<Statement>, Option<Terminator>)>,
     current: BlockId,
     hir_locals: Vec<Option<Local>>,
@@ -125,6 +126,7 @@ fn lower_function(types: &Types, function: &hir::Function, waits: Option<&[bool]
         types,
         function,
         locals: Vec::new(),
+        names: Vec::new(),
         blocks: Vec::new(),
         current: BlockId(0),
         hir_locals: vec![None; function.locals.len()],
@@ -142,7 +144,8 @@ fn lower_function(types: &Types, function: &hir::Function, waits: Option<&[bool]
     }
     let value = b.block(&function.body);
     if function.body.ty != Ty::NEVER {
-        b.emit_return(value);
+        let span = function.body.tail.as_ref().map_or(Span::default(), |tail| tail.span);
+        b.emit_return(value, span);
     }
     let blocks = b
         .blocks
@@ -152,6 +155,7 @@ fn lower_function(types: &Types, function: &hir::Function, waits: Option<&[bool]
     Body {
         name: function.name.clone(),
         locals: b.locals,
+        names: b.names,
         params,
         loans: function.loans.clone(),
         ret: b.ret,
@@ -171,6 +175,7 @@ impl Builder<'_> {
 
     fn new_local(&mut self, ty: Ty) -> Local {
         self.locals.push(ty);
+        self.names.push(None);
         Local(self.locals.len() as u32 - 1)
     }
 
@@ -178,7 +183,12 @@ impl Builder<'_> {
         if let Some(local) = self.hir_locals[id.0 as usize] {
             return local;
         }
-        let local = self.new_local(self.function.locals[id.0 as usize].ty);
+        let declared = &self.function.locals[id.0 as usize];
+        let local = self.new_local(declared.ty);
+        // The compiler's own are `_` and `<...>`.
+        if declared.name != "_" && !declared.name.starts_with('<') {
+            self.names[local.0 as usize] = Some(declared.name.clone());
+        }
         self.hir_locals[id.0 as usize] = Some(local);
         local
     }
@@ -732,22 +742,24 @@ impl Builder<'_> {
     }
 
     /// Returns `value`, as `ok(value)` from a fallible function.
-    fn emit_return(&mut self, value: Operand) {
+    /// Returns the value of the expression at `span`, which a debugger
+    /// stops at.
+    fn emit_return(&mut self, value: Operand, span: Span) {
         let value =
             if self.fallible() { self.variant(self.function.result, OK, vec![value], Span::default()) } else { value };
-        self.exit(value);
+        self.exit(value, span);
     }
 
     /// Returns `err(error)` from a fallible function.
-    fn emit_fail(&mut self, error: Operand) {
+    fn emit_fail(&mut self, error: Operand, span: Span) {
         let value = self.variant(self.function.result, ERR, vec![error], Span::default());
-        self.exit(value);
+        self.exit(value, span);
     }
 
-    fn exit(&mut self, value: Operand) {
+    fn exit(&mut self, value: Operand, span: Span) {
         let operand = match self.ret {
             Some(ret) => {
-                self.store(Place::local(ret), value, Span::default());
+                self.store(Place::local(ret), value, span);
                 Operand::local(ret)
             }
             None => Operand::Const(Const::Unit),
@@ -898,14 +910,15 @@ impl Builder<'_> {
                 self.scopes.last_mut().unwrap().push(Exit::Defer(Rc::new(call.clone())));
             }
             hir::Stmt::Return(value) => {
+                let span = value.as_ref().map_or(Span::default(), |v| v.span);
                 let value = value.as_ref().map_or(Operand::Const(Const::Unit), |v| self.expr(v));
-                self.emit_return(value);
+                self.emit_return(value, span);
             }
             hir::Stmt::Fail(error) => {
                 let span = error.span;
                 let error = self.expr(error);
                 self.note_failure(span);
-                self.emit_fail(error);
+                self.emit_fail(error, span);
             }
             hir::Stmt::Break | hir::Stmt::Continue => {
                 let lp = self.loops.last().unwrap();
@@ -1329,12 +1342,12 @@ impl Builder<'_> {
                 self.switch_to(exit);
                 if is_option {
                     let none = self.variant(self.success_ty(), NONE, Vec::new(), e.span);
-                    self.emit_return(none);
+                    self.emit_return(none, e.span);
                 } else {
                     let TyKind::Result(_, error_ty) = *self.types.kind(inner.ty) else { unreachable!() };
                     let error = self.widen(Operand::Copy(place.variant_field(ERR, 0)), error_ty, e.span);
                     self.note_failure(e.span);
-                    self.emit_fail(error);
+                    self.emit_fail(error, e.span);
                 }
                 self.switch_to(next);
                 Operand::Copy(place.variant_field(success, 0))

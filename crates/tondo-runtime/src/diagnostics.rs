@@ -494,10 +494,16 @@ pub(crate) fn start() {
         EXACT.store(true, Ordering::Relaxed);
     }
     let on = |name: &str| std::env::var_os(name).is_some_and(|value| value == "1");
-    if !on("TONDO_DIAGNOSTICS") && !on("TONDO_TRACE") && std::env::var_os("TONDO_DUMP").is_none() {
+    let debugged = on("TONDO_DEBUG");
+    if !on("TONDO_DIAGNOSTICS") && !on("TONDO_TRACE") && !debugged && std::env::var_os("TONDO_DUMP").is_none() {
         return;
     }
     ENABLED.store(true, Ordering::Relaxed);
+    // `tondo debug -- program` debugs that program, not those it starts.
+    if debugged {
+        unsafe { std::env::remove_var("TONDO_DEBUG") };
+        super::debugger::WAIT.store(true, Ordering::Relaxed);
+    }
     use std::os::unix::fs::{DirBuilderExt, MetadataExt};
     let directory = directory();
     let _ = std::fs::DirBuilder::new().mode(0o700).create(&directory);
@@ -516,6 +522,7 @@ pub(crate) fn start() {
     }
     extern "C" fn remove(_: *mut u8) {
         end_trace(&mut SESSION.lock().unwrap_or_else(|e| e.into_inner()), "exit");
+        super::debugger::exited();
         if let Some(path) = SOCKET.get() {
             let _ = std::fs::remove_file(path);
         }
@@ -562,6 +569,9 @@ fn serve(listener: UnixListener) {
                     super::recorder::stop();
                     *session = None;
                 }
+                if super::debugger::is_client(client.as_raw_fd()) {
+                    super::debugger::detach();
+                }
             }
             kept
         });
@@ -587,7 +597,14 @@ fn answer(client: &mut UnixStream, pending: &mut Vec<u8>) -> bool {
     pending.extend_from_slice(&buffer[..count]);
     while let Some(end) = pending.iter().position(|&b| b == b'\n') {
         let line: Vec<u8> = pending.drain(..=end).collect();
-        let reply = match String::from_utf8_lossy(&line).trim() {
+        let line = String::from_utf8_lossy(&line).trim().to_string();
+        let reply = match line.as_str() {
+            _ if super::debugger::is_client(client.as_raw_fd())
+                && let Some(reply) = super::debugger::command(&line) =>
+            {
+                reply
+            }
+            "debug" => super::debugger::attach(client),
             "info" => info(),
             "counters" => counters(),
             "trace" => trace(client),

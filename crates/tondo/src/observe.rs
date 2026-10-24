@@ -13,10 +13,10 @@ fn directory() -> PathBuf {
 }
 
 /// A connection to a running program.
-struct Program {
-    pid: u32,
-    reader: BufReader<UnixStream>,
-    writer: UnixStream,
+pub(crate) struct Program {
+    pub(crate) pid: u32,
+    pub(crate) reader: BufReader<UnixStream>,
+    pub(crate) writer: UnixStream,
 }
 
 impl Program {
@@ -27,7 +27,7 @@ impl Program {
     }
 
     /// The program's answer to `request`, or why there is none.
-    fn ask(&mut self, request: &str) -> Result<Value, String> {
+    pub(crate) fn ask(&mut self, request: &str) -> Result<Value, String> {
         let ended = |_| format!("the program {} ended", self.pid);
         writeln!(self.writer, "{request}").map_err(ended)?;
         let mut line = String::new();
@@ -107,7 +107,7 @@ fn target(name: &str) -> Result<u32, String> {
     }
 }
 
-fn connect(name: &str) -> Result<Program, String> {
+pub(crate) fn connect(name: &str) -> Result<Program, String> {
     let pid = target(name)?;
     Program::connect(pid).map_err(|_| {
         format!(
@@ -354,7 +354,7 @@ pub fn trace(traced: Traced, duration: Option<Duration>, output: Option<PathBuf>
 }
 
 /// Connects to a program this trace started, once it listens.
-fn started(executable: &std::path::Path, pid: u32) -> Result<Program, String> {
+pub(crate) fn started(executable: &std::path::Path, pid: u32) -> Result<Program, String> {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
         if let Ok(program) = Program::connect(pid) {

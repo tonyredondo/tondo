@@ -227,8 +227,8 @@ completos no se ejecuta ninguna.
 ## 7. Comandos
 
 ~~~text
-tondo run [<project>|<file.to>] [--link <library>]... [--static] [-- <argument>...]
-tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip]
+tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug] [-- <argument>...]
+tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--debug]
 tondo check [<project>|<file.to>] [--json]
 tondo expand [<project>|<file.to>]
 tondo fmt [--check | --compact] <file.to>...
@@ -236,7 +236,7 @@ tondo api [<module>|<file.to>] [--private] [--list] [--project <dir>]
 tondo guide [<topic>] [--list] [--skill]
 tondo update [<project>] [<dependency>...]
 tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
-tondo test [<project>] [--static]
+tondo test [<project>] [--static] [--debug]
 tondo lsp
 tondo ps [--json]
 tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--json]
@@ -244,6 +244,7 @@ tondo trace <pid|name> [--duration <seconds>] [--output <path>]
 tondo trace [--duration <seconds>] [--output <path>] -- <program> [<argument>...]
 tondo dump <pid|name> [--output <path>]
 tondo dump read <file> [tasks | task <id> | heap] [--json]
+tondo debug [--json] <file.to|project|executable|pid|name> [-- <argument>...]
 ~~~
 
 - `run` compila, guarda el ejecutable en la caché y lo ejecuta; `build` escribe
@@ -262,6 +263,7 @@ tondo dump read <file> [tasks | task <id> | heap] [--json]
   estáticas, `"static:z"` o un archivo `.a`. En macOS es error.
 - `--strip` deja fuera del ejecutable la tabla de símbolos. Las trazas de
   Tondo no la usan; los depuradores y profilers externos, sí.
+- `--debug` compila un build de depuración para `tondo debug` (sección 7.6).
 - `expand` muestra, con su formato canónico, el `impl` que dio el provider de
   cada `derive` (27.3 del lenguaje), y dónde está el `derive`.
 - `fmt` aplica el formato canónico (21) a archivos sueltos; `--check` falla si
@@ -279,7 +281,7 @@ tondo dump read <file> [tasks | task <id> | heap] [--json]
 - `test` sigue la [especificación de testing](./TONDO_TESTING_SPEC.md).
 - `lsp` sirve a un editor (sección 7.4).
 - `ps`, `counters`, `trace` y `dump` observan los programas en ejecución
-  (sección 7.5).
+  (sección 7.5), y `debug` depura uno (sección 7.6).
 - Estado de salida: `0` éxito; `1` diagnósticos de error o fallo de formato; `2`
   uso incorrecto; `3` error del toolchain (sección 9). `run` devuelve el estado
   del programa.
@@ -498,6 +500,38 @@ la hizo, mientras vive. Una muestra de `n` bytes cuenta por
 es el código del programa que asignó, pasando por la librería estándar, y el
 tipo, el del valor que hacía la sentencia o la colección que cambiaba, que el
 compilador anota junto a cada llamada sin coste al ejecutar.
+
+### 7.6 Depurador
+
+`--debug`, en `run`, `build` y `test`, compila un build de depuración: sin
+optimizar, con una sonda donde empieza cada línea y lo que el depurador
+necesita para leer los bindings de cada función. Un build sin `--debug` no
+tiene nada de eso, ni su coste.
+
+`tondo debug` depura un build de depuración: compila con `--debug` un archivo
+`.to` o un proyecto, o arranca un ejecutable, y el programa espera antes de
+`main` a que se le diga que siga; o se adjunta a uno en ejecución, nombrado
+como en `counters`, que arrancó con `TONDO_DIAGNOSTICS=1`. Lee una orden por
+línea, de la terminal o de su entrada, y con `--json` escribe cada respuesta
+y cada evento como una línea de JSON, para una herramienta o un modelo:
+
+- `break <file>:<line> [if <name> <op> <value>]` para donde empieza esa
+  línea, o la siguiente con código del archivo. La condición compara un
+  binding con `==`, `!=`, `<`, `<=`, `>` o `>=`: como números si los dos lo
+  son, y si no como el texto que el depurador muestra. `delete <id>` lo quita.
+- `continue` sigue hasta un breakpoint; `step`, hasta la siguiente línea,
+  entrando en las llamadas; `next`, hasta la siguiente línea de la misma
+  función o de una que la llamó; `finish`, hasta una línea de una que la
+  llamó. `pause`, o Ctrl-C, para el programa.
+- Cuando una tarea para, las demás paran en su siguiente línea, y todas
+  siguen juntas. `tasks` dice dónde está cada una.
+- `locals` muestra los bindings que tienen un valor en la función donde paró
+  la tarea, y `print <name>` uno: los textos entre comillas, los registros
+  con sus campos, los enums con su variante y las colecciones con sus
+  elementos. Un binding cuyo valor se movió o se liberó no se muestra.
+  `stack` da las funciones de la tarea, de dentro afuera.
+- `quit` termina el programa que arrancó; al acabar la entrada, el programa
+  sigue sin el depurador.
 
 ## 8. Determinismo
 

@@ -439,11 +439,12 @@ pub fn test_inputs(path: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(inputs)
 }
 
-/// Lowers a checked program to a native object file.
-pub fn object(analysis: &Analysis) -> Result<Vec<u8>, String> {
+/// Lowers a checked program to a native object file; a debug build has
+/// what a debugger needs (toolchain 7.6) and is not optimized.
+pub fn object(analysis: &Analysis, debug: bool) -> Result<Vec<u8>, String> {
     let program = analysis.program.as_ref().expect("object() requires a checked program");
     let bodies = lower::lower(program);
-    codegen::compile(program, &bodies, &analysis.sources, analysis.meta)
+    codegen::compile(program, &bodies, &analysis.sources, analysis.meta, debug)
 }
 
 pub fn cache_dir() -> PathBuf {

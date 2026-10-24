@@ -1,7 +1,7 @@
 //! `tondo ps` and `tondo counters` look at a running program through its
 //! socket, and the socket goes when the program ends.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -205,4 +205,54 @@ fn dumps_of_a_running_program_and_at_a_panic() {
     let summary = tondo(&["dump", "read", dump.to_str().unwrap(), "--json"]);
     let summary = summary["summary"].as_str().unwrap();
     assert!(summary.contains("dumped at a panic") && summary.contains("1 runs panics.to:3 in main"), "{summary}");
+}
+
+const DEBUGGED: &str = r#"import std.console
+
+type User = { name: String, age: Int }
+
+fn older(user: User): User {
+    let next = User { name: user.name, age: user.age + 1 }
+    next
+}
+
+fn main() {
+    let ada = User { name: "Ada", age: 36 }
+    let names = ["a", "b"]
+    let aged = older(ada)
+    console.println("{aged.age} {names.length()}")
+}
+"#;
+
+#[test]
+fn debugger_session() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("debugged.to"), DEBUGGED).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "debugged.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = "break debugged.to:13\ncontinue\nlocals\nstep\nstack\nprint user\nfinish\ndelete 1\ncontinue\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let lines: Vec<Value> =
+        String::from_utf8_lossy(&output.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let stops: Vec<&Value> = lines.iter().filter_map(|l| l.get("stopped")).collect();
+    assert_eq!(stops[0]["why"], "start");
+    assert_eq!(stops[1]["at"], "debugged.to:13 in main");
+    assert_eq!(stops[2]["at"], "debugged.to:6 in older");
+    let locals = lines.iter().find_map(|l| l["locals"].as_array()).unwrap();
+    let shown: Vec<String> = locals.iter().map(|l| format!("{} = {}", l["name"], l["value"])).collect();
+    assert_eq!(shown, [r#""ada" = "User { name: \"Ada\", age: 36 }""#, r#""names" = "[\"a\", \"b\"]""#]);
+    let stack = lines.iter().find_map(|l| l["stack"].as_array()).unwrap();
+    assert_eq!(stack[..2], [json!("debugged.to:6 in older"), json!("debugged.to:13 in main")]);
+    let user = lines.iter().find(|l| l["name"] == "user").unwrap();
+    assert_eq!(user["value"], "User { name: \"Ada\", age: 36 }");
+    assert!(lines.iter().any(|l| l.get("exited").is_some()));
 }

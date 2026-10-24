@@ -17,6 +17,7 @@ mod civil;
 mod clock;
 mod codec;
 mod cycles;
+mod debugger;
 mod diagnostics;
 mod env;
 mod fs;
@@ -1783,6 +1784,13 @@ pub unsafe extern "C" fn tondo_rt_sb_f32(b: *mut Builder, value: f32) {
 pub unsafe extern "C" fn tondo_rt_sb_char(b: *mut Builder, value: u32) {
     let c = char::from_u32(value).unwrap_or(char::REPLACEMENT_CHARACTER);
     unsafe { write!((*b).0, "{c}").unwrap() }
+}
+
+/// A text in quotes, escaped as JSON escapes it, as a debugger shows it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_sb_quoted(b: *mut Builder, s: *const Str) {
+    let text = String::from_utf8_lossy(unsafe { str_bytes(s) });
+    unsafe { write!((*b).0, "{text:?}").unwrap() }
 }
 
 /// Consumes the builder and returns an owned string.

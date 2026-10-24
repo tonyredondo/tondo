@@ -86,6 +86,9 @@ pub fn project(types: &Types, ty: Ty, proj: Proj) -> Ty {
 pub struct Body {
     pub name: String,
     pub locals: Vec<Ty>,
+    /// The names of the program's own bindings, for a debugger; the
+    /// compiler's temporaries have none.
+    pub names: Vec<Option<String>>,
     pub params: Vec<Local>,
     /// Parameters passed as the address of the caller's place (a `mut self`
     /// or `var self` loan); reads and writes go through it.
