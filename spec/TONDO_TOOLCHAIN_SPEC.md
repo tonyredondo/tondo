@@ -245,6 +245,7 @@ tondo trace [--duration <seconds>] [--output <path>] -- <program> [<argument>...
 tondo dump <pid|name> [--output <path>]
 tondo dump read <file> [tasks | task <id> | heap] [--json]
 tondo debug [--json] <file.to|project|executable|pid|name> [-- <argument>...]
+tondo dap
 ~~~
 
 - `run` compila, guarda el ejecutable en la caché y lo ejecuta; `build` escribe
@@ -281,7 +282,8 @@ tondo debug [--json] <file.to|project|executable|pid|name> [-- <argument>...]
 - `test` sigue la [especificación de testing](./TONDO_TESTING_SPEC.md).
 - `lsp` sirve a un editor (sección 7.4).
 - `ps`, `counters`, `trace` y `dump` observan los programas en ejecución
-  (sección 7.5), y `debug` depura uno (sección 7.6).
+  (sección 7.5); `debug` depura uno, y `dap` hace lo mismo para un editor
+  (sección 7.6).
 - Estado de salida: `0` éxito; `1` diagnósticos de error o fallo de formato; `2`
   uso incorrecto; `3` error del toolchain (sección 9). `run` devuelve el estado
   del programa.
@@ -532,6 +534,14 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   `stack` da las funciones de la tarea, de dentro afuera.
 - `quit` termina el programa que arrancó; al acabar la entrada, el programa
   sigue sin el depurador.
+
+`tondo dap` habla el Debug Adapter Protocol por su entrada y su salida, para
+un editor: `launch` compila y arranca un programa como `tondo debug`, o lo
+arranca si es un ejecutable, y `attach` se adjunta a uno por su proceso o su
+nombre. Los breakpoints, con su condición, los pasos, la pausa, las tareas
+(`threads`), la pila, los bindings (`variables`) y `evaluate` de un nombre
+son las órdenes de `tondo debug`; la salida del programa va a la consola del
+editor.
 
 ## 8. Determinismo
 

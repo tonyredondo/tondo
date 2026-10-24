@@ -6,6 +6,7 @@ pub mod bind;
 pub mod check;
 pub mod codegen;
 pub mod compact;
+pub mod dap;
 pub mod debug;
 pub mod deps;
 pub mod derive;

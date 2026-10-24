@@ -38,6 +38,7 @@ usage:
   tondo debug [--json] <file.to|project|executable|pid|name> [-- <argument>...]
                                                        debug a program built with --debug: breakpoints,
                                                        steps, bindings, stacks, tasks
+  tondo dap                                            debug for an editor, with the Debug Adapter Protocol
   tondo dump <pid|name> [--output <path>]           write a dump of a running program: its tasks and
                                                        where they are, its counters, its live memory
   tondo dump read <file> [tasks | task <id> | heap] [--json]
@@ -95,6 +96,10 @@ fn main() -> ExitCode {
         "trace" => trace_command(&args[1..]),
         "dump" => dump_command(&args[1..]),
         "debug" => debug_command(&args[1..]),
+        "dap" => {
+            let build = |path: &Path| cached_executable(path, &BuildOptions { debug: true, ..BuildOptions::default() });
+            tondo::dap::serve(&build).map(|()| ExitCode::SUCCESS)
+        }
         "version" | "--version" | "-V" => {
             println!("tondo {} (native, cranelift)", driver::VERSION);
             Ok(ExitCode::SUCCESS)

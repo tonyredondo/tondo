@@ -256,3 +256,88 @@ fn debugger_session() {
     assert_eq!(user["value"], "User { name: \"Ada\", age: 36 }");
     assert!(lines.iter().any(|l| l.get("exited").is_some()));
 }
+
+/// One message of the Debug Adapter Protocol.
+fn dap_read(reader: &mut impl BufRead) -> Value {
+    let mut length = 0;
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        let line = line.trim_end();
+        if line.is_empty() {
+            break;
+        }
+        length = line.strip_prefix("Content-Length: ").unwrap().parse().unwrap();
+    }
+    let mut body = vec![0; length];
+    std::io::Read::read_exact(reader, &mut body).unwrap();
+    serde_json::from_slice(&body).unwrap()
+}
+
+#[test]
+fn debug_adapter() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dap");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("debugged.to"), DEBUGGED).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .arg("dap")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    let mut output = BufReader::new(child.stdout.take().unwrap());
+    let mut seq = 0;
+    let mut send = |command: &str, arguments: Value| {
+        seq += 1;
+        let text = json!({ "seq": seq, "type": "request", "command": command, "arguments": arguments }).to_string();
+        std::io::Write::write_all(&mut input, format!("Content-Length: {}\r\n\r\n{text}", text.len()).as_bytes())
+            .unwrap();
+    };
+    // Reads until the response to `command`, keeping the events.
+    let mut events = Vec::new();
+    let response = |output: &mut BufReader<_>, command: &str, events: &mut Vec<Value>| loop {
+        let message = dap_read(output);
+        if message["type"] == "response" && message["command"] == command {
+            assert_eq!(message["success"], true, "{message}");
+            return message;
+        }
+        events.push(message);
+    };
+    let until = |output: &mut BufReader<_>, event: &str, events: &mut Vec<Value>| {
+        if let Some(at) = events.iter().position(|e| e["event"] == event) {
+            return events.remove(at);
+        }
+        loop {
+            let message = dap_read(output);
+            if message["event"] == event {
+                return message;
+            }
+        }
+    };
+    send("initialize", json!({ "adapterID": "tondo" }));
+    response(&mut output, "initialize", &mut events);
+    send("launch", json!({ "program": "debugged.to", "cwd": dir }));
+    response(&mut output, "launch", &mut events);
+    until(&mut output, "initialized", &mut events);
+    let path = dir.join("debugged.to");
+    send("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [{ "line": 13 }] }));
+    let set = response(&mut output, "setBreakpoints", &mut events);
+    assert_eq!(set["body"]["breakpoints"][0]["verified"], true);
+    send("configurationDone", json!({}));
+    response(&mut output, "configurationDone", &mut events);
+    let stopped = until(&mut output, "stopped", &mut events);
+    assert_eq!(stopped["body"]["reason"], "breakpoint");
+    send("stackTrace", json!({ "threadId": stopped["body"]["threadId"] }));
+    let trace = response(&mut output, "stackTrace", &mut events);
+    assert_eq!(trace["body"]["stackFrames"][0]["line"], 13);
+    send("variables", json!({ "variablesReference": 1 }));
+    let variables = response(&mut output, "variables", &mut events);
+    assert_eq!(variables["body"]["variables"][0]["name"], "ada");
+    send("continue", json!({ "threadId": 1 }));
+    response(&mut output, "continue", &mut events);
+    until(&mut output, "terminated", &mut events);
+    send("disconnect", json!({}));
+    drop(input);
+    child.wait().unwrap();
+}

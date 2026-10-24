@@ -94,16 +94,11 @@ fn start_stopped() {
     while !ATTACHED.load(Ordering::Relaxed) && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
-    if !ATTACHED.load(Ordering::Relaxed) {
-        return;
-    }
+    // The debugger's `attach` made the stop at the start; it may have gone
+    // on already.
     let mut state = state();
-    let task = super::tasks::current_id();
-    let stop = Stop { task, site: usize::MAX, frame: 0, bounds: (0, 0), addresses: 0, alive: 0, why: "start".into() };
-    tell(&stopped_event(&stop));
-    state.stopped = Some(stop);
-    let resumed = state.resumed;
-    while state.resumed == resumed {
+    BEFORE_MAIN.store(false, Ordering::Relaxed);
+    while state.stopped.as_ref().is_some_and(|stop| stop.site == usize::MAX) {
         state = RESUMED.wait(state).unwrap_or_else(|e| e.into_inner());
     }
 }
@@ -175,8 +170,9 @@ static RESUMED: Condvar = Condvar::new();
 static CLIENT: Mutex<Option<UnixStream>> = Mutex::new(None);
 static CLIENT_FD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 /// The program started under `tondo debug`, which it waits for before
-/// `main`.
+/// `main`; and it has not reached `main` yet.
 pub(crate) static WAIT: AtomicBool = AtomicBool::new(false);
+static BEFORE_MAIN: AtomicBool = AtomicBool::new(true);
 
 fn state() -> std::sync::MutexGuard<'static, State> {
     STATE.lock().unwrap_or_else(|e| e.into_inner())
@@ -355,6 +351,15 @@ pub(crate) fn attach(client: &UnixStream) -> String {
     use std::os::fd::AsRawFd;
     *slot = client.try_clone().ok();
     CLIENT_FD.store(client.as_raw_fd(), Ordering::Relaxed);
+    drop(slot);
+    // A program that waits for the debugger stands still before `main`
+    // from now on, until it says go on.
+    if WAIT.load(Ordering::Relaxed) && BEFORE_MAIN.load(Ordering::Relaxed) {
+        let stop =
+            Stop { task: 1, site: usize::MAX, frame: 0, bounds: (0, 0), addresses: 0, alive: 0, why: "start".into() };
+        tell(&stopped_event(&stop));
+        state().stopped = Some(stop);
+    }
     ATTACHED.store(true, Ordering::Relaxed);
     format!("{{\"debugging\":true,\"lines\":{}}}", table.sites.len())
 }
@@ -483,7 +488,11 @@ fn breakpoint(table: &Table, text: &str) -> String {
         return error(format!("a breakpoint is `file:line`, as `main.to:12`, not `{at}`"));
     };
     let Ok(line) = line.parse::<u32>() else { return error(format!("`{line}` is not a line number")) };
-    let matches = |site: &Site| site.file == file || site.file.ends_with(&format!("/{file}"));
+    // A file as the compiler named it, or a path that ends with it, as an
+    // editor gives.
+    let matches = |site: &Site| {
+        site.file == file || site.file.ends_with(&format!("/{file}")) || file.ends_with(&format!("/{}", site.file))
+    };
     let Some(found) = table.sites.iter().filter(|s| matches(s) && s.line >= line).map(|s| s.line).min() else {
         let files: std::collections::BTreeSet<&str> = table.sites.iter().map(|s| s.file.as_str()).collect();
         return error(format!(

@@ -1661,5 +1661,8 @@ their next probe. The debugger lives in the program and speaks over the
 diagnostics socket, so it needs no `ptrace` or Mach ports, knows the tasks
 for what they are, and shows values as Tondo writes them; gdb and lldb see
 neither. `tondo debug` reads commands from a person or from its input,
-with `--json` answers for tools and models; an editor's adapter can speak
-the same commands.
+with `--json` answers for tools and models; `tondo dap` turns the Debug
+Adapter Protocol of an editor into the same commands. A program that
+`tondo debug` starts waits before `main` from the moment the debugger
+attaches, so that its first `continue`, however soon it comes, is the one
+that lets it go.

@@ -209,3 +209,4 @@ tasks | pause | delete 1 | quit
 ```
 
 When one task stops, all stop at their next line, and go on together.
+`tondo dap` is the same debugger for an editor (Debug Adapter Protocol).
