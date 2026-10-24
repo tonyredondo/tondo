@@ -1789,3 +1789,22 @@ was told the program had none; the table now comes before anything else.
 The cases now pass under emulation for arm64, dynamic and static, and for
 x86-64, and so do the other tests, but two that need `git` and `kill`,
 which the container did not have.
+
+## 2026-10-24 — Targets
+
+`--target x86_64-linux` and `--target aarch64-linux` build a static
+executable for Linux on either architecture from any machine, as `--static`
+builds one for this machine: Cranelift has both backends, and the linker is
+the toolchain's own, so the target's static runtime and musl are all a
+build needs. Go builds its runtime from source for any target; Tondo's is
+Rust and C, which a user does not have the compilers of, so another
+target's runtime comes built, as Rust's `rustup target add` brings it.
+Carried in `tondo`, each would add 17 MB to its 50; it carries its own
+machine's, and another target's comes in a pack, the runtime, musl and
+the identity of the runtime's source, which `tondo target pack` writes on
+a machine of that target. `TONDO_TARGETS` finds packs; downloads of them,
+fixed by hash as dependencies are, come with releases. A program for
+another architecture runs under qemu's user emulation, `qemu-<arch>` from
+`PATH` or what `binfmt_misc` has, so `tondo test --target` tests it here.
+The CI builds `tondo` across, tests it under emulation, and builds for
+the other architecture with the pack of the emulated `tondo`.

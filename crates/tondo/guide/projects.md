@@ -64,6 +64,12 @@ libraries must then be static too, `"static:z"` or a `.a` file.
 libraries for C instead, shared and static, with their header (topic
 `ffi`).
 
+`--target x86_64-linux` or `--target aarch64-linux` builds a static
+executable for that machine from any system. Another architecture's
+runtime comes in a pack that `tondo target pack <dir>` writes on a machine
+of it; `TONDO_TARGETS=<dir>` finds it. `tondo run` and `tondo test` run
+such a program under qemu-user.
+
 ## Editors
 
 `tondo lsp` is a language server: diagnostics as you type, hover, go to

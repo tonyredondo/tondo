@@ -671,15 +671,18 @@ pub fn compile(
     sources: &SourceMap,
     meta: bool,
     debug: bool,
+    target: Option<&str>,
 ) -> Result<Vec<u8>, String> {
     let mut flags = settings::builder();
     // A debug build keeps the code as written, statement after statement.
     flags.set("opt_level", if debug { "none" } else { "speed" }).map_err(|e| e.to_string())?;
     flags.set("is_pic", "true").map_err(|e| e.to_string())?;
-    let isa = cranelift_native::builder()
-        .map_err(|e| format!("unsupported host: {e}"))?
-        .finish(settings::Flags::new(flags))
-        .map_err(|e| e.to_string())?;
+    // Code for the machine, with what its processor has, or for a target.
+    let builder = match target {
+        Some(triple) => cranelift_codegen::isa::lookup_by_name(triple).map_err(|e| format!("{triple}: {e}"))?,
+        None => cranelift_native::builder().map_err(|e| format!("unsupported host: {e}"))?,
+    };
+    let isa = builder.finish(settings::Flags::new(flags)).map_err(|e| e.to_string())?;
     let builder =
         ObjectBuilder::new(isa, "tondo", cranelift_module::default_libcall_names()).map_err(|e| e.to_string())?;
     let mut cg = Codegen {

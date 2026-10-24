@@ -1,0 +1,13 @@
+#!/bin/sh
+# zig as the C compiler and linker of another target, which the name of
+# the link that runs this gives: aarch64-linux-musl-cc runs
+# `zig cc -target aarch64-linux-musl`. Drops the flags zig does not take.
+target=$(basename "$0" -cc)
+args=""
+for a in "$@"; do
+  case "$a" in
+    --target=*|-Wl,--as-needed|-Wl,--fix-cortex-a53-843419|-fuse-ld=lld|-B*) ;;
+    *) args="$args '$(printf %s "$a" | sed "s/'/'\\\\''/g")'" ;;
+  esac
+done
+eval exec zig cc -target "$target" "$args"

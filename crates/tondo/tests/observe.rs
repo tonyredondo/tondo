@@ -170,15 +170,27 @@ fn dumps_of_a_running_program_and_at_a_panic() {
     BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut line).unwrap();
     let pid = child.id().to_string();
     let file = dir.join("running.dump.json");
-    let output =
-        Command::new(env!("CARGO_BIN_EXE_tondo")).args(["dump", &pid, "--output"]).arg(&file).output().unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let read = |view: &[&str]| tondo(&[&["dump", "read", file.to_str().unwrap()], view, &["--json"]].concat());
+    // The tasks get to their waits soon after the program says it is ready.
+    let mut tasks = Value::Null;
+    for _ in 0..50 {
+        let output =
+            Command::new(env!("CARGO_BIN_EXE_tondo")).args(["dump", &pid, "--output"]).arg(&file).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        tasks = read(&["tasks"]);
+        let waits = |runs: &str| tasks.as_array().unwrap().iter().any(|t| t["runs"] == runs && t["state"] == "waits");
+        if waits("main") && waits("sleeper") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
     drop(child.stdin.take());
     child.wait().unwrap();
 
-    let read = |view: &[&str]| tondo(&[&["dump", "read", file.to_str().unwrap()], view, &["--json"]].concat());
-    let tasks = read(&["tasks"]);
-    let task = |runs: &str| tasks.as_array().unwrap().iter().find(|t| t["runs"] == runs).unwrap().clone();
+    let task = |runs: &str| {
+        let found = tasks.as_array().unwrap().iter().find(|t| t["runs"] == runs);
+        found.unwrap_or_else(|| panic!("no task runs {runs} in {tasks}")).clone()
+    };
     assert_eq!(task("main")["state"], "waits");
     assert_eq!(task("main")["at"], "dumped.to:16 in main");
     assert_eq!(task("sleeper")["at"], "dumped.to:4 in sleeper");

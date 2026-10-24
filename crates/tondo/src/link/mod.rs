@@ -14,8 +14,9 @@ use std::path::{Path, PathBuf};
 /// What the linker makes.
 pub enum Product<'a> {
     /// An executable: without its symbol table, or static, with the C
-    /// library in it.
-    Executable { strip: bool, statically: bool },
+    /// library in it; for a target, a static Linux one for its
+    /// architecture, whatever the machine.
+    Executable { strip: bool, statically: bool, target: Option<crate::target::Target> },
     /// A shared library that publishes `exports` (toolchain 7.7).
     Library { exports: &'a [String] },
 }
@@ -32,19 +33,24 @@ pub fn link(
     output: &Path,
     product: Product,
 ) -> Result<(), String> {
-    let (strip, statically) = match product {
-        Product::Executable { strip, statically } => (strip, statically),
-        Product::Library { .. } => (false, false),
+    let (strip, statically, target) = match product {
+        Product::Executable { strip, statically, target } => (strip, statically, target),
+        Product::Library { .. } => (false, false, None),
     };
     let exports = match product {
         Product::Library { exports } => Some(exports.to_vec()),
         Product::Executable { .. } => None,
     };
     let name = output.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned());
-    if cfg!(target_os = "macos") {
+    if cfg!(target_os = "macos") && target.is_none() {
         return link_macho(object, archives, runtime, native, output, strip, exports);
     }
-    let arch = if cfg!(target_arch = "aarch64") { elf::Arch::Aarch64 } else { elf::Arch::X86_64 };
+    let arch = match target {
+        Some(crate::target::Target::Aarch64) => elf::Arch::Aarch64,
+        Some(crate::target::Target::X86_64) => elf::Arch::X86_64,
+        None if cfg!(target_arch = "aarch64") => elf::Arch::Aarch64,
+        None => elf::Arch::X86_64,
+    };
     let dirs = search_dirs(arch);
     let mut archive_paths: Vec<PathBuf> = archives.to_vec();
     let mut shared: Vec<PathBuf> = Vec::new();

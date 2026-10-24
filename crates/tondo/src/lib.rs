@@ -35,5 +35,6 @@ pub mod project;
 pub mod runner;
 pub mod source;
 pub mod stdlib;
+pub mod target;
 pub mod toml;
 pub mod types;

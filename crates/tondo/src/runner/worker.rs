@@ -128,7 +128,14 @@ fn worker(
         &std::process::id().to_le_bytes(),
         format!("{:?}{:?}", Instant::now(), std::thread::current().id()).as_bytes(),
     ]);
-    let mut command = Command::new(executable);
+    let mut command = match &run.options.launcher {
+        Some(launcher) => {
+            let mut command = Command::new(launcher);
+            command.arg(executable);
+            command
+        }
+        None => Command::new(executable),
+    };
     command
         .current_dir(dir)
         .env("TONDO_TEST_PLAN", &plan)

@@ -58,8 +58,32 @@ fn main() {
     }
 
     // FNV-1a of the library identifies the runtime in compiler caches.
-    let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3));
+    let hash = fnv(0xcbf2_9ce4_8422_2325, &bytes);
     std::fs::write(out_dir.join("runtime-hash.txt"), format!("{hash:016x}")).unwrap();
+
+    // The runtime's source, with the compiler's version, identifies it on
+    // every target: a target's runtime that another `tondo` packed works
+    // with this one when they agree (toolchain 7.8).
+    let mut files = Vec::new();
+    let mut pending = vec![runtime.join("src")];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() { pending.push(path) } else { files.push(path) }
+        }
+    }
+    files.push(runtime.join("Cargo.toml"));
+    files.sort();
+    let mut identity = fnv(0xcbf2_9ce4_8422_2325, env::var("CARGO_PKG_VERSION").unwrap().as_bytes());
+    for file in files {
+        identity = fnv(identity, file.strip_prefix(&runtime).unwrap().to_string_lossy().as_bytes());
+        identity = fnv(identity, &std::fs::read(&file).unwrap());
+    }
+    std::fs::write(out_dir.join("runtime-identity.txt"), format!("{identity:016x}")).unwrap();
+}
+
+fn fnv(start: u64, bytes: &[u8]) -> u64 {
+    bytes.iter().fold(start, |h, &b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
 }
 
 /// Builds the runtime for `target`: the archive, and the native libraries

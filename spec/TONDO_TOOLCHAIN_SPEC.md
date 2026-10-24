@@ -227,8 +227,8 @@ completos no se ejecuta ninguna.
 ## 7. Comandos
 
 ~~~text
-tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug] [-- <argument>...]
-tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--debug]
+tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug] [--target <target>] [-- <argument>...]
+tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--debug] [--target <target>]
 tondo build --library [<project>|<file.to>] [--output <dir>] [--debug]
 tondo check [<project>|<file.to>] [--library] [--json]
 tondo expand [<project>|<file.to>]
@@ -237,7 +237,8 @@ tondo api [<module>|<file.to>] [--private] [--list] [--project <dir>]
 tondo guide [<topic>] [--list] [--skill]
 tondo update [<project>] [<dependency>...]
 tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
-tondo test [<project>] [--static] [--debug] [--library]
+tondo test [<project>] [--static] [--debug] [--library] [--target <target>]
+tondo target pack [<dir>]
 tondo lsp
 tondo ps [--json]
 tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--json]
@@ -268,6 +269,8 @@ tondo dap
 - `--debug` compila un build de depuración para `tondo debug` (sección 7.6).
 - `--library` compila, comprueba o prueba una librería para C, sin `main`
   (sección 7.7).
+- `--target` compila para otra máquina, y `target pack` escribe lo que otra
+  máquina necesita para compilar para esta (sección 7.8).
 - `expand` muestra, con su formato canónico, el `impl` que dio el provider de
   cada `derive` (27.3 del lenguaje), y dónde está el `derive`.
 - `fmt` aplica el formato canónico (21) a archivos sueltos; `--check` falla si
@@ -581,6 +584,28 @@ así que un proceso carga varias de Tondo, cada una con el suyo, y no se
 descarga, porque sus threads siguen ejecutando su código; de la estática, un
 programa enlaza una sola. `--static` y `--link` construyen ejecutables: con
 `--library` son error.
+
+### 7.8 Targets
+
+`--target <target>`, en `build`, `run` y `test`, compila para Linux en
+x86-64, `x86_64-linux`, o en arm64, `aarch64-linux`, desde cualquier sistema
+donde corre `tondo`. El ejecutable es estático, con musl, como con `--static`:
+no carga librerías del sistema, y las de `[native] libraries` y `--link` son
+estáticas.
+
+El runtime del target de su propia máquina viene con `tondo`; el de otro, en
+un pack: el directorio `<dir>/<target>` que escribe `tondo target pack [<dir>]`
+de un `tondo` para ese target, con el runtime, la librería de C, el unwinder
+y el archivo de inicio de musl, y la identidad del runtime. `TONDO_TARGETS`
+nombra los directorios donde están los packs, separados como en `PATH`. Sin
+pack es error, y uno de otra versión de `tondo` también: cada uno dice cómo
+escribirlo.
+
+`run` y `test` ejecutan un programa de otra arquitectura bajo la emulación de
+usuario de qemu: `qemu-<arch>` o `qemu-<arch>-static` de `PATH`, o el que el
+kernel tiene registrado en `binfmt_misc`. Sin ninguno es error, que pide
+instalar qemu-user; en un sistema que no es Linux, también: el programa
+corre en Linux.
 
 ## 8. Determinismo
 

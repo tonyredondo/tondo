@@ -2,6 +2,7 @@
 
 use crate::diag::Diagnostics;
 use crate::source::{SourceMap, Span};
+use crate::target::Target;
 use crate::{ast, check, codegen, deps, hir, lower, modules, mono, parser, project, stdlib};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -12,6 +13,9 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 const RUNTIME: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libtondo_runtime.a.gz"));
 const RUNTIME_LINK_ARGS: &str = include_str!(concat!(env!("OUT_DIR"), "/runtime-link-args.txt"));
 const RUNTIME_HASH: &str = include_str!(concat!(env!("OUT_DIR"), "/runtime-hash.txt"));
+/// The runtime's source and the compiler's version, which a target's pack
+/// must agree with.
+const RUNTIME_IDENTITY: &str = include_str!(concat!(env!("OUT_DIR"), "/runtime-identity.txt"));
 /// Rust's libunwind for musl targets, which the runtime needs there; empty
 /// elsewhere.
 const UNWIND: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libunwind.a.gz"));
@@ -502,12 +506,40 @@ pub fn library(analysis: &Analysis, object: &[u8], dir: &Path, name: &str) -> Re
     Ok(linking)
 }
 
-/// Lowers a checked program to a native object file; a debug build has
-/// what a debugger needs (toolchain 7.6) and is not optimized.
-pub fn object(analysis: &Analysis, debug: bool) -> Result<Vec<u8>, String> {
+/// Lowers a checked program to a native object file, for this machine or
+/// a target; a debug build has what a debugger needs (toolchain 7.6) and
+/// is not optimized.
+pub fn object(analysis: &Analysis, debug: bool, target: Option<Target>) -> Result<Vec<u8>, String> {
     let program = analysis.program.as_ref().expect("object() requires a checked program");
     let bodies = lower::lower(program);
-    codegen::compile(program, &bodies, &analysis.sources, analysis.meta, debug)
+    codegen::compile(program, &bodies, &analysis.sources, analysis.meta, debug, target.map(Target::triple))
+}
+
+/// Whether this tondo can build for `target`: its own machine's, or one
+/// whose pack it finds; asked before compiling, which the error saves.
+pub fn ready(target: Option<Target>) -> Result<(), String> {
+    match target.filter(|t| !t.native()) {
+        Some(target) => target.pack(RUNTIME_IDENTITY.trim()).map(|_| ()),
+        None => Ok(()),
+    }
+}
+
+/// Writes the pack of this machine's target in `dir` (toolchain 7.8): what
+/// a `tondo` elsewhere links a static executable for it with. Gives the
+/// directory it wrote.
+pub fn pack(dir: &Path) -> Result<PathBuf, String> {
+    let target = Target::machine().filter(|_| !STATIC[2].1.is_empty());
+    let Some(target) = target else {
+        return Err("a pack holds the static runtime of a Linux target, which this tondo does not have".into());
+    };
+    let out = dir.join(target.name());
+    std::fs::create_dir_all(&out).map_err(|e| format!("cannot create {}: {e}", out.display()))?;
+    for ((name, bytes), file) in STATIC.iter().zip(crate::target::PACK) {
+        let path = carried(name, bytes)?;
+        std::fs::copy(&path, out.join(file)).map_err(|e| format!("cannot write {}: {e}", out.join(file).display()))?;
+    }
+    write_atomic(&out.join("identity"), RUNTIME_IDENTITY.as_bytes())?;
+    Ok(out)
 }
 
 pub fn cache_dir() -> PathBuf {
@@ -577,18 +609,25 @@ fn link_arguments(linker: &str, library: &str) -> Result<Vec<String>, String> {
     Ok(vec![format!("-l{library}")])
 }
 
-/// How an executable links: `strip` leaves out its symbol table, and
-/// `statically` links the C library into it.
+/// How an executable links: `strip` leaves out its symbol table,
+/// `statically` links the C library into it, and a `target` makes it for
+/// another machine, statically.
 #[derive(Clone, Copy, Default)]
 pub struct Linking {
     pub strip: bool,
     pub statically: bool,
+    pub target: Option<Target>,
 }
 
 /// Links an object file with the embedded runtime and the native
 /// libraries (`-lname` or files) into an executable.
 pub fn link(object: &[u8], output: &Path, libraries: &[String], linking: Linking) -> Result<(), String> {
-    if linking.statically {
+    if let Some(target) = linking.target.filter(|t| !t.native()) {
+        let archives = target.pack(RUNTIME_IDENTITY.trim())?;
+        let product = crate::link::Product::Executable { strip: linking.strip, statically: true, target: Some(target) };
+        return crate::link::link(object, &archives, &[], libraries, output, product);
+    }
+    if linking.statically || linking.target.is_some() {
         if STATIC[2].1.is_empty() {
             let why = if cfg!(target_os = "linux") {
                 "this tondo was built without Rust's musl target, which a static executable needs"
@@ -598,7 +637,7 @@ pub fn link(object: &[u8], output: &Path, libraries: &[String], linking: Linking
             return Err(why.into());
         }
         let archives = STATIC.iter().map(|(name, bytes)| carried(name, bytes)).collect::<Result<Vec<_>, _>>()?;
-        let product = crate::link::Product::Executable { strip: linking.strip, statically: true };
+        let product = crate::link::Product::Executable { strip: linking.strip, statically: true, target: None };
         return crate::link::link(object, &archives, &[], libraries, output, product);
     }
     let runtime = carried("libtondo_runtime", RUNTIME)?;
@@ -616,7 +655,7 @@ pub fn link(object: &[u8], output: &Path, libraries: &[String], linking: Linking
         let mut archives = vec![runtime];
         let unwind = runtime_args.iter().position(|a| a.ends_with(".a")).map(|i| runtime_args.remove(i));
         archives.extend(unwind.map(PathBuf::from));
-        let product = crate::link::Product::Executable { strip: linking.strip, statically: false };
+        let product = crate::link::Product::Executable { strip: linking.strip, statically: false, target: None };
         return crate::link::link(object, &archives, &runtime_args, libraries, output, product);
     };
     let dir = cache_dir().join("runtime");

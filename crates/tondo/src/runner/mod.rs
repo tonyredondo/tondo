@@ -52,6 +52,9 @@ pub struct Options {
     /// `--report json=<path>` and `--report junit=<path>`: whether JUnit,
     /// and where.
     pub reports: Vec<(bool, PathBuf)>,
+    /// What runs the tests' executable when it is for another machine:
+    /// qemu's user emulation (toolchain 7.8).
+    pub launcher: Option<PathBuf>,
     /// Where attachments go; `target/test-artifacts` of the project if not.
     pub artifacts: Option<PathBuf>,
     /// Records missing and changed snapshots instead of failing on them.
@@ -617,9 +620,19 @@ pub fn schedule_seed(seed: u64, iteration: u32) -> u64 {
 
 /// Where the test build of the project at `path` is kept: a directory
 /// named after everything the build reads, with the executable and its tree.
-pub fn build_dir(path: &Path, statically: bool, debug: bool) -> Result<PathBuf, String> {
+pub fn build_dir(
+    path: &Path,
+    statically: bool,
+    debug: bool,
+    target: Option<crate::target::Target>,
+) -> Result<PathBuf, String> {
     let identity = crate::driver::compiler_identity();
-    let linking = format!("{}{}", if statically { "static" } else { "" }, if debug { "debug" } else { "" });
+    let linking = format!(
+        "{}{}{}",
+        if statically { "static" } else { "" },
+        if debug { "debug" } else { "" },
+        target.map_or("", crate::target::Target::name)
+    );
     let mut parts = vec![identity.into_bytes(), linking.as_bytes().to_vec()];
     for input in crate::driver::test_inputs(path)? {
         parts.push(input.as_os_str().as_encoded_bytes().to_vec());
