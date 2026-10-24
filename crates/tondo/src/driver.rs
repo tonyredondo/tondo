@@ -63,9 +63,10 @@ pub fn cache_entry(kind: &str, key: &str) -> PathBuf {
 
 fn sweep(dir: &Path, now: std::time::SystemTime) {
     const DAY: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+    // A time after `now`, as one this sweep just wrote, is no age.
     let age = |path: &Path| {
         let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok()?;
-        now.duration_since(modified).ok()
+        Some(now.duration_since(modified).unwrap_or_default())
     };
     let stamp = dir.join(".swept");
     if age(&stamp).is_some_and(|age| age < DAY) || std::fs::write(&stamp, b"").is_err() {
