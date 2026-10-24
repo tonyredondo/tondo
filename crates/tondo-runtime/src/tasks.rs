@@ -732,8 +732,11 @@ fn stalled(queue: &Queue) -> Stalled {
 
 /// Threads the runtime started that still run, the main thread included.
 pub(crate) static RUNTIME_THREADS: AtomicUsize = AtomicUsize::new(1);
-/// Threads of C waiting in `tondo_rt_callback` for the task they started.
+/// Threads of C waiting in `tondo_rt_callback` for the task they started,
+/// which went on on a worker; while it runs on theirs, they can call back.
 static FOREIGN_WAITING: AtomicUsize = AtomicUsize::new(0);
+/// Calls from threads of C that have not returned.
+static FOREIGN_CALLS: AtomicUsize = AtomicUsize::new(0);
 /// Threads an executable's process had before its program started, which
 /// are not the program's: an emulator's, as qemu's. A library's host has
 /// its own, which may call it.
@@ -743,7 +746,7 @@ static BEFORE: AtomicUsize = AtomicUsize::new(0);
 /// what they hold is not leaked when the program ends before them.
 pub fn wait_foreign_calls() {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
-    while FOREIGN_WAITING.load(Ordering::SeqCst) > 0 && std::time::Instant::now() < deadline {
+    while FOREIGN_CALLS.load(Ordering::SeqCst) > 0 && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
 }
@@ -1655,19 +1658,21 @@ pub unsafe extern "C" fn tondo_rt_callback(
         (*task).foreign = &call;
         (*task).origin = Some(Arc::new(Origin::Foreign));
     }
-    FOREIGN_WAITING.fetch_add(1, Ordering::SeqCst);
+    FOREIGN_CALLS.fetch_add(1, Ordering::SeqCst);
     run(task);
     // The workers start when a call first waits: one that returns at once
     // needs none.
     if !*call.done.lock().unwrap_or_else(|e| e.into_inner()) {
         start_workers();
+        FOREIGN_WAITING.fetch_add(1, Ordering::SeqCst);
+        let mut done = call.done.lock().unwrap_or_else(|e| e.into_inner());
+        while !*done {
+            done = call.finished.wait(done).unwrap_or_else(|e| e.into_inner());
+        }
+        drop(done);
+        FOREIGN_WAITING.fetch_sub(1, Ordering::SeqCst);
     }
-    let mut done = call.done.lock().unwrap_or_else(|e| e.into_inner());
-    while !*done {
-        done = call.finished.wait(done).unwrap_or_else(|e| e.into_inner());
-    }
-    drop(done);
-    FOREIGN_WAITING.fetch_sub(1, Ordering::SeqCst);
+    FOREIGN_CALLS.fetch_sub(1, Ordering::SeqCst);
     // What a library wrote comes before what its caller writes next.
     if library.is_some() {
         super::flush_stdout();
