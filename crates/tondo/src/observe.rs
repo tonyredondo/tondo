@@ -469,6 +469,16 @@ impl Recording {
         for sample in &self.samples {
             threads.insert(sample[1].as_u64().unwrap_or(0));
         }
+        // A task that runs when the trace ends, or whose stop its thread
+        // had not recorded as the program ended, runs to the end.
+        let times = self.events.iter().map(|event| &event[1]).chain(self.samples.iter().map(|sample| &sample[0]));
+        let end = times.map(|at| self.micros(at)).fold(0.0, f64::max);
+        for (tid, (task, start)) in running {
+            out.push(
+                json!({ "ph": "X", "name": label(task), "pid": pid, "tid": tid, "ts": start, "dur": round(end - start),
+                "args": { "task": task, "then": "ran as the trace ended" } }),
+            );
+        }
         for tid in threads {
             let name = if tid == 1 { "main thread".to_string() } else { format!("thread {tid}") };
             out.push(json!({ "ph": "M", "name": "thread_name", "pid": pid, "tid": tid, "args": { "name": name } }));
