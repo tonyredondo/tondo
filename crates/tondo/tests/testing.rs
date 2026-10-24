@@ -623,3 +623,14 @@ test waits {
     assert!(dir.join("cleaned").exists(), "the test's defer did not run");
     assert!(!dir.join("report.json").exists());
 }
+
+/// A package with no `main`, as one that others depend on, has tests too
+/// (testing 6.3).
+#[test]
+fn tests_need_no_main() {
+    let dir = project("no_main", "test doubles {\n    assert(twice(2) == 4)\n}\n");
+    std::fs::write(dir.join("src/main.to"), "pub fn twice(n: Int): Int {\n    n * 2\n}\n").unwrap();
+    let (stdout, stderr, status) = tondo(&dir, &["test"]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    assert!(stdout.contains("app::unit::app::doubles ... ok"), "{stdout}");
+}

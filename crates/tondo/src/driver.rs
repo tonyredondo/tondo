@@ -115,7 +115,7 @@ pub fn analyze_for_editor(
     open: std::collections::HashMap<PathBuf, String>,
 ) -> Result<Analysis, String> {
     OPEN.with(|o| *o.borrow_mut() = open);
-    let analysis = analyze_with(path, tests, false, true, false);
+    let analysis = analyze_with(path, tests, false, true, Root::Program);
     OPEN.with(|o| o.borrow_mut().clear());
     analysis
 }
@@ -123,36 +123,50 @@ pub fn analyze_for_editor(
 /// Reads, parses and checks a program: a project directory (toolchain 3)
 /// or a single source file.
 pub fn analyze(path: &Path) -> Result<Analysis, String> {
-    analyze_with(path, false, false, false, false)
+    analyze_with(path, false, false, false, Root::Program)
 }
 
 /// Reads, parses and checks a library for C (toolchain 7): without `main`,
 /// it publishes `pub extern fn`s.
 pub fn analyze_library(path: &Path) -> Result<Analysis, String> {
-    analyze_with(path, false, false, false, true)
+    analyze_with(path, false, false, false, Root::CLibrary)
 }
 
 /// Reads, parses and checks the test build of a project (testing 5): its
 /// sources, its unit test companions and its integration test roots. The
-/// sources are checked first on their own, as a program or as a library,
-/// so tests cannot make code that is wrong without them build.
+/// sources are checked first on their own, as a library for C or with no
+/// need of `main` (testing 6.3), so tests cannot make code that is wrong
+/// without them build.
 pub fn analyze_tests(path: &Path, library: bool) -> Result<Analysis, String> {
     if !path.is_dir() {
         return Err(format!("{} is not a project: `tondo test` runs the tests of a project directory", path.display()));
     }
-    let production = analyze_with(path, false, false, false, library)?;
+    let root = if library { Root::CLibrary } else { Root::Tested };
+    let production = analyze_with(path, false, false, false, root)?;
     if production.diags.has_errors() {
         return Ok(production);
     }
-    analyze_with(path, true, false, false, false)
+    analyze_with(path, true, false, false, Root::Program)
 }
 
 /// Reads, parses and checks a provider for the `meta` profile (27.7).
 pub fn analyze_meta(path: &Path) -> Result<Analysis, String> {
-    analyze_with(path, false, true, false, false)
+    analyze_with(path, false, true, false, Root::Program)
 }
 
-fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, library: bool) -> Result<Analysis, String> {
+/// What the root module of an analysis is.
+#[derive(Clone, Copy, PartialEq)]
+enum Root {
+    /// A program, which runs `main` or its script; or a test build, which
+    /// runs its tests.
+    Program,
+    /// The sources a test build tests, which need no `main`.
+    Tested,
+    /// A library for C (toolchain 7).
+    CLibrary,
+}
+
+fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) -> Result<Analysis, String> {
     let mut expansions = Vec::new();
     let mut sources = SourceMap::default();
     let mut diags = Diagnostics::default();
@@ -312,8 +326,8 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, library: boo
         return Ok(Analysis { sources, diags, program: None, source_id, libraries, meta, expansions, index });
     }
     let mut module = module;
-    module.library |= library;
-    module.c_library = library;
+    module.library |= root != Root::Program;
+    module.c_library = root == Root::CLibrary;
     let program = if diags.has_errors() { None } else { check::check(&module, &sources, &mut diags, meta) };
     let program = program.and_then(|program| mono::monomorphize(program, &mut diags));
     drop_dependency_warnings(&mut diags, &sources, &dependencies);
