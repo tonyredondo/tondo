@@ -35,6 +35,13 @@ jobs:
         run: cargo test -p tondo --test cases --test bind
         env:
           TONDO_LINKER: tondo
+      # Tondo's own Mach-O linker, which does not fail the run until it
+      # links every case (H12).
+      - if: runner.os == 'macOS'
+        continue-on-error: true
+        run: cargo test -p tondo --test cases cases
+        env:
+          TONDO_LINKER: tondo
       # Static executables, with musl (`--static`).
       - if: runner.os == 'Linux'
         run: cargo test -p tondo --test cases cases

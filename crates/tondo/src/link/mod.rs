@@ -3,6 +3,7 @@
 //! them to run programs, so it needs no development packages either.
 
 mod elf;
+pub mod macho;
 
 use std::path::{Path, PathBuf};
 
@@ -19,6 +20,9 @@ pub fn link(
     strip: bool,
     statically: bool,
 ) -> Result<(), String> {
+    if cfg!(target_os = "macos") {
+        return link_macho(object, archives, runtime, native, output, strip);
+    }
     let arch = if cfg!(target_arch = "aarch64") { elf::Arch::Aarch64 } else { elf::Arch::X86_64 };
     let dirs = search_dirs(arch);
     let mut archive_paths: Vec<PathBuf> = archives.to_vec();
@@ -242,4 +246,99 @@ fn is_elf(path: &Path, arch: elf::Arch) -> bool {
         elf::Arch::Aarch64 => object::elf::EM_AARCH64,
     };
     header.starts_with(b"\x7fELF") && header[4] == 2 && machine == wanted.0
+}
+
+/// Links a Mach-O executable. The system's libraries are not on disk, so
+/// they are named by the paths they load from, and what they define is
+/// bound by name when the program starts.
+fn link_macho(
+    object: &[u8],
+    archives: &[PathBuf],
+    runtime: &[String],
+    native: &[String],
+    output: &Path,
+    strip: bool,
+) -> Result<(), String> {
+    let arch = if cfg!(target_arch = "aarch64") { macho::Arch::Arm64 } else { macho::Arch::X86_64 };
+    let mut archive_paths: Vec<PathBuf> = archives.to_vec();
+    let mut dylibs: Vec<String> = vec!["/usr/lib/libSystem.B.dylib".into()];
+    let mut rpaths: Vec<String> = Vec::new();
+    let add = |dylib: String, dylibs: &mut Vec<String>| {
+        if !dylibs.contains(&dylib) {
+            dylibs.push(dylib);
+        }
+    };
+    let dirs = ["/opt/homebrew/lib", "/usr/local/lib", "/usr/lib"];
+    // `-lname` as the system and package managers install it.
+    let library = |name: &str| -> String {
+        match name {
+            "System" | "c" | "m" | "pthread" | "dl" => "/usr/lib/libSystem.B.dylib".into(),
+            "iconv" => "/usr/lib/libiconv.2.dylib".into(),
+            _ => dirs
+                .iter()
+                .map(|d| Path::new(d).join(format!("lib{name}.dylib")))
+                .find(|p| p.is_file())
+                .map_or(format!("/usr/lib/lib{name}.dylib"), |p| p.display().to_string()),
+        }
+    };
+    let mut arguments = runtime.iter();
+    while let Some(argument) = arguments.next() {
+        if argument == "-framework" {
+            if let Some(name) = arguments.next() {
+                add(format!("/System/Library/Frameworks/{name}.framework/Versions/A/{name}"), &mut dylibs);
+            }
+        } else if let Some(name) = argument.strip_prefix("-l") {
+            add(library(name), &mut dylibs);
+        } else {
+            archive_paths.push(PathBuf::from(argument));
+        }
+    }
+    for entry in native {
+        let path = Path::new(entry);
+        if let Some(name) = entry.strip_prefix("static:") {
+            let file = format!("lib{name}.a");
+            let found = dirs.iter().map(|d| Path::new(d).join(&file)).find(|p| p.is_file());
+            archive_paths.push(found.ok_or_else(|| {
+                format!("no static library {file} in the system's library paths; give its file instead, as \"vendor/{file}\"")
+            })?);
+        } else if entry.ends_with(".dylib") {
+            if !path.is_file() {
+                return Err(format!("the library {entry} does not exist"));
+            }
+            let dir = path.parent().unwrap_or(Path::new(".")).display().to_string();
+            if !rpaths.contains(&dir) {
+                rpaths.push(dir);
+            }
+            add(path.display().to_string(), &mut dylibs);
+        } else if entry.contains('/') || entry.ends_with(".a") {
+            if !path.is_file() {
+                return Err(format!("the library {entry} does not exist"));
+            }
+            archive_paths.push(path.to_path_buf());
+        } else {
+            add(library(entry), &mut dylibs);
+        }
+    }
+    let read = |path: &Path| std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()));
+    let archive_data: Vec<(String, Vec<u8>)> =
+        archive_paths.iter().map(|p| Ok((p.display().to_string(), read(p)?))).collect::<Result<_, String>>()?;
+    let identifier = output.file_name().map_or("a.out".into(), |n| n.to_string_lossy().into_owned());
+    let inputs = macho::Inputs {
+        arch,
+        objects: vec![("the program".into(), object)],
+        archives: archive_data.iter().map(|(n, d)| (n.clone(), d.as_slice())).collect(),
+        dylibs,
+        rpaths,
+        entry: "_main".into(),
+        strip,
+        identifier,
+    };
+    let bytes = macho::link(inputs)?;
+    std::fs::write(output, bytes).map_err(|e| format!("cannot write {}: {e}", output.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(output, std::fs::Permissions::from_mode(0o755));
+    }
+    Ok(())
 }
