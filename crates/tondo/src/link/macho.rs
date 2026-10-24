@@ -1189,8 +1189,10 @@ impl<'a> Linker<'a> {
                         i,
                         a.section,
                         &reloc,
-                        file - from as u64,
-                        base - from as u64,
+                        // Where offset 0 of the section would be: only the
+                        // sums with the atom's offsets are addresses.
+                        file.wrapping_sub(from as u64),
+                        base.wrapping_sub(from as u64),
                         &mut rebases,
                         &mut binds,
                     )?;
@@ -1439,7 +1441,7 @@ impl Linker<'_> {
         rebases: &mut Vec<u64>,
         binds: &mut Vec<(u64, usize, i64)>,
     ) -> Result<(), String> {
-        let (f, p) = (file + reloc.offset, base + reloc.offset);
+        let (f, p) = (file.wrapping_add(reloc.offset), base.wrapping_add(reloc.offset));
         let Some(target) = self.reloc_target(input, section, reloc) else { return Ok(()) };
         let name = &self.inputs[input].name;
         let fail = |what: &str| error(name, format!("{what} (relocation {} {:?})", reloc.kind, target));
@@ -2100,7 +2102,7 @@ impl Linker<'_> {
         let mut encoded: Vec<(u32, u32)> = Vec::new();
         let mut lsdas: Vec<(u32, u32)> = Vec::new();
         for &(start, _, encoding, personality, lsda) in &entries {
-            let function = (start - BASE) as u32;
+            let function = start.wrapping_sub(BASE) as u32;
             let mut encoding = encoding;
             if let Some(personality) = personality {
                 let index = match personalities.iter().position(|&p| p == personality) {
@@ -2114,7 +2116,7 @@ impl Linker<'_> {
             }
             if let Some(lsda) = lsda {
                 encoding |= 0x4000_0000;
-                lsdas.push((function, (self.address(lsda) - BASE) as u32));
+                lsdas.push((function, self.address(lsda).wrapping_sub(BASE) as u32));
             }
             encoded.push((function, encoding));
         }
@@ -2136,7 +2138,8 @@ impl Linker<'_> {
         w(&mut out, index_offset);
         w(&mut out, index_count);
         for &personality in &personalities {
-            let slot = self.slots.get(&personality).map_or(0, |_| (self.slot_address(personality) - BASE) as u32);
+            let slot =
+                self.slots.get(&personality).map_or(0, |_| self.slot_address(personality).wrapping_sub(BASE) as u32);
             w(&mut out, slot);
         }
         let mut page_offset = pages_offset;
@@ -2148,7 +2151,7 @@ impl Linker<'_> {
             lsda_index += lsdas.iter().filter(|l| l.0 >= page[0].0 && l.0 <= page.last().unwrap().0).count();
             page_offset += 8 + 8 * page.len() as u32;
         }
-        let end = entries.last().map_or(0, |e| (e.0 - BASE) as u32 + e.1);
+        let end = entries.last().map_or(0, |e| (e.0.wrapping_sub(BASE) as u32).wrapping_add(e.1));
         w(&mut out, end);
         w(&mut out, 0);
         w(&mut out, lsda_offset + 8 * lsdas.len() as u32);
