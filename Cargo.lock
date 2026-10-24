@@ -2037,6 +2037,7 @@ dependencies = [
  "cranelift-module",
  "cranelift-native",
  "cranelift-object",
+ "flate2",
  "gimli",
  "libc",
  "object",

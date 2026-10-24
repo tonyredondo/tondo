@@ -35,6 +35,11 @@ jobs:
         run: cargo test -p tondo --test cases --test bind
         env:
           TONDO_LINKER: tondo
+      # Static executables, with musl (`--static`).
+      - if: runner.os == 'Linux'
+        run: cargo test -p tondo --test cases cases
+        env:
+          TONDO_CASES_STATIC: 1
       - run: dist/package.sh ${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:
@@ -62,6 +67,7 @@ jobs:
           (rustup show active-toolchain || rustup toolchain install) &&
           cargo test --workspace &&
           TONDO_LINKER=tondo cargo test -p tondo --test cases --test bind &&
+          TONDO_CASES_STATIC=1 cargo test -p tondo --test cases cases &&
           dist/package.sh ${{ matrix.target }}"
       - uses: actions/upload-artifact@v4
         with:

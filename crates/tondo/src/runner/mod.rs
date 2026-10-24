@@ -617,9 +617,10 @@ pub fn schedule_seed(seed: u64, iteration: u32) -> u64 {
 
 /// Where the test build of the project at `path` is kept: a directory
 /// named after everything the build reads, with the executable and its tree.
-pub fn build_dir(path: &Path) -> Result<PathBuf, String> {
+pub fn build_dir(path: &Path, statically: bool) -> Result<PathBuf, String> {
     let identity = crate::driver::compiler_identity();
-    let mut parts = vec![identity.into_bytes()];
+    let linking = if statically { "static" } else { "" };
+    let mut parts = vec![identity.into_bytes(), linking.as_bytes().to_vec()];
     for input in crate::driver::test_inputs(path)? {
         parts.push(input.as_os_str().as_encoded_bytes().to_vec());
         parts.push(std::fs::read(&input).map_err(|e| format!("cannot read {}: {e}", input.display()))?);

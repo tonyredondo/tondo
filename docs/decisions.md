@@ -1521,3 +1521,20 @@ the constructors, as the C toolchain's start files do. `tondo build
 
 Until it links by default, `TONDO_LINKER=tondo` chooses it, and CI runs
 the cases and the binding tests with it on every Linux.
+
+## 2026-10-24 — Static executables (H12, second part)
+
+`--static` on `build`, `run` and `test` links a static executable on
+Linux: the runtime built for musl, musl's C library and its unwinder,
+which Rust ships for its musl targets and the compiler carries. Tondo's
+linker links them with no loader and no dynamic section, starting at the
+runtime's entry, which musl's `__libc_start_main` takes as its own start
+files would. Shared libraries cannot come in: a static executable has no
+loader, musl's `dlopen` needs one, and a library built for glibc would
+bring a second C library into the process. Archives can; one built for
+glibc links when it uses nothing only glibc has, and the error says when
+it does. The compiler carries both runtimes compressed, at about a
+quarter of their size, and writes each to the cache the first time it
+links. Where there is no C compiler for musl, the runtime's C code for
+musl is compiled by the system's, without `_FORTIFY_SOURCE`, whose checked
+functions musl lacks.

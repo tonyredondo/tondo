@@ -14,7 +14,8 @@
 //! - `// expect-env: <NAME>=<value>` — the executable runs with it set.
 //!
 //! Executables run with `TONDO_RT_CHECK_LEAKS=1`, so every case also checks
-//! that reference counting frees each string exactly once.
+//! that reference counting frees each string exactly once. With
+//! `TONDO_CASES_STATIC` set, cases build static executables (`--static`).
 //!
 //! Each directory under `tests/projects` is a project built as a whole,
 //! with the expectations written in any of its files.
@@ -93,6 +94,7 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
         .arg(path.file_name().unwrap())
         .arg("--output")
         .arg(&binary)
+        .args(std::env::var_os("TONDO_CASES_STATIC").map(|_| "--static"))
         .env("XDG_CACHE_HOME", scratch.join("cache"))
         .output()
         .unwrap();

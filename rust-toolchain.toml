@@ -1,3 +1,5 @@
 [toolchain]
 channel = "1.98.1"
 components = ["rustfmt", "clippy"]
+# What a static executable links on Linux (`tondo build --static`).
+targets = ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]

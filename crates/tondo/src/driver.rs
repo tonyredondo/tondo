@@ -7,12 +7,35 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-const RUNTIME: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libtondo_runtime.a"));
+// The archives the compiler carries, compressed; each is written to the
+// cache the first time a program links.
+const RUNTIME: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libtondo_runtime.a.gz"));
 const RUNTIME_LINK_ARGS: &str = include_str!(concat!(env!("OUT_DIR"), "/runtime-link-args.txt"));
 const RUNTIME_HASH: &str = include_str!(concat!(env!("OUT_DIR"), "/runtime-hash.txt"));
 /// Rust's libunwind for musl targets, which the runtime needs there; empty
 /// elsewhere.
-const UNWIND: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libunwind.a"));
+const UNWIND: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libunwind.a.gz"));
+/// What a static executable links on Linux (`--static`): the runtime built
+/// for musl, musl's C library and its unwinder; empty elsewhere.
+const STATIC: [(&str, &[u8]); 3] = [
+    ("libtondo_runtime-static", include_bytes!(concat!(env!("OUT_DIR"), "/libtondo_runtime-static.a.gz"))),
+    ("libunwind-static", include_bytes!(concat!(env!("OUT_DIR"), "/libunwind-static.a.gz"))),
+    ("libc-static", include_bytes!(concat!(env!("OUT_DIR"), "/libc-static.a.gz"))),
+];
+
+/// The archive `name` of the compiler, in the cache.
+fn carried(name: &str, compressed: &[u8]) -> Result<PathBuf, String> {
+    let dir = cache_dir().join("runtime");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    let path = dir.join(format!("{name}-{RUNTIME_HASH}.a"));
+    if !path.exists() {
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(compressed), &mut bytes)
+            .map_err(|e| format!("the compiler's {name} is damaged: {e}"))?;
+        write_atomic(&path, &bytes)?;
+    }
+    Ok(path)
+}
 
 pub struct Analysis {
     pub sources: SourceMap,
@@ -447,25 +470,37 @@ fn link_arguments(linker: &str, library: &str) -> Result<Vec<String>, String> {
     Ok(vec![format!("-l{library}")])
 }
 
+/// How an executable links: `strip` leaves out its symbol table, and
+/// `statically` links the C library into it.
+#[derive(Clone, Copy, Default)]
+pub struct Linking {
+    pub strip: bool,
+    pub statically: bool,
+}
+
 /// Links an object file with the embedded runtime and the native
-/// libraries (`-lname` or files) into an executable; `strip` leaves out
-/// its symbol table.
-pub fn link(object: &[u8], output: &Path, libraries: &[String], strip: bool) -> Result<(), String> {
-    let dir = cache_dir().join("runtime");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    let runtime = dir.join(format!("libtondo_runtime-{RUNTIME_HASH}.a"));
-    if !runtime.exists() {
-        write_atomic(&runtime, RUNTIME)?;
+/// libraries (`-lname` or files) into an executable.
+pub fn link(object: &[u8], output: &Path, libraries: &[String], linking: Linking) -> Result<(), String> {
+    if linking.statically {
+        if STATIC[2].1.is_empty() {
+            let why = if cfg!(target_os = "linux") {
+                "this tondo was built without Rust's musl target, which a static executable needs"
+            } else {
+                "a static executable is for Linux: this system has no static C library; build without --static"
+            };
+            return Err(why.into());
+        }
+        let archives = STATIC.iter().map(|(name, bytes)| carried(name, bytes)).collect::<Result<Vec<_>, _>>()?;
+        return crate::link::link(object, &archives, &[], libraries, output, linking.strip, true);
     }
+    let runtime = carried("libtondo_runtime", RUNTIME)?;
+    let dir = cache_dir().join("runtime");
     let object_path = dir.join(format!("object-{}.o", std::process::id()));
     std::fs::write(&object_path, object).map_err(|e| format!("cannot write {}: {e}", object_path.display()))?;
     let linker = std::env::var("TONDO_CC").unwrap_or_else(|_| "cc".into());
     let mut runtime_args: Vec<String> = RUNTIME_LINK_ARGS.split_whitespace().map(String::from).collect();
     if !UNWIND.is_empty() {
-        let unwind = dir.join(format!("libunwind-{RUNTIME_HASH}.a"));
-        if !unwind.exists() {
-            write_atomic(&unwind, UNWIND)?;
-        }
+        let unwind = carried("libunwind", UNWIND)?;
         for arg in &mut runtime_args {
             if arg == "-lunwind" {
                 *arg = unwind.display().to_string();
@@ -477,7 +512,7 @@ pub fn link(object: &[u8], output: &Path, libraries: &[String], strip: bool) -> 
         let mut archives = vec![runtime.clone()];
         let unwind = runtime_args.iter().position(|a| a.ends_with(".a")).map(|i| runtime_args.remove(i));
         archives.extend(unwind.map(PathBuf::from));
-        let result = crate::link::link(object, &archives, &runtime_args, libraries, output, strip);
+        let result = crate::link::link(object, &archives, &runtime_args, libraries, output, linking.strip, false);
         let _ = std::fs::remove_file(&object_path);
         return result;
     }
@@ -499,7 +534,7 @@ pub fn link(object: &[u8], output: &Path, libraries: &[String], strip: bool) -> 
         } else {
             ["-Wl,--gc-sections", "-Wl,--strip-debug"]
         })
-        .args(strip.then_some(if cfg!(target_os = "macos") { "-Wl,-x" } else { "-Wl,--strip-all" }))
+        .args(linking.strip.then_some(if cfg!(target_os = "macos") { "-Wl,-x" } else { "-Wl,--strip-all" }))
         .output();
     let _ = std::fs::remove_file(&object_path);
     match result {

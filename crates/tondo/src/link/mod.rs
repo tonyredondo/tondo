@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 
 /// Links the program's object with archives (the runtime first), the
 /// system libraries the runtime needs (`-lname` and files, as Rust lists
-/// them) and the native libraries of `[native]`.
+/// them) and the native libraries of `[native]`. A static executable
+/// links archives alone, the C library among them.
 pub fn link(
     object: &[u8],
     archives: &[PathBuf],
@@ -16,6 +17,7 @@ pub fn link(
     native: &[String],
     output: &Path,
     strip: bool,
+    statically: bool,
 ) -> Result<(), String> {
     let arch = if cfg!(target_arch = "aarch64") { elf::Arch::Aarch64 } else { elf::Arch::X86_64 };
     let dirs = search_dirs(arch);
@@ -35,6 +37,13 @@ pub fn link(
             continue;
         }
         let path = Path::new(library);
+        let archive = library.ends_with(".a");
+        if statically && !archive {
+            let name = path.file_name().map_or(library.clone(), |n| n.to_string_lossy().into_owned());
+            return Err(format!(
+                "a static executable cannot load the shared library `{name}`: give its static library, as \"static:{name}\" or a `.a` file, or build without --static"
+            ));
+        }
         if library.ends_with(".so") || library.contains(".so.") {
             if !path.is_file() {
                 return Err(format!("the library {library} does not exist"));
@@ -52,7 +61,7 @@ pub fn link(
         }
     }
     // The C library first: the entry needs it.
-    let mut system: Vec<PathBuf> = vec![find_shared(arch, &dirs, "c")?];
+    let mut system: Vec<PathBuf> = if statically { Vec::new() } else { vec![find_shared(arch, &dirs, "c")?] };
     for argument in runtime {
         match argument.strip_prefix("-l") {
             Some(name) => {
@@ -63,6 +72,12 @@ pub fn link(
             }
             None => archive_paths.push(PathBuf::from(argument)),
         }
+    }
+    // glibc's dynamic loader defines some of what C code uses, such as
+    // `__stack_chk_guard` on aarch64.
+    let loader = PathBuf::from(interpreter(arch));
+    if !statically && is_elf(&loader, arch) && !system.contains(&loader) {
+        system.push(loader);
     }
     let read = |path: &Path| std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()));
     let archive_data: Vec<(String, Vec<u8>)> =
@@ -76,7 +91,7 @@ pub fn link(
         shared: shared_data.iter().map(|(n, d)| (n.clone(), d.as_slice())).collect(),
         always_needed: shared.len(),
         runpath,
-        interpreter: interpreter(arch).into(),
+        interpreter: (!statically).then(|| interpreter(arch).into()),
         entry: "tondo_rt_start".into(),
         strip,
     };

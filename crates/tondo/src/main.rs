@@ -9,10 +9,11 @@ const USAGE: &str = "\
 New to Tondo, or a model writing it? Start with `tondo guide`.
 
 usage:
-  tondo run [<project>|<file.to>] [--link <library>]... [-- <argument>...]
+  tondo run [<project>|<file.to>] [--link <library>]... [--static] [-- <argument>...]
                                                        compile and run a program
-  tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--strip]
-                                                       compile a native executable (without its symbol table)
+  tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip]
+                                                       compile a native executable (static on Linux;
+                                                       without its symbol table)
   tondo check [<project>|<file.to>] [--json]           report diagnostics only (as JSON)
   tondo expand [<project>|<file.to>]                   show what each `derive` expanded to
   tondo fmt [--check | --compact] <file.to>...         format files canonically, or print them compactly
@@ -25,7 +26,7 @@ usage:
             [--retry <n>] [--allow-flaky] [--repeat <n>] [--codeowners auto|none|<path>]
             [--show-output] [--allow-empty] [--deny-skips] [--test-format human|json]
             [--report json=<path> | junit=<path>]... [--diagnostic-format human|json]
-            [--artifacts <dir>] [--update-snapshots]
+            [--artifacts <dir>] [--update-snapshots] [--static]
                                                        run the tests of a project
   tondo doc-test [--edition 0.1] <markdown>            check the examples of a document (as JSON)
   tondo lsp                                            serve an editor: diagnostics, hover, definitions,
@@ -81,7 +82,7 @@ fn main() -> ExitCode {
             println!("{USAGE}");
             Ok(ExitCode::SUCCESS)
         }
-        file if file.ends_with(".to") => run(Path::new(file), &args[1..], &[]),
+        file if file.ends_with(".to") => run(Path::new(file), &args[1..], &[], false),
         other => Err(format!("unknown command `{other}`\n{USAGE}")),
     };
     result.unwrap_or_else(|message| {
@@ -179,6 +180,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         update_snapshots: false,
     };
     let mut diagnostics_json = false;
+    let mut statically = false;
     let usage = |message: String| format!("{message}\n{USAGE}");
     // A count written canonically: `0` or digits without a leading zero.
     let count = |text: &str, flag: &str| {
@@ -274,6 +276,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             }
             "--show-output" => options.show_output = true,
             "--allow-empty" => options.allow_empty = true,
+            "--static" => statically = true,
             "--deny-skips" => options.deny_skips = true,
             "--allow-flaky" => options.allow_flaky = true,
             "--update-snapshots" => options.update_snapshots = true,
@@ -352,7 +355,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     options.schedules = schedules.map(|count| (count, seed, chosen));
     // The build is reused while nothing it reads changes.
-    let dir = runner::build_dir(&path)?;
+    let dir = runner::build_dir(&path, statically)?;
     let (executable, tree_file) = (dir.join("tests"), dir.join("tree"));
     let tree = match runner::Tree::load(&tree_file).filter(|_| executable.is_file()) {
         Some(tree) => tree,
@@ -378,7 +381,12 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
             // Linked aside and renamed, so another run of the same tests keeps its own.
             let partial = executable.with_extension(format!("partial-{}", std::process::id()));
-            driver::link(&driver::object(&analysis)?, &partial, &analysis.libraries, false)?;
+            driver::link(
+                &driver::object(&analysis)?,
+                &partial,
+                &analysis.libraries,
+                driver::Linking { strip: false, statically },
+            )?;
             std::fs::rename(&partial, &executable)
                 .map_err(|e| format!("cannot write {}: {e}", executable.display()))?;
             tree.save(&tree_file)?;
@@ -661,11 +669,15 @@ fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
 }
 
 /// The `--link <library>` options before `--`, and the other arguments.
-fn link_options(args: &[OsString]) -> Result<(Vec<String>, Vec<OsString>), String> {
-    let (mut libraries, mut rest) = (Vec::new(), Vec::new());
+/// The native libraries `--link` adds, whether `--static` asks for a
+/// static executable, and the other arguments.
+fn link_options(args: &[OsString]) -> Result<(Vec<String>, bool, Vec<OsString>), String> {
+    let (mut libraries, mut statically, mut rest) = (Vec::new(), false, Vec::new());
     let mut args = args.iter();
     while let Some(arg) = args.next() {
-        if arg == "--" {
+        if arg == "--static" && !statically {
+            statically = true;
+        } else if arg == "--" {
             rest.push(arg.clone());
             rest.extend(args.by_ref().cloned());
         } else if arg == "--link" {
@@ -676,12 +688,12 @@ fn link_options(args: &[OsString]) -> Result<(Vec<String>, Vec<OsString>), Strin
             rest.push(arg.clone());
         }
     }
-    Ok((libraries, rest))
+    Ok((libraries, statically, rest))
 }
 
 fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
     let (path, rest) = source_argument(args);
-    let (libraries, rest) = link_options(rest)?;
+    let (libraries, statically, rest) = link_options(rest)?;
     let mut output = None;
     let mut strip = false;
     let mut rest = rest.iter();
@@ -703,25 +715,26 @@ fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
         return Ok(ExitCode::FAILURE);
     };
     let libraries = [analysis.libraries.clone(), libraries].concat();
-    driver::link(&driver::object(&analysis)?, &output, &libraries, strip)?;
+    driver::link(&driver::object(&analysis)?, &output, &libraries, driver::Linking { strip, statically })?;
     Ok(ExitCode::SUCCESS)
 }
 
 fn run_command(args: &[OsString]) -> Result<ExitCode, String> {
     let (path, rest) = source_argument(args);
-    let (libraries, rest) = link_options(rest)?;
+    let (libraries, statically, rest) = link_options(rest)?;
     let program_args = match rest.as_slice() {
         [] => &[][..],
         [separator, rest @ ..] if separator == "--" => rest,
         _ => return Err(format!("program arguments go after `--`\n{USAGE}")),
     };
-    run(&path, program_args, &libraries)
+    run(&path, program_args, &libraries, statically)
 }
 
 /// Compiles (or reuses a cached build of) `path` and executes it.
-fn run(path: &Path, program_args: &[OsString], libraries: &[String]) -> Result<ExitCode, String> {
+fn run(path: &Path, program_args: &[OsString], libraries: &[String], statically: bool) -> Result<ExitCode, String> {
     let identity = driver::compiler_identity();
-    let mut parts = vec![identity.into_bytes(), libraries.join("\n").into_bytes()];
+    let linking = if statically { "static" } else { "" };
+    let mut parts = vec![identity.into_bytes(), libraries.join("\n").into_bytes(), linking.as_bytes().to_vec()];
     for input in driver::inputs(path)? {
         parts.push(input.as_os_str().as_encoded_bytes().to_vec());
         parts.push(std::fs::read(&input).map_err(|e| format!("cannot read {}: {e}", input.display()))?);
@@ -737,7 +750,7 @@ fn run(path: &Path, program_args: &[OsString], libraries: &[String]) -> Result<E
         std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
         let partial = dir.join(format!(".partial-{}", std::process::id()));
         let libraries = [analysis.libraries.clone(), libraries.to_vec()].concat();
-        driver::link(&object, &partial, &libraries, false)?;
+        driver::link(&object, &partial, &libraries, driver::Linking { strip: false, statically })?;
         std::fs::rename(&partial, &executable).map_err(|e| e.to_string())?;
     }
     exec(&executable, program_args)

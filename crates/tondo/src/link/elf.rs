@@ -62,7 +62,8 @@ pub struct Inputs<'a> {
     /// Where the executable looks for shared libraries besides the
     /// system's (`DT_RUNPATH`).
     pub runpath: Vec<String>,
-    pub interpreter: String,
+    /// The dynamic loader; none for a static executable.
+    pub interpreter: Option<String>,
     pub entry: String,
     /// Without a symbol table.
     pub strip: bool,
@@ -342,6 +343,8 @@ struct Linker<'a> {
     size: [u64; OUTS.len()],
     align: [u64; OUTS.len()],
     tls: (u64, u64, u64),
+    /// Whether shared libraries load it, or it is static.
+    dynamic: bool,
 }
 
 fn error(input: &str, message: impl std::fmt::Display) -> String {
@@ -367,6 +370,7 @@ pub fn link(inputs: Inputs) -> Result<Vec<u8>, String> {
         size: [0; OUTS.len()],
         align: [1; OUTS.len()],
         tls: (0, 0, 1),
+        dynamic: true,
     };
     let entry = linker.intern(inputs.entry.as_bytes());
     linker.globals[entry].required = true;
@@ -379,6 +383,7 @@ pub fn link(inputs: Inputs) -> Result<Vec<u8>, String> {
         library.needed = index < inputs.always_needed;
         linker.libraries.push(library);
     }
+    linker.dynamic = inputs.interpreter.is_some();
     linker.resolve()?;
     linker.collect(entry);
     linker.scan()?;
@@ -523,7 +528,8 @@ impl<'a> Linker<'a> {
                 continue;
             }
             let name = self.globals[id].name;
-            if let Some(synthetic) = synthetic(name) {
+            // A static C library asks for `_DYNAMIC` to know it is static.
+            if let Some(synthetic) = synthetic(name).filter(|&s| self.dynamic || s != Synthetic::Dynamic) {
                 self.globals[id].def = Def::Linker(synthetic);
                 continue;
             }
@@ -796,7 +802,7 @@ impl<'a> Linker<'a> {
         let libraries = self.libraries.iter().filter(|l| l.needed).count() as u64;
         let versions = self.versions();
         let dynsyms = self.dynsyms.len() as u64 + 1;
-        sizes[Out::Interp as usize] = inputs.interpreter.len() as u64 + 1;
+        sizes[Out::Interp as usize] = inputs.interpreter.as_ref().map_or(0, |i| i.len() as u64 + 1);
         sizes[Out::Hash as usize] = 4 * (2 + 1 + dynsyms);
         sizes[Out::Dynsym as usize] = 24 * dynsyms;
         sizes[Out::Dynstr as usize] = self.dynstr(inputs).0.len() as u64;
@@ -818,6 +824,11 @@ impl<'a> Linker<'a> {
         if versions.iter().all(|(_, v)| v.is_empty()) {
             sizes[Out::Versym as usize] = 0;
             sizes[Out::Verneed as usize] = 0;
+        }
+        if !self.dynamic {
+            for out in [Out::Hash, Out::Dynsym, Out::Dynstr, Out::RelaDyn, Out::Dynamic] {
+                sizes[out as usize] = 0;
+            }
         }
         self.size = sizes;
         // Memory follows the file, a page between segments; `.tbss` takes
@@ -853,7 +864,9 @@ impl<'a> Linker<'a> {
     fn program_headers(&self) -> usize {
         let tls = self.size[Out::Tdata as usize] + self.size[Out::Tbss as usize] > 0;
         let eh = self.size[Out::EhFrameHdr as usize] > 0;
-        7 + usize::from(tls) + usize::from(eh)
+        // The header table, the loader and the dynamic section, which a
+        // static executable has none of.
+        4 + 3 * usize::from(self.dynamic) + usize::from(tls) + usize::from(eh)
     }
 
     /// The versions each needed library is asked for.
@@ -1121,7 +1134,9 @@ impl<'a> Linker<'a> {
         let (dynstr, strings) = self.dynstr(inputs);
         let versions = self.versions();
         // The interpreter, and the dynamic symbols with their versions.
-        image.put(at(Out::Interp), inputs.interpreter.as_bytes());
+        if let Some(interpreter) = &inputs.interpreter {
+            image.put(at(Out::Interp), interpreter.as_bytes());
+        }
         image.put(at(Out::Dynstr), &dynstr);
         let mut version_index: HashMap<(usize, &[u8]), u16> = HashMap::new();
         let mut next = 2u16;
@@ -1268,6 +1283,9 @@ impl<'a> Linker<'a> {
             ]);
         }
         dynamic.push((DT_NULL, 0));
+        if !self.dynamic {
+            dynamic.clear();
+        }
         for (n, (tag, value)) in dynamic.iter().enumerate() {
             image.u64(at(Out::Dynamic) + 16 * n as u64, tag.0 as u64);
             image.u64(at(Out::Dynamic) + 16 * n as u64 + 8, *value);
@@ -1516,8 +1534,10 @@ impl<'a> Linker<'a> {
         let phnum = self.program_headers();
         // The program headers.
         let mut headers: Vec<(ProgramType, ProgramFlags, u64, u64, u64, u64)> = Vec::new();
-        headers.push((PT_PHDR, PF_R, 64, BASE + 64, 56 * phnum as u64, 8));
-        headers.push((PT_INTERP, PF_R, at(Out::Interp), addr(Out::Interp), size(Out::Interp), 1));
+        if self.dynamic {
+            headers.push((PT_PHDR, PF_R, 64, BASE + 64, 56 * phnum as u64, 8));
+            headers.push((PT_INTERP, PF_R, at(Out::Interp), addr(Out::Interp), size(Out::Interp), 1));
+        }
         let segments: [(ProgramFlags, Out, Out); 3] = [
             (PF_R, Out::Interp, Out::EhFrame),
             (PF_R | PF_X, Out::Plt, Out::Text),
@@ -1539,7 +1559,9 @@ impl<'a> Linker<'a> {
         for (kind, flags, offset, vaddr, filesz, memsz) in loads {
             headers.push((kind, flags, offset, vaddr, filesz, memsz));
         }
-        headers.push((PT_DYNAMIC, PF_R | PF_W, at(Out::Dynamic), addr(Out::Dynamic), size(Out::Dynamic), 8));
+        if self.dynamic {
+            headers.push((PT_DYNAMIC, PF_R | PF_W, at(Out::Dynamic), addr(Out::Dynamic), size(Out::Dynamic), 8));
+        }
         let (tls_start, tls_size, tls_align) = self.tls;
         if size(Out::Tdata) + size(Out::Tbss) > 0 {
             let filesz = size(Out::Tdata);
@@ -1581,7 +1603,7 @@ impl<'a> Linker<'a> {
         let mut sections: Vec<[u64; 10]> = vec![[0; 10]];
         let mut index: HashMap<Out, u32> = HashMap::new();
         for out in OUTS {
-            if size(out) == 0 && !matches!(out, Out::Dynamic | Out::Dynsym | Out::Dynstr) {
+            if size(out) == 0 && !(self.dynamic && matches!(out, Out::Dynamic | Out::Dynsym | Out::Dynstr)) {
                 continue;
             }
             let (kind, flags) = out.header();
