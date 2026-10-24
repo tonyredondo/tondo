@@ -120,6 +120,7 @@ Every milestone ends with programs that compile to native executables and run.
 | **Identity and cycles** | `Ref[T]`, values with an identity that compare and hash by it, read in place and never changed; a collector of the cycles of references that counting alone would keep, which starts from the shared state every cycle passes through and stops the workers briefly at safe points; `WeakRef[T]` for caches | Done |
 | **Warnings** | The `core` profile of 22.8 for the program's own code: unused imports, bindings and parameters (`_name` holds a value to the end of its scope), names against the conventions with the conventional one, confusable identifiers by their Unicode skeletons, redundant conversions, comparisons with NaN, repeated `Set[...]` entries, unreachable code, serial spawns in loops | Done |
 | **Interruption** | Ctrl-C stops `tondo test`: no more tests start, the running ones are cancelled and run their `defer`s, a worker that does not stop is killed, and the run exits with `4` (`3` if it had to kill) without reports | Done |
+| **Examples of documents** | `tondo doc-test` checks the examples of a Markdown document as 21.6 says, as syntax, as fragments and scripts against the fixtures of Appendix C, or as failing with the errors they name, and records each as JSON; closures that give a capture away are called once (`CallOnce`) | Done |
 
 The first cut deliberately leaves out the following. They are part of the
 language and remain planned work, scheduled after H7:
@@ -135,8 +136,13 @@ What the specifications define and Tondo does not do yet, found by
 compiling every example they contain and reading the rest against the
 code (2026-10-24):
 
-- **Tools:** `tondo doc-test`, which checks the examples of a document
-  (21.6), and its `E0006` for an example of no valid source form.
+- **Tools:** the register `testing/doc-test-runtime-links.json`, which ties
+  each fragment and script of a normative document to a test that runs it
+  (21.6); `tondo doc-test` gives no `formatted_sha256` for an example the
+  formatter cannot print on its own, a signature, a type or a pattern.
+- **Specifications:** the examples of the language's and the standard
+  library's that `tondo doc-test` rejects: scripts with imports written as
+  syntax, and a fixture that names `env.Value`.
 
 ## Working rules
 

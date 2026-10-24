@@ -104,12 +104,24 @@ pub fn add(
     sources: &mut SourceMap,
     diags: &mut Diagnostics,
 ) {
+    add_except(modules, packages, sources, diags, &[]);
+}
+
+/// Like `add`, without the modules `replaced` names, which the caller adds.
+pub fn add_except(
+    modules: &mut Vec<ModuleSource>,
+    packages: &mut Vec<PackageInfo>,
+    sources: &mut SourceMap,
+    diags: &mut Diagnostics,
+    replaced: &[&str],
+) {
     let package = packages.len();
     let mut pending: Vec<&str> = vec!["prelude"];
     let wanted = |module: &ast::Module, pending: &mut Vec<&str>| {
         for import in &module.imports {
             if let Some((name, _)) = source(&import.path)
                 && !pending.contains(&name)
+                && !replaced.contains(&name)
             {
                 pending.push(name);
             }

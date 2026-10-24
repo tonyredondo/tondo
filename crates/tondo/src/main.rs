@@ -27,6 +27,7 @@ usage:
             [--report json=<path> | junit=<path>]... [--diagnostic-format human|json]
             [--artifacts <dir>] [--update-snapshots]
                                                        run the tests of a project
+  tondo doc-test [--edition 0.1] <markdown>            check the examples of a document (as JSON)
   tondo lsp                                            serve an editor: diagnostics, hover, definitions,
                                                        references, rename, completion, highlighting
   tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
@@ -70,6 +71,7 @@ fn main() -> ExitCode {
         "update" => update_command(&args[1..]),
         "bind" => bind_command(&args[1..]),
         "test" => test_command(&args[1..]),
+        "doc-test" => doc_test_command(&args[1..]),
         "lsp" => tondo::lsp::serve().map(|()| ExitCode::SUCCESS),
         "version" | "--version" | "-V" => {
             println!("tondo {} (native, cranelift)", driver::VERSION);
@@ -394,6 +396,38 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             Ok(ExitCode::from(TOOL_FAILURE))
         }
         Err(runner::Failure::Interrupted(forced)) => Ok(ExitCode::from(if forced { TOOL_FAILURE } else { 4 })),
+    }
+}
+
+/// Checks the examples of a Markdown document (21.6): their records as
+/// JSON on stdout, and why each failing one fails on stderr.
+fn doc_test_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let args: Vec<String> = args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+    let usage = |message: String| format!("{message}\n{USAGE}");
+    let markdown = match args.as_slice() {
+        [flag, edition, markdown] if flag == "--edition" && edition == "0.1" => markdown,
+        [flag, edition, _] if flag == "--edition" => {
+            return Err(usage(format!("doc-test checks edition 0.1, not {edition}")));
+        }
+        [markdown] => markdown,
+        _ => return Err(usage("doc-test takes one Markdown file".into())),
+    };
+    let bytes = std::fs::read(markdown).map_err(|e| format!("cannot read {markdown}: {e}"))?;
+    // The file as given, in NFC with `/` between directories.
+    use unicode_normalization::UnicodeNormalization;
+    let file: String = markdown.replace(std::path::MAIN_SEPARATOR, "/").nfc().collect();
+    match tondo::doctest::check(&file, &bytes) {
+        Ok(report) => {
+            println!("{}", report.records);
+            for failure in &report.failures {
+                eprintln!("{failure}");
+            }
+            Ok(if report.failures.is_empty() { ExitCode::SUCCESS } else { ExitCode::FAILURE })
+        }
+        Err(error) => {
+            eprintln!("{file}:{}: error[{}]: {}", error.line, error.code, error.message);
+            Ok(ExitCode::FAILURE)
+        }
     }
 }
 

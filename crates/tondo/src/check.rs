@@ -110,7 +110,7 @@ fn check_with<'a>(
 }
 
 /// Prelude type names (26.3); they cannot be redeclared unqualified.
-const PRELUDE_TYPES: [&str; 42] = [
+pub(crate) const PRELUDE_TYPES: [&str; 42] = [
     "NumericConversionError",
     "Bool",
     "Int",
@@ -641,9 +641,9 @@ struct Checker<'a> {
     impls: Vec<ImplDef>,
     /// The traits each type parameter is bound by, with their arguments.
     bounds: HashMap<Ty, Vec<(TraitId, Vec<Ty>)>>,
-    /// The call protocol bounding a type parameter (11.8): whether it may
-    /// change its captures (`CallMut`/`CallOnce`), and its `fn(...)` type.
-    call_bounds: HashMap<Ty, (bool, Ty)>,
+    /// The call protocol bounding a type parameter (11.8), and its
+    /// `fn(...)` type.
+    call_bounds: HashMap<Ty, (Protocol, Ty)>,
     /// The cursor types of maps and sets, by what they yield and whether
     /// they belong to a set.
     cursor_templates: HashMap<(CursorKind, bool), TemplateId>,
@@ -792,6 +792,14 @@ struct ClosureKind {
     infer_error: bool,
 }
 
+/// The protocols a call bound names (11.8), each implying the next.
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum Protocol {
+    Call,
+    CallMut,
+    CallOnce,
+}
+
 /// How a callable value is called (11.7, 11.8): its parameters and their
 /// modes, its result, whether the last parameter is variadic, and whether
 /// calling it may change it.
@@ -800,6 +808,8 @@ struct Callable {
     result: Ty,
     variadic: bool,
     mutates: bool,
+    /// A call consumes it (`CallOnce`).
+    once: bool,
     modes: Vec<ast::Mode>,
     /// Calling it needs an `unsafe` region (16.12).
     is_unsafe: bool,
@@ -902,7 +912,7 @@ impl<'a> Checker<'a> {
                 self.declare_module_name(&decl.name, ModuleName::Const(self.consts.len() - 1));
             }
         }
-        let (externs, fns): (Vec<&ast::FnDecl>, Vec<&ast::FnDecl>) = module
+        let (externs, mut fns): (Vec<&ast::FnDecl>, Vec<&ast::FnDecl>) = module
             .items
             .iter()
             .filter_map(|item| match item {
@@ -910,6 +920,8 @@ impl<'a> Checker<'a> {
                 _ => None,
             })
             .partition(|f| f.foreign.is_some());
+        // A fixture's operations come last, after the toolchain's own.
+        fns.sort_by_key(|f| self.fixture(f.span));
         for f in externs {
             self.declare_extern(f);
         }
@@ -999,6 +1011,9 @@ impl<'a> Checker<'a> {
             id
         } else if testing {
             FnId(0)
+        } else if module.library {
+            // Checked, with nothing to run.
+            return None;
         } else {
             self.diags.error_without_span("E1806", "the program has no `main` function and no top-level statements");
             return None;
@@ -2304,7 +2319,12 @@ impl<'a> Checker<'a> {
                     self.diags.error("E1104", bound.span, "a call bound takes a function type: `Call[fn(A): B]`");
                     return;
                 }
-                if self.call_bounds.insert(param, (name.name != "Call", signature)).is_some() {
+                let protocol = match name.name.as_str() {
+                    "Call" => Protocol::Call,
+                    "CallMut" => Protocol::CallMut,
+                    _ => Protocol::CallOnce,
+                };
+                if self.call_bounds.insert(param, (protocol, signature)).is_some() {
                     self.diags.error("E1115", bound.span, "a type parameter has one call bound");
                 }
             }
@@ -3198,9 +3218,9 @@ impl<'a> Checker<'a> {
         if equatable && !self.types.is_equatable(actual) {
             return Some("`Equatable`".into());
         }
-        if let Some((mutable, signature)) = self.call_bounds.get(&param).copied() {
+        if let Some((protocol, signature)) = self.call_bounds.get(&param).copied() {
             let signature = self.types.subst(signature, map);
-            if let Some(problem) = self.callable_as(actual, mutable, signature) {
+            if let Some(problem) = self.callable_as(actual, protocol, signature) {
                 return Some(problem);
             }
         }
@@ -3298,15 +3318,17 @@ impl<'a> Checker<'a> {
     }
 
     /// Why `ty` cannot be called as `signature` with the protocol a call
-    /// bound demands (`Call` unless `mutable`), if it cannot (11.8).
-    fn callable_as(&mut self, ty: Ty, mutable: bool, signature: Ty) -> Option<String> {
-        let wanted = format!("`{}[{}]`", if mutable { "CallMut" } else { "Call" }, self.types.display(signature));
+    /// bound demands, if it cannot (11.8).
+    fn callable_as(&mut self, ty: Ty, protocol: Protocol, signature: Ty) -> Option<String> {
+        let wanted = format!("`{protocol:?}[{}]`", self.types.display(signature));
         match self.callable(ty) {
-            Some(Callable { params, result, variadic, mutates, modes, is_unsafe }) => {
+            Some(Callable { params, result, variadic, mutates, once, modes, is_unsafe }) => {
                 let found = self.types.intern(TyKind::Fn(params, result, variadic, modes, is_unsafe));
                 if found != signature {
                     Some(format!("{wanted} (its signature is `{}`)", self.types.display(found)))
-                } else if mutates && !mutable {
+                } else if once && protocol != Protocol::CallOnce {
+                    Some(format!("{wanted} (it gives a capture away, so it is only `CallOnce`)"))
+                } else if mutates && protocol == Protocol::Call {
                     Some(format!("{wanted} (it changes its captures, so it is only `CallMut`)"))
                 } else {
                     None
@@ -3320,13 +3342,14 @@ impl<'a> Checker<'a> {
     /// How a value of `ty` is called, if it can be.
     fn callable(&mut self, ty: Ty) -> Option<Callable> {
         if let TyKind::Fn(params, result, variadic, modes, is_unsafe) = self.types.kind(ty).clone() {
-            return Some(Callable { params, result, variadic, mutates: false, modes, is_unsafe });
+            return Some(Callable { params, result, variadic, mutates: false, once: false, modes, is_unsafe });
         }
-        if let Some((mutable, signature)) = self.call_bound_of(ty) {
+        if let Some((protocol, signature)) = self.call_bound_of(ty) {
             let TyKind::Fn(params, result, variadic, modes, is_unsafe) = self.types.kind(signature).clone() else {
                 unreachable!()
             };
-            return Some(Callable { params, result, variadic, mutates: mutable, modes, is_unsafe });
+            let (mutates, once) = (protocol != Protocol::Call, protocol == Protocol::CallOnce);
+            return Some(Callable { params, result, variadic, mutates, once, modes, is_unsafe });
         }
         let (_, _, info) = self.types.closure(ty)?;
         Some(Callable {
@@ -3334,6 +3357,7 @@ impl<'a> Checker<'a> {
             result: info.result,
             variadic: info.variadic,
             mutates: info.mutates,
+            once: info.once,
             modes: info.modes,
             is_unsafe: info.is_unsafe,
         })
@@ -3431,11 +3455,11 @@ impl<'a> Checker<'a> {
     }
 
     /// The call bound of a type parameter or an opaque result.
-    fn call_bound_of(&mut self, ty: Ty) -> Option<(bool, Ty)> {
+    fn call_bound_of(&mut self, ty: Ty) -> Option<(Protocol, Ty)> {
         if let Some((def, args)) = self.types.opaque(ty) {
             let map: HashMap<Ty, Ty> = def.generics.iter().copied().zip(args.iter().copied()).collect();
-            let (mutable, signature) = self.call_bounds.get(&def.carrier).copied()?;
-            return Some((mutable, self.types.subst(signature, &map)));
+            let (protocol, signature) = self.call_bounds.get(&def.carrier).copied()?;
+            return Some((protocol, self.types.subst(signature, &map)));
         }
         self.call_bounds.get(&ty).copied()
     }
@@ -3590,8 +3614,9 @@ impl<'a> Checker<'a> {
         if self.type_names.contains_key(&owner.name) {
             self.index_refer(owner, crate::index::Key::Type(owner.name.clone()));
         }
-        // The prelude declares the methods of the intrinsic types.
-        if Some(module) == self.prelude
+        // The prelude declares the methods of the intrinsic types, and so
+        // may a fixture of documentation (Appendix C).
+        if (Some(module) == self.prelude || self.fixture(owner.span))
             && let Some(key) = self.intrinsic_owner(&owner.name)
         {
             return key;
@@ -3616,6 +3641,8 @@ impl<'a> Checker<'a> {
                 Ty::ERROR
             }
             Some(Some(ty)) if !PRELUDE_TYPES.contains(&owner.name.as_str()) => ty,
+            // An operation the toolchain has natively.
+            _ if self.fixture(owner.span) => Ty::ERROR,
             Some(_) => {
                 let message = format!(
                     "methods can only be declared on records, enums and newtypes of this module, not `{}`",
@@ -3658,13 +3685,22 @@ impl<'a> Checker<'a> {
         } else {
             None
         };
+        // What a fixture of documentation declares that the toolchain has
+        // is the toolchain's.
+        let native = || f.owner.as_ref().is_some_and(|o| crate::api::builtin_methods(&o.name).contains(&name.as_str()));
         match clash {
+            _ if self.fixture(f.span) && (clash.is_some() || native()) => {}
             Some(message) => self.diags.error("E1505", f.name.span, message),
             None => {
                 self.methods.insert((owner, name.clone()), id);
                 self.method_visibility.insert(id, (f.module, f.public));
             }
         }
+    }
+
+    /// Whether `span` is in a fixture of documentation (Appendix C).
+    fn fixture(&self, span: Span) -> bool {
+        self.sources.file_of(span.start).logical.starts_with("<fixture>/")
     }
 
     fn record_has_field(&self, ty: Ty, name: &str) -> bool {
@@ -4032,8 +4068,9 @@ impl<'a> Checker<'a> {
         function
     }
 
-    /// Checks moves and obligations (8.10) once the body is typed.
-    fn ownership(&mut self, function: &mut hir::Function, params: &[Option<ast::Mode>]) {
+    /// Checks moves and obligations (8.10) once the body is typed; whether
+    /// a closure body gives a capture away.
+    fn ownership(&mut self, function: &mut hir::Function, params: &[Option<ast::Mode>]) -> bool {
         let (signatures, traits, externs) = (&self.signatures, &self.traits, &self.externs);
         let modes = |callee: Callee| match callee {
             Callee::Fn(id) => signatures.get(id.0 as usize).map(|s| s.modes.clone()).unwrap_or_default(),
@@ -4051,8 +4088,13 @@ impl<'a> Checker<'a> {
                 _ => None,
             })
             .collect();
-        let context = crate::ownership::Context { params, modes: &modes, bound_modes: &bound_modes };
-        function.moves = crate::ownership::check(&mut self.types, function, context, self.diags);
+        // The type parameters a call consumes.
+        let once: HashSet<Ty> =
+            self.call_bounds.iter().filter(|(_, (p, _))| *p == Protocol::CallOnce).map(|(&t, _)| t).collect();
+        let context = crate::ownership::Context { params, modes: &modes, bound_modes: &bound_modes, once: &once };
+        let gives;
+        (function.moves, gives) = crate::ownership::check(&mut self.types, function, context, self.diags);
+        gives
     }
 
     /// The implicit `main` of a root script (spec 20.3). Its error type is
@@ -4243,6 +4285,7 @@ impl<'a> Checker<'a> {
                 result,
                 variadic: false,
                 mutates: false,
+                once: false,
                 is_unsafe: false,
             }),
             _ => self.callable(t),
@@ -4301,6 +4344,7 @@ impl<'a> Checker<'a> {
             variadic,
             modes: modes.clone(),
             mutates: false,
+            once: false,
             is_unsafe,
         };
         self.types.declare_closure(template, info);
@@ -4379,9 +4423,10 @@ impl<'a> Checker<'a> {
             moves: HashSet::new(),
             test,
         };
-        // A cleanup runs once, so it may give its captures away.
-        if !deferred {
-            self.ownership(&mut function, &params);
+        // A cleanup runs once, so it may give its captures away; another
+        // closure that does is called once (`CallOnce`).
+        if !deferred && self.ownership(&mut function, &params) {
+            self.types.closure_info_mut(template).once = true;
         }
         self.closure_functions[index] = Some(function);
         // The closure value holds the captured values, read now.
@@ -4478,6 +4523,7 @@ impl<'a> Checker<'a> {
             variadic: false,
             modes: Vec::new(),
             mutates: false,
+            once: false,
             is_unsafe: false,
         };
         self.types.declare_closure(template, info);
@@ -7393,6 +7439,15 @@ impl<'a> Checker<'a> {
                 self.diags.error("E1605", value.span, message);
                 return value;
             }
+            if found == expected && info.once {
+                let message = format!(
+                    "this closure gives a capture away, so it can be called once and cannot become {}; take it as a type parameter bound by `CallOnce[{}]`",
+                    self.display(expected),
+                    self.types.display(expected)
+                );
+                self.diags.error("E1108", value.span, message);
+                return value;
+            }
             if found == expected && !info.mutates {
                 let span = value.span;
                 return Self::mk(hir::ExprKind::Erase(Box::new(value), FnId(body)), expected, span);
@@ -9773,7 +9828,8 @@ impl<'a> Checker<'a> {
         if let TyKind::CFn(params, result, variadic) = self.types.kind(callee.ty).clone() {
             return self.c_value_call(cx, callee, (params, result, variadic), args, expected, span);
         }
-        let Some(Callable { params, result, variadic, mutates, modes, is_unsafe }) = self.callable(callee.ty) else {
+        let Some(Callable { params, result, variadic, mutates, modes, is_unsafe, .. }) = self.callable(callee.ty)
+        else {
             let message = format!("{} cannot be called", self.display(callee.ty));
             self.diags.error("E1102", callee.span, message);
             return Self::error_expr(span);

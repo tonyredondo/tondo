@@ -1,0 +1,36 @@
+import std.console
+
+type Token[T] = { value: T }
+
+fn spend[T: ~Copy](token: Token[T]) {
+    _ = token
+    console.println("spent")
+}
+
+fn invoke[F: ~Copy + CallOnce[fn(): Unit]](operation: F) {
+    operation()
+}
+
+fn run[T: ~Copy](token: Token[T]) {
+    let release = () {
+        spend(token)
+    }
+    defer release()
+    console.println("running")
+}
+
+fn give[T: ~Copy](token: Token[T]) {
+    let release = () {
+        spend(token)
+    }
+    invoke(release)
+}
+
+fn main() {
+    run(Token { value: "a" })
+    give(Token { value: "b" })
+}
+
+// expect-stdout: running
+// expect-stdout: spent
+// expect-stdout: spent

@@ -58,4 +58,4 @@ fn main() {}
 // expect-error: E1406 `value` is a loan, so its value of type `T` cannot be moved out of it
 // expect-error: E1105 `T` does not implement `Copy` (type parameters are `Copy` unless declared `~Copy`), which `copies` requires of `T`
 // expect-error: E1115 `~Copy` drops the `Copy` that parameters of functions, methods and impls assume; remove it here
-// expect-error: E1406 the closure cannot give away its capture `value` of type `T`, since it may be called again
+// expect-error: E1108 this closure gives a capture away, so it can be called once and cannot become `fn(): Int`

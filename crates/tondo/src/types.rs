@@ -344,6 +344,9 @@ pub struct ClosureInfo {
     /// Whether the body changes a capture, so calls need a `var` closure
     /// (`CallMut`) and it cannot become a `fn(...)` value.
     pub mutates: bool,
+    /// Whether the body gives a capture away, so a call consumes it
+    /// (`CallOnce`) and it cannot become a `fn(...)` value.
+    pub once: bool,
     /// `unsafe (...) { ... }`: calls need an `unsafe` region (16.12).
     pub is_unsafe: bool,
 }

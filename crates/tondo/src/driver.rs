@@ -246,6 +246,61 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool) -> Result<An
     Ok(Analysis { sources, diags, program, source_id, libraries, meta, expansions, index: None })
 }
 
+/// Checks an example of documentation (21.6) as the root file of a
+/// program: `source`, with the declarations of its fixture at its end
+/// (`tail`), and the fixture's modules of `std` (by name, with their
+/// source) in place of the standard ones. Without `main` or statements it
+/// is checked as a library.
+pub fn analyze_fence(
+    logical: &str,
+    source: &str,
+    tail: &str,
+    universe: &[(String, String)],
+) -> (SourceMap, Diagnostics) {
+    let mut sources = SourceMap::default();
+    let mut diags = Diagnostics::default();
+    let mut parse = |name: &str, logical: String, module: &str, text: &str| {
+        let id = sources.add(Path::new(name), text.to_string());
+        sources.set_identity(id, logical, module.to_string());
+        parser::parse_file(sources.file(id), &mut diags)
+    };
+    let mut module = parse(logical, logical.to_string(), "doc", source);
+    let fixture = parse("fixture.to", "<fixture>/fixture.to".into(), "doc", tail);
+    let main = |item: &ast::Item| matches!(item, ast::Item::Fn(f) if f.name.name == "main" && f.owner.is_none());
+    let library = module.statements.is_empty() && !module.items.iter().any(main);
+    module.imports.extend(fixture.imports);
+    module.items.extend(fixture.items);
+    let stubs: Vec<ast::Module> = universe
+        .iter()
+        .map(|(name, text)| {
+            parse(&format!("{name}.to"), format!("<fixture>/std.{name}.to"), &format!("std.{name}"), text)
+        })
+        .collect();
+    let mut modules = vec![modules::ModuleSource { path: vec!["doc".into()], package: 0, files: vec![(module, true)] }];
+    let mut packages = vec![modules::PackageInfo {
+        name: "doc".into(),
+        dependencies: Default::default(),
+        dev_dependencies: Default::default(),
+    }];
+    crate::meta::expand(&mut modules, &packages, &[], &mut sources, &mut diags);
+    crate::derive::derive(&mut modules, &mut sources, &mut diags);
+    let replaced: Vec<&str> = universe.iter().map(|(name, _)| name.as_str()).collect();
+    stdlib::add_except(&mut modules, &mut packages, &mut sources, &mut diags, &replaced);
+    for ((name, _), stub) in universe.iter().zip(stubs) {
+        let path = vec!["std".to_string(), name.clone()];
+        modules.push(modules::ModuleSource { path, package: packages.len() - 1, files: vec![(stub, false)] });
+    }
+    let mut module = modules::link(modules, 0, &packages, &mut diags);
+    module.library = library;
+    if !diags.has_errors()
+        && let Some(program) = check::check(&module, &sources, &mut diags, false)
+    {
+        mono::monomorphize(program, &mut diags);
+    }
+    diags.sort(&sources);
+    (sources, diags)
+}
+
 fn drop_dependency_warnings(diags: &mut Diagnostics, sources: &SourceMap, dependencies: &[String]) {
     diags.drop_warnings(sources, |file| {
         let module = &file.module;

@@ -9,6 +9,7 @@ pub mod compact;
 pub mod deps;
 pub mod derive;
 pub mod diag;
+pub mod doctest;
 pub mod driver;
 pub mod exhaust;
 pub mod fmt;

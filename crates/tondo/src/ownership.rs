@@ -26,26 +26,32 @@ enum Moved {
     Maybe,
 }
 
-/// The owned bindings that do not hold their value; absent ones do.
+/// The owned bindings that do not hold their value; absent ones do. In a
+/// closure body, also the captures it gave away, by their index.
 #[derive(Clone, Default, PartialEq)]
 struct Flow {
     moved: HashMap<LocalId, Moved>,
+    captures: HashMap<u32, Moved>,
 }
 
 /// The state after two paths join; `None` is a path that does not continue.
 fn merge(a: Option<Flow>, b: Option<Flow>) -> Option<Flow> {
+    fn join<K: Copy + Eq + std::hash::Hash>(a: &mut HashMap<K, Moved>, b: HashMap<K, Moved>) {
+        for state in a.iter_mut().filter(|(k, _)| !b.contains_key(*k)).map(|(_, s)| s) {
+            *state = Moved::Maybe;
+        }
+        for (key, state) in b {
+            let joined = match a.get(&key) {
+                Some(Moved::Surely) if state == Moved::Surely => Moved::Surely,
+                _ => Moved::Maybe,
+            };
+            a.insert(key, joined);
+        }
+    }
     match (a, b) {
         (Some(mut a), Some(b)) => {
-            for state in a.moved.iter_mut().filter(|(l, _)| !b.moved.contains_key(*l)).map(|(_, s)| s) {
-                *state = Moved::Maybe;
-            }
-            for (local, state) in b.moved {
-                let joined = match a.moved.get(&local) {
-                    Some(Moved::Surely) if state == Moved::Surely => Moved::Surely,
-                    _ => Moved::Maybe,
-                };
-                a.moved.insert(local, joined);
-            }
+            join(&mut a.moved, b.moved);
+            join(&mut a.captures, b.captures);
             Some(a)
         }
         (a, None) => a,
@@ -66,17 +72,21 @@ pub struct Context<'a> {
     pub modes: &'a dyn Fn(Callee) -> Vec<Mode>,
     /// The parameter modes of the type parameters with a call bound.
     pub bound_modes: &'a Map<Ty, Vec<Mode>>,
+    /// The type parameters bound by `CallOnce`, which a call consumes.
+    pub once: &'a HashSet<Ty>,
 }
 
 /// Checks the moves and obligations of `function`, and returns where a
-/// binding that is not `Copy` moves: its reads that give its value away.
+/// binding that is not `Copy` moves, its reads that give its value away,
+/// and whether a closure body gives a capture away, which makes calling it
+/// consume it (`CallOnce`, 11.8).
 pub fn check(
     types: &mut Types,
     function: &Function,
     context: Context,
     diags: &mut Diagnostics,
-) -> HashSet<(LocalId, Span)> {
-    let Context { params, modes, bound_modes } = context;
+) -> (HashSet<(LocalId, Span)>, bool) {
+    let Context { params, modes, bound_modes, once } = context;
     let mut checker = Checker {
         types,
         function,
@@ -88,9 +98,11 @@ pub fn check(
         reported: HashSet::new(),
         moves: HashSet::new(),
         quiet: false,
+        gives: false,
+        once,
     };
     checker.block(&function.body, Flow::default());
-    checker.moves
+    (checker.moves, checker.gives)
 }
 
 struct Checker<'a> {
@@ -107,6 +119,9 @@ struct Checker<'a> {
     /// Inside the operations of a `select`, which take their values only in
     /// the arm that wins: such moves are not recorded for lowering.
     quiet: bool,
+    /// Whether the closure body gave a capture away.
+    gives: bool,
+    once: &'a HashSet<Ty>,
 }
 
 impl Checker<'_> {
@@ -334,6 +349,19 @@ impl Checker<'_> {
         }
     }
 
+    /// A read of a capture the closure gave away is a use after a move.
+    fn use_capture(&mut self, base: &Expr, index: u32, span: Span, flow: &Flow) {
+        if let Some(state) = flow.captures.get(&index)
+            && let Some(capture) = self.capture_name(base, index)
+        {
+            let when = if *state == Moved::Maybe { " on some paths" } else { "" };
+            let message = format!(
+                "the closure gave its capture `{capture}` away{when} before this use; use it before passing it on"
+            );
+            self.error("E1401", span, message);
+        }
+    }
+
     /// The name of the capture that `base.field` reads in a closure body,
     /// whose first parameter is the closure itself.
     fn capture_name(&self, base: &Expr, index: u32) -> Option<String> {
@@ -364,7 +392,11 @@ impl Checker<'_> {
                 self.use_local(*local, expr.span, &flow);
                 Some(flow)
             }
-            ExprKind::Field(base, _) | ExprKind::Retype(base) | ExprKind::RefValue(base) => self.observe(base, flow),
+            ExprKind::Field(base, index) => {
+                self.use_capture(base, *index, expr.span, &flow);
+                self.observe(base, flow)
+            }
+            ExprKind::Retype(base) | ExprKind::RefValue(base) => self.observe(base, flow),
             ExprKind::Index(base, index) => {
                 let flow = self.observe(base, flow)?;
                 self.consume(index, flow)
@@ -434,15 +466,18 @@ impl Checker<'_> {
                 }
                 Some(flow)
             }
+            // The closure gives a capture away, so a call consumes it; the
+            // capture still holds its reference until the closure goes.
+            ExprKind::Field(base, index) if !copy && self.capture_name(base, *index).is_some() => {
+                self.use_capture(base, *index, expr.span, &flow);
+                let mut flow = flow;
+                flow.captures.insert(*index, Moved::Surely);
+                self.gives = true;
+                Some(flow)
+            }
             ExprKind::Field(base, index) if !copy && Self::root(base).is_some() => {
                 let root = Self::root(base).expect("checked above");
-                let message = if let Some(capture) = self.capture_name(base, *index) {
-                    format!(
-                        "the closure cannot give away its capture `{capture}` of type {}, since it may be called again{}",
-                        self.display(expr.ty),
-                        self.copy_hint(expr.ty)
-                    )
-                } else if self.params[root.0 as usize].is_some_and(|m| m != Mode::Value) {
+                let message = if self.params[root.0 as usize].is_some_and(|m| m != Mode::Value) {
                     format!(
                         "`{}` is a loan, so its part of type {} cannot be moved out of it",
                         self.local(root).name,
@@ -588,7 +623,12 @@ impl Checker<'_> {
                 let modes = self.value_modes(callee.ty);
                 let taken =
                     args.iter().enumerate().map(|(i, arg)| (arg, matches!(modes.get(i), Some(Mode::Value) | None)));
-                self.call_operands(std::iter::once((&**callee, false)).chain(taken), flow)
+                let mut flow = self.call_operands(std::iter::once((&**callee, false)).chain(taken), flow)?;
+                if self.once.contains(&callee.ty) || self.types.closure(callee.ty).is_some_and(|(_, _, info)| info.once)
+                {
+                    flow = self.call_once(callee, flow);
+                }
+                Some(flow)
             }
             ExprKind::Loan(place) | ExprKind::CursorNext(place, _) => {
                 let flow = self.indices(&place.path, flow)?;
@@ -705,6 +745,22 @@ impl Checker<'_> {
             Some((_, _, info)) => info.modes,
             None => self.bound_modes.get(&ty).cloned().unwrap_or_default(),
         }
+    }
+
+    /// A call of a closure that gives a capture away consumes the closure
+    /// (`CallOnce`); the binding keeps its reference until its scope ends.
+    fn call_once(&mut self, callee: &Expr, mut flow: Flow) -> Flow {
+        let Some(root) = Self::root(callee) else { return flow };
+        if self.params[root.0 as usize].is_some_and(|m| m != Mode::Value) {
+            let message = format!(
+                "`{}` is a loan, and this closure gives a capture away, so calling it would consume it; take it by value",
+                self.local(root).name
+            );
+            self.error("E1407", callee.span, message);
+        } else {
+            flow.moved.insert(root, Moved::Surely);
+        }
+        flow
     }
 
     /// Evaluates the operands of a call in order, taking those `take` says.

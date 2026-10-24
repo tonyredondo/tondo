@@ -1,0 +1,38 @@
+type Token[T] = { value: T }
+
+fn spend[T: ~Copy](token: Token[T]) {
+    _ = token
+}
+
+fn again[T: ~Copy](token: Token[T]) {
+    let release = () {
+        spend(token)
+    }
+    release()
+    release()
+}
+
+fn inside[T: ~Copy](token: Token[T]) {
+    let release = () {
+        spend(token)
+        spend(token)
+    }
+    release()
+}
+
+fn shared[F: ~Copy + Call[fn(): Unit]](operation: F) {
+    operation()
+}
+
+fn borrowed[T: ~Copy](token: Token[T]) {
+    let release = () {
+        spend(token)
+    }
+    shared(release)
+}
+
+fn main() {}
+
+// expect-error: E1401 `release` was moved before this use
+// expect-error: E1401 the closure gave its capture `token` away before this use
+// expect-error: E1105 it gives a capture away, so it is only `CallOnce`

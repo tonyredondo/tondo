@@ -1468,3 +1468,32 @@ killing its group), or at a second Ctrl-C. Exit `4` says the workers
 ended by themselves, `3` that one was killed. What the interruption cut
 has no outcome, the human output shows what ran and says it was
 interrupted, and no report, JUnit file or snapshot is written.
+
+## 2026-10-24 — `tondo doc-test`
+
+The fixtures of Appendix C are written once, in the manifest the
+appendix names, `conformance/0.1/fixtures/tondo-fixture-manifest.txt`,
+whose hash every record carries. The runner turns its lines into Tondo:
+an opaque type is a record without fields, or one holding a `Join` when
+it is `Send` but neither `Copy` nor `Share`, so moving it is checked as
+the language checks any affine value; an operation gets a body that is
+never run. A fixture's declarations go at the end of the example, as the
+appendix says, and its modules replace the standard ones of the same
+name, except `std.console` and `std.process`: what the manifest declares
+of them is part of what they have, and a pipeline only runs through the
+real one. An operation a fixture declares on a type of the language is
+used only where the toolchain has none, and a type the prelude has, such
+as `Deque`, is the prelude's. An example without `main` or statements is
+checked as a library.
+
+The examples showed that the language had no closures called once: one
+that gives a capture away is now `CallOnce`, a call consumes it, and it
+cannot become a `fn(...)` value or satisfy `Call` or `CallMut`. Only the
+check changes: reading a capture still takes its own reference, which the
+closure gives up when it goes.
+
+They also showed two places where the specifications disagree with
+themselves, which wait for a decision: the `tondo` category cannot take
+imports, which fifteen examples of the standard library and one of the
+language write before their statements, and `spec.application` takes an
+`Array[env.Value]` that `env.args()` does not give.

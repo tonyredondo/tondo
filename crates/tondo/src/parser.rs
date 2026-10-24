@@ -18,6 +18,71 @@ pub fn parse_with_parens(file: &SourceFile, diags: &mut Diagnostics) -> (Module,
     (module, parser.parens)
 }
 
+/// The productions an example of syntax is made of (21.6): a whole
+/// module, a sequence of declarations, signatures, statements, types and
+/// patterns, or a lone block; `None` when it is none of them.
+pub fn syntax_productions(file: &SourceFile) -> Option<Vec<&'static str>> {
+    let mut diags = Diagnostics::default();
+    let module = parse_file(file, &mut diags);
+    let bodies = |item: &Item| !matches!(item, Item::Fn(f) if f.body.is_none() && f.foreign.is_none());
+    if !diags.has_errors() && module.statements.is_empty() && module.items.iter().all(bodies) {
+        return Some(vec!["module_program"]);
+    }
+    let mut lexed = Diagnostics::default();
+    let tokens = lexer::lex(file, None, &mut lexed);
+    if lexed.has_errors() {
+        return None;
+    }
+    // Where an item that starts at `pos` ends, if it is one of `production`
+    // and ends a line.
+    let attempt = |pos: usize, production: &str| -> Option<usize> {
+        let mut scratch = Diagnostics::default();
+        let tokens = tokens.clone();
+        let mut parser =
+            Parser { file, tokens, pos, diags: &mut scratch, recovering: false, no_brace: false, parens: Vec::new() };
+        let parsed = match production {
+            "top_decl" | "function_signature" if parser.at_declaration() => match parser.declaration() {
+                Ok(Some(Item::Fn(f))) => {
+                    (f.body.is_none() && f.foreign.is_none()) == (production == "function_signature")
+                }
+                Ok(Some(_)) => production == "top_decl",
+                _ => false,
+            },
+            "statement" => parser.statement().is_ok(),
+            "type_expr_line" => parser.type_expr().is_ok(),
+            "pattern_line" => parser.pattern().is_ok(),
+            _ => false,
+        };
+        let end = parser.pos;
+        let ended = end > pos
+            && (parser.tokens[end - 1].tok == Tok::Newline || matches!(parser.tok(), Tok::Newline | Tok::Eof));
+        (parsed && ended && !scratch.has_errors()).then_some(end)
+    };
+    let mut productions = vec!["syntax_sequence"];
+    let mut pos = 0;
+    loop {
+        while tokens[pos].tok == Tok::Newline {
+            pos += 1;
+        }
+        if tokens[pos].tok == Tok::Eof {
+            return Some(productions);
+        }
+        let items = ["top_decl", "function_signature", "statement", "type_expr_line", "pattern_line"];
+        let Some((end, item)) = items.iter().find_map(|item| attempt(pos, item).map(|end| (end, *item))) else { break };
+        productions.push(item);
+        pos = end;
+    }
+    // A block on its own.
+    let mut scratch = Diagnostics::default();
+    let mut parser =
+        Parser { file, tokens, pos: 0, diags: &mut scratch, recovering: false, no_brace: false, parens: Vec::new() };
+    parser.skip_newlines();
+    let block = parser.block().is_ok();
+    parser.skip_newlines();
+    let ended = parser.at(&Tok::Eof);
+    (block && ended && !scratch.has_errors()).then(|| vec!["standalone_block"])
+}
+
 struct Parser<'a> {
     file: &'a SourceFile,
     tokens: Vec<Token>,

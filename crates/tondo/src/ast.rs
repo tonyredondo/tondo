@@ -25,6 +25,9 @@ pub struct Module {
     pub bound: bool,
     /// The `#!` line the file starts with.
     pub shebang: Option<Span>,
+    /// Checked as a library, without `main`: an example of documentation
+    /// that declares none (21.6).
+    pub library: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
