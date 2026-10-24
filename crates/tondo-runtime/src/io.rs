@@ -464,7 +464,7 @@ impl StreamState {
 
 /// A new stream over `host`, with one reference.
 pub(crate) fn stream(host: Box<dyn Host>, mode: Mode, buffered: bool) -> *mut StreamObject {
-    LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+    LIVE_OBJECTS.made();
     let state = StreamState {
         host: Some(host),
         ahead: Vec::new(),
@@ -600,7 +600,7 @@ pub unsafe extern "C" fn tondo_rt_stream_release(stream: *mut StreamObject) {
             });
         }
         drop(Box::from_raw(stream));
-        LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+        LIVE_OBJECTS.gone();
     }
 }
 
@@ -727,7 +727,7 @@ impl BufferObject {
 /// `io.Buffer()`
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_io_buffer_new() -> *mut BufferObject {
-    LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+    LIVE_OBJECTS.made();
     Box::into_raw(Box::new(BufferObject { rc: AtomicUsize::new(1), data: Mutex::new(Vec::new()) }))
 }
 
@@ -775,7 +775,7 @@ pub unsafe extern "C" fn tondo_rt_io_buffer_release(buffer: *mut BufferObject) {
         }
         std::sync::atomic::fence(Ordering::Acquire);
         drop(Box::from_raw(buffer));
-        LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+        LIVE_OBJECTS.gone();
     }
 }
 

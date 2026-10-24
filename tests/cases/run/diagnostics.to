@@ -1,0 +1,27 @@
+// The program's counters (std.diagnostics): a name gives the same counter
+// from any task.
+import std.console
+import std.diagnostics
+
+fn serve(count: Int) {
+    for _ in 0..count {
+        diagnostics.counter("requests").add()
+    }
+}
+
+fn main() {
+    let jobs = [spawn serve(100), spawn serve(50)]
+    for job in jobs {
+        job.wait()
+    }
+    let requests = diagnostics.counter("requests")
+    requests.add(2)
+    console.println("{requests.value()}")
+    let queue = diagnostics.gauge("queue")
+    queue.set(10)
+    queue.add(-3)
+    console.println("{diagnostics.gauge("queue").value()}")
+}
+
+// expect-stdout: 152
+// expect-stdout: 7

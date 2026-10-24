@@ -213,6 +213,8 @@ async fn handle(
     sender: mpsc::Sender<Request>,
     remote: String,
 ) -> Result<hyper::Response<Body>, Infallible> {
+    super::diagnostics::HTTP_SERVER_REQUESTS.add(1);
+    let _active = super::diagnostics::Open::new(&super::diagnostics::HTTP_SERVER_ACTIVE);
     let websocket = request
         .headers()
         .get(hyper::header::UPGRADE)

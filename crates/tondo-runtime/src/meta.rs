@@ -97,9 +97,12 @@ unsafe impl GlobalAlloc for Counting {
         {
             over("memory");
         }
-        let block = unsafe { System.alloc(layout) };
+        let mut block = unsafe { System.alloc(layout) };
         if block.is_null() && super::cycles::collect_for_memory() {
-            return unsafe { System.alloc(layout) };
+            block = unsafe { System.alloc(layout) };
+        }
+        if !block.is_null() {
+            super::diagnostics::allocated(layout.size());
         }
         block
     }
@@ -108,6 +111,7 @@ unsafe impl GlobalAlloc for Counting {
         if LIMIT.load(Ordering::Relaxed) != usize::MAX {
             HELD.fetch_sub(layout.size(), Ordering::Relaxed);
         }
+        super::diagnostics::freed(layout.size());
         unsafe { System.dealloc(ptr, layout) }
     }
 }

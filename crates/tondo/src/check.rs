@@ -198,8 +198,9 @@ enum StdModule {
     InternalMath,
     /// `std.internal.meta`: the request and response of a provider.
     InternalMeta,
-    /// `std.internal.codec`: encodings, digests and entropy, for
-    /// `std.encoding`, `std.hash`, `std.random` and `std.uuid`.
+    /// `std.internal.codec`: encodings, digests, entropy and the program's
+    /// counters, for `std.encoding`, `std.hash`, `std.random`, `std.uuid`
+    /// and `std.diagnostics`.
     InternalCodec,
     /// `std.internal.http`: the runtime's HTTP client, for `std.http`.
     InternalHttp,

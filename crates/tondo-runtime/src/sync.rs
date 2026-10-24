@@ -68,7 +68,7 @@ pub extern "C" fn tondo_rt_sync_new(
 ) -> *mut SyncObject {
     let align = align.max(8);
     let layout = std::alloc::Layout::from_size_align(size.max(1), align).unwrap();
-    LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+    LIVE_OBJECTS.made();
     let cell = Box::into_raw(Box::new(SyncObject {
         rc: AtomicUsize::new(1),
         state: AtomicUsize::new(0),
@@ -381,7 +381,7 @@ pub unsafe extern "C" fn tondo_rt_sync_release(object: *mut SyncObject) {
             release(o.value);
         }
         std::alloc::dealloc(o.value, std::alloc::Layout::from_size_align(o.size.max(1), o.align).unwrap());
-        LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+        LIVE_OBJECTS.gone();
     }
 }
 
@@ -411,7 +411,7 @@ pub unsafe extern "C" fn tondo_rt_semaphore_new(permits: i64, location: *const S
     if permits <= 0 {
         super::panic_with(1, &format!("a semaphore needs at least 1 permit, and this one has {permits}"), location);
     }
-    LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+    LIVE_OBJECTS.made();
     Box::into_raw(Box::new(SemaphoreObject {
         rc: AtomicUsize::new(1),
         lock: AtomicBool::new(false),
@@ -422,7 +422,7 @@ pub unsafe extern "C" fn tondo_rt_semaphore_new(permits: i64, location: *const S
 
 fn new_permit(semaphore: *mut SemaphoreObject) -> *mut PermitObject {
     unsafe { (*semaphore).rc.fetch_add(1, Ordering::Relaxed) };
-    LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+    LIVE_OBJECTS.made();
     Box::into_raw(Box::new(PermitObject { rc: AtomicUsize::new(1), semaphore }))
 }
 
@@ -474,7 +474,7 @@ pub unsafe extern "C" fn tondo_rt_permit_release(permit: *mut PermitObject) {
         }
         std::sync::atomic::fence(Ordering::Acquire);
         let permit = Box::from_raw(permit);
-        LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+        LIVE_OBJECTS.gone();
         let s = &mut *permit.semaphore;
         lock(&s.lock);
         let mut woken = None;
@@ -504,7 +504,7 @@ pub unsafe extern "C" fn tondo_rt_semaphore_release(semaphore: *mut SemaphoreObj
         }
         std::sync::atomic::fence(Ordering::Acquire);
         drop(Box::from_raw(semaphore));
-        LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+        LIVE_OBJECTS.gone();
     }
 }
 
@@ -528,7 +528,7 @@ pub unsafe extern "C" fn tondo_rt_barrier_new(parties: i64, location: *const Str
     if parties <= 0 {
         super::panic_with(1, &format!("a barrier needs at least 1 party, and this one has {parties}"), location);
     }
-    LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+    LIVE_OBJECTS.made();
     Box::into_raw(Box::new(BarrierObject {
         rc: AtomicUsize::new(1),
         lock: AtomicBool::new(false),
@@ -576,7 +576,7 @@ pub unsafe extern "C" fn tondo_rt_barrier_release(barrier: *mut BarrierObject) {
         }
         std::sync::atomic::fence(Ordering::Acquire);
         drop(Box::from_raw(barrier));
-        LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+        LIVE_OBJECTS.gone();
     }
 }
 

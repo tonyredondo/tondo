@@ -31,6 +31,10 @@ usage:
   tondo doc-test [--edition 0.1] <markdown>            check the examples of a document (as JSON)
   tondo lsp                                            serve an editor: diagnostics, hover, definitions,
                                                        references, rename, completion, highlighting
+  tondo ps [--json]                                    list the running Tondo programs
+  tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--json]
+                                                       watch a running program's counters, the runtime's
+                                                       and its own (std.diagnostics)
   tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
                                                        write a module of extern declarations for a C header
   tondo <file.to> [<argument>...]                      run a script (for #! lines)
@@ -74,6 +78,8 @@ fn main() -> ExitCode {
         "test" => test_command(&args[1..]),
         "doc-test" => doc_test_command(&args[1..]),
         "lsp" => tondo::lsp::serve().map(|()| ExitCode::SUCCESS),
+        "ps" => ps_command(&args[1..]),
+        "counters" => counters_command(&args[1..]),
         "version" | "--version" | "-V" => {
             println!("tondo {} (native, cranelift)", driver::VERSION);
             Ok(ExitCode::SUCCESS)
@@ -437,6 +443,45 @@ fn doc_test_command(args: &[OsString]) -> Result<ExitCode, String> {
             Ok(ExitCode::FAILURE)
         }
     }
+}
+
+/// Lists the running Tondo programs.
+fn ps_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let json = match args {
+        [] => false,
+        [flag] if flag == "--json" => true,
+        _ => return Err(format!("ps takes only --json\n{USAGE}")),
+    };
+    tondo::observe::ps(json).map(|()| ExitCode::SUCCESS)
+}
+
+/// Shows the counters of a running program.
+fn counters_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let args: Vec<String> = args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+    let usage = |message: &str| format!("{message}\n{USAGE}");
+    let (mut name, mut interval, mut count, mut json) = (None, std::time::Duration::from_secs(1), None, false);
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        match arg.as_str() {
+            "--json" => json = true,
+            "--interval" => {
+                let seconds = rest.next().and_then(|s| s.parse::<f64>().ok()).filter(|s| *s >= 0.1 && *s <= 3600.0);
+                let seconds =
+                    seconds.ok_or_else(|| usage("--interval takes seconds, from 0.1 to 3600, as --interval 2"))?;
+                interval = std::time::Duration::from_secs_f64(seconds);
+            }
+            "--count" => {
+                let n = rest.next().and_then(|n| n.parse::<u64>().ok()).filter(|n| *n > 0);
+                count =
+                    Some(n.ok_or_else(|| usage("--count takes how many times to show the counters, as --count 1"))?);
+            }
+            other if !other.starts_with('-') && name.is_none() => name = Some(other.to_string()),
+            other => return Err(usage(&format!("counters does not take `{other}`"))),
+        }
+    }
+    let name = name
+        .ok_or_else(|| usage("counters takes a running program: its process ID, or its name; `tondo ps` lists them"))?;
+    tondo::observe::counters(&name, interval, count, json).map(|()| ExitCode::SUCCESS)
 }
 
 /// Resolves the named dependencies, or all of them, again instead of

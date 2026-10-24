@@ -462,7 +462,7 @@ pub unsafe extern "C" fn tondo_rt_json_stream_reader(stream: *mut StreamObject, 
 }
 
 fn reader_object(reader: Reader) -> *mut ReaderObject {
-    LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+    LIVE_OBJECTS.made();
     Box::into_raw(Box::new(ReaderObject { rc: AtomicUsize::new(1), reader: Mutex::new(reader) }))
 }
 
@@ -549,7 +549,7 @@ pub unsafe extern "C" fn tondo_rt_json_reader_release(object: *mut ReaderObject)
         }
         std::sync::atomic::fence(Ordering::Acquire);
         drop(Box::from_raw(object));
-        LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+        LIVE_OBJECTS.gone();
     }
 }
 
@@ -813,7 +813,7 @@ fn writer<'a>(object: *mut WriterObject) -> Guard<'a> {
 }
 
 fn writer_object(pretty: u8, canonical: u8, sink: Option<Source>) -> *mut WriterObject {
-    LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+    LIVE_OBJECTS.made();
     let writer = Writer {
         out: String::new(),
         pretty: pretty != 0 && canonical == 0,
@@ -941,7 +941,7 @@ pub unsafe extern "C" fn tondo_rt_json_writer_release(object: *mut WriterObject)
         }
         std::sync::atomic::fence(Ordering::Acquire);
         drop(Box::from_raw(object));
-        LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+        LIVE_OBJECTS.gone();
     }
 }
 

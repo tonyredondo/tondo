@@ -1568,3 +1568,31 @@ it. CI runs the cases and projects in containers with
 no C compiler, Debian and Alpine, dynamic and static, and the cases once
 more with `TONDO_CC=cc`. `tondo bind` still reads headers with a C
 compiler's preprocessor.
+
+## 2026-10-24 — Counters of running programs (H13, first part)
+
+Every Tondo program serves the tools that watch it on a Unix socket,
+`$TMPDIR/tondo-<uid>/<pid>`, in a directory only its user can open, as
+.NET's diagnostics do. Attaching from outside, with `ptrace` or
+`task_for_pid`, needs permissions that macOS does not give and Linux
+restricts. A runtime thread of its own answers every tool with `poll`, so
+a program whose workers are busy or stuck still answers, and neither its
+sockets nor its memory count in what the program shows. `tondo ps` lists
+the programs and removes the sockets of those that died without removing
+theirs; `tondo counters` samples one every second, named by its process or
+its file, as a table or as JSON lines with the rate of each total. The
+runtime counts memory, objects, the collector's pauses, tasks, workers and
+their calls of C, timers, the bytes of `std.net` and HTTP requests;
+sockets, files and pipes come from the process's descriptors, so those of
+C libraries count too. `std.diagnostics` gives a program counters and
+gauges by name.
+
+An atomic operation for each allocation would cost dearly on many cores.
+The count of live objects that the leak check reads already was one
+atomic for the whole process, and a program that allocates on four tasks
+ran 40% faster without it. Each thread now counts in a block that only it
+writes, with no atomic operation, and the tools read the sum of every
+block; a runtime thread's block goes to the next one that starts. That
+program now takes 170 ms where it took 275 ms, against 160 ms counting
+nothing. The leak check still counts objects in one atomic, so that the
+count at exit is exact.

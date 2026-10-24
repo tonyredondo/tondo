@@ -25,6 +25,7 @@ pub mod meta;
 pub mod mir;
 pub mod modules;
 pub mod mono;
+pub mod observe;
 pub mod ownership;
 pub mod parser;
 pub mod project;

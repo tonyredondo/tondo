@@ -242,7 +242,7 @@ pub extern "C" fn tondo_rt_clock_begin(location: *const super::Str) -> *mut Cloc
     if !task.is_null() {
         unsafe { (*task).in_domain = true };
     }
-    super::LIVE_OBJECTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    super::LIVE_OBJECTS.made();
     Box::into_raw(Box::new(ClockObject { rc: std::sync::atomic::AtomicUsize::new(1) }))
 }
 
@@ -266,7 +266,7 @@ pub unsafe extern "C" fn tondo_rt_clock_release(clock: *mut ClockObject) {
     }
     std::sync::atomic::fence(Ordering::Acquire);
     drop(unsafe { Box::from_raw(clock) });
-    super::LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+    super::LIVE_OBJECTS.gone();
 }
 
 /// `clock.settle()`: the other tasks run until each ends or waits on the

@@ -17,6 +17,7 @@ mod civil;
 mod clock;
 mod codec;
 mod cycles;
+mod diagnostics;
 mod env;
 mod fs;
 mod http;
@@ -66,7 +67,7 @@ const HEADER: usize = std::mem::size_of::<Str>();
 /// Heap objects (strings and boxes) currently allocated. Checked at exit when
 /// `TONDO_RT_CHECK_LEAKS` is set, which the compiler's tests use to verify
 /// reference counting.
-static LIVE_OBJECTS: AtomicUsize = AtomicUsize::new(0);
+static LIVE_OBJECTS: diagnostics::Objects = diagnostics::Objects;
 
 fn str_layout(len: usize) -> Layout {
     Layout::from_size_align(HEADER + len, std::mem::align_of::<Str>()).expect("string too large")
@@ -81,7 +82,7 @@ pub fn str_new(bytes: &[u8]) -> *mut Str {
             handle_alloc_error(layout);
         }
         ptr.write(Str { rc: AtomicUsize::new(1), len: bytes.len() });
-        LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+        LIVE_OBJECTS.made();
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), (ptr as *mut u8).add(HEADER), bytes.len());
         ptr
     }
@@ -113,7 +114,7 @@ pub unsafe extern "C" fn tondo_rt_str_release(s: *mut Str) {
     match rc.fetch_sub(1, Ordering::Release) {
         1 => {
             fence(Ordering::Acquire);
-            LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+            LIVE_OBJECTS.gone();
             unsafe { dealloc(s as *mut u8, str_layout((*s).len)) }
         }
         0 => runtime_fault("string released after it was freed"),
@@ -312,7 +313,7 @@ pub extern "C" fn tondo_rt_box_new(size: usize) -> *mut BoxHeader {
             handle_alloc_error(layout);
         }
         ptr.write(BoxHeader { rc: AtomicUsize::new(1), size });
-        LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+        LIVE_OBJECTS.made();
         ptr
     }
 }
@@ -343,7 +344,7 @@ pub unsafe extern "C" fn tondo_rt_box_release(b: *mut BoxHeader, release: Option
             if let Some(release) = release {
                 unsafe { release(box_value(b)) };
             }
-            LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+            LIVE_OBJECTS.gone();
             unsafe { dealloc(b as *mut u8, box_layout((*b).size)) }
         }
         0 => runtime_fault("box released after it was freed"),
@@ -404,7 +405,7 @@ pub extern "C" fn tondo_rt_ref_new(size: usize) -> *mut RefHeader {
             handle_alloc_error(layout);
         }
         ptr.write(RefHeader { rc: AtomicUsize::new(1), weak: AtomicUsize::new(1), size, dead: AtomicBool::new(false) });
-        LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+        LIVE_OBJECTS.made();
         ptr
     }
 }
@@ -482,7 +483,7 @@ unsafe fn ref_forget(r: *mut RefHeader) {
     unsafe {
         if (*r).weak.fetch_sub(1, Ordering::Release) == 1 {
             fence(Ordering::Acquire);
-            LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+            LIVE_OBJECTS.gone();
             dealloc(r as *mut u8, ref_layout((*r).size));
         }
     }
@@ -527,7 +528,7 @@ pub extern "C" fn tondo_rt_fn_new(
             handle_alloc_error(layout);
         }
         ptr.write(FnObject { rc: AtomicUsize::new(1), release, code, size, visit });
-        LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+        LIVE_OBJECTS.made();
         ptr
     }
 }
@@ -556,7 +557,7 @@ pub unsafe extern "C" fn tondo_rt_fn_release(f: *mut FnObject) {
                 if let Some(release) = (*f).release {
                     release((f as *mut u8).add(FN_HEADER));
                 }
-                LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+                LIVE_OBJECTS.gone();
                 dealloc(f as *mut u8, fn_layout((*f).size));
             }
         }
@@ -630,7 +631,7 @@ fn array_alloc(size: usize, len: usize, cap: usize) -> *mut ArrayHeader {
             handle_alloc_error(layout);
         }
         ptr.write(ArrayHeader { rc: AtomicUsize::new(1), len, cap, head: 0 });
-        LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+        LIVE_OBJECTS.made();
         ptr
     }
 }
@@ -660,7 +661,7 @@ pub unsafe extern "C" fn tondo_rt_array_release(a: *mut ArrayHeader, size: usize
                         release(element(a, size, index));
                     }
                 }
-                LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+                LIVE_OBJECTS.gone();
                 dealloc(a as *mut u8, array_layout(size, (*a).cap));
             }
         }
@@ -740,7 +741,7 @@ unsafe fn reserve(
             tondo_rt_array_release(a, size, release);
         } else {
             // Unique: the elements moved; nothing is retained or released.
-            LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+            LIVE_OBJECTS.gone();
             dealloc(a as *mut u8, array_layout(size, cap));
         }
         *slot = new;
@@ -1467,7 +1468,7 @@ impl MapObject {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_map_new(entry_size: usize, value_offset: usize) -> *mut MapObject {
-    LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+    LIVE_OBJECTS.made();
     Box::into_raw(Box::new(MapObject {
         rc: AtomicUsize::new(1),
         entry_size,
@@ -1509,7 +1510,7 @@ pub unsafe extern "C" fn tondo_rt_map_release(m: *mut MapObject, glue: *const Ma
                 let mut object = Box::from_raw(m);
                 release_entries(&mut object, &*glue);
             }
-            LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+            LIVE_OBJECTS.gone();
         }
         0 => runtime_fault("map released after it was freed"),
         _ => {}
@@ -2067,7 +2068,7 @@ pub fn check_leaks() -> Option<usize> {
     tasks::wait_foreign_calls();
     // Garbage cycles are not leaks: the collector frees them.
     cycles::collect_all();
-    let live = LIVE_OBJECTS.load(Ordering::Relaxed);
+    let live = LIVE_OBJECTS.live();
     (live != 0).then_some(live)
 }
 
@@ -2090,6 +2091,7 @@ static ALLOCATOR: meta::Counting = meta::Counting;
 #[unsafe(no_mangle)]
 pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
     meta::start();
+    diagnostics::start();
     let mut status = tasks::run_main(tondo_main);
     if let Some(status) = tasks::ending() {
         process::cancel_live();

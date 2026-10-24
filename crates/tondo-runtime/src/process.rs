@@ -83,7 +83,7 @@ pub struct PlanObject {
 }
 
 fn plan(stages: Vec<Stage>) -> *mut PlanObject {
-    LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+    LIVE_OBJECTS.made();
     Box::into_raw(Box::new(PlanObject { rc: AtomicUsize::new(1), stages }))
 }
 
@@ -194,7 +194,7 @@ pub unsafe extern "C" fn tondo_rt_process_plan_release(plan: *mut PlanObject) {
         }
         std::sync::atomic::fence(Ordering::Acquire);
         drop(Box::from_raw(plan));
-        LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+        LIVE_OBJECTS.gone();
     }
 }
 
@@ -446,6 +446,7 @@ fn spawn(plan: &PlanObject, defaults: Defaults) -> std::io::Result<Running> {
             };
             command.stdout(stdout.stdio()).stderr(stderr.stdio());
             let child = command.spawn()?;
+            super::diagnostics::PROCESSES_STARTED.add(1);
             running.pids.push(child.id());
             running.children.push(child);
             // `command` drops here, closing this side's copies of the pipes.
@@ -464,6 +465,11 @@ fn spawn(plan: &PlanObject, defaults: Defaults) -> std::io::Result<Running> {
 /// The children of processes that started and nobody waited for, which a
 /// panic cancels.
 static LIVE: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+
+/// How many processes the program started are running.
+pub(crate) fn running() -> usize {
+    LIVE.lock().unwrap_or_else(|e| e.into_inner()).len()
+}
 
 fn kill_all(pids: &[u32]) {
     for &pid in pids {
@@ -631,7 +637,7 @@ impl Process {
 pub unsafe extern "C" fn tondo_rt_process_start(plan: *mut PlanObject, out: *mut *mut ProcessObject) -> i64 {
     match spawn(plan_ref(plan), Defaults::Inherit) {
         Ok(running) => {
-            LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+            LIVE_OBJECTS.made();
             let process = ProcessObject { rc: AtomicUsize::new(1), running: Mutex::new(running) };
             unsafe { *out = Box::into_raw(Box::new(process)) };
             0
@@ -752,7 +758,7 @@ pub unsafe extern "C" fn tondo_rt_process_release(process: *mut ProcessObject) {
             });
         }
         drop(Box::from_raw(process));
-        LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+        LIVE_OBJECTS.gone();
     }
 }
 

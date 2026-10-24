@@ -258,7 +258,10 @@ impl Tcp {
         let mut sent = 0;
         while sent < data.len() {
             match self.socket.attempt(Direction::Write, |mut socket| socket.write(&data[sent..])) {
-                Ok(count) => sent += count,
+                Ok(count) => {
+                    sent += count;
+                    super::diagnostics::NET_WRITTEN.add(count as i64);
+                }
                 Err(error) if error.kind() == ErrorKind::WouldBlock => break,
                 Err(error) => return Err(error),
             }
@@ -350,7 +353,10 @@ impl Host for TcpIn {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
         match self.tcp.socket.attempt(Direction::Read, |mut socket| socket.read(buffer)) {
             Err(error) if error.kind() == ErrorKind::WouldBlock => Err(would_block(&mut self.waiting, self.gave_up)),
-            read => read,
+            read => {
+                super::diagnostics::NET_READ.add(*read.as_ref().unwrap_or(&0) as i64);
+                read
+            }
         }
     }
 
@@ -372,6 +378,7 @@ impl Host for Inbox {
             flow.bytes.drain(..count);
             drop(flow);
             self.pipe.changed.notify_waiters();
+            super::diagnostics::NET_READ.add(count as i64);
             return Ok(count);
         }
         failed(&flow.failure)?;
@@ -460,6 +467,7 @@ impl Host for Outbox {
         if queued == 0 || queued + data.len() <= HIGH {
             flow.bytes.extend_from_slice(data);
             drop(flow);
+            super::diagnostics::NET_WRITTEN.add(data.len() as i64);
             self.pipe.changed.notify_waiters();
             return Ok(());
         }
@@ -520,6 +528,7 @@ struct Connection {
 
 impl Connection {
     fn new(reader: Box<dyn Host>, writer: Box<dyn Host>, local: SocketAddr, remote: SocketAddr) -> Connection {
+        super::diagnostics::NET_CONNECTIONS.add(1);
         Connection {
             reader: Held(crate::io::stream(reader, Mode::Ready, false)),
             writer: Held(crate::io::stream(writer, Mode::Ready, false)),
@@ -961,7 +970,10 @@ pub unsafe extern "C" fn tondo_rt_net_send_to(
             loop {
                 match sending.attempt(Direction::Write, |socket| socket.send_to(&data, to)) {
                     Err(error) if error.kind() == ErrorKind::WouldBlock => sending.ready(Direction::Write).await,
-                    sent => return Ok(sent.map(|_| ())?),
+                    sent => {
+                        super::diagnostics::NET_WRITTEN.add(*sent.as_ref().unwrap_or(&0) as i64);
+                        return Ok(sent.map(|_| ())?);
+                    }
                 }
             }
         })
@@ -997,6 +1009,7 @@ pub unsafe extern "C" fn tondo_rt_net_receive(object: *mut NativeObject, timeout
             }
             match receiving.attempt(Direction::Read, |socket| socket.recv_from(&mut buffer)) {
                 Ok((count, from)) => {
+                    super::diagnostics::NET_READ.add(count as i64);
                     buffer.truncate(count);
                     return Ok(Net::Datagram(Datagram { bytes: buffer, from }));
                 }

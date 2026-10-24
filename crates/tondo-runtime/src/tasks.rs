@@ -702,9 +702,18 @@ pub(crate) fn spawn_thread<T: Send + 'static>(
     stack: Option<usize>,
     body: impl FnOnce() -> T + Send + 'static,
 ) -> std::thread::JoinHandle<T> {
+    try_spawn_thread(stack, body).unwrap_or_else(|_| runtime_fault("cannot start a thread"))
+}
+
+/// Starts a runtime thread, or says why the system would not.
+pub(crate) fn try_spawn_thread<T: Send + 'static>(
+    stack: Option<usize>,
+    body: impl FnOnce() -> T + Send + 'static,
+) -> std::io::Result<std::thread::JoinHandle<T>> {
     struct Running;
     impl Drop for Running {
         fn drop(&mut self) {
+            super::diagnostics::retire_here();
             RUNTIME_THREADS.fetch_sub(1, Ordering::SeqCst);
         }
     }
@@ -713,22 +722,24 @@ pub(crate) fn spawn_thread<T: Send + 'static>(
     if let Some(stack) = stack {
         builder = builder.stack_size(stack);
     }
-    builder
-        .spawn(move || {
-            let _running = Running;
-            body()
-        })
-        .unwrap_or_else(|_| runtime_fault("cannot start a thread"))
+    let started = builder.spawn(move || {
+        let _running = Running;
+        body()
+    });
+    if started.is_err() {
+        RUNTIME_THREADS.fetch_sub(1, Ordering::SeqCst);
+    }
+    started
 }
 
 /// How many threads the process has, where the system tells.
 #[cfg(target_os = "linux")]
-fn os_threads() -> Option<usize> {
+pub(crate) fn os_threads() -> Option<usize> {
     std::fs::read_dir("/proc/self/task").ok().map(|entries| entries.count())
 }
 
 #[cfg(target_os = "macos")]
-fn os_threads() -> Option<usize> {
+pub(crate) fn os_threads() -> Option<usize> {
     unsafe extern "C" {
         static mach_task_self_: u32;
         fn task_threads(task: u32, threads: *mut *mut u32, count: *mut u32) -> i32;
@@ -750,7 +761,7 @@ fn os_threads() -> Option<usize> {
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn os_threads() -> Option<usize> {
+pub(crate) fn os_threads() -> Option<usize> {
     None
 }
 
@@ -1096,6 +1107,7 @@ fn monitor() {
                 if !queue.runnable.is_empty() && queue.idle == 0 {
                     state.replaced.store(true, Ordering::SeqCst);
                     queue.workers += 1;
+                    super::diagnostics::WORKERS_REPLACED.add(1);
                     drop(queue);
                     start_worker();
                 }
@@ -1173,6 +1185,32 @@ static TASKS: std::sync::LazyLock<Mutex<std::collections::HashSet<usize>>> = std
 
 fn tasks() -> std::sync::MutexGuard<'static, std::collections::HashSet<usize>> {
     TASKS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// What the scheduler holds now, for `tondo counters`.
+pub(crate) struct Scheduler {
+    pub live: usize,
+    pub ready: usize,
+    pub workers: usize,
+    pub idle: usize,
+    pub timers: usize,
+    /// Workers inside a call of C, and the calls of C made so far.
+    pub in_c: usize,
+    pub c_calls: usize,
+}
+
+pub(crate) fn scheduler() -> Scheduler {
+    let live = tasks().len();
+    let queue = queue();
+    let (ready, workers, idle) = (queue.runnable.len(), queue.workers, queue.idle);
+    let timers = queue.timers.len().saturating_sub(queue.stale);
+    drop(queue);
+    let callers = CALLERS.lock().unwrap_or_else(|e| e.into_inner());
+    let depths = callers.iter().map(|c| (c.depth.load(Ordering::Relaxed), c.calls.load(Ordering::Relaxed)));
+    // `calls` counts entries and exits.
+    let (in_c, c_calls) = depths
+        .fold((0, 0), |(inside, made), (depth, calls)| (inside + usize::from(depth > 0), made + (calls + depth) / 2));
+    Scheduler { live, ready, workers, idle, timers, in_c, c_calls }
 }
 
 /// How many tasks are alive.
@@ -1289,6 +1327,7 @@ pub(crate) fn ending() -> Option<i32> {
 }
 
 fn new_task(stack: Stack, body: *mut u8, code: *const u8, kind: ResultKind, join: *mut JoinObject) -> *mut Task {
+    super::diagnostics::TASKS_SPAWNED.add(1);
     let sp = unsafe { initial_stack(stack.top()) };
     let task = Box::into_raw(Box::new(Task {
         sp,
@@ -1592,7 +1631,7 @@ pub unsafe extern "C" fn tondo_rt_spawn(
     } else {
         unsafe { std::alloc::alloc(std::alloc::Layout::from_size_align(size, align).unwrap()) }
     };
-    LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+    LIVE_OBJECTS.made();
     let join = Box::into_raw(Box::new(JoinObject {
         rc: AtomicUsize::new(1),
         lock: AtomicBool::new(false),
@@ -1860,7 +1899,7 @@ unsafe fn free_join(join: *mut JoinObject) {
             std::alloc::dealloc((*join).result, layout);
         }
         drop(Box::from_raw(join));
-        LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+        LIVE_OBJECTS.gone();
     }
 }
 
@@ -1888,7 +1927,7 @@ pub struct GroupObject {
 /// with their tag, `1` for `err`.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_group_new(fallible: u8) -> *mut GroupObject {
-    LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+    LIVE_OBJECTS.made();
     Box::into_raw(Box::new(GroupObject {
         rc: AtomicUsize::new(1),
         lock: AtomicBool::new(false),
@@ -2090,7 +2129,7 @@ pub unsafe extern "C" fn tondo_rt_group_release(group: *mut GroupObject) {
             free_join((&(*group).joins)[index]);
         }
         drop(Box::from_raw(group));
-        LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+        LIVE_OBJECTS.gone();
     }
 }
 
@@ -2162,7 +2201,7 @@ pub unsafe extern "C" fn tondo_rt_channel_new(
             location,
         );
     }
-    LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+    LIVE_OBJECTS.made();
     let channel = Box::into_raw(Box::new(ChannelObject {
         rc: AtomicUsize::new(1),
         lock: AtomicBool::new(false),
@@ -2227,7 +2266,7 @@ pub unsafe extern "C" fn tondo_rt_sender_new(channel: *mut ChannelObject) -> *mu
         unlock(&c.lock);
         c.rc.fetch_add(1, Ordering::Relaxed);
     }
-    LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+    LIVE_OBJECTS.made();
     Box::into_raw(Box::new(SenderObject { rc: AtomicUsize::new(1), channel }))
 }
 
@@ -2499,7 +2538,7 @@ pub unsafe extern "C" fn tondo_rt_sender_release(sender: *mut SenderObject) {
         }
         std::sync::atomic::fence(Ordering::Acquire);
         let sender = Box::from_raw(sender);
-        LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+        LIVE_OBJECTS.gone();
         let c = &mut *sender.channel;
         lock(&c.lock);
         c.senders -= 1;
@@ -2538,7 +2577,7 @@ pub unsafe extern "C" fn tondo_rt_receiver_release(channel: *mut ChannelObject) 
             }
             std::alloc::dealloc(value, layout);
         }
-        LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+        LIVE_OBJECTS.gone();
     }
 }
 

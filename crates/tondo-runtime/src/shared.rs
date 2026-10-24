@@ -401,7 +401,7 @@ pub unsafe extern "C" fn tondo_rt_shared_map_from(
         .map(|_| Padded(Stripe { lock: AtomicBool::new(false), count: AtomicIsize::new(0) }))
         .collect();
     let buckets = (0..stripes.len() * 2).map(|_| AtomicPtr::new(std::ptr::null_mut())).collect();
-    LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+    LIVE_OBJECTS.made();
     let map = Box::into_raw(Box::new(SharedMap {
         rc: AtomicUsize::new(1),
         table: AtomicPtr::new(Box::into_raw(Box::new(Table { buckets }))),
@@ -668,7 +668,7 @@ pub unsafe extern "C" fn tondo_rt_shared_map_release(map: *mut SharedMap) {
         }
         let m = Box::from_raw(map);
         free_table(m.table.load(Ordering::Relaxed), m.glue, m.node_layout(), m.value_offset, true);
-        LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+        LIVE_OBJECTS.gone();
     }
 }
 
@@ -836,7 +836,7 @@ pub unsafe extern "C" fn tondo_rt_shared_queue_from(
     visit: Option<Visit>,
 ) -> *mut SharedQueue {
     let segment = Segment::new(FIRST_SEGMENT, 0, size);
-    LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+    LIVE_OBJECTS.made();
     let queue = Box::into_raw(Box::new(SharedQueue {
         rc: AtomicUsize::new(1),
         head: Padded(AtomicPtr::new(segment)),
@@ -963,7 +963,7 @@ pub unsafe extern "C" fn tondo_rt_shared_queue_release(queue: *mut SharedQueue) 
             free_segment(segment, q.release);
             segment = next;
         }
-        LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+        LIVE_OBJECTS.gone();
     }
 }
 
@@ -1071,7 +1071,7 @@ pub unsafe extern "C" fn tondo_rt_shared_stack_from(
     release: Option<Glue>,
     visit: Option<Visit>,
 ) -> *mut SharedStack {
-    LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+    LIVE_OBJECTS.made();
     let stack = Box::into_raw(Box::new(SharedStack {
         rc: AtomicUsize::new(1),
         top: Padded(AtomicPtr::new(std::ptr::null_mut())),
@@ -1189,7 +1189,7 @@ pub unsafe extern "C" fn tondo_rt_shared_stack_release(stack: *mut SharedStack) 
             }
             dealloc(node as *mut u8, s.layout());
         }
-        LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+        LIVE_OBJECTS.gone();
     }
 }
 
@@ -1267,7 +1267,7 @@ pub unsafe extern "C" fn tondo_rt_shared_array_from(
             copy_retained(element(source, size, index), values.add(index * size), size, retain);
         }
         tondo_rt_array_release(source, size, release);
-        LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+        LIVE_OBJECTS.made();
         let array = Box::into_raw(Box::new(SharedArray {
             rc: AtomicUsize::new(1),
             length,
@@ -1404,7 +1404,7 @@ pub unsafe extern "C" fn tondo_rt_shared_array_release(array: *mut SharedArray) 
             }
         }
         dealloc(a.values, a.layout());
-        LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+        LIVE_OBJECTS.gone();
     }
 }
 

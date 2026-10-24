@@ -1,0 +1,8 @@
+import std.diagnostics
+
+fn main() {
+    diagnostics.counter("open").add(-1)
+}
+
+// expect-panic: P0008
+// expect-stderr: panic[P0008]: explicit-panic: a diagnostics.Counter only grows, and add(-1) would take from it: use a diagnostics.Gauge

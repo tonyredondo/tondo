@@ -49,7 +49,7 @@ pub extern "C" fn tondo_rt_reflect_box(
             handle_alloc_error(layout);
         }
         object.write(BoxObject { rc: AtomicUsize::new(1), size, release, identity, visit });
-        LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+        LIVE_OBJECTS.made();
         object
     }
 }
@@ -66,7 +66,7 @@ pub unsafe extern "C" fn tondo_rt_reflect_release(object: *mut BoxObject) {
         }
         dealloc(object as *mut u8, layout((*object).size));
     }
-    LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+    LIVE_OBJECTS.gone();
 }
 
 /// Visits the value for the cycle collector.

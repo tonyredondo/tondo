@@ -238,6 +238,8 @@ tondo update [<project>] [<dependency>...]
 tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
 tondo test [<project>] [--static]
 tondo lsp
+tondo ps [--json]
+tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--json]
 ~~~
 
 - `run` compila, guarda el ejecutable en la caché y lo ejecuta; `build` escribe
@@ -272,6 +274,7 @@ tondo lsp
   cada librería a `[native] libraries`.
 - `test` sigue la [especificación de testing](./TONDO_TESTING_SPEC.md).
 - `lsp` sirve a un editor (sección 7.4).
+- `ps` y `counters` observan los programas en ejecución (sección 7.5).
 - Estado de salida: `0` éxito; `1` diagnósticos de error o fallo de formato; `2`
   uso incorrecto; `3` error del toolchain (sección 9). `run` devuelve el estado
   del programa.
@@ -404,6 +407,45 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
 
 Las posiciones cuentan bytes UTF-8 cuando el editor lo admite y unidades
 UTF-16 si no.
+
+### 7.5 Programas en ejecución
+
+Cada programa de Tondo atiende a las herramientas que lo observan en un socket
+Unix, `$TMPDIR/tondo-<uid>/<pid>`, dentro de un directorio que solo su usuario
+puede abrir. Lo sirve un hilo propio del runtime, así que responde aunque sus
+workers estén ocupados o bloqueados. `TONDO_DIAGNOSTICS=0` lo apaga. Un
+programa que termina borra su socket, y `tondo ps` borra los de los que
+terminaron sin hacerlo.
+
+- `ps` lista los programas del usuario en ejecución: su proceso, cuánto llevan
+  en marcha y su línea de órdenes; con `--json`, como un array.
+- `counters` muestra cada intervalo, un segundo si no se da otro, los
+  contadores de un programa, nombrado por su proceso o por el nombre de su
+  archivo cuando un solo programa lo tiene: cada nivel con su valor y cada
+  total con su ritmo por segundo desde la vez anterior. `--count` para tras
+  esas veces. Con `--json` escribe un objeto por línea, `{"pid", "uptime_ms",
+  "counters": [{"name", "unit", "value", "rate"}]}`, con `rate` solo en los
+  totales y `unit` `bytes`, `us` (microsegundos) o vacía.
+
+Los contadores del runtime, por grupos:
+
+| Grupo | Contadores |
+|---|---|
+| `memory` | `held`, los bytes asignados ahora; `allocated`, bytes; `allocations`; `objects`, los strings y boxes vivos |
+| `collector` | `collections`; `freed`, objetos de ciclos liberados; `paused`, el tiempo que los workers esperaron al colector; `longest`, la pausa más larga |
+| `tasks` | `live`; `ready`, las que esperan un worker; `spawned` |
+| `workers` | `total`; `idle`; `in_c`, los que están dentro de una llamada a C; `replaced`, los que tomaron el puesto de uno que tardaba en C; `c_calls` |
+| `timers` | `pending` |
+| `net` | `connections`; `read` y `written`, bytes de `std.net` |
+| `http` | `client.requests`; `server.requests`; `server.active`, peticiones que se están atendiendo |
+| `sockets` | `tcp`, `listening`, `udp` y `unix` abiertos |
+| `descriptors` | `files`, `pipes` y `total` abiertos |
+| `processes` | `running` y `started`, los procesos que lanzó el programa |
+| `os` | `cpu`, el tiempo de procesador; `resident`, la memoria en RAM; `threads` |
+
+Los del programa (14.25 de la librería estándar) forman el grupo `program`.
+Los sockets del propio canal no cuentan, ni la memoria de su hilo, así que
+observar un programa no cambia lo que muestra.
 
 ## 8. Determinismo
 

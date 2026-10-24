@@ -15,7 +15,7 @@ pub struct NativeObject {
 
 /// A new object holding `value`, with one reference.
 pub(crate) fn new<T: Any + Send + Sync>(value: T) -> *mut NativeObject {
-    LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+    LIVE_OBJECTS.made();
     Box::into_raw(Box::new(NativeObject { rc: AtomicUsize::new(1), value: Box::new(value) }))
 }
 
@@ -34,5 +34,5 @@ pub unsafe extern "C" fn tondo_rt_native_release(object: *mut NativeObject) {
     }
     std::sync::atomic::fence(Ordering::Acquire);
     drop(unsafe { Box::from_raw(object) });
-    LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+    LIVE_OBJECTS.gone();
 }

@@ -1492,6 +1492,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.sync` | Core + gated | `threads` para operaciones cross-thread | 0.1 | Mutex, rwlock, condición, semáforo, once, barrier, atomics y colecciones compartidas linealizables |
 | `std.executor` | Core + gated | `threads` para pools bloqueantes | 0.1 | Pools acotados, actores y bridge de trabajo bloqueante sobre las tareas del lenguaje |
 | `std.log` | Core | — | 0.1 | Eventos estructurados con niveles, en texto o JSON, sobre un `io.Writer` |
+| `std.diagnostics` | Core | — | 0.1 | Contadores y gauges del programa, que `tondo counters` muestra |
 | `std.console` | Capability-gated | `console` | 0.1 | stdin, stdout, stderr, texto, bytes y flushing |
 | `std.env` | Hosted | — | 0.1 | Argumentos, entorno y directorio de trabajo |
 | `std.fs` | Hosted | — | 0.1 | Filesystem, metadata y archivos |
@@ -3806,6 +3807,42 @@ app.openApi(title: "Users", version: "1.0")                        // GET /opena
   parámetros, cuerpo y respuestas, con los JSON Schemas de sus tipos tal como
   `std.json` los escribe. `App.openApi` sirve el documento de todas, también
   las de las apps montadas, en `path`.
+
+### 14.25 `std.diagnostics`
+
+`std.diagnostics` da al programa contadores propios, que `tondo counters`
+muestra junto a los del runtime (7.5 del toolchain):
+
+~~~tondo
+import std.diagnostics
+
+let served = diagnostics.counter("requests served")
+served.add()
+diagnostics.gauge("queue length").set(12)
+~~~
+
+La superficie es:
+
+~~~tondo pseudocode
+pub type Counter
+pub type Gauge
+
+pub fn counter(name: String): Counter
+pub fn gauge(name: String): Gauge
+pub fn Counter.add(self, amount: Int = 1)
+pub fn Counter.value(self): Int
+pub fn Gauge.set(self, value: Int)
+pub fn Gauge.add(self, amount: Int)
+pub fn Gauge.value(self): Int
+~~~
+
+- Un nombre da siempre el mismo contador, desde cualquier tarea, así que el
+  programa no tiene que guardarlo ni pasarlo. Pedir con `counter` el nombre de
+  un gauge, o al revés, y un nombre vacío son pánicos que dicen qué pedir.
+- Un `Counter` solo crece, y `tondo counters` muestra su ritmo por segundo y
+  su total; `add` con un número negativo es un pánico, porque lo que baja es
+  un `Gauge`. Un `Gauge` es un nivel que sube y baja.
+- Cambiar o leer un contador es una operación atómica, sin locks.
 
 ---
 

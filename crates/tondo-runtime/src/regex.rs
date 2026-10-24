@@ -229,7 +229,7 @@ pub unsafe extern "C" fn tondo_rt_regex_compile(
             return std::ptr::null_mut();
         }
     };
-    LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+    LIVE_OBJECTS.made();
     let limit = |n: i64| usize::try_from(n).unwrap_or(usize::MAX);
     Box::into_raw(Box::new(RegexObject {
         rc: AtomicUsize::new(1),
@@ -253,7 +253,7 @@ pub unsafe extern "C" fn tondo_rt_regex_release(object: *mut RegexObject) {
     }
     std::sync::atomic::fence(Ordering::Acquire);
     drop(unsafe { Box::from_raw(object) });
-    LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+    LIVE_OBJECTS.gone();
 }
 
 fn object<'a>(object: *mut RegexObject) -> &'a RegexObject {

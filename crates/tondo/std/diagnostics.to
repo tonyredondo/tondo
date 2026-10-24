@@ -1,0 +1,69 @@
+// std.diagnostics (standard library 14.25): the program's own counters,
+// which `tondo counters` shows next to the runtime's.
+
+import std.internal.codec as native
+
+/// A count that only grows, such as the requests served; `tondo counters`
+/// shows it with its rate per second.
+pub type Counter = {
+    priv id: Int
+}
+
+/// A level that goes up and down, such as the length of a queue.
+pub type Gauge = {
+    priv id: Int
+}
+
+/// The counter named `name`: asking for the name again gives the same one,
+/// from any task.
+pub fn counter(name: String): Counter {
+    Counter { id: metric(name, 0) }
+}
+
+/// The gauge named `name`: asking for the name again gives the same one,
+/// from any task.
+pub fn gauge(name: String): Gauge {
+    Gauge { id: metric(name, 1) }
+}
+
+fn metric(name: String, kind: Int): Int {
+    if name.isEmpty() {
+        panic("a counter needs a name: diagnostics.counter(\"requests\")")
+    }
+    let id = native.metric(name, kind)
+    if id == 0 {
+        let (other, call) = if kind == 0 { ("Gauge", "gauge") } else { ("Counter", "counter") }
+        panic(
+            "`{name}` is a diagnostics.{other} already: ask for it with diagnostics.{call}(\"{name}\"), or give this one another name",
+        )
+    }
+    id
+}
+
+/// Adds `amount`, which is not negative: a count that goes down is a
+/// `Gauge`.
+pub fn Counter.add(self, amount: Int = 1) {
+    if amount < 0 {
+        panic(
+            "a diagnostics.Counter only grows, and add({amount}) would take from it: use a diagnostics.Gauge",
+        )
+    }
+    native.metricAdd(self.id, amount)
+}
+
+pub fn Counter.value(self): Int {
+    native.metricValue(self.id)
+}
+
+pub fn Gauge.set(self, value: Int) {
+    native.metricSet(self.id, value)
+}
+
+/// Adds `amount`, which may be negative.
+pub fn Gauge.add(self, amount: Int) {
+    native.metricAdd(self.id, amount)
+}
+
+pub fn Gauge.value(self): Int {
+    native.metricValue(self.id)
+}

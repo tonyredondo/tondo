@@ -315,6 +315,8 @@ pub(crate) fn collect() -> Option<usize> {
     // An allocation failing while it collects does not wait for itself.
     let _busy = Busy::enter();
     let freed = count_and_free()?;
+    super::diagnostics::COLLECTIONS.add(1);
+    super::diagnostics::COLLECTED.add(freed as i64);
     *DONE.lock().unwrap_or_else(|e| e.into_inner()) += 1;
     CAUGHT_UP.notify_all();
     Some(freed)
@@ -328,6 +330,7 @@ fn count_and_free() -> Option<usize> {
     if !super::tasks::stop_world(STOP_TIMEOUT) {
         return None;
     }
+    let stopped = std::time::Instant::now();
     let mut registry = registry();
     let mut visitor = Visitor { nodes: Vec::new(), index: Index::default(), edges: Vec::new(), current: 0 };
     for (&address, &kind) in &registry.cells {
@@ -370,6 +373,9 @@ fn count_and_free() -> Option<usize> {
     registry.threshold = SMALLEST_THRESHOLD.max(visitor.nodes.len() - freed);
     registry.created = 0;
     super::tasks::resume_world();
+    let paused = stopped.elapsed().as_micros() as i64;
+    super::diagnostics::COLLECTOR_PAUSED.add(paused);
+    super::diagnostics::COLLECTOR_LONGEST.max(paused);
     drop(registry);
     // Nothing reaches the garbage, so the workers may run meanwhile; no
     // other collection does. Releasing the cells' states frees the cycles,

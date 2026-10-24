@@ -1,0 +1,9 @@
+import std.diagnostics
+
+fn main() {
+    diagnostics.gauge("open").set(1)
+    diagnostics.counter("open").add()
+}
+
+// expect-panic: P0008
+// expect-stderr: panic[P0008]: explicit-panic: `open` is a diagnostics.Gauge already: ask for it with diagnostics.gauge("open"), or give this one another name

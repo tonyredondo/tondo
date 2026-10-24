@@ -407,6 +407,7 @@ pub unsafe extern "C" fn tondo_rt_http_send(
     body: *mut NativeObject,
     timeout_ms: i64,
 ) -> *mut NativeObject {
+    super::diagnostics::HTTP_CLIENT_REQUESTS.add(1);
     let client = match native::get::<Result<reqwest::Client, String>>(client) {
         Some(Ok(client)) => client.clone(),
         Some(Err(problem)) => return native::new(Response::failed("connect", problem.clone())),

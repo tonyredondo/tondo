@@ -21,6 +21,7 @@ std.cbor       the same for CBOR (RFC 8949), deterministic if asked
 std.serialization  the protocol every format shares, for custom encodings
 std.csv        CSV rows and records, streaming and whole
 std.log        a logger with levels and fields, text or JSON lines
+std.diagnostics  the program's own counters, which `tondo counters` shows
 std.http       HTTP client and server, WebSockets (`tondo guide http`)
 std.net        TCP and UDP sockets, TLS, names
 std.regex      regular expressions
@@ -156,3 +157,27 @@ fn main(): !(csv.CsvError | time.TimeError) {
     logger.info("done", ["took": "{started.elapsed()}"])
 }
 ```
+
+## Watching a running program
+
+`tondo ps` lists the Tondo programs running; `tondo counters app` (a name
+or a process ID) shows theirs every second: memory, the cycle collector,
+tasks, workers, calls of C, sockets, files, HTTP requests, CPU. `--json`
+writes a line per second for a script or a model. A program adds its own:
+
+```tondo
+import std.diagnostics
+
+fn handle(order: String) {
+    diagnostics.counter("orders").add()
+    diagnostics.gauge("last order size").set(order.length())
+}
+
+fn main() {
+    handle("two books")
+}
+```
+
+A name gives the same counter from any task, so nothing is passed around.
+A `Counter` only grows (its rate shows per second); a `Gauge` goes up and
+down.
