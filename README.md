@@ -24,11 +24,12 @@ Hello, world
 
 Every CI run leaves a ready `tondo` for each platform as an artifact,
 `tondo-<target>` (x86-64 and arm64 Linux with glibc and musl, macOS on Apple
-silicon and Intel): `bin/tondo` is the whole toolchain, and it needs only a
-C toolchain (`cc`) to link (`dist/README.md`).
+silicon and Intel): `bin/tondo` is the whole toolchain, and it links
+executables itself, with no C toolchain (`dist/README.md`).
 
-Building requires Rust (the version is pinned in `rust-toolchain.toml`) and a C
-toolchain (`cc`), which is used as the linker.
+Building requires Rust (`rust-toolchain.toml` pins the version and the musl
+targets `--static` needs) and a C toolchain, with which Rust links the
+compiler.
 
 ```text
 cargo build --release
@@ -121,13 +122,13 @@ Every milestone ends with programs that compile to native executables and run.
 | **Warnings** | The `core` profile of 22.8 for the program's own code: unused imports, bindings and parameters (`_name` holds a value to the end of its scope), names against the conventions with the conventional one, confusable identifiers by their Unicode skeletons, redundant conversions, comparisons with NaN, repeated `Set[...]` entries, unreachable code, serial spawns in loops | Done |
 | **Interruption** | Ctrl-C stops `tondo test`: no more tests start, the running ones are cancelled and run their `defer`s, a worker that does not stop is killed, and the run exits with `4` (`3` if it had to kill) without reports | Done |
 | **Examples of documents** | `tondo doc-test` checks the examples of a Markdown document as 21.6 says, as syntax, as fragments and scripts against the fixtures of Appendix C, or as failing with the errors they name, and records each as JSON; closures that give a capture away are called once (`CallOnce`) | Done |
+| **H12** | A self-contained linker: `tondo` links ELF and Mach-O executables itself, against the libraries the system has to run programs, with no C toolchain or development packages; position-independent executables, with `DT_RELR` where glibc reads it; `--static` for static executables with musl on Linux; `--strip`; unwind information for C++ exceptions; ad-hoc signatures on macOS | Done |
 
 The first cut deliberately leaves out the following. They are part of the
 language and remain planned work, scheduled after H7:
 
 | Milestone | Scope |
 |---|---|
-| **H12** | A self-contained linker: `tondo` builds executables without a C toolchain installed |
 | **H13** | Diagnostics of running programs: memory dumps and a reader for them, a debugger, live counters and traces of the runtime, in the manner of `dotnet-dump`, `dotnet-counters` and `dotnet-trace` |
 | **Protobuf and gRPC** | Types and codecs generated from `.proto` schemas, and gRPC clients and servers over HTTP/2, designed together |
 | **Windows** | Its calling convention, exceptions, network polling and executables |

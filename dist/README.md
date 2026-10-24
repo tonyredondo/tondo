@@ -8,11 +8,12 @@ export PATH="$PWD/bin:$PATH"
 tondo version
 ```
 
-It needs a C compiler to link executables: `cc` by default, or the one
-`TONDO_CC` names (Xcode's command line tools on macOS; `gcc` or `clang` with
-the C library's headers on Linux, `musl-dev` on Alpine). Dependencies from git
-or archives use `git`, `curl`, `tar` and `unzip`; `tondo bind` uses
-`pkg-config` when it is given a package.
+It links executables itself, with no C compiler and no development
+packages: only the libraries the system has to run programs. `TONDO_CC`
+names a C compiler to link with instead. Dependencies from git or archives
+use `git`, `curl`, `tar` and `unzip`; `tondo bind` reads headers with a C
+compiler, `cc` or the one `TONDO_CC` names, and uses `pkg-config` when it
+is given a package.
 
 ```sh
 tondo run hello.to          # compile and run a file

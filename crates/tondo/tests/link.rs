@@ -10,7 +10,7 @@ use std::process::Command;
 fn build(dir: &Path, name: &str, strip: bool) -> Vec<u8> {
     let output = dir.join(name);
     let mut command = Command::new(env!("CARGO_BIN_EXE_tondo"));
-    command.args(["build", "main.to", "--output"]).arg(&output).current_dir(dir).env("TONDO_LINKER", "tondo");
+    command.args(["build", "main.to", "--output"]).arg(&output).current_dir(dir);
     if strip {
         command.arg("--strip");
     }

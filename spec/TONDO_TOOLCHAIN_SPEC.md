@@ -214,15 +214,15 @@ contenido de cada commit o archivo en `deps/`, nombrado por su commit o SHA-256.
 El contenido de la caché no se modifica después de crearse, y cada entrada
 aparece con un rename atómico.
 
-Para descargar, el toolchain usa `git`, `curl`, `tar` y `unzip` del sistema, como
-usa `cc` para enlazar. Si falta una herramienta, el error lo dice. Con
-`tondo.lock` y la caché completos no se ejecuta ninguna.
+Para descargar, el toolchain usa `git`, `curl`, `tar` y `unzip` del sistema.
+Si falta una herramienta, el error lo dice. Con `tondo.lock` y la caché
+completos no se ejecuta ninguna.
 
 ## 7. Comandos
 
 ~~~text
-tondo run [<project>|<file.to>] [--link <library>]... [-- <argument>...]
-tondo build [<project>|<file.to>] [--output <path>] [--link <library>]...
+tondo run [<project>|<file.to>] [--link <library>]... [--static] [-- <argument>...]
+tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip]
 tondo check [<project>|<file.to>] [--json]
 tondo expand [<project>|<file.to>]
 tondo fmt [--check | --compact] <file.to>...
@@ -230,7 +230,7 @@ tondo api [<module>|<file.to>] [--private] [--list] [--project <dir>]
 tondo guide [<topic>] [--list] [--skill]
 tondo update [<project>] [<dependency>...]
 tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
-tondo test [<project>]
+tondo test [<project>] [--static]
 tondo lsp
 ~~~
 
@@ -239,6 +239,17 @@ tondo lsp
 - `--link` enlaza una librería de C más, por nombre o archivo como en
   `[native] libraries`; un archivo suelto, que no tiene `tondo.toml`, la usa
   para sus `extern fn`.
+- El toolchain enlaza el ejecutable él mismo, sin compilador de C ni paquetes
+  de desarrollo: en Linux con las librerías compartidas que el sistema tiene
+  para ejecutar programas, por el nombre con que se cargan (`libc.so.6`,
+  `libsqlite3.so.0`), y en macOS con `libSystem`, los frameworks y las
+  `.dylib` instaladas. El ejecutable es independiente de posición. Con la
+  variable `TONDO_CC`, enlaza el compilador de C que nombra.
+- `--static` da en Linux un ejecutable estático, con musl, que no carga
+  librerías compartidas: las de `[native] libraries` y `--link` son
+  estáticas, `"static:z"` o un archivo `.a`. En macOS es error.
+- `--strip` deja fuera del ejecutable la tabla de símbolos. Las trazas de
+  Tondo no la usan; los depuradores y profilers externos, sí.
 - `expand` muestra, con su formato canónico, el `impl` que dio el provider de
   cada `derive` (27.3 del lenguaje), y dónde está el `derive`.
 - `fmt` aplica el formato canónico (21) a archivos sueltos; `--check` falla si

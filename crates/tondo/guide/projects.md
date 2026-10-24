@@ -54,6 +54,14 @@ A dependency is imported by its alias: `import units`, `import units.si`.
 --list` shows every module of the project, its dependencies and the
 standard library.
 
+## Executables
+
+`tondo build app --output app` writes a native executable, which `tondo`
+links itself: no C compiler is needed. On Linux, `--static` makes it
+static, with musl, for a container with nothing else in it; its native
+libraries must then be static too, `"static:z"` or a `.a` file.
+`--strip` leaves out the symbol table.
+
 ## Editors
 
 `tondo lsp` is a language server: diagnostics as you type, hover, go to

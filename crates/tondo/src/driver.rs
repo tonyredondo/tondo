@@ -496,10 +496,6 @@ pub fn link(object: &[u8], output: &Path, libraries: &[String], linking: Linking
         return crate::link::link(object, &archives, &[], libraries, output, linking.strip, true);
     }
     let runtime = carried("libtondo_runtime", RUNTIME)?;
-    let dir = cache_dir().join("runtime");
-    let object_path = dir.join(format!("object-{}.o", std::process::id()));
-    std::fs::write(&object_path, object).map_err(|e| format!("cannot write {}: {e}", object_path.display()))?;
-    let linker = std::env::var("TONDO_CC").unwrap_or_else(|_| "cc".into());
     let mut runtime_args: Vec<String> = RUNTIME_LINK_ARGS.split_whitespace().map(String::from).collect();
     if !UNWIND.is_empty() {
         let unwind = carried("libunwind", UNWIND)?;
@@ -509,15 +505,16 @@ pub fn link(object: &[u8], output: &Path, libraries: &[String], linking: Linking
             }
         }
     }
-    // Tondo's own linker, until it links by default.
-    if std::env::var_os("TONDO_CC").is_none() && std::env::var("TONDO_LINKER").as_deref() == Ok("tondo") {
-        let mut archives = vec![runtime.clone()];
+    // `TONDO_CC` links with the system's C compiler instead.
+    let Ok(linker) = std::env::var("TONDO_CC") else {
+        let mut archives = vec![runtime];
         let unwind = runtime_args.iter().position(|a| a.ends_with(".a")).map(|i| runtime_args.remove(i));
         archives.extend(unwind.map(PathBuf::from));
-        let result = crate::link::link(object, &archives, &runtime_args, libraries, output, linking.strip, false);
-        let _ = std::fs::remove_file(&object_path);
-        return result;
-    }
+        return crate::link::link(object, &archives, &runtime_args, libraries, output, linking.strip, false);
+    };
+    let dir = cache_dir().join("runtime");
+    let object_path = dir.join(format!("object-{}.o", std::process::id()));
+    std::fs::write(&object_path, object).map_err(|e| format!("cannot write {}: {e}", object_path.display()))?;
     let mut native = Vec::new();
     for library in libraries {
         native.extend(link_arguments(&linker, library)?);
@@ -558,6 +555,8 @@ pub fn link(object: &[u8], output: &Path, libraries: &[String], linking: Linking
                 names.join(", ")
             ))
         }
-        Err(e) => Err(format!("cannot run the linker `{linker}`: {e}; install a C toolchain or set TONDO_CC")),
+        Err(e) => {
+            Err(format!("cannot run the linker `{linker}`: {e}; install it, or unset TONDO_CC to link without one"))
+        }
     }
 }

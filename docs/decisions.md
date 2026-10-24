@@ -1507,10 +1507,9 @@ and from native archives only the members that define what is missing,
 and binds the rest to shared libraries found where the system keeps them
 to run programs, by the names they run with (`libc.so.6`, `libm.so.6`,
 `libgcc_s.so.1`; musl's one library), so no development package is
-needed. The executable is not position independent: every address is
-known when it links, and only what shared libraries define is bound when
-it starts, all at once (`BIND_NOW`), through a GOT and PLT entries that
-jump through it, with the versions each library defines. Sections that
+needed. What shared libraries define is bound when the executable
+starts, all at once (`BIND_NOW`), through a GOT and PLT entries that jump
+through it, with the versions each library defines. Sections that
 nothing reaches from the entry and the constructors are dropped, the
 runtime's thread-local accesses are relaxed to the executable's model,
 and `.eh_frame` keeps the descriptions of the functions that stay, which
@@ -1525,25 +1524,47 @@ code is. The code costs nothing more, since it is already position
 independent; the words that hold the executable's own addresses move
 with it when it starts, listed as `DT_RELR` bitmaps where glibc reads
 them (it defines `GLIBC_ABI_DT_RELR`, which the executable then asks
-for) and as relocations otherwise. A static executable starts in musl's
-`rcrt1.o`, which relocates it before `main`.
-
-Until it links by default, `TONDO_LINKER=tondo` chooses it, and CI runs
-the cases and the binding tests with it on every Linux.
+for) and as relocations otherwise.
 
 ## 2026-10-24 — Static executables (H12, second part)
 
 `--static` on `build`, `run` and `test` links a static executable on
 Linux: the runtime built for musl, musl's C library and its unwinder,
 which Rust ships for its musl targets and the compiler carries. Tondo's
-linker links them with no loader and no dynamic section, starting at the
-runtime's entry, which musl's `__libc_start_main` takes as its own start
-files would. Shared libraries cannot come in: a static executable has no
-loader, musl's `dlopen` needs one, and a library built for glibc would
-bring a second C library into the process. Archives can; one built for
+linker links them with no loader and no dynamic section; the executable
+starts in musl's `rcrt1.o`, which relocates it and calls the runtime's
+`main`, as a C toolchain's start files would. Shared libraries cannot
+come in: a static executable has no loader, musl's `dlopen` needs one,
+and a library built for glibc would bring a second C library into the
+process. Archives can; one built for
 glibc links when it uses nothing only glibc has, and the error says when
 it does. The compiler carries both runtimes compressed, at about a
 quarter of their size, and writes each to the cache the first time it
 links. Where there is no C compiler for musl, the runtime's C code for
 musl is compiled by the system's, without `_FORTIFY_SOURCE`, whose checked
 functions musl lacks.
+
+## 2026-10-24 — Tondo links Mach-O executables itself (H12, third part)
+
+On macOS the linker cuts each section of the objects into atoms at their
+symbols and keeps the atoms the entry and the constructors reach, as
+`-dead_strip` does. What `libSystem`, the frameworks and other dylibs
+define is bound when the program starts, by name, in whichever library
+the program loads that has it (flat lookup), so linking needs no SDK and
+no `.tbd` stubs: a dylib is named by the path it has in the system, where
+it no longer exists as a file. The executable is position independent,
+as macOS requires; thread-local variables are descriptors that `dyld`
+initializes; `__unwind_info`, rebuilt from the objects' compact unwind
+entries and pointing into `__eh_frame` for the functions only DWARF
+describes, lets C++ exceptions and backtraces cross the program; and
+an ad-hoc signature, which arm64 requires before it runs any code, covers
+the file.
+
+## 2026-10-24 — Executables without a C toolchain (H12)
+
+`tondo` links every executable with its own linker, on Linux and macOS.
+`TONDO_CC` names a C compiler to link with instead, should a system need
+it. CI runs the cases and projects in containers with
+no C compiler, Debian and Alpine, dynamic and static, and the cases once
+more with `TONDO_CC=cc`. `tondo bind` still reads headers with a C
+compiler's preprocessor.
