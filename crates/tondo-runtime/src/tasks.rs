@@ -723,8 +723,10 @@ fn stalled(queue: &Queue) -> Stalled {
     {
         return Stalled::No;
     }
-    // Threads of C that wait for a callback's task cannot call back.
-    let known = RUNTIME_THREADS.load(Ordering::SeqCst) + FOREIGN_WAITING.load(Ordering::SeqCst);
+    // Threads of C that wait for a callback's task cannot call back, nor
+    // can those there were before the program, as qemu's own.
+    let known =
+        RUNTIME_THREADS.load(Ordering::SeqCst) + FOREIGN_WAITING.load(Ordering::SeqCst) + BEFORE.load(Ordering::SeqCst);
     if os_threads().is_some_and(|count| count > known) { Stalled::MaybeC } else { Stalled::Deadlock }
 }
 
@@ -732,6 +734,10 @@ fn stalled(queue: &Queue) -> Stalled {
 pub(crate) static RUNTIME_THREADS: AtomicUsize = AtomicUsize::new(1);
 /// Threads of C waiting in `tondo_rt_callback` for the task they started.
 static FOREIGN_WAITING: AtomicUsize = AtomicUsize::new(0);
+/// Threads an executable's process had before its program started, which
+/// are not the program's: an emulator's, as qemu's. A library's host has
+/// its own, which may call it.
+static BEFORE: AtomicUsize = AtomicUsize::new(0);
 
 /// Waits, up to a second, for the calls from threads of C still running:
 /// what they hold is not leaked when the program ends before them.
@@ -1672,6 +1678,8 @@ pub unsafe extern "C" fn tondo_rt_callback(
 /// a worker; returns the program's exit status.
 #[cfg_attr(not(tondo_staticlib), allow(dead_code))]
 pub fn run_main(code: unsafe extern "C" fn() -> i32) -> i32 {
+    let others = os_threads().unwrap_or(0).saturating_sub(RUNTIME_THREADS.load(Ordering::SeqCst));
+    BEFORE.store(others, Ordering::SeqCst);
     let task = new_task(
         Stack::new(MAIN_STACK),
         std::ptr::null_mut(),

@@ -53,7 +53,8 @@ static ATTACHED: AtomicBool = AtomicBool::new(false);
 /// Every task stops at its next probe: one stopped, or the debugger asked.
 static HOLD: AtomicBool = AtomicBool::new(false);
 
-/// Called by a debug build before `main`.
+/// Called by a debug build's process before anything else, or by a
+/// library before its first call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_debug_table(raw: *const Raw) {
     let raw = unsafe { &*raw };
@@ -82,15 +83,16 @@ pub unsafe extern "C" fn tondo_rt_debug_table(raw: *const Raw) {
     let marked = sites.iter().map(|_| AtomicBool::new(false)).collect();
     let _ = TABLE.set(Table { functions, sites, marked });
     super::heap::track_objects();
-    if WAIT.load(Ordering::Relaxed) {
-        start_stopped();
-    }
 }
 
-/// Under `tondo debug`, the program waits a while for the debugger, then
+/// Under `tondo debug`, a debug build waits a while for the debugger, then
 /// stands still before `main` until it says go on, so that it can set its
 /// breakpoints first.
-fn start_stopped() {
+#[cfg_attr(not(tondo_staticlib), allow(dead_code))]
+pub(crate) fn start_stopped() {
+    if TABLE.get().is_none() || !WAIT.load(Ordering::Relaxed) {
+        return;
+    }
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while !ATTACHED.load(Ordering::Relaxed) && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(2));

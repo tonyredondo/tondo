@@ -2144,6 +2144,7 @@ pub extern "C" fn tondo_rt_main(tondo_main: unsafe extern "C" fn() -> i32) -> i3
     meta::own_cache();
     meta::start();
     diagnostics::start();
+    debugger::start_stopped();
     let mut status = tasks::run_main(tondo_main);
     if let Some(status) = tasks::ending() {
         process::cancel_live();

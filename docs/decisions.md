@@ -1769,3 +1769,23 @@ wait, 8 MB instead of 63 to 84. The four-task program that allocates went
 from 146 ms to 157; builds that differ from this one only in code that
 does not run take from 157 to 163, since Rust's standard library comes
 compiled and where its functions fall moves with the code before them.
+
+## 2026-10-24 — Under qemu
+
+Tondo for arm64 under qemu's user emulation, as `docker run --platform`
+runs it on an x86-64 machine, failed seven of the cases that pass on arm64
+hardware; they had been taken for the emulator's. Each had its cause.
+qemu 11.1.1 gets `smulh` wrong when one factor is a 1 it knows when it
+translates the code and the result goes to the register of a factor: five
+cases multiplied by `sizeOf[T]()` of a byte, which panicked as an
+overflow. The compiler no longer multiplies by a constant 1, which is the
+other factor and cannot overflow. qemu also has a thread of its own,
+which the runtime took for a thread of C that could still wake a program
+whose tasks all wait, so a deadlock was never reported; the threads an
+executable has before its program starts are now not counted. And a
+debug build handed its table to the runtime after the diagnostics socket
+existed, so a debugger that asked at once, as one under emulation does,
+was told the program had none; the table now comes before anything else.
+The cases now pass under emulation for arm64, dynamic and static, and for
+x86-64, and so do the other tests, but two that need `git` and `kill`,
+which the container did not have.

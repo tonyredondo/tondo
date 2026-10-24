@@ -1508,6 +1508,12 @@ impl Codegen<'_> {
         let block = e.fb.create_block();
         e.fb.append_block_params_for_function_params(block);
         e.fb.switch_to_block(block);
+        // A debug build's table, before a debugger can ask for it.
+        if let Some(debug) = e.cg.debug {
+            let debug = e.cg.module.declare_data_in_func(debug, e.fb.func);
+            let debug = e.fb.ins().symbol_value(POINTER, debug);
+            e.call_rt(Rt::DebugTable, &[debug]);
+        }
         let entry = e.cg.module.declare_func_in_func(entry, e.fb.func);
         let entry = e.fb.ins().func_addr(POINTER, entry);
         let status = e.call_rt(Rt::Main, &[entry]).expect("an exit status");
@@ -1541,11 +1547,6 @@ impl Codegen<'_> {
             let trace = e.cg.module.declare_data_in_func(trace, e.fb.func);
             let trace = e.fb.ins().symbol_value(POINTER, trace);
             e.call_rt(Rt::Trace, &[trace]);
-            if let Some(debug) = e.cg.debug {
-                let debug = e.cg.module.declare_data_in_func(debug, e.fb.func);
-                let debug = e.fb.ins().symbol_value(POINTER, debug);
-                e.call_rt(Rt::DebugTable, &[debug]);
-            }
             // A test build hands the runner its tree before `main` runs it.
             if let Some(table) = table {
                 let table = e.cg.module.declare_data_in_func(table, e.fb.func);
@@ -5381,6 +5382,17 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             code << 16 | (right_signed as u32) << 9 | (signed as u32) << 8 | bits
         };
         let detail = operation(op);
+        // A product by a constant 1 is the other factor, and cannot
+        // overflow: no multiply, which qemu's arm64 emulation gets wrong
+        // for `smulh` by a known 1.
+        let one = |fb: &FunctionBuilder, value: ir::Value| {
+            let ir::ValueDef::Result(inst, _) = fb.func.dfg.value_def(value) else { return false };
+            matches!(fb.func.dfg.insts[inst], ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm }
+                if imm.bits() == 1)
+        };
+        if op == BinOp::Mul && (one(&self.e.fb, a) || one(&self.e.fb, b)) {
+            return if one(&self.e.fb, b) { a } else { b };
+        }
         match op {
             BinOp::Add | BinOp::Sub | BinOp::Mul => {
                 let ins = self.e.fb.ins();
