@@ -74,7 +74,7 @@ jobs:
             platform: linux/amd64
     runs-on: ${{ matrix.os }}
     # A hang under emulation fails the job instead of holding it for hours.
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
