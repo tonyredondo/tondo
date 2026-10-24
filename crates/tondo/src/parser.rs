@@ -20,7 +20,8 @@ pub fn parse_with_parens(file: &SourceFile, diags: &mut Diagnostics) -> (Module,
 
 /// The productions an example of syntax is made of (21.6): a whole
 /// module, a sequence of declarations, signatures, statements, types and
-/// patterns, or a lone block; `None` when it is none of them.
+/// patterns after the imports they use, or a lone block; `None` when it is
+/// none of them.
 pub fn syntax_productions(file: &SourceFile) -> Option<Vec<&'static str>> {
     let mut diags = Diagnostics::default();
     let module = parse_file(file, &mut diags);
@@ -48,6 +49,7 @@ pub fn syntax_productions(file: &SourceFile) -> Option<Vec<&'static str>> {
                 Ok(Some(_)) => production == "top_decl",
                 _ => false,
             },
+            "import_decl" if parser.at_kw(Kw::Import) => parser.import().is_ok(),
             "statement" => parser.statement().is_ok(),
             "type_expr_line" => parser.type_expr().is_ok(),
             "pattern_line" => parser.pattern().is_ok(),
@@ -60,6 +62,14 @@ pub fn syntax_productions(file: &SourceFile) -> Option<Vec<&'static str>> {
     };
     let mut productions = vec!["syntax_sequence"];
     let mut pos = 0;
+    // The imports its items use come first.
+    loop {
+        while tokens[pos].tok == Tok::Newline {
+            pos += 1;
+        }
+        let Some(end) = attempt(pos, "import_decl") else { break };
+        pos = end;
+    }
     loop {
         while tokens[pos].tok == Tok::Newline {
             pos += 1;

@@ -119,13 +119,17 @@ fn rejects_documents_it_cannot_read() {
     }
 }
 
-/// The examples of the specifications hold. The language's and the
-/// standard library's wait for the changes to them that their examples
-/// need.
+/// The examples of the specifications hold.
 #[test]
 fn the_specifications_examples_hold() {
     let specs = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../spec");
-    for name in ["TONDO_TESTING_SPEC.md", "TONDO_TOOLCHAIN_SPEC.md"] {
+    let names = [
+        "TONDO_LANGUAGE_SPEC.md",
+        "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "TONDO_TESTING_SPEC.md",
+        "TONDO_TOOLCHAIN_SPEC.md",
+    ];
+    for name in names {
         let (_, stderr, status) = doc_test(&specs.join(name));
         assert_eq!(status, 0, "{name}:\n{stderr}");
     }

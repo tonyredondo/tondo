@@ -68,7 +68,7 @@ decl spec.application opaque ConfigError
 decl spec.application opaque RuntimeError
 decl spec.application opaque Config
 decl spec.application type Options = { configPath: Path }
-decl spec.application fn parseArgs(arguments: Array[env.Value]): Options ! ArgsError
+decl spec.application fn parseArgs(arguments: Array[String]): Options ! ArgsError
 decl spec.application fn loadConfig(path: Path): Config ! ConfigError
 decl spec.application fn run(config: Config): !RuntimeError
 fixture spec.async_page extends spec.core

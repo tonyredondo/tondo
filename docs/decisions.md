@@ -1492,8 +1492,10 @@ cannot become a `fn(...)` value or satisfy `Call` or `CallMut`. Only the
 check changes: reading a capture still takes its own reference, which the
 closure gives up when it goes.
 
-They also showed two places where the specifications disagree with
-themselves, which wait for a decision: the `tondo` category cannot take
-imports, which fifteen examples of the standard library and one of the
-language write before their statements, and `spec.application` takes an
-`Array[env.Value]` that `env.args()` does not give.
+They also showed two places where the specifications disagreed with
+themselves: the `tondo` category took no imports, which fifteen examples
+of the standard library and one of the language write before their
+statements, so a syntax sequence may now begin with them; and
+`spec.application` took an `Array[env.Value]` that `env.args()` does not
+give, so it takes an `Array[String]`. The examples of the four
+specifications pass, and a test checks them.

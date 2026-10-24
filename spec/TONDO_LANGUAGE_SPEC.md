@@ -7491,7 +7491,8 @@ documento y no existe un máximo semántico.
 Las categorías tienen este procedimiento exacto:
 
 - `tondo`: se prueba, en este orden, `module_program`, `syntax_sequence` y
-  `standalone_block`. Dentro de cada elemento de `syntax_sequence` se prueba
+  `standalone_block`. Una `syntax_sequence` puede empezar con los imports que
+  usan sus elementos. Dentro de cada elemento de `syntax_sequence` se prueba
   `top_decl`, `function_signature`, `statement`, `type_expr_line` y
   `pattern_line`, también en ese orden. Se elige la primera alternativa que
   consume la unidad lógica completa. El bloque entero debe llegar a `EOF`; se
@@ -7589,7 +7590,7 @@ syntax_item     = top_decl
                 | type_expr_line
                 | pattern_line ;
 
-syntax_sequence = { NL }, syntax_item,
+syntax_sequence = { NL | import_decl }, syntax_item,
                   { NL | syntax_item }, EOF ;
 
 standalone_block
@@ -11235,7 +11236,7 @@ type Options = {
     configPath: Path
 }
 
-fn parseArgs(arguments: Array[env.Value]): Options ! ArgsError
+fn parseArgs(arguments: Array[String]): Options ! ArgsError
 fn loadConfig(path: Path): Config ! ConfigError
 fn run(config: Config): !RuntimeError
 ~~~

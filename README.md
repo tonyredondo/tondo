@@ -140,9 +140,6 @@ code (2026-10-24):
   each fragment and script of a normative document to a test that runs it
   (21.6); `tondo doc-test` gives no `formatted_sha256` for an example the
   formatter cannot print on its own, a signature, a type or a pattern.
-- **Specifications:** the examples of the language's and the standard
-  library's that `tondo doc-test` rejects: scripts with imports written as
-  syntax, and a fixture that names `env.Value`.
 
 ## Working rules
 
