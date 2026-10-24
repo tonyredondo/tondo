@@ -29,6 +29,31 @@ fn main() {
 
 `tondo run hello.to` compiles and runs it.
 
+## A script
+
+A file needs no `main`: its statements run in order, from the top.
+
+```tondo
+#!/usr/bin/env tondo
+import std.console
+import std.env
+
+fn shout(text: String): String {
+    "{text.toUpper()}!"
+}
+
+for argument in env.args() {
+    console.println(shout(argument))
+}
+```
+
+`tondo shout.to a b` runs it with those arguments, and so does `./shout.to
+a b` after `chmod +x`. Functions and types may be declared anywhere in it,
+but functions do not see the script's bindings: pass them as arguments.
+`?` and `fail` at the top level end the script with that error, as a
+failing `main` does. A project's `src/main.to` may be a script too; a file
+with statements cannot be imported.
+
 ## Rules that differ from other languages
 
 - No semicolons: a newline ends a statement. A line continues after `,` `.`

@@ -243,3 +243,17 @@ pub const Max = 10
 
 fn main() {}
 ```
+
+A function of a script does not see the script's bindings: pass them.
+
+```tondo error E1001
+import std.console
+
+let name = "Ada"
+
+fn greet() {
+    console.println("Hello, {name}")
+}
+
+greet()
+```

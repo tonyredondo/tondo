@@ -55,7 +55,8 @@ fn main(): !ConfigError {
   `result.unwrapOr(value)`, and turn an option into a result with
   `option.okOr(error)`.
 - `main` may fail: `fn main(): !E`. The program then prints `error: ` and the
-  error's `Display` (or its variant), and exits with status 1.
+  error's `Display` (or its variant), and exits with status 1. A script's
+  `?` and `fail` at the top level do the same, with no signature to write.
 
 ## Optional values
 

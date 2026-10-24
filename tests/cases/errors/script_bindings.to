@@ -1,0 +1,12 @@
+import std.console
+
+let total = 3
+console.println("{later}")
+let later = 1
+
+fn show() {
+    console.println("{total}")
+}
+
+// expect-error: E1001 `total` is a binding of the script, which its functions do not see: pass it to the function as a parameter
+// expect-error: E1001 the script declares `later` further down: a binding is seen from its `let` on

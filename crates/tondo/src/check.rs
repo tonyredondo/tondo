@@ -84,6 +84,8 @@ fn check_with<'a>(
         datetime_module: None,
         unrepeatable: HashMap::new(),
         interpolating: false,
+        script_bindings: Vec::new(),
+        scripting: false,
         naming: String::new(),
         comparing: None,
         closure_name: None,
@@ -615,6 +617,10 @@ struct Checker<'a> {
     /// Inside the `{...}` of a string, where an unknown name may be text
     /// that meant a brace.
     interpolating: bool,
+    /// The bindings of a root script's statements, which its functions do
+    /// not see (20.3), and whether its statements are being checked.
+    script_bindings: Vec<String>,
+    scripting: bool,
     /// The function whose body is checked, as stack traces name it, and
     /// the name the next closure takes instead of `closure in` it.
     naming: String,
@@ -1006,6 +1012,11 @@ impl<'a> Checker<'a> {
         // Closure bodies are numbered after every declared function, the
         // script's `main` and the root of a test build's tree.
         let testing = module.test_package.is_some();
+        for statement in &module.statements {
+            if let ast::StmtKind::Let { pattern, .. } = &statement.kind {
+                bound_names(pattern, &mut self.script_bindings);
+            }
+        }
         self.closure_base = bodies.len() as u32 + u32::from(!module.statements.is_empty()) + u32::from(testing);
         let mut functions: Vec<hir::Function> =
             bodies.iter().zip(0..).map(|(f, i)| self.function(f, FnId(i))).collect();
@@ -4300,7 +4311,9 @@ impl<'a> Checker<'a> {
         self.naming = "main".into();
         let mut cx = self.new_cx(Ty::UNIT);
         cx.infer_error = true;
+        self.scripting = true;
         let stmts = self.statements(&mut cx, statements);
+        self.scripting = false;
         self.unused(&cx, &[]);
         let ty = if cx.diverged { Ty::NEVER } else { Ty::UNIT };
         let body = hir::Block { stmts, tail: None, ty };
@@ -10899,6 +10912,12 @@ impl<'a> Checker<'a> {
             _ if crate::api::standard_modules().contains(&format!("std.{name}")) => {
                 format!("`{name}` is a standard module: add `import std.{name}` at the top of the file")
             }
+            _ if self.script_bindings.iter().any(|bound| bound == name) => match self.scripting {
+                true => format!("the script declares `{name}` further down: a binding is seen from its `let` on"),
+                false => format!(
+                    "`{name}` is a binding of the script, which its functions do not see: pass it to the function as a parameter"
+                ),
+            },
             _ if self.interpolating => format!(
                 "inside a string, `{{{name}}}` interpolates it: write `{{{{{name}}}}}` for the braces themselves"
             ),
@@ -12723,5 +12742,14 @@ fn listed(items: &[String]) -> String {
         [] => String::new(),
         [only] => only.clone(),
         [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// The names a pattern binds.
+fn bound_names(pattern: &ast::Pattern, names: &mut Vec<String>) {
+    match &pattern.kind {
+        ast::PatternKind::Binding(name) | ast::PatternKind::Loan(_, name) => names.push(name.name.clone()),
+        ast::PatternKind::Tuple(parts) => parts.iter().for_each(|part| bound_names(part, names)),
+        _ => {}
     }
 }
