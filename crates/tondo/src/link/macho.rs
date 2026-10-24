@@ -1530,16 +1530,21 @@ impl Linker<'_> {
                 ]
                 .contains(&k) =>
             {
-                let after = match k {
-                    _ if k == X86_64_RELOC_SIGNED_1 => 1,
-                    _ if k == X86_64_RELOC_SIGNED_2 => 2,
-                    _ if k == X86_64_RELOC_SIGNED_4 => 4,
-                    _ => 0,
+                // External: the content is the addend less the bytes after
+                // the field, so the distance is from the field's end; local:
+                // the content was the distance to the target, which
+                // `reloc_target` read, from the instruction's end.
+                let value = if reloc.external {
+                    s + content(image) - (p as i64 + 4)
+                } else {
+                    let after = match k {
+                        _ if k == X86_64_RELOC_SIGNED_1 => 1,
+                        _ if k == X86_64_RELOC_SIGNED_2 => 2,
+                        _ if k == X86_64_RELOC_SIGNED_4 => 4,
+                        _ => 0,
+                    };
+                    s - (p as i64 + 4 + after)
                 };
-                // External: the content is the addend; local: the target's
-                // address, which `reloc_target` read.
-                let addend = if reloc.external { content(image) } else { 0 };
-                let value = s + addend - (p as i64 + 4 + after);
                 image.u32(f, i32::try_from(value).map_err(|_| fail("out of range"))? as u32);
             }
             (Arch::X86_64, k) if k == X86_64_RELOC_GOT_LOAD || k == X86_64_RELOC_GOT => {
