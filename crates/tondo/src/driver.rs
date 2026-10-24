@@ -35,8 +35,48 @@ fn carried(name: &str, compressed: &[u8]) -> Result<PathBuf, String> {
         std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(compressed), &mut bytes)
             .map_err(|e| format!("the compiler's {name} is damaged: {e}"))?;
         write_atomic(&path, &bytes)?;
+        // Those of other compilers go: a compiler writes its own again.
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let file = entry.file_name();
+            let hash = file.to_str().and_then(|f| f.strip_prefix(name)?.strip_prefix('-')?.strip_suffix(".a"));
+            if hash.is_some_and(|h| h.len() == 16 && h != RUNTIME_HASH && h.bytes().all(|b| b.is_ascii_hexdigit())) {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
     }
     Ok(path)
+}
+
+/// The cache entry `key` of `kind` (`run`, `test` or `meta`), which holds
+/// what a build can make again: using it marks it, and an entry no one
+/// used in 30 days is removed, looking at most once a day.
+pub fn cache_entry(kind: &str, key: &str) -> PathBuf {
+    let dir = cache_dir().join(kind);
+    let entry = dir.join(key);
+    let now = std::time::SystemTime::now();
+    if let Ok(file) = std::fs::File::open(&entry) {
+        let _ = file.set_modified(now);
+    }
+    sweep(&dir, now);
+    entry
+}
+
+fn sweep(dir: &Path, now: std::time::SystemTime) {
+    const DAY: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+    let age = |path: &Path| {
+        let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok()?;
+        now.duration_since(modified).ok()
+    };
+    let stamp = dir.join(".swept");
+    if age(&stamp).is_some_and(|age| age < DAY) || std::fs::write(&stamp, b"").is_err() {
+        return;
+    }
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() && age(&path).is_some_and(|age| age > 30 * DAY) {
+            let _ = std::fs::remove_dir_all(&path);
+        }
+    }
 }
 
 pub struct Analysis {
@@ -558,5 +598,28 @@ pub fn link(object: &[u8], output: &Path, libraries: &[String], linking: Linking
         Err(e) => {
             Err(format!("cannot run the linker `{linker}`: {e}; install it, or unset TONDO_CC to link without one"))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn sweeps_entries_unused_for_30_days() {
+        let dir = std::env::temp_dir().join(format!("tondo-sweep-{}", std::process::id()));
+        let now = SystemTime::now();
+        for (name, days) in [("old", 31), ("recent", 29)] {
+            std::fs::create_dir_all(dir.join(name)).unwrap();
+            let file = std::fs::File::open(dir.join(name)).unwrap();
+            file.set_modified(now - Duration::from_secs(days * 24 * 60 * 60)).unwrap();
+        }
+        super::sweep(&dir, now);
+        assert!(!dir.join("old").exists() && dir.join("recent").exists());
+        // Once a day at most.
+        std::fs::File::open(dir.join("recent")).unwrap().set_modified(now - Duration::from_secs(40 * 86400)).unwrap();
+        super::sweep(&dir, now);
+        assert!(dir.join("recent").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

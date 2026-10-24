@@ -626,5 +626,5 @@ pub fn build_dir(path: &Path, statically: bool) -> Result<PathBuf, String> {
         parts.push(std::fs::read(&input).map_err(|e| format!("cannot read {}: {e}", input.display()))?);
     }
     let key = crate::driver::fingerprint(&parts.iter().map(Vec::as_slice).collect::<Vec<_>>());
-    Ok(crate::driver::cache_dir().join("test").join(key))
+    Ok(crate::driver::cache_entry("test", &key))
 }

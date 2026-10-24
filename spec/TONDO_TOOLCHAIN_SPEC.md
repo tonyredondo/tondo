@@ -214,6 +214,12 @@ contenido de cada commit o archivo en `deps/`, nombrado por su commit o SHA-256.
 El contenido de la caché no se modifica después de crearse, y cada entrada
 aparece con un rename atómico.
 
+La caché guarda también lo que un build puede volver a hacer: el runtime del
+compilador, y los ejecutables de `run`, de las pruebas y de los providers y
+generadores, en `run/`, `test/` y `meta/`. Al escribir su runtime, un
+compilador borra los de otras versiones, y una entrada de esos directorios
+que nadie usa en 30 días se borra.
+
 Para descargar, el toolchain usa `git`, `curl`, `tar` y `unzip` del sistema.
 Si falta una herramienta, el error lo dice. Con `tondo.lock` y la caché
 completos no se ejecuta ninguna.

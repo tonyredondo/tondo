@@ -740,7 +740,7 @@ fn run(path: &Path, program_args: &[OsString], libraries: &[String], statically:
         parts.push(std::fs::read(&input).map_err(|e| format!("cannot read {}: {e}", input.display()))?);
     }
     let key = driver::fingerprint(&parts.iter().map(Vec::as_slice).collect::<Vec<_>>());
-    let dir = driver::cache_dir().join("run").join(key);
+    let dir = driver::cache_entry("run", &key);
     let executable = dir.join(program_name(path)?);
     if !executable.exists() {
         let Some(analysis) = analyze(path)? else {

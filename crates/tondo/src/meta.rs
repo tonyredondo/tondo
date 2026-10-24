@@ -788,7 +788,7 @@ fn build(provider: &Path, entry: Entry) -> Result<PathBuf, String> {
     let source = format!("{text}\n\nfn main() {{\n    {alias}.{serve}({function})\n}}\n");
     let identity = crate::driver::compiler_identity();
     let key = crate::driver::fingerprint(&[identity.as_bytes(), source.as_bytes()]);
-    let dir = crate::driver::cache_dir().join("meta").join(key);
+    let dir = crate::driver::cache_entry("meta", &key);
     let executable = dir.join("provider");
     if executable.is_file() {
         return Ok(executable);
