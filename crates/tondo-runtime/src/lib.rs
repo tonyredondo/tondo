@@ -35,6 +35,8 @@ mod regex;
 mod server;
 mod shared;
 mod snapshot;
+#[cfg(all(tondo_staticlib, target_os = "linux"))]
+mod start;
 mod sync;
 mod tasks;
 mod testing;

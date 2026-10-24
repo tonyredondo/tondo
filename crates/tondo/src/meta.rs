@@ -807,7 +807,7 @@ fn build(provider: &Path, entry: Entry) -> Result<PathBuf, String> {
     }
     let object = crate::driver::object(&analysis)?;
     let partial = dir.join(format!("provider.partial-{}", std::process::id()));
-    crate::driver::link(&object, &partial, &analysis.libraries)?;
+    crate::driver::link(&object, &partial, &analysis.libraries, false)?;
     std::fs::rename(&partial, &executable).map_err(|e| e.to_string())?;
     Ok(executable)
 }

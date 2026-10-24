@@ -1499,3 +1499,25 @@ statements, so a syntax sequence may now begin with them; and
 `spec.application` took an `Array[env.Value]` that `env.args()` does not
 give, so it takes an `Array[String]`. The examples of the four
 specifications pass, and a test checks them.
+
+## 2026-10-24 — Tondo links ELF executables itself (H12, first part)
+
+The linker reads the program's object, takes from the runtime's archive
+and from native archives only the members that define what is missing,
+and binds the rest to shared libraries found where the system keeps them
+to run programs, by the names they run with (`libc.so.6`, `libm.so.6`,
+`libgcc_s.so.1`; musl's one library), so no development package is
+needed. The executable is not position independent: every address is
+known when it links, and only what shared libraries define is bound when
+it starts, all at once (`BIND_NOW`), through a GOT and PLT entries that
+jump through it, with the versions each library defines. Sections that
+nothing reaches from the entry and the constructors are dropped, the
+runtime's thread-local accesses are relaxed to the executable's model,
+and `.eh_frame` keeps the descriptions of the functions that stay, which
+`.eh_frame_hdr` indexes. The runtime brings the entry, `tondo_rt_start`,
+which calls the C library's `__libc_start_main` with a function that runs
+the constructors, as the C toolchain's start files do. `tondo build
+--strip` leaves out the symbol table; Tondo's traces use their own table.
+
+Until it links by default, `TONDO_LINKER=tondo` chooses it, and CI runs
+the cases and the binding tests with it on every Linux.

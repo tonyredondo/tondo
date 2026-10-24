@@ -18,6 +18,7 @@ pub mod hash;
 pub mod hir;
 pub mod index;
 pub mod lexer;
+pub mod link;
 pub mod lower;
 pub mod lsp;
 pub mod meta;

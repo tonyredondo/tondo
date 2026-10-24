@@ -448,8 +448,9 @@ fn link_arguments(linker: &str, library: &str) -> Result<Vec<String>, String> {
 }
 
 /// Links an object file with the embedded runtime and the native
-/// libraries (`-lname` or files) into an executable.
-pub fn link(object: &[u8], output: &Path, libraries: &[String]) -> Result<(), String> {
+/// libraries (`-lname` or files) into an executable; `strip` leaves out
+/// its symbol table.
+pub fn link(object: &[u8], output: &Path, libraries: &[String], strip: bool) -> Result<(), String> {
     let dir = cache_dir().join("runtime");
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let runtime = dir.join(format!("libtondo_runtime-{RUNTIME_HASH}.a"));
@@ -471,6 +472,15 @@ pub fn link(object: &[u8], output: &Path, libraries: &[String]) -> Result<(), St
             }
         }
     }
+    // Tondo's own linker, until it links by default.
+    if std::env::var_os("TONDO_CC").is_none() && std::env::var("TONDO_LINKER").as_deref() == Ok("tondo") {
+        let mut archives = vec![runtime.clone()];
+        let unwind = runtime_args.iter().position(|a| a.ends_with(".a")).map(|i| runtime_args.remove(i));
+        archives.extend(unwind.map(PathBuf::from));
+        let result = crate::link::link(object, &archives, &runtime_args, libraries, output, strip);
+        let _ = std::fs::remove_file(&object_path);
+        return result;
+    }
     let mut native = Vec::new();
     for library in libraries {
         native.extend(link_arguments(&linker, library)?);
@@ -489,6 +499,7 @@ pub fn link(object: &[u8], output: &Path, libraries: &[String]) -> Result<(), St
         } else {
             ["-Wl,--gc-sections", "-Wl,--strip-debug"]
         })
+        .args(strip.then_some(if cfg!(target_os = "macos") { "-Wl,-x" } else { "-Wl,--strip-all" }))
         .output();
     let _ = std::fs::remove_file(&object_path);
     match result {

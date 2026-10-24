@@ -11,8 +11,8 @@ New to Tondo, or a model writing it? Start with `tondo guide`.
 usage:
   tondo run [<project>|<file.to>] [--link <library>]... [-- <argument>...]
                                                        compile and run a program
-  tondo build [<project>|<file.to>] [--output <path>] [--link <library>]...
-                                                       compile a native executable
+  tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--strip]
+                                                       compile a native executable (without its symbol table)
   tondo check [<project>|<file.to>] [--json]           report diagnostics only (as JSON)
   tondo expand [<project>|<file.to>]                   show what each `derive` expanded to
   tondo fmt [--check | --compact] <file.to>...         format files canonically, or print them compactly
@@ -378,7 +378,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
             // Linked aside and renamed, so another run of the same tests keeps its own.
             let partial = executable.with_extension(format!("partial-{}", std::process::id()));
-            driver::link(&driver::object(&analysis)?, &partial, &analysis.libraries)?;
+            driver::link(&driver::object(&analysis)?, &partial, &analysis.libraries, false)?;
             std::fs::rename(&partial, &executable)
                 .map_err(|e| format!("cannot write {}: {e}", executable.display()))?;
             tree.save(&tree_file)?;
@@ -682,16 +682,28 @@ fn link_options(args: &[OsString]) -> Result<(Vec<String>, Vec<OsString>), Strin
 fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
     let (path, rest) = source_argument(args);
     let (libraries, rest) = link_options(rest)?;
-    let output = match rest.as_slice() {
-        [] => program_name(&path)?,
-        [flag, output] if flag == "--output" || flag == "-o" => PathBuf::from(output),
-        _ => return Err(format!("unexpected arguments\n{USAGE}")),
+    let mut output = None;
+    let mut strip = false;
+    let mut rest = rest.iter();
+    while let Some(arg) = rest.next() {
+        match arg.to_str() {
+            Some("--output" | "-o") if output.is_none() => match rest.next() {
+                Some(path) => output = Some(PathBuf::from(path)),
+                None => return Err(format!("--output needs a path\n{USAGE}")),
+            },
+            Some("--strip") if !strip => strip = true,
+            _ => return Err(format!("unexpected arguments\n{USAGE}")),
+        }
+    }
+    let output = match output {
+        Some(output) => output,
+        None => program_name(&path)?,
     };
     let Some(analysis) = analyze(&path)? else {
         return Ok(ExitCode::FAILURE);
     };
     let libraries = [analysis.libraries.clone(), libraries].concat();
-    driver::link(&driver::object(&analysis)?, &output, &libraries)?;
+    driver::link(&driver::object(&analysis)?, &output, &libraries, strip)?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -725,7 +737,7 @@ fn run(path: &Path, program_args: &[OsString], libraries: &[String]) -> Result<E
         std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
         let partial = dir.join(format!(".partial-{}", std::process::id()));
         let libraries = [analysis.libraries.clone(), libraries.to_vec()].concat();
-        driver::link(&object, &partial, &libraries)?;
+        driver::link(&object, &partial, &libraries, false)?;
         std::fs::rename(&partial, &executable).map_err(|e| e.to_string())?;
     }
     exec(&executable, program_args)
