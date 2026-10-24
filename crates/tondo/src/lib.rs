@@ -24,6 +24,7 @@ pub mod lexer;
 pub mod link;
 pub mod lower;
 pub mod lsp;
+pub mod mcp;
 pub mod meta;
 pub mod mir;
 pub mod modules;

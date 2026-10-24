@@ -85,10 +85,31 @@ struct Analyzed {
     paths: Vec<Option<PathBuf>>,
 }
 
+/// What the columns of positions count.
+#[derive(Default, Clone, Copy, PartialEq)]
+enum Units {
+    #[default]
+    Utf16,
+    Utf8,
+    /// Characters, as diagnostics count them.
+    Chars,
+}
+
+impl Units {
+    fn count(self, text: &str) -> usize {
+        match self {
+            Units::Utf16 => text.encode_utf16().count(),
+            Units::Utf8 => text.len(),
+            Units::Chars => text.chars().count(),
+        }
+    }
+}
+
 #[derive(Default)]
 struct Server {
-    /// Positions count UTF-8 bytes instead of UTF-16 units.
-    utf8: bool,
+    units: Units,
+    /// Sends nothing on its own, as no editor shows diagnostics.
+    quiet: bool,
     open: HashMap<PathBuf, Document>,
     analyses: HashMap<PathBuf, Analyzed>,
     /// The analyses before the last of each root, newest first: while a
@@ -104,19 +125,57 @@ struct Server {
     shut: bool,
 }
 
+/// The language server's answers outside an editor, as `tondo mcp` asks
+/// them: columns count characters, and files are as they are on disk.
+pub struct Language(Server);
+
+impl Default for Language {
+    fn default() -> Language {
+        Language(Server { units: Units::Chars, quiet: true, ..Server::default() })
+    }
+}
+
+impl Language {
+    /// The answer to a request of the protocol, such as
+    /// `textDocument/definition`.
+    pub fn ask(&mut self, method: &str, params: &Value) -> Result<Value, String> {
+        match self.0.answer(method, params, true) {
+            Some(Ok(value)) => Ok(value),
+            Some(Err((_, message))) => Err(message),
+            None => Ok(Value::Null),
+        }
+    }
+}
+
 impl Server {
     /// Handles a message; false once the editor says `exit`.
     fn handle(&mut self, message: Value) -> bool {
         let method = message["method"].as_str().unwrap_or_default().to_string();
         let params = &message["params"];
         let id = message.get("id").cloned();
-        let result = match method.as_str() {
+        if method == "exit" {
+            return false;
+        }
+        let result = self.answer(&method, params, id.is_some());
+        if let (Some(id), Some(result)) = (id, result) {
+            send(match result {
+                Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+                Err((code, message)) => {
+                    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
+                }
+            });
+        }
+        true
+    }
+
+    /// What a message asks for: none for a notification.
+    fn answer(&mut self, method: &str, params: &Value, request: bool) -> Option<Result<Value, (i64, String)>> {
+        match method {
             "initialize" => Some(Ok(self.initialize(params))),
             "shutdown" => {
                 self.shut = true;
                 Some(Ok(Value::Null))
             }
-            "exit" => return false,
             "textDocument/didOpen" => {
                 let document = &params["textDocument"];
                 self.changed(document["uri"].as_str(), document["text"].as_str());
@@ -150,26 +209,18 @@ impl Server {
             "textDocument/semanticTokens/full" => {
                 Some(Ok(self.semantic_tokens(params).unwrap_or(json!({ "data": [] }))))
             }
-            _ if id.is_some() => Some(Err((-32601, format!("`{method}` is not supported")))),
+            _ if request => Some(Err((-32601, format!("`{method}` is not supported")))),
             _ => None,
-        };
-        if let (Some(id), Some(result)) = (id, result) {
-            send(match result {
-                Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
-                Err((code, message)) => {
-                    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
-                }
-            });
         }
-        true
     }
 
     fn initialize(&mut self, params: &Value) -> Value {
         let encodings = &params["capabilities"]["general"]["positionEncodings"];
-        self.utf8 = encodings.as_array().is_some_and(|e| e.iter().any(|e| e == "utf-8"));
+        let utf8 = encodings.as_array().is_some_and(|e| e.iter().any(|e| e == "utf-8"));
+        self.units = if utf8 { Units::Utf8 } else { Units::Utf16 };
         json!({
             "capabilities": {
-                "positionEncoding": if self.utf8 { "utf-8" } else { "utf-16" },
+                "positionEncoding": if utf8 { "utf-8" } else { "utf-16" },
                 "textDocumentSync": { "openClose": true, "change": 1 },
                 "hoverProvider": true,
                 "definitionProvider": true,
@@ -248,6 +299,9 @@ impl Server {
     /// Sends the diagnostics of each file of a root, and clears those of
     /// files that have none now.
     fn publish(&mut self, root: &Path, analyzed: &Analyzed) {
+        if self.quiet {
+            return;
+        }
         let mut by_file: HashMap<PathBuf, Vec<Value>> = HashMap::new();
         for diagnostic in &analyzed.analysis.diags.list {
             let Some(span) = diagnostic.span else { continue };
@@ -299,10 +353,7 @@ impl Server {
     }
 
     fn uri(&self, path: &Path) -> String {
-        self.open
-            .get(path)
-            .map(|document| document.uri.clone())
-            .unwrap_or_else(|| format!("file://{}", encode(&path.to_string_lossy())))
+        self.open.get(path).map(|document| document.uri.clone()).unwrap_or_else(|| file_uri(path))
     }
 
     /// The file and range of a span.
@@ -322,7 +373,7 @@ impl Server {
     fn range(&self, file: &SourceFile, span: Span) -> Value {
         let start = (span.start - file.base) as usize;
         let end = (span.end.max(span.start) - file.base) as usize;
-        json!({ "start": position(&file.text, start, self.utf8), "end": position(&file.text, end, self.utf8) })
+        json!({ "start": position(&file.text, start, self.units), "end": position(&file.text, end, self.units) })
     }
 
     /// The analysis, the file and the offset a request points at, once
@@ -332,7 +383,7 @@ impl Server {
         let analyzed = self.analyses.get(&root_of(&path).0)?;
         let index = analyzed.paths.iter().position(|p| p.as_deref() == Some(path.as_path()))?;
         let file = analyzed.analysis.sources.file(index);
-        let offset = offset(&file.text, &params["position"], self.utf8)?;
+        let offset = offset(&file.text, &params["position"], self.units)?;
         Some((analyzed, index, file.base + offset as u32))
     }
 
@@ -371,7 +422,7 @@ impl Server {
                 json!({ "contents": { "kind": "markdown", "value": format!("```tondo\nmodule {module}\n```") }, "range": range }),
             );
         }
-        let utf8 = self.utf8;
+        let units = self.units;
         let Some((analyzed, def, span)) = self.def_at(params) else { return self.builtin_hover(params) };
         let index = analyzed.analysis.index.as_ref()?;
         let def = &index.defs[def];
@@ -417,7 +468,7 @@ impl Server {
         let range = {
             let start = (span.start - file.base) as usize;
             let end = (span.end - file.base) as usize;
-            json!({ "start": position(&file.text, start, utf8), "end": position(&file.text, end, utf8) })
+            json!({ "start": position(&file.text, start, units), "end": position(&file.text, end, units) })
         };
         Some(json!({ "contents": { "kind": "markdown", "value": value }, "range": range }))
     }
@@ -627,7 +678,7 @@ impl Server {
             if after.trim_start_matches([' ', '\t']).starts_with(':') {
                 continue;
             }
-            let position = position(&source.text, (span.end - source.base) as usize, self.utf8);
+            let position = position(&source.text, (span.end - source.base) as usize, self.units);
             hints.push(json!({ "position": position, "label": format!(": {ty}"), "kind": 1 }));
         }
         Some(Value::Array(hints))
@@ -1005,9 +1056,8 @@ impl Server {
                 if line_end > from {
                     let line_start = text[..from].rfind('\n').map_or(0, |i| i + 1);
                     let line = text[..from].matches('\n').count();
-                    let units = |s: &str| if self.utf8 { s.len() } else { s.encode_utf16().count() };
-                    let column = units(&text[line_start..from]);
-                    let length = units(&text[from..line_end]);
+                    let column = self.units.count(&text[line_start..from]);
+                    let length = self.units.count(&text[from..line_end]);
                     let delta_line = line - last_line;
                     let delta_column = if delta_line == 0 { column - last_column } else { column };
                     data.extend([delta_line, delta_column, length, kind, modifiers as usize]);
@@ -1098,7 +1148,7 @@ impl Server {
         if formatted == text {
             return Some(json!([]));
         }
-        let end = position(&text, text.len(), self.utf8);
+        let end = position(&text, text.len(), self.units);
         Some(json!([{ "range": { "start": { "line": 0, "character": 0 }, "end": end }, "newText": formatted }]))
     }
 }
@@ -1173,18 +1223,18 @@ fn docs_before(file: &SourceFile, offset: u32) -> String {
     lines.join("\n")
 }
 
-/// An LSP position: the line, and the column in UTF-8 bytes or UTF-16 units.
-fn position(text: &str, offset: usize, utf8: bool) -> Value {
+/// An LSP position: the line, and the column in the server's units.
+fn position(text: &str, offset: usize, units: Units) -> Value {
     let offset = offset.min(text.len());
     let line_start = text[..offset].rfind('\n').map_or(0, |i| i + 1);
     let line = text[..line_start].matches('\n').count();
     let column = &text[line_start..offset];
-    let character = if utf8 { column.len() } else { column.encode_utf16().count() };
+    let character = units.count(column);
     json!({ "line": line, "character": character })
 }
 
 /// The byte offset of an LSP position.
-fn offset(text: &str, position: &Value, utf8: bool) -> Option<usize> {
+fn offset(text: &str, position: &Value, units: Units) -> Option<usize> {
     let line = position["line"].as_u64()? as usize;
     let character = position["character"].as_u64()? as usize;
     let start = match line {
@@ -1193,20 +1243,24 @@ fn offset(text: &str, position: &Value, utf8: bool) -> Option<usize> {
     };
     let rest = &text[start..];
     let rest = &rest[..rest.find('\n').unwrap_or(rest.len())];
-    if utf8 {
+    if units == Units::Utf8 {
         return Some(start + character.min(rest.len()));
     }
-    let mut units = 0;
+    let mut counted = 0;
     for (index, c) in rest.char_indices() {
-        if units >= character {
+        if counted >= character {
             return Some(start + index);
         }
-        units += c.len_utf16();
+        counted += if units == Units::Chars { 1 } else { c.len_utf16() };
     }
     Some(start + rest.len())
 }
 
-fn uri_path(uri: &str) -> Option<PathBuf> {
+pub(crate) fn file_uri(path: &Path) -> String {
+    format!("file://{}", encode(&path.to_string_lossy()))
+}
+
+pub(crate) fn uri_path(uri: &str) -> Option<PathBuf> {
     let path = uri.strip_prefix("file://")?;
     let bytes = path.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());

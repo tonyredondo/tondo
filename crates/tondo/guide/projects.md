@@ -93,3 +93,21 @@ args = ["lsp"]
 
 In Neovim: `vim.lsp.config('tondo', { cmd = { 'tondo', 'lsp' }, filetypes = { 'tondo' }, root_markers = { 'tondo.toml' } })`
 and `vim.lsp.enable('tondo')`, with `vim.filetype.add({ extension = { to = 'tondo' } })`.
+
+## Agents
+
+`tondo mcp` is a Model Context Protocol server: every command as a tool
+with structured results, the language server's navigation and rename, and
+debugging sessions. Add it to Claude Code with `claude mcp add tondo --
+tondo mcp`, to Codex with `codex mcp add tondo -- tondo mcp`, or to any
+client that reads this:
+
+```text
+{ "mcpServers": { "tondo": { "command": "tondo", "args": ["mcp"] } } }
+```
+
+`check` reports each diagnostic with its fixes, and `fix` applies the safe
+ones; `run` takes the program's input and ends it after a timeout; `test`
+gives the report of each test; `debug_start` returns a session for `debug`,
+which takes the debugger's commands. Lines and columns count from 1, and
+paths are relative to the directory the server runs in.

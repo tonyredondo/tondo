@@ -72,6 +72,10 @@ errors' repairs as edits (`fixes`), `safe` ones ready to apply.
 4. `tondo fmt` the files you wrote. To show a file to a model, `tondo fmt
    --compact` uses about 15% fewer tokens.
 
+`tondo mcp` gives an agent all of this as MCP tools, and more: applying
+the fixes, navigating, running with input, testing, observing and debugging
+programs (`tondo guide projects` says how to add it).
+
 ## Topics
 
 ```text

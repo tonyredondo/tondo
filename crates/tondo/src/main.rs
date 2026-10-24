@@ -38,6 +38,8 @@ usage:
   tondo doc-test [--edition 0.1] <markdown>            check the examples of a document (as JSON)
   tondo lsp                                            serve an editor: diagnostics, hover, definitions,
                                                        references, rename, completion, highlighting
+  tondo mcp                                            serve an agent, with the Model Context Protocol:
+                                                       every command above as its tools
   tondo ps [--json]                                    list the running Tondo programs
   tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--json]
                                                        watch a running program's counters, the runtime's
@@ -100,6 +102,7 @@ fn main() -> ExitCode {
         "test" => test_command(&args[1..]),
         "doc-test" => doc_test_command(&args[1..]),
         "lsp" => tondo::lsp::serve().map(|()| ExitCode::SUCCESS),
+        "mcp" => tondo::mcp::serve().map(|()| ExitCode::SUCCESS),
         "ps" => ps_command(&args[1..]),
         "counters" => counters_command(&args[1..]),
         "trace" => trace_command(&args[1..]),

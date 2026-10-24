@@ -240,6 +240,7 @@ tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--projec
 tondo test [<project>] [--static] [--debug] [--library] [--target <target>]
 tondo target pack [<dir>]
 tondo lsp
+tondo mcp
 tondo ps [--json]
 tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--json]
 tondo trace <pid|name> [--duration <seconds>] [--output <path>]
@@ -286,7 +287,7 @@ tondo dap
   paquete del sistema o de una librería (sección 7.1) y, en un proyecto, añade
   cada librería a `[native] libraries`.
 - `test` sigue la [especificación de testing](./TONDO_TESTING_SPEC.md).
-- `lsp` sirve a un editor (sección 7.4).
+- `lsp` sirve a un editor (sección 7.4), y `mcp`, a un agente (sección 7.9).
 - `ps`, `counters`, `trace` y `dump` observan los programas en ejecución
   (sección 7.5); `debug` depura uno, y `dap` hace lo mismo para un editor
   (sección 7.6).
@@ -606,6 +607,42 @@ usuario de qemu: `qemu-<arch>` o `qemu-<arch>-static` de `PATH`, o el que el
 kernel tiene registrado en `binfmt_misc`. Sin ninguno es error, que pide
 instalar qemu-user; en un sistema que no es Linux, también: el programa
 corre en Linux.
+
+### 7.9 `tondo mcp`
+
+`tondo mcp` es un servidor del Model Context Protocol por la entrada y la
+salida estándar, un mensaje JSON-RPC por línea, que un agente arranca. Habla
+las dos eras del protocolo: la de 2026-07-28, sin handshake, en la que cada
+petición dice su versión en `_meta` y `server/discover` da las versiones, las
+capacidades y la identidad del servidor; y la de `initialize`, de 2025-11-25 y
+anteriores. Una versión que no conoce es el error `-32022`, con las que sí.
+
+Sus herramientas hacen lo que los comandos de `tondo` y el servidor de
+lenguaje, cada una con un texto para el modelo y su resultado como datos
+(`structuredContent`):
+
+- Código: `check` da los diagnósticos, cada uno con el id de `check --json`
+  (22.3) y sus reparaciones; `fix` aplica las seguras, o las que se eligen por
+  id, a los archivos del programa, y comprueba de nuevo. `format`, `compact`,
+  `expand`, `api` y `guide`.
+- Navegación: `definition`, `references`, `hover`, `complete`, `symbols`, y
+  `rename`, que reescribe los archivos.
+- Builds: `build`; `run`, con su entrada y un tiempo tras el que el programa
+  termina, 60 s si no se dice; `test`, con lo que imprime y su informe JSON;
+  `doc_test`, `bind`, `update` y `target_pack`.
+- Programas en ejecución: `ps`, `counters`, `trace`, `dump` y `dump_read`.
+- Depuración: `debug_start` abre una sesión de `tondo debug` y da su id;
+  `debug` le pasa una orden y devuelve las respuestas, los eventos y lo que el
+  programa imprimió. Si el programa sigue corriendo pasado `wait`, `pause` lo
+  para y `wait` espera a que pare. `debug_stop` cierra la sesión.
+
+Las líneas y las columnas cuentan desde 1, las columnas en caracteres, como
+en los diagnósticos, y los paths son relativos al directorio del servidor. Lo
+que impide a una herramienta hacer su trabajo, como un build que no compila,
+es un resultado con `isError`; un programa que termina con error, tests que
+fallan o un formato que no se cumple son su resultado. Sus recursos son la
+guía, `tondo://guide/<tema>`, la skill, `tondo://skill`, y la API de cada
+módulo estándar, `tondo://api/<módulo>`.
 
 ## 8. Determinismo
 

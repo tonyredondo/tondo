@@ -24,7 +24,7 @@ extern "C" fn interrupted(_: i32) {
     INTERRUPTED.store(true, Ordering::SeqCst);
 }
 
-const HELP: &str = "\
+pub const HELP: &str = "\
 break <file>:<line> [if <name> <op> <value>]   stop where that line starts (b)
 delete <id>                                     remove a breakpoint
 continue                                        go on until a breakpoint (c)

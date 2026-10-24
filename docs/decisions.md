@@ -1808,3 +1808,23 @@ another architecture runs under qemu's user emulation, `qemu-<arch>` from
 `PATH` or what `binfmt_misc` has, so `tondo test --target` tests it here.
 The CI builds `tondo` across, tests it under emulation, and builds for
 the other architecture with the pack of the emulated `tondo`.
+
+## 2026-10-24 — Agents
+
+`tondo mcp` serves the toolchain to agents over the Model Context
+Protocol, from the compiler's own binary, as `tondo lsp` serves editors:
+it needs nothing else installed and always matches the compiler. It
+speaks both eras of the protocol, since clients still open with
+`initialize` while 2026-07-28 drops the handshake for a version on each
+request. The commands' tools run `tondo` itself, so they behave and fail
+as the commands do, a crash or a hang does not take the server down, and
+a timeout ends the whole process group; `check`, `fix` and navigation
+analyze in the server, since they need the spans. Places count lines and
+columns from 1, columns in characters, as diagnostics print them, which
+the language server now does on request, publishing nothing. A debugging
+session is a handle the server gives, as the protocol advises for state,
+and no call waits on a running program longer than `wait`: `pause`
+interrupts the debugger as Ctrl-C does. The results carry their data
+without an `outputSchema`, since the JSON of the commands is what the
+specifications define. `std.mcp`, for programs to serve their own tools,
+and reloading a running program for agents are later milestones.
