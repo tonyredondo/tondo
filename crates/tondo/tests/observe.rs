@@ -145,7 +145,7 @@ fn sleeper(woken: Receiver[Int]) {
 
 fn main() {
     var kept: Array[String] = []
-    for i in 0..20000 {
+    for i in 0..80000 {
         kept.push("entry {i} ".repeat(10))
     }
     let (wake, woken) = channel[Int]()
@@ -207,7 +207,8 @@ fn dumps_of_a_running_program_and_at_a_panic() {
     assert_eq!(task("main")["at"], "dumped.to:16 in main");
     assert_eq!(task("sleeper")["at"], "dumped.to:4 in sleeper");
     assert_eq!(task("sleeper")["spawned"][0], "dumped.to:13 in main");
-    // About 2 MiB of strings, from where the program made them.
+    // About 8 MiB of strings, from where the program made them: with a
+    // sample every 512 KiB, a run without one is as good as impossible.
     let heap = read(&["heap"]);
     let strings = heap["sites"].as_array().unwrap().iter().find(|s| s["kind"] == "String");
     let strings = strings.unwrap_or_else(|| panic!("no strings in {heap}"));
