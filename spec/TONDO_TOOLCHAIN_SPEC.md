@@ -478,7 +478,9 @@ un proyecto, que compila como `run`. Un programa que arranca espera a la
 herramienta antes de `main`, así que la traza lo cubre entero. Graba hasta
 que el programa termina, pasa `--duration` o llega Ctrl-C, que termina
 también el programa que arrancó, y escribe dos archivos, `<output>.json` y
-`<output>.folded`, con `<programa>-<pid>` como `<output>` si no se da:
+`<output>.folded`, con `<programa>-<pid>` como `<output>` si no se da. Si el
+programa que arrancó termina por una señal o con un estado distinto de 0, sin
+que la traza lo terminara, `trace` lo dice:
 
 - una línea de tiempo en Trace Event Format, que abre Perfetto: una pista por
   hilo, con un tramo por cada vez que una tarea corrió, nombrado por la

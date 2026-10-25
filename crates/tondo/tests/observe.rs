@@ -120,11 +120,21 @@ fn trace_of_a_started_program() {
     let named = |name: &str| events.iter().any(|e| e["name"] == name);
     let missing: Vec<&str> = ["crunch", "main", "spawns crunch"].into_iter().filter(|n| !named(n)).collect();
     let names: Vec<&Value> = events.iter().map(|e| &e["name"]).collect();
-    assert!(missing.is_empty(), "missing {missing:?} among {names:?}; {}", String::from_utf8_lossy(&output.stderr));
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert!(missing.is_empty() && !said.contains("the program"), "missing {missing:?} among {names:?}; {said}");
     let waits = events.iter().find(|e| e["name"] == "main" && e["args"]["then"] != "finished").unwrap();
     assert_eq!(waits["args"]["then"], "waits at traced.to:17 in main");
     let profile = std::fs::read_to_string(dir.join("out.folded")).unwrap();
     assert!(profile.lines().any(|line| line.contains(";crunch;fib")), "{profile}");
+    // A program that does not end well says how it ended.
+    std::fs::write(dir.join("fails.to"), "fn main() {\n    panic(\"no\")\n}\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["trace", "--output", "fails", "--", "fails.to"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success() && said.contains("; the program exited with status 101"), "{said}");
 }
 
 const DUMPED: &str = r#"import std.console

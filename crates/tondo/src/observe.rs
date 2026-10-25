@@ -318,12 +318,19 @@ pub fn trace(traced: Traced, duration: Option<Duration>, output: Option<PathBuf>
         }
     }
     unsafe { libc::signal(libc::SIGINT, libc::SIG_DFL) };
+    let mut end = None;
     if let Some(child) = child.as_mut() {
-        // A trace stopped early ends the program it started.
+        // A trace stopped early ends the program it started; otherwise how
+        // the program ended is told, unless it ended well.
         if stopping {
             unsafe { libc::kill(child.id() as i32, libc::SIGINT) };
         }
-        let _ = child.wait();
+        if let Ok(status) = child.wait()
+            && !status.success()
+            && !stopping
+        {
+            end = Some(ended(status, "the program"));
+        }
     }
     let base = output
         .map(|path| path.with_extension(""))
@@ -349,8 +356,31 @@ pub fn trace(traced: Traced, duration: Option<Duration>, output: Option<PathBuf>
             recording.dropped, recording.lost
         ));
     }
+    if let Some(end) = end {
+        summary.push_str(&format!("; {end}"));
+    }
     eprintln!("tondo: {summary}");
     Ok(())
+}
+
+/// How a process ended, as a report says it: `who` ended by a signal, or
+/// exited with a status.
+pub(crate) fn ended(status: std::process::ExitStatus, who: &str) -> String {
+    if let Some(signal) = std::os::unix::process::ExitStatusExt::signal(&status) {
+        let name = match signal {
+            4 => "SIGILL",
+            6 => "SIGABRT",
+            7 if cfg!(target_os = "linux") => "SIGBUS",
+            10 if cfg!(target_os = "macos") => "SIGBUS",
+            8 => "SIGFPE",
+            9 => "SIGKILL",
+            11 => "SIGSEGV",
+            15 => "SIGTERM",
+            _ => return format!("{who} ended by signal {signal}"),
+        };
+        return format!("{who} ended by signal {signal} ({name})");
+    }
+    format!("{who} exited with status {}", status.code().unwrap_or(-1))
 }
 
 /// Connects to a program this trace started, once it listens.

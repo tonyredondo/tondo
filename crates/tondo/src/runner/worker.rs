@@ -231,7 +231,11 @@ fn worker(
             outcome.duration += Instant::now() - started;
         }
         if outcome.status == Status::Passed {
-            outcome.status = if timed_out { Status::Timeout } else { Status::Crashed(describe(status)) };
+            outcome.status = if timed_out {
+                Status::Timeout
+            } else {
+                Status::Crashed(crate::observe::ended(status, "the test process"))
+            };
         }
         outcome.teardown = reached;
         send(tree, remaining, outcome, sender);
@@ -286,25 +290,6 @@ fn kill(child: &mut std::process::Child) {
         let _ = Command::new("kill").args(["-KILL", "--", &format!("-{}", child.id())]).status();
     }
     let _ = child.kill();
-}
-
-fn describe(status: std::process::ExitStatus) -> String {
-    #[cfg(unix)]
-    if let Some(signal) = std::os::unix::process::ExitStatusExt::signal(&status) {
-        let name = match signal {
-            4 => "SIGILL",
-            6 => "SIGABRT",
-            7 if cfg!(target_os = "linux") => "SIGBUS",
-            10 if cfg!(target_os = "macos") => "SIGBUS",
-            8 => "SIGFPE",
-            9 => "SIGKILL",
-            11 => "SIGSEGV",
-            15 => "SIGTERM",
-            _ => return format!("the test process ended by signal {signal}"),
-        };
-        return format!("the test process ended by signal {signal} ({name})");
-    }
-    format!("the test process exited with status {}", status.code().unwrap_or(-1))
 }
 
 impl Session<'_> {
