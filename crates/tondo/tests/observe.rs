@@ -118,7 +118,9 @@ fn trace_of_a_started_program() {
     let timeline: Value = serde_json::from_slice(&std::fs::read(dir.join("out.json")).unwrap()).unwrap();
     let events = timeline["traceEvents"].as_array().unwrap();
     let named = |name: &str| events.iter().any(|e| e["name"] == name);
-    assert!(named("crunch") && named("main") && named("spawns crunch"));
+    let missing: Vec<&str> = ["crunch", "main", "spawns crunch"].into_iter().filter(|n| !named(n)).collect();
+    let names: Vec<&Value> = events.iter().map(|e| &e["name"]).collect();
+    assert!(missing.is_empty(), "missing {missing:?} among {names:?}; {}", String::from_utf8_lossy(&output.stderr));
     let waits = events.iter().find(|e| e["name"] == "main" && e["args"]["then"] != "finished").unwrap();
     assert_eq!(waits["args"]["then"], "waits at traced.to:17 in main");
     let profile = std::fs::read_to_string(dir.join("out.folded")).unwrap();

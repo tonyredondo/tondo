@@ -1103,9 +1103,11 @@ fn watch(path: &Path, program_args: &[OsString], options: &BuildOptions) -> Resu
         match tondo::live::reload_named(&running.id().to_string()) {
             Ok(reloaded) => eprintln!("tondo: {}", reloaded.summary()),
             Err(tondo::live::Refused::Restart(message)) => {
-                eprintln!("tondo: not reloaded: {message}; running it again");
+                // Stopped before it says so, so that what comes next goes
+                // to the program run again.
                 let _ = running.kill();
                 let _ = running.wait();
+                eprintln!("tondo: not reloaded: {message}; running it again");
                 child = start()?;
             }
             Err(refused) => eprintln!("tondo: {}", refused.message()),
