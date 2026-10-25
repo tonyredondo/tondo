@@ -327,7 +327,7 @@ impl Rt {
             Rt::PanicValues => ("tondo_rt_panic_values", &[I32, I32, I64, I64, I64, I64], &[]),
             Rt::Trace => ("tondo_rt_trace", &[I64], &[]),
             Rt::DebugTable => ("tondo_rt_debug_table", &[I64], &[]),
-            Rt::DebugLine => ("tondo_rt_debug_line", &[I64, I64, I64], &[]),
+            Rt::DebugLine => ("tondo_rt_debug_line", &[I64, I64, I64], &[I8]),
             Rt::SbQuoted => ("tondo_rt_sb_quoted", &[I64, I64], &[]),
             Rt::BoxNew => ("tondo_rt_box_new", &[I64], &[I64]),
             Rt::BoxRetain => ("tondo_rt_box_retain", &[I64], &[]),
@@ -717,6 +717,8 @@ pub fn compile(
         debug_sites: Vec::new(),
         live: None,
         current: 0,
+        forwarders: HashMap::new(),
+        pending_forwarders: Vec::new(),
     };
 
     if debug {
@@ -784,6 +786,13 @@ pub fn compile(
         context.func.name = UserFuncName::user(3, thunk.as_u32());
         define_thunk(&mut cg, &bodies[target.0 as usize], target, &mut context.func, &mut builder_context);
         job(thunk, &mut context, None, Vec::new());
+        cg.module.clear_context(&mut context);
+    }
+    while let Some((target, forward)) = cg.pending_forwarders.pop() {
+        context.func.signature = cg.module.declarations().get_function_decl(forward).signature.clone();
+        context.func.name = UserFuncName::user(6, forward.as_u32());
+        define_forwarder(&mut cg, target, &mut context.func, &mut builder_context);
+        job(forward, &mut context, None, Vec::new());
         cg.module.clear_context(&mut context);
     }
     while let Some(callback) = cg.pending_callbacks.pop() {
@@ -863,6 +872,9 @@ struct Codegen<'a> {
     live: Option<LiveCodegen>,
     /// The body whose IR is being built.
     current: usize,
+    /// In a live build, what closures call their bodies through.
+    forwarders: HashMap<FnId, FuncId>,
+    pending_forwarders: Vec<(FnId, FuncId)>,
 }
 
 /// A live build's slots (toolchain 7.10): the table every call of the
@@ -896,6 +908,12 @@ impl LiveCodegen {
         let mut next = build.slots.values().max().map_or(0, |&slot| slot + 1);
         let mut seen: HashMap<String, u32> = HashMap::new();
         let (mut slot_of, mut identities) = (Vec::new(), Vec::new());
+        // A closure is its function's n-th of so many: an edit that adds
+        // or removes one makes them all others.
+        let mut closures: HashMap<&str, (u32, u32)> = HashMap::new();
+        for body in bodies.iter().filter(|b| b.name.starts_with("closure in ")) {
+            closures.entry(&body.name).or_default().1 += 1;
+        }
         for body in bodies {
             let params: Vec<String> = body
                 .params
@@ -906,7 +924,19 @@ impl LiveCodegen {
                     if loan { format!("mut {ty}") } else { ty }
                 })
                 .collect();
-            let base = format!("{}({}): {}", body.name, params.join(", "), types.display(body.result));
+            let name = match closures.get_mut(body.name.as_str()) {
+                Some((ordinal, total)) => {
+                    *ordinal += 1;
+                    format!("{} {ordinal}/{total}", body.name)
+                }
+                None => body.name.clone(),
+            };
+            let mut signature: Vec<Ty> = body.params.iter().map(|p| body.locals[p.0 as usize]).collect();
+            signature.push(body.result);
+            let digest = crate::live::shape_digest(types, &signature);
+            let base = format!("{name}({}): {}", params.join(", "), types.display(body.result));
+            let base = if digest.is_empty() { base } else { format!("{base} @{digest}") };
+            build.holds.entry(body.name.clone()).or_default().extend(crate::live::held(types, &body.locals));
             // Closures share a name: the first of a function keeps it.
             let count = seen.entry(base.clone()).or_insert(0);
             let identity = if *count == 0 { base } else { format!("{base} #{count}") };
@@ -1341,6 +1371,24 @@ impl Codegen<'_> {
         id
     }
 
+    /// The code a closure or a `defer` keeps: its body, or in a live build
+    /// a function that calls the body through its slot, so that a closure
+    /// made before a patch runs the patch's body.
+    fn closure_code(&mut self, body: FnId) -> FuncId {
+        if self.live.is_none() {
+            return self.functions[body.0 as usize];
+        }
+        if let Some(&forward) = self.forwarders.get(&body) {
+            return forward;
+        }
+        let signature = self.module.declarations().get_function_decl(self.functions[body.0 as usize]).signature.clone();
+        let name = format!("tondo_forward{}", body.0);
+        let forward = self.module.declare_function(&name, Linkage::Local, &signature).expect("a closure's forwarder");
+        self.forwarders.insert(body, forward);
+        self.pending_forwarders.push((body, forward));
+        forward
+    }
+
     fn runtime(&mut self, rt: Rt) -> FuncId {
         if let Some(&id) = self.runtime.get(&rt) {
             return id;
@@ -1437,6 +1485,9 @@ impl Codegen<'_> {
         for (&(kind, ty), &id) in &self.glue {
             functions.insert(id, format!("glue {kind:?} {}", self.types.display(ty)));
         }
+        for (&body, &id) in &self.forwarders {
+            functions.insert(id, format!("forward {}", live.identities[body.0 as usize]));
+        }
         for (&ty, &id) in &self.map_glue {
             data.insert(id, format!("map glue {}", self.types.display(ty)));
         }
@@ -1498,7 +1549,7 @@ impl Codegen<'_> {
         build.c = c;
         let c = self.address_table("tondo_live_c", &build.c)?;
         let mut identities: Vec<(String, DataId)> =
-            self.identities.iter().map(|(&ty, &id)| (self.types.display(ty), id)).collect();
+            self.identities.iter().map(|(&ty, &id)| (self.identity_key(ty), id)).collect();
         identities.sort();
         build.data = identities.iter().map(|(name, _)| name.clone()).collect();
         // With room for the types patches add.
@@ -1559,7 +1610,7 @@ impl Codegen<'_> {
             .identities
             .iter()
             .filter(|(_, id)| self.module.declarations().get_data_decl(**id).linkage != Linkage::Import)
-            .map(|(&ty, &id)| (self.types.display(ty), id))
+            .map(|(&ty, &id)| (self.identity_key(ty), id))
             .collect();
         added.sort();
         let start = 40 + live.slot_of.len() * 16;
@@ -1771,9 +1822,10 @@ impl Codegen<'_> {
             return id;
         }
         let shown = self.types.display(ty);
-        // A patch shares the running program's identity of a type it has.
-        if let Some(index) = self.live.as_ref().and_then(|live| live.patch.as_ref()?.0.iter().position(|t| *t == shown))
-        {
+        // A patch shares the running program's identity of a type it has,
+        // of the same shape.
+        let key = self.identity_key(ty);
+        if let Some(index) = self.live.as_ref().and_then(|live| live.patch.as_ref()?.0.iter().position(|t| *t == key)) {
             let symbol = format!("tondo_live_data{index}");
             let id = self.module.declare_data(&symbol, Linkage::Import, false, false).expect("type identity");
             self.identities.insert(ty, id);
@@ -1790,6 +1842,16 @@ impl Codegen<'_> {
         self.module.define_data(id, &data).expect("type identity definition");
         self.identities.insert(ty, id);
         id
+    }
+
+    /// How a live build's tables name a type's identity: by its name and
+    /// the digest of its shape.
+    fn identity_key(&self, ty: Ty) -> String {
+        let digest = crate::live::shape_digest(self.types, &[ty]);
+        match digest.is_empty() {
+            true => self.types.display(ty),
+            false => format!("{} @{digest}", self.types.display(ty)),
+        }
     }
 
     /// A static, immortal string object: `[refcount][length][bytes]`.
@@ -2951,6 +3013,22 @@ fn define_glue(cg: &mut Codegen, kind: Glue, ty: Ty, func: &mut ir::Function, fb
     e.fb.finalize(config);
 }
 
+/// What a live build's closure calls: its body, through the body's slot,
+/// with the same arguments.
+fn define_forwarder(cg: &mut Codegen, target: FnId, func: &mut ir::Function, fbc: &mut FunctionBuilderContext) {
+    let mut fb = FunctionBuilder::new(func, fbc);
+    let entry = fb.create_block();
+    fb.append_block_params_for_function_params(entry);
+    fb.switch_to_block(entry);
+    let params = fb.block_params(entry).to_vec();
+    let call = call_body(cg, &mut fb, target, &params);
+    let results = fb.inst_results(call).to_vec();
+    fb.ins().return_(&results);
+    fb.seal_all_blocks();
+    let config = cg.module.isa().frontend_config();
+    fb.finalize(config);
+}
+
 /// A thunk with the uniform convention of `fn(...)` values that ignores the
 /// captures' address and calls the named function `target`.
 fn define_thunk(
@@ -2998,6 +3076,12 @@ struct FnCodegen<'a, 'b> {
     sites: Vec<(u32, Option<Ty>)>,
     /// In a debug build, what its probes show.
     debug: Option<DebugFrame>,
+    /// What the probe just placed answered: whether to restart the frame;
+    /// the local that holds it, and the line each block a restart point
+    /// leads to is on.
+    probed: Option<ir::Value>,
+    restarts: Option<Local>,
+    carried: HashMap<usize, (String, usize)>,
 }
 
 /// What a function of a debug build keeps for its probes (toolchain 7.6):
@@ -3086,7 +3170,19 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             });
             DebugFrame { function, first, shown, alive, addresses, line: None }
         });
-        FnCodegen { e: Emit { cg, fb }, body, bodies, blocks, storage, span: Span::default(), sites: Vec::new(), debug }
+        FnCodegen {
+            e: Emit { cg, fb },
+            body,
+            bodies,
+            blocks,
+            storage,
+            span: Span::default(),
+            sites: Vec::new(),
+            debug,
+            probed: None,
+            restarts: None,
+            carried: HashMap::new(),
+        }
     }
 
     /// Builds the function's IR; gives where its statements are, which the
@@ -3127,7 +3223,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.call_rt(Rt::MetaStep, &[]);
             }
             if let Some(debug) = &mut self.debug {
-                debug.line = None;
+                debug.line = self.carried.remove(&index);
             }
             for stmt in &block.stmts {
                 self.statement(stmt);
@@ -3605,7 +3701,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             };
             let addresses = self.e.fb.ins().stack_addr(POINTER, debug.addresses, 0);
             let alive = self.e.fb.ins().stack_addr(POINTER, debug.alive, 0);
-            self.e.call_rt(Rt::DebugLine, &[site, addresses, alive]);
+            self.probed = self.e.call_rt(Rt::DebugLine, &[site, addresses, alive]);
         }
         self.debug = Some(debug);
     }
@@ -3618,6 +3714,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     // ---- statements and terminators ----------------------------------------
 
     fn statement(&mut self, stmt: &Statement) {
+        // A probe's answer is for the statement right after it.
+        self.probed = None;
         match stmt {
             Statement::Assign(place, rvalue, span) => {
                 // What it allocates: the collection a method changes, or the
@@ -3634,9 +3732,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
             }
             Statement::DeferPush(body, place) => {
-                let callee =
-                    self.e.cg.module.declare_func_in_func(self.e.cg.functions[body.0 as usize], self.e.fb.func);
-                let code = self.e.fb.ins().func_addr(POINTER, callee);
+                let code = self.e.cg.closure_code(*body);
+                let code = self.e.cg.module.declare_func_in_func(code, self.e.fb.func);
+                let code = self.e.fb.ins().func_addr(POINTER, code);
                 let mut spilled = Vec::new();
                 let closure = self.loan_address(place, &mut spilled);
                 self.e.call_rt(Rt::DeferPush, &[code, closure]);
@@ -4180,9 +4278,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 if *retain {
                     self.e.refcount(env, value, false);
                 }
-                let callee =
-                    self.e.cg.module.declare_func_in_func(self.e.cg.functions[body.0 as usize], self.e.fb.func);
-                let code = self.e.fb.ins().func_addr(POINTER, callee);
+                let code = self.e.cg.closure_code(*body);
+                let code = self.e.cg.module.declare_func_in_func(code, self.e.fb.func);
+                let code = self.e.fb.ins().func_addr(POINTER, code);
                 let size = self.e.fb.ins().iconst(POINTER, self.e.cg.layout(env).size as i64);
                 let release = self.e.glue_or_null(Glue::Release, env);
                 let visit = self.e.glue_or_null(Glue::Visit, env);
@@ -4222,6 +4320,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             Rvalue::Select(cases, blocking, span) => Val::Scalar(self.select(cases, *blocking, *span)),
             Rvalue::Cancelled => Val::Scalar(self.e.call_rt(Rt::Cancelled, &[]).unwrap()),
+            // What the probe of the line that starts here said; no line
+            // starts here, no restart.
+            Rvalue::Restart => Val::Scalar(match self.probed.take().inspect(|_| self.restarts = Some(place.local)) {
+                Some(asked) => asked,
+                None => self.e.fb.ins().iconst(types::I8, 0),
+            }),
             Rvalue::TaskOp(op, operands, retain, span) => match self.task_op(*op, operands, retain, place, *span) {
                 Some(value) => value,
                 None => return,
@@ -5594,6 +5698,16 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.fb.ins().jump(self.blocks[target.0 as usize], &[]);
             }
             Terminator::Branch(condition, then, otherwise) => {
+                // Both ways out of a restart point are on the line its probe
+                // was for: neither probes it again.
+                if let (Operand::Copy(place), Some(debug)) = (condition, &self.debug)
+                    && place.path.is_empty()
+                    && self.restarts == Some(place.local)
+                    && let Some(line) = debug.line.clone()
+                {
+                    self.carried.insert(then.0 as usize, line.clone());
+                    self.carried.insert(otherwise.0 as usize, line);
+                }
                 let condition = self.scalar(condition);
                 let (then, otherwise) = (self.blocks[then.0 as usize], self.blocks[otherwise.0 as usize]);
                 self.e.fb.ins().brif(condition, then, &[], otherwise, &[]);

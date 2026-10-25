@@ -105,6 +105,7 @@ pub fn serve(build: Build) -> Result<(), String> {
                 "supportsConditionalBreakpoints": true,
                 "supportsTerminateRequest": true,
                 "supportsEvaluateForHovers": true,
+                "supportsRestartFrame": true,
             })),
             "launch" | "attach" => match start(command, arguments, build, &editor) {
                 Ok(started) => {
@@ -266,6 +267,11 @@ fn handle(
         "stepIn" => program.ask("step").map(|_| json!({})),
         "stepOut" => program.ask("finish").map(|_| json!({})),
         "pause" => program.ask("pause").map(|_| json!({})),
+        // The frame where the task stopped, the only one that restarts.
+        "restartFrame" => match arguments["frameId"].as_u64() {
+            Some(0) | None => program.ask("restart").map(|_| json!({})),
+            Some(_) => Err("only the frame where the task stopped restarts".into()),
+        },
         "threads" => {
             let tasks = program.ask("tasks")?;
             let mut threads: Vec<Value> = tasks["tasks"]

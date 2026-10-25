@@ -29,6 +29,8 @@ pub struct Build {
     pub sites: u32,
     /// For a patch: what the running program has.
     pub patch: Option<Base>,
+    /// The nominal types a frame of each function may hold, by its name.
+    pub holds: HashMap<String, std::collections::BTreeSet<String>>,
 }
 
 /// What a patch builds on: the types whose identity the running program
@@ -50,6 +52,7 @@ impl Build {
             code: HashMap::new(),
             sites: 0,
             patch: None,
+            holds: HashMap::new(),
         }
     }
 }
@@ -91,46 +94,127 @@ pub fn compile(
     Ok(object)
 }
 
-/// What each nominal type is made of: its fields, its variants, or what a
-/// newtype wraps. A patch may not change it, since values of the old one
-/// are alive.
-fn shapes(types: &crate::types::Types) -> HashMap<String, String> {
-    use crate::types::{AdtId, AdtKind, Payload};
+/// A nominal type's name, as manifests key it.
+fn adt_name(types: &crate::types::Types, id: crate::types::AdtId) -> String {
+    let adt = types.adt(id);
+    match &adt.instance {
+        Some((_, args)) if !adt.name.contains('[') => {
+            let args: Vec<String> = args.iter().map(|&arg| types.display(arg)).collect();
+            format!("{}[{}]", adt.name, args.join(", "))
+        }
+        _ => adt.name.clone(),
+    }
+}
+
+/// What a nominal type is made of: its fields, its variants, or what a
+/// newtype wraps.
+fn adt_shape(types: &crate::types::Types, id: crate::types::AdtId) -> String {
+    use crate::types::{AdtKind, Payload};
     let fields = |fields: &[crate::types::Field]| {
         let fields: Vec<String> = fields.iter().map(|f| format!("{}: {}", f.name, types.display(f.ty))).collect();
         format!("{{ {} }}", fields.join(", "))
     };
-    let mut shapes = HashMap::new();
-    for index in 0..types.adt_count() {
-        let adt = types.adt(AdtId(index as u32));
-        let name = match &adt.instance {
-            Some((_, args)) if !adt.name.contains('[') => {
-                let args: Vec<String> = args.iter().map(|&arg| types.display(arg)).collect();
-                format!("{}[{}]", adt.name, args.join(", "))
-            }
-            _ => adt.name.clone(),
-        };
-        let shape = match &adt.kind {
-            AdtKind::Record(record) => fields(record),
-            AdtKind::Newtype(inner) => format!("= {}", types.display(*inner)),
-            AdtKind::Enum(variants) => {
-                let variants: Vec<String> = variants
-                    .iter()
-                    .map(|v| match &v.payload {
-                        Payload::Unit => v.name.clone(),
-                        Payload::Tuple(items) => {
-                            let items: Vec<String> = items.iter().map(|&t| types.display(t)).collect();
-                            format!("{}({})", v.name, items.join(", "))
-                        }
-                        Payload::Record(record) => format!("{} {}", v.name, fields(record)),
-                    })
-                    .collect();
-                variants.join(" | ")
-            }
-        };
-        shapes.insert(name, shape);
+    match &types.adt(id).kind {
+        AdtKind::Record(record) => fields(record),
+        AdtKind::Newtype(inner) => format!("= {}", types.display(*inner)),
+        AdtKind::Enum(variants) => {
+            let variants: Vec<String> = variants
+                .iter()
+                .map(|v| match &v.payload {
+                    Payload::Unit => v.name.clone(),
+                    Payload::Tuple(items) => {
+                        let items: Vec<String> = items.iter().map(|&t| types.display(t)).collect();
+                        format!("{}({})", v.name, items.join(", "))
+                    }
+                    Payload::Record(record) => format!("{} {}", v.name, fields(record)),
+                })
+                .collect();
+            variants.join(" | ")
+        }
     }
-    shapes
+}
+
+/// What each nominal type is made of. A patch may change one only when no
+/// running frame may hold a value of the old one.
+fn shapes(types: &crate::types::Types) -> HashMap<String, String> {
+    (0..types.adt_count())
+        .map(|index| crate::types::AdtId(index as u32))
+        .map(|id| (adt_name(types, id), adt_shape(types, id)))
+        .collect()
+}
+
+/// The nominal types a value of these types holds, through fields,
+/// variants, elements and captures; with `signatures`, also those the
+/// parameters and results of function types name.
+pub(crate) fn reachable(
+    types: &crate::types::Types,
+    tys: &[crate::types::Ty],
+    signatures: bool,
+) -> std::collections::BTreeSet<u32> {
+    use crate::types::{AdtKind, TyKind};
+    fn walk(
+        types: &crate::types::Types,
+        ty: crate::types::Ty,
+        signatures: bool,
+        seen: &mut std::collections::BTreeSet<u32>,
+    ) {
+        let each = |tys: &[crate::types::Ty], seen: &mut std::collections::BTreeSet<u32>| {
+            tys.iter().for_each(|&t| walk(types, t, signatures, seen))
+        };
+        match types.kind(ty) {
+            TyKind::Adt(id) => {
+                if seen.insert(id.0) {
+                    match &types.adt(*id).kind {
+                        AdtKind::Record(fields) => fields.iter().for_each(|f| walk(types, f.ty, signatures, seen)),
+                        AdtKind::Newtype(inner) => walk(types, *inner, signatures, seen),
+                        AdtKind::Enum(variants) => variants.iter().for_each(|v| each(&v.payload.types(), seen)),
+                    }
+                }
+            }
+            TyKind::Tuple(items) | TyKind::Union(items) | TyKind::Opaque(_, items) => each(items, seen),
+            TyKind::Option(t)
+            | TyKind::Array(t)
+            | TyKind::Deque(t)
+            | TyKind::Set(t)
+            | TyKind::Pointer(t)
+            | TyKind::CArray(t, _)
+            | TyKind::Handle(_, t) => walk(types, *t, signatures, seen),
+            TyKind::Result(a, b) | TyKind::Map(a, b) => each(&[*a, *b], seen),
+            TyKind::Fn(params, result, ..) | TyKind::CFn(params, result, _) if signatures => {
+                each(params, seen);
+                walk(types, *result, signatures, seen);
+            }
+            _ => {}
+        }
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for &ty in tys {
+        walk(types, ty, signatures, &mut seen);
+    }
+    seen
+}
+
+/// A digest of the shapes of the nominal types these types reach, which a
+/// live build's identities carry: a function or type whose shapes change
+/// is another, and the old code keeps the old one.
+pub(crate) fn shape_digest(types: &crate::types::Types, tys: &[crate::types::Ty]) -> String {
+    let adts = reachable(types, tys, true);
+    if adts.is_empty() {
+        return String::new();
+    }
+    let text: Vec<String> = adts
+        .into_iter()
+        .map(crate::types::AdtId)
+        .map(|id| format!("{} {}", adt_name(types, id), adt_shape(types, id)))
+        .collect();
+    let text = text.join("\n");
+    crate::driver::fingerprint(&[text.as_bytes()])[..8].to_string()
+}
+
+/// The names of the nominal types a frame of a function may hold, by the
+/// types of its locals.
+pub(crate) fn held(types: &crate::types::Types, locals: &[crate::types::Ty]) -> Vec<String> {
+    reachable(types, locals, false).into_iter().map(|id| adt_name(types, crate::types::AdtId(id))).collect()
 }
 
 /// Writes a build's manifest: the build's own, or one process's after
@@ -159,6 +243,7 @@ fn save(
         "code": build.code,
         "sites": build.sites,
         "types": shapes,
+        "holds": build.holds,
     });
     let file = match pid {
         Some(pid) => manifest_path(&format!("{}-{pid}", build.id)),
@@ -237,21 +322,25 @@ fn patch(
     }
     let types = &analysis.program.as_ref().expect("a checked program").types;
     let shapes = shapes(types);
+    // A type of another shape needs that no frame of the old code holds a
+    // value of it: the runtime looks before the patch goes in.
     let mut reshaped: Vec<String> = manifest["types"]
         .as_object()
         .into_iter()
         .flatten()
         .filter(|(name, shape)| shapes.get(*name).is_some_and(|now| Some(now.as_str()) != shape.as_str()))
-        .map(|(name, _)| format!("`{name}`"))
+        .map(|(name, _)| name.clone())
         .collect();
-    if !reshaped.is_empty() {
-        reshaped.sort();
-        return Err(Refused::Restart(format!(
-            "{} changed what {} made of, and values of the old shape are alive: start the program again",
-            reshaped.join(", "),
-            if reshaped.len() == 1 { "it is" } else { "they are" }
-        )));
-    }
+    reshaped.sort();
+    let guarded: Vec<String> = manifest["holds"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(_, held)| {
+            held.as_array().into_iter().flatten().any(|t| t.as_str().is_some_and(|t| reshaped.iter().any(|r| r == t)))
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
     let known: HashMap<String, u64> = serde_json::from_value(manifest["code"].clone()).unwrap_or_default();
     let (runtime, c, data) = (strings("runtime"), strings("c"), strings("data"));
     let mut build = Build {
@@ -264,6 +353,7 @@ fn patch(
         code: HashMap::new(),
         sites: 0,
         patch: Some(Base { data: data.clone(), sites: live["sites"].as_u64().unwrap_or(0) as u32 }),
+        holds: HashMap::new(),
     };
     let object = crate::driver::compile(&analysis, true, options.target, Some(&mut build)).map_err(Refused::Failed)?;
     use crate::link::patch::External;
@@ -284,16 +374,45 @@ fn patch(
     let patch = crate::link::patch::link(&object, &resolve, "tondo_patch").map_err(Refused::Restart)?;
     let patch_file = crate::driver::cache_dir().join("live").join(format!("patch-{pid}.bin"));
     std::fs::write(&patch_file, &patch).map_err(|e| format!("cannot write {}: {e}", patch_file.display()))?;
-    let answer = ask(&format!("patch {}", patch_file.display()));
+    let request: Vec<String> = std::iter::once(format!("patch {}", patch_file.display())).chain(guarded).collect();
+    let answer = ask(&request.join("\t"));
     let _ = std::fs::remove_file(&patch_file);
     let answer = answer?;
+    if let Some(alive) = answer["alive"].as_array() {
+        let shown: Vec<String> = reshaped.iter().map(|t| format!("`{t}`")).collect();
+        let places: Vec<String> = alive
+            .iter()
+            .map(|frame| {
+                let function = frame["function"].as_str().unwrap_or_default();
+                match frame["at"].as_str().filter(|at| !at.is_empty()) {
+                    Some(at) => format!("`{function}` ({at})"),
+                    None => format!("`{function}`"),
+                }
+            })
+            .collect();
+        let mut places = places;
+        places.dedup();
+        return Err(Refused::Restart(format!(
+            "{} changed what {} made of, and values of the old shape may be alive in {}, which {} the old code: start the program again",
+            shown.join(", "),
+            if shown.len() == 1 { "it is" } else { "they are" },
+            places.join(", "),
+            if places.len() == 1 { "runs" } else { "run" }
+        )));
+    }
     if let Some(error) = answer["error"].as_str() {
         return Err(Refused::Restart(error.to_string()));
     }
     let mut changed = Vec::new();
     let mut added = Vec::new();
     for (identity, hash) in &build.code {
-        let name = identity.split('(').next().unwrap_or(identity).to_string();
+        // A closure without its place among its function's.
+        let name = identity.split('(').next().unwrap_or(identity);
+        let name = match name.rsplit_once(' ') {
+            Some((closure, place)) if place.contains('/') && closure.starts_with("closure in ") => closure,
+            _ => name,
+        }
+        .to_string();
         match known.get(identity) {
             Some(old) if old == hash => {}
             Some(_) => changed.push(name),

@@ -205,6 +205,9 @@ pub enum Rvalue {
     Select(Vec<SelectCase>, bool, Span),
     /// Whether the current task is cancelled (11.15).
     Cancelled,
+    /// In a live build, whether the debugger asked to restart this frame at
+    /// the probe of the line that starts here (toolchain 7.10).
+    Restart,
     Concat(Vec<Piece>),
     /// A tuple or record from its components in declaration order. The
     /// destination is always a fresh local, so components never alias it.

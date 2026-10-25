@@ -162,9 +162,21 @@ pub(crate) fn start_stopped() {
 #[derive(Clone, Copy, PartialEq)]
 enum Mode {
     Run,
-    Step { task: u64 },
-    Next { task: u64, frame: usize },
-    Finish { task: u64, frame: usize },
+    Step {
+        task: u64,
+    },
+    Next {
+        task: u64,
+        frame: usize,
+    },
+    Finish {
+        task: u64,
+        frame: usize,
+    },
+    /// A frame restarts: stop where its function's new call starts.
+    Restarted {
+        task: u64,
+    },
 }
 
 /// Where the task that stopped is: its probe, the frame of its function
@@ -234,20 +246,21 @@ fn tell(event: &str) {
 }
 
 /// The probe where a line starts: stops the task when the debugger asked
-/// for it here.
+/// for it here. In a live build, whether the frame is to restart: the
+/// statement after the probe then returns and calls its function again.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize, alive: *const u64) {
+pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize, alive: *const u64) -> u8 {
     if !ATTACHED.load(Ordering::Relaxed) {
-        return;
+        return 0;
     }
-    let Some(table) = table() else { return };
+    let Some(table) = table() else { return 0 };
     let site = site as usize;
     // The frame of the function that has the probe.
     let frame = unsafe { *(super::trace::frame_pointer() as *const usize) };
     let task = super::tasks::current_id();
     let marked = table.marked.get(site).is_some_and(|m| m.load(Ordering::Relaxed));
     if !marked && !HOLD.load(Ordering::Relaxed) && state().mode == Mode::Run {
-        return;
+        return restarting(frame, task);
     }
     let mut state = state();
     let why = if state.stopped.is_some() || HOLD.load(Ordering::Relaxed) {
@@ -259,6 +272,11 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
             Mode::Step { task: t } => t == task,
             Mode::Next { task: t, frame: f } => t == task && frame >= f,
             Mode::Finish { task: t, frame: f } => t == task && frame > f,
+            // The first line of the call that restarted the frame.
+            Mode::Restarted { task: t } => {
+                let function = table.sites.get(site).map(|s| table.functions[s.function].name.as_str());
+                t == task && function == Some(RESTARTED.lock().unwrap_or_else(|e| e.into_inner()).as_str())
+            }
         };
         let hit = state.breakpoints.iter().find(|b| {
             b.sites.contains(&site)
@@ -266,8 +284,12 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
         });
         match (hit, stepped) {
             (Some(breakpoint), _) => Some(format!("breakpoint {}", breakpoint.id)),
+            (None, true) if matches!(state.mode, Mode::Restarted { .. }) => {
+                RESTART_FRAME.store(0, Ordering::Relaxed);
+                Some("restart".to_string())
+            }
             (None, true) => Some("step".to_string()),
-            (None, false) => return,
+            (None, false) => return restarting(frame, task),
         }
     };
     // A patch may come while the task waits.
@@ -292,6 +314,19 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
     if paused {
         super::tasks::enter_tondo();
     }
+    restarting(frame, task)
+}
+
+/// The frame the debugger asked to restart, and its task; and the function
+/// whose new call stops at its first line.
+static RESTART_FRAME: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static RESTART_TASK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static RESTARTED: Mutex<String> = Mutex::new(String::new());
+
+/// Whether the frame at a probe is the one to restart.
+fn restarting(frame: usize, task: u64) -> u8 {
+    let asked = RESTART_FRAME.load(Ordering::Relaxed);
+    u8::from(asked != 0 && asked == frame && RESTART_TASK.load(Ordering::Relaxed) == task)
 }
 
 fn stopped_event(stop: &Stop) -> String {
@@ -328,6 +363,9 @@ pub(crate) fn answered() {
 
 /// Goes on as `mode` says.
 fn resume(mode: Mode) {
+    if !matches!(mode, Mode::Restarted { .. }) {
+        RESTART_FRAME.store(0, Ordering::Relaxed);
+    }
     let mut state = state();
     state.mode = mode;
     state.stopped = None;
@@ -472,6 +510,27 @@ pub(crate) fn command(line: &str) -> Option<String> {
         }
         "continue" => {
             go_after_answer(Mode::Run);
+            "{\"running\":true}".into()
+        }
+        "restart" => {
+            let Some(stop) = stopped() else { return Some(not_stopped()) };
+            let Some(at) = table.sites.get(stop.site) else {
+                return Some("{\"error\":\"the program has not started: `continue` starts it\"}".into());
+            };
+            let function = table.functions[at.function].name.clone();
+            if !super::live::on() {
+                return Some("{\"error\":\"a frame restarts in a live build: debug the program with --live\"}".into());
+            }
+            if function.starts_with("closure in ") {
+                return Some(
+                    "{\"error\":\"a closure's frame does not restart: step out of it with `finish`, and restart its caller\"}"
+                        .into(),
+                );
+            }
+            RESTART_TASK.store(stop.task, Ordering::Relaxed);
+            RESTART_FRAME.store(stop.frame, Ordering::Relaxed);
+            *RESTARTED.lock().unwrap_or_else(|e| e.into_inner()) = function;
+            go_after_answer(Mode::Restarted { task: stop.task });
             "{\"running\":true}".into()
         }
         "step" | "next" | "finish" => {

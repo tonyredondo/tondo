@@ -683,27 +683,42 @@ tienen nada de eso, ni su coste.
 el que dicen sus archivos ahora: compila el programa de nuevo, con las
 opciones con que se compiló y desde el directorio donde se compiló, y el
 runtime pone el código nuevo en memoria y apunta los slots a él. Las
-llamadas que empiezan después usan el código nuevo; un frame que ya estaba
-en una función cambiada termina con el viejo, y las clausuras que existían
-conservan el suyo. Cambia en caliente:
+llamadas que empiezan después usan el código nuevo, también las de las
+clausuras que ya existían, cuyo cuerpo se llama por su slot; un frame que ya
+estaba en una función cambiada termina con el viejo. Cambia en caliente:
 
-- el cuerpo de funciones, métodos, instancias genéricas, implementaciones y
-  constantes;
+- el cuerpo de funciones, métodos, instancias genéricas, implementaciones,
+  clausuras y constantes;
 - las funciones, métodos, tipos e instancias nuevas;
-- una función cuya firma cambia, que es otra: el código viejo sigue llamando
-  a la vieja.
+- los campos, las variantes o la representación de un tipo cuando ningún
+  frame en ejecución puede tener un valor suyo: el runtime para el programa,
+  mira la pila de cada tarea contra los tipos que puede tener un frame de
+  cada función, por los de sus variables, y pone el código nuevo antes de
+  seguir.
+
+La identidad de una función, de una clausura o de la identidad de un tipo
+incluye la forma de los tipos que su firma alcanza, y la de una clausura
+además su lugar entre las de su función, y cuántas tiene: lo que cambia de
+forma es otro, y el código viejo que queda, como una clausura que capturó
+valores de la forma vieja, sigue con su versión y nunca mezcla las dos.
 
 No se aplica, y el programa sigue como estaba, cuando los archivos no
-compilan, con sus diagnósticos, ni cuando cambian los campos, las variantes
-o la representación de un tipo que ya existía, cuyos valores vivos tienen la
-forma vieja, ni cuando el cambio llama a una función de C que el programa no
-enlaza: el mensaje pide arrancarlo de nuevo. `reload` dice qué funciones
-cambiaron y cuáles añadió, y termina con estado 1 si no se aplicó.
+compilan, con sus diagnósticos, cuando un tipo cambia de forma y un frame en
+ejecución puede tener un valor de la vieja, diciendo cuál y dónde, o cuando
+el cambio llama a una función de C que el programa no enlaza: el mensaje
+pide arrancarlo de nuevo. `reload` dice qué funciones cambiaron y cuáles
+añadió, y termina con estado 1 si no se aplicó.
 
 Bajo `tondo debug --live`, la orden `reload` hace lo mismo, también con el
 programa parado: los breakpoints de las líneas cambiadas paran en el código
-nuevo. `tondo dap` lanza un build vivo con `"live": true` y atiende la
-petición propia `reload`.
+nuevo. `restart`, con el programa parado, hace que el frame donde paró
+vuelva ahí como con `return`, ejecutando sus `defer` y soltando sus
+bindings, y que su función se llame otra vez con los mismos argumentos, con
+el código que tiene ahora: el programa para en la primera línea de esa
+llamada. Lo que el frame ya hizo no se deshace. Solo reinicia el frame donde
+paró la tarea, y no el de una clausura. `tondo dap` lanza un build vivo con
+`"live": true`, atiende la petición propia `reload` y `restartFrame` del
+frame donde paró la tarea.
 
 `tondo run --watch` arranca un build vivo y, cuando cambian sus archivos, lo
 cambia como `reload`; si el cambio pide arrancarlo de nuevo, o el programa

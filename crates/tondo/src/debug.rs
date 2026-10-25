@@ -37,6 +37,7 @@ print <name>                                    one binding (p)
 stack                                           where the stopped task is (bt)
 tasks                                           where each stopped task is
 reload                                          a live build: its code as its files are now (r)
+restart                                         a live build: the stopped function again, from its start
 quit                                            end the program and the debugger (q)";
 
 /// The debugger, until its input ends or `quit`; gives the exit status of
@@ -147,7 +148,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 }
             }
             "break" | "delete" | "continue" | "step" | "next" | "finish" | "pause" | "locals" | "print" | "stack"
-            | "tasks" => {
+            | "tasks" | "restart" => {
                 session.send(format!("{word} {rest}").trim_end())?;
                 let answer = session.answer()?;
                 session.show(&answer);

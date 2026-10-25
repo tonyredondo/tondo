@@ -33,9 +33,17 @@ use crate::source::Span;
 use crate::types::{CursorKind, ERR, NONE, OK, SOME, Ty, TyKind, Types};
 use std::rc::Rc;
 
-pub fn lower(program: &hir::Program) -> Vec<Body> {
+pub fn lower(program: &hir::Program, live: bool) -> Vec<Body> {
     let lower_all = |waits: Option<&[bool]>| -> Vec<Body> {
-        program.functions.iter().map(|f| lower_function(&program.types, f, waits)).collect()
+        let restart = |index: usize, f: &hir::Function| {
+            (live && !f.test && !f.name.starts_with("closure in ")).then_some(hir::FnId(index as u32))
+        };
+        program
+            .functions
+            .iter()
+            .enumerate()
+            .map(|(i, f)| lower_function(&program.types, f, waits, restart(i, f)))
+            .collect()
     };
     let plain = lower_all(None);
     let waits = waiting(&plain);
@@ -119,9 +127,13 @@ struct Builder<'a> {
     waits: Option<&'a [bool]>,
     /// Inside the lowering of a cleanup, which has no cancellation points.
     cleaning: usize,
+    /// In a live build, the function itself, which a restarted frame calls
+    /// again; and its parameters.
+    restart: Option<hir::FnId>,
+    params: Vec<Local>,
 }
 
-fn lower_function(types: &Types, function: &hir::Function, waits: Option<&[bool]>) -> Body {
+fn lower_function(types: &Types, function: &hir::Function, waits: Option<&[bool]>, restart: Option<hir::FnId>) -> Body {
     let mut b = Builder {
         types,
         function,
@@ -136,9 +148,12 @@ fn lower_function(types: &Types, function: &hir::Function, waits: Option<&[bool]
         ret: None,
         waits,
         cleaning: 0,
+        restart,
+        params: Vec::new(),
     };
     b.current = b.new_block();
-    let params = function.params.iter().map(|&p| b.bind(p)).collect();
+    let params: Vec<Local> = function.params.iter().map(|&p| b.bind(p)).collect();
+    b.params = params.clone();
     if function.result != Ty::UNIT && function.result != Ty::NEVER {
         b.ret = Some(b.new_local(function.result));
     }
@@ -551,6 +566,40 @@ impl Builder<'_> {
         self.switch_to(next);
     }
 
+    /// In a live build, where a statement starts: when the debugger asks
+    /// to restart the frame there, it returns as `return` would, running
+    /// its cleanups, and its function is called again with the same
+    /// arguments, whose code may be new (toolchain 7.10).
+    fn restart_point(&mut self, span: Span) {
+        let Some(function) = self.restart else { return };
+        if self.cleaning > 0 {
+            return;
+        }
+        let asked = self.new_local(Ty::BOOL);
+        self.assign(Place::local(asked), Rvalue::Restart, span);
+        let (again, next) = (self.new_block(), self.new_block());
+        self.terminate(Terminator::Branch(Operand::local(asked), again, next));
+        self.switch_to(again);
+        self.cleaning += 1;
+        self.cleanup_to(0, 0);
+        self.cleaning -= 1;
+        let arguments: Vec<Operand> = self.params.iter().map(|&p| Operand::local(p)).collect();
+        let call = Rvalue::Call(hir::Callee::Fn(function), arguments);
+        let result = match self.ret {
+            Some(ret) => {
+                self.assign(Place::local(ret), call, span);
+                Operand::local(ret)
+            }
+            None => {
+                let unit = self.new_local(Ty::UNIT);
+                self.assign(Place::local(unit), call, span);
+                Operand::Const(Const::Unit)
+            }
+        };
+        self.terminate(Terminator::Return(result));
+        self.switch_to(next);
+    }
+
     /// Whether a call may wait (see `waiting`).
     fn call_waits(&self, callee: hir::Callee) -> bool {
         match callee {
@@ -785,7 +834,10 @@ impl Builder<'_> {
             self.in_frame(|b| b.stmt(stmt));
         }
         let mut value = match &block.tail {
-            Some(tail) => self.expr(tail),
+            Some(tail) => {
+                self.restart_point(tail.span);
+                self.expr(tail)
+            }
             None => Operand::Const(Const::Unit),
         };
         // Leaving the scope releases its bindings and runs its cleanups, so
@@ -808,6 +860,7 @@ impl Builder<'_> {
     }
 
     fn stmt(&mut self, stmt: &hir::Stmt) {
+        self.restart_point(stmt_span(stmt));
         match stmt {
             hir::Stmt::Let(id, value) => {
                 let value = self.expr(value);
@@ -1678,5 +1731,26 @@ impl Builder<'_> {
             }
             None => Operand::Const(Const::Unit),
         }
+    }
+}
+
+/// Where a statement is, for its line's probe: a restart point comes first
+/// on the line, after the probe.
+fn stmt_span(stmt: &hir::Stmt) -> Span {
+    match stmt {
+        hir::Stmt::Let(_, value)
+        | hir::Stmt::Destructure(_, value)
+        | hir::Stmt::Expr(value)
+        | hir::Stmt::Fail(value)
+        | hir::Stmt::Return(Some(value)) => value.span,
+        hir::Stmt::Assign { span, .. }
+        | hir::Stmt::AssignSlice { span, .. }
+        | hir::Stmt::LockSync { span, .. }
+        | hir::Stmt::AwaitChange(_, span) => *span,
+        hir::Stmt::Defer { closure, .. } => closure.span,
+        hir::Stmt::Loop { condition: Some(condition), .. } => condition.span,
+        hir::Stmt::ForEach { source, .. } => source.span,
+        hir::Stmt::ForRange { start, .. } => start.span,
+        _ => Span::default(),
     }
 }

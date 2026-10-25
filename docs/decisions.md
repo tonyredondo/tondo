@@ -1874,3 +1874,24 @@ debug build's standard output now comes at every line, as to a terminal,
 for the tool that reads it. Restarting a stopped frame with the new code
 comes later.
 
+## 2026-10-25 — What a reload changes
+
+A closure made before a reload ran its old body, so a server whose handler
+is a lambda never saw a change: closures and `defer`s now call their
+bodies through slots too, and a closure's identity is its place among its
+function's closures, how many those are, its signature and the shapes it
+captures. A type changes shape in place when no running frame can hold a
+value of the old one: Tondo has no globals, so then no such value exists
+and nothing needs copying. The runtime stops the program, looks at every
+task's stack against the types each function's frames may hold, and puts
+the patch in before it goes on; otherwise it names the frame. Identities
+carry the shapes their signatures reach, so that old code that remains,
+as a closure that captured old values, keeps its version. Copying values
+into a new shape while code that reads the old one runs needs on-stack
+replacement: a milestone of its own, after the one that moves frames to the
+new code of a function without type changes. `restart` returns from the
+stopped frame as `return` would and calls its function again with the
+same arguments: parameters are borrowed, so they are still there, and the
+probe of the line answers whether to do it, so a live build checks for it
+only where a debugger can stop.
+

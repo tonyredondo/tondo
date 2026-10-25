@@ -1578,8 +1578,9 @@ debug build's process ID or name. A program it starts waits before main for brea
         name: "debug",
         description: "A command of a debugging session: break <file>:<line> [if <name> <op> <value>], delete <id>, \
 continue, step, next, finish, pause, locals, print <name>, stack, tasks, reload (a program started with `live`: \
-its code as its files are now, even while it is stopped); and wait, which waits for a running program to stop. \
-Gives the debugger's answers and events, and what the program printed.",
+its code as its files are now, even while it is stopped), restart (live: the stopped function returns and is \
+called again with the same arguments, from its start, as its code is now); and wait, which waits for a running \
+program to stop. Gives the debugger's answers and events, and what the program printed.",
         kind: Kind::Runs,
         params: &[
             ("session", "string!", "The session `debug_start` gave."),

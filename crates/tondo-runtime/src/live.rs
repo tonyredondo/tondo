@@ -63,12 +63,43 @@ pub(crate) fn describe() -> String {
 
 /// Applies the patch in the file at `path` (`link::patch` writes it): maps
 /// it, relocates it, fills what it takes of the image and the runtime,
-/// makes it code, registers its tables and points the slots at it.
-pub(crate) fn patch(path: &str) -> String {
-    match apply(path) {
-        Ok(answer) => answer,
-        Err(error) => format!("{{\"error\":{}}}", super::diagnostics::quoted(&error)),
+/// makes it code, registers its tables and points the slots at it. After a
+/// tab, the functions no task may be in, whose frames may hold values of a
+/// type the patch changes: the world stops while the stacks are looked at
+/// and the patch goes in.
+pub(crate) fn patch(request: &str) -> String {
+    let mut parts = request.split('\t');
+    let path = parts.next().unwrap_or_default();
+    let guarded: Vec<&str> = parts.collect();
+    let error = |message: &str| format!("{{\"error\":{}}}", super::diagnostics::quoted(message));
+    let answer = |result: Result<String, String>| result.unwrap_or_else(|e| error(&e));
+    if guarded.is_empty() {
+        return answer(apply(path));
     }
+    if !super::tasks::stop_world(std::time::Duration::from_secs(2)) {
+        return error("the program did not stop for the patch: reload again");
+    }
+    let mut alive = Vec::new();
+    for shot in super::tasks::snapshot(None) {
+        for &address in &shot.stack {
+            let Some(frame) = super::trace::describe(address) else { continue };
+            if guarded.contains(&frame.function) {
+                let at = frame.at.map_or(String::new(), |(file, line)| format!("{file}:{line}"));
+                alive.push(format!(
+                    "{{\"task\":{},\"function\":{},\"at\":{}}}",
+                    shot.id,
+                    super::diagnostics::quoted(frame.function),
+                    super::diagnostics::quoted(&at)
+                ));
+            }
+        }
+    }
+    let result = match alive.is_empty() {
+        true => answer(apply(path)),
+        false => format!("{{\"error\":\"alive\",\"alive\":[{}]}}", alive.join(",")),
+    };
+    super::tasks::resume_world();
+    result
 }
 
 fn apply(path: &str) -> Result<String, String> {

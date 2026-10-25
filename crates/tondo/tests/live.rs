@@ -216,3 +216,123 @@ fn watching_reloads_what_is_saved() {
     assert_eq!(server.answer("c"), "v2 c 1 after 1");
     server.stop();
 }
+
+const HANDLER: &str = r#"import std.console
+
+type Reply = { text: String }
+
+fn handle(line: String): String {
+    let reply = Reply { text: "v1 {line}" }
+    reply.text
+}
+
+fn serve(handler: fn(String): String) {
+    for {
+        match console.readLine() {
+            some(line) => console.println(handler(line))
+            none => break
+        }
+    }
+}
+
+serve((line) { "{handle(line)}!" })
+"#;
+
+/// A closure made before a reload runs its new body, and a type no
+/// running frame holds changes in place.
+#[test]
+fn closures_and_types_change() {
+    let dir = dir("live_closures");
+    let file = dir.join("handler.to");
+    std::fs::write(&file, HANDLER).unwrap();
+    let mut server = Running::start(&dir, &["run", "handler.to", "--live"]);
+    assert_eq!(server.answer("a"), "v1 a!");
+    edit(&file, "{handle(line)}!", "{handle(line)}?");
+    edit(&file, "type Reply = { text: String }", "type Reply = { text: String, size: Int }");
+    edit(
+        &file,
+        "Reply { text: \"v1 {line}\" }\n    reply.text",
+        "Reply { text: \"v2 {line}\", size: 2 }\n    \"{reply.text} {reply.size}\"",
+    );
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done, "{said}");
+    assert_eq!(server.answer("b"), "v2 b 2?");
+    server.stop();
+}
+
+const HOLDER: &str = r#"import std.console
+
+type State = { count: Int }
+
+var state = State { count: 0 }
+for {
+    match console.readLine() {
+        some(line) => {
+            state = State { count: state.count + 1 }
+            console.println("{line} {state.count}")
+        }
+        none => break
+    }
+}
+"#;
+
+#[test]
+fn a_type_a_running_frame_holds_does_not_change() {
+    let dir = dir("live_holder");
+    let file = dir.join("holder.to");
+    std::fs::write(&file, HOLDER).unwrap();
+    let mut server = Running::start(&dir, &["run", "holder.to", "--live"]);
+    assert_eq!(server.answer("a"), "a 1");
+    edit(&file, "type State = { count: Int }", "type State = { count: Int, more: Bool }");
+    edit(&file, "State { count: 0 }", "State { count: 0, more: true }");
+    edit(&file, "State { count: state.count + 1 }", "State { count: state.count + 1, more: true }");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(!done && said.contains("may be alive in `main` (holder.to:"), "{said}");
+    assert_eq!(server.answer("b"), "b 2");
+    server.stop();
+}
+
+#[test]
+fn a_stopped_frame_restarts() {
+    let dir = dir("live_restart");
+    let file = dir.join("loop.to");
+    std::fs::write(&file, LOOP).unwrap();
+    let mut debugger = Running::start(&dir, &["debug", "--live", "--json", "loop.to"]);
+    let said = |debugger: &mut Running, until: &str| -> Vec<String> {
+        let mut lines = Vec::new();
+        loop {
+            let line = debugger.lines.recv_timeout(Duration::from_secs(60)).expect("the debugger's answer");
+            let done = line.contains(until);
+            lines.push(line);
+            if done {
+                return lines;
+            }
+        }
+    };
+    let send = |debugger: &mut Running, command: &str| {
+        writeln!(debugger.input, "{command}").unwrap();
+        debugger.input.flush().unwrap();
+    };
+    said(&mut debugger, "\"start\"");
+    send(&mut debugger, "break loop.to:5");
+    said(&mut debugger, "breakpoint");
+    send(&mut debugger, "continue");
+    said(&mut debugger, "\"stopped\"");
+    edit(&file, "\"old {n}\"", "\"new {n * 10}\"");
+    send(&mut debugger, "reload");
+    said(&mut debugger, "reloaded");
+    // The frame returns and its function runs again, from its first line,
+    // with its new code.
+    send(&mut debugger, "restart");
+    let restarted = said(&mut debugger, "\"stopped\"");
+    assert!(
+        restarted.last().unwrap().contains("\"why\":\"restart\"") && restarted.last().unwrap().contains("loop.to:4"),
+        "{restarted:?}"
+    );
+    send(&mut debugger, "delete 1");
+    said(&mut debugger, "deleted");
+    send(&mut debugger, "continue");
+    let rest = said(&mut debugger, "exited");
+    assert!(rest.iter().any(|l| l == "new 0") && !rest.iter().any(|l| l == "old 0"), "{rest:?}");
+    debugger.stop();
+}
