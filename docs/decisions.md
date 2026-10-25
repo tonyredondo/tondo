@@ -1920,3 +1920,15 @@ enters the code its state was made for, which the runtime records with the
 move, so a patch that comes meanwhile does not mix two versions. Values of
 a type whose shape changes still need starting again: copying them into
 the new shape is the next milestone.
+
+## 2026-10-25 — Less under emulation
+
+CI took about 50 minutes, and 37 of them were the cases run three times
+under qemu's emulation of x86-64 on arm64: as they are, linked statically
+and as debug builds, about 12 minutes each where natively they take less
+than one. The static and debug runs repeat what the test jobs of both
+architectures already run on their own hardware, and the musl jobs
+statically too. Under emulation the tests now run once, which still checks
+that the `tondo` built across, for glibc 2.28, works where it was not
+built.
+
