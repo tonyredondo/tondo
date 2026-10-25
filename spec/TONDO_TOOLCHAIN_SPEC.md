@@ -692,11 +692,8 @@ su slot. Cambia en caliente:
 - el cuerpo de funciones, métodos, instancias genéricas, implementaciones,
   clausuras y constantes;
 - las funciones, métodos, tipos e instancias nuevas;
-- los campos, las variantes o la representación de un tipo cuando ningún
-  frame en ejecución puede tener un valor suyo: el runtime para el programa,
-  mira la pila de cada tarea contra los tipos que puede tener un frame de
-  cada función, por los de sus variables, y pone el código nuevo antes de
-  seguir.
+- los campos, las variantes o la representación de un tipo, cuyos valores
+  vivos se convierten (ver más abajo).
 
 La identidad de una función, de una clausura o de la identidad de un tipo
 incluye la forma de los tipos que su firma alcanza, y la de una clausura
@@ -720,13 +717,36 @@ parámetros o resultado cambian termina con el código viejo. Las funciones que
 no cambian siguen con su código, y un cambio posterior que las cambie mueve
 sus frames.
 
+Los valores de un tipo que cambió de forma que tiene un frame se convierten
+al pasar el frame al código nuevo: como los valores no tienen identidad
+(4.1 del lenguaje), la conversión es una copia de la forma nueva, y hasta
+entonces el frame sigue con el código viejo y sus valores viejos. Un record
+conserva sus campos por nombre; uno de un tipo que también cambió se
+convierte, uno de tipo `T` que pasa a `T?` queda `some`, uno nuevo o de otro
+tipo empieza con el valor vacío de su tipo —0, 0.0, `false`, `""`, una
+colección vacía, `none`, o un record de valores vacíos— y uno que ya no está
+se suelta. Un enum conserva sus variantes por nombre, con su payload
+convertido igual. Las colecciones, opciones, resultados y tuplas se
+convierten elemento a elemento; un map o un set inserta de nuevo sus
+elementos. Las clausuras y los valores `fn(...)` no se convierten: siguen con
+su código viejo y sus valores. Un frame no pasa, y lo dice `reload`, cuando
+un campo nuevo o de otro tipo no tiene valor vacío, como un enum, y no pasa,
+y lo dice la salida de errores del programa, cuando tiene un valor de una
+variante que ya no está.
+
+El runtime para el programa y mira la pila de cada tarea: si un frame puede
+guardar valores de un tipo que cambió de forma dentro de un valor con
+identidad —un `Ref`, un canal, una tarea o un valor de `std.sync`—, que una
+copia no puede sustituir, el código nuevo no se pone.
+
 No se aplica, y el programa sigue como estaba, cuando los archivos no
 compilan, con sus diagnósticos, cuando un tipo cambia de forma y un frame en
-ejecución puede tener un valor de la vieja, diciendo cuál y dónde, o cuando
+ejecución puede guardar un valor de la vieja en un valor con identidad,
+diciendo cuál y dónde, o cuando
 el cambio llama a una función de C que el programa no enlaza: el mensaje
 pide arrancarlo de nuevo. `reload` dice qué funciones cambiaron y cuáles
-añadió, y dónde quedan frames en el código viejo, y termina con estado 1 si
-no se aplicó.
+añadió, qué pasa con los valores que convierte, y dónde quedan frames en el
+código viejo, y termina con estado 1 si no se aplicó.
 
 Bajo `tondo debug --live`, la orden `reload` hace lo mismo, también con el
 programa parado: el frame donde paró sigue en el código nuevo al continuar, y

@@ -1932,3 +1932,28 @@ statically too. Under emulation the tests now run once, which still checks
 that the `tondo` built across, for glibc 2.28, works where it was not
 built.
 
+## 2026-10-25 — Values of a changed type convert
+
+A reload that changed what a type is made of was refused while a running
+frame could hold a value of it, which a server's state always is. Values
+have no identity (4.1 of the language), so a value of the new shape made
+from the old one is that value: a frame converts the values it holds as
+it moves to the new code, and until then it runs the old code with the
+old values, so the two never meet. The running build's manifest
+describes each type its points hold, by the keys of the types it is made
+of; the patch rebuilds the old types from it as types of their own, of
+the same names, so their layouts are the old ones, and writes for each
+pair a function that converts a value or gives `none`, as the checker
+would write it, so that layouts, references and the release of what a
+failed conversion made come from the compiler as they are. Fields go by
+name, variants by name; a new field, or one of another type, starts with
+its type's empty value, and one without, as an enum, keeps the frames on
+the old code with a hint to make it optional. A value of a variant that
+is gone is only known when the frame moves: the conversion fails, every
+value made so far is released, and the frame stays, which the program's
+error stream says. Values with identity, as a `Ref` or a channel, would
+need every frame that may reach them to move at once; a reload is
+refused while a frame may keep a value of a changed type in one.
+Frames of a function whose parameters or result change still finish on
+the old code, and numbers do not convert to other numbers.
+

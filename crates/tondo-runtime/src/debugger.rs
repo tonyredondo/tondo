@@ -343,7 +343,7 @@ fn stopped_event(stop: &Stop) -> String {
 }
 
 /// A probe's place: `file:line in function`.
-fn place(site: usize) -> String {
+pub(crate) fn place(site: usize) -> String {
     let Some(table) = table() else { return String::new() };
     let Some(at) = table.sites.get(site) else { return "the start of the program".into() };
     format!("{}:{} in {}", at.file, at.line, table.functions[at.function].name)

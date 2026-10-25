@@ -125,12 +125,12 @@ fn a_running_program_changes() {
     assert!(!done && said.contains("error[") && said.contains("the program goes on as it was"), "{said}");
     assert_eq!(server.answer("c"), "v2 C 1 after 3");
 
-    // A type with other fields would not fit the values of the old one.
+    // A type with other fields converts the values frames hold.
     edit(&file, "\"v3\" +", "\"v3 {line}\"");
     edit(&file, "type Reply = { text: String, size: Int }", "type Reply = { text: String, size: Int, more: Bool }");
     edit(&file, "size: line.length() }", "size: line.length(), more: true }");
     let (done, said) = reload(&dir, &server.pid());
-    assert!(!done && said.contains("`Reply` changed what it is made of"), "{said}");
+    assert!(done && said.contains("`Reply.more` is new: values alive get false"), "{said}");
 
     // A new type and function come in.
     edit(&file, "type Reply = { text: String, size: Int, more: Bool }", "type Reply = { text: String, size: Int }");
@@ -141,6 +141,23 @@ fn a_running_program_changes() {
     assert_eq!(server.answer("dd"), "v3 dd 4 after 4");
     server.stop();
 }
+
+const SHARED: &str = r#"import std.console
+
+type State = { count: Int }
+
+let shared = Ref(State { count: 0 })
+var seen = 0
+for {
+    match console.readLine() {
+        some(line) => {
+            seen += 1
+            console.println("v1 {line} {shared.value.count} {seen}")
+        }
+        none => break
+    }
+}
+"#;
 
 const LOOP: &str = r#"import std.console
 
@@ -202,19 +219,20 @@ fn edit_and_continue() {
 fn watching_reloads_what_is_saved() {
     let dir = dir("live_watch");
     let file = dir.join("server.to");
-    std::fs::write(&file, SERVER).unwrap();
+    std::fs::write(&file, SHARED).unwrap();
     let mut server = Running::start(&dir, &["run", "server.to", "--watch"]);
-    assert_eq!(server.answer("a"), "v1 a 1 after 1");
-    edit(&file, "\"v1 {line}\"", "\"v2 {line}\"");
+    assert_eq!(server.answer("a"), "v1 a 0 1");
+    edit(&file, "\"v1 {line}", "\"v2 {line}");
     let reloaded = server.errors.recv_timeout(Duration::from_secs(60)).expect("a reload");
-    assert!(reloaded.contains("reloaded: 1 changed (reply)"), "{reloaded}");
-    assert_eq!(server.answer("b"), "v2 b 1 after 2");
-    // A change it cannot make in place runs the program again.
-    edit(&file, "type Reply = { text: String, size: Int }", "type Reply = { text: String, size: Int, more: Bool }");
-    edit(&file, "size: line.length() }", "size: line.length(), more: true }");
+    assert!(reloaded.contains("reloaded: 1 changed (main)"), "{reloaded}");
+    assert_eq!(server.answer("b"), "v2 b 0 2");
+    // A change it cannot make in place runs the program again: a `Ref`
+    // keeps a value of a type of another shape.
+    edit(&file, "type State = { count: Int }", "type State = { count: Int, more: Bool }");
+    edit(&file, "State { count: 0 }", "State { count: 0, more: true }");
     let restarted = server.errors.recv_timeout(Duration::from_secs(60)).expect("a restart");
     assert!(restarted.contains("running it again"), "{restarted}");
-    assert_eq!(server.answer("c"), "v2 c 1 after 1");
+    assert_eq!(server.answer("c"), "v2 c 0 1");
     server.stop();
 }
 
@@ -277,19 +295,124 @@ for {
 }
 "#;
 
+/// A type of another shape converts the values a running frame holds, by
+/// field name, as the frame moves to the new code; new fields start empty.
 #[test]
-fn a_type_a_running_frame_holds_does_not_change() {
+fn values_a_running_frame_holds_convert() {
     let dir = dir("live_holder");
     let file = dir.join("holder.to");
     std::fs::write(&file, HOLDER).unwrap();
     let mut server = Running::start(&dir, &["run", "holder.to", "--live"]);
     assert_eq!(server.answer("a"), "a 1");
+    edit(&file, "type State = { count: Int }", "type State = { count: Int, label: String }");
+    edit(&file, "State { count: 0 }", "State { count: 0, label: \"\" }");
+    edit(&file, "State { count: state.count + 1 }", "State { count: state.count + 1, label: \"{state.label}+\" }");
+    edit(&file, "\"{line} {state.count}\"", "\"{line} {state.count} {state.label}\"");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done && said.contains("`State.label` is new: values alive get \"\""), "{said}");
+    assert_eq!(server.answer("b"), "b 2 +");
+    // A new field without an empty value leaves the frame on the old code.
+    edit(&file, "type State = {", "enum Mode {\n    Fast\n    Slow\n}\n\ntype State = { mode: Mode,");
+    edit(&file, "State { count: 0,", "State { mode: Mode.Fast, count: 0,");
+    edit(&file, "State { count: state.count + 1,", "State { mode: Mode.Slow, count: state.count + 1,");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(
+        done && said.contains("`State.mode` is new and `Mode` has no empty value to start with: make it `Mode?`"),
+        "{said}"
+    );
+    assert_eq!(server.answer("c"), "c 3 ++");
+    server.stop();
+}
+
+const NESTED: &str = r#"import std.console
+
+type Entry = { name: String, hits: Int }
+type State = { entries: Array[Entry], index: Map[String, Entry], total: Int, note: String }
+
+enum Mode {
+    Idle
+    Busy(Int)
+}
+
+var state = State { entries: [], index: [:], total: 0, note: "x" }
+var mode = Mode.Idle
+for {
+    match console.readLine() {
+        some(line) => {
+            if line == "busy" {
+                mode = Mode.Busy(5)
+            }
+            let entry = Entry { name: line, hits: 1 }
+            state.entries.push(entry)
+            state.index[line] = entry
+            state.total += 1
+            let shown = match mode {
+                Mode.Idle => "idle"
+                Mode.Busy(_) => "busy"
+            }
+            console.println("{line} {state.total} {state.index.length()} {shown}")
+        }
+        none => break
+    }
+}
+"#;
+
+/// Values inside collections and other values convert too; a value of a
+/// variant the new code has not leaves its frame on the old code, which
+/// the program's error stream says.
+#[test]
+fn collections_and_variants_convert() {
+    let dir = dir("live_nested");
+    let file = dir.join("nested.to");
+    std::fs::write(&file, NESTED).unwrap();
+    let mut server = Running::start(&dir, &["run", "nested.to", "--live"]);
+    assert_eq!(server.answer("a"), "a 1 1 idle");
+    edit(&file, "hits: Int }", "hits: Int, tags: Array[String] }");
+    edit(&file, "total: Int, note: String }", "total: Int, seen: Set[String] }");
+    edit(&file, "total: 0, note: \"x\" }", "total: 0, seen: Set[] }");
+    edit(&file, "hits: 1 }", "hits: 1, tags: [\"t\"] }");
+    edit(
+        &file,
+        "            state.total += 1\n",
+        "            state.total += 1\n            state.seen.insert(line)\n",
+    );
+    edit(
+        &file,
+        "{state.index.length()}",
+        "{state.index.length()} {state.entries[0].tags.length()} {state.seen.length()}",
+    );
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(
+        done && said.contains("`Entry.tags` is new: values alive get []")
+            && said.contains("`State.note` is gone")
+            && said.contains("`State.seen` is new: values alive get Set[]"),
+        "{said}"
+    );
+    assert_eq!(server.answer("b"), "b 2 2 0 1 idle");
+    assert_eq!(server.answer("busy"), "busy 3 3 0 2 busy");
+    edit(&file, "    Busy(Int)\n", "    Paused\n");
+    edit(&file, "mode = Mode.Busy(5)", "mode = Mode.Paused");
+    edit(&file, "Mode.Busy(_) => \"busy\"", "Mode.Paused => \"paused\"");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done && said.contains("`Mode.Busy` is gone: a frame holding one stays on the old code"), "{said}");
+    assert_eq!(server.answer("c"), "c 4 4 0 3 busy");
+    let told = server.errors.recv_timeout(Duration::from_secs(60)).expect("why the frame stays");
+    assert!(told.contains("one of its `Mode` values is of a variant the new code does not have"), "{told}");
+    server.stop();
+}
+
+#[test]
+fn values_kept_in_a_ref_do_not_convert() {
+    let dir = dir("live_shared");
+    let file = dir.join("shared.to");
+    std::fs::write(&file, SHARED).unwrap();
+    let mut server = Running::start(&dir, &["run", "shared.to", "--live"]);
+    assert_eq!(server.answer("a"), "v1 a 0 1");
     edit(&file, "type State = { count: Int }", "type State = { count: Int, more: Bool }");
     edit(&file, "State { count: 0 }", "State { count: 0, more: true }");
-    edit(&file, "State { count: state.count + 1 }", "State { count: state.count + 1, more: true }");
     let (done, said) = reload(&dir, &server.pid());
-    assert!(!done && said.contains("may be alive in `main` (holder.to:"), "{said}");
-    assert_eq!(server.answer("b"), "b 2");
+    assert!(!done && said.contains("`main` (shared.to:8) may keep values of the old shape in a `Ref`"), "{said}");
+    assert_eq!(server.answer("b"), "v1 b 0 2");
     server.stop();
 }
 

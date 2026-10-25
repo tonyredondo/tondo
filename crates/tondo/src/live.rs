@@ -6,9 +6,10 @@
 //! runtime maps it and points the slots at its functions, and the old
 //! code stays for the frames still in it.
 
+mod migrate;
 mod osr;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 /// What codegen needs of a live build, and what it tells of it.
@@ -31,11 +32,17 @@ pub struct Build {
     pub sites: u32,
     /// For a patch: what the running program has.
     pub patch: Option<Base>,
-    /// The nominal types a frame of each function may hold, by its name.
+    /// The nominal types a frame of each function may keep in values with
+    /// identity, which a patch does not convert, by the function's name.
     pub holds: HashMap<String, std::collections::BTreeSet<String>>,
     /// Each function's lines and points, by its identity: what moves frames
-    /// to new code.
+    /// to new code; and what each type their states hold is made of, by its
+    /// key.
     pub points: serde_json::Map<String, serde_json::Value>,
+    pub structures: serde_json::Map<String, serde_json::Value>,
+    /// For a patch: the functions that convert values of the running
+    /// program's types to the new ones, in the order of the patch's table.
+    pub migrations: Vec<crate::hir::FnId>,
 }
 
 /// A statement's place, as text.
@@ -70,6 +77,8 @@ impl Build {
             patch: None,
             holds: HashMap::new(),
             points: serde_json::Map::new(),
+            structures: serde_json::Map::new(),
+            migrations: Vec::new(),
         }
     }
 }
@@ -228,10 +237,104 @@ pub(crate) fn shape_digest(types: &crate::types::Types, tys: &[crate::types::Ty]
     crate::driver::fingerprint(&[text.as_bytes()])[..8].to_string()
 }
 
-/// The names of the nominal types a frame of a function may hold, by the
-/// types of its locals.
+/// The names of the nominal types a frame of a function may keep in values
+/// with identity, by the types of its locals: what `Ref`s, channels,
+/// tasks and `std.sync` values hold.
 pub(crate) fn held(types: &crate::types::Types, locals: &[crate::types::Ty]) -> Vec<String> {
-    reachable(types, locals, false).into_iter().map(|id| adt_name(types, crate::types::AdtId(id))).collect()
+    use crate::types::{AdtKind, TyKind};
+    fn walk(
+        types: &crate::types::Types,
+        ty: crate::types::Ty,
+        seen: &mut HashSet<u32>,
+        out: &mut Vec<crate::types::Ty>,
+    ) {
+        let mut each =
+            |tys: &[crate::types::Ty], seen: &mut HashSet<u32>| tys.iter().for_each(|&t| walk(types, t, seen, out));
+        match types.kind(ty) {
+            TyKind::Handle(_, state) => out.push(*state),
+            TyKind::Adt(id) if seen.insert(id.0) => match &types.adt(*id).kind {
+                AdtKind::Record(fields) => each(&fields.iter().map(|f| f.ty).collect::<Vec<_>>(), seen),
+                AdtKind::Newtype(inner) => each(&[*inner], seen),
+                AdtKind::Enum(variants) => variants.iter().for_each(|v| each(&v.payload.types(), seen)),
+            },
+            TyKind::Tuple(items) | TyKind::Union(items) => each(items, seen),
+            TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) => each(&[*t], seen),
+            TyKind::Result(a, b) | TyKind::Map(a, b) => each(&[*a, *b], seen),
+            _ => {}
+        }
+    }
+    let (mut seen, mut inner) = (HashSet::new(), Vec::new());
+    for &local in locals {
+        walk(types, local, &mut seen, &mut inner);
+    }
+    reachable(types, &inner, false).into_iter().map(|id| adt_name(types, crate::types::AdtId(id))).collect()
+}
+
+/// How a live build's tables and manifests name a type: as it is shown,
+/// and the digest of the shapes it reaches.
+pub(crate) fn type_key(types: &crate::types::Types, ty: crate::types::Ty) -> String {
+    let digest = shape_digest(types, &[ty]);
+    match digest.is_empty() {
+        true => types.display(ty),
+        false => format!("{} @{digest}", types.display(ty)),
+    }
+}
+
+/// What a type is made of, by the keys of the types it is made of, which
+/// `out` gets too: what a patch rebuilds a type of an older shape from.
+pub(crate) fn describe(
+    types: &crate::types::Types,
+    ty: crate::types::Ty,
+    out: &mut serde_json::Map<String, serde_json::Value>,
+) -> String {
+    use crate::types::{AdtKind, Payload, TyKind};
+    use serde_json::json;
+    let key = type_key(types, ty);
+    if out.contains_key(&key) {
+        return key;
+    }
+    // Recursive types reach themselves.
+    out.insert(key.clone(), serde_json::Value::Null);
+    let keys = |tys: &[crate::types::Ty], out: &mut serde_json::Map<String, serde_json::Value>| -> Vec<String> {
+        tys.iter().map(|&t| describe(types, t, out)).collect()
+    };
+    let fields = |fields: &[crate::types::Field], out: &mut serde_json::Map<String, serde_json::Value>| {
+        let described: Vec<serde_json::Value> =
+            fields.iter().map(|f| json!([f.name, describe(types, f.ty, out), f.private])).collect();
+        described
+    };
+    let described = match types.kind(ty).clone() {
+        TyKind::Adt(id) => {
+            let name = adt_name(types, id);
+            match types.adt(id).kind.clone() {
+                AdtKind::Record(record) => json!({ "adt": name, "record": fields(&record, out) }),
+                AdtKind::Newtype(inner) => json!({ "adt": name, "newtype": describe(types, inner, out) }),
+                AdtKind::Enum(variants) => {
+                    let variants: Vec<serde_json::Value> = variants
+                        .iter()
+                        .map(|v| match &v.payload {
+                            Payload::Unit => json!({ "name": v.name }),
+                            Payload::Tuple(items) => json!({ "name": v.name, "tuple": keys(items, out) }),
+                            Payload::Record(record) => json!({ "name": v.name, "record": fields(record, out) }),
+                        })
+                        .collect();
+                    json!({ "adt": name, "enum": variants })
+                }
+            }
+        }
+        TyKind::Option(t) => json!({ "option": keys(&[t], out) }),
+        TyKind::Array(t) => json!({ "array": keys(&[t], out) }),
+        TyKind::Deque(t) => json!({ "deque": keys(&[t], out) }),
+        TyKind::Set(t) => json!({ "set": keys(&[t], out) }),
+        TyKind::Map(k, v) => json!({ "map": keys(&[k, v], out) }),
+        TyKind::Result(a, b) => json!({ "result": keys(&[a, b], out) }),
+        TyKind::Tuple(items) => json!({ "tuple": keys(&items, out) }),
+        // What a patch does not rebuild: scalars, which do not change, and
+        // values with identity or code.
+        _ => json!({ "other": types.display(ty) }),
+    };
+    out.insert(key.clone(), described);
+    key
 }
 
 /// Writes a build's manifest: the build's own, or one process's after
@@ -262,6 +365,7 @@ fn save(
         "types": shapes,
         "holds": build.holds,
         "points": build.points,
+        "structures": build.structures,
     });
     let file = match pid {
         Some(pid) => manifest_path(&format!("{}-{pid}", build.id)),
@@ -279,6 +383,8 @@ pub struct Reloaded {
     pub added: Vec<String>,
     pub moves: usize,
     pub stays: Vec<String>,
+    /// What converting values of types of another shape does to them.
+    pub notes: Vec<String>,
 }
 
 /// Why a reload did not happen: the program does not compile, or the
@@ -338,14 +444,15 @@ fn patch(
     let strings = |key: &str| -> Vec<String> {
         manifest[key].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(String::from)).collect()
     };
-    let analysis = crate::driver::analyze(path)?;
+    let mut analysis = crate::driver::analyze(path)?;
     if analysis.program.is_none() {
         return Err(Refused::Diagnostics(analysis.diags.render(&analysis.sources)));
     }
     let types = &analysis.program.as_ref().expect("a checked program").types;
     let shapes = shapes(types);
-    // A type of another shape needs that no frame of the old code holds a
-    // value of it: the runtime looks before the patch goes in.
+    // A type of another shape needs that no frame of the old code keeps a
+    // value of it in a value with identity, which no conversion reaches:
+    // the runtime looks before the patch goes in.
     let mut reshaped: Vec<String> = manifest["types"]
         .as_object()
         .into_iter()
@@ -381,7 +488,29 @@ fn patch(
         }),
         holds: HashMap::new(),
         points: serde_json::Map::new(),
+        structures: serde_json::Map::new(),
+        migrations: Vec::new(),
     };
+    // The values of the old types frames hold convert as the frames move.
+    let mut wanted: Vec<String> = manifest["points"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .flat_map(|(_, function)| function["points"].as_array().into_iter().flatten())
+        .flat_map(|point| point["state"].as_array().into_iter().flatten())
+        .filter_map(|item| item["type"].as_str().map(String::from))
+        .collect();
+    wanted.sort();
+    wanted.dedup();
+    let empty = serde_json::Map::new();
+    let structures = manifest["structures"].as_object().unwrap_or(&empty);
+    let program = analysis.program.as_mut().expect("a checked program");
+    let migrated = migrate::add(program, structures, &wanted);
+    let mut migrations = osr::Migrations { refused: migrated.refused, ..osr::Migrations::default() };
+    for (key, (function, new)) in migrated.conversions {
+        migrations.conversions.insert(key, (build.migrations.len(), new));
+        build.migrations.push(function);
+    }
     let object = crate::driver::compile(&analysis, true, options.target, Some(&mut build)).map_err(Refused::Failed)?;
     use crate::link::patch::External;
     let resolve = |name: &str| -> Result<External, String> {
@@ -408,7 +537,7 @@ fn patch(
         .map(|(i, _)| i.clone())
         .collect();
     let points = serde_json::Value::Object(build.points.clone());
-    let moves = osr::moves(&manifest["points"], &points, &set, &build.slots);
+    let moves = osr::moves(&manifest["points"], &points, &set, &build.slots, &migrations);
     patch.extend(&moves.bytes);
     let patch_file = crate::driver::cache_dir().join("live").join(format!("patch-{pid}.bin"));
     std::fs::write(&patch_file, &patch).map_err(|e| format!("cannot write {}: {e}", patch_file.display()))?;
@@ -431,11 +560,10 @@ fn patch(
         let mut places = places;
         places.dedup();
         return Err(Refused::Restart(format!(
-            "{} changed what {} made of, and values of the old shape may be alive in {}, which {} the old code: start the program again",
+            "{} changed what {} made of, and {} may keep values of the old shape in a `Ref`, a channel, a task or a value of `std.sync`, which a reload does not convert: start the program again",
             shown.join(", "),
             if shown.len() == 1 { "it is" } else { "they are" },
             places.join(", "),
-            if places.len() == 1 { "runs" } else { "run" }
         )));
     }
     if let Some(error) = answer["error"].as_str() {
@@ -444,8 +572,12 @@ fn patch(
     let mut changed = Vec::new();
     let mut added = Vec::new();
     for (identity, hash) in &build.code {
-        // A closure without its place among its function's.
+        // A closure without its place among its function's; conversions
+        // are the patch's own.
         let name = identity.split('(').next().unwrap_or(identity);
+        if name.starts_with("migrate ") {
+            continue;
+        }
         let name = match name.rsplit_once(' ') {
             Some((closure, place)) if place.contains('/') && closure.starts_with("closure in ") => closure,
             _ => name,
@@ -460,7 +592,11 @@ fn patch(
     let mut code = known;
     code.extend(build.code.drain());
     build.code = code;
-    // The points of the code each function runs now.
+    // The points of the code each function runs now, and what the types
+    // of their states are made of.
+    for (key, structure) in manifest["structures"].as_object().into_iter().flatten() {
+        build.structures.entry(key.clone()).or_insert_with(|| structure.clone());
+    }
     let mut points = manifest["points"].as_object().cloned().unwrap_or_default();
     for identity in &set {
         if let Some(entry) = build.points.get(identity) {
@@ -473,7 +609,10 @@ fn patch(
     changed.dedup();
     added.sort();
     added.dedup();
-    Ok(Reloaded { changed, added, moves: moves.count, stays: moves.stays })
+    let mut notes = migrated.notes;
+    notes.sort();
+    notes.dedup();
+    Ok(Reloaded { changed, added, moves: moves.count, stays: moves.stays, notes })
 }
 
 /// `tondo reload <pid|name>`: the running live program `name`.
@@ -500,16 +639,22 @@ impl Reloaded {
         if self.moves > 0 {
             summary.push_str("; frames move to the new code at their next statement");
         }
-        for stay in &self.stays {
+        for line in self.notes.iter().chain(&self.stays) {
             summary.push('\n');
-            summary.push_str(stay);
+            summary.push_str(line);
         }
         summary
     }
 
     /// As JSON, for the debugger's and agents' protocols.
     pub fn json(&self) -> serde_json::Value {
-        serde_json::json!({ "changed": self.changed, "added": self.added, "moves": self.moves, "stays": self.stays })
+        serde_json::json!({
+            "changed": self.changed,
+            "added": self.added,
+            "moves": self.moves,
+            "stays": self.stays,
+            "converted": self.notes,
+        })
     }
 
     fn changes(&self) -> String {

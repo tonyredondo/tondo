@@ -16,8 +16,15 @@ pub(super) struct Moves {
 }
 
 /// The moves from the points of `old` to those of `new`, by identity, for
-/// the functions `changed`, whose slots are those of `slots`.
-pub(super) fn moves(old: &Value, new: &Value, changed: &[String], slots: &HashMap<String, u32>) -> Moves {
+/// the functions `changed`, whose slots are those of `slots`; values of
+/// types of another shape go through the patch's conversions.
+pub(super) fn moves(
+    old: &Value,
+    new: &Value,
+    changed: &[String],
+    slots: &HashMap<String, u32>,
+    migrations: &Migrations,
+) -> Moves {
     let mut entries = Vec::new();
     let mut stays = Vec::new();
     for identity in changed {
@@ -64,10 +71,10 @@ pub(super) fn moves(old: &Value, new: &Value, changed: &[String], slots: &HashMa
         for (index, point) in from.iter().enumerate() {
             let (Some(site), Some(pair)) = (point["site"].as_i64(), pairs[index]) else { continue };
             let target = &to[pair];
-            match copies(point, target, &paths) {
-                Ok(copies) => {
+            match copies(point, target, &paths, migrations) {
+                Ok((copies, conversions)) => {
                     let word = |key: &str| target[key].as_u64().unwrap_or(0) as u32;
-                    entries.push((site, slot, word("point"), word("size"), copies));
+                    entries.push((site, slot, word("point"), word("size"), copies, conversions));
                 }
                 Err(reason) => {
                     let line = after["top"].as_u64().unwrap_or(0) + target["line"].as_u64().unwrap_or(0);
@@ -108,13 +115,18 @@ pub(super) fn moves(old: &Value, new: &Value, changed: &[String], slots: &HashMa
     let count = entries.len();
     let mut bytes = Vec::new();
     if count > 0 {
-        bytes.extend(b"OSR1");
+        bytes.extend(b"OSR2");
         bytes.extend((count as u32).to_le_bytes());
-        for (site, slot, point, size, copies) in entries {
+        for (site, slot, point, size, copies, conversions) in entries {
             bytes.extend(site.to_le_bytes());
             bytes.extend([slot, point, size, copies.len() as u32].into_iter().flat_map(u32::to_le_bytes));
             for (from, to, size) in copies {
                 bytes.extend([from, to, size].into_iter().flat_map(u32::to_le_bytes));
+            }
+            bytes.extend((conversions.len() as u32).to_le_bytes());
+            for (from, to, index, name) in conversions {
+                bytes.extend([from, to, index, name.len() as u32].into_iter().flat_map(u32::to_le_bytes));
+                bytes.extend(name.as_bytes());
             }
         }
     }
@@ -184,8 +196,15 @@ fn line_map(old: &[u64], new: &[u64]) -> HashMap<usize, usize> {
 }
 
 /// Where each part of the state of the old point goes in that of the new,
-/// or why the frame cannot move there.
-fn copies(old: &Value, new: &Value, paths: &HashMap<&str, &str>) -> Result<Vec<(u32, u32, u32)>, String> {
+/// as it is or through a conversion of the patch, or why the frame cannot
+/// move there.
+#[allow(clippy::type_complexity)]
+fn copies(
+    old: &Value,
+    new: &Value,
+    paths: &HashMap<&str, &str>,
+    migrations: &Migrations,
+) -> Result<(Vec<(u32, u32, u32)>, Vec<(u32, u32, u32, String)>), String> {
     if old["defers"] != new["defers"] {
         return Err("the `defer`s registered there changed".into());
     }
@@ -206,6 +225,7 @@ fn copies(old: &Value, new: &Value, paths: &HashMap<&str, &str>) -> Result<Vec<(
         .collect();
     let named = |key: &str| key.rsplit_once('/').map_or(key, |(name, _)| name).to_string();
     let mut copies = Vec::new();
+    let mut conversions = Vec::new();
     for item in list(new, "state") {
         let key = item["key"].as_str().unwrap_or_default();
         let made = key.starts_with('#');
@@ -216,12 +236,6 @@ fn copies(old: &Value, new: &Value, paths: &HashMap<&str, &str>) -> Result<Vec<(
             });
         };
         let (_, from) = given.swap_remove(index);
-        if from["type"] != item["type"] || from["size"] != item["size"] {
-            return Err(match made {
-                true => "a value of the statement around it has another type".into(),
-                false => format!("`{}` has another type", named(key)),
-            });
-        }
         if from["lent"].as_bool() == Some(true) || item["lent"].as_bool() == Some(true) {
             return Err(match made {
                 true => "it is inside a `lock` or borrows a value there".into(),
@@ -229,7 +243,26 @@ fn copies(old: &Value, new: &Value, paths: &HashMap<&str, &str>) -> Result<Vec<(
             });
         }
         let word = |v: &Value, key: &str| v[key].as_u64().unwrap_or(0) as u32;
-        copies.push((word(from, "offset"), word(item, "offset"), word(item, "size")));
+        let (old_type, new_type) =
+            (from["type"].as_str().unwrap_or_default(), item["type"].as_str().unwrap_or_default());
+        if old_type == new_type && from["size"] == item["size"] {
+            copies.push((word(from, "offset"), word(item, "offset"), word(item, "size")));
+            continue;
+        }
+        // A value of a type of another shape converts, if it can.
+        match migrations.conversions.get(old_type) {
+            Some(&(index, ref converted)) if converted == new_type => {
+                let shown = new_type.split(" @").next().unwrap_or(new_type).to_string();
+                conversions.push((word(from, "offset"), word(item, "offset"), index as u32, shown));
+            }
+            _ => {
+                return Err(match migrations.refused.get(old_type) {
+                    Some(why) => why.clone(),
+                    None if made => "a value of the statement around it has another type".into(),
+                    None => format!("`{}` has another type", named(key)),
+                });
+            }
+        }
     }
     // What the old code owns there and the new does not would never be
     // released.
@@ -239,7 +272,16 @@ fn copies(old: &Value, new: &Value, paths: &HashMap<&str, &str>) -> Result<Vec<(
             false => format!("`{}` would not be released", named(key)),
         });
     }
-    Ok(copies)
+    Ok((copies, conversions))
+}
+
+/// The patch's conversions of values of old types, by the old type's key:
+/// each one's place in the patch's table and the new type's key; and why
+/// values of other old types do not convert.
+#[derive(Default)]
+pub(super) struct Migrations {
+    pub conversions: HashMap<String, (usize, String)>,
+    pub refused: HashMap<String, String>,
 }
 
 /// Lines as a short list: `3, 5–8`.

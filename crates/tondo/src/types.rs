@@ -562,6 +562,11 @@ impl Types {
         &self.kinds[ty.0 as usize]
     }
 
+    /// Every type there is.
+    pub fn all(&self) -> impl Iterator<Item = Ty> + use<> {
+        (0..self.kinds.len() as u32).map(Ty)
+    }
+
     /// Declares a nominal type; its definition is filled in by `define_adt`.
     pub fn declare_adt(&mut self, name: String) -> (AdtId, Ty) {
         let id = AdtId(self.adts.len() as u32);

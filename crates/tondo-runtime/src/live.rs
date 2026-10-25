@@ -162,9 +162,27 @@ fn apply(path: &str) -> Result<String, String> {
     let table = unsafe { base.add(table) } as *const u64;
     let read = |index: usize| unsafe { *table.add(index) };
     let (trace, debug, sites, slots, identities) = (read(0), read(1), read(2), read(3) as usize, read(4) as usize);
-    if table as usize + (5 + slots * 2 + identities * 2) * 8 > base as usize + size {
+    if table as usize + (6 + slots * 2 + identities * 2) * 8 > base as usize + size {
         return Err("the patch is damaged".into());
     }
+    // Then its conversions of the old values frames bring.
+    let at = 5 + slots * 2 + identities * 2;
+    let count = read(at) as usize;
+    if table as usize + (6 + slots * 2 + identities * 2 + count * 3) * 8 > base as usize + size {
+        return Err("the patch is damaged".into());
+    }
+    let conversions: Vec<Conversion> = (0..count)
+        .map(|index| {
+            let word = |offset: usize| read(at + 1 + index * 3 + offset) as usize;
+            unsafe {
+                Conversion {
+                    convert: std::mem::transmute::<usize, Convert>(word(0)),
+                    from: (word(1) != 0).then(|| std::mem::transmute::<usize, Release>(word(1))),
+                    to: (word(2) != 0).then(|| std::mem::transmute::<usize, Release>(word(2))),
+                }
+            }
+        })
+        .collect();
     let current = super::debugger::sites() as u64;
     if debug != 0 && sites != current {
         return Err("the program changed since the patch was made: reload again".into());
@@ -199,14 +217,18 @@ fn apply(path: &str) -> Result<String, String> {
     // before, when the state would reach the old code. Each enters this
     // patch's code, which its state is for, even once another came.
     for (_, found) in &mut moves {
-        if found.slot >= info.capacity {
+        if found.slot >= info.capacity || found.conversions.iter().any(|c| c.index as usize >= conversions.len()) {
             return Err("the patch is damaged".into());
+        }
+        for converted in &mut found.conversions {
+            converted.conversion = Some(conversions[converted.index as usize]);
         }
         found.code = unsafe { (info.slots.add(found.slot as usize) as *const AtomicU64).as_ref() }
             .expect("the image's slots")
             .load(Ordering::Acquire);
     }
     let moving = moves.len();
+    TOLD.lock().unwrap_or_else(|e| e.into_inner()).clear();
     *MOVES.write().unwrap_or_else(|e| e.into_inner()) = moves;
     PENDING.store(moving > 0, Ordering::Release);
     let patches = PATCHES.fetch_add(1, Ordering::AcqRel) + 1;
@@ -282,21 +304,46 @@ fn executable(base: *mut u8, length: usize) -> Result<(), String> {
 
 /// How a frame at a site of the old code moves to the new: the slot of its
 /// function and the code it enters, the point of that code, the size of
-/// its state, and where each part of the old state goes in it.
+/// its state, and where each part of the old state goes in it, as it is or
+/// converted to a value of a type of another shape.
 struct Move {
     slot: u64,
     code: u64,
     point: u32,
     size: u32,
     copies: Vec<(u32, u32, u32)>,
+    conversions: Vec<Converted>,
 }
+
+/// A part of the old state that a conversion of the patch makes a value
+/// of the new code: where it is and goes, which conversion, and its type.
+struct Converted {
+    from: u32,
+    to: u32,
+    index: u32,
+    name: String,
+    conversion: Option<Conversion>,
+}
+
+/// A conversion: what writes the value of the new type, given the old,
+/// and whether it could; and what releases a value of either type.
+#[derive(Clone, Copy)]
+struct Conversion {
+    convert: Convert,
+    from: Option<Release>,
+    to: Option<Release>,
+}
+
+type Convert = unsafe extern "C" fn(*const u8, *mut u8) -> u8;
+type Release = unsafe extern "C" fn(*mut u8);
 
 /// The moves of the last patch, by the site of the old code.
 static MOVES: std::sync::RwLock<Vec<(i64, Move)>> = std::sync::RwLock::new(Vec::new());
 static PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// The moves a patch ends with, after `OSR1`: their count, then each
-/// one's site, slot, point, size, count of copies and the copies.
+/// The moves a patch ends with, after `OSR2`: their count, then each
+/// one's site, slot, point, size, count of copies and the copies, and count
+/// of conversions and each one's place, conversion and type's name.
 fn moves(bytes: &[u8]) -> Result<Vec<(i64, Move)>, String> {
     if bytes.is_empty() {
         return Ok(Vec::new());
@@ -309,7 +356,7 @@ fn moves(bytes: &[u8]) -> Result<Vec<(i64, Move)>, String> {
         Ok(slice)
     };
     let u32_of = |b: &[u8]| u32::from_le_bytes(b.try_into().expect("4 bytes"));
-    if take(4)? != b"OSR1" {
+    if take(4)? != b"OSR2" {
         return Err(damaged());
     }
     let count = u32_of(take(4)?);
@@ -322,7 +369,13 @@ fn moves(bytes: &[u8]) -> Result<Vec<(i64, Move)>, String> {
         for _ in 0..copies {
             list.push((u32_of(take(4)?), u32_of(take(4)?), u32_of(take(4)?)));
         }
-        moves.push((site, Move { slot, code: 0, point, size, copies: list }));
+        let mut conversions = Vec::new();
+        for _ in 0..u32_of(take(4)?) {
+            let (from, to, index, length) = (u32_of(take(4)?), u32_of(take(4)?), u32_of(take(4)?), u32_of(take(4)?));
+            let name = String::from_utf8_lossy(take(length as usize)?).into_owned();
+            conversions.push(Converted { from, to, index, name, conversion: None });
+        }
+        moves.push((site, Move { slot, code: 0, point, size, copies: list, conversions }));
     }
     moves.sort_by_key(|(site, _)| *site);
     Ok(moves)
@@ -351,11 +404,51 @@ pub unsafe extern "C" fn tondo_rt_live_transfer(site: i64, old: *const u8) -> u6
     unsafe {
         (state as *mut u64).write(found.point as u64);
         (state as *mut u64).add(1).write(found.code);
+        // Every value converts, or the frame stays as it was.
+        for (index, converted) in found.conversions.iter().enumerate() {
+            let conversion = converted.conversion.expect("a conversion of the patch");
+            if (conversion.convert)(old.add(converted.from as usize), state.add(16 + converted.to as usize)) == 0 {
+                for done in &found.conversions[..index] {
+                    if let Some(release) = done.conversion.and_then(|c| c.to) {
+                        release(state.add(16 + done.to as usize));
+                    }
+                }
+                libc::free(state as *mut libc::c_void);
+                stays(site, &converted.name);
+                return 0;
+            }
+        }
+        // The old values are the new ones now.
+        for converted in &found.conversions {
+            if let Some(release) = converted.conversion.and_then(|c| c.from) {
+                release(old.add(converted.from as usize) as *mut u8);
+            }
+        }
         for &(from, to, size) in &found.copies {
             std::ptr::copy_nonoverlapping(old.add(from as usize), state.add(16 + to as usize), size as usize);
         }
     }
     state as u64
+}
+
+/// The types whose values did not convert since the last patch.
+static TOLD: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Says, once for each type and patch, that a frame stays on the old code
+/// because one of its values does not convert.
+fn stays(site: i64, name: &str) {
+    let mut told = TOLD.lock().unwrap_or_else(|e| e.into_inner());
+    if told.iter().any(|t| t == name) {
+        return;
+    }
+    told.push(name.to_string());
+    let place = super::debugger::place(site as usize);
+    let _ = std::io::Write::write_fmt(
+        &mut std::io::stderr(),
+        format_args!(
+            "tondo runtime: a frame at {place} stays on the old code: one of its `{name}` values is of a variant the new code does not have\n"
+        ),
+    );
 }
 
 /// Releases a state once the new code took it.

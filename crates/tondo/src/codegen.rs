@@ -814,6 +814,27 @@ pub fn compile(
         job(callback.inner, &mut context, Some(&bodies[callback.target.0 as usize].name), Vec::new());
         cg.module.clear_context(&mut context);
     }
+    // A patch's conversions of the running program's values, which the
+    // runtime calls as frames move, with the glue that releases what they
+    // convert from and to.
+    for function in live.as_ref().map(|build| build.migrations.clone()).unwrap_or_default() {
+        let body = &bodies[function.0 as usize];
+        let mut signature = cg.module.make_signature();
+        signature.params.extend([AbiParam::new(POINTER), AbiParam::new(POINTER)]);
+        signature.returns.push(AbiParam::new(types::I8));
+        let name = format!("tondo_convert{}", function.0);
+        let id = cg.module.declare_function(&name, Linkage::Local, &signature).map_err(|e| e.to_string())?;
+        context.func.signature = signature;
+        context.func.name = UserFuncName::user(7, id.as_u32());
+        define_conversion(&mut cg, body, function, &mut context.func, &mut builder_context);
+        job(id, &mut context, None, Vec::new());
+        cg.module.clear_context(&mut context);
+        let TyKind::Option(new) = *cg.types.kind(body.result) else { unreachable!("a conversion gives `T?`") };
+        let old = body.locals[body.params[0].0 as usize];
+        let mut release = |ty: Ty| cg.types.needs_drop(ty).then(|| cg.glue(Glue::Release, ty));
+        let entry = (id, release(old), release(new));
+        cg.live.as_mut().expect("a live build").conversions.push(entry);
+    }
     while let Some((kind, ty, id)) = cg.pending_glue.pop() {
         context.func.signature = cg.glue_signature(kind);
         context.func.name = UserFuncName::user(2, id.as_u32());
@@ -903,6 +924,9 @@ struct LiveCodegen {
     /// unless it changes.
     patch: Option<(Vec<String>, u32)>,
     known: HashMap<String, u64>,
+    /// A patch's conversions, and the release glue of what each converts
+    /// from and to.
+    conversions: Vec<(FuncId, Option<FuncId>, Option<FuncId>)>,
     /// The word of each function's first site, the function, and the
     /// site's number in the build.
     sites: Vec<(DataId, usize, usize)>,
@@ -986,6 +1010,7 @@ impl LiveCodegen {
             code: HashMap::new(),
             patch,
             known,
+            conversions: Vec::new(),
             sites: Vec::new(),
             point_sites: HashMap::new(),
             layouts: HashMap::new(),
@@ -1614,7 +1639,7 @@ impl Codegen<'_> {
                         let ty = body.locals[local.0 as usize];
                         Some(serde_json::json!({
                             "key": key,
-                            "type": self.identity_key(ty),
+                            "type": crate::live::describe(self.types, ty, &mut build.structures),
                             "lent": matches!(kept, StateKept::Pointer(_)),
                             "owned": self.types.needs_drop(ty),
                             "offset": offset,
@@ -1750,7 +1775,11 @@ impl Codegen<'_> {
             .filter(|&index| live.known.get(&live.identities[index]) != live.code.get(&self.functions[index]))
             .collect();
         let start = 40 + set.len() * 16;
-        let mut bytes = vec![0u8; start + added.len() * 16];
+        // Then the conversions: their count, and each one's function and
+        // the release glue of what it converts from and to.
+        let conversions = start + added.len() * 16;
+        let mut bytes = vec![0u8; conversions + 8 + live.conversions.len() * 24];
+        bytes[conversions..conversions + 8].copy_from_slice(&(live.conversions.len() as u64).to_le_bytes());
         bytes[16..24].copy_from_slice(&(sites as u64).to_le_bytes());
         bytes[24..32].copy_from_slice(&(set.len() as u64).to_le_bytes());
         bytes[32..40].copy_from_slice(&(added.len() as u64).to_le_bytes());
@@ -1778,6 +1807,15 @@ impl Codegen<'_> {
             let identity = self.module.declare_data_in_data(*id, &mut table);
             table.write_data_addr((start + index * 16 + 8) as u32, identity, 0);
             build.data.push(name.clone());
+        }
+        for (index, &(convert, from, to)) in live.conversions.iter().enumerate() {
+            let at = conversions + 8 + index * 24;
+            for (offset, function) in [(0, Some(convert)), (8, from), (16, to)] {
+                if let Some(function) = function {
+                    let function = self.module.declare_func_in_data(function, &mut table);
+                    table.write_function_addr((at + offset) as u32, function);
+                }
+            }
         }
         self.module.define_data(live.info, &table).map_err(|e| e.to_string())?;
         build.sites = sites + self.debug_sites.len() as u32;
@@ -1983,11 +2021,7 @@ impl Codegen<'_> {
     /// How a live build's tables name a type's identity: by its name and
     /// the digest of its shape.
     fn identity_key(&self, ty: Ty) -> String {
-        let digest = crate::live::shape_digest(self.types, &[ty]);
-        match digest.is_empty() {
-            true => self.types.display(ty),
-            false => format!("{} @{digest}", self.types.display(ty)),
-        }
+        crate::live::type_key(self.types, ty)
     }
 
     /// A static, immortal string object: `[refcount][length][bytes]`.
@@ -3163,6 +3197,76 @@ fn define_forwarder(cg: &mut Codegen, target: FnId, func: &mut ir::Function, fbc
     fb.seal_all_blocks();
     let config = cg.module.isa().frontend_config();
     fb.finalize(config);
+}
+
+/// What the runtime calls to convert a value a frame brings to the new code
+/// (toolchain 7.10): the conversion `function`, given the value at the
+/// first address, writes what it gives at the second when that is `some`;
+/// the answer is whether it was.
+fn define_conversion(
+    cg: &mut Codegen,
+    body: &Body,
+    function: FnId,
+    func: &mut ir::Function,
+    fbc: &mut FunctionBuilderContext,
+) {
+    let fb = FunctionBuilder::new(func, fbc);
+    let mut e = Emit { cg, fb };
+    let entry = e.fb.create_block();
+    e.fb.append_block_params_for_function_params(entry);
+    e.fb.switch_to_block(entry);
+    let (from, to) = (e.fb.block_params(entry)[0], e.fb.block_params(entry)[1]);
+    let option = body.result;
+    let TyKind::Option(new) = *e.cg.types.kind(option) else { unreachable!("a conversion gives `T?`") };
+    let old = body.locals[body.params[0].0 as usize];
+    let mut values = Vec::new();
+    let result = (e.cg.class(option) == Class::Memory).then(|| {
+        let layout = e.cg.layout(option);
+        let data = StackSlotData::new(StackSlotKind::ExplicitSlot, layout.size, layout.align.trailing_zeros() as u8);
+        let slot = e.fb.create_sized_stack_slot(data);
+        e.fb.ins().stack_addr(POINTER, slot, 0)
+    });
+    values.extend(result);
+    match e.value_at(from, old) {
+        Val::Scalar(value) | Val::Memory(value) => values.push(value),
+        Val::Zero => {}
+    }
+    let call = call_body(e.cg, &mut e.fb, function, &values);
+    let value = match result {
+        Some(address) => Val::Memory(address),
+        None => Val::Scalar(e.fb.inst_results(call)[0]),
+    };
+    let tag = e.tag(option, value);
+    let (some, none) = (e.fb.create_block(), e.fb.create_block());
+    e.fb.ins().brif(tag, some, &[], none, &[]);
+    e.fb.switch_to_block(some);
+    match value {
+        // `T?` of an address is the address.
+        Val::Scalar(address) if e.cg.class(new) != Class::Zero => {
+            e.fb.ins().store(flags(), address, to, 0);
+        }
+        Val::Memory(base) => {
+            let slot = e.cg.slot(option, Proj::Variant(SOME, 0));
+            let at = e.component_address(base, &slot);
+            let converted = e.value_at(at, new);
+            e.store_val(to, new, converted);
+            // A boxed value is shared with its box, which goes.
+            if slot.boxed {
+                let copy = e.value_at(to, new);
+                e.refcount(new, copy, false);
+                e.refcount(option, value, true);
+            }
+        }
+        _ => {}
+    }
+    let yes = e.fb.ins().iconst(types::I8, 1);
+    e.fb.ins().return_(&[yes]);
+    e.fb.switch_to_block(none);
+    let no = e.fb.ins().iconst(types::I8, 0);
+    e.fb.ins().return_(&[no]);
+    e.fb.seal_all_blocks();
+    let config = e.cg.module.isa().frontend_config();
+    e.fb.finalize(config);
 }
 
 /// A thunk with the uniform convention of `fn(...)` values that ignores the
