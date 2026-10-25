@@ -972,3 +972,42 @@ fn a_frame_moves_past_several_reloads() {
     assert_eq!(server.answer("b"), "v1 b 1 now 2");
     server.stop();
 }
+
+const LOCKED: &str = r#"import std.console
+import std.sync
+
+type State = { hits: Int }
+
+let state: sync.Mutex[State] = sync.Mutex(State { hits: 0 })
+for {
+    match console.readLine() {
+        some(line) => {
+            let said = state.update((s) {
+                s.hits += 1
+                "v1 {line} {s.hits}"
+            })
+            console.println(said)
+        }
+        none => break
+    }
+}
+"#;
+
+/// A place inside a `lock` keeps its frame on the old code, and the report
+/// says so, rather than naming the lock's own value.
+#[test]
+fn a_frame_inside_a_lock_stays() {
+    let dir = dir("live_locked");
+    let file = dir.join("locked.to");
+    std::fs::write(&file, LOCKED).unwrap();
+    let mut server = Running::start(&dir, &["run", "locked.to", "--live"]);
+    assert_eq!(server.answer("a"), "v1 a 1");
+    edit(&file, "type State = { hits: Int }", "type State = { hits: Int, last: String }");
+    edit(&file, "State { hits: 0 }", "State { hits: 0, last: \"\" }");
+    edit(&file, "\"v1 {line} {s.hits}\"", "\"v2 {line} {s.hits} [{s.last}]\"");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done && said.contains("it is inside a `lock` or borrows a value there"), "{said}");
+    assert!(!said.contains("is not a type of the new code"), "{said}");
+    assert_eq!(server.answer("b"), "v2 b 2 []");
+    server.stop();
+}

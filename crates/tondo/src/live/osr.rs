@@ -454,6 +454,16 @@ fn copies(
         })
         .collect();
     let named = |key: &str| key.rsplit_once('/').map_or(key, |(name, _)| name).to_string();
+    // A value borrowed there keeps the frame where it is, whatever else
+    // changed: the lock it is inside, or what it borrows.
+    let lent = list(new, "state").iter().chain(given.iter().map(|(_, item)| *item));
+    if let Some(item) = lent.into_iter().find(|item| item["lent"].as_bool() == Some(true)) {
+        let key = item["key"].as_str().unwrap_or_default();
+        return Err(match key.starts_with('#') {
+            true => "it is inside a `lock` or borrows a value there".into(),
+            false => format!("`{}` borrows a value there", named(key)),
+        });
+    }
     let mut copies = Vec::new();
     let mut conversions = Vec::new();
     for item in list(new, "state") {
@@ -466,12 +476,6 @@ fn copies(
             });
         };
         let (_, from) = given.swap_remove(index);
-        if from["lent"].as_bool() == Some(true) || item["lent"].as_bool() == Some(true) {
-            return Err(match made {
-                true => "it is inside a `lock` or borrows a value there".into(),
-                false => format!("`{}` borrows a value there", named(key)),
-            });
-        }
         let word = |v: &Value, key: &str| v[key].as_u64().unwrap_or(0) as u32;
         let (old_type, new_type) =
             (from["type"].as_str().unwrap_or_default(), item["type"].as_str().unwrap_or_default());
