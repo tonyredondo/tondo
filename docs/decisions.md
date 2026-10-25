@@ -1991,3 +1991,16 @@ gives its captures away, as it then works on the closure's own; and when
 only its number changed, the old identity's slot leads to the new code,
 so values of it made before run the new body.
 
+## 2026-10-25 — Renames keep values
+
+A field renamed was a field gone and a field new, its values lost. The
+language has no annotation to say so, and asking for one would go
+against doing things by themselves; the edit itself says it well
+enough. When a record loses as many fields as it gains, and each lost
+one's values convert to the gained one in the same order, they are the
+same fields renamed; variants pair the same way. A type the program no
+longer has is the one it has newly, of the same kind and most of the same
+field or variant names, if no other is as close; functions whose
+signatures named the old type are then the same functions. The report
+says each rename, so a pairing that was not meant shows.
+

@@ -33,10 +33,13 @@ pub(super) fn add(
     structures: &serde_json::Map<String, Value>,
     wanted: &[String],
     closures: &[(String, String)],
+    renamed: &HashMap<String, String>,
+    latest: &serde_json::Map<String, Value>,
 ) -> Migrations {
     let mut migrations = Migrations::default();
     let Program { types, functions, .. } = program;
     let mut rebuild = Rebuild::new(types, structures);
+    rebuild.renamed = renamed.clone();
     let mut pairs = Vec::new();
     for (key, name) in closures {
         let Some(old) = rebuild.old(key) else { continue };
@@ -66,7 +69,7 @@ pub(super) fn add(
             }
         }
     }
-    let mut plan = Plan { types: &program.types, checked: HashMap::new(), notes: Vec::new() };
+    let mut plan = Plan { types: &program.types, checked: HashMap::new(), notes: Vec::new(), latest, current: true };
     let pairs: Vec<(String, Ty, Ty)> = pairs
         .into_iter()
         .filter(|(key, old, new)| match plan.check(*old, *new) {
@@ -98,6 +101,8 @@ struct Rebuild<'a> {
     shown: HashMap<String, Ty>,
     named: HashMap<String, Ty>,
     ghosts: HashMap<String, Ty>,
+    /// The new names of the types renamed, by their old ones.
+    renamed: HashMap<String, String>,
 }
 
 impl<'a> Rebuild<'a> {
@@ -112,7 +117,7 @@ impl<'a> Rebuild<'a> {
                 shown.entry(types.display(ty)).or_insert(ty);
             }
         }
-        Rebuild { types, structures, shown, named, ghosts: HashMap::new() }
+        Rebuild { types, structures, shown, named, ghosts: HashMap::new(), renamed: HashMap::new() }
     }
 
     /// The old type of a key: a type of the new program when it is the
@@ -142,6 +147,7 @@ impl<'a> Rebuild<'a> {
     fn now(&mut self, key: &str) -> Option<Ty> {
         let structure = self.structures.get(key)?.clone();
         if let Some(name) = structure["adt"].as_str() {
+            let name = self.renamed.get(name).map_or(name, String::as_str);
             return self.named.get(name).copied();
         }
         self.composite(&structure, key, &mut |r: &mut Self, key| r.now(key))
@@ -215,9 +221,21 @@ struct Plan<'a> {
     types: &'a Types,
     checked: HashMap<(Ty, Ty), Result<(), String>>,
     notes: Vec<String>,
+    /// The shapes of the running program's types as the last reload left
+    /// them, by name; and whether the type being checked is of those:
+    /// conversions from older versions, which frames may still need, go
+    /// without saying.
+    latest: &'a serde_json::Map<String, Value>,
+    current: bool,
 }
 
 impl Plan<'_> {
+    fn note(&mut self, note: String) {
+        if self.current {
+            self.notes.push(note);
+        }
+    }
+
     fn check(&mut self, old: Ty, new: Ty) -> Result<(), String> {
         if old == new {
             return Ok(());
@@ -243,27 +261,11 @@ impl Plan<'_> {
         match (types.kind(old).clone(), types.kind(new).clone()) {
             (TyKind::Adt(a), TyKind::Adt(b)) => {
                 let name = types.display(new);
-                match (types.adt(a).kind.clone(), types.adt(b).kind.clone()) {
-                    (AdtKind::Record(from), AdtKind::Record(to)) => self.fields(&name, &from, &to),
-                    (AdtKind::Newtype(from), AdtKind::Newtype(to)) => match self.fits(from, to) {
-                        true => Ok(()),
-                        false => Err(format!("`{name}` wraps another type now")),
-                    },
-                    (AdtKind::Enum(from), AdtKind::Enum(to)) => {
-                        for variant in &from {
-                            let stays = "a frame holding one stays on the old code";
-                            match to.iter().find(|v| v.name == variant.name) {
-                                None => self.notes.push(format!("`{name}.{}` is gone: {stays}", variant.name)),
-                                Some(target) if !self.payload(&name, &variant.payload, &target.payload) => self
-                                    .notes
-                                    .push(format!("`{name}.{}` carries something else: {stays}", variant.name)),
-                                Some(_) => {}
-                            }
-                        }
-                        Ok(())
-                    }
-                    _ => Err(format!("`{name}` is another kind of type now")),
-                }
+                let shape = self.latest.get(&super::adt_name(types, a)).and_then(Value::as_str);
+                let current = std::mem::replace(&mut self.current, shape == Some(super::adt_shape(types, a).as_str()));
+                let checked = self.check_adts(a, b, &name);
+                self.current = current;
+                checked
             }
             (TyKind::Option(a), TyKind::Option(b))
             | (TyKind::Array(a), TyKind::Array(b))
@@ -282,6 +284,40 @@ impl Plan<'_> {
         }
     }
 
+    /// Whether a nominal type converts to another, by its fields, variants
+    /// or what it wraps.
+    fn check_adts(&mut self, a: crate::types::AdtId, b: crate::types::AdtId, name: &str) -> Result<(), String> {
+        match (self.types.adt(a).kind.clone(), self.types.adt(b).kind.clone()) {
+            (AdtKind::Record(from), AdtKind::Record(to)) => self.fields(name, &from, &to),
+            (AdtKind::Newtype(from), AdtKind::Newtype(to)) => match self.fits(from, to) {
+                true => Ok(()),
+                false => Err(format!("`{name}` wraps another type now")),
+            },
+            (AdtKind::Enum(from), AdtKind::Enum(to)) => {
+                // Trying pairs says nothing; the pairs chosen do.
+                let notes = std::mem::take(&mut self.notes);
+                let found = targets(&from, &to, &mut |a, b| self.payload(name, a, b));
+                self.notes = notes;
+                for (variant, target) in from.iter().zip(found) {
+                    let stays = "a frame holding one stays on the old code";
+                    match target.map(|t| &to[t]) {
+                        None => self.note(format!("`{name}.{}` is gone: {stays}", variant.name)),
+                        Some(now) if now.name != variant.name => {
+                            self.note(format!("`{name}.{}` is `{}` now", variant.name, now.name));
+                            self.payload(name, &variant.payload, &now.payload);
+                        }
+                        Some(now) if !self.payload(name, &variant.payload, &now.payload) => {
+                            self.note(format!("`{name}.{}` carries something else: {stays}", variant.name))
+                        }
+                        Some(_) => {}
+                    }
+                }
+                Ok(())
+            }
+            _ => Err(format!("`{name}` is another kind of type now")),
+        }
+    }
+
     /// A record's fields, by name: those of the same type or of a type that
     /// converts keep their values, and the new ones, and those of another
     /// type, get the empty value of their type.
@@ -296,14 +332,19 @@ impl Plan<'_> {
     }
 
     fn record_fields(&mut self, name: &str, from: &[Field], to: &[Field]) -> Result<(), String> {
-        for field in to {
+        let found = sources(from, to, &mut |a, b| self.fits(a, b));
+        for (field, source) in to.iter().zip(&found) {
             let empty = empty_text(self.types, field.ty);
-            match from.iter().find(|f| f.name == field.name) {
+            match source.map(|i| &from[i]) {
+                Some(old) if old.name != field.name => {
+                    self.note(format!("`{name}.{}` is `{}` now", old.name, field.name))
+                }
                 Some(old) if self.fits(old.ty, field.ty) => {
                     let to = self.types.display(field.ty);
-                    match self.types.numeric_conversion(old.ty, field.ty) {
-                        Some(false) => self.notes.push(format!("`{name}.{}` is `{to}` now: values alive convert", field.name)),
-                        Some(true) => self.notes.push(format!(
+                    let numeric = (old.ty != field.ty).then(|| self.types.numeric_conversion(old.ty, field.ty));
+                    match numeric.flatten() {
+                        Some(false) => self.note(format!("`{name}.{}` is `{to}` now: values alive convert", field.name)),
+                        Some(true) => self.note(format!(
                             "`{name}.{}` is `{to}` now: values alive convert when they fit, and a frame holding one that does not stays on the old code",
                             field.name
                         )),
@@ -312,7 +353,7 @@ impl Plan<'_> {
                 }
                 Some(_) => match empty {
                     Some(empty) => {
-                        self.notes.push(format!("`{name}.{}` has another type: values alive get {empty}", field.name))
+                        self.note(format!("`{name}.{}` has another type: values alive get {empty}", field.name))
                     }
                     None => {
                         return Err(format!(
@@ -322,7 +363,7 @@ impl Plan<'_> {
                     }
                 },
                 None => match empty {
-                    Some(empty) => self.notes.push(format!("`{name}.{}` is new: values alive get {empty}", field.name)),
+                    Some(empty) => self.note(format!("`{name}.{}` is new: values alive get {empty}", field.name)),
                     None => {
                         let shown = self.types.display(field.ty);
                         return Err(format!(
@@ -333,8 +374,10 @@ impl Plan<'_> {
                 },
             }
         }
-        for field in from.iter().filter(|f| !to.iter().any(|t| t.name == f.name)) {
-            self.notes.push(format!("`{name}.{}` is gone", field.name));
+        for (index, field) in from.iter().enumerate() {
+            if !found.contains(&Some(index)) {
+                self.note(format!("`{name}.{}` is gone", field.name));
+            }
         }
         Ok(())
     }
@@ -350,6 +393,43 @@ impl Plan<'_> {
             _ => false,
         }
     }
+}
+
+/// Which old field each new field takes its value from: the one of its
+/// name; or, when as many fields are gone as are new, the one gone in the
+/// same order, if its value fits: a field renamed.
+fn sources(from: &[Field], to: &[Field], fits: &mut dyn FnMut(Ty, Ty) -> bool) -> Vec<Option<usize>> {
+    let mut found: Vec<Option<usize>> = to.iter().map(|f| from.iter().position(|g| g.name == f.name)).collect();
+    let gone: Vec<usize> = (0..from.len()).filter(|&i| !to.iter().any(|f| f.name == from[i].name)).collect();
+    let new: Vec<usize> = (0..to.len()).filter(|&j| found[j].is_none()).collect();
+    if !gone.is_empty() && gone.len() == new.len() && gone.iter().zip(&new).all(|(&i, &j)| fits(from[i].ty, to[j].ty)) {
+        for (&i, &j) in gone.iter().zip(&new) {
+            found[j] = Some(i);
+        }
+    }
+    found
+}
+
+/// Which new variant each old variant is: the one of its name; or, when as
+/// many variants are gone as are new, the new one in the same order, if its
+/// payload converts: a variant renamed.
+fn targets(
+    from: &[crate::types::Variant],
+    to: &[crate::types::Variant],
+    converts: &mut dyn FnMut(&Payload, &Payload) -> bool,
+) -> Vec<Option<usize>> {
+    let mut found: Vec<Option<usize>> = from.iter().map(|v| to.iter().position(|w| w.name == v.name)).collect();
+    let gone: Vec<usize> = (0..from.len()).filter(|&i| found[i].is_none()).collect();
+    let new: Vec<usize> = (0..to.len()).filter(|&j| !from.iter().any(|v| v.name == to[j].name)).collect();
+    if !gone.is_empty()
+        && gone.len() == new.len()
+        && gone.iter().zip(&new).all(|(&i, &j)| converts(&from[i].payload, &to[j].payload))
+    {
+        for (&i, &j) in gone.iter().zip(&new) {
+            found[i] = Some(j);
+        }
+    }
+    found
 }
 
 /// The empty value of a type, as a report shows it, if it has one.
@@ -500,12 +580,14 @@ impl Generate<'_> {
         expr(kind, ty)
     }
 
-    /// The new record's fields from the old one's, by name.
+    /// The new record's fields from the old one's, by name or renamed.
     fn fields(&mut self, read: &dyn Fn(usize) -> Expr, from: &[Field], to: &[Field]) -> Vec<(u32, Expr)> {
+        let found = sources(from, to, &mut |a, b| self.fits(a, b));
         to.iter()
+            .zip(found)
             .enumerate()
-            .map(|(index, field)| {
-                let value = match from.iter().position(|f| f.name == field.name) {
+            .map(|(index, (field, source))| {
+                let value = match source {
                     Some(old) => self.value(read(old), from[old].ty, field.ty),
                     None => self.empty(field.ty),
                 };
@@ -634,6 +716,7 @@ impl Generate<'_> {
         new_variants: &[crate::types::Variant],
     ) -> Expr {
         let option = self.program.types.intern(TyKind::Option(to));
+        let found = targets(old_variants, new_variants, &mut |a, b| self.payload_fits(a, b));
         let mut arms = Vec::new();
         for (index, variant) in old_variants.iter().enumerate() {
             let parts = variant.payload.types();
@@ -641,8 +724,7 @@ impl Generate<'_> {
             let patterns = locals.iter().zip(&parts).map(|(&l, &t)| pattern(PatKind::Binding(l), t)).collect();
             let pattern = pattern(PatKind::Variant(index as u32, patterns), from);
             let read = |i: usize| expr(ExprKind::Local(locals[i]), parts[i]);
-            let target = new_variants.iter().position(|v| v.name == variant.name);
-            let value = match target.map(|t| (t, &new_variants[t].payload)) {
+            let value = match found[index].map(|t| (t, &new_variants[t].payload)) {
                 Some((t, Payload::Unit)) if matches!(variant.payload, Payload::Unit) => {
                     self.some(expr(ExprKind::Variant(t as u32, Vec::new()), to))
                 }
@@ -682,6 +764,18 @@ impl Generate<'_> {
     fn fits(&self, old: Ty, new: Ty) -> bool {
         self.converts(old, new)
             || matches!(*self.program.types.kind(new), TyKind::Option(inner) if self.converts(old, inner))
+    }
+
+    /// Whether a variant's payload converts, as the plan says.
+    fn payload_fits(&self, from: &Payload, to: &Payload) -> bool {
+        match (from, to) {
+            (Payload::Unit, Payload::Unit) => true,
+            (Payload::Tuple(a), Payload::Tuple(b)) => {
+                a.len() == b.len() && a.iter().zip(b).all(|(&x, &y)| self.fits(x, y))
+            }
+            (Payload::Record(_), Payload::Record(fields)) => self.record_fits(from, fields),
+            _ => false,
+        }
     }
 
     /// Whether a record payload converts: as a record does, its new fields

@@ -35,6 +35,7 @@ pub(super) fn moves(
     changed: &[String],
     slots: &HashMap<String, u32>,
     migrations: &Migrations,
+    renamed: &HashMap<String, String>,
 ) -> Moves {
     let mut entries = Vec::new();
     let mut stays = Vec::new();
@@ -58,7 +59,7 @@ pub(super) fn moves(
             .into_iter()
             .flatten()
             .map(|(now, _)| now)
-            .filter(|now| *now != identity && base(now) == base(identity))
+            .filter(|now| *now != identity && base(now) == with_names(&base(identity), renamed))
             .collect();
         // A closure is the one of its function whose text is most its own.
         let closure = identity.starts_with("closure in ");
@@ -200,6 +201,26 @@ struct Passed {
     conversion: Option<(usize, String)>,
     memory: bool,
     size: u32,
+}
+
+/// A text with the types renamed called by their new names.
+pub(super) fn with_names(text: &str, renamed: &HashMap<String, String>) -> String {
+    let mut out = String::new();
+    let mut word = String::new();
+    let flush = |word: &mut String, out: &mut String| {
+        out.push_str(renamed.get(word.as_str()).map_or(word.as_str(), String::as_str));
+        word.clear();
+    };
+    for c in text.chars() {
+        if c.is_alphanumeric() || c == '_' {
+            word.push(c);
+        } else {
+            flush(&mut word, &mut out);
+            out.push(c);
+        }
+    }
+    flush(&mut word, &mut out);
+    out
 }
 
 /// Of the closures a closure may be now, the one whose text is most like

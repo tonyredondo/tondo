@@ -723,3 +723,71 @@ fn a_closure_numbered_otherwise_runs_its_new_body() {
     assert_eq!(server.answer("b"), "v2 b");
     server.stop();
 }
+
+const RENAMED: &str = r#"import std.console
+
+enum Mode {
+    Idle
+    Busy(Int)
+}
+
+type State = { total: Int, mode: Mode }
+
+fn show(state: State): String {
+    let mode = match state.mode {
+        Mode.Idle => "idle"
+        Mode.Busy(n) => "busy {n}"
+    }
+    "{state.total} {mode}"
+}
+
+var state = State { total: 0, mode: Mode.Busy(5) }
+for {
+    match console.readLine() {
+        some(line) => {
+            state = State { total: state.total + 1, mode: state.mode }
+            console.println("{line} {show(state)}")
+        }
+        none => break
+    }
+}
+"#;
+
+/// A field, a variant or a type renamed keeps the values of the old name.
+#[test]
+fn renames_keep_values() {
+    let dir = dir("live_renamed");
+    let file = dir.join("renamed.to");
+    std::fs::write(&file, RENAMED).unwrap();
+    let mut server = Running::start(&dir, &["run", "renamed.to", "--live"]);
+    assert_eq!(server.answer("a"), "a 1 busy 5");
+    let rename = |old: &str, new: &str| {
+        let text = std::fs::read_to_string(&file).unwrap();
+        let mut out = String::new();
+        let mut word = String::new();
+        for c in text.chars().chain(['\n']) {
+            if c.is_alphanumeric() {
+                word.push(c);
+                continue;
+            }
+            out.push_str(if word == old { new } else { &word });
+            word.clear();
+            out.push(c);
+        }
+        out.pop();
+        std::fs::write(&file, out).unwrap();
+    };
+    rename("total", "count");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done && said.contains("`State.total` is `count` now"), "{said}");
+    assert_eq!(server.answer("b"), "b 2 busy 5");
+    rename("Busy", "Working");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done && said.contains("`Mode.Busy` is `Working` now"), "{said}");
+    assert_eq!(server.answer("c"), "c 3 busy 5");
+    rename("State", "AppState");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done && said.contains("`State` is `AppState` now") && said.contains("2 changed (main, show)"), "{said}");
+    assert_eq!(server.answer("d"), "d 4 busy 5");
+    server.stop();
+}

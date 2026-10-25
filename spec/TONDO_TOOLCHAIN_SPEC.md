@@ -739,8 +739,12 @@ convierte, uno de tipo `T` que pasa a `T?` queda `some`, un número que pasa a
 otro tipo numérico se convierte como `T(x)` (8.6 del lenguaje), uno nuevo o
 de otro tipo empieza con el valor vacío de su tipo —0, 0.0, `false`, `""`,
 una colección vacía, `none`, o un record de valores vacíos— y uno que ya no
-está se suelta. Un enum conserva sus variantes por nombre, con su payload
-convertido igual. Las colecciones, opciones, resultados y tuplas se
+está se suelta; cuando faltan tantos campos como hay nuevos y, en su orden,
+sus valores se convierten, son campos renombrados, y conservan sus valores.
+Un enum conserva sus variantes por nombre, con su payload convertido igual,
+y sus variantes renombradas del mismo modo; y un tipo que falta es otro de
+nombre nuevo, del mismo tipo y con la mayoría de sus campos o variantes, si
+es el único así. Las colecciones, opciones, resultados y tuplas se
 convierten elemento a elemento; un map o un set inserta de nuevo sus
 elementos. Las clausuras y los valores `fn(...)` no se convierten: siguen con
 su código viejo y sus valores. Un frame no pasa, y lo dice `reload`, cuando

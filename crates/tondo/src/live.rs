@@ -45,6 +45,74 @@ pub struct Build {
     pub migrations: Vec<crate::hir::FnId>,
 }
 
+/// The types renamed, new names by old: of the types the old program had
+/// and the new has not, each of those the new has and the old had not of the
+/// same kind and mostly the same fields or variants, if it is the one.
+fn renamed_types(
+    old: &serde_json::Map<String, serde_json::Value>,
+    new: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    // A shape's kind and the names of its fields or variants, or what a
+    // newtype wraps.
+    let members = |shape: &str| -> (char, Vec<String>) {
+        if let Some(inner) = shape.strip_prefix("= ") {
+            return ('=', vec![inner.to_string()]);
+        }
+        let record = shape.starts_with('{');
+        let (mut depth, mut word, mut names, mut naming) = (0, String::new(), Vec::new(), true);
+        for c in shape.chars() {
+            match c {
+                '{' | '[' | '(' => depth += 1,
+                '}' | ']' | ')' => depth -= 1,
+                _ => {}
+            }
+            let top = if record { depth == 1 } else { depth == 0 };
+            match c {
+                ':' if record && top && naming => {
+                    names.push(word.trim().to_string());
+                    naming = false;
+                }
+                ',' if record && top => (word, naming) = (String::new(), true),
+                '|' if !record && top => (word, naming) = (String::new(), true),
+                c if !record && top && naming && (c == '(' || c == ' ' && !word.trim().is_empty()) => {
+                    names.push(word.trim().to_string());
+                    naming = false;
+                }
+                c if top && naming && c != '{' => word.push(c),
+                _ => {}
+            }
+        }
+        if !record && naming && !word.trim().is_empty() {
+            names.push(word.trim().to_string());
+        }
+        (if record { '{' } else { '|' }, names)
+    };
+    let gone: Vec<(&String, &str)> =
+        old.iter().filter(|(name, _)| !new.contains_key(*name)).filter_map(|(n, s)| Some((n, s.as_str()?))).collect();
+    let fresh: Vec<(&String, &String)> = new.iter().filter(|(name, _)| !old.contains_key(*name)).collect();
+    let mut renamed = HashMap::new();
+    for (name, shape) in gone {
+        let (kind, names) = members(shape);
+        let mut scored: Vec<(f64, &String)> = fresh
+            .iter()
+            .filter_map(|(now, shape)| {
+                let (other, members) = members(shape);
+                let common = names.iter().filter(|n| members.contains(n)).count();
+                let all = names.len() + members.len() - common;
+                (other == kind && all > 0).then(|| (common as f64 / all as f64, *now))
+            })
+            .collect();
+        scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+        if let [(best, now), rest @ ..] = scored.as_slice()
+            && *best >= 0.5
+            && rest.first().is_none_or(|r| r.0 < *best)
+        {
+            renamed.insert(name.clone(), (*now).clone());
+        }
+    }
+    renamed
+}
+
 /// A statement's place, as text.
 pub(crate) fn path_text(path: &[u32]) -> String {
     path.iter().map(u32::to_string).collect::<Vec<_>>().join(".")
@@ -460,6 +528,9 @@ fn patch(
         .filter(|(name, shape)| shapes.get(*name).is_some_and(|now| Some(now.as_str()) != shape.as_str()))
         .map(|(name, _)| name.clone())
         .collect();
+    // A type renamed is another shape to the frames that keep the old one.
+    let renamed = renamed_types(manifest["types"].as_object().unwrap_or(&serde_json::Map::new()), &shapes);
+    reshaped.extend(renamed.keys().cloned());
     reshaped.sort();
     let guarded: Vec<String> = manifest["holds"]
         .as_object()
@@ -517,7 +588,8 @@ fn patch(
         })
         .collect();
     let program = analysis.program.as_mut().expect("a checked program");
-    let migrated = migrate::add(program, structures, &wanted, &closures);
+    let latest = manifest["types"].as_object().unwrap_or(&empty);
+    let migrated = migrate::add(program, structures, &wanted, &closures, &renamed, latest);
     let mut migrations = osr::Migrations { refused: migrated.refused, ..osr::Migrations::default() };
     for (keys, function) in migrated.conversions {
         migrations.conversions.insert(keys, build.migrations.len());
@@ -549,7 +621,7 @@ fn patch(
         .map(|(i, _)| i.clone())
         .collect();
     let points = serde_json::Value::Object(build.points.clone());
-    let moves = osr::moves(&manifest["points"], &points, &set, &build.slots, &migrations);
+    let moves = osr::moves(&manifest["points"], &points, &set, &build.slots, &migrations, &renamed);
     patch.extend(&moves.bytes);
     let patch_file = crate::driver::cache_dir().join("live").join(format!("patch-{pid}.bin"));
     std::fs::write(&patch_file, &patch).map_err(|e| format!("cannot write {}: {e}", patch_file.display()))?;
@@ -600,7 +672,9 @@ fn patch(
         match known.get(identity) {
             Some(old) if old == hash => {}
             Some(_) => changed.push(name),
-            None if known.keys().any(|k| osr::base(k) == osr::base(identity)) => changed.push(name),
+            None if known.keys().any(|k| osr::with_names(&osr::base(k), &renamed) == osr::base(identity)) => {
+                changed.push(name)
+            }
             None => added.push(name),
         }
     }
@@ -631,9 +705,10 @@ fn patch(
         .into_iter()
         .filter(|note| {
             let name = note.trim_start_matches('`').split(['.', '`']).next().unwrap_or_default();
-            reshaped.iter().any(|r| r == name)
+            reshaped.iter().any(|r| r == name || renamed.get(r).is_some_and(|now| now == name))
         })
         .collect();
+    notes.extend(renamed.iter().map(|(old, new)| format!("`{old}` is `{new}` now")));
     notes.sort();
     notes.dedup();
     Ok(Reloaded { changed, added, moves: moves.count, stays: moves.stays, notes })
