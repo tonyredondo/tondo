@@ -715,10 +715,13 @@ valor que el nuevo no soltaría, o donde los `defer` registrados no son los
 mismos; `reload` dice en qué líneas y por qué. Una función cuya firma alcanza
 un tipo que cambió de forma es otra identidad, y un frame suyo pasa a la
 nueva, del mismo nombre y firma, con sus parámetros convertidos como los
-demás valores, salvo cuando su resultado alcanza un tipo que cambió de forma
-o un parámetro prestado con `mut` o `var` lo alcanza: entonces, como cuando
-sus parámetros o su resultado cambian de otro modo, termina con el código
-viejo. Las funciones que no cambian siguen con su código, y un cambio
+demás valores. Lo que vuelve al código viejo vuelve convertido a la forma
+vieja: el resultado, para el llamador viejo, y un valor prestado con `mut` o
+`var`, que la llamada nueva cambia en una copia convertida que al volver
+sustituye al del llamador; siempre que esa vuelta no pierda nada —cada campo
+viejo viene de uno nuevo, cada variante nueva existe en la vieja y cada
+número cabe—. Si la pierde, o cuando sus parámetros o su resultado cambian
+de otro modo, el frame termina con el código viejo. Las funciones que no cambian siguen con su código, y un cambio
 posterior que las cambie mueve sus frames, también los que quedaron en
 versiones anteriores.
 
@@ -726,8 +729,9 @@ Una clausura cuya función tiene ahora otras clausuras, o cuyas capturas
 cambiaron de forma, es otra identidad. La que es ahora es, de las de su
 función con la misma firma, la de texto más parecido, si se parece en lo
 principal y ninguna otra tanto: un frame suyo pasa a ella con sus capturas
-convertidas, salvo si las cambia o las entrega, porque trabaja sobre las de
-la propia clausura; y si solo cambió su número, los valores de esa clausura
+convertidas, que si las cambia vuelven convertidas a la clausura al
+terminar, como un valor prestado, salvo si las entrega; y si solo cambió su
+número, los valores de esa clausura
 hechos antes ejecutan también su código nuevo.
 
 Los valores de un tipo que cambió de forma que tiene un frame se convierten

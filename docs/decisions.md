@@ -2004,3 +2004,18 @@ field or variant names, if no other is as close; functions whose
 signatures named the old type are then the same functions. The report
 says each rename, so a pairing that was not meant shows.
 
+## 2026-10-25 — What goes back to the old code converts back
+
+Three kinds of frames finished on the old code because something of the
+new shape would go back to the old: a result its old caller takes, a
+value lent with `mut` or `var`, which is the caller's, and the captures a
+closure changes, which are the closure's. Each now converts back, with the
+same conversions the other way. The new code writes its result in the
+new shape where the runtime says, which converts it into the caller's
+place; a lent value, or captures, are copied in converted and, as the
+loan is the call's alone while it lasts, the copy goes back converted
+over the caller's when the call returns. Only a way back that loses
+nothing is taken: every old field comes from a new one, every new variant
+is an old one and every number fits; otherwise the frame finishes on the
+old code, as before, and the report says why.
+

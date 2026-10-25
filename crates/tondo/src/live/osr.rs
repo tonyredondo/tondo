@@ -42,10 +42,10 @@ pub(super) fn moves(
     // Frames move to the same function, or to the one a function whose
     // signature reaches a type of another shape is now, of the same name
     // and signature, with their parameters converted.
-    let mut pairs: Vec<(&str, &str, Vec<Passed>)> = changed
+    let mut pairs: Vec<(&str, &str, Call)> = changed
         .iter()
         .filter(|identity| old.get(identity.as_str()).is_some())
-        .map(|identity| (identity.as_str(), identity.as_str(), Vec::new()))
+        .map(|identity| (identity.as_str(), identity.as_str(), Call::default()))
         .collect();
     let names: Vec<&str> = new.as_object().into_iter().flatten().map(|(identity, _)| shown(identity)).collect();
     let mut redirects = Vec::new();
@@ -133,6 +133,7 @@ pub(super) fn moves(
                 Ok((copies, conversions)) => {
                     let word = |key: &str| target[key].as_u64().unwrap_or(0) as u32;
                     entries.push((site, slot, word("point"), word("size"), copies, conversions, passed.clone()));
+                    // `passed` is what the frame's call of the new code takes.
                 }
                 Err(reason) => {
                     let line = after["top"].as_u64().unwrap_or(0) + target["line"].as_u64().unwrap_or(0);
@@ -160,7 +161,7 @@ pub(super) fn moves(
     let count = entries.len();
     let mut bytes = Vec::new();
     if count > 0 || !redirects.is_empty() {
-        bytes.extend(b"OSR4");
+        bytes.extend(b"OSR5");
         bytes.extend((count as u32).to_le_bytes());
         for (site, slot, point, size, copies, conversions, passed) in entries {
             bytes.extend(site.to_le_bytes());
@@ -173,8 +174,8 @@ pub(super) fn moves(
                 bytes.extend([from, to, index, name.len() as u32].into_iter().flat_map(u32::to_le_bytes));
                 bytes.extend(name.as_bytes());
             }
-            bytes.extend((passed.len() as u32).to_le_bytes());
-            for param in passed {
+            bytes.extend((passed.params.len() as u32).to_le_bytes());
+            for param in &passed.params {
                 let (converts, index, name) = match &param.conversion {
                     Some((index, name)) => (1, *index as u32, name.as_str()),
                     None => (0, 0, ""),
@@ -182,7 +183,15 @@ pub(super) fn moves(
                 let words = [param.index, converts, u32::from(param.memory), index, param.size, name.len() as u32];
                 bytes.extend(words.into_iter().flat_map(u32::to_le_bytes));
                 bytes.extend(name.as_bytes());
+                let (back, index, size) = param.back.map_or((0, 0, 0), |(index, size)| (1, index as u32, size));
+                bytes.extend([back, index, size].into_iter().flat_map(u32::to_le_bytes));
             }
+            let (returns, index, size, name) = match &passed.result {
+                Some((index, size, name)) => (1, *index as u32, *size, name.as_str()),
+                None => (0, 0, 0, ""),
+            };
+            bytes.extend([returns, index, size, name.len() as u32].into_iter().flat_map(u32::to_le_bytes));
+            bytes.extend(name.as_bytes());
         }
         bytes.extend((redirects.len() as u32).to_le_bytes());
         for (from, to) in redirects {
@@ -201,6 +210,18 @@ struct Passed {
     conversion: Option<(usize, String)>,
     memory: bool,
     size: u32,
+    /// For a value lent to the function: the conversion that puts it back,
+    /// and the old size, the caller's.
+    back: Option<(usize, u32)>,
+}
+
+/// What a frame's call of a function of another identity takes: its
+/// parameters, and when the result has another shape, the conversion back
+/// to the one the old caller takes, the new result's size and its type.
+#[derive(Clone, Default)]
+struct Call {
+    params: Vec<Passed>,
+    result: Option<(usize, u32, String)>,
 }
 
 /// A text with the types renamed called by their new names.
@@ -266,15 +287,26 @@ fn likeness(a: &str, b: &str) -> f64 {
 /// of another identity, or why it cannot: its result must be the same, and
 /// each parameter the same or convert, unless it is lent, but for the
 /// captures of a closure that neither changes nor gives them away.
-fn parameters(before: &Value, after: &Value, migrations: &Migrations) -> Result<Vec<Passed>, String> {
+fn parameters(before: &Value, after: &Value, migrations: &Migrations) -> Result<Call, String> {
+    let shown = |key: &str| key.split(" @").next().unwrap_or(key).to_string();
+    let back = |old: &str, new: &str| migrations.backs.get(&(new.to_string(), old.to_string())).copied();
+    let mut call = Call::default();
+    // A result of another shape goes back to the old caller's, converted,
+    // when that loses nothing.
     if before["result"] != after["result"] {
-        return Err("its result is of a type of another shape".into());
+        let (old, new) = (before["result"].as_str().unwrap_or_default(), after["result"].as_str().unwrap_or_default());
+        let memory = before["returns"] == "memory" && after["returns"] == "memory";
+        let size = after["result_size"].as_u64().unwrap_or(0) as u32;
+        match back(old, new) {
+            Some(index) if memory => call.result = Some((index, size, shown(new))),
+            _ => return Err("its result is of a type of another shape, which does not convert back".into()),
+        }
     }
     let (from, to) = (list(before, "params"), list(after, "params"));
     if from.len() != to.len() || from.is_empty() && before.get("params").is_none() {
         return Err("its parameters or result changed".into());
     }
-    let mut passed = Vec::new();
+    let passed = &mut call.params;
     for (index, (old, new)) in from.iter().zip(to).enumerate() {
         let class = new["class"].as_str().unwrap_or_default();
         if old["class"] != new["class"] {
@@ -287,21 +319,29 @@ fn parameters(before: &Value, after: &Value, migrations: &Migrations) -> Result<
         let memory = class == "memory";
         let size = new["size"].as_u64().unwrap_or(0) as u32;
         if old_type == new_type {
-            passed.push(Passed { index: index as u32, conversion: None, memory, size });
+            passed.push(Passed { index: index as u32, conversion: None, memory, size, back: None });
             continue;
         }
-        let captures = index == 0 && before.get("owns").is_some_and(|owns| owns == false);
-        if old["loan"].as_bool() == Some(true) && !captures {
-            return Err(match index == 0 && before["owns"] == true {
-                true => "it changes its captures or gives them away, and they have another shape now".into(),
-                false => format!("its parameter {} is lent to it, and its type has another shape", index + 1),
-            });
+        // A value lent goes back converted, and a closure's captures, which
+        // it works on, unless it gives them away.
+        let lent = old["loan"].as_bool() == Some(true);
+        if lent && index == 0 && before["consumes"] == true {
+            return Err("it gives its captures away, and they have another shape now".into());
         }
+        let back = match back(old_type, new_type) {
+            Some(index) if lent => Some((index, old["size"].as_u64().unwrap_or(0) as u32)),
+            None if lent => {
+                return Err(format!(
+                    "its parameter {} is lent to it, of a type of another shape that does not convert back",
+                    index + 1
+                ));
+            }
+            _ => None,
+        };
         match migrations.conversions.get(&(old_type.to_string(), new_type.to_string())) {
             Some(&conversion) => {
-                let shown = new_type.split(" @").next().unwrap_or(new_type).to_string();
-                let conversion = Some((conversion, shown));
-                passed.push(Passed { index: index as u32, conversion, memory: memory || captures, size });
+                let conversion = Some((conversion, shown(new_type)));
+                passed.push(Passed { index: index as u32, conversion, memory: memory || lent, size, back });
             }
             _ => {
                 return Err(migrations
@@ -312,7 +352,7 @@ fn parameters(before: &Value, after: &Value, migrations: &Migrations) -> Result<
             }
         }
     }
-    Ok(passed)
+    Ok(call)
 }
 
 /// A function as a report names it: without its parameters, result and
@@ -464,6 +504,8 @@ fn copies(
 pub(super) struct Migrations {
     pub conversions: HashMap<(String, String), usize>,
     pub refused: HashMap<String, String>,
+    /// The conversions back, from a new type to the old, that lose nothing.
+    pub backs: HashMap<(String, String), usize>,
 }
 
 /// Lines as a short list: `3, 5–8`.

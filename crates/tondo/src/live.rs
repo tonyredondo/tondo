@@ -572,6 +572,7 @@ fn patch(
     let passed = functions().flat_map(|function| function["params"].as_array().into_iter().flatten());
     let mut wanted: Vec<String> =
         held.chain(passed).filter_map(|item| item["type"].as_str().map(String::from)).collect();
+    wanted.extend(functions().filter_map(|function| function["result"].as_str().map(String::from)));
     wanted.sort();
     wanted.dedup();
     let empty = serde_json::Map::new();
@@ -593,6 +594,10 @@ fn patch(
     let mut migrations = osr::Migrations { refused: migrated.refused, ..osr::Migrations::default() };
     for (keys, function) in migrated.conversions {
         migrations.conversions.insert(keys, build.migrations.len());
+        build.migrations.push(function);
+    }
+    for (keys, function) in migrated.backs {
+        migrations.backs.insert(keys, build.migrations.len());
         build.migrations.push(function);
     }
     let object = crate::driver::compile(&analysis, true, options.target, Some(&mut build)).map_err(Refused::Failed)?;

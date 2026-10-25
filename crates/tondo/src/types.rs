@@ -811,11 +811,11 @@ impl Types {
     /// For the type of a closure: its body and its signature with the
     /// enclosing type parameters replaced by the instance's arguments.
     /// Whether `ty` is the type of a closure.
-    /// Whether a call of the closure whose type this is works on its own
-    /// captures: changes or gives them away.
-    pub fn closure_owns(&self, ty: Ty) -> bool {
-        let Some((template, _)) = self.instance_of(ty) else { return false };
-        self.closures.get(&template).is_some_and(|info| info.mutates || info.once)
+    /// Whether a call of the closure whose type this is changes its
+    /// captures, and whether it gives them away.
+    pub fn closure_calls(&self, ty: Ty) -> Option<(bool, bool)> {
+        let (template, _) = self.instance_of(ty)?;
+        self.closures.get(&template).map(|info| (info.mutates, info.once))
     }
 
     pub fn is_closure(&self, ty: Ty) -> bool {

@@ -225,9 +225,10 @@ on with the new body. Where the new code needs a binding the old one does
 not have there, the call stays on the old code until it reaches another
 statement, and reload says which lines and why. A type may gain or lose
 fields and variants: the values running calls hold convert as the calls
-move, their parameters included, field by field, a new field starting
-empty (0, `""`, `[]`, `none`) and a number of another numeric type
-converting as `T(x)` does, and a field, a variant or a type renamed
+move, their parameters included, and what goes back to their callers, a
+result or a value lent, converts back, field by field, a new field
+starting empty (0, `""`, `[]`, `none`) and a number of another numeric
+type converting as `T(x)` does, and a field, a variant or a type renamed
 keeping its values; reload says what it did to them. Closures follow too,
 when another closure comes before them or what they capture changes shape.
 A value kept in a `Ref`, a channel, a task or `std.sync` does not convert:

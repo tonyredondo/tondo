@@ -12,7 +12,7 @@ use crate::hir::{
 use crate::source::Span;
 use crate::types::{AdtKind, Field, Payload, Ty, TyKind, Types};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// What a patch does with values of the old types frames hold: the
 /// function that converts those of an old type to a new one, by their keys;
@@ -22,6 +22,10 @@ pub(super) struct Migrations {
     pub conversions: HashMap<(String, String), FnId>,
     pub refused: HashMap<String, String>,
     pub notes: Vec<String>,
+    /// The conversions back, from a new type to the old one, by their keys,
+    /// of those that lose nothing: what the old code takes back from the
+    /// new, a result or a value it lent.
+    pub backs: HashMap<(String, String), FnId>,
 }
 
 /// Adds to the program the conversions of the old types `wanted`, by their
@@ -80,7 +84,14 @@ pub(super) fn add(
             }
         })
         .collect();
-    let (checked, notes) = (plan.checked, plan.notes);
+    // Back, quietly: what converting does is said of the way forward.
+    let notes = std::mem::take(&mut plan.notes);
+    let backs: Vec<(String, Ty, Ty)> = pairs
+        .iter()
+        .filter(|(_, old, new)| lossless(plan.types, *new, *old, &mut HashSet::new()) && plan.check(*new, *old).is_ok())
+        .cloned()
+        .collect();
+    let checked = plan.checked;
     migrations.notes = notes;
     let mut generate = Generate { program, checked, memo: HashMap::new() };
     for (key, old, new) in pairs {
@@ -88,7 +99,54 @@ pub(super) fn add(
         let new = super::type_key(&generate.program.types, new);
         migrations.conversions.insert((key, new), function);
     }
+    for (key, old, new) in backs {
+        let function = generate.function(new, old);
+        let new = super::type_key(&generate.program.types, new);
+        migrations.backs.insert((new, key), function);
+    }
     migrations
+}
+
+/// Whether every value of `from` converts to `to` and nothing of it is
+/// lost: each field of `to` comes from one of `from`, each variant of
+/// `from` is one of `to`, and each number fits.
+fn lossless(types: &Types, from: Ty, to: Ty, seen: &mut HashSet<(Ty, Ty)>) -> bool {
+    if from == to || !seen.insert((from, to)) {
+        return true;
+    }
+    let all = |a: &[Ty], b: &[Ty], seen: &mut HashSet<(Ty, Ty)>| {
+        a.len() == b.len() && a.iter().zip(b).all(|(&x, &y)| lossless(types, x, y, seen))
+    };
+    match (types.kind(from).clone(), types.kind(to).clone()) {
+        (TyKind::Adt(a), TyKind::Adt(b)) => match (types.adt(a).kind.clone(), types.adt(b).kind.clone()) {
+            (AdtKind::Record(from), AdtKind::Record(to)) => {
+                sources(&from, &to, &mut |x, y| lossless(types, x, y, seen)).iter().all(Option::is_some)
+            }
+            (AdtKind::Newtype(x), AdtKind::Newtype(y)) => lossless(types, x, y, seen),
+            (AdtKind::Enum(from), AdtKind::Enum(to)) => {
+                let payload = |p: &Payload, q: &Payload, seen: &mut HashSet<(Ty, Ty)>| match (p, q) {
+                    (Payload::Unit, Payload::Unit) => true,
+                    (Payload::Tuple(a), Payload::Tuple(b)) => all(a, b, seen),
+                    (Payload::Record(a), Payload::Record(b)) => {
+                        sources(a, b, &mut |x, y| lossless(types, x, y, seen)).iter().all(Option::is_some)
+                    }
+                    _ => false,
+                };
+                let found = targets(&from, &to, &mut |p, q| payload(p, q, &mut seen.clone()));
+                from.iter().zip(found).all(|(v, t)| t.is_some_and(|t| payload(&v.payload, &to[t].payload, seen)))
+            }
+            _ => false,
+        },
+        (TyKind::Option(a), TyKind::Option(b))
+        | (TyKind::Array(a), TyKind::Array(b))
+        | (TyKind::Deque(a), TyKind::Deque(b))
+        | (TyKind::Set(a), TyKind::Set(b)) => lossless(types, a, b, seen),
+        (TyKind::Map(k, v), TyKind::Map(j, w)) | (TyKind::Result(k, v), TyKind::Result(j, w)) => {
+            all(&[k, v], &[j, w], seen)
+        }
+        (TyKind::Tuple(a), TyKind::Tuple(b)) => all(&a, &b, seen),
+        _ => types.numeric_conversion(from, to) == Some(false),
+    }
 }
 
 /// The types of the running program, rebuilt from its manifest: those that

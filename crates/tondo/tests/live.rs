@@ -791,3 +791,56 @@ fn renames_keep_values() {
     assert_eq!(server.answer("d"), "d 4 busy 5");
     server.stop();
 }
+
+const LENT: &str = r#"import std.console
+
+type State = { count: Int }
+
+fn serve(state: mut State) {
+    for {
+        match console.readLine() {
+            some(line) => {
+                if line == "end" {
+                    return
+                }
+                state = State { count: state.count + 1 }
+                console.println("{line} {state.count}")
+            }
+            none => return
+        }
+    }
+}
+
+fn collect(): State {
+    var state = State { count: 100 }
+    serve(mut state)
+    state
+}
+
+let result = collect()
+console.println("done {result.count}")
+"#;
+
+/// A frame with a value lent to it, or whose result, of a type of another
+/// shape, moves: the value goes back to its caller converted, and so does
+/// the result, as nothing is lost.
+#[test]
+fn values_go_back_converted() {
+    let dir = dir("live_lent");
+    let file = dir.join("lent.to");
+    std::fs::write(&file, LENT).unwrap();
+    let mut server = Running::start(&dir, &["run", "lent.to", "--live"]);
+    assert_eq!(server.answer("a"), "a 101");
+    edit(&file, "type State = { count: Int }", "type State = { count: Int, label: String }");
+    edit(&file, "State { count: state.count + 1 }", "State { count: state.count + 1, label: \"{state.label}+\" }");
+    edit(&file, "\"{line} {state.count}\"", "\"{line} {state.count} [{state.label}]\"");
+    edit(&file, "State { count: 100 }", "State { count: 100, label: \"\" }");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(
+        done && said.contains("3 changed (collect, main, serve)") && !said.contains("finish on the old code"),
+        "{said}"
+    );
+    assert_eq!(server.answer("b"), "b 102 [+]");
+    assert_eq!(server.answer("end"), "done 102");
+    server.stop();
+}

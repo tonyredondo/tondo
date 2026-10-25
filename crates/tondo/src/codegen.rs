@@ -1688,7 +1688,16 @@ impl Codegen<'_> {
             // A closure's frame works on its captures, through its first
             // parameter; one that changes them or gives them away works on
             // the closure's own, which a copy cannot stand for.
-            let owns = body.params.first().is_some_and(|env| self.types.closure_owns(body.locals[env.0 as usize]));
+            let (mutates, consumes) = body
+                .params
+                .first()
+                .and_then(|env| self.types.closure_calls(body.locals[env.0 as usize]))
+                .unwrap_or_default();
+            let returns = match self.class(body.result) {
+                Class::Zero => "zero",
+                Class::Scalar(_) => "scalar",
+                Class::Memory => "memory",
+            };
             let entry = serde_json::json!({
                 "file": file,
                 "top": top,
@@ -1696,7 +1705,10 @@ impl Codegen<'_> {
                 "points": points,
                 "params": params,
                 "result": result,
-                "owns": owns,
+                "mutates": mutates,
+                "consumes": consumes,
+                "returns": returns,
+                "result_size": self.layout(body.result).size,
                 "text": shown,
             });
             functions.insert(live.identities[index].clone(), entry);
@@ -4095,25 +4107,34 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             None => self.e.fb.ins().iconst(types::I64, -1),
         };
         let buffer = self.e.fb.ins().stack_addr(POINTER, slot, 0);
+        // Where the result goes, when it goes in memory, then each
+        // parameter.
         let params = self.params_word_slot();
+        if let Some(ret) = self.body.ret
+            && let Storage::Pointer(var) = self.storage[ret.0 as usize]
+        {
+            let address = self.e.fb.use_var(var);
+            self.e.fb.ins().stack_store(POINTER, address, params, 0);
+        }
         for (index, &param) in self.body.params.iter().enumerate() {
             let value = match self.storage[param.0 as usize] {
                 Storage::Var(var) | Storage::Pointer(var) => self.e.fb.use_var(var),
                 Storage::Slot(slot) => self.e.fb.ins().stack_addr(POINTER, slot, 0),
                 Storage::Zero => continue,
             };
-            self.e.fb.ins().stack_store(POINTER, value, params, index as i32 * 8);
+            self.e.fb.ins().stack_store(POINTER, value, params, (index as i32 + 1) * 8);
         }
         let params = self.e.fb.ins().stack_addr(POINTER, params, 0);
         self.e.call_rt(Rt::LiveTransfer, &[site, buffer, params]).expect("the new state")
     }
 
-    /// A word for each parameter, as the call passes it.
+    /// A word for where the result goes, and one for each parameter, as
+    /// the call passes them.
     fn params_word_slot(&mut self) -> ir::StackSlot {
         if let Some(slot) = self.params_slot {
             return slot;
         }
-        let size = (self.body.params.len() as u32 * 8).max(8);
+        let size = (self.body.params.len() as u32 + 1) * 8;
         let slot = self.e.fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size, 3));
         self.params_slot = Some(slot);
         slot
@@ -6024,12 +6045,16 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             let (params, result_ty, symbol) = (declared.params.clone(), declared.result, declared.symbol.clone());
             return self.c_call(CTarget::Symbol(symbol), &params, result_ty, args, result);
         }
-        let mut values: Vec<ir::Value> = result.into_iter().collect();
-        // A frame that moves passes its parameters from where the runtime
-        // says, a word each.
+        // A frame that moves passes its parameters, and where the result
+        // goes, from where the runtime says, a word each.
         let moved = self.osr_params.take();
+        let result = match (moved, result) {
+            (Some(base), Some(_)) => Some(self.e.fb.ins().load(POINTER, flags(), base, 0)),
+            _ => result,
+        };
+        let mut values: Vec<ir::Value> = result.into_iter().collect();
         let moved_word = |fb: &mut FunctionBuilder, index: usize, ty: ir::Type| {
-            moved.map(|base| fb.ins().load(ty, flags(), base, index as i32 * 8))
+            moved.map(|base| fb.ins().load(ty, flags(), base, (index as i32 + 1) * 8))
         };
         let loans = match callee {
             Callee::Fn(id) => self.e.cg.loans[id.0 as usize].clone(),

@@ -229,12 +229,11 @@ fn apply(path: &str) -> Result<String, String> {
         if found.slot >= info.capacity || found.conversions.iter().any(|c| c.index as usize >= conversions.len()) {
             return Err("the patch is damaged".into());
         }
-        if found.params.iter().any(|p| p.converted.as_ref().is_some_and(|c| c.index as usize >= conversions.len())) {
-            return Err("the patch is damaged".into());
-        }
-        let parts = found.conversions.iter_mut().chain(found.params.iter_mut().filter_map(|p| p.converted.as_mut()));
+        let params = found.params.iter_mut().flat_map(|p| p.converted.iter_mut().chain(p.back.iter_mut()));
+        let parts = found.conversions.iter_mut().chain(params).chain(found.result.iter_mut().map(|(r, _)| r));
         for converted in parts {
-            converted.conversion = Some(conversions[converted.index as usize]);
+            let found = conversions.get(converted.index as usize).ok_or("the patch is damaged")?;
+            converted.conversion = Some(*found);
         }
         found.code = unsafe { (info.slots.add(found.slot as usize) as *const AtomicU64).as_ref() }
             .expect("the image's slots")
@@ -327,8 +326,11 @@ struct Move {
     copies: Vec<(u32, u32, u32)>,
     conversions: Vec<Converted>,
     /// For a function of another identity: each parameter, by its place, as
-    /// it is or converted, which the new code takes from the runtime.
+    /// it is or converted, which the new code takes from the runtime; and
+    /// for a result of another shape, the conversion back to the caller's,
+    /// with the new result's size.
     params: Vec<Param>,
+    result: Option<(Converted, u32)>,
 }
 
 /// A parameter a frame passes to the new code: its place, and how it is
@@ -338,6 +340,10 @@ struct Param {
     converted: Option<Converted>,
     memory: bool,
     size: u32,
+    /// For a value lent to the call: the conversion that puts it back, and
+    /// its size in the caller's shape.
+    back: Option<Converted>,
+    old_size: u32,
 }
 
 /// A part of the old state that a conversion of the patch makes a value
@@ -370,12 +376,14 @@ type Moves = (Vec<(i64, Move)>, Vec<(u32, u32)>);
 static MOVES: std::sync::RwLock<Vec<(i64, Move)>> = std::sync::RwLock::new(Vec::new());
 static PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// The moves a patch ends with, after `OSR4`: their count, then each
+/// The moves a patch ends with, after `OSR5`: their count, then each
 /// one's site, slot, point, size, count of copies and the copies, count of
 /// conversions and each one's place, conversion and type's name, and count
 /// of parameters and each one's place, whether it converts, whether it is
-/// in memory, its conversion, size and type's name; then the count of the
-/// slots that lead to another's code and each pair.
+/// in memory, its conversion, size and type's name, and whether it goes
+/// back, by which conversion, and its old size; whether the result converts
+/// back, by which conversion, its new size and type's name; then the count
+/// of the slots that lead to another's code and each pair.
 fn moves(bytes: &[u8]) -> Result<Moves, String> {
     if bytes.is_empty() {
         return Ok((Vec::new(), Vec::new()));
@@ -388,7 +396,7 @@ fn moves(bytes: &[u8]) -> Result<Moves, String> {
         Ok(slice)
     };
     let u32_of = |b: &[u8]| u32::from_le_bytes(b.try_into().expect("4 bytes"));
-    if take(4)? != b"OSR4" {
+    if take(4)? != b"OSR5" {
         return Err(damaged());
     }
     let count = u32_of(take(4)?);
@@ -412,11 +420,23 @@ fn moves(bytes: &[u8]) -> Result<Moves, String> {
             let (index, converts, memory) = (u32_of(take(4)?), u32_of(take(4)?), u32_of(take(4)?));
             let (conversion, size, length) = (u32_of(take(4)?), u32_of(take(4)?), u32_of(take(4)?));
             let name = String::from_utf8_lossy(take(length as usize)?).into_owned();
-            let converted =
-                (converts != 0).then_some(Converted { from: 0, to: 0, index: conversion, name, conversion: None });
-            params.push(Param { index, converted, memory: memory != 0, size });
+            let converted = (converts != 0).then(|| Converted {
+                from: 0,
+                to: 0,
+                index: conversion,
+                name: name.clone(),
+                conversion: None,
+            });
+            let (backs, back, old_size) = (u32_of(take(4)?), u32_of(take(4)?), u32_of(take(4)?));
+            let back = (backs != 0).then_some(Converted { from: 0, to: 0, index: back, name, conversion: None });
+            params.push(Param { index, converted, memory: memory != 0, size, back, old_size });
         }
-        moves.push((site, Move { slot, code: 0, point, size, copies: list, conversions, params }));
+        let (returns, back, result_size, length) =
+            (u32_of(take(4)?), u32_of(take(4)?), u32_of(take(4)?), u32_of(take(4)?));
+        let name = String::from_utf8_lossy(take(length as usize)?).into_owned();
+        let result =
+            (returns != 0).then_some((Converted { from: 0, to: 0, index: back, name, conversion: None }, result_size));
+        moves.push((site, Move { slot, code: 0, point, size, copies: list, conversions, params, result }));
     }
     moves.sort_by_key(|(site, _)| *site);
     let mut redirects = Vec::new();
@@ -466,7 +486,7 @@ pub unsafe extern "C" fn tondo_rt_live_transfer(site: i64, old: *const u8, param
                 return 0;
             }
         }
-        if !found.params.is_empty() {
+        if !found.params.is_empty() || found.result.is_some() {
             match arguments(found, params) {
                 Ok(block) => (state as *mut u64).add(2).write(block as u64),
                 Err(name) => {
@@ -494,24 +514,39 @@ pub unsafe extern "C" fn tondo_rt_live_transfer(site: i64, old: *const u8, param
     state as u64
 }
 
-/// What the runtime made of the parameters of the calls that frames make as
-/// they move, by the words it gives the calls: each converted value, where
-/// it is, and what releases it.
+/// What the runtime made for the calls that frames make as they move, by
+/// the words it gives the calls.
 static ARGUMENTS: std::sync::Mutex<Vec<(usize, Vec<Made>)>> = std::sync::Mutex::new(Vec::new());
 
-/// A converted parameter: where it is, what releases it, and whether the
-/// runtime allocated its memory.
-type Made = (usize, Option<Release>, bool);
+/// What a call of the new code takes that the runtime made: a parameter
+/// converted, which goes once the call returns; a value lent, converted,
+/// which then goes back to the caller's place in the caller's shape; or a
+/// place for a result of another shape, which goes to the caller's place
+/// converted back.
+enum Made {
+    Value { at: usize, release: Option<Release>, memory: bool },
+    Lent { at: usize, to: usize, size: u32, there: Conversion, back: Conversion },
+    Result { at: usize, to: usize, back: Conversion },
+}
 
-/// The words a moving frame's call takes its parameters from: each as it
-/// is, or converted; or the name of the type of one that does not convert.
+/// The words a moving frame's call takes where its result goes and its
+/// parameters from: each as it is, or converted; or the name of the type
+/// of one that does not convert.
 unsafe fn arguments(found: &Move, params: *const u64) -> Result<*mut u64, String> {
-    let count = found.params.iter().map(|p| p.index as usize + 1).max().unwrap_or(0);
-    let block = unsafe { libc::calloc(count.max(1), 8) } as *mut u64;
+    let count = found.params.iter().map(|p| p.index as usize + 2).max().unwrap_or(1);
+    let block = unsafe { libc::calloc(count, 8) } as *mut u64;
     let mut made: Vec<Made> = Vec::new();
+    // The result, in the new shape, then converted to the caller's place.
+    unsafe { block.write(params.read()) };
+    if let Some((converted, size)) = &found.result {
+        let at = unsafe { libc::calloc(1, (*size).max(1) as usize) };
+        let back = converted.conversion.expect("a conversion of the patch");
+        made.push(Made::Result { at: at as usize, to: unsafe { params.read() } as usize, back });
+        unsafe { block.write(at as u64) };
+    }
     for param in &found.params {
-        let word = unsafe { params.add(param.index as usize) };
-        let at = unsafe { block.add(param.index as usize) };
+        let word = unsafe { params.add(param.index as usize + 1) };
+        let at = unsafe { block.add(param.index as usize + 1) };
         let Some(converted) = &param.converted else {
             unsafe { at.write(word.read()) };
             continue;
@@ -529,33 +564,76 @@ unsafe fn arguments(found: &Move, params: *const u64) -> Result<*mut u64, String
             if param.memory {
                 unsafe { libc::free(to as *mut libc::c_void) };
             }
-            unsafe { release(&made) };
+            unsafe { release(made) };
             unsafe { libc::free(block as *mut libc::c_void) };
             return Err(converted.name.clone());
         }
         if param.memory {
             unsafe { at.write(to as u64) };
         }
-        made.push((to as usize, conversion.to, param.memory));
+        made.push(match param.back.as_ref().and_then(|b| b.conversion) {
+            Some(back) => {
+                Made::Lent { at: to as usize, to: from as usize, size: param.old_size, there: conversion, back }
+            }
+            None => Made::Value { at: to as usize, release: conversion.to, memory: param.memory },
+        });
     }
     ARGUMENTS.lock().unwrap_or_else(|e| e.into_inner()).push((block as usize, made));
     Ok(block)
 }
 
-/// Releases converted parameters, and the memory of those in memory.
-unsafe fn release(made: &[Made]) {
-    for &(at, release, memory) in made {
-        if let Some(release) = release {
-            unsafe { release(at as *mut u8) };
-        }
-        if memory {
-            unsafe { libc::free(at as *mut libc::c_void) };
+/// Once a call returns: what the runtime made for it goes, and what goes
+/// back to the caller, a value lent or the result, goes there converted.
+/// With `returned` false, as when making the call failed, nothing goes back.
+unsafe fn release(made: Vec<Made>) {
+    unsafe { finish(made, false) }
+}
+
+unsafe fn finish(made: Vec<Made>, returned: bool) {
+    let free = |at: usize| unsafe { libc::free(at as *mut libc::c_void) };
+    for made in made {
+        match made {
+            Made::Value { at, release, memory } => {
+                if let Some(release) = release {
+                    unsafe { release(at as *mut u8) };
+                }
+                if memory {
+                    free(at);
+                }
+            }
+            Made::Lent { at, to, size, there, back } => {
+                if returned {
+                    // The caller's value is the one the call left, in the
+                    // caller's shape, which loses nothing.
+                    let again = unsafe { libc::calloc(1, size.max(1) as usize) } as *mut u8;
+                    if unsafe { (back.convert)(at as *const u8, again) } != 0 {
+                        if let Some(release) = there.from {
+                            unsafe { release(to as *mut u8) };
+                        }
+                        unsafe { std::ptr::copy_nonoverlapping(again, to as *mut u8, size as usize) };
+                    }
+                    free(again as usize);
+                }
+                if let Some(release) = there.to {
+                    unsafe { release(at as *mut u8) };
+                }
+                free(at);
+            }
+            Made::Result { at, to, back } => {
+                if returned && unsafe { (back.convert)(at as *const u8, to as *mut u8) } == 0 {
+                    super::runtime_fault("a result did not convert back to the caller's shape");
+                }
+                if returned && let Some(release) = back.from {
+                    unsafe { release(at as *mut u8) };
+                }
+                free(at);
+            }
         }
     }
 }
 
 /// Once the call of a frame that moved returns: what the runtime converted
-/// for it goes.
+/// for it goes, and what goes back to the caller goes there.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_live_args_done(block: u64) {
     if block == 0 {
@@ -567,7 +645,7 @@ pub unsafe extern "C" fn tondo_rt_live_args_done(block: u64) {
         list.swap_remove(index).1
     };
     unsafe {
-        release(&made);
+        finish(made, true);
         libc::free(block as *mut libc::c_void);
     }
 }
