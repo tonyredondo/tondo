@@ -31,13 +31,12 @@ struct RegionCopy {
 }
 use crate::source::Span;
 use crate::types::{CursorKind, ERR, NONE, OK, SOME, Ty, TyKind, Types};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 pub fn lower(program: &hir::Program, live: bool) -> Vec<Body> {
     let lower_all = |waits: Option<&[bool]>| -> Vec<Body> {
-        let restart = |index: usize, f: &hir::Function| {
-            (live && !f.test && !f.name.starts_with("closure in ")).then_some(hir::FnId(index as u32))
-        };
+        let restart = |index: usize, f: &hir::Function| (live && !f.test).then_some(hir::FnId(index as u32));
         program
             .functions
             .iter()
@@ -131,6 +130,14 @@ struct Builder<'a> {
     /// again; and its parameters.
     restart: Option<hir::FnId>,
     params: Vec<Local>,
+    /// In a live build: the points, where each local comes from, the
+    /// statement being lowered, and how many blocks each statement has
+    /// lowered and locals each has made.
+    points: Vec<Point>,
+    origins: Vec<Origin>,
+    path: Vec<u32>,
+    blocks_of: HashMap<Vec<u32>, u32>,
+    made_by: HashMap<Vec<u32>, u32>,
 }
 
 fn lower_function(types: &Types, function: &hir::Function, waits: Option<&[bool]>, restart: Option<hir::FnId>) -> Body {
@@ -150,10 +157,24 @@ fn lower_function(types: &Types, function: &hir::Function, waits: Option<&[bool]
         cleaning: 0,
         restart,
         params: Vec::new(),
+        points: Vec::new(),
+        origins: Vec::new(),
+        path: Vec::new(),
+        blocks_of: HashMap::new(),
+        made_by: HashMap::new(),
     };
+    // A live build's first block is where a frame from the old code comes
+    // in, which `osr_entry` fills once the points are known.
     b.current = b.new_block();
     let params: Vec<Local> = function.params.iter().map(|&p| b.bind(p)).collect();
+    for (index, &param) in params.iter().enumerate() {
+        b.origins[param.0 as usize] = Origin::Param(index as u32);
+    }
     b.params = params.clone();
+    let osr = restart.map(|_| b.new_local(Ty::INT));
+    let start = b.new_block();
+    b.terminate(Terminator::Goto(start));
+    b.switch_to(start);
     if function.result != Ty::UNIT && function.result != Ty::NEVER {
         b.ret = Some(b.new_local(function.result));
     }
@@ -162,11 +183,25 @@ fn lower_function(types: &Types, function: &hir::Function, waits: Option<&[bool]
         let span = function.body.tail.as_ref().map_or(Span::default(), |tail| tail.span);
         b.emit_return(value, span);
     }
-    let blocks = b
+    if let Some(osr) = osr {
+        b.osr_entry(osr, start);
+    }
+    let blocks: Vec<BlockData> = b
         .blocks
         .into_iter()
         .map(|(stmts, terminator)| BlockData { stmts, terminator: terminator.unwrap_or(Terminator::Unreachable) })
         .collect();
+    let mut points = b.points;
+    if osr.is_some() {
+        let live = crate::mir::live_in(&blocks, b.locals.len());
+        for point in &mut points {
+            point.state = live[point.continues.0 as usize]
+                .iter()
+                .copied()
+                .filter(|local| !params.contains(local) && Some(*local) != osr)
+                .collect();
+        }
+    }
     Body {
         name: function.name.clone(),
         locals: b.locals,
@@ -176,6 +211,9 @@ fn lower_function(types: &Types, function: &hir::Function, waits: Option<&[bool]
         ret: b.ret,
         result: function.result,
         blocks,
+        osr,
+        points,
+        origins: b.origins,
     }
 }
 
@@ -191,6 +229,9 @@ impl Builder<'_> {
     fn new_local(&mut self, ty: Ty) -> Local {
         self.locals.push(ty);
         self.names.push(None);
+        let made = self.made_by.entry(self.path.clone()).or_insert(0);
+        self.origins.push(Origin::Made(self.path.clone(), *made));
+        *made += 1;
         Local(self.locals.len() as u32 - 1)
     }
 
@@ -203,6 +244,7 @@ impl Builder<'_> {
         // The compiler's own are `_` and `<...>`.
         if declared.name != "_" && !declared.name.starts_with('<') {
             self.names[local.0 as usize] = Some(declared.name.clone());
+            self.origins[local.0 as usize] = Origin::Named(declared.name.clone());
         }
         self.hir_locals[id.0 as usize] = Some(local);
         local
@@ -566,38 +608,97 @@ impl Builder<'_> {
         self.switch_to(next);
     }
 
-    /// In a live build, where a statement starts: when the debugger asks
-    /// to restart the frame there, it returns as `return` would, running
-    /// its cleanups, and its function is called again with the same
-    /// arguments, whose code may be new (toolchain 7.10).
-    fn restart_point(&mut self, span: Span) {
+    /// In a live build, where a statement starts (toolchain 7.10). The
+    /// probe of its line says what to do: go on; restart the frame, which
+    /// returns as `return` would, running its cleanups, and calls its
+    /// function again with the same arguments; or move the frame to the
+    /// new code, which takes its state as it is here and goes on from the
+    /// same point, while this frame returns what the new one does.
+    fn restart_point(&mut self, span: Span, kind: &'static str) {
         let Some(function) = self.restart else { return };
         if self.cleaning > 0 {
             return;
         }
-        let asked = self.new_local(Ty::BOOL);
-        self.assign(Place::local(asked), Rvalue::Restart, span);
-        let (again, next) = (self.new_block(), self.new_block());
-        self.terminate(Terminator::Branch(Operand::local(asked), again, next));
+        let point = self.points.len() as u32;
+        let asked = self.new_local(Ty::INT);
+        self.assign(Place::local(asked), Rvalue::Restart(point), span);
+        let (again, check, transfer, moving, next) =
+            (self.new_block(), self.new_block(), self.new_block(), self.new_block(), self.new_block());
+        let is = |b: &mut Self, code: i128| {
+            let compare = Rvalue::Binary(BinOp::Eq, Operand::local(asked), Operand::Const(Const::Int(code, Ty::INT)));
+            let yes = b.new_local(Ty::BOOL);
+            b.assign(Place::local(yes), compare, span);
+            Operand::local(yes)
+        };
+        let restart = is(self, 1);
+        self.terminate(Terminator::Branch(restart, again, check));
+        self.switch_to(check);
+        let moves = is(self, 2);
+        self.terminate(Terminator::Branch(moves, transfer, next));
+        let arguments: Vec<Operand> = self.params.iter().map(|&p| Operand::local(p)).collect();
+        // The new code returns for this frame, which returns its result.
+        let finish = |b: &mut Self, call: Rvalue| {
+            let result = match b.ret {
+                Some(ret) => {
+                    b.assign(Place::local(ret), call, span);
+                    Operand::local(ret)
+                }
+                None => {
+                    let unit = b.new_local(Ty::UNIT);
+                    b.assign(Place::local(unit), call, span);
+                    Operand::Const(Const::Unit)
+                }
+            };
+            b.terminate(Terminator::Return(result));
+        };
         self.switch_to(again);
         self.cleaning += 1;
         self.cleanup_to(0, 0);
         self.cleaning -= 1;
-        let arguments: Vec<Operand> = self.params.iter().map(|&p| Operand::local(p)).collect();
-        let call = Rvalue::Call(hir::Callee::Fn(function), arguments);
-        let result = match self.ret {
-            Some(ret) => {
-                self.assign(Place::local(ret), call, span);
-                Operand::local(ret)
-            }
-            None => {
-                let unit = self.new_local(Ty::UNIT);
-                self.assign(Place::local(unit), call, span);
-                Operand::Const(Const::Unit)
-            }
-        };
-        self.terminate(Terminator::Return(result));
+        finish(self, Rvalue::Call(hir::Callee::Fn(function), arguments.clone()));
+        // What the frame owns goes to the new one, which releases it.
+        self.switch_to(transfer);
+        let state = self.new_local(Ty::INT);
+        self.assign(Place::local(state), Rvalue::Transfer(point), span);
+        let given = self.new_local(Ty::BOOL);
+        let compare = Rvalue::Binary(BinOp::Ne, Operand::local(state), Operand::Const(Const::Int(0, Ty::INT)));
+        self.assign(Place::local(given), compare, span);
+        self.terminate(Terminator::Branch(Operand::local(given), moving, next));
+        self.switch_to(moving);
+        finish(self, Rvalue::CallOsr(function, arguments, Operand::local(state)));
+        let defers = self.scopes.iter().flatten().filter(|exit| matches!(exit, Exit::Defer(_))).count() as u32;
+        self.points.push(Point { path: self.path.clone(), span, continues: next, state: Vec::new(), kind, defers });
         self.switch_to(next);
+    }
+
+    /// The first block of a live build's function: a frame that comes from
+    /// the old code loads the state of its point and goes on from there.
+    fn osr_entry(&mut self, osr: Local, start: BlockId) {
+        let first = std::mem::take(&mut self.blocks[0]);
+        debug_assert!(first.0.is_empty());
+        self.switch_to(BlockId(0));
+        let given = self.new_local(Ty::BOOL);
+        let compare = Rvalue::Binary(BinOp::Ne, Operand::local(osr), Operand::Const(Const::Int(0, Ty::INT)));
+        self.assign(Place::local(given), compare, Span::default());
+        let dispatch = self.new_block();
+        self.terminate(Terminator::Branch(Operand::local(given), dispatch, start));
+        self.switch_to(dispatch);
+        let point = self.new_local(Ty::INT);
+        self.assign(Place::local(point), Rvalue::OsrPoint, Span::default());
+        for index in 0..self.points.len() {
+            let (load, other) = (self.new_block(), self.new_block());
+            let compare =
+                Rvalue::Binary(BinOp::Eq, Operand::local(point), Operand::Const(Const::Int(index as i128, Ty::INT)));
+            let this = self.new_local(Ty::BOOL);
+            self.assign(Place::local(this), compare, Span::default());
+            self.terminate(Terminator::Branch(Operand::local(this), load, other));
+            self.switch_to(load);
+            self.push(Statement::OsrLoad(index as u32));
+            let continues = self.points[index].continues;
+            self.terminate(Terminator::Goto(continues));
+            self.switch_to(other);
+        }
+        self.terminate(Terminator::Goto(start));
     }
 
     /// Whether a call may wait (see `waiting`).
@@ -830,16 +931,26 @@ impl Builder<'_> {
 
     fn block(&mut self, block: &hir::Block) -> Operand {
         self.scopes.push(Vec::new());
-        for stmt in &block.stmts {
+        // Each statement's place: its block's among those of the statement
+        // around it, then its own.
+        let around = self.path.clone();
+        let count = self.blocks_of.entry(around.clone()).or_insert(0);
+        let ordinal = *count;
+        *count += 1;
+        let at = |index: usize| -> Vec<u32> { around.iter().copied().chain([ordinal, index as u32]).collect() };
+        for (index, stmt) in block.stmts.iter().enumerate() {
+            self.path = at(index);
             self.in_frame(|b| b.stmt(stmt));
         }
+        self.path = at(block.stmts.len());
         let mut value = match &block.tail {
             Some(tail) => {
-                self.restart_point(tail.span);
+                self.restart_point(tail.span, "tail");
                 self.expr(tail)
             }
             None => Operand::Const(Const::Unit),
         };
+        self.path = around;
         // Leaving the scope releases its bindings and runs its cleanups, so
         // a value read from a place is copied first into a temporary of the
         // enclosing frame.
@@ -860,7 +971,7 @@ impl Builder<'_> {
     }
 
     fn stmt(&mut self, stmt: &hir::Stmt) {
-        self.restart_point(stmt_span(stmt));
+        self.restart_point(stmt_span(stmt), stmt_kind(stmt));
         match stmt {
             hir::Stmt::Let(id, value) => {
                 let value = self.expr(value);
@@ -1752,5 +1863,23 @@ fn stmt_span(stmt: &hir::Stmt) -> Span {
         hir::Stmt::ForEach { source, .. } => source.span,
         hir::Stmt::ForRange { start, .. } => start.span,
         _ => Span::default(),
+    }
+}
+
+/// What a statement is, for matching it with one of the new code.
+fn stmt_kind(stmt: &hir::Stmt) -> &'static str {
+    match stmt {
+        hir::Stmt::Let(..) => "let",
+        hir::Stmt::Destructure(..) => "let",
+        hir::Stmt::Assign { .. } | hir::Stmt::AssignSlice { .. } => "assign",
+        hir::Stmt::Defer { .. } => "defer",
+        hir::Stmt::Lend { .. } => "lend",
+        hir::Stmt::LockSync { .. } | hir::Stmt::AwaitChange(..) => "lock",
+        hir::Stmt::Expr(_) => "expr",
+        hir::Stmt::Return(_) => "return",
+        hir::Stmt::Fail(_) => "fail",
+        hir::Stmt::Break => "break",
+        hir::Stmt::Continue => "continue",
+        hir::Stmt::Loop { .. } | hir::Stmt::ForEach { .. } | hir::Stmt::ForRange { .. } => "for",
     }
 }

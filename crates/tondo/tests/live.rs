@@ -180,8 +180,9 @@ fn edit_and_continue() {
     said(&mut debugger, "breakpoint");
     send(&mut debugger, "continue");
     said(&mut debugger, "\"stopped\"");
-    // Stopped in `label`: its frame finishes with the old code, and the
-    // next call runs the new one, where the breakpoint is too.
+    // Stopped in `label`: its frame goes on in the new code with the text
+    // the old one made, and the next call runs the new code all through,
+    // where the breakpoint is too.
     edit(&file, "\"old {n}\"", "\"new {n * 10}\"");
     send(&mut debugger, "reload");
     let reloaded = said(&mut debugger, "reloaded");
@@ -334,5 +335,120 @@ fn a_stopped_frame_restarts() {
     send(&mut debugger, "continue");
     let rest = said(&mut debugger, "exited");
     assert!(rest.iter().any(|l| l == "new 0") && !rest.iter().any(|l| l == "old 0"), "{rest:?}");
+    debugger.stop();
+}
+
+/// A running frame moves to the new code at its next line, with the values
+/// it has; one that needs a value the old code does not have there stays
+/// until it reaches a line where it has all it needs.
+#[test]
+fn running_frames_move_to_the_new_code() {
+    let dir = dir("live_moves");
+    let file = dir.join("server.to");
+    std::fs::write(&file, SERVER).unwrap();
+    let mut server = Running::start(&dir, &["run", "server.to", "--live"]);
+    assert_eq!(server.answer("a"), "v1 a 1 after 1");
+    edit(&file, "after {seen}\")", "after {seen}!\")");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done && said.contains("1 changed (main); frames move to the new code at their next statement"), "{said}");
+    assert_eq!(server.answer("b"), "v1 b 1 after 2!");
+    edit(&file, "            seen += 1\n", "            seen += 1\n            let tenfold = seen * 10\n");
+    edit(&file, "after {seen}!\")", "after {seen} {tenfold}\")");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(
+        done && said
+            .contains("a frame of `main` stays on the old code at lines 15–16 of server.to: `tenfold` is new there"),
+        "{said}"
+    );
+    assert_eq!(server.answer("c"), "v1 c 1 after 3 30");
+    server.stop();
+}
+
+const CLOSURE: &str = r#"import std.console
+
+let serve = () {
+    var count = 0
+    for {
+        match console.readLine() {
+            some(line) => {
+                count += 1
+                console.println("v1 {line} {count}")
+            }
+            none => break
+        }
+    }
+}
+serve()
+"#;
+
+#[test]
+fn a_closure_s_frame_moves() {
+    let dir = dir("live_closure_moves");
+    let file = dir.join("closure.to");
+    std::fs::write(&file, CLOSURE).unwrap();
+    let mut server = Running::start(&dir, &["run", "closure.to", "--live"]);
+    assert_eq!(server.answer("a"), "v1 a 1");
+    edit(&file, "\"v1 {line} {count}\"", "\"v2 {line} {count * 100}\"");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done && said.contains("1 changed (closure in main)"), "{said}");
+    assert_eq!(server.answer("b"), "v2 b 200");
+    server.stop();
+}
+
+const COUNTING: &str = r#"import std.console
+
+var total = 0
+for i in 0..4 {
+    total += i
+    console.println("{i} total {total}")
+}
+"#;
+
+/// Stopped under the debugger, a frame goes on in the new code, and the
+/// stack shows it once.
+#[test]
+fn a_stopped_frame_goes_on_in_the_new_code() {
+    let dir = dir("live_stopped_moves");
+    let file = dir.join("count.to");
+    std::fs::write(&file, COUNTING).unwrap();
+    let mut debugger = Running::start(&dir, &["debug", "--live", "--json", "count.to"]);
+    let said = |debugger: &mut Running, until: &str| -> Vec<String> {
+        let mut lines = Vec::new();
+        loop {
+            let line = debugger.lines.recv_timeout(Duration::from_secs(60)).expect("the debugger's answer");
+            let done = line.contains(until);
+            lines.push(line);
+            if done {
+                return lines;
+            }
+        }
+    };
+    let send = |debugger: &mut Running, command: &str| {
+        writeln!(debugger.input, "{command}").unwrap();
+        debugger.input.flush().unwrap();
+    };
+    said(&mut debugger, "\"start\"");
+    send(&mut debugger, "break count.to:6");
+    said(&mut debugger, "breakpoint");
+    send(&mut debugger, "continue");
+    said(&mut debugger, "\"stopped\"");
+    send(&mut debugger, "continue");
+    let first = said(&mut debugger, "\"stopped\"");
+    assert!(first.iter().any(|l| l == "0 total 0"), "{first:?}");
+    edit(&file, "\"{i} total {total}\"", "\"{i} sum {total * 100}\"");
+    send(&mut debugger, "reload");
+    let reloaded = said(&mut debugger, "reloaded");
+    assert!(reloaded.last().unwrap().contains("\"changed\":[\"main\"]"), "{reloaded:?}");
+    send(&mut debugger, "continue");
+    let next = said(&mut debugger, "\"stopped\"");
+    assert!(next.iter().any(|l| l == "1 sum 100"), "{next:?}");
+    send(&mut debugger, "stack");
+    let stack = said(&mut debugger, "\"stack\"");
+    assert_eq!(stack.last().unwrap(), "{\"stack\":[\"count.to:6 in main\"]}");
+    send(&mut debugger, "delete 1");
+    said(&mut debugger, "deleted");
+    send(&mut debugger, "continue");
+    let rest = said(&mut debugger, "exited");
+    assert!(rest.iter().any(|l| l == "2 sum 300") && rest.iter().any(|l| l == "3 sum 600"), "{rest:?}");
     debugger.stop();
 }

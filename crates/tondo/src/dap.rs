@@ -326,7 +326,7 @@ fn handle(
         "reload" => {
             let pid = program.pid;
             match crate::live::reload(pid, &mut |request| program.ask(request)) {
-                Ok(reloaded) => Ok(json!({ "changed": reloaded.changed, "added": reloaded.added })),
+                Ok(reloaded) => Ok(reloaded.json()),
                 Err(refused) => Err(refused.message()),
             }
         }

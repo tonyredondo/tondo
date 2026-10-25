@@ -670,8 +670,7 @@ pub(super) fn define_inner(
             Val::Zero => {}
         }
     }
-    let callee = e.cg.module.declare_func_in_func(e.cg.functions[callback.target.0 as usize], e.fb.func);
-    let call = e.fb.ins().call(callee, &values);
+    let call = super::call_body(e.cg, &mut e.fb, callback.target, &values);
     if let Class::Scalar(_) = e.cg.class(result) {
         let value = e.fb.inst_results(call)[0];
         e.fb.ins().store(flags(), value, result_at, 0);

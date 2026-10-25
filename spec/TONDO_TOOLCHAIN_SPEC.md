@@ -682,10 +682,10 @@ tienen nada de eso, ni su coste.
 `tondo reload <pid|name>` cambia el código de un build vivo en ejecución por
 el que dicen sus archivos ahora: compila el programa de nuevo, con las
 opciones con que se compiló y desde el directorio donde se compiló, y el
-runtime pone el código nuevo en memoria y apunta los slots a él. Las
-llamadas que empiezan después usan el código nuevo, también las de las
-clausuras que ya existían, cuyo cuerpo se llama por su slot; un frame que ya
-estaba en una función cambiada termina con el viejo. Cambia en caliente:
+runtime pone el código nuevo en memoria y apunta a él los slots de las
+funciones que cambian. Las llamadas que empiezan después usan el código
+nuevo, también las de las clausuras que ya existían, cuyo cuerpo se llama por
+su slot. Cambia en caliente:
 
 - el cuerpo de funciones, métodos, instancias genéricas, implementaciones,
   clausuras y constantes;
@@ -702,16 +702,34 @@ además su lugar entre las de su función, y cuántas tiene: lo que cambia de
 forma es otro, y el código viejo que queda, como una clausura que capturó
 valores de la forma vieja, sigue con su versión y nunca mezcla las dos.
 
+Un frame que ya estaba en una función cambiada, también de una clausura o de
+otra tarea, pasa al código nuevo en la siguiente sentencia que empieza
+(on-stack replacement): a la misma sentencia del código nuevo, la de la misma
+línea una vez emparejadas las líneas de la función que no cambian, o la que
+ocupa el lugar de una línea cambiada, con los valores que tiene. Cada binding
+se reconoce por su nombre, y los valores que hace el compilador, como el
+iterador de un `for`, por la sentencia que los hace. El frame no pasa, y
+sigue con el código viejo hasta otra sentencia, donde el código nuevo
+necesita un binding que el viejo no tiene ahí o que tiene otro tipo, donde un
+binding presta un valor, como dentro de un `lock`, donde el viejo tiene un
+valor que el nuevo no soltaría, o donde los `defer` registrados no son los
+mismos; `reload` dice en qué líneas y por qué. El frame de una función cuyos
+parámetros o resultado cambian termina con el código viejo. Las funciones que
+no cambian siguen con su código, y un cambio posterior que las cambie mueve
+sus frames.
+
 No se aplica, y el programa sigue como estaba, cuando los archivos no
 compilan, con sus diagnósticos, cuando un tipo cambia de forma y un frame en
 ejecución puede tener un valor de la vieja, diciendo cuál y dónde, o cuando
 el cambio llama a una función de C que el programa no enlaza: el mensaje
 pide arrancarlo de nuevo. `reload` dice qué funciones cambiaron y cuáles
-añadió, y termina con estado 1 si no se aplicó.
+añadió, y dónde quedan frames en el código viejo, y termina con estado 1 si
+no se aplicó.
 
 Bajo `tondo debug --live`, la orden `reload` hace lo mismo, también con el
-programa parado: los breakpoints de las líneas cambiadas paran en el código
-nuevo. `restart`, con el programa parado, hace que el frame donde paró
+programa parado: el frame donde paró sigue en el código nuevo al continuar, y
+los breakpoints de las líneas cambiadas paran en el código nuevo. `restart`,
+con el programa parado, hace que el frame donde paró
 vuelva ahí como con `return`, ejecutando sus `defer` y soltando sus
 bindings, y que su función se llame otra vez con los mismos argumentos, con
 el código que tiene ahora: el programa para en la primera línea de esa

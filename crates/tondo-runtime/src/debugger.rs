@@ -251,7 +251,7 @@ fn tell(event: &str) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize, alive: *const u64) -> u8 {
     if !ATTACHED.load(Ordering::Relaxed) {
-        return 0;
+        return super::live::moving(site);
     }
     let Some(table) = table() else { return 0 };
     let site = site as usize;
@@ -260,7 +260,7 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
     let task = super::tasks::current_id();
     let marked = table.marked.get(site).is_some_and(|m| m.load(Ordering::Relaxed));
     if !marked && !HOLD.load(Ordering::Relaxed) && state().mode == Mode::Run {
-        return restarting(frame, task);
+        return restarting(frame, task, site);
     }
     let mut state = state();
     let why = if state.stopped.is_some() || HOLD.load(Ordering::Relaxed) {
@@ -289,7 +289,7 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
                 Some("restart".to_string())
             }
             (None, true) => Some("step".to_string()),
-            (None, false) => return restarting(frame, task),
+            (None, false) => return restarting(frame, task, site),
         }
     };
     // A patch may come while the task waits.
@@ -314,7 +314,7 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
     if paused {
         super::tasks::enter_tondo();
     }
-    restarting(frame, task)
+    restarting(frame, task, site)
 }
 
 /// The frame the debugger asked to restart, and its task; and the function
@@ -323,10 +323,14 @@ static RESTART_FRAME: std::sync::atomic::AtomicUsize = std::sync::atomic::Atomic
 static RESTART_TASK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static RESTARTED: Mutex<String> = Mutex::new(String::new());
 
-/// Whether the frame at a probe is the one to restart.
-fn restarting(frame: usize, task: u64) -> u8 {
+/// Whether the frame at a probe is the one to restart (1), or moves to new
+/// code (2).
+fn restarting(frame: usize, task: u64, site: usize) -> u8 {
     let asked = RESTART_FRAME.load(Ordering::Relaxed);
-    u8::from(asked != 0 && asked == frame && RESTART_TASK.load(Ordering::Relaxed) == task)
+    match asked != 0 && asked == frame && RESTART_TASK.load(Ordering::Relaxed) == task {
+        true => 1,
+        false => super::live::moving(site as i64),
+    }
 }
 
 fn stopped_event(stop: &Stop) -> String {

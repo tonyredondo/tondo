@@ -138,10 +138,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                     session.answer()
                 });
                 match (reloaded, json) {
-                    (Ok(reloaded), true) => println!(
-                        "{}",
-                        serde_json::json!({ "reloaded": { "changed": reloaded.changed, "added": reloaded.added } })
-                    ),
+                    (Ok(reloaded), true) => println!("{}", serde_json::json!({ "reloaded": reloaded.json() })),
                     (Ok(reloaded), false) => println!("{}", reloaded.summary()),
                     (Err(refused), true) => println!("{}", serde_json::json!({ "error": refused.message() })),
                     (Err(refused), false) => println!("{}", refused.message()),

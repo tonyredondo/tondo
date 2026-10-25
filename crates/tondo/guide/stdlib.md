@@ -219,10 +219,14 @@ When one task stops, all stop at their next line, and go on together.
 runs: after an edit, `tondo reload app` puts the new code in, keeping the
 program's state, and says which functions changed. `tondo run app.to
 --watch` does it whenever a file is saved. Calls that start afterwards run
-the new code, closures made before included; a call already running
-finishes with the old one. A type may gain or lose fields while no running
-call holds a value of it, as the types of a request a server handles; when
-one does, reload names where and says to start the program again, which
-`--watch` does. Under `tondo debug --live app.to`, `reload` works where the
-program stopped: edit the function, reload, continue; or `restart`, which
-runs the stopped function again from its first line, with its new code.
+the new code, closures made before included, and a call already running
+moves to it at its next statement, with its values: a loop in `main` goes
+on with the new body. Where the new code needs a binding the old one does
+not have there, the call stays on the old code until it reaches another
+statement, and reload says which lines and why. A type may gain or lose
+fields while no running call holds a value of it, as the types of a
+request a server handles; when one does, reload names where and says to
+start the program again, which `--watch` does. Under `tondo debug --live
+app.to`, `reload` works where the program stopped: edit the function,
+reload, continue; or `restart`, which runs the stopped function again from
+its first line, with its new code.

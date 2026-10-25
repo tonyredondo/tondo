@@ -217,10 +217,7 @@ impl Server {
                     (None, None) => return Err("give `session`, or `program`: a running live build".into()),
                 };
                 match crate::live::reload_named(&program) {
-                    Ok(reloaded) => Ok(Reply::new(
-                        reloaded.summary(),
-                        json!({ "changed": reloaded.changed, "added": reloaded.added }),
-                    )),
+                    Ok(reloaded) => Ok(Reply::new(reloaded.summary(), reloaded.json())),
                     Err(refused) => Err(refused.message()),
                 }
             }

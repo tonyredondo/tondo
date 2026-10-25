@@ -6,6 +6,8 @@
 //! runtime maps it and points the slots at its functions, and the old
 //! code stays for the frames still in it.
 
+mod osr;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -31,6 +33,19 @@ pub struct Build {
     pub patch: Option<Base>,
     /// The nominal types a frame of each function may hold, by its name.
     pub holds: HashMap<String, std::collections::BTreeSet<String>>,
+    /// Each function's lines and points, by its identity: what moves frames
+    /// to new code.
+    pub points: serde_json::Map<String, serde_json::Value>,
+}
+
+/// A statement's place, as text.
+pub(crate) fn path_text(path: &[u32]) -> String {
+    path.iter().map(u32::to_string).collect::<Vec<_>>().join(".")
+}
+
+/// A line's hash, whatever its indentation.
+pub(crate) fn line_hash(line: &str) -> u64 {
+    u64::from_str_radix(&crate::driver::fingerprint(&[line.trim().as_bytes()]), 16).unwrap_or(0)
 }
 
 /// What a patch builds on: the types whose identity the running program
@@ -38,6 +53,7 @@ pub struct Build {
 pub struct Base {
     pub data: Vec<String>,
     pub sites: u32,
+    pub code: HashMap<String, u64>,
 }
 
 impl Build {
@@ -53,6 +69,7 @@ impl Build {
             sites: 0,
             patch: None,
             holds: HashMap::new(),
+            points: serde_json::Map::new(),
         }
     }
 }
@@ -244,6 +261,7 @@ fn save(
         "sites": build.sites,
         "types": shapes,
         "holds": build.holds,
+        "points": build.points,
     });
     let file = match pid {
         Some(pid) => manifest_path(&format!("{}-{pid}", build.id)),
@@ -253,10 +271,14 @@ fn save(
     std::fs::write(&file, manifest.to_string()).map_err(|e| format!("cannot write {}: {e}", file.display()))
 }
 
-/// What a reload did: the functions whose code changed and those it added.
+/// What a reload did: the functions whose code changed and those it added;
+/// how many places of the old code move frames to the new, and where they
+/// stay on the old code and why.
 pub struct Reloaded {
     pub changed: Vec<String>,
     pub added: Vec<String>,
+    pub moves: usize,
+    pub stays: Vec<String>,
 }
 
 /// Why a reload did not happen: the program does not compile, or the
@@ -352,8 +374,13 @@ fn patch(
         data: data.clone(),
         code: HashMap::new(),
         sites: 0,
-        patch: Some(Base { data: data.clone(), sites: live["sites"].as_u64().unwrap_or(0) as u32 }),
+        patch: Some(Base {
+            data: data.clone(),
+            sites: live["sites"].as_u64().unwrap_or(0) as u32,
+            code: known.clone(),
+        }),
         holds: HashMap::new(),
+        points: serde_json::Map::new(),
     };
     let object = crate::driver::compile(&analysis, true, options.target, Some(&mut build)).map_err(Refused::Failed)?;
     use crate::link::patch::External;
@@ -371,7 +398,18 @@ fn patch(
             format!("the change calls `{name}`, which the running program does not link: start it again")
         })
     };
-    let patch = crate::link::patch::link(&object, &resolve, "tondo_patch").map_err(Refused::Restart)?;
+    let mut patch = crate::link::patch::link(&object, &resolve, "tondo_patch").map_err(Refused::Restart)?;
+    // The functions whose code changes, which the patch sets, and how
+    // their frames move to it.
+    let set: Vec<String> = build
+        .code
+        .iter()
+        .filter(|(identity, hash)| known.get(*identity) != Some(hash))
+        .map(|(i, _)| i.clone())
+        .collect();
+    let points = serde_json::Value::Object(build.points.clone());
+    let moves = osr::moves(&manifest["points"], &points, &set, &build.slots);
+    patch.extend(&moves.bytes);
     let patch_file = crate::driver::cache_dir().join("live").join(format!("patch-{pid}.bin"));
     std::fs::write(&patch_file, &patch).map_err(|e| format!("cannot write {}: {e}", patch_file.display()))?;
     let request: Vec<String> = std::iter::once(format!("patch {}", patch_file.display())).chain(guarded).collect();
@@ -422,12 +460,20 @@ fn patch(
     let mut code = known;
     code.extend(build.code.drain());
     build.code = code;
+    // The points of the code each function runs now.
+    let mut points = manifest["points"].as_object().cloned().unwrap_or_default();
+    for identity in &set {
+        if let Some(entry) = build.points.get(identity) {
+            points.insert(identity.clone(), entry.clone());
+        }
+    }
+    build.points = points;
     save(&build, &shapes, path, &options, Some(pid))?;
     changed.sort();
     changed.dedup();
     added.sort();
     added.dedup();
-    Ok(Reloaded { changed, added })
+    Ok(Reloaded { changed, added, moves: moves.count, stays: moves.stays })
 }
 
 /// `tondo reload <pid|name>`: the running live program `name`.
@@ -448,8 +494,25 @@ impl Refused {
 }
 
 impl Reloaded {
-    /// What a reload says it did.
+    /// What a reload says it did, then where frames stay on the old code.
     pub fn summary(&self) -> String {
+        let mut summary = self.changes();
+        if self.moves > 0 {
+            summary.push_str("; frames move to the new code at their next statement");
+        }
+        for stay in &self.stays {
+            summary.push('\n');
+            summary.push_str(stay);
+        }
+        summary
+    }
+
+    /// As JSON, for the debugger's and agents' protocols.
+    pub fn json(&self) -> serde_json::Value {
+        serde_json::json!({ "changed": self.changed, "added": self.added, "moves": self.moves, "stays": self.stays })
+    }
+
+    fn changes(&self) -> String {
         let list = |names: &[String]| names.join(", ");
         match (self.changed.is_empty(), self.added.is_empty()) {
             (true, true) => "reloaded: no function changed".into(),

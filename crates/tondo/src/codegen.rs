@@ -20,7 +20,8 @@ use crate::hir::{
     Program, ReflectOp, SharedOp, StdFn, StrOp, TaskOp,
 };
 use crate::mir::{
-    Body, Const, Local, Operand, Overlap, Piece, Place, Proj, Rvalue, SelectCase, Statement, Terminator, project,
+    Body, Const, Local, Operand, Origin, Overlap, Piece, Place, Proj, Rvalue, SelectCase, Statement, Terminator,
+    project,
 };
 use crate::source::{SourceMap, Span};
 use crate::types::{AdtKind, ERR, FloatTy, Handle, IntTy, Mode, OK, SOME, Shown, Ty, TyKind, Types};
@@ -60,6 +61,9 @@ const ARRAY_HEADER: i64 = 32;
 enum Rt {
     /// A live build's tables, before anything runs (toolchain 7.10).
     Live,
+    /// A frame's state for the new code, and its release once taken.
+    LiveTransfer,
+    LiveFree,
     StrRetain,
     StrRelease,
     StrEq,
@@ -562,6 +566,8 @@ impl Rt {
             Rt::Callback => ("tondo_rt_callback", &[I64, I64, I64], &[]),
             Rt::Main => ("tondo_rt_main", &[I64], &[I32]),
             Rt::Live => ("tondo_rt_live", &[I64], &[]),
+            Rt::LiveTransfer => ("tondo_rt_live_transfer", &[I64, I64], &[I64]),
+            Rt::LiveFree => ("tondo_rt_live_free", &[I64], &[]),
             Rt::JsonReaderRelease => ("tondo_rt_json_reader_release", &[I64], &[]),
             Rt::JsonWriterRelease => ("tondo_rt_json_writer_release", &[I64], &[]),
             Rt::PlanRelease => ("tondo_rt_process_plan_release", &[I64], &[]),
@@ -717,6 +723,7 @@ pub fn compile(
         debug_sites: Vec::new(),
         live: None,
         current: 0,
+        takes_osr: bodies.iter().map(|body| body.osr.is_some()).collect(),
         forwarders: HashMap::new(),
         pending_forwarders: Vec::new(),
     };
@@ -821,6 +828,7 @@ pub fn compile(
         cg.debug_table(debug);
     }
     if let Some(build) = live {
+        cg.live_points(build, bodies);
         cg.live_tables(build, trace)?;
     }
     let product = cg.module.finish();
@@ -872,6 +880,8 @@ struct Codegen<'a> {
     live: Option<LiveCodegen>,
     /// The body whose IR is being built.
     current: usize,
+    /// Which bodies take a live build's hidden parameter.
+    takes_osr: Vec<bool>,
     /// In a live build, what closures call their bodies through.
     forwarders: HashMap<FnId, FuncId>,
     pending_forwarders: Vec<(FnId, FuncId)>,
@@ -888,11 +898,19 @@ struct LiveCodegen {
     /// Each compiled function's code, hashed, by its function.
     code: HashMap<FuncId, u64>,
     /// For a patch: the types whose identity the running program holds,
-    /// and the number its debugger's sites start from.
+    /// and the number its debugger's sites start from; and the code the
+    /// program runs, hashed, by identity, which a patch leaves where it is
+    /// unless it changes.
     patch: Option<(Vec<String>, u32)>,
+    known: HashMap<String, u64>,
     /// The word of each function's first site, the function, and the
     /// site's number in the build.
     sites: Vec<(DataId, usize, usize)>,
+    /// The site of each point that has a probe, by function and point.
+    point_sites: HashMap<(usize, u32), u32>,
+    /// What each point's state is in its function, as `point_layout` lays
+    /// it out, by function and point.
+    layouts: HashMap<(usize, u32), StateLayout>,
 }
 
 impl LiveCodegen {
@@ -959,7 +977,19 @@ impl LiveCodegen {
         let slots = module.declare_data("tondo_live_slots", linkage, true, false).map_err(|e| e.to_string())?;
         let info = module.declare_data(info, Linkage::Local, false, false).map_err(|e| e.to_string())?;
         let patch = build.patch.as_ref().map(|base| (base.data.clone(), base.sites));
-        Ok(LiveCodegen { slots, info, slot_of, identities, code: HashMap::new(), patch, sites: Vec::new() })
+        let known = build.patch.as_ref().map(|base| base.code.clone()).unwrap_or_default();
+        Ok(LiveCodegen {
+            slots,
+            info,
+            slot_of,
+            identities,
+            code: HashMap::new(),
+            patch,
+            known,
+            sites: Vec::new(),
+            point_sites: HashMap::new(),
+            layouts: HashMap::new(),
+        })
     }
 }
 
@@ -992,15 +1022,38 @@ fn code_hash(code: &Compiled, labels: &Labels) -> u64 {
 /// Calls one of the program's functions: directly, or in a live build
 /// through its slot, which a patch may point at new code.
 fn call_body(cg: &mut Codegen, fb: &mut FunctionBuilder, id: FnId, args: &[ir::Value]) -> ir::Inst {
+    call_body_with(cg, fb, id, args, None)
+}
+
+/// A call with the state a frame brings to the new code, or none.
+fn call_body_with(
+    cg: &mut Codegen,
+    fb: &mut FunctionBuilder,
+    id: FnId,
+    args: &[ir::Value],
+    state: Option<ir::Value>,
+) -> ir::Inst {
+    let mut args = args.to_vec();
+    if cg.takes_osr[id.0 as usize] {
+        args.push(state.unwrap_or_else(|| fb.ins().iconst(types::I64, 0)));
+    }
+    let args = &args[..];
     let func = cg.functions[id.0 as usize];
     let Some(live) = &cg.live else {
         let callee = cg.module.declare_func_in_func(func, fb.func);
         return fb.ins().call(callee, args);
     };
-    let (table, slot) = (live.slots, live.slot_of[id.0 as usize]);
-    let table = cg.module.declare_data_in_func(table, fb.func);
-    let base = fb.ins().symbol_value(POINTER, table);
-    let code = fb.ins().load(POINTER, flags(), base, (slot * 8) as i32);
+    // A frame that moves enters the code its state is for, which a patch
+    // that comes meanwhile does not change.
+    let code = match state {
+        Some(state) => fb.ins().load(POINTER, flags(), state, 8),
+        None => {
+            let (table, slot) = (live.slots, live.slot_of[id.0 as usize]);
+            let table = cg.module.declare_data_in_func(table, fb.func);
+            let base = fb.ins().symbol_value(POINTER, table);
+            fb.ins().load(POINTER, flags(), base, (slot * 8) as i32)
+        }
+    };
     let signature = cg.module.declarations().get_function_decl(func).signature.clone();
     let signature = fb.import_signature(signature);
     fb.ins().call_indirect(signature, code, args)
@@ -1228,6 +1281,11 @@ impl Codegen<'_> {
                 Class::Memory => signature.params.push(AbiParam::new(POINTER)),
             }
         }
+        // A live build's hidden parameter: the state a frame brings from
+        // the old code.
+        if body.osr.is_some() {
+            signature.params.push(AbiParam::new(types::I64));
+        }
         if let Class::Scalar(ty) = self.class(body.result) {
             signature.returns.push(AbiParam::new(ty));
         }
@@ -1381,7 +1439,12 @@ impl Codegen<'_> {
         if let Some(&forward) = self.forwarders.get(&body) {
             return forward;
         }
-        let signature = self.module.declarations().get_function_decl(self.functions[body.0 as usize]).signature.clone();
+        // The convention of `fn(...)` values: no hidden parameter.
+        let mut signature =
+            self.module.declarations().get_function_decl(self.functions[body.0 as usize]).signature.clone();
+        if self.takes_osr[body.0 as usize] {
+            signature.params.pop();
+        }
         let name = format!("tondo_forward{}", body.0);
         let forward = self.module.declare_function(&name, Linkage::Local, &signature).expect("a closure's forwarder");
         self.forwarders.insert(body, forward);
@@ -1510,6 +1573,73 @@ impl Codegen<'_> {
         Labels { functions, data }
     }
 
+    /// What a live build's manifest keeps of each function's points, for a
+    /// patch to move frames from one version's to another's: a hash of each
+    /// of the function's lines, which says what lines stay the same, and of
+    /// each point its line among them, what it is, its site and what its
+    /// state holds, with each local's name across versions.
+    fn live_points(&mut self, build: &mut crate::live::Build, bodies: &[Body]) {
+        let live = self.live.as_ref().expect("a live build");
+        let mut functions = serde_json::Map::new();
+        for (index, body) in bodies.iter().enumerate() {
+            let placed: Vec<(u32, &crate::mir::Point)> = (0u32..)
+                .zip(&body.points)
+                .filter(|(number, point)| point.span != Span::default() && live.layouts.contains_key(&(index, *number)))
+                .collect();
+            let Some(&(_, first)) = placed.first() else { continue };
+            let lines: Vec<usize> = placed.iter().map(|(_, p)| self.sources.position(p.span.start).1).collect();
+            let (top, bottom) = (*lines.iter().min().expect("a point"), *lines.iter().max().expect("a point"));
+            let text = &self.sources.file_of(first.span.start).text;
+            let hashes: Vec<u64> =
+                text.lines().skip(top - 1).take(bottom - top + 1).map(crate::live::line_hash).collect();
+            let mut points = Vec::new();
+            for (&(number, point), line) in placed.iter().zip(&lines) {
+                let (items, size) = &live.layouts[&(index, number)];
+                let mut items: Vec<_> = items.iter().collect();
+                items.sort_by_key(|(local, ..)| local.0);
+                // Bindings of one name live at once are told apart by order.
+                let mut named: HashMap<&str, u32> = HashMap::new();
+                let state: Vec<serde_json::Value> = items
+                    .into_iter()
+                    .filter_map(|(local, kept, offset, bytes)| {
+                        let key = match &body.origins[local.0 as usize] {
+                            Origin::Named(name) => {
+                                let rank = named.entry(name).or_insert(0);
+                                *rank += 1;
+                                format!("{name}/{}", *rank - 1)
+                            }
+                            Origin::Made(path, made) => format!("#{}/{made}", crate::live::path_text(path)),
+                            Origin::Param(_) => return None,
+                        };
+                        let ty = body.locals[local.0 as usize];
+                        Some(serde_json::json!({
+                            "key": key,
+                            "type": self.identity_key(ty),
+                            "lent": matches!(kept, StateKept::Pointer(_)),
+                            "owned": self.types.needs_drop(ty),
+                            "offset": offset,
+                            "size": bytes,
+                        }))
+                    })
+                    .collect();
+                points.push(serde_json::json!({
+                    "point": number,
+                    "line": line - top,
+                    "kind": point.kind,
+                    "path": crate::live::path_text(&point.path),
+                    "defers": point.defers,
+                    "site": live.point_sites.get(&(index, number)),
+                    "size": size,
+                    "state": state,
+                }));
+            }
+            let file = self.sources.position(first.span.start).0;
+            let entry = serde_json::json!({ "file": file, "top": top, "lines": hashes, "points": points });
+            functions.insert(live.identities[index].clone(), entry);
+        }
+        build.points = functions;
+    }
+
     /// A live build's tables (toolchain 7.10): the slots, each pointing at
     /// its function; the runtime's functions, the functions of C the
     /// program calls and the identities of its types, which a patch reaches
@@ -1613,13 +1743,19 @@ impl Codegen<'_> {
             .map(|(&ty, &id)| (self.identity_key(ty), id))
             .collect();
         added.sort();
-        let start = 40 + live.slot_of.len() * 16;
+        // The functions whose code changes or is new: the others go on
+        // running the code the program has, whose frames a later patch
+        // moves as it knows their points.
+        let set: Vec<usize> = (0..live.slot_of.len())
+            .filter(|&index| live.known.get(&live.identities[index]) != live.code.get(&self.functions[index]))
+            .collect();
+        let start = 40 + set.len() * 16;
         let mut bytes = vec![0u8; start + added.len() * 16];
         bytes[16..24].copy_from_slice(&(sites as u64).to_le_bytes());
-        bytes[24..32].copy_from_slice(&(live.slot_of.len() as u64).to_le_bytes());
+        bytes[24..32].copy_from_slice(&(set.len() as u64).to_le_bytes());
         bytes[32..40].copy_from_slice(&(added.len() as u64).to_le_bytes());
-        for (index, &slot) in live.slot_of.iter().enumerate() {
-            bytes[40 + index * 16..48 + index * 16].copy_from_slice(&(slot as u64).to_le_bytes());
+        for (at, &index) in set.iter().enumerate() {
+            bytes[40 + at * 16..48 + at * 16].copy_from_slice(&(live.slot_of[index] as u64).to_le_bytes());
         }
         for index in 0..added.len() {
             let at = start + index * 16;
@@ -1634,9 +1770,9 @@ impl Codegen<'_> {
             let debug = self.module.declare_data_in_data(debug, &mut table);
             table.write_data_addr(8, debug, 0);
         }
-        for index in 0..live.slot_of.len() {
+        for (at, &index) in set.iter().enumerate() {
             let function = self.module.declare_func_in_data(self.functions[index], &mut table);
-            table.write_function_addr((48 + index * 16) as u32, function);
+            table.write_function_addr((48 + at * 16) as u32, function);
         }
         for (index, (name, id)) in added.iter().enumerate() {
             let identity = self.module.declare_data_in_data(*id, &mut table);
@@ -3054,6 +3190,18 @@ fn define_thunk(
     fb.finalize(config);
 }
 
+/// A point's state: each local live there, how it is kept, its offset and
+/// size; and the state's size.
+type StateLayout = (Vec<(Local, StateKept, u32, u32)>, u32);
+
+/// How a live build keeps a local of a point's state.
+#[derive(Clone, Copy)]
+enum StateKept {
+    Var(Variable, ir::Type),
+    Pointer(Variable),
+    Slot(ir::StackSlot),
+}
+
 /// Where a MIR local lives.
 #[derive(Copy, Clone)]
 enum Storage {
@@ -3080,8 +3228,14 @@ struct FnCodegen<'a, 'b> {
     /// the local that holds it, and the line each block a restart point
     /// leads to is on.
     probed: Option<ir::Value>,
-    restarts: Option<Local>,
+    carrying: bool,
     carried: HashMap<usize, (String, usize)>,
+    /// The site of the probe just placed, as a value and its number; that
+    /// of each point with a probe; and the state of the call being made.
+    site_now: Option<(ir::Value, u32)>,
+    point_sites: HashMap<u32, ir::Value>,
+    osr_arg: Option<ir::Value>,
+    state_slot: Option<ir::StackSlot>,
 }
 
 /// What a function of a debug build keeps for its probes (toolchain 7.6):
@@ -3180,8 +3334,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             sites: Vec::new(),
             debug,
             probed: None,
-            restarts: None,
+            carrying: false,
             carried: HashMap::new(),
+            site_now: None,
+            point_sites: HashMap::new(),
+            osr_arg: None,
+            state_slot: None,
         }
     }
 
@@ -3207,6 +3365,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 Storage::Zero | Storage::Slot(_) => {}
             }
         }
+        if let Some(osr) = self.body.osr {
+            let state = incoming.next().expect("the hidden parameter");
+            self.write(&Place::local(osr), Val::Scalar(state));
+        }
         if let Some(debug) = &self.debug {
             let zero = self.e.fb.ins().iconst(types::I64, 0);
             for word in 0..debug.shown.len().div_ceil(64) {
@@ -3224,6 +3386,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             if let Some(debug) = &mut self.debug {
                 debug.line = self.carried.remove(&index);
+                // The blocks of a restart point carry its line on; the one
+                // the statement goes on in only takes it.
+                self.carrying =
+                    debug.line.is_some() && !self.body.points.iter().any(|p| p.continues.0 as usize == index);
             }
             for stmt in &block.stmts {
                 self.statement(stmt);
@@ -3702,8 +3868,118 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             let addresses = self.e.fb.ins().stack_addr(POINTER, debug.addresses, 0);
             let alive = self.e.fb.ins().stack_addr(POINTER, debug.alive, 0);
             self.probed = self.e.call_rt(Rt::DebugLine, &[site, addresses, alive]);
+            let base = self.e.cg.live.as_ref().and_then(|live| live.patch.as_ref()).map_or(0, |(_, sites)| *sites);
+            self.site_now = Some((site, base + index as u32));
         }
         self.debug = Some(debug);
+    }
+
+    /// A live build's state at a point: each local live there, how it is
+    /// kept, and where in the state a frame brings it goes, with the
+    /// state's size; the same in the old code that writes it and the new
+    /// that reads it, for the runtime to match by the locals' names.
+    fn point_layout(&mut self, point: u32) -> StateLayout {
+        let key = (self.e.cg.current, point);
+        if let Some(layout) = self.e.cg.live.as_ref().and_then(|live| live.layouts.get(&key)) {
+            return layout.clone();
+        }
+        let mut items = Vec::new();
+        let mut size = 0u32;
+        for &local in &self.body.points[point as usize].state {
+            let ty = self.body.locals[local.0 as usize];
+            let (kept, bytes, align) = match self.storage[local.0 as usize] {
+                Storage::Zero => continue,
+                Storage::Var(var) => match self.e.cg.class(ty) {
+                    Class::Scalar(clif) => (StateKept::Var(var, clif), clif.bytes(), clif.bytes()),
+                    _ => (StateKept::Var(var, POINTER), 8, 8),
+                },
+                Storage::Pointer(var) => (StateKept::Pointer(var), 8, 8),
+                Storage::Slot(slot) => {
+                    let layout = self.e.cg.layout(ty);
+                    (StateKept::Slot(slot), layout.size, layout.align.max(1))
+                }
+            };
+            size = size.next_multiple_of(align);
+            items.push((local, kept, size, bytes));
+            size += bytes;
+        }
+        let layout = (items, size);
+        if let Some(live) = self.e.cg.live.as_mut() {
+            live.layouts.insert(key, layout.clone());
+        }
+        layout
+    }
+
+    /// The old code's side of a move: its state at the point, which the
+    /// runtime gives back as the new code expects it, or null.
+    fn transfer(&mut self, point: u32) -> ir::Value {
+        let (items, _) = self.point_layout(point);
+        // One place for the state of every point: frames stay small, and a
+        // deep recursion still meets the stack's guard.
+        let slot = match self.state_slot {
+            Some(slot) => slot,
+            None => {
+                let largest = (0..self.body.points.len() as u32).map(|p| self.point_layout(p).1).max().unwrap_or(0);
+                let data = StackSlotData::new(StackSlotKind::ExplicitSlot, largest.max(8), 4);
+                let slot = self.e.fb.create_sized_stack_slot(data);
+                self.state_slot = Some(slot);
+                slot
+            }
+        };
+        for (_, kept, offset, bytes) in items {
+            let address = self.e.fb.ins().stack_addr(POINTER, slot, offset as i32);
+            match kept {
+                StateKept::Var(var, _) | StateKept::Pointer(var) => {
+                    let value = self.e.fb.use_var(var);
+                    self.e.fb.ins().store(flags(), value, address, 0);
+                }
+                StateKept::Slot(kept) => {
+                    let source = self.e.fb.ins().stack_addr(POINTER, kept, 0);
+                    self.e.copy_memory(address, source, bytes);
+                }
+            }
+        }
+        let site = match self.point_sites.get(&point) {
+            Some(&site) => site,
+            None => self.e.fb.ins().iconst(types::I64, -1),
+        };
+        let buffer = self.e.fb.ins().stack_addr(POINTER, slot, 0);
+        self.e.call_rt(Rt::LiveTransfer, &[site, buffer]).expect("the new state")
+    }
+
+    /// The hidden parameter's value: the state a frame brings.
+    fn osr_state(&mut self) -> ir::Value {
+        let osr = self.body.osr.expect("a live build's function");
+        match self.read(&Place::local(osr)) {
+            Val::Scalar(value) => value,
+            _ => unreachable!("the state is a word"),
+        }
+    }
+
+    /// The new code's side of a move: the state of the point into the
+    /// locals live there, which the frame now owns.
+    fn osr_load(&mut self, point: u32) {
+        let state = self.osr_state();
+        let (items, _) = self.point_layout(point);
+        for (local, kept, offset, bytes) in items {
+            let address = self.e.fb.ins().iadd_imm_s(state, 16 + offset as i64);
+            match kept {
+                StateKept::Var(var, clif) => {
+                    let value = self.e.fb.ins().load(clif, flags(), address, 0);
+                    self.e.fb.def_var(var, value);
+                }
+                StateKept::Pointer(var) => {
+                    let value = self.e.fb.ins().load(POINTER, flags(), address, 0);
+                    self.e.fb.def_var(var, value);
+                }
+                StateKept::Slot(kept) => {
+                    let target = self.e.fb.ins().stack_addr(POINTER, kept, 0);
+                    self.e.copy_memory(target, address, bytes);
+                }
+            }
+            self.mark(local, true);
+        }
+        self.e.call_rt(Rt::LiveFree, &[state]);
     }
 
     fn location(&mut self, span: Span) -> ir::Value {
@@ -3717,6 +3993,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         // A probe's answer is for the statement right after it.
         self.probed = None;
         match stmt {
+            Statement::OsrLoad(point) => self.osr_load(*point),
             Statement::Assign(place, rvalue, span) => {
                 // What it allocates: the collection a method changes, or the
                 // value it makes.
@@ -3815,6 +4092,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
                 Rvalue::Call(callee, args) => {
                     self.call(*callee, args, None);
+                }
+                Rvalue::CallOsr(id, args, state) => {
+                    self.osr_arg = Some(self.scalar(state));
+                    // Stacks show the frame once, in its new code.
+                    self.e.fb.set_srcloc(ir::SourceLoc::default());
+                    self.call(Callee::Fn(*id), args, None);
                 }
                 Rvalue::CallIndirect(callee, args) => {
                     self.call_indirect(callee, args, None);
@@ -4322,10 +4605,35 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Rvalue::Cancelled => Val::Scalar(self.e.call_rt(Rt::Cancelled, &[]).unwrap()),
             // What the probe of the line that starts here said; no line
             // starts here, no restart.
-            Rvalue::Restart => Val::Scalar(match self.probed.take().inspect(|_| self.restarts = Some(place.local)) {
-                Some(asked) => asked,
-                None => self.e.fb.ins().iconst(types::I8, 0),
+            Rvalue::Restart(point) => Val::Scalar(match self.probed.take() {
+                Some(asked) => {
+                    self.carrying = true;
+                    if let Some((value, number)) = self.site_now {
+                        self.point_sites.insert(*point, value);
+                        let function = self.e.cg.current;
+                        if let Some(live) = self.e.cg.live.as_mut() {
+                            live.point_sites.insert((function, *point), number);
+                        }
+                    }
+                    self.e.fb.ins().uextend(types::I64, asked)
+                }
+                None => self.e.fb.ins().iconst(types::I64, 0),
             }),
+            Rvalue::Transfer(point) => Val::Scalar(self.transfer(*point)),
+            Rvalue::OsrPoint => {
+                let state = self.osr_state();
+                Val::Scalar(self.e.fb.ins().load(types::I64, flags(), state, 0))
+            }
+            Rvalue::CallOsr(id, args, state) => {
+                self.osr_arg = Some(self.scalar(state));
+                // Stacks show the frame once, in its new code.
+                self.e.fb.set_srcloc(ir::SourceLoc::default());
+                let result = if class == Class::Memory { Some(self.pointer_to(place, true)) } else { None };
+                match self.call(Callee::Fn(*id), args, result) {
+                    Some(value) if result.is_none() => Val::Scalar(value),
+                    _ => return,
+                }
+            }
             Rvalue::TaskOp(op, operands, retain, span) => match self.task_op(*op, operands, retain, place, *span) {
                 Some(value) => value,
                 None => return,
@@ -5546,7 +5854,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         }
         let result = match callee {
             Callee::Fn(id) => {
-                let call = call_body(self.e.cg, &mut self.e.fb, id, &values);
+                let state = self.osr_arg.take();
+                let call = call_body_with(self.e.cg, &mut self.e.fb, id, &values, state);
                 self.e.fb.inst_results(call).first().copied()
             }
             Callee::Std(StdFn::ConsolePrint) => self.e.call_rt(Rt::ConsolePrint, &values),
@@ -5698,12 +6007,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.fb.ins().jump(self.blocks[target.0 as usize], &[]);
             }
             Terminator::Branch(condition, then, otherwise) => {
-                // Both ways out of a restart point are on the line its probe
-                // was for: neither probes it again.
-                if let (Operand::Copy(place), Some(debug)) = (condition, &self.debug)
-                    && place.path.is_empty()
-                    && self.restarts == Some(place.local)
-                    && let Some(line) = debug.line.clone()
+                // Every way out of a restart point is on the line its probe
+                // was for: none probes it again.
+                if self.carrying
+                    && let Some(line) = self.debug.as_ref().and_then(|debug| debug.line.clone())
                 {
                     self.carried.insert(then.0 as usize, line.clone());
                     self.carried.insert(otherwise.0 as usize, line);

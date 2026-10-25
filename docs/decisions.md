@@ -1895,3 +1895,28 @@ same arguments: parameters are borrowed, so they are still there, and the
 probe of the line answers whether to do it, so a live build checks for it
 only where a debugger can stop.
 
+## 2026-10-25 — Frames move to the new code
+
+A reload left every running frame on the old code, so the loop of a
+server's `main`, which never returns, never saw a change. A frame of a
+changed function now moves to the new code at the next statement it
+starts, on its own: each statement start of a live build checks, at its
+probe, whether the patch moves frames from there, and if so writes the
+values live there to a buffer the runtime lays out as the new code expects,
+calls the new function with its arguments and that state, which enters at
+the same statement, and returns what it returns. The old frame stays
+below, waiting, and stacks leave it out. Statements match by text, not by
+line numbers: the lines of the function that stay the same are matched by
+their longest common sequence, a changed line takes the place of the old,
+and the statement there must be of the same kind. Values match by binding
+name, by order among the bindings of one name live at once, and those the
+compiler makes by the statement that makes them, and each must keep its
+type. When one does not match, a binding is lent, a value would not be
+released or the `defer`s differ, the frame stays on the old code until it
+reaches another statement, and reload says where and why. A patch now sets
+only the slots of the functions that change, so that a function a later
+reload changes still has the points of the code its frames run. A move
+enters the code its state was made for, which the runtime records with the
+move, so a patch that comes meanwhile does not mix two versions. Values of
+a type whose shape changes still need starting again: copying them into
+the new shape is the next milestone.

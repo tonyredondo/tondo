@@ -116,9 +116,11 @@ fn apply(path: &str) -> Result<String, String> {
     let image_at = 40;
     let words_at = image_at + size;
     let entries_at = words_at + words * 8;
-    if bytes.len() != entries_at + entries * 16 || table + 40 > size {
+    let moves_at = entries_at + entries * 16;
+    if bytes.len() < moves_at || table + 40 > size {
         return Err("the patch is damaged".into());
     }
+    let mut moves = moves(&bytes[moves_at..])?;
     let length = size.next_multiple_of(65536);
     let base = map(length)?;
     let image = unsafe { std::slice::from_raw_parts_mut(base, length) };
@@ -193,8 +195,22 @@ fn apply(path: &str) -> Result<String, String> {
             .store(address, Ordering::Release);
         USED.fetch_max(slot + 1, Ordering::AcqRel);
     }
+    // Frames of the old code move once the slots lead to the new: never
+    // before, when the state would reach the old code. Each enters this
+    // patch's code, which its state is for, even once another came.
+    for (_, found) in &mut moves {
+        if found.slot >= info.capacity {
+            return Err("the patch is damaged".into());
+        }
+        found.code = unsafe { (info.slots.add(found.slot as usize) as *const AtomicU64).as_ref() }
+            .expect("the image's slots")
+            .load(Ordering::Acquire);
+    }
+    let moving = moves.len();
+    *MOVES.write().unwrap_or_else(|e| e.into_inner()) = moves;
+    PENDING.store(moving > 0, Ordering::Release);
     let patches = PATCHES.fetch_add(1, Ordering::AcqRel) + 1;
-    Ok(format!("{{\"patched\":true,\"functions\":{slots},\"patches\":{patches}}}"))
+    Ok(format!("{{\"patched\":true,\"functions\":{slots},\"patches\":{patches},\"moves\":{moving}}}"))
 }
 
 /// The identities in use, the image's and the patches'.
@@ -262,4 +278,88 @@ fn executable(base: *mut u8, length: usize) -> Result<(), String> {
     }
     let _ = (base, length);
     Ok(())
+}
+
+/// How a frame at a site of the old code moves to the new: the slot of its
+/// function and the code it enters, the point of that code, the size of
+/// its state, and where each part of the old state goes in it.
+struct Move {
+    slot: u64,
+    code: u64,
+    point: u32,
+    size: u32,
+    copies: Vec<(u32, u32, u32)>,
+}
+
+/// The moves of the last patch, by the site of the old code.
+static MOVES: std::sync::RwLock<Vec<(i64, Move)>> = std::sync::RwLock::new(Vec::new());
+static PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The moves a patch ends with, after `OSR1`: their count, then each
+/// one's site, slot, point, size, count of copies and the copies.
+fn moves(bytes: &[u8]) -> Result<Vec<(i64, Move)>, String> {
+    if bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let damaged = || "the patch's moves are damaged".to_string();
+    let mut at = 0usize;
+    let mut take = |n: usize| -> Result<&[u8], String> {
+        let slice = bytes.get(at..at + n).ok_or_else(damaged)?;
+        at += n;
+        Ok(slice)
+    };
+    let u32_of = |b: &[u8]| u32::from_le_bytes(b.try_into().expect("4 bytes"));
+    if take(4)? != b"OSR1" {
+        return Err(damaged());
+    }
+    let count = u32_of(take(4)?);
+    let mut moves = Vec::new();
+    for _ in 0..count {
+        let site = i64::from_le_bytes(take(8)?.try_into().expect("8 bytes"));
+        let slot = u32_of(take(4)?) as u64;
+        let (point, size, copies) = (u32_of(take(4)?), u32_of(take(4)?), u32_of(take(4)?));
+        let mut list = Vec::new();
+        for _ in 0..copies {
+            list.push((u32_of(take(4)?), u32_of(take(4)?), u32_of(take(4)?)));
+        }
+        moves.push((site, Move { slot, code: 0, point, size, copies: list }));
+    }
+    moves.sort_by_key(|(site, _)| *site);
+    Ok(moves)
+}
+
+/// What a probe answers for its site: whether its frame moves to new code.
+pub(crate) fn moving(site: i64) -> u8 {
+    if !PENDING.load(Ordering::Acquire) {
+        return 0;
+    }
+    let moves = MOVES.read().unwrap_or_else(|e| e.into_inner());
+    if moves.binary_search_by_key(&site, |(s, _)| *s).is_ok() { 2 } else { 0 }
+}
+
+/// The state of a frame at a site of the old code as the new code's point
+/// expects it, in memory the new code releases; null when it does not move.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_live_transfer(site: i64, old: *const u8) -> u64 {
+    let moves = MOVES.read().unwrap_or_else(|e| e.into_inner());
+    let Ok(index) = moves.binary_search_by_key(&site, |(s, _)| *s) else { return 0 };
+    let found = &moves[index].1;
+    let state = unsafe { libc::calloc(1, 16 + found.size as usize) } as *mut u8;
+    if state.is_null() {
+        return 0;
+    }
+    unsafe {
+        (state as *mut u64).write(found.point as u64);
+        (state as *mut u64).add(1).write(found.code);
+        for &(from, to, size) in &found.copies {
+            std::ptr::copy_nonoverlapping(old.add(from as usize), state.add(16 + to as usize), size as usize);
+        }
+    }
+    state as u64
+}
+
+/// Releases a state once the new code took it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_live_free(state: u64) {
+    unsafe { libc::free(state as *mut libc::c_void) };
 }

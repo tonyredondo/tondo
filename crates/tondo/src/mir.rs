@@ -97,6 +97,40 @@ pub struct Body {
     pub ret: Option<Local>,
     pub result: Ty,
     pub blocks: Vec<BlockData>,
+    /// In a live build (toolchain 7.10): the hidden parameter that brings
+    /// a frame's state from the old code, null in an ordinary call; the
+    /// points where a frame can restart or move to new code; and where
+    /// each local comes from, which names it across versions.
+    pub osr: Option<Local>,
+    pub points: Vec<Point>,
+    pub origins: Vec<Origin>,
+}
+
+/// Where a statement starts in a live build: a frame stopped at its probe
+/// can restart there, or move to the same point of the new code with the
+/// locals live there.
+#[derive(Clone, Debug)]
+pub struct Point {
+    /// The statement: its place among the statements and blocks of the
+    /// function, and where it is.
+    pub path: Vec<u32>,
+    pub span: Span,
+    /// The block its code starts at, after the check.
+    pub continues: BlockId,
+    pub state: Vec<Local>,
+    /// What the statement is, for matching it with one of the new code,
+    /// and how many `defer`s are registered there.
+    pub kind: &'static str,
+    pub defers: u32,
+}
+
+/// Where a local comes from: a binding's name, a parameter, or the
+/// statement whose lowering made it and its place among those it made.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Origin {
+    Named(String),
+    Param(u32),
+    Made(Vec<u32>, u32),
 }
 
 impl Body {
@@ -129,6 +163,8 @@ pub enum Statement {
     Clear(Local),
     /// Makes the local the address of the state a `std.sync` guard locks.
     LendAt(Local, Operand),
+    /// Loads the state of a point from the hidden parameter (toolchain 7.10).
+    OsrLoad(u32),
 }
 
 #[derive(Clone, Debug)]
@@ -205,9 +241,17 @@ pub enum Rvalue {
     Select(Vec<SelectCase>, bool, Span),
     /// Whether the current task is cancelled (11.15).
     Cancelled,
-    /// In a live build, whether the debugger asked to restart this frame at
-    /// the probe of the line that starts here (toolchain 7.10).
-    Restart,
+    /// In a live build, what the probe of the line that starts at the
+    /// point said: go on (0), restart the frame (1), or move it to the new
+    /// code (2) (toolchain 7.10).
+    Restart(u32),
+    /// The state of the point, handed to the runtime, which gives it back
+    /// as the new code's point expects it; null when it does not move.
+    Transfer(u32),
+    /// A call of the function's new code with the state the runtime gave.
+    CallOsr(hir::FnId, Vec<Operand>, Operand),
+    /// The point the state of the hidden parameter is for.
+    OsrPoint,
     Concat(Vec<Piece>),
     /// A tuple or record from its components in declaration order. The
     /// destination is always a fresh local, so components never alias it.
@@ -269,4 +313,200 @@ pub enum Terminator {
     Return(Operand),
     Panic { code: u32, message: Option<Operand>, span: Span },
     Unreachable,
+}
+
+/// The locals each block reads before writing them, on some path from its
+/// start (toolchain 7.10): what a frame must bring to start there.
+pub fn live_in(blocks: &[BlockData], locals: usize) -> Vec<Vec<Local>> {
+    let words = locals.div_ceil(64).max(1);
+    let set = |bits: &mut [u64], local: Local| bits[local.0 as usize / 64] |= 1 << (local.0 % 64);
+    let unset = |bits: &mut [u64], local: Local| bits[local.0 as usize / 64] &= !(1 << (local.0 % 64));
+    // What each block reads first and what it writes, as one pass back
+    // through it gives them.
+    let mut reads = vec![vec![0u64; words]; blocks.len()];
+    let mut writes = vec![vec![0u64; words]; blocks.len()];
+    for (index, block) in blocks.iter().enumerate() {
+        let (read, written) = (&mut reads[index], &mut writes[index]);
+        let mut step = |used: &[Local], defined: &[Local]| {
+            for &local in defined {
+                unset(read, local);
+                set(written, local);
+            }
+            for &local in used {
+                set(read, local);
+            }
+        };
+        let (mut used, defined) = (Vec::new(), Vec::new());
+        terminator_uses(&block.terminator, &mut used);
+        step(&used, &defined);
+        for statement in block.stmts.iter().rev() {
+            let (mut used, mut defined) = (Vec::new(), Vec::new());
+            statement_locals(statement, &mut used, &mut defined);
+            step(&used, &defined);
+        }
+    }
+    let successors = |terminator: &Terminator| -> Vec<usize> {
+        match terminator {
+            Terminator::Goto(target) => vec![target.0 as usize],
+            Terminator::Branch(_, then, otherwise) => vec![then.0 as usize, otherwise.0 as usize],
+            _ => Vec::new(),
+        }
+    };
+    let mut live = vec![vec![0u64; words]; blocks.len()];
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for index in (0..blocks.len()).rev() {
+            let mut out = vec![0u64; words];
+            for successor in successors(&blocks[index].terminator) {
+                for (word, bits) in out.iter_mut().zip(&live[successor]) {
+                    *word |= bits;
+                }
+            }
+            let inward: Vec<u64> = (0..words).map(|w| reads[index][w] | (out[w] & !writes[index][w])).collect();
+            if inward != live[index] {
+                live[index] = inward;
+                changed = true;
+            }
+        }
+    }
+    live.iter()
+        .map(|bits| {
+            (0..locals as u32).map(Local).filter(|l| bits[l.0 as usize / 64] & (1 << (l.0 % 64)) != 0).collect()
+        })
+        .collect()
+}
+
+fn place_uses(place: &Place, used: &mut Vec<Local>) {
+    used.push(place.local);
+    for projection in &place.path {
+        if let Proj::Index(index, _) = projection {
+            used.push(*index);
+        }
+    }
+}
+
+fn operand_uses(operand: &Operand, used: &mut Vec<Local>) {
+    if let Operand::Copy(place) = operand {
+        place_uses(place, used);
+    }
+}
+
+fn operands_uses(operands: &[Operand], used: &mut Vec<Local>) {
+    operands.iter().for_each(|operand| operand_uses(operand, used));
+}
+
+fn bounds_uses(bounds: &[Option<Operand>; 3], used: &mut Vec<Local>) {
+    bounds.iter().flatten().for_each(|operand| operand_uses(operand, used));
+}
+
+fn rvalue_uses(rvalue: &Rvalue, used: &mut Vec<Local>) {
+    match rvalue {
+        Rvalue::Use(o)
+        | Rvalue::Unary(_, o)
+        | Rvalue::Increment(o)
+        | Rvalue::Convert(o)
+        | Rvalue::Length(o)
+        | Rvalue::Fixed(o, _)
+        | Rvalue::Erase(o, ..)
+        | Rvalue::Spawn(o, _) => operand_uses(o, used),
+        Rvalue::Binary(_, a, b) => {
+            operand_uses(a, used);
+            operand_uses(b, used);
+        }
+        Rvalue::Call(_, operands)
+        | Rvalue::Array(operands, _)
+        | Rvalue::Aggregate(operands)
+        | Rvalue::Variant(_, operands)
+        | Rvalue::Reflect(_, _, operands, _)
+        | Rvalue::TaskOp(_, operands, ..)
+        | Rvalue::ArrayOp(_, operands, _)
+        | Rvalue::StrOp(_, operands, _)
+        | Rvalue::Pointer(_, operands, _)
+        | Rvalue::MapOp(_, operands, _) => operands_uses(operands, used),
+        Rvalue::CallIndirect(callee, operands) => {
+            operand_uses(callee, used);
+            operands_uses(operands, used);
+        }
+        Rvalue::CallOsr(_, operands, state) => {
+            operands_uses(operands, used);
+            operand_uses(state, used);
+        }
+        Rvalue::TestMembers(members) => members.iter().for_each(|(_, o, _)| operand_uses(o, used)),
+        Rvalue::Select(cases, ..) => cases.iter().for_each(|case| operands_uses(&case.operands, used)),
+        Rvalue::Concat(pieces) => pieces.iter().for_each(|piece| {
+            if let Piece::Value(o, _) = piece {
+                operand_uses(o, used);
+            }
+        }),
+        Rvalue::Discriminant(place) => place_uses(place, used),
+        Rvalue::Slice(o, bounds, _) => {
+            operand_uses(o, used);
+            bounds_uses(bounds, used);
+        }
+        Rvalue::AssignSlice(place, bounds, o, _) => {
+            place_uses(place, used);
+            bounds_uses(bounds, used);
+            operand_uses(o, used);
+        }
+        Rvalue::CheckRegion(o, bounds, overlap, _) => {
+            operand_uses(o, used);
+            bounds_uses(bounds, used);
+            match overlap {
+                Overlap::Region(bounds) => bounds_uses(bounds, used),
+                Overlap::Index(o) => operand_uses(o, used),
+            }
+        }
+        Rvalue::Mutate(_, place, operands, ..) => {
+            place_uses(place, used);
+            operands_uses(operands, used);
+        }
+        Rvalue::FnValue(_)
+        | Rvalue::ExternFn(_)
+        | Rvalue::Callback(..)
+        | Rvalue::Layout(..)
+        | Rvalue::Cancelled
+        | Rvalue::Restart(_)
+        | Rvalue::Transfer(_)
+        | Rvalue::OsrPoint => {}
+    }
+}
+
+/// The locals a statement reads, and those it writes whole.
+fn statement_locals(statement: &Statement, used: &mut Vec<Local>, defined: &mut Vec<Local>) {
+    match statement {
+        Statement::Assign(place, rvalue, _) => {
+            rvalue_uses(rvalue, used);
+            if place.path.is_empty() {
+                defined.push(place.local);
+            } else {
+                place_uses(place, used);
+            }
+            // A `select` writes what it receives only when it completes.
+            if let Rvalue::Select(cases, ..) = &**rvalue {
+                cases.iter().for_each(|case| used.push(case.out));
+            }
+        }
+        Statement::Retain(place) | Statement::Release(place) | Statement::DeferPush(_, place) => {
+            place_uses(place, used)
+        }
+        Statement::Lend(local, place) => {
+            place_uses(place, used);
+            defined.push(*local);
+        }
+        Statement::Clear(local) => defined.push(*local),
+        Statement::LendAt(local, operand) => {
+            operand_uses(operand, used);
+            defined.push(*local);
+        }
+        Statement::DeferPop | Statement::OsrLoad(_) => {}
+    }
+}
+
+fn terminator_uses(terminator: &Terminator, used: &mut Vec<Local>) {
+    match terminator {
+        Terminator::Branch(o, ..) | Terminator::Return(o) => operand_uses(o, used),
+        Terminator::Panic { message: Some(o), .. } => operand_uses(o, used),
+        _ => {}
+    }
 }
