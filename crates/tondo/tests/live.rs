@@ -955,3 +955,20 @@ fn a_wait_for_input_ends_when_cancelled() {
     assert_eq!(line, "cancelled");
     server.stop();
 }
+
+/// A frame still on the code two reloads ago moves to the newest.
+#[test]
+fn a_frame_moves_past_several_reloads() {
+    let dir = dir("live_several");
+    let file = dir.join("server.to");
+    std::fs::write(&file, SERVER).unwrap();
+    let mut server = Running::start(&dir, &["run", "server.to", "--live"]);
+    assert_eq!(server.answer("a"), "v1 a 1 after 1");
+    for (old, new) in [("after {seen}", "then {seen}"), ("then {seen}", "now {seen}")] {
+        edit(&file, old, new);
+        let (done, said) = reload(&dir, &server.pid());
+        assert!(done && said.contains("1 changed (main)"), "{said}");
+    }
+    assert_eq!(server.answer("b"), "v1 b 1 now 2");
+    server.stop();
+}

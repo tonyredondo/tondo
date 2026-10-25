@@ -26,11 +26,12 @@ pub(super) fn base(identity: &str) -> String {
     }
 }
 
-/// The moves from the points of `old` to those of `new`, by identity, for
-/// the functions `changed`, whose slots are those of `slots`; values of
-/// types of another shape go through the patch's conversions.
+/// The moves from the points of `olds`, the running program's versions of
+/// its functions, to those of `new`, by identity, for the functions
+/// `changed`, whose slots are those of `slots`; values of types of another
+/// shape go through the patch's conversions.
 pub(super) fn moves(
-    old: &Value,
+    olds: &[&Value],
     new: &Value,
     changed: &[String],
     slots: &HashMap<String, u32>,
@@ -42,14 +43,14 @@ pub(super) fn moves(
     // Frames move to the same function, or to the one a function whose
     // signature reaches a type of another shape is now, of the same name
     // and signature, with their parameters converted.
-    let mut pairs: Vec<(&str, &str, Call)> = changed
+    let mut pairs: Vec<(&Value, &str, Call)> = olds
         .iter()
-        .filter(|identity| old.get(identity.as_str()).is_some())
-        .map(|identity| (identity.as_str(), identity.as_str(), Call::default()))
+        .flat_map(|old| changed.iter().filter_map(|identity| Some((old.get(identity.as_str())?, identity.as_str()))))
+        .map(|(before, identity)| (before, identity, Call::default()))
         .collect();
     let names: Vec<&str> = new.as_object().into_iter().flatten().map(|(identity, _)| shown(identity)).collect();
     let mut redirects = Vec::new();
-    for (identity, entry) in old.as_object().into_iter().flatten() {
+    for (identity, entry) in olds.iter().flat_map(|old| old.as_object().into_iter().flatten()) {
         let sited = entry["points"].as_array().is_some_and(|p| p.iter().any(|p| p["site"].is_i64()));
         if !sited || new.get(identity).is_some() || !names.contains(&shown(identity)) {
             continue;
@@ -81,13 +82,13 @@ pub(super) fn moves(
                 if closure && same("params") && same("result") {
                     redirects.extend(slots.get(identity).zip(slots.get(target)).map(|(&a, &b)| (a, b)));
                 }
-                pairs.push((identity, target.as_str(), plan))
+                pairs.push((entry, target.as_str(), plan))
             }
             Err(why) => stays.push(format!("frames of `{}` finish on the old code: {why}", shown(identity))),
         }
     }
-    for (identity, target, passed) in pairs {
-        let (Some(before), Some(after), Some(&slot)) = (old.get(identity), new.get(target), slots.get(target)) else {
+    for (before, target, passed) in pairs {
+        let (Some(after), Some(&slot)) = (new.get(target), slots.get(target)) else {
             continue;
         };
         let lines = line_map(&hashes(before), &hashes(after));
@@ -158,6 +159,8 @@ pub(super) fn moves(
     }
     stays.sort();
     stays.dedup();
+    redirects.sort();
+    redirects.dedup();
     let count = entries.len();
     let mut bytes = Vec::new();
     if count > 0 || !redirects.is_empty() {

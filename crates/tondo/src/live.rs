@@ -39,6 +39,9 @@ pub struct Build {
     /// to new code; and what each type their states hold is made of, by its
     /// key.
     pub points: serde_json::Map<String, serde_json::Value>,
+    /// The points of the versions of functions that patches replaced since
+    /// the build, which frames may still run, as `points` each.
+    pub older: Vec<serde_json::Value>,
     pub structures: serde_json::Map<String, serde_json::Value>,
     /// For a patch: the functions that convert values of the running
     /// program's types to the new ones, in the order of the patch's table;
@@ -148,6 +151,7 @@ impl Build {
             patch: None,
             holds: HashMap::new(),
             points: serde_json::Map::new(),
+            older: Vec::new(),
             structures: serde_json::Map::new(),
             migrations: Vec::new(),
             objects: Vec::new(),
@@ -541,6 +545,7 @@ fn save(
         "types": shapes,
         "holds": build.holds,
         "points": build.points,
+        "older": build.older,
         "structures": build.structures,
     });
     let file = match pid {
@@ -667,6 +672,7 @@ fn patch(
         }),
         holds: HashMap::new(),
         points: serde_json::Map::new(),
+        older: Vec::new(),
         structures: serde_json::Map::new(),
         migrations: Vec::new(),
         objects: Vec::new(),
@@ -674,7 +680,7 @@ fn patch(
     // The values of the old types frames hold convert as the frames move,
     // with the parameters of those that move to a function of another
     // identity.
-    let functions = || manifest["points"].as_object().into_iter().flatten().map(|(_, function)| function);
+    let functions = || versions(manifest).map(|(_, function)| function);
     let held = functions()
         .flat_map(|function| function["points"].as_array().into_iter().flatten())
         .flat_map(|point| point["state"].as_array().into_iter().flatten());
@@ -697,10 +703,7 @@ fn patch(
     let empty = serde_json::Map::new();
     let structures = manifest["structures"].as_object().unwrap_or(&empty);
     // A closure's captures, by the closure's function.
-    let closures: Vec<(String, String)> = manifest["points"]
-        .as_object()
-        .into_iter()
-        .flatten()
+    let closures: Vec<(String, String)> = versions(manifest)
         .filter(|(identity, _)| identity.starts_with("closure in "))
         .filter_map(|(identity, function)| {
             let captures = function["params"].as_array()?.first()?["type"].as_str()?.to_string();
@@ -748,7 +751,9 @@ fn patch(
         .map(|(i, _)| i.clone())
         .collect();
     let points = serde_json::Value::Object(build.points.clone());
-    let moves = osr::moves(&manifest["points"], &points, &set, &build.slots, &migrations, &renamed);
+    let olds: Vec<&serde_json::Value> =
+        std::iter::once(&manifest["points"]).chain(manifest["older"].as_array().into_iter().flatten()).collect();
+    let moves = osr::moves(&olds, &points, &set, &build.slots, &migrations, &renamed);
     patch.extend(&moves.bytes);
     let patch_file = crate::driver::cache_dir().join("live").join(format!("patch-{pid}.bin"));
     std::fs::write(&patch_file, &patch).map_err(|e| format!("cannot write {}: {e}", patch_file.display()))?;
@@ -825,12 +830,19 @@ fn patch(
         build.structures.entry(key.clone()).or_insert_with(|| structure.clone());
     }
     let mut points = manifest["points"].as_object().cloned().unwrap_or_default();
+    let mut replaced = serde_json::Map::new();
     for identity in &set {
-        if let Some(entry) = build.points.get(identity) {
-            points.insert(identity.clone(), entry.clone());
+        if let Some(entry) = build.points.get(identity)
+            && let Some(old) = points.insert(identity.clone(), entry.clone())
+        {
+            replaced.insert(identity.clone(), old);
         }
     }
     build.points = points;
+    build.older = manifest["older"].as_array().cloned().unwrap_or_default();
+    if !replaced.is_empty() {
+        build.older.push(serde_json::Value::Object(replaced));
+    }
     save(&build, &shapes, path, &options, Some(pid))?;
     changed.sort();
     changed.dedup();
@@ -852,6 +864,14 @@ fn patch(
     Ok(Reloaded { changed, added, moves: moves.count, stays: moves.stays, notes })
 }
 
+/// Each version of each function's points the manifest knows, by identity,
+/// the current ones first: a frame may still run an older one.
+fn versions(manifest: &serde_json::Value) -> impl Iterator<Item = (&String, &serde_json::Value)> {
+    std::iter::once(&manifest["points"])
+        .chain(manifest["older"].as_array().into_iter().flatten())
+        .flat_map(|points| points.as_object().into_iter().flatten())
+}
+
 /// Where a frame is: its function, file, line and column.
 type FramePlace = (String, String, u64, u64);
 
@@ -869,7 +889,7 @@ fn stop_tasks(
     // its statement reaches, and whether a wait there starts its statement
     // again.
     let mut calls: HashMap<FramePlace, (Vec<String>, bool)> = HashMap::new();
-    for (identity, entry) in manifest["points"].as_object().into_iter().flatten() {
+    for (identity, entry) in versions(manifest) {
         let file = entry["file"].as_str().unwrap_or_default().to_string();
         for call in entry["calls"].as_array().into_iter().flatten() {
             let key = (
