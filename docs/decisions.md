@@ -2047,3 +2047,17 @@ stream like a socket's: a host thread reads it when a task asks, and the
 task waits without holding a thread. A cancelled task waiting for a line
 now stops at once, as 11.15 of the language says, and what arrives stays
 for the next read.
+
+## 2026-10-25 — Old code stays
+
+A live build never frees a patch's code, and a frame that moves to new
+code leaves the old one below it, returning what the new one returns.
+Measured over a hundred reloads of a small program, memory grows by
+about 13 KB each; a move costs one frame of a task's 8 MiB stack. Freeing
+a patch would need to prove that nothing points into it: string literals
+of its code are immortal and may be in any value, closures keep the code
+of the patch that made them, and the frames that moved are still below.
+Not leaving the old frame below would need tail calls, and so Cranelift's
+`tail` calling convention for every function of a live build, with
+adapters for all the runtime calls. Neither is worth its cost while only
+a reload during very deep recursion would notice.

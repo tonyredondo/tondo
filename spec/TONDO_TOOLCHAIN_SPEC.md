@@ -804,6 +804,11 @@ cambia como `reload`; si el cambio pide arrancarlo de nuevo, o el programa
 ya terminó, lo vuelve a ejecutar, y si los archivos no compilan muestra los
 diagnósticos y el programa sigue con su código.
 
+Un build vivo no libera el código de los parches, y un frame que pasa al
+código nuevo deja debajo el suyo viejo, que solo devuelve lo que el nuevo
+devuelve: cada reload ocupa algo más de memoria, y cada frame que pasa, uno
+más de pila.
+
 La salida estándar de un build de depuración, y por tanto de uno vivo, se
 entrega en cada línea, como a una terminal, para la herramienta que la lee.
 

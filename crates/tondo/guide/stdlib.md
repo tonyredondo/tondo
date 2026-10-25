@@ -238,6 +238,9 @@ line starts that statement again with the new code. Reload refuses, and
 they hold with the old code after a wait it cannot end, as reading a file,
 or when a task holds the lock; write such a wait in a `let` statement of its
 own. A value kept in a task or a `std.sync` collection does not convert.
+Old code is never freed, and a call that moves leaves its old frame below
+it: each reload takes a little memory, and each move one frame of stack,
+which only reloading in the middle of very deep recursion notices.
 Under `tondo debug --live app.to`, `reload` works where the program
 stopped: edit the function, reload, continue; or `restart`, which runs the
 stopped function again from its first line, with its new code.
