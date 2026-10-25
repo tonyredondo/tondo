@@ -58,6 +58,8 @@ const ARRAY_HEADER: i64 = 32;
 /// Runtime entry points (see `tondo-runtime`).
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 enum Rt {
+    /// A live build's tables, before anything runs (toolchain 7.10).
+    Live,
     StrRetain,
     StrRelease,
     StrEq,
@@ -559,6 +561,7 @@ impl Rt {
             Rt::CVariadic => ("tondo_rt_c_variadic", &[I64, I64], &[]),
             Rt::Callback => ("tondo_rt_callback", &[I64, I64, I64], &[]),
             Rt::Main => ("tondo_rt_main", &[I64], &[I32]),
+            Rt::Live => ("tondo_rt_live", &[I64], &[]),
             Rt::JsonReaderRelease => ("tondo_rt_json_reader_release", &[I64], &[]),
             Rt::JsonWriterRelease => ("tondo_rt_json_writer_release", &[I64], &[]),
             Rt::PlanRelease => ("tondo_rt_process_plan_release", &[I64], &[]),
@@ -672,6 +675,7 @@ pub fn compile(
     meta: bool,
     debug: bool,
     target: Option<&str>,
+    mut live: Option<&mut crate::live::Build>,
 ) -> Result<Vec<u8>, String> {
     let mut flags = settings::builder();
     // A debug build keeps the code as written, statement after statement.
@@ -711,6 +715,8 @@ pub fn compile(
         debug: None,
         debug_functions: Vec::new(),
         debug_sites: Vec::new(),
+        live: None,
+        current: 0,
     };
 
     if debug {
@@ -724,6 +730,9 @@ pub fn compile(
             .declare_function(&symbol_name(index, &body.name), Linkage::Local, &signature)
             .map_err(|e| e.to_string())?;
         cg.functions.push(id);
+    }
+    if let Some(build) = live.as_deref_mut() {
+        cg.live = Some(LiveCodegen::new(&mut cg.module, build, bodies, &program.types)?);
     }
     for (index, export) in program.exports.iter().enumerate() {
         cg.export(index, export)?;
@@ -740,6 +749,7 @@ pub fn compile(
     for (index, body) in bodies.iter().enumerate() {
         context.func.signature = cg.signature(body);
         context.func.name = UserFuncName::user(0, index as u32);
+        cg.current = index;
         let sites = FnCodegen::new(&mut cg, body, bodies, &mut context.func, &mut builder_context).run();
         // A test's trace ends at the test, without the runner's tree that
         // calls it.
@@ -749,7 +759,10 @@ pub fn compile(
         cg.module.clear_context(&mut context);
     }
     let trace = cg.module.declare_data("tondo_trace", Linkage::Local, false, false).map_err(|e| e.to_string())?;
+    let patch = cg.live.as_ref().is_some_and(|live| live.patch.is_some());
     match program.main {
+        // A patch starts nothing: the running program calls into it.
+        _ if patch => {}
         Some(main) => {
             let main = main.0 as usize;
             let entry =
@@ -798,6 +811,9 @@ pub fn compile(
     if let Some(debug) = cg.debug {
         cg.debug_table(debug);
     }
+    if let Some(build) = live {
+        cg.live_tables(build, trace)?;
+    }
     let product = cg.module.finish();
     product.emit().map_err(|e| e.to_string())
 }
@@ -844,6 +860,120 @@ struct Codegen<'a> {
     debug: Option<DataId>,
     debug_functions: Vec<(String, Vec<DebugBinding>)>,
     debug_sites: Vec<(u32, u32)>,
+    live: Option<LiveCodegen>,
+    /// The body whose IR is being built.
+    current: usize,
+}
+
+/// A live build's slots (toolchain 7.10): the table every call of the
+/// program's functions goes through, the slot of each function, and its
+/// identity; and what the image registers with the runtime.
+struct LiveCodegen {
+    slots: DataId,
+    info: DataId,
+    slot_of: Vec<u32>,
+    identities: Vec<String>,
+    /// Each compiled function's code, hashed, by its function.
+    code: HashMap<FuncId, u64>,
+    /// For a patch: the types whose identity the running program holds,
+    /// and the number its debugger's sites start from.
+    patch: Option<(Vec<String>, u32)>,
+    /// The word of each function's first site, the function, and the
+    /// site's number in the build.
+    sites: Vec<(DataId, usize, usize)>,
+}
+
+impl LiveCodegen {
+    fn new(
+        module: &mut ObjectModule,
+        build: &mut crate::live::Build,
+        bodies: &[Body],
+        types: &Types,
+    ) -> Result<LiveCodegen, String> {
+        if build.capacity == 0 {
+            build.capacity = crate::live::capacity(bodies.len());
+        }
+        let mut next = build.slots.values().max().map_or(0, |&slot| slot + 1);
+        let mut seen: HashMap<String, u32> = HashMap::new();
+        let (mut slot_of, mut identities) = (Vec::new(), Vec::new());
+        for body in bodies {
+            let params: Vec<String> = body
+                .params
+                .iter()
+                .zip(&body.loans)
+                .map(|(param, &loan)| {
+                    let ty = types.display(body.locals[param.0 as usize]);
+                    if loan { format!("mut {ty}") } else { ty }
+                })
+                .collect();
+            let base = format!("{}({}): {}", body.name, params.join(", "), types.display(body.result));
+            // Closures share a name: the first of a function keeps it.
+            let count = seen.entry(base.clone()).or_insert(0);
+            let identity = if *count == 0 { base } else { format!("{base} #{count}") };
+            *count += 1;
+            let slot = *build.slots.entry(identity.clone()).or_insert_with(|| {
+                next += 1;
+                next - 1
+            });
+            if slot >= build.capacity {
+                return Err("this live build has no room for more functions: start it again".into());
+            }
+            slot_of.push(slot);
+            identities.push(identity);
+        }
+        // A patch uses the running program's slots, and says how to set them.
+        let (linkage, info) = match build.patch.is_some() {
+            true => (Linkage::Import, "tondo_patch"),
+            false => (Linkage::Local, "tondo_live"),
+        };
+        let slots = module.declare_data("tondo_live_slots", linkage, true, false).map_err(|e| e.to_string())?;
+        let info = module.declare_data(info, Linkage::Local, false, false).map_err(|e| e.to_string())?;
+        let patch = build.patch.as_ref().map(|base| (base.data.clone(), base.sites));
+        Ok(LiveCodegen { slots, info, slot_of, identities, code: HashMap::new(), patch, sites: Vec::new() })
+    }
+}
+
+/// What a live build's code hashes see of the names it refers to.
+struct Labels {
+    functions: HashMap<FuncId, String>,
+    data: HashMap<DataId, String>,
+}
+
+/// A hash of a function's code and of what it refers to.
+fn code_hash(code: &Compiled, labels: &Labels) -> u64 {
+    use cranelift_module::ModuleRelocTarget;
+    let mut parts: Vec<Vec<u8>> = vec![code.bytes.clone()];
+    for reloc in &code.relocs {
+        let target = match &reloc.name {
+            ModuleRelocTarget::User { namespace: 0, index } => {
+                labels.functions.get(&FuncId::from_u32(*index)).cloned().unwrap_or_default()
+            }
+            ModuleRelocTarget::User { index, .. } => {
+                labels.data.get(&DataId::from_u32(*index)).cloned().unwrap_or_default()
+            }
+            other => format!("{other:?}"),
+        };
+        parts.push(format!("{} {:?} {} {target}", reloc.offset, reloc.kind, reloc.addend).into_bytes());
+    }
+    let parts: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
+    u64::from_str_radix(&crate::driver::fingerprint(&parts), 16).unwrap_or(0)
+}
+
+/// Calls one of the program's functions: directly, or in a live build
+/// through its slot, which a patch may point at new code.
+fn call_body(cg: &mut Codegen, fb: &mut FunctionBuilder, id: FnId, args: &[ir::Value]) -> ir::Inst {
+    let func = cg.functions[id.0 as usize];
+    let Some(live) = &cg.live else {
+        let callee = cg.module.declare_func_in_func(func, fb.func);
+        return fb.ins().call(callee, args);
+    };
+    let (table, slot) = (live.slots, live.slot_of[id.0 as usize]);
+    let table = cg.module.declare_data_in_func(table, fb.func);
+    let base = fb.ins().symbol_value(POINTER, table);
+    let code = fb.ins().load(POINTER, flags(), base, (slot * 8) as i32);
+    let signature = cg.module.declarations().get_function_decl(func).signature.clone();
+    let signature = fb.import_signature(signature);
+    fb.ins().call_indirect(signature, code, args)
 }
 
 /// A binding a debug build's probe shows: its name, its type and the glue
@@ -1273,8 +1403,13 @@ impl Codegen<'_> {
                 .collect();
             workers.into_iter().flat_map(|worker| worker.join().expect("a compiling thread")).collect()
         });
+        let labels = self.live.is_some().then(|| self.labels());
         for (job, code) in jobs.into_iter().zip(compiled) {
             let code = code?;
+            if let Some(labels) = &labels {
+                let hash = code_hash(&code, labels);
+                self.live.as_mut().expect("a live build").code.insert(job.id, hash);
+            }
             self.module
                 .define_function_bytes(job.id, code.alignment, &code.bytes, &code.relocs)
                 .map_err(|e| format!("{e:?}"))?;
@@ -1283,6 +1418,217 @@ impl Codegen<'_> {
             }
         }
         Ok(())
+    }
+
+    /// What each function and data a function's code refers to is, the
+    /// same from one build to the next: a function by its identity, glue by
+    /// its type, a string by its text; the runtime's by their names.
+    fn labels(&self) -> Labels {
+        let live = self.live.as_ref().expect("a live build");
+        let mut functions: HashMap<FuncId, String> = HashMap::new();
+        let mut data: HashMap<DataId, String> = HashMap::new();
+        for (index, &id) in self.functions.iter().enumerate() {
+            functions.insert(id, live.identities[index].clone());
+        }
+        for (&body, &(value, thunk)) in &self.fn_values {
+            functions.insert(thunk, format!("thunk {}", live.identities[body.0 as usize]));
+            data.insert(value, format!("fn {}", live.identities[body.0 as usize]));
+        }
+        for (&(kind, ty), &id) in &self.glue {
+            functions.insert(id, format!("glue {kind:?} {}", self.types.display(ty)));
+        }
+        for (&ty, &id) in &self.map_glue {
+            data.insert(id, format!("map glue {}", self.types.display(ty)));
+        }
+        for (text, &id) in &self.strings {
+            data.insert(id, format!("string {text}"));
+        }
+        for (&ty, &id) in &self.identities {
+            data.insert(id, format!("identity {}", self.types.display(ty)));
+        }
+        for &(id, body, _) in &live.sites {
+            data.insert(id, format!("sites {}", live.identities[body]));
+        }
+        let declarations = self.module.declarations();
+        for (id, decl) in declarations.get_functions() {
+            functions.entry(id).or_insert_with(|| decl.name.clone().unwrap_or_default());
+        }
+        for (id, decl) in declarations.get_data_objects() {
+            data.entry(id).or_insert_with(|| decl.name.clone().unwrap_or_default());
+        }
+        Labels { functions, data }
+    }
+
+    /// A live build's tables (toolchain 7.10): the slots, each pointing at
+    /// its function; the runtime's functions, the functions of C the
+    /// program calls and the identities of its types, which a patch reaches
+    /// by their place; and what the image registers with the runtime.
+    fn live_tables(&mut self, build: &mut crate::live::Build, trace: DataId) -> Result<(), String> {
+        let live = self.live.take().expect("a live build");
+        build.code = live
+            .identities
+            .iter()
+            .enumerate()
+            .filter_map(|(index, identity)| live.code.get(&self.functions[index]).map(|&h| (identity.clone(), h)))
+            .collect();
+        let base = live.patch.as_ref().map_or(0, |(_, sites)| *sites as u64);
+        for &(id, _, first) in &live.sites {
+            let mut word = DataDescription::new();
+            word.define((base + first as u64).to_le_bytes().to_vec().into_boxed_slice());
+            word.set_align(8);
+            self.module.define_data(id, &word).map_err(|e| e.to_string())?;
+        }
+        if let Some((known, sites)) = &live.patch {
+            return self.patch_table(build, &live, known.len(), *sites, trace);
+        }
+        let mut slots = DataDescription::new();
+        slots.define(vec![0u8; build.capacity as usize * 8].into_boxed_slice());
+        slots.set_align(8);
+        for (index, &slot) in live.slot_of.iter().enumerate() {
+            let function = self.module.declare_func_in_data(self.functions[index], &mut slots);
+            slots.write_function_addr(slot * 8, function);
+        }
+        self.module.define_data(live.slots, &slots).map_err(|e| e.to_string())?;
+        let runtime = self.address_table("tondo_live_runtime", &build.runtime)?;
+        // What Cranelift calls itself, besides what the program calls.
+        let mut c: Vec<String> = self.c_functions.keys().cloned().collect();
+        c.extend(["memcpy", "memmove", "memset", "memcmp"].map(String::from));
+        c.sort();
+        c.dedup();
+        build.c = c;
+        let c = self.address_table("tondo_live_c", &build.c)?;
+        let mut identities: Vec<(String, DataId)> =
+            self.identities.iter().map(|(&ty, &id)| (self.types.display(ty), id)).collect();
+        identities.sort();
+        build.data = identities.iter().map(|(name, _)| name.clone()).collect();
+        // With room for the types patches add.
+        let room = identities.len() + 1024;
+        let data =
+            self.module.declare_data("tondo_live_data", Linkage::Local, true, false).map_err(|e| e.to_string())?;
+        let mut table = DataDescription::new();
+        table.define(vec![0u8; room * 8].into_boxed_slice());
+        table.set_align(8);
+        for (index, (_, id)) in identities.iter().enumerate() {
+            let identity = self.module.declare_data_in_data(*id, &mut table);
+            table.write_data_addr(index as u32 * 8, identity, 0);
+        }
+        self.module.define_data(data, &table).map_err(|e| e.to_string())?;
+        build.sites = self.debug_sites.len() as u32;
+        let id = self.string(&build.id);
+        let used = live.slot_of.iter().max().map_or(0, |&slot| slot as u64 + 1);
+        let words: [(u64, Option<DataId>); 12] = [
+            (0, Some(live.slots)),
+            (build.capacity as u64, None),
+            (used.max(build.slots.values().max().map_or(0, |&s| s as u64 + 1)), None),
+            (0, Some(runtime)),
+            (build.runtime.len() as u64, None),
+            (0, Some(c)),
+            (build.c.len() as u64, None),
+            (0, Some(data)),
+            (build.data.len() as u64, None),
+            (room as u64, None),
+            (0, Some(id)),
+            (build.sites as u64, None),
+        ];
+        let mut info = DataDescription::new();
+        info.define(words.iter().flat_map(|(value, _)| value.to_le_bytes()).collect::<Vec<u8>>().into_boxed_slice());
+        info.set_align(8);
+        for (index, (_, target)) in words.iter().enumerate() {
+            if let Some(target) = target {
+                let target = self.module.declare_data_in_data(*target, &mut info);
+                info.write_data_addr(index as u32 * 8, target, 0);
+            }
+        }
+        self.module.define_data(live.info, &info).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// A patch's table, which the runtime reads once it maps the patch:
+    /// its tables of stack traces and of the debugger's probes, the site
+    /// its probes number from, then the slots it sets and the identities
+    /// of the types it adds.
+    fn patch_table(
+        &mut self,
+        build: &mut crate::live::Build,
+        live: &LiveCodegen,
+        known: usize,
+        sites: u32,
+        trace: DataId,
+    ) -> Result<(), String> {
+        let mut added: Vec<(String, DataId)> = self
+            .identities
+            .iter()
+            .filter(|(_, id)| self.module.declarations().get_data_decl(**id).linkage != Linkage::Import)
+            .map(|(&ty, &id)| (self.types.display(ty), id))
+            .collect();
+        added.sort();
+        let start = 40 + live.slot_of.len() * 16;
+        let mut bytes = vec![0u8; start + added.len() * 16];
+        bytes[16..24].copy_from_slice(&(sites as u64).to_le_bytes());
+        bytes[24..32].copy_from_slice(&(live.slot_of.len() as u64).to_le_bytes());
+        bytes[32..40].copy_from_slice(&(added.len() as u64).to_le_bytes());
+        for (index, &slot) in live.slot_of.iter().enumerate() {
+            bytes[40 + index * 16..48 + index * 16].copy_from_slice(&(slot as u64).to_le_bytes());
+        }
+        for index in 0..added.len() {
+            let at = start + index * 16;
+            bytes[at..at + 8].copy_from_slice(&((known + index) as u64).to_le_bytes());
+        }
+        let mut table = DataDescription::new();
+        table.define(bytes.into_boxed_slice());
+        table.set_align(8);
+        let trace = self.module.declare_data_in_data(trace, &mut table);
+        table.write_data_addr(0, trace, 0);
+        if let Some(debug) = self.debug {
+            let debug = self.module.declare_data_in_data(debug, &mut table);
+            table.write_data_addr(8, debug, 0);
+        }
+        for index in 0..live.slot_of.len() {
+            let function = self.module.declare_func_in_data(self.functions[index], &mut table);
+            table.write_function_addr((48 + index * 16) as u32, function);
+        }
+        for (index, (name, id)) in added.iter().enumerate() {
+            let identity = self.module.declare_data_in_data(*id, &mut table);
+            table.write_data_addr((start + index * 16 + 8) as u32, identity, 0);
+            build.data.push(name.clone());
+        }
+        self.module.define_data(live.info, &table).map_err(|e| e.to_string())?;
+        build.sites = sites + self.debug_sites.len() as u32;
+        Ok(())
+    }
+
+    /// A table of the addresses of functions by name: those the program
+    /// declares, or others as imports.
+    fn address_table(&mut self, name: &str, functions: &[String]) -> Result<DataId, String> {
+        use cranelift_module::FuncOrDataId;
+        let id = self.module.declare_data(name, Linkage::Local, false, false).map_err(|e| e.to_string())?;
+        let mut table = DataDescription::new();
+        table.define(vec![0u8; functions.len().max(1) * 8].into_boxed_slice());
+        table.set_align(8);
+        for (index, function) in functions.iter().enumerate() {
+            let offset = index as u32 * 8;
+            match self.module.get_name(function) {
+                Some(FuncOrDataId::Data(data)) => {
+                    let data = self.module.declare_data_in_data(data, &mut table);
+                    table.write_data_addr(offset, data, 0);
+                }
+                found => {
+                    let func = match found {
+                        Some(FuncOrDataId::Func(func)) => func,
+                        _ => {
+                            let signature = self.module.make_signature();
+                            self.module
+                                .declare_function(function, Linkage::Import, &signature)
+                                .map_err(|e| e.to_string())?
+                        }
+                    };
+                    let func = self.module.declare_func_in_data(func, &mut table);
+                    table.write_function_addr(offset, func);
+                }
+            }
+        }
+        self.module.define_data(id, &table).map_err(|e| e.to_string())?;
+        Ok(id)
     }
 
     /// The stack trace table (the runtime's `trace::Table`): each function's
@@ -1424,7 +1770,16 @@ impl Codegen<'_> {
         if let Some(&id) = self.identities.get(&ty) {
             return id;
         }
-        let name = self.string(&self.types.display(ty));
+        let shown = self.types.display(ty);
+        // A patch shares the running program's identity of a type it has.
+        if let Some(index) = self.live.as_ref().and_then(|live| live.patch.as_ref()?.0.iter().position(|t| *t == shown))
+        {
+            let symbol = format!("tondo_live_data{index}");
+            let id = self.module.declare_data(&symbol, Linkage::Import, false, false).expect("type identity");
+            self.identities.insert(ty, id);
+            return id;
+        }
+        let name = self.string(&shown);
         let symbol = format!("tondo_type{}", self.identities.len());
         let id = self.module.declare_data(&symbol, Linkage::Local, false, false).expect("type identity");
         let mut data = DataDescription::new();
@@ -1511,7 +1866,13 @@ impl Codegen<'_> {
         let block = e.fb.create_block();
         e.fb.append_block_params_for_function_params(block);
         e.fb.switch_to_block(block);
-        // A debug build's table, before a debugger can ask for it.
+        // A live build's tables, and then a debug build's, before a
+        // debugger can ask for them.
+        if let Some(info) = e.cg.live.as_ref().map(|live| live.info) {
+            let info = e.cg.module.declare_data_in_func(info, e.fb.func);
+            let info = e.fb.ins().symbol_value(POINTER, info);
+            e.call_rt(Rt::Live, &[info]);
+        }
         if let Some(debug) = e.cg.debug {
             let debug = e.cg.module.declare_data_in_func(debug, e.fb.func);
             let debug = e.fb.ins().symbol_value(POINTER, debug);
@@ -1557,7 +1918,7 @@ impl Codegen<'_> {
                 let count = e.fb.ins().iconst(types::I64, tests.len() as i64);
                 e.call_rt(Rt::TestStart, &[address, count]);
             }
-            let callee = e.cg.module.declare_func_in_func(e.cg.functions[main], e.fb.func);
+            let main = FnId(main as u32);
             let value = match e.cg.class(result) {
                 Class::Memory => {
                     let layout = e.cg.layout(result);
@@ -1568,15 +1929,15 @@ impl Codegen<'_> {
                     );
                     let slot = e.fb.create_sized_stack_slot(data);
                     let address = e.fb.ins().stack_addr(POINTER, slot, 0);
-                    e.fb.ins().call(callee, &[address]);
+                    call_body(e.cg, &mut e.fb, main, &[address]);
                     Val::Memory(address)
                 }
                 Class::Scalar(_) => {
-                    let call = e.fb.ins().call(callee, &[]);
+                    let call = call_body(e.cg, &mut e.fb, main, &[]);
                     Val::Scalar(e.fb.inst_results(call)[0])
                 }
                 Class::Zero => {
-                    e.fb.ins().call(callee, &[]);
+                    call_body(e.cg, &mut e.fb, main, &[]);
                     Val::Zero
                 }
             };
@@ -1715,8 +2076,7 @@ impl Emit<'_, '_> {
                 Val::Scalar(v) | Val::Memory(v) => vec![v],
                 Val::Zero => Vec::new(),
             };
-            let callee = self.cg.module.declare_func_in_func(self.cg.functions[id.0 as usize], self.fb.func);
-            let call = self.fb.ins().call(callee, &args);
+            let call = call_body(self.cg, &mut self.fb, id, &args);
             let text = self.fb.inst_results(call)[0];
             self.call_rt(Rt::SbStr, &[builder, text]);
             self.call_rt(Rt::StrRelease, &[text]);
@@ -2124,8 +2484,7 @@ impl Emit<'_, '_> {
                 Val::Scalar(v) | Val::Memory(v) => vec![v],
                 Val::Zero => Vec::new(),
             };
-            let callee = self.cg.module.declare_func_in_func(self.cg.functions[id.0 as usize], self.fb.func);
-            let call = self.fb.ins().call(callee, &args);
+            let call = call_body(self.cg, &mut self.fb, id, &args);
             return self.fb.inst_results(call)[0];
         }
         let types = self.cg.types;
@@ -2609,8 +2968,7 @@ fn define_thunk(
     // Drop the captures' address, which follows the result slot if any.
     let env = usize::from(cg.class(body.result) == Class::Memory);
     params.remove(env);
-    let callee = cg.module.declare_func_in_func(cg.functions[target.0 as usize], fb.func);
-    let call = fb.ins().call(callee, &params);
+    let call = call_body(cg, &mut fb, target, &params);
     let results = fb.inst_results(call).to_vec();
     fb.ins().return_(&results);
     fb.seal_all_blocks();
@@ -2649,6 +3007,10 @@ struct FnCodegen<'a, 'b> {
 /// probe; and the line the last probe was for, in the block.
 struct DebugFrame {
     function: u32,
+    /// In a live build, the word that holds the number of the function's
+    /// first site, and that number: its probes count from it, so that the
+    /// code of a function that did not change stays the same.
+    first: Option<(DataId, usize)>,
     shown: Vec<(Local, Option<ir::StackSlot>)>,
     alive: ir::StackSlot,
     addresses: ir::StackSlot,
@@ -2715,7 +3077,14 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             let size = (shown.len().max(1) * 8) as u32;
             let addresses = fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size, 3));
             cg.debug_functions.push((body.name.clone(), described));
-            DebugFrame { function: cg.debug_functions.len() as u32 - 1, shown, alive, addresses, line: None }
+            let function = cg.debug_functions.len() as u32 - 1;
+            let first = cg.live.is_some().then(|| {
+                let name = format!("tondo_sites{function}");
+                let id = cg.module.declare_data(&name, Linkage::Local, false, false).expect("a function's sites");
+                cg.live.as_mut().expect("a live build").sites.push((id, cg.current, cg.debug_sites.len()));
+                (id, cg.debug_sites.len())
+            });
+            DebugFrame { function, first, shown, alive, addresses, line: None }
         });
         FnCodegen { e: Emit { cg, fb }, body, bodies, blocks, storage, span: Span::default(), sites: Vec::new(), debug }
     }
@@ -3224,7 +3593,16 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.fb.ins().stack_store(POINTER, address, debug.addresses, index as i32 * 8);
             }
             self.e.cg.debug_sites.push((span.start, debug.function));
-            let site = self.e.fb.ins().iconst(types::I64, self.e.cg.debug_sites.len() as i64 - 1);
+            let index = self.e.cg.debug_sites.len() - 1;
+            let site = match debug.first {
+                Some((first, number)) => {
+                    let first = self.e.cg.module.declare_data_in_func(first, self.e.fb.func);
+                    let first = self.e.fb.ins().symbol_value(POINTER, first);
+                    let first = self.e.fb.ins().load(types::I64, flags(), first, 0);
+                    self.e.fb.ins().iadd_imm_s(first, (index - number) as i64)
+                }
+                None => self.e.fb.ins().iconst(types::I64, index as i64),
+            };
             let addresses = self.e.fb.ins().stack_addr(POINTER, debug.addresses, 0);
             let alive = self.e.fb.ins().stack_addr(POINTER, debug.alive, 0);
             self.e.call_rt(Rt::DebugLine, &[site, addresses, alive]);
@@ -5064,8 +5442,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         }
         let result = match callee {
             Callee::Fn(id) => {
-                let func = self.e.cg.module.declare_func_in_func(self.e.cg.functions[id.0 as usize], self.e.fb.func);
-                let call = self.e.fb.ins().call(func, &values);
+                let call = call_body(self.e.cg, &mut self.e.fb, id, &values);
                 self.e.fb.inst_results(call).first().copied()
             }
             Callee::Std(StdFn::ConsolePrint) => self.e.call_rt(Rt::ConsolePrint, &values),

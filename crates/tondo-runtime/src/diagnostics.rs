@@ -516,7 +516,9 @@ pub(crate) fn start() {
     }
     let on = |name: &str| std::env::var_os(name).is_some_and(|value| value == "1");
     let debugged = on("TONDO_DEBUG");
-    if !on("TONDO_DIAGNOSTICS") && !on("TONDO_TRACE") && !debugged && std::env::var_os("TONDO_DUMP").is_none() {
+    let live = super::live::on() && std::env::var_os("TONDO_DIAGNOSTICS").is_none_or(|value| value != "0");
+    if !on("TONDO_DIAGNOSTICS") && !on("TONDO_TRACE") && !debugged && !live && std::env::var_os("TONDO_DUMP").is_none()
+    {
         return;
     }
     super::heap::prepare();
@@ -628,6 +630,8 @@ fn answer(client: &mut UnixStream, pending: &mut Vec<u8>) -> bool {
             }
             "debug" => super::debugger::attach(client),
             "info" => info(),
+            "live" => super::live::describe(),
+            _ if line.starts_with("patch ") => super::live::patch(&line["patch ".len()..]),
             "counters" => counters(),
             "trace" => trace(client),
             "dump" => dump("request", "", None, Some(std::time::Duration::from_millis(250))),
@@ -936,7 +940,7 @@ impl Frames {
     }
 }
 
-fn quoted(text: &str) -> String {
+pub(crate) fn quoted(text: &str) -> String {
     let mut out = String::from("\"");
     for c in text.chars() {
         match c {

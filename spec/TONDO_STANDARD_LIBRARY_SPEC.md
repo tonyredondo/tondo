@@ -4205,8 +4205,8 @@ let captured = buffer.text()?
 ~~~
 
 - La salida estándar se acumula en un buffer que el runtime entrega cuando se
-  llena, en cada línea si es una terminal, antes de leer la entrada y al
-  terminar el programa; un programa nunca necesita llamar a `flush`. La salida
+  llena, en cada línea si es una terminal o el programa es un build de
+  depuración, antes de leer la entrada y al terminar el programa; un programa nunca necesita llamar a `flush`. La salida
   de error no se acumula. `flush` entrega lo pendiente de la salida actual y
   devuelve el primer fallo de entrega ocurrido desde el anterior `flush`.
 - Un fallo de entrega que el programa no observe se reporta al terminar en

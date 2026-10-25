@@ -531,9 +531,20 @@ pub fn library(analysis: &Analysis, object: &[u8], dir: &Path, name: &str) -> Re
 /// a target; a debug build has what a debugger needs (toolchain 7.6) and
 /// is not optimized.
 pub fn object(analysis: &Analysis, debug: bool, target: Option<Target>) -> Result<Vec<u8>, String> {
+    compile(analysis, debug, target, None)
+}
+
+/// The object of a program, live (toolchain 7.10) when `live` says how.
+pub fn compile(
+    analysis: &Analysis,
+    debug: bool,
+    target: Option<Target>,
+    live: Option<&mut crate::live::Build>,
+) -> Result<Vec<u8>, String> {
     let program = analysis.program.as_ref().expect("object() requires a checked program");
     let bodies = lower::lower(program);
-    codegen::compile(program, &bodies, &analysis.sources, analysis.meta, debug, target.map(Target::triple))
+    let triple = target.map(Target::triple);
+    codegen::compile(program, &bodies, &analysis.sources, analysis.meta, debug || live.is_some(), triple, live)
 }
 
 /// Whether this tondo can build for `target`: its own machine's, or one
@@ -642,6 +653,44 @@ pub struct Linking {
 
 /// Links an object file with the embedded runtime and the native
 /// libraries (`-lname` or files) into an executable.
+/// The runtime's functions in the archive a build links, as a live build
+/// lists them for its patches; read once for each runtime.
+pub fn runtime_functions(statically: bool, target: Option<Target>) -> Result<Vec<String>, String> {
+    let (archive, kind) = match target.filter(|t| !t.native()) {
+        Some(target) => (target.pack(RUNTIME_IDENTITY.trim())?.remove(0), target.name()),
+        None if statically || target.is_some() => (carried(STATIC[0].0, STATIC[0].1)?, "static"),
+        None => (carried("libtondo_runtime", RUNTIME)?, "dynamic"),
+    };
+    let listed = cache_dir().join("live").join(format!("runtime-{RUNTIME_HASH}-{kind}.txt"));
+    if let Ok(text) = std::fs::read_to_string(&listed) {
+        return Ok(text.lines().map(String::from).collect());
+    }
+    use object::{Object, ObjectSymbol};
+    let bytes = std::fs::read(&archive).map_err(|e| format!("cannot read {}: {e}", archive.display()))?;
+    let parsed = object::read::archive::ArchiveFile::parse(&bytes[..]).map_err(|e| e.to_string())?;
+    let mut names = Vec::new();
+    for member in parsed.members() {
+        let member = member.map_err(|e| e.to_string())?;
+        let Ok(file) = object::File::parse(member.data(&bytes[..]).map_err(|e| e.to_string())?) else { continue };
+        for symbol in file.symbols() {
+            let name = symbol.name().unwrap_or_default();
+            let name = name.strip_prefix('_').filter(|_| file.format() == object::BinaryFormat::MachO).unwrap_or(name);
+            if symbol.is_global()
+                && symbol.is_definition()
+                && symbol.kind() == object::SymbolKind::Text
+                && let Some(rest) = name.strip_prefix("tondo_rt_")
+            {
+                names.push(format!("tondo_rt_{rest}"));
+            }
+        }
+    }
+    names.sort();
+    names.dedup();
+    let _ = std::fs::create_dir_all(listed.parent().expect("a directory"));
+    let _ = write_atomic(&listed, names.join("\n").as_bytes());
+    Ok(names)
+}
+
 pub fn link(object: &[u8], output: &Path, libraries: &[String], linking: Linking) -> Result<(), String> {
     if let Some(target) = linking.target.filter(|t| !t.native()) {
         let archives = target.pack(RUNTIME_IDENTITY.trim())?;

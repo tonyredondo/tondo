@@ -31,8 +31,9 @@ const LIMIT: usize = 256 * 1024;
 const INSTRUCTIONS: &str = "Tondo's toolchain. Tondo is a new language: read the guide before writing it \
 (the `guide` tool, or the tondo://guide resources), and `api` for what a module offers. After each edit, \
 `check` the program: each diagnostic says how to repair it, and `fix` applies the compiler's safe fixes. \
-`run` and `test` build and run it; `debug_start` debugs a build. Paths are relative to the server's \
-directory; lines and columns count from 1, columns in characters.";
+`run` and `test` build and run it; `debug_start` debugs a build. A program that keeps running is a \
+`run_start` session, whose code `reload` changes after an edit without starting it again. Paths are relative to \
+the server's directory; lines and columns count from 1, columns in characters.";
 
 pub fn serve() -> Result<(), String> {
     // A session whose debugger ended fails to write, instead of ending the
@@ -58,6 +59,9 @@ pub fn serve() -> Result<(), String> {
     for (_, session) in server.sessions.drain() {
         session.stop();
     }
+    for (_, mut run) in server.runs.drain() {
+        run.stop();
+    }
     Ok(())
 }
 
@@ -72,6 +76,7 @@ fn failure(id: Value, code: i64, message: &str, data: Value) -> Value {
 #[derive(Default)]
 struct Server {
     sessions: HashMap<String, Session>,
+    runs: HashMap<String, Run>,
     started: u32,
 }
 
@@ -169,6 +174,56 @@ impl Server {
             "definition" | "references" | "hover" | "complete" | "rename" | "symbols" => language(name, args),
             "debug_start" => self.debug_start(args),
             "debug" => self.debug(args),
+            "run_start" => self.run_start(args),
+            "run_output" | "run_input" | "run_stop" => {
+                let id = args.need("session")?;
+                let run = self.runs.get_mut(&id).ok_or_else(|| format!("no session `{id}`: `run_start` starts one"))?;
+                match name {
+                    "run_input" => {
+                        let text = args.text("text").unwrap_or_default();
+                        let stdin = run.child.stdin.as_mut().ok_or("the session's input is closed")?;
+                        stdin
+                            .write_all(text.as_bytes())
+                            .and_then(|()| stdin.flush())
+                            .map_err(|_| "the program ended")?;
+                        if args.flag("close") {
+                            drop(run.child.stdin.take());
+                        }
+                        let wait = Duration::from_secs_f64(args.number("wait").unwrap_or(0.5).clamp(0.0, 600.0));
+                        Ok(run.heard(&id, wait))
+                    }
+                    "run_stop" => {
+                        let mut run = self.runs.remove(&id).expect("a session");
+                        run.stop();
+                        Ok(run.heard(&id, Duration::ZERO))
+                    }
+                    _ => {
+                        let wait = Duration::from_secs_f64(args.number("wait").unwrap_or(1.0).clamp(0.0, 600.0));
+                        Ok(run.heard(&id, wait))
+                    }
+                }
+            }
+            "reload" => {
+                let program = match (args.text("session"), args.text("program")) {
+                    (Some(id), _) => {
+                        let run =
+                            self.runs.get(&id).ok_or_else(|| format!("no session `{id}`: `run_start` starts one"))?;
+                        if run.watch {
+                            return Err(format!("{id} watches its files and reloads itself"));
+                        }
+                        run.child.id().to_string()
+                    }
+                    (None, Some(program)) => program,
+                    (None, None) => return Err("give `session`, or `program`: a running live build".into()),
+                };
+                match crate::live::reload_named(&program) {
+                    Ok(reloaded) => Ok(Reply::new(
+                        reloaded.summary(),
+                        json!({ "changed": reloaded.changed, "added": reloaded.added }),
+                    )),
+                    Err(refused) => Err(refused.message()),
+                }
+            }
             "debug_stop" => {
                 let id = args.need("session")?;
                 let session = self.sessions.remove(&id).ok_or_else(|| unknown(&id))?;
@@ -179,9 +234,60 @@ impl Server {
         }
     }
 
+    fn run_start(&mut self, args: &Args) -> Result<Reply, String> {
+        use std::os::unix::process::CommandExt;
+        let mut argv = vec!["run".to_string(), args.path().display().to_string()];
+        argv.push(if args.flag("watch") { "--watch" } else { "--live" }.into());
+        let program_args = args.list("args");
+        if !program_args.is_empty() {
+            argv.push("--".into());
+            argv.extend(program_args);
+        }
+        let mut child = Command::new(tondo()?)
+            .args(&argv)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .process_group(0)
+            .spawn()
+            .map_err(|e| format!("cannot run tondo {}: {e}", argv.join(" ")))?;
+        let gather = |stream: Box<dyn Read + Send>| {
+            let buffer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let shared = buffer.clone();
+            std::thread::spawn(move || {
+                let mut stream = stream;
+                let mut chunk = [0u8; 8192];
+                while let Ok(count) = stream.read(&mut chunk) {
+                    if count == 0 {
+                        break;
+                    }
+                    shared.lock().unwrap_or_else(|e| e.into_inner()).extend_from_slice(&chunk[..count]);
+                }
+            });
+            buffer
+        };
+        let stdout = gather(Box::new(child.stdout.take().expect("piped")));
+        let stderr = gather(Box::new(child.stderr.take().expect("piped")));
+        if let Some(text) = args.text("stdin") {
+            let stdin = child.stdin.as_mut().expect("piped");
+            let _ = stdin.write_all(text.as_bytes()).and_then(|()| stdin.flush());
+        }
+        self.started += 1;
+        let id = format!("run-{}", self.started);
+        let mut run = Run { child, stdout, stderr, read: (0, 0), watch: args.flag("watch"), status: None };
+        let wait = Duration::from_secs_f64(args.number("wait").unwrap_or(2.0).clamp(0.0, 600.0));
+        let reply = run.heard(&id, wait);
+        self.runs.insert(id, run);
+        Ok(reply)
+    }
+
     fn debug_start(&mut self, args: &Args) -> Result<Reply, String> {
         let target = args.need("target")?;
-        let mut argv = vec!["debug".to_string(), "--json".into(), target.clone()];
+        let mut argv = vec!["debug".to_string(), "--json".into()];
+        if args.flag("live") {
+            argv.push("--live".into());
+        }
+        argv.push(target.clone());
         let program_args = args.list("args");
         if !program_args.is_empty() {
             argv.push("--".into());
@@ -986,6 +1092,73 @@ fn bounded(bytes: Vec<u8>) -> String {
     format!("{}\n… {} more bytes", &text[..cut], text.len() - cut)
 }
 
+/// A program a session keeps running, live: what it printed, and how much
+/// of it a tool read.
+struct Run {
+    child: Child,
+    stdout: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    stderr: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    read: (usize, usize),
+    watch: bool,
+    status: Option<std::process::ExitStatus>,
+}
+
+impl Run {
+    fn lengths(&self) -> (usize, usize) {
+        let length = |buffer: &std::sync::Mutex<Vec<u8>>| buffer.lock().unwrap_or_else(|e| e.into_inner()).len();
+        (length(&self.stdout), length(&self.stderr))
+    }
+
+    /// What the program printed since the last time, after waiting up to
+    /// `wait` for something new, and whether it runs.
+    fn heard(&mut self, id: &str, wait: Duration) -> Reply {
+        let deadline = Instant::now() + wait;
+        loop {
+            if self.status.is_none() {
+                self.status = self.child.try_wait().ok().flatten();
+            }
+            if self.lengths() != self.read || self.status.is_some() || Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // A last moment for what the program wrote as it ended.
+        if self.status.is_some() {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let take = |buffer: &std::sync::Mutex<Vec<u8>>, from: usize| {
+            let bytes = buffer.lock().unwrap_or_else(|e| e.into_inner());
+            (bounded(bytes[from.min(bytes.len())..].to_vec()), bytes.len())
+        };
+        let (stdout, out_end) = take(&self.stdout, self.read.0);
+        let (stderr, err_end) = take(&self.stderr, self.read.1);
+        self.read = (out_end, err_end);
+        let code = self.status.and_then(|status| status.code());
+        let mut text = match (stdout.is_empty(), stderr.is_empty()) {
+            (false, false) => format!("stdout:\n{stdout}stderr:\n{stderr}"),
+            (false, true) => stdout.clone(),
+            (true, false) => stderr.clone(),
+            (true, true) => String::new(),
+        };
+        match self.status {
+            None => text.push_str(&format!("{id} runs\n")),
+            Some(_) => {
+                text.push_str(&format!("{id} ended, exit code {}\n", code.map_or("none".into(), |c| c.to_string())))
+            }
+        }
+        let structured = json!({ "session": id, "pid": self.child.id(), "stdout": stdout, "stderr": stderr,
+            "running": self.status.is_none(), "exit_code": code });
+        Reply::new(text, structured)
+    }
+
+    fn stop(&mut self) {
+        if self.status.is_none() {
+            unsafe { libc::kill(-(self.child.id() as i32), libc::SIGKILL) };
+            self.status = self.child.wait().ok();
+        }
+    }
+}
+
 /// A debugging session: `tondo debug --json`, which prints the debugger's
 /// answers and events as lines of JSON among the program's own output.
 struct Session {
@@ -1398,13 +1571,15 @@ debug build's process ID or name. A program it starts waits before main for brea
         params: &[
             ("target", "string!", "The program to debug."),
             ("args", "strings", "The arguments of a program it starts."),
+            ("live", "boolean", "Build it live (`--live`), so that `reload` changes its code while it is debugged."),
         ],
     },
     Tool {
         name: "debug",
         description: "A command of a debugging session: break <file>:<line> [if <name> <op> <value>], delete <id>, \
-continue, step, next, finish, pause, locals, print <name>, stack, tasks; and wait, which waits for a running program \
-to stop. Gives the debugger's answers and events, and what the program printed.",
+continue, step, next, finish, pause, locals, print <name>, stack, tasks, reload (a program started with `live`: \
+its code as its files are now, even while it is stopped); and wait, which waits for a running program to stop. \
+Gives the debugger's answers and events, and what the program printed.",
         kind: Kind::Runs,
         params: &[
             ("session", "string!", "The session `debug_start` gave."),
@@ -1417,6 +1592,59 @@ to stop. Gives the debugger's answers and events, and what the program printed."
         description: "End a debugging session, and the program it started.",
         kind: Kind::Runs,
         params: &[("session", "string!", "The session `debug_start` gave.")],
+    },
+    Tool {
+        name: "run_start",
+        description: "Start a program and keep it running, as a live build: `reload` changes its code while it \
+runs, and with `watch` it reloads itself when its files change, running again when a change needs it. Gives the \
+session that run_output, run_input, run_stop and reload take; its output so far, and whether it runs.",
+        kind: Kind::Runs,
+        params: &[
+            PATH,
+            ("args", "strings", "The program's arguments."),
+            ("stdin", "string", "What to write to its standard input first."),
+            ("watch", "boolean", "Reload when its files change (`--watch`)."),
+            ("wait", "number", "Seconds to wait for its first output; 2 by default."),
+        ],
+    },
+    Tool {
+        name: "run_output",
+        description: "What a session's program printed since the last time, waiting up to `wait` seconds for \
+something; and whether it still runs.",
+        kind: Kind::Reads,
+        params: &[
+            ("session", "string!", "The session `run_start` gave."),
+            ("wait", "number", "Seconds to wait for output; 1 by default."),
+        ],
+    },
+    Tool {
+        name: "run_input",
+        description: "Write to a session's standard input, and give what the program printed then.",
+        kind: Kind::Runs,
+        params: &[
+            ("session", "string!", "The session `run_start` gave."),
+            ("text", "string!", "What to write; a line ends with \\n."),
+            ("close", "boolean", "End the input after it."),
+            ("wait", "number", "Seconds to wait for output; 0.5 by default."),
+        ],
+    },
+    Tool {
+        name: "run_stop",
+        description: "End a session's program, and give what it printed last.",
+        kind: Kind::Runs,
+        params: &[("session", "string!", "The session `run_start` gave.")],
+    },
+    Tool {
+        name: "reload",
+        description: "Change a running live build's code to what its files say now, while it runs: a session's \
+program, or one started with `tondo run --live` by its process ID or name. Says which functions changed and \
+which it added; frames already running finish with the old code. A change it cannot make in place, as a type \
+with other fields, says to start the program again; files that do not compile leave it as it was.",
+        kind: Kind::Runs,
+        params: &[
+            ("session", "string", "The session `run_start` gave."),
+            ("program", "string", "A running live build's process ID or name."),
+        ],
     },
 ];
 

@@ -6,6 +6,7 @@
 mod archive;
 mod elf;
 pub mod macho;
+pub mod patch;
 
 pub use archive::archive;
 

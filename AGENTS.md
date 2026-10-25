@@ -74,6 +74,9 @@ Tondo is new, and what is true of other languages often is not of it.
   as `tondo run`, `tondo test` and `tondo fmt`.
 - With the MCP server, prefer its tools: they give data, take a program's
   input, end a program that runs too long, and debug.
+- A program that keeps running, as a server, is a `run_start` session: after
+  an edit, `reload` changes its code while it runs and keeps its state,
+  instead of starting it again (`tondo run --watch` outside MCP).
 
 ## Work on the compiler
 

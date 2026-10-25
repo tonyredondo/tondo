@@ -227,8 +227,8 @@ completos no se ejecuta ninguna.
 ## 7. Comandos
 
 ~~~text
-tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug] [--target <target>] [-- <argument>...]
-tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--debug] [--target <target>]
+tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch] [--target <target>] [-- <argument>...]
+tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--debug | --live] [--target <target>]
 tondo build --library [<project>|<file.to>] [--output <dir>] [--debug]
 tondo check [<project>|<file.to>] [--library] [--json]
 tondo expand [<project>|<file.to>]
@@ -248,8 +248,9 @@ tondo trace <pid|name> [--duration <seconds>] [--output <path>]
 tondo trace [--duration <seconds>] [--output <path>] -- <program> [<argument>...]
 tondo dump <pid|name> [--output <path>]
 tondo dump read <file> [tasks | task <id> | heap | objects | object <address>] [--json]
-tondo debug [--json] <file.to|project|executable|pid|name> [-- <argument>...]
+tondo debug [--json] [--live] <file.to|project|executable|pid|name> [-- <argument>...]
 tondo dap
+tondo reload <pid|name>
 ~~~
 
 - `run` compila, guarda el ejecutable en la caché y lo ejecuta; `build` escribe
@@ -270,7 +271,9 @@ tondo dap
   estáticas, `"static:z"` o un archivo `.a`. En macOS es error.
 - `--strip` deja fuera del ejecutable la tabla de símbolos. Las trazas de
   Tondo no la usan; los depuradores y profilers externos, sí.
-- `--debug` compila un build de depuración para `tondo debug` (sección 7.6).
+- `--debug` compila un build de depuración para `tondo debug` (sección 7.6),
+  y `--live` uno vivo, cuyo código cambia mientras corre; `--watch` lo
+  cambia cuando cambian sus archivos (sección 7.10).
 - `--library` compila, comprueba o prueba una librería para C, sin `main`
   (sección 7.7).
 - `--target` compila para otra máquina, y `target pack` escribe lo que otra
@@ -635,10 +638,16 @@ lenguaje, cada una con un texto para el modelo y su resultado como datos
   termina, 60 s si no se dice; `test`, con lo que imprime y su informe JSON;
   `doc_test`, `bind`, `update` y `target_pack`.
 - Programas en ejecución: `ps`, `counters`, `trace`, `dump` y `dump_read`.
-- Depuración: `debug_start` abre una sesión de `tondo debug` y da su id;
-  `debug` le pasa una orden y devuelve las respuestas, los eventos y lo que el
-  programa imprimió. Si el programa sigue corriendo pasado `wait`, `pause` lo
-  para y `wait` espera a que pare. `debug_stop` cierra la sesión.
+- Depuración: `debug_start` abre una sesión de `tondo debug`, viva con
+  `live`, y da su id; `debug` le pasa una orden, `reload` incluida, y
+  devuelve las respuestas, los eventos y lo que el programa imprimió. Si el
+  programa sigue corriendo pasado `wait`, `pause` lo para y `wait` espera a
+  que pare. `debug_stop` cierra la sesión.
+- Programas vivos (sección 7.10): `run_start` arranca uno, con `watch` si se
+  pide, y da su sesión; `run_output` da lo que imprimió desde la última vez,
+  `run_input` le escribe en la entrada, `run_stop` lo termina y `reload`
+  cambia su código, o el de un build vivo en ejecución nombrado como en
+  `counters`.
 
 Las líneas y las columnas cuentan desde 1, las columnas en caracteres, como
 en los diagnósticos, y los paths son relativos al directorio del servidor. Lo
@@ -658,6 +667,51 @@ comandos, `claude` y `codex`. Un agente se encuentra por su comando en
 `PATH` o por su directorio de configuración en el home. Ejecutarlo de nuevo
 lo actualiza todo. Dice si el directorio de `tondo` no está en `PATH` y, sin
 ningún agente, cómo dar la skill y el servidor a otro.
+
+### 7.10 Builds vivos
+
+`--live`, en `run`, `build` y `debug`, compila un build vivo: uno de
+depuración (sección 7.6) cuyo código cambia mientras el programa corre.
+Cada llamada a una función del programa pasa por un slot de una tabla, y la
+imagen guarda tablas de lo que un cambio puede necesitar de ella: las
+funciones del runtime, que enlaza todas, las de C que llama y la identidad de
+cada tipo. Un build vivo atiende siempre a las herramientas, como con
+`TONDO_DIAGNOSTICS=1`, salvo con `TONDO_DIAGNOSTICS=0`. Los demás builds no
+tienen nada de eso, ni su coste.
+
+`tondo reload <pid|name>` cambia el código de un build vivo en ejecución por
+el que dicen sus archivos ahora: compila el programa de nuevo, con las
+opciones con que se compiló y desde el directorio donde se compiló, y el
+runtime pone el código nuevo en memoria y apunta los slots a él. Las
+llamadas que empiezan después usan el código nuevo; un frame que ya estaba
+en una función cambiada termina con el viejo, y las clausuras que existían
+conservan el suyo. Cambia en caliente:
+
+- el cuerpo de funciones, métodos, instancias genéricas, implementaciones y
+  constantes;
+- las funciones, métodos, tipos e instancias nuevas;
+- una función cuya firma cambia, que es otra: el código viejo sigue llamando
+  a la vieja.
+
+No se aplica, y el programa sigue como estaba, cuando los archivos no
+compilan, con sus diagnósticos, ni cuando cambian los campos, las variantes
+o la representación de un tipo que ya existía, cuyos valores vivos tienen la
+forma vieja, ni cuando el cambio llama a una función de C que el programa no
+enlaza: el mensaje pide arrancarlo de nuevo. `reload` dice qué funciones
+cambiaron y cuáles añadió, y termina con estado 1 si no se aplicó.
+
+Bajo `tondo debug --live`, la orden `reload` hace lo mismo, también con el
+programa parado: los breakpoints de las líneas cambiadas paran en el código
+nuevo. `tondo dap` lanza un build vivo con `"live": true` y atiende la
+petición propia `reload`.
+
+`tondo run --watch` arranca un build vivo y, cuando cambian sus archivos, lo
+cambia como `reload`; si el cambio pide arrancarlo de nuevo, o el programa
+ya terminó, lo vuelve a ejecutar, y si los archivos no compilan muestra los
+diagnósticos y el programa sigue con su código.
+
+La salida estándar de un build de depuración, y por tanto de uno vivo, se
+entrega en cada línea, como a una terminal, para la herramienta que la lee.
 
 ## 8. Determinismo
 

@@ -9,7 +9,7 @@
 
 use std::fmt::Write;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 
 /// The table the compiler writes: one entry per function of the program,
 /// whose `meta` offset in `blob` holds its name's length, its number of
@@ -33,11 +33,35 @@ struct Function {
 }
 
 static TABLE: AtomicPtr<Table> = AtomicPtr::new(std::ptr::null_mut());
+/// The tables of a live build's patches, in the order they came.
+const PATCHES: usize = 4096;
+static PATCHED: [AtomicPtr<Table>; PATCHES] = [const { AtomicPtr::new(std::ptr::null_mut()) }; PATCHES];
+static PATCHED_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// Registers the program's table; the first thing `main` does.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_trace(table: *const Table) {
     TABLE.store(table as *mut Table, Ordering::Release);
+}
+
+/// Registers a patch's table; false when there is no room for another.
+pub(crate) fn add(table: *const Table) -> bool {
+    let count = PATCHED_COUNT.load(Ordering::Acquire);
+    if count == PATCHES {
+        return false;
+    }
+    PATCHED[count].store(table as *mut Table, Ordering::Release);
+    PATCHED_COUNT.store(count + 1, Ordering::Release);
+    true
+}
+
+/// The program's table, then its patches'.
+fn tables() -> impl Iterator<Item = (usize, &'static Table)> {
+    let patched = PATCHED_COUNT.load(Ordering::Acquire);
+    std::iter::once(&TABLE)
+        .chain(&PATCHED[..patched])
+        .enumerate()
+        .filter_map(|(index, table)| unsafe { table.load(Ordering::Acquire).as_ref() }.map(|table| (index, table)))
 }
 
 /// A frame of compiled code: the function and the line it is at, and the
@@ -51,39 +75,38 @@ struct Frame {
     ty: Option<&'static str>,
 }
 
-fn entries() -> &'static [Function] {
-    let table = TABLE.load(Ordering::Acquire);
-    if table.is_null() {
-        return &[];
-    }
-    unsafe { std::slice::from_raw_parts((*table).functions, (*table).count as usize) }
+fn entries(table: &Table) -> &'static [Function] {
+    unsafe { std::slice::from_raw_parts(table.functions, table.count as usize) }
 }
 
-/// Whether the functions lie in the order of the table, as the compiler
-/// writes them into one section, which linkers keep.
-fn ordered() -> bool {
-    static ORDERED: AtomicU8 = AtomicU8::new(0);
-    match ORDERED.load(Ordering::Relaxed) {
+/// Whether a table's functions lie in its order, as the compiler writes
+/// them into one section, which linkers keep.
+fn ordered(slot: usize, table: &Table) -> bool {
+    static ORDERED: [AtomicU8; PATCHES + 1] = [const { AtomicU8::new(0) }; PATCHES + 1];
+    match ORDERED[slot].load(Ordering::Relaxed) {
         0 => {
-            let ordered = entries().windows(2).all(|pair| pair[0].code < pair[1].code);
-            ORDERED.store(if ordered { 1 } else { 2 }, Ordering::Relaxed);
+            let ordered = entries(table).windows(2).all(|pair| pair[0].code < pair[1].code);
+            ORDERED[slot].store(if ordered { 1 } else { 2 }, Ordering::Relaxed);
             ordered
         }
         state => state == 1,
     }
 }
 
-/// The function a return address is in: its start and entry.
-fn find(address: usize) -> Option<(usize, usize)> {
-    let entries = entries();
+/// The function a return address is in: its table, its start and its
+/// entry.
+fn find(address: usize) -> Option<(&'static Table, usize, usize)> {
     let inside = |f: &Function| f.code < address && address <= f.code + f.size as usize;
-    let index = if ordered() {
-        let at = entries.partition_point(|f| f.code < address).checked_sub(1)?;
-        Some(at).filter(|&at| inside(&entries[at]))?
-    } else {
-        entries.iter().position(inside)?
-    };
-    Some((entries[index].code, index))
+    tables().find_map(|(slot, table)| {
+        let entries = entries(table);
+        let index = if ordered(slot, table) {
+            let at = entries.partition_point(|f| f.code < address).checked_sub(1)?;
+            Some(at).filter(|&at| inside(&entries[at]))?
+        } else {
+            entries.iter().position(inside)?
+        };
+        Some((table, entries[index].code, index))
+    })
 }
 
 unsafe fn u32_at(blob: *const u8, offset: usize) -> u32 {
@@ -101,9 +124,8 @@ fn aligned(offset: usize, len: usize) -> usize {
 
 /// The frame of compiled code a return address belongs to.
 fn resolve(address: usize) -> Option<Frame> {
-    let (start, index) = find(address)?;
+    let (table, start, index) = find(address)?;
     unsafe {
-        let table = &*TABLE.load(Ordering::Acquire);
         let blob = table.blob;
         let meta = (*table.functions.add(index)).meta as usize;
         let (name_len, calls) = (u32_at(blob, meta) as usize, u32_at(blob, meta + 4) as usize);
@@ -167,9 +189,8 @@ pub(crate) fn describe(address: usize) -> Option<Described> {
     if let Some(frame) = resolve(address) {
         return Some(Described { function: frame.function, at: Some((frame.file, frame.line)), ty: frame.ty });
     }
-    let (_, index) = find(address).or_else(|| find(address + 1))?;
+    let (table, _, index) = find(address).or_else(|| find(address + 1))?;
     unsafe {
-        let table = &*TABLE.load(Ordering::Acquire);
         let meta = (*table.functions.add(index)).meta as usize;
         let function = text_at(table.blob, meta + 8, u32_at(table.blob, meta) as usize);
         Some(Described { function, at: None, ty: None })

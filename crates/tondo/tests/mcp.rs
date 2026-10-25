@@ -256,3 +256,37 @@ fn setup_readies_the_agents() {
     let calls = std::fs::read_to_string(dir.join("calls")).unwrap();
     assert_eq!(calls.matches("claude mcp remove --scope user tondo\n").count(), 2, "{calls}");
 }
+
+const LIVE: &str = "import std.console
+
+fn answer(line: String): String {
+    \"v1 {line}\"
+}
+
+for {
+    match console.readLine() {
+        some(line) => console.println(answer(line))
+        none => break
+    }
+}
+";
+
+#[test]
+fn live_sessions_reload() {
+    let dir = project("mcp_live", &[("server.to", LIVE)]);
+    let mut agent = Agent::start(&dir);
+    let (started, _) = agent.call("run_start", json!({ "path": "server.to" }));
+    assert_eq!(started["running"], true, "{started}");
+    let session = started["session"].clone();
+    let (heard, _) = agent.call("run_input", json!({ "session": session, "text": "a\n", "wait": 30 }));
+    assert_eq!(heard["stdout"], "v1 a\n", "{heard}");
+    let source = std::fs::read_to_string(dir.join("server.to")).unwrap().replace("\"v1 {line}\"", "\"v2 {line}\"");
+    std::fs::write(dir.join("server.to"), source).unwrap();
+    let (reloaded, _) = agent.call("reload", json!({ "session": session }));
+    assert_eq!(reloaded["changed"], json!(["answer"]));
+    let (heard, _) = agent.call("run_input", json!({ "session": session, "text": "b\n", "wait": 30 }));
+    assert_eq!(heard["stdout"], "v2 b\n", "{heard}");
+    let (stopped, _) = agent.call("run_stop", json!({ "session": session }));
+    assert_eq!(stopped["running"], false);
+    agent.stop();
+}

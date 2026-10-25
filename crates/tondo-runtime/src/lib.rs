@@ -25,6 +25,7 @@ mod heap;
 mod http;
 mod io;
 mod json;
+mod live;
 mod math;
 mod memory;
 mod meta;
@@ -1806,8 +1807,8 @@ pub unsafe extern "C" fn tondo_rt_sb_finish(b: *mut Builder) -> *mut Str {
 
 /// Standard output. `print` and `println` append to this ordered buffer
 /// (std.console); it is delivered when it fills, at every line when stdout
-/// is a terminal, by `flush`, and when the program ends, so programs never
-/// need to flush.
+/// is a terminal or the program a debug build, by `flush`, and when the
+/// program ends, so programs never need to flush.
 struct Output {
     buffer: Vec<u8>,
     /// Whether stdout is a terminal, decided on first use.
@@ -1853,8 +1854,11 @@ pub(crate) fn console_append(bytes: &[u8], newline: bool) {
     }
     let terminal = *out.terminal.get_or_insert_with(|| std::io::IsTerminal::is_terminal(&std::io::stdout()));
     let line = newline || bytes.contains(&b'\n');
-    // A test's output must survive a crash, so a test build delivers it at once.
-    if out.buffer.len() >= STDOUT_FLUSH_THRESHOLD || (terminal && line) || testing::ACTIVE.load(Ordering::Relaxed) {
+    // A test's output must survive a crash, so a test build delivers it at
+    // once; a debug build's comes at every line, as to a terminal, for the
+    // tool that reads it.
+    let lines = terminal || debugger::built();
+    if out.buffer.len() >= STDOUT_FLUSH_THRESHOLD || (lines && line) || testing::ACTIVE.load(Ordering::Relaxed) {
         out.deliver();
     }
 }

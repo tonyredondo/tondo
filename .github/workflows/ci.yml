@@ -43,6 +43,10 @@ jobs:
       - run: cargo test -p tondo --test cases
         env:
           TONDO_CASES_DEBUG: 1
+      # Live builds (`--live`), whose calls go through slots.
+      - run: cargo test -p tondo --test cases cases
+        env:
+          TONDO_CASES_LIVE: 1
       # The cases and projects where there is no C compiler, dynamic and
       # static.
       - if: runner.os == 'Linux'

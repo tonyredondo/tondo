@@ -1854,3 +1854,23 @@ is, and `run` and `build` still say there is nothing to run, and that
 `fn main() { ... }` or statements at the top of the file give it
 something.
 
+## 2026-10-25 — Live builds
+
+`--live` builds a debug build whose code changes while it runs, under the
+debugger or not, so that an agent or a person tries a change on the state
+a program already has. Every call of a program's function loads its
+address from a slot, one per function and signature, and the image keeps
+tables of the runtime's functions, which it links all of, of the functions
+of C it calls and of each type's identity. A reload compiles the whole
+program again from the directory it was built in: Cranelift makes that
+fast, and every later call then runs one consistent version. The
+toolchain's own linker lays the object out as an image the runtime maps
+anywhere, whose references to the running image are entries the runtime
+fills from those tables, so no symbol of the executable is read and moving
+it does not matter. The old code is never freed: frames still in it finish
+there. A type whose fields or variants change is refused, since values of
+the old shape are alive; `--watch` runs the program again instead. A
+debug build's standard output now comes at every line, as to a terminal,
+for the tool that reads it. Restarting a stopped frame with the new code
+comes later.
+

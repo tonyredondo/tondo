@@ -36,6 +36,7 @@ locals                                          the bindings that hold a value (
 print <name>                                    one binding (p)
 stack                                           where the stopped task is (bt)
 tasks                                           where each stopped task is
+reload                                          a live build: its code as its files are now (r)
 quit                                            end the program and the debugger (q)";
 
 /// The debugger, until its input ends or `quit`; gives the exit status of
@@ -57,6 +58,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
         }
         Debugged::Running(name) => (observe::connect(&name)?, None),
     };
+    let pid = program.pid;
     let Program { mut writer, reader, .. } = program;
     // The program may stand still at a breakpoint for as long as it takes.
     let _ = reader.get_ref().set_read_timeout(None);
@@ -118,6 +120,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
             "l" => "locals",
             "p" => "print",
             "bt" | "backtrace" => "stack",
+            "r" => "reload",
             "q" | "exit" => "quit",
             "" => continue,
             other => other,
@@ -127,6 +130,21 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
             "quit" => {
                 quit = true;
                 break;
+            }
+            "reload" => {
+                let reloaded = crate::live::reload(pid, &mut |request| {
+                    session.send(request)?;
+                    session.answer()
+                });
+                match (reloaded, json) {
+                    (Ok(reloaded), true) => println!(
+                        "{}",
+                        serde_json::json!({ "reloaded": { "changed": reloaded.changed, "added": reloaded.added } })
+                    ),
+                    (Ok(reloaded), false) => println!("{}", reloaded.summary()),
+                    (Err(refused), true) => println!("{}", serde_json::json!({ "error": refused.message() })),
+                    (Err(refused), false) => println!("{}", refused.message()),
+                }
             }
             "break" | "delete" | "continue" | "step" | "next" | "finish" | "pause" | "locals" | "print" | "stack"
             | "tasks" => {

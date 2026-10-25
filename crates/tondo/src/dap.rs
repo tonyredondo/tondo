@@ -66,6 +66,7 @@ fn read_message(input: &mut impl BufRead) -> Option<Value> {
 /// The program being debugged: the connection, the answers to commands,
 /// and the program it started.
 struct Debuggee {
+    pid: u32,
     writer: UnixStream,
     answers: mpsc::Receiver<Value>,
     child: Option<std::process::Child>,
@@ -85,7 +86,11 @@ impl Debuggee {
 }
 
 /// Serves an editor until it disconnects.
-pub fn serve(build: &dyn Fn(&Path) -> Result<Option<PathBuf>, String>) -> Result<(), String> {
+/// Builds a program for debugging, live or not: its executable, or none
+/// when it does not compile.
+pub type Build<'a> = &'a dyn Fn(&Path, bool) -> Result<Option<PathBuf>, String>;
+
+pub fn serve(build: Build) -> Result<(), String> {
     let editor = Editor { out: Arc::new(Mutex::new((std::io::stdout(), 0))) };
     let stdin = std::io::stdin();
     let mut input = stdin.lock();
@@ -133,12 +138,7 @@ pub fn serve(build: &dyn Fn(&Path) -> Result<Option<PathBuf>, String>) -> Result
 }
 
 /// Starts the program the editor names, or attaches to a running one.
-fn start(
-    command: &str,
-    arguments: &Value,
-    build: &dyn Fn(&Path) -> Result<Option<PathBuf>, String>,
-    editor: &Editor,
-) -> Result<Debuggee, String> {
+fn start(command: &str, arguments: &Value, build: Build, editor: &Editor) -> Result<Debuggee, String> {
     let root =
         arguments["cwd"].as_str().map(PathBuf::from).unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
     let (program, child) = if command == "launch" {
@@ -149,7 +149,10 @@ fn start(
         let executable = if path.is_file() && path.extension().is_none_or(|e| e != "to") {
             path
         } else {
-            build(&path)?.ok_or_else(|| format!("{program} does not compile: `tondo check {program}` shows why"))?
+            // A live build's code changes with the custom request `reload`.
+            let live = arguments["live"].as_bool().unwrap_or(false);
+            build(&path, live)?
+                .ok_or_else(|| format!("{program} does not compile: `tondo check {program}` shows why"))?
         };
         use std::os::unix::process::CommandExt;
         let arguments: Vec<String> =
@@ -173,6 +176,7 @@ fn start(
         };
         (observe::connect(&name)?, None)
     };
+    let pid = program.pid;
     let observe::Program { mut writer, reader, .. } = program;
     let _ = reader.get_ref().set_read_timeout(None);
     let (answer, answers) = mpsc::channel();
@@ -221,7 +225,7 @@ fn start(
         }
     }
     writeln!(writer, "debug").map_err(|e| e.to_string())?;
-    let debuggee = Debuggee { writer, answers, child, root };
+    let debuggee = Debuggee { pid, writer, answers, child, root };
     let attached = debuggee.answers.recv().map_err(|_| "the program ended".to_string())?;
     if let Some(error) = attached["error"].as_str() {
         return Err(format!("{error}: a program is debugged in a build with --debug"));
@@ -311,6 +315,14 @@ fn handle(
             let name = arguments["expression"].as_str().unwrap_or_default().trim();
             let value = program.ask(&format!("print {name}"))?;
             Ok(json!({ "result": value["value"], "type": value["type"], "variablesReference": 0 }))
+        }
+        // Tondo's own: a live build's code as its files are now.
+        "reload" => {
+            let pid = program.pid;
+            match crate::live::reload(pid, &mut |request| program.ask(request)) {
+                Ok(reloaded) => Ok(json!({ "changed": reloaded.changed, "added": reloaded.added })),
+                Err(refused) => Err(refused.message()),
+            }
         }
         "disconnect" | "terminate" => Ok(json!({})),
         other => Err(format!("tondo dap does not do `{other}`")),

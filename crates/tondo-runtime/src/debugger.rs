@@ -10,7 +10,7 @@ use super::{Builder, Str, str_bytes};
 use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Condvar, Mutex, OnceLock};
+use std::sync::{Condvar, Mutex, OnceLock, RwLock};
 
 /// Shows a value: appends it, as the debugger writes it, to a builder.
 type Show = unsafe extern "C" fn(*mut Builder, *const u8);
@@ -47,7 +47,13 @@ struct Table {
     marked: Vec<AtomicBool>,
 }
 
-static TABLE: OnceLock<Table> = OnceLock::new();
+/// The program's table, to which a live build's patches add theirs. A
+/// lock taken before `STATE`, and never held while a task waits.
+static TABLE: OnceLock<RwLock<Table>> = OnceLock::new();
+
+fn table() -> Option<std::sync::RwLockReadGuard<'static, Table>> {
+    TABLE.get().map(|table| table.read().unwrap_or_else(|e| e.into_inner()))
+}
 /// A debugger is attached: probes look at what it asked for.
 static ATTACHED: AtomicBool = AtomicBool::new(false);
 /// Every task stops at its next probe: one stopped, or the debugger asked.
@@ -57,6 +63,48 @@ static HOLD: AtomicBool = AtomicBool::new(false);
 /// library before its first call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_debug_table(raw: *const Raw) {
+    let (functions, sites) = unsafe { parse(raw) };
+    let marked = sites.iter().map(|_| AtomicBool::new(false)).collect();
+    let _ = TABLE.set(RwLock::new(Table { functions, sites, marked }));
+    super::heap::track_objects();
+}
+
+/// Adds a patch's table: its functions after the program's, its sites
+/// after those it numbers from; the breakpoints of its lines mark it too.
+/// Gives how many sites it added.
+pub(crate) fn add_table(raw: *const Raw) -> usize {
+    let (functions, sites) = unsafe { parse(raw) };
+    let Some(lock) = TABLE.get() else { return 0 };
+    let mut table = lock.write().unwrap_or_else(|e| e.into_inner());
+    let (offset, first) = (table.functions.len(), table.sites.len());
+    table.functions.extend(functions);
+    for mut site in sites {
+        site.function += offset;
+        table.sites.push(site);
+        table.marked.push(AtomicBool::new(false));
+    }
+    let mut state = state();
+    for breakpoint in &mut state.breakpoints {
+        let Some(&known) = breakpoint.sites.first() else { continue };
+        let (file, line) = (table.sites[known].file.clone(), table.sites[known].line);
+        let added = (first..table.sites.len()).filter(|&i| table.sites[i].file == file && table.sites[i].line == line);
+        breakpoint.sites.extend(added);
+    }
+    remark(&table, &state);
+    table.sites.len() - first
+}
+
+/// Whether the program is a debug build.
+pub(crate) fn built() -> bool {
+    TABLE.get().is_some()
+}
+
+/// The number of sites, which a patch's start from.
+pub(crate) fn sites() -> usize {
+    table().map_or(0, |table| table.sites.len())
+}
+
+unsafe fn parse(raw: *const Raw) -> (Vec<Function>, Vec<Site>) {
     let raw = unsafe { &*raw };
     let text = String::from_utf8_lossy(unsafe { str_bytes(raw.text) }).into_owned();
     let glues = unsafe { std::slice::from_raw_parts(raw.glues, raw.count as usize) };
@@ -80,9 +128,7 @@ pub unsafe extern "C" fn tondo_rt_debug_table(raw: *const Raw) {
             _ => {}
         }
     }
-    let marked = sites.iter().map(|_| AtomicBool::new(false)).collect();
-    let _ = TABLE.set(Table { functions, sites, marked });
-    super::heap::track_objects();
+    (functions, sites)
 }
 
 /// Under `tondo debug`, a debug build waits a while for the debugger, then
@@ -194,7 +240,7 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
     if !ATTACHED.load(Ordering::Relaxed) {
         return;
     }
-    let Some(table) = TABLE.get() else { return };
+    let Some(table) = table() else { return };
     let site = site as usize;
     // The frame of the function that has the probe.
     let frame = unsafe { *(super::trace::frame_pointer() as *const usize) };
@@ -216,7 +262,7 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
         };
         let hit = state.breakpoints.iter().find(|b| {
             b.sites.contains(&site)
-                && b.condition.as_ref().is_none_or(|c| holds(c, table, site, addresses as usize, alive as usize))
+                && b.condition.as_ref().is_none_or(|c| holds(c, &table, site, addresses as usize, alive as usize))
         });
         match (hit, stepped) {
             (Some(breakpoint), _) => Some(format!("breakpoint {}", breakpoint.id)),
@@ -224,6 +270,8 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
             (None, false) => return,
         }
     };
+    // A patch may come while the task waits.
+    drop(table);
     let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
     if let Some(why) = why {
         let stop = Stop { task, site, frame, bounds, addresses: addresses as usize, alive: alive as usize, why };
@@ -257,7 +305,7 @@ fn stopped_event(stop: &Stop) -> String {
 
 /// A probe's place: `file:line in function`.
 fn place(site: usize) -> String {
-    let Some(table) = TABLE.get() else { return String::new() };
+    let Some(table) = table() else { return String::new() };
     let Some(at) = table.sites.get(site) else { return "the start of the program".into() };
     format!("{}:{} in {}", at.file, at.line, table.functions[at.function].name)
 }
@@ -360,7 +408,7 @@ fn holds(condition: &Condition, table: &Table, site: usize, addresses: usize, al
 /// Attaches the tool on `client` as the debugger: it hears when the
 /// program stops.
 pub(crate) fn attach(client: &UnixStream) -> String {
-    let Some(table) = TABLE.get() else {
+    let Some(table) = table() else {
         return "{\"error\":\"the program was not built with --debug\"}".into();
     };
     let mut slot = CLIENT.lock().unwrap_or_else(|e| e.into_inner());
@@ -388,12 +436,10 @@ pub(crate) fn detach() {
     *CLIENT.lock().unwrap_or_else(|e| e.into_inner()) = None;
     CLIENT_FD.store(-1, Ordering::Relaxed);
     ATTACHED.store(false, Ordering::Relaxed);
-    let mut state = state();
-    state.breakpoints.clear();
-    if let Some(table) = TABLE.get() {
+    state().breakpoints.clear();
+    if let Some(table) = table() {
         table.marked.iter().for_each(|m| m.store(false, Ordering::Relaxed));
     }
-    drop(state);
     resume(Mode::Run);
 }
 
@@ -409,7 +455,8 @@ pub(crate) fn exited() {
 
 /// Answers a command of the debugger, or `None` for one it does not know.
 pub(crate) fn command(line: &str) -> Option<String> {
-    let table = TABLE.get()?;
+    let table = table()?;
+    let table = &*table;
     let (word, rest) = line.split_once(' ').unwrap_or((line, ""));
     let rest = rest.trim();
     let stopped = || state().stopped.clone();

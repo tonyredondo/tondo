@@ -16,7 +16,8 @@
 //! Executables run with `TONDO_RT_CHECK_LEAKS=1`, so every case also checks
 //! that reference counting frees each string exactly once. With
 //! `TONDO_CASES_STATIC` set, cases build static executables (`--static`);
-//! with `TONDO_CASES_DEBUG`, debug builds (`--debug`).
+//! with `TONDO_CASES_DEBUG`, debug builds (`--debug`); with
+//! `TONDO_CASES_LIVE`, live builds (`--live`).
 //!
 //! Each directory under `tests/projects` is a project built as a whole,
 //! with the expectations written in any of its files.
@@ -97,6 +98,7 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
         .arg(&binary)
         .args(std::env::var_os("TONDO_CASES_STATIC").map(|_| "--static"))
         .args(std::env::var_os("TONDO_CASES_DEBUG").map(|_| "--debug"))
+        .args(std::env::var_os("TONDO_CASES_LIVE").map(|_| "--live"))
         .env("XDG_CACHE_HOME", scratch.join("cache"))
         .output()
         .unwrap();

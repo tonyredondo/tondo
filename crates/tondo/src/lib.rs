@@ -22,6 +22,7 @@ pub mod hir;
 pub mod index;
 pub mod lexer;
 pub mod link;
+pub mod live;
 pub mod lower;
 pub mod lsp;
 pub mod mcp;

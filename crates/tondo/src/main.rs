@@ -10,11 +10,12 @@ const USAGE: &str = "\
 New to Tondo, or a model writing it? Start with `tondo guide`.
 
 usage:
-  tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug] [--target <target>] [-- <argument>...]
-                                                       compile and run a program (under qemu for another
-                                                       machine)
-  tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--debug]
-            [--target <target>]                        compile a native executable (static on Linux;
+  tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch]
+            [--target <target>] [-- <argument>...]     compile and run a program (under qemu for another
+                                                       machine; live: its code changes as it runs, with
+                                                       `tondo reload`, or by itself as its files change)
+  tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip]
+            [--debug | --live] [--target <target>]     compile a native executable (static on Linux;
                                                        without its symbol table; static for a target:
                                                        x86_64-linux or aarch64-linux)
   tondo build --library [<project>|<file.to>] [--output <dir>] [--debug]
@@ -46,9 +47,12 @@ usage:
   tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--json]
                                                        watch a running program's counters, the runtime's
                                                        and its own (std.diagnostics)
-  tondo debug [--json] <file.to|project|executable|pid|name> [-- <argument>...]
+  tondo debug [--json] [--live] <file.to|project|executable|pid|name> [-- <argument>...]
                                                        debug a program built with --debug: breakpoints,
-                                                       steps, bindings, stacks, tasks
+                                                       steps, bindings, stacks, tasks; and with --live,
+                                                       `reload` to change its code where it stopped
+  tondo reload <pid|name>                              change a running live build's code to what its
+                                                       files say now
   tondo dap                                            debug for an editor, with the Debug Adapter Protocol
   tondo dump <pid|name> [--output <path>]           write a dump of a running program: its tasks and
                                                        where they are, its counters, its live memory
@@ -105,6 +109,7 @@ fn main() -> ExitCode {
         "doc-test" => doc_test_command(&args[1..]),
         "lsp" => tondo::lsp::serve().map(|()| ExitCode::SUCCESS),
         "mcp" => tondo::mcp::serve().map(|()| ExitCode::SUCCESS),
+        "reload" => reload_command(&args[1..]),
         "setup" => match args.len() {
             1 => tondo::setup::setup().map(|()| ExitCode::SUCCESS),
             _ => Err(format!("setup takes no arguments\n{USAGE}")),
@@ -116,7 +121,9 @@ fn main() -> ExitCode {
         "debug" => debug_command(&args[1..]),
         "target" => target_command(&args[1..]),
         "dap" => {
-            let build = |path: &Path| cached_executable(path, &BuildOptions { debug: true, ..BuildOptions::default() });
+            let build = |path: &Path, live| {
+                cached_executable(path, &BuildOptions { debug: true, live, ..BuildOptions::default() })
+            };
             tondo::dap::serve(&build).map(|()| ExitCode::SUCCESS)
         }
         "version" | "--version" | "-V" => {
@@ -534,11 +541,12 @@ fn counters_command(args: &[OsString]) -> Result<ExitCode, String> {
 /// Debugs a program it builds or starts, or a running debug build.
 fn debug_command(args: &[OsString]) -> Result<ExitCode, String> {
     let usage = |message: &str| format!("{message}\n{USAGE}");
-    let (mut json, mut target, mut program_args) = (false, None, Vec::new());
+    let (mut json, mut target, mut program_args, mut live) = (false, None, Vec::new(), false);
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.to_str().unwrap_or_default() {
             "--json" => json = true,
+            "--live" => live = true,
             "--" => program_args = rest.by_ref().cloned().collect(),
             other if !other.starts_with('-') && target.is_none() => target = Some(arg.clone()),
             other => return Err(usage(&format!("debug does not take `{other}`"))),
@@ -552,7 +560,7 @@ fn debug_command(args: &[OsString]) -> Result<ExitCode, String> {
         || path.join("tondo.toml").is_file()
         || path.join("src/main.to").is_file()
     {
-        let options = BuildOptions { debug: true, ..BuildOptions::default() };
+        let options = BuildOptions { debug: true, live, ..BuildOptions::default() };
         match cached_executable(&path, &options)? {
             Some(executable) => tondo::debug::Debugged::Started(executable, program_args),
             None => return Ok(ExitCode::FAILURE),
@@ -564,6 +572,30 @@ fn debug_command(args: &[OsString]) -> Result<ExitCode, String> {
     };
     let status = tondo::debug::debug(debugged, json)?;
     Ok(ExitCode::from(status.clamp(0, 255) as u8))
+}
+
+/// Patches a running live build with its program as its sources say now
+/// (toolchain 7.10); it goes on with its old code when they do not compile.
+fn reload_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let [name] = args else {
+        return Err(format!("reload takes a running live program's process ID or name\n{USAGE}"));
+    };
+    match tondo::live::reload_named(&name.to_string_lossy()) {
+        Ok(reloaded) => {
+            println!("{}", reloaded.summary());
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(tondo::live::Refused::Diagnostics(text)) => {
+            eprint!("{text}");
+            eprintln!("tondo: not reloaded: the program goes on as it was");
+            Ok(ExitCode::FAILURE)
+        }
+        Err(tondo::live::Refused::Restart(message)) => {
+            eprintln!("tondo: not reloaded: {message}");
+            Ok(ExitCode::FAILURE)
+        }
+        Err(tondo::live::Refused::Failed(message)) => Err(message),
+    }
 }
 
 /// Dumps a running program, or reads a dump.
@@ -871,18 +903,35 @@ fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
 /// The native libraries `--link` adds, whether `--static` asks for a
 /// static executable, and the other arguments.
 /// How a program builds: its extra libraries, whether static, whether a
-/// debug build (toolchain 7.6), and for which target (7.8).
+/// debug build (toolchain 7.6) or a live one (7.10), and for which target
+/// (7.8).
 #[derive(Default)]
 struct BuildOptions {
     libraries: Vec<String>,
     statically: bool,
     debug: bool,
+    live: bool,
+    /// `run --watch`: reloads the program when its files change.
+    watch: bool,
     target: Option<Target>,
+}
+
+/// The object of a program; a live build's keeps its manifest.
+fn object(analysis: &driver::Analysis, path: &Path, options: &BuildOptions) -> Result<Vec<u8>, String> {
+    if !options.live {
+        return driver::object(analysis, options.debug, options.target);
+    }
+    let live = tondo::live::Options {
+        statically: options.statically,
+        target: options.target,
+        libraries: options.libraries.clone(),
+    };
+    tondo::live::compile(analysis, path, &live)
 }
 
 fn link_options(args: &[OsString]) -> Result<(BuildOptions, Vec<OsString>), String> {
     let (mut libraries, mut statically, mut debug, mut rest) = (Vec::new(), false, false, Vec::new());
-    let mut target = None;
+    let (mut target, mut live, mut watch) = (None, false, false);
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         if arg == "--target" && target.is_none() {
@@ -894,6 +943,10 @@ fn link_options(args: &[OsString]) -> Result<(BuildOptions, Vec<OsString>), Stri
             statically = true;
         } else if arg == "--debug" && !debug {
             debug = true;
+        } else if arg == "--live" && !live {
+            (live, debug) = (true, true);
+        } else if arg == "--watch" && !watch {
+            (watch, live, debug) = (true, true, true);
         } else if arg == "--" {
             rest.push(arg.clone());
             rest.extend(args.by_ref().cloned());
@@ -906,7 +959,7 @@ fn link_options(args: &[OsString]) -> Result<(BuildOptions, Vec<OsString>), Stri
         }
     }
     driver::ready(target)?;
-    Ok((BuildOptions { libraries, statically, debug, target }, rest))
+    Ok((BuildOptions { libraries, statically, debug, live, watch, target }, rest))
 }
 
 fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
@@ -916,7 +969,6 @@ fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     let (path, rest) = source_argument(args);
     let (options, rest) = link_options(rest)?;
-    let BuildOptions { libraries, statically, debug, target } = options;
     let mut output = None;
     let mut strip = false;
     let mut rest = rest.iter();
@@ -937,9 +989,10 @@ fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
     let Some(analysis) = analyze(&path, false)? else {
         return Ok(ExitCode::FAILURE);
     };
-    let libraries = [analysis.libraries.clone(), libraries].concat();
-    let object = driver::object(&analysis, debug, target)?;
-    driver::link(&object, &output, &libraries, driver::Linking { strip, statically, target })?;
+    let object = object(&analysis, &path, &options)?;
+    let libraries = [analysis.libraries.clone(), options.libraries].concat();
+    let linking = driver::Linking { strip, statically: options.statically, target: options.target };
+    driver::link(&object, &output, &libraries, linking)?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -1002,7 +1055,62 @@ fn run_command(args: &[OsString]) -> Result<ExitCode, String> {
         [separator, rest @ ..] if separator == "--" => rest,
         _ => return Err(format!("program arguments go after `--`\n{USAGE}")),
     };
+    if options.watch {
+        return watch(&path, program_args, &options);
+    }
     run(&path, program_args, &options)
+}
+
+/// `tondo run --watch` (toolchain 7.10): runs a live build of the program
+/// and, when its files change, reloads it; it runs the program again when
+/// it had ended or the change needs it, and goes on with the old code when
+/// the files do not compile.
+fn watch(path: &Path, program_args: &[OsString], options: &BuildOptions) -> Result<ExitCode, String> {
+    let stamps = || -> Vec<(PathBuf, Option<std::time::SystemTime>)> {
+        let inputs = driver::inputs(path).unwrap_or_default();
+        inputs.into_iter().map(|p| (p.clone(), std::fs::metadata(&p).and_then(|m| m.modified()).ok())).collect()
+    };
+    let start = || -> Result<Option<std::process::Child>, String> {
+        let Some(executable) = cached_executable(path, options)? else { return Ok(None) };
+        let launcher = options.target.map(Target::launcher).transpose()?.flatten();
+        let mut command = match &launcher {
+            Some(launcher) => {
+                let mut command = std::process::Command::new(launcher);
+                command.arg(&executable);
+                command
+            }
+            None => std::process::Command::new(&executable),
+        };
+        command.args(program_args).spawn().map(Some).map_err(|e| format!("cannot start {}: {e}", executable.display()))
+    };
+    let mut child = start()?;
+    let mut seen = stamps();
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        if let Some(status) = child.as_mut().and_then(|c| c.try_wait().ok().flatten()) {
+            eprintln!("tondo: the program ended ({status}); a change to its files runs it again");
+            child = None;
+        }
+        let now = stamps();
+        if now == seen {
+            continue;
+        }
+        seen = now;
+        let Some(running) = child.as_mut() else {
+            child = start()?;
+            continue;
+        };
+        match tondo::live::reload_named(&running.id().to_string()) {
+            Ok(reloaded) => eprintln!("tondo: {}", reloaded.summary()),
+            Err(tondo::live::Refused::Restart(message)) => {
+                eprintln!("tondo: not reloaded: {message}; running it again");
+                let _ = running.kill();
+                let _ = running.wait();
+                child = start()?;
+            }
+            Err(refused) => eprintln!("tondo: {}", refused.message()),
+        }
+    }
 }
 
 /// Compiles (or reuses a cached build of) `path` and executes it, under
@@ -1021,15 +1129,21 @@ fn run(path: &Path, program_args: &[OsString], options: &BuildOptions) -> Result
 /// The executable of `path` in the cache, built if it is not there; none
 /// when the program does not compile, whose diagnostics are printed.
 fn cached_executable(path: &Path, options: &BuildOptions) -> Result<Option<PathBuf>, String> {
-    let BuildOptions { libraries, statically, debug, target } = options;
+    let BuildOptions { libraries, statically, debug, live, target, .. } = options;
     let identity = driver::compiler_identity();
     let linking = format!(
-        "{}{}{}",
+        "{}{}{}{}",
         if *statically { "static" } else { "" },
         if *debug { "debug" } else { "" },
+        if *live { "live" } else { "" },
         target.map_or("", Target::name)
     );
     let mut parts = vec![identity.into_bytes(), libraries.join("\n").into_bytes(), linking.into_bytes()];
+    // A live build is of the files where they are: its manifest says where
+    // a reload reads them.
+    if *live {
+        parts.push(std::env::current_dir().map_err(|e| e.to_string())?.into_os_string().into_encoded_bytes());
+    }
     for input in driver::inputs(path)? {
         parts.push(input.as_os_str().as_encoded_bytes().to_vec());
         parts.push(std::fs::read(&input).map_err(|e| format!("cannot read {}: {e}", input.display()))?);
@@ -1041,7 +1155,7 @@ fn cached_executable(path: &Path, options: &BuildOptions) -> Result<Option<PathB
         let Some(analysis) = analyze(path, false)? else {
             return Ok(None);
         };
-        let object = driver::object(&analysis, *debug, *target)?;
+        let object = object(&analysis, path, options)?;
         std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
         let partial = dir.join(format!(".partial-{}", std::process::id()));
         let libraries = [analysis.libraries.clone(), libraries.to_vec()].concat();

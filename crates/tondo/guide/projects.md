@@ -121,5 +121,7 @@ Agent Skills standard.
 `check` reports each diagnostic with its fixes, and `fix` applies the safe
 ones; `run` takes the program's input and ends it after a timeout; `test`
 gives the report of each test; `debug_start` returns a session for `debug`,
-which takes the debugger's commands. Lines and columns count from 1, and
+which takes the debugger's commands. `run_start` keeps a program running
+as a live build: `run_input` and `run_output` talk to it, and `reload`
+changes its code after an edit, without starting it again. Lines and columns count from 1, and
 paths are relative to the directory the server runs in.
