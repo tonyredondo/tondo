@@ -456,9 +456,18 @@ struct SignalStack(*mut libc::c_void);
 impl Drop for SignalStack {
     fn drop(&mut self) {
         unsafe {
+            // The thread ends, or the process, whose `exit` on macOS drops
+            // it before a trace stops: the profiler's signal, which goes on
+            // coming meanwhile, must not come for a stack that is gone.
+            let mut profiler: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut profiler);
+            libc::sigaddset(&mut profiler, libc::SIGPROF);
+            libc::pthread_sigmask(libc::SIG_BLOCK, &profiler, std::ptr::null_mut());
             let disabled = libc::stack_t { ss_sp: std::ptr::null_mut(), ss_flags: libc::SS_DISABLE, ss_size: 0 };
-            libc::sigaltstack(&disabled, std::ptr::null_mut());
-            libc::munmap(self.0, SIGNAL_STACK);
+            // A stack the kernel may still deliver a signal on stays.
+            if libc::sigaltstack(&disabled, std::ptr::null_mut()) == 0 {
+                libc::munmap(self.0, SIGNAL_STACK);
+            }
         }
     }
 }
