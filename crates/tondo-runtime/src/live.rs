@@ -220,7 +220,11 @@ fn apply(path: &str) -> Result<String, String> {
         if found.slot >= info.capacity || found.conversions.iter().any(|c| c.index as usize >= conversions.len()) {
             return Err("the patch is damaged".into());
         }
-        for converted in &mut found.conversions {
+        if found.params.iter().any(|p| p.converted.as_ref().is_some_and(|c| c.index as usize >= conversions.len())) {
+            return Err("the patch is damaged".into());
+        }
+        let parts = found.conversions.iter_mut().chain(found.params.iter_mut().filter_map(|p| p.converted.as_mut()));
+        for converted in parts {
             converted.conversion = Some(conversions[converted.index as usize]);
         }
         found.code = unsafe { (info.slots.add(found.slot as usize) as *const AtomicU64).as_ref() }
@@ -313,6 +317,18 @@ struct Move {
     size: u32,
     copies: Vec<(u32, u32, u32)>,
     conversions: Vec<Converted>,
+    /// For a function of another identity: each parameter, by its place, as
+    /// it is or converted, which the new code takes from the runtime.
+    params: Vec<Param>,
+}
+
+/// A parameter a frame passes to the new code: its place, and how it is
+/// converted, with whether it is passed in memory and the size there.
+struct Param {
+    index: u32,
+    converted: Option<Converted>,
+    memory: bool,
+    size: u32,
 }
 
 /// A part of the old state that a conversion of the patch makes a value
@@ -341,9 +357,11 @@ type Release = unsafe extern "C" fn(*mut u8);
 static MOVES: std::sync::RwLock<Vec<(i64, Move)>> = std::sync::RwLock::new(Vec::new());
 static PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// The moves a patch ends with, after `OSR2`: their count, then each
-/// one's site, slot, point, size, count of copies and the copies, and count
-/// of conversions and each one's place, conversion and type's name.
+/// The moves a patch ends with, after `OSR3`: their count, then each
+/// one's site, slot, point, size, count of copies and the copies, count of
+/// conversions and each one's place, conversion and type's name, and count
+/// of parameters and each one's place, whether it converts, whether it is
+/// in memory, its conversion, size and type's name.
 fn moves(bytes: &[u8]) -> Result<Vec<(i64, Move)>, String> {
     if bytes.is_empty() {
         return Ok(Vec::new());
@@ -356,7 +374,7 @@ fn moves(bytes: &[u8]) -> Result<Vec<(i64, Move)>, String> {
         Ok(slice)
     };
     let u32_of = |b: &[u8]| u32::from_le_bytes(b.try_into().expect("4 bytes"));
-    if take(4)? != b"OSR2" {
+    if take(4)? != b"OSR3" {
         return Err(damaged());
     }
     let count = u32_of(take(4)?);
@@ -375,7 +393,16 @@ fn moves(bytes: &[u8]) -> Result<Vec<(i64, Move)>, String> {
             let name = String::from_utf8_lossy(take(length as usize)?).into_owned();
             conversions.push(Converted { from, to, index, name, conversion: None });
         }
-        moves.push((site, Move { slot, code: 0, point, size, copies: list, conversions }));
+        let mut params = Vec::new();
+        for _ in 0..u32_of(take(4)?) {
+            let (index, converts, memory) = (u32_of(take(4)?), u32_of(take(4)?), u32_of(take(4)?));
+            let (conversion, size, length) = (u32_of(take(4)?), u32_of(take(4)?), u32_of(take(4)?));
+            let name = String::from_utf8_lossy(take(length as usize)?).into_owned();
+            let converted =
+                (converts != 0).then_some(Converted { from: 0, to: 0, index: conversion, name, conversion: None });
+            params.push(Param { index, converted, memory: memory != 0, size });
+        }
+        moves.push((site, Move { slot, code: 0, point, size, copies: list, conversions, params }));
     }
     moves.sort_by_key(|(site, _)| *site);
     Ok(moves)
@@ -392,12 +419,15 @@ pub(crate) fn moving(site: i64) -> u8 {
 
 /// The state of a frame at a site of the old code as the new code's point
 /// expects it, in memory the new code releases; null when it does not move.
+/// `params` holds the frame's parameters, a word each, as the call passes
+/// them; for a function of another identity the state says where the call
+/// takes them from, converted.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_live_transfer(site: i64, old: *const u8) -> u64 {
+pub unsafe extern "C" fn tondo_rt_live_transfer(site: i64, old: *const u8, params: *const u64) -> u64 {
     let moves = MOVES.read().unwrap_or_else(|e| e.into_inner());
     let Ok(index) = moves.binary_search_by_key(&site, |(s, _)| *s) else { return 0 };
     let found = &moves[index].1;
-    let state = unsafe { libc::calloc(1, 16 + found.size as usize) } as *mut u8;
+    let state = unsafe { libc::calloc(1, 24 + found.size as usize) } as *mut u8;
     if state.is_null() {
         return 0;
     }
@@ -407,15 +437,30 @@ pub unsafe extern "C" fn tondo_rt_live_transfer(site: i64, old: *const u8) -> u6
         // Every value converts, or the frame stays as it was.
         for (index, converted) in found.conversions.iter().enumerate() {
             let conversion = converted.conversion.expect("a conversion of the patch");
-            if (conversion.convert)(old.add(converted.from as usize), state.add(16 + converted.to as usize)) == 0 {
+            if (conversion.convert)(old.add(converted.from as usize), state.add(24 + converted.to as usize)) == 0 {
                 for done in &found.conversions[..index] {
                     if let Some(release) = done.conversion.and_then(|c| c.to) {
-                        release(state.add(16 + done.to as usize));
+                        release(state.add(24 + done.to as usize));
                     }
                 }
                 libc::free(state as *mut libc::c_void);
                 stays(site, &converted.name);
                 return 0;
+            }
+        }
+        if !found.params.is_empty() {
+            match arguments(found, params) {
+                Ok(block) => (state as *mut u64).add(2).write(block as u64),
+                Err(name) => {
+                    for done in &found.conversions {
+                        if let Some(release) = done.conversion.and_then(|c| c.to) {
+                            release(state.add(24 + done.to as usize));
+                        }
+                    }
+                    libc::free(state as *mut libc::c_void);
+                    stays(site, &name);
+                    return 0;
+                }
             }
         }
         // The old values are the new ones now.
@@ -425,10 +470,88 @@ pub unsafe extern "C" fn tondo_rt_live_transfer(site: i64, old: *const u8) -> u6
             }
         }
         for &(from, to, size) in &found.copies {
-            std::ptr::copy_nonoverlapping(old.add(from as usize), state.add(16 + to as usize), size as usize);
+            std::ptr::copy_nonoverlapping(old.add(from as usize), state.add(24 + to as usize), size as usize);
         }
     }
     state as u64
+}
+
+/// What the runtime made of the parameters of the calls that frames make as
+/// they move, by the words it gives the calls: each converted value, where
+/// it is, and what releases it.
+static ARGUMENTS: std::sync::Mutex<Vec<(usize, Vec<Made>)>> = std::sync::Mutex::new(Vec::new());
+
+/// A converted parameter: where it is, what releases it, and whether the
+/// runtime allocated its memory.
+type Made = (usize, Option<Release>, bool);
+
+/// The words a moving frame's call takes its parameters from: each as it
+/// is, or converted; or the name of the type of one that does not convert.
+unsafe fn arguments(found: &Move, params: *const u64) -> Result<*mut u64, String> {
+    let count = found.params.iter().map(|p| p.index as usize + 1).max().unwrap_or(0);
+    let block = unsafe { libc::calloc(count.max(1), 8) } as *mut u64;
+    let mut made: Vec<Made> = Vec::new();
+    for param in &found.params {
+        let word = unsafe { params.add(param.index as usize) };
+        let at = unsafe { block.add(param.index as usize) };
+        let Some(converted) = &param.converted else {
+            unsafe { at.write(word.read()) };
+            continue;
+        };
+        let conversion = converted.conversion.expect("a conversion of the patch");
+        // A value in memory is passed by its address; one in a register, as
+        // it is.
+        let (from, to) = match param.memory {
+            true => {
+                (unsafe { word.read() } as *const u8, unsafe { libc::calloc(1, param.size.max(1) as usize) } as *mut u8)
+            }
+            false => (word as *const u8, at as *mut u8),
+        };
+        if unsafe { (conversion.convert)(from, to) } == 0 {
+            if param.memory {
+                unsafe { libc::free(to as *mut libc::c_void) };
+            }
+            unsafe { release(&made) };
+            unsafe { libc::free(block as *mut libc::c_void) };
+            return Err(converted.name.clone());
+        }
+        if param.memory {
+            unsafe { at.write(to as u64) };
+        }
+        made.push((to as usize, conversion.to, param.memory));
+    }
+    ARGUMENTS.lock().unwrap_or_else(|e| e.into_inner()).push((block as usize, made));
+    Ok(block)
+}
+
+/// Releases converted parameters, and the memory of those in memory.
+unsafe fn release(made: &[Made]) {
+    for &(at, release, memory) in made {
+        if let Some(release) = release {
+            unsafe { release(at as *mut u8) };
+        }
+        if memory {
+            unsafe { libc::free(at as *mut libc::c_void) };
+        }
+    }
+}
+
+/// Once the call of a frame that moved returns: what the runtime converted
+/// for it goes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_live_args_done(block: u64) {
+    if block == 0 {
+        return;
+    }
+    let made = {
+        let mut list = ARGUMENTS.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(index) = list.iter().position(|(b, _)| *b == block as usize) else { return };
+        list.swap_remove(index).1
+    };
+    unsafe {
+        release(&made);
+        libc::free(block as *mut libc::c_void);
+    }
 }
 
 /// The types whose values did not convert since the last patch.

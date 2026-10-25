@@ -225,10 +225,10 @@ on with the new body. Where the new code needs a binding the old one does
 not have there, the call stays on the old code until it reaches another
 statement, and reload says which lines and why. A type may gain or lose
 fields and variants: the values running calls hold convert as the calls
-move, field by field, a new field starting empty (0, `""`, `[]`, `none`),
-and reload says what it did to them. A value kept in a `Ref`, a channel, a
-task or `std.sync` does not convert: reload says where and to start the
-program again, which `--watch` does. Under `tondo debug --live app.to`,
-`reload` works where the program stopped: edit the function, reload,
-continue; or `restart`, which runs the stopped function again from its
-first line, with its new code.
+move, their parameters included, field by field, a new field starting
+empty (0, `""`, `[]`, `none`), and reload says what it did to them. A
+value kept in a `Ref`, a channel, a task or `std.sync` does not convert:
+reload says where and to start the program again, which `--watch` does.
+Under `tondo debug --live app.to`, `reload` works where the program
+stopped: edit the function, reload, continue; or `restart`, which runs the
+stopped function again from its first line, with its new code.

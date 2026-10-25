@@ -491,15 +491,16 @@ fn patch(
         structures: serde_json::Map::new(),
         migrations: Vec::new(),
     };
-    // The values of the old types frames hold convert as the frames move.
-    let mut wanted: Vec<String> = manifest["points"]
-        .as_object()
-        .into_iter()
-        .flatten()
-        .flat_map(|(_, function)| function["points"].as_array().into_iter().flatten())
-        .flat_map(|point| point["state"].as_array().into_iter().flatten())
-        .filter_map(|item| item["type"].as_str().map(String::from))
-        .collect();
+    // The values of the old types frames hold convert as the frames move,
+    // with the parameters of those that move to a function of another
+    // identity.
+    let functions = || manifest["points"].as_object().into_iter().flatten().map(|(_, function)| function);
+    let held = functions()
+        .flat_map(|function| function["points"].as_array().into_iter().flatten())
+        .flat_map(|point| point["state"].as_array().into_iter().flatten());
+    let passed = functions().flat_map(|function| function["params"].as_array().into_iter().flatten());
+    let mut wanted: Vec<String> =
+        held.chain(passed).filter_map(|item| item["type"].as_str().map(String::from)).collect();
     wanted.sort();
     wanted.dedup();
     let empty = serde_json::Map::new();
@@ -583,9 +584,13 @@ fn patch(
             _ => name,
         }
         .to_string();
+        // A function whose signature reaches a type of another shape is
+        // another identity, but the same function.
+        let base = |identity: &str| identity.split(" @").next().unwrap_or(identity).to_string();
         match known.get(identity) {
             Some(old) if old == hash => {}
             Some(_) => changed.push(name),
+            None if known.keys().any(|k| base(k) == base(identity)) => changed.push(name),
             None => added.push(name),
         }
     }
@@ -609,7 +614,16 @@ fn patch(
     changed.dedup();
     added.sort();
     added.dedup();
-    let mut notes = migrated.notes;
+    // What this reload's changes of shape do; conversions from older
+    // versions, which frames may still hold, go without saying.
+    let mut notes: Vec<String> = migrated
+        .notes
+        .into_iter()
+        .filter(|note| {
+            let name = note.trim_start_matches('`').split(['.', '`']).next().unwrap_or_default();
+            reshaped.iter().any(|r| r == name)
+        })
+        .collect();
     notes.sort();
     notes.dedup();
     Ok(Reloaded { changed, added, moves: moves.count, stays: moves.stays, notes })

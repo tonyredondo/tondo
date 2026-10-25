@@ -64,6 +64,7 @@ enum Rt {
     /// A frame's state for the new code, and its release once taken.
     LiveTransfer,
     LiveFree,
+    LiveArgsDone,
     StrRetain,
     StrRelease,
     StrEq,
@@ -566,8 +567,9 @@ impl Rt {
             Rt::Callback => ("tondo_rt_callback", &[I64, I64, I64], &[]),
             Rt::Main => ("tondo_rt_main", &[I64], &[I32]),
             Rt::Live => ("tondo_rt_live", &[I64], &[]),
-            Rt::LiveTransfer => ("tondo_rt_live_transfer", &[I64, I64], &[I64]),
+            Rt::LiveTransfer => ("tondo_rt_live_transfer", &[I64, I64, I64], &[I64]),
             Rt::LiveFree => ("tondo_rt_live_free", &[I64], &[]),
+            Rt::LiveArgsDone => ("tondo_rt_live_args_done", &[I64], &[]),
             Rt::JsonReaderRelease => ("tondo_rt_json_reader_release", &[I64], &[]),
             Rt::JsonWriterRelease => ("tondo_rt_json_writer_release", &[I64], &[]),
             Rt::PlanRelease => ("tondo_rt_process_plan_release", &[I64], &[]),
@@ -1604,7 +1606,7 @@ impl Codegen<'_> {
     /// each point its line among them, what it is, its site and what its
     /// state holds, with each local's name across versions.
     fn live_points(&mut self, build: &mut crate::live::Build, bodies: &[Body]) {
-        let live = self.live.as_ref().expect("a live build");
+        let live = self.live.take().expect("a live build");
         let mut functions = serde_json::Map::new();
         for (index, body) in bodies.iter().enumerate() {
             let placed: Vec<(u32, &crate::mir::Point)> = (0u32..)
@@ -1659,10 +1661,38 @@ impl Codegen<'_> {
                 }));
             }
             let file = self.sources.position(first.span.start).0;
-            let entry = serde_json::json!({ "file": file, "top": top, "lines": hashes, "points": points });
+            // How its frames get their parameters, which a frame that moves
+            // to a function of another identity passes converted; and its
+            // result, which the old caller takes.
+            let params: Vec<serde_json::Value> = body
+                .params
+                .iter()
+                .zip(&body.loans)
+                .map(|(param, &loan)| {
+                    let ty = body.locals[param.0 as usize];
+                    let class = match self.class(ty) {
+                        Class::Zero => "zero",
+                        Class::Scalar(_) => "scalar",
+                        Class::Memory => "memory",
+                    };
+                    let key = crate::live::describe(self.types, ty, &mut build.structures);
+                    let size = self.layout(ty).size;
+                    serde_json::json!({ "type": key, "loan": loan, "class": class, "size": size })
+                })
+                .collect();
+            let result = crate::live::describe(self.types, body.result, &mut build.structures);
+            let entry = serde_json::json!({
+                "file": file,
+                "top": top,
+                "lines": hashes,
+                "points": points,
+                "params": params,
+                "result": result,
+            });
             functions.insert(live.identities[index].clone(), entry);
         }
         build.points = functions;
+        self.live = Some(live);
     }
 
     /// A live build's tables (toolchain 7.10): the slots, each pointing at
@@ -3340,6 +3370,11 @@ struct FnCodegen<'a, 'b> {
     point_sites: HashMap<u32, ir::Value>,
     osr_arg: Option<ir::Value>,
     state_slot: Option<ir::StackSlot>,
+    /// Where the transfer leaves the frame's parameters, a word each, which
+    /// the runtime converts for a function of another identity; and where
+    /// the call to the new code takes them from.
+    params_slot: Option<ir::StackSlot>,
+    osr_params: Option<ir::Value>,
 }
 
 /// What a function of a debug build keeps for its probes (toolchain 7.6):
@@ -3444,6 +3479,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             point_sites: HashMap::new(),
             osr_arg: None,
             state_slot: None,
+            params_slot: None,
+            osr_params: None,
         }
     }
 
@@ -4048,7 +4085,52 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             None => self.e.fb.ins().iconst(types::I64, -1),
         };
         let buffer = self.e.fb.ins().stack_addr(POINTER, slot, 0);
-        self.e.call_rt(Rt::LiveTransfer, &[site, buffer]).expect("the new state")
+        let params = self.params_word_slot();
+        for (index, &param) in self.body.params.iter().enumerate() {
+            let value = match self.storage[param.0 as usize] {
+                Storage::Var(var) | Storage::Pointer(var) => self.e.fb.use_var(var),
+                Storage::Slot(slot) => self.e.fb.ins().stack_addr(POINTER, slot, 0),
+                Storage::Zero => continue,
+            };
+            self.e.fb.ins().stack_store(POINTER, value, params, index as i32 * 8);
+        }
+        let params = self.e.fb.ins().stack_addr(POINTER, params, 0);
+        self.e.call_rt(Rt::LiveTransfer, &[site, buffer, params]).expect("the new state")
+    }
+
+    /// A word for each parameter, as the call passes it.
+    fn params_word_slot(&mut self) -> ir::StackSlot {
+        if let Some(slot) = self.params_slot {
+            return slot;
+        }
+        let size = (self.body.params.len() as u32 * 8).max(8);
+        let slot = self.e.fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size, 3));
+        self.params_slot = Some(slot);
+        slot
+    }
+
+    /// The call of the new code a frame moves to, with its parameters as
+    /// the runtime gives them, converted, or as they are; what the runtime
+    /// converted goes once the call returns.
+    fn call_osr(
+        &mut self,
+        id: FnId,
+        args: &[Operand],
+        state: &Operand,
+        result: Option<ir::Value>,
+    ) -> Option<ir::Value> {
+        let state = self.scalar(state);
+        let block = self.e.fb.ins().load(types::I64, flags(), state, 16);
+        let slot = self.params_word_slot();
+        let params = self.e.fb.ins().stack_addr(POINTER, slot, 0);
+        let given = self.e.fb.ins().icmp_imm_u(IntCC::NotEqual, block, 0);
+        self.osr_params = Some(self.e.fb.ins().select(given, block, params));
+        self.osr_arg = Some(state);
+        // Stacks show the frame once, in its new code.
+        self.e.fb.set_srcloc(ir::SourceLoc::default());
+        let value = self.call(Callee::Fn(id), args, result);
+        self.e.call_rt(Rt::LiveArgsDone, &[block]);
+        value
     }
 
     /// The hidden parameter's value: the state a frame brings.
@@ -4066,7 +4148,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let state = self.osr_state();
         let (items, _) = self.point_layout(point);
         for (local, kept, offset, bytes) in items {
-            let address = self.e.fb.ins().iadd_imm_s(state, 16 + offset as i64);
+            let address = self.e.fb.ins().iadd_imm_s(state, 24 + offset as i64);
             match kept {
                 StateKept::Var(var, clif) => {
                     let value = self.e.fb.ins().load(clif, flags(), address, 0);
@@ -4198,10 +4280,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     self.call(*callee, args, None);
                 }
                 Rvalue::CallOsr(id, args, state) => {
-                    self.osr_arg = Some(self.scalar(state));
-                    // Stacks show the frame once, in its new code.
-                    self.e.fb.set_srcloc(ir::SourceLoc::default());
-                    self.call(Callee::Fn(*id), args, None);
+                    self.call_osr(*id, args, state, None);
                 }
                 Rvalue::CallIndirect(callee, args) => {
                     self.call_indirect(callee, args, None);
@@ -4729,11 +4808,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 Val::Scalar(self.e.fb.ins().load(types::I64, flags(), state, 0))
             }
             Rvalue::CallOsr(id, args, state) => {
-                self.osr_arg = Some(self.scalar(state));
-                // Stacks show the frame once, in its new code.
-                self.e.fb.set_srcloc(ir::SourceLoc::default());
                 let result = if class == Class::Memory { Some(self.pointer_to(place, true)) } else { None };
-                match self.call(Callee::Fn(*id), args, result) {
+                match self.call_osr(*id, args, state, result) {
                     Some(value) if result.is_none() => Val::Scalar(value),
                     _ => return,
                 }
@@ -5939,6 +6015,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             return self.c_call(CTarget::Symbol(symbol), &params, result_ty, args, result);
         }
         let mut values: Vec<ir::Value> = result.into_iter().collect();
+        // A frame that moves passes its parameters from where the runtime
+        // says, a word each.
+        let moved = self.osr_params.take();
+        let moved_word = |fb: &mut FunctionBuilder, index: usize, ty: ir::Type| {
+            moved.map(|base| fb.ins().load(ty, flags(), base, index as i32 * 8))
+        };
         let loans = match callee {
             Callee::Fn(id) => self.e.cg.loans[id.0 as usize].clone(),
             Callee::Std(_) => Vec::new(),
@@ -5948,11 +6030,16 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         for (index, arg) in args.iter().enumerate() {
             if loans.get(index).copied().unwrap_or(false) {
                 let Operand::Copy(place) = arg else { unreachable!("a loan is a place") };
-                values.push(self.loan_address(place, &mut spilled));
+                let address = self.loan_address(place, &mut spilled);
+                values.push(moved_word(&mut self.e.fb, index, POINTER).unwrap_or(address));
                 continue;
             }
             match self.operand(arg) {
-                Val::Scalar(value) | Val::Memory(value) => values.push(value),
+                Val::Scalar(value) => {
+                    let ty = self.e.fb.func.dfg.value_type(value);
+                    values.push(moved_word(&mut self.e.fb, index, ty).unwrap_or(value));
+                }
+                Val::Memory(value) => values.push(moved_word(&mut self.e.fb, index, POINTER).unwrap_or(value)),
                 Val::Zero => {}
             }
         }

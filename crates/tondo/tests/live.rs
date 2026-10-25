@@ -575,3 +575,45 @@ fn a_stopped_frame_goes_on_in_the_new_code() {
     assert!(rest.iter().any(|l| l == "2 sum 300") && rest.iter().any(|l| l == "3 sum 600"), "{rest:?}");
     debugger.stop();
 }
+
+const SERVE: &str = r#"import std.console
+
+type Config = { prefix: String }
+
+fn serve(config: Config) {
+    var seen = 0
+    for {
+        match console.readLine() {
+            some(line) => {
+                seen += 1
+                console.println("{config.prefix} {line} {seen}")
+            }
+            none => break
+        }
+    }
+}
+
+serve(Config { prefix: "v1" })
+"#;
+
+/// A frame of a function whose parameters' type changes shape moves to the
+/// function it is now, with its parameters converted, even several reloads
+/// later.
+#[test]
+fn a_frame_moves_with_its_parameters_converted() {
+    let dir = dir("live_serve");
+    let file = dir.join("serve.to");
+    std::fs::write(&file, SERVE).unwrap();
+    let mut server = Running::start(&dir, &["run", "serve.to", "--live"]);
+    assert_eq!(server.answer("a"), "v1 a 1");
+    edit(&file, "type Config = { prefix: String }", "type Config = { prefix: String, suffix: String }");
+    edit(&file, "{seen}\")", "{seen}[{config.suffix}]\")");
+    edit(&file, "Config { prefix: \"v1\" }", "Config { prefix: \"v1\", suffix: \"s\" }");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done && said.contains("2 changed (main, serve)") && said.contains("`Config.suffix` is new"), "{said}");
+    edit(&file, "[{config.suffix}]", "<{config.suffix}>");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done && !said.contains("finish on the old code"), "{said}");
+    assert_eq!(server.answer("b"), "v1 b 2<>");
+    server.stop();
+}

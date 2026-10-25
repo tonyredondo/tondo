@@ -1957,3 +1957,19 @@ refused while a frame may keep a value of a changed type in one.
 Frames of a function whose parameters or result change still finish on
 the old code, and numbers do not convert to other numbers.
 
+## 2026-10-25 — Frames move with their parameters converted
+
+A function whose signature reaches a type of another shape is another
+identity, so that callers and callees always agree, and its frames used
+to finish on the old code: a server's `serve(config)` loop never saw a
+change to `Config`. Such a frame now moves to the identity of the same
+name and signature, with its parameters converted. Parameters are the
+caller's, so the old frame hands them to the runtime, a word each, the
+runtime gives the call of the new code converted copies, and releases
+them once the call returns, to the old frame that then returns to its
+caller. The result must be the same, as the old caller takes it, and a
+parameter lent with `mut` or `var` must not reach a changed type, as it
+points at the caller's value of the old shape. A reload reports only the
+changes of shape it makes, while its conversions still reach frames that
+earlier reloads left on older versions.
+

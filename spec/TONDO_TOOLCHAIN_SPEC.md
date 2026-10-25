@@ -712,10 +712,15 @@ sigue con el código viejo hasta otra sentencia, donde el código nuevo
 necesita un binding que el viejo no tiene ahí o que tiene otro tipo, donde un
 binding presta un valor, como dentro de un `lock`, donde el viejo tiene un
 valor que el nuevo no soltaría, o donde los `defer` registrados no son los
-mismos; `reload` dice en qué líneas y por qué. El frame de una función cuyos
-parámetros o resultado cambian termina con el código viejo. Las funciones que
-no cambian siguen con su código, y un cambio posterior que las cambie mueve
-sus frames.
+mismos; `reload` dice en qué líneas y por qué. Una función cuya firma alcanza
+un tipo que cambió de forma es otra identidad, y un frame suyo pasa a la
+nueva, del mismo nombre y firma, con sus parámetros convertidos como los
+demás valores, salvo cuando su resultado alcanza un tipo que cambió de forma
+o un parámetro prestado con `mut` o `var` lo alcanza: entonces, como cuando
+sus parámetros o su resultado cambian de otro modo, termina con el código
+viejo. Las funciones que no cambian siguen con su código, y un cambio
+posterior que las cambie mueve sus frames, también los que quedaron en
+versiones anteriores.
 
 Los valores de un tipo que cambió de forma que tiene un frame se convierten
 al pasar el frame al código nuevo: como los valores no tienen identidad

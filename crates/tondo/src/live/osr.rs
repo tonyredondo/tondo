@@ -27,9 +27,40 @@ pub(super) fn moves(
 ) -> Moves {
     let mut entries = Vec::new();
     let mut stays = Vec::new();
-    for identity in changed {
-        let (Some(before), Some(after), Some(&slot)) = (old.get(identity), new.get(identity), slots.get(identity))
-        else {
+    // Frames move to the same function, or to the one a function whose
+    // signature reaches a type of another shape is now, of the same name
+    // and signature, with their parameters converted.
+    let mut pairs: Vec<(&str, &str, Vec<Passed>)> = changed
+        .iter()
+        .filter(|identity| old.get(identity.as_str()).is_some())
+        .map(|identity| (identity.as_str(), identity.as_str(), Vec::new()))
+        .collect();
+    let base = |identity: &str| identity.split(" @").next().unwrap_or(identity).to_string();
+    let names: Vec<&str> = new.as_object().into_iter().flatten().map(|(identity, _)| shown(identity)).collect();
+    for (identity, entry) in old.as_object().into_iter().flatten() {
+        let sited = entry["points"].as_array().is_some_and(|p| p.iter().any(|p| p["site"].is_i64()));
+        if !sited || new.get(identity).is_some() || !names.contains(&shown(identity)) {
+            continue;
+        }
+        let targets: Vec<&String> = new
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(now, _)| now)
+            .filter(|now| *now != identity && base(now) == base(identity))
+            .collect();
+        let found = match (identity.starts_with("closure in "), targets.as_slice()) {
+            (true, _) => Err("its function's closures or its signature changed".to_string()),
+            (false, [target]) => parameters(entry, &new[target.as_str()], migrations).map(|plan| (target, plan)),
+            _ => Err("its parameters or result changed".to_string()),
+        };
+        match found {
+            Ok((target, plan)) => pairs.push((identity, target.as_str(), plan)),
+            Err(why) => stays.push(format!("frames of `{}` finish on the old code: {why}", shown(identity))),
+        }
+    }
+    for (identity, target, passed) in pairs {
+        let (Some(before), Some(after), Some(&slot)) = (old.get(identity), new.get(target), slots.get(target)) else {
             continue;
         };
         let lines = line_map(&hashes(before), &hashes(after));
@@ -74,7 +105,7 @@ pub(super) fn moves(
             match copies(point, target, &paths, migrations) {
                 Ok((copies, conversions)) => {
                     let word = |key: &str| target[key].as_u64().unwrap_or(0) as u32;
-                    entries.push((site, slot, word("point"), word("size"), copies, conversions));
+                    entries.push((site, slot, word("point"), word("size"), copies, conversions, passed.clone()));
                 }
                 Err(reason) => {
                     let line = after["top"].as_u64().unwrap_or(0) + target["line"].as_u64().unwrap_or(0);
@@ -85,7 +116,7 @@ pub(super) fn moves(
                 }
             }
         }
-        let name = shown(identity);
+        let name = shown(target);
         let file = after["file"].as_str().unwrap_or_default();
         for (reason, mut lines) in reasons {
             lines.sort();
@@ -97,27 +128,14 @@ pub(super) fn moves(
             ));
         }
     }
-    // A function whose parameters or result change is another: frames of
-    // the old one finish in its code.
-    let names: Vec<&str> = new.as_object().into_iter().flatten().map(|(identity, _)| shown(identity)).collect();
-    for (identity, entry) in old.as_object().into_iter().flatten() {
-        let sited = entry["points"].as_array().is_some_and(|p| p.iter().any(|p| p["site"].is_i64()));
-        if sited && new.get(identity).is_none() && names.contains(&shown(identity)) {
-            let why = match identity.starts_with("closure in ") {
-                true => "its function's closures or its signature changed",
-                false => "its parameters or result changed",
-            };
-            stays.push(format!("frames of `{}` finish on the old code: {why}", shown(identity)));
-        }
-    }
     stays.sort();
     stays.dedup();
     let count = entries.len();
     let mut bytes = Vec::new();
     if count > 0 {
-        bytes.extend(b"OSR2");
+        bytes.extend(b"OSR3");
         bytes.extend((count as u32).to_le_bytes());
-        for (site, slot, point, size, copies, conversions) in entries {
+        for (site, slot, point, size, copies, conversions, passed) in entries {
             bytes.extend(site.to_le_bytes());
             bytes.extend([slot, point, size, copies.len() as u32].into_iter().flat_map(u32::to_le_bytes));
             for (from, to, size) in copies {
@@ -128,9 +146,78 @@ pub(super) fn moves(
                 bytes.extend([from, to, index, name.len() as u32].into_iter().flat_map(u32::to_le_bytes));
                 bytes.extend(name.as_bytes());
             }
+            bytes.extend((passed.len() as u32).to_le_bytes());
+            for param in passed {
+                let (converts, index, name) = match &param.conversion {
+                    Some((index, name)) => (1, *index as u32, name.as_str()),
+                    None => (0, 0, ""),
+                };
+                let words = [param.index, converts, u32::from(param.memory), index, param.size, name.len() as u32];
+                bytes.extend(words.into_iter().flat_map(u32::to_le_bytes));
+                bytes.extend(name.as_bytes());
+            }
         }
     }
     Moves { bytes, count, stays }
+}
+
+/// A parameter a frame passes to a function of another identity: its
+/// place, the conversion of its value and the name of its type when it
+/// converts, whether it is passed in memory, and its new size there.
+#[derive(Clone)]
+struct Passed {
+    index: u32,
+    conversion: Option<(usize, String)>,
+    memory: bool,
+    size: u32,
+}
+
+/// How a frame of the old function passes its parameters to the new one,
+/// of another identity, or why it cannot: its result must be the same, and
+/// each parameter the same or convert, unless it is lent.
+fn parameters(before: &Value, after: &Value, migrations: &Migrations) -> Result<Vec<Passed>, String> {
+    if before["result"] != after["result"] {
+        return Err("its result is of a type of another shape".into());
+    }
+    let (from, to) = (list(before, "params"), list(after, "params"));
+    if from.len() != to.len() || from.is_empty() && before.get("params").is_none() {
+        return Err("its parameters or result changed".into());
+    }
+    let mut passed = Vec::new();
+    for (index, (old, new)) in from.iter().zip(to).enumerate() {
+        let class = new["class"].as_str().unwrap_or_default();
+        if old["class"] != new["class"] {
+            return Err(format!("its parameter {} is passed another way now", index + 1));
+        }
+        if class == "zero" {
+            continue;
+        }
+        let (old_type, new_type) = (old["type"].as_str().unwrap_or_default(), new["type"].as_str().unwrap_or_default());
+        let memory = class == "memory";
+        let size = new["size"].as_u64().unwrap_or(0) as u32;
+        if old_type == new_type {
+            passed.push(Passed { index: index as u32, conversion: None, memory, size });
+            continue;
+        }
+        if old["loan"].as_bool() == Some(true) {
+            return Err(format!("its parameter {} is lent to it, and its type has another shape", index + 1));
+        }
+        match migrations.conversions.get(old_type) {
+            Some((conversion, converted)) if converted == new_type => {
+                let shown = new_type.split(" @").next().unwrap_or(new_type).to_string();
+                let conversion = Some((*conversion, shown));
+                passed.push(Passed { index: index as u32, conversion, memory, size });
+            }
+            _ => {
+                return Err(migrations
+                    .refused
+                    .get(old_type)
+                    .cloned()
+                    .unwrap_or_else(|| format!("its parameter {} does not convert", index + 1)));
+            }
+        }
+    }
+    Ok(passed)
 }
 
 /// A function as a report names it: without its parameters, result and
