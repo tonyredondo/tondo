@@ -355,6 +355,11 @@ fn parameters(before: &Value, after: &Value, migrations: &Migrations) -> Result<
     Ok(call)
 }
 
+/// A function as stacks name it.
+pub(super) fn shown_name(identity: &str) -> &str {
+    shown(identity)
+}
+
 /// A function as a report names it: without its parameters, result and
 /// place among its function's closures.
 fn shown(identity: &str) -> &str {

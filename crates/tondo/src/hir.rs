@@ -960,6 +960,19 @@ pub enum PathFn {
 }
 
 impl StdFn {
+    /// Whether it may wait and ends at once when the task is cancelled,
+    /// after which compiled code unwinds (11.15).
+    pub fn waits(self) -> bool {
+        matches!(
+            self,
+            StdFn::TimeSleep
+                | StdFn::ClockSettle
+                | StdFn::ClockAdvance
+                | StdFn::ConsoleReadLine
+                | StdFn::Io(IoFn::ReadLine | IoFn::Read | IoFn::ReadText)
+        )
+    }
+
     /// How each argument is passed: the methods of a `File` change it
     /// through a `var` loan, except `close`, which takes it.
     pub fn modes(self) -> Vec<crate::ast::Mode> {

@@ -107,6 +107,44 @@ fn object(guard: usize) -> *mut SyncObject {
     (guard & !1) as *mut SyncObject
 }
 
+/// A cell's value, of another type now: what releases and visits it goes
+/// with it, and the old value goes with what released it.
+pub(crate) unsafe fn sync_commit(
+    cell: usize,
+    value: *mut u8,
+    size: usize,
+    align: usize,
+    release: Option<Glue>,
+    visit: Option<cycles::Visit>,
+) {
+    let o = unsafe { &mut *(cell as *mut SyncObject) };
+    let (old, old_size, old_align, old_release) = (o.value, o.size, o.align, o.release);
+    let remembered = o.visit.is_some();
+    (o.value, o.size, o.align, o.release, o.visit) = (value, size, align, release, visit);
+    match (remembered, visit.is_some()) {
+        (false, true) => cycles::remember(cell as *const u8, Kind::Sync),
+        (true, false) => cycles::forget(cell as *const u8),
+        _ => {}
+    }
+    unsafe {
+        if let Some(release) = old_release {
+            release(old);
+        }
+        std::alloc::dealloc(old, std::alloc::Layout::from_size_align(old_size.max(1), old_align).unwrap());
+    }
+}
+
+/// Whether a task holds a cell's lock, and so its value.
+pub(crate) fn sync_locked(cell: usize) -> bool {
+    let state = unsafe { (*(cell as *mut SyncObject)).state.load(Ordering::Acquire) };
+    state & (WRITER | !(READER - 1)) != 0
+}
+
+/// A cell's value, which a reload converts.
+pub(crate) fn sync_value(cell: usize) -> *mut u8 {
+    unsafe { (*(cell as *mut SyncObject)).value }
+}
+
 /// The address of the value of a cell, given it or a guard on it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sync_value(handle: usize) -> *mut u8 {
@@ -376,6 +414,7 @@ pub unsafe extern "C" fn tondo_rt_sync_release(object: *mut SyncObject) {
         if (*object).visit.is_some() {
             cycles::forget(object as *const u8);
         }
+        super::live::forget_object(object as usize);
         let o = Box::from_raw(object);
         if let Some(release) = o.release {
             release(o.value);

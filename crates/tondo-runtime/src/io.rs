@@ -225,13 +225,90 @@ impl Host for std::fs::File {
     }
 }
 
-struct Stdin;
+/// The console input, which a host thread reads when a task asks for more:
+/// the task waiting for it holds no thread, and its wait can end (11.15).
+#[derive(Default)]
+struct Stdin {
+    waiting: bool,
+    gave_up: Option<ErrorKind>,
+}
+
+/// What the host thread read from the console input and no task took yet.
+struct Input {
+    bytes: Vec<u8>,
+    end: bool,
+    failure: Option<std::io::Error>,
+    reading: bool,
+}
+
+static INPUT: Mutex<Input> = Mutex::new(Input { bytes: Vec::new(), end: false, failure: None, reading: false });
+static INPUT_READ: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+fn console_input() -> MutexGuard<'static, Input> {
+    INPUT.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 impl Host for Stdin {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        // Output written so far is delivered before waiting for input.
-        super::flush_stdout();
-        std::io::stdin().read(buffer)
+        let mut input = console_input();
+        if !input.bytes.is_empty() {
+            let count = buffer.len().min(input.bytes.len());
+            buffer[..count].copy_from_slice(&input.bytes[..count]);
+            input.bytes.drain(..count);
+            return Ok(count);
+        }
+        if let Some(failure) = input.failure.take() {
+            return Err(failure);
+        }
+        if std::mem::take(&mut input.end) {
+            return Ok(0);
+        }
+        if let Some(kind) = self.gave_up {
+            return Err(kind.into());
+        }
+        if !input.reading {
+            input.reading = true;
+            // Output written so far is delivered before waiting for input.
+            super::flush_stdout();
+            submit(
+                Box::new(|| {
+                    let mut chunk = vec![0; READ_CHUNK];
+                    let read = std::io::stdin().read(&mut chunk);
+                    let mut input = console_input();
+                    match read {
+                        Ok(0) => input.end = true,
+                        Ok(count) => input.bytes.extend_from_slice(&chunk[..count]),
+                        Err(failure) => input.failure = Some(failure),
+                    }
+                    input.reading = false;
+                    drop(input);
+                    INPUT_READ.notify_waiters();
+                }),
+                true,
+            );
+        }
+        self.waiting = true;
+        Err(ErrorKind::WouldBlock.into())
+    }
+
+    fn blocked(&mut self) -> Option<Ready> {
+        std::mem::take(&mut self.waiting).then(|| {
+            Box::pin(async {
+                loop {
+                    let notified = INPUT_READ.notified();
+                    let mut notified = std::pin::pin!(notified);
+                    notified.as_mut().enable();
+                    if !console_input().reading {
+                        return;
+                    }
+                    notified.await;
+                }
+            }) as Ready
+        })
+    }
+
+    fn give_up(&mut self, kind: Option<ErrorKind>) {
+        self.gave_up = kind;
     }
 }
 
@@ -798,7 +875,7 @@ fn console() -> MutexGuard<'static, Option<Console>> {
             [
                 stream(Box::new(Stdout), Mode::Inline, false),
                 stream(Box::new(Stderr), Mode::Inline, false),
-                stream(Box::new(Stdin), Mode::Long, false),
+                stream(Box::<Stdin>::default(), Mode::Ready, false),
             ],
             [false; 3],
         )

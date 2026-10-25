@@ -188,6 +188,19 @@ pub enum Handle {
 }
 
 impl Handle {
+    /// The values with identity a live build's reload converts in place,
+    /// by their names (toolchain 7.10).
+    pub const CONVERTED: [Handle; 8] = [
+        Handle::Ref,
+        Handle::Weak,
+        Handle::Mutex,
+        Handle::RwLock,
+        Handle::Atomic,
+        Handle::Once,
+        Handle::Sender,
+        Handle::Receiver,
+    ];
+
     pub fn name(self) -> &'static str {
         match self {
             Handle::Join => "Join",

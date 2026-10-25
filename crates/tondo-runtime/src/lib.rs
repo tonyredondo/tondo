@@ -399,19 +399,45 @@ fn ref_layout(size: usize) -> Layout {
     Layout::from_size_align(REF_HEADER + size, 8).expect("reference too large")
 }
 
-/// A new identity with one reference; the caller stores the value.
+/// A new identity with one reference; the caller stores the value. A live
+/// build keeps the value apart, where a reload can put one of another size
+/// (toolchain 7.10).
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_ref_new(size: usize) -> *mut RefHeader {
-    let layout = ref_layout(size);
+    let apart = live::on();
+    let cell = if apart { 8 } else { size };
+    let layout = ref_layout(cell);
     unsafe {
         let ptr = alloc(layout) as *mut RefHeader;
         if ptr.is_null() {
             handle_alloc_error(layout);
         }
-        ptr.write(RefHeader { rc: AtomicUsize::new(1), weak: AtomicUsize::new(1), size, dead: AtomicBool::new(false) });
+        let header =
+            RefHeader { rc: AtomicUsize::new(1), weak: AtomicUsize::new(1), size: cell, dead: AtomicBool::new(false) };
+        ptr.write(header);
+        if apart {
+            let value = libc::calloc(1, size.max(1));
+            ((ptr as *mut u8).add(REF_HEADER) as *mut *mut libc::c_void).write(value);
+        }
         LIVE_OBJECTS.made();
         ptr
     }
+}
+
+/// Where a reference's value is: after its header, or in a live build
+/// where its header says.
+pub(crate) fn ref_payload(r: *mut u8) -> *mut u8 {
+    let at = unsafe { r.add(REF_HEADER) };
+    match live::on() {
+        true => unsafe { (at as *mut *mut u8).read() },
+        false => at,
+    }
+}
+
+/// In a live build, where a reference's value is now: a reload converts
+/// it into one of another size.
+pub(crate) fn ref_set_payload(r: *mut u8, value: *mut u8) {
+    unsafe { (r.add(REF_HEADER) as *mut *mut u8).write(value) };
 }
 
 /// Releases a reference; the last one releases the value's contents.
@@ -423,19 +449,20 @@ pub unsafe extern "C" fn tondo_rt_ref_release(r: *mut RefHeader, release: Option
     match unsafe { (*r).rc.fetch_sub(1, Ordering::Release) } {
         1 => {
             fence(Ordering::Acquire);
+            let value = ref_payload(r as *mut u8);
+            // A live build's code may be older than the value.
+            let release = if live::on() { live::forget_object(r as usize) } else { release };
             if let Some(release) = release {
-                unsafe { release((r as *mut u8).add(REF_HEADER)) };
+                unsafe { release(value) };
+            }
+            if live::on() {
+                unsafe { libc::free(value as *mut libc::c_void) };
             }
             unsafe { ref_forget(r) };
         }
         0 => runtime_fault("reference released after it was freed"),
         _ => {}
     }
-}
-
-/// The value of a reference, for the cycle collector.
-pub(crate) fn ref_payload(r: *mut u8) -> *mut u8 {
-    unsafe { r.add(REF_HEADER) }
 }
 
 /// Marks a reference the cycle collector found to be garbage: its weak

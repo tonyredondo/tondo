@@ -185,6 +185,12 @@ pub(crate) struct Described {
     pub ty: Option<&'static str>,
 }
 
+/// Where a return address of compiled code is: the function, and the file,
+/// line and column of the call.
+pub(crate) fn position(address: usize) -> Option<(&'static str, &'static str, u32, u32)> {
+    resolve(address).map(|frame| (frame.function, frame.file, frame.line, frame.column))
+}
+
 pub(crate) fn describe(address: usize) -> Option<Described> {
     if let Some(frame) = resolve(address) {
         return Some(Described { function: frame.function, at: Some((frame.file, frame.line)), ty: frame.ty });

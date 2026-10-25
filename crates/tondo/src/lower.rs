@@ -66,12 +66,8 @@ fn waiting(bodies: &[Body]) -> Vec<bool> {
         for rvalue in rvalues {
             match rvalue {
                 Rvalue::Call(hir::Callee::Fn(id), _) => calls[index].push(id.0 as usize),
-                Rvalue::Call(
-                    hir::Callee::Std(hir::StdFn::TimeSleep | hir::StdFn::ClockSettle | hir::StdFn::ClockAdvance),
-                    _,
-                )
-                | Rvalue::CallIndirect(..)
-                | Rvalue::Select(..) => waits[index] = true,
+                Rvalue::Call(hir::Callee::Std(f), _) if f.waits() => waits[index] = true,
+                Rvalue::CallIndirect(..) | Rvalue::Select(..) => waits[index] = true,
                 Rvalue::TaskOp(op, ..) if op.waits() => waits[index] = true,
                 _ => {}
             }
@@ -106,6 +102,18 @@ enum Exit {
     Defer(Rc<hir::Expr>),
 }
 
+/// Where a statement starts again: its first block, how many scopes and
+/// frames were open there and how many temporaries the last had, and
+/// whether it moved a binding away since, which it could not do again.
+#[derive(Clone, Copy)]
+struct Again {
+    block: BlockId,
+    scopes: usize,
+    frames: usize,
+    temps: usize,
+    moved: bool,
+}
+
 struct Builder<'a> {
     types: &'a Types,
     function: &'a hir::Function,
@@ -135,6 +143,10 @@ struct Builder<'a> {
     /// lowered and locals each has made.
     points: Vec<Point>,
     origins: Vec<Origin>,
+    /// In a live build, the statement being lowered: where it starts
+    /// again after a wait the runtime ends for a reload (toolchain 7.10).
+    again: Option<Again>,
+    pauses: Vec<(Span, bool)>,
     path: Vec<u32>,
     blocks_of: HashMap<Vec<u32>, u32>,
     made_by: HashMap<Vec<u32>, u32>,
@@ -159,6 +171,8 @@ fn lower_function(types: &Types, function: &hir::Function, waits: Option<&[bool]
         params: Vec::new(),
         points: Vec::new(),
         origins: Vec::new(),
+        again: None,
+        pauses: Vec::new(),
         path: Vec::new(),
         blocks_of: HashMap::new(),
         made_by: HashMap::new(),
@@ -214,6 +228,7 @@ fn lower_function(types: &Types, function: &hir::Function, waits: Option<&[bool]
         osr,
         points,
         origins: b.origins,
+        pauses: b.pauses,
     }
 }
 
@@ -586,11 +601,20 @@ impl Builder<'_> {
     /// After an operation that may wait: a cancelled task unwinds from here
     /// as a `return` does, releasing what the function owns and running its
     /// cleanups, and returns zeros its caller never uses (11.15).
-    fn cancellation_point(&mut self, span: Span) {
+    /// A wait that may start its statement again changes nothing when it
+    /// ends early: it had not taken, released or changed anything yet.
+    fn cancellation_point(&mut self, span: Span, restartable: bool) {
         if self.waits.is_none() || self.cleaning > 0 {
             return;
         }
-        let cancelled = self.temp(Ty::BOOL, Rvalue::Cancelled, span);
+        // 1: cancelled; 2, in a live build: the statement starts again.
+        let byte = Ty::int(crate::types::IntTy::U8);
+        let asked = self.temp(byte, Rvalue::Cancelled, span);
+        let is = |b: &mut Self, code: i128| {
+            let compare = Rvalue::Binary(BinOp::Eq, asked.clone(), Operand::Const(Const::Int(code, byte)));
+            b.temp(Ty::BOOL, compare, span)
+        };
+        let cancelled = is(self, 1);
         let (unwind, next) = (self.new_block(), self.new_block());
         self.terminate(Terminator::Branch(cancelled, unwind, next));
         self.switch_to(unwind);
@@ -606,6 +630,30 @@ impl Builder<'_> {
         self.cleaning -= 1;
         self.terminate(Terminator::Return(result));
         self.switch_to(next);
+        // What the statement made since it started goes, and it starts
+        // again, unless it gave a binding away.
+        let again = self.again.filter(|again| restartable && !again.moved);
+        if self.restart.is_some() {
+            self.pauses.push((span, again.is_some()));
+        }
+        let Some(again) = again else { return };
+        let restart = is(self, 2);
+        let (back, next) = (self.new_block(), self.new_block());
+        self.terminate(Terminator::Branch(restart, back, next));
+        self.switch_to(back);
+        self.cleaning += 1;
+        let mut temps: Vec<Local> = self.frames[again.frames][again.temps..].to_vec();
+        temps.extend(self.frames[again.frames + 1..].iter().flatten());
+        for local in temps.into_iter().rev() {
+            self.push(Statement::Release(Place::local(local)));
+        }
+        let exits: Vec<Exit> = self.scopes[again.scopes..].iter().rev().flat_map(|s| s.iter().rev().cloned()).collect();
+        for exit in exits {
+            self.exit_action(exit);
+        }
+        self.cleaning -= 1;
+        self.terminate(Terminator::Goto(again.block));
+        self.switch_to(next);
     }
 
     /// In a live build, where a statement starts (toolchain 7.10). The
@@ -620,6 +668,12 @@ impl Builder<'_> {
             return;
         }
         let point = self.points.len() as u32;
+        let start = self.new_block();
+        self.terminate(Terminator::Goto(start));
+        self.switch_to(start);
+        let frames = self.frames.len() - 1;
+        let temps = self.frames[frames].len();
+        self.again = Some(Again { block: start, scopes: self.scopes.len(), frames, temps, moved: false });
         let asked = self.new_local(Ty::INT);
         self.assign(Place::local(asked), Rvalue::Restart(point), span);
         let (again, check, transfer, moving, next) =
@@ -705,7 +759,7 @@ impl Builder<'_> {
     fn call_waits(&self, callee: hir::Callee) -> bool {
         match callee {
             hir::Callee::Fn(id) => self.waits.is_some_and(|w| w[id.0 as usize]),
-            hir::Callee::Std(hir::StdFn::TimeSleep | hir::StdFn::ClockSettle | hir::StdFn::ClockAdvance) => true,
+            hir::Callee::Std(f) => f.waits(),
             _ => false,
         }
     }
@@ -940,13 +994,18 @@ impl Builder<'_> {
         let at = |index: usize| -> Vec<u32> { around.iter().copied().chain([ordinal, index as u32]).collect() };
         for (index, stmt) in block.stmts.iter().enumerate() {
             self.path = at(index);
+            let outer = self.again.take();
             self.in_frame(|b| b.stmt(stmt));
+            self.leave_statement(outer);
         }
         self.path = at(block.stmts.len());
         let mut value = match &block.tail {
             Some(tail) => {
+                let outer = self.again.take();
                 self.restart_point(tail.span, "tail");
-                self.expr(tail)
+                let value = self.expr(tail);
+                self.leave_statement(outer);
+                value
             }
             None => Operand::Const(Const::Unit),
         };
@@ -968,6 +1027,15 @@ impl Builder<'_> {
         let scope = self.scopes.pop().unwrap();
         self.leave(scope);
         value
+    }
+
+    /// Back in the statement around one that ends: a binding the inner one
+    /// gave away, the outer gave away too.
+    fn leave_statement(&mut self, outer: Option<Again>) {
+        let inner = std::mem::replace(&mut self.again, outer);
+        if let (Some(outer), Some(inner)) = (&mut self.again, inner) {
+            outer.moved |= inner.moved;
+        }
     }
 
     fn stmt(&mut self, stmt: &hir::Stmt) {
@@ -994,7 +1062,7 @@ impl Builder<'_> {
                 // A cancelled task gets an empty guard, which releases nothing.
                 self.scopes.last_mut().unwrap().push(Exit::Release(guard));
                 if *mode != hir::LockMode::Try {
-                    self.cancellation_point(*span);
+                    self.cancellation_point(*span, true);
                 }
                 let inner = self.bind(*inner);
                 self.push(Statement::LendAt(inner, Operand::local(guard)));
@@ -1003,7 +1071,8 @@ impl Builder<'_> {
                 let guard = self.bind(*guard);
                 let wait = Rvalue::TaskOp(hir::TaskOp::SyncAwait, vec![Operand::local(guard)], vec![false], *span);
                 self.assign(Place::local(guard), wait, *span);
-                self.cancellation_point(*span);
+                // It let go of the lock.
+                self.cancellation_point(*span, false);
             }
             hir::Stmt::Destructure(pattern, value) => {
                 let value = self.expr(value);
@@ -1362,6 +1431,9 @@ impl Builder<'_> {
                     let moved = self.temp(e.ty, Rvalue::Use(Operand::local(local)), e.span);
                     let Operand::Copy(Place { local: temp, .. }) = moved else { unreachable!() };
                     self.own(temp);
+                    if let Some(again) = &mut self.again {
+                        again.moved = true;
+                    }
                     self.push(Statement::Clear(local));
                     return moved;
                 }
@@ -1541,7 +1613,7 @@ impl Builder<'_> {
                 let result = self.temp(e.ty, Rvalue::CallIndirect(callee, operands), e.span);
                 self.finish_call(e.ty, regions);
                 if e.ty != Ty::NEVER {
-                    self.cancellation_point(e.span);
+                    self.cancellation_point(e.span, true);
                 }
                 result
             }
@@ -1577,7 +1649,8 @@ impl Builder<'_> {
                 let flags = self.move_flags(&values, &moves, &types);
                 let result = self.temp(e.ty, Rvalue::TaskOp(*op, values, flags, e.span), e.span);
                 if op.waits() {
-                    self.cancellation_point(e.span);
+                    // A barrier counted the task.
+                    self.cancellation_point(e.span, *op != hir::TaskOp::BarrierWait);
                 }
                 result
             }
@@ -1586,7 +1659,9 @@ impl Builder<'_> {
                 let result = self.temp(e.ty, Rvalue::Call(*callee, operands), e.span);
                 self.finish_call(e.ty, regions);
                 if e.ty != Ty::NEVER && self.call_waits(*callee) {
-                    self.cancellation_point(e.span);
+                    // A virtual clock moved.
+                    let moved = matches!(callee, hir::Callee::Std(hir::StdFn::ClockSettle | hir::StdFn::ClockAdvance));
+                    self.cancellation_point(e.span, !moved);
                 }
                 result
             }
@@ -1681,7 +1756,7 @@ impl Builder<'_> {
         let group = self.expr(group);
         let settle = Rvalue::TaskOp(hir::TaskOp::GroupSettle, vec![group.clone()], vec![false], span);
         let index = self.temp(Ty::INT, settle, span);
-        self.cancellation_point(span);
+        self.cancellation_point(span, true);
         let values = self.new_local(array);
         self.assign(Place::local(values), Rvalue::ArrayOp(hir::ArrayOp::New, Vec::new(), span), span);
         let result = self.new_local(e.ty);
@@ -1748,7 +1823,7 @@ impl Builder<'_> {
         }
         let outs: Vec<Local> = cases.iter().map(|c| c.out).collect();
         let won = self.temp(Ty::INT, Rvalue::Select(cases, otherwise.is_none(), span), span);
-        self.cancellation_point(span);
+        self.cancellation_point(span, true);
         let has_value = e.ty != Ty::UNIT && e.ty != Ty::NEVER;
         let result = has_value.then(|| self.new_local(e.ty));
         let join = self.new_block();

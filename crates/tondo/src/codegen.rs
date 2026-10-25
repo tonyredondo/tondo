@@ -65,6 +65,7 @@ enum Rt {
     LiveTransfer,
     LiveFree,
     LiveArgsDone,
+    LiveObject,
     StrRetain,
     StrRelease,
     StrEq,
@@ -570,6 +571,7 @@ impl Rt {
             Rt::LiveTransfer => ("tondo_rt_live_transfer", &[I64, I64, I64], &[I64]),
             Rt::LiveFree => ("tondo_rt_live_free", &[I64], &[]),
             Rt::LiveArgsDone => ("tondo_rt_live_args_done", &[I64], &[]),
+            Rt::LiveObject => ("tondo_rt_live_object", &[I64, I64, I8, I64], &[]),
             Rt::JsonReaderRelease => ("tondo_rt_json_reader_release", &[I64], &[]),
             Rt::JsonWriterRelease => ("tondo_rt_json_writer_release", &[I64], &[]),
             Rt::PlanRelease => ("tondo_rt_process_plan_release", &[I64], &[]),
@@ -835,7 +837,15 @@ pub fn compile(
         let old = body.locals[body.params[0].0 as usize];
         let mut release = |ty: Ty| cg.types.needs_drop(ty).then(|| cg.glue(Glue::Release, ty));
         let entry = (id, release(old), release(new));
+        let index = cg.live.as_ref().expect("a live build").conversions.len();
         cg.live.as_mut().expect("a live build").conversions.push(entry);
+        if live.as_ref().is_some_and(|build| build.objects.contains(&index)) {
+            let (from, to) = (cg.identity(old), cg.identity(new));
+            let layout = cg.layout(new);
+            let visit = cg.types.can_cycle(new).then(|| cg.glue(Glue::Visit, new));
+            let object = (index, from, to, layout.size, layout.align, entry.2, visit);
+            cg.live.as_mut().expect("a live build").objects.push(object);
+        }
     }
     while let Some((kind, ty, id)) = cg.pending_glue.pop() {
         context.func.signature = cg.glue_signature(kind);
@@ -927,8 +937,11 @@ struct LiveCodegen {
     patch: Option<(Vec<String>, u32)>,
     known: HashMap<String, u64>,
     /// A patch's conversions, and the release glue of what each converts
-    /// from and to.
+    /// from and to; and of those that convert what values with identity
+    /// hold, the identity of the old type, and the new one's size and
+    /// alignment, release and visit glue.
     conversions: Vec<(FuncId, Option<FuncId>, Option<FuncId>)>,
+    objects: Vec<LiveObject>,
     /// The word of each function's first site, the function, and the
     /// site's number in the build.
     sites: Vec<(DataId, usize, usize)>,
@@ -980,7 +993,7 @@ impl LiveCodegen {
             let digest = crate::live::shape_digest(types, &signature);
             let base = format!("{name}({}): {}", params.join(", "), types.display(body.result));
             let base = if digest.is_empty() { base } else { format!("{base} @{digest}") };
-            build.holds.entry(body.name.clone()).or_default().extend(crate::live::held(types, &body.locals));
+            build.holds.entry(body.name.clone()).or_default().extend(crate::live::held(types, &body.locals, false));
             // Closures share a name: the first of a function keeps it.
             let count = seen.entry(base.clone()).or_insert(0);
             let identity = if *count == 0 { base } else { format!("{base} #{count}") };
@@ -1013,6 +1026,7 @@ impl LiveCodegen {
             patch,
             known,
             conversions: Vec::new(),
+            objects: Vec::new(),
             sites: Vec::new(),
             point_sites: HashMap::new(),
             layouts: HashMap::new(),
@@ -1698,7 +1712,20 @@ impl Codegen<'_> {
                 Class::Scalar(_) => "scalar",
                 Class::Memory => "memory",
             };
+            // Each call a frame may be in: what the rest of its statement
+            // reaches through values with identity, and for a wait, whether
+            // its statement can start again.
+            let mut calls: Vec<serde_json::Value> = crate::live::touches(self.types, body)
+                .into_iter()
+                .map(|(span, touches)| {
+                    let (_, line, column) = self.sources.position(span.start);
+                    let again = body.pauses.iter().find(|(at, _)| *at == span).map(|&(_, again)| again);
+                    serde_json::json!({ "line": line, "column": column, "touches": touches, "again": again })
+                })
+                .collect();
+            calls.dedup();
             let entry = serde_json::json!({
+                "calls": calls,
                 "file": file,
                 "top": top,
                 "lines": hashes,
@@ -1830,8 +1857,19 @@ impl Codegen<'_> {
         // Then the conversions: their count, and each one's function and
         // the release glue of what it converts from and to.
         let conversions = start + added.len() * 16;
-        let mut bytes = vec![0u8; conversions + 8 + live.conversions.len() * 24];
+        // Then what values with identity hold that converts: the count, and
+        // each one's conversion, old identity, new size and alignment, and
+        // release and visit glue.
+        let objects = conversions + 8 + live.conversions.len() * 24;
+        let mut bytes = vec![0u8; objects + 8 + live.objects.len() * 56];
         bytes[conversions..conversions + 8].copy_from_slice(&(live.conversions.len() as u64).to_le_bytes());
+        bytes[objects..objects + 8].copy_from_slice(&(live.objects.len() as u64).to_le_bytes());
+        for (index, &(conversion, _, _, size, align, _, _)) in live.objects.iter().enumerate() {
+            let at = objects + 8 + index * 56;
+            bytes[at..at + 8].copy_from_slice(&(conversion as u64).to_le_bytes());
+            bytes[at + 24..at + 32].copy_from_slice(&(size as u64).to_le_bytes());
+            bytes[at + 32..at + 40].copy_from_slice(&(align as u64).to_le_bytes());
+        }
         bytes[16..24].copy_from_slice(&(sites as u64).to_le_bytes());
         bytes[24..32].copy_from_slice(&(set.len() as u64).to_le_bytes());
         bytes[32..40].copy_from_slice(&(added.len() as u64).to_le_bytes());
@@ -1863,6 +1901,19 @@ impl Codegen<'_> {
         for (index, &(convert, from, to)) in live.conversions.iter().enumerate() {
             let at = conversions + 8 + index * 24;
             for (offset, function) in [(0, Some(convert)), (8, from), (16, to)] {
+                if let Some(function) = function {
+                    let function = self.module.declare_func_in_data(function, &mut table);
+                    table.write_function_addr((at + offset) as u32, function);
+                }
+            }
+        }
+        for (index, &(_, from, to, _, _, release, visit)) in live.objects.iter().enumerate() {
+            let at = objects + 8 + index * 56;
+            for (offset, identity) in [(8, from), (16, to)] {
+                let identity = self.module.declare_data_in_data(identity, &mut table);
+                table.write_data_addr((at + offset) as u32, identity, 0);
+            }
+            for (offset, function) in [(40, release), (48, visit)] {
                 if let Some(function) = function {
                     let function = self.module.declare_func_in_data(function, &mut table);
                     table.write_function_addr((at + offset) as u32, function);
@@ -2722,6 +2773,15 @@ impl Emit<'_, '_> {
         }
     }
 
+    /// Where a reference's value is: after its header, or in a live build,
+    /// which keeps it apart, where the header says.
+    fn ref_value(&mut self, reference: ir::Value) -> ir::Value {
+        match self.cg.live.is_some() {
+            true => self.fb.ins().load(POINTER, flags(), reference, REF_HEADER as i32),
+            false => self.fb.ins().iadd_imm_s(reference, REF_HEADER),
+        }
+    }
+
     fn copy_memory(&mut self, destination: ir::Value, source: ir::Value, size: u32) {
         if size > 64 {
             let config = self.cg.module.isa().frontend_config();
@@ -3350,6 +3410,12 @@ fn define_thunk(
 /// size; and the state's size.
 type StateLayout = (Vec<(Local, StateKept, u32, u32)>, u32);
 
+/// What a patch converts in place in values with identity that hold a
+/// type of another shape: its conversion, by its place among the patch's,
+/// the identities of the old type and of the new, the new one's size and
+/// alignment, and its release and visit glue.
+type LiveObject = (usize, DataId, DataId, u32, u32, Option<FuncId>, Option<FuncId>);
+
 /// How a live build keeps a local of a point's state.
 #[derive(Clone, Copy)]
 enum StateKept {
@@ -3659,7 +3725,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         self.e.fb.use_var(var)
                     }
                 };
-                base = Some(self.e.fb.ins().iadd_imm_s(reference, REF_HEADER));
+                base = Some(self.e.ref_value(reference));
                 ty = project(self.e.cg.types, ty, proj);
                 continue;
             }
@@ -4162,6 +4228,26 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let value = self.call(Callee::Fn(id), args, result);
         self.e.call_rt(Rt::LiveArgsDone, &[block]);
         value
+    }
+
+    /// In a live build, a value with identity the runtime knows of, with
+    /// the identity of the type of what it holds: a reload that changes
+    /// that type converts it (toolchain 7.10).
+    fn live_object(&mut self, object: ir::Value, holds: Ty, kind: i64) {
+        if self.e.cg.live.is_none() {
+            return;
+        }
+        let identity = self.e.cg.identity(holds);
+        let identity = self.e.cg.module.declare_data_in_func(identity, self.e.fb.func);
+        let identity = self.e.fb.ins().symbol_value(POINTER, identity);
+        // A `Ref`'s value is released with the glue of its type then, which
+        // a reload changes.
+        let release = match kind {
+            0 => self.e.glue_or_null(Glue::Release, holds),
+            _ => self.e.fb.ins().iconst(POINTER, 0),
+        };
+        let kind = self.e.fb.ins().iconst(types::I8, kind);
+        self.e.call_rt(Rt::LiveObject, &[object, identity, kind, release]);
     }
 
     /// The hidden parameter's value: the state a frame brings.
@@ -5167,6 +5253,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     .e
                     .call_rt(Rt::ChannelNew, &[capacity, bounded, size, align, release, visit, location])
                     .unwrap();
+                self.live_object(channel, value, 2);
                 let sender = self.e.call_rt(Rt::SenderNew, &[channel]).unwrap();
                 let pair = self.scratch(ty);
                 for (index, end) in [sender, channel].into_iter().enumerate() {
@@ -5233,6 +5320,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let cell = self.e.call_rt(Rt::SyncNew, &[size, align, release, visit]).unwrap();
                 let address = self.e.call_rt(Rt::SyncValue, &[cell]).unwrap();
                 self.e.store_val(address, state, value);
+                self.live_object(cell, state, 1);
                 Some(Val::Scalar(cell))
             }
             TaskOp::WeakNew => Some(Val::Scalar(self.e.call_rt(Rt::WeakNew, &[values[0]]).unwrap())),
@@ -5250,8 +5338,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
                 let size = self.e.fb.ins().iconst(POINTER, self.e.cg.layout(inner).size as i64);
                 let object = self.e.call_rt(Rt::RefNew, &[size]).unwrap();
-                let address = self.e.fb.ins().iadd_imm_s(object, REF_HEADER);
+                let address = self.e.ref_value(object);
                 self.e.store_val(address, inner, value);
+                self.live_object(object, inner, 0);
                 Some(Val::Scalar(object))
             }
             TaskOp::Lock(mode) => {

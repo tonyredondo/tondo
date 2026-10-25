@@ -41,8 +41,11 @@ pub struct Build {
     pub points: serde_json::Map<String, serde_json::Value>,
     pub structures: serde_json::Map<String, serde_json::Value>,
     /// For a patch: the functions that convert values of the running
-    /// program's types to the new ones, in the order of the patch's table.
+    /// program's types to the new ones, in the order of the patch's table;
+    /// and those of them that convert what values with identity hold, in
+    /// place, by their places there.
     pub migrations: Vec<crate::hir::FnId>,
+    pub objects: Vec<usize>,
 }
 
 /// The types renamed, new names by old: of the types the old program had
@@ -147,6 +150,7 @@ impl Build {
             points: serde_json::Map::new(),
             structures: serde_json::Map::new(),
             migrations: Vec::new(),
+            objects: Vec::new(),
         }
     }
 }
@@ -306,20 +310,30 @@ pub(crate) fn shape_digest(types: &crate::types::Types, tys: &[crate::types::Ty]
 }
 
 /// The names of the nominal types a frame of a function may keep in values
-/// with identity, by the types of its locals: what `Ref`s, channels,
-/// tasks and `std.sync` values hold.
-pub(crate) fn held(types: &crate::types::Types, locals: &[crate::types::Ty]) -> Vec<String> {
+/// with identity, by the types of its locals: with `converted`, in those a
+/// reload converts in place (`Handle::CONVERTED`), and guards on them, which
+/// it does not while they are held; otherwise in the others, as tasks and
+/// shared collections.
+pub(crate) fn held(types: &crate::types::Types, locals: &[crate::types::Ty], converted: bool) -> Vec<String> {
     use crate::types::{AdtKind, TyKind};
     fn walk(
         types: &crate::types::Types,
         ty: crate::types::Ty,
+        converted: bool,
         seen: &mut HashSet<u32>,
         out: &mut Vec<crate::types::Ty>,
     ) {
-        let mut each =
-            |tys: &[crate::types::Ty], seen: &mut HashSet<u32>| tys.iter().for_each(|&t| walk(types, t, seen, out));
+        let mut each = |tys: &[crate::types::Ty], seen: &mut HashSet<u32>| {
+            tys.iter().for_each(|&t| walk(types, t, converted, seen, out))
+        };
         match types.kind(ty) {
-            TyKind::Handle(_, state) => out.push(*state),
+            TyKind::Handle(handle, state)
+                if (crate::types::Handle::CONVERTED.contains(handle) || *handle == crate::types::Handle::Guard)
+                    == converted =>
+            {
+                out.push(*state)
+            }
+            TyKind::Handle(_, state) => each(&[*state], seen),
             TyKind::Adt(id) if seen.insert(id.0) => match &types.adt(*id).kind {
                 AdtKind::Record(fields) => each(&fields.iter().map(|f| f.ty).collect::<Vec<_>>(), seen),
                 AdtKind::Newtype(inner) => each(&[*inner], seen),
@@ -333,9 +347,102 @@ pub(crate) fn held(types: &crate::types::Types, locals: &[crate::types::Ty]) -> 
     }
     let (mut seen, mut inner) = (HashSet::new(), Vec::new());
     for &local in locals {
-        walk(types, local, &mut seen, &mut inner);
+        walk(types, local, converted, &mut seen, &mut inner);
     }
     reachable(types, &inner, false).into_iter().map(|id| adt_name(types, crate::types::AdtId(id))).collect()
+}
+
+/// For each call a frame may be in, by where it is: the nominal types that
+/// the rest of its statement, up to where the next starts, may reach through
+/// values with identity, which a reload converts in place.
+pub(crate) fn touches(
+    types: &crate::types::Types,
+    body: &crate::mir::Body,
+) -> Vec<(crate::source::Span, std::collections::BTreeSet<String>)> {
+    use crate::mir::{Rvalue, Statement, Terminator};
+    let reached: Vec<Vec<String>> = body.locals.iter().map(|&ty| held(types, &[ty], true)).collect();
+    let mut out = Vec::new();
+    for (index, block) in body.blocks.iter().enumerate() {
+        for (at, statement) in block.stmts.iter().enumerate() {
+            let Statement::Assign(_, rvalue, span) = statement else { continue };
+            if !matches!(
+                **rvalue,
+                Rvalue::Call(..) | Rvalue::CallIndirect(..) | Rvalue::TaskOp(..) | Rvalue::Select(..)
+            ) {
+                continue;
+            }
+            let mut names = std::collections::BTreeSet::new();
+            let (mut seen, mut next) = (HashSet::new(), vec![(index, at + 1)]);
+            while let Some((index, from)) = next.pop() {
+                if !seen.insert((index, from)) {
+                    continue;
+                }
+                let block = &body.blocks[index];
+                let mut used = Vec::new();
+                let mut stops = false;
+                for statement in &block.stmts[from..] {
+                    if let Statement::Assign(_, rvalue, _) = statement
+                        && matches!(**rvalue, Rvalue::Restart(_))
+                    {
+                        stops = true;
+                        break;
+                    }
+                    reaching(statement, &mut used);
+                }
+                if !stops {
+                    // What it returns is the caller's, whichever code it runs.
+                    if !matches!(block.terminator, Terminator::Return(_)) {
+                        crate::mir::terminator_uses(&block.terminator, &mut used);
+                    }
+                    match &block.terminator {
+                        Terminator::Goto(target) => next.push((target.0 as usize, 0)),
+                        Terminator::Branch(_, then, otherwise) => {
+                            next.extend([(then.0 as usize, 0), (otherwise.0 as usize, 0)])
+                        }
+                        _ => {}
+                    }
+                }
+                for local in used {
+                    names.extend(reached[local.0 as usize].iter().cloned());
+                }
+            }
+            // What the call itself reaches too.
+            let mut used = Vec::new();
+            reaching(statement, &mut used);
+            for local in used {
+                names.extend(reached[local.0 as usize].iter().cloned());
+            }
+            out.push((*span, names));
+        }
+    }
+    out
+}
+
+/// The locals a statement may reach what values with identity hold through,
+/// with the old code. A function of the program it calls runs the new code,
+/// through its slot, and copies, retains and releases leave what they hold
+/// alone: a value with identity releases it with the glue of its new type.
+fn reaching(statement: &crate::mir::Statement, used: &mut Vec<crate::mir::Local>) {
+    use crate::mir::{Operand, Place, Proj, Rvalue, Statement};
+    // Whether a place is outside what a `Ref` holds.
+    let outside = |place: &Place| !place.path.iter().any(|p| matches!(p, Proj::Deref));
+    let plain = |operand: &Operand| match operand {
+        Operand::Copy(place) => outside(place),
+        Operand::Const(_) => true,
+    };
+    match statement {
+        Statement::Assign(place, rvalue, _) if outside(place) => match &**rvalue {
+            Rvalue::Call(crate::hir::Callee::Fn(_), operands) if operands.iter().all(plain) => return,
+            Rvalue::Use(operand) if plain(operand) => return,
+            _ => {}
+        },
+        Statement::Retain(place) | Statement::Release(place) if outside(place) => return,
+        _ => {}
+    }
+    // What it makes counts too: a `Ref` the old code makes holds the old shape.
+    let mut defined = Vec::new();
+    crate::mir::statement_locals(statement, used, &mut defined);
+    used.extend(defined);
 }
 
 /// How a live build's tables and manifests name a type: as it is shown,
@@ -399,6 +506,7 @@ pub(crate) fn describe(
         TyKind::Tuple(items) => json!({ "tuple": keys(&items, out) }),
         // What a patch does not rebuild: scalars, which do not change, and
         // values with identity or code.
+        TyKind::Handle(handle, state) => json!({ "handle": handle.name(), "of": keys(&[state], out) }),
         _ => json!({ "other": types.display(ty) }),
     };
     out.insert(key.clone(), described);
@@ -561,6 +669,7 @@ fn patch(
         points: serde_json::Map::new(),
         structures: serde_json::Map::new(),
         migrations: Vec::new(),
+        objects: Vec::new(),
     };
     // The values of the old types frames hold convert as the frames move,
     // with the parameters of those that move to a function of another
@@ -573,6 +682,16 @@ fn patch(
     let mut wanted: Vec<String> =
         held.chain(passed).filter_map(|item| item["type"].as_str().map(String::from)).collect();
     wanted.extend(functions().filter_map(|function| function["result"].as_str().map(String::from)));
+    // What values with identity hold converts in place.
+    let converted = |name: &str| crate::types::Handle::CONVERTED.iter().any(|h| h.name() == name);
+    let held: Vec<String> = manifest["structures"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(_, s)| s["handle"].as_str().is_some_and(converted))
+        .filter_map(|(_, s)| s["of"][0].as_str().map(String::from))
+        .collect();
+    wanted.extend(held.iter().cloned());
     wanted.sort();
     wanted.dedup();
     let empty = serde_json::Map::new();
@@ -593,6 +712,9 @@ fn patch(
     let migrated = migrate::add(program, structures, &wanted, &closures, &renamed, latest);
     let mut migrations = osr::Migrations { refused: migrated.refused, ..osr::Migrations::default() };
     for (keys, function) in migrated.conversions {
+        if held.contains(&keys.0) {
+            build.objects.push(build.migrations.len());
+        }
         migrations.conversions.insert(keys, build.migrations.len());
         build.migrations.push(function);
     }
@@ -630,9 +752,20 @@ fn patch(
     patch.extend(&moves.bytes);
     let patch_file = crate::driver::cache_dir().join("live").join(format!("patch-{pid}.bin"));
     std::fs::write(&patch_file, &patch).map_err(|e| format!("cannot write {}: {e}", patch_file.display()))?;
+    // What values with identity hold converts in place, while every task
+    // waits at a statement for it.
+    let held_now = !build.objects.is_empty();
+    if held_now && let Err(why) = stop_tasks(ask, manifest, &reshaped) {
+        let _ = std::fs::remove_file(&patch_file);
+        let _ = ask("release");
+        return Err(why);
+    }
     let request: Vec<String> = std::iter::once(format!("patch {}", patch_file.display())).chain(guarded).collect();
     let answer = ask(&request.join("\t"));
     let _ = std::fs::remove_file(&patch_file);
+    if held_now {
+        let _ = ask("release");
+    }
     let answer = answer?;
     if let Some(alive) = answer["alive"].as_array() {
         let shown: Vec<String> = reshaped.iter().map(|t| format!("`{t}`")).collect();
@@ -649,7 +782,7 @@ fn patch(
         let mut places = places;
         places.dedup();
         return Err(Refused::Restart(format!(
-            "{} changed what {} made of, and {} may keep values of the old shape in a `Ref`, a channel, a task or a value of `std.sync`, which a reload does not convert: start the program again",
+            "{} changed what {} made of, and {} may keep values of the old shape in a task or a collection of `std.sync`, which a reload does not convert: start the program again",
             shown.join(", "),
             if shown.len() == 1 { "it is" } else { "they are" },
             places.join(", "),
@@ -718,6 +851,103 @@ fn patch(
     notes.dedup();
     Ok(Reloaded { changed, added, moves: moves.count, stays: moves.stays, notes })
 }
+
+/// Where a frame is: its function, file, line and column.
+type FramePlace = (String, String, u64, u64);
+
+/// Stops every task of the program at a statement, so that what values with
+/// identity hold can convert in place: the barrier stops those that run, and
+/// those that wait start their statements again, where they can. A frame
+/// that, before its next statement, may reach a value with identity holding
+/// a type that changed shape, or a task that does not stop, refuses it.
+fn stop_tasks(
+    ask: &mut dyn FnMut(&str) -> Result<serde_json::Value, String>,
+    manifest: &serde_json::Value,
+    reshaped: &[String],
+) -> Result<(), Refused> {
+    // Each call a frame may be in, by function and place: what the rest of
+    // its statement reaches, and whether a wait there starts its statement
+    // again.
+    let mut calls: HashMap<FramePlace, (Vec<String>, bool)> = HashMap::new();
+    for (identity, entry) in manifest["points"].as_object().into_iter().flatten() {
+        let file = entry["file"].as_str().unwrap_or_default().to_string();
+        for call in entry["calls"].as_array().into_iter().flatten() {
+            let key = (
+                osr::shown_name(identity).to_string(),
+                file.clone(),
+                call["line"].as_u64().unwrap_or(0),
+                call["column"].as_u64().unwrap_or(0),
+            );
+            let touches: Vec<String> =
+                call["touches"].as_array().into_iter().flatten().filter_map(|t| t.as_str().map(String::from)).collect();
+            let again = call["again"].as_bool() == Some(true);
+            let found = calls.entry(key).or_insert((Vec::new(), true));
+            found.0.extend(touches);
+            found.1 &= again;
+        }
+    }
+    let place = |frame: &serde_json::Value| {
+        (
+            frame["function"].as_str().unwrap_or_default().to_string(),
+            frame["file"].as_str().unwrap_or_default().to_string(),
+            frame["line"].as_u64().unwrap_or(0),
+            frame["column"].as_u64().unwrap_or(0),
+        )
+    };
+    let shown = |p: &FramePlace| format!("`{}` ({}:{})", p.0, p.1, p.2);
+    // Whether the rest of the statement at a call may reach a type that
+    // changed shape in a value with identity.
+    let reaches = |p: &FramePlace| match calls.get(p) {
+        Some((touches, _)) => touches.iter().any(|t| reshaped.contains(t)),
+        None => true,
+    };
+    let report = ask("barrier")?;
+    let mut again = Vec::new();
+    for task in report["tasks"].as_array().into_iter().flatten() {
+        let state = task["state"].as_str().unwrap_or_default();
+        let frames: Vec<FramePlace> = task["frames"].as_array().into_iter().flatten().map(place).collect();
+        if state == "runs" || state == "ready" {
+            let at = frames.first().map_or("an unknown place".to_string(), shown);
+            return Err(Refused::Restart(format!(
+                "a task at {at} did not stop at a statement for the reload: reload again"
+            )));
+        }
+        // The frames below the innermost wait for their calls to return.
+        for frame in frames.iter().skip(1) {
+            if reaches(frame) {
+                return Err(Refused::Restart(format!(
+                    "a task is in a call at {} whose statement may use, after the call, what a `Ref`, a channel or a `std.sync` value of a type that changed shape holds, with the old code: reload when the task is past it; if it stays there, as in a wait, write the call in a `let` statement of its own, or start the program again",
+                    shown(frame)
+                )));
+            }
+        }
+        let Some(innermost) = frames.first() else { continue };
+        match state {
+            "waits" if calls.get(innermost).is_some_and(|(_, again)| *again) => again.push(task["id"].to_string()),
+            "waits" | "in C" if reaches(innermost) => {
+                let what = if state == "waits" { WAITS } else { "a task is in a call of C at" };
+                return Err(Refused::Restart(format!("{what} {}{CANNOT}", shown(innermost))));
+            }
+            _ => {}
+        }
+    }
+    if again.is_empty() {
+        return Ok(());
+    }
+    let report = ask(&format!("again {}", again.join(" ")))?;
+    for task in report["tasks"].as_array().into_iter().flatten() {
+        if again.contains(&task["id"].to_string()) && task["state"] != "statement" {
+            let at = task["frames"].as_array().and_then(|f| f.first()).map(place);
+            let at = at.as_ref().map_or("an unknown place".to_string(), shown);
+            return Err(Refused::Restart(format!("{WAITS} {at}{CANNOT}")));
+        }
+    }
+    Ok(())
+}
+
+const WAITS: &str = "a task waits at";
+/// Why a task waiting there stops a reload, and what to do.
+const CANNOT: &str = " in a statement that may use, after the wait, what a `Ref`, a channel or a `std.sync` value of a type that changed shape holds, and the wait cannot end for the statement to start again: write the call that waits in a `let` statement of its own, reload when the task is past it, or start the program again";
 
 /// `tondo reload <pid|name>`: the running live program `name`.
 pub fn reload_named(name: &str) -> Result<Reloaded, Refused> {

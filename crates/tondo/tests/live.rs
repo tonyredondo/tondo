@@ -215,24 +215,44 @@ fn edit_and_continue() {
     debugger.stop();
 }
 
+const MODES: &str = r#"import std.console
+
+enum Mode {
+    Quiet
+    Loud
+}
+
+let _mode = Ref(Mode.Quiet)
+var seen = 0
+for {
+    match console.readLine() {
+        some(line) => {
+            seen += 1
+            console.println("v1 {line} {seen}")
+        }
+        none => break
+    }
+}
+"#;
+
 #[test]
 fn watching_reloads_what_is_saved() {
     let dir = dir("live_watch");
     let file = dir.join("server.to");
-    std::fs::write(&file, SHARED).unwrap();
+    std::fs::write(&file, MODES).unwrap();
     let mut server = Running::start(&dir, &["run", "server.to", "--watch"]);
-    assert_eq!(server.answer("a"), "v1 a 0 1");
+    assert_eq!(server.answer("a"), "v1 a 1");
     edit(&file, "\"v1 {line}", "\"v2 {line}");
     let reloaded = server.errors.recv_timeout(Duration::from_secs(60)).expect("a reload");
     assert!(reloaded.contains("reloaded: 1 changed (main)"), "{reloaded}");
-    assert_eq!(server.answer("b"), "v2 b 0 2");
+    assert_eq!(server.answer("b"), "v2 b 2");
     // A change it cannot make in place runs the program again: a `Ref`
-    // keeps a value of a type of another shape.
-    edit(&file, "type State = { count: Int }", "type State = { count: Int, more: Bool }");
-    edit(&file, "State { count: 0 }", "State { count: 0, more: true }");
+    // keeps a value of a variant the new code does not have.
+    let text = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(&file, text.replace("    Quiet\n", "").replace("Ref(Mode.Quiet)", "Ref(Mode.Loud)")).unwrap();
     let restarted = server.errors.recv_timeout(Duration::from_secs(60)).expect("a restart");
     assert!(restarted.contains("running it again"), "{restarted}");
-    assert_eq!(server.answer("c"), "v2 c 0 1");
+    assert_eq!(server.answer("c"), "v2 c 1");
     server.stop();
 }
 
@@ -405,7 +425,7 @@ fn collections_and_variants_convert() {
 }
 
 #[test]
-fn values_kept_in_a_ref_do_not_convert() {
+fn values_kept_in_a_ref_convert_in_place() {
     let dir = dir("live_shared");
     let file = dir.join("shared.to");
     std::fs::write(&file, SHARED).unwrap();
@@ -413,9 +433,86 @@ fn values_kept_in_a_ref_do_not_convert() {
     assert_eq!(server.answer("a"), "v1 a 0 1");
     edit(&file, "type State = { count: Int }", "type State = { count: Int, more: Bool }");
     edit(&file, "State { count: 0 }", "State { count: 0, more: true }");
+    edit(&file, "\"v1 {line} {shared.value.count}", "\"v2 {line} {shared.value.count} {shared.value.more}");
     let (done, said) = reload(&dir, &server.pid());
-    assert!(!done && said.contains("`main` (shared.to:8) may keep values of the old shape in a `Ref`"), "{said}");
-    assert_eq!(server.answer("b"), "v1 b 0 2");
+    assert!(done && said.contains("`State.more` is new: values alive get false"), "{said}");
+    assert_eq!(server.answer("b"), "v2 b 0 false 2");
+    server.stop();
+}
+
+const CHANNEL: &str = r#"import std.console
+import std.sync
+
+type State = { count: Int }
+
+fn worker(inbox: Receiver[State], total: sync.Mutex[State]) {
+    for state in inbox {
+        total.set(State { count: total.get().count + state.count })
+        console.println("v1 got {state.count} total {total.get().count}")
+    }
+}
+
+let total: sync.Mutex[State] = sync.Mutex(State { count: 0 })
+let (sender, receiver) = channel[State](8)
+spawn worker(receiver, total)
+for {
+    match console.readLine() {
+        some(line) => sender.send(State { count: line.length() })
+        none => break
+    }
+}
+sender.close()
+"#;
+
+#[test]
+fn channels_and_std_sync_values_convert_in_place() {
+    let dir = dir("live_channel");
+    let file = dir.join("channel.to");
+    std::fs::write(&file, CHANNEL).unwrap();
+    let mut server = Running::start(&dir, &["run", "channel.to", "--live"]);
+    assert_eq!(server.answer("ab"), "v1 got 2 total 2");
+    edit(&file, "type State = { count: Int }", "type State = { count: Int, tag: String }");
+    edit(&file, "state.count })", "state.count, tag: state.tag })");
+    edit(&file, "\"v1 got {state.count}", "\"v2 got {state.count} [{state.tag}]");
+    edit(&file, "State { count: 0 }", "State { count: 0, tag: \"\" }");
+    edit(&file, "line.length() }", "line.length(), tag: line }");
+    // `main` waits for a line in a statement that sends a `State`: the
+    // statement starts again in the new code.
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done, "{said}");
+    assert_eq!(server.answer("xyz"), "v2 got 3 [xyz] total 5");
+    server.stop();
+}
+
+const BORROWED: &str = r#"import std.console
+
+type State = { count: Int }
+
+fn watch(state: State) {
+    for {
+        match console.readLine() {
+            some(line) => console.println("v1 {line} {state.count}")
+            none => break
+        }
+    }
+}
+
+let shared = Ref(State { count: 7 })
+watch(shared.value)
+"#;
+
+#[test]
+fn a_value_a_ref_lends_does_not_convert() {
+    let dir = dir("live_borrowed");
+    let file = dir.join("lent.to");
+    std::fs::write(&file, BORROWED).unwrap();
+    let mut server = Running::start(&dir, &["run", "lent.to", "--live"]);
+    assert_eq!(server.answer("a"), "v1 a 7");
+    edit(&file, "type State = { count: Int }", "type State = { count: Int, more: Bool }");
+    edit(&file, "State { count: 7 }", "State { count: 7, more: true }");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(!done && said.contains("a task is in a call at `main` (lent.to:15) whose statement may use"), "{said}");
+    assert_eq!(server.answer("b"), "v1 b 7");
     server.stop();
 }
 
@@ -842,5 +939,19 @@ fn values_go_back_converted() {
     );
     assert_eq!(server.answer("b"), "b 102 [+]");
     assert_eq!(server.answer("end"), "done 102");
+    server.stop();
+}
+
+/// A task waiting for a line holds no thread, and its wait ends at once
+/// when it is cancelled, as a reload ends it to start its statement again.
+#[test]
+fn a_wait_for_input_ends_when_cancelled() {
+    let dir = dir("live_input");
+    let file = dir.join("input.to");
+    let program = "import std.console\nimport std.time\n\nlet job = spawn console.readLine()\ntime.sleep(time.milliseconds(50))\njob.cancel()\nconsole.println(\"cancelled\")\n";
+    std::fs::write(&file, program).unwrap();
+    let server = Running::start(&dir, &["run", "input.to"]);
+    let line = server.lines.recv_timeout(Duration::from_secs(60)).expect("the program goes on");
+    assert_eq!(line, "cancelled");
     server.stop();
 }

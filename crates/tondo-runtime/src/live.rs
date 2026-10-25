@@ -187,6 +187,30 @@ fn apply(path: &str) -> Result<String, String> {
     if debug != 0 && sites != current {
         return Err("the program changed since the patch was made: reload again".into());
     }
+    // Then what values with identity hold that converts in place, which
+    // happens while every task waits at the reload's barrier: all of it is
+    // converted first, and put in once the patch is.
+    let objects_at = at + 1 + count * 3;
+    let objects =
+        if table as usize + (objects_at + 1) * 8 <= base as usize + size { read(objects_at) as usize } else { 0 };
+    if table as usize + (objects_at + 1 + objects * 7) * 8 > base as usize + size {
+        return Err("the patch is damaged".into());
+    }
+    let mut held = Vec::new();
+    for index in 0..objects {
+        let word = |offset: usize| read(objects_at + 1 + index * 7 + offset);
+        let conversion = *conversions.get(word(0) as usize).ok_or("the patch is damaged")?;
+        held.push(Held {
+            conversion,
+            from: word(1) as usize,
+            to: word(2) as usize,
+            size: word(3) as usize,
+            align: word(4) as usize,
+            release: unsafe { (word(5) != 0).then(|| std::mem::transmute::<u64, Release>(word(5))) },
+            visit: unsafe { (word(6) != 0).then(|| std::mem::transmute::<u64, super::cycles::Visit>(word(6))) },
+        });
+    }
+
     for index in 0..identities {
         let (slot, address) = (read(5 + slots * 2 + index * 2), read(6 + slots * 2 + index * 2));
         if slot >= info.data_capacity {
@@ -203,16 +227,30 @@ fn apply(path: &str) -> Result<String, String> {
     if debug != 0 {
         super::debugger::add_table(debug as *const _);
     }
+    let slot_at =
+        |slot: u64| unsafe { (info.slots.add(slot as usize) as *const AtomicU64).as_ref() }.expect("the image's slots");
+    let mut before = Vec::new();
     for index in 0..slots {
         let (slot, address) = (read(5 + index * 2), read(6 + index * 2));
         if slot >= info.capacity {
             return Err("the program has no room for more functions: start it again".into());
         }
-        unsafe { (info.slots.add(slot as usize) as *const AtomicU64).as_ref() }
-            .expect("the image's slots")
-            .store(address, Ordering::Release);
+        before.push((slot, slot_at(slot).swap(address, Ordering::AcqRel)));
         USED.fetch_max(slot + 1, Ordering::AcqRel);
     }
+    // The conversions call the patch's code, through its slots: with every
+    // task waiting at the barrier, nothing else does yet, and should one
+    // value not convert, the slots lead back to the old code.
+    let staged = match stage(&held) {
+        Ok(staged) => staged,
+        Err(why) => {
+            for (slot, address) in before {
+                slot_at(slot).store(address, Ordering::Release);
+            }
+            return Err(why);
+        }
+    };
+    commit(staged, &held);
     // Values of a closure that is only numbered otherwise run its new code.
     for &(from, to) in &redirects {
         if from as u64 >= info.capacity || to as u64 >= info.capacity {
@@ -245,6 +283,288 @@ fn apply(path: &str) -> Result<String, String> {
     PENDING.store(moving > 0, Ordering::Release);
     let patches = PATCHES.fetch_add(1, Ordering::AcqRel) + 1;
     Ok(format!("{{\"patched\":true,\"functions\":{slots},\"patches\":{patches},\"moves\":{moving}}}"))
+}
+
+/// What a patch converts in place in values with identity that hold a type
+/// of another shape: its conversion, the identities of the old type and the
+/// new, the new one's size and alignment, and its release and visit glue.
+struct Held {
+    conversion: Conversion,
+    from: usize,
+    to: usize,
+    size: usize,
+    align: usize,
+    release: Option<Release>,
+    visit: Option<super::cycles::Visit>,
+}
+
+/// A value with identity's new content, converted, before it goes in.
+enum Staged {
+    Ref(usize, *mut u8, usize),
+    Sync(usize, *mut u8, usize),
+    Channel(usize, std::collections::VecDeque<u8>, usize),
+}
+
+/// What every value with identity of a type of another shape holds,
+/// converted; or, if one does not convert, nothing, and why.
+fn stage(held: &[Held]) -> Result<Vec<Staged>, String> {
+    if held.is_empty() {
+        return Ok(Vec::new());
+    }
+    let objects: Vec<(usize, usize, u8)> =
+        objects().iter().map(|(&o, &(identity, kind, _))| (o, identity, kind)).collect();
+    let mut staged = Vec::new();
+    for (object, identity, kind) in objects {
+        let Some(index) = held.iter().position(|h| h.from == identity) else { continue };
+        let h = &held[index];
+        let convert = |from: *const u8, to: *mut u8| unsafe { (h.conversion.convert)(from, to) } != 0;
+        let layout = std::alloc::Layout::from_size_align(h.size.max(1), h.align.max(1)).expect("a layout");
+        let fine = match kind {
+            OBJECT_REF => {
+                let to = unsafe { libc::calloc(1, h.size.max(1)) } as *mut u8;
+                let fine = convert(super::ref_payload(object as *mut u8), to);
+                match fine {
+                    true => staged.push(Staged::Ref(object, to, index)),
+                    false => unsafe { libc::free(to as *mut libc::c_void) },
+                }
+                fine
+            }
+            OBJECT_SYNC if super::sync::sync_locked(object) => {
+                unstage(staged, held);
+                return Err("a task holds the lock of a `std.sync` value of a type that changed shape, and the old code uses its value: reload when it lets go of it".into());
+            }
+            OBJECT_SYNC => {
+                let to = unsafe { std::alloc::alloc(layout) };
+                let fine = convert(super::sync::sync_value(object), to);
+                match fine {
+                    true => staged.push(Staged::Sync(object, to, index)),
+                    false => unsafe { std::alloc::dealloc(to, layout) },
+                }
+                fine
+            }
+            OBJECT_CHANNEL => {
+                let mut each = |from: *const u8, to: *mut u8| convert(from, to);
+                match unsafe { super::tasks::channel_convert(object, &mut each, h.size, h.align, h.release) } {
+                    Some(buffer) => {
+                        staged.push(Staged::Channel(object, buffer, index));
+                        true
+                    }
+                    None => false,
+                }
+            }
+            _ => true,
+        };
+        if !fine {
+            unstage(staged, held);
+            return Err("what a `Ref`, a channel or a `std.sync` value holds does not convert: it is of a variant the new code does not have, or a number that does not fit".into());
+        }
+    }
+    Ok(staged)
+}
+
+/// Releases what `stage` made, which does not go in.
+fn unstage(staged: Vec<Staged>, held: &[Held]) {
+    for staged in staged {
+        let (value, index, freed) = match &staged {
+            Staged::Ref(_, value, index) => (*value, *index, 0),
+            Staged::Sync(_, value, index) => (*value, *index, 1),
+            Staged::Channel(_, buffer, index) => {
+                let h = &held[*index];
+                let layout = std::alloc::Layout::from_size_align(h.size.max(1), h.align.max(1)).expect("a layout");
+                let value = unsafe { std::alloc::alloc(layout) };
+                for at in 0..buffer.len() / h.size.max(1) {
+                    for byte in 0..h.size {
+                        unsafe { value.add(byte).write(buffer[at * h.size + byte]) };
+                    }
+                    if let Some(release) = h.release {
+                        unsafe { release(value) };
+                    }
+                }
+                unsafe { std::alloc::dealloc(value, layout) };
+                continue;
+            }
+        };
+        let h = &held[index];
+        if let Some(release) = h.release {
+            unsafe { release(value) };
+        }
+        match freed {
+            0 => unsafe { libc::free(value as *mut libc::c_void) },
+            _ => unsafe {
+                std::alloc::dealloc(
+                    value,
+                    std::alloc::Layout::from_size_align(h.size.max(1), h.align.max(1)).expect("a layout"),
+                )
+            },
+        }
+    }
+}
+
+/// Puts in what `stage` made: each value with identity holds its value of
+/// the new type, and its old one goes.
+fn commit(staged: Vec<Staged>, held: &[Held]) {
+    let mut objects = objects();
+    for staged in staged {
+        let (object, index) = match &staged {
+            Staged::Ref(object, _, index) | Staged::Sync(object, _, index) | Staged::Channel(object, _, index) => {
+                (*object, *index)
+            }
+        };
+        let h = &held[index];
+        match staged {
+            Staged::Ref(object, value, _) => {
+                let old = super::ref_payload(object as *mut u8);
+                if let Some(release) = h.conversion.from {
+                    unsafe { release(old) };
+                }
+                unsafe { libc::free(old as *mut libc::c_void) };
+                super::ref_set_payload(object as *mut u8, value);
+            }
+            Staged::Sync(object, value, _) => unsafe {
+                super::sync::sync_commit(object, value, h.size, h.align, h.release, h.visit)
+            },
+            Staged::Channel(object, buffer, _) => unsafe {
+                super::tasks::channel_commit(object, buffer, h.size, h.align, h.release, h.visit)
+            },
+        }
+        if let Some(entry) = objects.get_mut(&object) {
+            entry.0 = h.to;
+            if entry.1 == OBJECT_REF {
+                entry.2 = h.release;
+            }
+        }
+    }
+}
+
+/// While a reload stops every task at a statement: the tasks there, each
+/// with the wait it waits in.
+static BARRIER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static WAITING: std::sync::Mutex<Vec<(u64, std::sync::Arc<super::tasks::Wait>)>> = std::sync::Mutex::new(Vec::new());
+
+/// Whether a reload stops every task at its next statement.
+pub(crate) fn barrier() -> bool {
+    BARRIER.load(Ordering::Acquire)
+}
+
+/// At a statement's probe while a reload stops every task: waits there,
+/// leaving its worker to others, until the reload is done.
+pub(crate) fn park() {
+    let wait = super::tasks::Wait::new();
+    WAITING.lock().unwrap_or_else(|e| e.into_inner()).push((super::tasks::current_id(), wait.clone()));
+    if BARRIER.load(Ordering::Acquire) {
+        wait.block();
+    }
+    WAITING.lock().unwrap_or_else(|e| e.into_inner()).retain(|(_, w)| !std::sync::Arc::ptr_eq(w, &wait));
+}
+
+/// `barrier`: every task stops at its next statement, unless it waits or
+/// is in C; the answer is where each is.
+pub(crate) fn hold() -> String {
+    BARRIER.store(true, Ordering::Release);
+    // Should the tool that asked go, the program goes on after a while.
+    let held = HELD.fetch_add(1, Ordering::AcqRel) + 1;
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(30));
+        if HELD.load(Ordering::Acquire) == held && barrier() {
+            let_go();
+        }
+    });
+    settle(&[]);
+    report()
+}
+
+/// The barriers held so far, which tells a barrier's own from a later one.
+static HELD: AtomicU64 = AtomicU64::new(0);
+
+/// `again <id>...`: the waits of these tasks end, and the statements they
+/// wait in start again, where they stop.
+pub(crate) fn again(ids: &str) -> String {
+    let ids: Vec<u64> = ids.split_whitespace().filter_map(|id| id.parse().ok()).collect();
+    for &id in &ids {
+        super::tasks::wait_again(id);
+    }
+    settle(&ids);
+    report()
+}
+
+/// `release`: the tasks the barrier stopped go on.
+pub(crate) fn let_go() -> String {
+    BARRIER.store(false, Ordering::Release);
+    for (_, wait) in WAITING.lock().unwrap_or_else(|e| e.into_inner()).iter() {
+        if wait.claim(0) {
+            super::tasks::notify(wait.task);
+        }
+    }
+    "{\"released\":true}".into()
+}
+
+/// Waits, a while, until no task runs and those of `ids` are at the
+/// barrier.
+fn settle(ids: &[u64]) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while std::time::Instant::now() < deadline {
+        let stopped: Vec<u64> = WAITING.lock().unwrap_or_else(|e| e.into_inner()).iter().map(|(id, _)| *id).collect();
+        if super::tasks::settled() && ids.iter().all(|id| stopped.contains(id)) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
+/// Where each task is: at a statement, waiting, in C, or still running; and
+/// the places of its frames, innermost first.
+fn report() -> String {
+    let stopped: Vec<u64> = WAITING.lock().unwrap_or_else(|e| e.into_inner()).iter().map(|(id, _)| *id).collect();
+    let tasks: Vec<String> = super::tasks::snapshot(None)
+        .into_iter()
+        .map(|shot| {
+            let state = if stopped.contains(&shot.id) { "statement" } else { shot.state };
+            let frames: Vec<String> = shot
+                .stack
+                .iter()
+                .filter_map(|&address| super::trace::position(address))
+                .map(|(function, file, line, column)| {
+                    format!(
+                        "{{\"function\":{},\"file\":{},\"line\":{line},\"column\":{column}}}",
+                        super::diagnostics::quoted(function),
+                        super::diagnostics::quoted(file)
+                    )
+                })
+                .collect();
+            format!("{{\"id\":{},\"state\":\"{state}\",\"frames\":[{}]}}", shot.id, frames.join(","))
+        })
+        .collect();
+    format!("{{\"tasks\":[{}]}}", tasks.join(","))
+}
+
+/// The values with identity of a live build, by their address: the
+/// identity of the type of what each holds, what it is, a `Ref`, a
+/// `std.sync` value or a channel (`OBJECT_*`), and for a `Ref` what releases
+/// its value. A reload that changes that type converts what they hold, in
+/// place, and the old code then releases a `Ref` with the new glue.
+type Objects = std::collections::HashMap<usize, (usize, u8, Option<Release>)>;
+static OBJECTS: std::sync::LazyLock<std::sync::Mutex<Objects>> = std::sync::LazyLock::new(Default::default);
+
+fn objects() -> std::sync::MutexGuard<'static, Objects> {
+    OBJECTS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+pub(crate) const OBJECT_REF: u8 = 0;
+pub(crate) const OBJECT_SYNC: u8 = 1;
+pub(crate) const OBJECT_CHANNEL: u8 = 2;
+
+/// A value with identity a live build makes.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_live_object(object: u64, identity: u64, kind: u8, release: Option<Release>) {
+    objects().insert(object as usize, (identity as usize, kind, release));
+}
+
+/// A value with identity that goes, and for a `Ref` what releases its value.
+pub(crate) fn forget_object(object: usize) -> Option<Release> {
+    match on() {
+        true => objects().remove(&object).and_then(|(.., release)| release),
+        false => None,
+    }
 }
 
 /// The identities in use, the image's and the patches'.

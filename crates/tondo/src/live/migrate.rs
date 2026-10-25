@@ -145,6 +145,8 @@ fn lossless(types: &Types, from: Ty, to: Ty, seen: &mut HashSet<(Ty, Ty)>) -> bo
             all(&[k, v], &[j, w], seen)
         }
         (TyKind::Tuple(a), TyKind::Tuple(b)) => all(&a, &b, seen),
+        // A value with identity is itself, what it holds converted in place.
+        (TyKind::Handle(a, _), TyKind::Handle(b, _)) => a == b,
         _ => types.numeric_conversion(from, to) == Some(false),
     }
 }
@@ -235,6 +237,10 @@ impl<'a> Rebuild<'a> {
             TyKind::Result(items[0], items[1])
         } else if let Some(items) = parts(self, "tuple", each) {
             TyKind::Tuple(items)
+        } else if let Some(items) = parts(self, "of", each) {
+            let name = structure["handle"].as_str().unwrap_or_default();
+            let handle = crate::types::Handle::CONVERTED.into_iter().find(|h| h.name() == name)?;
+            return Some(self.types.handle(handle, items[0]));
         } else {
             // A type that does not change shape is the new program's.
             return self.shown.get(key).copied();
@@ -336,6 +342,9 @@ impl Plan<'_> {
             (TyKind::Tuple(from), TyKind::Tuple(to)) if from.len() == to.len() => {
                 from.iter().zip(&to).try_for_each(|(&a, &b)| self.check(a, b))
             }
+            // A value with identity is itself: the reload converts what it
+            // holds in place.
+            (TyKind::Handle(a, x), TyKind::Handle(b, y)) if a == b => self.check(x, y),
             // A number converts as `T(x)` does.
             _ if types.numeric_conversion(old, new).is_some() => Ok(()),
             _ => Err(format!("a `{}` does not convert to a `{}`", types.display(old), types.display(new))),
@@ -594,9 +603,12 @@ impl Generate<'_> {
             return value;
         }
         // A number that always fits converts in place; one that may not, in
-        // a function of its own.
+        // a function of its own. A value with identity is itself.
         if self.program.types.numeric_conversion(old, new) == Some(false) {
             return expr(ExprKind::Convert(Box::new(value)), new);
+        }
+        if matches!(self.program.types.kind(old), TyKind::Handle(..)) {
+            return expr(ExprKind::Retype(Box::new(value)), new);
         }
         if self.converts(old, new) {
             let function = self.function(old, new);
@@ -704,6 +716,7 @@ impl Generate<'_> {
                 ];
                 return self.choose(old, arms, option);
             }
+            (TyKind::Handle(..), TyKind::Handle(..)) => expr(ExprKind::Retype(Box::new(old)), to),
             (TyKind::Tuple(items), TyKind::Tuple(targets)) => {
                 let values = items.iter().zip(&targets).enumerate().map(|(i, (&a, &b))| (i, a, b)).collect::<Vec<_>>();
                 let values = values.into_iter().map(|(i, a, b)| self.value(field(&old, i, a), a, b)).collect();

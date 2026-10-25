@@ -2019,3 +2019,31 @@ nothing is taken: every old field comes from a new one, every new variant
 is an old one and every number fits; otherwise the frame finishes on the
 old code, as before, and the report says why.
 
+
+## 2026-10-25 — Values with identity convert in place
+
+What a `Ref`, a channel or a `std.sync` value holds is shared between
+tasks, so a copy of the new shape cannot replace it: it converts once, in
+place, and no old code may touch it afterwards. A reload that needs it
+stops every task at the start of a statement, as a debugger pauses them.
+A task that waits does not get there by itself, and a server spends its
+life waiting: when its wait has done nothing yet — a receive, a send to a
+full channel, a lock, a sleep, a line of input — the wait ends and the
+statement starts again with the new code, repeating what it did before
+waiting, as evaluating its arguments. The alternative, waiting until each
+task gets to a statement alone, changes nothing visible but would almost
+never happen. Waits that did something, as `updateWhen`, which let go of
+the lock, or `Barrier.wait`, which counted the task, do not start again.
+The compiler records, for each call, what the rest of its statement may
+use through such values; a frame whose rest uses them, other than passing
+them to the program's functions, which run the new code, and whose task
+cannot start the statement again, refuses the reload, and so does a lock
+taken. A live build keeps a `Ref`'s value apart, one indirection more,
+where one of another size fits, and remembers each `Ref`'s release glue,
+so that old code releases a converted value with the new glue.
+
+For a line of input to be such a wait, the console's input became a
+stream like a socket's: a host thread reads it when a task asks, and the
+task waits without holding a thread. A cancelled task waiting for a line
+now stops at once, as 11.15 of the language says, and what arrives stays
+for the next read.

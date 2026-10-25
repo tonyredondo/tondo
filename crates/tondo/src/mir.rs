@@ -104,6 +104,9 @@ pub struct Body {
     pub osr: Option<Local>,
     pub points: Vec<Point>,
     pub origins: Vec<Origin>,
+    /// In a live build, each wait, by where it is, and whether the
+    /// statement it waits in can start again when a reload ends the wait.
+    pub pauses: Vec<(Span, bool)>,
 }
 
 /// Where a statement starts in a live build: a frame stopped at its probe
@@ -473,7 +476,7 @@ fn rvalue_uses(rvalue: &Rvalue, used: &mut Vec<Local>) {
 }
 
 /// The locals a statement reads, and those it writes whole.
-fn statement_locals(statement: &Statement, used: &mut Vec<Local>, defined: &mut Vec<Local>) {
+pub(crate) fn statement_locals(statement: &Statement, used: &mut Vec<Local>, defined: &mut Vec<Local>) {
     match statement {
         Statement::Assign(place, rvalue, _) => {
             rvalue_uses(rvalue, used);
@@ -503,7 +506,7 @@ fn statement_locals(statement: &Statement, used: &mut Vec<Local>, defined: &mut 
     }
 }
 
-fn terminator_uses(terminator: &Terminator, used: &mut Vec<Local>) {
+pub(crate) fn terminator_uses(terminator: &Terminator, used: &mut Vec<Local>) {
     match terminator {
         Terminator::Branch(o, ..) | Terminator::Return(o) => operand_uses(o, used),
         Terminator::Panic { message: Some(o), .. } => operand_uses(o, used),

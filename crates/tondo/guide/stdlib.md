@@ -231,8 +231,13 @@ starting empty (0, `""`, `[]`, `none`) and a number of another numeric
 type converting as `T(x)` does, and a field, a variant or a type renamed
 keeping its values; reload says what it did to them. Closures follow too,
 when another closure comes before them or what they capture changes shape.
-A value kept in a `Ref`, a channel, a task or `std.sync` does not convert:
-reload says where and to start the program again, which `--watch` does.
+What a `Ref`, a channel or a `Mutex` holds converts once, in place, while
+every task stops at a statement: a task waiting for a channel, a lock or a
+line starts that statement again with the new code. Reload refuses, and
+`--watch` starts the program again, when a statement may still use what
+they hold with the old code after a wait it cannot end, as reading a file,
+or when a task holds the lock; write such a wait in a `let` statement of its
+own. A value kept in a task or a `std.sync` collection does not convert.
 Under `tondo debug --live app.to`, `reload` works where the program
 stopped: edit the function, reload, continue; or `restart`, which runs the
 stopped function again from its first line, with its new code.

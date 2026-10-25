@@ -4189,7 +4189,9 @@ pub fn setInput(reader: io.Reader)
   sistema operativo ni pueden fallar: una llamada es una sentencia ordinaria.
 - `readLine` lee la siguiente línea de la entrada actual sin su `\n` ni `\r\n`,
   o `none` al final. Los bytes que no son UTF-8 se sustituyen por `U+FFFD`; un
-  fallo del host cuenta como final de la entrada.
+  fallo del host cuenta como final de la entrada. Mientras espera la entrada
+  del programa no ocupa un thread; si la tarea se cancela, deja de esperar al
+  instante y lo que llegue queda para la siguiente lectura.
 - `stdout()`, `stderr()` y `stdin()` devuelven los streams actuales como
   `io.Writer` e `io.Reader`. `setOutput`, `setError` y `setInput` los
   reemplazan para todo el programa, todas sus tareas incluidas; lo que el

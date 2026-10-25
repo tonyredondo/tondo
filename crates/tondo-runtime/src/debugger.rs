@@ -250,6 +250,11 @@ fn tell(event: &str) {
 /// statement after the probe then returns and calls its function again.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize, alive: *const u64) -> u8 {
+    // A reload that converts values with identity stops every task at a
+    // statement first.
+    if super::live::barrier() {
+        super::live::park();
+    }
     if !ATTACHED.load(Ordering::Relaxed) {
         return super::live::moving(site);
     }

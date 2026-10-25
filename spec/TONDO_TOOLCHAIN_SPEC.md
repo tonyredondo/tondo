@@ -757,15 +757,31 @@ y lo dice la salida de errores del programa, cuando tiene un valor de una
 variante que ya no está o un número que no cabe en su tipo nuevo, hasta una
 sentencia donde sus valores se convierten.
 
-El runtime para el programa y mira la pila de cada tarea: si un frame puede
-guardar valores de un tipo que cambió de forma dentro de un valor con
-identidad —un `Ref`, un canal, una tarea o un valor de `std.sync`—, que una
-copia no puede sustituir, el código nuevo no se pone.
+Lo que guarda un valor con identidad de un tipo que cambió de forma —un
+`Ref`, un canal o un valor de `std.sync` con estado, como un `Mutex`—, que
+comparten varias tareas, se convierte igual, una sola vez y en su sitio,
+mientras ninguna tarea ejecuta código: el runtime detiene cada tarea al
+empezar una sentencia. Una tarea que espera —recibir de un canal, enviar a
+uno lleno, tomar un lock, esperar una tarea, dormir, o leer de la consola o
+de un stream de `std.io`— sin que su espera haya hecho nada todavía deja de
+esperar y empieza de nuevo esa sentencia, con el código nuevo, si nada se
+movió antes en ella; lo que hizo antes de esperar, como evaluar sus
+argumentos, se repite. Las demás esperas, como `updateWhen`, `Barrier.wait`,
+leer un archivo o esperar un proceso, siguen. En un build vivo un `Ref`
+guarda su valor aparte, donde cabe uno de otro tamaño.
+
+El código nuevo no se pone cuando una tarea sigue en una sentencia que,
+antes de la siguiente, puede usar con el código viejo lo que guarda uno de
+esos valores —pasarlo a una función del programa, que ejecuta la nueva, no
+cuenta—, como la que espera en una llamada de C o en una espera que sigue;
+cuando una tarea tiene tomado su lock; o cuando lo que guarda no se
+convierte. Tampoco cuando un frame puede guardar valores de un tipo que
+cambió de forma en una tarea o en una colección de `std.sync`, que no se
+convierten.
 
 No se aplica, y el programa sigue como estaba, cuando los archivos no
-compilan, con sus diagnósticos, cuando un tipo cambia de forma y un frame en
-ejecución puede guardar un valor de la vieja en un valor con identidad,
-diciendo cuál y dónde, o cuando
+compilan, con sus diagnósticos, cuando los valores con identidad no pueden
+convertirse como se dijo, diciendo cuál y dónde, o cuando
 el cambio llama a una función de C que el programa no enlaza: el mensaje
 pide arrancarlo de nuevo. `reload` dice qué funciones cambiaron y cuáles
 añadió, qué pasa con los valores que convierte, y dónde quedan frames en el
