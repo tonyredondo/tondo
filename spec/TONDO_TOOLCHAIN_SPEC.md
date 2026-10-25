@@ -722,22 +722,32 @@ viejo. Las funciones que no cambian siguen con su código, y un cambio
 posterior que las cambie mueve sus frames, también los que quedaron en
 versiones anteriores.
 
+Una clausura cuya función tiene ahora otras clausuras, o cuyas capturas
+cambiaron de forma, es otra identidad. La que es ahora es, de las de su
+función con la misma firma, la de texto más parecido, si se parece en lo
+principal y ninguna otra tanto: un frame suyo pasa a ella con sus capturas
+convertidas, salvo si las cambia o las entrega, porque trabaja sobre las de
+la propia clausura; y si solo cambió su número, los valores de esa clausura
+hechos antes ejecutan también su código nuevo.
+
 Los valores de un tipo que cambió de forma que tiene un frame se convierten
 al pasar el frame al código nuevo: como los valores no tienen identidad
 (4.1 del lenguaje), la conversión es una copia de la forma nueva, y hasta
 entonces el frame sigue con el código viejo y sus valores viejos. Un record
 conserva sus campos por nombre; uno de un tipo que también cambió se
-convierte, uno de tipo `T` que pasa a `T?` queda `some`, uno nuevo o de otro
-tipo empieza con el valor vacío de su tipo —0, 0.0, `false`, `""`, una
-colección vacía, `none`, o un record de valores vacíos— y uno que ya no está
-se suelta. Un enum conserva sus variantes por nombre, con su payload
+convierte, uno de tipo `T` que pasa a `T?` queda `some`, un número que pasa a
+otro tipo numérico se convierte como `T(x)` (8.6 del lenguaje), uno nuevo o
+de otro tipo empieza con el valor vacío de su tipo —0, 0.0, `false`, `""`,
+una colección vacía, `none`, o un record de valores vacíos— y uno que ya no
+está se suelta. Un enum conserva sus variantes por nombre, con su payload
 convertido igual. Las colecciones, opciones, resultados y tuplas se
 convierten elemento a elemento; un map o un set inserta de nuevo sus
 elementos. Las clausuras y los valores `fn(...)` no se convierten: siguen con
 su código viejo y sus valores. Un frame no pasa, y lo dice `reload`, cuando
 un campo nuevo o de otro tipo no tiene valor vacío, como un enum, y no pasa,
 y lo dice la salida de errores del programa, cuando tiene un valor de una
-variante que ya no está.
+variante que ya no está o un número que no cabe en su tipo nuevo, hasta una
+sentencia donde sus valores se convierten.
 
 El runtime para el programa y mira la pila de cada tarea: si un frame puede
 guardar valores de un tipo que cambió de forma dentro de un valor con

@@ -1982,19 +1982,7 @@ impl<'a> Checker<'a> {
     /// Whether converting `from` to `to` can fail, or `None` when the table
     /// of 18.6 has no such conversion.
     fn conversion_checked(&self, from: Ty, to: Ty) -> Option<bool> {
-        let range = |ty: Ty| match self.types.kind(ty) {
-            TyKind::Int(int) => Some((int.min(), int.max())),
-            TyKind::Byte => Some((0, 255)),
-            _ => None,
-        };
-        let float = |ty: Ty| matches!(self.types.kind(ty), TyKind::Float(_));
-        match (range(from), range(to)) {
-            (Some((from_min, from_max)), Some((to_min, to_max))) => Some(from_min < to_min || from_max > to_max),
-            (Some(_), None) if float(to) => Some(false),
-            (None, Some(_)) if float(from) => Some(true),
-            (None, None) if float(from) && float(to) => Some(from == Ty::F64 && to == Ty::F32),
-            _ => None,
-        }
+        self.types.numeric_conversion(from, to)
     }
 
     fn import(&mut self, import: &ast::Import) {

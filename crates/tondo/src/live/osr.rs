@@ -15,6 +15,17 @@ pub(super) struct Moves {
     pub stays: Vec<String>,
 }
 
+/// An identity without what changes when only the shapes of the types its
+/// signature reaches, or the number of its function's closures, do: its
+/// name, parameters and result.
+pub(super) fn base(identity: &str) -> String {
+    let identity = identity.split(" @").next().unwrap_or(identity);
+    match identity.find('(') {
+        Some(at) => format!("{}{}", shown(identity), &identity[at..]),
+        None => identity.to_string(),
+    }
+}
+
 /// The moves from the points of `old` to those of `new`, by identity, for
 /// the functions `changed`, whose slots are those of `slots`; values of
 /// types of another shape go through the patch's conversions.
@@ -35,8 +46,8 @@ pub(super) fn moves(
         .filter(|identity| old.get(identity.as_str()).is_some())
         .map(|identity| (identity.as_str(), identity.as_str(), Vec::new()))
         .collect();
-    let base = |identity: &str| identity.split(" @").next().unwrap_or(identity).to_string();
     let names: Vec<&str> = new.as_object().into_iter().flatten().map(|(identity, _)| shown(identity)).collect();
+    let mut redirects = Vec::new();
     for (identity, entry) in old.as_object().into_iter().flatten() {
         let sited = entry["points"].as_array().is_some_and(|p| p.iter().any(|p| p["site"].is_i64()));
         if !sited || new.get(identity).is_some() || !names.contains(&shown(identity)) {
@@ -49,13 +60,28 @@ pub(super) fn moves(
             .map(|(now, _)| now)
             .filter(|now| *now != identity && base(now) == base(identity))
             .collect();
-        let found = match (identity.starts_with("closure in "), targets.as_slice()) {
-            (true, _) => Err("its function's closures or its signature changed".to_string()),
-            (false, [target]) => parameters(entry, &new[target.as_str()], migrations).map(|plan| (target, plan)),
-            _ => Err("its parameters or result changed".to_string()),
+        // A closure is the one of its function whose text is most its own.
+        let closure = identity.starts_with("closure in ");
+        let target = match targets.as_slice() {
+            [target] if !closure => Some(*target),
+            _ if closure => likeliest(entry, &targets, new),
+            _ => None,
+        };
+        let found = match target {
+            Some(target) => parameters(entry, &new[target.as_str()], migrations).map(|plan| (target, plan)),
+            None if closure => Err("its function's closures changed, and none of them now is it".to_string()),
+            None => Err("its parameters or result changed".to_string()),
         };
         match found {
-            Ok((target, plan)) => pairs.push((identity, target.as_str(), plan)),
+            Ok((target, plan)) => {
+                // Values of a closure that is only numbered otherwise now,
+                // with captures of the same shape, run its new code.
+                let same = |key: &str| entry[key] == new[target.as_str()][key];
+                if closure && same("params") && same("result") {
+                    redirects.extend(slots.get(identity).zip(slots.get(target)).map(|(&a, &b)| (a, b)));
+                }
+                pairs.push((identity, target.as_str(), plan))
+            }
             Err(why) => stays.push(format!("frames of `{}` finish on the old code: {why}", shown(identity))),
         }
     }
@@ -132,8 +158,8 @@ pub(super) fn moves(
     stays.dedup();
     let count = entries.len();
     let mut bytes = Vec::new();
-    if count > 0 {
-        bytes.extend(b"OSR3");
+    if count > 0 || !redirects.is_empty() {
+        bytes.extend(b"OSR4");
         bytes.extend((count as u32).to_le_bytes());
         for (site, slot, point, size, copies, conversions, passed) in entries {
             bytes.extend(site.to_le_bytes());
@@ -157,6 +183,10 @@ pub(super) fn moves(
                 bytes.extend(name.as_bytes());
             }
         }
+        bytes.extend((redirects.len() as u32).to_le_bytes());
+        for (from, to) in redirects {
+            bytes.extend([from, to].into_iter().flat_map(u32::to_le_bytes));
+        }
     }
     Moves { bytes, count, stays }
 }
@@ -172,9 +202,49 @@ struct Passed {
     size: u32,
 }
 
+/// Of the closures a closure may be now, the one whose text is most like
+/// its own, if it is mostly the same and no other is as close.
+fn likeliest<'a>(entry: &Value, targets: &[&'a String], new: &Value) -> Option<&'a String> {
+    let text = entry["text"].as_str()?;
+    let mut scored: Vec<(f64, &String)> = targets
+        .iter()
+        .filter_map(|&target| Some((likeness(text, new[target.as_str()]["text"].as_str()?), target)))
+        .collect();
+    scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+    match scored.as_slice() {
+        [(best, target), rest @ ..] if *best >= 0.5 && rest.first().is_none_or(|r| r.0 < *best) => Some(target),
+        _ => None,
+    }
+}
+
+/// How alike two texts are, from 0 to 1: the share of the pairs of
+/// characters in a row they have in common (Dice's coefficient).
+fn likeness(a: &str, b: &str) -> f64 {
+    let pairs = |text: &str| {
+        let chars: Vec<char> = text.split_whitespace().flat_map(|w| w.chars().chain([' '])).collect();
+        let mut pairs: Vec<(char, char)> = chars.windows(2).map(|w| (w[0], w[1])).collect();
+        pairs.sort_unstable();
+        pairs
+    };
+    let (a, b) = (pairs(a), pairs(b));
+    if a.is_empty() && b.is_empty() {
+        return 1.0;
+    }
+    let (mut i, mut j, mut common) = (0, 0, 0);
+    while i < a.len() && j < b.len() {
+        match a[i].cmp(&b[j]) {
+            std::cmp::Ordering::Equal => (i, j, common) = (i + 1, j + 1, common + 1),
+            std::cmp::Ordering::Less => i += 1,
+            std::cmp::Ordering::Greater => j += 1,
+        }
+    }
+    2.0 * common as f64 / (a.len() + b.len()) as f64
+}
+
 /// How a frame of the old function passes its parameters to the new one,
 /// of another identity, or why it cannot: its result must be the same, and
-/// each parameter the same or convert, unless it is lent.
+/// each parameter the same or convert, unless it is lent, but for the
+/// captures of a closure that neither changes nor gives them away.
 fn parameters(before: &Value, after: &Value, migrations: &Migrations) -> Result<Vec<Passed>, String> {
     if before["result"] != after["result"] {
         return Err("its result is of a type of another shape".into());
@@ -199,14 +269,18 @@ fn parameters(before: &Value, after: &Value, migrations: &Migrations) -> Result<
             passed.push(Passed { index: index as u32, conversion: None, memory, size });
             continue;
         }
-        if old["loan"].as_bool() == Some(true) {
-            return Err(format!("its parameter {} is lent to it, and its type has another shape", index + 1));
+        let captures = index == 0 && before.get("owns").is_some_and(|owns| owns == false);
+        if old["loan"].as_bool() == Some(true) && !captures {
+            return Err(match index == 0 && before["owns"] == true {
+                true => "it changes its captures or gives them away, and they have another shape now".into(),
+                false => format!("its parameter {} is lent to it, and its type has another shape", index + 1),
+            });
         }
-        match migrations.conversions.get(old_type) {
-            Some((conversion, converted)) if converted == new_type => {
+        match migrations.conversions.get(&(old_type.to_string(), new_type.to_string())) {
+            Some(&conversion) => {
                 let shown = new_type.split(" @").next().unwrap_or(new_type).to_string();
-                let conversion = Some((*conversion, shown));
-                passed.push(Passed { index: index as u32, conversion, memory, size });
+                let conversion = Some((conversion, shown));
+                passed.push(Passed { index: index as u32, conversion, memory: memory || captures, size });
             }
             _ => {
                 return Err(migrations
@@ -337,8 +411,8 @@ fn copies(
             continue;
         }
         // A value of a type of another shape converts, if it can.
-        match migrations.conversions.get(old_type) {
-            Some(&(index, ref converted)) if converted == new_type => {
+        match migrations.conversions.get(&(old_type.to_string(), new_type.to_string())) {
+            Some(&index) => {
                 let shown = new_type.split(" @").next().unwrap_or(new_type).to_string();
                 conversions.push((word(from, "offset"), word(item, "offset"), index as u32, shown));
             }
@@ -362,12 +436,12 @@ fn copies(
     Ok((copies, conversions))
 }
 
-/// The patch's conversions of values of old types, by the old type's key:
-/// each one's place in the patch's table and the new type's key; and why
-/// values of other old types do not convert.
+/// The patch's conversions of values of old types to new ones, by their
+/// keys: each one's place in the patch's table; and why values of other
+/// old types do not convert.
 #[derive(Default)]
 pub(super) struct Migrations {
-    pub conversions: HashMap<String, (usize, String)>,
+    pub conversions: HashMap<(String, String), usize>,
     pub refused: HashMap<String, String>,
 }
 
@@ -402,5 +476,7 @@ mod tests {
         let map = line_map(&[1, 2, 3], &[1, 3]);
         assert_eq!((map[&0], map.get(&1), map[&2]), (0, None, 1));
         assert_eq!(ranges(&[3, 5, 6, 7, 9]), "3, 5–7, 9");
+        assert!(likeness("serve((line) { \"v1 {line}\" })", "serve((line) { \"v2 {line}\" })") > 0.9);
+        assert!(likeness("(line) { \"v1 {line}\" }", "() { console.println(\"bye\") }") < 0.5);
     }
 }

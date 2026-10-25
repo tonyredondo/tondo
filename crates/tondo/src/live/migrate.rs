@@ -15,23 +15,48 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 /// What a patch does with values of the old types frames hold: the
-/// function that converts those of each old type, by its key, with the key
-/// of the new type; why values of others do not convert; and what
-/// converting does to them.
+/// function that converts those of an old type to a new one, by their keys;
+/// why values of others do not convert; and what converting does to them.
 #[derive(Default)]
 pub(super) struct Migrations {
-    pub conversions: HashMap<String, (FnId, String)>,
+    pub conversions: HashMap<(String, String), FnId>,
     pub refused: HashMap<String, String>,
     pub notes: Vec<String>,
 }
 
 /// Adds to the program the conversions of the old types `wanted`, by their
-/// keys, which `structures` describes.
-pub(super) fn add(program: &mut Program, structures: &serde_json::Map<String, Value>, wanted: &[String]) -> Migrations {
+/// keys, which `structures` describes; and of the captures of the old
+/// `closures`, by their keys and their functions' names, to those of the
+/// closures of the same functions now.
+pub(super) fn add(
+    program: &mut Program,
+    structures: &serde_json::Map<String, Value>,
+    wanted: &[String],
+    closures: &[(String, String)],
+) -> Migrations {
     let mut migrations = Migrations::default();
-    let mut rebuild = Rebuild::new(&mut program.types, structures);
+    let Program { types, functions, .. } = program;
+    let mut rebuild = Rebuild::new(types, structures);
     let mut pairs = Vec::new();
+    for (key, name) in closures {
+        let Some(old) = rebuild.old(key) else { continue };
+        let mut captures: Vec<Ty> = functions
+            .iter()
+            .filter(|f| f.name == *name)
+            .filter_map(|f| f.params.first().map(|env| f.locals[env.0 as usize].ty))
+            .collect();
+        captures.dedup();
+        for new in captures {
+            if super::type_key(rebuild.types, new) != *key {
+                pairs.push((key.clone(), old, new));
+            }
+        }
+    }
     for key in wanted {
+        // A closure's captures go with the closure they are now, above.
+        if structures.get(key).and_then(|s| s["adt"].as_str()).is_some_and(|name| name.starts_with("closure")) {
+            continue;
+        }
         match (rebuild.old(key), rebuild.now(key)) {
             (Some(old), Some(new)) if old != new => pairs.push((key.clone(), old, new)),
             (Some(_), Some(_)) => {}
@@ -58,7 +83,7 @@ pub(super) fn add(program: &mut Program, structures: &serde_json::Map<String, Va
     for (key, old, new) in pairs {
         let function = generate.function(old, new);
         let new = super::type_key(&generate.program.types, new);
-        migrations.conversions.insert(key, (function, new));
+        migrations.conversions.insert((key, new), function);
     }
     migrations
 }
@@ -251,6 +276,8 @@ impl Plan<'_> {
             (TyKind::Tuple(from), TyKind::Tuple(to)) if from.len() == to.len() => {
                 from.iter().zip(&to).try_for_each(|(&a, &b)| self.check(a, b))
             }
+            // A number converts as `T(x)` does.
+            _ if types.numeric_conversion(old, new).is_some() => Ok(()),
             _ => Err(format!("a `{}` does not convert to a `{}`", types.display(old), types.display(new))),
         }
     }
@@ -259,10 +286,30 @@ impl Plan<'_> {
     /// converts keep their values, and the new ones, and those of another
     /// type, get the empty value of their type.
     fn fields(&mut self, name: &str, from: &[Field], to: &[Field]) -> Result<(), String> {
+        // What a closure captures is its own business; the types of the
+        // values it captures are not.
+        let notes = std::mem::take(&mut self.notes);
+        let checked = self.record_fields(name, from, to);
+        let made = std::mem::replace(&mut self.notes, notes);
+        self.notes.extend(made.into_iter().filter(|note| !note.starts_with("`closure")));
+        checked
+    }
+
+    fn record_fields(&mut self, name: &str, from: &[Field], to: &[Field]) -> Result<(), String> {
         for field in to {
             let empty = empty_text(self.types, field.ty);
             match from.iter().find(|f| f.name == field.name) {
-                Some(old) if self.fits(old.ty, field.ty) => {}
+                Some(old) if self.fits(old.ty, field.ty) => {
+                    let to = self.types.display(field.ty);
+                    match self.types.numeric_conversion(old.ty, field.ty) {
+                        Some(false) => self.notes.push(format!("`{name}.{}` is `{to}` now: values alive convert", field.name)),
+                        Some(true) => self.notes.push(format!(
+                            "`{name}.{}` is `{to}` now: values alive convert when they fit, and a frame holding one that does not stays on the old code",
+                            field.name
+                        )),
+                        None => {}
+                    }
+                }
                 Some(_) => match empty {
                     Some(empty) => {
                         self.notes.push(format!("`{name}.{}` has another type: values alive get {empty}", field.name))
@@ -408,6 +455,11 @@ impl Generate<'_> {
         if old == new {
             return value;
         }
+        // A number that always fits converts in place; one that may not, in
+        // a function of its own.
+        if self.program.types.numeric_conversion(old, new) == Some(false) {
+            return expr(ExprKind::Convert(Box::new(value)), new);
+        }
         if self.converts(old, new) {
             let function = self.function(old, new);
             let option = self.program.types.intern(TyKind::Option(new));
@@ -539,6 +591,25 @@ impl Generate<'_> {
                 let replaced = self.program.types.intern(TyKind::Option(w));
                 self.collect(body, old, entry, to, Mutation::Insert, vec![key, value], replaced)
             }
+            _ if self.program.types.numeric_conversion(from, to).is_some() => {
+                let error = self.conversion_error();
+                let result = self.program.types.intern(TyKind::Result(to, error));
+                let converted = expr(ExprKind::Convert(Box::new(old)), result);
+                let value = body.local("value", to);
+                let arms = vec![
+                    Arm {
+                        pattern: pattern(PatKind::Variant(0, vec![pattern(PatKind::Binding(value), to)]), result),
+                        guard: None,
+                        body: self.some(expr(ExprKind::Local(value), to)),
+                    },
+                    Arm {
+                        pattern: pattern(PatKind::Variant(1, vec![pattern(PatKind::Wildcard, error)]), result),
+                        guard: None,
+                        body: expr(ExprKind::Variant(0, Vec::new()), option),
+                    },
+                ];
+                return expr(ExprKind::Match(Box::new(converted), arms), option);
+            }
             _ => unreachable!("the plan converts only these"),
         };
         self.some(converted)
@@ -597,6 +668,15 @@ impl Generate<'_> {
             arms.push(Arm { pattern, guard: None, body: value });
         }
         expr(ExprKind::Match(Box::new(old), arms), option)
+    }
+
+    /// The error of a numeric conversion, which the prelude declares.
+    fn conversion_error(&self) -> Ty {
+        let types = &self.program.types;
+        types
+            .all()
+            .find(|&ty| matches!(types.kind(ty), TyKind::Adt(id) if types.adt(*id).name == "NumericConversionError"))
+            .expect("the prelude's `NumericConversionError`")
     }
 
     fn fits(&self, old: Ty, new: Ty) -> bool {

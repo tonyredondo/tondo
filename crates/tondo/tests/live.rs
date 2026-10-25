@@ -397,7 +397,10 @@ fn collections_and_variants_convert() {
     assert!(done && said.contains("`Mode.Busy` is gone: a frame holding one stays on the old code"), "{said}");
     assert_eq!(server.answer("c"), "c 4 4 0 3 busy");
     let told = server.errors.recv_timeout(Duration::from_secs(60)).expect("why the frame stays");
-    assert!(told.contains("one of its `Mode` values is of a variant the new code does not have"), "{told}");
+    assert!(
+        told.contains("one of its `Mode` values does not convert: it is of a variant the new code does not have"),
+        "{told}"
+    );
     server.stop();
 }
 
@@ -615,5 +618,108 @@ fn a_frame_moves_with_its_parameters_converted() {
     let (done, said) = reload(&dir, &server.pid());
     assert!(done && !said.contains("finish on the old code"), "{said}");
     assert_eq!(server.answer("b"), "v1 b 2<>");
+    server.stop();
+}
+
+/// A number converts as `T(x)` does: always when the new type holds every
+/// value of the old, and otherwise when the value fits.
+#[test]
+fn numbers_convert() {
+    let dir = dir("live_numbers");
+    let file = dir.join("holder.to");
+    std::fs::write(&file, HOLDER).unwrap();
+    let mut server = Running::start(&dir, &["run", "holder.to", "--live"]);
+    assert_eq!(server.answer("a"), "a 1");
+    edit(&file, "count: Int }", "count: Float }");
+    edit(&file, "count: 0 }", "count: 0.0 }");
+    edit(&file, "state.count + 1 }", "state.count + 0.5 }");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done && said.contains("`State.count` is `Float` now: values alive convert"), "{said}");
+    assert_eq!(server.answer("b"), "b 1.5");
+    assert_eq!(server.answer("c"), "c 2.0");
+    edit(&file, "count: Float }", "count: Int8 }");
+    edit(&file, "count: 0.0 }", "count: 0 }");
+    edit(&file, "state.count + 0.5 }", "state.count + 1 }");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done && said.contains("`State.count` is `Int8` now: values alive convert when they fit"), "{said}");
+    assert_eq!(server.answer("d"), "d 3");
+    server.stop();
+}
+
+const CLOSURE_STATE: &str = r#"import std.console
+
+type Config = { prefix: String }
+
+let config = Config { prefix: "v1" }
+let serve = () {
+    var seen = 0
+    for {
+        match console.readLine() {
+            some(line) => {
+                seen += 1
+                console.println("{config.prefix} {line} {seen}")
+            }
+            none => break
+        }
+    }
+}
+serve()
+"#;
+
+/// A closure's frame moves when its function's closures are numbered
+/// otherwise, and when what it captures changes shape.
+#[test]
+fn a_closure_s_frame_moves_when_its_identity_changes() {
+    let dir = dir("live_closure_identity");
+    let file = dir.join("serve.to");
+    std::fs::write(&file, CLOSURE_STATE).unwrap();
+    let mut server = Running::start(&dir, &["run", "serve.to", "--live"]);
+    assert_eq!(server.answer("a"), "v1 a 1");
+    edit(&file, "let serve = () {", "let bye = () { console.println(\"bye\") }\nlet serve = () {");
+    edit(&file, "{seen}\")", "{seen}!\")");
+    edit(&file, "serve()\n", "serve()\nbye()\n");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done && !said.contains("finish on the old code"), "{said}");
+    assert_eq!(server.answer("b"), "v1 b 2!");
+    edit(&file, "type Config = { prefix: String }", "type Config = { prefix: String, suffix: String }");
+    edit(&file, "Config { prefix: \"v1\" }", "Config { prefix: \"v1\", suffix: \"s\" }");
+    edit(&file, "{seen}!\")", "{seen}[{config.suffix}]\")");
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done && said.contains("`Config.suffix` is new"), "{said}");
+    assert_eq!(server.answer("c"), "v1 c 3[]");
+    server.stop();
+}
+
+const LAMBDA: &str = r#"import std.console
+
+fn serve(handler: fn(String): String) {
+    for {
+        match console.readLine() {
+            some(line) => console.println(handler(line))
+            none => break
+        }
+    }
+}
+
+serve((line) { "v1 {line}" })
+"#;
+
+/// A closure made before a reload runs its new body even when another
+/// closure comes before it in its function now.
+#[test]
+fn a_closure_numbered_otherwise_runs_its_new_body() {
+    let dir = dir("live_lambda");
+    let file = dir.join("lambda.to");
+    std::fs::write(&file, LAMBDA).unwrap();
+    let mut server = Running::start(&dir, &["run", "lambda.to", "--live"]);
+    assert_eq!(server.answer("a"), "v1 a");
+    edit(
+        &file,
+        "serve((line) { \"v1 {line}\" })",
+        "let bye = () { console.println(\"bye\") }\nserve((line) { \"v2 {line}\" })\nbye()",
+    );
+    let (done, said) = reload(&dir, &server.pid());
+    assert!(done, "{said}");
+    assert_eq!(server.answer("b"), "v2 b");
     server.stop();
 }

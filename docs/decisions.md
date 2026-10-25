@@ -1973,3 +1973,21 @@ points at the caller's value of the old shape. A reload reports only the
 changes of shape it makes, while its conversions still reach frames that
 earlier reloads left on older versions.
 
+## 2026-10-25 — Numbers convert, closures follow
+
+A field that became another numeric type started empty; it now converts
+as `T(x)` does (8.6 of the language): always when the new type holds
+every value of the old, and otherwise when the value fits, a frame whose
+value does not staying on the old code until a statement where it does,
+rather than losing it. A closure's identity carries its place among its
+function's closures, so that editing its body keeps it; adding another
+closure to its function renumbered it, and its frames finished on the old
+code, as a server's handler loop did when `main` gained a lambda. The old
+closure is now matched to the one of the same function and signature
+whose text is most like its own, by the pairs of characters they share,
+which a one-line lambda keeps through an edit as lines would not; its
+frames move with their captures converted, unless the closure changes or
+gives its captures away, as it then works on the closure's own; and when
+only its number changed, the old identity's slot leads to the new code,
+so values of it made before run the new body.
+

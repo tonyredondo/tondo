@@ -562,6 +562,25 @@ impl Types {
         &self.kinds[ty.0 as usize]
     }
 
+    /// Whether a number converts to another numeric type (8.6 of the
+    /// language): `Some(true)` when the conversion can fail, `None` when
+    /// there is none.
+    pub fn numeric_conversion(&self, from: Ty, to: Ty) -> Option<bool> {
+        let range = |ty: Ty| match self.kind(ty) {
+            TyKind::Int(int) => Some((int.min(), int.max())),
+            TyKind::Byte => Some((0, 255)),
+            _ => None,
+        };
+        let float = |ty: Ty| matches!(self.kind(ty), TyKind::Float(_));
+        match (range(from), range(to)) {
+            (Some((from_min, from_max)), Some((to_min, to_max))) => Some(from_min < to_min || from_max > to_max),
+            (Some(_), None) if float(to) => Some(false),
+            (None, Some(_)) if float(from) => Some(true),
+            (None, None) if float(from) && float(to) => Some(from == Ty::F64 && to == Ty::F32),
+            _ => None,
+        }
+    }
+
     /// Every type there is.
     pub fn all(&self) -> impl Iterator<Item = Ty> + use<> {
         (0..self.kinds.len() as u32).map(Ty)
@@ -792,6 +811,13 @@ impl Types {
     /// For the type of a closure: its body and its signature with the
     /// enclosing type parameters replaced by the instance's arguments.
     /// Whether `ty` is the type of a closure.
+    /// Whether a call of the closure whose type this is works on its own
+    /// captures: changes or gives them away.
+    pub fn closure_owns(&self, ty: Ty) -> bool {
+        let Some((template, _)) = self.instance_of(ty) else { return false };
+        self.closures.get(&template).is_some_and(|info| info.mutates || info.once)
+    }
+
     pub fn is_closure(&self, ty: Ty) -> bool {
         match self.kind(ty) {
             TyKind::Adt(id) => {

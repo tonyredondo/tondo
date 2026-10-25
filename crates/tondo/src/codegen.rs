@@ -1619,6 +1619,10 @@ impl Codegen<'_> {
             let text = &self.sources.file_of(first.span.start).text;
             let hashes: Vec<u64> =
                 text.lines().skip(top - 1).take(bottom - top + 1).map(crate::live::line_hash).collect();
+            // A closure's text, which tells which closure it is when the
+            // number of its function's changes.
+            let shown: Vec<&str> = text.lines().skip(top - 1).take(bottom - top + 1).map(str::trim).collect();
+            let shown = body.name.starts_with("closure in ").then(|| shown.join("\n"));
             let mut points = Vec::new();
             for (&(number, point), line) in placed.iter().zip(&lines) {
                 let (items, size) = &live.layouts[&(index, number)];
@@ -1681,6 +1685,10 @@ impl Codegen<'_> {
                 })
                 .collect();
             let result = crate::live::describe(self.types, body.result, &mut build.structures);
+            // A closure's frame works on its captures, through its first
+            // parameter; one that changes them or gives them away works on
+            // the closure's own, which a copy cannot stand for.
+            let owns = body.params.first().is_some_and(|env| self.types.closure_owns(body.locals[env.0 as usize]));
             let entry = serde_json::json!({
                 "file": file,
                 "top": top,
@@ -1688,6 +1696,8 @@ impl Codegen<'_> {
                 "points": points,
                 "params": params,
                 "result": result,
+                "owns": owns,
+                "text": shown,
             });
             functions.insert(live.identities[index].clone(), entry);
         }

@@ -505,11 +505,22 @@ fn patch(
     wanted.dedup();
     let empty = serde_json::Map::new();
     let structures = manifest["structures"].as_object().unwrap_or(&empty);
+    // A closure's captures, by the closure's function.
+    let closures: Vec<(String, String)> = manifest["points"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(identity, _)| identity.starts_with("closure in "))
+        .filter_map(|(identity, function)| {
+            let captures = function["params"].as_array()?.first()?["type"].as_str()?.to_string();
+            Some((captures, osr::base(identity).split('(').next()?.to_string()))
+        })
+        .collect();
     let program = analysis.program.as_mut().expect("a checked program");
-    let migrated = migrate::add(program, structures, &wanted);
+    let migrated = migrate::add(program, structures, &wanted, &closures);
     let mut migrations = osr::Migrations { refused: migrated.refused, ..osr::Migrations::default() };
-    for (key, (function, new)) in migrated.conversions {
-        migrations.conversions.insert(key, (build.migrations.len(), new));
+    for (keys, function) in migrated.conversions {
+        migrations.conversions.insert(keys, build.migrations.len());
         build.migrations.push(function);
     }
     let object = crate::driver::compile(&analysis, true, options.target, Some(&mut build)).map_err(Refused::Failed)?;
@@ -584,13 +595,12 @@ fn patch(
             _ => name,
         }
         .to_string();
-        // A function whose signature reaches a type of another shape is
-        // another identity, but the same function.
-        let base = |identity: &str| identity.split(" @").next().unwrap_or(identity).to_string();
+        // A function whose signature reaches a type of another shape, or
+        // a closure numbered otherwise, is another identity, but the same.
         match known.get(identity) {
             Some(old) if old == hash => {}
             Some(_) => changed.push(name),
-            None if known.keys().any(|k| base(k) == base(identity)) => changed.push(name),
+            None if known.keys().any(|k| osr::base(k) == osr::base(identity)) => changed.push(name),
             None => added.push(name),
         }
     }

@@ -120,7 +120,7 @@ fn apply(path: &str) -> Result<String, String> {
     if bytes.len() < moves_at || table + 40 > size {
         return Err("the patch is damaged".into());
     }
-    let mut moves = moves(&bytes[moves_at..])?;
+    let (mut moves, redirects) = moves(&bytes[moves_at..])?;
     let length = size.next_multiple_of(65536);
     let base = map(length)?;
     let image = unsafe { std::slice::from_raw_parts_mut(base, length) };
@@ -212,6 +212,15 @@ fn apply(path: &str) -> Result<String, String> {
             .expect("the image's slots")
             .store(address, Ordering::Release);
         USED.fetch_max(slot + 1, Ordering::AcqRel);
+    }
+    // Values of a closure that is only numbered otherwise run its new code.
+    for &(from, to) in &redirects {
+        if from as u64 >= info.capacity || to as u64 >= info.capacity {
+            return Err("the patch is damaged".into());
+        }
+        let slot = |index: u32| unsafe { (info.slots.add(index as usize) as *const AtomicU64).as_ref() };
+        let code = slot(to).expect("the image's slots").load(Ordering::Acquire);
+        slot(from).expect("the image's slots").store(code, Ordering::Release);
     }
     // Frames of the old code move once the slots lead to the new: never
     // before, when the state would reach the old code. Each enters this
@@ -353,18 +362,23 @@ struct Conversion {
 type Convert = unsafe extern "C" fn(*const u8, *mut u8) -> u8;
 type Release = unsafe extern "C" fn(*mut u8);
 
+/// A patch's moves, by the site of the old code, and the slots that lead to
+/// another's code.
+type Moves = (Vec<(i64, Move)>, Vec<(u32, u32)>);
+
 /// The moves of the last patch, by the site of the old code.
 static MOVES: std::sync::RwLock<Vec<(i64, Move)>> = std::sync::RwLock::new(Vec::new());
 static PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// The moves a patch ends with, after `OSR3`: their count, then each
+/// The moves a patch ends with, after `OSR4`: their count, then each
 /// one's site, slot, point, size, count of copies and the copies, count of
 /// conversions and each one's place, conversion and type's name, and count
 /// of parameters and each one's place, whether it converts, whether it is
-/// in memory, its conversion, size and type's name.
-fn moves(bytes: &[u8]) -> Result<Vec<(i64, Move)>, String> {
+/// in memory, its conversion, size and type's name; then the count of the
+/// slots that lead to another's code and each pair.
+fn moves(bytes: &[u8]) -> Result<Moves, String> {
     if bytes.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
     let damaged = || "the patch's moves are damaged".to_string();
     let mut at = 0usize;
@@ -374,7 +388,7 @@ fn moves(bytes: &[u8]) -> Result<Vec<(i64, Move)>, String> {
         Ok(slice)
     };
     let u32_of = |b: &[u8]| u32::from_le_bytes(b.try_into().expect("4 bytes"));
-    if take(4)? != b"OSR3" {
+    if take(4)? != b"OSR4" {
         return Err(damaged());
     }
     let count = u32_of(take(4)?);
@@ -405,7 +419,11 @@ fn moves(bytes: &[u8]) -> Result<Vec<(i64, Move)>, String> {
         moves.push((site, Move { slot, code: 0, point, size, copies: list, conversions, params }));
     }
     moves.sort_by_key(|(site, _)| *site);
-    Ok(moves)
+    let mut redirects = Vec::new();
+    for _ in 0..u32_of(take(4)?) {
+        redirects.push((u32_of(take(4)?), u32_of(take(4)?)));
+    }
+    Ok((moves, redirects))
 }
 
 /// What a probe answers for its site: whether its frame moves to new code.
@@ -569,7 +587,7 @@ fn stays(site: i64, name: &str) {
     let _ = std::io::Write::write_fmt(
         &mut std::io::stderr(),
         format_args!(
-            "tondo runtime: a frame at {place} stays on the old code: one of its `{name}` values is of a variant the new code does not have\n"
+            "tondo runtime: a frame at {place} stays on the old code: one of its `{name}` values does not convert: it is of a variant the new code does not have, or a number that does not fit\n"
         ),
     );
 }
