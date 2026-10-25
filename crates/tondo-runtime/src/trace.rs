@@ -559,8 +559,7 @@ pub(crate) unsafe fn faulted(
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         let (pc, fp, link) = {
             let registers = &(*context).uc_mcontext.gregs;
-            let sp = registers[libc::REG_RSP as usize] as usize;
-            let link = if sp == 0 { 0 } else { *(sp as *const usize) };
+            let link = top_word(registers[libc::REG_RSP as usize] as usize, address);
             (registers[libc::REG_RIP as usize] as usize, registers[libc::REG_RBP as usize] as usize, link)
         };
         #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
@@ -571,8 +570,7 @@ pub(crate) unsafe fn faulted(
         #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
         let (pc, fp, link) = {
             let state = &(*(*context).uc_mcontext).__ss;
-            let link = if state.__rsp == 0 { 0 } else { *(state.__rsp as *const usize) };
-            (state.__rip as usize, state.__rbp as usize, link)
+            (state.__rip as usize, state.__rbp as usize, top_word(state.__rsp as usize, address))
         };
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         let (pc, fp, link) = {
@@ -581,6 +579,19 @@ pub(crate) unsafe fn faulted(
         };
         (address, pc, fp, link)
     }
+}
+
+/// The word at the top of the stack, or 0 when the stack pointer may be
+/// past the stack's end, in its guard: a function's frame can take it
+/// there before anything is written, and reading there would fault again
+/// inside the handler.
+#[cfg(target_arch = "x86_64")]
+unsafe fn top_word(sp: usize, address: usize) -> usize {
+    let readable = match crate::tasks::stack_bounds() {
+        Some((bottom, top)) => (bottom..top.saturating_sub(8)).contains(&sp),
+        None => sp != 0 && sp.abs_diff(address) >= crate::tasks::GUARD,
+    };
+    if readable { unsafe { *(sp as *const usize) } } else { 0 }
 }
 
 /// Reports a fault with the trace of the code that made it, and ends the
