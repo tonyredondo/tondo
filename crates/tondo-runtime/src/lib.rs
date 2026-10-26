@@ -1832,18 +1832,20 @@ impl Builder {
     fn grow(&mut self, more: usize) {
         let room = (self.len + more).max(self.room() * 2);
         let layout = str_layout(room);
+        // A new block holds what was asked, as a guess that is seldom
+        // short; one that grows takes all the room its block has.
+        let grown = !self.text.is_null();
         let text = unsafe {
-            if self.text.is_null() {
-                alloc(layout)
-            } else {
-                std::alloc::realloc(self.text as *mut u8, str_layout(self.room()), layout.size())
+            match grown {
+                false => alloc(layout),
+                true => std::alloc::realloc(self.text as *mut u8, str_layout(self.room()), layout.size()),
             }
         };
         if text.is_null() {
             handle_alloc_error(layout);
         }
         self.text = text as *mut Str;
-        unsafe { (*self.text).len = meta::usable(text, layout.size()) - HEADER }
+        unsafe { (*self.text).len = if grown { meta::usable(text, layout.size()) - HEADER } else { room } }
     }
 
     /// The string built. Its block keeps room it does not use, as much as it
