@@ -35,14 +35,14 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 pub fn lower(program: &hir::Program, live: bool) -> Vec<Body> {
+    // Each function on its own, on every core.
     let lower_all = |waits: Option<&[bool]>| -> Vec<Body> {
         let restart = |index: usize, f: &hir::Function| (live && !f.test).then_some(hir::FnId(index as u32));
-        program
-            .functions
-            .iter()
-            .enumerate()
-            .map(|(i, f)| lower_function(&program.types, f, waits, restart(i, f)))
-            .collect()
+        let indices: Vec<usize> = (0..program.functions.len()).collect();
+        crate::parallel::map(&indices, 1, |&i| {
+            let f = &program.functions[i];
+            lower_function(&program.types, f, waits, restart(i, f))
+        })
     };
     let plain = lower_all(None);
     let waits = waiting(&plain);

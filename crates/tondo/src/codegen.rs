@@ -39,6 +39,7 @@ use std::collections::HashSet;
 
 mod cabi;
 use cabi::{CTarget, Callback, define_adapter, define_inner};
+mod worker;
 
 const POINTER: ir::Type = types::I64;
 const IMMORTAL: u64 = u64::MAX;
@@ -697,6 +698,7 @@ pub fn compile(
         None => cranelift_native::builder().map_err(|e| format!("unsupported host: {e}"))?,
     };
     let isa = builder.finish(settings::Flags::new(flags)).map_err(|e| e.to_string())?;
+    let shapes = Shapes::new(&program.types, &*isa);
     let builder =
         ObjectBuilder::new(isa, "tondo", cranelift_module::default_libcall_names()).map_err(|e| e.to_string())?;
     let mut cg = Codegen {
@@ -707,7 +709,7 @@ pub fn compile(
         functions: Vec::new(),
         runtime: HashMap::new(),
         strings: HashMap::new(),
-        layouts: HashMap::new(),
+        shapes,
         glue: HashMap::new(),
         pending_glue: Vec::new(),
         map_glue: HashMap::new(),
@@ -752,23 +754,35 @@ pub fn compile(
     }
     let mut context = cg.module.make_context();
     let mut builder_context = FunctionBuilderContext::new();
-    // The IR of every function is built here, in order; `compile_all`
-    // compiles them on every core.
+    // The IR of every function is built on every core, and what each asks
+    // to declare is declared in the functions' order (see `worker`);
+    // `compile_all` compiles them on every core.
     let mut jobs = Vec::new();
     let mut job = |id: FuncId, context: &mut cranelift_codegen::Context, traced: Option<&str>, sites| {
         let func = std::mem::replace(&mut context.func, ir::Function::new());
         jobs.push(Job { id, func, traced: traced.map(str::to_string), sites });
     };
-    for (index, body) in bodies.iter().enumerate() {
-        context.func.signature = cg.signature(body);
-        context.func.name = UserFuncName::user(0, index as u32);
+    let built = {
+        let shared = worker::Shared::new(&cg);
+        let indices: Vec<usize> = (0..bodies.len()).collect();
+        crate::parallel::map(&indices, 1, |&index| worker::build(&shared, bodies, index))
+    };
+    for (index, (body, mut built)) in bodies.iter().zip(built).enumerate() {
         cg.current = index;
-        let sites = FnCodegen::new(&mut cg, body, bodies, &mut context.func, &mut builder_context).run();
         // A test's trace ends at the test, without the runner's tree that
         // calls it.
         let runner = !program.tests.is_empty() && program.main.is_some_and(|main| index == main.0 as usize);
-        let traced = !runner && !body.name.starts_with("suite ");
-        job(cg.functions[index], &mut context, traced.then_some(body.name.as_str()), sites);
+        let traced = (!runner && !body.name.starts_with("suite ")).then_some(body.name.as_str());
+        if built.serial {
+            context.func.signature = cg.signature(body);
+            context.func.name = UserFuncName::user(0, index as u32);
+            let sites = FnCodegen::new(&mut cg, body, bodies, &mut context.func, &mut builder_context).run();
+            job(cg.functions[index], &mut context, traced, sites);
+        } else {
+            worker::replay(&mut cg, bodies, &mut built);
+            context.func = built.func;
+            job(cg.functions[index], &mut context, traced, built.sites);
+        }
         cg.module.clear_context(&mut context);
     }
     let trace = cg.module.declare_data("tondo_trace", Linkage::Local, false, false).map_err(|e| e.to_string())?;
@@ -877,7 +891,7 @@ struct Codegen<'a> {
     functions: Vec<FuncId>,
     runtime: HashMap<Rt, FuncId>,
     strings: HashMap<String, DataId>,
-    layouts: HashMap<Ty, Layout>,
+    shapes: Shapes<'a>,
     glue: HashMap<(Glue, Ty), FuncId>,
     pending_glue: Vec<(Glue, Ty, FuncId)>,
     map_glue: HashMap<Ty, DataId>,
@@ -1062,26 +1076,26 @@ fn code_hash(code: &Compiled, labels: &Labels) -> u64 {
 
 /// Calls one of the program's functions: directly, or in a live build
 /// through its slot, which a patch may point at new code.
-fn call_body(cg: &mut Codegen, fb: &mut FunctionBuilder, id: FnId, args: &[ir::Value]) -> ir::Inst {
+fn call_body<'t, G: Gen<'t> + ?Sized>(cg: &mut G, fb: &mut FunctionBuilder, id: FnId, args: &[ir::Value]) -> ir::Inst {
     call_body_with(cg, fb, id, args, None)
 }
 
 /// A call with the state a frame brings to the new code, or none.
-fn call_body_with(
-    cg: &mut Codegen,
+fn call_body_with<'t, G: Gen<'t> + ?Sized>(
+    cg: &mut G,
     fb: &mut FunctionBuilder,
     id: FnId,
     args: &[ir::Value],
     state: Option<ir::Value>,
 ) -> ir::Inst {
     let mut args = args.to_vec();
-    if cg.takes_osr[id.0 as usize] {
+    if cg.takes_osr(id) {
         args.push(state.unwrap_or_else(|| fb.ins().iconst(types::I64, 0)));
     }
     let args = &args[..];
-    let func = cg.functions[id.0 as usize];
-    let Some(live) = &cg.live else {
-        let callee = cg.module.declare_func_in_func(func, fb.func);
+    let func = cg.function(id);
+    let Some((table, slot)) = cg.slot_of(id) else {
+        let callee = cg.declare_func_in_func(func, fb.func);
         return fb.ins().call(callee, args);
     };
     // A frame that moves enters the code its state is for, which a patch
@@ -1089,13 +1103,12 @@ fn call_body_with(
     let code = match state {
         Some(state) => fb.ins().load(POINTER, flags(), state, 8),
         None => {
-            let (table, slot) = (live.slots, live.slot_of[id.0 as usize]);
-            let table = cg.module.declare_data_in_func(table, fb.func);
+            let table = cg.declare_data_in_func(table, fb.func);
             let base = fb.ins().symbol_value(POINTER, table);
             fb.ins().load(POINTER, flags(), base, (slot * 8) as i32)
         }
     };
-    let signature = cg.module.declarations().get_function_decl(func).signature.clone();
+    let signature = cg.function_signature(func);
     let signature = fb.import_signature(signature);
     fb.ins().call_indirect(signature, code, args)
 }
@@ -1173,7 +1186,31 @@ fn compile_one(
     })
 }
 
-impl Codegen<'_> {
+/// What the code generator knows of the program's types without declaring
+/// anything: their classes and layouts, and the signatures that pass them,
+/// which any core can work out.
+struct Shapes<'t> {
+    types: &'t Types,
+    layouts: HashMap<Ty, Layout>,
+    call_conv: cranelift_codegen::isa::CallConv,
+    abi: cabi::Abi,
+}
+
+impl<'t> Shapes<'t> {
+    fn new(types: &'t Types, isa: &dyn cranelift_codegen::isa::TargetIsa) -> Shapes<'t> {
+        let abi = match (isa.name(), isa.default_call_conv()) {
+            ("aarch64", call_conv) => {
+                cabi::Abi::Arm64 { apple: call_conv == cranelift_codegen::isa::CallConv::AppleAarch64 }
+            }
+            _ => cabi::Abi::X64,
+        };
+        Shapes { types, layouts: HashMap::new(), call_conv: isa.default_call_conv(), abi }
+    }
+
+    fn make_signature(&self) -> ir::Signature {
+        ir::Signature::new(self.call_conv)
+    }
+
     fn class(&mut self, ty: Ty) -> Class {
         let repr = self.types.repr(ty);
         match self.types.kind(repr) {
@@ -1310,7 +1347,7 @@ impl Codegen<'_> {
     }
 
     fn signature(&mut self, body: &Body) -> ir::Signature {
-        let mut signature = self.module.make_signature();
+        let mut signature = self.make_signature();
         if self.class(body.result) == Class::Memory {
             signature.params.push(AbiParam::new(POINTER));
         }
@@ -1338,7 +1375,7 @@ impl Codegen<'_> {
     /// the result lives in memory, the captures' address, then the
     /// parameters. Closure bodies and thunks follow it.
     fn uniform_signature(&mut self, params: &[Ty], loans: &[bool], result: Ty) -> ir::Signature {
-        let mut signature = self.module.make_signature();
+        let mut signature = self.make_signature();
         if self.class(result) == Class::Memory {
             signature.params.push(AbiParam::new(POINTER));
         }
@@ -1357,32 +1394,8 @@ impl Codegen<'_> {
         signature
     }
 
-    /// The static `fn(...)` object of a named function, created on first use.
-    fn fn_value(&mut self, id: FnId, body: &Body) -> DataId {
-        if let Some(&(data, _)) = self.fn_values.get(&id) {
-            return data;
-        }
-        let params: Vec<Ty> = body.params.iter().map(|p| body.locals[p.0 as usize]).collect();
-        let signature = self.uniform_signature(&params, &body.loans, body.result);
-        let name = format!("tondo_thunk{}", id.0);
-        let thunk = self.module.declare_function(&name, Linkage::Local, &signature).expect("thunk declaration");
-        let data =
-            self.module.declare_data(&format!("tondo_fn{}", id.0), Linkage::Local, false, false).expect("fn value");
-        let mut description = DataDescription::new();
-        let mut bytes = vec![0u8; FN_HEADER as usize];
-        bytes[..8].copy_from_slice(&IMMORTAL.to_le_bytes());
-        description.define(bytes.into_boxed_slice());
-        description.set_align(8);
-        let reference = self.module.declare_func_in_data(thunk, &mut description);
-        description.write_function_addr(16, reference);
-        self.module.define_data(data, &description).expect("fn value definition");
-        self.fn_values.insert(id, (data, thunk));
-        self.pending_thunks.push((id, thunk));
-        data
-    }
-
     fn glue_signature(&mut self, kind: Glue) -> ir::Signature {
-        let mut signature = self.module.make_signature();
+        let mut signature = self.make_signature();
         signature.params.push(AbiParam::new(POINTER));
         if matches!(kind, Glue::Display | Glue::Visit | Glue::Show) {
             signature.params.push(AbiParam::new(POINTER));
@@ -1421,6 +1434,275 @@ impl Codegen<'_> {
         let (key, value) = (self.layout(key), self.layout(value));
         let offset = key.size.next_multiple_of(value.align);
         ((offset + value.size).next_multiple_of(key.align.max(value.align)), offset)
+    }
+}
+
+/// The symbol of a function of the runtime, and its signature, which
+/// `signature` starts as.
+fn runtime_signature(rt: Rt, mut signature: ir::Signature) -> (&'static str, ir::Signature) {
+    let native;
+    let (name, params, returns) = match rt {
+        Rt::Native(index) => {
+            let function = &crate::hir::NATIVES[index as usize];
+            let clif = |ty: crate::hir::NativeTy| match ty {
+                crate::hir::NativeTy::Float => types::F64,
+                crate::hir::NativeTy::Bool => types::I8,
+                crate::hir::NativeTy::Char => types::I32,
+                _ => types::I64,
+            };
+            let params: Vec<ir::Type> = function.receiver.iter().chain(function.params).map(|&t| clif(t)).collect();
+            let returns: Vec<ir::Type> =
+                (function.result != crate::hir::NativeTy::Unit).then(|| clif(function.result)).into_iter().collect();
+            native = (params, returns);
+            (function.symbol, native.0.as_slice(), native.1.as_slice())
+        }
+        _ => rt.signature(),
+    };
+    // The C ABI as LLVM implements it expects narrow integer arguments
+    // extended to 32 bits by the caller.
+    signature.params.extend(
+        params.iter().map(|&t| if t.is_int() && t.bits() < 32 { AbiParam::new(t).uext() } else { AbiParam::new(t) }),
+    );
+    signature.returns.extend(returns.iter().map(|&t| AbiParam::new(t)));
+    (name, signature)
+}
+
+/// What building a function's IR asks of the code generator: what the
+/// program is, the shapes of its types, the functions and data the code
+/// refers to, and what debug and live builds record of it. `Codegen`
+/// declares those as asked; a `Worker`, which builds a function on another
+/// core, names them so that `replay` declares them in the same order.
+trait Gen<'t> {
+    fn shapes(&mut self) -> &mut Shapes<'t>;
+    fn types(&self) -> &'t Types;
+    fn sources(&self) -> &'t SourceMap;
+    fn display(&self) -> &'t HashMap<Ty, FnId>;
+    fn externs(&self) -> &'t [crate::hir::Extern];
+    fn meta(&self) -> bool;
+    fn isa(&self) -> &dyn cranelift_codegen::isa::TargetIsa;
+    /// Which parameters of a function are loans.
+    fn loans(&self, id: FnId) -> Vec<bool>;
+    /// A function of the program, and whether it takes a live build's
+    /// hidden parameter.
+    fn function(&self, id: FnId) -> FuncId;
+    fn takes_osr(&self, id: FnId) -> bool;
+    fn function_signature(&self, id: FuncId) -> ir::Signature;
+    /// In a live build, the table of slots and a function's slot.
+    fn live(&self) -> bool;
+    fn slot_of(&self, id: FnId) -> Option<(DataId, u32)>;
+    /// The number a patch's debugger sites start from.
+    fn site_base(&self) -> u32;
+    fn debug(&self) -> bool;
+
+    fn string(&mut self, text: &str) -> DataId;
+    fn identity(&mut self, ty: Ty) -> DataId;
+    fn glue(&mut self, kind: Glue, ty: Ty) -> FuncId;
+    fn runtime(&mut self, rt: Rt) -> FuncId;
+    fn fn_value(&mut self, id: FnId, body: &Body) -> DataId;
+    fn map_glue(&mut self, ty: Ty) -> DataId;
+    fn closure_code(&mut self, body: FnId) -> FuncId;
+    fn c_function(&mut self, symbol: &str, signature: &ir::Signature) -> (FuncId, bool);
+    fn callback(&mut self, target: FnId, ty: Ty, closure: bool) -> FuncId;
+    fn declare_func_in_func(&mut self, id: FuncId, func: &mut ir::Function) -> ir::FuncRef;
+    fn declare_data_in_func(&mut self, id: DataId, func: &mut ir::Function) -> ir::GlobalValue;
+
+    /// A debug build's function, with the bindings it shows: its number.
+    fn debug_function(&mut self, name: String, described: Vec<DebugBinding>) -> u32;
+    /// In a live build, the word that holds the number of the function's
+    /// first site, and that number.
+    fn function_sites(&mut self) -> Option<(DataId, usize)>;
+    /// A probe of the function `function` at `start`: its site's number.
+    fn debug_site(&mut self, start: u32, function: u32) -> usize;
+    /// The number of the site `index`, as an instruction's constant.
+    fn site_constant(&mut self, fb: &mut FunctionBuilder, index: usize) -> ir::Value;
+    /// In a live build, the site of the probe of a point of the function.
+    fn point_site(&mut self, point: u32, number: u32);
+    /// In a live build, how a point's state is laid out, once worked out.
+    fn point_layout(&self, point: u32) -> Option<StateLayout>;
+    fn keep_point_layout(&mut self, point: u32, layout: StateLayout);
+
+    fn class(&mut self, ty: Ty) -> Class {
+        self.shapes().class(ty)
+    }
+    fn layout(&mut self, ty: Ty) -> Layout {
+        self.shapes().layout(ty)
+    }
+    fn scalar_type(&mut self, ty: Ty) -> ir::Type {
+        self.shapes().scalar_type(ty)
+    }
+    fn slot(&mut self, ty: Ty, proj: Proj) -> Slot {
+        self.shapes().slot(ty, proj)
+    }
+    fn signature(&mut self, body: &Body) -> ir::Signature {
+        self.shapes().signature(body)
+    }
+    fn uniform_signature(&mut self, params: &[Ty], loans: &[bool], result: Ty) -> ir::Signature {
+        self.shapes().uniform_signature(params, loans, result)
+    }
+    fn glue_signature(&mut self, kind: Glue) -> ir::Signature {
+        self.shapes().glue_signature(kind)
+    }
+    fn sequence_parts(&mut self, ty: Ty) -> (Ty, bool) {
+        self.shapes().sequence_parts(ty)
+    }
+    fn map_parts(&mut self, ty: Ty) -> (Ty, Ty) {
+        self.shapes().map_parts(ty)
+    }
+    fn entry_layout(&mut self, ty: Ty) -> (u32, u32) {
+        self.shapes().entry_layout(ty)
+    }
+    fn abi(&mut self) -> cabi::Abi {
+        self.shapes().abi
+    }
+    fn c_plan(&mut self, args: &[Ty], fixed: usize, result: Ty) -> cabi::Plan {
+        self.shapes().c_plan(args, fixed, result)
+    }
+    fn c_signature(&mut self, params: &[Ty], result: Ty) -> ir::Signature {
+        self.shapes().c_signature(params, result)
+    }
+    fn callback_frame(&mut self, ty: Ty) -> (Vec<u32>, u32) {
+        self.shapes().callback_frame(ty)
+    }
+}
+
+impl<'t> Gen<'t> for Codegen<'t> {
+    fn shapes(&mut self) -> &mut Shapes<'t> {
+        &mut self.shapes
+    }
+    fn types(&self) -> &'t Types {
+        self.types
+    }
+    fn sources(&self) -> &'t SourceMap {
+        self.sources
+    }
+    fn display(&self) -> &'t HashMap<Ty, FnId> {
+        self.display
+    }
+    fn externs(&self) -> &'t [crate::hir::Extern] {
+        self.externs
+    }
+    fn meta(&self) -> bool {
+        self.meta
+    }
+    fn isa(&self) -> &dyn cranelift_codegen::isa::TargetIsa {
+        self.module.isa()
+    }
+    fn loans(&self, id: FnId) -> Vec<bool> {
+        self.loans[id.0 as usize].clone()
+    }
+    fn function(&self, id: FnId) -> FuncId {
+        self.functions[id.0 as usize]
+    }
+    fn takes_osr(&self, id: FnId) -> bool {
+        self.takes_osr[id.0 as usize]
+    }
+    fn function_signature(&self, id: FuncId) -> ir::Signature {
+        self.module.declarations().get_function_decl(id).signature.clone()
+    }
+    fn live(&self) -> bool {
+        self.live.is_some()
+    }
+    fn slot_of(&self, id: FnId) -> Option<(DataId, u32)> {
+        self.live.as_ref().map(|live| (live.slots, live.slot_of[id.0 as usize]))
+    }
+    fn site_base(&self) -> u32 {
+        self.live.as_ref().and_then(|live| live.patch.as_ref()).map_or(0, |(_, sites)| *sites)
+    }
+    fn debug(&self) -> bool {
+        self.debug.is_some()
+    }
+    fn string(&mut self, text: &str) -> DataId {
+        Codegen::string(self, text)
+    }
+    fn identity(&mut self, ty: Ty) -> DataId {
+        Codegen::identity(self, ty)
+    }
+    fn glue(&mut self, kind: Glue, ty: Ty) -> FuncId {
+        Codegen::glue(self, kind, ty)
+    }
+    fn runtime(&mut self, rt: Rt) -> FuncId {
+        Codegen::runtime(self, rt)
+    }
+    fn fn_value(&mut self, id: FnId, body: &Body) -> DataId {
+        Codegen::fn_value(self, id, body)
+    }
+    fn map_glue(&mut self, ty: Ty) -> DataId {
+        Codegen::map_glue(self, ty)
+    }
+    fn closure_code(&mut self, body: FnId) -> FuncId {
+        Codegen::closure_code(self, body)
+    }
+    fn c_function(&mut self, symbol: &str, signature: &ir::Signature) -> (FuncId, bool) {
+        Codegen::c_function(self, symbol, signature)
+    }
+    fn callback(&mut self, target: FnId, ty: Ty, closure: bool) -> FuncId {
+        Codegen::callback(self, target, ty, closure)
+    }
+    fn declare_func_in_func(&mut self, id: FuncId, func: &mut ir::Function) -> ir::FuncRef {
+        self.module.declare_func_in_func(id, func)
+    }
+    fn declare_data_in_func(&mut self, id: DataId, func: &mut ir::Function) -> ir::GlobalValue {
+        self.module.declare_data_in_func(id, func)
+    }
+    fn debug_function(&mut self, name: String, described: Vec<DebugBinding>) -> u32 {
+        self.debug_functions.push((name, described));
+        self.debug_functions.len() as u32 - 1
+    }
+    fn function_sites(&mut self) -> Option<(DataId, usize)> {
+        self.live.as_ref()?;
+        let name = format!("tondo_sites{}", self.debug_functions.len() - 1);
+        let id = self.module.declare_data(&name, Linkage::Local, false, false).expect("a function's sites");
+        let first = self.debug_sites.len();
+        self.live.as_mut().expect("a live build").sites.push((id, self.current, first));
+        Some((id, first))
+    }
+    fn debug_site(&mut self, start: u32, function: u32) -> usize {
+        self.debug_sites.push((start, function));
+        self.debug_sites.len() - 1
+    }
+    fn site_constant(&mut self, fb: &mut FunctionBuilder, index: usize) -> ir::Value {
+        fb.ins().iconst(types::I64, index as i64)
+    }
+    fn point_site(&mut self, point: u32, number: u32) {
+        let function = self.current;
+        if let Some(live) = self.live.as_mut() {
+            live.point_sites.insert((function, point), number);
+        }
+    }
+    fn point_layout(&self, point: u32) -> Option<StateLayout> {
+        self.live.as_ref().and_then(|live| live.layouts.get(&(self.current, point)).cloned())
+    }
+    fn keep_point_layout(&mut self, point: u32, layout: StateLayout) {
+        let function = self.current;
+        if let Some(live) = self.live.as_mut() {
+            live.layouts.insert((function, point), layout);
+        }
+    }
+}
+
+impl Codegen<'_> {
+    /// The static `fn(...)` object of a named function, created on first use.
+    fn fn_value(&mut self, id: FnId, body: &Body) -> DataId {
+        if let Some(&(data, _)) = self.fn_values.get(&id) {
+            return data;
+        }
+        let params: Vec<Ty> = body.params.iter().map(|p| body.locals[p.0 as usize]).collect();
+        let signature = self.uniform_signature(&params, &body.loans, body.result);
+        let name = format!("tondo_thunk{}", id.0);
+        let thunk = self.module.declare_function(&name, Linkage::Local, &signature).expect("thunk declaration");
+        let data =
+            self.module.declare_data(&format!("tondo_fn{}", id.0), Linkage::Local, false, false).expect("fn value");
+        let mut description = DataDescription::new();
+        let mut bytes = vec![0u8; FN_HEADER as usize];
+        bytes[..8].copy_from_slice(&IMMORTAL.to_le_bytes());
+        description.define(bytes.into_boxed_slice());
+        description.set_align(8);
+        let reference = self.module.declare_func_in_data(thunk, &mut description);
+        description.write_function_addr(16, reference);
+        self.module.define_data(data, &description).expect("fn value definition");
+        self.fn_values.insert(id, (data, thunk));
+        self.pending_thunks.push((id, thunk));
+        data
     }
 
     /// The static table of glue functions the runtime uses for a map or set.
@@ -1498,37 +1780,7 @@ impl Codegen<'_> {
         if let Some(&id) = self.runtime.get(&rt) {
             return id;
         }
-        let native;
-        let (name, params, returns) = match rt {
-            Rt::Native(index) => {
-                let function = &crate::hir::NATIVES[index as usize];
-                let clif = |ty: crate::hir::NativeTy| match ty {
-                    crate::hir::NativeTy::Float => types::F64,
-                    crate::hir::NativeTy::Bool => types::I8,
-                    crate::hir::NativeTy::Char => types::I32,
-                    _ => types::I64,
-                };
-                let params: Vec<ir::Type> = function.receiver.iter().chain(function.params).map(|&t| clif(t)).collect();
-                let returns: Vec<ir::Type> = (function.result != crate::hir::NativeTy::Unit)
-                    .then(|| clif(function.result))
-                    .into_iter()
-                    .collect();
-                native = (params, returns);
-                (function.symbol, native.0.as_slice(), native.1.as_slice())
-            }
-            _ => rt.signature(),
-        };
-        let mut signature = self.module.make_signature();
-        // The C ABI as LLVM implements it expects narrow integer arguments
-        // extended to 32 bits by the caller.
-        signature.params.extend(
-            params.iter().map(
-                |&t| {
-                    if t.is_int() && t.bits() < 32 { AbiParam::new(t).uext() } else { AbiParam::new(t) }
-                },
-            ),
-        );
-        signature.returns.extend(returns.iter().map(|&t| AbiParam::new(t)));
+        let (name, signature) = runtime_signature(rt, self.module.make_signature());
         let id = self.module.declare_function(name, Linkage::Import, &signature).expect("runtime declaration");
         self.runtime.insert(rt, id);
         id
@@ -2311,37 +2563,37 @@ impl Codegen<'_> {
 }
 
 /// Code emission shared by function bodies and glue functions.
-struct Emit<'a, 'b> {
-    cg: &'a mut Codegen<'b>,
+struct Emit<'a, G: ?Sized> {
+    cg: &'a mut G,
     fb: FunctionBuilder<'a>,
 }
 
-impl Emit<'_, '_> {
+impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
     fn call_rt(&mut self, rt: Rt, args: &[ir::Value]) -> Option<ir::Value> {
         let id = self.cg.runtime(rt);
-        let callee = self.cg.module.declare_func_in_func(id, self.fb.func);
+        let callee = self.cg.declare_func_in_func(id, self.fb.func);
         let call = self.fb.ins().call(callee, args);
         self.fb.inst_results(call).first().copied()
     }
 
     fn call_glue(&mut self, kind: Glue, ty: Ty, args: &[ir::Value]) -> Option<ir::Value> {
         let id = self.cg.glue(kind, ty);
-        let callee = self.cg.module.declare_func_in_func(id, self.fb.func);
+        let callee = self.cg.declare_func_in_func(id, self.fb.func);
         let call = self.fb.ins().call(callee, args);
         self.fb.inst_results(call).first().copied()
     }
 
     fn glue_address(&mut self, kind: Glue, ty: Ty) -> ir::Value {
         let id = self.cg.glue(kind, ty);
-        let callee = self.cg.module.declare_func_in_func(id, self.fb.func);
+        let callee = self.cg.declare_func_in_func(id, self.fb.func);
         self.fb.ins().func_addr(POINTER, callee)
     }
 
     /// A glue function's address, or null when a retain or release of `ty`
     /// has nothing to do.
     fn glue_or_null(&mut self, kind: Glue, ty: Ty) -> ir::Value {
-        if matches!(kind, Glue::Retain | Glue::Release) && !self.cg.types.needs_drop(ty)
-            || kind == Glue::Visit && !self.cg.types.can_cycle(ty)
+        if matches!(kind, Glue::Retain | Glue::Release) && !self.cg.types().needs_drop(ty)
+            || kind == Glue::Visit && !self.cg.types().can_cycle(ty)
         {
             return self.fb.ins().iconst(POINTER, 0);
         }
@@ -2350,7 +2602,7 @@ impl Emit<'_, '_> {
 
     fn map_glue_address(&mut self, ty: Ty) -> ir::Value {
         let id = self.cg.map_glue(ty);
-        let global = self.cg.module.declare_data_in_func(id, self.fb.func);
+        let global = self.cg.declare_data_in_func(id, self.fb.func);
         self.fb.ins().symbol_value(POINTER, global)
     }
 
@@ -2366,7 +2618,7 @@ impl Emit<'_, '_> {
         match value {
             Val::Zero => seed,
             Val::Scalar(value) => {
-                let word = match *self.cg.types.kind(self.cg.types.repr(ty)) {
+                let word = match *self.cg.types().kind(self.cg.types().repr(ty)) {
                     TyKind::String => self.call_rt(Rt::StrHash, &[value]).unwrap(),
                     TyKind::Int(int) if int.signed() && int.bits() < 64 => self.fb.ins().sextend(types::I64, value),
                     _ => match self.cg.scalar_type(ty).bits() {
@@ -2378,7 +2630,7 @@ impl Emit<'_, '_> {
             }
             Val::Memory(address) => match self.cg.layout(ty).shape {
                 Shape::Struct(_) => {
-                    let count = self.cg.types.components(ty).unwrap().len() as u32;
+                    let count = self.cg.types().components(ty).unwrap().len() as u32;
                     let mut hash = seed;
                     for index in 0..count {
                         let slot = self.cg.slot(ty, Proj::Field(index));
@@ -2405,7 +2657,7 @@ impl Emit<'_, '_> {
 
     /// Appends the `Display` text of `value` to `builder`.
     fn append_display(&mut self, builder: ir::Value, ty: Ty, value: Val) {
-        if let Some(&id) = self.cg.display.get(&ty) {
+        if let Some(&id) = self.cg.display().get(&ty) {
             // A user type: its `Display.display` returns an owned string.
             let args: Vec<ir::Value> = match value {
                 Val::Scalar(v) | Val::Memory(v) => vec![v],
@@ -2417,7 +2669,7 @@ impl Emit<'_, '_> {
             self.call_rt(Rt::StrRelease, &[text]);
             return;
         }
-        let types = self.cg.types;
+        let types = self.cg.types();
         if let TyKind::Result(success, failure) = *types.kind(types.repr(ty)) {
             let tag = self.tag(ty, value);
             let (good, bad, done) = (self.fb.create_block(), self.fb.create_block(), self.fb.create_block());
@@ -2595,7 +2847,7 @@ impl Emit<'_, '_> {
     /// Components that are not scalars go through their own glue, so a
     /// recursive type does not expand forever.
     fn append_show(&mut self, builder: ir::Value, ty: Ty, value: Val, address: ir::Value) {
-        let types = self.cg.types;
+        let types = self.cg.types();
         let repr = types.repr(ty);
         let text = |e: &mut Self, text: &str| {
             let text = e.string_ptr(text);
@@ -2718,7 +2970,7 @@ impl Emit<'_, '_> {
 
     fn string_ptr(&mut self, text: &str) -> ir::Value {
         let id = self.cg.string(text);
-        let global = self.cg.module.declare_data_in_func(id, self.fb.func);
+        let global = self.cg.declare_data_in_func(id, self.fb.func);
         self.fb.ins().symbol_value(POINTER, global)
     }
 
@@ -2776,7 +3028,7 @@ impl Emit<'_, '_> {
     /// Where a reference's value is: after its header, or in a live build,
     /// which keeps it apart, where the header says.
     fn ref_value(&mut self, reference: ir::Value) -> ir::Value {
-        match self.cg.live.is_some() {
+        match self.cg.live() {
             true => self.fb.ins().load(POINTER, flags(), reference, REF_HEADER as i32),
             false => self.fb.ins().iadd_imm_s(reference, REF_HEADER),
         }
@@ -2784,7 +3036,7 @@ impl Emit<'_, '_> {
 
     fn copy_memory(&mut self, destination: ir::Value, source: ir::Value, size: u32) {
         if size > 64 {
-            let config = self.cg.module.isa().frontend_config();
+            let config = self.cg.isa().frontend_config();
             let size = self.fb.ins().iconst(POINTER, size as i64);
             self.fb.call_memcpy(config, destination, source, size);
             return;
@@ -2811,7 +3063,7 @@ impl Emit<'_, '_> {
         match value {
             Val::Scalar(tag) => tag,
             Val::Memory(address) => {
-                let tag = self.cg.scalar_type(self.cg.types.tag_ty(ty));
+                let tag = self.cg.scalar_type(self.cg.types().tag_ty(ty));
                 self.fb.ins().load(tag, flags(), address, 0)
             }
             Val::Zero => self.fb.ins().iconst(types::I8, 0),
@@ -2823,7 +3075,7 @@ impl Emit<'_, '_> {
     /// With `display`, a type's own `Display` comes first, and the string
     /// is owned.
     fn describe(&mut self, ty: Ty, value: Val, display: bool) -> ir::Value {
-        if display && let Some(&id) = self.cg.display.get(&ty) {
+        if display && let Some(&id) = self.cg.display().get(&ty) {
             let args: Vec<ir::Value> = match value {
                 Val::Scalar(v) | Val::Memory(v) => vec![v],
                 Val::Zero => Vec::new(),
@@ -2831,7 +3083,7 @@ impl Emit<'_, '_> {
             let call = call_body(self.cg, &mut self.fb, id, &args);
             return self.fb.inst_results(call)[0];
         }
-        let types = self.cg.types;
+        let types = self.cg.types();
         let repr = types.repr(ty);
         if repr == Ty::STRING
             && let Val::Scalar(text) = value
@@ -2892,11 +3144,11 @@ impl Emit<'_, '_> {
 
     /// Retains or releases every counted value inside `value`.
     fn refcount(&mut self, ty: Ty, value: Val, release: bool) {
-        if !self.cg.types.needs_drop(ty) {
+        if !self.cg.types().needs_drop(ty) {
             return;
         }
         match (value, self.cg.layout(ty).shape) {
-            (Val::Scalar(pointer), _) => match *self.cg.types.kind(self.cg.types.repr(ty)) {
+            (Val::Scalar(pointer), _) => match *self.cg.types().kind(self.cg.types().repr(ty)) {
                 TyKind::Array(element) | TyKind::Deque(element) if release => {
                     let size = self.element_size(element);
                     let glue = self.glue_or_null(Glue::Release, element);
@@ -2960,7 +3212,7 @@ impl Emit<'_, '_> {
                 }
             },
             (Val::Memory(base), Shape::Struct(_)) => {
-                let count = self.cg.types.components(ty).unwrap().len() as u32;
+                let count = self.cg.types().components(ty).unwrap().len() as u32;
                 for index in 0..count {
                     let slot = self.cg.slot(ty, Proj::Field(index));
                     self.refcount_slot(base, &slot, release);
@@ -2983,7 +3235,7 @@ impl Emit<'_, '_> {
             } else {
                 self.call_rt(Rt::BoxRetain, &[cell]);
             }
-        } else if self.cg.types.needs_drop(slot.ty) {
+        } else if self.cg.types().needs_drop(slot.ty) {
             let address = self.offset(base, slot.offset);
             let value = self.value_at(address, slot.ty);
             self.refcount(slot.ty, value, release);
@@ -2993,14 +3245,14 @@ impl Emit<'_, '_> {
     /// Reports to the cycle collector's `visitor` the references inside
     /// `value` that may lead to a cycle (see `Types::can_cycle`).
     fn visit(&mut self, ty: Ty, value: Val, visitor: ir::Value) {
-        if !self.cg.types.can_cycle(ty) {
+        if !self.cg.types().can_cycle(ty) {
             return;
         }
         match (value, self.cg.layout(ty).shape) {
             (Val::Scalar(pointer), _) => {
                 let zero = self.fb.ins().iconst(POINTER, 0);
                 // The kinds of `cycles::Kind` in the runtime.
-                let (kind, a, b) = match *self.cg.types.kind(self.cg.types.repr(ty)) {
+                let (kind, a, b) = match *self.cg.types().kind(self.cg.types().repr(ty)) {
                     TyKind::Array(element) | TyKind::Deque(element) => {
                         (2, self.element_size(element), self.glue_or_null(Glue::Visit, element))
                     }
@@ -3032,7 +3284,7 @@ impl Emit<'_, '_> {
                 self.call_rt(Rt::GcEdge, &[visitor, pointer, kind, a, b]);
             }
             (Val::Memory(base), Shape::Struct(_)) => {
-                let count = self.cg.types.components(ty).unwrap().len() as u32;
+                let count = self.cg.types().components(ty).unwrap().len() as u32;
                 for index in 0..count {
                     let slot = self.cg.slot(ty, Proj::Field(index));
                     self.visit_slot(base, &slot, visitor);
@@ -3046,7 +3298,7 @@ impl Emit<'_, '_> {
     }
 
     fn visit_slot(&mut self, base: ir::Value, slot: &Slot, visitor: ir::Value) {
-        if !self.cg.types.can_cycle(slot.ty) {
+        if !self.cg.types().can_cycle(slot.ty) {
             return;
         }
         if slot.boxed {
@@ -3065,7 +3317,7 @@ impl Emit<'_, '_> {
     /// Structural equality (8.11): 1 when equal, 0 otherwise.
     fn equal(&mut self, ty: Ty, a: Val, b: Val) -> ir::Value {
         match (a, b) {
-            (Val::Scalar(a), Val::Scalar(b)) => match *self.cg.types.kind(self.cg.types.repr(ty)) {
+            (Val::Scalar(a), Val::Scalar(b)) => match *self.cg.types().kind(self.cg.types().repr(ty)) {
                 TyKind::String => self.call_rt(Rt::StrEq, &[a, b]).unwrap(),
                 TyKind::Array(element) | TyKind::Deque(element) => {
                     let size = self.element_size(element);
@@ -3088,7 +3340,7 @@ impl Emit<'_, '_> {
             },
             (Val::Memory(a), Val::Memory(b)) => match self.cg.layout(ty).shape {
                 Shape::Struct(_) => {
-                    let count = self.cg.types.components(ty).unwrap().len() as u32;
+                    let count = self.cg.types().components(ty).unwrap().len() as u32;
                     let mut result = self.fb.ins().iconst(types::I8, 1);
                     for index in 0..count {
                         let slot = self.cg.slot(ty, Proj::Field(index));
@@ -3435,7 +3687,7 @@ enum Storage {
 }
 
 struct FnCodegen<'a, 'b> {
-    e: Emit<'a, 'b>,
+    e: Emit<'a, dyn Gen<'b> + 'a>,
     body: &'a Body,
     /// Every function, for named functions used as values.
     bodies: &'a [Body],
@@ -3484,7 +3736,7 @@ struct DebugFrame {
 
 impl<'a, 'b> FnCodegen<'a, 'b> {
     fn new(
-        cg: &'a mut Codegen<'b>,
+        cg: &'a mut (dyn Gen<'b> + 'a),
         body: &'a Body,
         bodies: &'a [Body],
         func: &'a mut ir::Function,
@@ -3521,7 +3773,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
             });
         }
-        let debug = cg.debug.is_some().then(|| {
+        let debug = cg.debug().then(|| {
             let mut shown = Vec::new();
             let mut described = Vec::new();
             for (index, name) in body.names.iter().enumerate() {
@@ -3541,14 +3793,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             let alive = fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, words * 8, 3));
             let size = (shown.len().max(1) * 8) as u32;
             let addresses = fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size, 3));
-            cg.debug_functions.push((body.name.clone(), described));
-            let function = cg.debug_functions.len() as u32 - 1;
-            let first = cg.live.is_some().then(|| {
-                let name = format!("tondo_sites{function}");
-                let id = cg.module.declare_data(&name, Linkage::Local, false, false).expect("a function's sites");
-                cg.live.as_mut().expect("a live build").sites.push((id, cg.current, cg.debug_sites.len()));
-                (id, cg.debug_sites.len())
-            });
+            let function = cg.debug_function(body.name.clone(), described);
+            let first = cg.function_sites();
             DebugFrame { function, first, shown, alive, addresses, line: None }
         });
         FnCodegen {
@@ -3610,7 +3856,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         for (index, block) in self.body.blocks.iter().enumerate() {
             if index > 0 {
                 self.e.fb.switch_to_block(self.blocks[index]);
-            } else if self.e.cg.meta {
+            } else if self.e.cg.meta() {
                 self.e.call_rt(Rt::MetaStep, &[]);
             }
             if let Some(debug) = &mut self.debug {
@@ -3629,13 +3875,13 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 Terminator::Branch(_, then, otherwise) => then.0 as usize <= index || otherwise.0 as usize <= index,
                 _ => false,
             };
-            if back && self.e.cg.meta {
+            if back && self.e.cg.meta() {
                 self.e.call_rt(Rt::MetaStep, &[]);
             }
             self.terminator(&block.terminator);
         }
         self.e.fb.seal_all_blocks();
-        let config = self.e.cg.module.isa().frontend_config();
+        let config = self.e.cg.isa().frontend_config();
         self.e.fb.finalize(config);
         self.sites
     }
@@ -3643,7 +3889,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     // ---- places and values ---------------------------------------------------
 
     fn place_ty(&self, place: &Place) -> Ty {
-        self.body.place_ty(self.e.cg.types, place)
+        self.body.place_ty(self.e.cg.types(), place)
     }
 
     fn operand_ty(&self, operand: &Operand) -> Ty {
@@ -3671,7 +3917,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let mut ty = self.body.locals[place.local.0 as usize];
         for &proj in &place.path {
             if let Proj::Index(index, _) = proj
-                && matches!(self.e.cg.types.kind(self.e.cg.types.repr(ty)), TyKind::Map(..) | TyKind::Set(_))
+                && matches!(self.e.cg.types().kind(self.e.cg.types().repr(ty)), TyKind::Map(..) | TyKind::Set(_))
             {
                 // Iteration over a map or set: the entry at a valid position,
                 // in storage of its own when it changes (13.3).
@@ -3696,11 +3942,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 };
                 let position = self.scalar(&Operand::local(index));
                 base = Some(self.e.call_rt(Rt::MapEntry, &[map, position]).unwrap());
-                ty = project(self.e.cg.types, ty, proj);
+                ty = project(self.e.cg.types(), ty, proj);
                 continue;
             }
             if let Proj::Index(index, span) = proj
-                && let TyKind::CArray(element, count) = *self.e.cg.types.kind(ty)
+                && let TyKind::CArray(element, count) = *self.e.cg.types().kind(ty)
             {
                 // A C array is stored in place.
                 let address = base.expect("a C array lives in memory");
@@ -3726,7 +3972,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     }
                 };
                 base = Some(self.e.ref_value(reference));
-                ty = project(self.e.cg.types, ty, proj);
+                ty = project(self.e.cg.types(), ty, proj);
                 continue;
             }
             // The value inside an option of a reference is the option.
@@ -3734,11 +3980,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 && let Proj::Variant(SOME, 0) = proj
                 && let Shape::Niche = self.e.cg.layout(ty).shape
             {
-                ty = project(self.e.cg.types, ty, proj);
+                ty = project(self.e.cg.types(), ty, proj);
                 continue;
             }
             if let Proj::Index(index, span) = proj {
-                let element = project(self.e.cg.types, ty, proj);
+                let element = project(self.e.cg.types(), ty, proj);
                 let sequence = match base {
                     Some(address) => {
                         if write {
@@ -3874,7 +4120,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             let value = self.operand(operand);
             args.push(self.in_memory(ty, value));
             let mut depth = 0;
-            while let TyKind::Array(element) = *self.e.cg.types.kind(self.e.cg.types.repr(ty)) {
+            while let TyKind::Array(element) = *self.e.cg.types().kind(self.e.cg.types().repr(ty)) {
                 ty = element;
                 depth += 1;
             }
@@ -3888,7 +4134,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             BinOp::Div => 3,
             _ => 4,
         };
-        let code = match *self.e.cg.types.kind(self.e.cg.types.repr(number)) {
+        let code = match *self.e.cg.types().kind(self.e.cg.types().repr(number)) {
             TyKind::Int(int) => IntTy::ALL.iter().position(|&i| i == int).unwrap() as i64,
             TyKind::Float(FloatTy::F32) => 8,
             _ => 9,
@@ -4067,7 +4313,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// there when it is asked to, and reads the bindings.
     fn probe(&mut self, span: Span) {
         let Some(mut debug) = self.debug.take() else { return };
-        let (file, line, _) = self.e.cg.sources.position(span.start);
+        let (file, line, _) = self.e.cg.sources().position(span.start);
         if span != Span::default() && debug.line.as_ref() != Some(&(file.clone(), line)) {
             debug.line = Some((file, line));
             for (index, &(local, copy)) in debug.shown.iter().enumerate() {
@@ -4083,22 +4329,20 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 };
                 self.e.fb.ins().stack_store(POINTER, address, debug.addresses, index as i32 * 8);
             }
-            self.e.cg.debug_sites.push((span.start, debug.function));
-            let index = self.e.cg.debug_sites.len() - 1;
+            let index = self.e.cg.debug_site(span.start, debug.function);
             let site = match debug.first {
                 Some((first, number)) => {
-                    let first = self.e.cg.module.declare_data_in_func(first, self.e.fb.func);
+                    let first = self.e.cg.declare_data_in_func(first, self.e.fb.func);
                     let first = self.e.fb.ins().symbol_value(POINTER, first);
                     let first = self.e.fb.ins().load(types::I64, flags(), first, 0);
                     self.e.fb.ins().iadd_imm_s(first, (index - number) as i64)
                 }
-                None => self.e.fb.ins().iconst(types::I64, index as i64),
+                None => self.e.cg.site_constant(&mut self.e.fb, index),
             };
             let addresses = self.e.fb.ins().stack_addr(POINTER, debug.addresses, 0);
             let alive = self.e.fb.ins().stack_addr(POINTER, debug.alive, 0);
             self.probed = self.e.call_rt(Rt::DebugLine, &[site, addresses, alive]);
-            let base = self.e.cg.live.as_ref().and_then(|live| live.patch.as_ref()).map_or(0, |(_, sites)| *sites);
-            self.site_now = Some((site, base + index as u32));
+            self.site_now = Some((site, self.e.cg.site_base() + index as u32));
         }
         self.debug = Some(debug);
     }
@@ -4108,9 +4352,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// state's size; the same in the old code that writes it and the new
     /// that reads it, for the runtime to match by the locals' names.
     fn point_layout(&mut self, point: u32) -> StateLayout {
-        let key = (self.e.cg.current, point);
-        if let Some(layout) = self.e.cg.live.as_ref().and_then(|live| live.layouts.get(&key)) {
-            return layout.clone();
+        if let Some(layout) = self.e.cg.point_layout(point) {
+            return layout;
         }
         let mut items = Vec::new();
         let mut size = 0u32;
@@ -4133,9 +4376,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             size += bytes;
         }
         let layout = (items, size);
-        if let Some(live) = self.e.cg.live.as_mut() {
-            live.layouts.insert(key, layout.clone());
-        }
+        self.e.cg.keep_point_layout(point, layout.clone());
         layout
     }
 
@@ -4234,11 +4475,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// the identity of the type of what it holds: a reload that changes
     /// that type converts it (toolchain 7.10).
     fn live_object(&mut self, object: ir::Value, holds: Ty, kind: i64) {
-        if self.e.cg.live.is_none() {
+        if !self.e.cg.live() {
             return;
         }
         let identity = self.e.cg.identity(holds);
-        let identity = self.e.cg.module.declare_data_in_func(identity, self.e.fb.func);
+        let identity = self.e.cg.declare_data_in_func(identity, self.e.fb.func);
         let identity = self.e.fb.ins().symbol_value(POINTER, identity);
         // A `Ref`'s value is released with the glue of its type then, which
         // a reload changes.
@@ -4286,7 +4527,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     }
 
     fn location(&mut self, span: Span) -> ir::Value {
-        let location = self.e.cg.sources.location(span);
+        let location = self.e.cg.sources().location(span);
         self.e.string_ptr(&location)
     }
 
@@ -4304,7 +4545,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     Rvalue::Mutate(_, target, ..) | Rvalue::AssignSlice(target, ..) => target,
                     _ => place,
                 };
-                self.at_typed(*span, Some(self.body.place_ty(self.e.cg.types, made)));
+                self.at_typed(*span, Some(self.body.place_ty(self.e.cg.types(), made)));
                 self.probe(*span);
                 self.assign(place, rvalue, *span);
                 if place.path.is_empty() {
@@ -4313,7 +4554,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             Statement::DeferPush(body, place) => {
                 let code = self.e.cg.closure_code(*body);
-                let code = self.e.cg.module.declare_func_in_func(code, self.e.fb.func);
+                let code = self.e.cg.declare_func_in_func(code, self.e.fb.func);
                 let code = self.e.fb.ins().func_addr(POINTER, code);
                 let mut spilled = Vec::new();
                 let closure = self.loan_address(place, &mut spilled);
@@ -4369,7 +4610,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     self.mark(place.local, false);
                 }
                 let ty = self.place_ty(place);
-                if !self.e.cg.types.needs_drop(ty) {
+                if !self.e.cg.types().needs_drop(ty) {
                     return;
                 }
                 let value = self.read(place);
@@ -4480,7 +4721,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let rt = if *function == StdFn::TimeUtc { Rt::TimeUtc } else { Rt::TimeUtcNow };
                 self.e.call_rt(rt, &values);
                 let address = self.scratch(ty);
-                for index in 0..7 {
+                for index in 0..7i32 {
                     let word = self.e.fb.ins().load(types::I64, flags(), out, index * 8);
                     let slot = self.e.cg.slot(ty, Proj::Field(index as u32));
                     self.e.fb.ins().store(flags(), word, address, slot.offset as i32);
@@ -4548,7 +4789,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
             }
             Rvalue::Variant(variant, components) => {
-                let tag_ty = self.e.cg.types.tag_ty(ty);
+                let tag_ty = self.e.cg.types().tag_ty(ty);
                 let tag = self.operand(&Operand::Const(Const::Int(*variant as i128, tag_ty)));
                 if let Class::Scalar(_) = class {
                     tag
@@ -4566,7 +4807,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Rvalue::Convert(operand) => {
                 let from = self.operand_ty(operand);
                 let value = self.scalar(operand);
-                match self.e.cg.types.kind(ty) {
+                match self.e.cg.types().kind(ty) {
                     TyKind::Result(target, _) => {
                         let target = *target;
                         let (converted, error) = self.convert_checked(value, from, target);
@@ -4577,7 +4818,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
             }
             Rvalue::Array(values, retain) => {
-                let TyKind::Array(element) = *self.e.cg.types.kind(self.e.cg.types.repr(ty)) else { unreachable!() };
+                let TyKind::Array(element) = *self.e.cg.types().kind(self.e.cg.types().repr(ty)) else {
+                    unreachable!()
+                };
                 let size = self.e.cg.layout(element).size as i64;
                 let size_value = self.e.fb.ins().iconst(POINTER, size);
                 let count = self.e.fb.ins().iconst(POINTER, values.len() as i64);
@@ -4606,7 +4849,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 Val::Scalar(if ty == Ty::STRING {
                     self.e.call_rt(Rt::StrSlice, &[&[sequence], &range[..]].concat()).unwrap()
                 } else {
-                    let TyKind::Array(element) = *self.e.cg.types.kind(self.e.cg.types.repr(ty)) else {
+                    let TyKind::Array(element) = *self.e.cg.types().kind(self.e.cg.types().repr(ty)) else {
                         unreachable!()
                     };
                     let size = self.e.element_size(element);
@@ -4626,7 +4869,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.value_at(address, ty)
             }
             Rvalue::Pointer(PointerOp::Offset, operands, _) => {
-                let TyKind::Pointer(element) = *self.e.cg.types.kind(ty) else { unreachable!("a pointer") };
+                let TyKind::Pointer(element) = *self.e.cg.types().kind(ty) else { unreachable!("a pointer") };
                 let (address, count) = (self.scalar(&operands[0]), self.scalar(&operands[1]));
                 let size = self.e.element_size(element);
                 let bytes = self.e.fb.ins().imul(count, size);
@@ -4636,7 +4879,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Rvalue::Length(collection) => {
                 let collection_ty = self.operand_ty(collection);
                 let value = self.scalar(collection);
-                Val::Scalar(match self.e.cg.types.kind(self.e.cg.types.repr(collection_ty)) {
+                Val::Scalar(match self.e.cg.types().kind(self.e.cg.types().repr(collection_ty)) {
                     TyKind::Array(_) | TyKind::Deque(_) => self.e.fb.ins().load(types::I64, flags(), value, 8),
                     TyKind::String => self.e.call_rt(Rt::StrLength, &[value]).unwrap(),
                     _ => self.e.call_rt(Rt::MapLen, &[value]).unwrap(),
@@ -4754,20 +4997,20 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             Rvalue::Callback(target, closure) => {
                 let adapter = self.e.cg.callback(*target, ty, *closure);
-                let func = self.e.cg.module.declare_func_in_func(adapter, self.e.fb.func);
+                let func = self.e.cg.declare_func_in_func(adapter, self.e.fb.func);
                 Val::Scalar(self.e.fb.ins().func_addr(POINTER, func))
             }
             Rvalue::ExternFn(id) => {
-                let declared = &self.e.cg.externs[*id as usize];
+                let declared = &self.e.cg.externs()[*id as usize];
                 let (params, result_ty, symbol) = (declared.params.clone(), declared.result, declared.symbol.clone());
                 let signature = self.e.cg.c_signature(&params, result_ty);
                 let (function, _) = self.e.cg.c_function(&symbol, &signature);
-                let func = self.e.cg.module.declare_func_in_func(function, self.e.fb.func);
+                let func = self.e.cg.declare_func_in_func(function, self.e.fb.func);
                 Val::Scalar(self.e.fb.ins().func_addr(POINTER, func))
             }
             Rvalue::Fixed(value, span) => {
                 let from = self.operand_ty(value);
-                let types = self.e.cg.types;
+                let types = self.e.cg.types();
                 match (types.kind(types.repr(from)), types.kind(types.repr(ty))) {
                     (TyKind::Array(element), TyKind::CArray(_, count)) => {
                         // An array of another length has no place there (`P0006`).
@@ -4801,7 +5044,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             Rvalue::Reflect(op, ty, operands, retain) => {
                 let identity = self.e.cg.identity(*ty);
-                let global = self.e.cg.module.declare_data_in_func(identity, self.e.fb.func);
+                let global = self.e.cg.declare_data_in_func(identity, self.e.fb.func);
                 let identity = self.e.fb.ins().symbol_value(POINTER, global);
                 match op {
                     ReflectOp::Box => {
@@ -4837,7 +5080,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         Val::Scalar(self.e.describe(*ty, value, true))
                     }
                     ReflectOp::Capabilities => {
-                        let types = self.e.cg.types;
+                        let types = self.e.cg.types();
                         let bits = types.is_copy(*ty) as i64
                             | (types.is_equatable(*ty) as i64) << 1
                             | (types.is_key(*ty) as i64) << 2;
@@ -4852,7 +5095,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             Rvalue::FnValue(id) => {
                 let data = self.e.cg.fn_value(*id, &self.bodies[id.0 as usize]);
-                let global = self.e.cg.module.declare_data_in_func(data, self.e.fb.func);
+                let global = self.e.cg.declare_data_in_func(data, self.e.fb.func);
                 Val::Scalar(self.e.fb.ins().symbol_value(POINTER, global))
             }
             Rvalue::Erase(closure, body, retain) => {
@@ -4862,7 +5105,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     self.e.refcount(env, value, false);
                 }
                 let code = self.e.cg.closure_code(*body);
-                let code = self.e.cg.module.declare_func_in_func(code, self.e.fb.func);
+                let code = self.e.cg.declare_func_in_func(code, self.e.fb.func);
                 let code = self.e.fb.ins().func_addr(POINTER, code);
                 let size = self.e.fb.ins().iconst(POINTER, self.e.cg.layout(env).size as i64);
                 let release = self.e.glue_or_null(Glue::Release, env);
@@ -4877,7 +5120,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 Val::Zero
             }
             Rvalue::Spawn(body, retain) => {
-                let TyKind::Fn(_, result, ..) = *self.e.cg.types.kind(self.operand_ty(body)) else {
+                let TyKind::Fn(_, result, ..) = *self.e.cg.types().kind(self.operand_ty(body)) else {
                     unreachable!("a task runs a `fn()` value")
                 };
                 let object = self.scalar(body);
@@ -4910,10 +5153,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     self.carrying = true;
                     if let Some((value, number)) = self.site_now {
                         self.point_sites.insert(*point, value);
-                        let function = self.e.cg.current;
-                        if let Some(live) = self.e.cg.live.as_mut() {
-                            live.point_sites.insert((function, *point), number);
-                        }
+                        self.e.cg.point_site(*point, number);
                     }
                     self.e.fb.ins().uextend(types::I64, asked)
                 }
@@ -4955,7 +5195,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// An intrinsic array operation. Returns the value for scalar results;
     /// results in memory are written to `place` directly.
     fn array_op(&mut self, op: ArrayOp, operands: &[Operand], place: &Place, ty: Ty, span: Span) -> Option<Val> {
-        let types = self.e.cg.types;
+        let types = self.e.cg.types();
         let element_of = |ty: Ty| match *types.kind(types.repr(ty)) {
             TyKind::Array(element) | TyKind::Deque(element) => element,
             _ => unreachable!("not an array or deque"),
@@ -5067,7 +5307,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.refcount(ty, *value, false);
             }
         }
-        if let TyKind::Map(..) | TyKind::Set(_) = self.e.cg.types.kind(self.e.cg.types.repr(collection_ty)) {
+        if let TyKind::Map(..) | TyKind::Set(_) = self.e.cg.types().kind(self.e.cg.types().repr(collection_ty)) {
             return self.mutate_map(mutation, target, &values, collection_ty, place, ty);
         }
         let (element, deque) = self.e.cg.sequence_parts(collection_ty);
@@ -5139,7 +5379,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         ty: Ty,
     ) -> Option<Val> {
         let (key, value) = self.e.cg.map_parts(map_ty);
-        let is_set = matches!(self.e.cg.types.kind(self.e.cg.types.repr(map_ty)), TyKind::Set(_));
+        let is_set = matches!(self.e.cg.types().kind(self.e.cg.types().repr(map_ty)), TyKind::Set(_));
         let glue = self.e.map_glue_address(map_ty);
         if mutation == Mutation::Clear {
             let (slot, spilled) = self.array_slot(target);
@@ -5186,7 +5426,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             TaskOp::Atomic(atomic) => return Some(self.atomic_op(atomic, operands, ty, span)),
             TaskOp::Zeroed => return Some(self.zeroed(ty)),
             TaskOp::SyncNew => {
-                let TyKind::Handle(handle, state) = *self.e.cg.types.kind(ty) else { unreachable!() };
+                let TyKind::Handle(handle, state) = *self.e.cg.types().kind(ty) else { unreachable!() };
                 if handle.collection() {
                     return Some(Val::Scalar(self.shared_new(handle, state, &operands[0], retain[0])));
                 }
@@ -5194,7 +5434,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             _ => {}
         }
         let handle_ty = operands.first().map(|o| self.operand_ty(o));
-        let item = handle_ty.map(|t| self.e.cg.types.handle_result(t));
+        let item = handle_ty.map(|t| self.e.cg.types().handle_result(t));
         // Handles and indices are scalars; the value `send` moves is read
         // where it is used.
         let scalars = match op {
@@ -5211,8 +5451,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 Some(self.e.value_at(out, item))
             }
             TaskOp::GroupNew => {
-                let result = self.e.cg.types.handle_result(ty);
-                let fallible = matches!(self.e.cg.types.kind(result), TyKind::Result(..));
+                let result = self.e.cg.types().handle_result(ty);
+                let fallible = matches!(self.e.cg.types().kind(result), TyKind::Result(..));
                 let fallible = self.e.fb.ins().iconst(types::I8, fallible as i64);
                 Some(Val::Scalar(self.e.call_rt(Rt::GroupNew, &[fallible]).unwrap()))
             }
@@ -5236,8 +5476,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             TaskOp::GroupLength => Some(Val::Scalar(self.e.call_rt(Rt::GroupLength, &[values[0]]).unwrap())),
             TaskOp::GroupSettle => Some(Val::Scalar(self.e.call_rt(Rt::GroupSettle, &[values[0]]).unwrap())),
             TaskOp::Channel => {
-                let sender_ty = self.e.cg.types.components(ty).expect("a pair of ends")[0];
-                let value = self.e.cg.types.handle_result(sender_ty);
+                let sender_ty = self.e.cg.types().components(ty).expect("a pair of ends")[0];
+                let value = self.e.cg.types().handle_result(sender_ty);
                 let (capacity, bounded) = match values.first() {
                     Some(&capacity) => (capacity, 1),
                     None => (self.e.fb.ins().iconst(types::I64, 0), 0),
@@ -5307,7 +5547,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             TaskOp::SyncNew => {
                 // The state moves into the new cell.
-                let state = self.e.cg.types.handle_result(ty);
+                let state = self.e.cg.types().handle_result(ty);
                 let value = self.operand(&operands[0]);
                 if retain[0] {
                     self.e.refcount(state, value, false);
@@ -5326,12 +5566,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             TaskOp::WeakNew => Some(Val::Scalar(self.e.call_rt(Rt::WeakNew, &[values[0]]).unwrap())),
             TaskOp::WeakGet => {
                 let reference = self.e.call_rt(Rt::WeakGet, &[values[0]]).unwrap();
-                let reference_ty = self.e.cg.types.lookup(&TyKind::Handle(Handle::Ref, item.unwrap())).unwrap();
+                let reference_ty = self.e.cg.types().lookup(&TyKind::Handle(Handle::Ref, item.unwrap())).unwrap();
                 self.pointer_option(place, ty, reference_ty, reference)
             }
             TaskOp::RefNew => {
                 // The value moves into the new identity.
-                let inner = self.e.cg.types.handle_result(ty);
+                let inner = self.e.cg.types().handle_result(ty);
                 let value = self.operand(&operands[0]);
                 if retain[0] {
                     self.e.refcount(inner, value, false);
@@ -5367,7 +5607,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             TaskOp::TryAcquire => {
                 let only = self.e.fb.ins().iconst(types::I8, 1);
                 let permit = self.e.call_rt(Rt::SemaphoreAcquire, &[values[0], only]).unwrap();
-                let permit_ty = self.e.cg.types.lookup(&TyKind::Handle(Handle::Permit, Ty::UNIT)).unwrap();
+                let permit_ty = self.e.cg.types().lookup(&TyKind::Handle(Handle::Permit, Ty::UNIT)).unwrap();
                 let out = self.scratch(permit_ty);
                 self.e.fb.ins().store(flags(), permit, out, 0);
                 let found = self.e.fb.ins().icmp_imm_s(IntCC::NotEqual, permit, 0);
@@ -5382,7 +5622,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             TaskOp::CopySender => Some(Val::Scalar(self.e.call_rt(Rt::SenderCopy, &[values[0]]).unwrap())),
             TaskOp::IsClosed => {
-                let sender = matches!(self.e.cg.types.kind(handle_ty.unwrap()), TyKind::Handle(Handle::Sender, _));
+                let sender = matches!(self.e.cg.types().kind(handle_ty.unwrap()), TyKind::Handle(Handle::Sender, _));
                 let sender = self.e.fb.ins().iconst(types::I8, sender as i64);
                 Some(Val::Scalar(self.e.call_rt(Rt::ChannelClosed, &[values[0], sender]).unwrap()))
             }
@@ -5404,7 +5644,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let mut sent = Vec::new();
         for (index, case) in cases.iter().enumerate() {
             let at = (CASE * index as u32) as i32;
-            let item = self.e.cg.types.handle_result(self.operand_ty(&case.operands[0]));
+            let item = self.e.cg.types().handle_result(self.operand_ty(&case.operands[0]));
             let kind = match case.op {
                 Some(TaskOp::Receive) => 0,
                 Some(TaskOp::Send) => 1,
@@ -5430,7 +5670,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     self.e.refcount(item, value, false);
                 }
                 let source = self.copy_to_stack(item, value);
-                if self.e.cg.types.needs_drop(item) {
+                if self.e.cg.types().needs_drop(item) {
                     sent.push((index, source, item));
                 }
                 source
@@ -5489,7 +5729,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Class::Memory => {
                 let address = self.scratch(ty);
                 let layout = self.e.cg.layout(ty);
-                let config = self.e.cg.module.target_config();
+                let config = self.e.cg.isa().frontend_config();
                 let align = layout.align.clamp(1, 8) as u8;
                 self.e.fb.emit_small_memset(config, address, 0, layout.size as u64, align, flags());
                 Val::Memory(address)
@@ -5541,7 +5781,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// `present` and the address of the payload of an option value, or of
     /// scratch space when it has no payload.
     fn option_parts(&mut self, ty: Ty, value: Val) -> (ir::Value, ir::Value) {
-        let TyKind::Option(payload) = *self.e.cg.types.kind(ty) else { unreachable!() };
+        let TyKind::Option(payload) = *self.e.cg.types().kind(ty) else { unreachable!() };
         let tag = self.e.tag(ty, value);
         let present = self.e.fb.ins().icmp_imm_s(IntCC::NotEqual, tag, 0);
         let address = match value {
@@ -5558,7 +5798,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// An operation of a shared collection (see the runtime's `shared`).
     fn shared_op(&mut self, op: SharedOp, operands: &[Operand], retain: &[bool], place: &Place) -> Option<Val> {
         let ty = self.place_ty(place);
-        let TyKind::Handle(handle, state) = *self.e.cg.types.kind(self.operand_ty(&operands[0])) else {
+        let TyKind::Handle(handle, state) = *self.e.cg.types().kind(self.operand_ty(&operands[0])) else {
             unreachable!("a shared collection")
         };
         let collection = self.scalar(&operands[0]);
@@ -5645,7 +5885,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let Operand::Copy(seen) = &operands[4] else { unreachable!("the place for the value seen") };
                 // Zeros stay when nothing was seen; they release nothing.
                 let out = self.scratch(value);
-                let config = self.e.cg.module.target_config();
+                let config = self.e.cg.isa().frontend_config();
                 let size = self.e.cg.layout(value).size;
                 self.e.fb.emit_small_memset(config, out, 0, size as u64, 8, flags());
                 let equal = self.e.glue_address(Glue::Equal, value);
@@ -5680,7 +5920,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
 
     /// An operation of an atomic integer, `Bool`, `Char` or `Byte`.
     fn atomic_op(&mut self, op: AtomicOp, operands: &[Operand], ty: Ty, span: Span) -> Val {
-        let TyKind::Handle(_, state) = *self.e.cg.types.kind(self.operand_ty(&operands[0])) else { unreachable!() };
+        let TyKind::Handle(_, state) = *self.e.cg.types().kind(self.operand_ty(&operands[0])) else { unreachable!() };
         let Class::Scalar(clif) = self.e.cg.class(state) else { unreachable!("a scalar") };
         let cell = self.scalar(&operands[0]);
         let width = self.e.fb.ins().iconst(types::I8, clif.bytes() as i64);
@@ -5706,7 +5946,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             AtomicOp::Add => {
                 let delta = word(self, &operands[1]);
-                let signed = self.e.cg.types.as_int(state).is_some_and(|i| i.signed());
+                let signed = self.e.cg.types().as_int(state).is_some_and(|i| i.signed());
                 let signed = self.e.fb.ins().iconst(types::I8, signed as i64);
                 let location = self.location(span);
                 self.e.call_rt(Rt::AtomicAdd, &[cell, width, signed, delta, location])
@@ -5767,7 +6007,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             };
             values.push(value);
         }
-        let TyKind::Result(success, _) = *self.e.cg.types.kind(ty) else { unreachable!("a result") };
+        let TyKind::Result(success, _) = *self.e.cg.types().kind(ty) else { unreachable!("a result") };
         // Metadata comes as three words; other values as one pointer.
         let out = self.e.fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 24, 3));
         let out = self.e.fb.ins().stack_addr(POINTER, out, 0);
@@ -5820,7 +6060,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         let tag = self.e.fb.ins().uextend(types::I64, tag);
                         let payload = match value {
                             Val::Memory(address) => {
-                                let variants = self.e.cg.types.variants(enum_ty).unwrap();
+                                let variants = self.e.cg.types().variants(enum_ty).unwrap();
                                 let carrying = variants.iter().position(|v| !v.is_empty()).unwrap();
                                 let slot = self.e.cg.slot(enum_ty, Proj::Variant(carrying as u32, 0));
                                 self.e.fb.ins().load(types::I64, flags(), address, slot.offset as i32)
@@ -5852,9 +6092,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let check = matches!(function, ProcessFn::Check | ProcessFn::Collect(true));
                 values.push(flag(self, check));
                 // Where the runtime writes each `ExitStatus` of the array.
-                let TyKind::Result(result, _) = *self.e.cg.types.kind(ty) else { unreachable!("a result") };
-                let statuses = self.e.cg.types.components(result).unwrap()[3];
-                let TyKind::Array(status) = *self.e.cg.types.kind(statuses) else { unreachable!("an array") };
+                let TyKind::Result(result, _) = *self.e.cg.types().kind(ty) else { unreachable!("a result") };
+                let statuses = self.e.cg.types().components(result).unwrap()[3];
+                let TyKind::Array(status) = *self.e.cg.types().kind(statuses) else { unreachable!("an array") };
                 let size = self.e.fb.ins().iconst(types::I64, self.e.cg.layout(status).size as i64);
                 let success = self.e.cg.slot(status, Proj::Field(1)).offset;
                 let success = self.e.fb.ins().iconst(types::I64, success as i64);
@@ -5874,7 +6114,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     fn process_result(&mut self, rt: Rt, mut values: Vec<ir::Value>, place: &Place) {
         const FAILED: i64 = 4;
         let ty = self.place_ty(place);
-        let TyKind::Result(success, error) = *self.e.cg.types.kind(ty) else { unreachable!("a result") };
+        let TyKind::Result(success, error) = *self.e.cg.types().kind(ty) else { unreachable!("a result") };
         let out = self.e.fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 48, 3));
         let out = self.e.fb.ins().stack_addr(POINTER, out, 0);
         values.push(out);
@@ -5890,13 +6130,13 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let variant = self.e.fb.ins().iadd_imm_s(status, -1);
         let variant = self.e.fb.ins().ireduce(types::I8, variant);
         self.e.fb.ins().store(flags(), variant, value, 0);
-        let output_ty = self.e.cg.types.variants(error).unwrap()[FAILED as usize - 1][1];
+        let output_ty = self.e.cg.types().variants(error).unwrap()[FAILED as usize - 1][1];
         if success == output_ty {
             let (failure, other) = (self.e.fb.create_block(), self.e.fb.create_block());
             let is_failure = self.e.fb.ins().icmp_imm_s(IntCC::Equal, status, FAILED);
             self.e.fb.ins().brif(is_failure, failure, &[], other, &[]);
             self.e.fb.switch_to_block(failure);
-            let status_ty = self.e.cg.types.variants(error).unwrap()[FAILED as usize - 1][0];
+            let status_ty = self.e.cg.types().variants(error).unwrap()[FAILED as usize - 1][0];
             let exit = self.record_from_words(status_ty, &words[4..6]);
             let output = self.record_from_words(output_ty, &words[0..4]);
             for (index, component) in [exit, output].into_iter().enumerate() {
@@ -5910,7 +6150,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.init_component(base, &slot, Val::Memory(value));
         self.e.fb.ins().jump(done, &[]);
         self.e.fb.switch_to_block(good);
-        let ok = match self.e.cg.types.components(success).map(|c| c.len()) {
+        let ok = match self.e.cg.types().components(success).map(|c| c.len()) {
             Some(count) => self.record_from_words(success, &words[0..count]),
             None => Val::Scalar(words[0]),
         };
@@ -5945,7 +6185,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// The value a successful status call wrote at `out`.
     fn fs_value(&mut self, ty: Ty, out: ir::Value) -> Val {
         let word = |this: &mut Self, index: i32| this.e.fb.ins().load(types::I64, flags(), out, index * 8);
-        match *self.e.cg.types.kind(ty) {
+        match *self.e.cg.types().kind(ty) {
             // `String?` or `Array[Byte]?`: null for `none`.
             TyKind::Option(element) => {
                 let pointer = word(self, 0);
@@ -5977,7 +6217,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
 
     /// A conversion that cannot fail (18.6).
     fn convert_total(&mut self, value: ir::Value, from: Ty, to: Ty) -> ir::Value {
-        let types = self.e.cg.types;
+        let types = self.e.cg.types();
         let to_clif = self.e.cg.scalar_type(to);
         let from_clif = self.e.cg.scalar_type(from);
         match (types.kind(from), types.kind(to)) {
@@ -5994,7 +6234,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// Resizes an integer bit pattern, extending by the source's signedness.
     fn resize(&mut self, value: ir::Value, from: Ty, to: ir::Type) -> ir::Value {
         let from_clif = self.e.cg.scalar_type(from);
-        let signed = self.e.cg.types.as_int(from).is_some_and(IntTy::signed);
+        let signed = self.e.cg.types().as_int(from).is_some_and(IntTy::signed);
         if from_clif.bits() == to.bits() {
             value
         } else if from_clif.bits() > to.bits() {
@@ -6012,14 +6252,14 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         const OUT_OF_RANGE: i64 = 0;
         const NOT_FINITE: i64 = 1;
         const NOT_INTEGRAL: i64 = 2;
-        let types = self.e.cg.types;
+        let types = self.e.cg.types();
         let to_clif = self.e.cg.scalar_type(to);
         let range = |ty: Ty| match types.kind(ty) {
             TyKind::Int(int) => (int.min(), int.max()),
             _ => (0, 255),
         };
         let ok = self.e.fb.ins().iconst(types::I8, -1);
-        let pick = |e: &mut Emit, failed: ir::Value, code: i64, current: ir::Value| {
+        let pick = |e: &mut Emit<_>, failed: ir::Value, code: i64, current: ir::Value| {
             let code = e.fb.ins().iconst(types::I8, code);
             e.fb.ins().select(failed, code, current)
         };
@@ -6130,7 +6370,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
 
     fn call(&mut self, callee: Callee, args: &[Operand], result: Option<ir::Value>) -> Option<ir::Value> {
         if let Callee::Extern(id) = callee {
-            let declared = &self.e.cg.externs[id as usize];
+            let declared = &self.e.cg.externs()[id as usize];
             let (params, result_ty, symbol) = (declared.params.clone(), declared.result, declared.symbol.clone());
             return self.c_call(CTarget::Symbol(symbol), &params, result_ty, args, result);
         }
@@ -6146,7 +6386,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             moved.map(|base| fb.ins().load(ty, flags(), base, (index as i32 + 1) * 8))
         };
         let loans = match callee {
-            Callee::Fn(id) => self.e.cg.loans[id.0 as usize].clone(),
+            Callee::Fn(id) => self.e.cg.loans(id),
             Callee::Std(_) => Vec::new(),
             Callee::Trait(..) | Callee::Extern(_) => unreachable!("handled before"),
         };
@@ -6246,7 +6486,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.refcount(ty, Val::Scalar(object), false);
             }
             let glue = self.e.cg.glue(Glue::Test, ty);
-            let glue = self.e.cg.module.declare_func_in_func(glue, self.e.fb.func);
+            let glue = self.e.cg.declare_func_in_func(glue, self.e.fb.func);
             let glue = self.e.fb.ins().func_addr(POINTER, glue);
             let node = self.e.fb.ins().iconst(types::I64, *node as i64);
             let offset = index as i32 * 24;
@@ -6265,11 +6505,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// A call through a `fn(...)` value: its code receives the captures'
     /// address first (see `Codegen::uniform_signature`).
     fn call_indirect(&mut self, callee: &Operand, args: &[Operand], result: Option<ir::Value>) -> Option<ir::Value> {
-        if let TyKind::CFn(params, result_ty, _) = self.e.cg.types.kind(self.operand_ty(callee)).clone() {
+        if let TyKind::CFn(params, result_ty, _) = self.e.cg.types().kind(self.operand_ty(callee)).clone() {
             let code = self.scalar(callee);
             return self.c_call(CTarget::Address(code), &params, result_ty, args, result);
         }
-        let TyKind::Fn(params, result_ty, _, modes, _) = self.e.cg.types.kind(self.operand_ty(callee)).clone() else {
+        let TyKind::Fn(params, result_ty, _, modes, _) = self.e.cg.types().kind(self.operand_ty(callee)).clone() else {
             unreachable!("an indirect call goes through a `fn(...)` value")
         };
         let loans: Vec<bool> = modes.iter().map(|m| matches!(m, Mode::Mut | Mode::Var)).collect();
@@ -6386,7 +6626,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let (detail, a, b, ty) = values(self);
         let a = self.wide(a, detail & 0x100 != 0);
         let b = self.wide(b, detail & 0x200 != 0);
-        let name = self.e.cg.types.display(ty);
+        let name = self.e.cg.types().display(ty);
         let name = self.e.string_ptr(&name);
         let code = self.e.fb.ins().iconst(types::I32, code as i64);
         let detail = self.e.fb.ins().iconst(types::I32, detail as i64);
@@ -6417,12 +6657,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         match op {
             UnaryOp::Not => self.e.fb.ins().bxor_imm_u(value, 1),
             UnaryOp::BitNot => self.e.fb.ins().bnot(value),
-            UnaryOp::Neg if matches!(self.e.cg.types.kind(ty), TyKind::Float(_)) => self.e.fb.ins().fneg(value),
+            UnaryOp::Neg if matches!(self.e.cg.types().kind(ty), TyKind::Float(_)) => self.e.fb.ins().fneg(value),
             UnaryOp::Neg => {
                 let clif = self.e.cg.scalar_type(ty);
                 let zero = self.e.fb.ins().iconst(clif, 0);
                 let (result, overflow) = self.e.fb.ins().ssub_overflow(zero, value);
-                let ty = self.e.cg.types.repr(ty);
+                let ty = self.e.cg.types().repr(ty);
                 self.panic_values_if(overflow, 5, span, |_| (5 << 16 | 0x100 | clif.bits(), value, value, ty));
                 result
             }
@@ -6449,7 +6689,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     fn binary(&mut self, op: BinOp, left: &Operand, right: &Operand, span: Span) -> ir::Value {
         let ty = self.operand_ty(left);
         let right_ty = self.operand_ty(right);
-        let is_array = |ty: Ty| matches!(self.e.cg.types.kind(self.e.cg.types.repr(ty)), TyKind::Array(_));
+        let is_array = |ty: Ty| matches!(self.e.cg.types().kind(self.e.cg.types().repr(ty)), TyKind::Array(_));
         if !matches!(op, BinOp::Eq | BinOp::Ne) && (is_array(ty) || is_array(right_ty)) {
             return self.array_arithmetic(op, left, right, span);
         }
@@ -6459,11 +6699,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             return if op == BinOp::Eq { equal } else { self.e.fb.ins().bxor_imm_u(equal, 1) };
         }
         let (a, b) = (self.scalar(left), self.scalar(right));
-        if self.e.cg.types.repr(ty) == Ty::STRING {
+        if self.e.cg.types().repr(ty) == Ty::STRING {
             let order = self.e.call_rt(Rt::StrCmp, &[a, b]).unwrap();
             return self.e.fb.ins().icmp_imm_s(int_condition(op, true), order, 0);
         }
-        let types = self.e.cg.types;
+        let types = self.e.cg.types();
         if let TyKind::Float(_) = types.kind(ty) {
             // IEEE 754 without traps (18.5); relational comparisons with NaN are false.
             let ins = self.e.fb.ins();
@@ -6494,7 +6734,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 BinOp::Shl => 6,
                 _ => 7,
             };
-            let bits = self.e.cg.types.as_int(ty).map_or(8, IntTy::bits);
+            let bits = self.e.cg.types().as_int(ty).map_or(8, IntTy::bits);
             code << 16 | (right_signed as u32) << 9 | (signed as u32) << 8 | bits
         };
         let detail = operation(op);

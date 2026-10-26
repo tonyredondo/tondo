@@ -17,7 +17,6 @@
 //! compilers expect.
 
 use super::*;
-use cranelift_codegen::isa::CallConv;
 
 #[derive(Copy, Clone, PartialEq)]
 pub(super) enum Abi {
@@ -51,14 +50,14 @@ enum Returned {
 }
 
 /// The parameters of a C signature with what fills each, and its result.
-struct Plan {
+pub(super) struct Plan {
     params: Vec<(AbiParam, Source)>,
     returned: Returned,
 }
 
 impl Plan {
-    fn signature(&self, cg: &Codegen) -> ir::Signature {
-        let mut signature = cg.module.make_signature();
+    fn signature(&self, shapes: &Shapes) -> ir::Signature {
+        let mut signature = shapes.make_signature();
         signature.params = self.params.iter().map(|(abi, _)| *abi).collect();
         signature.returns = match &self.returned {
             Returned::Scalar(abi) => vec![*abi],
@@ -109,14 +108,7 @@ fn parts_slot(fb: &mut FunctionBuilder, size: u32) -> ir::Value {
     fb.ins().stack_addr(POINTER, slot, 0)
 }
 
-impl Codegen<'_> {
-    pub(super) fn abi(&self) -> Abi {
-        match (self.module.isa().name(), self.module.isa().default_call_conv()) {
-            ("aarch64", call_conv) => Abi::Arm64 { apple: call_conv == CallConv::AppleAarch64 },
-            _ => Abi::X64,
-        }
-    }
-
+impl Shapes<'_> {
     /// How C passes a scalar of `ty`: narrow integers as extended `int`s.
     fn c_scalar(&mut self, ty: Ty) -> AbiParam {
         let clif = self.scalar_type(ty);
@@ -187,8 +179,8 @@ impl Codegen<'_> {
     /// How a call passes values of `args`, the first `fixed` for the
     /// declared parameters and the rest for `...` (already promoted), and
     /// receives `result`.
-    fn c_plan(&mut self, args: &[Ty], fixed: usize, result: Ty) -> Plan {
-        let abi = self.abi();
+    pub(super) fn c_plan(&mut self, args: &[Ty], fixed: usize, result: Ty) -> Plan {
+        let abi = self.abi;
         // The registers left of each class.
         let (mut ints, mut floats) = (if abi == Abi::X64 { 6 } else { 8 }, 8usize);
         let mut params = Vec::new();
@@ -273,6 +265,23 @@ impl Codegen<'_> {
         plan.signature(self)
     }
 
+    /// Where the result, then each argument, of a callback of `ty` lives in
+    /// its frame, and the frame's size.
+    pub(super) fn callback_frame(&mut self, ty: Ty) -> (Vec<u32>, u32) {
+        let TyKind::CFn(params, result, _) = self.types.kind(ty).clone() else { unreachable!("a C function type") };
+        let mut offsets = Vec::new();
+        let mut size = 0u32;
+        for part in std::iter::once(result).chain(params) {
+            let layout = self.layout(part);
+            let offset = size.next_multiple_of(layout.align.max(1));
+            offsets.push(offset);
+            size = offset + layout.size;
+        }
+        (offsets, size.max(8))
+    }
+}
+
+impl Codegen<'_> {
     /// The import of a C function by symbol. A symbol imported again with
     /// another signature is called through its address.
     pub(super) fn c_function(&mut self, symbol: &str, signature: &ir::Signature) -> (FuncId, bool) {
@@ -320,21 +329,6 @@ impl Codegen<'_> {
         self.pending_callbacks.push(Callback { target, ty, closure, adapter, inner });
         Ok(adapter)
     }
-
-    /// Where the result, then each argument, of a callback of `ty` lives in
-    /// its frame, and the frame's size.
-    fn callback_frame(&mut self, ty: Ty) -> (Vec<u32>, u32) {
-        let TyKind::CFn(params, result, _) = self.types.kind(ty).clone() else { unreachable!("a C function type") };
-        let mut offsets = Vec::new();
-        let mut size = 0u32;
-        for part in std::iter::once(result).chain(params) {
-            let layout = self.layout(part);
-            let offset = size.next_multiple_of(layout.align.max(1));
-            offsets.push(offset);
-            size = offset + layout.size;
-        }
-        (offsets, size.max(8))
-    }
 }
 
 /// An argument of a call of C: a scalar, or the address of a struct.
@@ -362,7 +356,7 @@ impl FnCodegen<'_, '_> {
         for (index, arg) in args.iter().enumerate() {
             let mut ty = self.operand_ty(arg);
             let value = match self.operand(arg) {
-                Val::Scalar(text) if self.e.cg.types.repr(ty) == Ty::STRING => {
+                Val::Scalar(text) if self.e.cg.types().repr(ty) == Ty::STRING => {
                     let location = self.location(self.span);
                     let copy = self.e.call_rt(Rt::CString, &[text, location]).unwrap();
                     copies.push(copy);
@@ -419,8 +413,8 @@ impl FnCodegen<'_, '_> {
             call_values.push(value);
         }
         let variadic = args.len() > params.len()
-            || matches!(&target, CTarget::Symbol(symbol) if self.e.cg.externs.iter().any(|e| &e.symbol == symbol && e.variadic));
-        let signature = plan.signature(self.e.cg);
+            || matches!(&target, CTarget::Symbol(symbol) if self.e.cg.externs().iter().any(|e| &e.symbol == symbol && e.variadic));
+        let signature = plan.signature(self.e.cg.shapes());
         self.e.call_rt(Rt::ForeignEnter, &[]);
         let results = if variadic && self.e.cg.abi() == Abi::X64 {
             self.c_variadic(target, &call_values, &signature)
@@ -428,7 +422,7 @@ impl FnCodegen<'_, '_> {
             let call = match target {
                 CTarget::Symbol(symbol) => {
                     let (id, direct) = self.e.cg.c_function(&symbol, &signature);
-                    let func = self.e.cg.module.declare_func_in_func(id, self.e.fb.func);
+                    let func = self.e.cg.declare_func_in_func(id, self.e.fb.func);
                     if direct {
                         self.e.fb.ins().call(func, &call_values)
                     } else {
@@ -477,7 +471,7 @@ impl FnCodegen<'_, '_> {
             CTarget::Address(code) => code,
             CTarget::Symbol(symbol) => {
                 let (id, _) = self.e.cg.c_function(&symbol, signature);
-                let func = self.e.cg.module.declare_func_in_func(id, self.e.fb.func);
+                let func = self.e.cg.declare_func_in_func(id, self.e.fb.func);
                 self.e.fb.ins().func_addr(POINTER, func)
             }
         };
@@ -507,7 +501,7 @@ impl FnCodegen<'_, '_> {
         let data = StackSlotData::new(StackSlotKind::ExplicitSlot, size, 3);
         let slot = self.e.fb.create_sized_stack_slot(data);
         let frame = self.e.fb.ins().stack_addr(POINTER, slot, 0);
-        let store = |e: &mut Emit, value: ir::Value, offset: u32| {
+        let store = |e: &mut Emit<_>, value: ir::Value, offset: u32| {
             let ty = e.fb.func.dfg.value_type(value);
             let value = if ty.is_int() && ty.bits() < 64 { e.fb.ins().uextend(types::I64, value) } else { value };
             e.fb.ins().store(flags(), value, frame, offset as i32);

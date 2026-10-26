@@ -2082,5 +2082,15 @@ tokens to move past them and climbed eleven levels of precedence for
 each operand, and two checks for names that look alike that compared
 each name with all others. A program using `std.http` and three
 encodings builds in about 70 ms instead of 120; one of 24,000 lines in
-about 600 instead of 770, where building Cranelift's IR, still on one
-core, is the largest part.
+about 430 instead of 770.
+
+Building each function's IR on another core meets declarations made as
+the IR asks for them, a string, glue, a function of the runtime, a debug
+build's sites, which number the object's symbols in the order they come.
+A worker builds a function with names of its own for those, recording
+what it asked in order; then, function by function in their order, the
+asks are declared as one core would have declared them, and the
+function's references renamed. The object is the same, byte for byte,
+which every case of the tests confirms in each kind of build. A function
+that calls C is built again in its turn, since whether it calls a symbol
+directly depends on the calls before it.

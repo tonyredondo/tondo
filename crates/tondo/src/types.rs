@@ -1,8 +1,8 @@
 //! Interned semantic types.
 
 pub use crate::ast::Mode;
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::sync::RwLock;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Ty(u32);
@@ -424,6 +424,14 @@ pub struct Field {
     pub private: bool,
 }
 
+fn read<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(|e| e.into_inner())
+}
+
+fn write<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
+    lock.write().unwrap_or_else(|e| e.into_inner())
+}
+
 pub struct Types {
     kinds: Vec<TyKind>,
     map: HashMap<TyKind, Ty>,
@@ -439,9 +447,11 @@ pub struct Types {
     /// Set when an instantiation nests without bound, such as a type whose
     /// field is the same type applied to a larger argument.
     pub runaway: Option<String>,
-    reaches: RefCell<HashMap<(Ty, Ty), bool>>,
-    needs_drop: RefCell<HashMap<Ty, bool>>,
-    can_cycle: RefCell<HashMap<Ty, bool>>,
+    /// What these ask of a type, kept; the code generator asks them on
+    /// every core.
+    reaches: RwLock<HashMap<(Ty, Ty), bool>>,
+    needs_drop: RwLock<HashMap<Ty, bool>>,
+    can_cycle: RwLock<HashMap<Ty, bool>>,
     /// Standard library types with an intrinsic `Display`.
     pub shown: HashMap<Ty, Shown>,
     /// The `extern type`s, laid out as C lays out their structs.
@@ -507,9 +517,9 @@ impl Default for Types {
             cursors: HashMap::new(),
             opaques: Vec::new(),
             runaway: None,
-            reaches: RefCell::default(),
-            needs_drop: RefCell::default(),
-            can_cycle: RefCell::default(),
+            reaches: RwLock::default(),
+            needs_drop: RwLock::default(),
+            can_cycle: RwLock::default(),
             shown: HashMap::new(),
             foreign: HashMap::new(),
         };
@@ -608,8 +618,8 @@ impl Types {
 
     pub fn define_adt(&mut self, id: AdtId, kind: AdtKind) {
         self.adts[id.0 as usize].kind = kind;
-        self.reaches.borrow_mut().clear();
-        self.needs_drop.borrow_mut().clear();
+        self.reaches.get_mut().unwrap_or_else(|e| e.into_inner()).clear();
+        self.needs_drop.get_mut().unwrap_or_else(|e| e.into_inner()).clear();
     }
 
     pub fn adt(&self, id: AdtId) -> &AdtDef {
@@ -1232,7 +1242,7 @@ impl Types {
 
     /// Whether a value of `to` can be stored inline, transitively, in `from`.
     pub fn reaches(&self, from: Ty, to: Ty) -> bool {
-        if let Some(&known) = self.reaches.borrow().get(&(from, to)) {
+        if let Some(&known) = read(&self.reaches).get(&(from, to)) {
             return known;
         }
         let mut seen = HashSet::new();
@@ -1247,7 +1257,7 @@ impl Types {
                 stack.extend(self.inline_components(ty));
             }
         }
-        self.reaches.borrow_mut().insert((from, to), found);
+        write(&self.reaches).insert((from, to), found);
         found
     }
 
@@ -1406,7 +1416,7 @@ impl Types {
 
     /// Whether values of this type own reference-counted storage.
     pub fn needs_drop(&self, ty: Ty) -> bool {
-        if let Some(&known) = self.needs_drop.borrow().get(&ty) {
+        if let Some(&known) = read(&self.needs_drop).get(&ty) {
             return known;
         }
         let repr = self.repr(ty);
@@ -1430,7 +1440,7 @@ impl Types {
             // the recursion at every cycle.
             parts.iter().any(|&part| self.is_boxed(repr, part) || self.needs_drop(part))
         };
-        self.needs_drop.borrow_mut().insert(ty, result);
+        write(&self.needs_drop).insert(ty, result);
         result
     }
 
@@ -1440,7 +1450,7 @@ impl Types {
     /// anything, or shared state whose own state can reach it again. Only
     /// such values are visited by the cycle collector.
     pub fn can_cycle(&self, ty: Ty) -> bool {
-        if let Some(&known) = self.can_cycle.borrow().get(&ty) {
+        if let Some(&known) = read(&self.can_cycle).get(&ty) {
             return known;
         }
         let reached = self.reach(ty);
@@ -1453,7 +1463,7 @@ impl Types {
             }
             _ => false,
         });
-        self.can_cycle.borrow_mut().insert(ty, result);
+        write(&self.can_cycle).insert(ty, result);
         result
     }
 
