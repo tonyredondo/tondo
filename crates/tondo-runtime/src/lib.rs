@@ -144,7 +144,7 @@ pub unsafe extern "C" fn tondo_rt_str_cmp(a: *const Str, b: *const Str) -> i32 {
 }
 
 /// The text of a string; strings always hold valid UTF-8.
-unsafe fn str_text<'a>(s: *const Str) -> &'a str {
+pub(crate) unsafe fn str_text<'a>(s: *const Str) -> &'a str {
     unsafe { std::str::from_utf8_unchecked(str_bytes(s)) }
 }
 
@@ -207,9 +207,9 @@ pub unsafe extern "C" fn tondo_rt_str_concat(a: *const Str, b: *const Str) -> *m
 /// `contains` (0), `startsWith` (1) or `endsWith` (2).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_test(s: *const Str, other: *const Str, test: u32) -> u8 {
-    let (text, other) = unsafe { (str_text(s), str_text(other)) };
+    let (text, other) = unsafe { (str_bytes(s), str_bytes(other)) };
     (match test {
-        0 => text.contains(other),
+        0 => find(text, other).is_some(),
         1 => text.starts_with(other),
         _ => text.ends_with(other),
     }) as u8
@@ -218,8 +218,23 @@ pub unsafe extern "C" fn tondo_rt_str_test(s: *const Str, other: *const Str, tes
 /// The scalar position of the first occurrence of `needle`, or -1.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_find(s: *const Str, needle: *const Str) -> i64 {
-    let (text, needle) = unsafe { (str_text(s), str_text(needle)) };
-    text.find(needle).map_or(-1, |offset| text[..offset].chars().count() as i64)
+    let (text, needle) = unsafe { (str_text(s), str_bytes(needle)) };
+    find(text.as_bytes(), needle).map_or(-1, |offset| text[..offset].chars().count() as i64)
+}
+
+/// Where `needle` first is in `haystack`: at each place its first byte is,
+/// as Go does, and past a few misses with a searcher that is never slow.
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    let Some(&first) = needle.first() else { return Some(0) };
+    let mut at = 0;
+    for _ in 0..16 {
+        let start = at + memchr::memchr(first, &haystack[at..])?;
+        if haystack[start..].starts_with(needle) {
+            return Some(start);
+        }
+        at = start + 1;
+    }
+    memchr::memmem::find(&haystack[at..], needle).map(|offset| at + offset)
 }
 
 #[unsafe(no_mangle)]

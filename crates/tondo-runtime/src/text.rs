@@ -5,7 +5,7 @@
 use super::{ArrayHeader, Builder, Str, element, str_bytes, str_new, tondo_rt_array_new};
 
 fn text<'a>(s: *const Str) -> &'a str {
-    std::str::from_utf8(unsafe { str_bytes(s) }).unwrap_or_default()
+    unsafe { super::str_text(s) }
 }
 
 /// An `Array[String]` of new strings.

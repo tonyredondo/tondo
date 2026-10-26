@@ -29,9 +29,22 @@ const ERROR: i64 = -1;
 
 /// Where the reader is inside a container.
 enum Frame {
-    Array { index: usize, started: bool },
-    Object { keys: HashSet<String>, key: Option<String>, expect_key: bool, started: bool },
+    Array {
+        index: usize,
+        started: bool,
+    },
+    /// The keys read so far, the current one last; past a few, also in a
+    /// set, to find a repeated one.
+    Object {
+        keys: Vec<String>,
+        set: Option<HashSet<String>>,
+        expect_key: bool,
+        started: bool,
+    },
 }
+
+/// How many keys an object has before the reader looks them up in a set.
+const FEW_KEYS: usize = 16;
 
 /// A stream of `std.io` the reader pulls its input from.
 struct Source(*mut StreamObject);
@@ -169,7 +182,7 @@ impl Reader {
         for frame in &self.frames {
             match frame {
                 Frame::Array { index, started: true } => write!(path, "[{}]", index.saturating_sub(1)).unwrap(),
-                Frame::Object { key: Some(key), .. } => {
+                Frame::Object { keys, .. } if let Some(key) = keys.last() => {
                     if !key.is_empty() && key.chars().all(|c| c.is_alphanumeric() || c == '_') {
                         write!(path, ".{key}").unwrap()
                     } else {
@@ -252,17 +265,25 @@ impl Reader {
             }
             self.position += 1;
             let duplicates = self.duplicates;
-            let Some(Frame::Object { keys, key, expect_key, started }) = self.frames.last_mut() else {
+            let Some(Frame::Object { keys, set, expect_key, started }) = self.frames.last_mut() else {
                 unreachable!("an object is open")
             };
-            let repeated = !keys.insert(name.clone()) && !duplicates;
-            *key = Some(name.clone());
+            if keys.len() == FEW_KEYS {
+                *set = Some(keys.iter().cloned().collect());
+            }
+            let repeated = match set {
+                Some(set) => !set.insert(name.clone()),
+                None => keys.contains(&name),
+            } && !duplicates;
+            self.text.clear();
+            self.text.push_str(&name);
+            keys.push(name);
             *started = true;
             *expect_key = false;
             if repeated {
-                return self.fail(format!("duplicate key {name:?}"));
+                let message = format!("duplicate key {:?}", self.text);
+                return self.fail(message);
             }
-            self.text = name;
             return KEY;
         }
         self.value()
@@ -289,7 +310,7 @@ impl Reader {
                 }
                 self.position += 1;
                 if byte == b'{' {
-                    let frame = Frame::Object { keys: HashSet::new(), key: None, expect_key: true, started: false };
+                    let frame = Frame::Object { keys: Vec::new(), set: None, expect_key: true, started: false };
                     self.frames.push(frame);
                     BEGIN_OBJECT
                 } else {
