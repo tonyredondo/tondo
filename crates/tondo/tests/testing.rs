@@ -638,3 +638,75 @@ fn a_package_without_main() {
     let (_, stderr, status) = tondo(&dir, &["run"]);
     assert!(status != 0 && stderr.contains("error[E1806]: nothing to run"), "{stderr}");
 }
+
+/// `--test-format events`: a line of JSON as each pass begins and each
+/// suite or test starts and ends, retries included, then the report.
+#[test]
+fn reports_events_as_tests_run() {
+    let tests = "\
+import std.console
+import std.testing
+
+test passes {
+    console.println(\"said\")
+}
+
+test fails {
+    assert(1 == 2, \"one is not two\")
+}
+
+suite group {
+    test skips {
+        testing.skip(\"later\")
+    }
+}
+";
+    let dir = project("events", tests);
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--test-format", "events", "--retry", "1"]);
+    assert_eq!(status, 1, "{stderr}");
+    let events: Vec<serde_json::Value> = stdout.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    let short = |id: &serde_json::Value| id.as_str().map(|id| id.rsplit("::").next().unwrap().to_string());
+    let seen: Vec<String> = events
+        .iter()
+        .map(|e| {
+            let id = short(&e["id"]);
+            let what = [e["event"].as_str(), id.as_deref(), e["status"].as_str()];
+            format!("{} r{}", what.iter().flatten().copied().collect::<Vec<_>>().join(" "), e["round"])
+        })
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            "pass r0",
+            "start fails r0",
+            "end fails failed-panic r0",
+            "start group r0",
+            "start skips r0",
+            "end skips skipped r0",
+            "end group passed r0",
+            "start passes r0",
+            "end passes passed r0",
+            "pass r1",
+            "start fails r1",
+            "end fails failed-panic r1",
+            "report rnull",
+        ]
+    );
+    assert_eq!(events[0]["format"], "tondo-test-events-0.1/1");
+    assert_eq!(events[0]["tests"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        events[2]["failure"]["message"],
+        "assertion-failed: one is not two\n  condition: 1 == 2\n  left:  1\n  right: 2"
+    );
+    assert_eq!(events[2]["failure"]["source"]["line"], 9);
+    assert_eq!(events[8]["stdout"]["data"], "said\n");
+    let report = &events.last().unwrap()["report"];
+    assert_eq!((&report["format"], &report["summary"]["failed_panic"]), (&"tondo-test-report-0.1/1".into(), &1.into()));
+
+    // What does not compile has only the report, which says so.
+    std::fs::write(dir.join("src/main_test.to"), "test broken {\n    missing()\n}\n").unwrap();
+    let (stdout, _, status) = tondo(&dir, &["test", "--test-format", "events"]);
+    assert_eq!(status, 1);
+    let event: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!((&event["event"], &event["report"]["compiled"]), (&"report".into(), &false.into()));
+}

@@ -33,9 +33,16 @@ pub(super) struct Run<'a> {
     pub stores: Stores<'a>,
 }
 
+/// What the workers tell as they run: a suite or test that started, in a
+/// pass, or the outcome of an attempt.
+pub(super) enum Note {
+    Started(u32, Context),
+    Ended(Box<Attempt>),
+}
+
 /// Runs each unit's tests, starting each unit in a new worker, `--jobs`
-/// units at a time; `report` sees each attempt as it is known.
-pub(super) fn execute(run: &Run, units: Vec<(Vec<u32>, Context)>, mut report: impl FnMut(&Attempt)) -> Vec<Attempt> {
+/// units at a time; `report` sees each start and attempt as it is known.
+pub(super) fn execute(run: &Run, units: Vec<(Vec<u32>, Context)>, mut report: impl FnMut(&Note)) -> Vec<Attempt> {
     let threads = run.options.jobs.max(1).min(units.len());
     let queue = Mutex::new(VecDeque::from(units));
     let (sender, receiver) = mpsc::channel();
@@ -52,9 +59,11 @@ pub(super) fn execute(run: &Run, units: Vec<(Vec<u32>, Context)>, mut report: im
             });
         }
         drop(sender);
-        for attempt in receiver {
-            report(&attempt);
-            attempts.push(attempt);
+        for note in receiver {
+            report(&note);
+            if let Note::Ended(attempt) = note {
+                attempts.push(*attempt);
+            }
         }
     });
     attempts
@@ -62,7 +71,7 @@ pub(super) fn execute(run: &Run, units: Vec<(Vec<u32>, Context)>, mut report: im
 
 /// Runs a plan in workers, one after another, until each test has an
 /// outcome.
-fn lane(run: &Run, plan: Vec<u32>, context: Context, sender: &mpsc::Sender<Attempt>) {
+fn lane(run: &Run, plan: Vec<u32>, context: Context, sender: &mpsc::Sender<Note>) {
     let mut remaining: VecDeque<u32> = plan.into();
     while !remaining.is_empty() && !interrupt::requested() {
         let before = remaining.len();
@@ -73,14 +82,15 @@ fn lane(run: &Run, plan: Vec<u32>, context: Context, sender: &mpsc::Sender<Attem
         if let Err(message) = started {
             // The worker could not start: every test fails alike.
             for test in remaining.drain(..) {
-                let _ = sender.send(Attempt::new(test, Status::Crashed(message.clone()), context));
+                let _ =
+                    sender.send(Note::Ended(Box::new(Attempt::new(test, Status::Crashed(message.clone()), context))));
             }
         }
         if remaining.len() == before
             && let Some(test) = remaining.pop_front()
         {
             let message = "the test process ended before it ran a test".to_string();
-            let _ = sender.send(Attempt::new(test, Status::Crashed(message), context));
+            let _ = sender.send(Note::Ended(Box::new(Attempt::new(test, Status::Crashed(message), context))));
         }
     }
 }
@@ -108,15 +118,16 @@ struct Session<'a> {
     /// Output the frames have not yet assigned, by the frame it precedes.
     pending: Vec<(u64, Vec<u8>)>,
     stdout_frames: u64,
-    /// Outcomes ended by a frame, until stdout reaches that frame.
-    done: Vec<(Attempt, u64)>,
+    /// Starts and outcomes told by a frame, until stdout reaches that
+    /// frame.
+    done: Vec<(Note, u64)>,
 }
 
 fn worker(
     run: &Run,
     remaining: &mut VecDeque<u32>,
     context: Context,
-    sender: &mpsc::Sender<Attempt>,
+    sender: &mpsc::Sender<Note>,
 ) -> Result<(), String> {
     let (executable, dir, tree, timeout, stores) =
         (run.executable, run.dir, run.tree, run.options.timeout, &run.stores);
@@ -206,8 +217,8 @@ fn worker(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
         let ready = session.stdout_frames;
-        for (outcome, _) in session.done.extract_if(.., |(_, frame)| *frame <= ready) {
-            send(tree, remaining, outcome, sender);
+        for (note, _) in session.done.extract_if(.., |(_, frame)| *frame <= ready) {
+            send(tree, remaining, note, sender);
         }
     }
     let status = child.wait().map_err(|e| e.to_string())?;
@@ -218,8 +229,8 @@ fn worker(
     interrupt::ended(&child, killed);
     let _ = std::fs::remove_file(&plan);
     session.flush_output();
-    for (outcome, _) in std::mem::take(&mut session.done) {
-        send(tree, remaining, outcome, sender);
+    for (note, _) in std::mem::take(&mut session.done) {
+        send(tree, remaining, note, sender);
     }
     // What the interruption cut has no outcome.
     if interrupt::requested() {
@@ -238,21 +249,29 @@ fn worker(
             };
         }
         outcome.teardown = reached;
-        send(tree, remaining, outcome, sender);
+        send(tree, remaining, Note::Ended(Box::new(outcome)), sender);
     }
     // The suites around it ended with the worker, their setup done.
     while let Some((mut outcome, _, started)) = session.running.pop() {
         if let Some(started) = started {
             outcome.duration += Instant::now() - started;
         }
-        send(tree, remaining, outcome, sender);
+        send(tree, remaining, Note::Ended(Box::new(outcome)), sender);
     }
     Ok(())
 }
 
-/// Reports an outcome and takes its tests out of the plan: a test that
-/// ran, or the tests a suite that failed or skipped in its setup blocks.
-fn send(tree: &Tree, remaining: &mut VecDeque<u32>, outcome: Attempt, sender: &mpsc::Sender<Attempt>) {
+/// Reports a start, or an outcome and takes its tests out of the plan: a
+/// test that ran, or the tests a suite that failed or skipped in its setup
+/// blocks.
+fn send(tree: &Tree, remaining: &mut VecDeque<u32>, note: Note, sender: &mpsc::Sender<Note>) {
+    let outcome = match note {
+        Note::Ended(outcome) => *outcome,
+        started => {
+            let _ = sender.send(started);
+            return;
+        }
+    };
     let node = outcome.node;
     let suite = tree.nodes[node as usize].suite;
     let blocked: Vec<u32> = if !suite {
@@ -267,7 +286,7 @@ fn send(tree: &Tree, remaining: &mut VecDeque<u32>, outcome: Attempt, sender: &m
     };
     let skipped = matches!(outcome.status, Status::Skipped(_));
     let context = Context { round: outcome.round, iteration: outcome.iteration, unit: outcome.unit };
-    let _ = sender.send(outcome);
+    let _ = sender.send(Note::Ended(Box::new(outcome)));
     // The suites inside that held those tests are blocked too.
     let mut suites: Vec<u32> = Vec::new();
     for &test in &blocked {
@@ -280,7 +299,7 @@ fn send(tree: &Tree, remaining: &mut VecDeque<u32>, outcome: Attempt, sender: &m
         }
     }
     for node_blocked in suites.into_iter().chain(blocked) {
-        let _ = sender.send(Attempt::new(node_blocked, Status::Blocked(node, skipped), context));
+        let _ = sender.send(Note::Ended(Box::new(Attempt::new(node_blocked, Status::Blocked(node, skipped), context))));
     }
 }
 
@@ -337,7 +356,10 @@ impl Session<'_> {
     fn give_stdout(&mut self, owner: Option<u32>, text: &[u8]) {
         if let Some(entry) = self.running.iter_mut().rev().find(|(o, _, _)| Some(o.node) == owner) {
             entry.0.stdout.extend_from_slice(text);
-        } else if let Some((done, _)) = self.done.iter_mut().rev().find(|(o, _)| Some(o.node) == owner) {
+        } else if let Some(done) = self.done.iter_mut().rev().find_map(|(note, _)| match note {
+            Note::Ended(outcome) if Some(outcome.node) == owner => Some(outcome),
+            _ => None,
+        }) {
             done.stdout.extend_from_slice(text);
         }
     }
@@ -399,7 +421,10 @@ impl Session<'_> {
         let text = String::from_utf8_lossy(payload).into_owned();
         let now = Instant::now();
         match kind {
-            "start" => self.running.push((Attempt::new(node, Status::Passed, self.context), false, Some(now))),
+            "start" => {
+                self.running.push((Attempt::new(node, Status::Passed, self.context), false, Some(now)));
+                self.done.push((Note::Started(node, self.context), sequence));
+            }
             "members" => {
                 if let Some(entry) = self.running.iter_mut().rev().find(|(o, _, _)| o.node == node) {
                     if let Some(started) = entry.2 {
@@ -427,7 +452,7 @@ impl Session<'_> {
                         outcome.status = Status::Error { message, error_type, location };
                     }
                     outcome.teardown = reached && kind == "error";
-                    self.done.push((outcome, sequence));
+                    self.done.push((Note::Ended(Box::new(outcome)), sequence));
                 }
             }
             "log" => {

@@ -1,5 +1,9 @@
-// The tests `tondo test --list --test-format json` lists, and what the
-// report of `tondo test --test-format json` says of each (testing 15).
+// What `tondo` says as JSON, read for the editor: the tests that
+// `tondo test --list --test-format json` lists, the events and the report
+// of `tondo test --test-format events` (testing 15), the project of a path
+// from `tondo graph --json`, and `tondo version --json`.
+
+import * as path from 'node:path';
 
 /** A test or a suite, and where it is. */
 export interface Listed {
@@ -71,25 +75,103 @@ export function listed(json: string): Listed[] {
   return [...(list.suites ?? []).map((s) => node(s, true)), ...(list.tests ?? []).map((t) => node(t, false))];
 }
 
+interface Report {
+  compiled?: boolean;
+  suites?: Entry[];
+  tests?: Entry[];
+}
+
 /** How each suite and test of a report ended. */
 export function outcomes(json: string): Outcome[] {
-  const report = JSON.parse(json) as { suites?: Entry[]; tests?: Entry[] };
+  return reported(JSON.parse(json) as Report);
+}
+
+function reported(report: Report): Outcome[] {
   return [...(report.suites ?? []), ...(report.tests ?? [])].map((entry) => {
     const attempts = entry.attempts ?? [];
     const attempt = attempts[(entry.decisive_attempt ?? attempts.length) - 1] ?? attempts[attempts.length - 1];
-    const why = attempt?.failure ?? attempt?.skip ?? undefined;
-    const message = attempt?.failure?.message ?? attempt?.skip?.reason;
-    const output = [text(attempt?.stdout), text(attempt?.stderr), ...(attempt?.logs ?? []).map((log) => `${log}\n`)].join('');
-    return {
-      id: entry.id,
-      verdict: verdict(entry.status ?? ''),
-      message,
-      file: why?.source?.file,
-      line: why?.source?.line,
-      column: why?.source?.column,
-      output,
-    };
+    return outcome(entry.id, entry.status ?? '', attempt);
   });
+}
+
+function outcome(id: string, status: string, attempt: Attempt | undefined): Outcome {
+  const why = attempt?.failure ?? attempt?.skip ?? undefined;
+  const message = attempt?.failure?.message ?? attempt?.skip?.reason;
+  const output = [text(attempt?.stdout), text(attempt?.stderr), ...(attempt?.logs ?? []).map((log) => `${log}\n`)].join('');
+  return {
+    id,
+    verdict: verdict(status),
+    message,
+    file: why?.source?.file,
+    line: why?.source?.line,
+    column: why?.source?.column,
+    output,
+  };
+}
+
+/** A line of `tondo test --test-format events`: a pass begins with its
+ *  tests, a suite or test starts or ends, and the report comes last. */
+export type TestEvent =
+  | { event: 'pass'; tests: string[] }
+  | { event: 'start'; id: string }
+  | { event: 'end'; outcome: Outcome; duration: number }
+  | { event: 'report'; compiled: boolean; outcomes: Outcome[] };
+
+export function testEvent(line: string): TestEvent | undefined {
+  let value;
+  try {
+    value = JSON.parse(line) as { event?: string; id?: string; tests?: string[]; status?: string; duration_ms?: number; report?: Report };
+  } catch {
+    return undefined;
+  }
+  switch (value.event) {
+    case 'pass':
+      return { event: 'pass', tests: value.tests ?? [] };
+    case 'start':
+      return { event: 'start', id: value.id ?? '' };
+    case 'end':
+      return { event: 'end', outcome: outcome(value.id ?? '', value.status ?? '', value as Attempt), duration: value.duration_ms ?? 0 };
+    case 'report':
+      return { event: 'report', compiled: value.report?.compiled !== false, outcomes: reported(value.report ?? {}) };
+    default:
+      return undefined;
+  }
+}
+
+/** Where a path is, by `tondo graph --json`: its project, if it is in one,
+ *  and the module it belongs to. */
+export interface Place {
+  root: string;
+  project: boolean;
+  module: string | null;
+}
+
+export function place(json: string): Place {
+  const graph = JSON.parse(json) as { format?: string; root: string; project: boolean; focus?: string | null };
+  if (!graph.format?.startsWith('tondo-graph-')) {
+    throw new Error('tondo graph gave no graph');
+  }
+  return { root: graph.root, project: graph.project, module: graph.focus ?? null };
+}
+
+/** What to build to run or debug a file: its project, or the file. */
+export function programOf(where: Place, file: string): { program: string; cwd: string } {
+  return where.project ? { program: where.root, cwd: where.root } : { program: file, cwd: path.dirname(file) };
+}
+
+/** Why a `tondo` cannot serve this extension, from what `tondo version
+ *  --json` printed, or `undefined` when it can. */
+export function incompatible(json: string): string | undefined {
+  try {
+    const version = JSON.parse(json) as { format?: string; version?: string };
+    if (version.format === 'tondo-version-0.1/1' && version.version) {
+      return undefined;
+    }
+  } catch {
+    // An older tondo prints its version as text.
+  }
+  const said = json.trim() || 'nothing';
+  return `This tondo is older than the extension (it says ${said}): update it with \`sh dist/install.sh\` from Tondo's repository.`;
 }
 
 /** The editor's verdict for a status of the report. */

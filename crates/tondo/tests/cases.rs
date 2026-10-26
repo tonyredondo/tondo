@@ -237,15 +237,19 @@ fn json_diagnostics() {
     let path = dir.join("unknown.to");
     std::fs::write(&path, "fn main() {\n    missing()\n}\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_tondo")).arg("check").arg(&path).arg("--json").output().unwrap();
-    let json = String::from_utf8(output.stdout).unwrap();
     assert!(!output.status.success());
-    let expected = concat!(
-        r#""severity":"error","code":"E1001","message":"unknown name `missing`","source_id":"root:unknown.to","#,
-        r#""module":"unknown","file":"unknown.to","#,
-        r#""range":{"start":{"byte":16,"line":1,"column":4},"end":{"byte":23,"line":1,"column":11}},"#,
-        r#""expected":null,"actual":null,"related":[],"fixes":[]}]"#
-    );
-    assert!(json.starts_with(r#"[{"id":"diag:"#) && json.trim_end().ends_with(expected), "{json}");
+    let mut json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!((&json["format"], &json["ok"]), (&"tondo-check-0.1/1".into(), &false.into()), "{json}");
+    let diagnostic = &mut json["diagnostics"][0];
+    assert!(diagnostic["id"].as_str().unwrap().starts_with("diag:"), "{diagnostic}");
+    diagnostic["id"] = "diag:…".into();
+    let expected = serde_json::json!({
+        "id": "diag:…", "severity": "error", "code": "E1001", "message": "unknown name `missing`",
+        "source_id": "root:unknown.to", "module": "unknown", "file": "unknown.to",
+        "range": { "start": { "byte": 16, "line": 1, "column": 4 }, "end": { "byte": 23, "line": 1, "column": 11 } },
+        "expected": null, "actual": null, "related": [], "fixes": [],
+    });
+    assert_eq!(json["diagnostics"], serde_json::json!([expected]));
 }
 
 /// Dependencies from a git repository (by tag) and an archive, reached

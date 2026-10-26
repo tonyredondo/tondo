@@ -1,6 +1,7 @@
 //! The machine-readable report and list (testing 15), in the canonical
 //! compact JSON of 15.1, and the values JUnit embeds.
 
+use super::worker::Note;
 use super::{Aggregate, Attempt, Options, Order, Selector, Status, Tree};
 
 /// A JSON value whose objects keep the order they are built in.
@@ -409,14 +410,7 @@ impl Context<'_> {
         };
         fields.push(("blocked_by", blocked_by));
         fields.push(("failure", failure(&attempt.status, self.options)));
-        let skip = match &attempt.status {
-            Status::Skipped(text) => {
-                let (reason, location) = located(text);
-                obj(vec![("reason", str(reason)), ("source", source(location))])
-            }
-            _ => Value::Null,
-        };
-        fields.push(("skip", skip));
+        fields.push(("skip", skip(&attempt.status)));
         let mut tags = attempt.tags.clone();
         tags.sort();
         fields.push(("tags", Value::Object(tags.into_iter().map(|(k, v)| (k, str(v))).collect())));
@@ -547,6 +541,64 @@ pub(super) fn status_name(status: &Status) -> &'static str {
         Status::Crashed(_) => "crashed",
         Status::Blocked(_, false) => "blocked-setup",
         Status::Blocked(_, true) => "blocked-skip",
+    }
+}
+
+/// The report as stdout gets it: alone, or as the last event (15.9).
+pub(super) fn reported(report: &Value, options: &Options) -> String {
+    match options.events {
+        true => obj(vec![("event", str("report")), ("report", report.clone())]).text(),
+        false => report.text(),
+    }
+}
+
+/// The event of a pass starting (15.9): an iteration of the plan or a
+/// retry round, with the tests it runs.
+pub(super) fn pass_event(tree: &Tree, iteration: u32, round: u32, tests: &[u32]) -> Value {
+    obj(vec![
+        ("event", str("pass")),
+        ("format", str("tondo-test-events-0.1/1")),
+        ("iteration", int(iteration as usize)),
+        ("round", int(round as usize)),
+        ("tests", Value::Array(tests.iter().map(|&t| str(tree.id(t))).collect())),
+    ])
+}
+
+/// The event of a suite or test starting or ending (15.9).
+pub(super) fn note_event(tree: &Tree, note: &Note, options: &Options) -> Value {
+    let (node, iteration, round) = match note {
+        Note::Started(node, context) => (*node, context.iteration, context.round),
+        Note::Ended(attempt) => (attempt.node, attempt.iteration, attempt.round),
+    };
+    let mut fields = vec![
+        ("event", str(if matches!(note, Note::Started(..)) { "start" } else { "end" })),
+        ("id", str(tree.id(node))),
+        ("suite", Value::Bool(tree.suite(node))),
+        ("iteration", int(iteration as usize)),
+        ("round", int(round as usize)),
+    ];
+    if let Note::Ended(attempt) = note {
+        fields.extend([
+            ("status", str(status_name(&attempt.status))),
+            ("duration_ms", int(attempt.duration.as_millis() as usize)),
+            ("failure", failure(&attempt.status, options)),
+            ("skip", skip(&attempt.status)),
+            ("logs", Value::Array(attempt.logs.iter().map(|l| str(l.clone())).collect())),
+            ("stdout", stream(&attempt.stdout)),
+            ("stderr", stream(&attempt.stderr)),
+        ]);
+    }
+    obj(fields)
+}
+
+/// Why an attempt skipped, and where, or `null`.
+fn skip(status: &Status) -> Value {
+    match status {
+        Status::Skipped(text) => {
+            let (reason, location) = located(text);
+            obj(vec![("reason", str(reason)), ("source", source(location))])
+        }
+        _ => Value::Null,
     }
 }
 

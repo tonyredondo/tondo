@@ -196,6 +196,17 @@ fn runs_tests_and_debugs() {
     assert_eq!(tested["report"]["summary"]["failed"], 1);
     assert!(text.contains("assertion-failed: wrong"), "{text}");
 
+    // What the program is made of, and a build, as data.
+    let (graph, text) = agent.call("graph", json!({ "path": "src/main.to" }));
+    assert_eq!(graph["modules"][0]["imports"][0]["module"], "std.console", "{graph}");
+    assert!(text.contains("  -> std.console\n"), "{text}");
+    let (built, _) = agent.call("build", json!({ "output": "built" }));
+    assert_eq!(
+        (&built["report"]["format"], &built["report"]["output"]),
+        (&"tondo-build-0.1/1".into(), &"built".into())
+    );
+    assert!(dir.join("built").is_file());
+
     let (started, _) = agent.call("debug_start", json!({ "target": "." }));
     let session = started["session"].clone();
     assert_eq!(started["said"].as_array().unwrap().last().unwrap()["stopped"]["why"], "start");
@@ -251,8 +262,23 @@ fn setup_readies_the_agents() {
     let calls = std::fs::read_to_string(dir.join("calls")).unwrap();
     assert!(calls.contains(&format!("claude mcp add --scope user tondo -- {} mcp\n", tondo.display())), "{calls}");
     assert!(calls.contains(&format!("codex mcp add tondo -- {} mcp\n", tondo.display())), "{calls}");
-    // Again, it replaces what it registered.
-    setup();
+    // Again, it replaces what it registered; as data, it says what it did.
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["setup", "--json"])
+        .env("HOME", &home)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    let said: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        (&said["format"], &said["ok"], &said["tondo"]),
+        (&"tondo-setup-0.1/1".into(), &true.into(), &json!(tondo))
+    );
+    let agents: Vec<(&str, bool)> =
+        said["agents"].as_array().unwrap().iter().map(|a| (a["name"].as_str().unwrap(), a["mcp"] == true)).collect();
+    assert_eq!(agents, [("Claude Code", true), ("Codex", true)]);
+    assert_eq!(said["agents"][0]["skill"], json!(home.join(".claude/skills/tondo/SKILL.md")));
+    assert!(said["messages"][0].as_str().unwrap().contains("its MCP server answers"), "{said}");
     let calls = std::fs::read_to_string(dir.join("calls")).unwrap();
     assert_eq!(calls.matches("claude mcp remove --scope user tondo\n").count(), 2, "{calls}");
 }

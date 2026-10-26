@@ -2,6 +2,7 @@
 //! canonical order as soon as it is known, then what failed, was flaky or
 //! skipped, with every attempt and what it wrote.
 
+use super::worker::Note;
 use super::{Aggregate, Attempt, Options, Status, Tree};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -32,6 +33,8 @@ pub(super) fn list(tree: &Tree, plan: &[u32], owners: &[Vec<String>]) {
 pub(super) struct Printer<'a> {
     /// Silent when stdout gets the JSON report.
     quiet: bool,
+    /// The events of `--test-format events` instead (15.9).
+    events: Option<&'a Options>,
     tree: &'a Tree,
     plan: Vec<u32>,
     expected: Vec<u32>,
@@ -43,17 +46,22 @@ pub(super) struct Printer<'a> {
 }
 
 impl<'a> Printer<'a> {
-    pub(super) fn new(tree: &'a Tree, plan: &[u32], options: &Options) -> Printer<'a> {
+    pub(super) fn new(tree: &'a Tree, plan: &[u32], options: &'a Options) -> Printer<'a> {
         let mut plan = plan.to_vec();
         plan.sort_by(|&a, &b| tree.id(a).cmp(tree.id(b)));
         let timeout = options.timeout;
         let quiet = options.json;
+        let events = options.events.then_some(options);
         let schedules = options.schedules.map(|(_, seed, _)| seed);
-        Printer { quiet, tree, plan, expected: Vec::new(), known: HashMap::new(), printed: 0, timeout, schedules }
+        let (expected, known) = (Vec::new(), HashMap::new());
+        Printer { quiet, events, tree, plan, expected, known, printed: 0, timeout, schedules }
     }
 
     /// A pass over `tests`: an iteration of the plan, or a retry round.
     pub(super) fn begin(&mut self, iteration: u32, round: u32, tests: &[u32]) {
+        if self.events.is_some() {
+            say!("{}", super::json::pass_event(self.tree, iteration, round, tests).text());
+        }
         if !self.quiet && round > 0 {
             say!("\nretry round {round}:");
         } else if let (false, Some(seed)) = (self.quiet, self.schedules) {
@@ -66,11 +74,15 @@ impl<'a> Printer<'a> {
         self.printed = 0;
     }
 
-    pub(super) fn attempt(&mut self, attempt: &Attempt) {
+    pub(super) fn note(&mut self, note: &Note) {
+        if let Some(options) = self.events {
+            say!("{}", super::json::note_event(self.tree, note, options).text());
+        }
+        let Note::Ended(attempt) = note else { return };
         if self.quiet || self.tree.suite(attempt.node) {
             return;
         }
-        self.known.insert(attempt.node, attempt.clone());
+        self.known.insert(attempt.node, (**attempt).clone());
         while let Some(attempt) = self.expected.get(self.printed).and_then(|t| self.known.get(t)) {
             say!("test {} ... {}", self.tree.id(attempt.node), short(self.tree, &attempt.status));
             self.printed += 1;

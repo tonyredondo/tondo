@@ -232,3 +232,82 @@ fn renamed(text: &str, alias: &str, name: &str) -> String {
     out.push_str(rest);
     out
 }
+
+/// The declarations of what `render` shows, as `tondo api --json` gives
+/// them: each one's kind, name, text and documentation.
+pub fn declarations(text: &str) -> Vec<serde_json::Value> {
+    // Blocks end at a blank line outside braces.
+    let mut blocks: Vec<Vec<&str>> = vec![Vec::new()];
+    let mut depth = 0i32;
+    for line in text.lines() {
+        if line.trim().is_empty() && depth == 0 {
+            blocks.push(Vec::new());
+            continue;
+        }
+        if !line.trim_start().starts_with("//") {
+            depth += line.matches('{').count() as i32 - line.matches('}').count() as i32;
+        }
+        blocks.last_mut().unwrap().push(line);
+    }
+    let mut found = Vec::new();
+    for block in blocks {
+        let doc: Vec<&str> = block
+            .iter()
+            .take_while(|line| line.starts_with("///"))
+            .map(|line| line.trim_start_matches("///").strip_prefix(' ').unwrap_or(&line[3..]))
+            .collect();
+        let code = block[doc.len()..].join("\n");
+        // A comment alone, as a module's header, declares nothing.
+        let Some(first) = code.lines().next().filter(|line| !line.starts_with("//")) else { continue };
+        let mut head = first.trim_end_matches(" {");
+        for word in ["pub ", "unsafe ", "extern "] {
+            head = head.strip_prefix(word).unwrap_or(head);
+        }
+        let kind = head.split(|c: char| !c.is_ascii_alphabetic()).next().unwrap_or(head);
+        let rest = &head[kind.len()..];
+        let name = match kind {
+            "impl" => skip_brackets(rest).trim().to_string(),
+            "fn" => without_brackets(rest.trim().split('(').next().unwrap_or(rest)),
+            _ => rest.trim().split(['[', ':', '=', ' ']).next().unwrap_or(rest).to_string(),
+        };
+        found.push(serde_json::json!({ "kind": kind, "name": name, "declaration": code, "doc": doc.join("\n") }));
+    }
+    found
+}
+
+/// A function's name without its type parameters: `Option.map` for
+/// `Option[T].map[U]`.
+fn without_brackets(text: &str) -> String {
+    let mut depth = 0;
+    text.chars()
+        .filter(|&c| {
+            match c {
+                '[' => depth += 1,
+                ']' => depth -= 1,
+                _ => return depth == 0,
+            }
+            false
+        })
+        .collect()
+}
+
+/// The text after a leading `[...]`, as the parameters of a generic `impl`.
+fn skip_brackets(text: &str) -> &str {
+    if !text.starts_with('[') {
+        return text;
+    }
+    let mut depth = 0;
+    for (index, c) in text.char_indices() {
+        match c {
+            '[' => depth += 1,
+            ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &text[index + 1..];
+                }
+            }
+            _ => {}
+        }
+    }
+    text
+}

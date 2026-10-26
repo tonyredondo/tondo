@@ -37,6 +37,23 @@ fn module() {
     let written = std::fs::read_to_string(dir.join("sample.to")).unwrap();
     let expected = std::fs::read_to_string(fixtures().join("sample.to")).unwrap();
     assert_eq!(written, expected, "the module differs from tests/bind/sample.to");
+    // As data: what it wrote, and the libraries; outside a project, none
+    // is added to a manifest.
+    let said = run(Command::new(compiler)
+        .args(["bind", "sample.h", "--output", "again.to", "--library", "m", "--json"])
+        .current_dir(&dir));
+    let said: serde_json::Value = serde_json::from_str(&said).unwrap();
+    assert_eq!(
+        said,
+        serde_json::json!({
+            "format": "tondo-bind-0.1/1", "ok": true, "file": "again.to", "module": "again",
+            "libraries": ["m"], "added": [],
+        })
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("again.to")).unwrap(),
+        written.replace("--output sample.to", "--output again.to --library m --json")
+    );
 }
 
 /// Builds a project with the program `main` that binds the library through

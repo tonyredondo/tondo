@@ -1,8 +1,9 @@
-// The list and the report of `tondo test`, as the Testing view reads them.
+// What tondo says as JSON, as the extension reads it: the list, the
+// events and the report of `tondo test`, `tondo graph` and `tondo version`.
 
 import * as assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { listed, outcomes, verdict } from '../report';
+import { incompatible, listed, outcomes, place, programOf, testEvent, verdict } from '../report';
 
 const source = (line: number) => ({ file: 'src/main_test.to', line, column: 6 });
 
@@ -80,4 +81,50 @@ test('every status of the report has a verdict', () => {
   for (const status of ['timeout', 'crashed', 'blocked-setup', 'resource-limit', 'infrastructure']) {
     assert.equal(verdict(status), 'errored');
   }
+});
+
+test('the events of a run say what started and how each attempt ended, then the report', () => {
+  const stream = (data: string) => ({ encoding: 'utf8', data });
+  assert.deepEqual(testEvent('{"event":"pass","format":"tondo-test-events-0.1/1","iteration":1,"round":0,"tests":["p::a"]}'), {
+    event: 'pass',
+    tests: ['p::a'],
+  });
+  assert.deepEqual(testEvent('{"event":"start","id":"p::a","suite":false,"iteration":1,"round":0}'), { event: 'start', id: 'p::a' });
+  const end = testEvent(
+    JSON.stringify({
+      event: 'end',
+      id: 'p::a',
+      status: 'failed-error',
+      duration_ms: 12,
+      failure: { kind: 'error', message: 'bad input', source: { file: 'src/a_test.to', line: 3, column: 5 } },
+      skip: null,
+      logs: [],
+      stdout: stream('printed\n'),
+      stderr: stream(''),
+    }),
+  );
+  assert.equal(end?.event, 'end');
+  if (end?.event === 'end') {
+    assert.equal(end.duration, 12);
+    assert.deepEqual([end.outcome.verdict, end.outcome.message, end.outcome.line, end.outcome.output], ['failed', 'bad input', 3, 'printed\n']);
+  }
+  const report = testEvent(JSON.stringify({ event: 'report', report: { compiled: true, suites: [], tests: [{ id: 'p::a', status: 'flaky-pass', attempts: [] }] } }));
+  assert.deepEqual(report?.event === 'report' && [report.compiled, report.outcomes.map((o) => o.verdict)], [true, ['passed']]);
+  const uncompiled = testEvent('{"event":"report","report":{"compiled":false,"suites":[],"tests":[]}}');
+  assert.equal(uncompiled?.event === 'report' && uncompiled.compiled, false);
+  assert.equal(testEvent('warning: not json'), undefined);
+});
+
+test('a file runs as its project, or alone, as tondo graph says', () => {
+  const inProject = place('{"format":"tondo-graph-0.1/1","ok":true,"root":"/w/app","project":true,"focus":"app.models","packages":[]}');
+  assert.deepEqual(inProject, { root: '/w/app', project: true, module: 'app.models' });
+  assert.deepEqual(programOf(inProject, '/w/app/src/models/user.to'), { program: '/w/app', cwd: '/w/app' });
+  const alone = place('{"format":"tondo-graph-0.1/1","ok":true,"root":"/w/hello.to","project":false,"focus":null,"packages":[]}');
+  assert.deepEqual(programOf(alone, '/w/hello.to'), { program: '/w/hello.to', cwd: '/w' });
+  assert.throws(() => place('{"format":"tondo-error-0.1/1","ok":false,"message":"no"}'));
+});
+
+test('a tondo older than the extension is told to update', () => {
+  assert.equal(incompatible('{"format":"tondo-version-0.1/1","ok":true,"version":"0.1.0-dev"}'), undefined);
+  assert.match(incompatible('tondo 0.1.0-dev (native, cranelift)\n') ?? '', /older than the extension.*install\.sh/);
 });

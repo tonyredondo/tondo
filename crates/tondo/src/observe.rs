@@ -67,7 +67,7 @@ fn program_name(info: &Value) -> &str {
 pub fn ps(json: bool) -> Result<(), String> {
     let programs = running();
     if json {
-        println!("{}", Value::Array(programs));
+        crate::cli::print_json("ps", true, json!({ "programs": programs }));
         return Ok(());
     }
     if programs.is_empty() {
@@ -269,7 +269,7 @@ struct Recording {
 
 /// `tondo trace`: records until the program ends, `duration` passes or
 /// Ctrl-C, then writes the timeline and the profile.
-pub fn trace(traced: Traced, duration: Option<Duration>, output: Option<PathBuf>) -> Result<(), String> {
+pub fn trace(traced: Traced, duration: Option<Duration>, output: Option<PathBuf>, as_json: bool) -> Result<(), String> {
     let (mut program, mut child) = match traced {
         Traced::Running(name) => (connect(&name)?, None),
         Traced::Started(executable, arguments) => {
@@ -355,6 +355,18 @@ pub fn trace(traced: Traced, duration: Option<Duration>, output: Option<PathBuf>
             "; {} events and {} samples were lost, too many to keep",
             recording.dropped, recording.lost
         ));
+    }
+    if as_json {
+        let fields = json!({
+            "timeline": timeline,
+            "profile": profile,
+            "events": recording.events.len(),
+            "samples": recording.samples.len(),
+            "lost": { "events": recording.dropped, "samples": recording.lost },
+            "ended": end,
+        });
+        crate::cli::print_json("trace", true, fields);
+        return Ok(());
     }
     if let Some(end) = end {
         summary.push_str(&format!("; {end}"));
@@ -625,7 +637,7 @@ fn demangled(symbol: &str) -> String {
 
 /// `tondo dump <pid|name>`: asks a running program for a dump and writes
 /// it, with every frame named, so that it reads anywhere.
-pub fn dump(name: &str, output: Option<PathBuf>) -> Result<(), String> {
+pub fn dump(name: &str, output: Option<PathBuf>, as_json: bool) -> Result<(), String> {
     let mut program = connect(name)?;
     let _ = program.reader.get_ref().set_read_timeout(Some(Duration::from_secs(60)));
     let mut dump = program.ask("dump")?;
@@ -637,6 +649,10 @@ pub fn dump(name: &str, output: Option<PathBuf>) -> Result<(), String> {
         output.unwrap_or_else(|| PathBuf::from(format!("{}-{}.dump.json", program_name(&dump["info"]), program.pid)));
     let text = serde_json::to_string_pretty(&dump).unwrap_or_default();
     std::fs::write(&path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    if as_json {
+        crate::cli::print_json("dump", true, json!({ "file": path, "summary": summary(&dump) }));
+        return Ok(());
+    }
     print!("{}", summary(&dump));
     eprintln!("tondo: the dump is in {}; `tondo dump read {}` shows it", path.display(), path.display());
     Ok(())
@@ -662,23 +678,31 @@ pub fn read(path: &std::path::Path, view: View, json: bool) -> Result<(), String
     }
     name_frames(&mut dump);
     let tasks = tasks(&dump);
+    // With `--json`, the view under its name.
+    let shown = |name: &str, value: Value| {
+        crate::cli::print_json("dump-read", true, json!({ name: value }));
+        Ok(())
+    };
     let out = match view {
-        View::Summary if json => json!({ "summary": summary(&dump) }).to_string(),
+        View::Summary if json => return shown("summary", Value::String(summary(&dump))),
         View::Summary => summary(&dump),
-        View::Tasks if json => Value::Array(tasks).to_string(),
+        View::Tasks if json => return shown("tasks", Value::Array(tasks)),
         View::Tasks => tasks.iter().map(|task| task_text(task, false)).collect::<Vec<_>>().join("\n"),
         View::Task(id) => {
             let task = tasks.iter().find(|t| t["id"] == id).ok_or_else(|| {
                 format!("the dump has no task {id}; `tondo dump read {} tasks` lists them", path.display())
             })?;
-            if json { task.to_string() } else { task_text(task, true) }
+            if json {
+                return shown("task", task.clone());
+            }
+            task_text(task, true)
         }
-        View::Heap if json => heap(&dump).to_string(),
+        View::Heap if json => return shown("heap", heap(&dump)),
         View::Heap => heap_text(&heap(&dump)),
         View::Objects | View::Object(_) if dump.get("objects").is_none() => {
             return Err("this dump has no objects: a dump of a build with --debug has every object".into());
         }
-        View::Objects if json => objects_by_type(&dump).to_string(),
+        View::Objects if json => return shown("objects", objects_by_type(&dump)),
         View::Objects => objects_text(&objects_by_type(&dump)),
         View::Object(address) => {
             let object = object(&dump, &address).ok_or_else(|| {
@@ -687,7 +711,10 @@ pub fn read(path: &std::path::Path, view: View, json: bool) -> Result<(), String
                     path.display()
                 )
             })?;
-            if json { object.to_string() } else { object_text(&object) }
+            if json {
+                return shown("object", object);
+            }
+            object_text(&object)
         }
     };
     println!("{}", out.trim_end());

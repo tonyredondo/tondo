@@ -7993,7 +7993,9 @@ reutilizar uno existente.
 
 ### 22.3 Salida estructurada
 
-Además de texto humano, el compilador ofrece JSON:
+Además de texto humano, el compilador ofrece JSON: `tondo check --json` da
+los diagnósticos en `diagnostics` de `tondo-check-0.1/1`, y
+`--diagnostic-format json` en stderr (7.12 del toolchain). Cada uno es:
 
 ~~~json
 {

@@ -4,8 +4,10 @@
 import * as vscode from 'vscode';
 import { LanguageClient, LanguageClientOptions, ServerOptions } from 'vscode-languageclient/node';
 import { findTondo } from './binary';
+import { exec } from './cli';
 import { registerDebugging } from './debugging';
 import { registerTasks } from './tasks';
+import { incompatible } from './report';
 import { registerTesting } from './testing';
 
 let client: LanguageClient | undefined;
@@ -25,6 +27,7 @@ export function tondo(): string {
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const output = vscode.window.createOutputChannel('Tondo', { log: true });
   context.subscriptions.push(output);
+  void checkVersion();
   await startClient(output);
   registerDebugging(context);
   registerTesting(context, output);
@@ -43,6 +46,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('tondo.restartLanguageServer', () => restartClient(output)),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration('tondo.path')) {
+        void checkVersion();
         void restartClient(output);
       }
     }),
@@ -51,6 +55,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
 export async function deactivate(): Promise<void> {
   await client?.stop();
+}
+
+/** Says so when the `tondo` found is older than this extension. */
+async function checkVersion(): Promise<void> {
+  try {
+    const ran = await exec(['version', '--json'], process.cwd());
+    const problem = incompatible(ran.stdout);
+    if (problem) {
+      void vscode.window.showWarningMessage(problem);
+    }
+  } catch {
+    // Without tondo, starting the language server says how to get it.
+  }
 }
 
 async function startClient(output: vscode.LogOutputChannel): Promise<void> {

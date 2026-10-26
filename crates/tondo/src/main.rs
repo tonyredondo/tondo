@@ -3,77 +3,13 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use tondo::cli::print_json;
 use tondo::driver;
 use tondo::target::Target;
 
-const USAGE: &str = "\
-New to Tondo, or a model writing it? Start with `tondo guide`.
-
-usage:
-  tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch]
-            [--target <target>] [-- <argument>...]     compile and run a program (under qemu for another
-                                                       machine; live: its code changes as it runs, with
-                                                       `tondo reload`, or by itself as its files change)
-  tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip]
-            [--debug | --live] [--target <target>]     compile a native executable (static on Linux;
-                                                       without its symbol table; static for a target:
-                                                       x86_64-linux or aarch64-linux)
-  tondo build --library [<project>|<file.to>] [--output <dir>] [--debug]
-                                                       compile a library for C, lib<name>.so (.dylib)
-                                                       and lib<name>.a, with its header <name>.h
-  tondo check [<project>|<file.to>] [--library] [--json]
-                                                       report diagnostics only (of a library; as JSON)
-  tondo expand [<project>|<file.to>]                   show what each `derive` expanded to
-  tondo fmt [--check | --compact] <file.to>...         format files canonically, or print them compactly
-  tondo api [<module>|<file.to>] [--private] [--list] [--project <dir>]
-                                                       show a module's declarations and documentation
-  tondo guide [<topic>] [--list] [--skill]             learn Tondo: the language, the library, the commands
-  tondo update [<project>] [<dependency>...]           fetch dependencies again and rewrite tondo.lock
-  tondo test [<project>] [--filter <text> | --glob <pattern> | --exact <id>] [--shard <i/n>]
-            [--order canonical|random] [--schedules <n>] [--seed <hex>] [--list] [--jobs <n>] [--timeout <seconds>]
-            [--retry <n>] [--allow-flaky] [--repeat <n>] [--codeowners auto|none|<path>]
-            [--show-output] [--allow-empty] [--deny-skips] [--test-format human|json]
-            [--report json=<path> | junit=<path>]... [--diagnostic-format human|json]
-            [--artifacts <dir>] [--update-snapshots] [--static] [--debug] [--library] [--target <target>]
-                                                       run the tests of a project (of a library)
-  tondo doc-test [--edition 0.1] <markdown>            check the examples of a document (as JSON)
-  tondo lsp                                            serve an editor: diagnostics, hover, definitions,
-                                                       references, rename, completion, highlighting
-  tondo mcp                                            serve an agent, with the Model Context Protocol:
-                                                       every command above as its tools
-  tondo setup                                          set up Claude Code and Codex: the skill, and tondo
-                                                       mcp for every project; checked
-  tondo ps [--json]                                    list the running Tondo programs
-  tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--json]
-                                                       watch a running program's counters, the runtime's
-                                                       and its own (std.diagnostics)
-  tondo debug [--json] [--live] <file.to|project|executable|pid|name> [-- <argument>...]
-                                                       debug a program built with --debug: breakpoints,
-                                                       steps, bindings, stacks, tasks; and with --live,
-                                                       `reload` to change its code where it stopped
-  tondo reload <pid|name>                              change a running live build's code to what its
-                                                       files say now
-  tondo dap                                            debug for an editor, with the Debug Adapter Protocol
-  tondo dump <pid|name> [--output <path>]           write a dump of a running program: its tasks and
-                                                       where they are, its counters, its live memory
-  tondo dump read <file> [tasks | task <id> | heap | objects | object <address>] [--json]
-                                                       show a dump, as one written at a crash with
-                                                       TONDO_DUMP=<dir>
-  tondo trace <pid|name> [--duration <seconds>] [--output <path>]
-  tondo trace [--duration <seconds>] [--output <path>] -- <program> [<argument>...]
-                                                       record what a program's tasks do, for Perfetto,
-                                                       and a profile of where it spends its time
-  tondo target pack [<dir>]                            write this machine's target, for a tondo elsewhere
-                                                       to build for it (TONDO_TARGETS=<dir>)
-  tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
-                                                       write a module of extern declarations for a C header
-  tondo <file.to> [<argument>...]                      run a script (for #! lines)
-  tondo version
-
-A project is a directory with src/main.to, or with main.to or tondo.toml,
-given as <project> or with --project <dir>; the current directory by default.
---link links a native library by name (-l) or file, besides a project's
-[native] libraries.";
+/// What a usage error ends with: `main` shows the usage of its command
+/// there (`tondo::cli`).
+const USAGE: &str = "\u{0}usage";
 
 /// Exit status for usage and toolchain failures (distinct from program errors).
 const TOOL_FAILURE: u8 = 3;
@@ -92,9 +28,15 @@ fn main() -> ExitCode {
     }
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     let Some(command) = args.first().and_then(|a| a.to_str()) else {
-        eprintln!("{USAGE}");
+        eprintln!("{}", tondo::cli::usage());
         return ExitCode::from(2);
     };
+    // `--help` asks for a command's usage, before the program's arguments.
+    let asks_help = args[1..].iter().take_while(|a| *a != "--").any(|a| a == "--help" || a == "-h");
+    if asks_help && let Some(help) = tondo::cli::help(command) {
+        print!("{help}");
+        return ExitCode::SUCCESS;
+    }
     let result = match command {
         "run" => run_command(&args[1..]),
         "build" => build_command(&args[1..]),
@@ -105,14 +47,16 @@ fn main() -> ExitCode {
         "guide" => guide_command(&args[1..]),
         "update" => update_command(&args[1..]),
         "bind" => bind_command(&args[1..]),
+        "graph" => graph_command(&args[1..]),
         "test" => test_command(&args[1..]),
         "doc-test" => doc_test_command(&args[1..]),
         "lsp" => tondo::lsp::serve().map(|()| ExitCode::SUCCESS),
         "mcp" => tondo::mcp::serve().map(|()| ExitCode::SUCCESS),
         "reload" => reload_command(&args[1..]),
-        "setup" => match args.len() {
-            1 => tondo::setup::setup().map(|()| ExitCode::SUCCESS),
-            _ => Err(format!("setup takes no arguments\n{USAGE}")),
+        "setup" => match args.get(1).and_then(|a| a.to_str()) {
+            None if args.len() == 1 => tondo::setup::setup(false).map(|()| ExitCode::SUCCESS),
+            Some("--json") if args.len() == 2 => tondo::setup::setup(true).map(|()| ExitCode::SUCCESS),
+            _ => Err(format!("setup takes only --json\n{USAGE}")),
         },
         "ps" => ps_command(&args[1..]),
         "counters" => counters_command(&args[1..]),
@@ -133,21 +77,93 @@ fn main() -> ExitCode {
             tondo::dap::serve(tondo::dap::Builds { program: &program, tests: &tests }).map(|()| ExitCode::SUCCESS)
         }
         "version" | "--version" | "-V" => {
-            println!("tondo {} (native, cranelift)", driver::VERSION);
+            if args.iter().skip(1).any(|a| a == "--json") {
+                let target = Target::machine().map(Target::name);
+                let fields =
+                    serde_json::json!({ "version": driver::VERSION, "backend": "cranelift", "target": target });
+                print_json("version", true, fields);
+            } else {
+                println!("tondo {} (native, cranelift)", driver::VERSION);
+            }
             Ok(ExitCode::SUCCESS)
         }
-        "help" | "--help" | "-h" => {
-            println!("{USAGE}");
-            Ok(ExitCode::SUCCESS)
-        }
+        "help" | "--help" | "-h" => match args.get(1).and_then(|a| a.to_str()) {
+            None => {
+                println!("{}", tondo::cli::usage());
+                Ok(ExitCode::SUCCESS)
+            }
+            Some(name) => match tondo::cli::help(name) {
+                Some(help) => {
+                    print!("{help}");
+                    Ok(ExitCode::SUCCESS)
+                }
+                None => Err(format!("no command `{name}`\n{USAGE}")),
+            },
+        },
+        "completions" => match args.get(1).and_then(|a| a.to_str()).and_then(tondo::cli::completions) {
+            Some(script) if args.len() == 2 => {
+                print!("{script}");
+                Ok(ExitCode::SUCCESS)
+            }
+            _ => Err(format!("completions are for bash, zsh or fish\n{USAGE}")),
+        },
         file if file.ends_with(".to") => run(Path::new(file), &args[1..], &BuildOptions::default()),
         other => Err(format!("unknown command `{other}`\n{USAGE}")),
     };
-    result.unwrap_or_else(|message| {
-        eprintln!("tondo: {message}");
-        // Usage errors end with the usage text.
-        ExitCode::from(if message.ends_with(USAGE) { 2 } else { TOOL_FAILURE })
+    // With `--json`, what goes wrong is JSON too, on stdout.
+    let json = args[1..].iter().take_while(|a| *a != "--").any(|a| a == "--json")
+        || args.windows(2).any(|w| w[0] == "--test-format" && w[1] != "human");
+    if json && let Err(message) = &result {
+        let (message, usage) = match message.strip_suffix(USAGE) {
+            Some(message) => (message.trim_end(), true),
+            None => (message.as_str(), false),
+        };
+        let status = if usage { 2 } else { TOOL_FAILURE };
+        let fields = serde_json::json!({ "message": message, "usage": usage, "status": status });
+        print_json("error", false, fields);
+        return ExitCode::from(status);
+    }
+    result.unwrap_or_else(|message| match message.strip_suffix(USAGE) {
+        // A usage error shows its command's usage, or every command's.
+        Some(message) => {
+            eprintln!("tondo: {}", message.trim_end());
+            match tondo::cli::help(command) {
+                Some(help) => eprint!("{help}"),
+                None => eprintln!("{}", tondo::cli::usage()),
+            }
+            ExitCode::from(2)
+        }
+        None => {
+            eprintln!("tondo: {message}");
+            ExitCode::from(TOOL_FAILURE)
+        }
     })
+}
+
+/// Takes `flag` out of the arguments: whether it was there.
+fn take_flag(args: &mut Vec<OsString>, flag: &str) -> bool {
+    let before = args.len();
+    args.retain(|a| a != flag);
+    args.len() != before
+}
+
+/// How the program's diagnostics are shown on stderr: as text, or as one
+/// JSON array (`--diagnostic-format`, 22.3).
+#[derive(Clone, Copy, Default, PartialEq)]
+enum Shown {
+    #[default]
+    Human,
+    Json,
+}
+
+fn show(analysis: &driver::Analysis, shown: Shown) {
+    if analysis.diags.list.is_empty() {
+        return;
+    }
+    match shown {
+        Shown::Human => eprint!("{}", analysis.diags.render(&analysis.sources)),
+        Shown::Json => eprintln!("{}", analysis.diags.json(&analysis.sources, &analysis.source_id)),
+    }
 }
 
 /// The program to compile, and the arguments after it.
@@ -167,12 +183,10 @@ fn program_name(path: &Path) -> Result<PathBuf, String> {
     name.map(PathBuf::from).ok_or_else(|| format!("cannot name a program after {}", path.display()))
 }
 
-/// Prints diagnostics; returns the analysis only when it has no errors.
-fn analyze(path: &Path, library: bool) -> Result<Option<driver::Analysis>, String> {
+/// Shows diagnostics; returns the analysis only when it has no errors.
+fn analyze(path: &Path, library: bool, shown: Shown) -> Result<Option<driver::Analysis>, String> {
     let analysis = if library { driver::analyze_library(path)? } else { driver::analyze(path)? };
-    if !analysis.diags.list.is_empty() {
-        eprint!("{}", analysis.diags.render(&analysis.sources));
-    }
+    show(&analysis, shown);
     Ok(analysis.program.is_some().then_some(analysis))
 }
 
@@ -184,27 +198,42 @@ fn check_command(args: &[OsString]) -> Result<ExitCode, String> {
         return Err(format!("unexpected arguments\n{USAGE}"));
     }
     let analysis = if library { driver::analyze_library(&path)? } else { driver::check(&path)? };
+    let ok = analysis.program.is_some();
     if json {
-        print!("{}", analysis.diags.render_json(&analysis.sources, &analysis.source_id));
-    } else if !analysis.diags.list.is_empty() {
-        eprint!("{}", analysis.diags.render(&analysis.sources));
+        let diagnostics = analysis.diags.json(&analysis.sources, &analysis.source_id);
+        print_json("check", ok, serde_json::json!({ "diagnostics": diagnostics }));
+    } else {
+        show(&analysis, Shown::Human);
     }
-    Ok(if analysis.program.is_some() { ExitCode::SUCCESS } else { ExitCode::FAILURE })
+    Ok(if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }
 
 /// Shows the `impl` each `derive` of the program expanded to (27.3).
 fn expand_command(args: &[OsString]) -> Result<ExitCode, String> {
-    let (path, rest) = source_argument(args);
+    let mut args = args.to_vec();
+    let json = take_flag(&mut args, "--json");
+    let (path, rest) = source_argument(&args);
     if !rest.is_empty() {
         return Err(format!("unexpected arguments\n{USAGE}"));
     }
     let analysis = driver::check(&path)?;
+    let ok = !analysis.diags.has_errors();
+    if json {
+        let expansions: Vec<serde_json::Value> = analysis
+            .expansions
+            .iter()
+            .map(|e| serde_json::json!({ "derive": e.request, "location": e.location, "source": e.source }))
+            .collect();
+        let diagnostics = analysis.diags.json(&analysis.sources, &analysis.source_id);
+        print_json("expand", ok, serde_json::json!({ "expansions": expansions, "diagnostics": diagnostics }));
+        return Ok(if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE });
+    }
     for expansion in &analysis.expansions {
         println!("// {} ({})\n{}", expansion.request, expansion.location, expansion.source.trim_end());
         println!();
     }
-    if analysis.diags.has_errors() {
-        eprint!("{}", analysis.diags.render(&analysis.sources));
+    if !ok {
+        show(&analysis, Shown::Human);
         return Ok(ExitCode::FAILURE);
     }
     Ok(ExitCode::SUCCESS)
@@ -234,6 +263,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         deny_skips: false,
         allow_flaky: false,
         json: false,
+        events: false,
         reports: Vec::new(),
         artifacts: None,
         update_snapshots: false,
@@ -343,20 +373,21 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             "--target" => target = Some(Target::parse(&value()?)?),
             "--deny-skips" => options.deny_skips = true,
             "--allow-flaky" => options.allow_flaky = true,
+            // The report as JSON, as `--test-format json` gives it.
+            "--json" => options.json = true,
             "--update-snapshots" => options.update_snapshots = true,
             "--artifacts" => options.artifacts = Some(PathBuf::from(value()?)),
-            "--test-format" | "--diagnostic-format" => {
-                let json = match value()?.as_str() {
-                    "human" => false,
-                    "json" => true,
-                    other => return Err(usage(format!("{flag} is human or json, not {other}"))),
-                };
-                if flag == "--test-format" {
-                    options.json = json;
-                } else {
-                    diagnostics_json = json;
-                }
-            }
+            "--test-format" => match value()?.as_str() {
+                "human" => (options.json, options.events) = (false, false),
+                "json" => (options.json, options.events) = (true, false),
+                "events" => (options.json, options.events) = (true, true),
+                other => return Err(usage(format!("--test-format is human, json or events, not {other}"))),
+            },
+            "--diagnostic-format" => match value()?.as_str() {
+                "human" => diagnostics_json = false,
+                "json" => diagnostics_json = true,
+                other => return Err(usage(format!("--diagnostic-format is human or json, not {other}"))),
+            },
             "--report" => {
                 let text = value()?;
                 let report = match text.split_once('=') {
@@ -597,10 +628,25 @@ fn debug_command(args: &[OsString]) -> Result<ExitCode, String> {
 /// Patches a running live build with its program as its sources say now
 /// (toolchain 7.10); it goes on with its old code when they do not compile.
 fn reload_command(args: &[OsString]) -> Result<ExitCode, String> {
-    let [name] = args else {
+    let mut args = args.to_vec();
+    let json = take_flag(&mut args, "--json");
+    let [name] = &args[..] else {
         return Err(format!("reload takes a running live program's process ID or name\n{USAGE}"));
     };
-    match tondo::live::reload_named(&name.to_string_lossy()) {
+    let reloaded = tondo::live::reload_named(&name.to_string_lossy());
+    if json {
+        let (ok, fields) = match reloaded {
+            Ok(reloaded) => (true, reloaded.json()),
+            Err(tondo::live::Refused::Failed(message)) => return Err(message),
+            Err(refused) => {
+                let restart = matches!(refused, tondo::live::Refused::Restart(_));
+                (false, serde_json::json!({ "message": refused.message(), "restart": restart }))
+            }
+        };
+        print_json("reload", ok, fields);
+        return Ok(if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE });
+    }
+    match reloaded {
         Ok(reloaded) => {
             println!("{}", reloaded.summary());
             Ok(ExitCode::SUCCESS)
@@ -639,8 +685,10 @@ fn dump_command(args: &[OsString]) -> Result<ExitCode, String> {
             };
             tondo::observe::read(Path::new(file), view, json).map(|()| ExitCode::SUCCESS)
         }
-        [name] if !name.starts_with('-') => tondo::observe::dump(name, None).map(|()| ExitCode::SUCCESS),
-        [name, "--output", path] => tondo::observe::dump(name, Some(PathBuf::from(path))).map(|()| ExitCode::SUCCESS),
+        [name] if !name.starts_with('-') => tondo::observe::dump(name, None, json).map(|()| ExitCode::SUCCESS),
+        [name, "--output", path] => {
+            tondo::observe::dump(name, Some(PathBuf::from(path)), json).map(|()| ExitCode::SUCCESS)
+        }
         _ => Err(usage("dump takes a running program, its process ID or its name, or `read <file>`")),
     }
 }
@@ -648,7 +696,7 @@ fn dump_command(args: &[OsString]) -> Result<ExitCode, String> {
 /// Traces a running program, or one it starts.
 fn trace_command(args: &[OsString]) -> Result<ExitCode, String> {
     let usage = |message: &str| format!("{message}\n{USAGE}");
-    let (mut name, mut duration, mut output, mut program) = (None, None, None, None);
+    let (mut name, mut duration, mut output, mut program, mut json) = (None, None, None, None, false);
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.to_str().unwrap_or_default() {
@@ -656,6 +704,7 @@ fn trace_command(args: &[OsString]) -> Result<ExitCode, String> {
                 program = Some(rest.by_ref().cloned().collect::<Vec<_>>());
                 break;
             }
+            "--json" => json = true,
             "--duration" => {
                 let seconds = rest.next().and_then(|s| s.to_str()?.parse::<f64>().ok()).filter(|s| *s > 0.0);
                 let seconds = seconds.ok_or_else(|| usage("--duration takes seconds, as --duration 10"))?;
@@ -687,18 +736,30 @@ fn trace_command(args: &[OsString]) -> Result<ExitCode, String> {
             ));
         }
     };
-    tondo::observe::trace(target, duration, output).map(|()| ExitCode::SUCCESS)
+    tondo::observe::trace(target, duration, output, json).map(|()| ExitCode::SUCCESS)
 }
 
 /// Resolves the named dependencies, or all of them, again instead of
 /// using `tondo.lock`.
 fn update_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let mut args = args.to_vec();
+    let json = take_flag(&mut args, "--json");
+    if let Some(flag) = args.iter().find(|a| a.to_string_lossy().starts_with('-')) {
+        return Err(format!("update does not take {}\n{USAGE}", flag.display()));
+    }
     let (path, rest) = match args.first() {
         Some(first) if Path::new(first).is_dir() => (PathBuf::from(first), &args[1..]),
-        _ => source_argument(args),
+        _ => source_argument(&args),
     };
     let names: Vec<String> = rest.iter().map(|a| a.to_string_lossy().into_owned()).collect();
-    tondo::deps::resolve(&path, Some(&names))?;
+    let packages = tondo::deps::resolve(&path, Some(&names))?;
+    if json {
+        let packages: Vec<serde_json::Value> = packages[1..]
+            .iter()
+            .map(|p| serde_json::json!({ "name": p.name, "dir": p.dir, "tests_only": p.tests_only }))
+            .collect();
+        print_json("update", true, serde_json::json!({ "lock": path.join("tondo.lock"), "packages": packages }));
+    }
     Ok(ExitCode::SUCCESS)
 }
 
@@ -706,7 +767,7 @@ fn update_command(args: &[OsString]) -> Result<ExitCode, String> {
 /// for C headers, and adds the library to `[native] libraries`.
 fn bind_command(args: &[OsString]) -> Result<ExitCode, String> {
     let (mut headers, mut libraries, mut arguments) = (Vec::new(), Vec::new(), Vec::new());
-    let (mut project, mut output, mut package) = (PathBuf::from("."), None, None);
+    let (mut project, mut output, mut package, mut json) = (PathBuf::from("."), None, None, false);
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         let text = arg.to_string_lossy();
@@ -716,6 +777,7 @@ fn bind_command(args: &[OsString]) -> Result<ExitCode, String> {
             "--project" => project = PathBuf::from(value("--project")?),
             "--package" => package = Some(value("--package")?.to_string_lossy().into_owned()),
             "--output" | "-o" => output = Some(PathBuf::from(value("--output")?)),
+            "--json" => json = true,
             "-I" | "-D" => arguments.push(format!("{text}{}", value(&text)?.to_string_lossy())),
             flag if flag.starts_with("-I") || flag.starts_with("-D") => arguments.push(flag.to_string()),
             flag if flag.starts_with('-') => return Err(format!("unknown option {flag}\n{USAGE}")),
@@ -763,15 +825,69 @@ fn bind_command(args: &[OsString]) -> Result<ExitCode, String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     }
     std::fs::write(&path, module).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-    eprintln!("wrote {}: import it as a module of the project, `import <package>.{name}`", path.display());
+    if !json {
+        eprintln!("wrote {}: import it as a module of the project, `import <package>.{name}`", path.display());
+    }
     // Only a project's manifest takes the libraries.
     let is_project = ["tondo.toml", "src/main.to", "main.to"].iter().any(|f| project.join(f).is_file());
+    let mut added = Vec::new();
     for library in &libraries {
         if !is_project {
-            eprintln!("link {library:?}: add it to [native] libraries in the project's tondo.toml");
+            if !json {
+                eprintln!("link {library:?}: add it to [native] libraries in the project's tondo.toml");
+            }
         } else if tondo::bind::add_library(&project, library)? {
-            eprintln!("added {library:?} to [native] libraries in tondo.toml");
+            if !json {
+                eprintln!("added {library:?} to [native] libraries in tondo.toml");
+            }
+            added.push(library);
         }
+    }
+    if json {
+        print_json(
+            "bind",
+            true,
+            serde_json::json!({ "file": path, "module": name, "libraries": libraries, "added": added }),
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Shows what a program is made of (7.11): its packages, its modules with
+/// their files, and what each imports.
+fn graph_command(args: &[OsString]) -> Result<ExitCode, String> {
+    use tondo::graph::View;
+    let (mut path, mut view, mut module, mut reverse, mut output) = (None, View::Modules, None, false, "text");
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        match arg.to_str() {
+            Some("--packages") => view = View::Packages,
+            Some("--files") => view = View::Files,
+            Some("--reverse") => reverse = true,
+            Some("--module") => {
+                module = Some(args.next().and_then(|m| m.to_str()).ok_or(format!("--module names a module\n{USAGE}"))?)
+            }
+            Some(format @ ("--json" | "--dot" | "--mermaid")) => output = &format[2..],
+            Some(flag) if flag.starts_with('-') => return Err(format!("graph does not take {flag}\n{USAGE}")),
+            _ if path.is_none() => path = Some(PathBuf::from(arg)),
+            _ => return Err(format!("graph takes one project, directory or file\n{USAGE}")),
+        }
+    }
+    if reverse && module.is_none() {
+        return Err(format!("--reverse goes with --module <module>\n{USAGE}"));
+    }
+    let mut graph = tondo::graph::graph(&path.unwrap_or_else(|| PathBuf::from(".")))?;
+    // A directory or file inside a project shows its module.
+    if view != View::Packages
+        && let Some(module) = module.map(str::to_string).or(graph.focus.clone())
+    {
+        graph.around(&module, reverse)?;
+    }
+    match output {
+        "json" => print_json("graph", true, graph.json(view == View::Packages)),
+        "dot" => print!("{}", graph.dot(view)),
+        "mermaid" => print!("{}", graph.mermaid(view)),
+        _ => print!("{}", graph.text(view)),
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -779,43 +895,71 @@ fn bind_command(args: &[OsString]) -> Result<ExitCode, String> {
 /// Rewrites files in the canonical format (21), or with `--check` reports
 /// those that are not.
 fn fmt_command(args: &[OsString]) -> Result<ExitCode, String> {
-    let check = args.iter().any(|a| a == "--check");
-    let compact = args.iter().any(|a| a == "--compact");
-    let files: Vec<&OsString> = args.iter().filter(|a| *a != "--check" && *a != "--compact").collect();
+    let mut args = args.to_vec();
+    let json = take_flag(&mut args, "--json");
+    let check = take_flag(&mut args, "--check");
+    let compact = take_flag(&mut args, "--compact");
+    if let Some(flag) = args.iter().find(|a| a.to_string_lossy().starts_with('-')) {
+        return Err(format!("fmt does not take {}\n{USAGE}", flag.display()));
+    }
+    let files = args;
     if files.is_empty() {
         return Err(format!("expected a source file\n{USAGE}"));
     }
     let mut status = ExitCode::SUCCESS;
-    for file in files {
+    // With `--json`: each file, whether it changed (or would, with
+    // `--check`), its compact form, or why it is not Tondo.
+    let mut reported: Vec<serde_json::Value> = Vec::new();
+    for file in &files {
         let path = Path::new(file);
         let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let mut sources = tondo::source::SourceMap::default();
         let index = sources.add(path, text.clone());
         let mut diags = tondo::diag::Diagnostics::default();
+        let source_id = format!("root:{}", path.display());
         if compact {
             match tondo::compact::compact(sources.file(index), &mut diags) {
+                Some(text) if json => reported.push(serde_json::json!({ "file": path, "compact": text })),
                 Some(text) => print!("{text}"),
                 None => {
-                    eprint!("{}", diags.render(&sources));
+                    match json {
+                        true => reported
+                            .push(serde_json::json!({ "file": path, "diagnostics": diags.json(&sources, &source_id) })),
+                        false => eprint!("{}", diags.render(&sources)),
+                    }
                     status = ExitCode::FAILURE;
                 }
             }
             continue;
         }
         let Some(formatted) = tondo::fmt::format(sources.file(index), &mut diags) else {
-            eprint!("{}", diags.render(&sources));
+            match json {
+                true => {
+                    reported.push(serde_json::json!({ "file": path, "diagnostics": diags.json(&sources, &source_id) }))
+                }
+                false => eprint!("{}", diags.render(&sources)),
+            }
             status = ExitCode::FAILURE;
             continue;
         };
-        if formatted == text {
+        let changed = formatted != text;
+        if json {
+            reported.push(serde_json::json!({ "file": path, "changed": changed }));
+        }
+        if !changed {
             continue;
         }
         if check {
-            eprintln!("{} is not formatted", path.display());
+            if !json {
+                eprintln!("{} is not formatted", path.display());
+            }
             status = ExitCode::FAILURE;
         } else {
             std::fs::write(path, formatted).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
         }
+    }
+    if json {
+        print_json("fmt", status == ExitCode::SUCCESS, serde_json::json!({ "files": reported }));
     }
     Ok(status)
 }
@@ -823,7 +967,25 @@ fn fmt_command(args: &[OsString]) -> Result<ExitCode, String> {
 /// `tondo guide`: the overview, a topic, the topics' names, or the
 /// overview as an agent skill.
 fn guide_command(args: &[OsString]) -> Result<ExitCode, String> {
-    let args: Vec<&str> = args.iter().filter_map(|a| a.to_str()).collect();
+    let mut args: Vec<&str> = args.iter().filter_map(|a| a.to_str()).collect();
+    let json = args.contains(&"--json");
+    args.retain(|a| *a != "--json");
+    if json {
+        let fields = match args.as_slice() {
+            [] => serde_json::json!({ "topic": tondo::guide::TOPICS[0].0, "text": tondo::guide::TOPICS[0].1 }),
+            ["--list"] => {
+                serde_json::json!({ "topics": tondo::guide::TOPICS.iter().map(|(name, _)| *name).collect::<Vec<_>>() })
+            }
+            ["--skill"] => serde_json::json!({ "skill": tondo::guide::skill() }),
+            [name] => match tondo::guide::topic(name) {
+                Some(text) => serde_json::json!({ "topic": name, "text": text }),
+                None => return Err(format!("there is no topic `{name}`; `tondo guide --list` shows them")),
+            },
+            _ => return Err(format!("expected one topic\n{USAGE}")),
+        };
+        print_json("guide", true, fields);
+        return Ok(ExitCode::SUCCESS);
+    }
     match args.as_slice() {
         [] => print!("{}", tondo::guide::TOPICS[0].1),
         ["--list"] => {
@@ -844,12 +1006,13 @@ fn guide_command(args: &[OsString]) -> Result<ExitCode, String> {
 /// `tondo api`: the declarations of a standard module, a module of the
 /// project or its dependencies, or a file; the whole package without one.
 fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
-    let (mut private, mut list, mut project, mut target) = (false, false, PathBuf::from("."), None);
+    let (mut private, mut list, mut json, mut project, mut target) = (false, false, false, PathBuf::from("."), None);
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.to_str() {
             Some("--private") => private = true,
             Some("--list") => list = true,
+            Some("--json") => json = true,
             Some("--project") => {
                 project = rest.next().map(PathBuf::from).ok_or(format!("--project names a directory\n{USAGE}"))?
             }
@@ -882,39 +1045,63 @@ fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
         Ok(out)
     };
     if list {
-        for name in tondo::api::standard_modules() {
-            println!("{name}");
-        }
+        let mut names: Vec<String> = tondo::api::standard_modules().iter().map(|name| name.to_string()).collect();
         if let Ok(modules) = modules() {
-            for (name, _, _) in modules {
-                println!("{name}");
-            }
+            names.extend(modules.into_iter().map(|(name, _, _)| name));
+        }
+        if json {
+            print_json("api", true, serde_json::json!({ "modules": names }));
+        } else {
+            names.iter().for_each(|name| println!("{name}"));
         }
         return Ok(ExitCode::SUCCESS);
     }
-    match target {
+    // What is shown: the module or file named, or each module of the
+    // project.
+    let (key, shown) = match target {
         Some(name) if name == "prelude" || name.starts_with("std.") => match tondo::api::standard(&name) {
-            Some(text) => print!("{text}"),
+            Some(text) => ("module", vec![(name, text.to_string())]),
             None => return Err(format!("there is no standard module `{name}`; `tondo api --list` shows them")),
         },
-        Some(file) if file.ends_with(".to") => print!("{}", render(&[PathBuf::from(file)])?),
+        Some(file) if file.ends_with(".to") => ("file", vec![(file.clone(), render(&[PathBuf::from(file)])?)]),
         Some(name) => {
             let modules = modules()?;
             let Some((_, paths, _)) = modules.iter().find(|(n, _, _)| *n == name) else {
                 return Err(format!("the project has no module `{name}`; `tondo api --list` shows them"));
             };
-            print!("{}", render(paths)?);
+            ("module", vec![(name, render(paths)?)])
         }
         None => {
-            let mut first = true;
+            let mut shown = Vec::new();
             for (name, paths, own) in modules()? {
                 let declarations = render(&paths)?;
                 if own && !declarations.is_empty() {
-                    print!("{}// module {name}\n\n{declarations}", if first { "" } else { "\n" });
-                    first = false;
+                    shown.push((name, declarations));
                 }
             }
+            ("modules", shown)
         }
+    };
+    if json {
+        let entries: Vec<serde_json::Value> = shown
+            .iter()
+            .map(|(name, text)| {
+                let key = if key == "file" { "file" } else { "module" };
+                serde_json::json!({ key: name, "declarations": tondo::api::declarations(text) })
+            })
+            .collect();
+        let fields = match (key, entries.as_slice()) {
+            ("modules", _) => serde_json::json!({ "modules": entries }),
+            (_, [entry]) => entry.clone(),
+            _ => unreachable!(),
+        };
+        print_json("api", true, fields);
+    } else if key == "modules" {
+        for (index, (name, declarations)) in shown.iter().enumerate() {
+            print!("{}// module {name}\n\n{declarations}", if index == 0 { "" } else { "\n" });
+        }
+    } else {
+        shown.iter().for_each(|(_, text)| print!("{text}"));
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -934,6 +1121,8 @@ struct BuildOptions {
     /// `run --watch`: reloads the program when its files change.
     watch: bool,
     target: Option<Target>,
+    /// How diagnostics are shown.
+    shown: Shown,
 }
 
 /// The object of a program; a live build's keeps its manifest.
@@ -952,9 +1141,16 @@ fn object(analysis: &driver::Analysis, path: &Path, options: &BuildOptions) -> R
 fn link_options(args: &[OsString]) -> Result<(BuildOptions, Vec<OsString>), String> {
     let (mut libraries, mut statically, mut debug, mut rest) = (Vec::new(), false, false, Vec::new());
     let (mut target, mut live, mut watch) = (None, false, false);
+    let mut shown = Shown::Human;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
-        if arg == "--target" && target.is_none() {
+        if arg == "--diagnostic-format" {
+            shown = match args.next().and_then(|v| v.to_str()) {
+                Some("human") => Shown::Human,
+                Some("json") => Shown::Json,
+                _ => return Err(format!("--diagnostic-format is human or json\n{USAGE}")),
+            };
+        } else if arg == "--target" && target.is_none() {
             let name = args
                 .next()
                 .ok_or_else(|| format!("--target needs a target: x86_64-linux or aarch64-linux\n{USAGE}"))?;
@@ -979,7 +1175,7 @@ fn link_options(args: &[OsString]) -> Result<(BuildOptions, Vec<OsString>), Stri
         }
     }
     driver::ready(target)?;
-    Ok((BuildOptions { libraries, statically, debug, live, watch, target }, rest))
+    Ok((BuildOptions { libraries, statically, debug, live, watch, target, shown }, rest))
 }
 
 fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
@@ -987,7 +1183,9 @@ fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
         let args = [&args[..at], &args[at + 1..]].concat();
         return library_command(&args);
     }
-    let (path, rest) = source_argument(args);
+    let mut args = args.to_vec();
+    let json = take_flag(&mut args, "--json");
+    let (path, rest) = source_argument(&args);
     let (options, rest) = link_options(rest)?;
     let mut output = None;
     let mut strip = false;
@@ -1006,19 +1204,32 @@ fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
         Some(output) => output,
         None => program_name(&path)?,
     };
-    let Some(analysis) = analyze(&path, false)? else {
+    let analysis = driver::analyze(&path)?;
+    let diagnostics = analysis.diags.json(&analysis.sources, &analysis.source_id);
+    if !json {
+        show(&analysis, options.shown);
+    }
+    if analysis.program.is_none() {
+        if json {
+            print_json("build", false, serde_json::json!({ "output": null, "diagnostics": diagnostics }));
+        }
         return Ok(ExitCode::FAILURE);
-    };
+    }
     let object = object(&analysis, &path, &options)?;
     let libraries = [analysis.libraries.clone(), options.libraries].concat();
     let linking = driver::Linking { strip, statically: options.statically, target: options.target };
     driver::link(&object, &output, &libraries, linking)?;
+    if json {
+        print_json("build", true, serde_json::json!({ "output": output, "diagnostics": diagnostics }));
+    }
     Ok(ExitCode::SUCCESS)
 }
 
 /// `tondo build --library`: a library for C (toolchain 7).
 fn library_command(args: &[OsString]) -> Result<ExitCode, String> {
-    let (path, rest) = source_argument(args);
+    let mut args = args.to_vec();
+    let json = take_flag(&mut args, "--json");
+    let (path, rest) = source_argument(&args);
     let (mut output, mut debug) = (None, false);
     let mut rest = rest.iter();
     while let Some(arg) = rest.next() {
@@ -1041,14 +1252,27 @@ fn library_command(args: &[OsString]) -> Result<ExitCode, String> {
         }
     }
     let name = program_name(&path)?.to_string_lossy().into_owned();
-    let Some(analysis) = analyze(&path, true)? else {
+    let analysis = driver::analyze_library(&path)?;
+    let diagnostics = analysis.diags.json(&analysis.sources, &analysis.source_id);
+    if !json {
+        show(&analysis, Shown::Human);
+    }
+    if analysis.program.is_none() {
+        if json {
+            print_json("build", false, serde_json::json!({ "files": [], "diagnostics": diagnostics }));
+        }
         return Ok(ExitCode::FAILURE);
-    };
+    }
     let object = driver::object(&analysis, debug, None)?;
     let dir = output.unwrap_or_else(|| PathBuf::from("."));
     let linking = driver::library(&analysis, &object, &dir, &name)?;
     let shared = format!("lib{name}.{}", if cfg!(target_os = "macos") { "dylib" } else { "so" });
     let wrote = [shared, format!("lib{name}.a"), format!("{name}.h")].map(|f| dir.join(f).display().to_string());
+    if json {
+        let fields = serde_json::json!({ "files": wrote, "linking": linking, "diagnostics": diagnostics });
+        print_json("build", true, fields);
+        return Ok(ExitCode::SUCCESS);
+    }
     println!("wrote {}, {} and {}", wrote[0], wrote[1], wrote[2]);
     println!("{linking}");
     Ok(ExitCode::SUCCESS)
@@ -1057,12 +1281,18 @@ fn library_command(args: &[OsString]) -> Result<ExitCode, String> {
 /// `tondo target pack [<dir>]`: writes the pack of this machine's target,
 /// which a `tondo` elsewhere builds for it with (toolchain 7.8).
 fn target_command(args: &[OsString]) -> Result<ExitCode, String> {
-    let dir = match args {
+    let mut args = args.to_vec();
+    let json = take_flag(&mut args, "--json");
+    let dir = match &args[..] {
         [pack] if pack == "pack" => PathBuf::from("."),
         [pack, dir] if pack == "pack" => PathBuf::from(dir),
         _ => return Err(format!("unexpected arguments\n{USAGE}")),
     };
     let wrote = driver::pack(&dir)?;
+    if json {
+        print_json("target-pack", true, serde_json::json!({ "pack": wrote, "targets": dir }));
+        return Ok(ExitCode::SUCCESS);
+    }
     println!("wrote {}: set TONDO_TARGETS to {} where a tondo builds for it", wrote.display(), dir.display());
     Ok(ExitCode::SUCCESS)
 }
@@ -1174,7 +1404,7 @@ fn cached_executable(path: &Path, options: &BuildOptions) -> Result<Option<PathB
     let dir = driver::cache_entry("run", &key);
     let executable = dir.join(program_name(path)?);
     if !executable.exists() {
-        let Some(analysis) = analyze(path, false)? else {
+        let Some(analysis) = analyze(path, false, options.shown)? else {
             return Ok(None);
         };
         let object = object(&analysis, path, options)?;

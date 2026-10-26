@@ -1,4 +1,4 @@
-// Where `tondo` is, and which project a file belongs to. Nothing here
+// Where `tondo` is, and whether a directory is a project. Nothing here
 // needs VS Code, so its tests run with Node alone.
 
 import * as fs from 'node:fs';
@@ -31,26 +31,4 @@ function isExecutable(file: string): boolean {
  *  or `main.to`. */
 export function isProject(dir: string): boolean {
   return ['tondo.toml', path.join('src', 'main.to'), 'main.to'].some((file) => fs.existsSync(path.join(dir, file)));
-}
-
-/** The project a file belongs to, the nearest above it, or `undefined`
- *  for a file on its own, as a script. */
-export function projectOf(file: string): string | undefined {
-  let dir = path.dirname(file);
-  for (;;) {
-    if (isProject(dir)) {
-      return dir;
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) {
-      return undefined;
-    }
-    dir = parent;
-  }
-}
-
-/** What to build to run or debug a file: its project, or the file. */
-export function programOf(file: string): { program: string; cwd: string } {
-  const project = projectOf(file);
-  return project ? { program: project, cwd: project } : { program: file, cwd: path.dirname(file) };
 }

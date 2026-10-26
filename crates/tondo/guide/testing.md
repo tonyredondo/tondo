@@ -45,7 +45,8 @@ suite slow {
   `withVirtualTime` for code that sleeps.
 - `tondo test --filter text`, `--exact id`, `--list`, `--jobs n`,
   `--timeout s`, `--retry n`, `--order random --seed hex`,
-  `--report junit=out.xml`.
+  `--report junit=out.xml`; `--json` gives the report as data, and
+  `--test-format events` a line of JSON for each result as it comes.
 - A test that ends with tasks still running fails, with where each waits and
   where it was spawned: wait for them, cancel them, or close what they wait on.
 - `tondo test --schedules 50` runs each test with its tasks in 50 orders, to

@@ -1,11 +1,11 @@
-// Finding `tondo`, and the project a file belongs to.
+// Finding `tondo`.
 
 import * as assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
-import { findTondo, programOf, projectOf } from '../binary';
+import { findTondo } from '../binary';
 
 function scratch(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'tondo-vscode-'));
@@ -26,17 +26,4 @@ test('tondo is the one configured, then one on PATH, then where the installer pu
   assert.equal(findTondo('', { PATH: bin }, home), path.join(home, '.local', 'bin', 'tondo'));
   touch(path.join(bin, 'tondo'), 0o755);
   assert.equal(findTondo('', { PATH: bin }, home), path.join(bin, 'tondo'));
-});
-
-test('a file runs as its project, or alone', () => {
-  const root = scratch();
-  touch(path.join(root, 'app', 'tondo.toml'));
-  touch(path.join(root, 'app', 'src', 'parse.to'));
-  assert.equal(projectOf(path.join(root, 'app', 'src', 'parse.to')), path.join(root, 'app'));
-  touch(path.join(root, 'scripts', 'hello.to'));
-  assert.equal(projectOf(path.join(root, 'scripts', 'hello.to')), undefined);
-  assert.deepEqual(programOf(path.join(root, 'scripts', 'hello.to')), {
-    program: path.join(root, 'scripts', 'hello.to'),
-    cwd: path.join(root, 'scripts'),
-  });
 });

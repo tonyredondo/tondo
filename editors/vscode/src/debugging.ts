@@ -3,7 +3,7 @@
 
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { programOf } from './binary';
+import { programFor } from './cli';
 import { tondo } from './extension';
 import { tondoTask } from './tasks';
 
@@ -13,7 +13,7 @@ export function registerDebugging(context: vscode.ExtensionContext): void {
       createDebugAdapterDescriptor: () => new vscode.DebugAdapterExecutable(tondo(), ['dap']),
     }),
     vscode.debug.registerDebugConfigurationProvider('tondo', {
-      resolveDebugConfiguration: (folder, config) => {
+      resolveDebugConfiguration: async (folder, config) => {
         // F5 without a launch.json: the program of the file open.
         if (!config.type && !config.request && !config.name) {
           const file = activeFile();
@@ -21,7 +21,7 @@ export function registerDebugging(context: vscode.ExtensionContext): void {
             void vscode.window.showInformationMessage('Open a Tondo file to debug its program.');
             return undefined;
           }
-          return { type: 'tondo', request: 'launch', name: 'Debug', ...programOf(file) };
+          return { type: 'tondo', request: 'launch', name: 'Debug', ...(await programFor(file)) };
         }
         if (config.request === 'launch' && !config.cwd) {
           config.cwd = folder?.uri.fsPath ?? path.dirname(String(config.program ?? ''));
@@ -64,7 +64,7 @@ async function run(uri: vscode.Uri | undefined, command: 'run' | 'watch'): Promi
   await vscode.workspace.saveAll(false);
   const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(file));
   try {
-    await vscode.tasks.executeTask(tondoTask(command, programOf(file).program, folder));
+    await vscode.tasks.executeTask(tondoTask(command, (await programFor(file)).program, folder));
   } catch (error) {
     void vscode.window.showErrorMessage((error as Error).message);
   }
@@ -78,7 +78,11 @@ async function debug(uri: vscode.Uri | undefined, live: boolean): Promise<void> 
   }
   const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(file));
   const name = live ? 'Debug live' : 'Debug';
-  await vscode.debug.startDebugging(folder, { type: 'tondo', request: 'launch', name, live, ...programOf(file) });
+  try {
+    await vscode.debug.startDebugging(folder, { type: 'tondo', request: 'launch', name, live, ...(await programFor(file)) });
+  } catch (error) {
+    void vscode.window.showErrorMessage((error as Error).message);
+  }
 }
 
 /** Puts in the code of the files as they are now, and says what changed. */

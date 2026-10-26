@@ -6,6 +6,7 @@ debugger, the tests, live builds, and the tools of `tondo mcp` for agents.
 It needs the `tondo` executable: `sh dist/install.sh` from Tondo's
 repository installs it. The extension finds it on `PATH`, in
 `~/.cargo/bin` or in `~/.local/bin`; the setting `tondo.path` names another.
+It says so when that `tondo` is older than the extension.
 
 ## What it does
 
@@ -21,9 +22,10 @@ repository installs it. The extension finds it on `PATH`, in
   while it runs: saving a file puts its new code in, keeping the program's
   state (Edit and Continue). *Tondo: Run Live* does the same in a terminal.
 - **Tests** in the Testing view: every test and suite of the workspace's
-  projects, with buttons beside them in the editor. A failure shows its
-  message on the line that failed; *Debug Test* runs one test alone under
-  the debugger.
+  projects, with buttons beside them in the editor, each result shown as it
+  comes. A failure shows its message on the line that failed; *Debug Test*
+  runs one test alone under the debugger. Saving a file lists its project's
+  tests again, a new project's too.
 - **Tasks**: check, build, run, test and run live, with their errors in
   the Problems panel.
 - **Agents**: VS Code's agents get the tools of `tondo mcp` (check, fix,

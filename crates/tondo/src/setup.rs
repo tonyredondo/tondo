@@ -40,12 +40,25 @@ const AGENTS: [Agent; 2] = [
     },
 ];
 
-pub fn setup() -> Result<(), String> {
+/// Readies the agents, saying what it did line by line, or, with `json`,
+/// as `tondo-setup-0.1/1`: the agents readied and the same lines.
+pub fn setup(json: bool) -> Result<(), String> {
     let tondo = std::env::current_exe()
         .and_then(|path| path.canonicalize())
         .map_err(|e| format!("cannot find tondo itself: {e}"))?;
     check(&tondo)?;
-    println!(
+    let mut said = Vec::new();
+    let mut agents = Vec::new();
+    macro_rules! say {
+        ($($arg:tt)*) => {{
+            let line = format!($($arg)*);
+            if !json {
+                std::println!("{line}");
+            }
+            said.push(line);
+        }};
+    }
+    say!(
         "tondo {} at {}: it compiles and runs a program, and its MCP server answers",
         crate::driver::VERSION,
         tondo.display()
@@ -63,7 +76,8 @@ pub fn setup() -> Result<(), String> {
             .and_then(|()| std::fs::write(&skill, crate::guide::skill()))
             .map_err(|e| format!("cannot write {}: {e}", skill.display()))?;
         let Some(command) = command else {
-            println!(
+            agents.push(serde_json::json!({ "name": agent.name, "skill": skill, "mcp": false }));
+            say!(
                 "{}: the skill is in {}; with `{}` installed, `tondo setup` registers the MCP server",
                 agent.name,
                 skill.display(),
@@ -88,26 +102,41 @@ pub fn setup() -> Result<(), String> {
                 String::from_utf8_lossy(&added.stderr).trim()
             ));
         }
-        println!("{}: the skill is in {}, and tondo mcp serves every project", agent.name, skill.display());
+        agents.push(serde_json::json!({ "name": agent.name, "skill": skill, "mcp": true }));
+        say!("{}: the skill is in {}, and tondo mcp serves every project", agent.name, skill.display());
     }
     let dir = tondo.parent().expect("a directory");
     let path = std::env::var_os("PATH").unwrap_or_default();
-    if !std::env::split_paths(&path).any(|entry| entry.canonicalize().is_ok_and(|entry| entry == dir)) {
-        println!(
+    let on_path = std::env::split_paths(&path).any(|entry| entry.canonicalize().is_ok_and(|entry| entry == dir));
+    if !on_path {
+        say!(
             "{} is not on PATH: add it, as export PATH=\"{}:$PATH\" in your shell's profile",
             dir.display(),
             dir.display()
         );
     }
     match found.is_empty() {
-        true => println!(
+        true => say!(
             "no Claude Code or Codex here: for another agent, `tondo guide --skill` prints the skill, and \
              `{} mcp` is the MCP server, over standard input and output",
             tondo.display()
         ),
-        false => println!("start a new session of {} to load the skill and the MCP server", found.join(" and ")),
+        false => say!("start a new session of {} to load the skill and the MCP server", found.join(" and ")),
     }
-    println!("new to Tondo? `tondo guide`");
+    say!("new to Tondo? `tondo guide`");
+    if json {
+        crate::cli::print_json(
+            "setup",
+            true,
+            serde_json::json!({
+                "tondo": tondo,
+                "version": crate::driver::VERSION,
+                "agents": agents,
+                "on_path": on_path,
+                "messages": said,
+            }),
+        );
+    }
     Ok(())
 }
 

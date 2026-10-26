@@ -126,6 +126,11 @@ impl Diagnostics {
 
     /// The diagnostics as a JSON array in the form of 22.3. `source_id`
     /// identifies the package or the single file.
+    /// The diagnostics as JSON values (22.3).
+    pub fn json(&self, sources: &SourceMap, source_id: &str) -> serde_json::Value {
+        serde_json::from_str(&self.render_json(sources, source_id)).expect("diagnostics as JSON")
+    }
+
     pub fn render_json(&self, sources: &SourceMap, source_id: &str) -> String {
         let mut items = Vec::new();
         for d in &self.list {

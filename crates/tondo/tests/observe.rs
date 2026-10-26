@@ -30,7 +30,7 @@ fn tondo(args: &[&str]) -> Value {
 }
 
 fn listed(pid: u32) -> bool {
-    tondo(&["ps", "--json"]).as_array().unwrap().iter().any(|p| p["pid"] == pid)
+    tondo(&["ps", "--json"])["programs"].as_array().unwrap().iter().any(|p| p["pid"] == pid)
 }
 
 #[test]
@@ -189,7 +189,7 @@ fn dumps_of_a_running_program_and_at_a_panic() {
         let output =
             Command::new(env!("CARGO_BIN_EXE_tondo")).args(["dump", &pid, "--output"]).arg(&file).output().unwrap();
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-        tasks = read(&["tasks"]);
+        tasks = read(&["tasks"])["tasks"].clone();
         let waits = |runs: &str| tasks.as_array().unwrap().iter().any(|t| t["runs"] == runs && t["state"] == "waits");
         if waits("main") && waits("sleeper") {
             break;
@@ -209,7 +209,7 @@ fn dumps_of_a_running_program_and_at_a_panic() {
     assert_eq!(task("sleeper")["spawned"][0], "dumped.to:13 in main");
     // About 8 MiB of strings, from where the program made them: with a
     // sample every 512 KiB, a run without one is as good as impossible.
-    let heap = read(&["heap"]);
+    let heap = read(&["heap"])["heap"].clone();
     let strings = heap["sites"].as_array().unwrap().iter().find(|s| s["kind"] == "String");
     let strings = strings.unwrap_or_else(|| panic!("no strings in {heap}"));
     assert_eq!(strings["site"], "dumped.to:10 in main");
@@ -468,7 +468,7 @@ fn every_object_of_a_debug_build() {
     child.wait().unwrap();
 
     let file = file.to_str().unwrap();
-    let types = tondo(&["dump", "read", file, "objects", "--json"]);
+    let types = tondo(&["dump", "read", file, "objects", "--json"])["objects"].clone();
     let strings = types["types"].as_array().unwrap().iter().find(|t| t["type"] == "String").unwrap();
     assert!(strings["objects"].as_u64().unwrap() >= 20000, "{types}");
     // One of the strings the array keeps, and what keeps it.
@@ -479,7 +479,7 @@ fn every_object_of_a_debug_build() {
         .iter()
         .find(|o| o["text"] == "entry 7 entry 7 entry 7 entry 7 entry 7 entry 7 entry 7 entry 7 entry 7 entry 7 ");
     let address = entry.unwrap()["address"].as_str().unwrap();
-    let object = tondo(&["dump", "read", file, "object", address, "--json"]);
+    let object = tondo(&["dump", "read", file, "object", address, "--json"])["object"].clone();
     assert_eq!(object["type"], "String");
     let chain = object["chain"].as_array().unwrap();
     assert_eq!(chain[0], "task 1");

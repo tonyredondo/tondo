@@ -80,9 +80,14 @@ tondo fmt <file.to>                canonical layout; --compact prints the fewest
 tondo api <module>                 a module's declarations and docs, no bodies:
                                    std.http, std.fs, prelude, app.models, a dependency
 tondo api --list                   the modules there are
+tondo graph [<path>]               a program's modules, files and imports; with a
+                                   directory or file, its project and module
 tondo expand                       what each `derive` wrote
 tondo guide <topic>                one topic of this guide
 ```
+
+`tondo <command> --help` explains a command; with `--json`, a command
+writes its result as one JSON object.
 
 Every error has a code and says how to fix it, often with the exact code to
 write; `tondo check --json` gives the same as data with spans, and many

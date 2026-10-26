@@ -2113,3 +2113,36 @@ one of them: `launch` takes the test's id, builds the tests with debug
 information as `tondo test --debug` would, gives the executable a plan of
 that test alone, and turns the runner's frames into a line that says how
 the test ended.
+
+## 2026-10-26 — The command line for tools
+
+Every command takes `--json` and writes one object, `{"format":
+"tondo-<command>-0.1/1", "ok": ..., ...}`, so that a tool reads the result
+instead of parsing text, and knows which format it reads. `ok` is whether
+the command did what it was asked, which a tool needs besides the exit
+status: `check` exits 1 for errors and still answers. An error that stops a
+command is `tondo-error-0.1/1` when JSON was asked, with its status and
+whether it is one of usage. `check --json` was an array of diagnostics; it
+is now that object, with the array as `diagnostics`, since an array leaves
+no room for anything else a command has to say.
+
+The commands, their options and what each does are one table, from which
+`--help`, `tondo help` and the completions for bash, zsh and fish are made,
+so that they cannot disagree. A mistake shows that command's help, not
+every command's.
+
+`tondo graph` reads the imports of a program without compiling it: the
+packages, the modules with their files, and what each imports, as text,
+JSON, Graphviz or Mermaid. Given a directory or a file, it says which
+project holds it and which module it belongs to, which is what an editor
+asks of a file it opens; a separate command for that would have answered
+less. Tests are left out: they are not part of what the program is made
+of.
+
+`tondo test --test-format events` writes a line as each pass begins and
+each suite or test starts and ends, and the report last, so that an editor
+shows results as they come and still has the report that decides them
+after retries. What a test wrote travels with its end rather than as its
+own events: the runner learns which test wrote what from the frames that
+order a worker's output, which may come after the test ended.
+

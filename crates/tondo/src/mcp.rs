@@ -171,6 +171,22 @@ impl Server {
                 Ok(Reply::new(text, json!({ "compiles": analysis.program.is_some(), "diagnostics": diagnostics })))
             }
             "fix" => fix(args),
+            "graph" => {
+                use crate::graph::View;
+                let view = match args.text("view").as_deref().unwrap_or("modules") {
+                    "modules" => View::Modules,
+                    "packages" => View::Packages,
+                    "files" => View::Files,
+                    other => return Err(format!("no view `{other}`: modules, packages or files")),
+                };
+                let mut graph = crate::graph::graph(&args.path())?;
+                if let Some(module) = args.text("module").or(graph.focus.clone())
+                    && view != View::Packages
+                {
+                    graph.around(&module, args.flag("reverse"))?;
+                }
+                Ok(Reply::new(graph.text(view), graph.json(view == View::Packages)))
+            }
             "definition" | "references" | "hover" | "complete" | "rename" | "symbols" => language(name, args),
             "debug_start" => self.debug_start(args),
             "debug" => self.debug(args),
@@ -873,7 +889,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
     let report = std::env::temp_dir().join(format!("tondo-mcp-{}-report.json", std::process::id()));
     match name {
         "format" => {
-            push(&["fmt"]);
+            push(&["fmt", "--json"]);
             switch(&mut argv, "--check", "check");
             let files = args.list("files");
             if files.is_empty() {
@@ -882,7 +898,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             argv.extend(files);
         }
         "compact" => push(&["fmt", "--compact", &args.need("file")?]),
-        "expand" => push(&["expand", &path]),
+        "expand" => push(&["expand", &path, "--json"]),
         "api" => {
             push(&["api"]);
             argv.extend(args.text("module"));
@@ -897,7 +913,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             switch(&mut argv, "--skill", "skill");
         }
         "build" => {
-            push(&["build"]);
+            push(&["build", "--json"]);
             switch(&mut argv, "--library", "library");
             argv.push(path);
             option(&mut argv, "--output", "output");
@@ -931,7 +947,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         }
         "doc_test" => push(&["doc-test", &args.need("file")?]),
         "bind" => {
-            push(&["bind"]);
+            push(&["bind", "--json"]);
             argv.extend(args.list("headers"));
             option(&mut argv, "--package", "package");
             for library in args.list("libraries") {
@@ -947,12 +963,12 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             }
         }
         "update" => {
-            push(&["update"]);
+            push(&["update", "--json"]);
             argv.extend(args.text("project"));
             argv.extend(args.list("dependencies"));
         }
         "target_pack" => {
-            push(&["target", "pack"]);
+            push(&["target", "pack", "--json"]);
             argv.extend(args.text("dir"));
         }
         "ps" => push(&["ps", "--json"]),
@@ -962,7 +978,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             option(&mut argv, "--interval", "interval");
         }
         "trace" => {
-            push(&["trace"]);
+            push(&["trace", "--json"]);
             argv.extend(args.text("program"));
             option(&mut argv, "--duration", "duration");
             option(&mut argv, "--output", "output");
@@ -973,7 +989,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             }
         }
         "dump" => {
-            push(&["dump", &args.need("program")?]);
+            push(&["dump", &args.need("program")?, "--json"]);
             option(&mut argv, "--output", "output");
         }
         "dump_read" => {
@@ -991,7 +1007,9 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
     }
     let stdin = args.text("stdin").filter(|_| name == "run");
     let ran = execute(&argv, stdin, timeout.map(Duration::from_secs_f64))?;
-    let json = matches!(name, "ps" | "counters" | "dump_read") || (name == "test" && args.flag("list"));
+    // What the command gives as JSON is the result's data.
+    let json = !matches!(name, "compact" | "api" | "guide" | "run" | "test" | "doc_test")
+        || (name == "test" && args.flag("list"));
     // The result of a program, of its tests or of a check is what it
     // reports, not a failure of the tool.
     let reported = matches!(name, "run" | "test" | "doc_test") || (name == "format" && args.flag("check"));
@@ -1388,6 +1406,18 @@ Read it before writing Tondo.",
             ("topic", "string", "The topic, such as syntax, types, errors, tasks, testing or pitfalls."),
             ("list", "boolean", "Name the topics."),
             ("skill", "boolean", "The overview as an agent skill (SKILL.md)."),
+        ],
+    },
+    Tool {
+        name: "graph",
+        description: "What a program is made of: its packages, its modules with their files, and what each module \
+imports. Given a directory or file inside a project, its project, and the module it belongs to.",
+        kind: Kind::Reads,
+        params: &[
+            ("path", "string", "A project, or a directory or .to file in one; the server's directory by default."),
+            ("view", "string", "modules (the default), packages, or files."),
+            ("module", "string", "Only what this module imports, directly or not."),
+            ("reverse", "boolean", "With `module`, only what imports it, directly or not."),
         ],
     },
     Tool {

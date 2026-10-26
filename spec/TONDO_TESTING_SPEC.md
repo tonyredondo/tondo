@@ -4,8 +4,9 @@
 - **Edición objetivo:** Tondo 0.1.
 - **Especificación base:** [Tondo 0.1](./TONDO_LANGUAGE_SPEC.md).
 - **Formatos de tooling:** `tondo-test-report-0.1/1`,
-  `tondo-test-list-0.1/1`, `tondo-junit-report-0.1/1`,
-  `tondo-test-artifacts-0.1/1` y `tondo-snapshot-store-0.1/2`.
+  `tondo-test-list-0.1/1`, `tondo-test-events-0.1/1`,
+  `tondo-junit-report-0.1/1`, `tondo-test-artifacts-0.1/1` y
+  `tondo-snapshot-store-0.1/2`.
 
 Esta especificación añade a Tondo las declaraciones `suite` y `test` y define
 cómo el toolchain descubre, compila, ejecuta y reporta árboles estáticos de
@@ -2110,7 +2111,8 @@ tondo test [<project> | --project <dir>]
            [--artifacts <path>]
            [--update-snapshots]
            [--diagnostic-format <human|json>]
-           [--test-format <human|json>]
+           [--test-format <human|json|events>]
+           [--json]
            [--report <json|junit>=<path>]...
            [--show-output]
            [--deny-skips]
@@ -2195,6 +2197,10 @@ Reglas:
 - `--test-format human` es el default interactivo.
 - `--test-format json` emite exactamente un reporte
   `tondo-test-report-0.1/1`, o una lista `tondo-test-list-0.1/1` con `--list`.
+  `--json` es lo mismo que `--test-format json`.
+- `--test-format events` emite, mientras los tests corren, una línea JSON por
+  pasada y por cada inicio y final de suite o test, y el reporte como última
+  línea (15.9). Con `--list` emite la lista como `json`.
 - `--report` es repetible y escribe el resultado de la misma ejecución sin
   volver a compilar ni ejecutar. Se divide por el primer `=`; format y path
   vacíos son inválidos.
@@ -3667,6 +3673,32 @@ regular con tamaño y SHA-256 exactos; cualquier colisión o corrupción usa exi
 Objects huérfanos de invocaciones anteriores son cache, no forman parte del
 store lógico y pueden recolectarse. El runner no sigue symlinks dentro del root,
 no ejecuta contenido y no interpreta media types.
+
+### 15.9 Eventos
+
+`--test-format events` escribe en stdout `tondo-test-events-0.1/1`: un objeto
+JSON compacto por línea, en el orden en que el runner conoce lo que cuenta,
+para que un editor muestre cada resultado cuando llega. Cada línea tiene
+`event`:
+
+- `pass`, al empezar cada pasada (una iteración del plan o una ronda de
+  retry): `format`, `iteration`, `round` y `tests`, los ids de los tests que
+  ejecuta en orden canónico.
+- `start`, al empezar una suite o un test: `id`, `suite`, `iteration` y
+  `round`.
+- `end`, al conocerse el resultado de un intento: los campos de `start` y
+  `status`, `duration_ms`, `failure`, `skip`, `logs`, `stdout` y `stderr`,
+  con los valores del intento en el reporte (15.3). Un test bloqueado por su
+  suite tiene `end` sin `start`. Lo que un intento escribió va en su `end`.
+- `report`, la última línea: `report` es el reporte `tondo-test-report-0.1/1`
+  completo, el mismo de `--test-format json`, que decide el resultado de
+  cada test tras sus retries.
+
+Con varios `--jobs` los eventos de trabajadores distintos se intercalan; los
+de un trabajador conservan su orden. Si la compilación falla, la única línea
+es `report`, con `compiled` en `false` (15.6). Una invocación interrumpida
+(7.10) no escribe `report`. `duration_ms` es el tiempo medido y no es
+determinista; el reporte no lo contiene.
 
 ## 16. Conformidad
 

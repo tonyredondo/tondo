@@ -49,6 +49,9 @@ pub struct Options {
     pub allow_flaky: bool,
     /// What stdout gets: lines for people, or the JSON report.
     pub json: bool,
+    /// With `json`, a line of JSON for each start and outcome as tests run,
+    /// then the report (15.9).
+    pub events: bool,
     /// `--report json=<path>` and `--report junit=<path>`: whether JUnit,
     /// and where.
     pub reports: Vec<(bool, PathBuf)>,
@@ -388,7 +391,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     context.rounds = &rounds;
     let report = context.report(&aggregates);
     if options.json {
-        say!("{}", report.text());
+        say!("{}", json::reported(&report, options));
     } else {
         human::report(tree, &printer, &aggregates, &owners, options, failed, started.elapsed());
     }
@@ -474,7 +477,7 @@ pub fn uncompiled(dir: &Path, options: &Options) -> Result<(), Failure> {
     };
     let report = context.report(&[]);
     if options.json {
-        say!("{}", report.text());
+        say!("{}", json::reported(&report, options));
     }
     for (junit, path) in &options.reports {
         if !junit {
@@ -522,7 +525,7 @@ fn campaign(run: &worker::Run, plan: &[u32], printer: &mut human::Printer) -> (V
         }
         let context = Context { round: 0, iteration, unit: None };
         let units = units.into_iter().map(|u| (u, context)).collect();
-        attempts.extend(worker::execute(run, units, |a| printer.attempt(a)));
+        attempts.extend(worker::execute(run, units, |note| printer.note(note)));
     }
     for round in 1..=options.retry {
         let units = retry_units(tree, plan, &attempts);
@@ -534,7 +537,7 @@ fn campaign(run: &worker::Run, plan: &[u32], printer: &mut human::Printer) -> (V
         rounds.push(units.clone());
         let units =
             units.into_iter().map(|(unit, tests)| (tests, Context { round, iteration: 1, unit: Some(unit) })).collect();
-        attempts.extend(worker::execute(run, units, |a| printer.attempt(a)));
+        attempts.extend(worker::execute(run, units, |note| printer.note(note)));
     }
     (attempts, rounds)
 }

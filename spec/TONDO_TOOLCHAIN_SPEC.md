@@ -227,34 +227,40 @@ completos no se ejecuta ninguna.
 ## 7. Comandos
 
 ~~~text
-tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch] [--target <target>] [-- <argument>...]
-tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--debug | --live] [--target <target>]
-tondo build --library [<project>|<file.to>] [--output <dir>] [--debug]
+tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch] [--target <target>] [--diagnostic-format human|json] [-- <argument>...]
+tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--debug | --live] [--target <target>] [--diagnostic-format human|json] [--json]
+tondo build --library [<project>|<file.to>] [--output <dir>] [--debug] [--json]
 tondo check [<project>|<file.to>] [--library] [--json]
-tondo expand [<project>|<file.to>]
-tondo fmt [--check | --compact] <file.to>...
-tondo api [<module>|<file.to>] [--private] [--list] [--project <dir>]
-tondo guide [<topic>] [--list] [--skill]
-tondo update [<project>] [<dependency>...]
-tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>]
-tondo test [<project>] [--static] [--debug] [--library] [--target <target>]
-tondo target pack [<dir>]
+tondo expand [<project>|<file.to>] [--json]
+tondo fmt [--check | --compact] [--json] <file.to>...
+tondo api [<module>|<file.to>] [--private] [--list] [--project <dir>] [--json]
+tondo graph [<project>|<dir>|<file.to>] [--packages | --files] [--module <module> [--reverse]] [--json | --dot | --mermaid]
+tondo guide [<topic>] [--list] [--skill] [--json]
+tondo update [<project>] [<dependency>...] [--json]
+tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>] [--json]
+tondo test [<project>] [--static] [--debug] [--library] [--target <target>] [--test-format human|json|events] [--json] [--diagnostic-format human|json]
+tondo doc-test [--edition 0.1] <markdown>
+tondo target pack [<dir>] [--json]
 tondo lsp
 tondo mcp
-tondo setup
+tondo setup [--json]
 tondo ps [--json]
 tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--json]
-tondo trace <pid|name> [--duration <seconds>] [--output <path>]
-tondo trace [--duration <seconds>] [--output <path>] -- <program> [<argument>...]
-tondo dump <pid|name> [--output <path>]
+tondo trace <pid|name> [--duration <seconds>] [--output <path>] [--json]
+tondo trace [--duration <seconds>] [--output <path>] [--json] -- <program> [<argument>...]
+tondo dump <pid|name> [--output <path>] [--json]
 tondo dump read <file> [tasks | task <id> | heap | objects | object <address>] [--json]
 tondo debug [--json] [--live] <file.to|project|executable|pid|name> [-- <argument>...]
 tondo dap
-tondo reload <pid|name>
+tondo reload <pid|name> [--json]
+tondo completions bash|zsh|fish
+tondo help [<command>]
+tondo version [--json]
 ~~~
 
 - `run` compila, guarda el ejecutable en la caché y lo ejecuta; `build` escribe
-  el ejecutable; `check` solo informa diagnósticos, en JSON con `--json` (22.3).
+  el ejecutable; `check` solo informa diagnósticos, en JSON con `--json`
+  (sección 7.12 y 22.3 del lenguaje).
   `check` no pide `main`: un paquete de solo declaraciones, como una librería
   de la que otros dependen, se comprueba sin `E1806`, que dan `run` y `build`.
 - `--link` enlaza una librería de C más, por nombre o archivo como en
@@ -288,6 +294,8 @@ tondo reload <pid|name>
   15 % menos de tokens; `fmt` lo devuelve a la forma canónica.
 - `api` muestra las declaraciones de un módulo con su documentación y sin
   cuerpos (sección 7.2).
+- `graph` muestra de qué está hecho un programa: sus paquetes, sus módulos
+  con sus archivos y lo que importa cada uno (sección 7.11).
 - `guide` enseña Tondo a personas y a modelos (sección 7.3).
 - `bind` escribe un módulo con las declaraciones de C de unos headers, de un
   paquete del sistema o de una librería (sección 7.1) y, en un proyecto, añade
@@ -298,9 +306,16 @@ tondo reload <pid|name>
 - `ps`, `counters`, `trace` y `dump` observan los programas en ejecución
   (sección 7.5); `debug` depura uno, y `dap` hace lo mismo para un editor
   (sección 7.6).
+- `help` y `<comando> --help` muestran el uso de un comando, o de todos;
+  `completions` escribe el script que completa los comandos y sus opciones en
+  `bash`, `zsh` o `fish`; `version` dice la versión, el target y el backend.
+- Con `--json`, un comando escribe su resultado como un objeto JSON, y
+  `--diagnostic-format json` da los diagnósticos de lo que compila como JSON
+  (sección 7.12).
 - Estado de salida: `0` éxito; `1` diagnósticos de error o fallo de formato; `2`
-  uso incorrecto; `3` error del toolchain (sección 9). `run` devuelve el estado
-  del programa.
+  uso incorrecto, que muestra el uso del comando; `3` error del toolchain
+  (sección 9). `run` devuelve el estado del programa, y `test`, `4` si se
+  interrumpe (7.10 de la especificación de testing).
 
 ### 7.1 `tondo bind`
 
@@ -443,7 +458,8 @@ las herramientas, así que no paga por ellas; `tondo trace -- <program>` y
 `tondo ps` borra los de los que terminaron sin hacerlo.
 
 - `ps` lista los programas del usuario en ejecución: su proceso, cuánto llevan
-  en marcha y su línea de órdenes; con `--json`, como un array.
+  en marcha y su línea de órdenes; con `--json`, como `programs` de
+  `tondo-ps-0.1/1` (sección 7.12).
 - `counters` muestra cada intervalo, un segundo si no se da otro, los
   contadores de un programa, nombrado por su proceso o por el nombre de su
   archivo cuando un solo programa lo tiene: cada nivel con su valor y cada
@@ -512,7 +528,8 @@ todos sus marcos; `heap`, la memoria viva por sitio y tipo; y, en el
 volcado de un build de depuración, `objects`, cada objeto vivo por tipo, y
 `object <address>` uno: su tipo, su tamaño, dónde se hizo, su texto si es un
 string, los objetos que apuntan a él y la cadena más corta que lo mantiene
-vivo desde la pila de una tarea. Con `--json`, la misma vista como JSON.
+vivo desde la pila de una tarea. Con `--json`, la misma vista como JSON, en
+`tondo-dump-read-0.1/1` (sección 7.12).
 
 La memoria viva sale de muestras que el runtime toma siempre, como Go: una
 asignación por cada 512 KiB de media, a intervalos al azar, con la pila que
@@ -635,7 +652,7 @@ lenguaje, cada una con un texto para el modelo y su resultado como datos
 - Código: `check` da los diagnósticos, cada uno con el id de `check --json`
   (22.3) y sus reparaciones; `fix` aplica las seguras, o las que se eligen por
   id, a los archivos del programa, y comprueba de nuevo. `format`, `compact`,
-  `expand`, `api` y `guide`.
+  `expand`, `api`, `graph` y `guide`.
 - Navegación: `definition`, `references`, `hover`, `complete`, `symbols`, y
   `rename`, que reescribe los archivos.
 - Builds: `build`; `run`, con su entrada y un tiempo tras el que el programa
@@ -652,6 +669,9 @@ lenguaje, cada una con un texto para el modelo y su resultado como datos
   `run_input` le escribe en la entrada, `run_stop` lo termina y `reload`
   cambia su código, o el de un build vivo en ejecución nombrado como en
   `counters`.
+
+Una herramienta que hace lo que un comando con `--json` da el JSON del
+comando (sección 7.12) como sus datos.
 
 Las líneas y las columnas cuentan desde 1, las columnas en caracteres, como
 en los diagnósticos, y los paths son relativos al directorio del servidor. Lo
@@ -813,6 +833,89 @@ más de pila.
 
 La salida estándar de un build de depuración, y por tanto de uno vivo, se
 entrega en cada línea, como a una terminal, para la herramienta que la lee.
+
+### 7.11 `tondo graph`
+
+`tondo graph` muestra de qué está hecho un programa: sus paquetes y sus
+dependencias, los módulos de cada paquete con sus archivos, y los módulos
+que importa cada uno, también los de `std`. No compila: lee los imports.
+
+~~~text
+$ tondo graph
+app  src/main.to
+  -> std.console
+  -> app.models
+  -> shapes
+app.models  src/models/role.to src/models/user.to
+  -> std.json
+shapes  shapes/src/shapes.to
+std.console
+std.json
+~~~
+
+- El argumento es un proyecto, un directorio o un archivo. El proyecto de un
+  directorio o archivo es el directorio más cercano hacia arriba con
+  `tondo.toml` o `src/main.to`, o el que lo contiene con `main.to`; el de un
+  directorio o archivo de sus fuentes, además, se reduce a su módulo, como con
+  `--module`. Un archivo fuera de un proyecto es un programa solo (sección 2).
+- Un módulo se nombra por su path entero, con el nombre del paquete: un
+  import de una dependencia por su alias nombra el paquete. Los archivos de
+  un paquete se muestran relativos a su directorio, tras el nombre del paquete
+  si es una dependencia. Los tests no forman parte del grafo.
+- `--packages` muestra solo los paquetes y sus dependencias, con su alias si
+  difiere y `(dev)` las de `[dev-dependencies]`; `--files`, cada archivo y los
+  archivos de los módulos que importa.
+- `--module <módulo>` muestra solo lo que el módulo alcanza por sus imports,
+  directa o indirectamente, y con `--reverse`, lo que lo alcanza a él.
+- `--dot` lo escribe para Graphviz y `--mermaid` como flowchart de Mermaid,
+  con un grupo por paquete; `--json` como `tondo-graph-0.1/1` (sección 7.12).
+- Un módulo que no existe en el grafo, o un directorio fuera de un proyecto,
+  es un error del toolchain (estado 3).
+
+### 7.12 Salida para herramientas
+
+Con `--json`, un comando escribe en stdout un solo objeto JSON en una línea,
+también cuando falla por diagnósticos. Tiene `format`,
+`tondo-<comando>-0.1/1`, y `ok`, si el comando hizo lo que se pedía, y los
+campos de su resultado:
+
+| Comando | `format` | Campos |
+|---|---|---|
+| `check` | `tondo-check-0.1/1` | `diagnostics`; `ok` si compila |
+| `build` | `tondo-build-0.1/1` | `output`, o `null`, y `diagnostics`; con `--library`, `files`, `linking` y `diagnostics` |
+| `expand` | `tondo-expand-0.1/1` | `expansions`, cada una con `derive`, `location` y `source`, y `diagnostics` |
+| `fmt` | `tondo-fmt-0.1/1` | `files`, cada uno con `file` y `changed` (o lo cambiaría, con `--check`), `compact` o `diagnostics` |
+| `api` | `tondo-api-0.1/1` | `module` o `file` y `declarations`, cada una con `kind`, `name`, `declaration` y `doc`; sin argumento, `modules` con ellos; con `--list`, `modules`, sus nombres |
+| `graph` | `tondo-graph-0.1/1` | `root`, `project`, `focus` (el módulo del path, o `null`), `packages` con `name`, `dir`, `dependencies` y `dev_dependencies` (`alias` y `package`) y `tests_only`, y salvo con `--packages`, `modules` con `name`, `package`, `files` e `imports` (`module`, `file` y `line`) |
+| `guide` | `tondo-guide-0.1/1` | `topic` y `text`; `topics` con `--list`; `skill` con `--skill` |
+| `update` | `tondo-update-0.1/1` | `lock` y `packages`, con `name`, `dir` y `tests_only` |
+| `bind` | `tondo-bind-0.1/1` | `file`, `module`, `libraries` y `added`, las que añadió a `tondo.toml` |
+| `target pack` | `tondo-target-pack-0.1/1` | `pack` y `targets` |
+| `setup` | `tondo-setup-0.1/1` | `tondo`, `version`, `agents` (`name`, `skill` y `mcp`), `on_path` y `messages`, lo que dice sin `--json` |
+| `ps` | `tondo-ps-0.1/1` | `programs` |
+| `trace` | `tondo-trace-0.1/1` | `timeline`, `profile`, `events`, `samples`, `lost` y `ended` |
+| `dump` | `tondo-dump-0.1/1` | `file` y `summary` |
+| `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `tasks`, `task`, `heap`, `objects` u `object` |
+| `reload` | `tondo-reload-0.1/1` | `changed`, `added`, `moves`, `stays` y `converted`; si no puede, `ok` falso, `message` y `restart` |
+| `version` | `tondo-version-0.1/1` | `version`, `backend` y `target` |
+
+Cada diagnóstico es el objeto de 22.3 del lenguaje. Las claves de los
+objetos van en orden alfabético; los paths de archivos del programa son los
+que se dieron o relativos a su proyecto, y los de `graph`, absolutos.
+
+- Un error que impide el comando, con `--json` o con un `--test-format` que
+  no es `human`, es `tondo-error-0.1/1`: `ok` falso, `message`, `status` (`2`
+  o `3`) y `usage`, si es de uso; el estado de salida es el mismo.
+- `--diagnostic-format json` en `run`, `build` y `test` escribe los
+  diagnósticos de la compilación en stderr como un array JSON, en lugar del
+  texto, sin cambiar lo demás que escribe el comando.
+- `test` da sus formatos con `--test-format` (10 y 15 de la especificación de
+  testing): `--json` es `--test-format json`, y `events` da una línea por
+  resultado mientras corre. `doc-test` escribe sus registros (21.6 del
+  lenguaje), y `counters` y `debug` con `--json`, un objeto por línea mientras
+  corren.
+- Un campo nuevo puede aparecer en la misma versión de un formato; quitar o
+  cambiar uno cambia la versión.
 
 ## 8. Determinismo
 

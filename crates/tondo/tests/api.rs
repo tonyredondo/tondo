@@ -106,6 +106,33 @@ impl Sized for User
     assert!(stdout.contains("pub fn readText(path: String): String ! FsError"), "{stdout}");
     let (stdout, _, _) = tondo(&dir, &["api", "std.csv"]);
     assert!(stdout.contains("pub fn rows(input: io.Reader, separator: Char = ','): Rows"), "{stdout}");
+    // As data: each declaration's kind, name, text and documentation.
+    let json = |args: &[&str]| -> serde_json::Value {
+        let (stdout, stderr, status) = tondo(&dir, args);
+        assert_eq!(status, 0, "{stderr}");
+        serde_json::from_str(&stdout).unwrap()
+    };
+    let models = json(&["api", "app.models", "--json"]);
+    assert_eq!((&models["format"], &models["module"]), (&"tondo-api-0.1/1".into(), &"app.models".into()));
+    let declarations = models["declarations"].as_array().unwrap();
+    let named: Vec<(&str, &str)> =
+        declarations.iter().map(|d| (d["kind"].as_str().unwrap(), d["name"].as_str().unwrap())).collect();
+    assert_eq!(
+        named,
+        [("type", "User"), ("fn", "User.new"), ("fn", "save"), ("trait", "Sized"), ("impl", "Sized for User")]
+    );
+    assert_eq!(declarations[0]["doc"], "A person.");
+    assert_eq!(declarations[2]["declaration"], "pub fn save(user: User, out: io.Writer): Unit ! io.IoError");
+    assert_eq!(declarations[3]["declaration"], "pub trait Sized {\n    /// How big.\n    fn size(self): Int\n}");
+    let whole = json(&["api", "--json"]);
+    assert_eq!(whole["modules"][0]["module"], "app.models");
+    let list = json(&["api", "--list", "--json"]);
+    let list: Vec<&str> = list["modules"].as_array().unwrap().iter().map(|m| m.as_str().unwrap()).collect();
+    assert!(list.contains(&"std.http") && list.contains(&"app.models"), "{list:?}");
+    let prelude = json(&["api", "prelude", "--json"]);
+    let names: Vec<&str> =
+        prelude["declarations"].as_array().unwrap().iter().map(|d| d["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"Option.map") && names.contains(&"Iterator[T] for ArrayIterator[T]"), "{names:?}");
     let (_, stderr, status) = tondo(&dir, &["api", "std.nothing"]);
     assert_eq!(
         (status, stderr.trim()),
