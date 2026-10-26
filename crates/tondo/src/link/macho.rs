@@ -109,6 +109,7 @@ mod raw {
     pub const X86_64_RELOC_SIGNED_4: u8 = 8;
     pub const X86_64_RELOC_TLV: u8 = 9;
 }
+use crate::hash::FastMap;
 use object::{Endianness, Object, ObjectSection};
 use std::collections::{HashMap, HashSet};
 
@@ -250,7 +251,7 @@ struct Linker<'a> {
     arch: Arch,
     inputs: Vec<Input<'a>>,
     globals: Vec<Global<'a>>,
-    names: HashMap<&'a [u8], usize>,
+    names: FastMap<&'a [u8], usize>,
     outs: Vec<OutSection>,
     out_index: HashMap<(&'static str, Vec<u8>), usize>,
     got: Vec<Target>,
@@ -276,6 +277,133 @@ fn error(input: &str, message: impl std::fmt::Display) -> String {
     format!("linking {input}: {message}")
 }
 
+/// An object read on its own, before the linker takes in its symbols: its
+/// sections and atoms, and its symbols with their names and their type and
+/// description fields.
+struct Parsed<'a> {
+    name: String,
+    sections: Vec<Sect<'a>>,
+    symbols: Vec<Sym>,
+    names: Vec<&'a [u8]>,
+    kinds: Vec<(u8, u16)>,
+    atoms: Vec<Atom>,
+}
+
+/// Reads an object for `take`, which can happen on any thread.
+fn parse<'a>(arch: Arch, name: String, data: &'a [u8]) -> Result<Parsed<'a>, String> {
+    let file = MachOFile64::<Endianness>::parse(data).map_err(|e| error(&name, e))?;
+    let endian = file.endian();
+    let cpu = file.macho_header().cputype(endian).0;
+    let wanted = match arch {
+        Arch::Arm64 => CPU_TYPE_ARM64,
+        Arch::X86_64 => CPU_TYPE_X86_64,
+    };
+    if cpu != wanted {
+        return Err(error(&name, "it is for another architecture"));
+    }
+    let subsections = file.macho_header().flags(endian).0 & MH_SUBSECTIONS_VIA_SYMBOLS != 0;
+    let mut sections = Vec::new();
+    for section in file.sections() {
+        let header = section.macho_section();
+        let flags = header.flags(endian).0;
+        let kind = flags & SECTION_TYPE;
+        let raw = header.relocations(endian, data).map_err(|e| error(&name, e))?;
+        let mut relocations = Vec::new();
+        let mut addend = 0i64;
+        let mut minus = None;
+        for r in raw {
+            let info = r.info(endian);
+            match (arch, info.r_type.0) {
+                (Arch::Arm64, ARM64_RELOC_ADDEND) => {
+                    addend = ((info.r_symbolnum as i64) << 40) >> 40;
+                    continue;
+                }
+                (Arch::Arm64, ARM64_RELOC_SUBTRACTOR) | (Arch::X86_64, X86_64_RELOC_SUBTRACTOR) => {
+                    minus = Some((info.r_extern, info.r_symbolnum));
+                    continue;
+                }
+                _ => {}
+            }
+            relocations.push(Reloc {
+                offset: info.r_address as u64,
+                kind: info.r_type.0,
+                pcrel: info.r_pcrel,
+                length: info.r_length,
+                external: info.r_extern,
+                symbol: info.r_symbolnum,
+                addend: std::mem::take(&mut addend),
+                minus: minus.take(),
+            });
+        }
+        relocations.sort_by_key(|r| r.offset);
+        let zerofill = matches!(kind as u8, S_ZEROFILL | S_GB_ZEROFILL | S_THREAD_LOCAL_ZEROFILL);
+        sections.push(Sect {
+            segname: name16(&header.segname),
+            sectname: name16(&header.sectname),
+            addr: header.addr(endian),
+            size: header.size(endian),
+            align: 1u64 << header.align(endian),
+            kind: kind as u8,
+            attributes: flags & !SECTION_TYPE,
+            data: if zerofill { &[] } else { section.data().map_err(|e| error(&name, e))? },
+            relocations,
+            atoms: Vec::new(),
+        });
+    }
+    // The symbols, with what `take` needs to know of each.
+    let table = file.macho_symbol_table();
+    let mut symbols = Vec::new();
+    let mut names = Vec::new();
+    let mut kinds = Vec::new();
+    for nlist in table.iter() {
+        names.push(nlist.name(endian, table.strings()).unwrap_or_default());
+        let desc = nlist.n_desc(endian).0;
+        kinds.push((nlist.n_type().0, desc));
+        symbols.push(Sym {
+            sect: nlist.n_sect(),
+            value: nlist.n_value(endian),
+            global: None,
+            no_dead_strip: desc & N_NO_DEAD_STRIP != 0,
+        });
+    }
+    // Atoms: a section starts one, and so does each symbol in it when
+    // the object allows cutting there; literals, `__compact_unwind`
+    // and `__eh_frame` stay whole.
+    let mut atoms = Vec::new();
+    // The symbols of each section that may start an atom: `L` labels are
+    // the assembler's; `l` ones, private to the linker, still start atoms.
+    let mut in_section: Vec<Vec<u64>> = vec![Vec::new(); sections.len()];
+    for (n, sym) in symbols.iter().enumerate() {
+        if let Some(values) = (sym.sect as usize).checked_sub(1).and_then(|s| in_section.get_mut(s))
+            && !names[n].starts_with(b"L")
+        {
+            values.push(sym.value);
+        }
+    }
+    for (s, section) in sections.iter_mut().enumerate() {
+        let whole = !subsections
+            || matches!(section.kind, S_CSTRING_LITERALS | S_4BYTE_LITERALS | S_8BYTE_LITERALS | S_16BYTE_LITERALS)
+            || section.sectname == b"__eh_frame"
+            || section.sectname == b"__compact_unwind";
+        let mut starts: Vec<u64> = vec![section.addr];
+        if !whole {
+            let inside = |&value: &u64| value > section.addr && value < section.addr + section.size;
+            starts.extend(in_section[s].iter().copied().filter(inside));
+        }
+        starts.sort();
+        starts.dedup();
+        if section.size == 0 {
+            starts.clear();
+        }
+        for (n, &start) in starts.iter().enumerate() {
+            let end = starts.get(n + 1).copied().unwrap_or(section.addr + section.size);
+            section.atoms.push(atoms.len());
+            atoms.push(Atom { section: s, start, end, live: false, place: None });
+        }
+    }
+    Ok(Parsed { name, sections, symbols, names, kinds, atoms })
+}
+
 fn name16(bytes: &[u8; 16]) -> Vec<u8> {
     bytes.iter().copied().take_while(|&b| b != 0).collect()
 }
@@ -286,7 +414,7 @@ pub fn link(inputs: Inputs) -> Result<Vec<u8>, String> {
         arch: inputs.arch,
         inputs: Vec::new(),
         globals: Vec::new(),
-        names: HashMap::new(),
+        names: FastMap::default(),
         outs: Vec::new(),
         out_index: HashMap::new(),
         got: Vec::new(),
@@ -348,87 +476,22 @@ impl<'a> Linker<'a> {
 
     /// Adds an object: its sections cut into atoms, and its symbols.
     fn add(&mut self, name: String, data: &'a [u8]) -> Result<Vec<usize>, String> {
-        let file = MachOFile64::<Endianness>::parse(data).map_err(|e| error(&name, e))?;
-        let endian = file.endian();
-        let cpu = file.macho_header().cputype(endian).0;
-        let wanted = match self.arch {
-            Arch::Arm64 => CPU_TYPE_ARM64,
-            Arch::X86_64 => CPU_TYPE_X86_64,
-        };
-        if cpu != wanted {
-            return Err(error(&name, "it is for another architecture"));
-        }
-        let subsections = file.macho_header().flags(endian).0 & MH_SUBSECTIONS_VIA_SYMBOLS != 0;
+        let parsed = parse(self.arch, name, data)?;
+        self.take(parsed)
+    }
+
+    /// Takes in an object `parse` read: the globals it defines and needs.
+    fn take(&mut self, parsed: Parsed<'a>) -> Result<Vec<usize>, String> {
+        let Parsed { name, sections, mut symbols, names, kinds, atoms } = parsed;
         let index = self.inputs.len() as u32;
-        let mut sections = Vec::new();
-        for section in file.sections() {
-            let header = section.macho_section();
-            let flags = header.flags(endian).0;
-            let kind = flags & SECTION_TYPE;
-            let raw = header.relocations(endian, data).map_err(|e| error(&name, e))?;
-            let mut relocations = Vec::new();
-            let mut addend = 0i64;
-            let mut minus = None;
-            for r in raw {
-                let info = r.info(endian);
-                match (self.arch, info.r_type.0) {
-                    (Arch::Arm64, ARM64_RELOC_ADDEND) => {
-                        addend = ((info.r_symbolnum as i64) << 40) >> 40;
-                        continue;
-                    }
-                    (Arch::Arm64, ARM64_RELOC_SUBTRACTOR) | (Arch::X86_64, X86_64_RELOC_SUBTRACTOR) => {
-                        minus = Some((info.r_extern, info.r_symbolnum));
-                        continue;
-                    }
-                    _ => {}
-                }
-                relocations.push(Reloc {
-                    offset: info.r_address as u64,
-                    kind: info.r_type.0,
-                    pcrel: info.r_pcrel,
-                    length: info.r_length,
-                    external: info.r_extern,
-                    symbol: info.r_symbolnum,
-                    addend: std::mem::take(&mut addend),
-                    minus: minus.take(),
-                });
-            }
-            relocations.sort_by_key(|r| r.offset);
-            let zerofill = matches!(kind as u8, S_ZEROFILL | S_GB_ZEROFILL | S_THREAD_LOCAL_ZEROFILL);
-            sections.push(Sect {
-                segname: name16(&header.segname),
-                sectname: name16(&header.sectname),
-                addr: header.addr(endian),
-                size: header.size(endian),
-                align: 1u64 << header.align(endian),
-                kind: kind as u8,
-                attributes: flags & !SECTION_TYPE,
-                data: if zerofill { &[] } else { section.data().map_err(|e| error(&name, e))? },
-                relocations,
-                atoms: Vec::new(),
-            });
-        }
-        // The symbols, and the globals they define or need.
-        let table = file.macho_symbol_table();
-        let mut symbols = Vec::new();
-        let mut names = Vec::new();
         let mut undefined = Vec::new();
-        for nlist in table.iter() {
-            let n_type = nlist.n_type().0;
-            let symbol_name = nlist.name(endian, table.strings()).unwrap_or_default();
-            names.push(symbol_name);
+        for (n, sym) in symbols.iter_mut().enumerate() {
+            let (n_type, desc) = kinds[n];
             let stab = n_type & N_STAB != 0;
             let external = n_type & N_EXT != 0;
             let kind = n_type & N_TYPE;
-            let desc = nlist.n_desc(endian).0;
-            let mut sym = Sym {
-                sect: nlist.n_sect(),
-                value: nlist.n_value(endian),
-                global: None,
-                no_dead_strip: desc & N_NO_DEAD_STRIP != 0,
-            };
             if !stab && external {
-                let id = self.intern(symbol_name);
+                let id = self.intern(names[n]);
                 sym.global = Some(id);
                 let def = match kind {
                     N_SECT => Some(Def::Atom { input: index, atom: u32::MAX, offset: sym.value }),
@@ -460,43 +523,6 @@ impl<'a> Linker<'a> {
                     }
                 }
             }
-            symbols.push(sym);
-        }
-        // Atoms: a section starts one, and so does each symbol in it when
-        // the object allows cutting there; literals, `__compact_unwind`
-        // and `__eh_frame` stay whole.
-        let mut atoms = Vec::new();
-        for (s, section) in sections.iter_mut().enumerate() {
-            let whole = !subsections
-                || matches!(section.kind, S_CSTRING_LITERALS | S_4BYTE_LITERALS | S_8BYTE_LITERALS | S_16BYTE_LITERALS)
-                || section.sectname == b"__eh_frame"
-                || section.sectname == b"__compact_unwind";
-            let mut starts: Vec<u64> = vec![section.addr];
-            if !whole {
-                for (n, sym) in symbols.iter().enumerate() {
-                    let name = names[n];
-                    // `L` labels are the assembler's; `l` ones, private
-                    // to the linker, still start atoms.
-                    let temporary = name.starts_with(b"L");
-                    if sym.sect as usize == s + 1
-                        && !temporary
-                        && sym.value > section.addr
-                        && sym.value < section.addr + section.size
-                    {
-                        starts.push(sym.value);
-                    }
-                }
-            }
-            starts.sort();
-            starts.dedup();
-            if section.size == 0 {
-                starts.clear();
-            }
-            for (n, &start) in starts.iter().enumerate() {
-                let end = starts.get(n + 1).copied().unwrap_or(section.addr + section.size);
-                section.atoms.push(atoms.len());
-                atoms.push(Atom { section: s, start, end, live: false, place: None });
-            }
         }
         let input = Input { name, sections, symbols, atoms };
         // Each defined global points at its atom.
@@ -516,7 +542,7 @@ impl<'a> Linker<'a> {
 
     /// Brings in the members of archives that define what is undefined.
     fn archives(&mut self, archives: &[(String, &'a [u8])]) -> Result<(), String> {
-        let mut index: HashMap<&'a [u8], (usize, u64)> = HashMap::new();
+        let mut index: FastMap<&'a [u8], (usize, u64)> = FastMap::default();
         let mut parsed = Vec::new();
         for (a, (name, data)) in archives.iter().enumerate() {
             let archive = object::read::archive::ArchiveFile::parse(*data).map_err(|e| error(name, e))?;
@@ -528,26 +554,48 @@ impl<'a> Linker<'a> {
             }
             parsed.push(archive);
         }
+        // Room for the names the archives may bring.
+        self.names.reserve(index.len());
+        self.globals.reserve(index.len());
         let mut loaded: HashSet<(usize, u64)> = HashSet::new();
         let mut pending: Vec<usize> =
             (0..self.globals.len()).filter(|&id| self.globals[id].def == Def::Undefined).collect();
-        while let Some(id) = pending.pop() {
-            let global = &self.globals[id];
-            if global.def != Def::Undefined {
-                continue;
+        // In rounds: the members that define what is needed now are read
+        // on every core, and taken in, in the order of the archives, while
+        // what brought each in is still undefined.
+        loop {
+            let mut wanted: Vec<((usize, u64), usize)> = Vec::new();
+            for id in pending.drain(..) {
+                let global = &self.globals[id];
+                if global.def != Def::Undefined {
+                    continue;
+                }
+                let Some(&member) = index.get(global.name) else { continue };
+                if loaded.insert(member) {
+                    wanted.push((member, id));
+                }
             }
-            let Some(&(a, offset)) = index.get(global.name) else { continue };
-            if !loaded.insert((a, offset)) {
-                continue;
+            if wanted.is_empty() {
+                return Ok(());
             }
-            let (archive_name, data) = &archives[a];
-            let member =
-                parsed[a].member(object::read::archive::ArchiveOffset(offset)).map_err(|e| error(archive_name, e))?;
-            let bytes = member.data(*data).map_err(|e| error(archive_name, e))?;
-            let member_name = format!("{archive_name}({})", String::from_utf8_lossy(member.name()));
-            pending.extend(self.add(member_name, bytes)?);
+            wanted.sort_unstable();
+            let read = crate::parallel::map(&wanted, 4, |&((a, offset), _)| {
+                let (archive_name, data) = &archives[a];
+                let member = parsed[a]
+                    .member(object::read::archive::ArchiveOffset(offset))
+                    .map_err(|e| error(archive_name, e))?;
+                let bytes = member.data(*data).map_err(|e| error(archive_name, e))?;
+                parse(self.arch, format!("{archive_name}({})", String::from_utf8_lossy(member.name())), bytes)
+            });
+            for ((member, id), read) in wanted.into_iter().zip(read) {
+                if self.globals[id].def != Def::Undefined {
+                    // Another member of this round defined it first.
+                    loaded.remove(&member);
+                    continue;
+                }
+                pending.extend(self.take(read?)?);
+            }
         }
-        Ok(())
     }
 
     /// The target of a relocation's symbol field.

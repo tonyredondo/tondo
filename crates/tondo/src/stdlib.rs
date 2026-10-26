@@ -138,15 +138,29 @@ pub fn add_except(
         dependencies: Default::default(),
         dev_dependencies: Default::default(),
     });
+    // In rounds: the modules wanted so far are parsed on every core, and
+    // what they import is wanted next, in the order the files were added.
     let mut done = 0;
     while done < pending.len() {
-        let name = pending[done];
-        done += 1;
-        let text = SOURCES.iter().find(|(n, _)| *n == name).unwrap().1;
-        let file = sources.add(Path::new(&format!("{name}.to")), text.to_string());
-        sources.set_identity(file, format!("<std>/{name}.to"), format!("std.{name}"));
-        let parsed = parser::parse_file(sources.file(file), diags);
-        wanted(&parsed, &mut pending);
-        modules.push(ModuleSource { path: vec!["std".into(), name.into()], package, files: vec![(parsed, false)] });
+        let round: Vec<&str> = pending[done..].to_vec();
+        done = pending.len();
+        let files: Vec<usize> = round
+            .iter()
+            .map(|name| {
+                let text = SOURCES.iter().find(|(n, _)| n == name).unwrap().1;
+                let file = sources.add(Path::new(&format!("{name}.to")), text.to_string());
+                sources.set_identity(file, format!("<std>/{name}.to"), format!("std.{name}"));
+                file
+            })
+            .collect();
+        let parsed = crate::parallel::map(&files, 1, |&file| {
+            let mut found = Diagnostics::default();
+            (parser::parse_file(sources.file(file), &mut found), found)
+        });
+        for (name, (parsed, mut found)) in round.into_iter().zip(parsed) {
+            diags.list.append(&mut found.list);
+            wanted(&parsed, &mut pending);
+            modules.push(ModuleSource { path: vec!["std".into(), name.into()], package, files: vec![(parsed, false)] });
+        }
     }
 }

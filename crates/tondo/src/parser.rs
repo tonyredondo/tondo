@@ -135,11 +135,19 @@ impl Parser<'_> {
         self.tokens[self.pos.saturating_sub(1)].span
     }
 
-    fn bump(&mut self) -> Token {
-        let token = self.tokens[self.pos].clone();
+    /// Moves past the current token, and gives its span.
+    fn bump(&mut self) -> Span {
+        let span = self.tokens[self.pos].span;
         if self.pos < self.tokens.len() - 1 {
             self.pos += 1;
         }
+        span
+    }
+
+    /// Moves past the current token, and gives it.
+    fn bump_token(&mut self) -> Token {
+        let token = self.tokens[self.pos].clone();
+        self.bump();
         token
     }
 
@@ -239,7 +247,7 @@ impl Parser<'_> {
 
     fn expect(&mut self, tok: Tok) -> PResult<Span> {
         if self.at(&tok) {
-            return Ok(self.bump().span);
+            return Ok(self.bump());
         }
         let what = tok.describe();
         self.expected(&what)
@@ -247,7 +255,7 @@ impl Parser<'_> {
 
     fn ident(&mut self) -> PResult<Ident> {
         match self.tok().clone() {
-            Tok::Ident(name) => Ok(Ident { name, span: self.bump().span }),
+            Tok::Ident(name) => Ok(Ident { name, span: self.bump() }),
             Tok::Kw(kw) => self.error(format!("`{}` is a reserved keyword and cannot be used as a name", kw.as_str())),
             _ => self.expected("identifier"),
         }
@@ -327,7 +335,7 @@ impl Parser<'_> {
     }
 
     fn import(&mut self) -> PResult<Import> {
-        let start = self.bump().span;
+        let start = self.bump();
         let mut path = vec![self.ident()?];
         while self.eat(&Tok::Dot) {
             path.push(self.ident()?);
@@ -414,7 +422,7 @@ impl Parser<'_> {
     fn annotations(&mut self) -> PResult<Vec<Annotation>> {
         let mut annotations = Vec::new();
         while self.at(&Tok::At) {
-            let start = self.bump().span;
+            let start = self.bump();
             let name = self.ident()?;
             let argument = if self.eat(&Tok::LParen) {
                 let argument = match self.tok().clone() {
@@ -687,8 +695,8 @@ impl Parser<'_> {
     /// A field name may be a keyword (5.4).
     fn field_name(&mut self) -> PResult<Ident> {
         match self.tok().clone() {
-            Tok::Ident(name) => Ok(Ident { name, span: self.bump().span }),
-            Tok::Kw(kw) => Ok(Ident { name: kw.as_str().into(), span: self.bump().span }),
+            Tok::Ident(name) => Ok(Ident { name, span: self.bump() }),
+            Tok::Kw(kw) => Ok(Ident { name: kw.as_str().into(), span: self.bump() }),
             _ => self.expected("field name"),
         }
     }
@@ -915,7 +923,7 @@ impl Parser<'_> {
 
     fn error_type(&mut self) -> PResult<TypeExpr> {
         if self.at(&Tok::LParen) {
-            let start = self.bump().span;
+            let start = self.bump();
             let inner = self.type_expr()?;
             self.expect(Tok::RParen)?;
             return Ok(TypeExpr { kind: inner.kind, span: start.to(self.prev_span()) });
@@ -1000,7 +1008,7 @@ impl Parser<'_> {
                 })
             }
             Tok::Kw(Kw::Unsafe | Kw::Extern) if self.nth(1) == &Tok::Kw(Kw::Fn) => {
-                let keyword = self.bump().tok;
+                let keyword = self.bump_token().tok;
                 // A `?` after it belongs to the whole function type.
                 let mut ty = self.primary_type()?;
                 if let TypeKind::Fn { is_unsafe, is_extern, .. } = &mut ty.kind {
@@ -1267,7 +1275,7 @@ impl Parser<'_> {
     }
 
     fn match_expression(&mut self) -> PResult<Expr> {
-        let start = self.bump().span;
+        let start = self.bump();
         let no_brace = std::mem::replace(&mut self.no_brace, true);
         let scrutinee = self.expression();
         self.no_brace = no_brace;
@@ -1313,7 +1321,7 @@ impl Parser<'_> {
 
     /// `select { arms }` (11.14).
     fn select_expression(&mut self) -> PResult<Expr> {
-        let start = self.bump().span;
+        let start = self.bump();
         let no_brace = std::mem::replace(&mut self.no_brace, false);
         let arms = self.select_arms();
         self.no_brace = no_brace;
@@ -1395,7 +1403,7 @@ impl Parser<'_> {
 
     /// `return`, `fail`, `break` or `continue` (shared by statements and arms).
     fn transfer(&mut self) -> PResult<StmtKind> {
-        Ok(match self.bump().tok {
+        Ok(match self.bump_token().tok {
             Tok::Kw(Kw::Return) => {
                 let value = if matches!(self.tok(), Tok::Newline | Tok::RBrace | Tok::Eof | Tok::Comma) {
                     None
@@ -1572,7 +1580,7 @@ impl Parser<'_> {
     }
 
     fn if_expression(&mut self) -> PResult<Expr> {
-        let start = self.bump().span;
+        let start = self.bump();
         let no_brace = std::mem::replace(&mut self.no_brace, true);
         let condition = self.expression();
         self.no_brace = no_brace;
@@ -1594,17 +1602,14 @@ impl Parser<'_> {
         Ok(Expr { kind: ExprKind::If { condition, then, otherwise }, span })
     }
 
-    /// Precedence climbing over levels 3–13 of spec 17.11 (lowest first).
+    /// Precedence climbing over levels 3–13 of spec 17.11 (lowest first):
+    /// the operators of `level` and above, each level's left-associative,
+    /// and those of levels 2 to 4 not chained.
     fn binary(&mut self, level: usize) -> PResult<Expr> {
-        const LEVELS: usize = 11;
-        if level == LEVELS {
-            return self.unary();
-        }
-        let mut left = self.binary(level + 1)?;
-        let non_associative = matches!(level, 2..=4);
-        let mut chained = false;
-        while let Some(op) = self.binary_op(level) {
-            if non_associative && chained {
+        let mut left = self.unary()?;
+        let mut last = None;
+        while let Some((op, at)) = self.binary_op().filter(|&(_, at)| at >= level) {
+            if matches!(at, 2..=4) && last == Some(at) {
                 let span = self.span();
                 self.diags.error(
                     "E0005",
@@ -1614,40 +1619,40 @@ impl Parser<'_> {
                 return Err(());
             }
             self.bump();
-            let right = self.binary(level + 1)?;
+            let right = self.binary(at + 1)?;
             let span = left.span.to(right.span);
             left = Expr { kind: ExprKind::Binary(op, Box::new(left), Box::new(right)), span };
-            chained = true;
+            last = Some(at);
         }
         Ok(left)
     }
 
-    fn binary_op(&self, level: usize) -> Option<BinOp> {
-        let op = match (level, self.tok()) {
-            (0, Tok::Kw(Kw::Or)) => BinOp::Or,
-            (1, Tok::Kw(Kw::And)) => BinOp::And,
-            (2, Tok::EqEq) => BinOp::Eq,
-            (2, Tok::NotEq) => BinOp::Ne,
-            (3, Tok::Lt) => BinOp::Lt,
-            (3, Tok::Le) => BinOp::Le,
-            (3, Tok::Gt) => BinOp::Gt,
-            (3, Tok::Ge) => BinOp::Ge,
-            (3, Tok::Kw(Kw::In)) => BinOp::In,
-            (4, Tok::DotDot) => BinOp::Range,
-            (4, Tok::DotDotEq) => BinOp::RangeInclusive,
-            (5, Tok::Pipe) => BinOp::BitOr,
-            (6, Tok::Caret) => BinOp::BitXor,
-            (7, Tok::Amp) => BinOp::BitAnd,
-            (8, Tok::Shl) => BinOp::Shl,
-            (8, Tok::Shr) => BinOp::Shr,
-            (9, Tok::Plus) => BinOp::Add,
-            (9, Tok::Minus) => BinOp::Sub,
-            (10, Tok::Star) => BinOp::Mul,
-            (10, Tok::Slash) => BinOp::Div,
-            (10, Tok::Percent) => BinOp::Rem,
+    /// The binary operator at the current token, and its level.
+    fn binary_op(&self) -> Option<(BinOp, usize)> {
+        Some(match self.tok() {
+            Tok::Kw(Kw::Or) => (BinOp::Or, 0),
+            Tok::Kw(Kw::And) => (BinOp::And, 1),
+            Tok::EqEq => (BinOp::Eq, 2),
+            Tok::NotEq => (BinOp::Ne, 2),
+            Tok::Lt => (BinOp::Lt, 3),
+            Tok::Le => (BinOp::Le, 3),
+            Tok::Gt => (BinOp::Gt, 3),
+            Tok::Ge => (BinOp::Ge, 3),
+            Tok::Kw(Kw::In) => (BinOp::In, 3),
+            Tok::DotDot => (BinOp::Range, 4),
+            Tok::DotDotEq => (BinOp::RangeInclusive, 4),
+            Tok::Pipe => (BinOp::BitOr, 5),
+            Tok::Caret => (BinOp::BitXor, 6),
+            Tok::Amp => (BinOp::BitAnd, 7),
+            Tok::Shl => (BinOp::Shl, 8),
+            Tok::Shr => (BinOp::Shr, 8),
+            Tok::Plus => (BinOp::Add, 9),
+            Tok::Minus => (BinOp::Sub, 9),
+            Tok::Star => (BinOp::Mul, 10),
+            Tok::Slash => (BinOp::Div, 10),
+            Tok::Percent => (BinOp::Rem, 10),
             _ => return None,
-        };
-        Some(op)
+        })
     }
 
     fn unary(&mut self) -> PResult<Expr> {
@@ -1656,7 +1661,7 @@ impl Parser<'_> {
             Tok::Kw(Kw::Not) => UnaryOp::Not,
             Tok::Tilde => UnaryOp::BitNot,
             Tok::Kw(Kw::Spawn) => {
-                let start = self.bump().span;
+                let start = self.bump();
                 // `detached` is a word of `spawn` only: `spawn detached(x)`
                 // still spawns a function of that name.
                 let detached = matches!(self.tok(), Tok::Ident(word) if word == "detached")
@@ -1676,7 +1681,7 @@ impl Parser<'_> {
             }
             _ => return self.postfix(),
         };
-        let start = self.bump().span;
+        let start = self.bump();
         let operand = self.unary()?;
         let span = start.to(operand.span);
         Ok(Expr { kind: ExprKind::Unary(op, Box::new(operand)), span })
@@ -1695,10 +1700,10 @@ impl Parser<'_> {
                 Tok::Dot => {
                     self.bump();
                     let field = match self.tok().clone() {
-                        Tok::Ident(name) => Ident { name, span: self.bump().span },
-                        Tok::Kw(kw) => Ident { name: kw.as_str().into(), span: self.bump().span },
+                        Tok::Ident(name) => Ident { name, span: self.bump() },
+                        Tok::Kw(kw) => Ident { name: kw.as_str().into(), span: self.bump() },
                         Tok::Int { value, suffix: None } => {
-                            let span = expr.span.to(self.bump().span);
+                            let span = expr.span.to(self.bump());
                             expr = Expr { kind: ExprKind::TupleSlot(Box::new(expr), value as u32), span };
                             continue;
                         }
@@ -1706,7 +1711,7 @@ impl Parser<'_> {
                         Tok::Float { text, suffix: None }
                             if text.split('.').all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())) =>
                         {
-                            let span = expr.span.to(self.bump().span);
+                            let span = expr.span.to(self.bump());
                             for slot in text.split('.') {
                                 expr = Expr {
                                     kind: ExprKind::TupleSlot(Box::new(expr), slot.parse().unwrap_or(u32::MAX)),
@@ -1899,7 +1904,7 @@ impl Parser<'_> {
             if mode != Mode::Ref {
                 self.bump();
             }
-            let span = self.bump().span;
+            let span = self.bump();
             if !first {
                 return self.error("the receiver `self` must be the first parameter");
             }
@@ -1914,7 +1919,7 @@ impl Parser<'_> {
         }
         // C's `...` ends the parameters of an `extern fn`.
         if self.at(&Tok::Ellipsis) {
-            let span = self.bump().span;
+            let span = self.bump();
             let name = Ident { name: "...".into(), span };
             return Ok(Param { name, ty: None, mode: Mode::Value, variadic: true, default: None, span });
         }
@@ -2070,7 +2075,7 @@ impl Parser<'_> {
 
     /// `[]`, `[a, b]`; map literals use `:` (23.23).
     fn bracket_literal(&mut self) -> PResult<Expr> {
-        let start = self.bump().span;
+        let start = self.bump();
         let no_brace = std::mem::replace(&mut self.no_brace, false);
         let result = (|| -> PResult<ExprKind> {
             if self.at(&Tok::Colon) && self.nth(1) == &Tok::RBracket {
@@ -2105,7 +2110,7 @@ impl Parser<'_> {
     }
 
     fn paren(&mut self) -> PResult<Expr> {
-        let start = self.bump().span;
+        let start = self.bump();
         if self.eat(&Tok::RParen) {
             return Ok(Expr { kind: ExprKind::Unit, span: start.to(self.prev_span()) });
         }

@@ -12,6 +12,50 @@ pub use archive::archive;
 
 use std::path::{Path, PathBuf};
 
+/// A file the linker reads, mapped rather than copied: the runtime's
+/// archive alone is tens of megabytes, which every link would read again.
+struct Mapped {
+    address: *mut libc::c_void,
+    length: usize,
+}
+
+impl Mapped {
+    fn open(path: &Path) -> Result<Mapped, String> {
+        use std::os::fd::AsRawFd;
+        let cannot = |e: std::io::Error| format!("cannot read {}: {e}", path.display());
+        let file = std::fs::File::open(path).map_err(cannot)?;
+        let length = file.metadata().map_err(cannot)?.len() as usize;
+        if length == 0 {
+            return Ok(Mapped { address: std::ptr::null_mut(), length });
+        }
+        let address = unsafe {
+            libc::mmap(std::ptr::null_mut(), length, libc::PROT_READ, libc::MAP_PRIVATE, file.as_raw_fd(), 0)
+        };
+        match address == libc::MAP_FAILED {
+            true => Err(cannot(std::io::Error::last_os_error())),
+            false => Ok(Mapped { address, length }),
+        }
+    }
+}
+
+impl std::ops::Deref for Mapped {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match self.length {
+            0 => &[],
+            _ => unsafe { std::slice::from_raw_parts(self.address as *const u8, self.length) },
+        }
+    }
+}
+
+impl Drop for Mapped {
+    fn drop(&mut self) {
+        if self.length > 0 {
+            unsafe { libc::munmap(self.address, self.length) };
+        }
+    }
+}
+
 /// What the linker makes.
 pub enum Product<'a> {
     /// An executable: without its symbol table, or static, with the C
@@ -111,21 +155,23 @@ pub fn link(
     if !statically && is_elf(&loader, arch) && !system.contains(&loader) {
         system.push(loader);
     }
-    let read = |path: &Path| std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()));
-    let files: Vec<(String, Vec<u8>)> =
-        archive_paths.iter().map(|p| Ok((p.display().to_string(), read(p)?))).collect::<Result<_, String>>()?;
+    let files: Vec<(String, Mapped)> =
+        archive_paths.iter().map(|p| Ok((p.display().to_string(), Mapped::open(p)?))).collect::<Result<_, String>>()?;
     // An object among them, as the start file of a static executable,
     // comes in whole.
     let (archive_data, object_data): (Vec<_>, Vec<_>) = files.into_iter().partition(|(_, d)| d.starts_with(b"!<arch>"));
-    let shared_data: Vec<(String, Vec<u8>)> =
-        shared.iter().chain(&system).map(|p| Ok((p.display().to_string(), read(p)?))).collect::<Result<_, String>>()?;
+    let shared_data: Vec<(String, Mapped)> = shared
+        .iter()
+        .chain(&system)
+        .map(|p| Ok((p.display().to_string(), Mapped::open(p)?)))
+        .collect::<Result<_, String>>()?;
     let inputs = elf::Inputs {
         arch,
         objects: std::iter::once(("the program".to_string(), object))
-            .chain(object_data.iter().map(|(n, d)| (n.clone(), d.as_slice())))
+            .chain(object_data.iter().map(|(n, d)| (n.clone(), &d[..])))
             .collect(),
-        archives: archive_data.iter().map(|(n, d)| (n.clone(), d.as_slice())).collect(),
-        shared: shared_data.iter().map(|(n, d)| (n.clone(), d.as_slice())).collect(),
+        archives: archive_data.iter().map(|(n, d)| (n.clone(), &d[..])).collect(),
+        shared: shared_data.iter().map(|(n, d)| (n.clone(), &d[..])).collect(),
         always_needed: shared.len(),
         runpath,
         interpreter: (!statically && exports.is_none()).then(|| interpreter(arch).into()),
@@ -355,14 +401,13 @@ fn link_macho(
             add(library(entry), &mut dylibs);
         }
     }
-    let read = |path: &Path| std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()));
-    let archive_data: Vec<(String, Vec<u8>)> =
-        archive_paths.iter().map(|p| Ok((p.display().to_string(), read(p)?))).collect::<Result<_, String>>()?;
+    let archive_data: Vec<(String, Mapped)> =
+        archive_paths.iter().map(|p| Ok((p.display().to_string(), Mapped::open(p)?))).collect::<Result<_, String>>()?;
     let identifier = output.file_name().map_or("a.out".into(), |n| n.to_string_lossy().into_owned());
     let inputs = macho::Inputs {
         arch,
         objects: vec![("the program".into(), object)],
-        archives: archive_data.iter().map(|(n, d)| (n.clone(), d.as_slice())).collect(),
+        archives: archive_data.iter().map(|(n, d)| (n.clone(), &d[..])).collect(),
         dylibs,
         rpaths,
         entry: "_main".into(),

@@ -70,3 +70,52 @@ mod tests {
         assert_eq!(hex(example), "657cc6f1f65d18bda1f1c6e81b157a903c56abfccf55086e3884e23ac14b9da4");
     }
 }
+
+/// A fast hash for maps of names, as the linker's symbols, where the
+/// standard library's, made to resist chosen keys, costs more than it
+/// protects (FxHash, from rustc).
+#[derive(Default, Clone, Copy)]
+pub struct Fast(u64);
+
+impl std::hash::Hasher for Fast {
+    fn write(&mut self, bytes: &[u8]) {
+        let (words, rest) = bytes.as_chunks::<8>();
+        for word in words {
+            self.add(u64::from_le_bytes(*word));
+        }
+        if !rest.is_empty() {
+            let mut last = [0u8; 8];
+            last[..rest.len()].copy_from_slice(rest);
+            self.add(u64::from_le_bytes(last));
+        }
+    }
+
+    fn write_u8(&mut self, n: u8) {
+        self.add(n as u64);
+    }
+
+    fn write_u32(&mut self, n: u32) {
+        self.add(n as u64);
+    }
+
+    fn write_u64(&mut self, n: u64) {
+        self.add(n);
+    }
+
+    fn write_usize(&mut self, n: usize) {
+        self.add(n as u64);
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+impl Fast {
+    fn add(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+}
+
+pub type FastMap<K, V> = std::collections::HashMap<K, V, std::hash::BuildHasherDefault<Fast>>;
+pub type FastSet<K> = std::collections::HashSet<K, std::hash::BuildHasherDefault<Fast>>;

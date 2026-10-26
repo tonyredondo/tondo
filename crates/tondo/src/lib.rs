@@ -32,6 +32,7 @@ pub mod modules;
 pub mod mono;
 pub mod observe;
 pub mod ownership;
+pub mod parallel;
 pub mod parser;
 pub mod project;
 pub mod runner;

@@ -198,8 +198,9 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
                 continue;
             }
             let (files, root_file) = project::sources(&package.dir, &package.name)?;
-            for (index, file) in files.iter().enumerate() {
-                let parsed = parse(&file.path, &mut sources, &mut diags)?;
+            let first = sources.len();
+            let parsed_files = parse_files(files.iter().map(|f| f.path.as_path()), &mut sources, &mut diags)?;
+            for (index, (file, parsed)) in files.iter().zip(parsed_files).enumerate() {
                 // A dependency's files are shown under its package name.
                 let relative = file.path.strip_prefix(&package.dir).unwrap_or(&file.path);
                 let mut logical: Vec<String> =
@@ -207,7 +208,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
                 if package_index > 0 {
                     logical.insert(0, package.name.clone());
                 }
-                sources.set_identity(sources.len() - 1, logical.join("/"), file.module.join("."));
+                sources.set_identity(first + index, logical.join("/"), file.module.join("."));
                 let Some(parsed) = parsed else { continue };
                 let position = match modules.iter().position(|m| m.package == package_index && m.path == file.module) {
                     Some(position) => position,
@@ -234,10 +235,11 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
             // under `tests/` is a module of a package that depends on the
             // tested one.
             let (companions, roots) = project::test_sources(&packages[0].dir, &tested)?;
-            for file in companions {
-                let parsed = parse(&file.path, &mut sources, &mut diags)?;
+            let first = sources.len();
+            let parsed_files = parse_files(companions.iter().map(|f| f.path.as_path()), &mut sources, &mut diags)?;
+            for (index, (file, parsed)) in companions.into_iter().zip(parsed_files).enumerate() {
                 let relative = file.path.strip_prefix(&packages[0].dir).unwrap_or(&file.path);
-                sources.set_identity(sources.len() - 1, relative.display().to_string(), file.module.join("."));
+                sources.set_identity(first + index, relative.display().to_string(), file.module.join("."));
                 let Some(mut parsed) = parsed else { continue };
                 parsed.class = ast::SourceClass::Unit;
                 match modules.iter_mut().find(|m| m.package == 0 && m.path == file.module) {
@@ -250,10 +252,11 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
                 }
             }
             let package = packages.len();
-            for file in roots {
-                let parsed = parse(&file.path, &mut sources, &mut diags)?;
+            let first = sources.len();
+            let parsed_files = parse_files(roots.iter().map(|f| f.path.as_path()), &mut sources, &mut diags)?;
+            for (index, (file, parsed)) in roots.into_iter().zip(parsed_files).enumerate() {
                 let relative = file.path.strip_prefix(&packages[0].dir).unwrap_or(&file.path);
-                sources.set_identity(sources.len() - 1, relative.display().to_string(), file.module.join("."));
+                sources.set_identity(first + index, relative.display().to_string(), file.module.join("."));
                 let Some(mut parsed) = parsed else { continue };
                 parsed.class = ast::SourceClass::Integration;
                 let path = std::iter::once(format!("{tested}_tests")).chain(file.module).collect();
@@ -406,6 +409,40 @@ fn drop_dependency_warnings(diags: &mut Diagnostics, sources: &SourceMap, depend
 
 /// Reads and parses one source file; `None` when it cannot be lexed.
 fn parse(path: &Path, sources: &mut SourceMap, diags: &mut Diagnostics) -> Result<Option<ast::Module>, String> {
+    let parsed = parse_files(std::iter::once(path), sources, diags)?;
+    Ok(parsed.into_iter().next().flatten())
+}
+
+/// Reads files into `sources`, one each, in order, and parses them on every
+/// core: each one's module, or none when it is not valid UTF-8 or starts
+/// with a byte order mark.
+fn parse_files<'p>(
+    paths: impl Iterator<Item = &'p Path>,
+    sources: &mut SourceMap,
+    diags: &mut Diagnostics,
+) -> Result<Vec<Option<ast::Module>>, String> {
+    let mut loaded = Vec::new();
+    for path in paths {
+        loaded.push(load(path, sources, diags)?);
+    }
+    let parsed = crate::parallel::map(&loaded, 1, |file| {
+        let mut found = Diagnostics::default();
+        file.map(|file| (parser::parse_file(sources.file(file), &mut found), found))
+    });
+    Ok(parsed
+        .into_iter()
+        .map(|parsed| {
+            parsed.map(|(module, mut found)| {
+                diags.list.append(&mut found.list);
+                module
+            })
+        })
+        .collect())
+}
+
+/// Reads a file into `sources`, or the text an editor has of it: the file,
+/// unless it cannot be parsed, which `diags` says.
+fn load(path: &Path, sources: &mut SourceMap, diags: &mut Diagnostics) -> Result<Option<usize>, String> {
     let open = OPEN.with(|o| {
         let open = o.borrow();
         if open.is_empty() {
@@ -435,7 +472,7 @@ fn parse(path: &Path, sources: &mut SourceMap, diags: &mut Diagnostics) -> Resul
         diags.error("E0001", Span::new(base, base + 3), "source files must not start with a byte order mark");
         return Ok(None);
     }
-    Ok(Some(parser::parse_file(sources.file(file), diags)))
+    Ok(Some(file))
 }
 
 /// The source files a build of `path` reads, for cache keys.

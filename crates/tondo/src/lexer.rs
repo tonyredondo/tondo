@@ -127,8 +127,20 @@ fn punct_text(tok: &Tok) -> &'static str {
     PUNCTUATION.iter().find(|(_, t)| t == tok).map_or("?", |(text, _)| text)
 }
 
+/// The entries of `PUNCTUATION` by the byte they start with, in its order.
+fn by_first_byte() -> &'static [Vec<usize>; 128] {
+    static TABLE: std::sync::OnceLock<[Vec<usize>; 128]> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut table: [Vec<usize>; 128] = std::array::from_fn(|_| Vec::new());
+        for (index, (text, _)) in PUNCTUATION.iter().enumerate() {
+            table[text.as_bytes()[0] as usize].push(index);
+        }
+        table
+    })
+}
+
 /// Longest spellings first, so a linear scan implements maximal munch.
-const PUNCTUATION: &[(&str, Tok)] = &[
+static PUNCTUATION: &[(&str, Tok)] = &[
     ("...", Tok::Ellipsis),
     ("..=", Tok::DotDotEq),
     ("<<=", Tok::ShlEq),
@@ -254,6 +266,7 @@ pub fn lex_with_comments(file: &SourceFile, range: Option<Span>, diags: &mut Dia
         end,
         diags,
         raw: Vec::new(),
+        bracketed: Vec::new(),
         delims: Vec::new(),
         comments: Vec::new(),
     };
@@ -262,43 +275,36 @@ pub fn lex_with_comments(file: &SourceFile, range: Option<Span>, diags: &mut Dia
     }
     lexer.run();
     let comments = lexer.comments;
-    (significant_newlines(lexer.raw, file.base + end as u32), comments)
+    (significant_newlines(lexer.raw, lexer.bracketed, file.base + end as u32), comments)
 }
 
-enum Raw {
-    Token(Token),
-    /// A run of physical newlines; `bracketed` when `(` or `[` is the
-    /// innermost open delimiter.
-    Newline {
-        bracketed: bool,
-        span: Span,
-    },
-}
-
-fn significant_newlines(raw: Vec<Raw>, end: u32) -> Vec<Token> {
-    let mut out: Vec<Token> = Vec::with_capacity(raw.len());
-    for (i, item) in raw.iter().enumerate() {
-        match item {
-            Raw::Token(token) => out.push(token.clone()),
-            Raw::Newline { bracketed, span } => {
-                if *bracketed {
-                    continue;
-                }
-                let previous = out.last().map(|t| &t.tok);
-                if previous.is_none_or(|t| *t == Tok::Newline || suppresses_following_newline(t)) {
-                    continue;
-                }
-                let next = raw[i + 1..].iter().find_map(|r| match r {
-                    Raw::Token(t) => Some(&t.tok),
-                    Raw::Newline { .. } => None,
-                });
-                if next.is_some_and(|t| *t == Tok::Dot || is_binary_continuation(t)) {
-                    continue;
-                }
-                out.push(Token { tok: Tok::Newline, span: *span });
+/// Keeps, of the runs of physical newlines the tokens hold as `Newline`,
+/// those that end a statement: not inside `(` or `[` (the runs at the
+/// indices of `bracketed`), not after a token that continues the line, and
+/// not before one that does. In place, as the tokens can be many.
+fn significant_newlines(mut raw: Vec<Token>, bracketed: Vec<usize>, end: u32) -> Vec<Token> {
+    let mut bracketed = bracketed.into_iter().peekable();
+    let mut kept: usize = 0;
+    for i in 0..raw.len() {
+        if raw[i].tok == Tok::Newline {
+            if bracketed.next_if_eq(&i).is_some() {
+                continue;
+            }
+            let previous = kept.checked_sub(1).map(|p| &raw[p].tok);
+            if previous.is_none_or(|t| *t == Tok::Newline || suppresses_following_newline(t)) {
+                continue;
+            }
+            // A run of newlines is followed by a token, or by the end.
+            let next = raw.get(i + 1).map(|t| &t.tok);
+            if next.is_some_and(|t| *t == Tok::Dot || is_binary_continuation(t)) {
+                continue;
             }
         }
+        raw.swap(kept, i);
+        kept += 1;
     }
+    raw.truncate(kept);
+    let mut out = raw;
     if out.last().is_some_and(|t| t.tok != Tok::Newline) {
         out.push(Token { tok: Tok::Newline, span: Span::new(end, end) });
     }
@@ -312,7 +318,11 @@ struct Lexer<'a> {
     pos: usize,
     end: usize,
     diags: &'a mut Diagnostics,
-    raw: Vec<Raw>,
+    /// The tokens, with each run of physical newlines as one `Newline`, and
+    /// the indices of the runs where `(` or `[` is the innermost open
+    /// delimiter.
+    raw: Vec<Token>,
+    bracketed: Vec<usize>,
     delims: Vec<Tok>,
     comments: Vec<Span>,
 }
@@ -341,17 +351,20 @@ impl Lexer<'_> {
 
     fn push(&mut self, tok: Tok, start: usize) {
         let span = self.span(start, self.pos);
-        self.raw.push(Raw::Token(Token { tok, span }));
+        self.raw.push(Token { tok, span });
     }
 
     fn newline(&mut self, start: usize) {
-        if let Some(Raw::Newline { span, .. }) = self.raw.last_mut() {
+        if let Some(Token { tok: Tok::Newline, span }) = self.raw.last_mut() {
             span.end = self.base + self.pos as u32;
             return;
         }
         let bracketed = matches!(self.delims.last(), Some(Tok::LParen | Tok::LBracket));
         let span = self.span(start, self.pos);
-        self.raw.push(Raw::Newline { bracketed, span });
+        if bracketed {
+            self.bracketed.push(self.raw.len());
+        }
+        self.raw.push(Token { tok: Tok::Newline, span });
     }
 
     fn run(&mut self) {
@@ -430,7 +443,9 @@ impl Lexer<'_> {
                 break;
             }
         }
-        let name: String = self.text[start..self.pos].nfc().collect();
+        // ASCII is already in NFC.
+        let text = &self.text[start..self.pos];
+        let name: String = if text.is_ascii() { text.to_string() } else { text.nfc().collect() };
         let tok = match Kw::lookup(&name) {
             Some(kw) => Tok::Kw(kw),
             None => Tok::Ident(name),
@@ -491,7 +506,9 @@ impl Lexer<'_> {
             self.push(Tok::Str(Vec::new()), start);
             return;
         }
-        let Some((text, tok)) = PUNCTUATION.iter().find(|(text, _)| rest.starts_with(text)) else {
+        let candidates = c.is_ascii().then(|| &by_first_byte()[c as usize]).map_or(&[][..], Vec::as_slice);
+        let found = candidates.iter().map(|&i| &PUNCTUATION[i]).find(|(text, _)| rest.starts_with(text));
+        let Some((text, tok)) = found else {
             self.pos += c.len_utf8();
             let message = if c == ';' {
                 "`;` is not a Tondo token: a new line ends a statement".to_string()

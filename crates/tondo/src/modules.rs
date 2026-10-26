@@ -198,7 +198,11 @@ pub fn link(mut modules: Vec<ModuleSource>, root: usize, packages: &[PackageInfo
             })
             .collect();
         confusables(&names, diags);
-        let outer: Vec<(String, String)> = names.iter().map(|n| (skeleton(&n.name), n.name.clone())).collect();
+        let mut outer: HashMap<String, Vec<(String, String)>> = HashMap::new();
+        for name in &names {
+            let skeleton = skeleton(&name.name);
+            outer.entry(skeleton.clone()).or_default().push((skeleton, name.name.clone()));
+        }
         for ((file, is_root), imports) in module.files.into_iter().zip(&file_imports[index]) {
             let class = file.class;
             let mut linker = Linker {
@@ -385,13 +389,15 @@ fn confusable<'a>(
 
 /// Warns of each name of `names` that looks the same as an earlier one.
 fn confusables(names: &[&Ident], diags: &mut Diagnostics) {
-    let mut seen: Vec<(String, String)> = Vec::new();
+    // The names seen, by their skeleton.
+    let mut seen: HashMap<String, Vec<(String, String)>> = HashMap::new();
     for name in names {
         let skeleton = skeleton(&name.name);
-        if let Some(warning) = confusable(seen.iter(), &skeleton, name) {
+        let alike = seen.entry(skeleton.clone()).or_default();
+        if let Some(warning) = confusable(alike.iter(), &skeleton, name) {
             diags.warning("W1005", name.span, warning);
         }
-        seen.push((skeleton, name.name.clone()));
+        alike.push((skeleton, name.name.clone()));
     }
 }
 
@@ -463,7 +469,8 @@ struct Linker<'a> {
     used: HashSet<String>,
     /// The names of the module's scope, and the bindings visible where the
     /// linker is, with their skeletons.
-    outer: &'a [(String, String)],
+    /// The names of the module, by their skeleton.
+    outer: &'a HashMap<String, Vec<(String, String)>>,
     visible: Vec<(String, String)>,
     diags: &'a mut Diagnostics,
 }
@@ -483,7 +490,7 @@ impl Linker<'_> {
         self.convention(name, Case::Camel);
         if name.name != "_" {
             let skeleton = skeleton(&name.name);
-            let seen = self.outer.iter().chain(&self.visible);
+            let seen = self.outer.get(&skeleton).into_iter().flatten().chain(&self.visible);
             if let Some(warning) = confusable(seen, &skeleton, name) {
                 self.diags.warning("W1005", name.span, warning);
             }

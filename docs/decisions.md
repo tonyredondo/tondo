@@ -2061,3 +2061,26 @@ Not leaving the old frame below would need tail calls, and so Cranelift's
 `tail` calling convention for every function of a live build, with
 adapters for all the runtime calls. Neither is worth its cost while only
 a reload during very deep recursion would notice.
+
+## 2026-10-26 — The compiler and the linker on every core
+
+A build must give the same bytes whatever the machine (8 of the
+toolchain), so work spreads over the cores only where items are
+independent, and their results come back in the items' order: the
+linker reads the archive members a round needs, the relocations of the
+sections it reaches and relocates the sections on every core, and takes
+their symbols in, in order; Cranelift compiles functions, and the parser
+reads files and standard modules, the same way. The threads are made
+once and wait between calls, since many calls have less work than making
+threads costs; a call from inside another runs on its own thread. A test
+builds a program twice and compares the bytes.
+
+Measuring first showed that the largest costs were not a lack of cores:
+reading the runtime's 65 MB archive at every link (now mapped), a lexer
+that copied every token and every identifier, a parser that copied
+tokens to move past them and climbed eleven levels of precedence for
+each operand, and two checks for names that look alike that compared
+each name with all others. A program using `std.http` and three
+encodings builds in about 70 ms instead of 120; one of 24,000 lines in
+about 600 instead of 770, where building Cranelift's IR, still on one
+core, is the largest part.

@@ -1140,10 +1140,11 @@ struct Compiled {
 fn compile_one(
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     context: &mut cranelift_codegen::Context,
-    job: &mut Job,
+    id: FuncId,
+    function: ir::Function,
 ) -> Result<Compiled, String> {
     context.clear();
-    context.func = std::mem::replace(&mut job.func, ir::Function::new());
+    context.func = function;
     context.compile(isa, &mut Default::default()).map_err(|e| format!("{:?}", e.inner))?;
     let code = context.compiled_code().expect("compiled code");
     let sources = code.buffer.get_srclocs_sorted();
@@ -1161,7 +1162,7 @@ fn compile_one(
         .buffer
         .relocs()
         .iter()
-        .map(|reloc| cranelift_module::ModuleReloc::from_mach_reloc(reloc, &context.func, job.id))
+        .map(|reloc| cranelift_module::ModuleReloc::from_mach_reloc(reloc, &context.func, id))
         .collect();
     Ok(Compiled {
         alignment: code.buffer.min_alignment as u64,
@@ -1541,19 +1542,18 @@ impl Codegen<'_> {
     /// the object is the same each time.
     fn compile_all(&mut self, mut jobs: Vec<Job>) -> Result<(), String> {
         let isa = self.module.isa();
-        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(jobs.len().max(1));
-        let size = jobs.len().div_ceil(threads);
-        let compiled: Vec<Result<Compiled, String>> = std::thread::scope(|scope| {
-            let workers: Vec<_> = jobs
-                .chunks_mut(size.max(1))
-                .map(|chunk| {
-                    scope.spawn(move || {
-                        let mut context = cranelift_codegen::Context::new();
-                        chunk.iter_mut().map(|job| compile_one(isa, &mut context, job)).collect::<Vec<_>>()
-                    })
-                })
-                .collect();
-            workers.into_iter().flat_map(|worker| worker.join().expect("a compiling thread")).collect()
+        // Each function goes to the thread that compiles it.
+        let functions: Vec<(FuncId, std::sync::Mutex<Option<ir::Function>>)> = jobs
+            .iter_mut()
+            .map(|job| (job.id, std::sync::Mutex::new(Some(std::mem::replace(&mut job.func, ir::Function::new())))))
+            .collect();
+        let compiled = crate::parallel::map(&functions, 1, |(id, function)| {
+            thread_local! {
+                static CONTEXT: std::cell::RefCell<cranelift_codegen::Context> =
+                    std::cell::RefCell::new(cranelift_codegen::Context::new());
+            }
+            let function = function.lock().unwrap_or_else(|e| e.into_inner()).take().expect("a function");
+            CONTEXT.with(|context| compile_one(isa, &mut context.borrow_mut(), *id, function))
         });
         let labels = self.live.is_some().then(|| self.labels());
         for (job, code) in jobs.into_iter().zip(compiled) {

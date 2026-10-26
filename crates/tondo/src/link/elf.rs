@@ -10,6 +10,7 @@
 //! loader for the library's block, and `.eh_frame_hdr` indexes the unwind
 //! tables.
 
+use crate::hash::{FastMap, FastSet};
 use object::elf::*;
 use object::read::elf::{ElfFile64, SectionHeader as _};
 use object::{
@@ -303,7 +304,7 @@ struct Export<'a> {
 
 struct Library<'a> {
     soname: String,
-    exports: HashMap<&'a [u8], Export<'a>>,
+    exports: FastMap<&'a [u8], Export<'a>>,
     needed: bool,
     /// Whether it defines `GLIBC_ABI_DT_RELR`: its loader reads `DT_RELR`.
     relr: bool,
@@ -365,8 +366,8 @@ struct Linker<'a> {
     arch: Arch,
     inputs: Vec<Input<'a>>,
     globals: Vec<Global<'a>>,
-    names: HashMap<&'a [u8], usize>,
-    groups: HashSet<&'a [u8]>,
+    names: FastMap<&'a [u8], usize>,
+    groups: FastSet<&'a [u8]>,
     libraries: Vec<Library<'a>>,
     got: Vec<Slot>,
     slots: HashMap<Slot, u32>,
@@ -402,8 +403,8 @@ pub fn link(inputs: Inputs) -> Result<Vec<u8>, String> {
         arch: inputs.arch,
         inputs: Vec::new(),
         globals: Vec::new(),
-        names: HashMap::new(),
-        groups: HashSet::new(),
+        names: FastMap::default(),
+        groups: FastSet::default(),
         libraries: Vec::new(),
         got: Vec::new(),
         slots: HashMap::new(),
@@ -478,41 +479,37 @@ impl<'a> Linker<'a> {
 
     /// Adds an object: its sections, and the globals it defines and needs.
     fn add(&mut self, name: String, data: &'a [u8]) -> Result<Vec<usize>, String> {
-        let file = ElfFile64::<Endianness>::parse(data).map_err(|e| error(&name, e))?;
-        if file.elf_header().e_machine.get(file.endian()) != self.arch.machine() {
-            return Err(error(&name, "it is for another architecture"));
-        }
+        let parsed = parse(self.arch, name, data)?;
+        self.take(parsed)
+    }
+
+    /// Takes in an object `parse` read: what it defines and needs.
+    fn take(&mut self, parsed: Parsed<'a>) -> Result<Vec<usize>, String> {
+        let Parsed { name, file, comdats, eh_frame, symbols, count: symbol_count } = parsed;
         let count = file.elf_section_table().len();
         let mut dropped = vec![false; count];
-        for comdat in file.comdats() {
-            let signature = comdat.name_bytes().map_err(|e| error(&name, e))?;
+        for (signature, sections) in comdats {
             if !self.groups.insert(signature) {
-                for section in comdat.sections() {
-                    dropped[section.0] = true;
+                for section in sections {
+                    dropped[section] = true;
                 }
             }
         }
         let index = self.inputs.len() as u32;
-        let mut globals = vec![None; file.symbols().count() + 1];
+        let mut globals = vec![None; symbol_count + 1];
         let mut undefined = Vec::new();
-        for symbol in file.symbols() {
-            if symbol.is_local() {
-                continue;
-            }
-            let symbol_name = symbol.name_bytes().map_err(|e| error(&name, e))?;
+        for symbol in symbols {
+            let symbol_name = symbol.name;
             let id = self.intern(symbol_name);
-            globals[symbol.index().0] = Some(id);
-            let weak = symbol.is_weak();
-            let def = match symbol.section() {
+            globals[symbol.index] = Some(id);
+            let weak = symbol.weak;
+            let def = match symbol.section {
                 SymbolSection::Section(section) if !dropped[section.0] => {
-                    Def::Section { input: index, section: section.0 as u32, value: symbol.address() }
+                    Def::Section { input: index, section: section.0 as u32, value: symbol.address }
                 }
-                SymbolSection::Absolute => Def::Absolute(symbol.address()),
+                SymbolSection::Absolute => Def::Absolute(symbol.address),
                 // A tentative definition keeps its alignment in its value.
-                SymbolSection::Common => {
-                    let align = symbol.elf_symbol().st_value.get(file.endian()).max(1);
-                    Def::Common { size: symbol.size(), align }
-                }
+                SymbolSection::Common => Def::Common { size: symbol.size, align: symbol.address.max(1) },
                 _ => {
                     // `__tls_get_addr` is called only by accesses that
                     // linking relaxes.
@@ -536,18 +533,23 @@ impl<'a> Linker<'a> {
                 global.weak = weak;
             }
         }
-        let mut input = Input {
+        // The unwind descriptions of a group taken from another object go
+        // with it.
+        let (eh_frame, fdes) = match eh_frame {
+            Some((section, records, fdes)) if !dropped[section as usize] => (Some((section, records)), fdes),
+            _ => (None, HashMap::new()),
+        };
+        let input = Input {
             name,
             file,
             place: vec![None; count],
             dropped,
             live: vec![false; count],
             globals,
-            eh_frame: None,
-            fdes: HashMap::new(),
+            eh_frame,
+            fdes,
             relocations: HashMap::new(),
         };
-        input.read_eh_frame()?;
         self.inputs.push(input);
         Ok(undefined)
     }
@@ -555,7 +557,7 @@ impl<'a> Linker<'a> {
     /// Brings in the members of archives that define what is undefined, as
     /// long as some do.
     fn archives(&mut self, archives: &[(String, &'a [u8])]) -> Result<(), String> {
-        let mut index: HashMap<&'a [u8], (usize, u64)> = HashMap::new();
+        let mut index: FastMap<&'a [u8], (usize, u64)> = FastMap::default();
         let mut parsed = Vec::new();
         for (a, (name, data)) in archives.iter().enumerate() {
             let archive = object::read::archive::ArchiveFile::parse(*data).map_err(|e| error(name, e))?;
@@ -567,24 +569,47 @@ impl<'a> Linker<'a> {
             }
             parsed.push(archive);
         }
+        // Room for the names the archives may bring.
+        self.names.reserve(index.len());
+        self.globals.reserve(index.len());
         let mut loaded: HashSet<(usize, u64)> = HashSet::new();
         let mut pending: Vec<usize> =
             (0..self.globals.len()).filter(|&id| self.globals[id].def == Def::Undefined).collect();
-        while let Some(id) = pending.pop() {
-            let global = &self.globals[id];
-            if global.def != Def::Undefined || !global.required {
-                continue;
+        // In rounds: the members that define what is needed now are read
+        // on every core, and taken in, in the order of the archives, while
+        // what brought each in is still undefined.
+        loop {
+            let mut wanted: Vec<((usize, u64), usize)> = Vec::new();
+            for id in pending.drain(..) {
+                let global = &self.globals[id];
+                if global.def != Def::Undefined || !global.required {
+                    continue;
+                }
+                let Some(&member) = index.get(global.name) else { continue };
+                if loaded.insert(member) {
+                    wanted.push((member, id));
+                }
             }
-            let Some(&(a, offset)) = index.get(global.name) else { continue };
-            if !loaded.insert((a, offset)) {
-                continue;
+            if wanted.is_empty() {
+                break;
             }
-            let (archive_name, data) = &archives[a];
-            let member =
-                parsed[a].member(object::read::archive::ArchiveOffset(offset)).map_err(|e| error(archive_name, e))?;
-            let bytes = member.data(*data).map_err(|e| error(archive_name, e))?;
-            let member_name = format!("{archive_name}({})", String::from_utf8_lossy(member.name()));
-            pending.extend(self.add(member_name, bytes)?);
+            wanted.sort_unstable();
+            let read = crate::parallel::map(&wanted, 4, |&((a, offset), _)| {
+                let (archive_name, data) = &archives[a];
+                let member = parsed[a]
+                    .member(object::read::archive::ArchiveOffset(offset))
+                    .map_err(|e| error(archive_name, e))?;
+                let bytes = member.data(*data).map_err(|e| error(archive_name, e))?;
+                parse(self.arch, format!("{archive_name}({})", String::from_utf8_lossy(member.name())), bytes)
+            });
+            for ((member, id), read) in wanted.into_iter().zip(read) {
+                if self.globals[id].def != Def::Undefined {
+                    // Another member of this round defined it first.
+                    loaded.remove(&member);
+                    continue;
+                }
+                pending.extend(self.take(read?)?);
+            }
         }
         Ok(())
     }
@@ -627,61 +652,92 @@ impl<'a> Linker<'a> {
                 work.push((input, section));
             }
         }
-        for (i, input) in self.inputs.iter().enumerate() {
-            for section in input.file.sections() {
-                let header = section.elf_section_header();
-                let endian = input.file.endian();
-                let (kind, flags) = (header.sh_type(endian), header.sh_flags(endian));
-                let name = section.name_bytes().unwrap_or_default();
-                let root = matches!(output_of(name, kind, flags), Some(Out::InitArray | Out::FiniArray))
-                    || flags.0 & SHF_GNU_RETAIN.0 != 0;
-                if root && !input.dropped[section.index().0] {
-                    work.push((i as u32, section.index().0 as u32));
+        // Constructors, destructors and what asks to be kept, in every
+        // input, looked for on every core.
+        let indices: Vec<usize> = (0..self.inputs.len()).collect();
+        let kept = crate::parallel::map(&indices, 1, |&i| {
+            let input = &self.inputs[i];
+            let endian = input.file.endian();
+            input
+                .file
+                .sections()
+                .filter(|section| {
+                    let header = section.elf_section_header();
+                    let (kind, flags) = (header.sh_type(endian), header.sh_flags(endian));
+                    let name = section.name_bytes().unwrap_or_default();
+                    let root = matches!(output_of(name, kind, flags), Some(Out::InitArray | Out::FiniArray))
+                        || flags.0 & SHF_GNU_RETAIN.0 != 0;
+                    root && !input.dropped[section.index().0]
+                })
+                .map(|section| (i as u32, section.index().0 as u32))
+                .collect::<Vec<_>>()
+        });
+        work.extend(kept.into_iter().flatten());
+        // In waves: the relocations of the sections reached last, and of
+        // their unwind descriptions, are read on every core.
+        while !work.is_empty() {
+            let mut fresh = Vec::new();
+            for (input, section) in work.drain(..) {
+                if !std::mem::replace(&mut self.inputs[input as usize].live[section as usize], true) {
+                    fresh.push((input, section));
                 }
             }
-        }
-        while let Some((input, section)) = work.pop() {
-            let i = input as usize;
-            if std::mem::replace(&mut self.inputs[i].live[section as usize], true) {
-                continue;
+            let mut unread: Vec<(u32, u32)> = Vec::new();
+            for &(input, section) in &fresh {
+                let i = &self.inputs[input as usize];
+                unread.push((input, section));
+                if i.fdes.contains_key(&section)
+                    && let Some((frames, _)) = &i.eh_frame
+                {
+                    unread.push((input, *frames));
+                }
             }
-            self.read_relocations(i, section);
-            let mut targets: Vec<Target> = self.relocations(i, section).iter().filter_map(|r| r.target).collect();
-            // A function's unwind description, and what it and its CIE
-            // refer to besides the function.
-            if let Some(records) = self.inputs[i].fdes.get(&section).cloned()
-                && let Some(frames) = self.inputs[i].eh_frame.as_ref().map(|(s, _)| *s)
-            {
-                self.read_relocations(i, frames);
-                let all = &self.inputs[i].eh_frame.as_ref().unwrap().1;
-                let relocations = self.relocations(i, frames);
-                for record in records {
-                    let fde = &all[record];
-                    let cie = fde.cie.and_then(|cie| all.iter().find(|r| r.start == cie));
-                    for r in std::iter::once(fde).chain(cie) {
-                        let first = relocations.partition_point(|x| x.offset < r.start);
-                        for reloc in relocations[first..].iter().take_while(|x| x.offset < r.start + r.len) {
-                            if reloc.offset != fde.start + 8 {
-                                targets.extend(reloc.target);
+            unread.sort_unstable();
+            unread.dedup();
+            unread.retain(|(input, section)| !self.inputs[*input as usize].relocations.contains_key(section));
+            let read = crate::parallel::map(&unread, 64, |&(input, section)| {
+                read_relocations(&self.inputs[input as usize], input as usize, section)
+            });
+            for ((input, section), relocations) in unread.into_iter().zip(read) {
+                self.inputs[input as usize].relocations.insert(section, relocations);
+            }
+            for (input, section) in fresh {
+                let i = input as usize;
+                let mut targets: Vec<Target> = self.relocations(i, section).iter().filter_map(|r| r.target).collect();
+                // A function's unwind description, and what it and its CIE
+                // refer to besides the function.
+                if let Some(records) = self.inputs[i].fdes.get(&section)
+                    && let Some((frames, all)) = self.inputs[i].eh_frame.as_ref()
+                {
+                    let relocations = self.relocations(i, *frames);
+                    for &record in records {
+                        let fde = &all[record];
+                        let cie = fde.cie.and_then(|cie| all.binary_search_by_key(&cie, |r| r.start).ok());
+                        for r in std::iter::once(fde).chain(cie.map(|cie| &all[cie])) {
+                            let first = relocations.partition_point(|x| x.offset < r.start);
+                            for reloc in relocations[first..].iter().take_while(|x| x.offset < r.start + r.len) {
+                                if reloc.offset != fde.start + 8 {
+                                    targets.extend(reloc.target);
+                                }
                             }
                         }
                     }
                 }
-            }
-            for target in targets {
-                match target {
-                    Target::Global(id) => {
-                        self.globals[id].used = true;
-                        if let Def::Section { input, section, .. } = self.globals[id].def {
-                            work.push((input, section));
+                for target in targets {
+                    match target {
+                        Target::Global(id) => {
+                            self.globals[id].used = true;
+                            if let Def::Section { input, section, .. } = self.globals[id].def {
+                                work.push((input, section));
+                            }
                         }
-                    }
-                    Target::Local { input, symbol } => {
-                        let file = &self.inputs[input as usize].file;
-                        if let Ok(symbol) = file.symbol_by_index(SymbolIndex(symbol as usize))
-                            && let SymbolSection::Section(section) = symbol.section()
-                        {
-                            work.push((input, section.0 as u32));
+                        Target::Local { input, symbol } => {
+                            let file = &self.inputs[input as usize].file;
+                            if let Ok(symbol) = file.symbol_by_index(SymbolIndex(symbol as usize))
+                                && let SymbolSection::Section(section) = symbol.section()
+                            {
+                                work.push((input, section.0 as u32));
+                            }
                         }
                     }
                 }
@@ -692,19 +748,17 @@ impl<'a> Linker<'a> {
         }
     }
 
-    /// The relocations of a section that `read_relocations` read, by
-    /// offset.
+    /// The relocations of a section that `collect` read, by offset.
     fn relocations(&self, input: usize, section: u32) -> &[Relocation] {
         self.inputs[input].relocations.get(&section).map_or(&[], Vec::as_slice)
     }
+}
 
-    fn read_relocations(&mut self, input: usize, section: u32) {
-        if self.inputs[input].relocations.contains_key(&section) {
-            return;
-        }
-        let input_ref = &self.inputs[input];
+/// The relocations of a section of `input`, the `index`th, by offset.
+fn read_relocations(input_ref: &Input<'_>, input: usize, section: u32) -> Vec<Relocation> {
+    {
         let Ok(section_ref) = input_ref.file.section_by_index(object::SectionIndex(section as usize)) else {
-            return;
+            return Vec::new();
         };
         let mut out: Vec<Relocation> = section_ref
             .relocations()
@@ -726,9 +780,11 @@ impl<'a> Linker<'a> {
             })
             .collect();
         out.sort_by_key(|r| r.offset);
-        self.inputs[input].relocations.insert(section, out);
+        out
     }
+}
 
+impl<'a> Linker<'a> {
     /// Finds what the live code needs from the linker: entries in the GOT,
     /// calls into shared libraries and words that point into them.
     fn scan(&mut self) -> Result<(), String> {
@@ -1123,48 +1179,96 @@ impl<'a> Linker<'a> {
     }
 }
 
-impl Input<'_> {
-    /// Reads the records of `.eh_frame`: which CIE each description of a
-    /// function uses, and which section the function is in.
-    fn read_eh_frame(&mut self) -> Result<(), String> {
-        let Some(section) = self.file.section_by_name(".eh_frame") else { return Ok(()) };
-        let index = section.index().0 as u32;
-        if self.dropped[index as usize] {
-            return Ok(());
-        }
-        let data = section.data().map_err(|e| error(&self.name, e))?;
-        let mut functions: HashMap<u64, u32> = HashMap::new();
-        for (offset, r) in section.relocations() {
-            if let RelocationTarget::Symbol(symbol) = r.target()
-                && let Ok(symbol) = self.file.symbol_by_index(symbol)
-                && let SymbolSection::Section(target) = symbol.section()
-            {
-                functions.insert(offset, target.0 as u32);
-            }
-        }
-        let mut records = Vec::new();
-        let mut at = 0u64;
-        while at + 8 <= data.len() as u64 {
-            let word = |o: u64| u32::from_le_bytes(data[o as usize..o as usize + 4].try_into().unwrap());
-            let length = word(at) as u64;
-            if length == 0 {
-                break;
-            }
-            if length == 0xffff_ffff {
-                return Err(error(&self.name, "a 64-bit `.eh_frame` record"));
-            }
-            let id = word(at + 4) as u64;
-            let cie = (id != 0).then(|| at + 4 - id);
-            let function = cie.and_then(|_| functions.get(&(at + 8)).copied());
-            if let Some(function) = function {
-                self.fdes.entry(function).or_default().push(records.len());
-            }
-            records.push(Record { start: at, len: length + 4, cie, function });
-            at += length + 4;
-        }
-        self.eh_frame = Some((index, records));
-        Ok(())
+/// An object read on its own, before the linker takes in its symbols: the
+/// sections of each COMDAT group, by its signature, and its `.eh_frame`
+/// section with its records and each function section's records there.
+struct Parsed<'a> {
+    name: String,
+    file: ElfFile64<'a, Endianness>,
+    comdats: Vec<(&'a [u8], Vec<usize>)>,
+    eh_frame: EhFrame,
+    /// Its symbols that are not local, and how many symbols it has.
+    symbols: Vec<Symbol<'a>>,
+    count: usize,
+}
+
+/// A symbol of an object that is not local: for a common one, its value is
+/// its alignment.
+struct Symbol<'a> {
+    index: usize,
+    name: &'a [u8],
+    section: SymbolSection,
+    weak: bool,
+    address: u64,
+    size: u64,
+}
+
+type EhFrame = Option<(u32, Vec<Record>, HashMap<u32, Vec<usize>>)>;
+
+/// Reads an object for `take`, which can happen on any thread.
+fn parse<'a>(arch: Arch, name: String, data: &'a [u8]) -> Result<Parsed<'a>, String> {
+    let file = ElfFile64::<Endianness>::parse(data).map_err(|e| error(&name, e))?;
+    if file.elf_header().e_machine.get(file.endian()) != arch.machine() {
+        return Err(error(&name, "it is for another architecture"));
     }
+    let mut comdats = Vec::new();
+    for comdat in file.comdats() {
+        let signature = comdat.name_bytes().map_err(|e| error(&name, e))?;
+        comdats.push((signature, comdat.sections().map(|section| section.0).collect()));
+    }
+    let eh_frame = eh_frame(&name, &file)?;
+    let mut symbols = Vec::new();
+    for symbol in file.symbols().filter(|symbol| !symbol.is_local()) {
+        symbols.push(Symbol {
+            index: symbol.index().0,
+            name: symbol.name_bytes().map_err(|e| error(&name, e))?,
+            section: symbol.section(),
+            weak: symbol.is_weak(),
+            address: symbol.elf_symbol().st_value.get(file.endian()),
+            size: symbol.size(),
+        });
+    }
+    let count = file.symbols().count();
+    Ok(Parsed { name, file, comdats, eh_frame, symbols, count })
+}
+
+/// The records of an object's `.eh_frame`: which CIE each description of
+/// a function uses, and which section the function is in.
+fn eh_frame(name: &str, file: &ElfFile64<'_, Endianness>) -> Result<EhFrame, String> {
+    let Some(section) = file.section_by_name(".eh_frame") else { return Ok(None) };
+    let index = section.index().0 as u32;
+    let data = section.data().map_err(|e| error(name, e))?;
+    let mut functions: HashMap<u64, u32> = HashMap::new();
+    for (offset, r) in section.relocations() {
+        if let RelocationTarget::Symbol(symbol) = r.target()
+            && let Ok(symbol) = file.symbol_by_index(symbol)
+            && let SymbolSection::Section(target) = symbol.section()
+        {
+            functions.insert(offset, target.0 as u32);
+        }
+    }
+    let mut records = Vec::new();
+    let mut fdes: HashMap<u32, Vec<usize>> = HashMap::new();
+    let mut at = 0u64;
+    while at + 8 <= data.len() as u64 {
+        let word = |o: u64| u32::from_le_bytes(data[o as usize..o as usize + 4].try_into().unwrap());
+        let length = word(at) as u64;
+        if length == 0 {
+            break;
+        }
+        if length == 0xffff_ffff {
+            return Err(error(name, "a 64-bit `.eh_frame` record"));
+        }
+        let id = word(at + 4) as u64;
+        let cie = (id != 0).then(|| at + 4 - id);
+        let function = cie.and_then(|_| functions.get(&(at + 8)).copied());
+        if let Some(function) = function {
+            fdes.entry(function).or_default().push(records.len());
+        }
+        records.push(Record { start: at, len: length + 4, cie, function });
+        at += length + 4;
+    }
+    Ok(Some((index, records, fdes)))
 }
 
 /// Reads what a shared library exports, with its default versions.
@@ -1172,7 +1276,7 @@ fn library<'a>(name: &str, data: &'a [u8]) -> Result<Library<'a>, String> {
     let file = ElfFile64::<Endianness>::parse(data).map_err(|e| error(name, e))?;
     let endian = file.endian();
     let versions = file.elf_section_table().versions(endian, data).map_err(|e| error(name, e))?;
-    let mut exports = HashMap::new();
+    let mut exports = FastMap::default();
     for symbol in file.dynamic_symbols() {
         if symbol.is_undefined() || symbol.is_local() {
             continue;
@@ -1403,20 +1507,31 @@ impl<'a> Linker<'a> {
             let code = plt_entry(self.arch, stub, slot);
             image.put(at(Out::Plt) + PLT_ENTRY * n as u64, &code);
         }
-        // The sections of the inputs, relocated.
+        // The sections of the inputs, relocated on every core, each apart,
+        // and put in their order.
+        let mut sections: Vec<(usize, usize, Out, u64)> = Vec::new();
         for (i, input) in self.inputs.iter().enumerate() {
-            for section in input.file.sections() {
-                let s = section.index().0;
-                let Some((out, offset)) = input.place[s] else { continue };
-                if out.nobits() {
-                    continue;
+            for (s, place) in input.place.iter().enumerate() {
+                if let Some((out, offset)) = *place
+                    && !out.nobits()
+                {
+                    sections.push((i, s, out, offset));
                 }
-                let data = section.data().map_err(|e| error(&input.name, e))?;
-                let file_at = at(out) + offset;
-                image.put(file_at, data);
-                let base = addr(out) + offset;
-                self.relocate(&mut image, i, s as u32, file_at, base, &mut relocations, None)?;
             }
+        }
+        let relocated = crate::parallel::map(&sections, 16, |&(i, s, out, offset)| {
+            let input = &self.inputs[i];
+            let section = input.file.section_by_index(object::SectionIndex(s)).map_err(|e| error(&input.name, e))?;
+            let data = section.data().map_err(|e| error(&input.name, e))?;
+            let mut alone = Image { bytes: data.to_vec() };
+            let mut dynamic = Vec::new();
+            self.relocate(&mut alone, i, s as u32, 0, addr(out) + offset, &mut dynamic, None)?;
+            Ok::<_, String>((alone.bytes, dynamic))
+        });
+        for (&(_, _, out, offset), relocated) in sections.iter().zip(relocated) {
+            let (bytes, dynamic) = relocated?;
+            image.put(at(out) + offset, &bytes);
+            relocations.extend(dynamic);
         }
         let fdes = self.write_eh_frame(&mut image, &mut relocations)?;
         if self.size[Out::EhFrameHdr as usize] > 0 {

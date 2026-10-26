@@ -34,3 +34,16 @@ fn links_and_strips() {
     assert_eq!(file.symbols().count(), 0);
     assert!(stripped.len() < full.len());
 }
+
+/// What the compiler and the linker make does not depend on how their work
+/// spreads over the cores, which differs from one build to the next.
+#[test]
+fn builds_the_same_bytes_each_time() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("link_same");
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\nimport std.json\nimport std.yaml\nimport std.regex\n\npub type Item = { name: String, tags: Array[String] }\n\nlet item = Item { name: \"x\", tags: [\"a\"] }\nlet text = json.encode(item)\nlet _ = yaml.encode(item)\nlet _ = regex.Regex.compile(\"[a-z]+\")\nif text.length() > 0 {\n    console.println(\"linked\")\n}\n";
+    std::fs::write(dir.join("main.to"), program).unwrap();
+    let first = build(&dir, "first", false);
+    let second = build(&dir, "second", false);
+    assert!(first == second, "two builds of the same program differ");
+}
