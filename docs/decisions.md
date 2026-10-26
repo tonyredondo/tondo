@@ -2436,3 +2436,24 @@ needs no account's password. `tondo` makes no executable memory of its
 own, so the hardened runtime needs no entitlement. A bare executable
 cannot be stapled, so Gatekeeper asks Apple on the first run. Builds of a
 pull request have no secrets and are not signed; the script says so.
+
+## 2026-10-26 — Inlining, with every frame kept
+
+Go is fast on small functions because it inlines them, closures included
+when the function that calls them is inlined too. Tondo now does the same
+in its MIR, in builds that neither step through code, count it nor reload
+it: a call of a small function becomes its blocks, with its parameters
+the caller's arguments and a loan the place lent, which the MIR's
+explicit ownership makes a copy without retains. A call through a `fn`
+value the function made itself, a closure or a named function, becomes a
+call of its body, the captures read from the value, and is inlined in
+turn; the check for cancellation after it goes when the code inlined
+cannot wait. Rounds repeat this, so `apply(f, n)` with a closure becomes
+one loop.
+
+A trace still names every frame (language 15.7), and a profile gives each
+its function, file and line (toolchain 7.15): each call and each run of
+code records the call it was inlined at, which records the one around
+it, and the runtime expands them, without allocating, into the frames
+they were. A heap's site skips the standard library inlined into the
+program's code as it skipped its frames.

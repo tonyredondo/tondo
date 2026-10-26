@@ -238,6 +238,8 @@ fn lower_function(types: &Types, function: &hir::Function, waits: Option<&[bool]
         span: function.span,
         starts: b.starts,
         ways: b.ways,
+        inlined: Vec::new(),
+        scopes: Vec::new(),
     }
 }
 

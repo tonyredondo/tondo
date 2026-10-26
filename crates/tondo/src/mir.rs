@@ -25,6 +25,9 @@ pub enum Proj {
     Index(Local, Span),
     /// The value a `Ref[T]` identifies, which is only read.
     Deref,
+    /// The captures of a closure in a `fn` value, of the type given, which
+    /// its body borrows (`inline`).
+    Captures(Ty),
 }
 
 /// A local or a path inside it.
@@ -80,9 +83,11 @@ pub fn project(types: &Types, ty: Ty, proj: Proj) -> Ty {
             _ => unreachable!("index of a non-collection"),
         },
         Proj::Deref => types.handle_result(ty),
+        Proj::Captures(captures) => captures,
     }
 }
 
+#[derive(Clone)]
 pub struct Body {
     pub name: String,
     pub locals: Vec<Ty>,
@@ -114,6 +119,20 @@ pub struct Body {
     pub span: Span,
     pub starts: Vec<(BlockId, usize, Span)>,
     pub ways: Vec<Way>,
+    /// The calls inlined into the function, and the one each block's code
+    /// comes from, when it comes from one (`inline`).
+    pub inlined: Vec<Inlined>,
+    pub scopes: Vec<Option<u32>>,
+}
+
+/// A call inlined: the function it called and where that function is,
+/// where the call was, and the inlined call that holds it, when one does.
+#[derive(Clone, Debug)]
+pub struct Inlined {
+    pub name: String,
+    pub span: Span,
+    pub call: Span,
+    pub parent: Option<u32>,
 }
 
 /// A way a branch of the program can go: the statement of the block it
@@ -162,11 +181,13 @@ impl Body {
     }
 }
 
+#[derive(Clone)]
 pub struct BlockData {
     pub stmts: Vec<Statement>,
     pub terminator: Terminator,
 }
 
+#[derive(Clone)]
 pub enum Statement {
     Assign(Place, Box<Rvalue>, Span),
     /// Takes one more reference to every counted value inside the place.
@@ -220,6 +241,7 @@ pub enum Overlap {
     Index(Operand),
 }
 
+#[derive(Clone)]
 pub enum Rvalue {
     Use(Operand),
     Unary(UnaryOp, Operand),
@@ -315,6 +337,7 @@ pub enum Rvalue {
 }
 
 /// One operation of a `select`.
+#[derive(Clone)]
 pub struct SelectCase {
     /// `receive`, `send`, `wait` or `next`; `None` for `time.sleep`.
     pub op: Option<TaskOp>,
@@ -325,11 +348,13 @@ pub struct SelectCase {
     pub retain: bool,
 }
 
+#[derive(Clone)]
 pub enum Piece {
     Text(String),
     Value(Operand, Ty),
 }
 
+#[derive(Clone)]
 pub enum Terminator {
     Goto(BlockId),
     Branch(Operand, BlockId, BlockId),

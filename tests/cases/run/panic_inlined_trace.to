@@ -1,0 +1,25 @@
+// A stack trace names the frames of functions the compiler inlined: a
+// closure called through a `fn` value is inlined with the function that
+// calls it, and each still shows where it was.
+fn apply(f: fn(Int): Int, value: Int): Int {
+    f(value)
+}
+
+fn scaled(value: Int): Int {
+    let factor = 9_223_372_036_854_775
+    apply((x: Int): Int { x * factor }, value)
+}
+
+fn main() {
+    let small = scaled(3)
+    let _large = scaled(small)
+}
+
+// expect-panic: P0005
+// expect-stderr: panic[P0005]: checked-overflow: 27670116110564325 * 9223372036854775 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-stderr:  --> panic_inlined_trace.to:10:27
+// expect-stderr: stack:
+// expect-stderr:   closure in scaled  panic_inlined_trace.to:10:27
+// expect-stderr:   apply              panic_inlined_trace.to:5:5
+// expect-stderr:   scaled             panic_inlined_trace.to:10:5
+// expect-stderr:   main               panic_inlined_trace.to:15:18

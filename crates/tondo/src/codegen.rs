@@ -793,9 +793,9 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     // to declare is declared in the functions' order (see `worker`);
     // `compile_all` compiles them on every core.
     let mut jobs = Vec::new();
-    let mut job = |id: FuncId, context: &mut cranelift_codegen::Context, traced: Option<&str>, sites| {
+    let mut job = |id: FuncId, context: &mut cranelift_codegen::Context, traced: Option<&str>, sites, inlined| {
         let func = std::mem::replace(&mut context.func, ir::Function::new());
-        jobs.push(Job { id, func, traced: traced.map(str::to_string), sites });
+        jobs.push(Job { id, func, traced: traced.map(str::to_string), sites, inlined });
     };
     let built = {
         let shared = worker::Shared::new(&cg);
@@ -812,11 +812,11 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
             context.func.signature = cg.signature(body);
             context.func.name = UserFuncName::user(0, index as u32);
             let sites = FnCodegen::new(&mut cg, body, bodies, &mut context.func, &mut builder_context).run();
-            job(cg.functions[index], &mut context, traced, sites);
+            job(cg.functions[index], &mut context, traced, sites, body.inlined.clone());
         } else {
             worker::replay(&mut cg, bodies, &mut built);
             context.func = built.func;
-            job(cg.functions[index], &mut context, traced, built.sites);
+            job(cg.functions[index], &mut context, traced, built.sites, body.inlined.clone());
         }
         cg.module.clear_context(&mut context);
     }
@@ -829,14 +829,14 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
             let main = main.0 as usize;
             let entry =
                 cg.entry_point(main, bodies[main].result, &program.tests, trace, &mut context, &mut builder_context)?;
-            job(entry, &mut context, None, Vec::new());
+            job(entry, &mut context, None, Vec::new(), Vec::new());
             cg.module.clear_context(&mut context);
             let start = cg.process_main(entry, &mut context, &mut builder_context)?;
-            job(start, &mut context, None, Vec::new());
+            job(start, &mut context, None, Vec::new(), Vec::new());
         }
         None => {
             let init = cg.library_start(trace, &mut context, &mut builder_context)?;
-            job(init, &mut context, None, Vec::new());
+            job(init, &mut context, None, Vec::new(), Vec::new());
             cg.library = Some(init);
         }
     }
@@ -845,26 +845,26 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         context.func.signature = cg.module.declarations().get_function_decl(thunk).signature.clone();
         context.func.name = UserFuncName::user(3, thunk.as_u32());
         define_thunk(&mut cg, &bodies[target.0 as usize], target, &mut context.func, &mut builder_context);
-        job(thunk, &mut context, None, Vec::new());
+        job(thunk, &mut context, None, Vec::new(), Vec::new());
         cg.module.clear_context(&mut context);
     }
     while let Some((target, forward)) = cg.pending_forwarders.pop() {
         context.func.signature = cg.module.declarations().get_function_decl(forward).signature.clone();
         context.func.name = UserFuncName::user(6, forward.as_u32());
         define_forwarder(&mut cg, target, &mut context.func, &mut builder_context);
-        job(forward, &mut context, None, Vec::new());
+        job(forward, &mut context, None, Vec::new(), Vec::new());
         cg.module.clear_context(&mut context);
     }
     while let Some(callback) = cg.pending_callbacks.pop() {
         context.func.signature = cg.module.declarations().get_function_decl(callback.adapter).signature.clone();
         context.func.name = UserFuncName::user(4, callback.adapter.as_u32());
         define_adapter(&mut cg, &callback, &mut context.func, &mut builder_context);
-        job(callback.adapter, &mut context, None, Vec::new());
+        job(callback.adapter, &mut context, None, Vec::new(), Vec::new());
         cg.module.clear_context(&mut context);
         context.func.signature = cg.module.declarations().get_function_decl(callback.inner).signature.clone();
         context.func.name = UserFuncName::user(5, callback.inner.as_u32());
         define_inner(&mut cg, &bodies[callback.target.0 as usize], &callback, &mut context.func, &mut builder_context);
-        job(callback.inner, &mut context, Some(&bodies[callback.target.0 as usize].name), Vec::new());
+        job(callback.inner, &mut context, Some(&bodies[callback.target.0 as usize].name), Vec::new(), Vec::new());
         cg.module.clear_context(&mut context);
     }
     // A patch's conversions of the running program's values, which the
@@ -880,7 +880,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         context.func.signature = signature;
         context.func.name = UserFuncName::user(7, id.as_u32());
         define_conversion(&mut cg, body, function, &mut context.func, &mut builder_context);
-        job(id, &mut context, None, Vec::new());
+        job(id, &mut context, None, Vec::new(), Vec::new());
         cg.module.clear_context(&mut context);
         let TyKind::Option(new) = *cg.types.kind(body.result) else { unreachable!("a conversion gives `T?`") };
         let old = body.locals[body.params[0].0 as usize];
@@ -900,7 +900,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         context.func.signature = cg.glue_signature(kind);
         context.func.name = UserFuncName::user(2, id.as_u32());
         define_glue(&mut cg, kind, ty, &mut context.func, &mut builder_context);
-        job(id, &mut context, None, Vec::new());
+        job(id, &mut context, None, Vec::new(), Vec::new());
         cg.module.clear_context(&mut context);
     }
     cg.compile_all(jobs)?;
@@ -1181,8 +1181,13 @@ struct Traced {
     size: u32,
     calls: Vec<(u32, u32)>,
     lines: Vec<(u32, u32)>,
-    sites: Vec<(u32, Option<Ty>)>,
+    sites: Vec<Site>,
+    inlined: Vec<crate::mir::Inlined>,
 }
+
+/// Where a statement's code is in the source, the type of the local it
+/// assigns, and the inlined call it comes from (`Body::inlined`).
+type Site = (u32, Option<Ty>, Option<u32>);
 
 /// A function whose IR is built, to compile; `traced` names it in stack
 /// traces.
@@ -1193,7 +1198,8 @@ struct Job {
     /// Where each statement's code is in the source, and the type of the
     /// local it assigns, so that a sample of the memory it allocates names
     /// its type: the source location of an instruction indexes this, from 1.
-    sites: Vec<(u32, Option<Ty>)>,
+    sites: Vec<Site>,
+    inlined: Vec<crate::mir::Inlined>,
 }
 
 /// A function's machine code, its relocations, and its size and calls for
@@ -1905,8 +1911,8 @@ impl Codegen<'_> {
                 .define_function_bytes(job.id, code.alignment, &code.bytes, &code.relocs)
                 .map_err(|e| format!("{e:?}"))?;
             if let Some(name) = job.traced {
-                let (size, calls, lines, sites) = (code.size, code.calls, code.lines, job.sites);
-                self.traced.push(Traced { id: job.id, name, size, calls, lines, sites });
+                let (size, calls, lines, sites, inlined) = (code.size, code.calls, code.lines, job.sites, job.inlined);
+                self.traced.push(Traced { id: job.id, name, size, calls, lines, sites, inlined });
             }
         }
         Ok(())
@@ -2300,9 +2306,9 @@ impl Codegen<'_> {
     }
 
     /// The stack trace table (the runtime's `trace::Table`): each function's
-    /// code and size, and in one blob its name, its calls and its lines,
-    /// then the names they refer to: their files, and the types the calls
-    /// assign. A function's lines are its file and, in as many bytes as
+    /// code and size, and in one blob its name, its calls, its lines and
+    /// the calls inlined into it, then the names they refer to: their
+    /// files, the types the calls assign and the functions inlined. A function's lines are its file and, in as many bytes as
     /// they take, where each run of code of one line starts and its line,
     /// each as the difference from the run before, in LEB128, the line's
     /// zigzag; line `0` is code of no line.
@@ -2327,37 +2333,53 @@ impl Codegen<'_> {
             blob.extend_from_slice(function.name.as_bytes());
             pad(&mut blob);
             for &(offset, site) in &function.calls {
-                let (source, ty) = function.sites[site as usize - 1];
+                let (source, ty, scope) = function.sites[site as usize - 1];
                 let (file, line, column) = self.sources.position(source);
                 let file = name(&mut files, file);
                 let ty = match ty {
                     Some(ty) => name(&mut files, self.types.display(ty)),
                     None => u32::MAX,
                 };
-                for value in [offset, line as u32, column as u32, file, ty] {
+                for value in [offset, line as u32, column as u32, file, ty, scope.unwrap_or(u32::MAX)] {
                     blob.extend_from_slice(&value.to_le_bytes());
                 }
             }
+            // Each run of code of one line, and of one inlined call: its
+            // line is in the inlined function's file. Code of no statement,
+            // as the moves and jumps between two, is the one before's.
             let mut file = None;
-            let mut runs: Vec<(u32, i64)> = Vec::new();
-            for &(start, site) in &function.lines {
-                let line = match site {
-                    0 => 0,
-                    site => {
-                        let (path, line, _) = self.sources.position(function.sites[site as usize - 1].0);
-                        file.get_or_insert(path);
-                        line as i64
-                    }
-                };
-                if runs.last().is_none_or(|&(_, last)| last != line) {
-                    runs.push((start, line));
+            let placed: Vec<(u32, Option<(i64, u32)>)> = function
+                .lines
+                .iter()
+                .map(|&(start, site)| {
+                    let placed = (site != 0).then(|| {
+                        let (source, _, scope) = function.sites[site as usize - 1];
+                        let (path, line, _) = self.sources.position(source);
+                        if scope.is_none() {
+                            file.get_or_insert(path);
+                        }
+                        (line as i64, scope.map_or(0, |scope| scope + 1))
+                    });
+                    (start, placed)
+                })
+                .collect();
+            // Code before the first statement is the first statement's;
+            // a debugger's builds keep it of none, which it does not stop in.
+            let mut known = placed.iter().find_map(|&(_, placed)| placed).unwrap_or((0, 0));
+            let mut runs: Vec<(u32, i64, u32)> = Vec::new();
+            for (start, placed) in placed {
+                let (line, scope) = placed.unwrap_or(if self.debug.is_some() { (0, 0) } else { known });
+                known = (line, scope);
+                if runs.last().is_none_or(|&(_, last, inlined)| (last, inlined) != (line, scope)) {
+                    runs.push((start, line, scope));
                 }
             }
             let mut encoded = Vec::new();
             let (mut offset, mut line) = (0u32, 0i64);
-            for (start, now) in runs {
+            for (start, now, scope) in runs {
                 leb128(&mut encoded, (start - offset) as u64);
                 leb128(&mut encoded, ((now - line) << 1 ^ (now - line) >> 63) as u64);
+                leb128(&mut encoded, scope as u64);
                 (offset, line) = (start, now);
             }
             let file = file.map_or(u32::MAX, |path| name(&mut files, path));
@@ -2365,6 +2387,17 @@ impl Codegen<'_> {
             blob.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
             blob.extend_from_slice(&encoded);
             pad(&mut blob);
+            // Each inlined call: the function inlined, where it was called,
+            // the inlined call that holds it, and the inlined function's file.
+            for inlined in &function.inlined {
+                let (path, line, column) = self.sources.position(inlined.call.start);
+                let (called, path) = (name(&mut files, inlined.name.clone()), name(&mut files, path));
+                let own = name(&mut files, self.sources.position(inlined.span.start).0);
+                let parent = inlined.parent.unwrap_or(u32::MAX);
+                for value in [called, line as u32, column as u32, path, parent, own] {
+                    blob.extend_from_slice(&value.to_le_bytes());
+                }
+            }
         }
         let files_at = blob.len() as u64;
         blob.extend_from_slice(&(files.len() as u32).to_le_bytes());
@@ -3822,7 +3855,9 @@ struct FnCodegen<'a, 'b> {
     storage: Vec<Storage>,
     /// Where the statement being compiled is, for panics of the runtime.
     span: Span,
-    sites: Vec<(u32, Option<Ty>)>,
+    sites: Vec<Site>,
+    /// The inlined call the block being compiled comes from.
+    scope: Option<u32>,
     /// In a debug build, what its probes show.
     debug: Option<DebugFrame>,
     /// What the probe just placed answered: whether to restart the frame;
@@ -3938,6 +3973,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             storage,
             span: Span::default(),
             sites: Vec::new(),
+            scope: None,
             debug,
             probed: None,
             carrying: false,
@@ -3957,7 +3993,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
 
     /// Builds the function's IR; gives where its statements are, which the
     /// source locations of its instructions index.
-    fn run(mut self) -> Vec<(u32, Option<Ty>)> {
+    fn run(mut self) -> Vec<Site> {
         let entry = self.blocks[0];
         self.e.fb.append_block_params_for_function_params(entry);
         self.e.fb.switch_to_block(entry);
@@ -3999,6 +4035,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
         }
         for (index, block) in self.body.blocks.iter().enumerate() {
+            self.scope = self.body.scopes.get(index).copied().flatten();
             if index > 0 {
                 self.e.fb.switch_to_block(self.blocks[index]);
             } else if self.e.cg.meta() {
@@ -4121,6 +4158,18 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let offset = self.e.fb.ins().imul_imm_u(index, size as i64);
                 base = Some(self.e.fb.ins().iadd(address, offset));
                 ty = element;
+                continue;
+            }
+            if let Proj::Captures(captures) = proj {
+                let object = match base {
+                    Some(address) => self.e.fb.ins().load(POINTER, flags(), address, 0),
+                    None => {
+                        let Storage::Var(var) = self.storage[place.local.0 as usize] else { unreachable!() };
+                        self.e.fb.use_var(var)
+                    }
+                };
+                base = Some(self.e.fb.ins().iadd_imm_s(object, FN_HEADER));
+                ty = captures;
                 continue;
             }
             if let Proj::Deref = proj {
@@ -4479,7 +4528,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
 
     /// The source location of code at `start` that assigns `ty`.
     fn site(&mut self, start: u32, ty: Option<Ty>) -> ir::SourceLoc {
-        self.sites.push((start, ty));
+        self.sites.push((start, ty, self.scope));
         ir::SourceLoc::new(self.sites.len() as u32)
     }
 
@@ -5055,7 +5104,29 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     tag
                 } else {
                     let base = self.pointer_to(place, true);
-                    self.e.store_val(base, tag_ty, tag);
+                    // A whole word when the payloads start past it, so that
+                    // a copy of the value reads what was just stored as
+                    // stored, without waiting for the store to land.
+                    let payloads = self
+                        .e
+                        .cg
+                        .types()
+                        .variants(ty)
+                        .expect("an enum")
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, components)| !components.is_empty())
+                        .map(|(variant, _)| self.e.cg.slot(ty, Proj::Variant(variant as u32, 0)).offset)
+                        .min();
+                    match tag {
+                        Val::Scalar(tag)
+                            if payloads.is_none_or(|offset| offset >= 8) && self.e.cg.layout(ty).size >= 8 =>
+                        {
+                            let word = self.wide(tag, false);
+                            self.e.fb.ins().store(flags(), word, base, 0);
+                        }
+                        _ => self.e.store_val(base, tag_ty, tag),
+                    }
                     for (index, component) in components.iter().enumerate() {
                         let slot = self.e.cg.slot(ty, Proj::Variant(*variant, index as u32));
                         let value = self.operand(component);

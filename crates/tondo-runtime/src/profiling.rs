@@ -175,22 +175,23 @@ struct Made {
 }
 
 /// The function, file and line of an address: the program's from its
-/// table, others from the symbols of the executable or of the library that
-/// holds them.
-fn named(address: usize) -> (String, String, i64) {
+/// table, with those of the calls its code was inlined at after it, others
+/// from the symbols of the executable or of the library that holds them.
+fn named(address: usize) -> Vec<(String, String, i64)> {
     if let Some(described) = super::trace::describe(address) {
         let (file, line) = described.at.map_or(("", 0), |(file, line)| (file, line as i64));
-        return (described.function.to_string(), file.to_string(), line);
+        let outer = described.inlined.map(|(function, file, line, _)| (function.into(), file.into(), line as i64));
+        return std::iter::once((described.function.to_string(), file.to_string(), line)).chain(outer).collect();
     }
     if let Some(name) = super::symbols::name(address) {
-        return (demangled(name), String::new(), 0);
+        return vec![(demangled(name), String::new(), 0)];
     }
     let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
     if unsafe { libc::dladdr(address as *const libc::c_void, &mut info) } != 0 && !info.dli_sname.is_null() {
         let symbol = unsafe { std::ffi::CStr::from_ptr(info.dli_sname) }.to_string_lossy();
-        return (demangled(&symbol), String::new(), 0);
+        return vec![(demangled(&symbol), String::new(), 0)];
     }
-    (format!("{address:#x}"), String::new(), 0)
+    vec![(format!("{address:#x}"), String::new(), 0)]
 }
 
 /// A symbol of Rust's manglings as Rust writes the path, without its hash
@@ -264,7 +265,7 @@ fn made(
     if let Some(default) = default {
         builder.default_type(default);
     }
-    let mut names: HashMap<usize, (String, String, i64)> = HashMap::new();
+    let mut names: HashMap<usize, Vec<(String, String, i64)>> = HashMap::new();
     let mut folded: HashMap<String, i64> = HashMap::new();
     for (stack, values, labels) in samples {
         for &address in stack {
@@ -272,14 +273,19 @@ fn made(
         }
         let frames: Vec<super::pprof::Frame> = stack
             .iter()
-            .map(|address| {
-                let (function, file, line) = &names[address];
-                super::pprof::Frame { address: *address as u64, function, file, line: *line }
+            .flat_map(|address| {
+                names[address].iter().map(|(function, file, line)| super::pprof::Frame {
+                    address: *address as u64,
+                    function,
+                    file,
+                    line: *line,
+                })
             })
             .collect();
         let tags: Vec<(&str, &str)> = labels.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
         builder.sample(&frames, values, &tags);
-        let line: Vec<&str> = stack.iter().rev().map(|address| names[address].0.as_str()).collect();
+        let line: Vec<&str> =
+            stack.iter().rev().flat_map(|address| names[address].iter().rev().map(|named| named.0.as_str())).collect();
         *folded.entry(line.join(";")).or_default() += values.last().copied().unwrap_or(0);
     }
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
@@ -361,7 +367,7 @@ pub extern "C" fn tondo_rt_profile_memory() -> *mut super::native::NativeObject 
     }
     // The allocator is not where the memory was asked for.
     for (stack, ..) in &mut weighed {
-        let asked = stack.iter().position(|&a| !allocator(&named(a).0)).unwrap_or(0);
+        let asked = stack.iter().position(|&a| !allocator(&named(a)[0].0)).unwrap_or(0);
         stack.drain(..asked);
     }
     let kinds =

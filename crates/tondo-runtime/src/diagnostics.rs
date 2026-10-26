@@ -811,8 +811,18 @@ fn frame(address: usize) -> String {
     if let Some(described) = super::trace::describe(address) {
         let function = quoted(described.function);
         let ty = described.ty.map_or(String::new(), |ty| format!(",\"type\":{}", quoted(ty)));
+        // The calls the code was inlined at, from the innermost out.
+        let outer: Vec<String> = described
+            .inlined
+            .map(|(function, file, line, _)| {
+                format!("{{\"function\":{},\"file\":{},\"line\":{line}}}", quoted(function), quoted(file))
+            })
+            .collect();
+        let inlined = if outer.is_empty() { String::new() } else { format!(",\"inlined\":[{}]", outer.join(",")) };
         return match described.at {
-            Some((file, line)) => format!("{{\"function\":{function},\"file\":{},\"line\":{line}{ty}}}", quoted(file)),
+            Some((file, line)) => {
+                format!("{{\"function\":{function},\"file\":{},\"line\":{line}{ty}{inlined}}}", quoted(file))
+            }
             None => format!("{{\"function\":{function}}}"),
         };
     }

@@ -801,6 +801,16 @@ fn frame_text(dump: &Value, address: &Value) -> Option<String> {
     }
 }
 
+/// A frame as a dump shows it, and those of the calls its code was inlined
+/// at, from the innermost out.
+fn frame_texts(dump: &Value, address: &Value) -> Vec<String> {
+    let inlined = address.as_str().map(|a| &dump["frames"][a]["inlined"]);
+    let outer = inlined.and_then(Value::as_array).into_iter().flatten().filter_map(|frame| {
+        Some(format!("{}:{} in {}", frame["file"].as_str()?, frame["line"], frame["function"].as_str()?))
+    });
+    frame_text(dump, address).into_iter().chain(outer).collect()
+}
+
 /// Whether a frame is the program's own, with a place in its source.
 fn placed(dump: &Value, address: &Value) -> bool {
     address.as_str().is_some_and(|a| dump["frames"][a]["file"].is_string())
@@ -825,7 +835,7 @@ fn tasks(dump: &Value) -> Vec<Value> {
         };
         let at = stack.iter().find(|a| compiled(dump, a)).and_then(|a| frame_text(dump, a));
         let words = |list: &Value| -> Vec<String> {
-            list.as_array().into_iter().flatten().filter_map(|a| frame_text(dump, a)).collect()
+            list.as_array().into_iter().flatten().flat_map(|a| frame_texts(dump, a)).collect()
         };
         out.push(json!({
             "id": task["id"], "runs": runs, "state": task["state"], "at": at, "cancelled": task["cancelled"],
@@ -879,16 +889,13 @@ fn heap(dump: &Value) -> Value {
         let typed = first.and_then(|i| dump["frames"][stack[i].as_str()?]["type"].as_str()).map(str::to_string);
         let made = || first.and_then(|i| i.checked_sub(1)).and_then(|i| frame_text(dump, stack[i])).map(|f| kind(&f));
         let kind = typed.or_else(made).unwrap_or_else(|| "other".into());
-        let own = stack.iter().position(|a| {
-            placed(dump, a)
-                && !dump["frames"][a.as_str().unwrap_or_default()]["file"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .starts_with("<std>/")
-        });
+        // Code of the standard library inlined into the program's is in a
+        // frame of the program's own.
+        let own = stack.iter().filter(|a| placed(dump, a)).flat_map(|a| frame_texts(dump, a));
         let site = own
-            .or(first)
-            .and_then(|i| frame_text(dump, stack[i]))
+            .into_iter()
+            .find(|text| !text.starts_with("<std>/"))
+            .or_else(|| first.and_then(|i| frame_text(dump, stack[i])))
             .unwrap_or_else(|| "outside the program's code".into());
         let entry = sites.entry((site, kind)).or_default();
         entry.0 += weight;

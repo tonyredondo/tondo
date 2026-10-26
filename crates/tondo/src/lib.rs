@@ -23,6 +23,7 @@ pub mod hash;
 pub mod header;
 pub mod hir;
 pub mod index;
+pub mod inline;
 pub mod lexer;
 pub mod link;
 pub mod live;

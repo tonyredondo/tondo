@@ -87,7 +87,7 @@ impl<'s, 't> Shared<'s, 't> {
 /// A function's IR, built on some core, and what it asked for.
 pub(super) struct Built {
     pub(super) func: ir::Function,
-    pub(super) sites: Vec<(u32, Option<Ty>)>,
+    pub(super) sites: Vec<super::Site>,
     asked: Vec<Asked>,
     /// The references to what was asked: functions and data by the index
     /// of what was asked, and the instructions that hold a site's number.

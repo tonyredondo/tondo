@@ -614,9 +614,12 @@ pub fn compile(
     live: Option<&mut crate::live::Build>,
 ) -> Result<Vec<u8>, String> {
     let program = analysis.program.as_ref().expect("object() requires a checked program");
-    let bodies = lower::lower(program, live.is_some());
+    let mut bodies = lower::lower(program, live.is_some());
     let triple = target.map(Target::triple);
     let debug = debug || live.is_some();
+    if !debug && !analysis.meta {
+        crate::inline::inline(&mut bodies);
+    }
     let options = codegen::Options { meta: analysis.meta, debug, target: triple, live, coverage: None };
     codegen::compile(program, &bodies, &analysis.sources, options)
 }

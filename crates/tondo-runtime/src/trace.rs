@@ -14,12 +14,15 @@ use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 /// The table the compiler writes: one entry per function of the program,
 /// whose `meta` offset in `blob` holds its name's length, its number of
 /// calls, the name and, 4-aligned, the calls as `[return offset, line,
-/// column, file, type]`; then its file, the length of its lines and,
-/// 4-aligned, its lines: where each run of code of one line starts and its
-/// line, as differences from the run before in LEB128, the line's zigzag,
-/// line `0` being code of none. At `files` in `blob`: the count of the
-/// names the calls refer to, their files and the types they assign, and
-/// each one's length and text, 4-aligned. No type or file is `u32::MAX`.
+/// column, file, type, inlined]`; then its file, the length of its lines
+/// and, 4-aligned, its lines: where each run of code of one line starts and
+/// its line, as differences from the run before in LEB128, the line's
+/// zigzag, line `0` being code of none; then the calls inlined into it, as
+/// `[function, line, column, file, parent]`, which `inlined` and `parent`
+/// point at in `blob`. At `files` in `blob`: the count of the names these
+/// refer to, their files, the types the calls assign and the functions
+/// inlined, and each one's length and text, 4-aligned. No name, inlined
+/// call or parent is `u32::MAX`.
 #[repr(C)]
 pub struct Table {
     functions: *const Function,
@@ -125,33 +128,122 @@ fn aligned(offset: usize, len: usize) -> usize {
     (offset + len + 3) & !3
 }
 
-/// The frame of compiled code a return address belongs to.
-fn resolve(address: usize) -> Option<Frame> {
+/// The size of a call's entry in a table, and of an inlined call's.
+const CALL: usize = 24;
+const RECORD: usize = 24;
+
+/// A function of a table: where its entry is in the blob, and its name.
+#[derive(Clone, Copy)]
+struct Of {
+    table: &'static Table,
+    meta: usize,
+    function: &'static str,
+}
+
+impl Of {
+    fn new(table: &'static Table, index: usize) -> Of {
+        unsafe {
+            let meta = (*table.functions.add(index)).meta as usize;
+            let function = text_at(table.blob, meta + 8, u32_at(table.blob, meta) as usize);
+            Of { table, meta, function }
+        }
+    }
+
+    /// Where its calls are, and how many.
+    fn calls(&self) -> (usize, usize) {
+        let blob = self.table.blob;
+        unsafe {
+            let name_len = u32_at(blob, self.meta) as usize;
+            (aligned(self.meta + 8, name_len), u32_at(blob, self.meta + 4) as usize)
+        }
+    }
+
+    /// Where its lines are: their file, and where they start and end.
+    fn lines(&self) -> (u32, usize, usize) {
+        let (calls, count) = self.calls();
+        let lines = calls + count * CALL;
+        let blob = self.table.blob;
+        unsafe { (u32_at(blob, lines), lines + 8, lines + 8 + u32_at(blob, lines + 4) as usize) }
+    }
+
+    /// Where the record of its inlined call `index` is.
+    fn record(&self, index: u32) -> usize {
+        let (_, _, end) = self.lines();
+        aligned(end, 0) + index as usize * RECORD
+    }
+
+    /// The name of the function code is in: the one inlined there, or its own.
+    fn name(&self, inlined: u32) -> &'static str {
+        match inlined {
+            u32::MAX => self.function,
+            index => unsafe { named(self.table, u32_at(self.table.blob, self.record(index))) },
+        }
+    }
+}
+
+/// The calls code inlined at `record` was inlined at, from the innermost
+/// out: the function each is in, and where the call is.
+#[derive(Clone, Copy)]
+pub(crate) struct Inlined {
+    of: Option<Of>,
+    record: u32,
+}
+
+impl Iterator for Inlined {
+    type Item = (&'static str, &'static str, u32, u32);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let of = self.of.filter(|_| self.record != u32::MAX)?;
+        let (blob, at) = (of.table.blob, of.record(self.record));
+        unsafe {
+            let parent = u32_at(blob, at + 16);
+            let call =
+                (of.name(parent), named(of.table, u32_at(blob, at + 12)), u32_at(blob, at + 4), u32_at(blob, at + 8));
+            self.record = parent;
+            Some(call)
+        }
+    }
+}
+
+/// The call a return address of compiled code returns from: its function,
+/// and where its entry is in the table's blob.
+fn call(address: usize) -> Option<(Of, usize)> {
     let (table, start, index) = find(address)?;
-    unsafe {
-        let blob = table.blob;
-        let meta = (*table.functions.add(index)).meta as usize;
-        let (name_len, calls) = (u32_at(blob, meta) as usize, u32_at(blob, meta + 4) as usize);
-        let function = text_at(blob, meta + 8, name_len);
-        let sites = aligned(meta + 8, name_len);
-        let offset = (address - start) as u32;
-        let site = (0..calls).map(|k| sites + k * 20).find(|&site| u32_at(blob, site) == offset)?;
-        let name = |index: u32| {
-            let mut cursor = table.files as usize + 4;
-            for _ in 0..index {
-                cursor = aligned(cursor + 4, u32_at(blob, cursor) as usize);
-            }
-            text_at(blob, cursor + 4, u32_at(blob, cursor) as usize)
-        };
-        let ty = u32_at(blob, site + 16);
-        Some(Frame {
-            function,
-            file: name(u32_at(blob, site + 12)),
+    let of = Of::new(table, index);
+    let (sites, calls) = of.calls();
+    let offset = (address - start) as u32;
+    let site = (0..calls).map(|k| sites + k * CALL).find(|&site| unsafe { u32_at(table.blob, site) } == offset)?;
+    Some((of, site))
+}
+
+/// The frames of compiled code a return address stands for, innermost
+/// first: the call's, in the function inlined there when one is, and one
+/// for each call it was inlined at, out to the function the code is in.
+fn frames(address: usize) -> impl Iterator<Item = Frame> {
+    let found = call(address).map(|(of, site)| unsafe {
+        let blob = of.table.blob;
+        let (ty, inlined) = (u32_at(blob, site + 16), u32_at(blob, site + 20));
+        let frame = Frame {
+            function: of.name(inlined),
+            file: named(of.table, u32_at(blob, site + 12)),
             line: u32_at(blob, site + 4),
             column: u32_at(blob, site + 8),
-            ty: (ty != u32::MAX).then(|| name(ty)),
-        })
-    }
+            ty: (ty != u32::MAX).then(|| named(of.table, ty)),
+        };
+        (frame, Inlined { of: Some(of), record: inlined })
+    });
+    let (first, outer) = match found {
+        Some((frame, outer)) => (Some(frame), outer),
+        None => (None, Inlined { of: None, record: u32::MAX }),
+    };
+    let outer = outer.map(|(function, file, line, column)| Frame { function, file, line, column, ty: None });
+    first.into_iter().chain(outer)
+}
+
+/// The frame of compiled code a return address belongs to: the innermost
+/// of its frames.
+fn resolve(address: usize) -> Option<Frame> {
+    frames(address).next()
 }
 
 /// A number in LEB128 at `cursor`, which it moves past it.
@@ -179,28 +271,33 @@ unsafe fn named(table: &Table, index: u32) -> &'static str {
     unsafe { text_at(blob, cursor + 4, u32_at(blob, cursor) as usize) }
 }
 
-/// The file and line of the statement whose code holds `pc`.
-pub(crate) fn line(pc: usize) -> Option<(&'static str, u32)> {
+/// The file and line of the statement whose code holds `pc`, and the call
+/// it was inlined at, when it was.
+fn located(pc: usize) -> Option<(&'static str, u32, &'static str, Inlined)> {
     let (table, start, index) = find(pc + 1)?;
+    let of = Of::new(table, index);
+    let (file, mut cursor, end) = of.lines();
+    let offset = (pc - start) as u64;
+    let (mut at, mut line, mut found) = (0u64, 0i64, (0i64, 0u64));
     unsafe {
-        let blob = table.blob;
-        let meta = (*table.functions.add(index)).meta as usize;
-        let (name_len, calls) = (u32_at(blob, meta) as usize, u32_at(blob, meta + 4) as usize);
-        let lines = aligned(meta + 8, name_len) + calls * 20;
-        let file = u32_at(blob, lines);
-        let (mut cursor, end) = (lines + 8, lines + 8 + u32_at(blob, lines + 4) as usize);
-        let offset = (pc - start) as u64;
-        let (mut at, mut line, mut found) = (0u64, 0i64, 0i64);
         while cursor < end {
-            at += leb128(blob, &mut cursor, end);
-            let zigzag = leb128(blob, &mut cursor, end);
+            at += leb128(table.blob, &mut cursor, end);
+            let zigzag = leb128(table.blob, &mut cursor, end);
             line += (zigzag >> 1) as i64 ^ -((zigzag & 1) as i64);
+            let inlined = leb128(table.blob, &mut cursor, end);
             if at > offset {
                 break;
             }
-            found = line;
+            found = (line, inlined);
         }
-        (found > 0 && file != u32::MAX).then(|| (named(table, file), found as u32))
+        let (line, inlined) = found;
+        let record = (inlined as u32).wrapping_sub(1);
+        let file = match record {
+            u32::MAX => file,
+            record => u32_at(table.blob, of.record(record) + 20),
+        };
+        (line > 0 && file != u32::MAX)
+            .then(|| (named(table, file), line as u32, of.name(record), Inlined { of: Some(of), record }))
     }
 }
 
@@ -231,11 +328,12 @@ pub(crate) fn compiled(pc: usize) -> bool {
 
 /// What a trace shows for an address of compiled code: the function, and
 /// where the function calls another, the file and line and the type the
-/// statement there assigns.
+/// statement there assigns; and the calls the code was inlined at.
 pub(crate) struct Described {
     pub function: &'static str,
     pub at: Option<(&'static str, u32)>,
     pub ty: Option<&'static str>,
+    pub inlined: Inlined,
 }
 
 /// Where a return address of compiled code is: the function, and the file,
@@ -245,16 +343,18 @@ pub(crate) fn position(address: usize) -> Option<(&'static str, &'static str, u3
 }
 
 pub(crate) fn describe(address: usize) -> Option<Described> {
-    if let Some(frame) = resolve(address) {
-        return Some(Described { function: frame.function, at: Some((frame.file, frame.line)), ty: frame.ty });
+    if let Some((of, site)) = call(address) {
+        let mut frames = frames(address);
+        let frame = frames.next()?;
+        let inlined = Inlined { of: Some(of), record: unsafe { u32_at(of.table.blob, site + 20) } };
+        return Some(Described { function: frame.function, at: Some((frame.file, frame.line)), ty: frame.ty, inlined });
+    }
+    if let Some((file, line, function, inlined)) = located(address) {
+        return Some(Described { function, at: Some((file, line)), ty: None, inlined });
     }
     let (table, _, index) = find(address).or_else(|| find(address + 1))?;
-    unsafe {
-        let meta = (*table.functions.add(index)).meta as usize;
-        let function = text_at(table.blob, meta + 8, u32_at(table.blob, meta) as usize);
-        // Where it is runs, for a sample, by the lines of its function.
-        Some(Described { function, at: line(address), ty: None })
-    }
+    let function = Of::new(table, index).function;
+    Some(Described { function, at: None, ty: None, inlined: Inlined { of: None, record: u32::MAX } })
 }
 
 /// The frame pointer of the function this inlines into.
@@ -382,7 +482,7 @@ pub(crate) fn spawned(parent: Option<Arc<Origin>>) -> Arc<Origin> {
 fn runs(addresses: impl Iterator<Item = usize>) -> impl Iterator<Item = (Frame, usize)> {
     // The body of `spawn call()` only makes the call, and a trace shows the
     // spawn as the task's origin instead.
-    let mut frames = addresses.filter_map(resolve).filter(|f| !spawn_body(f.function)).peekable();
+    let mut frames = addresses.flat_map(frames).filter(|f| !spawn_body(f.function)).peekable();
     std::iter::from_fn(move || {
         let frame = frames.next()?;
         let mut times = 1;
@@ -456,7 +556,7 @@ fn write_stack<I: Iterator<Item = usize>>(
 /// Where the program's own code is in the running task's stack: the first
 /// frame outside the standard library, which a panic inside it points at.
 pub(crate) fn caller() -> Option<String> {
-    let frame = here().filter_map(resolve).find(|frame| !frame.file.starts_with("<std>/"))?;
+    let frame = here().flat_map(frames).find(|frame| !frame.file.starts_with("<std>/"))?;
     Some(format!("{}:{}:{}", frame.file, frame.line, frame.column))
 }
 

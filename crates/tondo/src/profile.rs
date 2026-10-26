@@ -120,11 +120,17 @@ pub(crate) fn build(
             .into_iter()
             .flatten()
             .filter_map(Value::as_str)
-            .map(|address| {
+            .flat_map(|address| {
                 let frame = &frames[address];
+                let number = u64::from_str_radix(address, 16).unwrap_or(0);
                 let file = frame["file"].as_str().unwrap_or_default().to_string();
                 let line = frame["line"].as_i64().unwrap_or(0);
-                (u64::from_str_radix(address, 16).unwrap_or(0), names.function(address), file, line)
+                // The calls its code was inlined at, each a frame of its own.
+                let inlined = frame["inlined"].as_array().into_iter().flatten().map(move |outer| {
+                    let text = |key: &str| outer[key].as_str().unwrap_or_default().to_string();
+                    (number, text("function"), text("file"), outer["line"].as_i64().unwrap_or(0))
+                });
+                std::iter::once((number, names.function(address), file, line)).chain(inlined)
             })
             .collect()
     };
