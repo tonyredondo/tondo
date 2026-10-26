@@ -180,7 +180,10 @@
               "processId": "^\"\\${command:pickProcess}\""
             }
           }
-        ]
+        ],
+        "variables": {
+          "pickProcess": "tondo.pickProcess"
+        }
       }
     ],
     "commands": [
@@ -215,6 +218,45 @@
         "command": "tondo.restartLanguageServer",
         "title": "Restart the Language Server",
         "category": "Tondo"
+      },
+      {
+        "command": "tondo.pickProcess",
+        "title": "Pick a Running Program",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.watchCounters",
+        "title": "Watch a Running Program's Counters",
+        "category": "Tondo",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "tondo.stopCounters",
+        "title": "Stop Watching Counters",
+        "category": "Tondo",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "tondo.trace",
+        "title": "Trace a Running Program (Perfetto)",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.dump",
+        "title": "Dump a Running Program",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.refreshModules",
+        "title": "Refresh Modules",
+        "category": "Tondo",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "tondo.moduleGraph",
+        "title": "Show the Module Graph (Mermaid)",
+        "category": "Tondo",
+        "icon": "$(type-hierarchy)"
       }
     ],
     "menus": {
@@ -234,6 +276,43 @@
         {
           "command": "tondo.reload",
           "when": "debugType == tondo"
+        },
+        {
+          "command": "tondo.stopCounters",
+          "when": "tondo.counting"
+        },
+        {
+          "command": "tondo.pickProcess",
+          "when": "false"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "tondo.refreshModules",
+          "when": "view == tondoModules",
+          "group": "navigation@0"
+        },
+        {
+          "command": "tondo.moduleGraph",
+          "when": "view == tondoModules",
+          "group": "navigation@1"
+        },
+        {
+          "command": "tondo.watchCounters",
+          "when": "view == tondoCounters",
+          "group": "navigation@0"
+        },
+        {
+          "command": "tondo.stopCounters",
+          "when": "view == tondoCounters && tondo.counting",
+          "group": "navigation@1"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "tondo.moduleGraph",
+          "when": "view == tondoModules && viewItem == project",
+          "group": "inline"
         }
       ]
     },
@@ -292,6 +371,26 @@
       {
         "id": "tondo",
         "label": "Tondo"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "tondoModules",
+          "name": "Tondo Modules",
+          "when": "tondo.active"
+        },
+        {
+          "id": "tondoCounters",
+          "name": "Tondo Counters",
+          "when": "tondo.counting"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "tondoCounters",
+        "contents": "No program watched.\n[Watch a Running Program](command:tondo.watchCounters)"
       }
     ]
   },

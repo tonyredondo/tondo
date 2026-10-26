@@ -29,6 +29,14 @@ It says so when that `tondo` is older than the extension.
   file is saved, a new project's too; *Run Tests Continuously* runs again
   those that a saved change can affect, and *Run with Coverage* shows which
   lines, functions and ways of branches the tests ran.
+- **Modules**: the *Tondo Modules* view shows each project's packages,
+  modules, files and imports, from `tondo graph`; *Show the Module Graph*
+  writes it in Mermaid.
+- **Running programs**, those started with `TONDO_DIAGNOSTICS=1` and debug
+  builds: *Attach* picks them by name; *Watch a Running Program's
+  Counters* shows them in the *Tondo Counters* view as they change; *Trace
+  a Running Program* records it and opens the timeline in Perfetto; *Dump
+  a Running Program* shows where its tasks are and what holds its memory.
 - **Tasks**: check, build, run, test and run live, with their errors in
   the Problems panel.
 - **Agents**: VS Code's agents get the tools of `tondo mcp` (check, fix,

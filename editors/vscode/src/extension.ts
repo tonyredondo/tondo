@@ -6,6 +6,8 @@ import { LanguageClient, LanguageClientOptions, ServerOptions } from 'vscode-lan
 import { findTondo } from './binary';
 import { exec } from './cli';
 import { registerDebugging } from './debugging';
+import { registerModules } from './modules';
+import { registerObserving } from './observe';
 import { registerTasks } from './tasks';
 import { incompatible } from './report';
 import { Served } from './report';
@@ -34,6 +36,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   onTests = registerTesting(context, output);
   await startClient(output);
   registerDebugging(context);
+  registerModules(context);
+  registerObserving(context, output);
+  void vscode.commands.executeCommand('setContext', 'tondo.active', true);
   registerTasks(context);
   // The tools of `tondo mcp`, for VS Code's agents.
   context.subscriptions.push(

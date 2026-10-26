@@ -2209,3 +2209,13 @@ report is JSON for tools and LCOV for the many that read it; the counters'
 layout leaves room for profiling and profile-guided optimization, which
 need the same counts of blocks.
 
+## 2026-10-26 — Running programs in VS Code
+
+The extension shows what `tondo` already says as JSON: the programs to
+attach to, picked by name from `tondo ps` instead of from every process of
+the machine; their counters from `tondo counters`, in a view; a dump's
+summary; and the modules of each project from `tondo graph`, in a view and
+in Mermaid. A trace opens in Perfetto's web UI, which loads a file only
+from a server it allows: the extension serves the timeline once on
+127.0.0.1:9001, as Perfetto's own script does, rather than ship a viewer.
+

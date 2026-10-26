@@ -282,3 +282,75 @@ function text(stream: Stream | undefined): string {
   }
   return stream.encoding === 'base64' ? Buffer.from(stream.data, 'base64').toString('utf8') : stream.data;
 }
+
+/** A program `tondo ps --json` lists: one that started with
+ *  `TONDO_DIAGNOSTICS=1`, or a debug build. */
+export interface Running {
+  pid: number;
+  program: string;
+  arguments: string[];
+  uptime_ms: number;
+}
+
+export function running(json: string): Running[] {
+  const listed = JSON.parse(json) as { format?: string; programs?: Running[] };
+  if (listed.format !== 'tondo-ps-0.1/1') {
+    throw new Error('tondo ps gave no list');
+  }
+  return listed.programs ?? [];
+}
+
+/** A line of `tondo counters --json`: each counter, as a row to show. */
+export function counterRows(line: string): { name: string; value: string }[] | undefined {
+  let sample: { counters?: { name: string; unit?: string; value: number; rate?: number }[] };
+  try {
+    sample = JSON.parse(line) as typeof sample;
+  } catch {
+    return undefined;
+  }
+  return (sample.counters ?? []).map((counter) => {
+    const unit = counter.unit === 'us' ? ' µs' : counter.unit ? ` ${counter.unit}` : '';
+    const rate = counter.rate === undefined ? '' : `, ${counter.rate}${unit}/s`;
+    return { name: counter.name, value: `${counter.value}${unit}${rate}` };
+  });
+}
+
+/** What `tondo trace --json` wrote: the timeline, for Perfetto, and the
+ *  CPU profile. */
+export function traced(json: string): { timeline: string; profile: string } {
+  const trace = JSON.parse(json) as { format?: string; timeline?: string; profile?: string; message?: string };
+  if (trace.format !== 'tondo-trace-0.1/1' || !trace.timeline || !trace.profile) {
+    throw new Error(trace.message ?? 'tondo trace gave no trace');
+  }
+  return { timeline: trace.timeline, profile: trace.profile };
+}
+
+/** A project's packages, each with its modules, each with its files and
+ *  imports, from `tondo graph --json`; the standard modules last, as the
+ *  package `std`. */
+export interface Graphed {
+  name: string;
+  dir?: string;
+  modules: { name: string; files: string[]; imports: { module: string; file: string; line: number }[] }[];
+}
+
+export function graphed(json: string): Graphed[] {
+  const graph = JSON.parse(json) as {
+    format?: string;
+    packages?: { name: string; dir: string }[];
+    modules?: { name: string; package: string; files: string[]; imports: { module: string; file: string; line: number }[] }[];
+  };
+  if (graph.format !== 'tondo-graph-0.1/1') {
+    throw new Error('tondo graph gave no graph');
+  }
+  const packages: Graphed[] = (graph.packages ?? []).map((p) => ({ name: p.name, dir: p.dir, modules: [] }));
+  for (const module of graph.modules ?? []) {
+    let found = packages.find((p) => p.name === module.package);
+    if (!found) {
+      found = { name: module.package, modules: [] };
+      packages.push(found);
+    }
+    found.modules.push({ name: module.name, files: module.files, imports: module.imports });
+  }
+  return packages;
+}

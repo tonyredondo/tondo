@@ -3,7 +3,7 @@
 
 import * as assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { NEEDED, covered, incompatible, listed, outcomes, place, programOf, served, testEvent, verdict } from '../report';
+import { NEEDED, counterRows, covered, graphed, incompatible, listed, outcomes, place, programOf, running, served, testEvent, traced, verdict } from '../report';
 
 const source = (line: number) => ({ file: 'src/main_test.to', line, column: 6 });
 
@@ -201,4 +201,38 @@ test('a report of coverage says how many times each line, function and way ran',
   assert.equal(file.file, 'src/main.to');
   assert.deepEqual(file.branches[0].branch, { line: 10, column: 5 });
   assert.throws(() => covered('{"format":"tondo-test-report-0.1/1"}'));
+});
+
+test('running programs, counters, traces and graphs read as the views show them', () => {
+  const programs = running('{"format":"tondo-ps-0.1/1","ok":true,"programs":[{"pid":7,"program":"/w/app","arguments":["-v"],"uptime_ms":10}]}');
+  assert.deepEqual(programs.map((p) => [p.pid, p.program]), [[7, '/w/app']]);
+  assert.throws(() => running('[]'));
+  const rows = counterRows(
+    '{"pid":7,"uptime_ms":10,"counters":[{"name":"tasks","unit":"","value":3},{"name":"heap","unit":"bytes","value":100,"rate":2.5},{"name":"gc","unit":"us","value":4}]}',
+  );
+  assert.deepEqual(rows, [
+    { name: 'tasks', value: '3' },
+    { name: 'heap', value: '100 bytes, 2.5 bytes/s' },
+    { name: 'gc', value: '4 µs' },
+  ]);
+  assert.equal(counterRows('not json'), undefined);
+  assert.deepEqual(traced('{"format":"tondo-trace-0.1/1","ok":true,"timeline":"/t/a.json","profile":"/t/a.folded"}'), {
+    timeline: '/t/a.json',
+    profile: '/t/a.folded',
+  });
+  assert.throws(() => traced('{"format":"tondo-error-0.1/1","ok":false,"message":"no program app"}'), /no program app/);
+  const packages = graphed(
+    JSON.stringify({
+      format: 'tondo-graph-0.1/1',
+      packages: [{ name: 'app', dir: '/w/app' }],
+      modules: [
+        { name: 'app', package: 'app', files: ['/w/app/src/main.to'], imports: [{ module: 'std.json', file: '/w/app/src/main.to', line: 1 }] },
+        { name: 'std.json', package: 'std', files: [], imports: [] },
+      ],
+    }),
+  );
+  assert.deepEqual(packages.map((p) => [p.name, p.modules.map((m) => m.name)]), [
+    ['app', ['app']],
+    ['std', ['std.json']],
+  ]);
 });
