@@ -268,6 +268,12 @@
         (if-let false (value_used flags))
         (output_pair (x64_mul ty true x y) (value_regs_invalid)))
 
+;; Tondo: of 32 or 64 bits, with the two-operand `imul`.
+(rule 6 (lower i @ (smul_overflow _ x y @ (value_type (ty_32_or_64 ty))))
+        (if-let (second_result flags) i)
+        (if-let false (value_used flags))
+        (output_pair (value_reg (x64_imul ty x y)) (value_regs_invalid)))
+
 (rule 5 (lower i @ (smul_overflow _ x y @ (value_type $I8)))
         (if-let (second_result flags) i)
         (if-let false (value_used flags))

@@ -2103,6 +2103,13 @@
 (decl x64_mul_lo_with_flags_paired (Type bool Gpr GprMem) ProducesFlags)
 (rule (x64_mul_lo_with_flags_paired ty signed src1 src2)
       (asm_produce_flags (x64_mul_raw ty signed src1 src2)))
+;; Tondo: a signed product of 32 or 64 bits needs only its low half, which
+;; the two-operand `imul` gives, setting the overflow flag the same, in one
+;; micro-op and without `rdx`.
+(rule 1 (x64_mul_lo_with_flags_paired ty @ $I64 true src1 src2)
+      (asm_produce_flags (x64_imulq_rm_raw src1 (gpr_mem_64_for_ty ty src2))))
+(rule 1 (x64_mul_lo_with_flags_paired ty @ $I32 true src1 src2)
+      (asm_produce_flags (x64_imull_rm_raw src1 (gpr_mem_32_for_ty ty src2))))
 
 ;; Get the invalid register as writable
 (decl writable_invalid_gpr () WritableGpr)
