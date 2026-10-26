@@ -3,7 +3,7 @@
 
 import * as assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { incompatible, listed, outcomes, place, programOf, testEvent, verdict } from '../report';
+import { NEEDED, incompatible, listed, outcomes, place, programOf, served, testEvent, verdict } from '../report';
 
 const source = (line: number) => ({ file: 'src/main_test.to', line, column: 6 });
 
@@ -108,6 +108,45 @@ test('the events of a run say what started and how each attempt ended, then the 
     assert.equal(end.duration, 12);
     assert.deepEqual([end.outcome.verdict, end.outcome.message, end.outcome.line, end.outcome.output], ['failed', 'bad input', 3, 'printed\n']);
   }
+  assert.deepEqual(testEvent('{"event":"output","id":"p::a","suite":false,"iteration":1,"round":0,"stdout":{"encoding":"utf8","data":"half"}}'), {
+    event: 'output',
+    id: 'p::a',
+    text: 'half',
+  });
+  const compared = testEvent(
+    JSON.stringify({
+      event: 'end',
+      id: 'p::b',
+      status: 'failed-panic',
+      failure: {
+        kind: 'panic',
+        message: 'assertion-failed: sum\n  condition: sum == 5\n  left:  4\n  right: 5',
+        source: { file: 'src/a_test.to', line: 7, column: 5 },
+        comparison: { left: '4', right: '5' },
+        stack: [
+          { function: 'add', source: { file: 'src/a.to', line: 2, column: 5 }, task: 0, times: 1 },
+          { function: 'test b', source: { file: 'src/a_test.to', line: 7, column: 5 }, task: 0, times: 1 },
+          { function: 'main', source: null, task: 1, times: 1 },
+        ],
+      },
+      logs: ['noted'],
+      stdout: stream('x'),
+      stderr: stream(''),
+    }),
+  );
+  assert.equal(compared?.event, 'end');
+  if (compared?.event === 'end') {
+    assert.deepEqual(compared.outcome.comparison, { left: '4', right: '5' });
+    assert.deepEqual(
+      compared.outcome.stack.map((f) => [f.function, f.file, f.line]),
+      [
+        ['add', 'src/a.to', 2],
+        ['test b', 'src/a_test.to', 7],
+      ],
+    );
+    assert.equal(compared.outcome.logs, 'noted\n');
+    assert.equal(compared.outcome.output, 'xnoted\n');
+  }
   const report = testEvent(JSON.stringify({ event: 'report', report: { compiled: true, suites: [], tests: [{ id: 'p::a', status: 'flaky-pass', attempts: [] }] } }));
   assert.deepEqual(report?.event === 'report' && [report.compiled, report.outcomes.map((o) => o.verdict)], [true, ['passed']]);
   const uncompiled = testEvent('{"event":"report","report":{"compiled":false,"suites":[],"tests":[]}}');
@@ -125,6 +164,22 @@ test('a file runs as its project, or alone, as tondo graph says', () => {
 });
 
 test('a tondo older than the extension is told to update', () => {
-  assert.equal(incompatible('{"format":"tondo-version-0.1/1","ok":true,"version":"0.1.0-dev"}'), undefined);
+  const version = (features: string[]) => JSON.stringify({ format: 'tondo-version-0.1/1', ok: true, version: '0.1.0-dev', features });
+  assert.equal(incompatible(version(NEEDED)), undefined);
+  assert.match(incompatible(version(['json'])) ?? '', /older than the extension/);
+  assert.match(incompatible('{"format":"tondo-version-0.1/1","ok":true,"version":"0.1.0-dev"}') ?? '', /older/);
   assert.match(incompatible('tondo 0.1.0-dev (native, cranelift)\n') ?? '', /older than the extension.*install\.sh/);
+});
+
+test('the tests the language server sends are a list, with each file whole', () => {
+  const sent = served({
+    root: 'file:///w/app',
+    tests: [
+      { id: 'app::unit::app::group', parent: null, name: 'group', suite: true, location: { uri: 'file:///w/app/src/main_test.to', range: { start: { line: 4, character: 6 } } } },
+      { id: 'app::unit::app::group::inner', parent: 'app::unit::app::group', name: 'inner', suite: false },
+    ],
+  });
+  assert.equal(sent.dir, '/w/app');
+  assert.deepEqual(sent.nodes[0], { id: 'app::unit::app::group', parent: null, name: 'group', suite: true, file: '/w/app/src/main_test.to', line: 5, column: 7 });
+  assert.equal(sent.nodes[1].file, undefined);
 });

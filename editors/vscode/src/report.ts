@@ -4,6 +4,7 @@
 // from `tondo graph --json`, and `tondo version --json`.
 
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /** A test or a suite, and where it is. */
 export interface Listed {
@@ -27,8 +28,21 @@ export interface Outcome {
   file?: string;
   line?: number;
   column?: number;
+  /** The two sides of the comparison an `assert` failed on. */
+  comparison?: { left: string; right: string };
+  /** Where the failure happened, the innermost frame first. */
+  stack: Frame[];
   /** What it wrote, and what it logged. */
   output: string;
+  /** What it logged alone, which comes only with its end. */
+  logs: string;
+}
+
+export interface Frame {
+  function: string;
+  file?: string;
+  line?: number;
+  column?: number;
 }
 
 interface Source {
@@ -48,7 +62,12 @@ interface Entry {
 }
 
 interface Attempt {
-  failure?: { message?: string; source?: Source } | null;
+  failure?: {
+    message?: string;
+    source?: Source;
+    comparison?: { left: string; right: string } | null;
+    stack?: { function: string; source?: Source | null; task?: number }[];
+  } | null;
   skip?: { reason?: string; source?: Source } | null;
   logs?: string[];
   stdout?: Stream;
@@ -81,6 +100,33 @@ interface Report {
   tests?: Entry[];
 }
 
+/** What the language server sends of a project's tests as they change
+ *  (`tondo/tests`). */
+export interface Served {
+  root: string;
+  tests: {
+    id: string;
+    parent: string | null;
+    name: string;
+    suite: boolean;
+    location?: { uri: string; range: { start: { line: number; character: number } } };
+  }[];
+}
+
+/** The project and its tests, as a list gives them, with each file whole. */
+export function served(params: Served): { dir: string; nodes: Listed[] } {
+  const nodes = params.tests.map((test) => ({
+    id: test.id,
+    parent: test.parent,
+    name: test.name,
+    suite: test.suite,
+    file: test.location ? fileURLToPath(test.location.uri) : undefined,
+    line: test.location ? test.location.range.start.line + 1 : undefined,
+    column: test.location ? test.location.range.start.character + 1 : undefined,
+  }));
+  return { dir: fileURLToPath(params.root), nodes };
+}
+
 /** How each suite and test of a report ended. */
 export function outcomes(json: string): Outcome[] {
   return reported(JSON.parse(json) as Report);
@@ -97,7 +143,10 @@ function reported(report: Report): Outcome[] {
 function outcome(id: string, status: string, attempt: Attempt | undefined): Outcome {
   const why = attempt?.failure ?? attempt?.skip ?? undefined;
   const message = attempt?.failure?.message ?? attempt?.skip?.reason;
-  const output = [text(attempt?.stdout), text(attempt?.stderr), ...(attempt?.logs ?? []).map((log) => `${log}\n`)].join('');
+  const logs = (attempt?.logs ?? []).map((log) => `${log}\n`).join('');
+  const stack = (attempt?.failure?.stack ?? [])
+    .filter((frame) => !frame.task)
+    .map((frame) => ({ function: frame.function, file: frame.source?.file, line: frame.source?.line, column: frame.source?.column }));
   return {
     id,
     verdict: verdict(status),
@@ -105,7 +154,10 @@ function outcome(id: string, status: string, attempt: Attempt | undefined): Outc
     file: why?.source?.file,
     line: why?.source?.line,
     column: why?.source?.column,
-    output,
+    comparison: attempt?.failure?.comparison ?? undefined,
+    stack,
+    output: text(attempt?.stdout) + text(attempt?.stderr) + logs,
+    logs,
   };
 }
 
@@ -114,13 +166,23 @@ function outcome(id: string, status: string, attempt: Attempt | undefined): Outc
 export type TestEvent =
   | { event: 'pass'; tests: string[] }
   | { event: 'start'; id: string }
+  | { event: 'output'; id: string; text: string }
   | { event: 'end'; outcome: Outcome; duration: number }
   | { event: 'report'; compiled: boolean; outcomes: Outcome[] };
 
 export function testEvent(line: string): TestEvent | undefined {
   let value;
   try {
-    value = JSON.parse(line) as { event?: string; id?: string; tests?: string[]; status?: string; duration_ms?: number; report?: Report };
+    value = JSON.parse(line) as {
+      event?: string;
+      id?: string;
+      tests?: string[];
+      status?: string;
+      duration_ms?: number;
+      stdout?: Stream;
+      stderr?: Stream;
+      report?: Report;
+    };
   } catch {
     return undefined;
   }
@@ -129,6 +191,8 @@ export function testEvent(line: string): TestEvent | undefined {
       return { event: 'pass', tests: value.tests ?? [] };
     case 'start':
       return { event: 'start', id: value.id ?? '' };
+    case 'output':
+      return { event: 'output', id: value.id ?? '', text: text(value.stdout) + text(value.stderr) };
     case 'end':
       return { event: 'end', outcome: outcome(value.id ?? '', value.status ?? '', value as Attempt), duration: value.duration_ms ?? 0 };
     case 'report':
@@ -159,12 +223,16 @@ export function programOf(where: Place, file: string): { program: string; cwd: s
   return where.project ? { program: where.root, cwd: where.root } : { program: file, cwd: path.dirname(file) };
 }
 
+/** What the extension needs of `tondo`, as `tondo version --json` lists
+ *  its features. */
+export const NEEDED = ['json', 'graph', 'test-events', 'test-exact-many', 'lsp-tests'];
+
 /** Why a `tondo` cannot serve this extension, from what `tondo version
  *  --json` printed, or `undefined` when it can. */
 export function incompatible(json: string): string | undefined {
   try {
-    const version = JSON.parse(json) as { format?: string; version?: string };
-    if (version.format === 'tondo-version-0.1/1' && version.version) {
+    const version = JSON.parse(json) as { format?: string; version?: string; features?: string[] };
+    if (version.format === 'tondo-version-0.1/1' && NEEDED.every((feature) => version.features?.includes(feature))) {
       return undefined;
     }
   } catch {

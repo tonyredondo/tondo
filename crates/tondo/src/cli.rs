@@ -178,6 +178,10 @@ pub const COMMANDS: &[Command] = &[
     },
 ];
 
+/// What this `tondo` offers tools beyond its commands, as `tondo version
+/// --json` lists it, for a client to check before it relies on one.
+pub const FEATURES: &[&str] = &["json", "graph", "test-events", "test-exact-many", "lsp-tests", "lsp-lenses"];
+
 /// What a command writes with `--json`: one object, its format named for
 /// the command (`tondo-<command>-0.1/1`), whether it succeeded, and what
 /// the command gives.

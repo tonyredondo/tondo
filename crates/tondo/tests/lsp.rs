@@ -13,10 +13,17 @@ struct Editor {
     next: u64,
     /// The diagnostics last published for each file.
     diagnostics: Vec<(String, Value)>,
+    /// The tests of projects sent, in order (`tondo/tests`).
+    tests: Vec<Value>,
 }
 
 impl Editor {
     fn start() -> Editor {
+        Editor::start_with(Value::Null)
+    }
+
+    /// An editor that gives the server `initializationOptions`.
+    fn start_with(options: Value) -> Editor {
         let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
             .arg("lsp")
             .stdin(Stdio::piped())
@@ -25,9 +32,10 @@ impl Editor {
             .unwrap();
         let input = child.stdin.take().unwrap();
         let output = BufReader::new(child.stdout.take().unwrap());
-        let mut editor = Editor { child, input, output, next: 0, diagnostics: Vec::new() };
+        let mut editor = Editor { child, input, output, next: 0, diagnostics: Vec::new(), tests: Vec::new() };
+        let capabilities = json!({ "general": { "positionEncodings": ["utf-8"] } });
         let initialized =
-            editor.request("initialize", json!({ "capabilities": { "general": { "positionEncodings": ["utf-8"] } } }));
+            editor.request("initialize", json!({ "capabilities": capabilities, "initializationOptions": options }));
         assert_eq!(initialized["capabilities"]["positionEncoding"], "utf-8");
         editor.notify("initialized", json!({}));
         editor
@@ -69,6 +77,9 @@ impl Editor {
             let message = self.receive();
             if message["id"] == id {
                 return message.get("result").cloned().unwrap_or_else(|| message["error"].clone());
+            }
+            if message["method"] == "tondo/tests" {
+                self.tests.push(message["params"].clone());
             }
             if message["method"] == "textDocument/publishDiagnostics" {
                 let uri = message["params"]["uri"].as_str().unwrap().to_string();
@@ -367,5 +378,87 @@ fn highlights_symbols_signatures_hints() {
     let hints = editor.request("textDocument/inlayHint", json!({ "textDocument": { "uri": uri }, "range": range }));
     let labels: Vec<&str> = hints.as_array().unwrap().iter().map(|h| h["label"].as_str().unwrap()).collect();
     assert_eq!(labels, [": String", ": models.User", ": Int"], "{hints}");
+    editor.stop();
+}
+
+/// With `tests` asked for, the server sends a project's suites and tests
+/// as its files change; Run and Debug lenses sit over `main` or a script's
+/// first statement, in the file that holds it.
+#[test]
+fn tells_tests_and_lenses() {
+    let main = "import std.console\n\nfn main() {\n    console.println(\"hi\")\n}\n";
+    let tests = "test first {\n    assert(1 == 1)\n}\n\nsuite group {\n    test inner {}\n}\n";
+    let dir = project(
+        "lsp-tests",
+        &[("tondo.toml", "[package]\nname = \"app\"\n"), ("src/main.to", main), ("src/main_test.to", tests)],
+    );
+    let mut editor = Editor::start_with(json!({ "tests": true }));
+    let tested = editor.open(&dir.join("src/main_test.to"));
+    let lenses = editor.request("textDocument/codeLens", json!({ "textDocument": { "uri": tested } }));
+    assert_eq!(lenses, json!([]));
+    // A request about the file has its project analyzed, as a pause does.
+    editor.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": tested } }));
+    let sent = editor.tests.last().cloned().expect("the project's tests");
+    assert_eq!(sent["root"], format!("file://{}", dir.display()));
+    let ids: Vec<(&str, &Value, bool)> = sent["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| (t["id"].as_str().unwrap(), &t["parent"], t["suite"].as_bool().unwrap()))
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            ("app::unit::app::first", &Value::Null, false),
+            ("app::unit::app::group", &Value::Null, true),
+            ("app::unit::app::group::inner", &json!("app::unit::app::group"), false),
+        ]
+    );
+    assert_eq!(sent["tests"][2]["name"], "inner");
+    assert_eq!(sent["tests"][2]["location"]["uri"], tested);
+    assert_eq!(sent["tests"][2]["location"]["range"]["start"], json!({ "line": 5, "character": 9 }));
+
+    // Over main, in the file that holds it.
+    let opened = editor.open(&dir.join("src/main.to"));
+    let lenses = editor.request("textDocument/codeLens", json!({ "textDocument": { "uri": opened } }));
+    let titles: Vec<(&str, &str)> = lenses
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| (l["command"]["title"].as_str().unwrap(), l["command"]["command"].as_str().unwrap()))
+        .collect();
+    assert_eq!(titles, [("Run", "tondo.run"), ("Debug", "tondo.debug"), ("Debug Live", "tondo.debugLive")]);
+    assert_eq!(lenses[0]["range"]["start"], json!({ "line": 2, "character": 3 }));
+    assert_eq!(lenses[0]["command"]["arguments"], json!([opened]));
+
+    // A test written, not saved, is sent; nothing new sends nothing.
+    let count = editor.tests.len();
+    let edited = format!("{tests}\ntest second {{}}\n");
+    editor.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": tested, "version": 2 }, "contentChanges": [{ "text": edited }] }),
+    );
+    editor.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": tested } }));
+    assert_eq!(editor.tests.len(), count + 1);
+    assert_eq!(editor.tests.last().unwrap()["tests"][3]["id"], "app::unit::app::second");
+    editor.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": tested, "version": 3 }, "contentChanges": [{ "text": edited }] }),
+    );
+    editor.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": tested } }));
+    assert_eq!(editor.tests.len(), count + 1);
+
+    // A script's first statement, in a file on its own.
+    let script = project("lsp-script", &[("hello.to", "import std.console\n\nconsole.println(\"hi\")\n")]);
+    let opened = editor.open(&script.join("hello.to"));
+    let lenses = editor.request("textDocument/codeLens", json!({ "textDocument": { "uri": opened } }));
+    assert_eq!(lenses[1]["range"]["start"], json!({ "line": 2, "character": 0 }));
+    editor.stop();
+
+    // Without asking, no tests are sent.
+    let mut editor = Editor::start();
+    let tested = editor.open(&dir.join("src/main_test.to"));
+    editor.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": tested } }));
+    assert!(editor.tests.is_empty());
     editor.stop();
 }

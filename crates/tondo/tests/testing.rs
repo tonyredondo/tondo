@@ -96,6 +96,61 @@ fn selects_and_lists() {
     assert_eq!(status, 0);
     let (_, _, status) = tondo(&sample(), &["test", "--filter", "skipsWithAReason", "--deny-skips"]);
     assert_eq!(status, 1);
+    // `--exact` again chooses more, in one run; each must name something.
+    let (stdout, _, status) = tondo(
+        &sample(),
+        &[
+            "test",
+            "--exact",
+            "sample::unit::sample::doublesPrivately",
+            "--exact",
+            "sample::unit::sample::shared::nested",
+        ],
+    );
+    let report = "test sample::unit::sample::doublesPrivately ... ok\ntest sample::unit::sample::shared::nested::seesBoth ... ok\nok. 2 passed; 0 failed; 0 skipped; 0 blocked\n";
+    assert_eq!((untimed(&stdout).as_str(), status), (report, 0));
+    let (stdout, _, _) = tondo(
+        &sample(),
+        &[
+            "test",
+            "--list",
+            "--test-format",
+            "json",
+            "--exact",
+            "sample::unit::sample::doublesPrivately",
+            "--exact",
+            "sample::unit::sample::logsAndTags",
+        ],
+    );
+    let list: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        list["selection"],
+        serde_json::json!({ "kind": "exact", "value": ["sample::unit::sample::doublesPrivately", "sample::unit::sample::logsAndTags"] })
+    );
+    let (_, stderr, status) =
+        tondo(&sample(), &["test", "--exact", "sample::unit::sample::doublesPrivately", "--exact", "nothing"]);
+    assert_eq!(
+        (stderr.as_str(), status),
+        ("tondo: no suite or test is \"nothing\"; `tondo test --list` lists them\n", 1)
+    );
+    let (_, stderr, status) = tondo(&sample(), &["test", "--exact", "a", "--filter", "b"]);
+    assert_eq!(status, 2, "{stderr}");
+}
+
+/// Listing analyzes the tests without building them: a library that
+/// cannot be linked does not keep the list from coming.
+#[test]
+fn lists_without_building() {
+    let dir = project("list-unlinked", "test works {\n    assert(1 == 1)\n}\n");
+    std::fs::write(
+        dir.join("tondo.toml"),
+        "[package]\nname = \"app\"\n\n[native]\nlibraries = [\"tondo_missing_library\"]\n",
+    )
+    .unwrap();
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--list"]);
+    assert_eq!((stdout.as_str(), status), ("app::unit::app::works\n", 0), "{stderr}");
+    let (_, _, status) = tondo(&dir, &["test"]);
+    assert_eq!(status, 3);
 }
 
 /// A panic in a task a test started still runs the test's cleanups and its
@@ -316,7 +371,8 @@ fn writes_json_and_junit_reports() {
         "{\"format\":\"tondo-test-report-0.1/1\",\"edition\":\"0.1\",",
         "\"compiled\":true,\"selection\":{\"kind\":\"all\",\"value\":null},",
         "\"stack\":[{\"function\":\"test failsAnAssertion\",\"source\":{\"file\":\"src/main_test.to\",\"line\":11,\"column\":5},\"task\":0,\"times\":1}]",
-        "\"failure\":{\"kind\":\"error\",\"code\":null,\"error_type\":\"ParseError\",\"message\":\"ParseError.Empty\",\"source\":{\"file\":\"src/main_test.to\",\"line\":15,\"column\":18},\"stack\":[]}",
+        "\"failure\":{\"kind\":\"error\",\"code\":null,\"error_type\":\"ParseError\",\"message\":\"ParseError.Empty\",\"source\":{\"file\":\"src/main_test.to\",\"line\":15,\"column\":18},\"comparison\":null,\"stack\":[]}",
+        "\"comparison\":{\"left\":\"4\",\"right\":\"5\"},\"stack\":[{\"function\":\"test failsAnAssertion\"",
         "\"blocked_by\":{\"id\":\"sample::unit::sample::brokenSetup\",\"attempt\":1}",
         "\"skip\":{\"reason\":\"needs a database\",\"source\":{\"file\":\"src/main_test.to\",\"line\":20,\"column\":5}}",
         "\"tags\":{\"area\":\"parse\"}",
@@ -685,6 +741,7 @@ suite group {
             "end skips skipped r0",
             "end group passed r0",
             "start passes r0",
+            "output passes r0",
             "end passes passed r0",
             "pass r1",
             "start fails r1",
@@ -692,6 +749,8 @@ suite group {
             "report rnull",
         ]
     );
+    // What a test writes comes as it writes it, and again with its end.
+    assert_eq!(events[8]["stdout"]["data"], "said\n");
     assert_eq!(events[0]["format"], "tondo-test-events-0.1/1");
     assert_eq!(events[0]["tests"].as_array().unwrap().len(), 3);
     assert_eq!(
@@ -699,7 +758,9 @@ suite group {
         "assertion-failed: one is not two\n  condition: 1 == 2\n  left:  1\n  right: 2"
     );
     assert_eq!(events[2]["failure"]["source"]["line"], 9);
-    assert_eq!(events[8]["stdout"]["data"], "said\n");
+    assert_eq!(events[9]["stdout"]["data"], "said\n");
+    // The two sides of the comparison, for a diff.
+    assert_eq!(events[2]["failure"]["comparison"], serde_json::json!({ "left": "1", "right": "2" }));
     let report = &events.last().unwrap()["report"];
     assert_eq!((&report["format"], &report["summary"]["failed_panic"]), (&"tondo-test-report-0.1/1".into(), &1.into()));
 

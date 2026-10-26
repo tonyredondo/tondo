@@ -1,5 +1,6 @@
-// Running and debugging with `tondo dap`, live builds whose code changes
-// as their files are saved, and the lenses over `main`.
+// Running and debugging with `tondo dap`, and live builds whose code
+// changes as their files are saved. The lenses over `main` come from the
+// language server, with these commands.
 
 import * as path from 'node:path';
 import * as vscode from 'vscode';
@@ -42,7 +43,6 @@ export function registerDebugging(context: vscode.ExtensionContext): void {
         void reload(session, false);
       }
     }),
-    vscode.languages.registerCodeLensProvider({ language: 'tondo' }, { provideCodeLenses: lenses }),
   );
 }
 
@@ -108,18 +108,3 @@ async function reload(session: vscode.DebugSession | undefined, asked: boolean):
 }
 
 /** Run, debug and debug live over `fn main`. */
-function lenses(document: vscode.TextDocument): vscode.CodeLens[] {
-  const found: vscode.CodeLens[] = [];
-  for (let line = 0; line < document.lineCount; line++) {
-    if (!/^(pub\s+)?fn\s+main\s*\(/.test(document.lineAt(line).text)) {
-      continue;
-    }
-    const range = document.lineAt(line).range;
-    found.push(
-      new vscode.CodeLens(range, { title: 'Run', command: 'tondo.run', arguments: [document.uri] }),
-      new vscode.CodeLens(range, { title: 'Debug', command: 'tondo.debug', arguments: [document.uri] }),
-      new vscode.CodeLens(range, { title: 'Debug Live', command: 'tondo.debugLive', arguments: [document.uri] }),
-    );
-  }
-  return found;
-}

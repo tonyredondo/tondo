@@ -43,7 +43,7 @@ suite slow {
   `attach(name, mediaType, bytes)`, `snapshot(name, value)` (compares the
   value's JSON with a file; `tondo test --update-snapshots` writes it), and
   `withVirtualTime` for code that sleeps.
-- `tondo test --filter text`, `--exact id`, `--list`, `--jobs n`,
+- `tondo test --filter text`, `--exact id` (again for more), `--list`, `--jobs n`,
   `--timeout s`, `--retry n`, `--order random --seed hex`,
   `--report junit=out.xml`; `--json` gives the report as data, and
   `--test-format events` a line of JSON for each result as it comes.

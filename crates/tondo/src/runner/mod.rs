@@ -283,11 +283,22 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     let owners: Vec<Vec<String>> = (0..tree.nodes.len() as u32).map(|n| ownership.of(tree.file(n))).collect();
     let snapshots = store::Snapshots::read(dir, &package(dir)).map_err(Failure::Input)?;
     let selected = select::select(tree, &options.selector);
-    if selected.is_empty() {
+    // Each `--exact` names a suite or test.
+    let missing: Vec<String> = match &options.selector {
+        Selector::Exact(ids) => ids
+            .iter()
+            .filter(|id| !(1..tree.nodes.len() as u32).any(|node| tree.id(node) == id.as_str()))
+            .map(|id| format!("{id:?}"))
+            .collect(),
+        _ => Vec::new(),
+    };
+    if selected.is_empty() || !missing.is_empty() {
         let message = match &options.selector {
             Selector::Filter(text) => format!("no test matches --filter {text:?}"),
             Selector::Glob(_) => "no suite or test matches --glob".to_string(),
-            Selector::Exact(id) => format!("no suite or test is {id:?}; `tondo test --list` lists them"),
+            Selector::Exact(_) => {
+                format!("no suite or test is {}; `tondo test --list` lists them", missing.join(" or "))
+            }
             Selector::All => {
                 "the project has no tests: write `test name { ... }` in a `_test.to` file or under `tests/`".into()
             }

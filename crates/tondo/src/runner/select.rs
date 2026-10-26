@@ -11,7 +11,8 @@ pub enum Selector {
     /// A glob over the identity of a test or a suite.
     Glob(Glob),
     /// The identity of a test or a suite.
-    Exact(String),
+    /// `--exact`, once or more: the suites and tests with these ids.
+    Exact(Vec<String>),
 }
 
 /// A portable glob (8.2): components split by `::`, where `*` matches any
@@ -112,7 +113,7 @@ pub fn select(tree: &Tree, selector: &Selector) -> Vec<u32> {
         Selector::All => true,
         Selector::Filter(text) => tree.id(node).contains(text.as_str()),
         Selector::Glob(glob) => glob.matches(tree.id(node)),
-        Selector::Exact(id) => tree.id(node) == id,
+        Selector::Exact(ids) => ids.iter().any(|id| tree.id(node) == id),
     };
     let mut selected: Vec<u32> = (1..tree.nodes.len() as u32)
         .filter(|&test| !tree.nodes[test as usize].suite)

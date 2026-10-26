@@ -34,9 +34,10 @@ pub(super) struct Run<'a> {
 }
 
 /// What the workers tell as they run: a suite or test that started, in a
-/// pass, or the outcome of an attempt.
+/// pass, what it wrote (to stdout or not), or the outcome of an attempt.
 pub(super) enum Note {
     Started(u32, Context),
+    Wrote(u32, Context, bool, Vec<u8>),
     Ended(Box<Attempt>),
 }
 
@@ -361,6 +362,24 @@ impl Session<'_> {
             _ => None,
         }) {
             done.stdout.extend_from_slice(text);
+        } else {
+            return;
+        }
+        self.wrote(owner.expect("an owner"), true, text);
+    }
+
+    /// Tells what an entry wrote, before its end if that waits.
+    fn wrote(&mut self, node: u32, stdout: bool, text: &[u8]) {
+        if text.is_empty() {
+            return;
+        }
+        let note = Note::Wrote(node, self.context, stdout, text.to_vec());
+        match self.done.iter().position(|(note, _)| matches!(note, Note::Ended(o) if o.node == node)) {
+            Some(at) => {
+                let sequence = self.done[at].1;
+                self.done.insert(at, (note, sequence));
+            }
+            None => self.done.push((note, self.owners.len() as u64 - 1)),
         }
     }
 
@@ -413,6 +432,7 @@ impl Session<'_> {
     fn give_stderr(&mut self, text: &[u8]) {
         if let Some(index) = self.owner() {
             self.running[index].0.stderr.extend_from_slice(text);
+            self.wrote(self.running[index].0.node, false, text);
         }
     }
 

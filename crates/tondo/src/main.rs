@@ -69,8 +69,14 @@ fn main() -> ExitCode {
                 cached_executable(path, &BuildOptions { debug: true, live, ..BuildOptions::default() })
             };
             let tests = |path: &Path| {
-                let build =
-                    TestBuild { library: false, debug: true, statically: false, target: None, diagnostics_json: false };
+                let build = TestBuild {
+                    library: false,
+                    debug: true,
+                    statically: false,
+                    target: None,
+                    diagnostics_json: false,
+                    list: false,
+                };
                 let built = build_tests(path, &build)?;
                 Ok(built.map(|(executable, tree)| (executable, tree.nodes.into_iter().map(|n| n.id).collect())))
             };
@@ -79,8 +85,10 @@ fn main() -> ExitCode {
         "version" | "--version" | "-V" => {
             if args.iter().skip(1).any(|a| a == "--json") {
                 let target = Target::machine().map(Target::name);
-                let fields =
-                    serde_json::json!({ "version": driver::VERSION, "backend": "cranelift", "target": target });
+                let features = tondo::cli::FEATURES;
+                let fields = serde_json::json!({
+                    "version": driver::VERSION, "backend": "cranelift", "target": target, "features": features,
+                });
                 print_json("version", true, fields);
             } else {
                 println!("tondo {} (native, cranelift)", driver::VERSION);
@@ -285,7 +293,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     let mut rest = rest.iter();
     while let Some(arg) = rest.next() {
         let flag = arg.to_string_lossy().into_owned();
-        if seen.contains(&flag) && flag != "--report" {
+        if seen.contains(&flag) && flag != "--report" && flag != "--exact" {
             return Err(usage(format!("{flag} appears twice")));
         }
         seen.push(flag.clone());
@@ -293,12 +301,13 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             rest.next().map(|v| v.to_string_lossy().into_owned()).ok_or_else(|| usage(format!("{flag} needs a value")))
         };
         match flag.as_str() {
+            "--exact" if let Selector::Exact(ids) = &mut options.selector => ids.push(value()?),
             "--filter" | "--glob" | "--exact" if !matches!(options.selector, Selector::All) => {
                 return Err(usage("give only one of --filter, --glob and --exact".into()));
             }
             "--filter" => options.selector = Selector::Filter(value()?),
             "--glob" => options.selector = Selector::Glob(Glob::parse(&value()?).map_err(usage)?),
-            "--exact" => options.selector = Selector::Exact(value()?),
+            "--exact" => options.selector = Selector::Exact(vec![value()?]),
             "--shard" => {
                 let text = value()?;
                 let parts = text.split_once('/').map(|(i, n)| (count(i, "--shard"), count(n, "--shard")));
@@ -449,10 +458,14 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         options.order = Order::Random(seed, chosen);
     }
     options.schedules = schedules.map(|count| (count, seed, chosen));
-    // The build is reused while nothing it reads changes.
-    driver::ready(target)?;
+    // The build is reused while nothing it reads changes; a list needs
+    // only the tests' tree.
+    if !options.list {
+        driver::ready(target)?;
+    }
     options.launcher = target.map(Target::launcher).transpose()?.flatten();
-    let built = build_tests(&path, &TestBuild { library, debug, statically, target, diagnostics_json })?;
+    let build = TestBuild { library, debug, statically, target, diagnostics_json, list: options.list };
+    let built = build_tests(&path, &build)?;
     let Some((executable, tree)) = built else {
         // A report says it did not compile (testing 15.6).
         return Ok(match runner::uncompiled(&path, &options) {
@@ -484,15 +497,17 @@ struct TestBuild {
     statically: bool,
     target: Option<Target>,
     diagnostics_json: bool,
+    /// Only the tree, to list the tests: analyzed, not compiled.
+    list: bool,
 }
 
 /// The executable of a project's tests and their tree, built unless what
 /// it reads is unchanged; none, after its diagnostics, when it does not
-/// compile.
+/// compile. A list gets the tree without the executable.
 fn build_tests(path: &Path, build: &TestBuild) -> Result<Option<(PathBuf, tondo::runner::Tree)>, String> {
     let dir = tondo::runner::build_dir(path, build.statically, build.debug, build.target)?;
     let (executable, tree_file) = (dir.join("tests"), dir.join("tree"));
-    if let Some(tree) = tondo::runner::Tree::load(&tree_file).filter(|_| executable.is_file()) {
+    if let Some(tree) = tondo::runner::Tree::load(&tree_file).filter(|_| build.list || executable.is_file()) {
         return Ok(Some((executable, tree)));
     }
     let analysis = driver::analyze_tests(path, build.library)?;
@@ -505,6 +520,10 @@ fn build_tests(path: &Path, build: &TestBuild) -> Result<Option<(PathBuf, tondo:
     let locations = program.tests.iter().map(|n| analysis.sources.location(n.span)).collect();
     let tree = tondo::runner::Tree { nodes: program.tests.clone(), locations };
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    if build.list {
+        tree.save(&tree_file)?;
+        return Ok(Some((executable, tree)));
+    }
     // Linked aside and renamed, so another run of the same tests keeps its own.
     let partial = executable.with_extension(format!("partial-{}", std::process::id()));
     driver::link(

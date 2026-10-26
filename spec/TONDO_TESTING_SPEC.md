@@ -1373,8 +1373,10 @@ El runner ofrece exactamente tres selectores:
   de cada test o suite.
 - `--exact id`: igualdad bytewise con la identidad visible de un test o suite.
 
-Son mutuamente excluyentes y cada uno aparece como máximo una vez. No existe un
-selector regex en esta edición.
+Son mutuamente excluyentes. `--filter` y `--glob` aparecen como máximo una
+vez; `--exact` puede repetirse y selecciona la unión de lo que nombra, en una
+sola ejecución, y cada id debe nombrar un test o suite: uno que no existe es
+una selección vacía (9.6). No existe un selector regex en esta edición.
 
 El glob trata `::` como separador de componentes y admite únicamente:
 
@@ -2097,7 +2099,7 @@ Interfaz mínima:
 
 ~~~text
 tondo test [<project> | --project <dir>]
-           [--filter <text> | --glob <pattern> | --exact <node-id>]
+           [--filter <text> | --glob <pattern> | --exact <node-id>...]
            [--codeowners <auto|none|path>]
            [--shard <index/count>]
            [--order <canonical|random>]
@@ -2164,7 +2166,8 @@ Reglas:
   siguen 8.2.
 - `--codeowners auto` es el default y sigue 5.7.
 - `--shard` sigue 8.3 y `--order`/`--seed` siguen 8.4.
-- `--list` no ejecuta bodies y no admite `--show-output`, `--deny-skips` ni un
+- `--list` no ejecuta bodies ni genera código: le basta el análisis de los
+  tests. No admite `--show-output`, `--deny-skips` ni un
   reporte `junit`; tampoco admite `--retry`, `--repeat`, `--allow-flaky`,
   `--artifacts` ni `--update-snapshots`. Sí admite los tres selectores,
   sharding, orden y reporte `json`.
@@ -2998,7 +3001,8 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
 ~~~
 
 `selection.kind` es `all`, `filter`, `glob` o `exact`; `value` es `null` para
-`all` y conserva el argumento exacto en los otros casos.
+`all` y conserva el argumento exacto en los otros casos; con varios `--exact`,
+es el array de sus ids en el orden en que se dieron.
 `target.name` es la arquitectura y el sistema donde corrieron los tests, como
 `x86_64-linux` o `aarch64-macos`, y `profile` vale `hosted`.
 `policy.deny_skips` y `policy.allow_flaky` contienen los valores efectivos de
@@ -3250,6 +3254,10 @@ exactamente:
     "line": 3,
     "column": 9
   },
+  "comparison": {
+    "left": "41",
+    "right": "42"
+  },
   "stack": []
 }
 ~~~
@@ -3263,6 +3271,9 @@ exactamente:
 - `message` es presentación humana y nunca actúa como identidad.
 - `source` es una ubicación lógica o `null`: la del pánico, o la del `?` o
   `fail` por el que el error salió del test o del setup.
+- `comparison` es, para un `assert` que falla en una comparación, sus dos
+  lados como los muestra el mensaje (15.8 del lenguaje), `left` y `right`,
+  para que una herramienta los compare; `null` en los demás casos.
 - `stack` es un array posiblemente vacío de frames Tondo, sin paths físicos.
   Cada frame es `{"function": "depth", "source": {...}, "task": 0, "times": 3}`:
   `task` es `0` en la tarea que falló y crece en cada tarea que la lanzó, y
@@ -3686,10 +3697,14 @@ para que un editor muestre cada resultado cuando llega. Cada línea tiene
   ejecuta en orden canónico.
 - `start`, al empezar una suite o un test: `id`, `suite`, `iteration` y
   `round`.
+- `output`, cuando se sabe qué suite o test escribió algo: los campos de
+  `start` y `stdout` o `stderr`, con la forma de 15.1. Llega después de su
+  `start` y antes de su `end`, en trozos que no siguen las líneas.
 - `end`, al conocerse el resultado de un intento: los campos de `start` y
   `status`, `duration_ms`, `failure`, `skip`, `logs`, `stdout` y `stderr`,
   con los valores del intento en el reporte (15.3). Un test bloqueado por su
-  suite tiene `end` sin `start`. Lo que un intento escribió va en su `end`.
+  suite tiene `end` sin `start`. Su `end` repite todo lo que el intento
+  escribió.
 - `report`, la última línea: `report` es el reporte `tondo-test-report-0.1/1`
   completo, el mismo de `--test-format json`, que decide el resultado de
   cada test tras sus retries.

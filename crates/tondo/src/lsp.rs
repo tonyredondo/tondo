@@ -83,6 +83,8 @@ struct Document {
 struct Analyzed {
     analysis: Analysis,
     paths: Vec<Option<PathBuf>>,
+    /// The tests of a project, when it checked.
+    tests: Option<Vec<crate::hir::TestNodeInfo>>,
 }
 
 /// What the columns of positions count.
@@ -122,6 +124,10 @@ struct Server {
     published: HashMap<PathBuf, HashSet<PathBuf>>,
     /// Where the standard modules are written, for definitions in them.
     std: Option<PathBuf>,
+    /// Whether the editor asked for the tests of each project
+    /// (`tondo/tests`), and the last it was sent of each.
+    tests: bool,
+    listed: HashMap<PathBuf, Value>,
     shut: bool,
 }
 
@@ -206,6 +212,7 @@ impl Server {
             "workspace/symbol" => Some(Ok(self.workspace_symbols(params))),
             "textDocument/signatureHelp" => Some(Ok(self.signature_help(params).unwrap_or(Value::Null))),
             "textDocument/inlayHint" => Some(Ok(self.inlay_hints(params).unwrap_or(json!([])))),
+            "textDocument/codeLens" => Some(Ok(self.lenses(params).unwrap_or(json!([])))),
             "textDocument/semanticTokens/full" => {
                 Some(Ok(self.semantic_tokens(params).unwrap_or(json!({ "data": [] }))))
             }
@@ -218,6 +225,7 @@ impl Server {
         let encodings = &params["capabilities"]["general"]["positionEncodings"];
         let utf8 = encodings.as_array().is_some_and(|e| e.iter().any(|e| e == "utf-8"));
         self.units = if utf8 { Units::Utf8 } else { Units::Utf16 };
+        self.tests = params["initializationOptions"]["tests"] == true;
         json!({
             "capabilities": {
                 "positionEncoding": if utf8 { "utf-8" } else { "utf-16" },
@@ -234,6 +242,7 @@ impl Server {
                 "workspaceSymbolProvider": true,
                 "signatureHelpProvider": { "triggerCharacters": ["(", ","] },
                 "inlayHintProvider": true,
+                "codeLensProvider": { "resolveProvider": false },
                 "semanticTokensProvider": {
                     "legend": { "tokenTypes": TOKEN_TYPES, "tokenModifiers": ["declaration", "readonly", "defaultLibrary"] },
                     "full": true,
@@ -272,6 +281,7 @@ impl Server {
         let open = self.open.iter().map(|(path, document)| (path.clone(), document.text.clone())).collect();
         let Some(analyzed) = self.analyzed(root, open) else { return };
         self.publish(root, &analyzed);
+        self.publish_tests(root, &analyzed);
         if let Some(previous) = self.analyses.insert(root.to_path_buf(), analyzed) {
             let earlier = self.earlier.entry(root.to_path_buf()).or_default();
             earlier.insert(0, previous);
@@ -281,7 +291,8 @@ impl Server {
 
     /// An analysis of a root with the given text of open files.
     fn analyzed(&mut self, root: &Path, open: HashMap<PathBuf, String>) -> Option<Analyzed> {
-        let analysis = driver::analyze_for_editor(root, root.is_dir(), open).ok()?;
+        let mut analysis = driver::analyze_for_editor(root, root.is_dir(), open).ok()?;
+        let tests = analysis.program.take().map(|program| program.tests).filter(|_| root.is_dir());
         let std = self.std_dir();
         let paths = (0..analysis.sources.len())
             .map(|index| {
@@ -293,7 +304,59 @@ impl Server {
                 }
             })
             .collect();
-        Some(Analyzed { analysis, paths })
+        Some(Analyzed { analysis, paths, tests })
+    }
+
+    /// Sends a project's suites and tests when they change, as the editor
+    /// asked: each with its id, its parent's, its name and where it is.
+    fn publish_tests(&mut self, root: &Path, analyzed: &Analyzed) {
+        let Some(nodes) = analyzed.tests.as_ref().filter(|_| self.tests && !self.quiet) else { return };
+        let mut tests = Vec::new();
+        for node in nodes.iter().skip(1) {
+            let Some(location) = self.location(analyzed, node.span) else { continue };
+            let parent = nodes.get(node.parent as usize).filter(|_| node.parent != 0).map(|p| p.id.clone());
+            let name = node.id.rsplit("::").next().unwrap_or(&node.id);
+            tests.push(
+                json!({ "id": node.id, "parent": parent, "name": name, "suite": node.suite, "location": location }),
+            );
+        }
+        let tests = Value::Array(tests);
+        if self.listed.get(root) != Some(&tests) {
+            self.listed.insert(root.to_path_buf(), tests.clone());
+            send(json!({ "jsonrpc": "2.0", "method": "tondo/tests",
+                "params": { "root": self.uri(root), "tests": tests } }));
+        }
+    }
+
+    /// Run, Debug and Debug Live over a program's `main`, or over the first
+    /// statement of a script, in the file that holds it.
+    fn lenses(&self, params: &Value) -> Option<Value> {
+        let uri = params["textDocument"]["uri"].as_str()?;
+        let path = uri_path(uri)?;
+        let (root, project) = root_of(&path);
+        let holds = !project || [root.join("src/main.to"), root.join("main.to")].contains(&path);
+        if !holds {
+            return Some(json!([]));
+        }
+        let text = match self.open.get(&path) {
+            Some(document) => document.text.clone(),
+            None => std::fs::read_to_string(&path).ok()?,
+        };
+        let mut sources = crate::source::SourceMap::default();
+        let index = sources.add(&path, text);
+        let file = sources.file(index);
+        let module = crate::parser::parse_file(file, &mut crate::diag::Diagnostics::default());
+        let main = module.items.iter().find_map(|item| match item {
+            crate::ast::Item::Fn(f) if f.name.name == "main" && f.owner.is_none() => Some(f.name.span),
+            _ => None,
+        });
+        let Some(span) = main.or(module.statements.first().map(|s| s.span)) else { return Some(json!([])) };
+        let range = self.range(file, span);
+        let lenses: Vec<Value> = [("Run", "tondo.run"), ("Debug", "tondo.debug"), ("Debug Live", "tondo.debugLive")]
+            .iter()
+            .map(|(title, command)| json!({ "range": range, "command": { "title": title, "command": command, "arguments": [uri] } }))
+            .collect();
+        Some(Value::Array(lenses))
     }
 
     /// Sends the diagnostics of each file of a root, and clears those of

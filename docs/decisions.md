@@ -2146,3 +2146,34 @@ after retries. What a test wrote travels with its end rather than as its
 own events: the runner learns which test wrote what from the frames that
 order a worker's output, which may come after the test ended.
 
+## 2026-10-26 — Tests for editors
+
+An editor lists a project's tests when it opens and after each save, so
+`tondo test --list` now stops once the tests are analyzed: it needs their
+tree, not their code. The tree is cached with the build's key, which a
+build of the same sources reuses.
+
+`--exact` can be given again, so that the tests chosen in an editor run in
+one invocation, sharing its build and its workers. Each id must still name
+something: an id that names nothing is an empty selection, as a selector
+that matches nothing is.
+
+A failed `assert` on a comparison already showed both sides; the failure's
+JSON now gives them apart, as `comparison`, so that an editor shows a diff.
+What a test writes is an `output` event as soon as the runner knows whose
+it is, so a long test's output shows as it runs; its `end` still carries
+all of it, so that an event alone says everything about an attempt.
+
+`tondo version --json` lists `features`, so that a client checks for what
+it uses rather than for a version number, which a build of `main` does not
+change.
+
+The language server already analyzes each project as a build of its
+tests, so it knows the tests as they are written: an editor that asks for
+them gets `tondo/tests` with a project's tests whenever they change,
+without saving and without a process. `--list` stays for a project no file
+of which is open. The lenses over `main` came from a pattern in the
+extension, which a script without `main` or a `main` in a string fooled;
+the server puts them where the parser finds `main`, or a script's first
+statement, which also serves editors other than VS Code.
+

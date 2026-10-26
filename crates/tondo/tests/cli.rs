@@ -89,6 +89,8 @@ fn commands_give_json() {
     assert_eq!(status, 0);
     assert_eq!((&version["format"], &version["backend"]), (&json!("tondo-version-0.1/1"), &json!("cranelift")));
     assert!(version["version"].as_str().unwrap().starts_with("0.1"), "{version}");
+    assert_eq!(version["features"], json!(tondo::cli::FEATURES));
+    assert!(tondo::cli::FEATURES.contains(&"test-exact-many"));
 
     let (topics, _) = json(&dir, &["guide", "--list", "--json"]);
     assert!(topics["topics"].as_array().unwrap().iter().any(|t| t == "pitfalls"), "{topics}");

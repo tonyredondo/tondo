@@ -1,14 +1,16 @@
 // The tests of the workspace's projects in the Testing view: listed by
-// `tondo test --list`, run by `tondo test`, whose events show each result
-// as it comes, and debugged by `tondo dap`.
+// `tondo test --list` at first and then by the language server as files
+// change, run by `tondo test`, whose events show each result as it comes,
+// and debugged by `tondo dap`.
 
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { isProject } from './binary';
-import { Ran, exec, placeOf } from './cli';
-import { Outcome, listed, testEvent } from './report';
+import { Ran, exec } from './cli';
+import { Listed, Outcome, Served, listed, served, testEvent } from './report';
 
-export function registerTesting(context: vscode.ExtensionContext, output: vscode.OutputChannel): void {
+/** Registers the tests; what it returns takes the language server's. */
+export function registerTesting(context: vscode.ExtensionContext, output: vscode.OutputChannel): (params: Served) => void {
   const controller = vscode.tests.createTestController('tondo', 'Tondo');
   context.subscriptions.push(controller);
   // Each project's item, and the project of each item.
@@ -32,7 +34,8 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
     await Promise.all([...dirs].map(discover));
   }
 
-  async function discover(dir: string): Promise<void> {
+  /** A project's item, made when it is first seen. */
+  function projectItem(dir: string): vscode.TestItem {
     let project = projects.get(dir);
     if (!project) {
       project = controller.createTestItem(`project:${dir}`, path.basename(dir), vscode.Uri.file(dir));
@@ -40,6 +43,11 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
       projectOf.set(project, dir);
       controller.items.add(project);
     }
+    return project;
+  }
+
+  async function discover(dir: string): Promise<void> {
+    const project = projectItem(dir);
     let ran: Ran;
     try {
       ran = await exec(['test', '--list', '--test-format', 'json'], dir);
@@ -47,18 +55,31 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
       project.error = (error as Error).message;
       return;
     }
-    let nodes;
     try {
-      nodes = listed(ran.stdout);
+      show(dir, listed(ran.stdout));
     } catch {
       project.error = ran.stderr.trim() || 'tondo test --list gave no list';
-      return;
     }
+  }
+
+  /** Shows a project's tests, keeping the items of those that stay where
+   *  they were, so that their results stay. */
+  function show(dir: string, nodes: Listed[]): void {
+    const project = projectItem(dir);
     project.error = undefined;
+    const before = new Map<string, vscode.TestItem>();
+    const gather = (item: vscode.TestItem): void =>
+      item.children.forEach((child) => {
+        before.set(child.id, child);
+        gather(child);
+      });
+    gather(project);
     const items = new Map<string, vscode.TestItem>();
     for (const node of nodes) {
-      const uri = node.file ? vscode.Uri.file(path.join(dir, node.file)) : undefined;
-      const item = controller.createTestItem(node.id, node.name, uri);
+      const uri = node.file ? vscode.Uri.file(path.resolve(dir, node.file)) : undefined;
+      const kept = before.get(node.id);
+      const item = kept && kept.uri?.fsPath === uri?.fsPath ? kept : controller.createTestItem(node.id, node.name, uri);
+      item.label = node.name;
       if (node.line) {
         const position = new vscode.Position(node.line - 1, Math.max((node.column ?? 1) - 1, 0));
         item.range = new vscode.Range(position, position);
@@ -66,16 +87,18 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
       projectOf.set(item, dir);
       items.set(node.id, item);
     }
+    const children = new Map<vscode.TestItem, vscode.TestItem[]>();
     const roots: vscode.TestItem[] = [];
     for (const node of nodes) {
       const item = items.get(node.id)!;
       const parent = node.parent ? items.get(node.parent) : undefined;
       if (parent) {
-        parent.children.add(item);
+        children.set(parent, [...(children.get(parent) ?? []), item]);
       } else {
         roots.push(item);
       }
     }
+    items.forEach((item) => item.children.replace(children.get(item) ?? []));
     project.children.replace(roots);
   }
 
@@ -85,21 +108,6 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
     }
   };
   controller.refreshHandler = () => discoverAll();
-
-  // A file saved lists its project's tests again, and a new project's.
-  const pending = new Map<string, NodeJS.Timeout>();
-  context.subscriptions.push(
-    vscode.workspace.onDidSaveTextDocument(async (document) => {
-      if (document.languageId !== 'tondo' || document.uri.scheme !== 'file') {
-        return;
-      }
-      const where = await placeOf(document.uri.fsPath).catch(() => undefined);
-      if (where?.project) {
-        clearTimeout(pending.get(where.root));
-        pending.set(where.root, setTimeout(() => void discover(where.root), 500));
-      }
-    }),
-  );
 
   /** The tests under an item, which a run starts. */
   function tests(item: vscode.TestItem, into: vscode.TestItem[]): vscode.TestItem[] {
@@ -123,89 +131,92 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
       }
     }
     for (const [dir, items] of byProject) {
+      if (token.isCancellationRequested) {
+        break;
+      }
+      // One run for everything chosen in a project.
       const whole = items.some((item) => item.id.startsWith('project:'));
-      const selections = whole ? [undefined] : items.map((item) => item.id);
+      const args = ['test', '--test-format', 'events', '--allow-empty'];
+      if (!whole) {
+        items.forEach((item) => args.push('--exact', item.id));
+      }
       const started = items.flatMap((item) => tests(item, []));
       started.forEach((item) => testRun.enqueued(item));
       const known = new Map(started.map((item) => [item.id, item]));
-      for (const selection of selections) {
-        if (token.isCancellationRequested) {
-          break;
+      const locate = (file?: string, line?: number, column?: number) =>
+        file && line ? new vscode.Location(vscode.Uri.file(path.join(dir, file)), new vscode.Position(line - 1, Math.max((column ?? 1) - 1, 0))) : undefined;
+      const ended = (outcome: Outcome, duration?: number) => {
+        const item = known.get(outcome.id);
+        if (!item) {
+          return;
         }
-        const args = ['test', '--test-format', 'events', '--allow-empty'];
-        if (selection) {
-          args.push('--exact', selection);
+        const text = outcome.message ?? outcome.verdict;
+        // A comparison shows as a diff: what was expected on the right.
+        const message = outcome.comparison
+          ? vscode.TestMessage.diff(text, outcome.comparison.right, outcome.comparison.left)
+          : new vscode.TestMessage(text);
+        message.location = locate(outcome.file, outcome.line, outcome.column);
+        message.stackTrace = outcome.stack.map((frame) => {
+          const at = locate(frame.file, frame.line, frame.column);
+          return new vscode.TestMessageStackFrame(frame.function, at?.uri, at?.range.start);
+        });
+        switch (outcome.verdict) {
+          case 'passed':
+            testRun.passed(item, duration);
+            break;
+          case 'skipped':
+            testRun.skipped(item);
+            break;
+          case 'failed':
+            testRun.failed(item, message, duration);
+            break;
+          case 'errored':
+            testRun.errored(item, message, duration);
+            break;
         }
-        let reported = false;
-        const ended = (outcome: Outcome, duration?: number) => {
-          const item = known.get(outcome.id);
-          if (!item) {
-            return;
-          }
-          const location =
-            outcome.file && outcome.line
-              ? new vscode.Location(
-                  vscode.Uri.file(path.join(dir, outcome.file)),
-                  new vscode.Position(outcome.line - 1, Math.max((outcome.column ?? 1) - 1, 0)),
-                )
-              : undefined;
-          const message = new vscode.TestMessage(outcome.message ?? outcome.verdict);
-          message.location = location;
-          switch (outcome.verdict) {
-            case 'passed':
-              testRun.passed(item, duration);
-              break;
-            case 'skipped':
-              testRun.skipped(item);
-              break;
-            case 'failed':
-              testRun.failed(item, message, duration);
-              break;
-            case 'errored':
-              testRun.errored(item, message, duration);
-              break;
-          }
-          return location;
-        };
-        const ran: Ran = await exec(args, dir, token, (line) => {
-          const event = testEvent(line);
-          switch (event?.event) {
-            case 'start':
-              if (known.has(event.id)) {
-                testRun.started(known.get(event.id)!);
-              }
-              break;
-            case 'end': {
-              // Each attempt as it ends; a retry may change it.
-              const location = ended(event.outcome, event.duration);
-              const item = known.get(event.outcome.id);
-              if (item && event.outcome.output) {
-                testRun.appendOutput(event.outcome.output.replace(/\r?\n/g, '\r\n'), location, item);
-              }
-              break;
+      };
+      let reported = false;
+      const ran: Ran = await exec(args, dir, token, (line) => {
+        const event = testEvent(line);
+        const item = event && 'id' in event ? known.get(event.id) : undefined;
+        switch (event?.event) {
+          case 'start':
+            if (item) {
+              testRun.started(item);
             }
-            case 'report':
-              reported = event.compiled;
-              // The report decides, after every retry.
-              for (const outcome of event.outcomes) {
-                ended(outcome);
-                known.delete(outcome.id);
-              }
-              break;
+            break;
+          case 'output':
+            if (item) {
+              testRun.appendOutput(event.text.replace(/\r?\n/g, '\r\n'), undefined, item);
+            }
+            break;
+          case 'end': {
+            // Each attempt as it ends; a retry may change it.
+            ended(event.outcome, event.duration);
+            const ending = known.get(event.outcome.id);
+            if (ending && event.outcome.logs) {
+              testRun.appendOutput(event.outcome.logs.replace(/\r?\n/g, '\r\n'), undefined, ending);
+            }
+            break;
           }
-        }).catch((error: Error) => ({ code: null, stdout: '', stderr: error.message }));
-        if (!reported) {
-          // It did not compile, or tondo failed: why goes on every test.
-          const message = new vscode.TestMessage(ran.stderr.trim() || 'tondo test gave no report');
-          for (const item of started.filter((item) => !selection || item.id.startsWith(selection))) {
-            testRun.errored(item, message);
-            known.delete(item.id);
-          }
-          continue;
+          case 'report':
+            reported = event.compiled;
+            // The report decides, after every retry.
+            for (const outcome of event.outcomes) {
+              ended(outcome);
+              known.delete(outcome.id);
+            }
+            break;
         }
-        if (ran.stderr.trim()) {
-          output.appendLine(ran.stderr.trimEnd());
-        }
+      }).catch((error: Error) => ({ code: null, stdout: '', stderr: error.message }));
+      if (!reported) {
+        // It did not compile, or tondo failed: why goes on every test.
+        const message = new vscode.TestMessage(ran.stderr.trim() || 'tondo test gave no report');
+        known.forEach((item) => testRun.errored(item, message));
+        continue;
+      }
+      if (ran.stderr.trim()) {
+        output.appendLine(ran.stderr.trimEnd());
       }
       // What the report does not name did not run.
       known.forEach((item) => testRun.skipped(item));
@@ -238,4 +249,9 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
   if ((vscode.workspace.workspaceFolders ?? []).some((folder) => isProject(folder.uri.fsPath))) {
     void discoverAll();
   }
+  // Then the language server says what changes as files are edited.
+  return (params) => {
+    const { dir, nodes } = served(params);
+    show(dir, nodes);
+  };
 }

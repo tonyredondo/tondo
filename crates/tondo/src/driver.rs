@@ -327,16 +327,22 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
         // refer to; its own errors would only follow from them.
         let earlier = diags.has_errors();
         let mut checked = Diagnostics::default();
-        let index = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            check::check_indexed(&module, &sources, &mut checked).1
+        let found = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            check::check_indexed(&module, &sources, &mut checked)
         }))
         .ok();
+        let (program, index) = match found {
+            // The program checked, unmonomorphized: what an editor asks of
+            // it, as its tests.
+            Some((program, index)) => (program.filter(|_| !earlier), Some(index)),
+            None => (None, None),
+        };
         if !earlier {
             diags.list.append(&mut checked.list);
         }
         drop_dependency_warnings(&mut diags, &sources, &dependencies);
         diags.sort(&sources);
-        return Ok(Analysis { sources, diags, program: None, source_id, libraries, meta, expansions, index });
+        return Ok(Analysis { sources, diags, program, source_id, libraries, meta, expansions, index });
     }
     let program = if diags.has_errors() { None } else { check::check(&module, &sources, &mut diags, meta) };
     let program = program.and_then(|program| mono::monomorphize(program, &mut diags));

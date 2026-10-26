@@ -442,6 +442,16 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
 - Las reparaciones de los diagnósticos (22.4 del lenguaje), cada una como
   acción `quickfix`, preferida si es `safe`, y una acción `source.fixAll` que
   aplica las seguras del archivo que no se tocan entre sí.
+- Code lenses *Run*, *Debug* y *Debug Live* sobre el `main` de un programa, o
+  sobre la primera sentencia de un script, en el archivo que lo contiene, con
+  las órdenes `tondo.run`, `tondo.debug` y `tondo.debugLive` y la URI del
+  archivo como argumento, que el editor implementa.
+- Si el editor lo pide con `"tests": true` en `initializationOptions`, la
+  notificación `tondo/tests` le da las suites y los tests de un proyecto cada
+  vez que cambian al analizarlo, aunque no estén guardados:
+  `{"root": <uri>, "tests": [{"id", "parent", "name", "suite", "location"}]}`,
+  con los ids de la lista de `tondo test --list` (15.4 de testing) y el
+  `parent` como id o `null`.
 
 Las posiciones cuentan bytes UTF-8 cuando el editor lo admite y unidades
 UTF-16 si no.
@@ -897,7 +907,7 @@ campos de su resultado:
 | `dump` | `tondo-dump-0.1/1` | `file` y `summary` |
 | `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `tasks`, `task`, `heap`, `objects` u `object` |
 | `reload` | `tondo-reload-0.1/1` | `changed`, `added`, `moves`, `stays` y `converted`; si no puede, `ok` falso, `message` y `restart` |
-| `version` | `tondo-version-0.1/1` | `version`, `backend` y `target` |
+| `version` | `tondo-version-0.1/1` | `version`, `backend`, `target` y `features`, lo que ofrece a las herramientas además de sus comandos: `json`, `graph`, `test-events`, `test-exact-many`, `lsp-tests` y `lsp-lenses` |
 
 Cada diagnóstico es el objeto de 22.3 del lenguaje. Las claves de los
 objetos van en orden alfabético; los paths de archivos del programa son los

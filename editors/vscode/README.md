@@ -12,8 +12,8 @@ It says so when that `tondo` is older than the extension.
 
 - **Editing**, from `tondo lsp`: diagnostics as you type, with their quick
   fixes; hover; go to definition; references; rename; completion;
-  signature help; inlay hints; symbols; semantic highlighting; and
-  formatting, on save by default.
+  signature help; inlay hints; symbols; semantic highlighting; *Run* and
+  *Debug* over `main` or a script; and formatting, on save by default.
 - **Running and debugging**, from `tondo dap`: *Run* and *Debug* over
   `fn main`, in the editor's title bar, or with F5 on any Tondo file, which
   runs its project or the file alone as a script. Breakpoints, stepping,
@@ -22,10 +22,11 @@ It says so when that `tondo` is older than the extension.
   while it runs: saving a file puts its new code in, keeping the program's
   state (Edit and Continue). *Tondo: Run Live* does the same in a terminal.
 - **Tests** in the Testing view: every test and suite of the workspace's
-  projects, with buttons beside them in the editor, each result shown as it
-  comes. A failure shows its message on the line that failed; *Debug Test*
-  runs one test alone under the debugger. Saving a file lists its project's
-  tests again, a new project's too.
+  projects, with buttons beside them in the editor, each result and what it
+  writes shown as they come. A failure shows its message on the line that
+  failed, a comparison as a diff, and its stack; *Debug Test* runs one test
+  alone under the debugger. Tests appear as you write them, before the
+  file is saved, a new project's too.
 - **Tasks**: check, build, run, test and run live, with their errors in
   the Problems panel.
 - **Agents**: VS Code's agents get the tools of `tondo mcp` (check, fix,

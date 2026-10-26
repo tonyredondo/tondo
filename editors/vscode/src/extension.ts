@@ -8,9 +8,12 @@ import { exec } from './cli';
 import { registerDebugging } from './debugging';
 import { registerTasks } from './tasks';
 import { incompatible } from './report';
+import { Served } from './report';
 import { registerTesting } from './testing';
 
 let client: LanguageClient | undefined;
+/** Takes the tests the language server sends. */
+let onTests: (params: Served) => void = () => undefined;
 
 /** The `tondo` executable, or an error that says how to get it. */
 export function tondo(): string {
@@ -28,9 +31,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const output = vscode.window.createOutputChannel('Tondo', { log: true });
   context.subscriptions.push(output);
   void checkVersion();
+  onTests = registerTesting(context, output);
   await startClient(output);
   registerDebugging(context);
-  registerTesting(context, output);
   registerTasks(context);
   // The tools of `tondo mcp`, for VS Code's agents.
   context.subscriptions.push(
@@ -85,8 +88,11 @@ async function startClient(output: vscode.LogOutputChannel): Promise<void> {
       { scheme: 'untitled', language: 'tondo' },
     ],
     outputChannel: output,
+    // Each project's tests as its files change (`tondo/tests`).
+    initializationOptions: { tests: true },
   };
   client = new LanguageClient('tondo', 'Tondo', server, options);
+  client.onNotification('tondo/tests', (params: Served) => onTests(params));
   await client.start();
 }
 

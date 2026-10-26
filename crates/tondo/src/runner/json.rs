@@ -171,7 +171,10 @@ impl Context<'_> {
             Selector::All => ("all", Value::Null),
             Selector::Filter(text) => ("filter", str(text.clone())),
             Selector::Glob(glob) => ("glob", str(glob.text())),
-            Selector::Exact(id) => ("exact", str(id.clone())),
+            Selector::Exact(ids) => match &ids[..] {
+                [id] => ("exact", str(id.clone())),
+                ids => ("exact", Value::Array(ids.iter().map(|id| str(id.clone())).collect())),
+            },
         };
         let mode = match self.options.codeowners {
             super::Codeowners::Auto => "auto",
@@ -564,19 +567,23 @@ pub(super) fn pass_event(tree: &Tree, iteration: u32, round: u32, tests: &[u32])
     ])
 }
 
-/// The event of a suite or test starting or ending (15.9).
+/// The event of a suite or test starting, writing or ending (15.9).
 pub(super) fn note_event(tree: &Tree, note: &Note, options: &Options) -> Value {
-    let (node, iteration, round) = match note {
-        Note::Started(node, context) => (*node, context.iteration, context.round),
-        Note::Ended(attempt) => (attempt.node, attempt.iteration, attempt.round),
+    let (event, node, iteration, round) = match note {
+        Note::Started(node, context) => ("start", *node, context.iteration, context.round),
+        Note::Wrote(node, context, ..) => ("output", *node, context.iteration, context.round),
+        Note::Ended(attempt) => ("end", attempt.node, attempt.iteration, attempt.round),
     };
     let mut fields = vec![
-        ("event", str(if matches!(note, Note::Started(..)) { "start" } else { "end" })),
+        ("event", str(event)),
         ("id", str(tree.id(node))),
         ("suite", Value::Bool(tree.suite(node))),
         ("iteration", int(iteration as usize)),
         ("round", int(round as usize)),
     ];
+    if let Note::Wrote(_, _, stdout, text) = note {
+        fields.push((if *stdout { "stdout" } else { "stderr" }, stream(text)));
+    }
     if let Note::Ended(attempt) = note {
         fields.extend([
             ("status", str(status_name(&attempt.status))),
@@ -622,12 +629,20 @@ pub(super) fn failure(status: &Status, options: &Options) -> Value {
         Status::Crashed(how) => ("crashed", None, None, how.clone(), None),
         _ => return Value::Null,
     };
+    // The sides of a comparison asserted, as language 15.8 shows them.
+    let comparison = match message.split_once("\n  left:  ").and_then(|(_, rest)| rest.split_once("\n  right: ")) {
+        Some((left, right)) if code.as_deref() == Some("P0007") => {
+            obj(vec![("left", str(left)), ("right", str(right))])
+        }
+        _ => Value::Null,
+    };
     obj(vec![
         ("kind", str(kind)),
         ("code", opt(code.as_deref())),
         ("error_type", opt(error_type.as_deref())),
         ("message", str(message)),
         ("source", source(location.as_deref())),
+        ("comparison", comparison),
         ("stack", Value::Array(stack)),
     ])
 }
