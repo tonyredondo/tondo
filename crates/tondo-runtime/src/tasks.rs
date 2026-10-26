@@ -174,20 +174,45 @@ impl Drop for Stack {
 unsafe impl Send for Stack {}
 
 /// Task stacks kept for reuse: mapping and unmapping one per task costs
-/// more than the task itself.
+/// more than the task itself. Each thread keeps a few, and trades them
+/// with the shared ones a batch at a time, since a task often ends on
+/// another thread than the one that started it.
 static SPARE_STACKS: Mutex<Vec<Stack>> = Mutex::new(Vec::new());
 const SPARE_LIMIT: usize = 256;
+const BATCH: usize = 16;
+
+thread_local! {
+    static OWN_STACKS: std::cell::RefCell<Vec<Stack>> = const { std::cell::RefCell::new(Vec::new()) };
+}
 
 fn task_stack() -> Stack {
-    let spare = SPARE_STACKS.lock().unwrap_or_else(|e| e.into_inner()).pop();
-    spare.unwrap_or_else(|| Stack::new(TASK_STACK))
+    OWN_STACKS
+        .with(|own| {
+            let mut own = own.borrow_mut();
+            if own.is_empty() {
+                let mut spare = SPARE_STACKS.lock().unwrap_or_else(|e| e.into_inner());
+                let at = spare.len().saturating_sub(BATCH);
+                own.extend(spare.drain(at..));
+            }
+            own.pop()
+        })
+        .unwrap_or_else(|| Stack::new(TASK_STACK))
 }
 
 fn recycle(stack: Stack) {
-    let mut spare = SPARE_STACKS.lock().unwrap_or_else(|e| e.into_inner());
-    if stack.size == TASK_STACK && spare.len() < SPARE_LIMIT {
-        spare.push(stack);
+    if stack.size != TASK_STACK {
+        return;
     }
+    OWN_STACKS.with(|own| {
+        let mut own = own.borrow_mut();
+        own.push(stack);
+        if own.len() > 2 * BATCH {
+            let mut spare = SPARE_STACKS.lock().unwrap_or_else(|e| e.into_inner());
+            let room = SPARE_LIMIT.saturating_sub(spare.len()).min(BATCH);
+            let at = own.len() - BATCH;
+            spare.extend(own.drain(at..).take(room));
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -312,6 +337,9 @@ struct Queue {
     idle: usize,
     /// A worker waits for the network's events instead (`poll`).
     polling: bool,
+    /// A worker was woken for the tasks scheduled and has not looked at
+    /// the queue yet: it takes them, so no other is woken for them.
+    waking: bool,
     /// Waits for the network's events, which the watcher counts.
     polls: u64,
     /// Tasks taken from the queue, to look at the network now and then.
@@ -333,6 +361,7 @@ static QUEUE: Mutex<Queue> = Mutex::new(Queue {
     workers: 1,
     idle: 0,
     polling: false,
+    waking: false,
     polls: 0,
     picks: 0,
     surplus: 0,
@@ -410,9 +439,13 @@ fn queue() -> MutexGuard<'static, Queue> {
 fn schedule(task: *mut Task) {
     let mut queue = queue();
     queue.runnable.push_back(task);
-    if LOOKS_NEXT.with(|next| next.replace(false)) {
+    if LOOKS_NEXT.with(|next| next.replace(false)) || queue.waking {
         return;
     }
+    // One worker woken at a time, not one for each task: the one woken
+    // wakes the next if it finds more, as Go's scheduler wakes a thread
+    // only when none is looking for work.
+    queue.waking = queue.idle > 0;
     wake_one(queue);
 }
 
@@ -929,6 +962,10 @@ fn work(main: bool) -> i32 {
                     _ => queue.runnable.pop_front(),
                 };
                 if let Some(task) = next {
+                    if !queue.runnable.is_empty() && queue.idle > 0 && !queue.waking {
+                        queue.waking = true;
+                        READY.notify_one();
+                    }
                     break task;
                 }
                 // With sockets to poll, an idle worker waits for their
@@ -961,6 +998,7 @@ fn work(main: bool) -> i32 {
                     None => READY.wait(queue).unwrap_or_else(|e| e.into_inner()),
                 };
                 queue.idle -= 1;
+                queue.waking = false;
             }
         };
         run(task);
@@ -1005,7 +1043,7 @@ fn run(task: *mut Task) {
             if let Some(stack) = task.stack.take() {
                 recycle(stack);
             }
-            tasks().remove(&(&*task as *const Task as usize));
+            unregister(&*task as *const Task as usize);
             drop(task);
             super::clock::stopped(in_domain);
             if was_main {
@@ -1492,10 +1530,68 @@ extern "C" fn trampoline() -> ! {
 
 /// Every task created and not yet freed: a panic cancels them, and a test
 /// runner counts them before and after a test.
-static TASKS: std::sync::LazyLock<Mutex<std::collections::HashSet<usize>>> = std::sync::LazyLock::new(Default::default);
+/// The tasks alive, in shards that a task's address picks, so that the
+/// threads that start and end tasks seldom wait for each other.
+static TASKS: [Mutex<Tasks>; SHARDS] = [const { Mutex::new(Tasks::with_hasher(Shuffle)) }; SHARDS];
+const SHARDS: usize = 16;
 
-fn tasks() -> std::sync::MutexGuard<'static, std::collections::HashSet<usize>> {
-    TASKS.lock().unwrap_or_else(|e| e.into_inner())
+type Tasks = std::collections::HashSet<usize, Shuffle>;
+
+/// A task's address, its bits mixed: what a set of tasks hashes it by.
+#[derive(Clone, Copy, Default)]
+struct Shuffle;
+
+impl std::hash::BuildHasher for Shuffle {
+    type Hasher = Shuffled;
+    fn build_hasher(&self) -> Shuffled {
+        Shuffled(0)
+    }
+}
+
+struct Shuffled(u64);
+
+impl std::hash::Hasher for Shuffled {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.0 = (self.0 ^ byte as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        }
+    }
+    fn write_usize(&mut self, value: usize) {
+        self.0 = (value as u64 >> 6).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+}
+
+fn shard(task: usize) -> std::sync::MutexGuard<'static, Tasks> {
+    TASKS[(task >> 6) % SHARDS].lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn register(task: usize) {
+    shard(task).insert(task);
+}
+
+fn unregister(task: usize) {
+    shard(task).remove(&task);
+}
+
+/// Every task alive, with every shard locked, in order: while they are, no
+/// task is freed.
+struct All(Vec<std::sync::MutexGuard<'static, Tasks>>);
+
+impl All {
+    fn iter(&self) -> impl Iterator<Item = &usize> {
+        self.0.iter().flat_map(|shard| shard.iter())
+    }
+
+    fn len(&self) -> usize {
+        self.0.iter().map(|shard| shard.len()).sum()
+    }
+}
+
+fn tasks() -> All {
+    All(TASKS.iter().map(|shard| shard.lock().unwrap_or_else(|e| e.into_inner())).collect())
 }
 
 /// What the scheduler holds now, for `tondo counters`.
@@ -1531,7 +1627,7 @@ pub(crate) fn live_tasks() -> usize {
 
 /// The tasks alive now.
 pub(crate) fn alive() -> std::collections::HashSet<usize> {
-    tasks().clone()
+    tasks().iter().copied().collect()
 }
 
 /// The tasks alive now that were not in `before`: where each waits, or
@@ -1665,7 +1761,7 @@ fn new_task(stack: Stack, body: *mut u8, code: *const u8, kind: ResultKind, join
         origin: None,
         labels: std::sync::atomic::AtomicU32::new(labels()),
     }));
-    tasks().insert(task as usize);
+    register(task as usize);
     super::clock::woke(task);
     task
 }
