@@ -5405,6 +5405,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 Val::Scalar(self.e.call_rt(Rt::Spawn, &[object, kind, size, align, release, visit]).unwrap())
             }
             Rvalue::Select(cases, blocking, span) => Val::Scalar(self.select(cases, *blocking, *span)),
+            // A live build's patches link only the runtime's functions.
+            Rvalue::Cancelled if self.e.cg.live() => Val::Scalar(self.e.call_rt(Rt::Cancelled, &[]).unwrap()),
             Rvalue::Cancelled => {
                 // Without a reason to ask the runtime, nearly always, no call.
                 let id = self.e.cg.attention();
