@@ -298,7 +298,7 @@
   "scripts": {
     "compile": "tsc -p . && esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --minify --outfile=out/extension.js",
     "watch": "tsc -w -p .",
-    "test": "npm run compile && node --test out/test/",
+    "test": "npm run compile && node --test \"out/test/*.test.js\"",
     "package": "npm run compile && vsce package --skip-license"
   },
   "dependencies": {
