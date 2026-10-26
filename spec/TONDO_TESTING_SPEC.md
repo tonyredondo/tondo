@@ -2121,6 +2121,7 @@ tondo test [<project> | --project <dir>]
            [--bench [--bench-time <seconds>] [--save-baseline <name|path>]
                     [--baseline <name|path> | --against <revision>]
                     [--max-regression <percent>]]
+           [--profile <cpu|memory>]
            [--show-output]
            [--deny-skips]
            [--allow-flaky]
@@ -2377,6 +2378,21 @@ test app::unit::app::fibonacci ... ok
 benchmarks that regressed beyond 5%:
   app::unit::app::fibonacci fib 20: 79.2% slower
 ~~~
+
+### 10.5 Perfiles
+
+`--profile cpu` escribe un perfil de cada test, y con `--bench` de cada
+benchmark, en el formato de pprof de 7.15 de la especificación del toolchain:
+las muestras de cada milisegundo de procesador mientras el test corre, o
+mientras el benchmark toma sus muestras, sin el calentamiento ni la tanda que
+cuenta. `--profile memory` cuenta en su lugar lo que asignan, como lo cuenta
+`tondo profile --memory`, lo que hace más lenta cada asignación: un
+benchmark medido así no se compara con uno medido sin él. Cada perfil va a
+`target/profiles/<id>.<cpu|memory>.pprof` del proyecto, con `::` del id como
+`.`, o `<id>--<benchmark>.<cpu|memory>.pprof`, con los caracteres que no son
+letras, dígitos, `.`, `_` ni `-` como `_`. Un test demasiado corto para tener
+una muestra no tiene perfil. La salida para personas lista los perfiles al
+final, y el reporte, en `profiles` (15.1).
 
 ## 11. Frontera con `assert` y `std.testing`
 
@@ -3037,6 +3053,7 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
     "timeout_ms": 60000
   },
   "bench": null,
+  "profiles": null,
   "suites": [
     {
       "id": "application::unit::math::arithmetic",
@@ -3171,7 +3188,9 @@ trabajadores y el timeout efectivo por entrada. `bench` es `null` sin
 `--bench`, y con él dice cuánto midió cada benchmark y dónde (15.11). Cada
 test dice con `bench` si es un benchmark (10.4), y cada intento da en
 `benchmarks` lo que midieron los suyos, en el orden en que terminaron: vacío
-sin `--bench`.
+sin `--bench`. `profiles` es `null` sin `--profile`, y con él da cada perfil
+escrito como `{"test", "bench", "profile"}`: el id del test, el nombre del
+benchmark o `null`, y la ruta del archivo desde el directorio del proyecto.
 
 `ownership.mode` es `auto`, `explicit` o `none`. `source` y `sha256` son strings
 cuando se utilizó un CODEOWNERS y `null` en otro caso. `source` siempre es
@@ -4067,7 +4086,8 @@ los ejecutan en cada plataforma de CI. El compilador nativo implementa hoy:
   `--bench-time`, `P2009` y su reporte; las líneas base con
   `--save-baseline`, `--baseline` y `--against`, y `--max-regression`
   (10.4, 15.11, 15.12);
-- los reportes para personas en Markdown y HTML (15.13).
+- los reportes para personas en Markdown y HTML (15.13);
+- los perfiles de tests y benchmarks con `--profile` (10.5).
 
 Queda pendiente rechazar la mezcla de `Instant` de dominios distintos (7.9).
 

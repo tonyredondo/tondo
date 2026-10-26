@@ -8,6 +8,9 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 static ON: AtomicBool = AtomicBool::new(false);
+/// Whether threads are sampled: while a tool traces the program, or while
+/// a test build profiles its tests.
+static SAMPLING: AtomicBool = AtomicBool::new(false);
 
 /// Whether a tool traces the program now.
 #[inline]
@@ -199,7 +202,7 @@ extern "C" fn sample(_: i32, info: *mut libc::siginfo_t, context: *mut libc::c_v
     crate::tasks::answer_where(pc, fp);
     // On macOS a worker is signalled whether it runs or waits: only one
     // that runs a task makes a sample.
-    if !on() || (cfg!(target_os = "macos") && crate::tasks::current().is_null()) {
+    if !SAMPLING.load(Ordering::Relaxed) || (cfg!(target_os = "macos") && crate::tasks::current().is_null()) {
         unsafe { *errno = saved };
         return;
     }
@@ -283,17 +286,31 @@ pub(crate) fn install() {
 }
 
 pub(crate) fn start() {
+    ON.store(true, Ordering::SeqCst);
+    sample_threads();
+}
+
+pub(crate) fn stop() {
+    stop_sampling();
+    ON.store(false, Ordering::SeqCst);
+}
+
+/// Samples the threads every millisecond of processor time, without
+/// recording events.
+pub(crate) fn sample_threads() {
     install();
     if RING.load(Ordering::Acquire).is_null() {
         RING.store(crate::zeroed(SLOTS), Ordering::Release);
     }
-    ON.store(true, Ordering::SeqCst);
+    if SAMPLING.swap(true, Ordering::SeqCst) {
+        return;
+    }
     // macOS sends the signal of the process's processor time to whichever
     // thread it likes, mostly the main one, however idle; a thread of the
     // runtime signals each worker every millisecond instead.
     if cfg!(target_os = "macos") {
         let _ = crate::tasks::try_spawn_thread(Some(64 * 1024), || {
-            while on() {
+            while SAMPLING.load(Ordering::Relaxed) {
                 crate::tasks::signal_workers(libc::SIGPROF);
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
@@ -303,9 +320,9 @@ pub(crate) fn start() {
     }
 }
 
-pub(crate) fn stop() {
+fn stop_sampling() {
     timer(0);
-    ON.store(false, Ordering::SeqCst);
+    SAMPLING.store(false, Ordering::SeqCst);
 }
 
 /// Raises `SIGPROF` every `micros` of the process's processor time, or

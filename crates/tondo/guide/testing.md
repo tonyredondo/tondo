@@ -95,6 +95,9 @@ test parsing {
   `target/bench/main.json`, and `--baseline main` compares with it: each
   benchmark says how much it changed, and whether that is `slower`,
   `faster` or the `same` with 95% confidence.
+- `--profile cpu` (or `memory`) writes a profile of each test, or with
+  `--bench` of what each benchmark measured, to `target/profiles`, which
+  `tondo profile show` reads (topic `stdlib`).
 - `--against main` builds the tests of a git revision and runs each next to
   these on the same machine; with `--max-regression 5`, a benchmark 5%
   slower, or allocating more, fails the run: a gate for CI.

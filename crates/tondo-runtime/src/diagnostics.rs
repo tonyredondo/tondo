@@ -964,14 +964,14 @@ pub(crate) fn crash_dump(reason: &str, message: &str, here: Vec<usize>, stop: bo
 
 /// The frames a document refers to by address, each described once.
 #[derive(Default)]
-struct Frames {
+pub(crate) struct Frames {
     described: std::collections::HashSet<usize>,
-    json: String,
+    pub(crate) json: String,
 }
 
 impl Frames {
     /// The addresses as a JSON array, describing the new ones.
-    fn list(&mut self, addresses: &[usize]) -> String {
+    pub(crate) fn list(&mut self, addresses: &[usize]) -> String {
         let mut out = String::from("[");
         for (index, &address) in addresses.iter().enumerate() {
             let comma = if index == 0 { "" } else { "," };

@@ -125,7 +125,7 @@ pub const COMMANDS: &[Command] = &[
             "          [--report json=<path> | junit=<path> | coverage=<path> | lcov=<path> | markdown=<path>",
             "                    | html=<path>]... [--coverage]",
             "          [--bench [--bench-time <seconds>] [--save-baseline <name>] [--baseline <name> | --against <rev>]",
-            "                   [--max-regression <percent>]]",
+            "                   [--max-regression <percent>]] [--profile cpu|memory]",
             "          [--diagnostic-format human|json] [--artifacts <dir>] [--update-snapshots]",
             "          [--static] [--debug] [--library] [--target <target>]",
         ],

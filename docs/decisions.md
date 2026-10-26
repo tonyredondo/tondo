@@ -2370,3 +2370,28 @@ turned on only for the tools. Besides the samples of live memory, each
 stack's samples now add up to what it allocated, which is what to cut
 first. `show` credits each line of the program with what the runtime and
 the standard library do for it, so the lines it lists are the program's.
+
+## 2026-10-26 — Profiles of tests and benchmarks
+
+A benchmark says how fast; its profile says why, so the two come from the
+same run. `tondo test --profile` has each worker sample its threads, or
+count its allocations, only while a test runs or a benchmark takes its
+samples: the warm-up and the batch that counts allocations are left out,
+so the profile is of what was measured. The worker writes what it
+collected as the trace channel does, frames named, and `tondo test` makes
+each into pprof, named after its test and benchmark. Sampling the threads
+records no events, which nobody would read; counting allocations slows
+them, so a benchmark measured that way says so in its documentation.
+
+## 2026-10-26 — Profiles of tests and benchmarks
+
+A benchmark says how fast; its profile says why, so the two come from the
+same run. `tondo test --profile` has each worker sample its threads, or
+count its allocations, only while a test runs or a benchmark takes its
+samples: the warm-up and the batch that counts allocations are left out,
+so the profile is of what was measured. The worker writes what it
+collected as the trace channel does, frames named, and `tondo test` makes
+each into pprof, named after its test and benchmark. Sampling the threads
+records no events, which nobody would read; counting allocations slows
+them, so a benchmark profiled for memory is not compared with one that
+was not.

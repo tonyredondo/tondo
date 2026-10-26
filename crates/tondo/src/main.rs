@@ -295,6 +295,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         save_baseline: None,
         baseline: None,
         max_regression: None,
+        profile: None,
     };
     let mut diagnostics_json = false;
     let (mut bench, mut bench_time) = (false, 3.0);
@@ -362,6 +363,13 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
                     .ok()
                     .filter(|s| s.is_finite() && *s > 0.0)
                     .ok_or_else(|| usage("--bench-time takes a positive number of seconds".into()))?;
+            }
+            "--profile" => {
+                options.profile = Some(match value()?.as_str() {
+                    "cpu" => tondo::profile::Kind::Cpu,
+                    "memory" => tondo::profile::Kind::Memory,
+                    other => return Err(usage(format!("--profile is cpu or memory, not {other}"))),
+                });
             }
             "--save-baseline" => save = Some(value()?),
             "--baseline" => baseline = Some(value()?),

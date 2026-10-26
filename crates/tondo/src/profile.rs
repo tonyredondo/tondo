@@ -21,7 +21,7 @@ pub enum Kind {
 }
 
 impl Kind {
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Kind::Cpu => "cpu",
             Kind::Memory => "memory",
@@ -67,7 +67,50 @@ pub fn profile(
         frames.extend(more.clone());
     }
     let program = recorded.info["program"].as_str().unwrap_or_default().to_string();
-    let names = Names::new(&frames, &program);
+    let (builder, count) = build(kind, &program, &frames, &recorded.recording.samples, recorded.asked.as_ref())?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let elapsed = recorded.started.elapsed();
+    let bytes = builder.finish((now - elapsed).as_nanos() as i64, elapsed.as_nanos() as i64);
+    let path = output.unwrap_or_else(|| {
+        PathBuf::from(format!("{}-{}.{}.pprof", observe::program_name(&recorded.info), recorded.pid, kind.name()))
+    });
+    std::fs::write(&path, bytes).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    if as_json {
+        let fields = json!({
+            "profile": path,
+            "kind": kind.name(),
+            "samples": count,
+            "duration_ms": elapsed.as_millis() as u64,
+            "lost": recorded.recording.lost,
+            "ended": recorded.end,
+        });
+        crate::cli::print_json("profile", true, fields);
+        return Ok(());
+    }
+    let what = match kind {
+        Kind::Cpu => format!("{count} samples of 1 ms of processor time"),
+        Kind::Memory => format!("{count} samples of memory"),
+        Kind::Tasks => format!("{count} tasks"),
+    };
+    let mut said = format!("{what}: {}; `tondo profile show {}` shows where", path.display(), path.display());
+    if let Some(end) = &recorded.end {
+        said.push_str(&format!("; {end}"));
+    }
+    eprintln!("tondo: {said}");
+    Ok(())
+}
+
+/// The profile of `kind` of what a program said: the samples of its
+/// threads, or the answer it gave to what it was asked, `memory` or
+/// `dump`, with the frames they name; and how many samples it has.
+pub(crate) fn build(
+    kind: Kind,
+    program: &str,
+    frames: &serde_json::Map<String, Value>,
+    samples: &[Value],
+    asked: Option<&Value>,
+) -> Result<(Builder, usize), String> {
+    let names = Names::new(frames, program);
     let stack = |addresses: &Value| -> Vec<(u64, String, String, i64)> {
         addresses
             .as_array()
@@ -97,18 +140,18 @@ pub fn profile(
             .collect();
         builder.sample(&frames, values, labels);
     };
-    let (mut builder, count) = match kind {
+    match kind {
         Kind::Cpu => {
             let mut builder =
-                Builder::new(&program, &[("samples", "count"), ("cpu", "nanoseconds")], ("cpu", "nanoseconds"), PERIOD);
-            for sample in &recorded.recording.samples {
+                Builder::new(program, &[("samples", "count"), ("cpu", "nanoseconds")], ("cpu", "nanoseconds"), PERIOD);
+            for sample in samples {
                 let thread = sample[1].to_string();
                 add(&mut builder, &sample[2], &[1, PERIOD], &[("thread", &thread)]);
             }
-            (builder, recorded.recording.samples.len())
+            Ok((builder, samples.len()))
         }
         Kind::Memory => {
-            let memory = recorded.asked.as_ref().map(|a| a["memory"].clone()).filter(|m| m.is_object()).ok_or(
+            let memory = asked.map(|a| a["memory"].clone()).filter(|m| m.is_object()).ok_or(
                 "the program said nothing of its memory: it ended before it was asked, or it does not sample it",
             )?;
             let rate = memory["rate"].as_f64().unwrap_or(512.0 * 1024.0);
@@ -118,7 +161,7 @@ pub fn profile(
                 ("inuse_objects", "count"),
                 ("inuse_space", "bytes"),
             ];
-            let mut builder = Builder::new(&program, &types, ("space", "bytes"), rate as i64);
+            let mut builder = Builder::new(program, &types, ("space", "bytes"), rate as i64);
             builder.default_type("inuse_space");
             let samples = memory["samples"].as_array().cloned().unwrap_or_default();
             for sample in &samples {
@@ -134,52 +177,21 @@ pub fn profile(
                     (entry["objects"].as_f64().unwrap_or(0.0), entry["bytes"].as_f64().unwrap_or(0.0));
                 add(&mut builder, &entry["stack"], &[objects.round() as i64, bytes.round() as i64, 0, 0], &[]);
             }
-            (builder, samples.len() + allocated.len())
+            Ok((builder, samples.len() + allocated.len()))
         }
         Kind::Tasks => {
-            let dump = recorded.asked.as_ref().filter(|d| d["tasks"].is_array()).ok_or(
+            let dump = asked.filter(|d| d["tasks"].is_array()).ok_or(
                 "the program ended before its tasks could be seen: give --duration to profile them while it runs",
             )?;
-            let mut builder = Builder::new(&program, &[("tasks", "count")], ("tasks", "count"), 1);
+            let mut builder = Builder::new(program, &[("tasks", "count")], ("tasks", "count"), 1);
             let tasks = dump["tasks"].as_array().cloned().unwrap_or_default();
             for task in &tasks {
                 let state = task["state"].as_str().unwrap_or_default().to_string();
                 add(&mut builder, &task["stack"], &[1], &[("state", &state)]);
             }
-            (builder, tasks.len())
+            Ok((builder, tasks.len()))
         }
-    };
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-    let elapsed = recorded.started.elapsed();
-    let bytes = std::mem::replace(&mut builder, Builder::new("", &[], ("", ""), 0))
-        .finish((now - elapsed).as_nanos() as i64, elapsed.as_nanos() as i64);
-    let path = output.unwrap_or_else(|| {
-        PathBuf::from(format!("{}-{}.{}.pprof", observe::program_name(&recorded.info), recorded.pid, kind.name()))
-    });
-    std::fs::write(&path, bytes).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-    if as_json {
-        let fields = json!({
-            "profile": path,
-            "kind": kind.name(),
-            "samples": count,
-            "duration_ms": elapsed.as_millis() as u64,
-            "lost": recorded.recording.lost,
-            "ended": recorded.end,
-        });
-        crate::cli::print_json("profile", true, fields);
-        return Ok(());
     }
-    let what = match kind {
-        Kind::Cpu => format!("{count} samples of 1 ms of processor time"),
-        Kind::Memory => format!("{count} samples of memory"),
-        Kind::Tasks => format!("{count} tasks"),
-    };
-    let mut said = format!("{what}: {}; `tondo profile show {}` shows where", path.display(), path.display());
-    if let Some(end) = &recorded.end {
-        said.push_str(&format!("; {end}"));
-    }
-    eprintln!("tondo: {said}");
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -479,13 +491,11 @@ pub fn show(
         crate::cli::print_json("profile-show", true, fields);
         return Ok(());
     }
-    let mut out = format!(
-        "{} of {}, {} in all over {:.2}s\n",
-        hot.kind,
-        path.display(),
-        amount(hot.total, &hot.unit),
-        profile.duration as f64 / 1e9
-    );
+    let over = match profile.duration {
+        0 => String::new(),
+        nanos => format!(" over {:.2}s", nanos as f64 / 1e9),
+    };
+    let mut out = format!("{} of {}, {} in all{over}\n", hot.kind, path.display(), amount(hot.total, &hot.unit));
     if lines {
         out.push_str(&format!("{:>9} {:>6} {:>9} {:>6}  line\n", "flat", "flat%", "cum", "cum%"));
         for (file, line, function, flat, cum) in hot.lines.iter().take(top) {

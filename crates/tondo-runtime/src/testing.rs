@@ -142,6 +142,7 @@ pub unsafe extern "C" fn tondo_rt_test_start(table: *const Node, count: usize) {
     };
     *RUNNER.lock().unwrap_or_else(|e| e.into_inner()) = Some(runner);
     ACTIVE.store(true, Ordering::Relaxed);
+    crate::profiling::start();
     if std::env::var_os("TONDO_TEST_PLAN").is_some() {
         stop_on_request();
     }
@@ -236,9 +237,18 @@ pub unsafe extern "C" fn tondo_rt_test_members(members: *const Member, count: us
             Some((member, node))
         });
         let Some(Some((member, node))) = next else { break };
-        let state = (!with(|r| r.suites[node as usize]).unwrap_or(true)).then(State::save);
+        let test = !with(|r| r.suites[node as usize]).unwrap_or(true);
+        let state = test.then(State::save);
+        // A test is profiled while it runs, a benchmark while it measures.
+        let profiled = test && crate::profiling::on() && !crate::bench::measures();
+        if profiled {
+            crate::profiling::resume();
+        }
         let member = &members[member];
         unsafe { (member.glue)(member.object) };
+        if profiled {
+            crate::profiling::write(node, None);
+        }
         // A panic in another task cancelled this one: its cleanups run as
         // it returns, and the worker ends.
         if crate::tasks::cancelled() {

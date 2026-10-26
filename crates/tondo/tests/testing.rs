@@ -1221,3 +1221,58 @@ test adding {
     let page = std::fs::read_to_string(&html).unwrap();
     assert!(page.contains("<td>add | sum</td>") && page.contains("<svg"), "{page}");
 }
+
+#[test]
+fn profiles_tests_and_benchmarks() {
+    let tests = "\
+import std.testing
+
+fn fib(n: Int): Int {
+    if n < 2 {
+        return n
+    }
+    fib(n - 1) + fib(n - 2)
+}
+
+test slow {
+    assert(fib(30) == 832040)
+}
+
+test joining {
+    testing.bench(\"join\", () { \"{[1, 2, 3]}\" })
+}
+";
+    let dir = project("profiles", tests);
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--profile", "cpu"]);
+    assert_eq!(status, 0, "{stderr}");
+    assert!(
+        stdout.contains("profiles, for `tondo profile show <file>`:\n  target/profiles/app.unit.app.slow.cpu.pprof\n"),
+        "{stdout}"
+    );
+    let (shown, stderr, _) = tondo(&dir, &["profile", "show", "target/profiles/app.unit.app.slow.cpu.pprof", "--json"]);
+    let shown: serde_json::Value = serde_json::from_str(&shown).unwrap_or_else(|_| panic!("{stderr}"));
+    assert_eq!(shown["functions"][0]["function"], "fib", "{shown}");
+    assert_eq!(shown["lines"][0]["file"], "src/main_test.to", "{shown}");
+    // A benchmark's profile covers what it measures.
+    let args = ["test", "--bench", "--bench-time", "0.2", "--profile", "memory", "--test-format", "json"];
+    let (stdout, _, _) = tondo(&dir, &args);
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let profile = &report["profiles"][0];
+    assert_eq!(
+        (&profile["test"], &profile["bench"]),
+        (&serde_json::json!("app::unit::app::joining"), &serde_json::json!("join"))
+    );
+    assert_eq!(profile["profile"], "target/profiles/app.unit.app.joining--join.memory.pprof");
+    let (shown, _, _) =
+        tondo(&dir, &["profile", "show", profile["profile"].as_str().unwrap(), "--sample", "alloc_space", "--json"]);
+    let shown: serde_json::Value = serde_json::from_str(&shown).unwrap();
+    assert!(shown["total"].as_i64().unwrap() > 0, "{shown}");
+    assert_eq!(
+        (&shown["lines"][0]["file"], &shown["lines"][0]["line"]),
+        (&serde_json::json!("src/main_test.to"), &serde_json::json!(15)),
+        "{shown}"
+    );
+    let (_, stderr, status) = tondo(&dir, &["test", "--profile", "time"]);
+    assert_eq!(status, 2);
+    assert!(stderr.contains("--profile is cpu or memory, not time"), "{stderr}");
+}

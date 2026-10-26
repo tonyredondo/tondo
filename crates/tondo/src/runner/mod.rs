@@ -89,6 +89,8 @@ pub struct Options {
     /// `--max-regression`, as a fraction: a benchmark slower or allocating
     /// more than that fails the run.
     pub max_regression: Option<f64>,
+    /// `--profile`: a profile of each test, or of each benchmark (10.5).
+    pub profile: Option<crate::profile::Kind>,
 }
 
 /// What `--bench` compares with: a baseline saved before, or the tests of
@@ -423,6 +425,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         snapshots: (&snapshots.before, &snapshots.before, None),
         compiled: true,
         baselines: &none,
+        profiles: &[],
     };
     if options.list {
         if options.json {
@@ -459,12 +462,22 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         let _ = std::fs::remove_dir_all(counts);
         std::fs::create_dir_all(counts).map_err(|e| Failure::Output(e.to_string()))?;
     }
+    // With profiles, where the workers write what they collected.
+    let collected = options.profile.map(|kind| {
+        let dir = std::env::temp_dir().join(format!("tondo-profiles-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        (kind, dir)
+    });
+    if let Some((_, dir)) = &collected {
+        std::fs::create_dir_all(dir).map_err(|e| Failure::Output(e.to_string()))?;
+    }
     let stores = worker::Stores {
         artifacts: &artifacts,
         snapshots: &snapshots,
         entries: &entries,
         update: options.update_snapshots,
         counts: counts.as_deref(),
+        profiles: collected.as_ref().map(|(kind, dir)| (*kind, dir.as_path())),
     };
     let run = worker::Run { executable, dir, tree, options, stores, bench: options.bench };
     interrupt::listen();
@@ -491,6 +504,14 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     }
     let aggregates = aggregates(tree, &attempts);
     let mut failed = failed(&aggregates, &attempts, options);
+    let profiles = match &collected {
+        Some((kind, from)) => {
+            let written = profiled(tree, executable, *kind, from, dir, Path::new("target/profiles"));
+            let _ = std::fs::remove_dir_all(from);
+            written.map_err(Failure::Output)?
+        }
+        None => Vec::new(),
+    };
     let baselines = std::mem::take(&mut printer.baselines);
     // What each test's benchmarks measured, the last time it ran.
     let measured: Vec<(String, &Benchmark)> = aggregates
@@ -538,6 +559,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     };
     context.rounds = &rounds;
     context.baselines = &baselines;
+    context.profiles = &profiles;
     let report = context.report(&aggregates);
     let covered = match &counts {
         Some(counts) => {
@@ -552,6 +574,12 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         say!("{}", json::reported(&report, options));
     } else {
         human::report(tree, &printer, &aggregates, &owners, options, failed, started.elapsed());
+        if !profiles.is_empty() {
+            say!("\nprofiles, for `tondo profile show <file>`:");
+            for (_, _, path) in &profiles {
+                say!("  {}", path.display());
+            }
+        }
         if let Some(covered) = covered.as_ref().filter(|_| options.coverage) {
             print!("{}", covered.summary());
         }
@@ -608,6 +636,60 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         return Err(Failure::Output(error));
     }
     Ok(failed)
+}
+
+/// The profiles the workers collected in `from`, each made into pprof in
+/// `to` of the project `dir`, named after its test and benchmark: each
+/// test's id, benchmark and file, from the project's directory.
+fn profiled(
+    tree: &Tree,
+    executable: &Path,
+    kind: crate::profile::Kind,
+    from: &Path,
+    dir: &Path,
+    to: &Path,
+) -> Result<Vec<(String, Option<String>, PathBuf)>, String> {
+    let mut written = Vec::new();
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(from).into_iter().flatten().flatten().map(|e| e.path()).collect();
+    entries.sort();
+    if !entries.is_empty() {
+        let at = dir.join(to);
+        std::fs::create_dir_all(&at).map_err(|e| format!("cannot create {}: {e}", at.display()))?;
+    }
+    for entry in entries {
+        let Ok(collected) = serde_json::from_slice::<serde_json::Value>(&std::fs::read(&entry).unwrap_or_default())
+        else {
+            continue;
+        };
+        let Some(node) = collected["node"].as_u64().filter(|&n| (n as usize) < tree.nodes.len()) else { continue };
+        let test = tree.id(node as u32).to_string();
+        let bench = collected["bench"].as_str().map(str::to_string);
+        let empty = serde_json::Map::new();
+        let frames = collected["frames"].as_object().unwrap_or(&empty);
+        let samples = collected["samples"].as_array().cloned().unwrap_or_default();
+        let memory = serde_json::json!({ "memory": { "rate": collected["rate"], "samples": [], "allocated": collected["allocated"] } });
+        let program = executable.display().to_string();
+        let (builder, count) = crate::profile::build(kind, &program, frames, &samples, Some(&memory))?;
+        // A test too short to be sampled has no profile.
+        if count == 0 {
+            continue;
+        }
+        // From the first sample to the last.
+        let times: Vec<i64> = samples.iter().filter_map(|s| s[0].as_i64()).collect();
+        let duration = times.iter().max().zip(times.iter().min()).map_or(0, |(last, first)| last - first);
+        let name = |text: &str| -> String {
+            text.chars().map(|c| if c.is_ascii_alphanumeric() || "._-".contains(c) { c } else { '_' }).collect()
+        };
+        let mut file = test.replace("::", ".");
+        if let Some(bench) = &bench {
+            file.push_str(&format!("--{}", name(bench)));
+        }
+        let path = to.join(format!("{}.{}.pprof", name(&file), kind.name()));
+        let bytes = builder.finish(0, duration);
+        std::fs::write(dir.join(&path), bytes).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+        written.push((test, bench, path));
+    }
+    Ok(written)
 }
 
 /// The tests that passed, failed, skipped, were blocked and passed after
@@ -686,6 +768,7 @@ pub fn uncompiled(dir: &Path, options: &Options) -> Result<(), Failure> {
     let none = bench::Baselines::default();
     let context = json::Context {
         baselines: &none,
+        profiles: &[],
         tree: &tree,
         options,
         owners: &[],

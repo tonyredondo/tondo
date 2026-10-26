@@ -168,6 +168,8 @@ pub(super) struct Context<'a> {
     pub compiled: bool,
     /// What the benchmarks compare with, and the regression allowed.
     pub baselines: &'a super::bench::Baselines,
+    /// With `--profile`, each profile written: its test, benchmark and file.
+    pub profiles: &'a [(String, Option<String>, std::path::PathBuf)],
 }
 
 impl Context<'_> {
@@ -368,6 +370,14 @@ impl Context<'_> {
             Value::Object(fields)
         });
         fields.push(("bench", bench.unwrap_or(Value::Null)));
+        let profiles = self.profiles.iter().map(|(test, bench, path)| {
+            obj(vec![
+                ("test", str(test.clone())),
+                ("bench", bench.as_ref().map_or(Value::Null, |b| str(b.clone()))),
+                ("profile", str(path.display().to_string())),
+            ])
+        });
+        fields.push(("profiles", options.profile.map_or(Value::Null, |_| Value::Array(profiles.collect()))));
         let (suites, tests) = self.forest();
         let find = |node: u32| aggregates.iter().find(|a| a.node == node);
         let nodes = |list: &[u32]| {

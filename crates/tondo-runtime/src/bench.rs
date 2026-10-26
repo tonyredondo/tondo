@@ -58,6 +58,11 @@ pub(crate) fn allocated(size: usize) {
     BYTES.fetch_add(size as u64, Ordering::Relaxed);
 }
 
+/// Whether benchmarks measure: `tondo test --bench`.
+pub(crate) fn measures() -> bool {
+    measuring().is_some()
+}
+
 /// The time each benchmark measures for, under `tondo test --bench`.
 fn measuring() -> Option<Duration> {
     static TIME: std::sync::OnceLock<Option<Duration>> = std::sync::OnceLock::new();
@@ -126,6 +131,8 @@ pub extern "C" fn tondo_rt_bench_next() -> i64 {
             let each = time.as_nanos() as f64 / SAMPLES as f64;
             bench.batch = (each / per_run.max(1.0)).floor().clamp(1.0, (1u64 << 40) as f64) as u64;
             let samples = (time.as_nanos() as f64 / per_run.max(1.0)) as usize;
+            // A profile of the benchmark covers what it measures.
+            crate::profiling::resume();
             Phase::Sampling(samples.clamp(FEWEST, SAMPLES))
         }
         Phase::Sampling(count) => {
@@ -133,6 +140,7 @@ pub extern "C" fn tondo_rt_bench_next() -> i64 {
             match bench.samples.len() < count {
                 true => Phase::Sampling(count),
                 false => {
+                    crate::profiling::pause();
                     let before = (ALLOCATIONS.load(Ordering::Relaxed), BYTES.load(Ordering::Relaxed));
                     crate::diagnostics::hook(crate::diagnostics::MEASURED);
                     Phase::Counting(before.0, before.1)
@@ -165,6 +173,7 @@ pub extern "C" fn tondo_rt_bench_end(completed: u8) {
     let bench = STATE.lock().unwrap_or_else(|e| e.into_inner()).bench.take();
     crate::diagnostics::unhook(crate::diagnostics::MEASURED);
     let Some(bench) = bench.filter(|b| completed != 0 && !b.samples.is_empty()) else { return };
+    crate::profiling::write(crate::testing::current(), Some(&bench.name));
     let samples: Vec<String> = bench.samples.iter().map(|s| format!("{s:.3}")).collect();
     let payload =
         format!("{}\0{}\0{}\0{:.3}\0{:.3}", bench.name, bench.batch, samples.join(" "), bench.allocations, bench.bytes);

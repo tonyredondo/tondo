@@ -23,6 +23,8 @@ pub(super) struct Stores<'a> {
     pub update: bool,
     /// With coverage, where each worker writes its counts.
     pub counts: Option<&'a Path>,
+    /// With profiles, what of and where each worker writes them.
+    pub profiles: Option<(crate::profile::Kind, &'a Path)>,
 }
 
 /// What every worker of a run shares: the executable, the project it runs
@@ -165,6 +167,9 @@ fn worker(
     }
     if let Some(counts) = stores.counts {
         command.env("TONDO_TEST_COVERAGE", counts);
+    }
+    if let Some((kind, dir)) = stores.profiles {
+        command.env("TONDO_TEST_PROFILE", format!("{}:{}", kind.name(), dir.display()));
     }
     if let Some(time) = run.bench {
         command.env("TONDO_TEST_BENCH", time.as_secs_f64().to_string());

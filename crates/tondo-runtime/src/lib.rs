@@ -35,6 +35,7 @@ mod native;
 mod net;
 mod poll;
 mod process;
+mod profiling;
 mod recorder;
 mod reflect;
 mod regex;
