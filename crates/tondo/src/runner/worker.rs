@@ -33,6 +33,8 @@ pub(super) struct Run<'a> {
     pub tree: &'a Tree,
     pub options: &'a Options,
     pub stores: Stores<'a>,
+    /// How long each benchmark measures for, under `--bench`.
+    pub bench: Option<std::time::Duration>,
 }
 
 /// What the workers tell as they run: a suite or test that started, in a
@@ -164,7 +166,7 @@ fn worker(
     if let Some(counts) = stores.counts {
         command.env("TONDO_TEST_COVERAGE", counts);
     }
-    if let Some(time) = run.options.bench {
+    if let Some(time) = run.bench {
         command.env("TONDO_TEST_BENCH", time.as_secs_f64().to_string());
     }
     if let Some(seed) = run.options.schedule(context.iteration) {

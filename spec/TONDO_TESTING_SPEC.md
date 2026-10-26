@@ -2253,7 +2253,7 @@ toolchain no deja archivos parciales ni finge atomicidad entre paths distintos.
 `--watch` ejecuta los tests seleccionados y después, cada vez que cambian los
 archivos que lee el build de tests, vuelve a compilar y ejecuta los que el
 cambio puede afectar, hasta que la invocación se interrumpe (7.10), con exit
-`4`. Un test está afectado si su archivo cambió, o si su módulo o los módulos
+`4`. Atiende un cambio cuando los archivos dejan de cambiar. Un test está afectado si su archivo cambió, o si su módulo o los módulos
 que importa su archivo alcanzan, por los imports del programa, un módulo con
 un archivo cambiado. Cualquier otro cambio, como el del manifest o un archivo
 que desaparece, afecta a todos. Si el cambio no afecta a ninguno, no hay
@@ -2352,15 +2352,17 @@ Las medidas se comparan con una línea base:
 - `--against <revision>` compara con la revisión de git del repositorio del
   proyecto que nombra, como `main` o `origin/main`: extrae sus archivos, una
   vez por commit en la caché, compila sus tests como estos, y ejecuta cada
-  unidad (8.7) primero en ellos y después en estos, una tras otra en la misma
-  máquina. Es la comparación para un gate de CI, que no depende de dónde se
-  midió antes. Un benchmark que la revisión no tiene es nuevo.
+  unidad (8.7) en ellos y en estos, en la misma máquina, en cuatro rondas que
+  alternan cuál va primero, cada una con la cuarta parte de `--bench-time`;
+  las muestras de cada lado se juntan, así que una máquina que se acelera o se
+  frena pesa en los dos. Es la comparación para un gate de CI, que no depende
+  de dónde se midió antes. Un benchmark que la revisión no tiene es nuevo.
 
 Con una línea base, cada benchmark dice cuánto cambió la mediana, el intervalo
 en que está ese cambio con un 95% de confianza (de mil remuestreos con
 repetición de las muestras de cada lado, con una semilla fija) y su veredicto:
-`slower` si todo el intervalo es mayor que cero y el cambio pasa del 1%,
-`faster` si todo es menor y el cambio baja del −1%, y `same` en otro caso.
+`slower` si todo el intervalo es mayor que cero y el cambio pasa del 2%,
+`faster` si todo es menor y el cambio baja del −2%, y `same` en otro caso.
 
 `--max-regression <percent>` hace fallar la invocación (9.6) si un benchmark
 es `slower` en más de ese porcentaje, o si sus asignaciones o sus bytes por

@@ -108,7 +108,7 @@ pub(super) struct Compared {
 }
 
 /// A change smaller than this is the same, whatever the interval says.
-const NOISE: f64 = 0.01;
+const NOISE: f64 = 0.02;
 
 /// Compares a benchmark with its baseline; with `max`, a fraction, a run
 /// slower or allocating more than that much more has regressed.

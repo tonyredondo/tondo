@@ -2330,9 +2330,13 @@ a CI gate should use.
 A change is judged by the interval of the change of the median, from a
 thousand resamples of each side's samples with a fixed seed, so the same
 measures always give the same verdict: slower or faster only when the
-whole interval says so and the change is past 1%. `--max-regression`
+whole interval says so and the change is past 2%. `--max-regression`
 fails the run on a slower verdict past the percent given, or on more
 allocations or bytes per run, which are exact and need no statistics.
+Each side is measured in four rounds that alternate which goes first:
+a shared machine that speeds up or slows down between two runs otherwise
+reads as a change, as when CI on a busy runner judged the same code 68%
+slower.
 
 ## 2026-10-26 — Reports for people
 

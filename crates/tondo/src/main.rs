@@ -705,12 +705,26 @@ fn watch_tests(path: &Path, build: &TestBuild, options: &mut tondo::runner::Opti
             }
             let now = stamps();
             if now != seen {
+                let now = settled(now, &stamps);
                 let moved = now.iter().chain(&seen).filter(|s| !seen.contains(s) || !now.contains(s));
                 changed = Some(moved.map(|(path, _)| path.clone()).collect());
                 seen = now;
                 break;
             }
         }
+    }
+}
+
+/// The files' times once they stop changing: a file saved in several
+/// writes, as one emptied and then written, is read whole.
+fn settled<T: PartialEq>(mut now: T, stamps: &dyn Fn() -> T) -> T {
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let again = stamps();
+        if again == now {
+            return now;
+        }
+        now = again;
     }
 }
 
@@ -1769,7 +1783,7 @@ fn watch(path: &Path, program_args: &[OsString], options: &BuildOptions) -> Resu
         if now == seen {
             continue;
         }
-        seen = now;
+        seen = settled(now, &stamps);
         let Some(running) = child.as_mut() else {
             child = start()?;
             continue;

@@ -100,10 +100,17 @@ fn reload(dir: &Path, pid: &str) -> (bool, String) {
     (output.status.success(), text)
 }
 
+/// Changes a file as an editor saves it: whole, at once.
 fn edit(path: &Path, old: &str, new: &str) {
     let text = std::fs::read_to_string(path).unwrap();
     assert!(text.contains(old), "{old}");
-    std::fs::write(path, text.replace(old, new)).unwrap();
+    save(path, &text.replace(old, new));
+}
+
+fn save(path: &Path, text: &str) {
+    let saved = path.with_extension("saving");
+    std::fs::write(&saved, text).unwrap();
+    std::fs::rename(&saved, path).unwrap();
 }
 
 #[test]
@@ -249,7 +256,7 @@ fn watching_reloads_what_is_saved() {
     // A change it cannot make in place runs the program again: a `Ref`
     // keeps a value of a variant the new code does not have.
     let text = std::fs::read_to_string(&file).unwrap();
-    std::fs::write(&file, text.replace("    Quiet\n", "").replace("Ref(Mode.Quiet)", "Ref(Mode.Loud)")).unwrap();
+    save(&file, &text.replace("    Quiet\n", "").replace("Ref(Mode.Quiet)", "Ref(Mode.Loud)"));
     let restarted = server.errors.recv_timeout(Duration::from_secs(60)).expect("a restart");
     assert!(restarted.contains("running it again"), "{restarted}");
     assert_eq!(server.answer("c"), "v2 c 1");

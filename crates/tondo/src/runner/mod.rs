@@ -466,7 +466,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         update: options.update_snapshots,
         counts: counts.as_deref(),
     };
-    let run = worker::Run { executable, dir, tree, options, stores };
+    let run = worker::Run { executable, dir, tree, options, stores, bench: options.bench };
     interrupt::listen();
     let (attempts, rounds) = match &options.baseline {
         Some(Baseline::Revision(revision)) => (against(&run, revision, &plan, &mut printer), Vec::new()),
@@ -768,34 +768,77 @@ fn units(tree: &Tree, plan: &[u32]) -> Vec<Vec<u32>> {
     units
 }
 
+/// The rounds of `--against`, which alternate which side runs first.
+const ROUNDS: u32 = 4;
+
 /// `--against` (10.4): each unit of the plan runs in the revision's tests,
-/// when they have its tests, and then in these, one after the other on this
-/// machine; what the revision's benchmarks measure is the baseline.
+/// when they have its tests, and in these, on this machine, in rounds that
+/// alternate which goes first, each with a part of the time; the samples of
+/// each side are put together, so that a machine that speeds up or slows
+/// down weighs on both. What the revision's benchmarks measure is the
+/// baseline.
 fn against(run: &worker::Run, revision: &Revision, plan: &[u32], printer: &mut human::Printer) -> Vec<Attempt> {
     let (tree, options) = (run.tree, run.options);
+    let bench = run.bench.map(|time| time / ROUNDS);
+    let ours = worker::Run { stores: worker::Stores { ..run.stores }, bench, ..*run };
     let stores = worker::Stores { update: false, counts: None, ..run.stores };
-    let theirs =
-        worker::Run { executable: &revision.executable, dir: &revision.dir, tree: &revision.tree, options, stores };
+    let (executable, dir, theirs_tree) = (&revision.executable, &revision.dir, &revision.tree);
+    let theirs = worker::Run { executable, dir, tree: theirs_tree, options, stores, bench };
     let node = |id: &str| (1..revision.tree.nodes.len() as u32).find(|&n| revision.tree.id(n) == id);
     printer.begin(1, 0, plan);
     let context = Context { round: 0, iteration: 1, unit: None };
     let mut attempts = Vec::new();
     for unit in units(tree, plan) {
         let mapped: Vec<u32> = unit.iter().filter_map(|&t| node(tree.id(t))).collect();
-        if !mapped.is_empty() {
-            for attempt in worker::execute(&theirs, vec![(mapped, context)], |_| {}) {
-                let id = revision.tree.id(attempt.node).to_string();
-                for benchmark in attempt.benchmarks {
-                    printer.baselines.measures.insert((id.clone(), benchmark.name.clone()), benchmark);
+        unit.iter().for_each(|&test| printer.note(&worker::Note::Started(test, context)));
+        let mut measured: Vec<Attempt> = Vec::new();
+        for round in 0..ROUNDS {
+            for first in [round % 2 == 0, round % 2 == 1] {
+                if interrupt::requested() {
+                    return attempts;
+                }
+                if first && !mapped.is_empty() {
+                    for attempt in worker::execute(&theirs, vec![(mapped.clone(), context)], |_| {}) {
+                        let id = revision.tree.id(attempt.node).to_string();
+                        for benchmark in attempt.benchmarks {
+                            let key = (id.clone(), benchmark.name.clone());
+                            match printer.baselines.measures.get_mut(&key) {
+                                Some(kept) => joined(kept, benchmark),
+                                None => _ = printer.baselines.measures.insert(key, benchmark),
+                            }
+                        }
+                    }
+                } else if !first {
+                    for attempt in worker::execute(&ours, vec![(unit.clone(), context)], |_| {}) {
+                        match measured.iter_mut().find(|a| a.node == attempt.node) {
+                            // A round that fails decides.
+                            Some(kept) if attempt.status != Status::Passed => *kept = attempt,
+                            Some(kept) => {
+                                for benchmark in attempt.benchmarks {
+                                    match kept.benchmarks.iter_mut().find(|b| b.name == benchmark.name) {
+                                        Some(found) => joined(found, benchmark),
+                                        None => kept.benchmarks.push(benchmark),
+                                    }
+                                }
+                            }
+                            None => measured.push(attempt),
+                        }
+                    }
                 }
             }
         }
-        if interrupt::requested() {
-            break;
+        for attempt in measured {
+            printer.note(&worker::Note::Ended(Box::new(attempt.clone())));
+            attempts.push(attempt);
         }
-        attempts.extend(worker::execute(run, vec![(unit, context)], |note| printer.note(note)));
     }
     attempts
+}
+
+/// A benchmark's samples of another round, with what it allocated last.
+fn joined(kept: &mut Benchmark, more: Benchmark) {
+    kept.samples.extend(more.samples);
+    (kept.runs, kept.allocations, kept.bytes) = (more.runs, more.allocations, more.bytes);
 }
 
 fn top(tree: &Tree, mut node: u32) -> u32 {

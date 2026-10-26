@@ -889,7 +889,9 @@ frame donde paró la tarea.
 `tondo run --watch` arranca un build vivo y, cuando cambian sus archivos, lo
 cambia como `reload`; si el cambio pide arrancarlo de nuevo, o el programa
 ya terminó, lo vuelve a ejecutar, y si los archivos no compilan muestra los
-diagnósticos y el programa sigue con su código.
+diagnósticos y el programa sigue con su código. Atiende un cambio cuando los
+archivos dejan de cambiar, así que lee entero uno que se guarda en varias
+escrituras.
 
 Un build vivo no libera el código de los parches, y un frame que pasa al
 código nuevo deja debajo el suyo viejo, que solo devuelve lo que el nuevo

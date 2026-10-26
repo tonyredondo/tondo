@@ -1058,7 +1058,7 @@ test plain {
     let (stdout, _, status) = tondo(&dir, &args);
     assert_eq!(status, 1, "{stdout}");
     assert!(stdout.contains("test app::unit::app::fibonacci ... ok\n  fib 5 "), "{stdout}");
-    assert!(stdout.contains(" ns/op  ±") && stdout.contains(" allocs/op  "), "{stdout}");
+    assert!(stdout.contains("/op  ±") && stdout.contains(" allocs/op  "), "{stdout}");
     args.extend(["--test-format", "json"]);
     let (stdout, _, _) = tondo(&dir, &args);
     let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
@@ -1153,9 +1153,9 @@ test fibonacci {
     assert_eq!(status, 1, "{stdout}{stderr}");
     assert!(stderr.contains("tondo: building the tests of HEAD ("), "{stderr}");
     assert!(stdout.contains("% slower, REGRESSED\n"), "{stdout}");
-    // The same code is not slower.
+    // The same code is not slower, even on a machine shared with others.
     std::fs::write(dir.join("src/main.to"), source("")).unwrap();
-    let (stdout, _, status) = tondo(&dir, &[&bench[..], &["--against", "HEAD", "--max-regression", "50"]].concat());
+    let (stdout, _, status) = tondo(&dir, &[&bench[..], &["--against", "HEAD", "--max-regression", "100"]].concat());
     assert_eq!(status, 0, "{stdout}");
     // What goes with what.
     for (args, said) in [
