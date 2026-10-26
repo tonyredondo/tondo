@@ -444,6 +444,9 @@ struct Next {
     /// And the tasks the tasks it runs started, which idle workers take
     /// half of at a time.
     tasks: Mutex<Local>,
+    /// How many there are, which a worker that would take some reads
+    /// without the lock.
+    count: AtomicUsize,
 }
 
 struct Local(VecDeque<*mut Task>);
@@ -461,14 +464,19 @@ impl Next {
 fn steal() -> Option<*mut Task> {
     let own = OWN_NEXT.with(Cell::get)?;
     for other in nexts().filter(|other| !std::ptr::eq(*other, own)) {
+        if other.count.load(Ordering::Relaxed) == 0 {
+            continue;
+        }
         let Ok(mut theirs) = other.tasks.try_lock() else { continue };
         let count = theirs.0.len().div_ceil(2);
         if count == 0 {
             continue;
         }
         let mut taken: VecDeque<*mut Task> = theirs.0.drain(..count).collect();
+        other.count.fetch_sub(count, Ordering::Relaxed);
         drop(theirs);
         let first = taken.pop_front();
+        own.count.fetch_add(taken.len(), Ordering::Relaxed);
         own.tasks().0.extend(taken);
         return first;
     }
@@ -576,6 +584,7 @@ fn enqueue(task: *mut Task) {
         && let Some(own) = OWN_NEXT.with(Cell::get)
     {
         own.tasks().0.push_back(task);
+        own.count.fetch_add(1, Ordering::Relaxed);
         if IDLE.load(Ordering::Relaxed) > 0 {
             let mut queue = queue();
             if queue.idle > 0 && !queue.waking {
@@ -1083,6 +1092,7 @@ fn work(main: bool) -> i32 {
                 task: AtomicPtr::new(std::ptr::null_mut()),
                 since: AtomicU64::new(0),
                 tasks: Mutex::new(Local(VecDeque::new())),
+                count: AtomicUsize::new(0),
             }));
             let index = NEXT_COUNT.fetch_add(1, Ordering::AcqRel);
             if let Some(slot) = NEXTS.get(index) {
@@ -1093,7 +1103,7 @@ fn work(main: bool) -> i32 {
     }
     // A worker just woken looks once more, a moment later, for a task
     // waiting next to a worker that runs another, before it sleeps again.
-    let mut woken = false;
+    let (mut woken, mut waited) = (false, false);
     loop {
         // The task made runnable by the one that ran here, but now and then
         // the queue first, so that two tasks that wake each other do not
@@ -1109,8 +1119,9 @@ fn work(main: bool) -> i32 {
                 queue().runnable.push_back(task);
             }
             // Then the tasks its tasks started.
-            let started = next.tasks().0.pop_front();
+            let started = (next.count.load(Ordering::Relaxed) > 0).then(|| next.tasks().0.pop_front()).flatten();
             if let Some(task) = started {
+                next.count.fetch_sub(1, Ordering::Relaxed);
                 if !runs.is_multiple_of(61) {
                     run(task);
                     continue;
@@ -1135,6 +1146,7 @@ fn work(main: bool) -> i32 {
                         let task = next.task.swap(std::ptr::null_mut(), Ordering::AcqRel);
                         queue.runnable.extend(Some(task).filter(|task| !task.is_null()));
                         queue.runnable.extend(next.tasks().0.drain(..));
+                        next.count.store(0, Ordering::Relaxed);
                     }
                     return 0;
                 }
@@ -1170,7 +1182,9 @@ fn work(main: bool) -> i32 {
                 if let Some(task) = steal() {
                     break task;
                 }
-                let (taken, young) = take_next();
+                // Only a worker just woken looks at the others' next, which
+                // they write all the time.
+                let (taken, young) = if woken || waited { take_next() } else { (None, false) };
                 if let Some(task) = taken {
                     break task;
                 }
@@ -1183,7 +1197,8 @@ fn work(main: bool) -> i32 {
                     IDLE.fetch_add(1, Ordering::Relaxed);
                 }
                 let mut next = queue.timers.peek().map(|t| t.at);
-                if young && woken {
+                waited = young && woken;
+                if waited {
                     let soon = Instant::now() + NEXT_WAIT;
                     next = Some(next.map_or(soon, |at| at.min(soon)));
                 }
@@ -1215,7 +1230,7 @@ fn work(main: bool) -> i32 {
                 queue.waking = false;
             }
         };
-        woken = false;
+        (woken, waited) = (false, false);
         run(task);
     }
 }
