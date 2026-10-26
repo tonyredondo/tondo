@@ -121,7 +121,7 @@ pub unsafe extern "C" fn tondo_rt_str_release(s: *mut Str) {
     if rc.load(Ordering::Relaxed) == IMMORTAL {
         return;
     }
-    match rc.fetch_sub(1, Ordering::Release) {
+    match dropped(rc) {
         1 => {
             fence(Ordering::Acquire);
             LIVE_OBJECTS.gone();
@@ -129,6 +129,18 @@ pub unsafe extern "C" fn tondo_rt_str_release(s: *mut Str) {
         }
         0 => runtime_fault("string released after it was freed"),
         _ => {}
+    }
+}
+
+/// Drops a reference to an object and returns the count it had. The last
+/// one goes without the atomic decrement, which costs more than most
+/// objects' allocation: no other reference is left to count, nor to take
+/// another, as only a `Ref`'s weak ones could.
+#[inline(always)]
+fn dropped(rc: &AtomicUsize) -> usize {
+    match rc.load(Ordering::Relaxed) {
+        1 => 1,
+        _ => rc.fetch_sub(1, Ordering::Release),
     }
 }
 
@@ -363,7 +375,7 @@ pub unsafe extern "C" fn tondo_rt_box_release(b: *mut BoxHeader, release: Option
     if b.is_null() {
         return;
     }
-    match unsafe { (*b).rc.fetch_sub(1, Ordering::Release) } {
+    match dropped(unsafe { &(*b).rc }) {
         1 => {
             fence(Ordering::Acquire);
             if let Some(release) = release {
@@ -602,7 +614,7 @@ pub unsafe extern "C" fn tondo_rt_fn_release(f: *mut FnObject) {
     if rc.load(Ordering::Relaxed) == IMMORTAL {
         return;
     }
-    match rc.fetch_sub(1, Ordering::Release) {
+    match dropped(rc) {
         1 => {
             fence(Ordering::Acquire);
             unsafe {
@@ -704,7 +716,7 @@ pub unsafe extern "C" fn tondo_rt_array_release(a: *mut ArrayHeader, size: usize
     if a.is_null() {
         return;
     }
-    match unsafe { (*a).rc.fetch_sub(1, Ordering::Release) } {
+    match dropped(unsafe { &(*a).rc }) {
         1 => {
             fence(Ordering::Acquire);
             unsafe {
@@ -1555,7 +1567,7 @@ pub unsafe extern "C" fn tondo_rt_map_release(m: *mut MapObject, glue: *const Ma
     if m.is_null() {
         return;
     }
-    match unsafe { (*m).rc.fetch_sub(1, Ordering::Release) } {
+    match dropped(unsafe { &(*m).rc }) {
         1 => {
             fence(Ordering::Acquire);
             unsafe {
