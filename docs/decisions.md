@@ -2481,3 +2481,14 @@ program can tell. The rest of the text must be of types whose `Display`
 runs no code of the program, and must not read `x` again, whose bytes
 would move under it. `format.Builder` is a string grown so, and a string
 literal, which counts no references, is retained and released no more.
+
+## 2026-10-26 — Cranelift, patched
+
+Every `+` and `-` of integers is checked, and Cranelift 0.137 branches on
+the overflow of a signed one with `seto`, `test` and a jump, where it uses
+one `jo` for unsigned additions and for multiplications: arithmetic loops
+paid twice the instructions Go's do. Four rules of its instruction
+selection make the signed ones one instruction too, on x86-64 and arm64.
+The maintainer chose to keep the patched crate in `vendor/`, which
+`[patch.crates-io]` puts in place, over waiting for Cranelift to take the
+rules: `vendor/README.md` says what changed and how to update it.
