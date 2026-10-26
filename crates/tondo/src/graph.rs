@@ -132,37 +132,15 @@ pub fn project_of(path: &Path) -> Option<PathBuf> {
 fn resolve_imports(graph: &mut Graph, aliases: &[Vec<(String, String)>]) -> Result<(), String> {
     let paths: Vec<(usize, PathBuf)> =
         graph.modules.iter().enumerate().flat_map(|(i, m)| m.files.iter().map(move |f| (i, f.clone()))).collect();
-    let parsed = crate::parallel::map(&paths, 1, |(_, path)| {
-        let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        let mut sources = SourceMap::default();
-        let file = sources.add(path, text);
-        let module = crate::parser::parse_file(sources.file(file), &mut Diagnostics::default());
-        let file = sources.file(file);
-        let imports: Vec<(Vec<String>, u32)> = module
-            .imports
-            .iter()
-            .map(|i| (i.path.iter().map(|p| p.name.clone()).collect(), file.line_col(i.span.start).0 as u32))
-            .collect();
-        Ok::<_, String>(imports)
-    });
+    let parsed = crate::parallel::map(&paths, 1, |(_, path)| written_imports(path));
     let mut standard = BTreeSet::new();
     for ((index, path), imports) in paths.into_iter().zip(parsed) {
         let package = graph.packages.iter().position(|p| p.name == graph.modules[index].package).unwrap_or(0);
         for (written, line) in imports? {
-            let module = match written[0].as_str() {
-                "std" => {
-                    standard.insert(written.join("."));
-                    written.join(".")
-                }
-                first if first == graph.packages[package].name => written.join("."),
-                first => match aliases[package].iter().find(|(alias, _)| alias == first) {
-                    Some((_, name)) => std::iter::once(name.as_str())
-                        .chain(written[1..].iter().map(String::as_str))
-                        .collect::<Vec<_>>()
-                        .join("."),
-                    None => written.join("."),
-                },
-            };
+            let module = resolved(&written, &graph.packages[package].name, &aliases[package]);
+            if written[0] == "std" {
+                standard.insert(module.clone());
+            }
             let imports = &mut graph.modules[index].imports;
             if !imports.iter().any(|i| i.module == module) {
                 imports.push(Import { module, file: path.clone(), line });
@@ -176,7 +154,42 @@ fn resolve_imports(graph: &mut Graph, aliases: &[Vec<(String, String)>]) -> Resu
     Ok(())
 }
 
+/// The imports of a file as written, each with its line.
+fn written_imports(path: &Path) -> Result<Vec<(Vec<String>, u32)>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let mut sources = SourceMap::default();
+    let file = sources.add(path, text);
+    let module = crate::parser::parse_file(sources.file(file), &mut Diagnostics::default());
+    let file = sources.file(file);
+    Ok(module
+        .imports
+        .iter()
+        .map(|i| (i.path.iter().map(|p| p.name.clone()).collect(), file.line_col(i.span.start).0 as u32))
+        .collect())
+}
+
+/// The whole path of the module an import names, in a package with these
+/// dependencies: by the dependency's package, not its alias.
+fn resolved(written: &[String], package: &str, aliases: &[(String, String)]) -> String {
+    match aliases.iter().find(|(alias, _)| *alias == written[0]).filter(|_| written[0] != package) {
+        Some((_, name)) => {
+            std::iter::once(name.as_str()).chain(written[1..].iter().map(String::as_str)).collect::<Vec<_>>().join(".")
+        }
+        None => written.join("."),
+    }
+}
+
 impl Graph {
+    /// The modules a file of the project imports, as `imports` names them:
+    /// a test's, which the graph leaves out.
+    pub fn imports_of(&self, path: &Path) -> Vec<String> {
+        let package = &self.packages[0];
+        let aliases: Vec<(String, String)> =
+            package.dependencies.iter().chain(&package.dev_dependencies).cloned().collect();
+        let written = written_imports(path).unwrap_or_default();
+        written.iter().map(|(written, _)| resolved(written, &package.name, &aliases)).collect()
+    }
+
     /// Keeps only the modules that `module` reaches through its imports,
     /// or with `reverse`, those that reach it.
     pub fn around(&mut self, module: &str, reverse: bool) -> Result<(), String> {

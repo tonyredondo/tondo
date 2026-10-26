@@ -118,11 +118,10 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
     return into;
   }
 
-  async function run(request: vscode.TestRunRequest, token: vscode.CancellationToken): Promise<void> {
-    const testRun = controller.createTestRun(request);
+  /** The items asked for, by project: everything, or those chosen. */
+  function chosen(request: vscode.TestRunRequest): Map<string, vscode.TestItem[]> {
     const included = request.include ?? [...projects.values()];
     const excluded = new Set(request.exclude ?? []);
-    // What each project runs: everything, or the items asked for.
     const byProject = new Map<string, vscode.TestItem[]>();
     for (const item of included) {
       const dir = projectOf.get(item);
@@ -130,98 +129,179 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
         byProject.set(dir, [...(byProject.get(dir) ?? []), item]);
       }
     }
-    for (const [dir, items] of byProject) {
+    return byProject;
+  }
+
+  /** `tondo test` with the items of a project, as events. */
+  function testArgs(items: vscode.TestItem[], watch: boolean): string[] {
+    const args = ['test', '--test-format', 'events', '--allow-empty'];
+    if (watch) {
+      args.push('--watch');
+    }
+    if (!items.some((item) => item.id.startsWith('project:'))) {
+      items.forEach((item) => args.push('--exact', item.id));
+    }
+    return args;
+  }
+
+  /** Shows the events of `tondo test` in a project on the run `current`
+   *  gives; `ended` is told when a report ends a run, and whether the
+   *  tests compiled. */
+  function follower(dir: string, current: () => vscode.TestRun | undefined, ended: (compiled: boolean, ids: Set<string>) => void) {
+    const item = (id: string) => {
+      const found = projects.get(dir);
+      let match: vscode.TestItem | undefined;
+      const find = (parent: vscode.TestItem) =>
+        parent.children.forEach((child) => {
+          if (child.id === id) {
+            match = child;
+          } else if (!match) {
+            find(child);
+          }
+        });
+      if (found) {
+        find(found);
+      }
+      return match;
+    };
+    const locate = (file?: string, line?: number, column?: number) =>
+      file && line ? new vscode.Location(vscode.Uri.file(path.resolve(dir, file)), new vscode.Position(line - 1, Math.max((column ?? 1) - 1, 0))) : undefined;
+    const finish = (testRun: vscode.TestRun, outcome: Outcome, duration?: number) => {
+      const test = item(outcome.id);
+      if (!test) {
+        return;
+      }
+      const text = outcome.message ?? outcome.verdict;
+      // A comparison shows as a diff: what was expected on the right.
+      const message = outcome.comparison
+        ? vscode.TestMessage.diff(text, outcome.comparison.right, outcome.comparison.left)
+        : new vscode.TestMessage(text);
+      message.location = locate(outcome.file, outcome.line, outcome.column);
+      message.stackTrace = outcome.stack.map((frame) => {
+        const at = locate(frame.file, frame.line, frame.column);
+        return new vscode.TestMessageStackFrame(frame.function, at?.uri, at?.range.start);
+      });
+      switch (outcome.verdict) {
+        case 'passed':
+          testRun.passed(test, duration);
+          break;
+        case 'skipped':
+          testRun.skipped(test);
+          break;
+        case 'failed':
+          testRun.failed(test, message, duration);
+          break;
+        case 'errored':
+          testRun.errored(test, message, duration);
+          break;
+      }
+    };
+    return (line: string) => {
+      const event = testEvent(line);
+      const testRun = current();
+      if (!event || !testRun) {
+        return;
+      }
+      switch (event.event) {
+        case 'pass':
+          event.tests.forEach((id) => {
+            const test = item(id);
+            if (test) {
+              testRun.enqueued(test);
+            }
+          });
+          break;
+        case 'start': {
+          const test = item(event.id);
+          if (test) {
+            testRun.started(test);
+          }
+          break;
+        }
+        case 'output': {
+          const test = item(event.id);
+          if (test) {
+            testRun.appendOutput(event.text.replace(/\r?\n/g, '\r\n'), undefined, test);
+          }
+          break;
+        }
+        case 'end': {
+          // Each attempt as it ends; a retry may change it.
+          finish(testRun, event.outcome, event.duration);
+          const test = item(event.outcome.id);
+          if (test && event.outcome.logs) {
+            testRun.appendOutput(event.outcome.logs.replace(/\r?\n/g, '\r\n'), undefined, test);
+          }
+          break;
+        }
+        case 'report':
+          // The report decides, after every retry.
+          event.outcomes.forEach((outcome) => finish(testRun, outcome));
+          ended(event.compiled, new Set(event.outcomes.map((outcome) => outcome.id)));
+          break;
+      }
+    };
+  }
+
+  async function run(request: vscode.TestRunRequest, token: vscode.CancellationToken): Promise<void> {
+    if (request.continuous) {
+      await Promise.all([...chosen(request)].map(([dir, items]) => watch(request, dir, items, token)));
+      return;
+    }
+    const testRun = controller.createTestRun(request);
+    for (const [dir, items] of chosen(request)) {
       if (token.isCancellationRequested) {
         break;
       }
-      // One run for everything chosen in a project.
-      const whole = items.some((item) => item.id.startsWith('project:'));
-      const args = ['test', '--test-format', 'events', '--allow-empty'];
-      if (!whole) {
-        items.forEach((item) => args.push('--exact', item.id));
-      }
       const started = items.flatMap((item) => tests(item, []));
       started.forEach((item) => testRun.enqueued(item));
-      const known = new Map(started.map((item) => [item.id, item]));
-      const locate = (file?: string, line?: number, column?: number) =>
-        file && line ? new vscode.Location(vscode.Uri.file(path.join(dir, file)), new vscode.Position(line - 1, Math.max((column ?? 1) - 1, 0))) : undefined;
-      const ended = (outcome: Outcome, duration?: number) => {
-        const item = known.get(outcome.id);
-        if (!item) {
-          return;
-        }
-        const text = outcome.message ?? outcome.verdict;
-        // A comparison shows as a diff: what was expected on the right.
-        const message = outcome.comparison
-          ? vscode.TestMessage.diff(text, outcome.comparison.right, outcome.comparison.left)
-          : new vscode.TestMessage(text);
-        message.location = locate(outcome.file, outcome.line, outcome.column);
-        message.stackTrace = outcome.stack.map((frame) => {
-          const at = locate(frame.file, frame.line, frame.column);
-          return new vscode.TestMessageStackFrame(frame.function, at?.uri, at?.range.start);
-        });
-        switch (outcome.verdict) {
-          case 'passed':
-            testRun.passed(item, duration);
-            break;
-          case 'skipped':
-            testRun.skipped(item);
-            break;
-          case 'failed':
-            testRun.failed(item, message, duration);
-            break;
-          case 'errored':
-            testRun.errored(item, message, duration);
-            break;
-        }
-      };
       let reported = false;
-      const ran: Ran = await exec(args, dir, token, (line) => {
-        const event = testEvent(line);
-        const item = event && 'id' in event ? known.get(event.id) : undefined;
-        switch (event?.event) {
-          case 'start':
-            if (item) {
-              testRun.started(item);
-            }
-            break;
-          case 'output':
-            if (item) {
-              testRun.appendOutput(event.text.replace(/\r?\n/g, '\r\n'), undefined, item);
-            }
-            break;
-          case 'end': {
-            // Each attempt as it ends; a retry may change it.
-            ended(event.outcome, event.duration);
-            const ending = known.get(event.outcome.id);
-            if (ending && event.outcome.logs) {
-              testRun.appendOutput(event.outcome.logs.replace(/\r?\n/g, '\r\n'), undefined, ending);
-            }
-            break;
-          }
-          case 'report':
-            reported = event.compiled;
-            // The report decides, after every retry.
-            for (const outcome of event.outcomes) {
-              ended(outcome);
-              known.delete(outcome.id);
-            }
-            break;
-        }
-      }).catch((error: Error) => ({ code: null, stdout: '', stderr: error.message }));
+      let ran = new Set<string>();
+      const follow = follower(dir, () => testRun, (compiled, ids) => ((reported = compiled), (ran = ids)));
+      const done: Ran = await exec(testArgs(items, false), dir, token, follow).catch((error: Error) => ({
+        code: null,
+        stdout: '',
+        stderr: error.message,
+      }));
       if (!reported) {
         // It did not compile, or tondo failed: why goes on every test.
-        const message = new vscode.TestMessage(ran.stderr.trim() || 'tondo test gave no report');
-        known.forEach((item) => testRun.errored(item, message));
+        const message = new vscode.TestMessage(done.stderr.trim() || 'tondo test gave no report');
+        started.forEach((item) => testRun.errored(item, message));
         continue;
       }
-      if (ran.stderr.trim()) {
-        output.appendLine(ran.stderr.trimEnd());
+      if (done.stderr.trim()) {
+        output.appendLine(done.stderr.trimEnd());
       }
       // What the report does not name did not run.
-      known.forEach((item) => testRun.skipped(item));
+      started.filter((item) => !ran.has(item.id)).forEach((item) => testRun.skipped(item));
     }
     testRun.end();
+  }
+
+  /** A continuous run: `tondo test --watch`, with a run of the view for
+   *  each run of the tests, until it is cancelled. */
+  async function watch(request: vscode.TestRunRequest, dir: string, items: vscode.TestItem[], token: vscode.CancellationToken): Promise<void> {
+    let testRun: vscode.TestRun | undefined;
+    const follow = follower(dir, () => {
+      testRun ??= controller.createTestRun(request, undefined, true);
+      return testRun;
+    }, (compiled) => {
+      if (!compiled) {
+        const message = new vscode.TestMessage('the tests do not compile: Problems shows why');
+        items.flatMap((item) => tests(item, [])).forEach((item) => testRun?.errored(item, message));
+      }
+      testRun?.end();
+      testRun = undefined;
+    });
+    const done = await exec(testArgs(items, true), dir, token, follow).catch((error: Error) => ({
+      code: null,
+      stdout: '',
+      stderr: error.message,
+    }));
+    testRun?.end();
+    if (!token.isCancellationRequested && done.stderr.trim()) {
+      output.appendLine(done.stderr.trimEnd());
+    }
   }
 
   async function debug(request: vscode.TestRunRequest): Promise<void> {
@@ -243,7 +323,7 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
     });
   }
 
-  controller.createRunProfile('Run', vscode.TestRunProfileKind.Run, run, true);
+  controller.createRunProfile('Run', vscode.TestRunProfileKind.Run, run, true, undefined, true);
   controller.createRunProfile('Debug', vscode.TestRunProfileKind.Debug, (request) => debug(request), true);
   // Projects found at once, so their tests show before the view opens.
   if ((vscode.workspace.workspaceFolders ?? []).some((folder) => isProject(folder.uri.fsPath))) {

@@ -2177,3 +2177,16 @@ extension, which a script without `main` or a `main` in a string fooled;
 the server puts them where the parser finds `main`, or a script's first
 statement, which also serves editors other than VS Code.
 
+## 2026-10-26 — Tests that run as files change
+
+`tondo test --watch` runs the tests, then after each change those it can
+affect, which VS Code's continuous runs use. Which tests a change affects
+comes from the same imports as `tondo graph`: a test whose file changed,
+or whose module or imports reach a changed module. Anything else, as the
+manifest, runs every test, rather than guess. Each run is a whole
+invocation in the format asked for, so a client reads a watch as it reads
+one run.
+
+A run that an editor cancels is ended with `SIGTERM`, which now stops the
+workers as Ctrl-C does instead of leaving them to finish alone.
+

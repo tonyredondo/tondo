@@ -20,7 +20,18 @@ mod store;
 mod worker;
 
 pub use owners::Codeowners;
-pub use select::{Glob, Order, Selector};
+pub use select::{Glob, Order, Selector, affected};
+
+/// Whether `tondo test` was interrupted, which ends `--watch` too.
+pub fn interrupted() -> bool {
+    interrupt::requested()
+}
+
+/// Handles interruptions from now on, before tests run, as `--watch`
+/// waits for changes.
+pub fn listen() {
+    interrupt::listen();
+}
 
 use crate::hir::TestNodeInfo;
 use std::path::{Path, PathBuf};

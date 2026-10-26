@@ -278,7 +278,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         launcher: None,
     };
     let mut diagnostics_json = false;
-    let (mut statically, mut debug, mut library) = (false, false, false);
+    let (mut statically, mut debug, mut library, mut watch) = (false, false, false, false);
     let mut target = None;
     let usage = |message: String| format!("{message}\n{USAGE}");
     // A count written canonically: `0` or digits without a leading zero.
@@ -334,6 +334,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
                 );
             }
             "--list" => options.list = true,
+            "--watch" => watch = true,
             "--jobs" => {
                 options.jobs = count(&value()?, "--jobs")
                     .ok()
@@ -447,6 +448,10 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     if options.list && !options.reports.is_empty() {
         return Err(usage("--list writes no report; use --test-format json".into()));
     }
+    let once = ["--list", "--update-snapshots", "--report"];
+    if watch && let Some(flag) = once.iter().find(|f| given(f)) {
+        return Err(usage(format!("--watch runs the tests again and again; it does not go with {flag}")));
+    }
     // A seed chosen now is shown, so the orders can be repeated.
     let chosen = seed.is_none();
     let seed = seed.unwrap_or_else(|| {
@@ -465,10 +470,18 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     options.launcher = target.map(Target::launcher).transpose()?.flatten();
     let build = TestBuild { library, debug, statically, target, diagnostics_json, list: options.list };
-    let built = build_tests(&path, &build)?;
-    let Some((executable, tree)) = built else {
+    if watch {
+        return watch_tests(&path, &build, &mut options);
+    }
+    run_tests(&path, &build, &options)
+}
+
+/// Builds the tests and runs those selected, as `tondo test` does once.
+fn run_tests(path: &Path, build: &TestBuild, options: &tondo::runner::Options) -> Result<ExitCode, String> {
+    use tondo::runner;
+    let Some((executable, tree)) = build_tests(path, build)? else {
         // A report says it did not compile (testing 15.6).
-        return Ok(match runner::uncompiled(&path, &options) {
+        return Ok(match runner::uncompiled(path, options) {
             Err(runner::Failure::Output(message)) => {
                 eprintln!("tondo: {message}");
                 ExitCode::from(TOOL_FAILURE)
@@ -476,7 +489,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             _ => ExitCode::FAILURE,
         });
     };
-    match runner::test(&path, &executable, &tree, &options) {
+    match runner::test(path, &executable, &tree, options) {
         Ok(failed) => Ok(if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS }),
         Err(runner::Failure::Input(message) | runner::Failure::Empty(message)) => {
             eprintln!("tondo: {message}");
@@ -487,6 +500,58 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             Ok(ExitCode::from(TOOL_FAILURE))
         }
         Err(runner::Failure::Interrupted(forced)) => Ok(ExitCode::from(if forced { TOOL_FAILURE } else { 4 })),
+    }
+}
+
+/// `tondo test --watch` (testing 10.2): runs the tests selected, then,
+/// each time the files of the project change, those the change may affect,
+/// until it is interrupted.
+fn watch_tests(path: &Path, build: &TestBuild, options: &mut tondo::runner::Options) -> Result<ExitCode, String> {
+    use tondo::runner::{self, Selector};
+    runner::listen();
+    let stamps = || -> Vec<(PathBuf, Option<std::time::SystemTime>)> {
+        let inputs = driver::test_inputs(path).unwrap_or_default();
+        inputs.into_iter().map(|p| (p.clone(), std::fs::metadata(&p).and_then(|m| m.modified()).ok())).collect()
+    };
+    let chosen = std::mem::replace(&mut options.selector, Selector::All);
+    let mut seen = stamps();
+    let mut changed: Option<Vec<PathBuf>> = None;
+    loop {
+        // The tests chosen, or those of them a change affects.
+        let narrowed = match &changed {
+            None => None,
+            Some(changed) => {
+                let names: Vec<String> =
+                    changed.iter().map(|p| p.strip_prefix(path).unwrap_or(p).display().to_string()).collect();
+                eprintln!("\ntondo: {} changed", names.join(", "));
+                build_tests(path, build)?
+                    .map(|(_, tree)| Selector::Exact(runner::affected(path, &tree, &chosen, changed)))
+            }
+        };
+        let skip = matches!(&narrowed, Some(Selector::Exact(ids)) if ids.is_empty());
+        if skip {
+            eprintln!("tondo: no test chosen depends on what changed");
+        } else {
+            options.selector = narrowed.unwrap_or_else(|| chosen.clone());
+            if run_tests(path, build, options)? == ExitCode::from(4) || runner::interrupted() {
+                return Ok(ExitCode::from(4));
+            }
+        }
+        eprintln!("tondo: watching the project's files; a change runs the tests it affects");
+        // The next change.
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            if runner::interrupted() {
+                return Ok(ExitCode::from(4));
+            }
+            let now = stamps();
+            if now != seen {
+                let moved = now.iter().chain(&seen).filter(|s| !seen.contains(s) || !now.contains(s));
+                changed = Some(moved.map(|(path, _)| path.clone()).collect());
+                seen = now;
+                break;
+            }
+        }
     }
 }
 

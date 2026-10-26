@@ -1,9 +1,9 @@
-//! Interrupting `tondo test` (testing 7.10). The first `SIGINT` stops the
-//! dispatch of tests and asks each worker to stop with `SIGTERM`: it
-//! cancels its tasks, which run their cleanups, and ends. A worker still
-//! running after `GRACE`, or at a second `SIGINT`, is killed with what it
-//! started. The run then writes no report and exits with `4`, or with `3`
-//! when a worker had to be killed.
+//! Interrupting `tondo test` (testing 7.10). The first `SIGINT`, or the
+//! `SIGTERM` an editor ends a run with, stops the dispatch of tests and
+//! asks each worker to stop with `SIGTERM`: it cancels its tasks, which run
+//! their cleanups, and ends. A worker still running after `GRACE`, or at a
+//! second signal, is killed with what it started. The run then writes no
+//! report and exits with `4`, or with `3` when a worker had to be killed.
 
 use std::process::{Child, Command};
 use std::sync::Mutex;
@@ -54,9 +54,15 @@ pub(super) fn ended(child: &Child, killed: bool) {
     }
 }
 
-/// Handles `SIGINT` from now on.
+/// Handles `SIGINT` and `SIGTERM` from now on, once for the invocation.
 #[cfg(unix)]
 pub(super) fn listen() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(listening);
+}
+
+#[cfg(unix)]
+fn listening() {
     static PIPE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
     extern "C" fn interrupted(_: i32) {
         let byte = 1u8;
@@ -90,7 +96,9 @@ pub(super) fn listen() {
         next();
         signal(libc::SIGKILL);
     });
-    unsafe { libc::signal(libc::SIGINT, interrupted as *const () as libc::sighandler_t) };
+    for signal in [libc::SIGINT, libc::SIGTERM] {
+        unsafe { libc::signal(signal, interrupted as *const () as libc::sighandler_t) };
+    }
 }
 
 #[cfg(not(unix))]

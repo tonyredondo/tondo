@@ -1320,8 +1320,8 @@ del reloj virtual.
 ### 7.10 Interrupción externa de la invocación
 
 Una cancelación solicitada por el usuario, el host o el supervisor de CI no es
-un timeout de test, pánico ni fallo de assertion. En la primera solicitud el
-runner:
+un timeout de test, pánico ni fallo de assertion. `SIGINT` y `SIGTERM` son
+solicitudes. En la primera el runner:
 
 1. Deja de despachar nuevas entradas e iteraciones.
 2. Solicita cancelación cooperativa a cada entrada activa.
@@ -2110,6 +2110,7 @@ tondo test [<project> | --project <dir>]
            [--retry <non-negative-int>]
            [--repeat <positive-int>]
            [--schedules <positive-int>]
+           [--watch]
            [--artifacts <path>]
            [--update-snapshots]
            [--diagnostic-format <human|json>]
@@ -2238,6 +2239,24 @@ Si un output solicitado no puede serializarse o publicarse después de ejecutar,
 el comando termina con exit `3` y no presenta el conjunto de reportes como
 completo. Un JSON ya publicado debe continuar siendo byte a byte válido; el
 toolchain no deja archivos parciales ni finge atomicidad entre paths distintos.
+
+### 10.2 `--watch`
+
+`--watch` ejecuta los tests seleccionados y después, cada vez que cambian los
+archivos que lee el build de tests, vuelve a compilar y ejecuta los que el
+cambio puede afectar, hasta que la invocación se interrumpe (7.10), con exit
+`4`. Un test está afectado si su archivo cambió, o si su módulo o los módulos
+que importa su archivo alcanzan, por los imports del programa, un módulo con
+un archivo cambiado. Cualquier otro cambio, como el del manifest o un archivo
+que desaparece, afecta a todos. Si el cambio no afecta a ninguno, no hay
+ejecución.
+
+Cada ejecución es una invocación completa con el formato pedido: con `json`,
+un reporte por línea; con `events`, sus eventos, que acaban en su `report`.
+Lo que no compila escribe sus diagnósticos y el reporte de 15.6, y la
+invocación sigue esperando cambios. La selección de cada ejecución es la de
+`--exact` con sus tests. `--watch` no admite `--list`, `--update-snapshots`
+ni `--report`.
 
 ## 11. Frontera con `assert` y `std.testing`
 

@@ -3,14 +3,16 @@
 
 use super::Tree;
 use crate::hash::sha256;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
+#[derive(Clone)]
 pub enum Selector {
     All,
     /// A substring of a test's identity.
     Filter(String),
     /// A glob over the identity of a test or a suite.
     Glob(Glob),
-    /// The identity of a test or a suite.
     /// `--exact`, once or more: the suites and tests with these ids.
     Exact(Vec<String>),
 }
@@ -18,8 +20,10 @@ pub enum Selector {
 /// A portable glob (8.2): components split by `::`, where `*` matches any
 /// text inside a component, `?` one character, and a component `**` any
 /// number of whole components.
+#[derive(Clone)]
 pub struct Glob(Vec<Part>, String);
 
+#[derive(Clone)]
 enum Part {
     Any,
     Component(Vec<char>),
@@ -182,6 +186,79 @@ pub fn order_digest(seed: u64, parent: &str, child: &str) -> [u8; 32] {
     bytes.push(0);
     bytes.extend_from_slice(child.as_bytes());
     sha256(&bytes)
+}
+
+/// The ids of the tests `chosen` selects that a change to the files
+/// `changed` of the project in `dir` may affect, as `--watch` runs them
+/// again (testing 10.2): every one when something other than the program's
+/// modules and tests changed, as the manifest or a file removed.
+pub fn affected(dir: &Path, tree: &Tree, chosen: &Selector, changed: &[PathBuf]) -> Vec<String> {
+    let chosen = select(tree, chosen);
+    let affected = touched(dir, tree, changed);
+    let kept = chosen.into_iter().filter(|test| affected.as_ref().is_none_or(|a| a.contains(test)));
+    kept.map(|test| tree.id(test).to_string()).collect()
+}
+
+/// The tests of a changed file, and those whose module or imports reach a
+/// changed module through the imports of the program; `None` for every
+/// test.
+fn touched(dir: &Path, tree: &Tree, changed: &[PathBuf]) -> Option<Vec<u32>> {
+    let graph = crate::graph::graph(dir).ok()?;
+    // A file removed changes what its module declares: everything runs.
+    let changed: Vec<PathBuf> = changed.iter().map(|path| path.canonicalize().ok()).collect::<Option<_>>()?;
+    let root = &graph.packages[0].name;
+    // The module of a file of the program, or of a test beside them.
+    let module_of = |path: &Path| {
+        let module = graph.modules.iter().find(|m| m.files.iter().any(|f| f == path));
+        module.or_else(|| {
+            graph.modules.iter().find(|m| &m.package == root && m.files.iter().any(|f| f.parent() == path.parent()))
+        })
+    };
+    let mut reached = BTreeSet::new();
+    for path in &changed {
+        let is_test = path.to_string_lossy().ends_with("_test.to") || path.starts_with(graph.root.join("tests"));
+        match module_of(path) {
+            Some(module) if !is_test => _ = reached.insert(module.name.clone()),
+            Some(_) => {}
+            None if is_test => {}
+            None => return None,
+        }
+    }
+    // What imports a changed module, directly or not.
+    loop {
+        let more: Vec<String> = graph
+            .modules
+            .iter()
+            .filter(|m| !reached.contains(&m.name) && m.imports.iter().any(|i| reached.contains(&i.module)))
+            .map(|m| m.name.clone())
+            .collect();
+        if more.is_empty() {
+            break;
+        }
+        reached.extend(more);
+    }
+    let mut files: Vec<(String, bool)> = Vec::new();
+    let mut tests = Vec::new();
+    for node in 1..tree.nodes.len() as u32 {
+        if tree.suite(node) {
+            continue;
+        }
+        let file = tree.file(node).to_string();
+        let found = files.iter().find(|(f, _)| *f == file).map(|(_, a)| *a);
+        let is_affected = found.unwrap_or_else(|| {
+            let path = graph.root.join(&file);
+            let path = path.canonicalize().unwrap_or(path);
+            let is_affected = changed.contains(&path)
+                || module_of(&path).is_some_and(|m| reached.contains(&m.name))
+                || graph.imports_of(&path).iter().any(|import| reached.contains(import));
+            files.push((file, is_affected));
+            is_affected
+        });
+        if is_affected {
+            tests.push(node);
+        }
+    }
+    Some(tests)
 }
 
 #[cfg(test)]

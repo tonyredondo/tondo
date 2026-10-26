@@ -43,6 +43,8 @@ suite slow {
   `attach(name, mediaType, bytes)`, `snapshot(name, value)` (compares the
   value's JSON with a file; `tondo test --update-snapshots` writes it), and
   `withVirtualTime` for code that sleeps.
+- `tondo test --watch` runs the tests again as files change: those the
+  change can affect, through the imports.
 - `tondo test --filter text`, `--exact id` (again for more), `--list`, `--jobs n`,
   `--timeout s`, `--retry n`, `--order random --seed hex`,
   `--report junit=out.xml`; `--json` gives the report as data, and

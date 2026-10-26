@@ -771,3 +771,66 @@ suite group {
     let event: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!((&event["event"], &event["report"]["compiled"]), (&"report".into(), &false.into()));
 }
+
+/// `--watch` runs the tests, then after each change those it may affect,
+/// until it is interrupted: here, a change to a module runs the tests of
+/// what imports it and not the others.
+#[test]
+fn watches_and_runs_what_a_change_affects() {
+    use std::io::BufRead;
+    let dir = project("watch", "test standsAlone {\n    assert(2 == 2)\n}\n");
+    std::fs::create_dir_all(dir.join("src/shapes")).unwrap();
+    std::fs::write(dir.join("src/shapes/shapes.to"), "pub fn sides(): Int {\n    3\n}\n").unwrap();
+    std::fs::write(dir.join("src/shapes/shapes_test.to"), "test hasSides {\n    assert(sides() == 3)\n}\n").unwrap();
+    std::fs::create_dir_all(dir.join("tests")).unwrap();
+    std::fs::write(
+        dir.join("tests/api.to"),
+        "import app.shapes\n\ntest usesShapes {\n    assert(shapes.sides() == 3)\n}\n",
+    )
+    .unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["test", "--watch", "--test-format", "events"])
+        .current_dir(&dir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let (sender, lines) = std::sync::mpsc::channel();
+    let stdout = child.stdout.take().unwrap();
+    std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stdout).lines() {
+            let _ = sender.send(line.unwrap());
+        }
+    });
+    // The tests of each run, by the `pass` that starts it.
+    let next_run = || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let mut tests = Vec::new();
+        loop {
+            let line = lines.recv_timeout(deadline - std::time::Instant::now()).expect("an event");
+            let event: serde_json::Value = serde_json::from_str(&line).unwrap();
+            match event["event"].as_str().unwrap() {
+                "pass" => {
+                    tests = event["tests"].as_array().unwrap().iter().map(|t| t.as_str().unwrap().to_string()).collect()
+                }
+                "report" => return tests,
+                _ => {}
+            }
+        }
+    };
+    let all = ["app::integration::api::usesShapes", "app::unit::app::standsAlone", "app::unit::shapes::hasSides"];
+    assert_eq!(next_run(), all);
+    // Stamps change at least each second on some filesystems.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::fs::write(dir.join("src/shapes/shapes.to"), "pub fn sides(): Int {\n    1 + 2\n}\n").unwrap();
+    assert_eq!(next_run(), ["app::integration::api::usesShapes", "app::unit::shapes::hasSides"]);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::fs::write(dir.join("src/main_test.to"), "test standsAlone {\n    assert(3 == 3)\n}\n").unwrap();
+    assert_eq!(next_run(), ["app::unit::app::standsAlone"]);
+    // The manifest changed: everything runs.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"app\"\n\n").unwrap();
+    assert_eq!(next_run(), all);
+    unsafe { libc::kill(child.id() as i32, libc::SIGINT) };
+    assert_eq!(child.wait().unwrap().code(), Some(4));
+}
