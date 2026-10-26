@@ -67,6 +67,42 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "While a live build is debugged, put in the code of a Tondo file when it is saved (Edit and Continue)."
+        },
+        "tondo.run.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "The arguments of the programs run or debugged from the editor: *Run* and *Debug* over `main`, F5 without a `launch.json`, and the tasks."
+        },
+        "tondo.run.env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "scope": "resource",
+          "markdownDescription": "Variables of the environment for the programs run or debugged from the editor, added to the editor's own."
+        },
+        "tondo.test.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Arguments added to `tondo test` in the Testing view, as `[\"--jobs\", \"4\"]`."
+        },
+        "tondo.test.env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "scope": "resource",
+          "markdownDescription": "Variables of the environment for the tests, run or debugged, added to the editor's own."
         }
       }
     },
@@ -103,6 +139,14 @@
                 },
                 "description": "The program's arguments.",
                 "default": []
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Variables of the program's environment, added to the editor's own.",
+                "default": {}
               },
               "cwd": {
                 "type": "string",
@@ -272,6 +316,36 @@
         "command": "tondo.debugDump",
         "title": "Debug a Dump",
         "category": "Tondo"
+      },
+      {
+        "command": "tondo.menu",
+        "title": "Show the Tondo Menu",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.newProject",
+        "title": "New Project",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.install",
+        "title": "Install tondo",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.showOutput",
+        "title": "Show the Output",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.walkthrough",
+        "title": "Get Started",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.updateSnapshot",
+        "title": "Update Snapshot",
+        "category": "Tondo"
       }
     ],
     "menus": {
@@ -298,6 +372,10 @@
         },
         {
           "command": "tondo.pickProcess",
+          "when": "false"
+        },
+        {
+          "command": "tondo.updateSnapshot",
           "when": "false"
         }
       ],
@@ -328,6 +406,18 @@
           "command": "tondo.moduleGraph",
           "when": "view == tondoModules && viewItem == project",
           "group": "inline"
+        }
+      ],
+      "testing/message/context": [
+        {
+          "command": "tondo.updateSnapshot",
+          "when": "testMessage == tondo.snapshot"
+        }
+      ],
+      "testing/message/content": [
+        {
+          "command": "tondo.updateSnapshot",
+          "when": "testMessage == tondo.snapshot"
         }
       ]
     },
@@ -406,6 +496,68 @@
       {
         "view": "tondoCounters",
         "contents": "No program watched.\n[Watch a Running Program](command:tondo.watchCounters)"
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "start",
+        "title": "Get Started with Tondo",
+        "description": "Install tondo, make a project, run it, debug it and test it, and let agents write Tondo.",
+        "steps": [
+          {
+            "id": "install",
+            "title": "Install tondo",
+            "description": "The extension runs the `tondo` executable, which is the whole toolchain.\n[Install tondo](command:tondo.install)",
+            "media": {
+              "markdown": "walkthrough/install.md"
+            },
+            "completionEvents": [
+              "onContext:tondo.installed"
+            ]
+          },
+          {
+            "id": "project",
+            "title": "Make a project",
+            "description": "A project has a program and a test to start from.\n[New Project](command:tondo.newProject)",
+            "media": {
+              "markdown": "walkthrough/project.md"
+            },
+            "completionEvents": [
+              "onCommand:tondo.newProject"
+            ]
+          },
+          {
+            "id": "run",
+            "title": "Run and debug",
+            "description": "*Run* and *Debug* sit over `fn main`; F5 debugs the file open. Debug Live changes the program's code as files are saved.\n[Debug the File Open](command:tondo.debug)",
+            "media": {
+              "markdown": "walkthrough/run.md"
+            },
+            "completionEvents": [
+              "onCommand:tondo.debug",
+              "onCommand:tondo.run"
+            ]
+          },
+          {
+            "id": "test",
+            "title": "Test",
+            "description": "Every test of the workspace is in the Testing view, as you write it.\n[Open the Testing View](command:workbench.view.testing.focus)",
+            "media": {
+              "markdown": "walkthrough/test.md"
+            },
+            "completionEvents": [
+              "onView:workbench.view.testing"
+            ]
+          },
+          {
+            "id": "agents",
+            "title": "Let agents write Tondo",
+            "description": "VS Code's agents get the tools of `tondo mcp` by themselves; `tondo setup` gives them to Claude Code and Codex too.",
+            "media": {
+              "markdown": "walkthrough/agents.md"
+            }
+          }
+        ]
       }
     ]
   },

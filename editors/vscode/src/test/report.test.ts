@@ -1,9 +1,29 @@
-// What tondo says as JSON, as the extension reads it: the list, the
-// events and the report of `tondo test`, `tondo graph` and `tondo version`.
+// What tondo says, as the extension reads it: the list, the events and
+// the report of `tondo test`, `tondo graph`, `tondo check`, `tondo
+// doc-test` and `tondo version`.
 
 import * as assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { NEEDED, counterRows, covered, graphed, incompatible, listed, outcomes, place, programOf, running, served, testEvent, traced, verdict } from '../report';
+import {
+  NEEDED,
+  checked,
+  counterRows,
+  covered,
+  examples,
+  failures,
+  graphed,
+  incompatible,
+  listed,
+  outcomes,
+  place,
+  programOf,
+  rendered,
+  running,
+  served,
+  testEvent,
+  traced,
+  verdict,
+} from '../report';
 
 const source = (line: number) => ({ file: 'src/main_test.to', line, column: 6 });
 
@@ -234,5 +254,45 @@ test('running programs, counters, traces and graphs read as the views show them'
   assert.deepEqual(packages.map((p) => [p.name, p.modules.map((m) => m.name)]), [
     ['app', ['app']],
     ['std', ['std.json']],
+  ]);
+});
+
+test('a check gives its diagnostics, counted from 0, and the terminal shows them from 1', () => {
+  const report = checked(
+    JSON.stringify({
+      format: 'tondo-check-0.1/1',
+      ok: false,
+      diagnostics: [
+        {
+          code: 'E1001',
+          file: 'src/main.to',
+          message: 'unknown name `foo`',
+          range: { start: { byte: 16, line: 1, column: 4 }, end: { byte: 19, line: 1, column: 7 } },
+          severity: 'error',
+        },
+      ],
+    }),
+  );
+  assert.equal(report.ok, false);
+  assert.deepEqual(report.problems[0].start, { line: 1, column: 4 });
+  assert.deepEqual(report.problems[0].end, { line: 1, column: 7 });
+  assert.equal(rendered(report.problems[0]), 'error[E1001]: unknown name `foo`\n  --> src/main.to:2:5');
+  // A build says what it built; an error that is no diagnostic is one.
+  assert.equal(checked('{"format":"tondo-build-0.1/1","ok":true,"output":"app","diagnostics":[]}').output, 'app');
+  const broken = checked('{"format":"tondo-error-0.1/1","ok":false,"message":"tondo.toml: line 1: expected `key = value`"}');
+  assert.equal(rendered(broken.problems[0]), 'error: tondo.toml: line 1: expected `key = value`');
+  assert.throws(() => checked('{}'));
+});
+
+test("a document's examples, and what doc-test says of those that fail", () => {
+  const text = '# Doc\n\n~~~tondo\nfn main() {}\n~~~\n\n~~~tondo compile-fail E1102\nfn main() {}\r\n~~~\n';
+  assert.deepEqual(examples(text), [
+    { line: 2, header: 'tondo' },
+    { line: 6, header: 'tondo compile-fail E1102' },
+  ]);
+  const failed = failures('doc.md:7: this example should fail with E1102, and it compiles\n  more\n/w/b.md:3: does not parse\n');
+  assert.deepEqual([...failed], [
+    [7, 'this example should fail with E1102, and it compiles\n  more'],
+    [3, 'does not parse'],
   ]);
 });

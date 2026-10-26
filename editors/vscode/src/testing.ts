@@ -8,7 +8,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { isProject } from './binary';
-import { Ran, exec } from './cli';
+import { Ran, exec, settings } from './cli';
+import { Documents } from './docs';
 import { Covered, Listed, Outcome, Served, covered, listed, served, testEvent } from './report';
 
 /** Registers the tests; what it returns takes the language server's. */
@@ -106,10 +107,19 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
 
   controller.resolveHandler = async (item) => {
     if (!item) {
-      await discoverAll();
+      await Promise.all([discoverAll(), documents.discover()]);
     }
   };
-  controller.refreshHandler = () => discoverAll();
+  controller.refreshHandler = () => Promise.all([discoverAll(), documents.discover()]).then(() => undefined);
+  // The examples of Markdown documents, which `tondo doc-test` checks.
+  const documents = new Documents(controller);
+  context.subscriptions.push(
+    vscode.workspace.onDidSaveTextDocument((document) => {
+      if (document.languageId === 'markdown') {
+        void documents.read(document.uri);
+      }
+    }),
+  );
 
   /** The tests under an item, which a run starts. */
   function tests(item: vscode.TestItem, into: vscode.TestItem[]): vscode.TestItem[] {
@@ -135,7 +145,7 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
   }
 
   /** `tondo test` with the items of a project, as events. */
-  function testArgs(items: vscode.TestItem[], watch: boolean): string[] {
+  function testArgs(dir: string, items: vscode.TestItem[], watch: boolean): string[] {
     const args = ['test', '--test-format', 'events', '--allow-empty'];
     if (watch) {
       args.push('--watch');
@@ -143,6 +153,8 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
     if (!items.some((item) => item.id.startsWith('project:'))) {
       items.forEach((item) => args.push('--exact', item.id));
     }
+    // What the settings add, as `--jobs 4`.
+    args.push(...settings('test', dir).args);
     return args;
   }
 
@@ -179,6 +191,10 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
         ? vscode.TestMessage.diff(text, outcome.comparison.right, outcome.comparison.left)
         : new vscode.TestMessage(text);
       message.location = locate(outcome.file, outcome.line, outcome.column);
+      // A snapshot that differs offers to be written as it is now.
+      if (outcome.code === 'P2007') {
+        message.contextValue = 'tondo.snapshot';
+      }
       message.stackTrace = outcome.stack.map((frame) => {
         const at = locate(frame.file, frame.line, frame.column);
         return new vscode.TestMessageStackFrame(frame.function, at?.uri, at?.range.start);
@@ -280,6 +296,11 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
       return;
     }
     const testRun = controller.createTestRun(request);
+    const asked = request.include ?? documents.all();
+    const docs = asked.filter((item) => documents.owns(item) && !request.exclude?.includes(item));
+    if (docs.length > 0) {
+      await documents.run(testRun, docs, token);
+    }
     for (const [dir, items] of chosen(request)) {
       if (token.isCancellationRequested) {
         break;
@@ -289,13 +310,13 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
       let reported = false;
       let ran = new Set<string>();
       const follow = follower(dir, () => testRun, (compiled, ids) => ((reported = compiled), (ran = ids)));
-      const args = testArgs(items, false);
+      const args = testArgs(dir, items, false);
       const report = path.join(os.tmpdir(), `tondo-coverage-${process.pid}-${Date.now()}.json`);
       const coverage = request.profile?.kind === vscode.TestRunProfileKind.Coverage;
       if (coverage) {
         args.push('--report', `coverage=${report}`);
       }
-      const done: Ran = await exec(args, dir, token, follow).catch((error: Error) => ({
+      const done: Ran = await exec(args, dir, token, follow, settings('test', dir).env).catch((error: Error) => ({
         code: null,
         stdout: '',
         stderr: error.message,
@@ -338,7 +359,7 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
       testRun?.end();
       testRun = undefined;
     });
-    const done = await exec(testArgs(items, true), dir, token, follow).catch((error: Error) => ({
+    const done = await exec(testArgs(dir, items, true), dir, token, follow, settings('test', dir).env).catch((error: Error) => ({
       code: null,
       stdout: '',
       stderr: error.message,
@@ -365,10 +386,26 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
       program: dir,
       cwd: dir,
       test: item.id,
+      env: settings('test', dir).env,
     });
   }
 
   controller.createRunProfile('Run', vscode.TestRunProfileKind.Run, run, true, undefined, true);
+  // A snapshot written as the test now makes it, then the test again.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tondo.updateSnapshot', async (asked: { test: vscode.TestItem }) => {
+      const dir = projectOf.get(asked.test);
+      if (!dir) {
+        return;
+      }
+      const ran = await exec(['test', '--update-snapshots', '--exact', asked.test.id], dir);
+      if (ran.code !== 0) {
+        void vscode.window.showErrorMessage(ran.stderr.trim() || ran.stdout.trim() || 'tondo test failed');
+        return;
+      }
+      await run(new vscode.TestRunRequest([asked.test]), new vscode.CancellationTokenSource().token);
+    }),
+  );
   controller.createRunProfile('Debug', vscode.TestRunProfileKind.Debug, (request) => debug(request), true);
   const coverage = controller.createRunProfile('Coverage', vscode.TestRunProfileKind.Coverage, run, true);
   coverage.loadDetailedCoverage = async (_, file) => details.get(file) ?? [];

@@ -4,16 +4,26 @@ Everything `tondo` offers an editor, in VS Code: the language server, the
 debugger, the tests, live builds, and the tools of `tondo mcp` for agents.
 
 It needs the `tondo` executable: `sh dist/install.sh` from Tondo's
-repository installs it. The extension finds it on `PATH`, in
-`~/.cargo/bin` or in `~/.local/bin`; the setting `tondo.path` names another.
-It says so when that `tondo` is older than the extension.
+repository installs it, and this extension in the editors it finds. The
+extension finds `tondo` on `PATH`, in `~/.cargo/bin` or in `~/.local/bin`;
+the setting `tondo.path` names another. The status bar shows its version,
+or says that it is missing or older than the extension, and opens the
+Tondo menu. *Tondo: Get Started* walks through installing it, making a
+project, running, debugging and testing it.
 
 ## What it does
 
-- **Editing**, from `tondo lsp`: diagnostics as you type, with their quick
-  fixes; hover; go to definition; references; rename; completion;
-  signature help; inlay hints; symbols; semantic highlighting; *Run* and
-  *Debug* over `main` or a script; and formatting, on save by default.
+- **Projects**: *Tondo: New Project* makes one, with a program and a test,
+  and opens it.
+- **Editing**, from `tondo lsp`: diagnostics as you type, those of the
+  whole workspace too, with their quick fixes and a link to what their
+  code means; hover; go to definition, type definition and
+  implementations; references; call and type hierarchies; rename, of
+  files and folders too; completion, which writes the import of a module
+  it names; signature help; inlay hints of types and parameters; symbols;
+  folding and smart selection; semantic highlighting; *Run* and *Debug*
+  over `main` or a script; and formatting, of a selection too, on save by
+  default.
 - **Running and debugging**, from `tondo dap`: *Run* and *Debug* over
   `fn main`, in the editor's title bar, or with F5 on any Tondo file, which
   runs its project or the file alone as a script. Breakpoints with
@@ -32,7 +42,9 @@ It says so when that `tondo` is older than the extension.
   alone under the debugger. Tests appear as you write them, before the
   file is saved, a new project's too; *Run Tests Continuously* runs again
   those that a saved change can affect, and *Run with Coverage* shows which
-  lines, functions and ways of branches the tests ran.
+  lines, functions and ways of branches the tests ran. A snapshot that
+  differs offers *Update Snapshot*. The examples of the workspace's
+  Markdown documents are there too, checked by `tondo doc-test`.
 - **Modules**: the *Tondo Modules* view shows each project's packages,
   modules, files and imports, from `tondo graph`; *Show the Module Graph*
   writes it in Mermaid.
@@ -41,8 +53,9 @@ It says so when that `tondo` is older than the extension.
   Counters* shows them in the *Tondo Counters* view as they change; *Trace
   a Running Program* records it and opens the timeline in Perfetto; *Dump
   a Running Program* shows where its tasks are and what holds its memory.
-- **Tasks**: check, build, run, test and run live, with their errors in
-  the Problems panel.
+- **Tasks**: check, build, run, test and run live. Check and build read
+  the diagnostics of `tondo` as data into the Problems panel, with their
+  ranges.
 - **Agents**: VS Code's agents get the tools of `tondo mcp` (check, fix,
   run, test, debug, reload and the rest) without any setup.
 
@@ -51,3 +64,8 @@ It says so when that `tondo` is older than the extension.
 - `tondo.path`: the `tondo` executable, when it is not found by itself.
 - `tondo.reloadOnSave`: whether saving a file reloads a live build being
   debugged (on by default).
+- `tondo.run.args` and `tondo.run.env`: the arguments and the variables of
+  the programs run or debugged from the editor without a `launch.json`,
+  and of the tasks; a `launch.json` gives its own `args` and `env`.
+- `tondo.test.args` and `tondo.test.env`: what `tondo test` takes in the
+  Testing view, as `["--jobs", "4"]`, and the tests' variables.

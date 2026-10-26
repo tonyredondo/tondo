@@ -4,7 +4,7 @@
 
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { programFor } from './cli';
+import { programFor, settings } from './cli';
 import { tondo } from './extension';
 import { tondoTask } from './tasks';
 
@@ -22,7 +22,7 @@ export function registerDebugging(context: vscode.ExtensionContext): void {
             void vscode.window.showInformationMessage('Open a Tondo file to debug its program.');
             return undefined;
           }
-          return { type: 'tondo', request: 'launch', name: 'Debug', ...(await programFor(file)) };
+          return { type: 'tondo', request: 'launch', name: 'Debug', ...(await launched(file)) };
         }
         if (config.request === 'launch' && !config.cwd) {
           config.cwd = folder?.uri.fsPath ?? path.dirname(String(config.program ?? ''));
@@ -79,10 +79,16 @@ async function debug(uri: vscode.Uri | undefined, live: boolean): Promise<void> 
   const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(file));
   const name = live ? 'Debug live' : 'Debug';
   try {
-    await vscode.debug.startDebugging(folder, { type: 'tondo', request: 'launch', name, live, ...(await programFor(file)) });
+    await vscode.debug.startDebugging(folder, { type: 'tondo', request: 'launch', name, live, ...(await launched(file)) });
   } catch (error) {
     void vscode.window.showErrorMessage((error as Error).message);
   }
+}
+
+/** What to debug for a file, with the arguments and the variables of the
+ *  settings. */
+async function launched(file: string): Promise<{ program: string; cwd: string; args: string[]; env: Record<string, string> }> {
+  return { ...(await programFor(file)), ...settings('run', file) };
 }
 
 /** Puts in the code of the files as they are now, and says what changed. */

@@ -8,6 +8,7 @@ import { exec } from './cli';
 import { registerDebugging } from './debugging';
 import { registerModules } from './modules';
 import { registerObserving } from './observe';
+import { registerStatus } from './status';
 import { registerTasks } from './tasks';
 import { incompatible } from './report';
 import { Served } from './report';
@@ -23,7 +24,7 @@ export function tondo(): string {
   const found = findTondo(configured);
   if (!found) {
     throw new Error(
-      'Tondo is not installed: run `sh dist/install.sh` from its repository, or set `tondo.path` to its executable.',
+      'Tondo is not installed: run `sh dist/install.sh` from its repository (Tondo: Install tondo), or set `tondo.path` to its executable.',
     );
   }
   return found;
@@ -33,6 +34,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const output = vscode.window.createOutputChannel('Tondo', { log: true });
   context.subscriptions.push(output);
   void checkVersion();
+  registerStatus(context, output);
   onTests = registerTesting(context, output);
   await startClient(output);
   registerDebugging(context);

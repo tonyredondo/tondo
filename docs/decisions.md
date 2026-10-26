@@ -2268,3 +2268,17 @@ mistake shows while the manifest can still go back, `fix` is the MCP's
 tool on the command line, and `clean` empties the cache of builds but keeps
 what was downloaded unless asked. Agents get the same as tools.
 
+
+## 2026-10-26 — The extension, from the first day
+
+The extension says where it stands: the status bar has the version of the
+`tondo` found, or that it is missing or too old, and a menu of what the
+extension does; *New Project* runs `tondo new`, and a walkthrough goes from
+installing `tondo` to a project run, debugged and tested. Check and build
+tasks read the diagnostics as JSON, rather than match their text: the
+Problems panel gets their ranges and codes, and the terminal shows them a
+line each. The arguments and environment of programs and tests are
+settings, for runs without a `launch.json`; one that has them keeps its
+own. A snapshot that differs offers to be updated where its failure
+shows, and the examples of Markdown documents are tests, by the line of
+their fence, as `tondo doc-test` reports them.

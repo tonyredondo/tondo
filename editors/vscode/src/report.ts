@@ -1,7 +1,9 @@
-// What `tondo` says as JSON, read for the editor: the tests that
-// `tondo test --list --test-format json` lists, the events and the report
-// of `tondo test --test-format events` (testing 15), the project of a path
-// from `tondo graph --json`, and `tondo version --json`.
+// What `tondo` says, read for the editor: the tests that `tondo test
+// --list --test-format json` lists, the events and the report of `tondo
+// test --test-format events` (testing 15), the project of a path from
+// `tondo graph --json`, the diagnostics of `tondo check --json`, what
+// `tondo doc-test` says of a document's examples, and `tondo version
+// --json`.
 
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,6 +32,9 @@ export interface Outcome {
   column?: number;
   /** The two sides of the comparison an `assert` failed on. */
   comparison?: { left: string; right: string };
+  /** The code of the panic or error, as `P2007` for a snapshot that
+   *  differs. */
+  code?: string;
   /** Where the failure happened, the innermost frame first. */
   stack: Frame[];
   /** What it wrote, and what it logged. */
@@ -66,6 +71,7 @@ interface Attempt {
     message?: string;
     source?: Source;
     comparison?: { left: string; right: string } | null;
+    code?: string | null;
     stack?: { function: string; source?: Source | null; task?: number }[];
   } | null;
   skip?: { reason?: string; source?: Source } | null;
@@ -155,6 +161,7 @@ function outcome(id: string, status: string, attempt: Attempt | undefined): Outc
     line: why?.source?.line,
     column: why?.source?.column,
     comparison: attempt?.failure?.comparison ?? undefined,
+    code: attempt?.failure?.code ?? undefined,
     stack,
     output: text(attempt?.stdout) + text(attempt?.stderr) + logs,
     logs,
@@ -242,7 +249,7 @@ export function programOf(where: Place, file: string): { program: string; cwd: s
 
 /** What the extension needs of `tondo`, as `tondo version --json` lists
  *  its features. */
-export const NEEDED = ['json', 'graph', 'test-events', 'test-exact-many', 'test-watch', 'test-coverage', 'lsp-tests'];
+export const NEEDED = ['json', 'graph', 'test-events', 'test-exact-many', 'test-watch', 'test-coverage', 'lsp-tests', 'explain', 'new'];
 
 /** Why a `tondo` cannot serve this extension, from what `tondo version
  *  --json` printed, or `undefined` when it can. */
@@ -353,4 +360,88 @@ export function graphed(json: string): Graphed[] {
     found.modules.push({ name: module.name, files: module.files, imports: module.imports });
   }
   return packages;
+}
+
+/** A diagnostic of `tondo check --json` or `tondo build --json`, its
+ *  lines and columns counted from 0, its file from the project's
+ *  directory, or the file's. */
+export interface Problem {
+  file?: string;
+  severity: 'error' | 'warning';
+  code: string;
+  message: string;
+  start: { line: number; column: number };
+  end: { line: number; column: number };
+}
+
+/** Whether `tondo check` or `tondo build` went well, its diagnostics, and
+ *  what it built. */
+export function checked(json: string): { ok: boolean; output?: string; problems: Problem[] } {
+  const report = JSON.parse(json) as {
+    format?: string;
+    ok: boolean;
+    output?: string;
+    message?: string;
+    diagnostics?: {
+      file: string | null;
+      severity: 'error' | 'warning';
+      code: string;
+      message: string;
+      range: { start: { line: number; column: number }; end: { line: number; column: number } } | null;
+    }[];
+  };
+  if (!report.format?.startsWith('tondo-')) {
+    throw new Error('tondo gave no report');
+  }
+  const at = (point?: { line: number; column: number }) => ({ line: point?.line ?? 0, column: point?.column ?? 0 });
+  const problems = (report.diagnostics ?? []).map((d) => ({
+    file: d.file ?? undefined,
+    severity: d.severity,
+    code: d.code,
+    message: d.message,
+    start: at(d.range?.start),
+    end: at(d.range?.end),
+  }));
+  // An error that is no diagnostic, as a manifest that does not read.
+  if (!report.ok && problems.length === 0 && report.message) {
+    problems.push({ file: undefined, severity: 'error', code: '', message: report.message, start: at(), end: at() });
+  }
+  return { ok: report.ok, output: report.output, problems };
+}
+
+/** A diagnostic as the terminal shows it, where the Problems panel's
+ *  links find it. */
+export function rendered(problem: Problem): string {
+  const head = `${problem.severity}${problem.code ? `[${problem.code}]` : ''}: ${problem.message}`;
+  return problem.file ? `${head}\n  --> ${problem.file}:${problem.start.line + 1}:${problem.start.column + 1}` : head;
+}
+
+/** Where each example of a Markdown document starts, by line from 0, and
+ *  how it is checked: `tondo`, `tondo compile-fail E1102`… */
+export function examples(text: string): { line: number; header: string }[] {
+  const found: { line: number; header: string }[] = [];
+  text.split('\n').forEach((line, index) => {
+    const header = line.replace(/\r$/, '');
+    if (header.startsWith('~~~tondo')) {
+      found.push({ line: index, header: header.slice(3) });
+    }
+  });
+  return found;
+}
+
+/** What `tondo doc-test` said of each example that failed, by the line of
+ *  its fence, counted from 1. */
+export function failures(stderr: string): Map<number, string> {
+  const found = new Map<number, string>();
+  let current: number | undefined;
+  for (const line of stderr.split('\n')) {
+    const start = /^.*?\.md:(\d+): (.*)$/.exec(line);
+    if (start) {
+      current = Number(start[1]);
+      found.set(current, start[2]);
+    } else if (current !== undefined && line.trim()) {
+      found.set(current, `${found.get(current)}\n${line}`);
+    }
+  }
+  return found;
 }

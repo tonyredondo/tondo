@@ -13,10 +13,17 @@ export interface Ran {
   stderr: string;
 }
 
-/** Runs `tondo`; `line` sees each line of its output as it comes. */
-export function exec(args: string[], cwd: string, token?: vscode.CancellationToken, line?: (text: string) => void): Promise<Ran> {
+/** Runs `tondo`; `line` sees each line of its output as it comes, and
+ *  `env` adds to its environment. */
+export function exec(
+  args: string[],
+  cwd: string,
+  token?: vscode.CancellationToken,
+  line?: (text: string) => void,
+  env?: Record<string, string>,
+): Promise<Ran> {
   return new Promise((resolve, reject) => {
-    const child = spawn(tondo(), args, { cwd });
+    const child = spawn(tondo(), args, { cwd, env: env && { ...process.env, ...env } });
     let stdout = '';
     let stderr = '';
     let pending = '';
@@ -39,6 +46,14 @@ export function exec(args: string[], cwd: string, token?: vscode.CancellationTok
     });
     token?.onCancellationRequested(() => child.kill());
   });
+}
+
+/** What the settings give the programs or the tests the editor runs, for
+ *  the folder of a path: `tondo.run.args` and `tondo.run.env`, or
+ *  `tondo.test.args` and `tondo.test.env`. */
+export function settings(kind: 'run' | 'test', at?: string): { args: string[]; env: Record<string, string> } {
+  const config = vscode.workspace.getConfiguration('tondo', at ? vscode.Uri.file(at) : undefined);
+  return { args: config.get<string[]>(`${kind}.args`, []), env: config.get<Record<string, string>>(`${kind}.env`, {}) };
 }
 
 /** Where a file or directory is: its project, and its module. */
