@@ -12,6 +12,7 @@ macro_rules! say {
 
 mod bench;
 mod coverage;
+mod document;
 mod human;
 mod interrupt;
 mod json;
@@ -114,6 +115,9 @@ pub enum Report {
     Junit,
     Coverage,
     Lcov,
+    /// For people: the tests, benchmarks and coverage of a run (15.13).
+    Markdown,
+    Html,
 }
 
 impl Options {
@@ -543,19 +547,57 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         }
         None => None,
     };
+    printer.regressions = regressions;
     if options.json {
         say!("{}", json::reported(&report, options));
     } else {
-        printer.regressions = regressions;
         human::report(tree, &printer, &aggregates, &owners, options, failed, started.elapsed());
         if let Some(covered) = covered.as_ref().filter(|_| options.coverage) {
             print!("{}", covered.summary());
         }
     }
+    let document = || document::Document {
+        title: format!("Tests of {}", package(dir)),
+        failed,
+        counts: tallies(tree, &aggregates),
+        elapsed: started.elapsed(),
+        failures: aggregates
+            .iter()
+            .filter(|a| a.status.failed() || matches!(a.status, Status::Blocked(_, false)))
+            .map(|a| {
+                let kind = if tree.suite(a.node) { "suite " } else { "" };
+                (format!("{kind}{}", tree.id(a.node)), human::detail(tree, &a.attempts[a.decisive], options.timeout))
+            })
+            .collect(),
+        skipped: aggregates
+            .iter()
+            .filter_map(|a| match &a.status {
+                Status::Skipped(reason) if !tree.suite(a.node) => Some((tree.id(a.node).to_string(), reason.clone())),
+                _ => None,
+            })
+            .collect(),
+        benchmarks: measured
+            .iter()
+            .map(|(test, b)| {
+                let base = baselines.measures.get(&(test.clone(), b.name.clone()));
+                (test.clone(), *b, base.map(|base| bench::compare(b, base, options.max_regression)))
+            })
+            .collect(),
+        machine: options.bench.map(bench::machine),
+        baseline: options.baseline.as_ref().map(|baseline| match baseline {
+            Baseline::Saved(path) => format!("the baseline {}", path.display()),
+            Baseline::Revision(r) => format!("{} ({}), run alongside", r.name, &r.commit[..r.commit.len().min(12)]),
+        }),
+        max_regression: options.max_regression,
+        regressions: &printer.regressions,
+        coverage: covered.as_ref().map(coverage::Coverage::rows),
+    };
     for (kind, path) in &options.reports {
         let text = match (kind, &covered) {
             (Report::Junit, _) => junit::report(tree, &context, &aggregates, &report, options),
             (Report::Json, _) => report.text() + "\n",
+            (Report::Markdown, _) => document::markdown(&document()),
+            (Report::Html, _) => document::html(&document()),
             (Report::Coverage, Some(covered)) => covered.json().text() + "\n",
             (Report::Lcov, Some(covered)) => covered.lcov(),
             (_, None) => unreachable!("a report of coverage counts"),
@@ -566,6 +608,20 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         return Err(Failure::Output(error));
     }
     Ok(failed)
+}
+
+/// The tests that passed, failed, skipped, were blocked and passed after
+/// failing.
+fn tallies(tree: &Tree, aggregates: &[Aggregate]) -> [usize; 5] {
+    let tests: Vec<&Aggregate> = aggregates.iter().filter(|a| !tree.suite(a.node)).collect();
+    let count = |f: &dyn Fn(&Aggregate) -> bool| tests.iter().filter(|a| f(a)).count();
+    [
+        count(&|a| a.status == Status::Passed && !a.flaky),
+        count(&|a| a.status.failed()),
+        count(&|a| matches!(a.status, Status::Skipped(_) | Status::Blocked(_, true))),
+        count(&|a| matches!(a.status, Status::Blocked(_, false))),
+        count(&|a| a.flaky),
+    ]
 }
 
 /// The package's name, from its manifest.

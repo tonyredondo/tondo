@@ -1169,3 +1169,55 @@ test fibonacci {
         assert!(stderr.contains(said), "{args:?}: {stderr}");
     }
 }
+
+#[test]
+fn writes_reports_for_people() {
+    let tests = "\
+import std.testing
+
+test adds {
+    assert(add(1, 2) == 3)
+}
+
+test breaks {
+    assert(add(1, 1) == 3)
+}
+
+test waits {
+    testing.skip(\"needs a database\")
+}
+
+test adding {
+    testing.bench(\"add | sum\", () { add(2, 3) })
+}
+";
+    let dir = project("reports", tests);
+    std::fs::write(dir.join("src/main.to"), "pub fn add(a: Int, b: Int): Int {\n    a + b\n}\n\nfn main() {}\n")
+        .unwrap();
+    let (markdown, html) = (dir.join("report.md"), dir.join("report.html"));
+    let reports = [format!("markdown={}", markdown.display()), format!("html={}", html.display())];
+    let (_, stderr, status) = tondo(&dir, &["test", "--coverage", "--report", &reports[0], "--report", &reports[1]]);
+    assert_eq!(status, 1, "{stderr}");
+    let text = std::fs::read_to_string(&markdown).unwrap();
+    for part in [
+        "# Tests of app\n\n**FAILED: 2 passed, 1 failed, 1 skipped, 0 blocked, in ",
+        "## Failures\n\n### `app::unit::app::breaks`\n\n```text\npanic[P0007]: assertion-failed",
+        "## Skipped\n\n- `app::unit::app::waits`: needs a database\n",
+        "## Coverage\n\n| File | Lines | Functions | Branches |\n|---|---:|---:|---:|\n| `src/main.to` | ",
+        "| **Total** | ",
+    ] {
+        assert!(text.contains(part), "missing {part:?} in {text}");
+    }
+    let page = std::fs::read_to_string(&html).unwrap();
+    assert!(page.starts_with("<!doctype html>") && !page.contains("<script"), "{page}");
+    assert!(page.contains("<h2>Coverage</h2>") && page.contains("assertion-failed"), "{page}");
+    // Benchmarks, with their table.
+    let (_, stderr, _) =
+        tondo(&dir, &["test", "--bench", "--bench-time", "0.1", "--report", &reports[0], "--report", &reports[1]]);
+    let text = std::fs::read_to_string(&markdown).unwrap();
+    assert!(text.contains("## Benchmarks\n\nMeasured for 0.1 s each on "), "{text}{stderr}");
+    assert!(text.contains("| Test | Benchmark | Time/op | ± | Allocs/op | B/op |\n"), "{text}");
+    assert!(text.contains("| `adding` | add \\| sum | "), "{text}");
+    let page = std::fs::read_to_string(&html).unwrap();
+    assert!(page.contains("<td>add | sum</td>") && page.contains("<svg"), "{page}");
+}

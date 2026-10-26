@@ -2116,7 +2116,7 @@ tondo test [<project> | --project <dir>]
            [--diagnostic-format <human|json>]
            [--test-format <human|json|events>]
            [--json]
-           [--report <json|junit|coverage|lcov>=<path>]...
+           [--report <json|junit|coverage|lcov|markdown|html>=<path>]...
            [--coverage]
            [--bench [--bench-time <seconds>] [--save-baseline <name|path>]
                     [--baseline <name|path> | --against <revision>]
@@ -4012,6 +4012,29 @@ orden del reporte:
 `--baseline` lee ese formato y compara cada benchmark con el del mismo test y
 el mismo nombre.
 
+### 15.13 Reportes para personas
+
+`--report markdown=<path>` y `--report html=<path>` cuentan lo que encontró
+una invocación para leerlo, no para procesarlo: su forma no es normativa más
+allá de sus secciones, y una herramienta lee el reporte JSON. Ambos dicen el
+resultado y los tests que pasaron, fallaron, se omitieron o quedaron
+bloqueados, y el tiempo; después, cuando las hay:
+
+- `Failures`: cada test o suite que falló o quedó bloqueado, con lo que dice
+  la salida para personas;
+- `Skipped`: cada test omitido, con su razón;
+- `Benchmarks`: dónde se midieron y con qué se comparan, y por benchmark su
+  test, su nombre, su tiempo por ejecución, su dispersión, sus asignaciones y
+  bytes, y con una línea base su cambio y su veredicto; y los que empeoraron
+  más que `--max-regression`;
+- `Coverage`: las líneas, funciones y ramas que se ejecutaron de cada archivo
+  y del total.
+
+El Markdown sirve como comentario de una pull request o resumen de un job de
+CI. El HTML es un archivo que no carga nada ni ejecuta scripts: dibuja en SVG
+las muestras de cada benchmark, el cambio con su intervalo y la cobertura de
+cada archivo.
+
 ## 16. Conformidad
 
 La conformidad se comprueba con los tests del repositorio: los casos de
@@ -4041,7 +4064,8 @@ los ejecutan en cada plataforma de CI. El compilador nativo implementa hoy:
 - los benchmarks: `testing.bench` y `testing.keep`, `--bench` y
   `--bench-time`, `P2009` y su reporte; las líneas base con
   `--save-baseline`, `--baseline` y `--against`, y `--max-regression`
-  (10.4, 15.11, 15.12).
+  (10.4, 15.11, 15.12);
+- los reportes para personas en Markdown y HTML (15.13).
 
 Queda pendiente rechazar la mezcla de `Instant` de dominios distintos (7.9).
 

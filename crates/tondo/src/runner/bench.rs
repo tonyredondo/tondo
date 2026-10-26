@@ -230,6 +230,19 @@ pub(super) fn read_baseline(path: &Path) -> Result<Baselines, String> {
     Ok(Baselines { measures, source: Some(source) })
 }
 
+/// Where benchmarks ran, as people read it.
+pub(super) fn machine(time: std::time::Duration) -> String {
+    let cpus = std::thread::available_parallelism().map_or(1, |n| n.get());
+    format!(
+        "for {} s each on {} ({cpus} threads), {}-{}, by tondo {}",
+        time.as_secs_f64(),
+        cpu(),
+        std::env::consts::ARCH,
+        std::env::consts::OS,
+        crate::driver::VERSION
+    )
+}
+
 /// What a run of benchmarks ran on: the time each measured for and the
 /// machine, so that runs elsewhere are not taken for the same.
 pub(super) fn environment(time: std::time::Duration) -> Value {
@@ -313,7 +326,7 @@ pub(super) fn lines(test: &str, benchmarks: &[Benchmark], baselines: &Baselines,
 }
 
 /// A count per run: whole when it is.
-fn amount(value: f64) -> String {
+pub(super) fn amount(value: f64) -> String {
     match value.fract() == 0.0 {
         true => format!("{value:.0}"),
         false => format!("{value:.2}"),

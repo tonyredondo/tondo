@@ -150,7 +150,7 @@ fn short(tree: &Tree, status: &Status) -> String {
 }
 
 /// What an attempt ended with, in full.
-fn detail(tree: &Tree, attempt: &Attempt, timeout: Duration) -> String {
+pub(super) fn detail(tree: &Tree, attempt: &Attempt, timeout: Duration) -> String {
     match &attempt.status {
         Status::Passed => String::new(),
         Status::Error { message, location, .. } => {

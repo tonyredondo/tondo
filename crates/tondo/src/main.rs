@@ -447,14 +447,17 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
                     ("junit", Report::Junit),
                     ("coverage", Report::Coverage),
                     ("lcov", Report::Lcov),
+                    ("markdown", Report::Markdown),
+                    ("html", Report::Html),
                 ];
                 let report = match text.split_once('=') {
                     Some((kind, path)) if !path.is_empty() && kinds.iter().any(|(k, _)| *k == kind) => {
                         (kinds.iter().find(|(k, _)| *k == kind).unwrap().1, PathBuf::from(path))
                     }
                     _ => {
-                        let message =
-                            format!("--report takes json=, junit=, coverage= or lcov= and a path, not {text}");
+                        let message = format!(
+                            "--report takes json=, junit=, coverage=, lcov=, markdown= or html= and a path, not {text}"
+                        );
                         return Err(usage(message));
                     }
                 };

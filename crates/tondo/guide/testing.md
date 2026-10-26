@@ -49,6 +49,9 @@ suite slow {
   ran: lines, functions, and the ways of `if`, `match`, `and` and `or`;
   `--report coverage=<path>` writes it as JSON and `--report lcov=<path>`
   as LCOV.
+- `--report markdown=<path>` and `--report html=<path>` write what a run
+  found for people: failures, skips, benchmarks and coverage; the Markdown
+  fits a pull request or a CI summary, the HTML is one file with charts.
 - `tondo test --filter text`, `--exact id` (again for more), `--list`, `--jobs n`,
   `--timeout s`, `--retry n`, `--order random --seed hex`,
   `--report junit=out.xml`; `--json` gives the report as data, and

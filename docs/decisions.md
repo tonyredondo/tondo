@@ -2333,3 +2333,15 @@ measures always give the same verdict: slower or faster only when the
 whole interval says so and the change is past 1%. `--max-regression`
 fails the run on a slower verdict past the percent given, or on more
 allocations or bytes per run, which are exact and need no statistics.
+
+## 2026-10-26 — Reports for people
+
+The JSON report is for tools; people read a run in a pull request, in the
+summary of a CI job, or in a browser. `--report markdown=<path>` and
+`--report html=<path>` tell any run, not only benchmarks: what failed,
+what skipped, what the benchmarks measured and how they compare, and the
+coverage. Their form is not normative beyond their sections, so they can
+improve without breaking tools. The HTML is one file that loads nothing
+and runs no script, so a CI artifact opens anywhere: its charts are SVG,
+the samples of each benchmark, its change with its interval, and the
+coverage of each file.

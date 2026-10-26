@@ -58,6 +58,9 @@ struct FileCoverage {
 /// their counts.
 type Ways = BTreeMap<(usize, usize, String), u64>;
 
+/// A file's lines, functions and branches that ran, of those there are.
+pub(super) type Row = (String, [(usize, usize); 3]);
+
 pub struct Coverage {
     files: BTreeMap<String, FileCoverage>,
 }
@@ -207,6 +210,15 @@ impl Coverage {
             out.push_str(&format!("LF:{}\nLH:{}\nend_of_record\n", lines.found, lines.hit));
         }
         out
+    }
+
+    /// Each file's lines, functions and branches that ran, of those there
+    /// are, and the whole project's last, as `total`.
+    pub(super) fn rows(&self) -> Vec<Row> {
+        let pair = |ratios: [Ratio; 3]| ratios.map(|r| (r.hit, r.found));
+        let mut rows: Vec<Row> = self.files.iter().map(|(name, file)| (name.clone(), pair(file.ratios()))).collect();
+        rows.push(("total".into(), pair(self.totals())));
+        rows
     }
 
     /// What `--coverage` prints after the tests: each file's share of
