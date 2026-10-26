@@ -250,7 +250,7 @@ tondo doc-test [--edition 0.1] <markdown>
 tondo target pack [<dir>] [--json]
 tondo lsp
 tondo mcp
-tondo setup [--json]
+tondo setup [--vsix <file>] [--json]
 tondo ps [--json]
 tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--json]
 tondo trace <pid|name> [--duration <seconds>] [--output <path>] [--json]
@@ -312,8 +312,8 @@ tondo version [--json]
   paquete del sistema o de una librería (sección 7.1) y, en un proyecto, añade
   cada librería a `[native] libraries`.
 - `test` sigue la [especificación de testing](./TONDO_TESTING_SPEC.md).
-- `lsp` sirve a un editor (sección 7.4), y `mcp`, a un agente, que `setup`
-  prepara (sección 7.9).
+- `lsp` sirve a un editor (sección 7.4), y `mcp`, a un agente; `setup`
+  prepara los agentes y los editores (sección 7.9).
 - `ps`, `counters`, `trace` y `dump` observan los programas en ejecución
   (sección 7.5); `debug` depura uno, y `dap` hace lo mismo para un editor
   (sección 7.6).
@@ -739,16 +739,22 @@ fallan o un formato que no se cumple son su resultado. Sus recursos son la
 guía, `tondo://guide/<tema>`, la skill, `tondo://skill`, y la API de cada
 módulo estándar, `tondo://api/<módulo>`.
 
-`tondo setup` prepara los agentes de la máquina. Comprueba que `tondo`
-compila y ejecuta un programa y que su servidor MCP responde; escribe la
-skill, la de `tondo guide --skill`, donde la lee cada agente que encuentra,
-`~/.claude/skills/tondo` para Claude Code y `~/.agents/skills/tondo` para
-Codex y los del estándar Agent Skills; y registra `tondo mcp`, con la ruta
-de este `tondo`, en los dos para todos los proyectos, con sus propios
-comandos, `claude` y `codex`. Un agente se encuentra por su comando en
-`PATH` o por su directorio de configuración en el home. Ejecutarlo de nuevo
-lo actualiza todo. Dice si el directorio de `tondo` no está en `PATH` y, sin
-ningún agente, cómo dar la skill y el servidor a otro.
+`tondo setup` prepara los agentes y los editores de la máquina. Comprueba
+que `tondo` compila y ejecuta un programa y que su servidor MCP responde;
+escribe la skill, la de `tondo guide --skill`, donde la lee cada agente que
+encuentra, `~/.claude/skills/tondo` para Claude Code y
+`~/.agents/skills/tondo` para Codex y los del estándar Agent Skills; y
+registra `tondo mcp`, con la ruta de este `tondo`, en los dos para todos los
+proyectos, con sus propios comandos, `claude` y `codex`. Un agente se
+encuentra por su comando en `PATH` o por su directorio de configuración en
+el home. Instala además la extensión de Tondo para VS Code en cada editor de
+su familia que encuentra, VS Code, VS Code Insiders, Cursor, VSCodium y
+Windsurf, por su comando en `PATH` o, en macOS, dentro de su aplicación, con
+`<comando> --install-extension <vsix> --force`: el `.vsix` de `--vsix`, o
+el del último build de `main` que pasó CI, descargado con `gh`; sin él, dice
+cómo conseguirlo, y lo demás se hace igual. Ejecutarlo de nuevo lo actualiza
+todo. Dice si el directorio de `tondo` no está en `PATH` y, sin ningún
+agente, cómo dar la skill y el servidor a otro.
 
 ### 7.10 Builds vivos
 
@@ -949,7 +955,7 @@ campos de su resultado:
 | `update` | `tondo-update-0.1/1` | `lock` y `packages`, con `name`, `dir` y `tests_only` |
 | `bind` | `tondo-bind-0.1/1` | `file`, `module`, `libraries` y `added`, las que añadió a `tondo.toml` |
 | `target pack` | `tondo-target-pack-0.1/1` | `pack` y `targets` |
-| `setup` | `tondo-setup-0.1/1` | `tondo`, `version`, `agents` (`name`, `skill` y `mcp`), `on_path` y `messages`, lo que dice sin `--json` |
+| `setup` | `tondo-setup-0.1/1` | `tondo`, `version`, `agents` (`name`, `skill` y `mcp`), `editors` (`name` y `extension`), `on_path` y `messages`, lo que dice sin `--json` |
 | `ps` | `tondo-ps-0.1/1` | `programs` |
 | `trace` | `tondo-trace-0.1/1` | `timeline`, `profile`, `events`, `samples`, `lost` y `ended` |
 | `dump` | `tondo-dump-0.1/1` | `file` y `summary` |

@@ -28,6 +28,6 @@ pub fn topic(name: &str) -> Option<&'static str> {
 pub fn skill() -> String {
     let description = "Write, check, run and test Tondo programs (.to files, tondo.toml projects): \
 the language's rules, its standard library and the tondo commands, including `tondo api` to see what a \
-module offers and `tondo guide <topic>` for more.";
+module offers and `tondo guide <topic>` for more; and setting Tondo up for agents and editors, with `tondo setup`.";
     format!("---\nname: tondo\ndescription: {description}\n---\n\n{}", TOPICS[0].1)
 }

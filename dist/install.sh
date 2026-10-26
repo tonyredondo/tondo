@@ -1,9 +1,11 @@
 #!/bin/sh
 # Installs `tondo` from this repository and sets it up for the coding
-# agents of this machine: builds it, or without Rust downloads the latest
-# build of main that passed CI, puts it in a directory of programs, and
-# runs `tondo setup`, which checks it and gives Claude Code and Codex the
-# Tondo skill and `tondo mcp`. Running it again updates all of it.
+# agents and the editors of this machine: builds it, or without Rust
+# downloads the latest build of main that passed CI, puts it in a directory
+# of programs, and runs `tondo setup`, which checks it, gives Claude Code
+# and Codex the Tondo skill and `tondo mcp`, and installs the Tondo
+# extension in VS Code, Cursor, VSCodium and Windsurf. Running it again
+# updates all of it.
 #
 #   sh dist/install.sh [<bin dir>]
 #
@@ -53,4 +55,15 @@ cp "$built" "$bin/tondo.new"
 mv "$bin/tondo.new" "$bin/tondo"
 tondo="$bin/tondo"
 say "installed $tondo"
+# The editors' extension: `tondo setup` downloads CI's with gh; without
+# gh, npm makes it from this checkout.
+if ! command -v gh >/dev/null && command -v npm >/dev/null; then
+    say "making the VS Code extension with npm"
+    if (cd editors/vscode && npm ci --silent && npm run -s package -- -o "$work/tondo.vsix") >"$work/npm.log" 2>&1; then
+        "$tondo" setup --vsix "$work/tondo.vsix"
+        exit
+    fi
+    tail -n 5 "$work/npm.log" >&2
+    say "npm cannot make the VS Code extension; tondo setup says how to get it"
+fi
 "$tondo" setup

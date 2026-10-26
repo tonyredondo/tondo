@@ -24,11 +24,14 @@ in this order.
    checks that `tondo` compiles and runs a program and that its MCP server
    answers, writes the Tondo skill for Claude Code
    (`~/.claude/skills/tondo`) and for Codex and the other agents of the
-   Agent Skills standard (`~/.agents/skills/tondo`), and registers
+   Agent Skills standard (`~/.agents/skills/tondo`), registers
    `tondo mcp` with Claude Code and Codex for every project, for those of
-   them that are installed. Each line printed says what was done; when it
-   stops, its last line says what is missing and how to get it. Running it
-   again updates everything.
+   them that are installed, and installs the Tondo extension in VS Code,
+   VS Code Insiders, Cursor, VSCodium and Windsurf, for those that are
+   installed: the extension of the latest build of `main` that passed CI,
+   through `gh`, or without `gh` one that npm makes from this repository.
+   Each line printed says what was done; when it stops, its last line says
+   what is missing and how to get it. Running it again updates everything.
 
    With a `tondo` already installed, as one downloaded from CI,
    `tondo setup` alone does the rest. By hand, when the script cannot run:
@@ -36,8 +39,13 @@ in this order.
    ```sh
    cargo build --release --locked -p tondo     # Rust from https://rustup.rs, and a C compiler
    cp target/release/tondo ~/.cargo/bin/
-   tondo setup
+   (cd editors/vscode && npm ci && npm run package -- -o /tmp/tondo.vsix)   # Node from https://nodejs.org
+   tondo setup --vsix /tmp/tondo.vsix
    ```
+
+   An editor of the VS Code family that `tondo setup` does not find, as one
+   whose command is not on `PATH`, takes the `.vsix` with
+   `<editor> --install-extension <file>`.
 
    Any other MCP client runs it over standard input and output:
    `{ "mcpServers": { "tondo": { "command": "tondo", "args": ["mcp"] } } }`.
@@ -50,6 +58,8 @@ in this order.
    tondo run /tmp/hello.to           # hello
    claude mcp list                   # tondo: ... mcp - ✔ Connected
    codex mcp list                    # tondo ... enabled
+   code --list-extensions | grep tondo   # tondo.tondo, and the same with cursor, codium…
+   tondo setup --json                # what is set up, as data
    ```
 
    `tondo: command not found` means its directory is not on `PATH`: the
@@ -58,7 +68,9 @@ in this order.
 3. **Hand it over.** The skill and the MCP server load when a session of
    the agent starts: tell the user to start a new one. In it, the tools of
    `tondo` are there: `check`, `fix`, `run`, `test`, `debug_start` and the
-   rest.
+   rest. An editor that was open loads the extension when its windows
+   reload (*Developer: Reload Window*); *Tondo: Get Started* walks through
+   it, and *Tondo: New Project* makes a project.
 
 ## Write Tondo
 

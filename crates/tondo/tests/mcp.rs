@@ -243,24 +243,27 @@ fn runs_tests_and_debugs() {
     agent.stop();
 }
 
-/// `tondo setup` writes the skill for Claude Code and Codex and registers
-/// the server with their commands, here ones that say how they were run.
+/// `tondo setup` writes the skill for Claude Code and Codex, registers
+/// the server with their commands, and installs the extension in the
+/// editors, here with commands that say how they were run; `gh` gives an
+/// extension of CI. `PATH` has only them, so no real one runs.
 #[test]
 fn setup_readies_the_agents() {
     let dir = project("mcp_setup", &[]);
     let (home, commands) = (dir.join("home"), dir.join("commands"));
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&commands).unwrap();
-    for agent in ["claude", "codex"] {
-        let script = format!("#!/bin/sh\necho \"{agent} $*\" >> {}\n", dir.join("calls").display());
-        std::fs::write(commands.join(agent), script).unwrap();
+    let editors = ["code", "code-insiders", "cursor", "codium", "windsurf"];
+    for command in ["claude", "codex", "gh"].iter().chain(&editors) {
+        let mut script = format!("#!/bin/sh\necho \"{command} $*\" >> {}\n", dir.join("calls").display());
+        if *command == "gh" {
+            script += "case $2 in\nlist) echo 42 ;;\ndownload) for a; do [ \"$p\" = -D ] && : > \"$a/tondo-0.1.0.vsix\"; p=$a; done ;;\nesac\n";
+        }
+        std::fs::write(commands.join(command), script).unwrap();
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(commands.join(agent), std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(commands.join(command), std::fs::Permissions::from_mode(0o755)).unwrap();
     }
-    let path = std::env::join_paths(
-        std::iter::once(commands).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())),
-    )
-    .unwrap();
+    let path = commands.clone();
     let setup = || {
         let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
             .arg("setup")
@@ -281,9 +284,19 @@ fn setup_readies_the_agents() {
     let calls = std::fs::read_to_string(dir.join("calls")).unwrap();
     assert!(calls.contains(&format!("claude mcp add --scope user tondo -- {} mcp\n", tondo.display())), "{calls}");
     assert!(calls.contains(&format!("codex mcp add tondo -- {} mcp\n", tondo.display())), "{calls}");
+    assert!(calls.contains("gh run download 42 -R tonyredondo/tondo -n tondo-vscode -D "), "{calls}");
+    for editor in editors {
+        let installed = calls.lines().find(|line| line.starts_with(&format!("{editor} --install-extension "))).unwrap();
+        assert!(installed.ends_with("/tondo-0.1.0.vsix --force"), "{calls}");
+    }
+    assert!(said.contains("Cursor: the Tondo extension is installed; reload its windows"), "{said}");
     // Again, it replaces what it registered; as data, it says what it did.
+    // A .vsix given is the one installed.
+    let vsix = dir.join("tondo.vsix");
+    std::fs::write(&vsix, "").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
-        .args(["setup", "--json"])
+        .args(["setup", "--json", "--vsix"])
+        .arg(&vsix)
         .env("HOME", &home)
         .env("PATH", &path)
         .output()
@@ -300,6 +313,17 @@ fn setup_readies_the_agents() {
     assert!(said["messages"][0].as_str().unwrap().contains("its MCP server answers"), "{said}");
     let calls = std::fs::read_to_string(dir.join("calls")).unwrap();
     assert_eq!(calls.matches("claude mcp remove --scope user tondo\n").count(), 2, "{calls}");
+    assert!(calls.contains(&format!("windsurf --install-extension {} --force\n", vsix.display())), "{calls}");
+    let readied: Vec<(&str, bool)> = said["editors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| (e["name"].as_str().unwrap(), e["extension"] == true))
+        .collect();
+    assert_eq!(
+        readied,
+        [("VS Code", true), ("VS Code Insiders", true), ("Cursor", true), ("VSCodium", true), ("Windsurf", true)]
+    );
 }
 
 const LIVE: &str = "import std.console

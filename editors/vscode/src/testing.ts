@@ -377,7 +377,11 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
       return;
     }
     const [item] = chosen;
-    const dir = projectOf.get(item)!;
+    const dir = projectOf.get(item);
+    if (!dir) {
+      void vscode.window.showInformationMessage("A document's examples run, but are not debugged: Run them instead.");
+      return;
+    }
     const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(dir));
     await vscode.debug.startDebugging(folder, {
       type: 'tondo',

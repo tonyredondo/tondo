@@ -108,7 +108,18 @@ errors' repairs as edits (`fixes`), `safe` ones ready to apply.
 
 `tondo mcp` gives an agent all of this as MCP tools, and more: applying
 the fixes, navigating, running with input, testing, observing and debugging
-programs; `tondo setup` adds it, and the skill, to Claude Code and Codex.
+programs.
+
+## Setting up
+
+`tondo setup` readies the machine, and again updates it: it checks that
+`tondo` runs a program, gives Claude Code and Codex this skill and `tondo
+mcp`, and installs the Tondo extension in VS Code, Cursor, VSCodium and
+Windsurf, which then reload their windows. Each line it prints says what it
+did or what is missing and how to get it; `--json` says the same as data.
+Without `tondo`, `sh dist/install.sh` in a clone of Tondo's repository
+installs it and runs `tondo setup`. A new session of an agent loads the
+skill and the server.
 
 ## Topics
 

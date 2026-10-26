@@ -31,15 +31,17 @@ The script builds `tondo` with Rust (from [rustup](https://rustup.rs)) and
 a C compiler, or without Rust downloads the latest build that passed CI
 with GitHub's `gh`, and installs it. Then it runs `tondo setup`, which
 checks that it compiles and runs a program, and sets it up for the coding
-agents it finds: the Tondo skill for Claude Code and Codex, and
-`tondo mcp`, an MCP server whose tools do everything `tondo` does,
-registered with both. Then `tondo guide` teaches the language.
+agents and the editors it finds: the Tondo skill for Claude Code and
+Codex, and `tondo mcp`, an MCP server whose tools do everything `tondo`
+does, registered with both; and the Tondo extension, in
+[`editors/vscode`](editors/vscode), installed in VS Code, Cursor, VSCodium
+and Windsurf. Then `tondo guide` teaches the language, and in the editor
+*Tondo: Get Started* walks through a first project.
 
 With an agent, open this repository in it and ask it to set Tondo up:
 [`AGENTS.md`](AGENTS.md) tells it how, and how to check that it works.
-Editors use `tondo lsp`; `tondo guide projects` says how to set one up.
-VS Code has an extension in [`editors/vscode`](editors/vscode): every CI
-run leaves its `.vsix` as an artifact.
+Other editors use `tondo lsp`; `tondo guide projects` says how to set one
+up. Every CI run leaves the extension's `.vsix` as an artifact.
 
 ## Using it
 
@@ -157,7 +159,7 @@ Every milestone ends with programs that compile to native executables and run.
 | **Live builds** | `--live`: a debug build whose code changes while it runs; `tondo reload` puts in what its files say now, keeping the program's state, and `tondo run --watch` does it as they are saved; under `tondo debug --live`, `reload` where the program stopped, Edit and Continue, and `restart` of the stopped frame; closures made before a reload run the new code, running frames move to the new code at their next statement with their values (on-stack replacement), and the values of a type that gains or loses fields or variants convert as their frames move, parameters, captures and numbers included, renamed fields, variants and types keeping their values, results and lent values converting back, and closures follow when their function gains or loses others; what `Ref`s, channels and `std.sync` values hold converts in place while every task stops at a statement, a task waiting for a channel, a lock or a line starting its statement again; through calls by slots, patches the toolchain's own linker lays out, and tables of the running image; in `tondo mcp`, sessions of live programs and `reload` | Done |
 | **VS Code** | An extension over `tondo lsp`, `tondo dap` and `tondo mcp`: editing with every feature of the language server, formatting on save, *Run* and *Debug* over `main` or with F5, live builds that take in what is saved (Edit and Continue), the tests in the Testing view with failures on their lines, comparisons as diffs and stacks, continuous runs, coverage, and one test debugged alone, snapshots updated from a failure, the examples of Markdown documents, the modules of each project, running programs picked by name, their counters as they change, traces opened in Perfetto and dumps, tasks that read diagnostics as data into Problems, the arguments and environment of programs and tests in settings, a status bar with the version of `tondo` and a menu, *New Project* and a walkthrough to get started, and `tondo mcp`'s tools for VS Code's agents; its `.vsix` from every CI run | Done |
 | **Tools** | The command line for tools: `--help` for each command and completions for bash, zsh and fish from one table of the commands; `--json` on every command, one object with its format and whether it did what was asked, and errors as JSON too; `--diagnostic-format json`; `tondo graph`, a program's packages, modules, files and imports as text, JSON, Graphviz or Mermaid, narrowed to what a module reaches or what reaches it, and the project and module of any path; `tondo test --test-format events`, a line for each start, output and result as it comes; `--list` from the tests' analysis alone, `--exact` again for more in one run, the sides of a failed comparison as data, and the features a client can rely on in `tondo version --json`; `tondo test --watch`, which runs again what a change can affect, through the imports; `tondo test --coverage`, lines, functions and the ways of branches the tests ran, as JSON and LCOV too; the language server sends each project's tests as they are written and offers *Run* and *Debug* over `main`, implementations, call and type hierarchies, the type of a binding, folding, selection and formatting of a range, the parameter of each argument, imports added as names are completed or fixed, a folder renamed with its imports, the problems of the workspace from the start, and each code linked to `tondo explain`; `tondo new`, `init`, `add`, `remove`, `fix`, `explain` and `clean`, also as tools of `tondo mcp`; `tondo mcp` and the VS Code extension use them: results live in the Testing view, the project of a file from `tondo graph`, and a check that `tondo` is new enough | Done |
-| **Agents** | `tondo setup`, which gives Claude Code and Codex the skill and the server; `tondo mcp`, a Model Context Protocol server in both eras of the protocol: every command as a tool with structured results, the compiler's fixes applied, the language server's navigation and rename, runs with input and a timeout, tests with their report, running programs observed and debugging sessions; the guide, the skill and the standard modules' APIs as resources | Done |
+| **Agents** | `tondo setup`, which gives Claude Code and Codex the skill and the server, and installs the extension in VS Code, Cursor, VSCodium and Windsurf; `tondo mcp`, a Model Context Protocol server in both eras of the protocol: every command as a tool with structured results, the compiler's fixes applied, the language server's navigation and rename, runs with input and a timeout, tests with their report, running programs observed and debugging sessions; the guide, the skill and the standard modules' APIs as resources | Done |
 
 The first cut deliberately leaves out the following. They are part of the
 language and remain planned work, scheduled after H7:

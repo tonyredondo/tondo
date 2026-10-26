@@ -59,11 +59,17 @@ fn main() -> ExitCode {
         "lsp" => tondo::lsp::serve().map(|()| ExitCode::SUCCESS),
         "mcp" => tondo::mcp::serve().map(|()| ExitCode::SUCCESS),
         "reload" => reload_command(&args[1..]),
-        "setup" => match args.get(1).and_then(|a| a.to_str()) {
-            None if args.len() == 1 => tondo::setup::setup(false).map(|()| ExitCode::SUCCESS),
-            Some("--json") if args.len() == 2 => tondo::setup::setup(true).map(|()| ExitCode::SUCCESS),
-            _ => Err(format!("setup takes only --json\n{USAGE}")),
-        },
+        "setup" => {
+            let mut args = args[1..].to_vec();
+            let json = take_flag(&mut args, "--json");
+            match args.as_slice() {
+                [] => tondo::setup::setup(None, json).map(|()| ExitCode::SUCCESS),
+                [flag, vsix] if flag == "--vsix" => {
+                    tondo::setup::setup(Some(Path::new(vsix)), json).map(|()| ExitCode::SUCCESS)
+                }
+                _ => Err(format!("setup takes only --vsix <file> and --json\n{USAGE}")),
+            }
+        }
         "ps" => ps_command(&args[1..]),
         "counters" => counters_command(&args[1..]),
         "trace" => trace_command(&args[1..]),

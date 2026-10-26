@@ -2282,3 +2282,17 @@ settings, for runs without a `launch.json`; one that has them keeps its
 own. A snapshot that differs offers to be updated where its failure
 shows, and the examples of Markdown documents are tests, by the line of
 their fence, as `tondo doc-test` reports them.
+
+## 2026-10-26 — `tondo setup` installs the extension
+
+Setting Tondo up should leave the editor ready too, with nothing to do by
+hand: `tondo setup` installs the extension in each editor of the VS Code
+family it finds, through the editor's own command, as it registers the MCP
+server through each agent's. The binary does not carry the extension: it
+installs the `.vsix` it is given, or downloads the one CI made for the
+latest good build of `main` with `gh`, as the install script already
+downloads `tondo` itself; without `gh`, the install script makes it with
+npm from the checkout. A missing extension does not stop the rest of the
+setup, and the line about it says how to get one. The editors' own
+commands find them, on `PATH`, or on macOS inside their applications,
+which do not put them on `PATH`.

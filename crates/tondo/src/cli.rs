@@ -145,8 +145,12 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "setup",
-        usage: &["tondo setup [--json]"],
-        summary: &["set up Claude Code and Codex: the skill, and tondo", "mcp for every project; checked"],
+        usage: &["tondo setup [--vsix <file>] [--json]"],
+        summary: &[
+            "set up Claude Code and Codex: the skill, and tondo",
+            "mcp for every project; and the extension of VS Code",
+            "and its kin; checked",
+        ],
     },
     Command { name: "ps", usage: &["tondo ps [--json]"], summary: &["list the running Tondo programs"] },
     Command {

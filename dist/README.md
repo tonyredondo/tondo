@@ -24,4 +24,6 @@ tondo help                  # every command
 
 `tondo setup` checks that it works and sets up Claude Code and Codex:
 the Tondo skill, and `tondo mcp`, an MCP server whose tools do all of the
-above, for every project.
+above, for every project. It installs the Tondo extension in VS Code,
+Cursor, VSCodium and Windsurf too: the `.vsix` of `--vsix <file>`, or with
+GitHub's `gh` the one of the latest good build.
