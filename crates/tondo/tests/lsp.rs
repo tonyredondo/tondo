@@ -400,7 +400,7 @@ fn highlights_symbols_signatures_hints() {
 #[test]
 fn tells_tests_and_lenses() {
     let main = "import std.console\n\nfn main() {\n    console.println(\"hi\")\n}\n";
-    let tests = "test first {\n    assert(1 == 1)\n}\n\nsuite group {\n    test inner {}\n}\n";
+    let tests = "import std.testing\n\ntest first {\n    assert(1 == 1)\n}\n\ntest measured {\n    testing.bench(\"x\", () { 1 })\n}\n\nsuite group {\n    test inner {}\n}\n";
     let dir = project(
         "lsp-tests",
         &[("tondo.toml", "[package]\nname = \"app\"\n"), ("src/main.to", main), ("src/main_test.to", tests)],
@@ -413,23 +413,24 @@ fn tells_tests_and_lenses() {
     editor.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": tested } }));
     let sent = editor.tests.last().cloned().expect("the project's tests");
     assert_eq!(sent["root"], format!("file://{}", dir.display()));
-    let ids: Vec<(&str, &Value, bool)> = sent["tests"]
+    let ids: Vec<(&str, &Value, bool, bool)> = sent["tests"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|t| (t["id"].as_str().unwrap(), &t["parent"], t["suite"].as_bool().unwrap()))
+        .map(|t| (t["id"].as_str().unwrap(), &t["parent"], t["suite"].as_bool().unwrap(), t["bench"] == true))
         .collect();
     assert_eq!(
         ids,
         [
-            ("app::unit::app::first", &Value::Null, false),
-            ("app::unit::app::group", &Value::Null, true),
-            ("app::unit::app::group::inner", &json!("app::unit::app::group"), false),
+            ("app::unit::app::first", &Value::Null, false, false),
+            ("app::unit::app::measured", &Value::Null, false, true),
+            ("app::unit::app::group", &Value::Null, true, false),
+            ("app::unit::app::group::inner", &json!("app::unit::app::group"), false, false),
         ]
     );
-    assert_eq!(sent["tests"][2]["name"], "inner");
-    assert_eq!(sent["tests"][2]["location"]["uri"], tested);
-    assert_eq!(sent["tests"][2]["location"]["range"]["start"], json!({ "line": 5, "character": 9 }));
+    assert_eq!(sent["tests"][3]["name"], "inner");
+    assert_eq!(sent["tests"][3]["location"]["uri"], tested);
+    assert_eq!(sent["tests"][3]["location"]["range"]["start"], json!({ "line": 11, "character": 9 }));
 
     // Over main, in the file that holds it.
     let opened = editor.open(&dir.join("src/main.to"));
@@ -453,7 +454,7 @@ fn tells_tests_and_lenses() {
     );
     editor.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": tested } }));
     assert_eq!(editor.tests.len(), count + 1);
-    assert_eq!(editor.tests.last().unwrap()["tests"][3]["id"], "app::unit::app::second");
+    assert_eq!(editor.tests.last().unwrap()["tests"][4]["id"], "app::unit::app::second");
     editor.notify(
         "textDocument/didChange",
         json!({ "textDocument": { "uri": tested, "version": 3 }, "contentChanges": [{ "text": edited }] }),

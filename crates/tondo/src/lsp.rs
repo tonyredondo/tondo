@@ -347,7 +347,8 @@ impl Server {
     }
 
     /// Sends a project's suites and tests when they change, as the editor
-    /// asked: each with its id, its parent's, its name and where it is.
+    /// asked: each with its id, its parent's, its name, where it is, and
+    /// whether it is a benchmark.
     fn publish_tests(&mut self, root: &Path, analyzed: &Analyzed) {
         let Some(nodes) = analyzed.tests.as_ref().filter(|_| self.tests && !self.quiet) else { return };
         let mut tests = Vec::new();
@@ -355,9 +356,9 @@ impl Server {
             let Some(location) = self.location(analyzed, node.span) else { continue };
             let parent = nodes.get(node.parent as usize).filter(|_| node.parent != 0).map(|p| p.id.clone());
             let name = node.id.rsplit("::").next().unwrap_or(&node.id);
-            tests.push(
-                json!({ "id": node.id, "parent": parent, "name": name, "suite": node.suite, "location": location }),
-            );
+            tests
+                .push(json!({ "id": node.id, "parent": parent, "name": name, "suite": node.suite, "bench": node.bench,
+                    "location": location }));
         }
         let tests = Value::Array(tests);
         if self.listed.get(root) != Some(&tests) {

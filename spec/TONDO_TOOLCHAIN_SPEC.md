@@ -477,9 +477,10 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
 - Si el editor lo pide con `"tests": true` en `initializationOptions`, la
   notificación `tondo/tests` le da las suites y los tests de un proyecto cada
   vez que cambian al analizarlo, aunque no estén guardados:
-  `{"root": <uri>, "tests": [{"id", "parent", "name", "suite", "location"}]}`,
-  con los ids de la lista de `tondo test --list` (15.4 de testing) y el
-  `parent` como id o `null`.
+  `{"root": <uri>, "tests": [{"id", "parent", "name", "suite", "bench", "location"}]}`,
+  con los ids de la lista de `tondo test --list` (15.4 de testing), el
+  `parent` como id o `null`, y `bench` si el test es un benchmark (10.4 de
+  testing).
 
 Las posiciones cuentan bytes UTF-8 cuando el editor lo admite y unidades
 UTF-16 si no.

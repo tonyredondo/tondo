@@ -6,9 +6,11 @@ import * as assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   NEEDED,
+  benchLine,
   checked,
   counterRows,
   covered,
+  duration,
   examples,
   failures,
   graphed,
@@ -200,7 +202,7 @@ test('the tests the language server sends are a list, with each file whole', () 
     ],
   });
   assert.equal(sent.dir, '/w/app');
-  assert.deepEqual(sent.nodes[0], { id: 'app::unit::app::group', parent: null, name: 'group', suite: true, file: '/w/app/src/main_test.to', line: 5, column: 7 });
+  assert.deepEqual(sent.nodes[0], { id: 'app::unit::app::group', parent: null, name: 'group', suite: true, bench: false, file: '/w/app/src/main_test.to', line: 5, column: 7 });
   assert.equal(sent.nodes[1].file, undefined);
 });
 
@@ -295,4 +297,36 @@ test("a document's examples, and what doc-test says of those that fail", () => {
     [7, 'this example should fail with E1102, and it compiles\n  more'],
     [3, 'does not parse'],
   ]);
+});
+
+test('benchmarks are marked, and what they measured reads as tondo shows it', () => {
+  const list = JSON.stringify({
+    format: 'tondo-test-list-0.1/1',
+    suites: [],
+    tests: [
+      { id: 'p::unit::p::adds', parent: null, name: 'adds', bench: false },
+      { id: 'p::unit::p::parsing', parent: null, name: 'parsing', bench: true },
+    ],
+  });
+  assert.deepEqual(
+    listed(list).map((n) => [n.name, n.bench]),
+    [
+      ['adds', false],
+      ['parsing', true],
+    ],
+  );
+  const benchmark = {
+    name: 'parse 10',
+    ns_per_op: { median: 1973.4, deviation: 9.9 },
+    allocations_per_op: 51,
+    bytes_per_op: 1685,
+    baseline: { change_percent: 7.443, verdict: 'slower', regressed: '7.4% slower' },
+  };
+  const ended = testEvent(JSON.stringify({ event: 'end', id: 'p::unit::p::parsing', status: 'passed', benchmarks: [benchmark] }));
+  assert.ok(ended?.event === 'end');
+  const [measured] = ended.outcome.benchmarks;
+  assert.equal(benchLine(measured), 'parse 10  1.973 µs/op  ±0.5%  51 allocs/op  1685 B/op  +7.4% slower, regressed: 7.4% slower');
+  assert.equal(benchLine({ ...measured, change: undefined, allocations: 0.5 }), 'parse 10  1.973 µs/op  ±0.5%  0.50 allocs/op  1685 B/op');
+  assert.equal(duration(152.24), '152.2 ns');
+  assert.equal(duration(2.5e9), '2.500 s');
 });

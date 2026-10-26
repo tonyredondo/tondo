@@ -103,6 +103,15 @@
           "default": {},
           "scope": "resource",
           "markdownDescription": "Variables of the environment for the tests, run or debugged, added to the editor's own."
+        },
+        "tondo.bench.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Arguments added to `tondo test --bench` by the *Benchmark* profile of the Testing view, as `[\"--against\", \"main\", \"--max-regression\", \"5\"]` or `[\"--bench-time\", \"5\"]`."
         }
       }
     },

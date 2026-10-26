@@ -1020,6 +1020,17 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             option(&mut argv, "--exact", "exact");
             switch(&mut argv, "--library", "library");
             switch(&mut argv, "--update-snapshots", "update_snapshots");
+            // Benchmarks, measured and compared (testing 10.4).
+            switch(&mut argv, "--bench", "bench");
+            if let Some(seconds) = args.number("bench_time") {
+                argv.extend(["--bench-time".to_string(), seconds.to_string()]);
+            }
+            option(&mut argv, "--save-baseline", "save_baseline");
+            option(&mut argv, "--baseline", "baseline");
+            option(&mut argv, "--against", "against");
+            if let Some(percent) = args.number("max_regression") {
+                argv.extend(["--max-regression".to_string(), percent.to_string()]);
+            }
             building(&mut argv);
             argv.extend(args.list("flags"));
         }
@@ -1641,7 +1652,9 @@ program that runs past `timeout` is ended.",
     Tool {
         name: "test",
         description: "Run a project's tests: what failed and why, and the report of each test as data. `filter`, \
-`glob` or `exact` selects them, `list` only lists them, and `flags` takes the other options of `tondo test`.",
+`glob` or `exact` selects them, `list` only lists them, `bench` measures the benchmarks (tests that call \
+`testing.bench`) and compares them with `baseline` or `against` a git revision, and `flags` takes the other \
+options of `tondo test`.",
         kind: Kind::Runs,
         params: &[
             ("path", "string", "The project directory; the server's directory by default."),
@@ -1652,6 +1665,16 @@ program that runs past `timeout` is ended.",
             ("coverage", "boolean", "Also say which lines, functions and ways of branches of the project's code ran."),
             LIBRARY,
             ("update_snapshots", "boolean", "Record the snapshots instead of checking them."),
+            ("bench", "boolean", "Measure the benchmarks alone: time, spread and allocations of a run."),
+            ("bench_time", "number", "With `bench`: the seconds each benchmark measures for, 3 by default."),
+            ("save_baseline", "string", "With `bench`: keep the measures under this name, as `main`."),
+            ("baseline", "string", "With `bench`: compare with the measures kept under this name."),
+            ("against", "string", "With `bench`: compare with this git revision, built and run alongside."),
+            (
+                "max_regression",
+                "number",
+                "With a baseline: fail when a benchmark is this percent slower, or allocates more.",
+            ),
             STATIC,
             DEBUG,
             TARGET,

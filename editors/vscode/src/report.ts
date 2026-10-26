@@ -14,9 +14,22 @@ export interface Listed {
   parent: string | null;
   name: string;
   suite: boolean;
+  /** A test whose body calls `testing.bench` (testing 10.4). */
+  bench?: boolean;
   file?: string;
   line?: number;
   column?: number;
+}
+
+/** What a benchmark measured, and how it compares with its baseline. */
+export interface Measured {
+  name: string;
+  /** Nanoseconds a run takes, the median of the samples, and their spread. */
+  median: number;
+  deviation: number;
+  allocations: number;
+  bytes: number;
+  change?: { percent: number; verdict: string; regressed?: string };
 }
 
 /** How a test ended, as the editor shows it. */
@@ -41,6 +54,8 @@ export interface Outcome {
   output: string;
   /** What it logged alone, which comes only with its end. */
   logs: string;
+  /** What its benchmarks measured, under `--bench`. */
+  benchmarks: Measured[];
 }
 
 export interface Frame {
@@ -64,6 +79,15 @@ interface Entry {
   status?: string;
   decisive_attempt?: number;
   attempts?: Attempt[];
+  bench?: boolean;
+}
+
+interface Benchmark {
+  name: string;
+  ns_per_op: { median: number; deviation: number };
+  allocations_per_op: number;
+  bytes_per_op: number;
+  baseline?: { change_percent: number; verdict: string; regressed: string | null } | null;
 }
 
 interface Attempt {
@@ -78,6 +102,7 @@ interface Attempt {
   logs?: string[];
   stdout?: Stream;
   stderr?: Stream;
+  benchmarks?: Benchmark[];
 }
 
 interface Stream {
@@ -93,6 +118,7 @@ export function listed(json: string): Listed[] {
     parent: entry.parent ?? null,
     name: entry.name,
     suite,
+    bench: entry.bench === true,
     file: entry.source?.file,
     line: entry.source?.line,
     column: entry.source?.column,
@@ -115,6 +141,7 @@ export interface Served {
     parent: string | null;
     name: string;
     suite: boolean;
+    bench?: boolean;
     location?: { uri: string; range: { start: { line: number; character: number } } };
   }[];
 }
@@ -126,6 +153,7 @@ export function served(params: Served): { dir: string; nodes: Listed[] } {
     parent: test.parent,
     name: test.name,
     suite: test.suite,
+    bench: test.bench === true,
     file: test.location ? fileURLToPath(test.location.uri) : undefined,
     line: test.location ? test.location.range.start.line + 1 : undefined,
     column: test.location ? test.location.range.start.character + 1 : undefined,
@@ -165,7 +193,40 @@ function outcome(id: string, status: string, attempt: Attempt | undefined): Outc
     stack,
     output: text(attempt?.stdout) + text(attempt?.stderr) + logs,
     logs,
+    benchmarks: (attempt?.benchmarks ?? []).map((b) => ({
+      name: b.name,
+      median: b.ns_per_op.median,
+      deviation: b.ns_per_op.deviation,
+      allocations: b.allocations_per_op,
+      bytes: b.bytes_per_op,
+      change: b.baseline
+        ? { percent: b.baseline.change_percent, verdict: b.baseline.verdict, regressed: b.baseline.regressed ?? undefined }
+        : undefined,
+    })),
   };
+}
+
+/** A time per run in the unit that reads best, as `tondo test` shows it. */
+export function duration(nanoseconds: number): string {
+  const [value, unit] =
+    nanoseconds < 1e3 ? [nanoseconds, 'ns'] : nanoseconds < 1e6 ? [nanoseconds / 1e3, 'µs'] : nanoseconds < 1e9 ? [nanoseconds / 1e6, 'ms'] : [nanoseconds / 1e9, 's'];
+  return `${value.toFixed(value < 10 ? 3 : value < 100 ? 2 : 1)} ${unit}`;
+}
+
+/** A benchmark's line: its time per run and spread, its allocations, and
+ *  how it changed. */
+export function benchLine(measured: Measured): string {
+  const spread = measured.median > 0 ? (measured.deviation / measured.median) * 100 : 0;
+  const count = (n: number) => (Number.isInteger(n) ? `${n}` : n.toFixed(2));
+  let line = `${measured.name}  ${duration(measured.median)}/op  ±${spread.toFixed(1)}%  ${count(measured.allocations)} allocs/op  ${count(measured.bytes)} B/op`;
+  if (measured.change) {
+    const sign = measured.change.percent >= 0 ? '+' : '';
+    line += `  ${sign}${measured.change.percent.toFixed(1)}% ${measured.change.verdict}`;
+    if (measured.change.regressed) {
+      line += `, regressed: ${measured.change.regressed}`;
+    }
+  }
+  return line;
 }
 
 /** A line of `tondo test --test-format events`: a pass begins with its
@@ -249,7 +310,7 @@ export function programOf(where: Place, file: string): { program: string; cwd: s
 
 /** What the extension needs of `tondo`, as `tondo version --json` lists
  *  its features. */
-export const NEEDED = ['json', 'graph', 'test-events', 'test-exact-many', 'test-watch', 'test-coverage', 'lsp-tests', 'explain', 'new'];
+export const NEEDED = ['json', 'graph', 'test-events', 'test-exact-many', 'test-watch', 'test-coverage', 'lsp-tests', 'explain', 'new', 'test-bench'];
 
 /** Why a `tondo` cannot serve this extension, from what `tondo version
  *  --json` printed, or `undefined` when it can. */

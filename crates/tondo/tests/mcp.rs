@@ -240,6 +240,15 @@ fn runs_tests_and_debugs() {
     let ended = debug(&mut agent, "continue");
     assert_eq!(ended["ended"], true);
     assert_eq!(ended["output"], " 42\n");
+
+    // A benchmark, measured.
+    let bench = "import std.testing\n\ntest doubling {\n    testing.bench(\"twice\", () { twice(21) })\n}\n";
+    std::fs::write(dir.join("src/bench_test.to"), bench).unwrap();
+    let (measured, text) = agent.call("test", json!({ "bench": true, "bench_time": 0.1 }));
+    let benchmark = &measured["report"]["tests"][0]["attempts"][0]["benchmarks"][0];
+    assert_eq!(benchmark["name"], "twice", "{measured}");
+    assert!(benchmark["ns_per_op"]["median"].as_f64().unwrap() > 0.0, "{benchmark}");
+    assert!(text.contains("  twice "), "{text}");
     agent.stop();
 }
 

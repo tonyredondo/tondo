@@ -44,7 +44,11 @@ project, running, debugging and testing it.
   those that a saved change can affect, and *Run with Coverage* shows which
   lines, functions and ways of branches the tests ran. A snapshot that
   differs offers *Update Snapshot*. The examples of the workspace's
-  Markdown documents are there too, checked by `tondo doc-test`.
+  Markdown documents are there too, checked by `tondo doc-test`. The
+  *Benchmark* profile measures the tests that call `testing.bench`: each
+  benchmark's time, spread and allocations go to its output, and the
+  report opens beside the code, compared with a baseline when the settings
+  give one.
 - **Modules**: the *Tondo Modules* view shows each project's packages,
   modules, files and imports, from `tondo graph`; *Show the Module Graph*
   writes it in Mermaid.
@@ -69,3 +73,5 @@ project, running, debugging and testing it.
   and of the tasks; a `launch.json` gives its own `args` and `env`.
 - `tondo.test.args` and `tondo.test.env`: what `tondo test` takes in the
   Testing view, as `["--jobs", "4"]`, and the tests' variables.
+- `tondo.bench.args`: what the *Benchmark* profile adds to `tondo test
+  --bench`, as `["--against", "main", "--max-regression", "5"]`.

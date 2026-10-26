@@ -6,6 +6,8 @@ the line that failed, a comparison as a diff, and its stack.
 
 - *Run Tests Continuously* runs again the tests a saved change can affect.
 - *Run with Coverage* shows the lines, functions and branches tests ran.
+- *Benchmark* measures the tests that call `testing.bench`, and opens what
+  they measured beside the code.
 - *Debug Test* runs one test alone under the debugger.
 - A snapshot that differs offers *Update Snapshot*.
 

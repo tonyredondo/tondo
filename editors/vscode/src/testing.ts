@@ -10,7 +10,7 @@ import * as vscode from 'vscode';
 import { isProject } from './binary';
 import { Ran, exec, settings } from './cli';
 import { Documents } from './docs';
-import { Covered, Listed, Outcome, Served, covered, listed, served, testEvent } from './report';
+import { Covered, Listed, Outcome, Served, benchLine, covered, listed, served, testEvent } from './report';
 
 /** Registers the tests; what it returns takes the language server's. */
 export function registerTesting(context: vscode.ExtensionContext, output: vscode.OutputChannel): (params: Served) => void {
@@ -19,6 +19,8 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
   // Each project's item, and the project of each item.
   const projects = new Map<string, vscode.TestItem>();
   const projectOf = new WeakMap<vscode.TestItem, string>();
+  // The tests that are benchmarks, which the Benchmark profile measures.
+  const benchmark = new vscode.TestTag('bench');
 
   async function discoverAll(): Promise<void> {
     const found = await vscode.workspace.findFiles('**/{tondo.toml,src/main.to}', '**/{target,node_modules,.git}/**');
@@ -83,6 +85,7 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
       const kept = before.get(node.id);
       const item = kept && kept.uri?.fsPath === uri?.fsPath ? kept : controller.createTestItem(node.id, node.name, uri);
       item.label = node.name;
+      item.tags = node.bench ? [benchmark] : [];
       if (node.line) {
         const position = new vscode.Position(node.line - 1, Math.max((node.column ?? 1) - 1, 0));
         item.range = new vscode.Range(position, position);
@@ -144,11 +147,15 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
     return byProject;
   }
 
-  /** `tondo test` with the items of a project, as events. */
-  function testArgs(dir: string, items: vscode.TestItem[], watch: boolean): string[] {
+  /** `tondo test` with the items of a project, as events; measuring
+   *  benchmarks with `--bench` and what the settings add. */
+  function testArgs(dir: string, items: vscode.TestItem[], watch: boolean, bench = false): string[] {
     const args = ['test', '--test-format', 'events', '--allow-empty'];
     if (watch) {
       args.push('--watch');
+    }
+    if (bench) {
+      args.push('--bench', ...vscode.workspace.getConfiguration('tondo', vscode.Uri.file(dir)).get<string[]>('bench.args', []));
     }
     if (!items.some((item) => item.id.startsWith('project:'))) {
       items.forEach((item) => args.push('--exact', item.id));
@@ -250,6 +257,11 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
           if (test && event.outcome.logs) {
             testRun.appendOutput(event.outcome.logs.replace(/\r?\n/g, '\r\n'), undefined, test);
           }
+          // What its benchmarks measured.
+          if (test && event.outcome.benchmarks.length > 0) {
+            const lines = event.outcome.benchmarks.map((b) => `${test.label} ${benchLine(b)}\r\n`).join('');
+            testRun.appendOutput(lines, undefined, test);
+          }
           break;
         }
         case 'report':
@@ -296,7 +308,8 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
       return;
     }
     const testRun = controller.createTestRun(request);
-    const asked = request.include ?? documents.all();
+    const benchmarking = request.profile?.label === 'Benchmark';
+    const asked = benchmarking ? [] : (request.include ?? documents.all());
     const docs = asked.filter((item) => documents.owns(item) && !request.exclude?.includes(item));
     if (docs.length > 0) {
       await documents.run(testRun, docs, token);
@@ -305,16 +318,24 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
       if (token.isCancellationRequested) {
         break;
       }
-      const started = items.flatMap((item) => tests(item, []));
+      // A benchmark run runs the benchmarks alone.
+      const started = items
+        .flatMap((item) => tests(item, []))
+        .filter((item) => !benchmarking || item.tags.some((tag) => tag.id === benchmark.id));
       started.forEach((item) => testRun.enqueued(item));
       let reported = false;
       let ran = new Set<string>();
       const follow = follower(dir, () => testRun, (compiled, ids) => ((reported = compiled), (ran = ids)));
-      const args = testArgs(dir, items, false);
+      const args = testArgs(dir, items, false, benchmarking);
       const report = path.join(os.tmpdir(), `tondo-coverage-${process.pid}-${Date.now()}.json`);
       const coverage = request.profile?.kind === vscode.TestRunProfileKind.Coverage;
       if (coverage) {
         args.push('--report', `coverage=${report}`);
+      }
+      // What the benchmarks measured, as a page beside the code.
+      const measured = path.join(os.tmpdir(), `tondo-benchmarks-${path.basename(dir)}.md`);
+      if (benchmarking) {
+        args.push('--report', `markdown=${measured}`);
       }
       const done: Ran = await exec(args, dir, token, follow, settings('test', dir).env).catch((error: Error) => ({
         code: null,
@@ -337,6 +358,9 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
           output.appendLine(`no coverage: ${(error as Error).message}`);
         }
         await fs.rm(report, { force: true });
+      }
+      if (benchmarking) {
+        void vscode.commands.executeCommand('markdown.showPreviewToSide', vscode.Uri.file(measured));
       }
       // What the report does not name did not run.
       started.filter((item) => !ran.has(item.id)).forEach((item) => testRun.skipped(item));
@@ -395,6 +419,7 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
   }
 
   controller.createRunProfile('Run', vscode.TestRunProfileKind.Run, run, true, undefined, true);
+  controller.createRunProfile('Benchmark', vscode.TestRunProfileKind.Run, run, false, benchmark);
   // A snapshot written as the test now makes it, then the test again.
   context.subscriptions.push(
     vscode.commands.registerCommand('tondo.updateSnapshot', async (asked: { test: vscode.TestItem }) => {
