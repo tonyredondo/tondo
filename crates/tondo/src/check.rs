@@ -11517,6 +11517,16 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalNet),
                 )),
             ) => {
+                // `joined(values, separator)`: the elements' `Display`, with
+                // the separator between, into one text, as `Array.join`.
+                if module == StdModule::InternalText && *member == "joined" {
+                    let [values, separator] = args else { return self.arity_error(span, 2, args.len()) };
+                    let values = self.expr(cx, &values.value, None);
+                    let separator = self.expr(cx, &separator.value, Some(Ty::STRING));
+                    let separator = self.coerce(separator, Ty::STRING);
+                    let joined = hir::ExprKind::ArrayOp(hir::ArrayOp::Join, vec![values, separator]);
+                    return Self::mk(joined, Ty::STRING, span);
+                }
                 if module == StdModule::InternalReflect && matches!(*member, "box" | "describe") {
                     let [arg] = args else {
                         return self.arity_error(span, 1, args.len());

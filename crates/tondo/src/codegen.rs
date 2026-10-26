@@ -87,6 +87,7 @@ enum Rt {
     StrSliceChecked,
     StrFromChars,
     SbStart,
+    SbJoin,
     SbStr,
     SbI64,
     SbU64,
@@ -321,6 +322,7 @@ impl Rt {
             Rt::StrSliceChecked => ("tondo_rt_str_slice_checked", &[I64, I64, I64, I64], &[I64]),
             Rt::StrFromChars => ("tondo_rt_str_from_chars", &[I64], &[I64]),
             Rt::SbStart => ("tondo_rt_sb_start", &[I64, I64], &[]),
+            Rt::SbJoin => ("tondo_rt_sb_join", &[I64, I64, I64, I64, I64], &[]),
             Rt::SbStr => ("tondo_rt_sb_str", &[I64, I64], &[]),
             Rt::SbI64 => ("tondo_rt_sb_i64", &[I64, I64], &[]),
             Rt::SbU64 => ("tondo_rt_sb_u64", &[I64, I64], &[]),
@@ -5624,6 +5626,17 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let rt = if op == ArrayOp::Concat { Rt::ArrayConcat } else { Rt::ArrayRepeat };
                 Val::Scalar(self.e.call_rt(rt, &[a, b, size, retain, location]).unwrap())
             }
+            ArrayOp::Join => {
+                let element = element_of(self.operand_ty(&operands[0]));
+                let (array, separator) = (self.scalar(&operands[0]), self.scalar(&operands[1]));
+                let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 3);
+                let slot = self.e.fb.create_sized_stack_slot(data);
+                let builder = self.e.fb.ins().stack_addr(POINTER, slot, 0);
+                let size = self.e.element_size(element);
+                let display = self.e.glue_address(Glue::Display, element);
+                self.e.call_rt(Rt::SbJoin, &[builder, array, size, display, separator]);
+                Val::Scalar(self.e.call_rt(Rt::SbFinish, &[builder]).unwrap())
+            }
             ArrayOp::Contains => {
                 let element = self.operand_ty(&operands[0]);
                 let value = self.operand(&operands[0]);
@@ -7176,6 +7189,20 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         (TyKind::String, Val::Scalar(text)) => {
                             let length = self.e.fb.ins().load(types::I64, flags(), text, STRING_LENGTH);
                             room = Some(room.map_or(length, |room| self.e.fb.ins().iadd(room, length)));
+                        }
+                        // At most one digit more than it has, and its sign.
+                        (TyKind::Int(_), Val::Scalar(value)) => {
+                            let value = self.wide(value, true);
+                            let sign = self.e.fb.ins().sshr_imm_u(value, 63);
+                            let magnitude = self.e.fb.ins().bxor(value, sign);
+                            let magnitude = self.e.fb.ins().bor_imm_u(magnitude, 1);
+                            let zeros = self.e.fb.ins().clz(magnitude);
+                            let sixty_four = self.e.fb.ins().iconst(types::I64, 64);
+                            let bits = self.e.fb.ins().isub(sixty_four, zeros);
+                            let digits = self.e.fb.ins().imul_imm_u(bits, 1233);
+                            let digits = self.e.fb.ins().ushr_imm_u(digits, 12);
+                            room = Some(room.map_or(digits, |room| self.e.fb.ins().iadd(room, digits)));
+                            known += 2;
                         }
                         (TyKind::Int(_) | TyKind::Float(_), _) => known += 24,
                         _ => known += 16,

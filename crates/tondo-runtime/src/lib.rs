@@ -1846,13 +1846,16 @@ impl Builder {
         unsafe { (*self.text).len = room }
     }
 
-    /// The string built, with as many bytes as it holds.
+    /// The string built. Its block keeps a little room it does not use,
+    /// which the allocator frees with it, unless a budget or a watch counts
+    /// the memory a string holds by its length.
     pub fn finish(self) -> *mut Str {
         if self.text.is_null() {
             return str_new(&[]);
         }
         let mut text = self.text as *mut u8;
-        if self.room() != self.len {
+        let counted = diagnostics::hooks() & (diagnostics::BUDGET | diagnostics::WATCHED) != 0;
+        if self.room() - self.len > 16 || (counted && self.room() != self.len) {
             let layout = str_layout(self.len);
             text = unsafe { std::alloc::realloc(text, str_layout(self.room()), layout.size()) };
             if text.is_null() {
@@ -1874,6 +1877,28 @@ impl Write for Builder {
 
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
+    }
+}
+
+/// Starts the builder at `b` with the elements of an array, as their
+/// `Display` writes them, with `separator` between them.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_sb_join(
+    b: *mut Builder,
+    a: *mut ArrayHeader,
+    size: usize,
+    display: DisplayGlue,
+    separator: *const Str,
+) {
+    unsafe {
+        let separator = str_bytes(separator);
+        b.write(Builder::new((*a).len * (8 + separator.len())));
+        for k in 0..(*a).len {
+            if k > 0 {
+                (*b).extend(separator);
+            }
+            display(b, element(a, size, k));
+        }
     }
 }
 

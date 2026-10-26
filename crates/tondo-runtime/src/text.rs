@@ -2,7 +2,7 @@
 //! library 14.1): splitting, Unicode case and classes, and numbers to and
 //! from text. Positions are scalar indexes, as in the language.
 
-use super::{ArrayHeader, Builder, Str, element, str_bytes, str_new, tondo_rt_array_new};
+use super::{ArrayHeader, Str, element, str_new, tondo_rt_array_new};
 
 fn text<'a>(s: *const Str) -> &'a str {
     unsafe { super::str_text(s) }
@@ -48,23 +48,6 @@ pub unsafe extern "C" fn tondo_rt_text_lines(s: *const Str) -> *mut ArrayHeader 
 pub unsafe extern "C" fn tondo_rt_text_words(s: *const Str) -> *mut ArrayHeader {
     let words: Vec<&str> = text(s).split_whitespace().collect();
     strings(words.into_iter())
-}
-
-/// The strings of an `Array[String]` with `separator` between them.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_text_join(array: *mut ArrayHeader, separator: *const Str) -> *mut Str {
-    let separator = unsafe { str_bytes(separator) };
-    let count = if array.is_null() { 0 } else { unsafe { (*array).len } };
-    let part = |index| unsafe { str_bytes(*(element(array, 8, index) as *const *const Str)) };
-    let length = (0..count).map(|index| part(index).len()).sum::<usize>() + separator.len() * count.saturating_sub(1);
-    let mut out = Builder::new(length);
-    for index in 0..count {
-        if index > 0 {
-            out.extend(separator);
-        }
-        out.extend(part(index));
-    }
-    out.finish()
 }
 
 #[unsafe(no_mangle)]

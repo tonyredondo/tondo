@@ -437,6 +437,9 @@ pub enum ArrayOp {
     Repeat,
     /// `value in array`; the value comes first.
     Contains,
+    /// The elements as text with a separator between them: `joined` of
+    /// `std.internal.text`, which `Array.join` is.
+    Join,
 }
 
 /// How `LockSync` takes a lock.
@@ -1163,7 +1166,6 @@ pub const NATIVES: &[Native] = {
         text("split", &[String, String], Strings, "tondo_rt_text_split"),
         text("lines", &[String], Strings, "tondo_rt_text_lines"),
         text("words", &[String], Strings, "tondo_rt_text_words"),
-        text("join", &[Strings, String], String, "tondo_rt_text_join"),
         text("repeat", &[String, Int], String, "tondo_rt_text_repeat"),
         text("trimStart", &[String], String, "tondo_rt_text_trim_start"),
         text("trimEnd", &[String], String, "tondo_rt_text_trim_end"),

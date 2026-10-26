@@ -259,6 +259,12 @@ impl Mono<'_> {
                     self.collect_display(*ty);
                 }
             }
+            // `Array.join` displays each element, as an interpolation of
+            // the array would.
+            ExprKind::ArrayOp(crate::hir::ArrayOp::Join, operands) => {
+                self.exprs(operands, map);
+                self.collect_display(operands[0].ty);
+            }
             ExprKind::Aggregate(items)
             | ExprKind::Array(items)
             | ExprKind::Set(items)

@@ -858,11 +858,7 @@ pub fn Array[T].partition(self, predicate: fn(T): Bool): (Array[T], Array[T]) {
 
 /// The elements as text, with `separator` between them.
 pub fn Array[T: Display].join(self, separator: String): String {
-    var parts: Array[String] = []
-    for item in self {
-        parts.push("{item}")
-    }
-    textNative.join(parts, separator)
+    textNative.joined(self, separator)
 }
 
 /// Puts the elements in order, equal ones as they were.
