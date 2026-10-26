@@ -12,6 +12,7 @@ use std::io::Write;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering, fence};
 
+mod bench;
 mod cbor;
 mod civil;
 mod clock;
@@ -1950,6 +1951,7 @@ fn panic_name(code: u32) -> &'static str {
         2006 => "test-artifact-conflict",
         2007 => "test-snapshot-mismatch",
         2008 => "test-snapshot-conflict",
+        2009 => "test-bench-conflict",
         _ => "unknown",
     }
 }

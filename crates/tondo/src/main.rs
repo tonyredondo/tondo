@@ -290,8 +290,10 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         artifacts: None,
         update_snapshots: false,
         launcher: None,
+        bench: None,
     };
     let mut diagnostics_json = false;
+    let (mut bench, mut bench_time) = (false, 3.0);
     let (mut statically, mut debug, mut library, mut watch) = (false, false, false, false);
     let mut target = None;
     let usage = |message: String| format!("{message}\n{USAGE}");
@@ -348,6 +350,14 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
                 );
             }
             "--list" => options.list = true,
+            "--bench" => bench = true,
+            "--bench-time" => {
+                bench_time = value()?
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|s| s.is_finite() && *s > 0.0)
+                    .ok_or_else(|| usage("--bench-time takes a positive number of seconds".into()))?;
+            }
             "--coverage" => options.coverage = true,
             "--watch" => watch = true,
             "--jobs" => {
@@ -474,6 +484,25 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     if options.list && !options.reports.is_empty() {
         return Err(usage("--list writes no report; use --test-format json".into()));
+    }
+    if given("--bench-time") && !bench {
+        return Err(usage("--bench-time is how long each benchmark measures for: it goes with --bench".into()));
+    }
+    if bench {
+        // Benchmarks run one at a time, in the optimized build that counts
+        // nothing.
+        let measuring = ["--debug", "--coverage", "--jobs", "--retry", "--repeat", "--allow-flaky", "--schedules"];
+        if let Some(flag) = measuring.iter().chain(&["--update-snapshots"]).find(|f| given(f)) {
+            return Err(usage(format!(
+                "--bench measures each benchmark once, alone and optimized; it does not go with {flag}"
+            )));
+        }
+        if options.counting() {
+            return Err(usage(
+                "--bench measures a build that counts nothing; it does not go with a report of coverage".into(),
+            ));
+        }
+        options.bench = Some(std::time::Duration::from_secs_f64(bench_time));
     }
     let once = ["--list", "--update-snapshots", "--report"];
     if watch && let Some(flag) = once.iter().find(|f| given(f)) {

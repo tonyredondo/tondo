@@ -10,6 +10,7 @@ macro_rules! say {
     }};
 }
 
+mod bench;
 mod coverage;
 mod human;
 mod interrupt;
@@ -77,6 +78,9 @@ pub struct Options {
     pub artifacts: Option<PathBuf>,
     /// Records missing and changed snapshots instead of failing on them.
     pub update_snapshots: bool,
+    /// `--bench`: runs the benchmarks alone, each measuring for this long
+    /// (10.4).
+    pub bench: Option<Duration>,
 }
 
 /// What a `--report` writes (10, 15.5, 15.10).
@@ -103,13 +107,14 @@ pub struct Tree {
 
 impl Tree {
     /// Writes the tree beside the executable it describes, one node a line:
-    /// its parent, whether it is a suite, its identity and its location.
+    /// its parent, whether it is a suite, whether a benchmark, its identity
+    /// and its location.
     pub fn save(&self, path: &Path) -> Result<(), String> {
         let lines: Vec<String> = self
             .nodes
             .iter()
             .zip(&self.locations)
-            .map(|(n, location)| format!("{}\t{}\t{}\t{location}", n.parent, n.suite as u8, n.id))
+            .map(|(n, location)| format!("{}\t{}\t{}\t{}\t{location}", n.parent, n.suite as u8, n.bench as u8, n.id))
             .collect();
         let partial = path.with_extension(format!("partial-{}", std::process::id()));
         std::fs::write(&partial, lines.join("\n")).map_err(|e| format!("cannot write {}: {e}", partial.display()))?;
@@ -121,12 +126,13 @@ impl Tree {
         let text = std::fs::read_to_string(path).ok()?;
         let mut tree = Tree { nodes: Vec::new(), locations: Vec::new() };
         for line in text.lines() {
-            let mut parts = line.splitn(4, '\t');
+            let mut parts = line.splitn(5, '\t');
             let parent = parts.next()?.parse().ok()?;
             let suite = parts.next()? == "1";
+            let bench = parts.next()? == "1";
             let id = parts.next()?.to_string();
             let span = crate::source::Span::new(0, 0);
-            tree.nodes.push(TestNodeInfo { id, parent, suite, span });
+            tree.nodes.push(TestNodeInfo { id, parent, suite, bench, span });
             tree.locations.push(parts.next()?.to_string());
         }
         Some(tree)
@@ -213,6 +219,19 @@ pub struct Attempt {
     pub snapshots: Vec<Snapshot>,
     /// The virtual clocks it ran, in order (testing 7.9).
     pub virtual_time: Vec<VirtualClock>,
+    /// What its benchmarks measured, in order (10.4).
+    pub benchmarks: Vec<Benchmark>,
+}
+
+/// What a benchmark measured: the runs of each sample, the nanoseconds a
+/// run took by sample, and the allocations of a run and their bytes.
+#[derive(Clone, Debug)]
+pub struct Benchmark {
+    pub name: String,
+    pub runs: u64,
+    pub samples: Vec<f64>,
+    pub allocations: f64,
+    pub bytes: f64,
 }
 
 /// Where a virtual clock got, and how many times it moved by itself, by
@@ -270,6 +289,7 @@ impl Attempt {
             artifacts: Vec::new(),
             snapshots: Vec::new(),
             virtual_time: Vec::new(),
+            benchmarks: Vec::new(),
         }
     }
 }
@@ -313,7 +333,11 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     let ownership = owners::resolve(dir, &options.codeowners).map_err(Failure::Input)?;
     let owners: Vec<Vec<String>> = (0..tree.nodes.len() as u32).map(|n| ownership.of(tree.file(n))).collect();
     let snapshots = store::Snapshots::read(dir, &package(dir)).map_err(Failure::Input)?;
-    let selected = select::select(tree, &options.selector);
+    let mut selected = select::select(tree, &options.selector);
+    // `--bench` runs the benchmarks alone.
+    if options.bench.is_some() {
+        selected.retain(|&test| tree.nodes[test as usize].bench);
+    }
     // Each `--exact` names a suite or test.
     let missing: Vec<String> = match &options.selector {
         Selector::Exact(ids) => ids
@@ -325,6 +349,12 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     };
     if selected.is_empty() || !missing.is_empty() {
         let message = match &options.selector {
+            Selector::All if options.bench.is_some() => "the project has no benchmarks: a test that calls \
+                `testing.bench(\"name\", () { ... })` in its body is one"
+                .into(),
+            _ if options.bench.is_some() && missing.is_empty() => {
+                "no benchmark is selected: --bench runs the tests that call `testing.bench`".into()
+            }
             Selector::Filter(text) => format!("no test matches --filter {text:?}"),
             Selector::Glob(_) => "no suite or test matches --glob".to_string(),
             Selector::Exact(_) => {

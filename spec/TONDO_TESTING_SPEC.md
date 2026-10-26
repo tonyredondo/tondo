@@ -2118,6 +2118,7 @@ tondo test [<project> | --project <dir>]
            [--json]
            [--report <json|junit|coverage|lcov>=<path>]...
            [--coverage]
+           [--bench [--bench-time <seconds>]]
            [--show-output]
            [--deny-skips]
            [--allow-flaky]
@@ -2284,6 +2285,60 @@ Cada trabajador escribe sus cuentas al terminar y el runner las suma; una
 línea o un camino que nada ejecutó cuenta cero. Un trabajador terminado a la
 fuerza, por un timeout, pierde sus cuentas.
 
+### 10.4 Benchmarks
+
+Un benchmark es un `test` que mide: llama a `testing.bench(name, body)` en su
+propio cuerpo, también dentro de un `if` o de un `for`. El análisis lo sabe sin
+ejecutar nada, igual que conoce el árbol, y la lista (15.4) marca cada test con
+`bench`. `testing.bench` en cualquier otro lugar, en una función, una closure,
+un `defer` o el setup de una suite, es `E2006`: un test es un benchmark, o no lo
+es, por lo que dice su cuerpo.
+
+~~~tondo
+test parsing {
+    for size in [10, 1_000] {
+        let text = document(size)
+        testing.bench("parse {size}", () { json.parse(text) })?
+    }
+}
+~~~
+
+Sin `--bench`, un benchmark es un test más: cada `bench` ejecuta su cuerpo una
+vez, así que un benchmark que se rompe falla como cualquier test.
+
+`--bench` ejecuta solo los benchmarks de la selección, uno a uno, en el build
+optimizado que no cuenta nada: no admite `--debug`, `--coverage` ni un reporte
+de cobertura, `--jobs`, `--retry`, `--repeat`, `--allow-flaky`, `--schedules`
+ni `--update-snapshots`. Cada `bench` mide así:
+
+1. Calienta durante una décima parte de su tiempo, entre 50 ms y 1 s,
+   ejecutando el cuerpo en tandas que doblan las de la anterior.
+2. Con la última tanda calcula cuántas ejecuciones caben en una muestra para
+   tomar 50 muestras en `--bench-time` segundos, 3 por defecto; si una
+   ejecución es lenta, toma una por muestra y las muestras que caben en ese
+   tiempo, nunca menos de 5.
+3. Toma las muestras: el tiempo de cada tanda entre sus ejecuciones.
+4. Ejecuta una tanda más, que cuenta las asignaciones de memoria y sus bytes.
+
+Lo que da el cuerpo se conserva, como con `testing.keep`, para que el
+optimizador no elimine su cálculo. El timeout de la entrada (7.8) cuenta de
+nuevo desde que termina cada benchmark. Un cuerpo que falla termina su
+benchmark sin medidas, y `bench` devuelve ese error; un pánico termina el test,
+como siempre.
+
+El reporte (15.11) da por cada benchmark las ejecuciones de cada muestra, los
+nanosegundos por ejecución de cada muestra, su mediana, media, mínimo, máximo y
+desviación (la mediana de las distancias a la mediana, que una muestra
+retrasada por otra cosa no estira) y las asignaciones y bytes por ejecución; y
+una vez por invocación, el tiempo de cada benchmark y la máquina. La salida
+para personas pone bajo la línea de cada test una línea por benchmark:
+
+~~~text
+test app::unit::app::parsing ... ok
+  parse 10       1.973 µs/op  ±0.5%  51 allocs/op  1685 B/op
+  parse 1000     173.3 µs/op  ±0.4%  4017 allocs/op  85613 B/op
+~~~
+
 ## 11. Frontera con `assert` y `std.testing`
 
 ### 11.1 Núcleo suficiente
@@ -2326,6 +2381,9 @@ pub fn withVirtualTime[
 
 pub fn VirtualTime.settle(self)
 pub fn VirtualTime.advance(self, duration: time.Duration)
+
+pub fn bench[T, E, F: CallMut[fn(): T ! E]](name: String, body: F): ! E
+pub fn keep[T](value: T)
 ~~~
 
 Se utilizan mediante resolución de módulo ordinaria:
@@ -2373,6 +2431,13 @@ fallible conserva exactamente `E`. La llamada usa el `?` ordinario para
 propagar ese canal; con `E = Never` no existe rama `err` ejecutable. No existe
 type erasure, allocation de callback ni wrapper `Task`.
 
+`bench` recibe una closure escrita en la llamada. Es genérica sobre lo que da
+el cuerpo, su error y el tipo concreto de la closure, y exige `CallMut` porque
+ejecuta el cuerpo muchas veces. Como `withVirtualTime`, infiere el error del
+cuerpo, `Never` si no falla, y la llamada lo propaga con el `?` ordinario.
+`keep` recibe cualquier valor y lo da por usado: el optimizador no puede
+eliminar lo que lo calculó.
+
 `VirtualTime` es un tipo opaco test-only con `Copy`, `Send` y `Share`, sin
 `Equatable`, `Key` ni `Display`. El usuario nunca lo construye:
 `withVirtualTime` se lo da al cierre, y deja de mover el reloj al terminar. `settle` y `advance` esperan, porque conducir otras tareas es una
@@ -2392,8 +2457,13 @@ Estas operaciones son intrínsecas y selladas dentro de un artefacto de test:
   pánico, skip y cancelación de la closure sin reinterpretarlos.
 - `VirtualTime.settle` observa quiescencia sin mover el reloj y
   `VirtualTime.advance` conduce el dominio hasta un target exacto.
+- `bench` ejecuta su cuerpo una vez, o lo mide conforme a 10.4 con `--bench`;
+  produce `P2009` si su nombre está vacío, tiene un carácter de control o ya
+  nombra otro benchmark del mismo test, y devuelve el error del cuerpo.
+- `keep` devuelve `Unit`.
 - Llamadas desde helpers, closures o tasks estructuradas conservan el envelope
-  de la entrada que las alcanzó.
+  de la entrada que las alcanzó; `bench` solo se admite en el cuerpo de un
+  test (`E2006`).
 - Ninguna expone ID, nombre, path, estado, runner ni referencia a otro nodo.
 - No existe `TestContext`, `currentTest()`, registro runtime ni callback de
   lifecycle.
@@ -2806,8 +2876,9 @@ Tondo 0.1 incluye estos códigos en su registro normativo:
 | `E2003` | `invalid-test-source-declaration` | Una fuente de test intenta exportar API, alterar la unidad de producción sellada o ser consumida desde producción; o producción intenta importar `std.testing`. |
 | `E2004` | `empty-test-suite` | Una suite no contiene ningún miembro directo y, por tanto, ningún test descendiente. |
 | `E2005` | `invalid-suite-capture` | Un descendiente intenta capturar `var`, préstamo, valor afín o un tipo que no cumple `Copy + Send + Share`. |
+| `E2006` | `bench-outside-test-body` | `testing.bench` aparece fuera del cuerpo de un test: en una función, una closure, un `defer` o el setup de una suite. |
 
-El runtime de test añade ocho pánicos:
+El runtime de test añade nueve pánicos:
 
 | Código | Nombre estable | Condición primaria |
 |---|---|---|
@@ -2819,6 +2890,7 @@ El runtime de test añade ocho pánicos:
 | `P2006` | `test-artifact-conflict` | Un attachment tiene nombre/media type inválido o repite un nombre ya registrado en el mismo intento. |
 | `P2007` | `test-snapshot-mismatch` | Un snapshot esperado no existe o sus bytes difieren del `String` actual fuera de update mode. |
 | `P2008` | `test-snapshot-conflict` | Un snapshot tiene nombre inválido o repite una key ya comprobada en el mismo intento. |
+| `P2009` | `test-bench-conflict` | Un benchmark tiene un nombre vacío o con un carácter de control, o repite el nombre de otro benchmark del mismo test. |
 
 `testing.failNow` reutiliza `P0007`; no añade otro código.
 
@@ -2925,6 +2997,7 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
     "jobs": 1,
     "timeout_ms": 60000
   },
+  "bench": null,
   "suites": [
     {
       "id": "application::unit::math::arithmetic",
@@ -2957,6 +3030,7 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
           "artifacts": [],
           "snapshots": [],
           "virtual_time": [],
+          "benchmarks": [],
           "logs": [],
           "stdout": {"encoding": "utf8", "data": ""},
           "stderr": {"encoding": "utf8", "data": ""}
@@ -2979,6 +3053,7 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
         "column": 10
       },
       "owners": ["@tondo/math"],
+      "bench": false,
       "status": "passed",
       "decisive_attempt": 1,
       "attempts": [
@@ -2998,6 +3073,7 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
           "artifacts": [],
           "snapshots": [],
           "virtual_time": [],
+          "benchmarks": [],
           "logs": [],
           "stdout": {"encoding": "utf8", "data": ""},
           "stderr": {"encoding": "utf8", "data": ""}
@@ -3052,7 +3128,11 @@ es el array de sus ids en el orden en que se dieron.
 `x86_64-linux` o `aarch64-macos`, y `profile` vale `hosted`.
 `policy.deny_skips` y `policy.allow_flaky` contienen los valores efectivos de
 sus flags. `limits.jobs` y `limits.timeout_ms` contienen el número de
-trabajadores y el timeout efectivo por entrada.
+trabajadores y el timeout efectivo por entrada. `bench` es `null` sin
+`--bench`, y con él dice cuánto midió cada benchmark y dónde (15.11). Cada
+test dice con `bench` si es un benchmark (10.4), y cada intento da en
+`benchmarks` lo que midieron los suyos, en el orden en que terminaron: vacío
+sin `--bench`.
 
 `ownership.mode` es `auto`, `explicit` o `none`. `source` y `sha256` son strings
 cuando se utilizó un CODEOWNERS y `null` en otro caso. `source` siempre es
@@ -3421,7 +3501,8 @@ bloqueo, logs ni output:
         "line": 2,
         "column": 10
       },
-      "owners": ["@tondo/math"]
+      "owners": ["@tondo/math"],
+      "bench": false
     }
   ]
 }
@@ -3746,8 +3827,8 @@ para que un editor muestre cada resultado cuando llega. Cada línea tiene
   `start` y `stdout` o `stderr`, con la forma de 15.1. Llega después de su
   `start` y antes de su `end`, en trozos que no siguen las líneas.
 - `end`, al conocerse el resultado de un intento: los campos de `start` y
-  `status`, `duration_ms`, `failure`, `skip`, `logs`, `stdout` y `stderr`,
-  con los valores del intento en el reporte (15.3). Un test bloqueado por su
+  `status`, `duration_ms`, `failure`, `skip`, `logs`, `stdout`, `stderr` y
+  `benchmarks`, con los valores del intento en el reporte (15.3). Un test bloqueado por su
   suite tiene `end` sin `start`. Su `end` repite todo lo que el intento
   escribió.
 - `report`, la última línea: `report` es el reporte `tondo-test-report-0.1/1`
@@ -3799,6 +3880,50 @@ ejecutaron. `--report lcov=<path>` da lo mismo como tracefile de LCOV, con
 `SF`, `FN`, `FNDA`, `BRDA` (una rama por bloque, en orden), `DA` y sus
 totales, para las herramientas que lo leen.
 
+### 15.11 Benchmarks
+
+Con `--bench`, el campo `bench` del reporte dice cuánto midió cada benchmark y
+en qué máquina, para no comparar como iguales medidas de máquinas distintas:
+
+~~~json
+{
+  "time_ms": 3000,
+  "toolchain": "tondo 0.1.0",
+  "os": "linux",
+  "arch": "x86_64",
+  "cpu": "AMD Ryzen 9 5950X 16-Core Processor",
+  "cpus": 32
+}
+~~~
+
+`cpu` es el modelo del procesador como lo nombra el sistema, o la arquitectura
+si no lo nombra; `cpus`, los hilos que puede ejecutar a la vez. Cada benchmark
+de un intento tiene esta forma:
+
+~~~json
+{
+  "name": "parse 10",
+  "runs_per_sample": 367839,
+  "samples": 50,
+  "ns_per_op": {
+    "median": 16.138,
+    "mean": 16.179,
+    "min": 16.017,
+    "max": 16.890,
+    "deviation": 0.107
+  },
+  "allocations_per_op": 0.000,
+  "bytes_per_op": 0.000,
+  "samples_ns_per_op": [16.890, 16.478, 16.310]
+}
+~~~
+
+`runs_per_sample` son las ejecuciones del cuerpo en cada muestra y `samples`,
+cuántas hay; `samples_ns_per_op` da los nanosegundos por ejecución de cada una,
+en el orden en que se tomaron. `deviation` es la mediana de las distancias a la
+mediana. Las medidas, en nanosegundos, asignaciones o bytes por ejecución, son
+números decimales con exactamente tres decimales, sin exponente.
+
 ## 16. Conformidad
 
 La conformidad se comprueba con los tests del repositorio: los casos de
@@ -3806,7 +3931,7 @@ La conformidad se comprueba con los tests del repositorio: los casos de
 los ejecutan en cada plataforma de CI. El compilador nativo implementa hoy:
 
 - `suite` y `test`: grammar, formato, árbol estático, identidades y los
-  diagnósticos `E2001` a `E2005`;
+  diagnósticos `E2001` a `E2006`;
 - unit companions e integration roots (5.2 a 5.4);
 - de `std.testing`, `log`, `tags`, `failNow` y `skip`;
 - trabajadores (7.1), lifecycle de suite (7.3), timeouts (7.8) y los estados
@@ -3824,7 +3949,9 @@ los ejecutan en cada plataforma de CI. El compilador nativo implementa hoy:
   con `ignore`, `matches` y `replace`, sobre un archivo por snapshot y
   `--update-snapshots`;
 - `testing.withVirtualTime` con `settle` y `advance`, y los pánicos `P2003` a
-  `P2005`.
+  `P2005`;
+- los benchmarks: `testing.bench` y `testing.keep`, `--bench` y
+  `--bench-time`, `P2009` y su reporte (10.4, 15.11).
 
 Queda pendiente rechazar la mezcla de `Instant` de dominios distintos (7.9).
 
@@ -3930,6 +4057,17 @@ test expiresAtDeadline {
 }
 ~~~
 
+### Benchmark
+
+~~~tondo
+import std.testing
+
+test sorting {
+    let values = shuffled(10_000)
+    testing.bench("sort 10000", () { values.sorted() })
+}
+~~~
+
 ### Comandos
 
 ~~~text
@@ -3950,6 +4088,7 @@ tondo test --deny-skips
 tondo test --update-snapshots --jobs 1
 tondo test --artifacts target/test-artifacts
 tondo test --test-format json
+tondo test --bench --bench-time 5
 tondo test \
     --report junit=artifacts/tests.xml \
     --report json=artifacts/tests.json

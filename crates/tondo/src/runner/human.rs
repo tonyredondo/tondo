@@ -85,6 +85,10 @@ impl<'a> Printer<'a> {
         self.known.insert(attempt.node, (**attempt).clone());
         while let Some(attempt) = self.expected.get(self.printed).and_then(|t| self.known.get(t)) {
             say!("test {} ... {}", self.tree.id(attempt.node), short(self.tree, &attempt.status));
+            // What its benchmarks measured, under `--bench`.
+            if !attempt.benchmarks.is_empty() {
+                say!("{}", super::bench::lines(&attempt.benchmarks).trim_end());
+            }
             self.printed += 1;
         }
     }

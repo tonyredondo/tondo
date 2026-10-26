@@ -123,10 +123,14 @@ pub const COMMANDS: &[Command] = &[
             "          [--retry <n>] [--allow-flaky] [--repeat <n>] [--codeowners auto|none|<path>]",
             "          [--show-output] [--allow-empty] [--deny-skips] [--test-format human|json|events] [--json]",
             "          [--report json=<path> | junit=<path> | coverage=<path> | lcov=<path>]... [--coverage]",
+            "          [--bench [--bench-time <seconds>]]",
             "          [--diagnostic-format human|json] [--artifacts <dir>] [--update-snapshots]",
             "          [--static] [--debug] [--library] [--target <target>]",
         ],
-        summary: &["run the tests of a project (of a library); with --watch,", "again as its files change"],
+        summary: &[
+            "run the tests of a project (of a library); with --watch,",
+            "again as its files change; --bench measures its benchmarks",
+        ],
     },
     Command {
         name: "doc-test",
@@ -230,6 +234,7 @@ pub const FEATURES: &[&str] = &[
     "test-exact-many",
     "test-watch",
     "test-coverage",
+    "test-bench",
     "lsp-tests",
     "lsp-lenses",
     "explain",

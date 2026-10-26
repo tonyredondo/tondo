@@ -2296,3 +2296,23 @@ npm from the checkout. A missing extension does not stop the rest of the
 setup, and the line about it says how to get one. The editors' own
 commands find them, on `PATH`, or on macOS inside their applications,
 which do not put them on `PATH`.
+
+## 2026-10-26 — Benchmarks are tests that measure
+
+The testing specification rules out a keyword for benchmarks, and a
+benchmark that is not run with the tests rots. So a benchmark is a `test`
+whose own body calls `testing.bench(name, closure)`: the analysis knows it,
+as it knows the tree, so `--bench` runs exactly those and the list and the
+editor mark them, and a plain `tondo test` runs each closure once, so a
+broken benchmark fails like a test. The call is allowed only in a test's
+own body, not in a helper, a closure or a suite's setup, so that whether a
+test is a benchmark never depends on what happens when it runs.
+
+The compiler turns the call into a loop that asks the runtime how many
+runs come next, as Go's `b.Loop` does: the runtime warms up, sizes the
+batches so that 50 samples fill the time given, and counts the allocations
+of one more batch with an allocation hook of their own, so the samples are
+not slowed by counting. What the closure gives goes to an opaque call, so
+the optimizer keeps the work that made it. The spread reported is the
+median of the distances to the median, which a sample delayed by
+something else does not stretch.

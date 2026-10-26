@@ -10,6 +10,8 @@ pub(super) enum Value {
     Null,
     Bool(bool),
     Int(i64),
+    /// A number in the closed decimal form of its field, as written.
+    Number(String),
     Str(String),
     Array(Vec<Value>),
     Object(Vec<(String, Value)>),
@@ -42,6 +44,7 @@ fn write(value: &Value, xml: bool, out: &mut String) {
         Value::Null => out.push_str("null"),
         Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
         Value::Int(n) => out.push_str(&n.to_string()),
+        Value::Number(text) => out.push_str(text),
         Value::Str(text) => string(text, xml, out),
         Value::Array(items) => {
             out.push('[');
@@ -236,7 +239,7 @@ impl Context<'_> {
         let id = tree.id(node);
         let parts: Vec<&str> = id.split("::").collect();
         let parent = tree.nodes[node as usize].parent;
-        vec![
+        let mut fields = vec![
             ("id", str(id)),
             ("parent", if parent == 0 { Value::Null } else { str(tree.id(parent)) }),
             ("package", str(parts[0])),
@@ -246,7 +249,12 @@ impl Context<'_> {
             ("name", str(*parts.last().unwrap_or(&""))),
             ("source", source(Some(&tree.locations[node as usize]))),
             ("owners", Value::Array(self.owners[node as usize].iter().map(|o| str(o.clone())).collect())),
-        ]
+        ];
+        // A test says whether it is a benchmark (10.4).
+        if !tree.suite(node) {
+            fields.push(("bench", Value::Bool(tree.nodes[node as usize].bench)));
+        }
+        fields
     }
 
     pub(super) fn descriptor_fields(&self, node: u32) -> Vec<(String, Value)> {
@@ -350,6 +358,7 @@ impl Context<'_> {
             "limits",
             obj(vec![("jobs", int(options.jobs)), ("timeout_ms", int(options.timeout.as_millis() as usize))]),
         ));
+        fields.push(("bench", options.bench.map_or(Value::Null, super::bench::environment)));
         let (suites, tests) = self.forest();
         let find = |node: u32| aggregates.iter().find(|a| a.node == node);
         let nodes = |list: &[u32]| {
@@ -420,6 +429,7 @@ impl Context<'_> {
         fields.push(("artifacts", artifacts(attempt)));
         fields.push(("snapshots", snapshots(attempt)));
         fields.push(("virtual_time", virtual_time(attempt)));
+        fields.push(("benchmarks", Value::Array(attempt.benchmarks.iter().map(super::bench::json).collect())));
         fields.push(("logs", Value::Array(attempt.logs.iter().map(|l| str(l.clone())).collect())));
         fields.push(("stdout", stream(&attempt.stdout)));
         fields.push(("stderr", stream(&attempt.stderr)));
@@ -593,6 +603,7 @@ pub(super) fn note_event(tree: &Tree, note: &Note, options: &Options) -> Value {
             ("logs", Value::Array(attempt.logs.iter().map(|l| str(l.clone())).collect())),
             ("stdout", stream(&attempt.stdout)),
             ("stderr", stream(&attempt.stderr)),
+            ("benchmarks", Value::Array(attempt.benchmarks.iter().map(super::bench::json).collect())),
         ]);
     }
     obj(fields)

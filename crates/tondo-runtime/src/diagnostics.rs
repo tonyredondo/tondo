@@ -18,14 +18,17 @@ use std::time::Instant;
 /// What allocations and the counts of objects do beyond their work, a bit
 /// each in one word that their fast path reads once: keep to a budget of
 /// memory (a `meta` program), count for the tools (a program that starts
-/// with `TONDO_DIAGNOSTICS=1`, is traced, or leaves a dump at a crash), or
-/// count objects exactly (the leak check). A program nobody watches pays
+/// with `TONDO_DIAGNOSTICS=1`, is traced, or leaves a dump at a crash),
+/// count objects exactly (the leak check), or count the allocations of a
+/// benchmark. A program nobody watches pays
 /// for nothing but that load.
 static HOOKS: AtomicU8 = AtomicU8::new(if cfg!(tondo_staticlib) { 0 } else { EXACT });
 #[cfg_attr(not(tondo_staticlib), allow(dead_code))]
 pub(crate) const BUDGET: u8 = 1;
 pub(crate) const WATCHED: u8 = 2;
 const EXACT: u8 = 4;
+/// Counts allocations for a benchmark (`testing.bench`).
+pub(crate) const MEASURED: u8 = 8;
 
 #[inline(always)]
 pub(crate) fn hooks() -> u8 {
@@ -35,6 +38,11 @@ pub(crate) fn hooks() -> u8 {
 /// Turns a hook on, before the program starts.
 pub(crate) fn hook(bit: u8) {
     HOOKS.fetch_or(bit, Ordering::Relaxed);
+}
+
+/// Turns a hook off.
+pub(crate) fn unhook(bit: u8) {
+    HOOKS.fetch_and(!bit, Ordering::Relaxed);
 }
 
 #[inline]

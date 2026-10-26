@@ -245,7 +245,7 @@ tondo fix [<project>|<file.to>] [--library] [--json]
 tondo explain [<code>] [--json]
 tondo clean [--all] [--json]
 tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>] [--json]
-tondo test [<project>] [--static] [--debug] [--library] [--target <target>] [--watch] [--coverage] [--test-format human|json|events] [--json] [--diagnostic-format human|json]
+tondo test [<project>] [--static] [--debug] [--library] [--target <target>] [--watch] [--coverage] [--bench [--bench-time <seconds>]] [--test-format human|json|events] [--json] [--diagnostic-format human|json]
 tondo doc-test [--edition 0.1] <markdown>
 tondo target pack [<dir>] [--json]
 tondo lsp

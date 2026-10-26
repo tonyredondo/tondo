@@ -44,6 +44,8 @@ pub struct TestNodeInfo {
     pub id: String,
     pub parent: u32,
     pub suite: bool,
+    /// A test whose body calls `testing.bench` (testing 10.4).
+    pub bench: bool,
     pub span: Span,
 }
 
@@ -809,6 +811,12 @@ pub enum StdFn {
     ClockEnd,
     ClockSettle,
     ClockAdvance,
+    /// The loop of `testing.bench(name, body)` (testing 10.4): its start,
+    /// how many runs come next, and its end; and `testing.keep(value)`.
+    BenchStart,
+    BenchNext,
+    BenchEnd,
+    Keep,
 }
 
 /// What `std.internal.reflect` does with a value of a type it is given:

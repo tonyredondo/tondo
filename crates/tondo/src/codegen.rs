@@ -134,6 +134,10 @@ enum Rt {
     ClockSettle,
     ClockAdvance,
     ClockRelease,
+    BenchStart,
+    BenchNext,
+    BenchEnd,
+    Keep,
     RegexRelease,
     NativeRelease,
     ReflectBox,
@@ -363,6 +367,10 @@ impl Rt {
             Rt::ClockSettle => ("tondo_rt_clock_settle", &[I64], &[]),
             Rt::ClockAdvance => ("tondo_rt_clock_advance", &[I64, I64, I64], &[]),
             Rt::ClockRelease => ("tondo_rt_clock_release", &[I64], &[]),
+            Rt::BenchStart => ("tondo_rt_bench_start", &[I64, I64], &[]),
+            Rt::BenchNext => ("tondo_rt_bench_next", &[], &[I64]),
+            Rt::BenchEnd => ("tondo_rt_bench_end", &[I8], &[]),
+            Rt::Keep => ("tondo_rt_keep", &[I64], &[]),
             Rt::RegexRelease => ("tondo_rt_regex_release", &[I64], &[]),
             Rt::NativeRelease => ("tondo_rt_native_release", &[I64], &[]),
             Rt::ReflectBox => ("tondo_rt_reflect_box", &[I64, I64, I64, I64], &[I64]),
@@ -6594,6 +6602,31 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.call_rt(Rt::ClockBegin, &values)
             }
             Callee::Std(StdFn::ClockEnd) => self.e.call_rt(Rt::ClockEnd, &values),
+            Callee::Std(StdFn::BenchStart) => {
+                values.push(self.location(self.span));
+                self.e.call_rt(Rt::BenchStart, &values)
+            }
+            Callee::Std(StdFn::BenchNext) => self.e.call_rt(Rt::BenchNext, &values),
+            Callee::Std(StdFn::BenchEnd) => self.e.call_rt(Rt::BenchEnd, &values),
+            Callee::Std(StdFn::Keep) => {
+                // The value as a word the runtime is given, so that its
+                // computation stays.
+                let fb = &mut self.e.fb;
+                let word = match values.first().copied() {
+                    None => fb.ins().iconst(types::I64, 0),
+                    Some(value) => match fb.func.dfg.value_type(value) {
+                        types::I64 => value,
+                        types::F64 => fb.ins().bitcast(types::I64, MemFlagsData::new(), value),
+                        types::F32 => {
+                            let bits = fb.ins().bitcast(types::I32, MemFlagsData::new(), value);
+                            fb.ins().uextend(types::I64, bits)
+                        }
+                        types::I128 => fb.ins().ireduce(types::I64, value),
+                        _ => fb.ins().uextend(types::I64, value),
+                    },
+                };
+                self.e.call_rt(Rt::Keep, &[word])
+            }
             Callee::Std(StdFn::ClockSettle) => self.e.call_rt(Rt::ClockSettle, &values),
             Callee::Std(StdFn::ClockAdvance) => {
                 values.push(self.location(self.span));

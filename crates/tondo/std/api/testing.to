@@ -31,3 +31,12 @@ pub fn withVirtualTime[E, F: Send + CallOnce[fn(VirtualTime): Unit ! E]](body: F
 pub fn VirtualTime.settle(self)
 
 pub fn VirtualTime.advance(self, duration: time.Duration)
+
+/// Makes the test a benchmark, called in its body (testing 10.4): runs the
+/// closure once, or with `tondo test --bench` measures how long a run
+/// takes and what it allocates; keeps what the closure gives. The call
+/// fails as the closure does.
+pub fn bench[T, E, F: CallMut[fn(): T ! E]](name: String, body: F): ! E
+
+/// Uses the value, so that the optimizer keeps the work that made it.
+pub fn keep[T](value: T)

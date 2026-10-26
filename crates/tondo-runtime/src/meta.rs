@@ -108,7 +108,7 @@ unsafe impl GlobalAlloc for Counting {
     /// none to free (language 16.7); the collector itself may go past the
     /// budget while it frees.
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        use super::diagnostics::{BUDGET, WATCHED, hooks};
+        use super::diagnostics::{BUDGET, MEASURED, WATCHED, hooks};
         let hooks = hooks();
         if hooks & BUDGET != 0 {
             budget(layout.size());
@@ -119,6 +119,9 @@ unsafe impl GlobalAlloc for Counting {
         }
         if hooks & WATCHED != 0 && !block.is_null() {
             super::diagnostics::allocated(block, layout.size());
+        }
+        if hooks & MEASURED != 0 && !block.is_null() {
+            super::bench::allocated(layout.size());
         }
         block
     }

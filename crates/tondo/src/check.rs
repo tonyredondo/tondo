@@ -90,6 +90,7 @@ fn check_with<'a>(
         naming: String::new(),
         comparing: None,
         closure_name: None,
+        measuring: None,
         intrinsic_owners: HashMap::new(),
         trait_modules: HashMap::new(),
         conversion_error: Ty::ERROR,
@@ -629,6 +630,9 @@ struct Checker<'a> {
     /// whether the value coerced is the left one.
     comparing: Option<bool>,
     closure_name: Option<String>,
+    /// The test whose body is checked, which `testing.bench` makes a
+    /// benchmark.
+    measuring: Option<u32>,
     /// The standard functions whose values depend on the moment or the
     /// machine, which the `meta` profile cannot call, with their names.
     unrepeatable: HashMap<FnId, &'static str>,
@@ -1116,7 +1120,7 @@ impl<'a> Checker<'a> {
     /// The root of a test build's tree (testing 3.2): a function that runs
     /// the top-level suites and tests of the test files.
     fn tests(&mut self, module: &ast::Module, package: &str) -> hir::Function {
-        let root = hir::TestNodeInfo { id: String::new(), parent: 0, suite: true, span: Span::new(0, 0) };
+        let root = hir::TestNodeInfo { id: String::new(), parent: 0, suite: true, bench: false, span: Span::new(0, 0) };
         self.test_nodes.push(root);
         let mut nodes = Vec::new();
         let mut prefixes = Vec::new();
@@ -1210,6 +1214,135 @@ impl<'a> Checker<'a> {
             }
         };
         let block = hir::Block { stmts, tail: Some(Box::new(run)), ty };
+        Self::mk(hir::ExprKind::Block(block), ty, span)
+    }
+
+    /// `testing.bench(name, () { ... })` (testing 10.4), in a test's own
+    /// body, which makes the test a benchmark: runs the body as many times
+    /// as the runtime asks, keeping what it gives, until it asks for none
+    /// or the body fails; the call fails as the body does.
+    fn bench(&mut self, cx: &mut FnCx, args: &[ast::Arg], span: Span) -> hir::Expr {
+        let [name, body] = args else {
+            return self.arity_error(span, 2, args.len());
+        };
+        let ast::ExprKind::Closure(closure) = &body.value.kind else {
+            let message = "`bench` takes a name and a closure: `testing.bench(\"parse\", () { json.parse(text) })?`";
+            self.diags.error("E1102", body.value.span, message);
+            return Self::error_expr(span);
+        };
+        match self.measuring {
+            Some(test) if cx.test_member => self.test_nodes[test as usize].bench = true,
+            _ => {
+                let message = "`testing.bench` measures in the body of a `test`, which it makes a benchmark: call it \
+                               there, as `test parsing { testing.bench(\"parse\", () { json.parse(text) })? }`, not \
+                               in a closure, a function or a suite's setup";
+                self.diags.error("E2006", span, message);
+            }
+        }
+        let name = self.expr(cx, &name.value, Some(Ty::STRING));
+        let name = self.coerce(name, Ty::STRING);
+        let kind = ClosureKind { deferred: false, is_unsafe: closure.is_unsafe, test: false, infer_error: true };
+        let parts = (&closure.params[..], closure.result.as_ref());
+        let block = &closure.body;
+        let value = self.closure_with(cx, parts, None, kind, span, |this, cx, success| this.block(cx, block, success));
+        let Some((_, _, info)) = self.types.closure(value.ty) else { return Self::error_expr(span) };
+        let (success, error) = match *self.types.kind(info.result) {
+            TyKind::Result(success, error) => (success, Some(error)),
+            _ => (info.result, None),
+        };
+        let mk = |kind, ty| Self::mk(kind, ty, span);
+        let std = |function, values, ty| mk(hir::ExprKind::Call(Callee::Std(function), Vec::new(), values), ty);
+        let local = |this: &mut Self, cx: &mut FnCx, ty: Ty| {
+            let local = this.hidden_local(cx, ty);
+            cx.mutable[local.0 as usize] = true;
+            local
+        };
+        let read = |local: LocalId, ty: Ty| mk(hir::ExprKind::Local(local), ty);
+        let set = |local: LocalId, op: Option<BinOp>, value: hir::Expr| hir::Stmt::Assign {
+            local,
+            path: Vec::new(),
+            op,
+            value,
+            span,
+        };
+        let int = |n: i128| mk(hir::ExprKind::Int(n), Ty::INT);
+        let ty = self.types.intern(TyKind::Result(Ty::UNIT, error.unwrap_or(Ty::NEVER)));
+        let (body, left, completed, outcome) =
+            (local(self, cx, value.ty), local(self, cx, Ty::INT), local(self, cx, Ty::BOOL), local(self, cx, ty));
+        let unit = || mk(hir::ExprKind::Unit, Ty::UNIT);
+        let ok = mk(hir::ExprKind::Variant(OK, vec![(0, unit())]), ty);
+        // What a run gives is kept, so that its work is not optimized away.
+        let keep = |value: hir::Expr| match success {
+            Ty::UNIT | Ty::NEVER => hir::Stmt::Expr(value),
+            _ => {
+                hir::Stmt::Expr(mk(hir::ExprKind::Call(Callee::Std(StdFn::Keep), vec![success], vec![value]), Ty::UNIT))
+            }
+        };
+        let run = mk(hir::ExprKind::CallValue(Box::new(read(body, value.ty)), Vec::new()), info.result);
+        let run = match error {
+            None => keep(run),
+            Some(error) => {
+                // `match body() { ok(v) => keep(v), err(e) => { outcome = err(e); completed = false; break } }`
+                let (kept, failure) = (local(self, cx, success), local(self, cx, error));
+                let pattern = |variant, local, ty| hir::Pattern {
+                    kind: hir::PatKind::Variant(
+                        variant,
+                        vec![hir::Pattern { kind: hir::PatKind::Binding(local), ty, span }],
+                    ),
+                    ty: info.result,
+                    span,
+                };
+                let kept_body = hir::Block { stmts: vec![keep(read(kept, success))], tail: None, ty: Ty::UNIT };
+                let failed = mk(hir::ExprKind::Variant(ERR, vec![(0, read(failure, error))]), ty);
+                let stop = hir::Block {
+                    stmts: vec![
+                        set(outcome, None, failed),
+                        set(completed, None, mk(hir::ExprKind::Bool(false), Ty::BOOL)),
+                        hir::Stmt::Break,
+                    ],
+                    tail: None,
+                    ty: Ty::NEVER,
+                };
+                let arms = vec![
+                    hir::Arm {
+                        pattern: pattern(OK, kept, success),
+                        guard: None,
+                        body: mk(hir::ExprKind::Block(kept_body), Ty::UNIT),
+                    },
+                    hir::Arm {
+                        pattern: pattern(ERR, failure, error),
+                        guard: None,
+                        body: mk(hir::ExprKind::Block(stop), Ty::NEVER),
+                    },
+                ];
+                hir::Stmt::Expr(mk(hir::ExprKind::Match(Box::new(run), arms), Ty::UNIT))
+            }
+        };
+        // `if left == 0 { left = next(); if left == 0 { break } }`
+        let none_left =
+            || mk(hir::ExprKind::Binary(BinOp::Eq, Box::new(read(left, Ty::INT)), Box::new(int(0))), Ty::BOOL);
+        let stop = hir::Block { stmts: vec![hir::Stmt::Break], tail: None, ty: Ty::NEVER };
+        let next = hir::Block {
+            stmts: vec![
+                set(left, None, std(StdFn::BenchNext, Vec::new(), Ty::INT)),
+                hir::Stmt::Expr(mk(hir::ExprKind::If(Box::new(none_left()), stop, None), Ty::UNIT)),
+            ],
+            tail: None,
+            ty: Ty::UNIT,
+        };
+        let refill = hir::Stmt::Expr(mk(hir::ExprKind::If(Box::new(none_left()), next, None), Ty::UNIT));
+        let turn =
+            hir::Block { stmts: vec![refill, set(left, Some(BinOp::Sub), int(1)), run], tail: None, ty: Ty::UNIT };
+        let stmts = vec![
+            hir::Stmt::Expr(std(StdFn::BenchStart, vec![name], Ty::UNIT)),
+            hir::Stmt::Let(body, value),
+            hir::Stmt::Let(left, int(0)),
+            hir::Stmt::Let(completed, mk(hir::ExprKind::Bool(true), Ty::BOOL)),
+            hir::Stmt::Let(outcome, ok),
+            hir::Stmt::Loop { condition: None, body: turn },
+            hir::Stmt::Expr(std(StdFn::BenchEnd, vec![read(completed, Ty::BOOL)], Ty::UNIT)),
+        ];
+        let block = hir::Block { stmts, tail: Some(Box::new(read(outcome, ty))), ty };
         Self::mk(hir::ExprKind::Block(block), ty, span)
     }
 
@@ -1439,15 +1572,18 @@ impl<'a> Checker<'a> {
             }
             let index = self.test_nodes.len() as u32;
             let suite = matches!(node, ast::TestNode::Suite(_));
-            self.test_nodes.push(hir::TestNodeInfo { id: id.clone(), parent, suite, span: name.span });
+            self.test_nodes.push(hir::TestNodeInfo { id: id.clone(), parent, suite, bench: false, span: name.span });
             let unit = self.types.intern(TyKind::Fn(Vec::new(), Ty::UNIT, false, Vec::new(), false));
             let kind = ClosureKind { deferred: false, is_unsafe: false, test: true, infer_error: false };
             self.closure_name = Some(format!("{} {}", if suite { "suite" } else { "test" }, name.name));
+            // A test's own body may measure (`testing.bench`).
+            let outer = std::mem::replace(&mut self.measuring, (!suite).then_some(index));
             let closure =
                 self.closure_with(cx, (&[], None), Some(unit), kind, node.span(), |this, inner, _| match node {
                     ast::TestNode::Test(t) => this.block(inner, &t.body, Some(Ty::UNIT)),
                     ast::TestNode::Suite(s) => this.suite_body(inner, s, index, &id),
                 });
+            self.measuring = outer;
             let Some((body, _, info)) = self.types.closure(closure.ty) else { continue };
             let erased = self.types.intern(TyKind::Fn(Vec::new(), info.result, false, Vec::new(), false));
             members.push((index, Self::mk(hir::ExprKind::Erase(Box::new(closure), FnId(body)), erased, name.span)));
@@ -11322,6 +11458,15 @@ impl<'a> Checker<'a> {
                         return Self::mk(hir::ExprKind::Panic(message, code), Ty::NEVER, span);
                     }
                     "withVirtualTime" => return self.with_virtual_time(cx, args, span),
+                    "bench" => return self.bench(cx, args, span),
+                    "keep" => {
+                        let [arg] = args else {
+                            return self.arity_error(span, 1, args.len());
+                        };
+                        let value = self.expr(cx, &arg.value, None);
+                        let call = hir::ExprKind::Call(Callee::Std(StdFn::Keep), vec![value.ty], vec![value]);
+                        return Self::mk(call, Ty::UNIT, span);
+                    }
                     "log" => (StdFn::TestLog, vec![Ty::STRING]),
                     "tags" => (StdFn::TestTags, vec![self.types.intern(TyKind::Map(Ty::STRING, Ty::STRING))]),
                     "attach" => {

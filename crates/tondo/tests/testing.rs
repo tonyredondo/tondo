@@ -975,3 +975,124 @@ test logic {
     let (stdout, _, _) = tondo(&dir, &["test"]);
     assert!(!stdout.contains("coverage"), "{stdout}");
 }
+
+#[test]
+fn measures_benchmarks() {
+    let tests = "\
+import std.console
+import std.testing
+
+fn fib(n: Int): Int {
+    if n < 2 {
+        return n
+    }
+    fib(n - 1) + fib(n - 2)
+}
+
+fn parse(text: String): Int ! String {
+    if text == \"\" {
+        fail \"empty\"
+    }
+    text.length()
+}
+
+test fibonacci {
+    for n in [5, 15] {
+        testing.bench(\"fib {n}\", () { fib(n) })
+    }
+}
+
+test once {
+    testing.bench(\"print\", () { console.println(\"ran\") })
+}
+
+test joins {
+    testing.bench(\"join\", () { \"{[1, 2, 3]}\" })
+}
+
+test fails {
+    testing.bench(\"parse\", () { parse(\"\")? })?
+}
+
+test twice {
+    testing.bench(\"same\", () { 1 })
+    testing.bench(\"same\", () { 2 })
+}
+
+test plain {
+    assert(fib(3) == 2)
+}
+";
+    let dir = project("benchmarks", tests);
+    // A plain run runs each body once.
+    let (stdout, _, status) = tondo(&dir, &["test", "--show-output"]);
+    assert_eq!(status, 1, "{stdout}");
+    for part in [
+        "test app::unit::app::fibonacci ... ok\n",
+        "test app::unit::app::once ... ok\n",
+        "test app::unit::app::plain ... ok\n",
+        "--- app::unit::app::fails\nerror: empty\n --> src/main_test.to:33:5\n",
+        "panic[P2009]: test-bench-conflict: this test already has a benchmark named \"same\"",
+    ] {
+        assert!(stdout.contains(part), "missing {part:?} in {stdout}");
+    }
+    assert_eq!(stdout.matches("ran\n").count(), 1, "{stdout}");
+    // The list says which tests are benchmarks.
+    let (stdout, _, _) = tondo(&dir, &["test", "--list", "--test-format", "json"]);
+    let list: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let marked: Vec<(&str, bool)> = list["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| (t["name"].as_str().unwrap(), t["bench"].as_bool().unwrap()))
+        .collect();
+    assert_eq!(
+        marked,
+        [("fails", true), ("fibonacci", true), ("joins", true), ("once", true), ("plain", false), ("twice", true)]
+    );
+    // `--bench` measures the benchmarks alone.
+    let exact = ["--exact", "app::unit::app::fibonacci", "--exact", "app::unit::app::joins", "--exact"];
+    let mut args = vec!["test", "--bench", "--bench-time", "0.2"];
+    args.extend(exact);
+    args.push("app::unit::app::fails");
+    let (stdout, _, status) = tondo(&dir, &args);
+    assert_eq!(status, 1, "{stdout}");
+    assert!(stdout.contains("test app::unit::app::fibonacci ... ok\n  fib 5 "), "{stdout}");
+    assert!(stdout.contains(" ns/op  ±") && stdout.contains(" allocs/op  "), "{stdout}");
+    args.extend(["--test-format", "json"]);
+    let (stdout, _, _) = tondo(&dir, &args);
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(report["bench"]["time_ms"], 200, "{report}");
+    assert!(report["bench"]["cpus"].as_u64().unwrap() >= 1);
+    let measured = |name: &str| {
+        let test = report["tests"].as_array().unwrap().iter().find(|t| t["name"] == name).unwrap().clone();
+        test["attempts"][0]["benchmarks"].clone()
+    };
+    let fib = measured("fibonacci");
+    let names: Vec<&str> = fib.as_array().unwrap().iter().map(|b| b["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["fib 5", "fib 15"]);
+    let median = |b: &serde_json::Value| b["ns_per_op"]["median"].as_f64().unwrap();
+    assert!(median(&fib[1]) > median(&fib[0]) * 10.0, "{fib}");
+    for benchmark in fib.as_array().unwrap() {
+        let samples = benchmark["samples"].as_u64().unwrap();
+        assert!((5..=50).contains(&samples), "{benchmark}");
+        assert_eq!(benchmark["samples_ns_per_op"].as_array().unwrap().len() as u64, samples);
+        assert_eq!(benchmark["allocations_per_op"].as_f64(), Some(0.0), "{benchmark}");
+    }
+    assert!(measured("joins")[0]["allocations_per_op"].as_f64().unwrap() >= 1.0);
+    assert_eq!(measured("fails"), serde_json::json!([]), "a body that fails measures nothing");
+    // Benchmarks run alone, optimized and once.
+    let (_, stderr, status) = tondo(&dir, &["test", "--bench", "--jobs", "2"]);
+    assert_eq!(status, 2, "{stderr}");
+    assert!(stderr.contains("--bench measures each benchmark once, alone and optimized"), "{stderr}");
+    let (_, stderr, _) = tondo(&dir, &["test", "--bench-time", "1"]);
+    assert!(stderr.contains("it goes with --bench"), "{stderr}");
+    // Only a test's own body measures.
+    std::fs::write(
+        dir.join("src/main_test.to"),
+        "import std.testing\n\nfn helper() {\n    testing.bench(\"x\", () { 1 })\n}\n\ntest uses {\n    helper()\n}\n",
+    )
+    .unwrap();
+    let (_, stderr, _) = tondo(&dir, &["test"]);
+    assert!(stderr.contains("error[E2006]"), "{stderr}");
+}

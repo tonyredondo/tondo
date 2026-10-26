@@ -6,7 +6,7 @@
 
 use super::interrupt;
 use super::store::{Artifacts, Snapshots};
-use super::{Artifact, Attempt, Context, Options, Snapshot, Status, Tree, VirtualClock};
+use super::{Artifact, Attempt, Benchmark, Context, Options, Snapshot, Status, Tree, VirtualClock};
 use std::collections::VecDeque;
 use std::io::Read;
 use std::path::Path;
@@ -163,6 +163,9 @@ fn worker(
     }
     if let Some(counts) = stores.counts {
         command.env("TONDO_TEST_COVERAGE", counts);
+    }
+    if let Some(time) = run.options.bench {
+        command.env("TONDO_TEST_BENCH", time.as_secs_f64().to_string());
     }
     if let Some(seed) = run.options.schedule(context.iteration) {
         command.env("TONDO_RT_SCHEDULE", format!("{seed:x}"));
@@ -528,6 +531,25 @@ impl Session<'_> {
                     && let Some(entry) = self.running.iter_mut().rev().find(|(o, _, _)| o.node == node)
                 {
                     entry.0.virtual_time.push(VirtualClock { elapsed_ns, automatic, explicit, settles });
+                }
+            }
+            "bench" => {
+                let parts: Vec<&str> = text.split('\0').collect();
+                if let [name, runs, samples, allocations, bytes] = parts[..]
+                    && let Some(entry) = self.running.iter_mut().rev().find(|(o, _, _)| o.node == node)
+                {
+                    entry.0.benchmarks.push(Benchmark {
+                        name: name.to_string(),
+                        runs: runs.parse().unwrap_or(1),
+                        samples: samples.split(' ').filter_map(|s| s.parse().ok()).collect(),
+                        allocations: allocations.parse().unwrap_or_default(),
+                        bytes: bytes.parse().unwrap_or_default(),
+                    });
+                    // The timeout is each benchmark's: its time starts again.
+                    if let Some(started) = entry.2.as_mut() {
+                        entry.0.duration += now - *started;
+                        *started = now;
+                    }
                 }
             }
             "skip" | "panic" => {

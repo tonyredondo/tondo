@@ -556,6 +556,19 @@ pub unsafe extern "C" fn tondo_rt_test_snapshot(
     }
 }
 
+/// The suite or test whose code runs, or the root.
+pub(crate) fn current() -> u32 {
+    with(|r| r.current()).unwrap_or(0)
+}
+
+/// Tells `tondo test` something of the entry that runs.
+pub(crate) fn report(kind: &str, payload: &[u8]) {
+    with(|r| {
+        let node = r.current();
+        r.frame(kind, node, payload)
+    });
+}
+
 /// Reports what a virtual clock did once its closure ends: where it got,
 /// and how many times it moved by itself, by `advance` and settled.
 pub(crate) fn virtual_time(now: u64, automatic: u64, explicit: u64, settles: u64) {

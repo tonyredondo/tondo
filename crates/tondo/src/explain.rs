@@ -114,6 +114,11 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "A member of a suite captures a `var`, a loan, an affine value, or a type that is not `Copy + Send + Share`.",
     ),
     (
+        "E2006",
+        "bench-outside-test-body",
+        "`testing.bench` is called outside a test's own body: in a function, a closure, a `defer` or a suite's setup.",
+    ),
+    (
         "E2101",
         "invalid-derive-target",
         "What `derive` names is not a nominal type of this module, or its binders differ.",
@@ -195,6 +200,11 @@ pub const CODES: &[(&str, &str, &str)] = &[
     ),
     ("P2007", "test-snapshot-mismatch", "A snapshot is missing or differs, outside `--update-snapshots`."),
     ("P2008", "test-snapshot-conflict", "A snapshot's name is invalid, or repeats in the same attempt."),
+    (
+        "P2009",
+        "test-bench-conflict",
+        "A benchmark's name is empty or has a control character, or repeats in the same test.",
+    ),
 ];
 
 /// What a code is: its name, its kind, what it reports, and the examples
