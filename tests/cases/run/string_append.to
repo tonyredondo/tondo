@@ -1,0 +1,44 @@
+// `x = "{x}..."` appends to the string in its own block when nothing else
+// holds it; a copy, a field lent by `mut self` and the string read again
+// in the same text all keep their values.
+import std.console
+import std.format
+
+type Log = { text: String }
+
+fn Log.note(mut self, n: Int) {
+    self.text = "{self.text}{n};"
+}
+
+fn main() {
+    var s = "a"
+    let kept = s
+    for i in 0..3 {
+        s = "{s}{i}"
+    }
+    console.println("{s} {kept}")
+    var log = Log { text: "" }
+    log.note(1)
+    let before = log
+    log.note(-2)
+    console.println("{log.text} {before.text}")
+    var twice = "ab"
+    twice = "{twice}{twice}"
+    console.println(twice)
+    var long = ""
+    for i in 0..1000 {
+        long = "{long}{i % 10}"
+    }
+    console.println("{long.length()} {long[0:12]}")
+    var built = format.Builder.new()
+    built.add("x")
+    built.add(42)
+    built.addLine(true)
+    console.print(built.text())
+}
+
+// expect-stdout: a012 a
+// expect-stdout: 1;-2; 1;
+// expect-stdout: abab
+// expect-stdout: 1000 012345678901
+// expect-stdout: x42true

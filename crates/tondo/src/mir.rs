@@ -352,6 +352,10 @@ pub struct SelectCase {
 pub enum Piece {
     Text(String),
     Value(Operand, Ty),
+    /// First, the string at the place, which the rest is appended to in its
+    /// own block when nothing else holds it, or which is released once the
+    /// text is built: `x = "{x}..."`, assigned to the place.
+    Taken(Place),
 }
 
 #[derive(Clone)]
@@ -482,10 +486,10 @@ fn rvalue_uses(rvalue: &Rvalue, used: &mut Vec<Local>) {
         }
         Rvalue::TestMembers(members) => members.iter().for_each(|(_, o, _)| operand_uses(o, used)),
         Rvalue::Select(cases, ..) => cases.iter().for_each(|case| operands_uses(&case.operands, used)),
-        Rvalue::Concat(pieces) => pieces.iter().for_each(|piece| {
-            if let Piece::Value(o, _) = piece {
-                operand_uses(o, used);
-            }
+        Rvalue::Concat(pieces) => pieces.iter().for_each(|piece| match piece {
+            Piece::Value(o, _) => operand_uses(o, used),
+            Piece::Taken(place) => place_uses(place, used),
+            Piece::Text(_) => {}
         }),
         Rvalue::Discriminant(place) => place_uses(place, used),
         Rvalue::Slice(o, bounds, _) => {

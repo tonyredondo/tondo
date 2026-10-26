@@ -1843,19 +1843,20 @@ impl Builder {
             handle_alloc_error(layout);
         }
         self.text = text as *mut Str;
-        unsafe { (*self.text).len = room }
+        unsafe { (*self.text).len = meta::usable(text, layout.size()) - HEADER }
     }
 
-    /// The string built. Its block keeps a little room it does not use,
-    /// which the allocator frees with it, unless a budget or a watch counts
-    /// the memory a string holds by its length.
+    /// The string built. Its block keeps room it does not use, as much as it
+    /// uses at most, which the allocator frees with it and a string appended
+    /// to in place grows into, unless a budget or a watch counts the memory
+    /// a string holds by its length.
     pub fn finish(self) -> *mut Str {
         if self.text.is_null() {
             return str_new(&[]);
         }
         let mut text = self.text as *mut u8;
         let counted = diagnostics::hooks() & (diagnostics::BUDGET | diagnostics::WATCHED) != 0;
-        if self.room() - self.len > 16 || (counted && self.room() != self.len) {
+        if self.room() - self.len > self.len.max(16) || (counted && self.room() != self.len) {
             let layout = str_layout(self.len);
             text = unsafe { std::alloc::realloc(text, str_layout(self.room()), layout.size()) };
             if text.is_null() {
@@ -1899,6 +1900,68 @@ pub unsafe extern "C" fn tondo_rt_sb_join(
             }
             display(b, element(a, size, k));
         }
+    }
+}
+
+/// `x = "{x}{t}"`: `s` with `t` after it, in `s`'s own block when nothing
+/// else holds it and the block has room, or else in a new one, `s` then
+/// released.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_str_append(s: *mut Str, t: *const Str) -> *mut Str {
+    unsafe { append(s, str_bytes(t)) }
+}
+
+/// `x = "{x}{i}"`, as `tondo_rt_str_append`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_str_append_int(s: *mut Str, value: i64) -> *mut Str {
+    let mut digits = [0; 21];
+    let text = decimal(value.unsigned_abs(), (&mut digits[1..]).try_into().unwrap());
+    let start = 21 - text.len() - usize::from(value < 0);
+    if value < 0 {
+        digits[start] = b'-';
+    }
+    unsafe { append(s, &digits[start..]) }
+}
+
+unsafe fn append(s: *mut Str, bytes: &[u8]) -> *mut Str {
+    unsafe {
+        let len = (*s).len;
+        if (*s).rc.load(Ordering::Acquire) == 1
+            && str_layout(len + bytes.len()).size() <= meta::usable(s as *const u8, str_layout(len).size())
+        {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), (s as *mut u8).add(HEADER + len), bytes.len());
+            (*s).len = len + bytes.len();
+            return s;
+        }
+        let mut builder = Builder::new(0);
+        if tondo_rt_sb_adopt(&mut builder, s, bytes.len()) == 0 {
+            tondo_rt_str_release(s);
+        }
+        builder.extend(bytes);
+        builder.finish()
+    }
+}
+
+/// Starts the builder at `b` with the string `s` and room for `room` bytes
+/// more: in the string's own block when nothing else holds it, which is the
+/// builder's then (1), or else in a new one with a copy of it (0).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_sb_adopt(b: *mut Builder, s: *mut Str, room: usize) -> u8 {
+    unsafe {
+        if (*s).rc.load(Ordering::Acquire) == 1 {
+            // The block may hold more than the string: room it grows into.
+            let len = (*s).len;
+            (*s).len = meta::usable(s as *const u8, str_layout(len).size()) - HEADER;
+            b.write(Builder { text: s, len });
+            if len + room > (*b).room() {
+                (*b).grow(room);
+            }
+            LIVE_OBJECTS.gone();
+            return 1;
+        }
+        b.write(Builder::new((*s).len + room));
+        (*b).extend(str_bytes(s));
+        0
     }
 }
 

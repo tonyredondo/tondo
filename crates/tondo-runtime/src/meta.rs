@@ -77,6 +77,35 @@ pub struct Counting;
 use mimalloc::MiMalloc as Heap;
 
 #[cfg(tondo_staticlib)]
+unsafe extern "C" {
+    fn mi_malloc(size: usize) -> *mut u8;
+    fn mi_realloc(block: *mut u8, size: usize) -> *mut u8;
+    fn mi_usable_size(block: *const u8) -> usize;
+}
+
+/// mimalloc's blocks are aligned to 8 bytes at least: what needs no more
+/// takes its plain functions, which skip the work of the aligned ones.
+#[cfg(tondo_staticlib)]
+const PLAIN: usize = 8;
+
+/// The bytes a block can hold, which may be more than were asked for: what
+/// a string being built grows into before it moves. Exactly those asked
+/// for while a budget or a watch counts the bytes of each block.
+#[cfg(tondo_staticlib)]
+pub(crate) fn usable(block: *const u8, asked: usize) -> usize {
+    use super::diagnostics::{BUDGET, WATCHED, hooks};
+    match hooks() & (BUDGET | WATCHED) {
+        0 => unsafe { mi_usable_size(block) },
+        _ => asked,
+    }
+}
+
+#[cfg(not(tondo_staticlib))]
+pub(crate) fn usable(_: *const u8, asked: usize) -> usize {
+    asked
+}
+
+#[cfg(tondo_staticlib)]
 static LIMIT: AtomicUsize = AtomicUsize::new(usize::MAX);
 #[cfg(tondo_staticlib)]
 static HELD: AtomicUsize = AtomicUsize::new(0);
@@ -101,9 +130,10 @@ unsafe impl GlobalAlloc for Counting {
         if hooks & BUDGET != 0 {
             budget(layout.size());
         }
-        let mut block = unsafe { Heap.alloc(layout) };
+        let get = || unsafe { if layout.align() <= PLAIN { mi_malloc(layout.size()) } else { Heap.alloc(layout) } };
+        let mut block = get();
         if block.is_null() && super::cycles::collect_for_memory() {
-            block = unsafe { Heap.alloc(layout) };
+            block = get();
         }
         if hooks & WATCHED != 0 && !block.is_null() {
             super::diagnostics::allocated(block, layout.size());
@@ -142,9 +172,12 @@ unsafe impl GlobalAlloc for Counting {
             }
             return block;
         }
-        let mut block = unsafe { Heap.realloc(ptr, layout, new_size) };
+        let get = || unsafe {
+            if layout.align() <= PLAIN { mi_realloc(ptr, new_size) } else { Heap.realloc(ptr, layout, new_size) }
+        };
+        let mut block = get();
         if block.is_null() && super::cycles::collect_for_memory() {
-            block = unsafe { Heap.realloc(ptr, layout, new_size) };
+            block = get();
         }
         if hooks & MEASURED != 0 && !block.is_null() && new_size > layout.size() {
             super::bench::allocated(new_size);

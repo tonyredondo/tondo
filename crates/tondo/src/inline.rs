@@ -557,10 +557,10 @@ fn visit_rvalue(rvalue: &mut Rvalue, f: &mut impl FnMut(&mut Place)) {
         }
         Rvalue::TestMembers(members) => members.iter_mut().for_each(|(_, o, _)| visit_operand(o, f)),
         Rvalue::Select(cases, ..) => cases.iter_mut().for_each(|case| visit_operands(&mut case.operands, f)),
-        Rvalue::Concat(pieces) => pieces.iter_mut().for_each(|piece| {
-            if let Piece::Value(o, _) = piece {
-                visit_operand(o, f);
-            }
+        Rvalue::Concat(pieces) => pieces.iter_mut().for_each(|piece| match piece {
+            Piece::Value(o, _) => visit_operand(o, f),
+            Piece::Taken(place) => f(place),
+            Piece::Text(_) => {}
         }),
         Rvalue::Discriminant(place) => f(place),
         Rvalue::Slice(o, bounds, _) => {

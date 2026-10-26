@@ -88,6 +88,9 @@ enum Rt {
     StrFromChars,
     SbStart,
     SbJoin,
+    SbAdopt,
+    StrAppend,
+    StrAppendInt,
     SbStr,
     SbI64,
     SbU64,
@@ -323,6 +326,9 @@ impl Rt {
             Rt::StrFromChars => ("tondo_rt_str_from_chars", &[I64], &[I64]),
             Rt::SbStart => ("tondo_rt_sb_start", &[I64, I64], &[]),
             Rt::SbJoin => ("tondo_rt_sb_join", &[I64, I64, I64, I64, I64], &[]),
+            Rt::SbAdopt => ("tondo_rt_sb_adopt", &[I64, I64, I64], &[I8]),
+            Rt::StrAppend => ("tondo_rt_str_append", &[I64, I64], &[I64]),
+            Rt::StrAppendInt => ("tondo_rt_str_append_int", &[I64, I64], &[I64]),
             Rt::SbStr => ("tondo_rt_sb_str", &[I64, I64], &[]),
             Rt::SbI64 => ("tondo_rt_sb_i64", &[I64, I64], &[]),
             Rt::SbU64 => ("tondo_rt_sb_u64", &[I64, I64], &[]),
@@ -3885,6 +3891,9 @@ struct FnCodegen<'a, 'b> {
     counted: Option<(u32, usize)>,
     starts: HashMap<(usize, usize), Vec<Span>>,
     ways: HashMap<(usize, usize), Vec<usize>>,
+    /// Locals that only ever hold a string literal, which counts no
+    /// references: retaining and releasing them does nothing.
+    literal: HashSet<Local>,
 }
 
 /// What a function of a debug build keeps for its probes (toolchain 7.6):
@@ -3990,6 +3999,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             counted: None,
             starts: HashMap::new(),
             ways: HashMap::new(),
+            literal: literals(body),
         }
     }
 
@@ -4921,7 +4931,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     self.mark(place.local, false);
                 }
                 let ty = self.place_ty(place);
-                if !self.e.cg.types().needs_drop(ty) {
+                if !self.e.cg.types().needs_drop(ty) || place.path.is_empty() && self.literal.contains(&place.local) {
                     return;
                 }
                 let value = self.read(place);
@@ -7167,6 +7177,20 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     }
 
     fn concat(&mut self, pieces: &[Piece]) -> ir::Value {
+        // `x = "{x}{s}"` and `x = "{x}{i}"` in one call.
+        if let [Piece::Taken(place), Piece::Value(operand, ty)] = pieces {
+            let appended = match *self.e.cg.types().kind(self.e.cg.types().repr(*ty)) {
+                TyKind::String => Some((Rt::StrAppend, false)),
+                TyKind::Int(int) if int.signed() || int.bits() < 64 => Some((Rt::StrAppendInt, int.signed())),
+                _ => None,
+            };
+            if let Some((rt, signed)) = appended {
+                let text = self.scalar(&Operand::Copy(place.clone()));
+                let value = self.scalar(operand);
+                let value = if rt == Rt::StrAppendInt { self.wide(value, signed) } else { value };
+                return self.e.call_rt(rt, &[text, value]).unwrap();
+            }
+        }
         // A string alone is that string.
         if let [Piece::Value(operand, ty)] = pieces
             && self.e.cg.types().repr(*ty) == Ty::STRING
@@ -7180,9 +7204,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let mut known = 0;
         let mut room = None;
         let mut values = Vec::new();
+        let mut taken = None;
+        let mut released = None;
         for piece in pieces {
             match piece {
                 Piece::Text(text) => known += text.len() as i64,
+                Piece::Taken(place) => taken = Some((place, self.scalar(&Operand::Copy(place.clone())))),
                 Piece::Value(operand, ty) => {
                     let value = self.operand(operand);
                     match (self.e.cg.types().kind(self.e.cg.types().repr(*ty)), value) {
@@ -7218,10 +7245,21 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 3);
         let slot = self.e.fb.create_sized_stack_slot(data);
         let builder = self.e.fb.ins().stack_addr(POINTER, slot, 0);
-        self.e.call_rt(Rt::SbStart, &[builder, room]);
+        match taken {
+            // The string goes on in its own block when nothing else holds
+            // it; else it is copied, and released once the text is built.
+            Some((_, text)) => {
+                let adopted = self.e.call_rt(Rt::SbAdopt, &[builder, text, room]).unwrap();
+                released = Some((adopted, text));
+            }
+            None => {
+                self.e.call_rt(Rt::SbStart, &[builder, room]);
+            }
+        }
         let mut values = values.into_iter();
         for piece in pieces {
             match piece {
+                Piece::Taken(_) => {}
                 Piece::Text(text) => {
                     let text = self.e.string_ptr(text);
                     self.e.call_rt(Rt::SbStr, &[builder, text]);
@@ -7232,7 +7270,16 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
             }
         }
-        self.e.call_rt(Rt::SbFinish, &[builder]).unwrap()
+        let built = self.e.call_rt(Rt::SbFinish, &[builder]).unwrap();
+        if let Some((adopted, text)) = released {
+            let (release, next) = (self.e.fb.create_block(), self.e.fb.create_block());
+            self.e.fb.ins().brif(adopted, next, &[], release, &[]);
+            self.e.fb.switch_to_block(release);
+            self.e.call_rt(Rt::StrRelease, &[text]);
+            self.e.fb.ins().jump(next, &[]);
+            self.e.fb.switch_to_block(next);
+        }
+        built
     }
 
     fn binary(&mut self, op: BinOp, left: &Operand, right: &Operand, span: Span) -> ir::Value {
@@ -7355,6 +7402,36 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
         }
     }
+}
+
+/// The locals a function assigns a string literal and nothing else, nor
+/// lends to what could change them: a call, a `select`, a task or a
+/// mutation.
+fn literals(body: &Body) -> HashSet<Local> {
+    let mut assigned: HashMap<Local, bool> = HashMap::new();
+    for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
+        let (mut used, mut defined) = (Vec::new(), Vec::new());
+        crate::mir::statement_locals(statement, &mut used, &mut defined);
+        let literal = matches!(statement,
+            Statement::Assign(place, rvalue, _) if place.path.is_empty() && matches!(**rvalue, Rvalue::Use(Operand::Const(Const::Str(_)))));
+        let lends = matches!(statement, Statement::Assign(_, rvalue, _) if matches!(**rvalue,
+            Rvalue::Call(..) | Rvalue::CallIndirect(..) | Rvalue::CallOsr(..) | Rvalue::Select(..) | Rvalue::TaskOp(..)
+            | Rvalue::Spawn(..) | Rvalue::Mutate(..) | Rvalue::Pointer(..)));
+        for local in defined {
+            *assigned.entry(local).or_insert(literal) &= literal;
+        }
+        if lends {
+            for local in used {
+                assigned.insert(local, false);
+            }
+        }
+    }
+    let params: HashSet<Local> = body.params.iter().copied().chain(body.ret).collect();
+    assigned
+        .into_iter()
+        .filter(|&(local, literal)| literal && !params.contains(&local))
+        .map(|(local, _)| local)
+        .collect()
 }
 
 fn int_condition(op: BinOp, signed: bool) -> IntCC {

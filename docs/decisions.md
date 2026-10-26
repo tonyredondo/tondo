@@ -2468,3 +2468,16 @@ allocator that counts budgets and samples, gives each thread a heap of
 its own and sends a block freed elsewhere back to it without a lock. It is
 a dependency of C, as `ring` already is, and smaller than an allocator of
 our own would be.
+
+## 2026-10-26 — Strings grow in place
+
+`x = "{x}..."` builds a new string and drops the old one, which makes a
+string built in a loop cost the square of its length, and `format.Builder`
+kept its pieces apart to avoid that. When nothing else holds the string,
+which its count says, the text now goes on in the string's own block,
+which mimalloc says how much it can hold, and the block grows by doubling
+when it must; a string another binding holds is copied as before, so no
+program can tell. The rest of the text must be of types whose `Display`
+runs no code of the program, and must not read `x` again, whose bytes
+would move under it. `format.Builder` is a string grown so, and a string
+literal, which counts no references, is retained and released no more.

@@ -1,32 +1,32 @@
 // std.format (standard library 10.6): text built piece by piece, each with
 // its `Display`.
 
-/// Text built piece by piece: `add` takes a value's `Display`, and the
-/// builder displays as everything added, joined once.
+/// Text built piece by piece: `add` appends a value's `Display`, in place
+/// when nothing else holds the text.
 pub type Builder = {
-    priv parts: Array[String]
+    priv built: String
 }
 
 pub fn Builder.new(): Builder {
-    Builder { parts: [] }
+    Builder { built: "" }
 }
 
 pub fn Builder.add[T: Display](mut self, value: T) {
-    self.parts.push("{value}")
+    self.built = "{self.built}{value}"
 }
 
 /// Adds the value and a `\n`.
 pub fn Builder.addLine[T: Display](mut self, value: T) {
-    self.parts.push("{value}\n")
+    self.built = "{self.built}{value}\n"
 }
 
 pub fn Builder.isEmpty(self): Bool {
-    self.parts.all((part) { part.isEmpty() })
+    self.built.isEmpty()
 }
 
 /// Everything added, as one string.
 pub fn Builder.text(self): String {
-    self.parts.join("")
+    self.built
 }
 
 impl Display for Builder {

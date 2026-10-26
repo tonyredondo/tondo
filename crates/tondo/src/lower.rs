@@ -52,6 +52,50 @@ pub fn lower(program: &hir::Program, live: bool) -> Vec<Body> {
     lower_all(Some(&waits))
 }
 
+/// What `x = "{x}..."` appends to the string at `x`, a local or its
+/// fields: text, and values whose `Display` runs no code of the program and
+/// that do not read `x` again, which the string's own block may hold.
+fn appended<'e>(
+    value: &'e hir::Expr,
+    local: LocalId,
+    path: &[hir::PlaceStep],
+    types: &Types,
+) -> Option<&'e [hir::Segment]> {
+    let hir::ExprKind::Interpolate(segments) = &value.kind else { return None };
+    let (hir::Segment::Value(first), rest) = segments.split_first()? else { return None };
+    let reads = |mut expr: &hir::Expr, path: &[hir::PlaceStep]| {
+        for step in path.iter().rev() {
+            match (&expr.kind, step) {
+                (hir::ExprKind::Field(base, index), hir::PlaceStep::Field(field)) if index == field => expr = base,
+                _ => return false,
+            }
+        }
+        matches!(expr.kind, hir::ExprKind::Local(id) if id == local)
+    };
+    let rooted = |mut expr: &hir::Expr| loop {
+        match &expr.kind {
+            hir::ExprKind::Field(base, _) => expr = base,
+            hir::ExprKind::Local(id) => return *id == local,
+            _ => return false,
+        }
+    };
+    let plain = |ty: Ty| {
+        matches!(
+            types.kind(types.repr(ty)),
+            TyKind::String | TyKind::Int(_) | TyKind::Byte | TyKind::Float(_) | TyKind::Bool | TyKind::Char
+        )
+    };
+    fn fits(segments: &[hir::Segment], ok: &impl Fn(&hir::Expr) -> bool) -> bool {
+        segments.iter().all(|segment| match segment {
+            hir::Segment::Text(_) => true,
+            hir::Segment::Value(hir::Expr { kind: hir::ExprKind::Interpolate(inner), .. }) => fits(inner, ok),
+            hir::Segment::Value(value) => ok(value),
+        })
+    }
+    let fits = fits(rest, &|value: &hir::Expr| plain(value.ty) && !rooted(value));
+    (first.ty == Ty::STRING && reads(first, path) && fits).then_some(rest)
+}
+
 /// Which functions may wait and end early when their task is cancelled
 /// (11.15): those that use such an operation, call a function value, or
 /// call a function that may.
@@ -1117,6 +1161,14 @@ impl Builder<'_> {
             hir::Stmt::Assign { local, path, op, value, span } => {
                 // The location (and its indices) is resolved before the value (13.8).
                 let place = self.place(*local, path);
+                // The string at the place grows in place, and releases
+                // itself when it cannot.
+                if let Some(rest) = appended(value, *local, path, self.types).filter(|_| op.is_none()) {
+                    let mut pieces = vec![Piece::Taken(place.clone())];
+                    pieces.extend(self.pieces(rest));
+                    self.assign(place, Rvalue::Concat(pieces), *span);
+                    return;
+                }
                 let value = self.expr(value);
                 let ty = self.place_ty(&place);
                 let rvalue = match op {
@@ -1316,6 +1368,22 @@ impl Builder<'_> {
                 self.switch_to(exit);
             }
         }
+    }
+
+    /// The pieces of an interpolation, those of one inside it among them, as
+    /// a generic value's `Display` is.
+    fn pieces(&mut self, segments: &[hir::Segment]) -> Vec<Piece> {
+        let mut pieces = Vec::new();
+        for segment in segments {
+            match segment {
+                hir::Segment::Text(text) => pieces.push(Piece::Text(text.clone())),
+                hir::Segment::Value(hir::Expr { kind: hir::ExprKind::Interpolate(inner), .. }) => {
+                    pieces.extend(self.pieces(inner))
+                }
+                hir::Segment::Value(value) => pieces.push(Piece::Value(self.expr(value), value.ty)),
+            }
+        }
+        pieces
     }
 
     /// For operands that move into a collection: which must be retained
@@ -1741,13 +1809,7 @@ impl Builder<'_> {
             hir::ExprKind::If(condition, then, otherwise) => self.if_expr(e, condition, then, otherwise.as_deref()),
             hir::ExprKind::Block(block) => self.block(block),
             hir::ExprKind::Interpolate(segments) => {
-                let pieces = segments
-                    .iter()
-                    .map(|s| match s {
-                        hir::Segment::Text(text) => Piece::Text(text.clone()),
-                        hir::Segment::Value(value) => Piece::Value(self.expr(value), value.ty),
-                    })
-                    .collect();
+                let pieces = self.pieces(segments);
                 self.temp(Ty::STRING, Rvalue::Concat(pieces), e.span)
             }
             hir::ExprKind::Panic(message, code) => {
