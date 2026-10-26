@@ -73,8 +73,11 @@ with statements cannot be imported.
 ## Commands
 
 ```text
+tondo new <name>                   a project: tondo.toml, src/main.to, a test
 tondo run [<file.to>|<project>]    compile and run
 tondo check [...] [--json]         diagnostics only; JSON for tools
+tondo fix [...]                    apply the compiler's safe repairs
+tondo explain E1102                what a code of an error or a panic means
 tondo test [<project>]             run the tests
 tondo fmt <file.to>                canonical layout; --compact prints the fewest tokens
 tondo api <module>                 a module's declarations and docs, no bodies:
@@ -82,6 +85,7 @@ tondo api <module>                 a module's declarations and docs, no bodies:
 tondo api --list                   the modules there are
 tondo graph [<path>]               a program's modules, files and imports; with a
                                    directory or file, its project and module
+tondo add <alias> --path <dir>     a dependency (or --git <url> --tag <t>, --url <url>)
 tondo expand                       what each `derive` wrote
 tondo guide <topic>                one topic of this guide
 ```

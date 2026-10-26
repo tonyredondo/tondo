@@ -53,6 +53,9 @@ A dependency is imported by its alias: `import units`, `import units.si`.
 A package of declarations only, with no `main` and no statements, is a
 library: `tondo check` and `tondo test` work on it, and only `run` and
 `build` need something to run.
+`tondo new app` makes a project; `tondo add units --path libs/units` (or
+`--git <url> --tag v1.2.0`, `--url <url>`) adds a dependency and fetches it,
+and `tondo remove units` takes it out.
 `tondo.lock` pins every download; `tondo update` refreshes it. `tondo api
 --list` shows every module of the project, its dependencies and the
 standard library.

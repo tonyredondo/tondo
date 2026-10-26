@@ -2245,3 +2245,26 @@ logpoint and a count of hits are the runtime's, so the program does not
 stop for each hit. A dump opens in the same adapter, without a program,
 at its tasks and stacks.
 
+## 2026-10-26 — The language server, the command line and agents for an IDE
+
+The language server answers what an IDE asks beyond names: who calls a
+function and what it calls, from the uses the index already has; the
+`impl`s of a trait or a type, and the types of a trait, which the index now
+records; the declaration of a binding's type; the parameter each argument
+goes to; the structure of a file, from its tokens; and the format of a
+range, as the hunks where the canonical format differs. A name that is a
+module the file does not import offers the import, as completion and as the
+compiler's repair. In Tondo a directory is a module, so renaming one renames
+the module: the imports of it and the names it is used by change with it.
+The projects of the editor's folders are analyzed when it starts, so their
+problems show before any file is opened.
+
+`tondo explain` turns the registry of codes the specifications keep into
+help, with the examples of the guide, whose examples of errors already
+compile to the code they name; a diagnostic's code links to it. `tondo
+new` and `init` make a project with a program and a test, `add` and
+`remove` edit the manifest as a person would and fetch at once, so a
+mistake shows while the manifest can still go back, `fix` is the MCP's
+tool on the command line, and `clean` empties the cache of builds but keeps
+what was downloaded unless asked. Agents get the same as tools.
+

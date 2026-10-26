@@ -362,12 +362,20 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
                 .ok_or_else(|| format!("{program} does not compile: `tondo check {program}` shows why"))?
         };
         use std::os::unix::process::CommandExt;
+        // The variables the editor gives the program.
+        let variables: Vec<(String, String)> = arguments["env"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(name, value)| (name.clone(), value.as_str().map_or(value.to_string(), str::to_string)))
+            .collect();
         let arguments: Vec<String> =
             arguments["args"].as_array().into_iter().flatten().filter_map(|a| a.as_str().map(str::to_string)).collect();
         let mut command = std::process::Command::new(&executable);
         if let Some(plan) = &plan {
             command.env("TONDO_TEST_PLAN", plan);
         }
+        command.envs(variables);
         let child = command
             .args(&arguments)
             .current_dir(&root)

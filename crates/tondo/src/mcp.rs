@@ -187,7 +187,29 @@ impl Server {
                 }
                 Ok(Reply::new(graph.text(view), graph.json(view == View::Packages)))
             }
-            "definition" | "references" | "hover" | "complete" | "rename" | "symbols" => language(name, args),
+            "definition" | "references" | "hover" | "complete" | "rename" | "symbols" | "implementations" | "calls" => {
+                language(name, args)
+            }
+            "explain" => {
+                let code = args.need("code")?;
+                let explained = crate::explain::explain(&code)
+                    .ok_or(format!("there is no code `{code}`: E, W and P and four digits"))?;
+                Ok(Reply::new(crate::explain::text(&explained), explained))
+            }
+            "new_project" => {
+                let path = PathBuf::from(args.need("path")?);
+                let init = args.flag("init");
+                let name = match args.text("name") {
+                    Some(name) => name,
+                    None => {
+                        let whole = if init { path.canonicalize().unwrap_or(path.clone()) } else { path.clone() };
+                        whole.file_name().unwrap_or_default().to_string_lossy().replace('-', "_")
+                    }
+                };
+                let written = crate::manage::create(&path, &name, !init)?;
+                let text = format!("made the project `{name}` in {}: `run` runs it, `test` tests it", path.display());
+                Ok(Reply::new(text, json!({ "project": path, "name": name, "files": written })))
+            }
             "debug_start" => self.debug_start(args),
             "debug" => self.debug(args),
             "run_start" => self.run_start(args),
@@ -645,6 +667,14 @@ fn fix(args: &Args) -> Result<Reply, String> {
     Ok(Reply::new(text, structured))
 }
 
+/// `tondo fix`: the safe repairs of a program applied to its files, as the
+/// tool `fix` applies them: what it says, and its data.
+pub fn fix_files(path: &Path, library: bool) -> Result<(String, Value), String> {
+    let arguments = json!({ "path": path, "library": library });
+    let reply = fix(&Args(&arguments))?;
+    Ok((reply.text, reply.structured))
+}
+
 /// The language server's answer at a place of a file.
 fn language(name: &str, args: &Args) -> Result<Reply, String> {
     let file = args.need("file")?;
@@ -670,8 +700,51 @@ fn language(name: &str, args: &Args) -> Result<Reply, String> {
     let at = json!({ "textDocument": document, "position": position });
     let mut lines = Lines::default();
     match name {
-        "definition" | "references" => {
-            let method = format!("textDocument/{name}");
+        "calls" => {
+            let prepared = server.ask("textDocument/prepareCallHierarchy", &at)?;
+            let Some(item) = prepared.get(0).cloned() else {
+                return Ok(Reply::new(
+                    "no function is declared at that line and column".into(),
+                    json!({ "calls": [] }),
+                ));
+            };
+            let incoming = args.text("direction").as_deref() != Some("outgoing");
+            let method = if incoming { "callHierarchy/incomingCalls" } else { "callHierarchy/outgoingCalls" };
+            let answer = server.ask(method, &json!({ "item": item }))?;
+            let key = if incoming { "from" } else { "to" };
+            let calls: Vec<Value> = answer
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|call| {
+                    let other = &call[key];
+                    let place = lines.place(&json!({ "uri": other["uri"], "range": other["selectionRange"] }))?;
+                    let times = call["fromRanges"].as_array().map_or(0, Vec::len);
+                    Some(json!({ "function": other["name"], "place": place, "times": times }))
+                })
+                .collect();
+            let said = if incoming { "is called by" } else { "calls" };
+            let mut text = format!("{} {said}:\n", item["name"].as_str().unwrap_or_default());
+            for call in &calls {
+                let place = &call["place"];
+                text.push_str(&format!(
+                    "  {} at {}:{} ({} times)\n",
+                    call["function"].as_str().unwrap_or_default(),
+                    place["file"].as_str().unwrap_or_default(),
+                    place["line"],
+                    call["times"]
+                ));
+            }
+            if calls.is_empty() {
+                text.push_str("  nothing\n");
+            }
+            Ok(Reply::new(text, json!({ "calls": calls })))
+        }
+        "definition" | "references" | "implementations" => {
+            let method = match name {
+                "implementations" => "textDocument/implementation".to_string(),
+                _ => format!("textDocument/{name}"),
+            };
             let params =
                 json!({ "textDocument": document, "position": position, "context": { "includeDeclaration": true } });
             let answer = server.ask(&method, &params)?;
@@ -977,6 +1050,17 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             argv.extend(args.text("dir"));
         }
         "ps" => push(&["ps", "--json"]),
+        "add_dependency" => {
+            push(&["add", &args.need("alias")?, "--json"]);
+            for key in ["path", "git", "tag", "branch", "rev", "url", "sha256", "project"] {
+                option(&mut argv, &format!("--{key}"), key);
+            }
+            switch(&mut argv, "--dev", "dev");
+        }
+        "remove_dependency" => {
+            push(&["remove", &args.need("alias")?, "--json"]);
+            option(&mut argv, "--project", "project");
+        }
         "counters" => {
             let count = args.number("count").unwrap_or(1.0).max(1.0).to_string();
             push(&["counters", &args.need("program")?, "--json", "--count", &count]);
@@ -1461,6 +1545,60 @@ imports. Given a directory or file inside a project, its project, and the module
         description: "Rename the program's declaration at a place, and every reference to it, rewriting the files.",
         kind: Kind::Edits,
         params: &[FILE, LINE, COLUMN, ("new_name", "string!", "The new name.")],
+    },
+    Tool {
+        name: "implementations",
+        description: "The `impl`s of the trait or type at a place, or the methods that implement the trait's method there.",
+        kind: Kind::Reads,
+        params: &[FILE, LINE, COLUMN],
+    },
+    Tool {
+        name: "calls",
+        description: "The functions that call the function at a place, or with `direction: outgoing`, those it calls.",
+        kind: Kind::Reads,
+        params: &[FILE, LINE, COLUMN, ("direction", "string", "incoming, the default, or outgoing.")],
+    },
+    Tool {
+        name: "explain",
+        description: "What the code of an error, a warning or a panic means (E1102, W1002, P0007), with the guide's examples of it.",
+        kind: Kind::Reads,
+        params: &[("code", "string!", "The code, as a diagnostic or a panic gives it.")],
+    },
+    Tool {
+        name: "new_project",
+        description: "Make a Tondo project, tondo.toml, src/main.to and a test, in a new directory, or with `init` in one that exists.",
+        kind: Kind::Edits,
+        params: &[
+            ("path", "string!", "The project's directory."),
+            ("name", "string", "The package's name: the directory's by default."),
+            ("init", "boolean", "Make a project of a directory that exists."),
+        ],
+    },
+    Tool {
+        name: "add_dependency",
+        description: "Add a dependency to a project's tondo.toml and fetch it: a directory, a git repository or an archive.",
+        kind: Kind::Edits,
+        params: &[
+            ("alias", "string!", "The name the program imports it by."),
+            ("path", "string", "A directory of the dependency."),
+            ("git", "string", "A git repository's URL."),
+            ("tag", "string", "With git: a tag."),
+            ("branch", "string", "With git: a branch."),
+            ("rev", "string", "With git: a commit."),
+            ("url", "string", "An archive's URL."),
+            ("sha256", "string", "With url: the archive's SHA-256."),
+            ("dev", "boolean", "Only for the tests ([dev-dependencies])."),
+            ("project", "string", "The project; the server's directory by default."),
+        ],
+    },
+    Tool {
+        name: "remove_dependency",
+        description: "Take a dependency out of a project's tondo.toml.",
+        kind: Kind::Edits,
+        params: &[
+            ("alias", "string!", "The name the program imports it by."),
+            ("project", "string", "The project; the server's directory by default."),
+        ],
     },
     Tool {
         name: "symbols",

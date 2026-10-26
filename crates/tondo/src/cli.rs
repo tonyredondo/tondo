@@ -45,6 +45,11 @@ pub const COMMANDS: &[Command] = &[
         summary: &["report diagnostics only (of a library; as JSON)"],
     },
     Command {
+        name: "fix",
+        usage: &["tondo fix [<project>|<file.to>] [--library] [--json]"],
+        summary: &["apply the compiler's safe repairs to the program's files"],
+    },
+    Command {
         name: "expand",
         usage: &["tondo expand [<project>|<file.to>] [--json]"],
         summary: &["show what each `derive` expanded to"],
@@ -73,9 +78,42 @@ pub const COMMANDS: &[Command] = &[
         summary: &["learn Tondo: the language, the library, the commands"],
     },
     Command {
+        name: "explain",
+        usage: &["tondo explain [<code>] [--json]"],
+        summary: &["what the code of an error, a warning or a panic means, with examples"],
+    },
+    Command {
         name: "update",
         usage: &["tondo update [<project>] [<dependency>...] [--json]"],
         summary: &["fetch dependencies again and rewrite tondo.lock"],
+    },
+    Command {
+        name: "new",
+        usage: &["tondo new <name> [--json]"],
+        summary: &["make a project in a new directory: tondo.toml,", "src/main.to and a test"],
+    },
+    Command {
+        name: "init",
+        usage: &["tondo init [<dir>] [--name <name>] [--json]"],
+        summary: &["make a project of an existing directory"],
+    },
+    Command {
+        name: "add",
+        usage: &[
+            "tondo add <alias> --path <dir> | --git <url> [--tag <tag> | --branch <branch> | --rev <commit>]",
+            "          | --url <url> [--sha256 <hash>] [--dev] [--project <dir>] [--json]",
+        ],
+        summary: &["add a dependency to tondo.toml, and fetch it"],
+    },
+    Command {
+        name: "remove",
+        usage: &["tondo remove <alias> [--project <dir>] [--json]"],
+        summary: &["take a dependency out of tondo.toml"],
+    },
+    Command {
+        name: "clean",
+        usage: &["tondo clean [--all] [--json]"],
+        summary: &["empty the cache of builds; with --all, the fetched", "dependencies too"],
     },
     Command {
         name: "test",
@@ -181,8 +219,20 @@ pub const COMMANDS: &[Command] = &[
 
 /// What this `tondo` offers tools beyond its commands, as `tondo version
 /// --json` lists it, for a client to check before it relies on one.
-pub const FEATURES: &[&str] =
-    &["json", "graph", "test-events", "test-exact-many", "test-watch", "test-coverage", "lsp-tests", "lsp-lenses"];
+pub const FEATURES: &[&str] = &[
+    "json",
+    "graph",
+    "test-events",
+    "test-exact-many",
+    "test-watch",
+    "test-coverage",
+    "lsp-tests",
+    "lsp-lenses",
+    "explain",
+    "new",
+    "add",
+    "fix",
+];
 
 /// What a command writes with `--json`: one object, its format named for
 /// the command (`tondo-<command>-0.1/1`), whether it succeeded, and what

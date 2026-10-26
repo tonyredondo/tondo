@@ -159,6 +159,23 @@ fn checks_fixes_and_navigates() {
     assert!(source.contains("fn welcome(") && source.contains("console.println(welcome(\"ada\"))"), "{source}");
     let (symbols, _) = agent.call("symbols", json!({ "file": "main.to" }));
     assert_eq!(symbols["symbols"][0]["name"], "welcome");
+    // Who calls it, and what a code means.
+    let (calls, text) = agent.call("calls", json!({ "file": "main.to", "line": 3, "column": 4 }));
+    assert_eq!(calls["calls"][0]["function"], "main", "{text}");
+    let (explained, text) = agent.call("explain", json!({ "code": "E1001" }));
+    assert_eq!(explained["name"], "unknown-name");
+    assert!(text.starts_with("E1001 unknown-name (error)"), "{text}");
+
+    // A project made, and a dependency added to it and taken out.
+    let (made, _) = agent.call("new_project", json!({ "path": "made" }));
+    assert_eq!(made["name"], "made");
+    std::fs::create_dir_all(dir.join("lib")).unwrap();
+    agent.call("new_project", json!({ "path": "lib", "init": true }));
+    let (added, _) = agent.call("add_dependency", json!({ "alias": "lib", "path": "../lib", "project": "made" }));
+    assert_eq!(added["report"]["format"], "tondo-add-0.1/1", "{added}");
+    assert!(std::fs::read_to_string(dir.join("made/tondo.toml")).unwrap().contains("lib = { path = \"../lib\" }"));
+    agent.call("remove_dependency", json!({ "alias": "lib", "project": "made" }));
+    assert!(!std::fs::read_to_string(dir.join("made/tondo.toml")).unwrap().contains("lib ="));
     agent.stop();
 }
 

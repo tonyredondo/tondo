@@ -76,6 +76,12 @@ pub struct Index {
     /// The type of each expression of the program's own files.
     pub types: Vec<(Span, usize)>,
     pub shapes: Vec<Shape>,
+    /// Each `impl`: the declaration of its trait, when the program has it,
+    /// where the `impl` is, and the name of the type it is for.
+    pub impls: Vec<(Option<usize>, Span, String)>,
+    /// Each method of an `impl`: the trait method it implements, and its
+    /// name.
+    pub implemented: Vec<(usize, Span)>,
     keys: HashMap<Key, usize>,
 }
 

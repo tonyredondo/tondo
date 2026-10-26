@@ -22,8 +22,17 @@ impl Editor {
         Editor::start_with(Value::Null)
     }
 
+    /// An editor with a folder open, whose projects the server analyzes.
+    fn start_with_folders(folder: &Path) -> Editor {
+        Editor::launch(Value::Null, json!([{ "uri": format!("file://{}", folder.display()), "name": "folder" }]))
+    }
+
     /// An editor that gives the server `initializationOptions`.
     fn start_with(options: Value) -> Editor {
+        Editor::launch(options, Value::Null)
+    }
+
+    fn launch(options: Value, folders: Value) -> Editor {
         let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
             .arg("lsp")
             .stdin(Stdio::piped())
@@ -34,8 +43,10 @@ impl Editor {
         let output = BufReader::new(child.stdout.take().unwrap());
         let mut editor = Editor { child, input, output, next: 0, diagnostics: Vec::new(), tests: Vec::new() };
         let capabilities = json!({ "general": { "positionEncodings": ["utf-8"] } });
-        let initialized =
-            editor.request("initialize", json!({ "capabilities": capabilities, "initializationOptions": options }));
+        let initialized = editor.request(
+            "initialize",
+            json!({ "capabilities": capabilities, "initializationOptions": options, "workspaceFolders": folders }),
+        );
         assert_eq!(initialized["capabilities"]["positionEncoding"], "utf-8");
         editor.notify("initialized", json!({}));
         editor
@@ -377,7 +388,9 @@ fn highlights_symbols_signatures_hints() {
     let range = json!({ "start": { "line": 0, "character": 0 }, "end": { "line": 30, "character": 0 } });
     let hints = editor.request("textDocument/inlayHint", json!({ "textDocument": { "uri": uri }, "range": range }));
     let labels: Vec<&str> = hints.as_array().unwrap().iter().map(|h| h["label"].as_str().unwrap()).collect();
-    assert_eq!(labels, [": String", ": models.User", ": Int"], "{hints}");
+    // The types of bindings declared without one, then the parameters
+    // arguments go to: `make("Ada", age: 36)` names its second.
+    assert_eq!(labels, [": String", ": models.User", ": Int", "name:", "user:", "times:"], "{hints}");
     editor.stop();
 }
 
@@ -460,5 +473,181 @@ fn tells_tests_and_lenses() {
     let tested = editor.open(&dir.join("src/main_test.to"));
     editor.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": tested } }));
     assert!(editor.tests.is_empty());
+    editor.stop();
+}
+
+const SHAPED: &str = "import std.console
+import app.shapes
+
+trait Named {
+    fn name(self): String
+}
+
+type Box = { label: String, size: Int }
+
+impl Named for Box {
+    fn name(self): String {
+        self.label
+    }
+}
+
+fn area(width: Int, height: Int): Int {
+    width * height
+}
+
+fn describe(box: Box): String {
+    let total = area(box.size, 2)
+    let named = Named.name(box)
+    \"{named} {total}\"
+}
+
+fn main() {
+    let box = Box { label: \"a\", size: 3 }
+    console.println(describe(box))
+    console.println(\"{shapes.sides()}\")
+}
+";
+
+/// Calls, implementations, types, the structure of a file, hints of
+/// parameters, imports added, and a folder renamed.
+#[test]
+fn navigates_calls_types_and_structure() {
+    let dir = project(
+        "lsp-structure",
+        &[
+            ("tondo.toml", "[package]\nname = \"app\"\n"),
+            ("src/main.to", SHAPED),
+            ("src/shapes/shapes.to", "pub fn sides(): Int {\n    3\n}\n"),
+        ],
+    );
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("src/main.to"));
+    let at = |line: usize, character: usize| json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": character } });
+
+    // Who calls `area`, and what `describe` calls.
+    let prepared = editor.request("textDocument/prepareCallHierarchy", at(15, 4));
+    assert_eq!(prepared[0]["name"], "area");
+    let incoming = editor.request("callHierarchy/incomingCalls", json!({ "item": prepared[0] }));
+    assert_eq!(incoming[0]["from"]["name"], "describe");
+    let describe = editor.request("textDocument/prepareCallHierarchy", at(19, 4));
+    let outgoing = editor.request("callHierarchy/outgoingCalls", json!({ "item": describe[0] }));
+    let called: Vec<&str> = outgoing.as_array().unwrap().iter().map(|c| c["to"]["name"].as_str().unwrap()).collect();
+    assert!(called.contains(&"area") && called.contains(&"name"), "{called:?}");
+
+    // A trait's implementations, a method's, and a binding's type.
+    let impls = editor.request("textDocument/implementation", at(3, 7));
+    assert_eq!(impls[0]["range"]["start"]["line"], 9);
+    let methods = editor.request("textDocument/implementation", at(4, 8));
+    assert_eq!(methods[0]["range"]["start"], json!({ "line": 10, "character": 7 }));
+    let typed = editor.request("textDocument/typeDefinition", at(19, 12));
+    assert_eq!(typed["range"]["start"], json!({ "line": 7, "character": 5 }));
+    let boxed = editor.request("textDocument/prepareTypeHierarchy", at(7, 6));
+    let supertypes = editor.request("typeHierarchy/supertypes", json!({ "item": boxed[0] }));
+    assert_eq!(supertypes[0]["name"], "Named");
+    let named = editor.request("textDocument/prepareTypeHierarchy", at(3, 7));
+    let subtypes = editor.request("typeHierarchy/subtypes", json!({ "item": named[0] }));
+    assert_eq!(subtypes[0]["name"], "Box");
+
+    // The parameters arguments go to, unless named so already.
+    let range = json!({ "start": { "line": 0, "character": 0 }, "end": { "line": 28, "character": 0 } });
+    let hints = editor.request("textDocument/inlayHint", json!({ "textDocument": { "uri": uri }, "range": range }));
+    let labels: Vec<(u64, &str)> = hints
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|h| h["kind"] == 2)
+        .map(|h| (h["position"]["line"].as_u64().unwrap(), h["label"].as_str().unwrap()))
+        .collect();
+    assert_eq!(labels, [(20, "width:"), (20, "height:")]);
+
+    // Folds, and selections growing from a name.
+    let folds = editor.request("textDocument/foldingRange", json!({ "textDocument": { "uri": uri } }));
+    let folds: Vec<(u64, u64, Option<&str>)> = folds
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| (f["startLine"].as_u64().unwrap(), f["endLine"].as_u64().unwrap(), f["kind"].as_str()))
+        .collect();
+    assert!(folds.contains(&(0, 1, Some("imports"))) && folds.contains(&(9, 12, None)), "{folds:?}");
+    let selected = editor.request(
+        "textDocument/selectionRange",
+        json!({ "textDocument": { "uri": uri }, "positions": [{ "line": 20, "character": 23 }] }),
+    );
+    assert_eq!(selected[0]["range"]["start"], json!({ "line": 20, "character": 21 }));
+    assert_eq!(selected[0]["parent"]["range"]["start"], json!({ "line": 20, "character": 21 }));
+    assert_eq!(selected[0]["parent"]["range"]["end"], json!({ "line": 20, "character": 32 }));
+
+    // A module not imported yet, completed with its import.
+    let completed = editor.request("textDocument/completion", at(26, 4));
+    let json_module = completed["items"].as_array().unwrap().iter().find(|i| i["label"] == "json").unwrap();
+    assert_eq!(json_module["additionalTextEdits"][0]["newText"], "import std.json\n");
+    assert_eq!(json_module["additionalTextEdits"][0]["range"]["start"], json!({ "line": 2, "character": 0 }));
+
+    // Only the lines of a range are formatted.
+    let messy = SHAPED
+        .replace("fn area(width: Int, height: Int): Int {", "fn area(width:Int,height:Int):Int {")
+        .replace("fn main() {", "fn main()   {");
+    editor.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": messy }] }),
+    );
+    let range = json!({ "start": { "line": 15, "character": 0 }, "end": { "line": 16, "character": 0 } });
+    let edits = editor.request(
+        "textDocument/rangeFormatting",
+        json!({ "textDocument": { "uri": uri }, "range": range, "options": {} }),
+    );
+    assert_eq!(edits.as_array().unwrap().len(), 1, "{edits}");
+    assert_eq!(edits[0]["newText"], "fn area(width: Int, height: Int): Int {\n");
+    editor.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 3 }, "contentChanges": [{ "text": SHAPED }] }),
+    );
+
+    // The folder of a module renamed: its import and its uses follow.
+    let renamed = editor.request(
+        "workspace/willRenameFiles",
+        json!({ "files": [{ "oldUri": format!("file://{}", dir.join("src/shapes").display()), "newUri": format!("file://{}", dir.join("src/figures").display()) }] }),
+    );
+    let mut texts: Vec<(u64, &str)> = renamed["changes"][&uri]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| (e["range"]["start"]["line"].as_u64().unwrap(), e["newText"].as_str().unwrap()))
+        .collect();
+    texts.sort();
+    assert_eq!(texts, [(1, "app.figures"), (28, "figures")]);
+    editor.stop();
+}
+
+/// The projects of the editor's folders show their problems when it
+/// starts, before their files are opened; a name a module of the program
+/// has offers its import.
+#[test]
+fn checks_the_workspace_and_imports_modules() {
+    let dir = project(
+        "lsp-workspace",
+        &[
+            ("tondo.toml", "[package]\nname = \"app\"\n"),
+            ("src/main.to", "fn main() {\n    let x = shapes.sides()\n}\n"),
+            ("src/shapes/shapes.to", "pub fn sides(): Int {\n    3\n}\n"),
+        ],
+    );
+    let mut editor = Editor::start_with_folders(&dir);
+    editor.notify("initialized", json!({}));
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    editor.request("workspace/symbol", json!({ "query": "" }));
+    let uri = format!("file://{}", dir.join("src/main.to").display());
+    let (_, diagnostics) =
+        editor.diagnostics.iter().find(|(u, _)| *u == uri).cloned().expect("diagnostics of a file not opened");
+    let unknown = diagnostics.as_array().unwrap().iter().find(|d| d["code"] == "E1001").unwrap();
+    assert!(unknown["message"].as_str().unwrap().contains("add `import app.shapes`"), "{diagnostics}");
+    editor.open(&dir.join("src/main.to"));
+    let range = json!({ "start": { "line": 1, "character": 12 }, "end": { "line": 1, "character": 12 } });
+    let actions = editor.request(
+        "textDocument/codeAction",
+        json!({ "textDocument": { "uri": uri }, "range": range, "context": { "diagnostics": [] } }),
+    );
+    let import = actions.as_array().unwrap().iter().find(|a| a["title"] == "add `import app.shapes`").unwrap();
+    assert_eq!(import["edit"]["changes"][&uri][0]["newText"], "import app.shapes\n");
     editor.stop();
 }

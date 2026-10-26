@@ -48,6 +48,12 @@ fn main() -> ExitCode {
         "update" => update_command(&args[1..]),
         "bind" => bind_command(&args[1..]),
         "graph" => graph_command(&args[1..]),
+        "new" | "init" => create_command(command, &args[1..]),
+        "add" => add_command(&args[1..]),
+        "remove" => remove_command(&args[1..]),
+        "fix" => fix_command(&args[1..]),
+        "explain" => explain_command(&args[1..]),
+        "clean" => clean_command(&args[1..]),
         "test" => test_command(&args[1..]),
         "doc-test" => doc_test_command(&args[1..]),
         "lsp" => tondo::lsp::serve().map(|()| ExitCode::SUCCESS),
@@ -959,6 +965,177 @@ fn bind_command(args: &[OsString]) -> Result<ExitCode, String> {
             true,
             serde_json::json!({ "file": path, "module": name, "libraries": libraries, "added": added }),
         );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `tondo new <name>` and `tondo init [<dir>]` (7.14): a project, with a
+/// program and a test.
+fn create_command(command: &str, args: &[OsString]) -> Result<ExitCode, String> {
+    let mut args = args.to_vec();
+    let json = take_flag(&mut args, "--json");
+    let mut name = None;
+    if let Some(at) = args.iter().position(|a| a == "--name") {
+        args.remove(at);
+        let given =
+            (at < args.len()).then(|| args.remove(at)).ok_or(format!("--name takes the package's name\n{USAGE}"))?;
+        name = Some(given.to_string_lossy().into_owned());
+    }
+    let (dir, name) = match (command, args.as_slice()) {
+        ("new", [given]) => {
+            let given = PathBuf::from(given);
+            let name = name.unwrap_or_else(|| given.file_name().unwrap_or_default().to_string_lossy().into_owned());
+            (given, name)
+        }
+        ("new", _) => return Err(format!("new takes the name of the project to make\n{USAGE}")),
+        ("init", [] | [_]) => {
+            let dir = args.first().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+            let whole = dir.canonicalize().map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+            let name =
+                name.unwrap_or_else(|| whole.file_name().unwrap_or_default().to_string_lossy().replace('-', "_"));
+            (dir, name)
+        }
+        _ => return Err(format!("init takes the directory to make a project of, the current one by default\n{USAGE}")),
+    };
+    let written = tondo::manage::create(&dir, &name, command == "new")?;
+    if json {
+        print_json(command, true, serde_json::json!({ "project": dir, "name": name, "files": written }));
+    } else {
+        println!(
+            "made the project `{name}` in {}: `tondo run {}` runs it, `tondo test {}` tests it",
+            dir.display(),
+            dir.display(),
+            dir.display()
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `tondo add` (7.14): a dependency in tondo.toml, fetched.
+fn add_command(args: &[OsString]) -> Result<ExitCode, String> {
+    use tondo::manage::Source;
+    let (mut alias, mut source, mut reference, mut sha256) = (None, None, None, None);
+    let (mut dev, mut json, mut project) = (false, false, PathBuf::from("."));
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        let flag = arg.to_string_lossy().into_owned();
+        let mut value =
+            || rest.next().map(|v| v.to_string_lossy().into_owned()).ok_or(format!("{flag} needs a value\n{USAGE}"));
+        match flag.as_str() {
+            "--path" => source = Some(Source::Path(value()?)),
+            "--git" => source = Some(Source::Git { url: value()?, reference: None }),
+            "--url" => source = Some(Source::Archive { url: value()?, sha256: None }),
+            "--tag" => reference = Some(("tag", value()?)),
+            "--branch" => reference = Some(("branch", value()?)),
+            "--rev" => reference = Some(("rev", value()?)),
+            "--sha256" => sha256 = Some(value()?),
+            "--project" => project = PathBuf::from(value()?),
+            "--dev" => dev = true,
+            "--json" => json = true,
+            other if !other.starts_with('-') && alias.is_none() => alias = Some(other.to_string()),
+            other => return Err(format!("add does not take {other}\n{USAGE}")),
+        }
+    }
+    let alias = alias.ok_or(format!("add takes the name the program imports the dependency by\n{USAGE}"))?;
+    let source = match (source, reference, sha256) {
+        (Some(Source::Git { url, .. }), reference, None) => Source::Git { url, reference },
+        (Some(Source::Archive { url, .. }), None, sha256) => Source::Archive { url, sha256 },
+        (Some(path @ Source::Path(_)), None, None) => path,
+        (None, ..) => return Err(format!("add takes where the dependency is: --path, --git or --url\n{USAGE}")),
+        _ => return Err(format!("--tag, --branch and --rev go with --git, and --sha256 with --url\n{USAGE}")),
+    };
+    tondo::manage::add(&project, &alias, &source, dev)?;
+    let table = if dev { "dev-dependencies" } else { "dependencies" };
+    if json {
+        print_json("add", true, serde_json::json!({ "alias": alias, "table": table }));
+    } else {
+        println!("added `{alias}` to [{table}]: `import {alias}` uses it");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `tondo remove` (7.14): a dependency out of tondo.toml.
+fn remove_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let mut args = args.to_vec();
+    let json = take_flag(&mut args, "--json");
+    let mut project = PathBuf::from(".");
+    if let Some(at) = args.iter().position(|a| a == "--project") {
+        args.remove(at);
+        project = (at < args.len())
+            .then(|| PathBuf::from(args.remove(at)))
+            .ok_or(format!("--project names a directory\n{USAGE}"))?;
+    }
+    let [alias] = args.as_slice() else { return Err(format!("remove takes the dependency's name\n{USAGE}")) };
+    let alias = alias.to_string_lossy().into_owned();
+    tondo::manage::remove(&project, &alias)?;
+    if json {
+        print_json("remove", true, serde_json::json!({ "alias": alias }));
+    } else {
+        println!("removed `{alias}`");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `tondo fix` (7.14): the compiler's safe repairs, applied.
+fn fix_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let mut args = args.to_vec();
+    let json = take_flag(&mut args, "--json");
+    let library = take_flag(&mut args, "--library");
+    let (path, rest) = source_argument(&args);
+    if !rest.is_empty() {
+        return Err(format!("unexpected arguments\n{USAGE}"));
+    }
+    let (text, data) = tondo::mcp::fix_files(&path, library)?;
+    let compiles = data["compiles"] == true;
+    match json {
+        true => print_json("fix", compiles, data),
+        false => print!("{}", if text.ends_with('\n') { text } else { format!("{text}\n") }),
+    }
+    Ok(if compiles { ExitCode::SUCCESS } else { ExitCode::FAILURE })
+}
+
+/// `tondo explain` (7.13): what a code means, or every code.
+fn explain_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let mut args = args.to_vec();
+    let json = take_flag(&mut args, "--json");
+    match args.as_slice() {
+        [] => {
+            let codes: Vec<serde_json::Value> = tondo::explain::CODES
+                .iter()
+                .map(|(code, name, summary)| serde_json::json!({ "code": code, "name": name, "summary": summary }))
+                .collect();
+            match json {
+                true => print_json("explain", true, serde_json::json!({ "codes": codes })),
+                false => tondo::explain::CODES.iter().for_each(|(code, name, _)| println!("{code} {name}")),
+            }
+        }
+        [code] => {
+            let code = code.to_string_lossy();
+            let Some(explained) = tondo::explain::explain(&code) else {
+                return Err(format!("there is no code `{code}`: `tondo explain` lists them"));
+            };
+            match json {
+                true => print_json("explain", true, explained),
+                false => print!("{}", tondo::explain::text(&explained)),
+            }
+        }
+        _ => return Err(format!("explain takes one code, as `tondo explain E1102`\n{USAGE}")),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `tondo clean` (7.14): the cache of builds emptied.
+fn clean_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let mut args = args.to_vec();
+    let json = take_flag(&mut args, "--json");
+    let all = take_flag(&mut args, "--all");
+    if !args.is_empty() {
+        return Err(format!("clean takes only --all and --json\n{USAGE}"));
+    }
+    let freed = tondo::manage::clean(all)?;
+    match json {
+        true => print_json("clean", true, serde_json::json!({ "freed": freed, "all": all })),
+        false => println!("freed {:.1} MB of the cache", freed as f64 / 1e6),
     }
     Ok(ExitCode::SUCCESS)
 }

@@ -188,6 +188,7 @@ impl Checker<'_> {
         let Some(def) = index.of(&Key::TraitMethod(trait_id, name.name.clone())) else { return };
         index.alias(Key::Fn(id), def);
         index.refer(name.span, def);
+        index.implemented.push((def, name.span));
     }
 
     /// The types of the expressions, with the members of each.

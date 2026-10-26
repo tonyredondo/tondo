@@ -237,6 +237,13 @@ tondo api [<module>|<file.to>] [--private] [--list] [--project <dir>] [--json]
 tondo graph [<project>|<dir>|<file.to>] [--packages | --files] [--module <module> [--reverse]] [--json | --dot | --mermaid]
 tondo guide [<topic>] [--list] [--skill] [--json]
 tondo update [<project>] [<dependency>...] [--json]
+tondo new <name> [--json]
+tondo init [<dir>] [--name <name>] [--json]
+tondo add <alias> --path <dir> | --git <url> [--tag <tag> | --branch <branch> | --rev <commit>] | --url <url> [--sha256 <hash>] [--dev] [--project <dir>] [--json]
+tondo remove <alias> [--project <dir>] [--json]
+tondo fix [<project>|<file.to>] [--library] [--json]
+tondo explain [<code>] [--json]
+tondo clean [--all] [--json]
 tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>] [--json]
 tondo test [<project>] [--static] [--debug] [--library] [--target <target>] [--watch] [--coverage] [--test-format human|json|events] [--json] [--diagnostic-format human|json]
 tondo doc-test [--edition 0.1] <markdown>
@@ -296,6 +303,10 @@ tondo version [--json]
   cuerpos (sección 7.2).
 - `graph` muestra de qué está hecho un programa: sus paquetes, sus módulos
   con sus archivos y lo que importa cada uno (sección 7.11).
+- `explain` dice qué significa el código de un error, un warning o un pánico
+  (sección 7.13); `new`, `init`, `add`, `remove`, `fix` y `clean` hacen un
+  proyecto, cambian sus dependencias, aplican las reparaciones seguras y
+  vacían la caché (sección 7.14).
 - `guide` enseña Tondo a personas y a modelos (sección 7.3).
 - `bind` escribe un módulo con las declaraciones de C de unos headers, de un
   paquete del sistema o de una librería (sección 7.1) y, en un proyecto, añade
@@ -423,10 +434,16 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   del proyecto cuyo nombre contiene lo que se busca.
 - La firma de la llamada que se escribe, con su documentación y el argumento
   en que está el cursor.
-- El tipo de cada variable declarada sin escribirlo, como pista en línea.
+- El tipo de cada variable declarada sin escribirlo, y el parámetro al que va
+  cada argumento que no lo nombra ni es ya su nombre, como pistas en línea.
 - Definición y referencias de variables, parámetros (también en argumentos con
   nombre), funciones, métodos, tipos, campos, variantes, constantes, traits y
   módulos; las de la librería estándar se abren desde una copia en la caché.
+- La definición del tipo de un binding, un campo o un parámetro; las
+  implementaciones de un trait o de un tipo (sus `impl`) y de un método de un
+  trait; quién llama a una función y a quién llama (call hierarchy); y los
+  traits que implementa un tipo o los tipos que implementan un trait (type
+  hierarchy).
 - Renombrar una declaración del programa cambia cada referencia; un campo
   escrito con el nombre de una variable, `User { name }`, pasa a
   `User { fullName: name }`.
@@ -434,11 +451,22 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   que implementa el runtime con su documentación de `tondo api`; tras
   `modulo.`, sus declaraciones públicas; y si no, las variables y parámetros
   de la función hasta el cursor, las declaraciones del módulo, los módulos que
-  usa y las palabras clave.
+  usa, los que no importa todavía, con el `import` que los trae, y las
+  palabras clave.
 - Resaltado semántico de cada nombre según lo que declara (módulo, tipo, enum,
   trait, parámetro, variable, campo, variante, función, método), de las
   palabras clave, los textos, los números y los comentarios.
-- Los símbolos de un archivo y su formato canónico (21 del lenguaje).
+- Los símbolos de un archivo y su formato canónico (21 del lenguaje), entero o
+  en las líneas de un rango; los bloques, corchetes de varias líneas, imports
+  y comentarios que se pliegan; y la selección que crece del token a los
+  corchetes que lo rodean, su línea y el archivo.
+- Renombrar la carpeta de un módulo del proyecto
+  (`workspace/willRenameFiles`) cambia los imports de él y de los módulos que
+  contiene, y los nombres con que se usa.
+- Al empezar, analiza los proyectos de las carpetas del editor, para que sus
+  problemas se vean antes de abrir sus archivos.
+- El código de cada diagnóstico enlaza a `tondo-explain:<código>`, lo que
+  `tondo explain` dice de él (sección 7.13).
 - Las reparaciones de los diagnósticos (22.4 del lenguaje), cada una como
   acción `quickfix`, preferida si es `safe`, y una acción `source.fixAll` que
   aplica las seguras del archivo que no se tocan entre sí.
@@ -681,9 +709,10 @@ lenguaje, cada una con un texto para el modelo y su resultado como datos
 - Código: `check` da los diagnósticos, cada uno con el id de `check --json`
   (22.3) y sus reparaciones; `fix` aplica las seguras, o las que se eligen por
   id, a los archivos del programa, y comprueba de nuevo. `format`, `compact`,
-  `expand`, `api`, `graph` y `guide`.
-- Navegación: `definition`, `references`, `hover`, `complete`, `symbols`, y
-  `rename`, que reescribe los archivos.
+  `expand`, `api`, `graph`, `guide` y `explain`.
+- Navegación: `definition`, `references`, `implementations`, `calls`,
+  `hover`, `complete`, `symbols`, y `rename`, que reescribe los archivos.
+- Proyectos: `new_project`, `add_dependency` y `remove_dependency`.
 - Builds: `build`; `run`, con su entrada y un tiempo tras el que el programa
   termina, 60 s si no se dice; `test`, con lo que imprime y su informe JSON, y su cobertura si se pide;
   `doc_test`, `bind`, `update` y `target_pack`.
@@ -926,7 +955,12 @@ campos de su resultado:
 | `dump` | `tondo-dump-0.1/1` | `file` y `summary` |
 | `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `tasks`, `task`, `heap`, `objects` u `object` |
 | `reload` | `tondo-reload-0.1/1` | `changed`, `added`, `moves`, `stays` y `converted`; si no puede, `ok` falso, `message` y `restart` |
-| `version` | `tondo-version-0.1/1` | `version`, `backend`, `target` y `features`, lo que ofrece a las herramientas además de sus comandos: `json`, `graph`, `test-events`, `test-exact-many`, `test-watch`, `test-coverage`, `lsp-tests` y `lsp-lenses` |
+| `version` | `tondo-version-0.1/1` | `version`, `backend`, `target` y `features`, lo que ofrece a las herramientas además de sus comandos: `json`, `graph`, `test-events`, `test-exact-many`, `test-watch`, `test-coverage`, `lsp-tests`, `lsp-lenses`, `explain`, `new`, `add` y `fix` |
+| `new`, `init` | `tondo-new-0.1/1`, `tondo-init-0.1/1` | `project`, `name` y `files`, los que escribió |
+| `add`, `remove` | `tondo-add-0.1/1`, `tondo-remove-0.1/1` | `alias`, y con `add` la tabla, `table` |
+| `fix` | `tondo-fix-0.1/1` | `applied` y `skipped`, cada reparación con su `id` y su `title`, `compiles` y los `diagnostics` de después; `ok` si compila |
+| `explain` | `tondo-explain-0.1/1` | `code`, `name`, `kind`, `summary` y `examples` (`topic`, `text` y `code`); sin código, `codes` |
+| `clean` | `tondo-clean-0.1/1` | `freed`, en bytes, y `all` |
 
 Cada diagnóstico es el objeto de 22.3 del lenguaje. Las claves de los
 objetos van en orden alfabético; los paths de archivos del programa son los
@@ -945,6 +979,36 @@ que se dieron o relativos a su proyecto, y los de `graph`, absolutos.
   corren.
 - Un campo nuevo puede aparecer en la misma versión de un formato; quitar o
   cambiar uno cambia la versión.
+
+### 7.13 `tondo explain`
+
+`tondo explain <código>` dice qué significa un código de diagnóstico o de
+pánico: su nombre estable y su condición, del registro de 22.2 del lenguaje y
+de 14 de la especificación de testing, y los ejemplos de la guía que lo dan,
+cada uno con el texto que dice qué escribir. Sin código, lista todos. Con un
+código que no existe es un error del toolchain (estado 3).
+
+### 7.14 Proyectos desde la línea de órdenes
+
+- `tondo new <name>` hace un proyecto en un directorio nuevo, o vacío, de ese
+  nombre: `tondo.toml` con `[package] name`, `src/main.to` con un programa,
+  `src/main_test.to` con un test, y `.gitignore` con `target/`. `tondo init
+  [<dir>]` hace lo mismo en un directorio que existe, el actual si no se da,
+  sin tocar los archivos que ya tiene; su nombre es el del directorio, con `_`
+  por `-`, o `--name`. El nombre debe ser un identificador, y un directorio
+  que ya es un proyecto es un error.
+- `tondo add <alias>` añade una dependencia a `[dependencies]`, o con `--dev`
+  a `[dev-dependencies]`: `--path`, `--git` con `--tag`, `--branch` o `--rev`,
+  o `--url` con `--sha256`, como las escribe la sección 4.1. Después la
+  resuelve y la descarga como un build; si no puede, `tondo.toml` queda como
+  estaba. Un alias que el proyecto ya tiene es un error. `tondo remove
+  <alias>` la quita y vuelve a escribir `tondo.lock`.
+- `tondo fix` aplica las reparaciones `safe` de los diagnósticos (22.4 del
+  lenguaje) a los archivos del programa, las que no se tocan entre sí, y
+  comprueba de nuevo; da `1` si sigue sin compilar.
+- `tondo clean` vacía la caché de builds (sección 6); con `--all`, también
+  los repositorios y archivos descargados, que el siguiente build descarga
+  de nuevo.
 
 ## 8. Determinismo
 

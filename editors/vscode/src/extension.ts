@@ -52,6 +52,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       },
     }),
     vscode.commands.registerCommand('tondo.restartLanguageServer', () => restartClient(output)),
+    // What a diagnostic's code means, which its link opens.
+    vscode.workspace.registerTextDocumentContentProvider('tondo-explain', {
+      provideTextDocumentContent: async (uri) => {
+        const ran = await exec(['explain', uri.path], process.cwd());
+        return ran.stdout || ran.stderr;
+      },
+    }),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration('tondo.path')) {
         void checkVersion();

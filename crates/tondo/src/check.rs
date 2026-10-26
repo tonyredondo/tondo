@@ -81,6 +81,7 @@ fn check_with<'a>(
         owners: HashMap::new(),
         method_visibility: HashMap::new(),
         prelude: None,
+        module_paths: Vec::new(),
         datetime_module: None,
         unrepeatable: HashMap::new(),
         interpolating: false,
@@ -688,6 +689,9 @@ struct Checker<'a> {
     /// The module `std.prelude`, which declares the methods of the intrinsic
     /// types, and their keys by name.
     prelude: Option<u32>,
+    /// The path of each module of the program, which an unknown name may
+    /// be the last part of.
+    module_paths: Vec<Vec<String>>,
     /// The module `std.datetime`, the part of `std.time` written in Tondo,
     /// which owns the types of `std.time` as their module would.
     datetime_module: Option<u32>,
@@ -893,6 +897,7 @@ struct Capture {
 impl<'a> Checker<'a> {
     fn program(&mut self, module: &'a ast::Module) -> Option<hir::Program> {
         self.prelude = module.module_paths.iter().position(|p| p == &["std", "prelude"]).map(|i| i as u32);
+        self.module_paths = module.module_paths.clone();
         self.datetime_module = module.module_paths.iter().position(|p| p == &["std", "datetime"]).map(|i| i as u32);
         for import in &module.imports {
             self.import(import);
@@ -3167,6 +3172,12 @@ impl<'a> Checker<'a> {
                 let message = format!("`impl {trait_name} for {target_name}` is missing `{name}`");
                 self.diags.error("E1114", decl.span, message);
             }
+        }
+        let name =
+            self.index.is_some().then(|| self.index_type_name(target).unwrap_or_else(|| self.types.display(target)));
+        if let (Some(index), Some(name)) = (self.index.as_mut(), name) {
+            let declared = index.of(&crate::index::Key::Trait(trait_id.0));
+            index.impls.push((declared, decl.span, name));
         }
         self.impls.push(ImplDef {
             intrinsic: false,
@@ -10871,6 +10882,14 @@ impl<'a> Checker<'a> {
 
     /// Reports `E1001`, pointing habits from other languages at the canonical form.
     fn unknown_name(&mut self, cx: &FnCx, name: &str, span: Span) {
+        // A module of the program this file does not import.
+        let here = self.sources.file_of(span.start).module.clone();
+        let module = self
+            .module_paths
+            .iter()
+            .filter(|p| p.first().is_some_and(|first| first != "std") && p.last().is_some_and(|last| last == name))
+            .map(|p| p.join("."))
+            .find(|path| *path != here);
         let hint = match name {
             "Some" | "Ok" | "Err" => format!("Tondo writes `{}(...)`", name.to_lowercase()),
             "None" | "null" | "nil" | "undefined" | "NULL" | "nullptr" | "Nothing" => {
@@ -10905,6 +10924,13 @@ impl<'a> Checker<'a> {
             "exit" => "`process.exit(code)` ends the program, after `import std.process`".into(),
             _ if crate::api::standard_modules().contains(&format!("std.{name}")) => {
                 format!("`{name}` is a standard module: add `import std.{name}` at the top of the file")
+            }
+            _ if module.is_some() => {
+                format!(
+                    "`{name}` is the module `{}`: add `import {}` at the top of the file",
+                    module.as_deref().unwrap_or_default(),
+                    module.as_deref().unwrap_or_default()
+                )
             }
             _ if self.script_bindings.iter().any(|bound| bound == name) => match self.scripting {
                 true => format!("the script declares `{name}` further down: a binding is seen from its `let` on"),
@@ -10947,7 +10973,9 @@ impl<'a> Checker<'a> {
         };
         if let Some((safe, replacement)) = replacement {
             self.diags.fix(format!("write `{replacement}`"), safe, vec![(span, replacement)]);
-        } else if crate::api::standard_modules().contains(&format!("std.{name}")) {
+        } else if let Some(path) = module
+            .or_else(|| crate::api::standard_modules().contains(&format!("std.{name}")).then(|| format!("std.{name}")))
+        {
             // After the file's last import, or at its start.
             let file = self.sources.file_of(span.start);
             let (mut at, mut offset) = (0, 0);
@@ -10958,7 +10986,7 @@ impl<'a> Checker<'a> {
                 }
             }
             let place = Span::new(file.base + at as u32, file.base + at as u32);
-            self.diags.fix(format!("add `import std.{name}`"), true, vec![(place, format!("import std.{name}\n"))]);
+            self.diags.fix(format!("add `import {path}`"), true, vec![(place, format!("import {path}\n"))]);
         }
     }
 

@@ -4,6 +4,7 @@
 
 use crate::driver::{self, Analysis};
 use crate::index::{DefKind, Index};
+use crate::lexer::{Kw, Tok};
 use crate::source::{SourceFile, Span};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -127,6 +128,8 @@ struct Server {
     /// Whether the editor asked for the tests of each project
     /// (`tondo/tests`), and the last it was sent of each.
     tests: bool,
+    /// The editor's folders, whose projects are analyzed when it starts.
+    folders: Vec<PathBuf>,
     listed: HashMap<PathBuf, Value>,
     shut: bool,
 }
@@ -213,6 +216,27 @@ impl Server {
             "textDocument/signatureHelp" => Some(Ok(self.signature_help(params).unwrap_or(Value::Null))),
             "textDocument/inlayHint" => Some(Ok(self.inlay_hints(params).unwrap_or(json!([])))),
             "textDocument/codeLens" => Some(Ok(self.lenses(params).unwrap_or(json!([])))),
+            "textDocument/foldingRange" => Some(Ok(self.folding_ranges(params).unwrap_or(json!([])))),
+            "textDocument/selectionRange" => Some(Ok(self.selection_ranges(params).unwrap_or(json!([])))),
+            "textDocument/rangeFormatting" => Some(Ok(self.range_formatting(params).unwrap_or(json!([])))),
+            "textDocument/implementation" => Some(Ok(self.implementation(params).unwrap_or(Value::Null))),
+            "textDocument/typeDefinition" => Some(Ok(self.type_definition(params).unwrap_or(Value::Null))),
+            "textDocument/prepareCallHierarchy" => {
+                Some(Ok(self.prepare_hierarchy(params, &[DefKind::Function, DefKind::Method]).unwrap_or(Value::Null)))
+            }
+            "callHierarchy/incomingCalls" => Some(Ok(self.incoming_calls(params).unwrap_or(json!([])))),
+            "callHierarchy/outgoingCalls" => Some(Ok(self.outgoing_calls(params).unwrap_or(json!([])))),
+            "textDocument/prepareTypeHierarchy" => {
+                let kinds = [DefKind::Type, DefKind::Enum, DefKind::Trait];
+                Some(Ok(self.prepare_hierarchy(params, &kinds).unwrap_or(Value::Null)))
+            }
+            "typeHierarchy/supertypes" => Some(Ok(self.type_hierarchy(params, true).unwrap_or(json!([])))),
+            "typeHierarchy/subtypes" => Some(Ok(self.type_hierarchy(params, false).unwrap_or(json!([])))),
+            "workspace/willRenameFiles" => Some(Ok(self.will_rename_files(params).unwrap_or(Value::Null))),
+            "initialized" => {
+                self.analyze_workspace();
+                None
+            }
             "textDocument/semanticTokens/full" => {
                 Some(Ok(self.semantic_tokens(params).unwrap_or(json!({ "data": [] }))))
             }
@@ -226,6 +250,9 @@ impl Server {
         let utf8 = encodings.as_array().is_some_and(|e| e.iter().any(|e| e == "utf-8"));
         self.units = if utf8 { Units::Utf8 } else { Units::Utf16 };
         self.tests = params["initializationOptions"]["tests"] == true;
+        let folders = params["workspaceFolders"].as_array().into_iter().flatten().filter_map(|f| f["uri"].as_str());
+        self.folders = folders.chain(params["rootUri"].as_str()).filter_map(uri_path).collect();
+        self.folders.dedup();
         json!({
             "capabilities": {
                 "positionEncoding": if utf8 { "utf-8" } else { "utf-16" },
@@ -243,6 +270,18 @@ impl Server {
                 "signatureHelpProvider": { "triggerCharacters": ["(", ","] },
                 "inlayHintProvider": true,
                 "codeLensProvider": { "resolveProvider": false },
+                "foldingRangeProvider": true,
+                "selectionRangeProvider": true,
+                "documentRangeFormattingProvider": true,
+                "callHierarchyProvider": true,
+                "implementationProvider": true,
+                "typeDefinitionProvider": true,
+                "typeHierarchyProvider": true,
+                "workspace": {
+                    "fileOperations": {
+                        "willRename": { "filters": [{ "scheme": "file", "pattern": { "glob": "**", "matches": "folder" } }] },
+                    },
+                },
                 "semanticTokensProvider": {
                     "legend": { "tokenTypes": TOKEN_TYPES, "tokenModifiers": ["declaration", "readonly", "defaultLibrary"] },
                     "full": true,
@@ -376,13 +415,19 @@ impl Server {
                 crate::diag::Severity::Error => 1,
                 crate::diag::Severity::Warning => 2,
             };
-            by_file.entry(path).or_default().push(json!({
+            let code = diagnostic.code.unwrap_or("E0000");
+            let mut published = json!({
                 "range": range,
                 "severity": severity,
-                "code": diagnostic.code.unwrap_or("E0000"),
+                "code": code,
                 "source": "tondo",
                 "message": diagnostic.message,
-            }));
+            });
+            // The code opens what it means (`tondo explain`).
+            if crate::explain::CODES.iter().any(|(c, ..)| *c == code) {
+                published["codeDescription"] = json!({ "href": format!("tondo-explain:{code}") });
+            }
+            by_file.entry(path).or_default().push(published);
         }
         let before = self.published.remove(root).unwrap_or_default();
         for path in before.iter().filter(|path| !by_file.contains_key(*path)) {
@@ -744,6 +789,43 @@ impl Server {
             let position = position(&source.text, (span.end - source.base) as usize, self.units);
             hints.push(json!({ "position": position, "label": format!(": {ty}"), "kind": 1 }));
         }
+        // The parameter each argument goes to, where the call does not name
+        // it and the argument is not its name already.
+        let tokens = crate::lexer::lex(source, None, &mut crate::diag::Diagnostics::default());
+        let end = source.base + source.text.len() as u32;
+        for &(span, used) in &index.uses {
+            let callee = &index.defs[used];
+            let callable = matches!(callee.kind, DefKind::Function | DefKind::Method);
+            let declared = span == callee.name_span || index.implemented.iter().any(|&(_, s)| s == span);
+            if !callable || declared || span.start < from.max(source.base) || span.end > to.min(end) {
+                continue;
+            }
+            let Some(at) = tokens.iter().position(|t| t.span.start >= span.end) else { continue };
+            if tokens[at].tok != Tok::LParen || tokens[at].span.start != span.end {
+                continue;
+            }
+            let declared = analyzed.analysis.sources.file_of(callee.decl_span.start);
+            let names = parameter_names(&header(declared.slice(callee.decl_span)));
+            // `value.method(...)` passes `self` before the parentheses;
+            // `Type.method(value)` within them.
+            let before = &source.text[..(span.start - source.base) as usize];
+            let receiver = before
+                .strip_suffix('.')
+                .map(|b| b.rsplit(|c: char| !(c.is_alphanumeric() || c == '_')).next().unwrap_or_default());
+            let skip = receiver.is_some_and(|r| !r.starts_with(char::is_uppercase))
+                && names.first().is_some_and(|n| n == "self");
+            let names = &names[skip as usize..];
+            for (argument, first, named, alone) in arguments(&tokens[at + 1..]) {
+                let Some(name) = names.get(argument) else { break };
+                if named || name == "self" || alone.as_deref() == Some(name.as_str()) {
+                    continue;
+                }
+                let position = position(&source.text, (first - source.base) as usize, self.units);
+                hints.push(
+                    json!({ "position": position, "label": format!("{name}:"), "kind": 2, "paddingRight": true }),
+                );
+            }
+        }
         Some(Value::Array(hints))
     }
 
@@ -999,6 +1081,32 @@ impl Server {
             {
                 items.push(self.item(analyzed, &found.name, DefKind::Module, Some(def)));
             }
+        }
+        // The modules the file does not import yet, with their import.
+        let imported: HashSet<&str> =
+            here.text.lines().filter_map(|l| l.strip_prefix("import ")?.split_whitespace().next()).collect();
+        let mut after = 0;
+        let mut offset = 0;
+        for line in here.text.split_inclusive('\n') {
+            offset += line.len();
+            if line.starts_with("import ") {
+                after = offset;
+            }
+        }
+        let place = position(&here.text, after, self.units);
+        let mut modules: Vec<String> =
+            crate::api::standard_modules().into_iter().filter(|m| m.starts_with("std.")).collect();
+        modules.extend((0..sources.len()).filter(|&i| sources.file(i).own).map(|i| sources.file(i).module.clone()));
+        modules.dedup();
+        for module in modules {
+            let name = module.rsplit('.').next().unwrap_or_default().to_string();
+            if imported.contains(module.as_str()) || module == here.module || !seen.insert(name.clone()) {
+                continue;
+            }
+            items.push(json!({
+                "label": name, "kind": 9, "detail": format!("import {module}"), "sortText": format!("~{name}"),
+                "additionalTextEdits": [{ "range": { "start": place, "end": place }, "newText": format!("import {module}\n") }],
+            }));
         }
         for keyword in KEYWORDS {
             items.push(json!({ "label": keyword, "kind": 14 }));
@@ -1351,4 +1459,536 @@ fn encode(path: &str) -> String {
             _ => format!("%{b:02X}"),
         })
         .collect()
+}
+
+/// What an editor asks beyond reading and changing names: the structure of
+/// a file, calls and implementations, and what a folder renamed changes.
+impl Server {
+    /// The text of a document: as the editor has it, or as saved.
+    fn document(&self, params: &Value) -> Option<(PathBuf, String)> {
+        let path = uri_path(params["textDocument"]["uri"].as_str()?)?;
+        let text = match self.open.get(&path) {
+            Some(document) => document.text.clone(),
+            None => std::fs::read_to_string(&path).ok()?,
+        };
+        Some((path, text))
+    }
+
+    /// Blocks, brackets that span lines, runs of imports and of comments.
+    fn folding_ranges(&self, params: &Value) -> Option<Value> {
+        let (path, text) = self.document(params)?;
+        let mut sources = crate::source::SourceMap::default();
+        let added = sources.add(&path, text);
+        let file = sources.file(added);
+        let (tokens, comments) = crate::lexer::lex_with_comments(file, None, &mut crate::diag::Diagnostics::default());
+        let line = |offset: u32| file.line_col(offset).0 - 1;
+        let mut ranges = Vec::new();
+        let mut open = Vec::new();
+        for token in &tokens {
+            match token.tok {
+                Tok::LBrace | Tok::LBracket | Tok::LParen => open.push(line(token.span.start)),
+                Tok::RBrace | Tok::RBracket | Tok::RParen => {
+                    if let Some(start) = open.pop() {
+                        let end = line(token.span.start);
+                        if end > start + 1 {
+                            ranges.push(json!({ "startLine": start, "endLine": end - 1 }));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        // Lines in a row: imports, or comments.
+        let mut runs = |lines: Vec<usize>, kind: &str| {
+            let mut start = None;
+            for (i, &l) in lines.iter().enumerate() {
+                let first = *start.get_or_insert(l);
+                let last = lines.get(i + 1).is_none_or(|&next| next != l + 1);
+                if last {
+                    if l > first {
+                        ranges.push(json!({ "startLine": first, "endLine": l, "kind": kind }));
+                    }
+                    start = None;
+                }
+            }
+        };
+        let imports: Vec<usize> =
+            tokens.iter().filter(|t| matches!(t.tok, Tok::Kw(Kw::Import))).map(|t| line(t.span.start)).collect();
+        runs(imports, "imports");
+        let mut commented: Vec<usize> = comments.iter().map(|c| line(c.start)).collect();
+        commented.dedup();
+        runs(commented, "comment");
+        Some(Value::Array(ranges))
+    }
+
+    /// From the token at each position out: the brackets around it, what
+    /// is between them, its line, and the file.
+    fn selection_ranges(&self, params: &Value) -> Option<Value> {
+        let (path, text) = self.document(params)?;
+        let mut sources = crate::source::SourceMap::default();
+        let added = sources.add(&path, text.clone());
+        let file = sources.file(added);
+        let tokens = crate::lexer::lex(file, None, &mut crate::diag::Diagnostics::default());
+        let mut pairs = Vec::new();
+        let mut open = Vec::new();
+        for token in &tokens {
+            match token.tok {
+                Tok::LBrace | Tok::LBracket | Tok::LParen => open.push(token.span),
+                Tok::RBrace | Tok::RBracket | Tok::RParen => {
+                    if let Some(start) = open.pop() {
+                        pairs.push((start.end, token.span.start));
+                        pairs.push((start.start, token.span.end));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut results = Vec::new();
+        for asked in params["positions"].as_array().into_iter().flatten() {
+            let at = offset(&text, asked, self.units)? as u32;
+            let mut spans: Vec<(u32, u32)> = Vec::new();
+            if let Some(token) = tokens
+                .iter()
+                .find(|t| t.span.start <= at && at <= t.span.end && !matches!(t.tok, Tok::Newline | Tok::Eof))
+            {
+                spans.push((token.span.start, token.span.end));
+            }
+            let mut around: Vec<(u32, u32)> = pairs.iter().copied().filter(|&(s, e)| s <= at && at <= e).collect();
+            around.sort_by_key(|&(s, e)| e - s);
+            spans.extend(around);
+            let start = text[..at as usize].rfind('\n').map_or(0, |i| i + 1);
+            let end = text[at as usize..].find('\n').map_or(text.len(), |i| at as usize + i);
+            let indent = text[start..end].len() - text[start..end].trim_start().len();
+            spans.push(((start + indent) as u32, end as u32));
+            spans.push((0, text.len() as u32));
+            // Each one around the one before.
+            let mut kept: Vec<(u32, u32)> = Vec::new();
+            for span in spans {
+                if kept.last().is_none_or(|&(s, e)| span.0 <= s && e <= span.1 && span != (s, e)) {
+                    kept.push(span);
+                }
+            }
+            let mut range = Value::Null;
+            for &(s, e) in kept.iter().rev() {
+                let here = json!({ "start": position(&text, s as usize, self.units), "end": position(&text, e as usize, self.units) });
+                range = match range {
+                    Value::Null => json!({ "range": here }),
+                    parent => json!({ "range": here, "parent": parent }),
+                };
+            }
+            results.push(range);
+        }
+        Some(Value::Array(results))
+    }
+
+    /// The canonical format of the lines a range touches, where it differs.
+    fn range_formatting(&self, params: &Value) -> Option<Value> {
+        let (path, text) = self.document(params)?;
+        let mut sources = crate::source::SourceMap::default();
+        let file = sources.add(&path, text.clone());
+        let formatted = crate::fmt::format(sources.file(file), &mut crate::diag::Diagnostics::default())?;
+        let (first, last) =
+            (params["range"]["start"]["line"].as_u64()? as usize, params["range"]["end"]["line"].as_u64()? as usize);
+        let old: Vec<&str> = text.split_inclusive('\n').collect();
+        let new: Vec<&str> = formatted.split_inclusive('\n').collect();
+        let starts: Vec<usize> = std::iter::once(0)
+            .chain(old.iter().scan(0, |at, l| {
+                *at += l.len();
+                Some(*at)
+            }))
+            .collect();
+        let mut edits = Vec::new();
+        for (from, to, new_from, new_to) in hunks(&old, &new) {
+            // A hunk the range touches; one that adds lines, where it adds them.
+            if to.max(from + 1) <= first || from > last {
+                continue;
+            }
+            let range = json!({ "start": position(&text, starts[from], self.units), "end": position(&text, starts[to], self.units) });
+            edits.push(json!({ "range": range, "newText": new[new_from..new_to].concat() }));
+        }
+        Some(Value::Array(edits))
+    }
+
+    /// A function or method as an item of a hierarchy, or a type.
+    fn item_of(&self, analyzed: &Analyzed, def: usize) -> Option<Value> {
+        let index = analyzed.analysis.index.as_ref()?;
+        let found = &index.defs[def];
+        let kind = match found.kind {
+            DefKind::Function => 12,
+            DefKind::Method => 6,
+            DefKind::Type => 23,
+            DefKind::Enum => 10,
+            DefKind::Trait => 11,
+            _ => return None,
+        };
+        let (path, range) = self.place(analyzed, found.decl_span)?;
+        let (_, selection) = self.place(analyzed, found.name_span)?;
+        let uri = self.uri(&path);
+        Some(
+            json!({ "name": found.name, "kind": kind, "uri": uri, "range": range, "selectionRange": selection, "data": { "def": def } }),
+        )
+    }
+
+    /// The root of the analysis an item of a hierarchy came from, and its
+    /// declaration.
+    fn item_def(&mut self, params: &Value) -> Option<(PathBuf, usize)> {
+        let item = &params["item"];
+        self.prepare(&json!({ "textDocument": { "uri": item["uri"] } }))?;
+        let path = uri_path(item["uri"].as_str()?)?;
+        Some((root_of(&path).0, item["data"]["def"].as_u64()? as usize))
+    }
+
+    fn prepare_hierarchy(&mut self, params: &Value, kinds: &[DefKind]) -> Option<Value> {
+        self.prepare(params)?;
+        let (analyzed, def, _) = self.def_at(params)?;
+        let index = analyzed.analysis.index.as_ref()?;
+        if !kinds.contains(&index.defs[def].kind) {
+            return None;
+        }
+        Some(json!([self.item_of(analyzed, def)?]))
+    }
+
+    /// Where a function is called from, grouped by the function that calls.
+    fn incoming_calls(&mut self, params: &Value) -> Option<Value> {
+        let (root, def) = self.item_def(params)?;
+        let analyzed = self.analyses.get(&root)?;
+        let index = analyzed.analysis.index.as_ref()?;
+        let own = index.defs[def].name_span;
+        let mut by_caller: Vec<(usize, Vec<Value>)> = Vec::new();
+        for &(span, used) in &index.uses {
+            if used != def || span == own || index.implemented.iter().any(|&(_, s)| s == span) {
+                continue;
+            }
+            let Some(caller) = enclosing(index, span) else { continue };
+            let (_, range) = self.place(analyzed, span)?;
+            match by_caller.iter_mut().find(|(c, _)| *c == caller) {
+                Some((_, ranges)) => ranges.push(range),
+                None => by_caller.push((caller, vec![range])),
+            }
+        }
+        let calls: Vec<Value> = by_caller
+            .into_iter()
+            .filter_map(|(caller, ranges)| {
+                Some(json!({ "from": self.item_of(analyzed, caller)?, "fromRanges": ranges }))
+            })
+            .collect();
+        Some(Value::Array(calls))
+    }
+
+    /// What a function calls, grouped by the function called.
+    fn outgoing_calls(&mut self, params: &Value) -> Option<Value> {
+        let (root, def) = self.item_def(params)?;
+        let analyzed = self.analyses.get(&root)?;
+        let index = analyzed.analysis.index.as_ref()?;
+        let body = index.defs[def].decl_span;
+        let mut by_callee: Vec<(usize, Vec<Value>)> = Vec::new();
+        for &(span, used) in &index.uses {
+            let callable = matches!(index.defs[used].kind, DefKind::Function | DefKind::Method);
+            if !callable || span.start < body.start || span.end > body.end || span == index.defs[def].name_span {
+                continue;
+            }
+            let (_, range) = self.place(analyzed, span)?;
+            match by_callee.iter_mut().find(|(c, _)| *c == used) {
+                Some((_, ranges)) => ranges.push(range),
+                None => by_callee.push((used, vec![range])),
+            }
+        }
+        let calls: Vec<Value> = by_callee
+            .into_iter()
+            .filter_map(|(callee, ranges)| Some(json!({ "to": self.item_of(analyzed, callee)?, "fromRanges": ranges })))
+            .collect();
+        Some(Value::Array(calls))
+    }
+
+    /// The `impl`s of a trait or of a type, or the methods that implement a
+    /// trait's method.
+    fn implementation(&mut self, params: &Value) -> Option<Value> {
+        self.prepare(params)?;
+        let (analyzed, def, _) = self.def_at(params)?;
+        let index = analyzed.analysis.index.as_ref()?;
+        let found = &index.defs[def];
+        let spans: Vec<Span> = match found.kind {
+            DefKind::Trait => index.impls.iter().filter(|(t, ..)| *t == Some(def)).map(|(_, span, _)| *span).collect(),
+            DefKind::Type | DefKind::Enum => {
+                index.impls.iter().filter(|(.., target)| *target == found.name).map(|(_, span, _)| *span).collect()
+            }
+            _ => index.implemented.iter().filter(|(d, _)| *d == def).map(|(_, span)| *span).collect(),
+        };
+        let locations: Vec<Value> = spans.into_iter().filter_map(|span| self.location(analyzed, span)).collect();
+        Some(Value::Array(locations))
+    }
+
+    /// The declaration of the type a binding, field or parameter has.
+    fn type_definition(&mut self, params: &Value) -> Option<Value> {
+        self.prepare(params)?;
+        let (analyzed, def, _) = self.def_at(params)?;
+        let index = analyzed.analysis.index.as_ref()?;
+        let found = &index.defs[def];
+        let named = match found.kind {
+            DefKind::Type | DefKind::Enum | DefKind::Trait => found.name.clone(),
+            _ => found.ty.clone()?,
+        };
+        // `User`, of `Array[User]` or `User?` the type inside.
+        let words: Vec<&str> =
+            named.split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| !w.is_empty()).collect();
+        let declared = words.iter().rev().find_map(|word| {
+            index
+                .defs
+                .iter()
+                .find(|d| matches!(d.kind, DefKind::Type | DefKind::Enum | DefKind::Trait) && d.name == *word)
+        })?;
+        self.location(analyzed, declared.name_span)
+    }
+
+    /// The traits a type implements, or the types that implement a trait.
+    fn type_hierarchy(&mut self, params: &Value, supertypes: bool) -> Option<Value> {
+        let (root, def) = self.item_def(params)?;
+        let analyzed = self.analyses.get(&root)?;
+        let index = analyzed.analysis.index.as_ref()?;
+        let found = &index.defs[def];
+        let mut related: Vec<usize> = Vec::new();
+        for (trait_def, _, target) in &index.impls {
+            let other = match (supertypes, found.kind) {
+                (true, DefKind::Type | DefKind::Enum) if *target == found.name => *trait_def,
+                (false, DefKind::Trait) if *trait_def == Some(def) => {
+                    index.defs.iter().position(|d| matches!(d.kind, DefKind::Type | DefKind::Enum) && d.name == *target)
+                }
+                _ => None,
+            };
+            if let Some(other) = other.filter(|o| !related.contains(o)) {
+                related.push(other);
+            }
+        }
+        Some(Value::Array(related.into_iter().filter_map(|d| self.item_of(analyzed, d)).collect()))
+    }
+
+    /// A folder of a project's sources renamed is its module renamed: the
+    /// imports of it and of the modules inside it, and the names it is
+    /// used by, change with it.
+    fn will_rename_files(&mut self, params: &Value) -> Option<Value> {
+        let mut changes: HashMap<String, Vec<Value>> = HashMap::new();
+        for renamed in params["files"].as_array().into_iter().flatten() {
+            let (Some(old), Some(new)) = (uri_path(renamed["oldUri"].as_str()?), uri_path(renamed["newUri"].as_str()?))
+            else {
+                continue;
+            };
+            let (root, project) = root_of(&old);
+            if !project || !old.is_dir() {
+                continue;
+            }
+            if self.dirty.remove(&root) || !self.analyses.contains_key(&root) {
+                self.analyze(&root);
+            }
+            let Some(analyzed) = self.analyses.get(&root) else { continue };
+            let sources = &analyzed.analysis.sources;
+            // The module of the folder, from a file of it.
+            let Some(module) = (0..sources.len())
+                .find(|&i| {
+                    sources.file(i).own && analyzed.paths[i].as_deref().and_then(Path::parent) == Some(old.as_path())
+                })
+                .map(|i| sources.file(i).module.clone())
+            else {
+                continue;
+            };
+            let depth = module.matches('.').count();
+            let Some(source_root) = old.ancestors().nth(depth) else { continue };
+            let Ok(relative) = new.strip_prefix(source_root) else { continue };
+            let package = module.split('.').next().unwrap_or_default();
+            let parts: Vec<String> =
+                relative.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+            if !parts.iter().all(|p| crate::project::is_identifier(p)) {
+                continue;
+            }
+            let renamed_to = std::iter::once(package.to_string()).chain(parts).collect::<Vec<_>>().join(".");
+            let (old_name, new_name) =
+                (module.rsplit('.').next().unwrap_or_default(), renamed_to.rsplit('.').next().unwrap_or_default());
+            for i in 0..sources.len() {
+                let (file, Some(path)) = (sources.file(i), analyzed.paths[i].as_ref()) else { continue };
+                if !file.own && !path.to_string_lossy().ends_with("_test.to") {
+                    continue;
+                }
+                let uri = self.uri(path);
+                let mut offset = 0;
+                for line in file.text.split_inclusive('\n') {
+                    if let Some(rest) = line.strip_prefix("import ")
+                        && let Some(after) = rest.strip_prefix(module.as_str())
+                        && (after.starts_with('.') || after.trim().is_empty() || after.starts_with(' '))
+                    {
+                        let start = offset + "import ".len();
+                        let range = json!({ "start": position(&file.text, start, self.units), "end": position(&file.text, start + module.len(), self.units) });
+                        changes.entry(uri.clone()).or_default().push(json!({ "range": range, "newText": renamed_to }));
+                    }
+                    offset += line.len();
+                }
+            }
+            // The names the module is used by, where it is imported as itself.
+            if let Some(index) = analyzed.analysis.index.as_ref()
+                && let Some(def) = index.of(&crate::index::Key::Module(module.clone()))
+                && old_name != new_name
+            {
+                for span in index.references(def) {
+                    if sources.slice(span) == old_name
+                        && let Some((path, range)) = self.place(analyzed, span)
+                    {
+                        changes
+                            .entry(self.uri(&path))
+                            .or_default()
+                            .push(json!({ "range": range, "newText": new_name }));
+                    }
+                }
+            }
+        }
+        Some(json!({ "changes": changes }))
+    }
+
+    /// The projects in the editor's folders, analyzed as it starts, so that
+    /// their problems show before their files are opened.
+    fn analyze_workspace(&mut self) {
+        let mut found = Vec::new();
+        for folder in std::mem::take(&mut self.folders) {
+            find_projects(&folder, 0, &mut found);
+        }
+        self.dirty.extend(found);
+    }
+}
+
+/// The function whose declaration holds `span`, the innermost.
+fn enclosing(index: &Index, span: Span) -> Option<usize> {
+    (0..index.defs.len())
+        .filter(|&d| matches!(index.defs[d].kind, DefKind::Function | DefKind::Method))
+        .filter(|&d| index.defs[d].decl_span.start <= span.start && span.end <= index.defs[d].decl_span.end)
+        .min_by_key(|&d| index.defs[d].decl_span.end - index.defs[d].decl_span.start)
+}
+
+/// The directories under `dir` that are projects, a few levels down.
+fn find_projects(dir: &Path, depth: usize, found: &mut Vec<PathBuf>) {
+    if dir.join("tondo.toml").is_file() || dir.join("src/main.to").is_file() {
+        found.push(dir.to_path_buf());
+        return;
+    }
+    if depth >= 4 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let skipped = name.starts_with('.') || ["target", "node_modules", "vendor"].contains(&name.as_str());
+        if !skipped && entry.file_type().is_ok_and(|t| t.is_dir()) {
+            find_projects(&entry.path(), depth + 1, found);
+        }
+    }
+}
+
+/// The hunks where two texts' lines differ: each one's lines in the first
+/// and in the second, from one to the line after.
+fn hunks(old: &[&str], new: &[&str]) -> Vec<(usize, usize, usize, usize)> {
+    let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+    let suffix = old[prefix..].iter().rev().zip(new[prefix..].iter().rev()).take_while(|(a, b)| a == b).count();
+    let (a, b) = (&old[prefix..old.len() - suffix], &new[prefix..new.len() - suffix]);
+    if a.is_empty() && b.is_empty() {
+        return Vec::new();
+    }
+    // The longest common subsequence of the middle, unless it is too big.
+    if a.len() * b.len() > 4_000_000 {
+        return vec![(prefix, prefix + a.len(), prefix, prefix + b.len())];
+    }
+    let mut lengths = vec![vec![0u32; b.len() + 1]; a.len() + 1];
+    for i in (0..a.len()).rev() {
+        for j in (0..b.len()).rev() {
+            lengths[i][j] =
+                if a[i] == b[j] { lengths[i + 1][j + 1] + 1 } else { lengths[i + 1][j].max(lengths[i][j + 1]) };
+        }
+    }
+    let (mut i, mut j, mut out) = (0, 0, Vec::new());
+    let (mut from, mut new_from) = (0, 0);
+    while i < a.len() || j < b.len() {
+        if i < a.len() && j < b.len() && a[i] == b[j] {
+            if (i, j) != (from, new_from) {
+                out.push((prefix + from, prefix + i, prefix + new_from, prefix + j));
+            }
+            i += 1;
+            j += 1;
+            (from, new_from) = (i, j);
+        } else if j < b.len() && (i == a.len() || lengths[i][j + 1] >= lengths[i + 1][j]) {
+            j += 1;
+        } else {
+            i += 1;
+        }
+    }
+    if (i, j) != (from, new_from) {
+        out.push((prefix + from, prefix + i, prefix + new_from, prefix + j));
+    }
+    out
+}
+
+/// The names of the parameters a function's header declares, `self` too.
+fn parameter_names(header: &str) -> Vec<String> {
+    let Some(open) = header.find('(') else { return Vec::new() };
+    let (mut depth, mut from, mut names) = (0usize, open + 1, Vec::new());
+    let mut push = |text: &str| {
+        let text = text.trim();
+        let text = text.strip_prefix("mut ").or(text.strip_prefix("var ")).unwrap_or(text);
+        let name = text.split(':').next().unwrap_or_default().trim();
+        if !name.is_empty() {
+            names.push(name.to_string());
+        }
+    };
+    for (i, c) in header.char_indices().skip(open + 1) {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' if depth == 0 => {
+                push(&header[from..i]);
+                break;
+            }
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                push(&header[from..i]);
+                from = i + 1;
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+/// The arguments of a call, from the tokens after its `(`: each one's
+/// place among them, where it starts, whether it names its parameter
+/// (`name: value`), and the name it is when it is a name alone.
+fn arguments(tokens: &[crate::lexer::Token]) -> Vec<(usize, u32, bool, Option<String>)> {
+    let mut out = Vec::new();
+    let (mut depth, mut place) = (0usize, 0);
+    let mut current: Vec<&crate::lexer::Token> = Vec::new();
+    let mut finish = |current: &mut Vec<&crate::lexer::Token>, place: usize| {
+        if let Some(first) = current.first() {
+            let named = matches!((&first.tok, current.get(1).map(|t| &t.tok)), (Tok::Ident(_), Some(Tok::Colon)));
+            let alone = match current.as_slice() {
+                [token] => match &token.tok {
+                    Tok::Ident(name) => Some(name.clone()),
+                    _ => None,
+                },
+                _ => None,
+            };
+            out.push((place, first.span.start, named, alone));
+        }
+        current.clear();
+    };
+    for token in tokens {
+        match token.tok {
+            Tok::Newline => continue,
+            Tok::RParen if depth == 0 => {
+                finish(&mut current, place);
+                break;
+            }
+            Tok::Comma if depth == 0 => {
+                finish(&mut current, place);
+                place += 1;
+                continue;
+            }
+            Tok::LParen | Tok::LBracket | Tok::LBrace => depth += 1,
+            Tok::RParen | Tok::RBracket | Tok::RBrace => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        current.push(token);
+    }
+    out
 }
