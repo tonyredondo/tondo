@@ -1245,8 +1245,11 @@ test joining {
     let dir = project("profiles", tests);
     let (stdout, stderr, status) = tondo(&dir, &["test", "--profile", "cpu"]);
     assert_eq!(status, 0, "{stderr}");
+    // A test as short as `joining` has one only when it was sampled, as
+    // under emulation.
     assert!(
-        stdout.contains("profiles, for `tondo profile show <file>`:\n  target/profiles/app.unit.app.slow.cpu.pprof\n"),
+        stdout.contains("profiles, for `tondo profile show <file>`:\n")
+            && stdout.contains("  target/profiles/app.unit.app.slow.cpu.pprof\n"),
         "{stdout}"
     );
     let (shown, stderr, _) = tondo(&dir, &["profile", "show", "target/profiles/app.unit.app.slow.cpu.pprof", "--json"]);

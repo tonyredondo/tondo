@@ -27,6 +27,7 @@ pub(crate) fn name(address: usize) -> Option<&'static str> {
     (*start <= address && address < *end).then_some(name.as_str())
 }
 
+#[cfg(target_os = "linux")]
 fn u16_at(bytes: &[u8], at: usize) -> Option<u16> {
     Some(u16::from_le_bytes(bytes.get(at..at + 2)?.try_into().ok()?))
 }
