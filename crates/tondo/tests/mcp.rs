@@ -262,14 +262,14 @@ fn fib(n: Int): Int {
 }
 
 fn main() {
-    console.println(\"{fib(32)}\")
+    console.println(\"{fib(35)}\")
 }
 ";
 
 const PROFILED_TESTS: &str = "import std.testing
 
 test slow {
-    assert(fib(29) == 514229)
+    assert(fib(35) == 9227465)
 }
 
 test joining {

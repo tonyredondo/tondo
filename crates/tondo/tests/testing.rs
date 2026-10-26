@@ -1235,7 +1235,7 @@ fn fib(n: Int): Int {
 }
 
 test slow {
-    assert(fib(30) == 832040)
+    assert(fib(35) == 9227465)
 }
 
 test joining {

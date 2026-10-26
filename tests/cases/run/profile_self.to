@@ -13,7 +13,7 @@ fn fib(n: Int): Int {
 
 fn crunch(): Int {
     var total = 0
-    for _ in 0..40 {
+    for _ in 0..400 {
         total += fib(24)
     }
     total
@@ -41,4 +41,4 @@ fn main() {
 // expect-stdout: true 31 139
 // expect-stdout: true
 // expect-stdout: true 2000
-// expect-stdout: true 1854720
+// expect-stdout: true 18547200
