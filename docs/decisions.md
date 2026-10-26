@@ -2492,3 +2492,17 @@ selection make the signed ones one instruction too, on x86-64 and arm64.
 The maintainer chose to keep the patched crate in `vendor/`, which
 `[patch.crates-io]` puts in place, over waiting for Cranelift to take the
 rules: `vendor/README.md` says what changed and how to update it.
+
+## 2026-10-26 — A notified task runs next
+
+A task that wakes another, as a sender wakes a receiver or a task that
+ends wakes the one that waits for it, now leaves it next to its worker,
+which runs it as soon as the waker waits or ends, as Go's `runnext` does:
+two tasks that hand values to each other run one after the other on one
+thread, without crossing cores or waking a sleeping one, and a channel
+benchmark runs faster than Go's. A task that waits there longer than
+20 microseconds, because its worker runs on, is taken by an idle worker,
+which is woken for it at most once every 100 microseconds, so stages of
+a pipeline still run in parallel; and the queue goes first now and then,
+so two tasks that wake each other do not hold back the others. New tasks
+go to the queue, as before.

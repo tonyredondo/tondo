@@ -21,7 +21,7 @@ use std::collections::BinaryHeap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -435,8 +435,101 @@ fn queue() -> MutexGuard<'static, Queue> {
     QUEUE.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Makes a new or notified task runnable.
+/// What a worker runs next: a task the task it runs made runnable, as Go's
+/// `runnext`, so that two tasks that hand each other values run one after
+/// the other on one thread, and when it was put there.
+struct Next {
+    task: AtomicPtr<Task>,
+    since: AtomicU64,
+}
+
+/// Every worker's `Next`, which an idle worker takes a task from when the
+/// worker that has it runs another for long: read without a lock, as every
+/// idle worker reads them. A worker past the last has none.
+static NEXTS: [AtomicPtr<Next>; 1024] = [const { AtomicPtr::new(std::ptr::null_mut()) }; 1024];
+static NEXT_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+thread_local! {
+    static OWN_NEXT: Cell<Option<&'static Next>> = const { Cell::new(None) };
+    static NEXT_TURNS: Cell<u32> = const { Cell::new(0) };
+}
+
+/// How long a task waits next to a worker that runs another before an idle
+/// worker takes it, so that tasks that could run in parallel still do.
+const NEXT_WAIT: Duration = Duration::from_micros(20);
+/// When a worker was last woken for a task waiting next.
+static NEXT_WOKE: AtomicU64 = AtomicU64::new(0);
+
+fn nanos() -> u64 {
+    static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    EPOCH.get_or_init(Instant::now).elapsed().as_nanos() as u64
+}
+
+fn nexts() -> impl Iterator<Item = &'static Next> {
+    let count = NEXT_COUNT.load(Ordering::Acquire).min(NEXTS.len());
+    NEXTS[..count].iter().filter_map(|next| unsafe { next.load(Ordering::Acquire).as_ref() })
+}
+
+/// The tasks waiting next to their workers.
+fn waiting_next() -> Vec<*mut Task> {
+    nexts().map(|next| next.task.load(Ordering::Acquire)).filter(|task| !task.is_null()).collect()
+}
+
+/// A task another worker has had next for longer than `NEXT_WAIT`, taken
+/// from it; and whether one waits there for less.
+fn take_next() -> (Option<*mut Task>, bool) {
+    let mine = OWN_NEXT.with(Cell::get).map(|next| next as *const Next);
+    let now = nanos();
+    let mut young = false;
+    for next in nexts().filter(|next| Some(*next as *const Next) != mine) {
+        let task = next.task.load(Ordering::Acquire);
+        if task.is_null() {
+            continue;
+        }
+        if now.saturating_sub(next.since.load(Ordering::Relaxed)) < NEXT_WAIT.as_nanos() as u64 {
+            young = true;
+        } else if next.task.compare_exchange(task, std::ptr::null_mut(), Ordering::AcqRel, Ordering::Acquire).is_ok() {
+            return (Some(task), young);
+        }
+    }
+    (None, young)
+}
+
+/// Makes a notified task runnable: one that the running task notifies runs
+/// next on its thread, and the one it replaces there, if any, goes to the
+/// queue.
 fn schedule(task: *mut Task) {
+    if !current().is_null()
+        && exploring().is_none()
+        && let Some(next) = OWN_NEXT.with(Cell::get)
+    {
+        next.since.store(nanos(), Ordering::Relaxed);
+        let replaced = next.task.swap(task, Ordering::AcqRel);
+        if !replaced.is_null() {
+            enqueue(replaced);
+            return;
+        }
+        // An idle worker takes it if this one runs on for long, as Go's
+        // scheduler steals `runnext` from a processor busy for a while: one
+        // woken now and then, not at every task two tasks hand each other.
+        let now = nanos();
+        if now.saturating_sub(NEXT_WOKE.load(Ordering::Relaxed)) < 5 * NEXT_WAIT.as_nanos() as u64 {
+            return;
+        }
+        NEXT_WOKE.store(now, Ordering::Relaxed);
+        let mut queue = queue();
+        if queue.idle > 0 && !queue.waking {
+            queue.waking = true;
+            drop(queue);
+            READY.notify_one();
+        }
+        return;
+    }
+    enqueue(task);
+}
+
+/// Makes a task runnable in the queue every worker takes from.
+fn enqueue(task: *mut Task) {
     let mut queue = queue();
     queue.runnable.push_back(task);
     if LOOKS_NEXT.with(|next| next.replace(false)) || queue.waking {
@@ -787,6 +880,7 @@ fn stalled(queue: &Queue) -> Stalled {
         || queue.idle + pinned.count() + usize::from(queue.polling) < queue.workers
         || HOST_WORK.load(Ordering::SeqCst) != 0
         || MAIN_DONE.load(Ordering::SeqCst)
+        || nexts().any(|next| !next.task.load(Ordering::Acquire).is_null())
     {
         return Stalled::No;
     }
@@ -926,7 +1020,36 @@ fn add_timer(delay: Duration, wait: Arc<Wait>, index: usize) {
 /// it ran, and then returns its exit status.
 fn work(main: bool) -> i32 {
     super::trace::guard_thread(true);
+    if exploring().is_none() && OWN_NEXT.with(Cell::get).is_none() {
+        let index = NEXT_COUNT.load(Ordering::Acquire);
+        if index < NEXTS.len() {
+            let next: &'static Next =
+                Box::leak(Box::new(Next { task: AtomicPtr::new(std::ptr::null_mut()), since: AtomicU64::new(0) }));
+            let index = NEXT_COUNT.fetch_add(1, Ordering::AcqRel);
+            if let Some(slot) = NEXTS.get(index) {
+                slot.store(next as *const Next as *mut Next, Ordering::Release);
+                OWN_NEXT.with(|mine| mine.set(Some(next)));
+            }
+        }
+    }
+    // A worker just woken looks once more, a moment later, for a task
+    // waiting next to a worker that runs another, before it sleeps again.
+    let mut woken = false;
     loop {
+        // The task made runnable by the one that ran here, but now and then
+        // the queue first, so that two tasks that wake each other do not
+        // keep the others waiting.
+        if let Some(next) = OWN_NEXT.with(Cell::get) {
+            let runs = NEXT_TURNS.with(|runs| runs.replace(runs.get().wrapping_add(1)));
+            let task = next.task.swap(std::ptr::null_mut(), Ordering::AcqRel);
+            if !task.is_null() {
+                if !runs.is_multiple_of(61) {
+                    run(task);
+                    continue;
+                }
+                queue().runnable.push_back(task);
+            }
+        }
         let task = {
             let mut queue = queue();
             loop {
@@ -940,6 +1063,11 @@ fn work(main: bool) -> i32 {
                 if !main && queue.surplus > 0 {
                     queue.surplus -= 1;
                     queue.workers -= 1;
+                    let next =
+                        OWN_NEXT.with(Cell::get).map(|next| next.task.swap(std::ptr::null_mut(), Ordering::AcqRel));
+                    if let Some(task) = next.filter(|task| !task.is_null()) {
+                        queue.runnable.push_back(task);
+                    }
                     return 0;
                 }
                 fire_timers(&mut queue);
@@ -968,6 +1096,12 @@ fn work(main: bool) -> i32 {
                     }
                     break task;
                 }
+                // A task next to a worker that runs another for long; one
+                // there for less is looked at again in a moment.
+                let (taken, young) = take_next();
+                if let Some(task) = taken {
+                    break task;
+                }
                 // With sockets to poll, an idle worker waits for their
                 // events, unless another one does, and runs what they wake
                 // on its own thread.
@@ -976,6 +1110,10 @@ fn work(main: bool) -> i32 {
                     queue.idle += 1;
                 }
                 let mut next = queue.timers.peek().map(|t| t.at);
+                if young && woken {
+                    let soon = Instant::now() + NEXT_WAIT;
+                    next = Some(next.map_or(soon, |at| at.min(soon)));
+                }
                 match stalled(&queue) {
                     Stalled::Deadlock => {
                         drop(queue);
@@ -998,9 +1136,12 @@ fn work(main: bool) -> i32 {
                     None => READY.wait(queue).unwrap_or_else(|e| e.into_inner()),
                 };
                 queue.idle -= 1;
+                // Woken for a task, or after waiting a moment for one.
+                woken = queue.waking && !woken;
                 queue.waking = false;
             }
         };
+        woken = false;
         run(task);
     }
 }
@@ -1204,7 +1345,8 @@ pub(crate) fn snapshot(here: Option<Vec<usize>>) -> Vec<Shot> {
         .collect();
     let answers = ask_where(&others);
     let callers: Vec<&InC> = CALLERS.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let ready: std::collections::HashSet<usize> = queue().runnable.iter().map(|&t| t as usize).collect();
+    let ready: std::collections::HashSet<usize> =
+        queue().runnable.iter().copied().chain(waiting_next()).map(|t| t as usize).collect();
     let mut all: Vec<*mut Task> = tasks().iter().map(|&t| t as *mut Task).collect();
     all.sort_by_key(|&t| unsafe { (*t).id });
     let me = current();
@@ -1450,7 +1592,7 @@ fn monitor() {
             busy = true;
             if last.insert(key, calls) == Some(calls) && !state.replaced.load(Ordering::SeqCst) {
                 let mut queue = queue();
-                if !queue.runnable.is_empty() && queue.idle == 0 {
+                if (!queue.runnable.is_empty() || !waiting_next().is_empty()) && queue.idle == 0 {
                     state.replaced.store(true, Ordering::SeqCst);
                     queue.workers += 1;
                     super::diagnostics::WORKERS_REPLACED.add(1);
@@ -1609,7 +1751,7 @@ pub(crate) struct Scheduler {
 pub(crate) fn scheduler() -> Scheduler {
     let live = tasks().len();
     let queue = queue();
-    let (ready, workers, idle) = (queue.runnable.len(), queue.workers, queue.idle);
+    let (ready, workers, idle) = (queue.runnable.len() + waiting_next().len(), queue.workers, queue.idle);
     let timers = queue.timers.len().saturating_sub(queue.stale);
     drop(queue);
     let callers = CALLERS.lock().unwrap_or_else(|e| e.into_inner());
@@ -1952,7 +2094,8 @@ pub(crate) fn wait_again(id: u64) -> bool {
 /// of C, or has ended.
 pub(crate) fn settled() -> bool {
     let callers: Vec<&InC> = CALLERS.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let ready: std::collections::HashSet<usize> = queue().runnable.iter().map(|&t| t as usize).collect();
+    let ready: std::collections::HashSet<usize> =
+        queue().runnable.iter().copied().chain(waiting_next()).map(|t| t as usize).collect();
     let in_c = |task: *mut Task| {
         callers.iter().any(|c| c.depth.load(Ordering::SeqCst) > 0 && c.task.load(Ordering::SeqCst) == task)
     };
@@ -2253,7 +2396,7 @@ pub unsafe extern "C" fn tondo_rt_spawn(
         }
         (*task).origin = Some(spawned);
     }
-    schedule(task);
+    enqueue(task);
     join
 }
 
