@@ -2315,8 +2315,6 @@ pub(crate) fn start_library(start: unsafe extern "C" fn()) {
 #[cfg(tondo_staticlib)]
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_main(tondo_main: unsafe extern "C" fn() -> i32) -> i32 {
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    meta::own_cache();
     meta::start();
     diagnostics::start();
     debugger::start_stopped();

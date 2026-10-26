@@ -111,7 +111,8 @@ fn build_runtime(runtime: &Path, out_dir: &Path, target: &str) -> (PathBuf, Stri
         .env_remove("CARGO_ENCODED_RUSTFLAGS");
     // The C parts of the runtime's dependencies, for musl on a system
     // without a musl compiler: the system's, without glibc's fortified
-    // functions.
+    // functions, nor the C23 names its headers give functions, as
+    // `__isoc23_strtol`, which musl does not have.
     let key = target.replace('-', "_");
     let compiler = format!("{}-linux-musl-gcc", target.split('-').next().unwrap_or_default());
     if target.contains("musl")
@@ -119,7 +120,7 @@ fn build_runtime(runtime: &Path, out_dir: &Path, target: &str) -> (PathBuf, Stri
         && !on_path(&compiler)
         && !on_path("musl-gcc")
     {
-        command.env(format!("CC_{key}"), "cc").env(format!("CFLAGS_{key}"), "-U_FORTIFY_SOURCE");
+        command.env(format!("CC_{key}"), "cc").env(format!("CFLAGS_{key}"), "-U_FORTIFY_SOURCE -std=gnu11");
     }
     let output = command.output().expect("failed to run cargo for the Tondo runtime");
     let stderr = String::from_utf8_lossy(&output.stderr);

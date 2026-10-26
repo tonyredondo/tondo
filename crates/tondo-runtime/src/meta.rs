@@ -5,7 +5,7 @@
 
 use super::{Str, str_bytes, str_new};
 #[cfg(tondo_staticlib)]
-use std::alloc::{GlobalAlloc, Layout, System};
+use std::alloc::{GlobalAlloc, Layout};
 use std::io::Write;
 #[cfg(tondo_staticlib)]
 use std::sync::atomic::AtomicUsize;
@@ -66,9 +66,15 @@ pub unsafe extern "C" fn tondo_rt_meta_bytes(hex: *const Str) -> *mut super::Arr
 }
 
 /// Counts the memory a `meta` program holds, up to the limit that
-/// `TONDO_META_MEMORY` sets; any other program only pays a load.
+/// `TONDO_META_MEMORY` sets; any other program only pays a load. Memory
+/// comes from mimalloc: each thread allocates from its own heap, and a
+/// block freed on another goes back to it, without a lock, where the
+/// system's allocator makes threads wait for each other's.
 #[cfg(tondo_staticlib)]
 pub struct Counting;
+
+#[cfg(tondo_staticlib)]
+use mimalloc::MiMalloc as Heap;
 
 #[cfg(tondo_staticlib)]
 static LIMIT: AtomicUsize = AtomicUsize::new(usize::MAX);
@@ -84,24 +90,6 @@ pub fn start() {
     }
 }
 
-/// glibc makes a thread's cache of freed blocks, whose counts change at
-/// every allocation, at the thread's first free, right after the block
-/// freed. Allocated again, that block can be the closure of a task, freed
-/// on the thread that runs the task and reused there at every allocation:
-/// two cores then write one cache line, and both run up to twice as slow.
-/// The main thread makes its cache before anything else and keeps the
-/// block before it.
-#[cfg(all(tondo_staticlib, target_os = "linux", target_env = "gnu"))]
-pub fn own_cache() {
-    // Opaque, or the compiler drops calls whose blocks nothing reads.
-    use std::hint::black_box;
-    unsafe {
-        libc::free(black_box(libc::malloc(1)));
-        // Never freed, so never another thread's.
-        black_box(libc::malloc(1));
-    }
-}
-
 #[cfg(tondo_staticlib)]
 unsafe impl GlobalAlloc for Counting {
     /// Memory runs short only after a collection of garbage cycles found
@@ -113,9 +101,9 @@ unsafe impl GlobalAlloc for Counting {
         if hooks & BUDGET != 0 {
             budget(layout.size());
         }
-        let mut block = unsafe { System.alloc(layout) };
+        let mut block = unsafe { Heap.alloc(layout) };
         if block.is_null() && super::cycles::collect_for_memory() {
-            block = unsafe { System.alloc(layout) };
+            block = unsafe { Heap.alloc(layout) };
         }
         if hooks & WATCHED != 0 && !block.is_null() {
             super::diagnostics::allocated(block, layout.size());
@@ -135,7 +123,7 @@ unsafe impl GlobalAlloc for Counting {
         if hooks & WATCHED != 0 {
             super::diagnostics::freed(ptr, layout.size());
         }
-        unsafe { System.dealloc(ptr, layout) }
+        unsafe { Heap.dealloc(ptr, layout) }
     }
 
     /// The system's, which grows and shrinks a block in place when it can.
@@ -154,9 +142,9 @@ unsafe impl GlobalAlloc for Counting {
             }
             return block;
         }
-        let mut block = unsafe { System.realloc(ptr, layout, new_size) };
+        let mut block = unsafe { Heap.realloc(ptr, layout, new_size) };
         if block.is_null() && super::cycles::collect_for_memory() {
-            block = unsafe { System.realloc(ptr, layout, new_size) };
+            block = unsafe { Heap.realloc(ptr, layout, new_size) };
         }
         if hooks & MEASURED != 0 && !block.is_null() && new_size > layout.size() {
             super::bench::allocated(new_size);

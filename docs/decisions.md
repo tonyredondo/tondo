@@ -2457,3 +2457,14 @@ code records the call it was inlined at, which records the one around
 it, and the runtime expands them, without allocating, into the frames
 they were. A heap's site skips the standard library inlined into the
 program's code as it skipped its frames.
+
+## 2026-10-26 — mimalloc
+
+Tondo's tasks move between workers, so the memory one task allocates is
+often freed on another thread. glibc's allocator makes that free wait for
+the lock of the arena the block came from, and the benchmark that spawns
+a thousand tasks spent most of its time there. mimalloc, under the
+allocator that counts budgets and samples, gives each thread a heap of
+its own and sends a block freed elsewhere back to it without a lock. It is
+a dependency of C, as `ring` already is, and smaller than an allocator of
+our own would be.
