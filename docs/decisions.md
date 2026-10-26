@@ -2222,3 +2222,26 @@ in Mermaid. A trace opens in Perfetto's web UI, which loads a file only
 from a server it allows: the extension serves the timeline once on
 127.0.0.1:9001, as Perfetto's own script does, rather than ship a viewer.
 
+## 2026-10-26 — The debugger, part by part
+
+The debugger already showed each binding as text with its structure, as
+Tondo would write it: a record with its fields, a variant with its payload,
+a collection with its elements. Rather than another kind of glue for every
+type, the runtime reads that text back into its parts, so a value opens
+field by field and a path names a part: `user.name`, `items[2]`,
+`scores["x"]`, in `print`, in conditions, in logpoints and in an editor's
+watches. Parts of a value too long to show whole do not open.
+
+A function keeps the addresses of its bindings in a slot of its frame, at
+the same place in every call: the first of its probes that runs with a
+debugger attached says where, and the frames of any stopped task then show
+their bindings, as they were when their line started. A binding that lives
+in a register has a copy the probe writes; it is read back after the probe,
+so a value the debugger sets stays.
+
+A panic stops where the program's own code panicked, before it unwinds,
+with its text: the most useful stop there is, so it is on by default. A
+logpoint and a count of hits are the runtime's, so the program does not
+stop for each hit. A dump opens in the same adapter, without a program,
+at its tasks and stacks.
+

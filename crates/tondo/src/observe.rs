@@ -721,6 +721,18 @@ pub fn read(path: &std::path::Path, view: View, json: bool) -> Result<(), String
     Ok(())
 }
 
+/// A dump as a debugger shows it after the fact (toolchain 7.6): its
+/// summary, each task with its stack in words, and the memory by site.
+pub fn opened(path: &std::path::Path) -> Result<(String, Vec<Value>, Value), String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let mut dump: Value = serde_json::from_str(&text).map_err(|e| format!("{} is not a dump: {e}", path.display()))?;
+    if dump.get("dump").is_none() {
+        return Err(format!("{} is not a dump of a Tondo program", path.display()));
+    }
+    name_frames(&mut dump);
+    Ok((summary(&dump), tasks(&dump), heap(&dump)))
+}
+
 /// Names each frame the program did not, from the symbols of its files.
 fn name_frames(dump: &mut Value) {
     let program = dump["info"]["program"].as_str().unwrap_or_default().to_string();

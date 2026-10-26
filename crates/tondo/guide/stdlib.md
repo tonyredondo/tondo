@@ -205,12 +205,17 @@ one a line, typed or piped, `--json` for a line of JSON each:
 
 ```text
 break app.to:12 if count > 3    stop where line 12 starts, when count > 3
+break app.to:12 hits 5          the 5th time (or >= 5, % 5)
+break app.to:12 log at {i}      write it there, and go on
 continue | step | next | finish run, into calls, over them, out
-locals | print user | stack     the bindings that hold a value, the calls
-tasks | pause | delete 1 | quit
+locals | print user.name        the bindings, or a part of one: items[2], map["k"]
+children user | stack | frame 1 a value's parts, the calls, a caller's bindings
+set count 3 | catch none        change a binding; do not stop at panics
+tasks | task 2 | pause | delete 1 | quit
 ```
 
-When one task stops, all stop at their next line, and go on together.
+A panic stops where the program's code panicked, before it unwinds. When
+one task stops, all stop at their next line, and go on together.
 `tondo dap` is the same debugger for an editor (Debug Adapter Protocol).
 
 ## Live builds

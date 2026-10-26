@@ -88,6 +88,16 @@ export function registerObserving(context: vscode.ExtensionContext, output: vsco
     vscode.commands.registerCommand('tondo.stopCounters', stop),
     vscode.commands.registerCommand('tondo.trace', trace),
     vscode.commands.registerCommand('tondo.dump', dump),
+    vscode.commands.registerCommand('tondo.debugDump', async (uri?: vscode.Uri) => {
+      const file =
+        uri ??
+        (await vscode.window.showOpenDialog({ filters: { 'Tondo dumps': ['json'] }, openLabel: 'Debug this dump' }))?.[0];
+      if (file) {
+        const folder = vscode.workspace.getWorkspaceFolder(file) ?? vscode.workspace.workspaceFolders?.[0];
+        const cwd = folder?.uri.fsPath ?? path.dirname(file.fsPath);
+        await vscode.debug.startDebugging(folder, { type: 'tondo', request: 'launch', name: 'Debug a dump', dump: file.fsPath, cwd });
+      }
+    }),
     { dispose: stop },
   );
 }

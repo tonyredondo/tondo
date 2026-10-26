@@ -4490,6 +4490,15 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             let addresses = self.e.fb.ins().stack_addr(POINTER, debug.addresses, 0);
             let alive = self.e.fb.ins().stack_addr(POINTER, debug.alive, 0);
             self.probed = self.e.call_rt(Rt::DebugLine, &[site, addresses, alive]);
+            // A binding the debugger changed comes back from its copy.
+            for &(local, copy) in &debug.shown {
+                if let (Storage::Var(var), Some(slot)) = (self.storage[local.0 as usize], copy)
+                    && let Class::Scalar(ty) = self.e.cg.class(self.body.locals[local.0 as usize])
+                {
+                    let value = self.e.fb.ins().stack_load(POINTER, ty, slot, 0);
+                    self.e.fb.def_var(var, value);
+                }
+            }
             self.site_now = Some((site, self.e.cg.site_base() + index as u32));
         }
         self.debug = Some(debug);

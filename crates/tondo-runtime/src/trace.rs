@@ -231,6 +231,16 @@ pub(crate) fn walk(fp: usize, (bottom, top): (usize, usize)) -> Walk {
     Walk { fp, bottom, top }
 }
 
+/// The callers on a stack from the frame `fp` on, innermost first: each
+/// one's frame pointer, and the return address into it.
+pub(crate) fn callers(fp: usize, bounds: (usize, usize)) -> impl Iterator<Item = (usize, usize)> {
+    let mut walk = walk(fp, bounds);
+    std::iter::from_fn(move || {
+        let address = walk.next()?;
+        Some((walk.fp, address))
+    })
+}
+
 impl Iterator for Walk {
     type Item = usize;
 

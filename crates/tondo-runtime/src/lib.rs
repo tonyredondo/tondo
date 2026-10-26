@@ -39,6 +39,7 @@ mod reflect;
 mod regex;
 mod server;
 mod shared;
+mod shown;
 mod snapshot;
 #[cfg(all(tondo_staticlib, target_os = "linux"))]
 mod start;
@@ -2005,6 +2006,10 @@ pub unsafe extern "C" fn tondo_rt_panic(mut code: u32, message: *const Str, loca
     if recorder::on() {
         let task = tasks::current_id();
         recorder::record(recorder::Event::Panic { task, message: format!("{text}\n --> {location}") });
+    }
+    // A debugger sees where the program's code panicked first.
+    if !suppressed {
+        debugger::panicked(&text);
     }
     let report = format!("{prefix}{text}\n --> {location}{}", trace::report());
     // A test build reports it to `tondo test` instead.

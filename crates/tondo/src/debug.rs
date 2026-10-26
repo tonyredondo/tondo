@@ -25,16 +25,22 @@ extern "C" fn interrupted(_: i32) {
 }
 
 pub const HELP: &str = "\
-break <file>:<line> [if <name> <op> <value>]   stop where that line starts (b)
+break <file>:<line> [if <path> <op> <value>] [hits <n>|>= <n>|% <n>] [log <message with {paths}>]
+                                                stop where that line starts, or write a message there (b)
 delete <id>                                     remove a breakpoint
 continue                                        go on until a breakpoint (c)
 step                                            to the next line, into calls (s)
 next                                            to the next line of this function (n)
 finish                                          until this function returns (f)
 pause                                           stop every task, as Ctrl-C does
+catch panic|none                                stop where a task panics, before it unwinds (the default), or not
+set <name> <value>                              change a binding of the frame where the task stopped: a number, Bool, Char, String
 locals                                          the bindings that hold a value (l)
-print <name>                                    one binding (p)
-stack                                           where the stopped task is (bt)
+print <path>                                    a binding or a part of it: user.name, items[2], map[\"key\"] (p)
+children <path>                                 the parts of a binding or of a part
+stack [<task>]                                  where the stopped task is, or another (bt)
+frame <n>                                       look at frame n of the stack: locals, print
+task <id>                                       look at another stopped task, from its innermost frame
 tasks                                           where each stopped task is
 reload                                          a live build: its code as its files are now (r)
 restart                                         a live build: the stopped function again, from its start
@@ -121,6 +127,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
             "l" => "locals",
             "p" => "print",
             "bt" | "backtrace" => "stack",
+            "frame" => "select",
             "r" => "reload",
             "q" | "exit" => "quit",
             "" => continue,
@@ -145,8 +152,13 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 }
             }
             "break" | "delete" | "continue" | "step" | "next" | "finish" | "pause" | "locals" | "print" | "stack"
-            | "tasks" | "restart" => {
-                session.send(format!("{word} {rest}").trim_end())?;
+            | "tasks" | "restart" | "select" | "children" | "task" | "catch" | "set" => {
+                // `task <id>` looks at that task's innermost frame.
+                let request = match word {
+                    "task" => format!("select {rest} 0"),
+                    _ => format!("{word} {rest}"),
+                };
+                session.send(request.trim_end())?;
                 let answer = session.answer()?;
                 session.show(&answer);
                 if answer["running"] == true {
@@ -197,6 +209,11 @@ impl Session {
                 self.events.push(value);
                 continue;
             }
+            // A logpoint's message, as it comes.
+            if value.get("logged").is_some() {
+                self.show(&value);
+                continue;
+            }
             return Ok(value);
         }
     }
@@ -216,6 +233,7 @@ impl Session {
                 Ok(value) if value.get("stopped").is_some() || value.get("exited").is_some() => {
                     self.events.push(value);
                 }
+                Ok(value) if value.get("logged").is_some() => self.show(&value),
                 // The answer to `pause`.
                 Ok(_) => {}
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -279,8 +297,20 @@ impl Session {
                     task["why"].as_str().unwrap_or_default()
                 );
             }
+        } else if let Some(logged) = value["logged"].as_str() {
+            println!("{logged}");
         } else if let Some(id) = value.get("deleted") {
             println!("breakpoint {id} removed");
+        } else if let Some(parts) = value["children"].as_array() {
+            for part in parts {
+                println!(
+                    "{} = {}",
+                    part["path"].as_str().unwrap_or_default(),
+                    part["value"].as_str().unwrap_or_default()
+                );
+            }
+        } else if let Some(selected) = value.get("selected") {
+            println!("task {}, frame {}", selected["task"], selected["frame"]);
         } else if value.get("debugging").is_some() || value.get("running").is_some() || value.get("pausing").is_some() {
         } else {
             println!("{value}");
@@ -289,12 +319,11 @@ impl Session {
 }
 
 fn binding(value: &Value) -> String {
-    format!(
-        "{}: {} = {}",
-        value["name"].as_str().unwrap_or_default(),
-        value["type"].as_str().unwrap_or_default(),
-        value["value"].as_str().unwrap_or_default()
-    )
+    let (name, value_text) = (value["name"].as_str().unwrap_or_default(), value["value"].as_str().unwrap_or_default());
+    match value["type"].as_str() {
+        Some(ty) => format!("{name}: {ty} = {value_text}"),
+        None => format!("{name} = {value_text}"),
+    }
 }
 
 /// The line of source a place names, `file:line in function`, as the

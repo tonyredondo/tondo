@@ -218,7 +218,7 @@ fn runs_tests_and_debugs() {
     let stopped = debug(&mut agent, "continue");
     assert_eq!(stopped["said"][1]["stopped"]["at"], "src/main.to:4 in twice");
     let locals = debug(&mut agent, "locals");
-    assert_eq!(locals["said"][0]["locals"][0], json!({ "name": "n", "type": "Int", "value": "21" }));
+    assert_eq!(locals["said"][0]["locals"][0], json!({ "name": "n", "type": "Int", "value": "21", "children": 0 }));
     debug(&mut agent, "delete 1");
     let ended = debug(&mut agent, "continue");
     assert_eq!(ended["ended"], true);

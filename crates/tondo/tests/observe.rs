@@ -261,7 +261,7 @@ fn debugger_session() {
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
-    let script = "break debugged.to:13\ncontinue\nlocals\nstep\nstack\nprint user\nfinish\ndelete 1\ncontinue\n";
+    let script = "break debugged.to:13\ncontinue\nlocals\nstep\nstack\nprint user\nframe 1\nprint ada.name\nchildren names\nframe 0\nfinish\ndelete 1\ncontinue\n";
     std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
     drop(child.stdin.take());
     let output = child.wait_with_output().unwrap();
@@ -279,6 +279,15 @@ fn debugger_session() {
     assert_eq!(stack[..2], [json!("debugged.to:6 in older"), json!("debugged.to:13 in main")]);
     let user = lines.iter().find(|l| l["name"] == "user").unwrap();
     assert_eq!(user["value"], "User { name: \"Ada\", age: 36 }");
+    assert_eq!(user["children"], 2);
+    // The caller's frame, and parts of its bindings by their paths.
+    assert!(lines.iter().any(|l| l["selected"] == json!({ "task": 1, "frame": 1 })), "{lines:?}");
+    let name = lines.iter().find(|l| l["name"] == "ada.name").unwrap();
+    assert_eq!((&name["value"], &name["type"]), (&json!("\"Ada\""), &Value::Null));
+    let parts = lines.iter().find_map(|l| l["children"].as_array()).unwrap();
+    let parts: Vec<(&str, &str)> =
+        parts.iter().map(|p| (p["path"].as_str().unwrap(), p["value"].as_str().unwrap())).collect();
+    assert_eq!(parts, [("names[0]", "\"a\""), ("names[1]", "\"b\"")]);
     assert!(lines.iter().any(|l| l.get("exited").is_some()));
 }
 
@@ -424,12 +433,41 @@ fn debug_adapter() {
     response(&mut output, "configurationDone", &mut events);
     let stopped = until(&mut output, "stopped", &mut events);
     assert_eq!(stopped["body"]["reason"], "breakpoint");
-    send("stackTrace", json!({ "threadId": stopped["body"]["threadId"] }));
+    let thread = stopped["body"]["threadId"].clone();
+    send("stackTrace", json!({ "threadId": thread }));
     let trace = response(&mut output, "stackTrace", &mut events);
     assert_eq!(trace["body"]["stackFrames"][0]["line"], 13);
-    send("variables", json!({ "variablesReference": 1 }));
-    let variables = response(&mut output, "variables", &mut events);
-    assert_eq!(variables["body"]["variables"][0]["name"], "ada");
+    // The frame's bindings, and the parts of one, opened.
+    let variables =
+        |send: &mut dyn FnMut(&str, Value), frame: &Value, output: &mut BufReader<_>, events: &mut Vec<Value>| {
+            send("scopes", json!({ "frameId": frame }));
+            let scopes = response(output, "scopes", events);
+            send("variables", json!({ "variablesReference": scopes["body"]["scopes"][0]["variablesReference"] }));
+            response(output, "variables", events)["body"]["variables"].clone()
+        };
+    let frame = trace["body"]["stackFrames"][0]["id"].clone();
+    let locals = variables(&mut send, &frame, &mut output, &mut events);
+    assert_eq!(locals[0]["name"], "ada");
+    let opened = locals[0]["variablesReference"].clone();
+    assert_ne!(opened, 0);
+    send("variables", json!({ "variablesReference": opened }));
+    let parts = response(&mut output, "variables", &mut events)["body"]["variables"].clone();
+    let parts: Vec<(&str, &str)> =
+        parts.as_array().unwrap().iter().map(|p| (p["name"].as_str().unwrap(), p["value"].as_str().unwrap())).collect();
+    assert_eq!(parts, [("name", "\"Ada\""), ("age", "36")]);
+    send("evaluate", json!({ "expression": "names[1]", "frameId": frame }));
+    let evaluated = response(&mut output, "evaluate", &mut events);
+    assert_eq!(evaluated["body"]["result"], "\"b\"");
+    // Into the call: the caller's frame still shows its bindings.
+    send("stepIn", json!({ "threadId": thread }));
+    response(&mut output, "stepIn", &mut events);
+    until(&mut output, "stopped", &mut events);
+    send("stackTrace", json!({ "threadId": thread }));
+    let trace = response(&mut output, "stackTrace", &mut events);
+    let frames = trace["body"]["stackFrames"].as_array().unwrap().clone();
+    assert_eq!((frames[0]["name"].as_str(), frames[1]["name"].as_str()), (Some("older"), Some("main")));
+    let outer = variables(&mut send, &frames[1]["id"], &mut output, &mut events);
+    assert_eq!(outer[0]["name"], "ada");
     send("continue", json!({ "threadId": 1 }));
     response(&mut output, "continue", &mut events);
     until(&mut output, "terminated", &mut events);
@@ -484,4 +522,171 @@ fn every_object_of_a_debug_build() {
     let chain = object["chain"].as_array().unwrap();
     assert_eq!(chain[0], "task 1");
     assert!(chain[1].as_str().unwrap().starts_with("Array[String]"), "{object}");
+}
+
+const STOPPING: &str = "import std.console
+
+fn pick(values: Array[Int], at: Int): Int {
+    return values[at]
+}
+
+fn main() {
+    var total = 0
+    for i in 0..4 {
+        total = total + i
+    }
+    console.println(\"{total}\")
+    console.println(\"{pick([1, 2], total)}\")
+}
+";
+
+/// A logpoint writes and goes on; a count of hits stops at the one asked
+/// for; a binding changes; and a panic stops where the program's code
+/// panicked, before it unwinds.
+#[test]
+fn debugger_logs_counts_changes_and_stops_at_panics() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-stops");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("stopping.to"), STOPPING).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "stopping.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = "break stopping.to:10 log at {i}: {total}\nbreak stopping.to:10 hits 3\ncontinue\nset total 40\ncontinue\nlocals\nframe 1\nprint total\ncontinue\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    let lines: Vec<Value> =
+        String::from_utf8_lossy(&output.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let logged: Vec<&str> = lines.iter().filter_map(|l| l["logged"].as_str()).collect();
+    assert_eq!(logged, ["at 0: 0", "at 1: 0", "at 2: 1", "at 3: 42"], "{lines:?}");
+    let stops: Vec<&Value> = lines.iter().filter_map(|l| l.get("stopped")).collect();
+    assert_eq!(
+        (stops[1]["why"].as_str(), stops[1]["at"].as_str()),
+        (Some("breakpoint 2"), Some("stopping.to:10 in main"))
+    );
+    let set = lines.iter().find(|l| l["name"] == "total").unwrap();
+    assert_eq!(set["value"], "40");
+    // 40, then + 2 and + 3: `pick` reads past the end, and the panic
+    // stops there.
+    let panic = stops[2]["why"].as_str().unwrap();
+    assert!(panic.starts_with("panic[P0001]: bounds: index 45 is out of bounds"), "{panic}");
+    assert_eq!(stops[2]["at"], "stopping.to:4 in pick");
+    let locals = lines.iter().find_map(|l| l["locals"].as_array()).unwrap();
+    assert_eq!(locals.iter().find(|l| l["name"] == "at").unwrap()["value"], "45");
+    let total = lines.iter().filter(|l| l["name"] == "total").nth(1).unwrap();
+    assert_eq!(total["value"], "45");
+    assert!(lines.iter().any(|l| l.get("exited").is_some()));
+}
+
+/// The Debug Adapter Protocol for one test: requests in order, and what
+/// comes back.
+struct Adapter {
+    child: std::process::Child,
+    input: std::process::ChildStdin,
+    output: BufReader<std::process::ChildStdout>,
+    seq: u64,
+    events: Vec<Value>,
+}
+
+impl Adapter {
+    fn start() -> Adapter {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .arg("dap")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let input = child.stdin.take().unwrap();
+        let output = BufReader::new(child.stdout.take().unwrap());
+        Adapter { child, input, output, seq: 0, events: Vec::new() }
+    }
+
+    fn ask(&mut self, command: &str, arguments: Value) -> Value {
+        self.seq += 1;
+        let text =
+            json!({ "seq": self.seq, "type": "request", "command": command, "arguments": arguments }).to_string();
+        std::io::Write::write_all(&mut self.input, format!("Content-Length: {}\r\n\r\n{text}", text.len()).as_bytes())
+            .unwrap();
+        loop {
+            let message = dap_read(&mut self.output);
+            if message["type"] == "response" && message["command"] == command {
+                assert_eq!(message["success"], true, "{message}");
+                return message["body"].clone();
+            }
+            self.events.push(message);
+        }
+    }
+
+    fn until(&mut self, event: &str) -> Value {
+        if let Some(at) = self.events.iter().position(|e| e["event"] == event) {
+            return self.events.remove(at)["body"].clone();
+        }
+        loop {
+            let message = dap_read(&mut self.output);
+            if message["event"] == event {
+                return message["body"].clone();
+            }
+        }
+    }
+
+    fn stop(mut self) {
+        self.ask("disconnect", json!({}));
+        drop(self.input);
+        self.child.wait().unwrap();
+    }
+}
+
+#[test]
+fn debug_adapter_stops_at_panics_and_opens_dumps() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dap-panics");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("stopping.to"), STOPPING).unwrap();
+    let mut adapter = Adapter::start();
+    let capabilities = adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    assert_eq!(capabilities["exceptionBreakpointFilters"][0]["filter"], "panic");
+    adapter.ask("launch", json!({ "program": "stopping.to", "cwd": dir }));
+    adapter.until("initialized");
+    adapter.ask("setExceptionBreakpoints", json!({ "filters": ["panic"] }));
+    adapter.ask("configurationDone", json!({}));
+    let stopped = adapter.until("stopped");
+    assert_eq!(stopped["reason"], "exception");
+    assert!(stopped["text"].as_str().unwrap().contains("index 6 is out of bounds"), "{stopped}");
+    let info = adapter.ask("exceptionInfo", json!({ "threadId": stopped["threadId"] }));
+    assert_eq!(info["exceptionId"], "panic");
+    adapter.ask("continue", json!({ "threadId": stopped["threadId"] }));
+    adapter.until("terminated");
+    adapter.stop();
+
+    // A dump of a program that panicked: its task and where it was.
+    let crashes = dir.join("crashes");
+    let _ = std::fs::remove_dir_all(&crashes);
+    std::fs::create_dir_all(&crashes).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", "stopping.to"])
+        .env("TONDO_DUMP", &crashes)
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let dump = std::fs::read_dir(&crashes).unwrap().next().unwrap().unwrap().path();
+    let mut adapter = Adapter::start();
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("launch", json!({ "dump": dump, "cwd": dir }));
+    adapter.until("initialized");
+    adapter.ask("configurationDone", json!({}));
+    let stopped = adapter.until("stopped");
+    let threads = adapter.ask("threads", json!({}));
+    assert_eq!(threads["threads"].as_array().unwrap().len(), 1, "{threads}");
+    let trace = adapter.ask("stackTrace", json!({ "threadId": stopped["threadId"] }));
+    let frames = trace["stackFrames"].as_array().unwrap();
+    let pick = frames.iter().find(|f| f["name"] == "pick").unwrap_or_else(|| panic!("{trace}"));
+    assert_eq!((pick["line"].as_u64(), pick["source"]["name"].as_str()), (Some(4), Some("stopping.to")));
+    let scopes = adapter.ask("scopes", json!({ "frameId": pick["id"] }));
+    let task = adapter.ask("variables", json!({ "variablesReference": scopes["scopes"][0]["variablesReference"] }));
+    assert_eq!(task["variables"][0]["name"], "state");
+    adapter.stop();
 }

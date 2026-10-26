@@ -563,10 +563,17 @@ como en `counters`, que arrancó con `TONDO_DIAGNOSTICS=1`. Lee una orden por
 línea, de la terminal o de su entrada, y con `--json` escribe cada respuesta
 y cada evento como una línea de JSON, para una herramienta o un modelo:
 
-- `break <file>:<line> [if <name> <op> <value>]` para donde empieza esa
-  línea, o la siguiente con código del archivo. La condición compara un
-  binding con `==`, `!=`, `<`, `<=`, `>` o `>=`: como números si los dos lo
-  son, y si no como el texto que el depurador muestra. `delete <id>` lo quita.
+- `break <file>:<line> [if <path> <op> <value>] [hits <count>] [log <message>]`
+  para donde empieza esa línea, o la siguiente con código del archivo. La
+  condición compara un binding, o una parte suya por su ruta, con `==`, `!=`,
+  `<`, `<=`, `>` o `>=`: como números si los dos lo son, y si no como el texto
+  que el depurador muestra. `hits` cuenta las veces que se cumple y para en la
+  `n`-ésima, desde ella (`>= n`), tras ella (`> n`) o cada `n` (`% n`). Con
+  `log`, no para: escribe el mensaje, cada `{ruta}` cambiada por lo que nombra,
+  y sigue. `delete <id>` lo quita.
+- Una tarea que entra en pánico para donde el código del programa lo produjo,
+  antes de deshacer su pila, con el texto del pánico como motivo; `catch none`
+  lo desactiva y `catch panic` lo vuelve a activar.
 - `continue` sigue hasta un breakpoint; `step`, hasta la siguiente línea,
   entrando en las llamadas; `next`, hasta la siguiente línea de la misma
   función o de una que la llamó; `finish`, hasta una línea de una que la
@@ -574,10 +581,17 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
 - Cuando una tarea para, las demás paran en su siguiente línea, y todas
   siguen juntas. `tasks` dice dónde está cada una.
 - `locals` muestra los bindings que tienen un valor en la función donde paró
-  la tarea, y `print <name>` uno: los textos entre comillas, los registros
-  con sus campos, los enums con su variante y las colecciones con sus
-  elementos. Un binding cuyo valor se movió o se liberó no se muestra.
-  `stack` da las funciones de la tarea, de dentro afuera.
+  la tarea, y `print <path>` uno, o una parte suya por su ruta: `user.name`,
+  `items[2]`, `scores["x"]`, `pair.0`. Los textos van entre comillas, los
+  registros con sus campos, los enums con su variante y las colecciones con
+  sus elementos; `children <path>` da las partes de un valor, cada una con su
+  ruta. Un binding cuyo valor se movió o se liberó no se muestra.
+- `stack [<task>]` da las funciones de una tarea parada, de dentro afuera;
+  `frame <n>` elige la `n`-ésima para `locals` y `print`, y `task <id>` otra
+  tarea parada. Las funciones de fuera muestran sus bindings como estaban al
+  empezar la línea que llamó.
+- `set <name> <value>` cambia un binding de la función donde paró la tarea:
+  un número, `Bool`, `Char`, `Byte` o `String`.
 - `quit` termina el programa que arrancó; al acabar la entrada, el programa
   sigue sin el depurador.
 
@@ -586,10 +600,15 @@ un editor: `launch` compila y arranca un programa como `tondo debug`, o lo
 arranca si es un ejecutable, y `attach` se adjunta a uno por su proceso o su
 nombre. Con `"test"`, el id de un test del proyecto que `tondo test --list`
 da, `launch` compila los tests del proyecto como un build de depuración y
-ejecuta ese test solo; la consola dice cómo terminó. Los breakpoints, con su condición, los pasos, la pausa, las tareas
-(`threads`), la pila, los bindings (`variables`) y `evaluate` de un nombre
-son las órdenes de `tondo debug`; la salida del programa va a la consola del
-editor.
+ejecuta ese test solo; la consola dice cómo terminó. Con `"dump"`, un
+volcado (sección 7.5), `launch` lo abre sin programa: sus tareas como hilos,
+sus pilas, el estado de cada una y la memoria por dónde se creó. Los
+breakpoints, con su condición, sus hits y sus logpoints, los pasos, la pausa,
+las tareas (`threads`), la pila de cada una con los bindings de cada función,
+desplegables por partes (`variables`), `evaluate` de una ruta, `setVariable`
+y la excepción de un pánico (el filtro `panic`, con `exceptionInfo`) son las
+órdenes de `tondo debug`; la salida del programa y los logpoints van a la
+consola del editor.
 
 ### 7.7 Librerías para C
 

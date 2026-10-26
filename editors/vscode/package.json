@@ -90,9 +90,6 @@
         ],
         "configurationAttributes": {
           "launch": {
-            "required": [
-              "program"
-            ],
             "properties": {
               "program": {
                 "type": "string",
@@ -125,6 +122,10 @@
                 "type": "boolean",
                 "description": "Stop before the program starts.",
                 "default": false
+              },
+              "dump": {
+                "type": "string",
+                "description": "A dump of a program (`tondo dump`, or `TONDO_DUMP=<dir>` at a crash), opened at its tasks and stacks instead of running a program."
               }
             }
           },
@@ -178,6 +179,15 @@
               "request": "attach",
               "name": "Attach",
               "processId": "^\"\\${command:pickProcess}\""
+            }
+          },
+          {
+            "label": "Tondo: Debug a dump",
+            "body": {
+              "type": "tondo",
+              "request": "launch",
+              "name": "Debug a dump",
+              "dump": "^\"\\${workspaceFolder}/app.dump.json\""
             }
           }
         ],
@@ -257,6 +267,11 @@
         "title": "Show the Module Graph (Mermaid)",
         "category": "Tondo",
         "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "tondo.debugDump",
+        "title": "Debug a Dump",
+        "category": "Tondo"
       }
     ],
     "menus": {

@@ -16,8 +16,12 @@ It says so when that `tondo` is older than the extension.
   *Debug* over `main` or a script; and formatting, on save by default.
 - **Running and debugging**, from `tondo dap`: *Run* and *Debug* over
   `fn main`, in the editor's title bar, or with F5 on any Tondo file, which
-  runs its project or the file alone as a script. Breakpoints, stepping,
-  bindings, conditions, and *Restart Frame*.
+  runs its project or the file alone as a script. Breakpoints with
+  conditions, hit counts and log messages; stepping; the variables of every
+  frame and task, opened field by field; watches and hovers of paths like
+  `user.name`; changing a value; a stop where a panic happens, before it
+  unwinds; *Restart Frame*; and *Debug a Dump*, which opens a dump of a
+  crashed program at its tasks and stacks.
 - **Live builds**: *Tondo: Debug Live* starts a build whose code changes
   while it runs: saving a file puts its new code in, keeping the program's
   state (Edit and Continue). *Tondo: Run Live* does the same in a terminal.

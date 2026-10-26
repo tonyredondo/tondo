@@ -72,9 +72,28 @@ struct Debuggee {
     child: Option<std::process::Child>,
     /// Where relative paths of the program's sources are.
     root: PathBuf,
+    /// What each `variablesReference` names, until the program goes on: a
+    /// task, a frame of its stack, and a path in it, empty for the frame's
+    /// bindings.
+    handles: Vec<(u64, u64, String)>,
+}
+
+/// A frame's id: its task, and its place in the task's stack.
+fn frame_id(task: u64, index: u64) -> u64 {
+    task * 10_000 + index
+}
+
+fn frame_of(id: u64) -> (u64, u64) {
+    (id / 10_000, id % 10_000)
 }
 
 impl Debuggee {
+    /// A reference to what a path names in a frame, for `variables`.
+    fn handle(&mut self, task: u64, frame: u64, path: String) -> u64 {
+        self.handles.push((task, frame, path));
+        self.handles.len() as u64
+    }
+
     fn ask(&mut self, command: &str) -> Result<Value, String> {
         writeln!(self.writer, "{command}").map_err(|_| "the program ended".to_string())?;
         let answer = self.answers.recv().map_err(|_| "the program ended".to_string())?;
@@ -122,18 +141,60 @@ pub fn serve(builds: Builds) -> Result<(), String> {
     let stdin = std::io::stdin();
     let mut input = stdin.lock();
     let mut debuggee: Option<Debuggee> = None;
+    let mut dumped: Option<Dumped> = None;
     let mut breakpoints: std::collections::HashMap<String, Vec<u64>> = std::collections::HashMap::new();
     while let Some(request) = read_message(&mut input) {
         let arguments = &request["arguments"];
         let command = request["command"].as_str().unwrap_or_default();
+        // A dump: tasks to look at, which do not run.
+        if let Some(dumped) = &dumped
+            && !matches!(command, "initialize" | "launch" | "disconnect" | "terminate")
+        {
+            let result = dumped.answer(command, arguments);
+            editor.respond(&request, result);
+            if command == "configurationDone" {
+                let first = dumped.tasks.first().map_or(json!(1), |t| t["id"].clone());
+                let text = dumped.summary.lines().next().unwrap_or_default();
+                editor.event(
+                    "stopped",
+                    json!({ "reason": "entry", "description": text, "threadId": first, "allThreadsStopped": true }),
+                );
+            }
+            continue;
+        }
         let result: Result<Value, String> = match command {
             "initialize" => Ok(json!({
                 "supportsConfigurationDoneRequest": true,
                 "supportsConditionalBreakpoints": true,
+                "supportsHitConditionalBreakpoints": true,
+                "supportsLogPoints": true,
                 "supportsTerminateRequest": true,
                 "supportsEvaluateForHovers": true,
                 "supportsRestartFrame": true,
+                "supportsExceptionInfoRequest": true,
+                "supportsSetVariable": true,
+                "exceptionBreakpointFilters": [
+                    { "filter": "panic", "label": "Panics", "description": "Stop where a task panics, before it unwinds", "default": true }
+                ],
             })),
+            "disconnect" | "terminate" if dumped.is_some() => Ok(json!({})),
+            "launch" if arguments["dump"].is_string() => {
+                let path = PathBuf::from(arguments["dump"].as_str().unwrap_or_default());
+                let root = arguments["cwd"]
+                    .as_str()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+                match observe::opened(&root.join(&path)) {
+                    Ok((summary, tasks, heap)) => {
+                        editor.event("output", json!({ "category": "console", "output": summary.clone() }));
+                        dumped = Some(Dumped { summary, tasks, heap, root });
+                        editor.respond(&request, Ok(json!({})));
+                        editor.event("initialized", json!({}));
+                        continue;
+                    }
+                    Err(message) => Err(message),
+                }
+            }
             "launch" | "attach" => match start(command, arguments, &builds, &editor) {
                 Ok(started) => {
                     debuggee = Some(started);
@@ -163,6 +224,109 @@ pub fn serve(builds: Builds) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// A dump the editor looks at (`launch` with `dump`): its tasks as
+/// threads, their stacks, and what the memory held.
+struct Dumped {
+    summary: String,
+    tasks: Vec<Value>,
+    heap: Value,
+    root: PathBuf,
+}
+
+impl Dumped {
+    fn answer(&self, command: &str, arguments: &Value) -> Result<Value, String> {
+        let task = |id: &Value| self.tasks.iter().find(|t| t["id"] == *id);
+        match command {
+            "setBreakpoints" => Ok(json!({ "breakpoints": [] })),
+            "setExceptionBreakpoints" | "configurationDone" => Ok(json!({})),
+            "threads" => {
+                let threads: Vec<Value> = self
+                    .tasks
+                    .iter()
+                    .map(|t| {
+                        let name = format!(
+                            "task {} ({}) {}",
+                            t["id"],
+                            t["runs"].as_str().unwrap_or_default(),
+                            t["state"].as_str().unwrap_or_default()
+                        );
+                        json!({ "id": t["id"], "name": name })
+                    })
+                    .collect();
+                Ok(json!({ "threads": threads }))
+            }
+            "stackTrace" => {
+                let id = &arguments["threadId"];
+                let lines = task(id).and_then(|t| t["stack"].as_array()).cloned().unwrap_or_default();
+                let thread = id.as_u64().unwrap_or(0);
+                let frames: Vec<Value> = lines
+                    .iter()
+                    .enumerate()
+                    .map(|(index, line)| {
+                        let text = line.as_str().unwrap_or_default();
+                        let mut frame =
+                            json!({ "id": frame_id(thread, index as u64), "name": text, "line": 0, "column": 0 });
+                        if let Some((place, function)) = text.split_once(" in ")
+                            && let Some((file, line)) = place.rsplit_once(':')
+                        {
+                            frame["name"] = json!(function);
+                            frame["line"] = json!(line.parse::<u64>().unwrap_or(0));
+                            frame["column"] = json!(1);
+                            frame["source"] =
+                                json!({ "name": file, "path": self.root.join(file).display().to_string() });
+                        }
+                        frame
+                    })
+                    .collect();
+                Ok(json!({ "stackFrames": frames, "totalFrames": frames.len() }))
+            }
+            "scopes" => {
+                let (thread, _) = frame_of(arguments["frameId"].as_u64().unwrap_or(0));
+                Ok(json!({ "scopes": [
+                    { "name": "Task", "variablesReference": thread + 1, "expensive": false },
+                    { "name": "Memory", "variablesReference": 1, "expensive": false },
+                ] }))
+            }
+            // The memory by where it was made, or a task's state.
+            "variables" => {
+                let reference = arguments["variablesReference"].as_u64().unwrap_or(0);
+                let variables: Vec<Value> = if reference == 1 {
+                    let sites = self.heap["sites"].as_array().cloned().unwrap_or_default();
+                    sites
+                        .iter()
+                        .take(100)
+                        .map(|site| {
+                            let value = format!("{} bytes in {} objects", site["bytes"], site["objects"]);
+                            json!({ "name": format!("{} at {}", site["kind"].as_str().unwrap_or_default(), site["site"].as_str().unwrap_or_default()), "value": value, "variablesReference": 0 })
+                        })
+                        .collect()
+                } else {
+                    let Some(task) = task(&json!(reference - 1)) else { return Ok(json!({ "variables": [] })) };
+                    let mut rows = vec![
+                        ("state", task["state"].clone()),
+                        ("runs", task["runs"].clone()),
+                        ("cancelled", task["cancelled"].clone()),
+                    ];
+                    if let Some(spawned) = task["spawned"].as_array().and_then(|s| s.first()) {
+                        rows.push(("spawned at", spawned.clone()));
+                    }
+                    for lock in task["locks"].as_array().into_iter().flatten() {
+                        rows.push(("holds a lock taken at", lock.clone()));
+                    }
+                    rows.into_iter()
+                        .map(|(name, value)| {
+                            let value = value.as_str().map_or(value.to_string(), str::to_string);
+                            json!({ "name": name, "value": value, "variablesReference": 0 })
+                        })
+                        .collect()
+                };
+                Ok(json!({ "variables": variables }))
+            }
+            _ => Err("a dump does not run: it shows the program as it was when it was dumped".into()),
+        }
+    }
 }
 
 /// Starts the program the editor names, or attaches to a running one.
@@ -245,14 +409,21 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
                 if stop["why"] == "start" && !entry {
                     continue;
                 }
-                let reason = match stop["why"].as_str().unwrap_or_default() {
+                let why = stop["why"].as_str().unwrap_or_default();
+                let reason = match why {
                     "start" => "entry",
                     "step" => "step",
                     "pause" => "pause",
+                    _ if why.starts_with("panic[") => "exception",
                     _ => "breakpoint",
                 };
-                events
-                    .event("stopped", json!({ "reason": reason, "threadId": stop["task"], "allThreadsStopped": true }));
+                let mut body = json!({ "reason": reason, "threadId": stop["task"], "allThreadsStopped": true });
+                if why.starts_with("panic[") {
+                    body["text"] = json!(why);
+                }
+                events.event("stopped", body);
+            } else if let Some(logged) = value["logged"].as_str() {
+                events.event("output", json!({ "category": "console", "output": format!("{logged}\n") }));
             } else if value.get("exited").is_some() {
                 let (count, ended) = &*read_out;
                 let count = count.lock().unwrap_or_else(|e| e.into_inner());
@@ -295,7 +466,7 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
         }
     }
     writeln!(writer, "debug").map_err(|e| e.to_string())?;
-    let debuggee = Debuggee { pid, writer, answers, child, root };
+    let debuggee = Debuggee { pid, writer, answers, child, root, handles: Vec::new() };
     let attached = debuggee.answers.recv().map_err(|_| "the program ended".to_string())?;
     if let Some(error) = attached["error"].as_str() {
         return Err(format!("{error}: a program is debugged in a build with --debug"));
@@ -320,7 +491,9 @@ fn handle(
             for wanted in arguments["breakpoints"].as_array().into_iter().flatten() {
                 let line = wanted["line"].as_u64().unwrap_or(0);
                 let condition = wanted["condition"].as_str().map_or(String::new(), |c| format!(" if {c}"));
-                match program.ask(&format!("break {path}:{line}{condition}")) {
+                let hits = wanted["hitCondition"].as_str().map_or(String::new(), |h| format!(" hits {h}"));
+                let log = wanted["logMessage"].as_str().map_or(String::new(), |m| format!(" log {m}"));
+                match program.ask(&format!("break {path}:{line}{condition}{hits}{log}")) {
                     Ok(answer) => {
                         ids.push(answer["breakpoint"]["id"].as_u64().unwrap_or(0));
                         set.push(json!({ "verified": true, "line": answer["breakpoint"]["line"] }));
@@ -331,14 +504,43 @@ fn handle(
             breakpoints.insert(path, ids);
             Ok(json!({ "breakpoints": set }))
         }
-        "configurationDone" | "continue" => program.ask("continue").map(|_| json!({ "allThreadsContinued": true })),
-        "next" => program.ask("next").map(|_| json!({})),
-        "stepIn" => program.ask("step").map(|_| json!({})),
-        "stepOut" => program.ask("finish").map(|_| json!({})),
+        "configurationDone" | "continue" => {
+            program.handles.clear();
+            program.ask("continue").map(|_| json!({ "allThreadsContinued": true }))
+        }
+        "next" | "stepIn" | "stepOut" => {
+            program.handles.clear();
+            let asked = match command {
+                "next" => "next",
+                "stepIn" => "step",
+                _ => "finish",
+            };
+            program.ask(asked).map(|_| json!({}))
+        }
         "pause" => program.ask("pause").map(|_| json!({})),
+        "setExceptionBreakpoints" => {
+            let panics = arguments["filters"].as_array().is_some_and(|f| f.iter().any(|f| f == "panic"));
+            program.ask(if panics { "catch panic" } else { "catch none" }).map(|_| json!({}))
+        }
+        // Why the task stopped at a panic: its message, with where.
+        "exceptionInfo" => {
+            let task = arguments["threadId"].as_u64().unwrap_or(1);
+            let tasks = program.ask("tasks")?;
+            let held = tasks["tasks"].as_array().into_iter().flatten().find(|t| t["task"] == task);
+            let why = held.and_then(|t| t["why"].as_str()).unwrap_or_default();
+            if !why.starts_with("panic[") {
+                return Err(format!("task {task} did not panic"));
+            }
+            Ok(
+                json!({ "exceptionId": "panic", "description": why, "breakMode": "always", "details": { "message": why } }),
+            )
+        }
         // The frame where the task stopped, the only one that restarts.
-        "restartFrame" => match arguments["frameId"].as_u64() {
-            Some(0) | None => program.ask("restart").map(|_| json!({})),
+        "restartFrame" => match arguments["frameId"].as_u64().map(frame_of) {
+            Some((_, 0)) | None => {
+                program.handles.clear();
+                program.ask("restart").map(|_| json!({}))
+            }
             Some(_) => Err("only the frame where the task stopped restarts".into()),
         },
         "threads" => {
@@ -355,7 +557,8 @@ fn handle(
             Ok(json!({ "threads": threads }))
         }
         "stackTrace" => {
-            let stack = program.ask("stack")?;
+            let task = arguments["threadId"].as_u64().unwrap_or(1);
+            let stack = program.ask(&format!("stack {task}"))?;
             let frames: Vec<Value> = stack["stack"]
                 .as_array()
                 .into_iter()
@@ -366,30 +569,86 @@ fn handle(
                     let (file, line) = place.rsplit_once(':')?;
                     let path = program.root.join(file);
                     Some(json!({
-                        "id": index, "name": function, "line": line.parse::<u64>().ok()?, "column": 1,
-                        "source": { "name": file, "path": path.display().to_string() },
+                        "id": frame_id(task, index as u64), "name": function, "line": line.parse::<u64>().ok()?,
+                        "column": 1, "source": { "name": file, "path": path.display().to_string() },
                     }))
                 })
                 .collect();
             Ok(json!({ "stackFrames": frames, "totalFrames": frames.len() }))
         }
-        // The debugger shows the bindings of the frame where the task
-        // stopped.
-        "scopes" => Ok(json!({ "scopes": [{ "name": "Locals", "variablesReference": 1, "expensive": false }] })),
+        "scopes" => {
+            let (task, index) = frame_of(arguments["frameId"].as_u64().unwrap_or(10_000));
+            let locals = program.handle(task, index, String::new());
+            Ok(json!({ "scopes": [{ "name": "Locals", "variablesReference": locals, "expensive": false }] }))
+        }
+        // A frame's bindings, or the parts of one or of a part, each with a
+        // reference to its own parts when it has some.
         "variables" => {
-            let locals = program.ask("locals")?;
-            let variables: Vec<Value> = locals["locals"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|l| json!({ "name": l["name"], "value": l["value"], "type": l["type"], "variablesReference": 0 }))
-                .collect();
+            let reference = arguments["variablesReference"].as_u64().unwrap_or(0) as usize;
+            let Some((task, index, path)) = reference.checked_sub(1).and_then(|r| program.handles.get(r).cloned())
+            else {
+                return Ok(json!({ "variables": [] }));
+            };
+            program.ask(&format!("select {task} {index}"))?;
+            let mut variables = Vec::new();
+            if path.is_empty() {
+                let locals = program.ask("locals")?;
+                for local in locals["locals"].as_array().into_iter().flatten() {
+                    let name = local["name"].as_str().unwrap_or_default().to_string();
+                    let parts = local["children"].as_u64().unwrap_or(0);
+                    let reference = if parts > 0 { program.handle(task, index, name.clone()) } else { 0 };
+                    variables.push(json!({
+                        "name": name, "value": local["value"], "type": local["type"],
+                        "variablesReference": reference, "evaluateName": name,
+                    }));
+                }
+            } else {
+                let parts = program.ask(&format!("children {path}"))?;
+                for part in parts["children"].as_array().into_iter().flatten() {
+                    let name = part["name"].as_str().unwrap_or_default();
+                    let shown = name.strip_prefix('.').unwrap_or(name);
+                    let path = part["path"].as_str().unwrap_or_default().to_string();
+                    let count = part["children"].as_u64().unwrap_or(0);
+                    let reference = if count > 0 { program.handle(task, index, path.clone()) } else { 0 };
+                    variables.push(json!({
+                        "name": shown, "value": part["value"], "variablesReference": reference, "evaluateName": path,
+                    }));
+                }
+            }
             Ok(json!({ "variables": variables }))
         }
+        // A binding of a frame where its task stopped, changed.
+        "setVariable" => {
+            let reference = arguments["variablesReference"].as_u64().unwrap_or(0) as usize;
+            let Some((task, index, path)) = reference.checked_sub(1).and_then(|r| program.handles.get(r).cloned())
+            else {
+                return Err("no such variables".into());
+            };
+            if !path.is_empty() {
+                return Err("a whole binding changes, not a part of it".into());
+            }
+            program.ask(&format!("select {task} {index}"))?;
+            let name = arguments["name"].as_str().unwrap_or_default();
+            let value = arguments["value"].as_str().unwrap_or_default();
+            let set = program.ask(&format!("set {name} {value}"))?;
+            Ok(json!({ "value": set["value"], "type": set["type"], "variablesReference": 0 }))
+        }
+        // A binding or a part of it, by its path, in the frame chosen.
         "evaluate" => {
-            let name = arguments["expression"].as_str().unwrap_or_default().trim();
-            let value = program.ask(&format!("print {name}"))?;
-            Ok(json!({ "result": value["value"], "type": value["type"], "variablesReference": 0 }))
+            let path = arguments["expression"].as_str().unwrap_or_default().trim().to_string();
+            let (task, index) = match arguments["frameId"].as_u64() {
+                Some(id) => frame_of(id),
+                None => {
+                    let tasks = program.ask("tasks")?;
+                    let stopped = tasks["tasks"].as_array().into_iter().flatten().find(|t| t["why"] != "held");
+                    (stopped.and_then(|t| t["task"].as_u64()).unwrap_or(1), 0)
+                }
+            };
+            program.ask(&format!("select {task} {index}"))?;
+            let value = program.ask(&format!("print {path}"))?;
+            let parts = value["children"].as_u64().unwrap_or(0);
+            let reference = if parts > 0 { program.handle(task, index, path) } else { 0 };
+            Ok(json!({ "result": value["value"], "type": value["type"], "variablesReference": reference }))
         }
         // Tondo's own: a live build's code as its files are now.
         "reload" => {
