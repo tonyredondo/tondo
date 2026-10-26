@@ -1,0 +1,37 @@
+import std.math
+import std.testing
+
+fn mandelbrot(size: Int): Int {
+    var inside = 0
+    for row in 0..size {
+        for column in 0..size {
+            let cr = Float(column) * 3.0 / Float(size) - 2.0
+            let ci = Float(row) * 2.0 / Float(size) - 1.0
+            var (zr, zi) = (0.0, 0.0)
+            var iteration = 0
+            for iteration < 50 and zr * zr + zi * zi <= 4.0 {
+                let next = zr * zr - zi * zi + cr
+                zi = 2.0 * zr * zi + ci
+                zr = next
+                iteration += 1
+            }
+            if iteration == 50 {
+                inside += 1
+            }
+        }
+    }
+    inside
+}
+
+fn roots(count: Int): Float {
+    var total = 0.0
+    for i in 0..count {
+        total += math.sqrt(Float(i)).unwrapOr(0.0)
+    }
+    total
+}
+
+test floats {
+    testing.bench("mandelbrot 64", () { mandelbrot(64) })
+    testing.bench("sqrt 100000", () { roots(100_000) })
+}

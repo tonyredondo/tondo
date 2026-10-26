@@ -1,0 +1,40 @@
+import std.json
+import std.testing
+
+type Item = {
+    id: Int
+    name: String
+    price: Float
+    tags: Array[String]
+    available: Bool
+}
+
+const Document: String = "{{\"id\": 7, \"name\": \"lamp\", \"price\": 19.5, \"tags\": [\"home\", \"light\"], \"available\": true, \"stock\": 120, \"color\": \"white\", \"weight\": 1.25, \"brand\": \"lumen\", \"code\": \"LMP-7\"}}"
+
+fn numbers(count: Int): String {
+    var parts: Array[String] = []
+    for i in 0..count {
+        parts.push("{i}")
+    }
+    "[{parts.join(",")}]"
+}
+
+test json {
+    testing.bench("parse object", () { json.parse(Document) })?
+    let array = numbers(1000)
+    testing.bench("parse 1000 numbers", () { json.parse(array) })?
+    testing.bench("decode struct", () { json.decode[Item](Document) })?
+    var items: Array[Item] = []
+    for i in 0..100 {
+        items.push(
+            Item {
+                id: i
+                name: "item {i}"
+                price: Float(i) * 1.5
+                tags: ["a", "b"]
+                available: i % 2 == 0
+            },
+        )
+    }
+    testing.bench("encode 100 structs", () { json.encode(items) })
+}

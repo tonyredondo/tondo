@@ -1279,3 +1279,14 @@ test joining {
     assert_eq!(status, 2);
     assert!(stderr.contains("--profile is cpu or memory, not time"), "{stderr}");
 }
+
+/// The comparison with Go (bench/) keeps compiling: its Tondo benchmarks
+/// run once as tests, and the program that compares checks.
+#[test]
+fn the_comparison_with_go_builds() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let (stdout, stderr, status) = tondo(&root, &["test", "bench/tondo"]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    let (stdout, stderr, status) = tondo(&root, &["check", "bench/compare.to"]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+}

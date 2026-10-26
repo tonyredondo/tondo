@@ -1,0 +1,5 @@
+// The Tondo side of the comparison with Go: its benchmarks are the tests
+// of this project (`tondo test --bench`), each one the same work as the Go
+// benchmark of the same name in ../go.
+
+fn main() {}

@@ -1,0 +1,22 @@
+import std.regex
+import std.testing
+
+test regex {
+    let pattern = regex.Regex.compile("^[a-z]+\\.[a-z]+@[a-z]+\\.com$")?
+    var lines: Array[String] = []
+    for i in 0..1000 {
+        lines.push(if i % 2 == 0 { "ada.lovelace@example.com" } else { "not an address {i}" })
+    }
+    testing.bench(
+        "match 1000",
+        () {
+            var found = 0
+            for line in lines {
+                if pattern.isMatch(line)? {
+                    found += 1
+                }
+            }
+            found
+        },
+    )?
+}

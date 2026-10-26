@@ -1,0 +1,22 @@
+import std.testing
+
+fn fib(n: Int): Int {
+    if n < 2 {
+        return n
+    }
+    fib(n - 1) + fib(n - 2)
+}
+
+fn apply(f: fn(Int): Int, times: Int): Int {
+    var total = 0
+    for i in 0..times {
+        total += f(i)
+    }
+    total
+}
+
+test calls {
+    testing.bench("fib 25", () { fib(25) })
+    let step = 3
+    testing.bench("closure 1000", () { apply((x: Int): Int { x + step }, 1000) })
+}

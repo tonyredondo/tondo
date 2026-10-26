@@ -1,0 +1,39 @@
+import std.testing
+
+fn square(n: Int): Int {
+    n * n
+}
+
+fn spawned(count: Int): Int {
+    var jobs: Array[Join[Int]] = []
+    for i in 0..count {
+        jobs.push(spawn square(i))
+    }
+    var total = 0
+    for job in jobs {
+        total += job.wait()
+    }
+    total
+}
+
+fn produce(out: Sender[Int], count: Int) {
+    for i in 0..count {
+        out.send(i)
+    }
+}
+
+fn piped(count: Int): Int {
+    let (sender, receiver) = channel[Int](64)
+    let producer = spawn produce(sender, count)
+    var total = 0
+    for value in receiver {
+        total += value
+    }
+    producer.wait()
+    total
+}
+
+test tasks {
+    testing.bench("spawn 1000", () { spawned(1000) })
+    testing.bench("channel 10000", () { piped(10_000) })
+}

@@ -1,0 +1,40 @@
+import std.testing
+
+/// `count` numbers in a fixed shuffled order, from a linear congruential
+/// generator, as the Go side makes them.
+fn shuffled(count: Int): Array[Int] {
+    var values: Array[Int] = []
+    var seed = 42
+    for _ in 0..count {
+        seed = (seed * 1_103_515_245 + 12345) % 2_147_483_648
+        values.push(seed % 100_000)
+    }
+    values
+}
+
+fn pushed(count: Int): Int {
+    var values: Array[Int] = []
+    for i in 0..count {
+        values.push(i)
+    }
+    values.length()
+}
+
+fn indexed(values: Array[Int]): Int {
+    var total = 0
+    for i in 0..values.length() {
+        total += values[i]
+    }
+    total
+}
+
+test arrays {
+    testing.bench("push 1000", () { pushed(1000) })
+    let values = shuffled(10_000)
+    testing.bench("sort 10000", () { values.sorted() })
+    testing.bench(
+        "map filter sum 10000",
+        () { values.map((x) { x * 2 }).filter((x) { x % 3 == 0 }).sum() },
+    )
+    testing.bench("index sum 10000", () { indexed(values) })
+}

@@ -1,0 +1,36 @@
+import std.testing
+
+type Point = {
+    x: Int
+    y: Int
+}
+
+type User = {
+    name: String
+    age: Int
+}
+
+fn points(count: Int): Int {
+    var all: Array[Point] = []
+    for i in 0..count {
+        all.push(Point { x: i, y: i * 2 })
+    }
+    var total = 0
+    for point in all {
+        total += point.x + point.y
+    }
+    total
+}
+
+fn users(count: Int): Int {
+    var all: Array[User] = []
+    for i in 0..count {
+        all.push(User { name: "user {i}", age: i % 90 })
+    }
+    all.length()
+}
+
+test structs {
+    testing.bench("points 1000", () { points(1000) })
+    testing.bench("users 1000", () { users(1000) })
+}

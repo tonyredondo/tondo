@@ -1,0 +1,170 @@
+// Compares Tondo with Go: runs the benchmarks of bench/tondo with
+// `tondo test --bench` and those of bench/go with `go test -bench`, and
+// writes a Markdown table: for each benchmark, the time a run takes on each
+// side, Tondo's time over Go's, and the allocations of a run, the slowest
+// against Go first.
+//
+//   tondo run bench/compare.to [--time <seconds>] [--output <file>]
+//
+// It runs from the repository's root; `TONDO` names the `tondo` to measure
+// with, `tondo` on PATH by default.
+
+import std.console
+import std.env
+import std.fs
+import std.json
+import std.process
+
+type Measure = {
+    nanoseconds: Float
+    allocations: Float
+}
+
+type Row = {
+    name: String
+    tondo: Measure
+    go: Measure
+}
+
+/// What `tondo test --bench` measured, by `test/benchmark`.
+fn tondoSide(tondo: String, seconds: String): Map[String, Measure] ! String {
+    let ran =
+        process
+            .command(
+                tondo,
+                "test",
+                "bench/tondo",
+                "--bench",
+                "--bench-time",
+                seconds,
+                "--test-format",
+                "json",
+            )
+            .output()
+            .mapErr((e) { "cannot run {tondo}: {e}" })?
+    let text = ran.text().mapErr((e) { "tondo's report is not text: {e}" })?
+    let report = json.parse(text).mapErr((e) { "tondo gave no report: {e}" })?
+    var measured: Map[String, Measure] = [:]
+    for entry in report.field("tests").asArray().unwrapOr([]) {
+        let name = entry.field("name").asText().unwrapOr("")
+        for attempt in entry.field("attempts").asArray().unwrapOr([]) {
+            for benchmark in attempt.field("benchmarks").asArray().unwrapOr([]) {
+                let key = "{name}/{benchmark.field("name").asText().unwrapOr("")}"
+                let nanoseconds = benchmark
+                    .field("ns_per_op")
+                    .field("median")
+                    .asFloat()
+                    .unwrapOr(0.0)
+                let allocations = benchmark.field("allocations_per_op").asFloat().unwrapOr(0.0)
+                measured[key] = Measure { nanoseconds: nanoseconds, allocations: allocations }
+            }
+        }
+    }
+    measured
+}
+
+/// What `go test -bench` measured, by the same names: `BenchmarkCalls/fib_25`
+/// is `calls/fib 25`.
+fn goSide(seconds: String): Map[String, Measure] ! String {
+    let ran =
+        process
+            .command(
+                "go",
+                "test",
+                "-run",
+                "^$",
+                "-bench",
+                ".",
+                "-benchmem",
+                "-benchtime",
+                "{seconds}s",
+            )
+            .directory("bench/go")
+            .output()
+            .mapErr((e) { "cannot run go: {e}" })?
+    let text = ran.text().mapErr((e) { "go's output is not text: {e}" })?
+    var measured: Map[String, Measure] = [:]
+    for line in text.lines() {
+        let words = line.words()
+        if words.length() < 8 or not words[0].startsWith("Benchmark") or words[3] != "ns/op" {
+            continue
+        }
+        // `BenchmarkCalls/fib_25-32`: the test, the benchmark, and the
+        // processors after the last `-`.
+        let full = words[0].removePrefix("Benchmark")
+        let parts = full.split("/")
+        if parts.length() != 2 {
+            continue
+        }
+        let suffix = parts[1].split("-")
+        let benchmark = suffix
+            .slice(0, suffix.length() - 1)
+            .unwrapOr([])
+            .join("-")
+            .replace("_", " ")
+        let key = "{parts[0].toLower()}/{benchmark}"
+        let nanoseconds = Float.parse(words[2]).unwrapOr(0.0)
+        let allocations = Float.parse(words[6]).unwrapOr(0.0)
+        measured[key] = Measure { nanoseconds: nanoseconds, allocations: allocations }
+    }
+    measured
+}
+
+/// A time, in the unit that reads best.
+fn time(nanoseconds: Float): String {
+    if nanoseconds < 1000.0 {
+        return "{nanoseconds.toFixed(1)} ns"
+    }
+    if nanoseconds < 1_000_000.0 {
+        return "{(nanoseconds / 1000.0).toFixed(2)} µs"
+    }
+    "{(nanoseconds / 1_000_000.0).toFixed(2)} ms"
+}
+
+fn main(): !String {
+    var seconds = "1"
+    var output = ""
+    let arguments = env.args()
+    for i in 0..arguments.length() {
+        if arguments[i] == "--time" and i + 1 < arguments.length() {
+            seconds = arguments[i + 1]
+        }
+        if arguments[i] == "--output" and i + 1 < arguments.length() {
+            output = arguments[i + 1]
+        }
+    }
+    let tondo = env.get("TONDO").unwrapOr("tondo")
+    let ours = tondoSide(tondo, seconds)?
+    let theirs = goSide(seconds)?
+    var rows: Array[Row] = []
+    for (name, measure) in ours {
+        match theirs.get(name) {
+            some(go) => rows.push(Row { name: name, tondo: measure, go: go })
+            none => console.eprintln("no Go benchmark for {name}")
+        }
+    }
+    // The slowest against Go first.
+    rows.sortBy((row) { -row.tondo.nanoseconds / row.go.nanoseconds })
+    var lines: Array[String] = [
+        "| Benchmark | Tondo | Go | Tondo/Go | Allocs/op Tondo | Allocs/op Go |",
+        "|---|---:|---:|---:|---:|---:|",
+    ]
+    var slower = 0
+    for row in rows {
+        let ratio = row.tondo.nanoseconds / row.go.nanoseconds
+        if ratio > 1.0 {
+            slower += 1
+        }
+        let mark = if ratio > 1.0 { " ⚠" } else { "" }
+        lines.push(
+            "| {row.name} | {time(row.tondo.nanoseconds)} | {time(row.go.nanoseconds)} | {ratio.toFixed(2)}×{mark} | {row.tondo.allocations.toFixed(0)} | {row.go.allocations.toFixed(0)} |",
+        )
+    }
+    lines.push("")
+    lines.push("{slower} of {rows.length()} benchmarks are slower than Go.")
+    let table = lines.join("\n")
+    console.println(table)
+    if output != "" {
+        fs.writeText(output, "{table}\n").mapErr((e) { "cannot write {output}: {e}" })?
+    }
+}

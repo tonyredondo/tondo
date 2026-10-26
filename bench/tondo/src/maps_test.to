@@ -1,0 +1,35 @@
+import std.testing
+
+fn inserted(count: Int): Int {
+    var squares: Map[Int, Int] = [:]
+    for i in 0..count {
+        squares[i] = i * 2
+    }
+    squares.length()
+}
+
+fn looked(squares: Map[Int, Int], count: Int): Int {
+    var total = 0
+    for i in 0..count {
+        total += squares.get(i).unwrapOr(0)
+    }
+    total
+}
+
+fn named(count: Int): Int {
+    var ages: Map[String, Int] = [:]
+    for i in 0..count {
+        ages["key {i}"] = i
+    }
+    ages.length()
+}
+
+test maps {
+    testing.bench("insert 10000 ints", () { inserted(10_000) })
+    var squares: Map[Int, Int] = [:]
+    for i in 0..10_000 {
+        squares[i] = i * 2
+    }
+    testing.bench("lookup 10000 ints", () { looked(squares, 10_000) })
+    testing.bench("insert 1000 strings", () { named(1000) })
+}

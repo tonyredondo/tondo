@@ -1,0 +1,30 @@
+import std.format
+import std.testing
+
+fn joined(count: Int): String {
+    var builder = format.Builder.new()
+    for i in 0..count {
+        builder.add("part")
+        builder.add(i)
+    }
+    builder.text()
+}
+
+fn ints(count: Int): Int {
+    var total = 0
+    for i in 0..count {
+        total += "{i}".length()
+    }
+    total
+}
+
+test strings {
+    let (name, place) = ("ada", "london")
+    testing.bench("interpolate", () { "{name} lives in {place}, age {36}" })
+    testing.bench("builder 100", () { joined(100) })
+    let csv = ["alpha", "beta", "gamma", "delta"].repeat(25).join(",")
+    testing.bench("split 100", () { csv.split(",").length() })
+    testing.bench("int to text 1000", () { ints(1000) })
+    let haystack = "{"abcdefghij".repeat(100)}needle"
+    testing.bench("contains 1000", () { haystack.contains("needle") })
+}
