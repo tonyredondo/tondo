@@ -176,7 +176,9 @@ fn profiles_time_memory_and_tasks() {
     };
     // Processor time, by function and by the program's own lines.
     run(&["profile", "--output", "cpu.pprof", "--", "busy.to"]);
-    let cpu = show(&["cpu.pprof"]);
+    // `crunch`, inlined, has no time of its own, so it ranks after every
+    // function that has some, which an emulator gives more of.
+    let cpu = show(&["cpu.pprof", "--top", "1000"]);
     assert_eq!(
         (&cpu["format"], &cpu["type"], &cpu["unit"]),
         (&json!("tondo-profile-show-0.1/1"), &json!("cpu"), &json!("nanoseconds"))
