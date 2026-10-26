@@ -8,6 +8,10 @@ export PATH="$PWD/bin:$PATH"
 tondo version
 ```
 
+On macOS, the builds of `main` that CI makes are signed with a Developer
+ID and notarized by Apple, so Gatekeeper runs a `tondo` downloaded with a
+browser; it asks Apple the first time.
+
 It links executables itself, with no C compiler and no development
 packages: only the libraries the system has to run programs. `TONDO_CC`
 names a C compiler to link with instead. Dependencies from git or archives

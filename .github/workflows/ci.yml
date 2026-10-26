@@ -55,7 +55,16 @@ jobs:
           run="docker run --rm -u $(id -u):$(id -g) -e HOME=/tmp -v $PWD:$PWD -w $PWD"
           $run debian:stable-slim sh -c "! command -v cc && $cases cases projects"
           $run -e TONDO_CASES_STATIC=1 debian:stable-slim sh -c "! command -v cc && $cases cases"
+      # On macOS, signed with the Developer ID and notarized, on pushes to
+      # main: a fork's pull request has no secrets, and its build is not
+      # signed.
       - run: dist/package.sh ${{ matrix.target }}
+        env:
+          MACOS_CERTIFICATE: ${{ github.event_name == 'push' && secrets.MACOS_CERTIFICATE || '' }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
       # The way in that the README and AGENTS.md give.
       - run: sh dist/install.sh "$RUNNER_TEMP/bin"
       - uses: actions/upload-artifact@v4

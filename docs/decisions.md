@@ -2423,3 +2423,16 @@ each line with what the runtime and the standard library do for it, as
 `show` does, so the lines marked are the ones to change. An agent asks the
 same with the `profile` tool, which gives each hot line with its code, so
 it can optimize without reading a flame graph.
+
+## 2026-10-26 — Signed and notarized on macOS
+
+A `tondo` downloaded with a browser on macOS carries the quarantine
+attribute, and Gatekeeper refuses a binary that is not signed with a
+Developer ID and notarized. CI's builds of `main` are both: the
+certificate goes into a keychain of the runner's own for that job, the
+binary is signed with the hardened runtime and a secure timestamp, and
+Apple notarizes a zip of it, with an App Store Connect API key, which
+needs no account's password. `tondo` makes no executable memory of its
+own, so the hardened runtime needs no entitlement. A bare executable
+cannot be stapled, so Gatekeeper asks Apple on the first run. Builds of a
+pull request have no secrets and are not signed; the script says so.
