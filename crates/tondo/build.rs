@@ -57,8 +57,12 @@ fn main() {
         }
     }
 
-    // FNV-1a of the library identifies the runtime in compiler caches.
-    let hash = fnv(0xcbf2_9ce4_8422_2325, &bytes);
+    // FNV-1a of the library and of the static parts identifies the runtime
+    // in compiler caches, which keep each part by it.
+    let mut hash = fnv(0xcbf2_9ce4_8422_2325, &bytes);
+    for (name, _) in parts {
+        hash = fnv(hash, &std::fs::read(out_dir.join(name)).unwrap());
+    }
     std::fs::write(out_dir.join("runtime-hash.txt"), format!("{hash:016x}")).unwrap();
 
     // The runtime's source, with the compiler's version, identifies it on
