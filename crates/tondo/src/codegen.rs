@@ -4886,33 +4886,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             Statement::Clear(local) => {
                 self.mark(*local, false);
-                let place = Place::local(*local);
-                let ty = self.place_ty(&place);
-                match self.e.cg.class(ty) {
-                    Class::Zero => {}
-                    Class::Scalar(clif) if clif.is_float() => {
-                        let zero = self.e.fb.ins().f64const(0.0);
-                        let zero = if clif == types::F32 { self.e.fb.ins().fdemote(types::F32, zero) } else { zero };
-                        self.write(&place, Val::Scalar(zero));
-                    }
-                    Class::Scalar(clif) => {
-                        let zero = self.e.fb.ins().iconst(clif, 0);
-                        self.write(&place, Val::Scalar(zero));
-                    }
-                    Class::Memory => {
-                        let address = self.pointer_to(&place, false);
-                        let size = self.e.cg.layout(ty).size;
-                        let mut offset = 0;
-                        for width in [types::I64, types::I32, types::I16, types::I8] {
-                            let zero = self.e.fb.ins().iconst(width, 0);
-                            while offset + width.bytes() <= size {
-                                self.e.fb.ins().store(flags(), zero, address, offset as i32);
-                                offset += width.bytes();
-                            }
-                        }
-                    }
-                }
+                self.zero(&Place::local(*local), false);
             }
+            Statement::Moved(place) => self.zero(place, true),
             Statement::Lend(local, place) => {
                 if let Storage::Pointer(var) = self.storage[local.0 as usize] {
                     let address = self.pointer_to(place, true);
@@ -4936,6 +4912,35 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
                 let value = self.read(place);
                 self.e.refcount(ty, value, matches!(stmt, Statement::Release(_)));
+            }
+        }
+    }
+
+    /// Zeroes a place whose value moved away: releasing it releases nothing.
+    fn zero(&mut self, place: &Place, write: bool) {
+        let ty = self.place_ty(place);
+        match self.e.cg.class(ty) {
+            Class::Zero => {}
+            Class::Scalar(clif) if clif.is_float() => {
+                let zero = self.e.fb.ins().f64const(0.0);
+                let zero = if clif == types::F32 { self.e.fb.ins().fdemote(types::F32, zero) } else { zero };
+                self.write(place, Val::Scalar(zero));
+            }
+            Class::Scalar(clif) => {
+                let zero = self.e.fb.ins().iconst(clif, 0);
+                self.write(place, Val::Scalar(zero));
+            }
+            Class::Memory => {
+                let address = self.pointer_to(place, write);
+                let size = self.e.cg.layout(ty).size;
+                let mut offset = 0;
+                for width in [types::I64, types::I32, types::I16, types::I8] {
+                    let zero = self.e.fb.ins().iconst(width, 0);
+                    while offset + width.bytes() <= size {
+                        self.e.fb.ins().store(flags(), zero, address, offset as i32);
+                        offset += width.bytes();
+                    }
+                }
             }
         }
     }

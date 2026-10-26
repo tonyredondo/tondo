@@ -198,6 +198,10 @@ struct Builder<'a> {
     path: Vec<u32>,
     blocks_of: HashMap<Vec<u32>, u32>,
     made_by: HashMap<Vec<u32>, u32>,
+    /// The temporary a `match` arm's bindings take their values from,
+    /// rather than copy them: the arm has no guard, so the match uses
+    /// nothing of it after them.
+    moving: Option<Local>,
 }
 
 fn lower_function(types: &Types, function: &hir::Function, waits: Option<&[bool]>, restart: Option<hir::FnId>) -> Body {
@@ -226,6 +230,7 @@ fn lower_function(types: &Types, function: &hir::Function, waits: Option<&[bool]
         path: Vec::new(),
         blocks_of: HashMap::new(),
         made_by: HashMap::new(),
+        moving: None,
     };
     // A live build's first block is where a frame from the old code comes
     // in, which `osr_entry` fills once the points are known.
@@ -391,6 +396,23 @@ impl Builder<'_> {
         Operand::local(local)
     }
 
+    /// Whether a local is a temporary the current frame owns.
+    fn owned(&self, local: Local) -> bool {
+        self.frames.last().unwrap().contains(&local)
+    }
+
+    /// Moves the value at `place`, inside a temporary of the frame, into a
+    /// new temporary of its own, and leaves zero where it was: what a
+    /// binding then takes without a retain, and the temporary's release no
+    /// longer releases.
+    fn move_out(&mut self, place: Place, span: Span) -> Operand {
+        let local = self.new_local(self.place_ty(&place));
+        self.assign(Place::local(local), Rvalue::Use(Operand::Copy(place.clone())), span);
+        self.own(local);
+        self.push(Statement::Moved(place));
+        Operand::local(local)
+    }
+
     /// Whether `value` is a whole temporary owned by the current frame, which
     /// can then be moved instead of retained. Removes it from the frame.
     fn take_temporary(&mut self, value: &Operand) -> bool {
@@ -539,7 +561,16 @@ impl Builder<'_> {
             hir::PatKind::Wildcard | hir::PatKind::Literal(_) => {}
             hir::PatKind::Binding(id) => {
                 let local = self.bind(*id);
-                self.store(Place::local(local), Operand::Copy(place.clone()), pattern.span);
+                let inside = |p: &Proj| matches!(p, Proj::Field(_) | Proj::Variant(..));
+                match self.moving == Some(place.local) && place.path.iter().all(inside) {
+                    true => {
+                        self.assign(Place::local(local), Rvalue::Use(Operand::Copy(place.clone())), pattern.span);
+                        if self.needs_drop(self.locals[local.0 as usize]) {
+                            self.push(Statement::Moved(place.clone()));
+                        }
+                    }
+                    false => self.store(Place::local(local), Operand::Copy(place.clone()), pattern.span),
+                }
                 if self.needs_drop(self.locals[local.0 as usize]) {
                     self.scopes.last_mut().unwrap().push(Exit::Release(local));
                 }
@@ -591,7 +622,9 @@ impl Builder<'_> {
             let scope_depth = self.scopes.len();
             self.scopes.push(Vec::new());
             self.test_pattern(&arm.pattern, &place, next);
+            self.moving = (held && arm.guard.is_none()).then_some(place.local);
             self.bind_pattern(&arm.pattern, &place);
+            self.moving = None;
             if let Some(guard) = &arm.guard {
                 let passed = self.in_frame(|b| b.expr(guard));
                 let (body, failed) = (self.new_block(), self.new_block());
@@ -1692,7 +1725,12 @@ impl Builder<'_> {
                     self.emit_fail(error, e.span);
                 }
                 self.switch_to(next);
-                Operand::Copy(place.variant_field(success, 0))
+                let payload = place.variant_field(success, 0);
+                // A temporary gives its payload up rather than lend it.
+                match place.path.is_empty() && self.owned(place.local) && self.needs_drop(self.place_ty(&payload)) {
+                    true => self.move_out(payload, e.span),
+                    false => Operand::Copy(payload),
+                }
             }
             hir::ExprKind::FnValue(id, _) => self.temp(e.ty, Rvalue::FnValue(*id), e.span),
             hir::ExprKind::ExternFn(id) => self.temp(e.ty, Rvalue::ExternFn(*id), e.span),

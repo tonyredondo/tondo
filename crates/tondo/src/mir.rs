@@ -205,6 +205,9 @@ pub enum Statement {
     /// Zeroes a binding whose value moved away, so that releasing it at
     /// the end of its scope releases nothing.
     Clear(Local),
+    /// Zeroes a component of a temporary whose value moved away, out of a
+    /// `match` or a `?`, so that releasing the temporary leaves it.
+    Moved(Place),
     /// Makes the local the address of the state a `std.sync` guard locks.
     LendAt(Local, Operand),
     /// Loads the state of a point from the hidden parameter (toolchain 7.10).
@@ -547,6 +550,7 @@ pub(crate) fn statement_locals(statement: &Statement, used: &mut Vec<Local>, def
             defined.push(*local);
         }
         Statement::Clear(local) => defined.push(*local),
+        Statement::Moved(place) => place_uses(place, used),
         Statement::LendAt(local, operand) => {
             operand_uses(operand, used);
             defined.push(*local);
