@@ -917,9 +917,9 @@ test logic {
         .iter()
         .map(|l| (l["line"].as_u64().unwrap(), l["count"].as_u64().unwrap()))
         .collect();
-    let run: Vec<u64> = lines.iter().filter(|(_, count)| *count > 0).map(|(line, _)| *line).collect();
-    let not_run: Vec<u64> = lines.iter().filter(|(_, count)| *count == 0).map(|(line, _)| *line).collect();
-    assert_eq!((run, not_run), (vec![10, 11, 12, 18, 19, 26], vec![13, 21, 30, 34]));
+    // Each line counts the times a statement written on it started: the
+    // `match` once a call, each arm once it ran.
+    assert_eq!(lines, [(10, 2), (11, 1), (12, 1), (13, 0), (18, 1), (19, 1), (21, 0), (26, 1), (30, 0), (34, 0)]);
     let functions: Vec<(&str, u64, u64)> = file["functions"]
         .as_array()
         .unwrap()
@@ -956,6 +956,21 @@ test logic {
     ] {
         assert!(lcov.contains(part), "missing {part:?} in {lcov}");
     }
+    // A loop's head counts each check, its body each turn.
+    let looping = project("coverage-loops", "test sums {\n    assert(total([1, 2, 3]) == 8)\n}\n");
+    let source = "pub fn total(values: Array[Int]): Int {\n    var sum = 0\n    for value in values {\n        sum = sum + value\n    }\n    var n = 0\n    for n < 2 {\n        n = n + 1\n    }\n    sum + n\n}\n\nfn main() {}\n";
+    std::fs::write(looping.join("src/main.to"), source).unwrap();
+    let report = looping.join("coverage.json");
+    let (_, stderr, status) = tondo(&looping, &["test", "--report", &format!("coverage={}", report.display())]);
+    assert_eq!(status, 0, "{stderr}");
+    let covered: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&report).unwrap()).unwrap();
+    let lines: Vec<(u64, u64)> = covered["files"][0]["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| (l["line"].as_u64().unwrap(), l["count"].as_u64().unwrap()))
+        .collect();
+    assert_eq!(lines, [(2, 1), (3, 4), (4, 3), (6, 1), (7, 3), (8, 2), (10, 1)]);
     // Without coverage the build counts nothing, and says nothing of it.
     let (stdout, _, _) = tondo(&dir, &["test"]);
     assert!(!stdout.contains("coverage"), "{stdout}");

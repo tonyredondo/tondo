@@ -107,9 +107,12 @@ pub struct Body {
     /// In a live build, each wait, by where it is, and whether the
     /// statement it waits in can start again when a reload ends the wait.
     pub pauses: Vec<(Span, bool)>,
-    /// Where the function starts, and each way its branches can go, which
-    /// coverage counts (testing 10.3).
+    /// Where the function starts, where each statement the program wrote
+    /// starts to run (the statement of a block, and where the statement
+    /// is), and each way its branches can go, which coverage counts
+    /// (testing 10.3).
     pub span: Span,
+    pub starts: Vec<(BlockId, usize, Span)>,
     pub ways: Vec<Way>,
 }
 

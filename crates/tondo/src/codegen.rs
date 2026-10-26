@@ -3777,6 +3777,7 @@ struct FnCodegen<'a, 'b> {
     /// and the ways of branches by the block and statement they start at.
     counters: Option<ir::GlobalValue>,
     counted: Option<(u32, usize)>,
+    starts: HashMap<(usize, usize), Vec<Span>>,
     ways: HashMap<(usize, usize), Vec<usize>>,
 }
 
@@ -3880,6 +3881,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             osr_params: None,
             counters: None,
             counted: None,
+            starts: HashMap::new(),
             ways: HashMap::new(),
         }
     }
@@ -3920,6 +3922,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
         }
         if self.e.cg.coverage().is_some() {
+            for &(block, at, span) in &self.body.starts {
+                self.starts.entry((block.0 as usize, at)).or_default().push(span);
+            }
             for (n, way) in self.body.ways.iter().enumerate() {
                 self.ways.entry((way.block.0 as usize, way.at)).or_default().push(n);
             }
@@ -4403,11 +4408,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     }
 
     /// With coverage, a run of the line a statement of the project's code
-    /// starts on, once for the lines one after another in a block.
+    /// starts on, once for statements one after another on a line.
     fn count_line(&mut self, span: Span) {
-        if self.e.cg.coverage().is_none() || span == Span::default() {
-            return;
-        }
         let file = self.e.cg.sources().file_of(span.start);
         let (line, _) = file.line_col(span.start);
         if !file.own || self.counted == Some((file.base, line)) {
@@ -4431,8 +4433,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         }
     }
 
-    /// With coverage, the ways of branches that start at this statement.
+    /// With coverage, the statements and the ways of branches that start
+    /// at this statement of the block.
     fn count_ways(&mut self, block: usize, at: usize) {
+        for span in self.starts.remove(&(block, at)).unwrap_or_default() {
+            self.count_line(span);
+        }
         let Some(ways) = self.ways.remove(&(block, at)) else { return };
         for n in ways {
             let way = &self.body.ways[n];
@@ -4688,7 +4694,6 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     _ => place,
                 };
                 self.at_typed(*span, Some(self.body.place_ty(self.e.cg.types(), made)));
-                self.count_line(*span);
                 self.probe(*span);
                 self.assign(place, rvalue, *span);
                 if place.path.is_empty() {

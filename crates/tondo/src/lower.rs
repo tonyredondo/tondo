@@ -147,7 +147,9 @@ struct Builder<'a> {
     /// again after a wait the runtime ends for a reload (toolchain 7.10).
     again: Option<Again>,
     pauses: Vec<(Span, bool)>,
-    /// The ways each branch can go, for coverage.
+    /// Where each statement starts, and the ways each branch can go, for
+    /// coverage.
+    starts: Vec<(BlockId, usize, Span)>,
     ways: Vec<Way>,
     path: Vec<u32>,
     blocks_of: HashMap<Vec<u32>, u32>,
@@ -175,6 +177,7 @@ fn lower_function(types: &Types, function: &hir::Function, waits: Option<&[bool]
         origins: Vec::new(),
         again: None,
         pauses: Vec::new(),
+        starts: Vec::new(),
         ways: Vec::new(),
         path: Vec::new(),
         blocks_of: HashMap::new(),
@@ -233,6 +236,7 @@ fn lower_function(types: &Types, function: &hir::Function, waits: Option<&[bool]
         origins: b.origins,
         pauses: b.pauses,
         span: function.span,
+        starts: b.starts,
         ways: b.ways,
     }
 }
@@ -277,6 +281,14 @@ impl Builder<'_> {
 
     fn switch_to(&mut self, block: BlockId) {
         self.current = block;
+    }
+
+    /// A statement the program wrote starts to run here.
+    fn start(&mut self, span: Span) {
+        if span != Span::default() {
+            let at = self.blocks[self.current.0 as usize].0.len();
+            self.starts.push((self.current, at, span));
+        }
     }
 
     /// A way of a branch, which starts here, or at the start of `block`.
@@ -546,6 +558,7 @@ impl Builder<'_> {
                 self.switch_to(body);
             }
             self.way(None, e.span, arm.pattern.span, "arm");
+            self.start(arm.body.span);
             self.in_frame(|b| {
                 let value = b.expr(&arm.body);
                 if let Some(result) = result.filter(|_| arm.body.ty != Ty::NEVER) {
@@ -1018,6 +1031,7 @@ impl Builder<'_> {
             Some(tail) => {
                 let outer = self.again.take();
                 self.restart_point(tail.span, "tail");
+                self.start(tail.span);
                 let value = self.expr(tail);
                 self.leave_statement(outer);
                 value
@@ -1055,6 +1069,10 @@ impl Builder<'_> {
 
     fn stmt(&mut self, stmt: &hir::Stmt) {
         self.restart_point(stmt_span(stmt), stmt_kind(stmt));
+        // A loop starts again at its head, each time it checks.
+        if !matches!(stmt, hir::Stmt::Loop { .. } | hir::Stmt::ForEach { .. } | hir::Stmt::ForRange { .. }) {
+            self.start(stmt_span(stmt));
+        }
         match stmt {
             hir::Stmt::Let(id, value) => {
                 let value = self.expr(value);
@@ -1181,6 +1199,7 @@ impl Builder<'_> {
                 let exit = self.new_block();
                 self.goto(head);
                 self.switch_to(head);
+                self.start(stmt_span(stmt));
                 match condition {
                     Some(condition) => {
                         let value = self.in_frame(|b| b.expr(condition));
@@ -1214,6 +1233,7 @@ impl Builder<'_> {
                     (self.new_block(), self.new_block(), self.new_block(), self.new_block());
                 self.goto(head);
                 self.switch_to(head);
+                self.start(stmt_span(stmt));
                 let more = Rvalue::Binary(BinOp::Lt, Operand::local(cursor), length);
                 let more = self.temp(Ty::BOOL, more, array.span);
                 self.terminate(Terminator::Branch(more, body_block, exit));
@@ -1264,6 +1284,7 @@ impl Builder<'_> {
                     (self.new_block(), self.new_block(), self.new_block(), self.new_block());
                 self.goto(head);
                 self.switch_to(head);
+                self.start(stmt_span(stmt));
                 let compare = if *inclusive { BinOp::Le } else { BinOp::Lt };
                 let more = self.temp(
                     Ty::BOOL,

@@ -2269,9 +2269,10 @@ Con `--coverage` o un reporte de cobertura, el build de tests cuenta lo que
 se ejecuta del código propio del proyecto: sus fuentes, no sus tests, sus
 dependencias ni la stdlib. Cuenta tres cosas:
 
-- Las líneas: cada vez que empieza a ejecutarse un tramo de sentencias en una
-  línea. Una línea que inicia varios tramos, como la de un `match`, puede
-  contar más veces que las que se llegó a ella.
+- Las líneas: cada vez que empieza a ejecutarse una sentencia escrita en ella,
+  el valor final de un bloque o el cuerpo de un brazo de `match`; la cabecera
+  de un bucle, cada vez que se comprueba. Las demás líneas de una sentencia
+  que ocupa varias no cuentan aparte.
 - Las funciones: cada llamada. Las que no son genéricas se compilan aunque
   nada las llame, así que cuentan cero; una genérica que ningún test
   instancia no aparece.

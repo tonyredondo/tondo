@@ -2194,14 +2194,17 @@ workers as Ctrl-C does instead of leaving them to finish alone.
 
 `tondo test --coverage` counts what the tests run of the project's own
 code, not its tests, dependencies or the standard library. The compiler
-adds a counter where a run of statements on a line starts, at the start of
-each function, and where each way of an `if`, a `match` or `and` and `or`
+adds a counter where each statement the program wrote starts, at a loop's
+head, at the start of each function, and where each way of an `if`, a `match` or `and` and `or`
 starts, in blocks that lowering already makes for each way; a test build
 with coverage is a build of its own. Each worker writes its counters when
 it ends and `tondo test` adds them up, so the workers stay as they are. The
 counts are not atomic: two tasks may lose an increment between them, which
 can make a count low but never zero when the code ran, and an atomic add on
-every line would slow the tests more than coverage is worth.
+every line would slow the tests more than coverage is worth. Counting
+where the generated blocks of a line start, as first done, made the line of
+a `match` count once more for each arm that ran; counting the statements as
+written makes a line's count the times it ran.
 
 A function nothing calls is code that did not run, so a test build now has
 every function of the project that is not generic, called or not. The
