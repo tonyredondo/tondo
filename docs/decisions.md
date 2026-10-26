@@ -2190,3 +2190,22 @@ one run.
 A run that an editor cancels is ended with `SIGTERM`, which now stops the
 workers as Ctrl-C does instead of leaving them to finish alone.
 
+## 2026-10-26 — Coverage
+
+`tondo test --coverage` counts what the tests run of the project's own
+code, not its tests, dependencies or the standard library. The compiler
+adds a counter where a run of statements on a line starts, at the start of
+each function, and where each way of an `if`, a `match` or `and` and `or`
+starts, in blocks that lowering already makes for each way; a test build
+with coverage is a build of its own. Each worker writes its counters when
+it ends and `tondo test` adds them up, so the workers stay as they are. The
+counts are not atomic: two tasks may lose an increment between them, which
+can make a count low but never zero when the code ran, and an atomic add on
+every line would slow the tests more than coverage is worth.
+
+A function nothing calls is code that did not run, so a test build now has
+every function of the project that is not generic, called or not. The
+report is JSON for tools and LCOV for the many that read it; the counters'
+layout leaves room for profiling and profile-guided optimization, which
+need the same counts of blocks.
+

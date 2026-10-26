@@ -191,7 +191,9 @@ fn runs_tests_and_debugs() {
     assert_eq!(ran["stdout"], "read 42\n", "{ran}");
     assert_eq!(ran["exit_code"], 0);
 
-    let (tested, text) = agent.call("test", json!({}));
+    let (tested, text) = agent.call("test", json!({ "coverage": true }));
+    assert_eq!(tested["coverage"]["format"], "tondo-coverage-0.1/1", "{tested}");
+    assert!(text.contains("coverage:\n  src/main.to"), "{text}");
     assert_eq!(tested["report"]["summary"]["passed"], 1);
     assert_eq!(tested["report"]["summary"]["failed"], 1);
     assert!(text.contains("assertion-failed: wrong"), "{text}");

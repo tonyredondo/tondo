@@ -21,6 +21,8 @@ pub(super) struct Stores<'a> {
     pub snapshots: &'a Snapshots,
     pub entries: &'a Path,
     pub update: bool,
+    /// With coverage, where each worker writes its counts.
+    pub counts: Option<&'a Path>,
 }
 
 /// What every worker of a run shares: the executable, the project it runs
@@ -158,6 +160,9 @@ fn worker(
         .stderr(Stdio::piped());
     if stores.update {
         command.env("TONDO_TEST_UPDATE", "1");
+    }
+    if let Some(counts) = stores.counts {
+        command.env("TONDO_TEST_COVERAGE", counts);
     }
     if let Some(seed) = run.options.schedule(context.iteration) {
         command.env("TONDO_RT_SCHEDULE", format!("{seed:x}"));

@@ -147,6 +147,8 @@ struct Builder<'a> {
     /// again after a wait the runtime ends for a reload (toolchain 7.10).
     again: Option<Again>,
     pauses: Vec<(Span, bool)>,
+    /// The ways each branch can go, for coverage.
+    ways: Vec<Way>,
     path: Vec<u32>,
     blocks_of: HashMap<Vec<u32>, u32>,
     made_by: HashMap<Vec<u32>, u32>,
@@ -173,6 +175,7 @@ fn lower_function(types: &Types, function: &hir::Function, waits: Option<&[bool]
         origins: Vec::new(),
         again: None,
         pauses: Vec::new(),
+        ways: Vec::new(),
         path: Vec::new(),
         blocks_of: HashMap::new(),
         made_by: HashMap::new(),
@@ -229,6 +232,8 @@ fn lower_function(types: &Types, function: &hir::Function, waits: Option<&[bool]
         points,
         origins: b.origins,
         pauses: b.pauses,
+        span: function.span,
+        ways: b.ways,
     }
 }
 
@@ -272,6 +277,15 @@ impl Builder<'_> {
 
     fn switch_to(&mut self, block: BlockId) {
         self.current = block;
+    }
+
+    /// A way of a branch, which starts here, or at the start of `block`.
+    fn way(&mut self, block: Option<BlockId>, branch: Span, span: Span, label: &'static str) {
+        let (block, at) = match block {
+            Some(block) => (block, 0),
+            None => (self.current, self.blocks[self.current.0 as usize].0.len()),
+        };
+        self.ways.push(Way { block, at, branch, span, label });
     }
 
     fn push(&mut self, stmt: Statement) {
@@ -531,6 +545,7 @@ impl Builder<'_> {
                 self.goto(next);
                 self.switch_to(body);
             }
+            self.way(None, e.span, arm.pattern.span, "arm");
             self.in_frame(|b| {
                 let value = b.expr(&arm.body);
                 if let Some(result) = result.filter(|_| arm.body.ty != Ty::NEVER) {
@@ -1670,9 +1685,12 @@ impl Builder<'_> {
                 self.temp(e.ty, Rvalue::Unary(*op, operand), e.span)
             }
             hir::ExprKind::Binary(op @ (BinOp::And | BinOp::Or), left, right) => {
+                let sides = (left.span, right.span);
                 let result = self.new_local(Ty::BOOL);
                 let left = self.expr(left);
                 let (rhs, short, join) = (self.new_block(), self.new_block(), self.new_block());
+                self.way(Some(rhs), e.span, sides.1, "evaluated");
+                self.way(Some(short), e.span, sides.0, "short-circuited");
                 let branch = if *op == BinOp::And {
                     Terminator::Branch(left, rhs, short)
                 } else {
@@ -1887,6 +1905,9 @@ impl Builder<'_> {
         let has_value = e.ty != Ty::UNIT && e.ty != Ty::NEVER;
         let result = has_value.then(|| self.new_local(e.ty));
         let (then_block, else_block, join) = (self.new_block(), self.new_block(), self.new_block());
+        let first = then.tail.as_ref().map(|tail| tail.span).filter(|_| then.stmts.is_empty());
+        self.way(Some(then_block), e.span, first.unwrap_or(e.span), "then");
+        self.way(Some(else_block), e.span, otherwise.map_or(e.span, |o| o.span), "else");
         self.terminate(Terminator::Branch(condition, then_block, else_block));
 
         self.switch_to(then_block);

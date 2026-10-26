@@ -149,8 +149,10 @@ fn lists_without_building() {
     .unwrap();
     let (stdout, stderr, status) = tondo(&dir, &["test", "--list"]);
     assert_eq!((stdout.as_str(), status), ("app::unit::app::works\n", 0), "{stderr}");
+    // Running them fails: on Linux at the link, and on macOS, whose
+    // libraries are not files to look for, when the tests start.
     let (_, _, status) = tondo(&dir, &["test"]);
-    assert_eq!(status, 3);
+    assert_ne!(status, 0);
 }
 
 /// A panic in a task a test started still runs the test's cleanups and its
@@ -833,4 +835,128 @@ fn watches_and_runs_what_a_change_affects() {
     assert_eq!(next_run(), all);
     unsafe { libc::kill(child.id() as i32, libc::SIGINT) };
     assert_eq!(child.wait().unwrap().code(), Some(4));
+}
+
+const COVERED: &str = "import std.console
+
+pub enum Shape {
+    Circle(Float)
+    Square(Float)
+    Point
+}
+
+pub fn area(shape: Shape): Float {
+    match shape {
+        Shape.Circle(r) => 3.0 * r * r
+        Shape.Square(s) => s * s
+        Shape.Point => 0.0
+    }
+}
+
+pub fn sign(n: Int): Int {
+    if n > 0 {
+        return 1
+    } else {
+        return -1
+    }
+}
+
+pub fn both(a: Bool, b: Bool): Bool {
+    a and b
+}
+
+pub fn unused(): Int {
+    42
+}
+
+fn main() {
+    console.println(\"{area(Shape.Point)}\")
+}
+";
+
+/// Coverage: the lines, functions and ways of branches of the project's
+/// code that the tests ran, as JSON, LCOV and a summary; what no test
+/// calls counts as not run, and the tests themselves do not count.
+#[test]
+fn measures_coverage() {
+    let tests = "\
+test areas {
+    assert(area(Shape.Circle(1.0)) == 3.0)
+    assert(area(Shape.Square(2.0)) == 4.0)
+}
+
+test signs {
+    assert(sign(5) == 1)
+}
+
+test logic {
+    assert(both(false, true) == false)
+}
+";
+    let dir = project("coverage", tests);
+    std::fs::write(dir.join("src/main.to"), COVERED).unwrap();
+    let (json, lcov) = (dir.join("coverage.json"), dir.join("lcov.info"));
+    let reports = [format!("coverage={}", json.display()), format!("lcov={}", lcov.display())];
+    let (stdout, stderr, status) =
+        tondo(&dir, &["test", "--coverage", "--jobs", "2", "--report", &reports[0], "--report", &reports[1]]);
+    assert_eq!(status, 0, "{stderr}");
+    assert!(
+        stdout.ends_with(
+            "\ncoverage:\n  src/main.to  lines 60.0% (6/10)      functions 60.0% (3/5)     branches 57.1% (4/7)\n  total        lines 60.0% (6/10)      functions 60.0% (3/5)     branches 57.1% (4/7)\n"
+        ),
+        "{stdout}"
+    );
+    let covered: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&json).unwrap()).unwrap();
+    assert_eq!(covered["format"], "tondo-coverage-0.1/1");
+    assert_eq!(covered["files"].as_array().unwrap().len(), 1, "only the project's code counts: {covered}");
+    let file = &covered["files"][0];
+    assert_eq!(file["file"], "src/main.to");
+    let lines: Vec<(u64, u64)> = file["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| (l["line"].as_u64().unwrap(), l["count"].as_u64().unwrap()))
+        .collect();
+    let run: Vec<u64> = lines.iter().filter(|(_, count)| *count > 0).map(|(line, _)| *line).collect();
+    let not_run: Vec<u64> = lines.iter().filter(|(_, count)| *count == 0).map(|(line, _)| *line).collect();
+    assert_eq!((run, not_run), (vec![10, 11, 12, 18, 19, 26], vec![13, 21, 30, 34]));
+    let functions: Vec<(&str, u64, u64)> = file["functions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| (f["name"].as_str().unwrap(), f["line"].as_u64().unwrap(), f["count"].as_u64().unwrap()))
+        .collect();
+    assert_eq!(functions, [("area", 9, 2), ("sign", 17, 1), ("both", 25, 1), ("unused", 29, 0), ("main", 33, 0)]);
+    let ways: Vec<(u64, &str, u64)> = file["branches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| (b["branch"]["line"].as_u64().unwrap(), b["label"].as_str().unwrap(), b["count"].as_u64().unwrap()))
+        .collect();
+    assert_eq!(
+        ways,
+        [
+            (10, "Shape.Circle(r)", 1),
+            (10, "Shape.Square(s)", 1),
+            (10, "Shape.Point", 0),
+            (18, "then", 1),
+            (18, "else", 0),
+            (26, "short-circuited", 1),
+            (26, "evaluated", 0),
+        ]
+    );
+    assert_eq!(covered["summary"]["branches"], serde_json::json!({ "found": 7, "hit": 4 }));
+    let lcov = std::fs::read_to_string(&lcov).unwrap();
+    for part in [
+        "TN:\nSF:src/main.to\nFN:9,area\n",
+        "FNDA:0,unused\n",
+        "BRDA:10,0,2,0\n",
+        "DA:13,0\n",
+        "LF:10\nLH:6\nend_of_record\n",
+    ] {
+        assert!(lcov.contains(part), "missing {part:?} in {lcov}");
+    }
+    // Without coverage the build counts nothing, and says nothing of it.
+    let (stdout, _, _) = tondo(&dir, &["test"]);
+    assert!(!stdout.contains("coverage"), "{stdout}");
 }

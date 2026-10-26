@@ -29,6 +29,9 @@ pub struct SourceFile {
     pub module: String,
     pub text: String,
     pub base: u32,
+    /// The project's own code, which coverage counts (testing 10.3): not
+    /// its tests, dependencies or the standard library.
+    pub own: bool,
     line_starts: Vec<u32>,
 }
 
@@ -73,7 +76,8 @@ impl SourceMap {
         let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into());
         let module = path.file_stem().map_or_else(String::new, |s| s.to_string_lossy().into());
         let logical = name.clone();
-        self.files.push(SourceFile { name, path: path.to_owned(), logical, module, text, base, line_starts });
+        let own = false;
+        self.files.push(SourceFile { name, path: path.to_owned(), logical, module, text, base, own, line_starts });
         self.files.len() - 1
     }
 
@@ -81,6 +85,11 @@ impl SourceMap {
     pub fn set_identity(&mut self, index: usize, logical: String, module: String) {
         self.files[index].logical = logical;
         self.files[index].module = module;
+    }
+
+    /// Marks a file as the project's own code.
+    pub fn set_own(&mut self, index: usize) {
+        self.files[index].own = true;
     }
 
     pub fn len(&self) -> usize {

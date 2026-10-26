@@ -147,6 +147,35 @@ pub unsafe extern "C" fn tondo_rt_test_start(table: *const Node, count: usize) {
     }
 }
 
+/// A test build's counters, with coverage (testing 10.3).
+static COUNTERS: std::sync::atomic::AtomicPtr<u64> = std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+static COUNTED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Called before the tests run in a build with coverage: under `tondo
+/// test`, which names a directory in `TONDO_TEST_COVERAGE`, the worker
+/// writes its counters there as it ends, as a file of its own of words in
+/// little-endian order.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_coverage_start(counters: *mut u64, count: usize) {
+    if std::env::var_os("TONDO_TEST_COVERAGE").is_none() {
+        return;
+    }
+    COUNTERS.store(counters, Ordering::SeqCst);
+    COUNTED.store(count, Ordering::SeqCst);
+    extern "C" fn written(_: *mut u8) {
+        let (counters, count) = (COUNTERS.load(Ordering::SeqCst), COUNTED.load(Ordering::SeqCst));
+        let Some(dir) = std::env::var_os("TONDO_TEST_COVERAGE") else { return };
+        let counts = unsafe { std::slice::from_raw_parts(counters, count) };
+        let bytes: Vec<u8> = counts.iter().flat_map(|count| count.to_le_bytes()).collect();
+        let _ = std::fs::write(std::path::Path::new(&dir).join(std::process::id().to_string()), bytes);
+    }
+    // `atexit` is not a symbol of glibc's shared library.
+    unsafe extern "C" {
+        fn __cxa_atexit(function: extern "C" fn(*mut u8), argument: *mut u8, object: *mut u8) -> i32;
+    }
+    unsafe { __cxa_atexit(written, std::ptr::null_mut(), std::ptr::null_mut()) };
+}
+
 /// Under `tondo test`, `SIGTERM` is its request to stop (testing 7.10):
 /// every task is cancelled, the one that runs a test too, so their
 /// `defer`s run, and the worker ends without starting another test.

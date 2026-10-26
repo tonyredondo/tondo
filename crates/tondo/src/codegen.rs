@@ -121,6 +121,7 @@ enum Rt {
     GcEdge,
     ReportError,
     TestStart,
+    CoverageStart,
     TestMembers,
     TestError,
     TestLog,
@@ -349,6 +350,7 @@ impl Rt {
             Rt::BoxUnique => ("tondo_rt_box_unique", &[I64, I64, I64], &[]),
             Rt::ReportError => ("tondo_rt_report_error", &[I64], &[]),
             Rt::TestStart => ("tondo_rt_test_start", &[I64, I64], &[]),
+            Rt::CoverageStart => ("tondo_rt_coverage_start", &[I64, I64], &[]),
             Rt::TestMembers => ("tondo_rt_test_members", &[I64, I64], &[]),
             Rt::TestError => ("tondo_rt_test_error", &[I64, I64], &[]),
             Rt::TestLog => ("tondo_rt_test_log", &[I64], &[]),
@@ -677,17 +679,21 @@ fn flags() -> MemFlagsData {
     MemFlagsData::trusted()
 }
 
-/// Compiles the program to an object file; `meta` counts a step at each
-/// call and each turn of a loop, for a provider or generator (27.7).
-pub fn compile(
-    program: &Program,
-    bodies: &[Body],
-    sources: &SourceMap,
-    meta: bool,
-    debug: bool,
-    target: Option<&str>,
-    mut live: Option<&mut crate::live::Build>,
-) -> Result<Vec<u8>, String> {
+/// How an object is built: `meta` counts a step at each call and each turn
+/// of a loop, for a provider or generator (27.7); a debug build for a
+/// debugger; for another machine; live; or counting what runs, with what
+/// each counter counts.
+pub struct Options<'o> {
+    pub meta: bool,
+    pub debug: bool,
+    pub target: Option<&'o str>,
+    pub live: Option<&'o mut crate::live::Build>,
+    pub coverage: Option<&'o mut Vec<Counted>>,
+}
+
+/// Compiles the program to an object file.
+pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options: Options) -> Result<Vec<u8>, String> {
+    let Options { meta, debug, target, mut live, coverage } = options;
     let mut flags = settings::builder();
     // A debug build keeps the code as written, statement after statement.
     flags.set("opt_level", if debug { "none" } else { "speed" }).map_err(|e| e.to_string())?;
@@ -732,7 +738,13 @@ pub fn compile(
         takes_osr: bodies.iter().map(|body| body.osr.is_some()).collect(),
         forwarders: HashMap::new(),
         pending_forwarders: Vec::new(),
+        coverage: None,
     };
+    if coverage.is_some() {
+        let counters =
+            cg.module.declare_data("tondo_coverage", Linkage::Local, true, false).map_err(|e| e.to_string())?;
+        cg.coverage = Some((counters, Vec::new()));
+    }
 
     if debug {
         let table = cg.module.declare_data("tondo_debug", Linkage::Local, false, false).map_err(|e| e.to_string())?;
@@ -870,6 +882,12 @@ pub fn compile(
     }
     cg.compile_all(jobs)?;
 
+    if let (Some(out), Some((counters, counted))) = (coverage, cg.coverage.take()) {
+        let mut data = cranelift_module::DataDescription::new();
+        data.define_zeroinit(counted.len().max(1) * 8);
+        cg.module.define_data(counters, &data).map_err(|e| e.to_string())?;
+        *out = counted;
+    }
     cg.trace_table(trace);
     if let Some(debug) = cg.debug {
         cg.debug_table(debug);
@@ -932,6 +950,20 @@ struct Codegen<'a> {
     /// In a live build, what closures call their bodies through.
     forwarders: HashMap<FnId, FuncId>,
     pending_forwarders: Vec<(FnId, FuncId)>,
+    /// A test build that counts what runs (testing 10.3): its counters,
+    /// and what each counts.
+    coverage: Option<(DataId, Vec<Counted>)>,
+}
+
+/// What a counter of a test build with coverage counts (testing 10.3):
+/// the runs of a line of the project's code, the calls of a function, or
+/// the times a branch went one way, with where its branch is and what the
+/// way is called.
+#[derive(Clone, Debug)]
+pub enum Counted {
+    Line { file: String, line: usize },
+    Function { file: String, line: usize, name: String },
+    Way { file: String, line: usize, column: usize, branch: (usize, usize), label: String },
 }
 
 /// A live build's slots (toolchain 7.10): the table every call of the
@@ -1493,6 +1525,13 @@ trait Gen<'t> {
     /// The number a patch's debugger sites start from.
     fn site_base(&self) -> u32;
     fn debug(&self) -> bool;
+    /// In a test build with coverage, its counters.
+    fn coverage(&self) -> Option<DataId>;
+    /// A counter of what `counted` says: its number.
+    fn counter(&mut self, counted: Counted) -> usize;
+    /// Where the counter `index` is among the counters, as an
+    /// instruction's constant.
+    fn counter_offset(&mut self, fb: &mut FunctionBuilder, index: usize) -> ir::Value;
 
     fn string(&mut self, text: &str) -> DataId;
     fn identity(&mut self, ty: Ty) -> DataId;
@@ -1610,6 +1649,17 @@ impl<'t> Gen<'t> for Codegen<'t> {
     }
     fn debug(&self) -> bool {
         self.debug.is_some()
+    }
+    fn coverage(&self) -> Option<DataId> {
+        self.coverage.as_ref().map(|(counters, _)| *counters)
+    }
+    fn counter(&mut self, counted: Counted) -> usize {
+        let (_, all) = self.coverage.as_mut().expect("a build with coverage");
+        all.push(counted);
+        all.len() - 1
+    }
+    fn counter_offset(&mut self, fb: &mut FunctionBuilder, index: usize) -> ir::Value {
+        fb.ins().iconst(types::I64, index as i64 * 8)
     }
     fn string(&mut self, text: &str) -> DataId {
         Codegen::string(self, text)
@@ -2504,6 +2554,14 @@ impl Codegen<'_> {
                 let address = e.fb.ins().symbol_value(POINTER, table);
                 let count = e.fb.ins().iconst(types::I64, tests.len() as i64);
                 e.call_rt(Rt::TestStart, &[address, count]);
+            }
+            // With coverage, the counters, which the runtime writes out.
+            if let Some((counters, counted)) = &e.cg.coverage {
+                let (counters, count) = (*counters, counted.len() as i64);
+                let counters = e.cg.module.declare_data_in_func(counters, e.fb.func);
+                let address = e.fb.ins().symbol_value(POINTER, counters);
+                let count = e.fb.ins().iconst(types::I64, count);
+                e.call_rt(Rt::CoverageStart, &[address, count]);
             }
             let main = FnId(main as u32);
             let value = match e.cg.class(result) {
@@ -3715,6 +3773,11 @@ struct FnCodegen<'a, 'b> {
     /// the call to the new code takes them from.
     params_slot: Option<ir::StackSlot>,
     osr_params: Option<ir::Value>,
+    /// With coverage: the counters, the line counted last in the block,
+    /// and the ways of branches by the block and statement they start at.
+    counters: Option<ir::GlobalValue>,
+    counted: Option<(u32, usize)>,
+    ways: HashMap<(usize, usize), Vec<usize>>,
 }
 
 /// What a function of a debug build keeps for its probes (toolchain 7.6):
@@ -3815,6 +3878,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             state_slot: None,
             params_slot: None,
             osr_params: None,
+            counters: None,
+            counted: None,
+            ways: HashMap::new(),
         }
     }
 
@@ -3853,11 +3919,20 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.mark(param, true);
             }
         }
+        if self.e.cg.coverage().is_some() {
+            for (n, way) in self.body.ways.iter().enumerate() {
+                self.ways.entry((way.block.0 as usize, way.at)).or_default().push(n);
+            }
+        }
         for (index, block) in self.body.blocks.iter().enumerate() {
             if index > 0 {
                 self.e.fb.switch_to_block(self.blocks[index]);
             } else if self.e.cg.meta() {
                 self.e.call_rt(Rt::MetaStep, &[]);
+            }
+            self.counted = None;
+            if index == 0 {
+                self.count_call();
             }
             if let Some(debug) = &mut self.debug {
                 debug.line = self.carried.remove(&index);
@@ -3866,9 +3941,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.carrying =
                     debug.line.is_some() && !self.body.points.iter().any(|p| p.continues.0 as usize == index);
             }
-            for stmt in &block.stmts {
+            for (at, stmt) in block.stmts.iter().enumerate() {
+                self.count_ways(index, at);
                 self.statement(stmt);
             }
+            self.count_ways(index, block.stmts.len());
             // A jump back to an earlier block closes a loop: a step.
             let back = match &block.terminator {
                 Terminator::Goto(target) => target.0 as usize <= index,
@@ -4309,6 +4386,71 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.fb.ins().stack_store(POINTER, word, alive, offset);
     }
 
+    /// With coverage, one more run of what a counter counts.
+    fn count(&mut self, counted: Counted) {
+        let Some(counters) = self.e.cg.coverage() else { return };
+        let index = self.e.cg.counter(counted);
+        let counters = match self.counters {
+            Some(counters) => counters,
+            None => *self.counters.insert(self.e.cg.declare_data_in_func(counters, self.e.fb.func)),
+        };
+        let base = self.e.fb.ins().symbol_value(POINTER, counters);
+        let offset = self.e.cg.counter_offset(&mut self.e.fb, index);
+        let address = self.e.fb.ins().iadd(base, offset);
+        let count = self.e.fb.ins().load(types::I64, flags(), address, 0);
+        let count = self.e.fb.ins().iadd_imm_s(count, 1);
+        self.e.fb.ins().store(flags(), count, address, 0);
+    }
+
+    /// With coverage, a run of the line a statement of the project's code
+    /// starts on, once for the lines one after another in a block.
+    fn count_line(&mut self, span: Span) {
+        if self.e.cg.coverage().is_none() || span == Span::default() {
+            return;
+        }
+        let file = self.e.cg.sources().file_of(span.start);
+        let (line, _) = file.line_col(span.start);
+        if !file.own || self.counted == Some((file.base, line)) {
+            return;
+        }
+        self.counted = Some((file.base, line));
+        self.count(Counted::Line { file: file.logical.clone(), line });
+    }
+
+    /// With coverage, a call of a function of the project's code.
+    fn count_call(&mut self) {
+        let span = self.body.span;
+        if self.e.cg.coverage().is_none() || span == Span::default() {
+            return;
+        }
+        let file = self.e.cg.sources().file_of(span.start);
+        if file.own {
+            let (line, _) = file.line_col(span.start);
+            let name = self.body.name.clone();
+            self.count(Counted::Function { file: file.logical.clone(), line, name });
+        }
+    }
+
+    /// With coverage, the ways of branches that start at this statement.
+    fn count_ways(&mut self, block: usize, at: usize) {
+        let Some(ways) = self.ways.remove(&(block, at)) else { return };
+        for n in ways {
+            let way = &self.body.ways[n];
+            let file = self.e.cg.sources().file_of(way.span.start);
+            if !file.own || way.span == Span::default() {
+                continue;
+            }
+            let (line, column) = file.line_col(way.span.start);
+            let branch = file.line_col(way.branch.start);
+            let label = match way.label {
+                // An arm is called by its pattern.
+                "arm" => file.slice(way.span).lines().next().unwrap_or_default().to_string(),
+                label => label.to_string(),
+            };
+            self.count(Counted::Way { file: file.logical.clone(), line, column, branch, label });
+        }
+    }
+
     /// In a debug build, a probe where a line starts: the debugger stops
     /// there when it is asked to, and reads the bindings.
     fn probe(&mut self, span: Span) {
@@ -4546,6 +4688,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     _ => place,
                 };
                 self.at_typed(*span, Some(self.body.place_ty(self.e.cg.types(), made)));
+                self.count_line(*span);
                 self.probe(*span);
                 self.assign(place, rvalue, *span);
                 if place.path.is_empty() {

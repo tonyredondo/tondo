@@ -202,6 +202,23 @@ export function testEvent(line: string): TestEvent | undefined {
   }
 }
 
+/** What `--report coverage=<path>` writes of a file (testing 15.10): how
+ *  many times each line, function and way of a branch ran. */
+export interface Covered {
+  file: string;
+  lines: { line: number; count: number }[];
+  functions: { name: string; line: number; count: number }[];
+  branches: { branch: { line: number; column: number }; line: number; column: number; label: string; count: number }[];
+}
+
+export function covered(json: string): Covered[] {
+  const coverage = JSON.parse(json) as { format?: string; files?: Covered[] };
+  if (coverage.format !== 'tondo-coverage-0.1/1') {
+    throw new Error('not a report of coverage');
+  }
+  return coverage.files ?? [];
+}
+
 /** Where a path is, by `tondo graph --json`: its project, if it is in one,
  *  and the module it belongs to. */
 export interface Place {
@@ -225,7 +242,7 @@ export function programOf(where: Place, file: string): { program: string; cwd: s
 
 /** What the extension needs of `tondo`, as `tondo version --json` lists
  *  its features. */
-export const NEEDED = ['json', 'graph', 'test-events', 'test-exact-many', 'test-watch', 'lsp-tests'];
+export const NEEDED = ['json', 'graph', 'test-events', 'test-exact-many', 'test-watch', 'test-coverage', 'lsp-tests'];
 
 /** Why a `tondo` cannot serve this extension, from what `tondo version
  *  --json` printed, or `undefined` when it can. */

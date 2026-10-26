@@ -580,6 +580,7 @@ impl Generate<'_> {
             body: empty,
             moves: Default::default(),
             test: false,
+            span: Default::default(),
         });
         self.memo.insert((old, new), id);
         let mut body = Body { locals: Vec::new(), stmts: Vec::new() };

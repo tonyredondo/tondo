@@ -45,6 +45,10 @@ suite slow {
   `withVirtualTime` for code that sleeps.
 - `tondo test --watch` runs the tests again as files change: those the
   change can affect, through the imports.
+- `tondo test --coverage` says how much of the project's code the tests
+  ran: lines, functions, and the ways of `if`, `match`, `and` and `or`;
+  `--report coverage=<path>` writes it as JSON and `--report lcov=<path>`
+  as LCOV.
 - `tondo test --filter text`, `--exact id` (again for more), `--list`, `--jobs n`,
   `--timeout s`, `--retry n`, `--order random --seed hex`,
   `--report junit=out.xml`; `--json` gives the report as data, and

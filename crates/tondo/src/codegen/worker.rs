@@ -30,6 +30,7 @@ enum Asked {
     DebugSite(u32, u32),
     PointSite(u32, u32),
     PointLayout(u32, StateLayout),
+    Counter(Counted),
 }
 
 /// What every worker reads of the program and of what is declared already.
@@ -51,6 +52,7 @@ pub(super) struct Shared<'s, 't> {
     /// number a patch's sites start from.
     live: Option<(DataId, &'s [u32], u32)>,
     debug: bool,
+    coverage: Option<DataId>,
 }
 
 impl<'s, 't> Shared<'s, 't> {
@@ -76,6 +78,7 @@ impl<'s, 't> Shared<'s, 't> {
             data,
             live: cg.live.as_ref().map(|live| (live.slots, &live.slot_of[..], Gen::site_base(cg))),
             debug: cg.debug.is_some(),
+            coverage: Gen::coverage(cg),
         }
     }
 }
@@ -90,6 +93,9 @@ pub(super) struct Built {
     func_refs: Vec<(ir::FuncRef, usize)>,
     data_refs: Vec<(ir::GlobalValue, usize)>,
     site_constants: Vec<(ir::Inst, usize)>,
+    /// The instructions that hold where a counter is, by its number among
+    /// the function's.
+    counter_offsets: Vec<(ir::Inst, usize)>,
     /// A call of C, whose import depends on the calls before it: the
     /// function is built again in its turn.
     pub(super) serial: bool,
@@ -103,8 +109,10 @@ struct Worker<'w, 's, 't> {
     func_refs: Vec<(ir::FuncRef, usize)>,
     data_refs: Vec<(ir::GlobalValue, usize)>,
     site_constants: Vec<(ir::Inst, usize)>,
+    counter_offsets: Vec<(ir::Inst, usize)>,
     point_layouts: HashMap<u32, StateLayout>,
     sites: usize,
+    counters: usize,
     serial: bool,
 }
 
@@ -121,8 +129,10 @@ pub(super) fn build(shared: &Shared, bodies: &[Body], index: usize) -> Built {
         func_refs: Vec::new(),
         data_refs: Vec::new(),
         site_constants: Vec::new(),
+        counter_offsets: Vec::new(),
         point_layouts: HashMap::new(),
         sites: 0,
+        counters: 0,
         serial: false,
     };
     let body = &bodies[index];
@@ -137,6 +147,7 @@ pub(super) fn build(shared: &Shared, bodies: &[Body], index: usize) -> Built {
         func_refs: worker.func_refs,
         data_refs: worker.data_refs,
         site_constants: worker.site_constants,
+        counter_offsets: worker.counter_offsets,
         serial: worker.serial,
     }
 }
@@ -193,6 +204,20 @@ impl<'t> Gen<'t> for Worker<'_, '_, 't> {
     }
     fn debug(&self) -> bool {
         self.shared.debug
+    }
+    fn coverage(&self) -> Option<DataId> {
+        self.shared.coverage
+    }
+    fn counter(&mut self, counted: Counted) -> usize {
+        self.ask(Asked::Counter(counted));
+        self.counters += 1;
+        self.counters - 1
+    }
+    fn counter_offset(&mut self, fb: &mut FunctionBuilder, index: usize) -> ir::Value {
+        let value = fb.ins().iconst(types::I64, index as i64 * 8);
+        let inst = fb.func.dfg.value_def(value).unwrap_inst();
+        self.counter_offsets.push((inst, index));
+        value
     }
     fn string(&mut self, text: &str) -> DataId {
         DataId::from_u32(self.ask(Asked::String(text.to_string())))
@@ -318,6 +343,7 @@ impl<'t> Gen<'t> for Worker<'_, '_, 't> {
 pub(super) fn replay(cg: &mut Codegen, bodies: &[Body], built: &mut Built) {
     let mut ids = vec![0u32; built.asked.len()];
     let mut first_site: Option<usize> = None;
+    let mut first_counter: Option<usize> = None;
     for (n, asked) in std::mem::take(&mut built.asked).into_iter().enumerate() {
         let real = |id: FuncId, ids: &[u32]| match id.as_u32().checked_sub(NAMED) {
             Some(n) => FuncId::from_u32(ids[n as usize]),
@@ -353,6 +379,11 @@ pub(super) fn replay(cg: &mut Codegen, bodies: &[Body], built: &mut Built) {
                 Gen::keep_point_layout(cg, point, layout);
                 0
             }
+            Asked::Counter(counted) => {
+                let index = Gen::counter(cg, counted);
+                first_counter.get_or_insert(index);
+                0
+            }
         };
     }
     let func = &mut built.func;
@@ -380,5 +411,11 @@ pub(super) fn replay(cg: &mut Codegen, bodies: &[Body], built: &mut Built) {
     for &(inst, index) in &built.site_constants {
         func.dfg.insts[inst] =
             InstructionData::UnaryImm { opcode: Opcode::Iconst, imm: ir::immediates::Imm64::new(first + index as i64) };
+    }
+    let first = first_counter.unwrap_or(0) as i64;
+    for &(inst, index) in &built.counter_offsets {
+        let offset = (first + index as i64) * 8;
+        func.dfg.insts[inst] =
+            InstructionData::UnaryImm { opcode: Opcode::Iconst, imm: ir::immediates::Imm64::new(offset) };
     }
 }

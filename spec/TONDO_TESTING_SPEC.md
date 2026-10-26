@@ -5,8 +5,8 @@
 - **Especificación base:** [Tondo 0.1](./TONDO_LANGUAGE_SPEC.md).
 - **Formatos de tooling:** `tondo-test-report-0.1/1`,
   `tondo-test-list-0.1/1`, `tondo-test-events-0.1/1`,
-  `tondo-junit-report-0.1/1`, `tondo-test-artifacts-0.1/1` y
-  `tondo-snapshot-store-0.1/2`.
+  `tondo-junit-report-0.1/1`, `tondo-coverage-0.1/1`,
+  `tondo-test-artifacts-0.1/1` y `tondo-snapshot-store-0.1/2`.
 
 Esta especificación añade a Tondo las declaraciones `suite` y `test` y define
 cómo el toolchain descubre, compila, ejecuta y reporta árboles estáticos de
@@ -2116,7 +2116,8 @@ tondo test [<project> | --project <dir>]
            [--diagnostic-format <human|json>]
            [--test-format <human|json|events>]
            [--json]
-           [--report <json|junit>=<path>]...
+           [--report <json|junit|coverage|lcov>=<path>]...
+           [--coverage]
            [--show-output]
            [--deny-skips]
            [--allow-flaky]
@@ -2211,6 +2212,10 @@ Reglas:
 - `--report json=<path>` escribe exactamente los mismos bytes que el JSON
   correspondiente de `--test-format json`.
 - `--report junit=<path>` escribe `tondo-junit-report-0.1/1` según 15.5.
+- `--report coverage=<path>` escribe `tondo-coverage-0.1/1` y
+  `--report lcov=<path>` lo mismo como tracefile de LCOV (15.10); `--coverage`
+  escribe tras el resultado humano qué parte del código se ejecutó (10.3).
+  Cualquiera de los tres compila los tests contando lo que se ejecuta.
 - Dos reportes no pueden resolver al mismo output ni sobrescribir un input,
   source, manifest, lockfile, snapshot store, artifact store u otro producto
   declarado. Cada archivo se publica atómicamente después de completar su
@@ -2257,6 +2262,26 @@ Lo que no compila escribe sus diagnósticos y el reporte de 15.6, y la
 invocación sigue esperando cambios. La selección de cada ejecución es la de
 `--exact` con sus tests. `--watch` no admite `--list`, `--update-snapshots`
 ni `--report`.
+
+### 10.3 Cobertura
+
+Con `--coverage` o un reporte de cobertura, el build de tests cuenta lo que
+se ejecuta del código propio del proyecto: sus fuentes, no sus tests, sus
+dependencias ni la stdlib. Cuenta tres cosas:
+
+- Las líneas: cada vez que empieza a ejecutarse un tramo de sentencias en una
+  línea. Una línea que inicia varios tramos, como la de un `match`, puede
+  contar más veces que las que se llegó a ella.
+- Las funciones: cada llamada. Las que no son genéricas se compilan aunque
+  nada las llame, así que cuentan cero; una genérica que ningún test
+  instancia no aparece.
+- Los caminos de cada rama: `then` y `else` de un `if` (también el `else` que
+  no se escribió), cada brazo de un `match`, por su patrón, y `evaluated` y
+  `short-circuited` de `and` y `or`.
+
+Cada trabajador escribe sus cuentas al terminar y el runner las suma; una
+línea o un camino que nada ejecutó cuenta cero. Un trabajador terminado a la
+fuerza, por un timeout, pierde sus cuentas.
 
 ## 11. Frontera con `assert` y `std.testing`
 
@@ -3733,6 +3758,45 @@ de un trabajador conservan su orden. Si la compilación falla, la única línea
 es `report`, con `compiled` en `false` (15.6). Una invocación interrumpida
 (7.10) no escribe `report`. `duration_ms` es el tiempo medido y no es
 determinista; el reporte no lo contiene.
+
+### 15.10 Cobertura
+
+`--report coverage=<path>` escribe `tondo-coverage-0.1/1`, en una línea:
+
+~~~json
+{
+  "format": "tondo-coverage-0.1/1",
+  "files": [
+    {
+      "file": "src/shapes.to",
+      "lines": [{ "line": 10, "count": 4 }],
+      "functions": [{ "name": "area", "line": 9, "count": 2 }],
+      "branches": [
+        {
+          "branch": { "line": 10, "column": 5 },
+          "line": 11,
+          "column": 9,
+          "label": "Shape.Circle(r)",
+          "count": 1
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "lines": { "found": 10, "hit": 6 },
+    "functions": { "found": 5, "hit": 3 },
+    "branches": { "found": 7, "hit": 4 }
+  }
+}
+~~~
+
+`files` va en orden de path lógico, y en cada uno las líneas por número, las
+funciones por la línea de su nombre y los caminos por su rama y su lugar.
+`branch` es dónde empieza la rama, y `line` y `column`, dónde empieza el
+camino. `summary` cuenta las líneas, funciones y caminos que hay y los que se
+ejecutaron. `--report lcov=<path>` da lo mismo como tracefile de LCOV, con
+`SF`, `FN`, `FNDA`, `BRDA` (una rama por bloque, en orden), `DA` y sus
+totales, para las herramientas que lo leen.
 
 ## 16. Conformidad
 

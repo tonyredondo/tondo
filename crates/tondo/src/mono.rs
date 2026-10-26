@@ -16,6 +16,12 @@ use std::collections::{HashMap, VecDeque};
 const MAX_DEPTH: usize = 32;
 
 pub fn monomorphize(program: Program, diags: &mut Diagnostics) -> Option<Program> {
+    monomorphize_with(program, &[], diags)
+}
+
+/// The same, with more functions that are not generic built as if called:
+/// a test build's own, which coverage counts even when nothing calls them.
+pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnostics) -> Option<Program> {
     let Program { mut types, functions, main, traits, impls, externs, mut exports, c_api, tests, .. } = program;
     let mut mono = Mono {
         types: &mut types,
@@ -39,6 +45,9 @@ pub fn monomorphize(program: Program, diags: &mut Diagnostics) -> Option<Program
     // What C calls is reached from C.
     for export in &mut exports {
         export.function = mono.instance(export.function, Vec::new());
+    }
+    for &root in roots {
+        mono.instance(root, Vec::new());
     }
     while let Some((id, args, instance)) = mono.queue.pop_front() {
         let generic = &functions[id.0 as usize];
@@ -125,6 +134,7 @@ impl Mono<'_> {
             body: Block { stmts: Vec::new(), tail: None, ty: Ty::UNIT },
             moves: Default::default(),
             test: false,
+            span: self.functions[id.0 as usize].span,
         };
         if !args.is_empty() {
             let shown: Vec<String> = args.iter().map(|&a| self.types.display(a)).collect();

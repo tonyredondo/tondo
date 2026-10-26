@@ -157,6 +157,9 @@ pub struct Function {
     /// Whether it runs a test or a suite's setup, which tells the runner
     /// where an error leaves it (testing 7.6).
     pub test: bool,
+    /// Where it is declared: a function's name, a closure, a script's
+    /// first statement; none for what the compiler makes.
+    pub span: Span,
 }
 
 #[derive(Clone)]

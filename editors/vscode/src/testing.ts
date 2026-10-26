@@ -3,11 +3,13 @@
 // change, run by `tondo test`, whose events show each result as it comes,
 // and debugged by `tondo dap`.
 
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { isProject } from './binary';
 import { Ran, exec } from './cli';
-import { Listed, Outcome, Served, listed, served, testEvent } from './report';
+import { Covered, Listed, Outcome, Served, covered, listed, served, testEvent } from './report';
 
 /** Registers the tests; what it returns takes the language server's. */
 export function registerTesting(context: vscode.ExtensionContext, output: vscode.OutputChannel): (params: Served) => void {
@@ -243,6 +245,35 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
     };
   }
 
+  // What each file's coverage shows when it is opened.
+  const details = new WeakMap<vscode.FileCoverage, vscode.FileCoverageDetail[]>();
+
+  /** Shows a project's coverage in the run. */
+  function cover(testRun: vscode.TestRun, dir: string, files: Covered[]): void {
+    for (const file of files) {
+      const statements = new Map<number, vscode.StatementCoverage>();
+      for (const { line, count } of file.lines) {
+        statements.set(line, new vscode.StatementCoverage(count, new vscode.Position(line - 1, 0), []));
+      }
+      // Each way of a branch belongs to the line of its branch.
+      for (const way of file.branches) {
+        const at = way.branch.line;
+        if (!statements.has(at)) {
+          statements.set(at, new vscode.StatementCoverage(0, new vscode.Position(at - 1, 0), []));
+        }
+        const position = new vscode.Position(way.line - 1, Math.max(way.column - 1, 0));
+        statements.get(at)!.branches.push(new vscode.BranchCoverage(way.count, position, way.label));
+      }
+      const declarations = file.functions.map(
+        (f) => new vscode.DeclarationCoverage(f.name, f.count, new vscode.Position(f.line - 1, 0)),
+      );
+      const shown = [...statements.values(), ...declarations];
+      const coverage = vscode.FileCoverage.fromDetails(vscode.Uri.file(path.resolve(dir, file.file)), shown);
+      details.set(coverage, shown);
+      testRun.addCoverage(coverage);
+    }
+  }
+
   async function run(request: vscode.TestRunRequest, token: vscode.CancellationToken): Promise<void> {
     if (request.continuous) {
       await Promise.all([...chosen(request)].map(([dir, items]) => watch(request, dir, items, token)));
@@ -258,7 +289,13 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
       let reported = false;
       let ran = new Set<string>();
       const follow = follower(dir, () => testRun, (compiled, ids) => ((reported = compiled), (ran = ids)));
-      const done: Ran = await exec(testArgs(items, false), dir, token, follow).catch((error: Error) => ({
+      const args = testArgs(items, false);
+      const report = path.join(os.tmpdir(), `tondo-coverage-${process.pid}-${Date.now()}.json`);
+      const coverage = request.profile?.kind === vscode.TestRunProfileKind.Coverage;
+      if (coverage) {
+        args.push('--report', `coverage=${report}`);
+      }
+      const done: Ran = await exec(args, dir, token, follow).catch((error: Error) => ({
         code: null,
         stdout: '',
         stderr: error.message,
@@ -271,6 +308,14 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
       }
       if (done.stderr.trim()) {
         output.appendLine(done.stderr.trimEnd());
+      }
+      if (coverage) {
+        try {
+          cover(testRun, dir, covered(await fs.readFile(report, 'utf8')));
+        } catch (error) {
+          output.appendLine(`no coverage: ${(error as Error).message}`);
+        }
+        await fs.rm(report, { force: true });
       }
       // What the report does not name did not run.
       started.filter((item) => !ran.has(item.id)).forEach((item) => testRun.skipped(item));
@@ -325,6 +370,8 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
 
   controller.createRunProfile('Run', vscode.TestRunProfileKind.Run, run, true, undefined, true);
   controller.createRunProfile('Debug', vscode.TestRunProfileKind.Debug, (request) => debug(request), true);
+  const coverage = controller.createRunProfile('Coverage', vscode.TestRunProfileKind.Coverage, run, true);
+  coverage.loadDetailedCoverage = async (_, file) => details.get(file) ?? [];
   // Projects found at once, so their tests show before the view opens.
   if ((vscode.workspace.workspaceFolders ?? []).some((folder) => isProject(folder.uri.fsPath))) {
     void discoverAll();

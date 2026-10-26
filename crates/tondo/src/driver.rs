@@ -207,6 +207,8 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
                     relative.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
                 if package_index > 0 {
                     logical.insert(0, package.name.clone());
+                } else {
+                    sources.set_own(first + index);
                 }
                 sources.set_identity(first + index, logical.join("/"), file.module.join("."));
                 let Some(parsed) = parsed else { continue };
@@ -345,7 +347,17 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
         return Ok(Analysis { sources, diags, program, source_id, libraries, meta, expansions, index });
     }
     let program = if diags.has_errors() { None } else { check::check(&module, &sources, &mut diags, meta) };
-    let program = program.and_then(|program| mono::monomorphize(program, &mut diags));
+    let program = program.and_then(|program| {
+        // A test build has every function of the project that is not
+        // generic, so that coverage counts those no test calls (testing
+        // 10.3).
+        let own = |f: &hir::Function| {
+            tests && f.generics.is_empty() && f.span != Span::default() && sources.file_of(f.span.start).own
+        };
+        let roots: Vec<hir::FnId> =
+            (0..program.functions.len()).filter(|&i| own(&program.functions[i])).map(|i| hir::FnId(i as u32)).collect();
+        mono::monomorphize_with(program, &roots, &mut diags)
+    });
     drop_dependency_warnings(&mut diags, &sources, &dependencies);
     diags.sort(&sources);
     Ok(Analysis { sources, diags, program, source_id, libraries, meta, expansions, index: None })
@@ -577,6 +589,23 @@ pub fn object(analysis: &Analysis, debug: bool, target: Option<Target>) -> Resul
     compile(analysis, debug, target, None)
 }
 
+/// The object of a test build that counts what runs of the project's code
+/// (testing 10.3), with what each of its counters counts.
+pub fn object_counting(
+    analysis: &Analysis,
+    debug: bool,
+    target: Option<Target>,
+) -> Result<(Vec<u8>, Vec<codegen::Counted>), String> {
+    let program = analysis.program.as_ref().expect("object_counting() requires a checked program");
+    let bodies = lower::lower(program, false);
+    let mut counted = Vec::new();
+    let triple = target.map(Target::triple);
+    let options =
+        codegen::Options { meta: analysis.meta, debug, target: triple, live: None, coverage: Some(&mut counted) };
+    let object = codegen::compile(program, &bodies, &analysis.sources, options)?;
+    Ok((object, counted))
+}
+
 /// The object of a program, live (toolchain 7.10) when `live` says how.
 pub fn compile(
     analysis: &Analysis,
@@ -587,7 +616,9 @@ pub fn compile(
     let program = analysis.program.as_ref().expect("object() requires a checked program");
     let bodies = lower::lower(program, live.is_some());
     let triple = target.map(Target::triple);
-    codegen::compile(program, &bodies, &analysis.sources, analysis.meta, debug || live.is_some(), triple, live)
+    let debug = debug || live.is_some();
+    let options = codegen::Options { meta: analysis.meta, debug, target: triple, live, coverage: None };
+    codegen::compile(program, &bodies, &analysis.sources, options)
 }
 
 /// Whether this tondo can build for `target`: its own machine's, or one

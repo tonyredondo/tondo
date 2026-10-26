@@ -10,6 +10,7 @@ macro_rules! say {
     }};
 }
 
+mod coverage;
 mod human;
 mod interrupt;
 mod json;
@@ -19,6 +20,7 @@ mod select;
 mod store;
 mod worker;
 
+pub use coverage::save_counted;
 pub use owners::Codeowners;
 pub use select::{Glob, Order, Selector, affected};
 
@@ -63,9 +65,11 @@ pub struct Options {
     /// With `json`, a line of JSON for each start and outcome as tests run,
     /// then the report (15.9).
     pub events: bool,
-    /// `--report json=<path>` and `--report junit=<path>`: whether JUnit,
-    /// and where.
-    pub reports: Vec<(bool, PathBuf)>,
+    /// Each `--report`: what it is, and where it goes.
+    pub reports: Vec<(Report, PathBuf)>,
+    /// `--coverage`: counts what runs of the project's code and says how
+    /// much ran (10.3), as a report of coverage also does.
+    pub coverage: bool,
     /// What runs the tests' executable when it is for another machine:
     /// qemu's user emulation (toolchain 7.8).
     pub launcher: Option<PathBuf>,
@@ -73,6 +77,22 @@ pub struct Options {
     pub artifacts: Option<PathBuf>,
     /// Records missing and changed snapshots instead of failing on them.
     pub update_snapshots: bool,
+}
+
+/// What a `--report` writes (10, 15.5, 15.10).
+#[derive(Clone, Copy, PartialEq)]
+pub enum Report {
+    Json,
+    Junit,
+    Coverage,
+    Lcov,
+}
+
+impl Options {
+    /// Whether the build counts what runs, for coverage.
+    pub fn counting(&self) -> bool {
+        self.coverage || self.reports.iter().any(|(r, _)| matches!(r, Report::Coverage | Report::Lcov))
+    }
 }
 
 /// The tree of the test build, with where each node is declared.
@@ -360,11 +380,19 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     };
     let entries = std::env::temp_dir().join(format!("tondo-snapshots-{}", std::process::id()));
     std::fs::write(&entries, snapshots.for_worker()).map_err(|e| Failure::Output(e.to_string()))?;
+    // With coverage, where the workers write their counts.
+    let counts =
+        options.counting().then(|| std::env::temp_dir().join(format!("tondo-coverage-{}", std::process::id())));
+    if let Some(counts) = &counts {
+        let _ = std::fs::remove_dir_all(counts);
+        std::fs::create_dir_all(counts).map_err(|e| Failure::Output(e.to_string()))?;
+    }
     let stores = worker::Stores {
         artifacts: &artifacts,
         snapshots: &snapshots,
         entries: &entries,
         update: options.update_snapshots,
+        counts: counts.as_deref(),
     };
     let run = worker::Run { executable, dir, tree, options, stores };
     interrupt::listen();
@@ -412,14 +440,30 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     };
     context.rounds = &rounds;
     let report = context.report(&aggregates);
+    let covered = match &counts {
+        Some(counts) => {
+            let covered = coverage::collect(counts, &executable.with_file_name("counted")).map_err(Failure::Output);
+            let _ = std::fs::remove_dir_all(counts);
+            Some(covered?)
+        }
+        None => None,
+    };
     if options.json {
         say!("{}", json::reported(&report, options));
     } else {
         human::report(tree, &printer, &aggregates, &owners, options, failed, started.elapsed());
+        if let Some(covered) = covered.as_ref().filter(|_| options.coverage) {
+            print!("{}", covered.summary());
+        }
     }
-    for (junit, path) in &options.reports {
-        let text =
-            if *junit { junit::report(tree, &context, &aggregates, &report, options) } else { report.text() + "\n" };
+    for (kind, path) in &options.reports {
+        let text = match (kind, &covered) {
+            (Report::Junit, _) => junit::report(tree, &context, &aggregates, &report, options),
+            (Report::Json, _) => report.text() + "\n",
+            (Report::Coverage, Some(covered)) => covered.json().text() + "\n",
+            (Report::Lcov, Some(covered)) => covered.lcov(),
+            (_, None) => unreachable!("a report of coverage counts"),
+        };
         publish(path, &text)?;
     }
     if let Some(error) = artifacts.error.lock().unwrap_or_else(|e| e.into_inner()).take() {
@@ -501,8 +545,8 @@ pub fn uncompiled(dir: &Path, options: &Options) -> Result<(), Failure> {
     if options.json {
         say!("{}", json::reported(&report, options));
     }
-    for (junit, path) in &options.reports {
-        if !junit {
+    for (kind, path) in &options.reports {
+        if *kind == Report::Json {
             publish(path, &(report.text() + "\n"))?;
         }
     }
@@ -649,13 +693,15 @@ pub fn build_dir(
     path: &Path,
     statically: bool,
     debug: bool,
+    counting: bool,
     target: Option<crate::target::Target>,
 ) -> Result<PathBuf, String> {
     let identity = crate::driver::compiler_identity();
     let linking = format!(
-        "{}{}{}",
+        "{}{}{}{}",
         if statically { "static" } else { "" },
         if debug { "debug" } else { "" },
+        if counting { "coverage" } else { "" },
         target.map_or("", crate::target::Target::name)
     );
     let mut parts = vec![identity.into_bytes(), linking.as_bytes().to_vec()];

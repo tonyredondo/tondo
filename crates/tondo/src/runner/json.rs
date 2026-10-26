@@ -88,15 +88,15 @@ fn string(text: &str, xml: bool, out: &mut String) {
     out.push('"');
 }
 
-fn str(text: impl Into<String>) -> Value {
+pub(super) fn str(text: impl Into<String>) -> Value {
     Value::Str(text.into())
 }
 
-fn obj(fields: Vec<(&str, Value)>) -> Value {
+pub(super) fn obj(fields: Vec<(&str, Value)>) -> Value {
     Value::Object(fields.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
 }
 
-fn int(n: usize) -> Value {
+pub(super) fn int(n: usize) -> Value {
     Value::Int(n as i64)
 }
 

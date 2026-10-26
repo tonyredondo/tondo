@@ -76,6 +76,7 @@ fn main() -> ExitCode {
                     target: None,
                     diagnostics_json: false,
                     list: false,
+                    coverage: false,
                 };
                 let built = build_tests(path, &build)?;
                 Ok(built.map(|(executable, tree)| (executable, tree.nodes.into_iter().map(|n| n.id).collect())))
@@ -273,6 +274,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         json: false,
         events: false,
         reports: Vec::new(),
+        coverage: false,
         artifacts: None,
         update_snapshots: false,
         launcher: None,
@@ -334,6 +336,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
                 );
             }
             "--list" => options.list = true,
+            "--coverage" => options.coverage = true,
             "--watch" => watch = true,
             "--jobs" => {
                 options.jobs = count(&value()?, "--jobs")
@@ -400,10 +403,22 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             },
             "--report" => {
                 let text = value()?;
+                use runner::Report;
+                let kinds = [
+                    ("json", Report::Json),
+                    ("junit", Report::Junit),
+                    ("coverage", Report::Coverage),
+                    ("lcov", Report::Lcov),
+                ];
                 let report = match text.split_once('=') {
-                    Some(("json", path)) if !path.is_empty() => (false, PathBuf::from(path)),
-                    Some(("junit", path)) if !path.is_empty() => (true, PathBuf::from(path)),
-                    _ => return Err(usage(format!("--report takes json=<path> or junit=<path>, not {text}"))),
+                    Some((kind, path)) if !path.is_empty() && kinds.iter().any(|(k, _)| *k == kind) => {
+                        (kinds.iter().find(|(k, _)| *k == kind).unwrap().1, PathBuf::from(path))
+                    }
+                    _ => {
+                        let message =
+                            format!("--report takes json=, junit=, coverage= or lcov= and a path, not {text}");
+                        return Err(usage(message));
+                    }
                 };
                 if options.reports.iter().any(|(_, p)| *p == report.1) {
                     return Err(usage(format!("two reports go to {}", report.1.display())));
@@ -426,7 +441,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     if given("--repeat") && (given("--retry") || given("--allow-flaky")) {
         return Err(usage("--repeat runs everything again; it does not go with --retry or --allow-flaky".into()));
     }
-    let listing = ["--show-output", "--deny-skips", "--retry", "--repeat", "--allow-flaky"];
+    let listing = ["--show-output", "--deny-skips", "--retry", "--repeat", "--allow-flaky", "--coverage"];
     if options.list
         && let Some(flag) = listing.iter().find(|f| given(f))
     {
@@ -469,7 +484,8 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         driver::ready(target)?;
     }
     options.launcher = target.map(Target::launcher).transpose()?.flatten();
-    let build = TestBuild { library, debug, statically, target, diagnostics_json, list: options.list };
+    let (list, coverage) = (options.list, options.counting());
+    let build = TestBuild { library, debug, statically, target, diagnostics_json, list, coverage };
     if watch {
         return watch_tests(&path, &build, &mut options);
     }
@@ -564,13 +580,15 @@ struct TestBuild {
     diagnostics_json: bool,
     /// Only the tree, to list the tests: analyzed, not compiled.
     list: bool,
+    /// Counting what runs, for coverage (testing 10.3).
+    coverage: bool,
 }
 
 /// The executable of a project's tests and their tree, built unless what
 /// it reads is unchanged; none, after its diagnostics, when it does not
 /// compile. A list gets the tree without the executable.
 fn build_tests(path: &Path, build: &TestBuild) -> Result<Option<(PathBuf, tondo::runner::Tree)>, String> {
-    let dir = tondo::runner::build_dir(path, build.statically, build.debug, build.target)?;
+    let dir = tondo::runner::build_dir(path, build.statically, build.debug, build.coverage, build.target)?;
     let (executable, tree_file) = (dir.join("tests"), dir.join("tree"));
     if let Some(tree) = tondo::runner::Tree::load(&tree_file).filter(|_| build.list || executable.is_file()) {
         return Ok(Some((executable, tree)));
@@ -591,8 +609,16 @@ fn build_tests(path: &Path, build: &TestBuild) -> Result<Option<(PathBuf, tondo:
     }
     // Linked aside and renamed, so another run of the same tests keeps its own.
     let partial = executable.with_extension(format!("partial-{}", std::process::id()));
+    let object = match build.coverage {
+        true => {
+            let (object, counted) = driver::object_counting(&analysis, build.debug, build.target)?;
+            tondo::runner::save_counted(&dir.join("counted"), &counted)?;
+            object
+        }
+        false => driver::object(&analysis, build.debug, build.target)?,
+    };
     driver::link(
-        &driver::object(&analysis, build.debug, build.target)?,
+        &object,
         &partial,
         &analysis.libraries,
         driver::Linking { strip: false, statically: build.statically, target: build.target },

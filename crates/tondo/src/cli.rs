@@ -84,8 +84,9 @@ pub const COMMANDS: &[Command] = &[
             "          [--order canonical|random] [--schedules <n>] [--seed <hex>] [--list] [--jobs <n>] [--timeout <seconds>]",
             "          [--retry <n>] [--allow-flaky] [--repeat <n>] [--codeowners auto|none|<path>]",
             "          [--show-output] [--allow-empty] [--deny-skips] [--test-format human|json|events] [--json]",
-            "          [--report json=<path> | junit=<path>]... [--diagnostic-format human|json]",
-            "          [--artifacts <dir>] [--update-snapshots] [--static] [--debug] [--library] [--target <target>]",
+            "          [--report json=<path> | junit=<path> | coverage=<path> | lcov=<path>]... [--coverage]",
+            "          [--diagnostic-format human|json] [--artifacts <dir>] [--update-snapshots]",
+            "          [--static] [--debug] [--library] [--target <target>]",
         ],
         summary: &["run the tests of a project (of a library); with --watch,", "again as its files change"],
     },
@@ -181,7 +182,7 @@ pub const COMMANDS: &[Command] = &[
 /// What this `tondo` offers tools beyond its commands, as `tondo version
 /// --json` lists it, for a client to check before it relies on one.
 pub const FEATURES: &[&str] =
-    &["json", "graph", "test-events", "test-exact-many", "test-watch", "lsp-tests", "lsp-lenses"];
+    &["json", "graph", "test-events", "test-exact-many", "test-watch", "test-coverage", "lsp-tests", "lsp-lenses"];
 
 /// What a command writes with `--json`: one object, its format named for
 /// the command (`tondo-<command>-0.1/1`), whether it succeeded, and what

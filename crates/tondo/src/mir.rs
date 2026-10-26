@@ -107,6 +107,23 @@ pub struct Body {
     /// In a live build, each wait, by where it is, and whether the
     /// statement it waits in can start again when a reload ends the wait.
     pub pauses: Vec<(Span, bool)>,
+    /// Where the function starts, and each way its branches can go, which
+    /// coverage counts (testing 10.3).
+    pub span: Span,
+    pub ways: Vec<Way>,
+}
+
+/// A way a branch of the program can go: the statement of the block it
+/// starts at, the branch it belongs to (an `if`, a `match`, `&&` or `||`),
+/// where the way is, and what it is called: `then`, `else`, `evaluated`,
+/// `short-circuited`, or `arm`, which is called by its pattern.
+#[derive(Clone, Debug)]
+pub struct Way {
+    pub block: BlockId,
+    pub at: usize,
+    pub branch: Span,
+    pub span: Span,
+    pub label: &'static str,
 }
 
 /// Where a statement starts in a live build: a frame stopped at its probe

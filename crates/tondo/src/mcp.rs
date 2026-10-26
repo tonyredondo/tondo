@@ -885,8 +885,10 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
     };
     let path = args.path().display().to_string();
     let mut timeout = None;
-    // The tests' report, besides what `tondo test` prints for people.
+    // The tests' report, besides what `tondo test` prints for people, and
+    // their coverage.
     let report = std::env::temp_dir().join(format!("tondo-mcp-{}-report.json", std::process::id()));
+    let coverage = std::env::temp_dir().join(format!("tondo-mcp-{}-coverage.json", std::process::id()));
     match name {
         "format" => {
             push(&["fmt", "--json"]);
@@ -936,6 +938,9 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
                 // The list is its own report.
                 true => push(&["--list", "--test-format", "json"]),
                 false => push(&["--report", &format!("json={}", report.display())]),
+            }
+            if args.flag("coverage") {
+                push(&["--coverage", "--report", &format!("coverage={}", coverage.display())]);
             }
             option(&mut argv, "--filter", "filter");
             option(&mut argv, "--glob", "glob");
@@ -1022,6 +1027,13 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
     {
         structured["report"] = parsed;
         let _ = std::fs::remove_file(&report);
+    }
+    if name == "test"
+        && let Some(parsed) =
+            std::fs::read(&coverage).ok().and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+    {
+        structured["coverage"] = parsed;
+        let _ = std::fs::remove_file(&coverage);
     }
     if json {
         let parsed = serde_json::from_str::<Value>(&ran.stdout).ok().or_else(|| {
@@ -1499,6 +1511,7 @@ program that runs past `timeout` is ended.",
             ("glob", "string", "The tests whose ids match this pattern."),
             ("exact", "string", "The test with this id."),
             ("list", "boolean", "List the tests instead of running them."),
+            ("coverage", "boolean", "Also say which lines, functions and ways of branches of the project's code ran."),
             LIBRARY,
             ("update_snapshots", "boolean", "Record the snapshots instead of checking them."),
             STATIC,

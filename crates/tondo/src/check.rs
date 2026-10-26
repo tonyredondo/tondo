@@ -1146,6 +1146,7 @@ impl<'a> Checker<'a> {
             body,
             moves: HashSet::new(),
             test: false,
+            span: Span::default(),
         };
         self.ownership(&mut function, &cx.params);
         function
@@ -4260,6 +4261,7 @@ impl<'a> Checker<'a> {
             body,
             moves: HashSet::new(),
             test: false,
+            span: f.name.span,
         };
         self.ownership(&mut function, &cx.params);
         function
@@ -4321,6 +4323,7 @@ impl<'a> Checker<'a> {
             body,
             moves: HashSet::new(),
             test: false,
+            span: statements.first().map_or(Span::default(), |s| s.span),
         };
         self.ownership(&mut function, &cx.params);
         function
@@ -4621,6 +4624,7 @@ impl<'a> Checker<'a> {
             body,
             moves: HashSet::new(),
             test,
+            span,
         };
         // A cleanup runs once, so it may give its captures away; another
         // closure that does is called once (`CallOnce`).
@@ -4752,6 +4756,7 @@ impl<'a> Checker<'a> {
             body,
             moves: HashSet::new(),
             test: false,
+            span,
         }));
         let values = values.into_iter().enumerate().map(|(i, a)| (i as u32, a)).collect();
         Self::mk(hir::ExprKind::Record(values), env_ty, span)

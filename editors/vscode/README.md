@@ -27,7 +27,8 @@ It says so when that `tondo` is older than the extension.
   failed, a comparison as a diff, and its stack; *Debug Test* runs one test
   alone under the debugger. Tests appear as you write them, before the
   file is saved, a new project's too; *Run Tests Continuously* runs again
-  those that a saved change can affect.
+  those that a saved change can affect, and *Run with Coverage* shows which
+  lines, functions and ways of branches the tests ran.
 - **Tasks**: check, build, run, test and run live, with their errors in
   the Problems panel.
 - **Agents**: VS Code's agents get the tools of `tondo mcp` (check, fix,

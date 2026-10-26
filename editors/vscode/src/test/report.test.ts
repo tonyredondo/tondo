@@ -3,7 +3,7 @@
 
 import * as assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { NEEDED, incompatible, listed, outcomes, place, programOf, served, testEvent, verdict } from '../report';
+import { NEEDED, covered, incompatible, listed, outcomes, place, programOf, served, testEvent, verdict } from '../report';
 
 const source = (line: number) => ({ file: 'src/main_test.to', line, column: 6 });
 
@@ -182,4 +182,23 @@ test('the tests the language server sends are a list, with each file whole', () 
   assert.equal(sent.dir, '/w/app');
   assert.deepEqual(sent.nodes[0], { id: 'app::unit::app::group', parent: null, name: 'group', suite: true, file: '/w/app/src/main_test.to', line: 5, column: 7 });
   assert.equal(sent.nodes[1].file, undefined);
+});
+
+test('a report of coverage says how many times each line, function and way ran', () => {
+  const report = JSON.stringify({
+    format: 'tondo-coverage-0.1/1',
+    files: [
+      {
+        file: 'src/main.to',
+        lines: [{ line: 10, count: 4 }],
+        functions: [{ name: 'area', line: 9, count: 2 }],
+        branches: [{ branch: { line: 10, column: 5 }, line: 11, column: 9, label: 'Shape.Circle(r)', count: 1 }],
+      },
+    ],
+    summary: {},
+  });
+  const [file] = covered(report);
+  assert.equal(file.file, 'src/main.to');
+  assert.deepEqual(file.branches[0].branch, { line: 10, column: 5 });
+  assert.throws(() => covered('{"format":"tondo-test-report-0.1/1"}'));
 });
