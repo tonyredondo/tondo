@@ -23,7 +23,7 @@ fn main() {
     profile.startMemory()
     var kept: Array[String] = []
     for i in 0..2000 {
-        kept.push("entry {i} ".repeat(40))
+        kept.push("entry {i} ".repeat(320))
     }
     let cpu = profile.startCpu()
     let job = profile.withLabels(["job": "crunch"], () { spawn crunch() })
