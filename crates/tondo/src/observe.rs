@@ -582,7 +582,7 @@ impl Recording {
                 .into_iter()
                 .flatten()
                 .rev()
-                .map(|a| names.function(a.as_str().unwrap_or_default()))
+                .flat_map(|a| names.functions(a.as_str().unwrap_or_default()).into_iter().rev())
                 .collect();
             *counts.entry(frames.join(";")).or_default() += 1;
         }
@@ -616,6 +616,14 @@ impl<'a> Names<'a> {
             Some(symbol) => symbol,
             None => format!("{}+{offset:#x}", image.rsplit('/').next().unwrap_or(&image)),
         }
+    }
+
+    /// A frame's function, and those its code was inlined into, from the
+    /// innermost out.
+    pub(crate) fn functions(&self, address: &str) -> Vec<String> {
+        let inlined = self.frames[address]["inlined"].as_array().into_iter().flatten();
+        let outer = inlined.filter_map(|frame| frame["function"].as_str().map(String::from));
+        std::iter::once(self.function(address)).chain(outer).collect()
     }
 
     /// Where the innermost frame of the program in a stack is: its function,

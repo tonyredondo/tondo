@@ -20,12 +20,19 @@ use std::collections::{HashMap, HashSet};
 const SMALL: usize = 30;
 /// How many times calls in code just inlined are inlined in turn.
 const ROUNDS: usize = 3;
+/// The most statements a function may have to be copied for a `fn` value
+/// it is passed, and how many such copies a program may have.
+const SPECIALIZED: usize = 400;
+const COPIES: usize = 256;
 
-pub fn inline(bodies: &mut [Body]) {
+pub fn inline(bodies: &mut Vec<Body>) {
+    let mut copies = HashMap::new();
     for _ in 0..ROUNDS {
+        specialize(bodies, &mut copies);
         let shapes: Vec<Shape> = bodies.iter().map(Shape::of).collect();
         for body in bodies.iter_mut() {
-            devirtualize(body, &shapes);
+            let made = made(body);
+            call_bodies(body, &made, &shapes);
         }
         let small: Vec<Option<Body>> = bodies.iter().map(|body| small(body).then(|| body.clone())).collect();
         if small.iter().all(Option::is_none) {
@@ -61,10 +68,13 @@ impl Shape {
     }
 }
 
-/// Calls of a `fn` value the function made itself, of a closure or of a
-/// named function, as calls of its body, which can be inlined: the body
-/// of a closure takes its captures, which the value holds, first.
-fn devirtualize(body: &mut Body, shapes: &[Shape]) {
+/// A `fn` value a local holds: the function, and whether it is a
+/// closure's body, which takes its captures first.
+type Made = HashMap<Local, (crate::hir::FnId, bool)>;
+
+/// The locals the function assigns a `fn` value it makes, of a closure or
+/// of a named function, once, and never another.
+fn made(body: &Body) -> Made {
     let mut definitions: HashMap<Local, usize> = HashMap::new();
     let mut made: HashMap<Local, (crate::hir::FnId, bool)> = HashMap::new();
     for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
@@ -88,6 +98,12 @@ fn devirtualize(body: &mut Body, shapes: &[Shape]) {
         }
     }
     made.retain(|local, _| definitions.get(local) == Some(&1));
+    made
+}
+
+/// Calls through the `fn` values of `made` as calls of their bodies, which
+/// can be inlined: a closure's takes its captures, which the value holds.
+fn call_bodies(body: &mut Body, made: &Made, shapes: &[Shape]) {
     if made.is_empty() {
         return;
     }
@@ -110,9 +126,80 @@ fn devirtualize(body: &mut Body, shapes: &[Shape]) {
     }
 }
 
-/// Whether a function is worth inlining and can be: it is small, calls no
-/// function of the program, registers no `defer`, and uses its loans only
-/// as places.
+/// Calls that pass a `fn` value the caller made to a function too large
+/// to inline, which calls it: calls of a copy of the function where those
+/// calls are of the value's body, as Go's generics make `slices.Sort` of
+/// `cmp.Less` for a type. `copies` keeps each copy, by the function, the
+/// parameter and the value's function, for the calls that pass the same.
+fn specialize(bodies: &mut Vec<Body>, copies: &mut HashMap<(usize, usize, u32, bool), u32>) {
+    let count = bodies.len();
+    for index in 0..count {
+        let made = made(&bodies[index]);
+        if made.is_empty() {
+            continue;
+        }
+        let mut changes = Vec::new();
+        for (block, statements) in bodies[index].blocks.iter().enumerate() {
+            for (at, statement) in statements.stmts.iter().enumerate() {
+                let Statement::Assign(_, rvalue, _) = statement else { continue };
+                let Rvalue::Call(Callee::Fn(callee), arguments) = &**rvalue else { continue };
+                let target = &bodies[callee.0 as usize];
+                if small(target) || cost(target) > SPECIALIZED {
+                    continue;
+                }
+                let passed = arguments.iter().enumerate().find_map(|(param, argument)| match argument {
+                    Operand::Copy(place) if place.path.is_empty() => Some((param, *made.get(&place.local)?)),
+                    _ => None,
+                });
+                let Some((param, (value, closure))) = passed else { continue };
+                let local = target.params[param];
+                if loan(target, param) || defined(target).contains(&local) || !calls(target, local) {
+                    continue;
+                }
+                changes.push((block, at, callee.0 as usize, param, value, closure));
+            }
+        }
+        for (block, at, callee, param, value, closure) in changes {
+            let key = (callee, param, value.0, closure);
+            if !copies.contains_key(&key) && copies.len() == COPIES {
+                continue;
+            }
+            let copy = *copies.entry(key).or_insert_with(|| {
+                let mut copy = bodies[callee].clone();
+                let shapes: Vec<Shape> = bodies.iter().map(Shape::of).collect();
+                let made = HashMap::from([(copy.params[param], (value, closure))]);
+                call_bodies(&mut copy, &made, &shapes);
+                bodies.push(copy);
+                bodies.len() as u32 - 1
+            });
+            let Statement::Assign(_, rvalue, _) = &mut bodies[index].blocks[block].stmts[at] else { unreachable!() };
+            let Rvalue::Call(callee, _) = &mut **rvalue else { unreachable!() };
+            *callee = Callee::Fn(crate::hir::FnId(copy));
+        }
+    }
+}
+
+/// Whether a function calls the `fn` value a local holds.
+fn calls(body: &Body, local: Local) -> bool {
+    body.blocks.iter().flat_map(|block| &block.stmts).any(|statement| {
+        matches!(statement, Statement::Assign(_, rvalue, _)
+            if matches!(&**rvalue, Rvalue::CallIndirect(Operand::Copy(place), _) if place.local == local && place.path.is_empty()))
+    })
+}
+
+/// A function's statements and branches.
+fn cost(body: &Body) -> usize {
+    body.blocks
+        .iter()
+        .map(|block| {
+            block.stmts.len() + usize::from(!matches!(block.terminator, Terminator::Goto(_) | Terminator::Return(_)))
+        })
+        .sum()
+}
+
+/// Whether a function is worth inlining and can be: it is small,
+/// registers no `defer`, and uses its loans only as places. A call of
+/// itself it makes is not inlined, and each round inlines one level more.
 fn small(body: &Body) -> bool {
     if body.osr.is_some() || !body.points.is_empty() {
         return false;
@@ -125,8 +212,7 @@ fn small(body: &Body) -> bool {
             match statement {
                 Statement::DeferPush(..) | Statement::DeferPop | Statement::OsrLoad(_) => return false,
                 Statement::Assign(_, rvalue, _) => match &**rvalue {
-                    Rvalue::Call(Callee::Fn(_), _)
-                    | Rvalue::CallOsr(..)
+                    Rvalue::CallOsr(..)
                     | Rvalue::Restart(_)
                     | Rvalue::Transfer(_)
                     | Rvalue::OsrPoint

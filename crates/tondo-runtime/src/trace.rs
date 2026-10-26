@@ -72,7 +72,6 @@ fn tables() -> impl Iterator<Item = (usize, &'static Table)> {
 
 /// A frame of compiled code: the function and the line it is at, and the
 /// type the statement there assigns.
-#[derive(PartialEq)]
 struct Frame {
     function: &'static str,
     file: &'static str,
@@ -486,7 +485,9 @@ fn runs(addresses: impl Iterator<Item = usize>) -> impl Iterator<Item = (Frame, 
     std::iter::from_fn(move || {
         let frame = frames.next()?;
         let mut times = 1;
-        while frames.next_if(|next| *next == frame).is_some() {
+        // The same as the trace shows it, whatever type its call assigns.
+        let shown = |f: &Frame| (f.function, f.file, f.line, f.column);
+        while frames.next_if(|next| shown(next) == shown(&frame)).is_some() {
             times += 1;
         }
         Some((frame, times))
