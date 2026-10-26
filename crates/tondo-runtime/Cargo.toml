@@ -46,3 +46,8 @@ webpki-roots = "1.0.10"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tondo_staticlib)"] }
+
+# A library for C is a shared object, which musl's loader refuses when it
+# holds thread-local storage of the initial-exec model, mimalloc's default.
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc = { version = "0.1", default-features = false, features = ["local_dynamic_tls"] }
