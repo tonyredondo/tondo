@@ -654,7 +654,10 @@ fn answer(client: &mut UnixStream, pending: &mut Vec<u8>) -> bool {
                 let memory = memory(&mut frames);
                 format!("{{\"memory\":{memory},\"frames\":{{{}}}}}", frames.json)
             }
-            "trace" => trace(client),
+            "trace" => match trace(client) {
+                Ok(()) => continue,
+                Err(reply) => reply,
+            },
             "dump" => dump("request", "", None, Some(std::time::Duration::from_millis(250))),
             "stop" => {
                 let mut session = SESSION.lock().unwrap_or_else(|e| e.into_inner());
@@ -666,7 +669,7 @@ fn answer(client: &mut UnixStream, pending: &mut Vec<u8>) -> bool {
             }
             other => format!("{{\"error\":{}}}", quoted(&format!("unknown request `{other}`"))),
         };
-        if writeln!(client, "{reply}").is_err() {
+        if send(client, &reply).is_err() {
             return false;
         }
         super::debugger::answered();
@@ -689,18 +692,31 @@ struct Session {
 static SESSION: Mutex<Option<Session>> = Mutex::new(None);
 static TRACED: std::sync::Condvar = std::sync::Condvar::new();
 
-fn trace(client: &UnixStream) -> String {
+/// Starts tracing for a tool and tells it so, or says why not. The reply
+/// goes while the session is held, so that the end of the trace, which the
+/// program's exit writes from another thread, cannot reach the tool first.
+fn trace(client: &mut UnixStream) -> Result<(), String> {
     let mut session = SESSION.lock().unwrap_or_else(|e| e.into_inner());
     if session.is_some() {
-        return "{\"error\":\"another tool traces this program\"}".into();
+        return Err("{\"error\":\"another tool traces this program\"}".into());
     }
-    let Ok(stream) = client.try_clone() else { return "{\"error\":\"cannot trace\"}".into() };
+    let Ok(stream) = client.try_clone() else { return Err("{\"error\":\"cannot trace\"}".into()) };
     *session = Some(Session { stream, fd: client.as_raw_fd(), described: Default::default() });
     if !super::recorder::on() {
         super::recorder::start();
     }
+    let _ = send(client, &format!("{{\"tracing\":true,\"clock\":{}}}", super::recorder::now()));
     TRACED.notify_all();
-    format!("{{\"tracing\":true,\"clock\":{}}}", super::recorder::now())
+    Ok(())
+}
+
+/// Writes a line to a tool in one write, so that no other line can come
+/// between it and its end.
+fn send(stream: &mut impl std::io::Write, line: &str) -> std::io::Result<()> {
+    let mut whole = String::with_capacity(line.len() + 1);
+    whole.push_str(line);
+    whole.push('\n');
+    stream.write_all(whole.as_bytes())
 }
 
 /// Sends the tool what was recorded since the last time; a tool that is
@@ -708,7 +724,7 @@ fn trace(client: &UnixStream) -> String {
 fn push(session: &mut Option<Session>) {
     let Some(tracer) = session.as_mut() else { return };
     let line = recorded(tracer);
-    if writeln!(tracer.stream, "{line}").is_err() {
+    if send(&mut tracer.stream, &line).is_err() {
         super::recorder::stop();
         *session = None;
     }
@@ -726,7 +742,8 @@ fn end_trace(session: &mut Option<Session>, why: &str) {
     if let Some(mut tracer) = session.take() {
         let mut frames = Frames { described: std::mem::take(&mut tracer.described), json: String::new() };
         let memory = if why == "exit" { memory(&mut frames) } else { "null".into() };
-        let _ = writeln!(tracer.stream, "{{\"end\":\"{why}\",\"memory\":{memory},\"frames\":{{{}}}}}", frames.json);
+        let ended = format!("{{\"end\":\"{why}\",\"memory\":{memory},\"frames\":{{{}}}}}", frames.json);
+        let _ = send(&mut tracer.stream, &ended);
     }
 }
 
