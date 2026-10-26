@@ -2413,3 +2413,13 @@ generation, so labels made per request do not grow without end and a
 sample whose set was replaced has none, rather than another's.
 `withLabels` takes a body that gives anything, a result included, so a
 body that fails is passed on with `?` like any call.
+
+## 2026-10-26 — Profiles where the code is
+
+A profile is read against the code, so the editor puts it there: after a
+*Profile*, each hot line of the program ends with its share, its own and
+with what it calls, and the flame graph opens beside it. The share credits
+each line with what the runtime and the standard library do for it, as
+`show` does, so the lines marked are the ones to change. An agent asks the
+same with the `profile` tool, which gives each hot line with its code, so
+it can optimize without reading a flame graph.

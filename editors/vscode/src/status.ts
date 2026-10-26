@@ -57,6 +57,7 @@ async function menu(): Promise<void> {
     { label: '$(type-hierarchy) Show the Module Graph', command: 'tondo.moduleGraph' },
     { label: '$(pulse) Watch a Running Program', command: 'tondo.watchCounters' },
     { label: '$(debug) Debug a Dump', command: 'tondo.debugDump' },
+    { label: '$(flame) Show a Profile', command: 'tondo.showProfile' },
     { label: '$(refresh) Restart the Language Server', command: 'tondo.restartLanguageServer' },
     { label: '$(output) Show the Output', command: 'tondo.showOutput' },
     { label: '$(book) Get Started', command: 'tondo.walkthrough' },

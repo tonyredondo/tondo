@@ -14,6 +14,7 @@ import {
   examples,
   failures,
   graphed,
+  hotLines,
   incompatible,
   listed,
   outcomes,
@@ -22,6 +23,7 @@ import {
   rendered,
   running,
   served,
+  share,
   testEvent,
   traced,
   verdict,
@@ -329,4 +331,27 @@ test('benchmarks are marked, and what they measured reads as tondo shows it', ()
   assert.equal(benchLine({ ...measured, change: undefined, allocations: 0.5 }), 'parse 10  1.973 µs/op  ±0.5%  0.50 allocs/op  1685 B/op');
   assert.equal(duration(152.24), '152.2 ns');
   assert.equal(duration(2.5e9), '2.500 s');
+});
+
+test("a profile's hot lines, and how much each took at its end", () => {
+  const shown = JSON.stringify({
+    format: 'tondo-profile-show-0.1/1',
+    type: 'cpu',
+    unit: 'nanoseconds',
+    total: 146_000_000,
+    lines: [
+      { file: 'busy.to', line: 14, flat: 94_000_000, cum: 94_000_000 },
+      { file: 'busy.to', line: 23, flat: 2_000_000, cum: 141_000_000 },
+    ],
+  });
+  const hot = hotLines(shown);
+  assert.equal(hot.lines.length, 2);
+  assert.equal(share(hot.lines[0].flat, hot.lines[0].cum, hot.total, hot.unit), '🔥 64.4% (94ms)');
+  assert.equal(share(hot.lines[1].flat, hot.lines[1].cum, hot.total, hot.unit), '🔥 1.4% (2ms), 96.6% with what it calls');
+  assert.equal(share(100, 100, hot.total, hot.unit), undefined);
+  assert.equal(share(3 << 20, 3 << 20, 4 << 20, 'bytes'), '🔥 75.0% (3.0MiB)');
+  assert.throws(() => hotLines('{"format":"tondo-error-0.1/1"}'));
+  const report = testEvent(JSON.stringify({ event: 'report', report: { compiled: true, profiles: [{ test: 'p::unit::p::slow', bench: null, profile: 'target/profiles/p.unit.p.slow.cpu.pprof' }] } }));
+  assert.ok(report?.event === 'report');
+  assert.deepEqual(report.profiles, ['target/profiles/p.unit.p.slow.cpu.pprof']);
 });

@@ -8,6 +8,7 @@ import { exec } from './cli';
 import { registerDebugging } from './debugging';
 import { registerModules } from './modules';
 import { registerObserving } from './observe';
+import { registerProfiles } from './profiles';
 import { registerStatus } from './status';
 import { registerTasks } from './tasks';
 import { incompatible } from './report';
@@ -35,7 +36,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(output);
   void checkVersion();
   registerStatus(context, output);
-  onTests = registerTesting(context, output);
+  const showProfile = registerProfiles(context, output);
+  onTests = registerTesting(context, output, showProfile);
   await startClient(output);
   registerDebugging(context);
   registerModules(context);

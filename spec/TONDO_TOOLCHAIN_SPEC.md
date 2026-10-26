@@ -474,10 +474,11 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
 - Las reparaciones de los diagnósticos (22.4 del lenguaje), cada una como
   acción `quickfix`, preferida si es `safe`, y una acción `source.fixAll` que
   aplica las seguras del archivo que no se tocan entre sí.
-- Code lenses *Run*, *Debug* y *Debug Live* sobre el `main` de un programa, o
-  sobre la primera sentencia de un script, en el archivo que lo contiene, con
-  las órdenes `tondo.run`, `tondo.debug` y `tondo.debugLive` y la URI del
-  archivo como argumento, que el editor implementa.
+- Code lenses *Run*, *Debug*, *Debug Live* y *Profile* sobre el `main` de un
+  programa, o sobre la primera sentencia de un script, en el archivo que lo
+  contiene, con las órdenes `tondo.run`, `tondo.debug`, `tondo.debugLive` y
+  `tondo.profile` y la URI del archivo como argumento, que el editor
+  implementa.
 - Si el editor lo pide con `"tests": true` en `initializationOptions`, la
   notificación `tondo/tests` le da las suites y los tests de un proyecto cada
   vez que cambian al analizarlo, aunque no estén guardados:
@@ -719,9 +720,14 @@ lenguaje, cada una con un texto para el modelo y su resultado como datos
   `hover`, `complete`, `symbols`, y `rename`, que reescribe los archivos.
 - Proyectos: `new_project`, `add_dependency` y `remove_dependency`.
 - Builds: `build`; `run`, con su entrada y un tiempo tras el que el programa
-  termina, 60 s si no se dice; `test`, con lo que imprime y su informe JSON, y su cobertura si se pide;
+  termina, 60 s si no se dice; `test`, con lo que imprime y su informe JSON, y su cobertura si se pide,
+  y sus benchmarks con `bench`, comparados con `baseline` o `against`;
   `doc_test`, `bind`, `update` y `target_pack`.
 - Programas en ejecución: `ps`, `counters`, `trace`, `dump` y `dump_read`.
+- Perfiles (sección 7.15): `profile` perfila un programa hasta que termina o
+  pasa `duration`, uno en ejecución, un test o lo que miden los benchmarks,
+  y da por perfil sus funciones y las líneas del programa que más toman, cada
+  línea con su código, y lo que tomó cada label.
 - Depuración: `debug_start` abre una sesión de `tondo debug`, viva con
   `live`, y da su id; `debug` le pasa una orden, `reload` incluida, y
   devuelve las respuestas, los eventos y lo que el programa imprimió. Si el
@@ -1048,7 +1054,8 @@ compilador guarda, junto a la tabla de llamadas de las trazas, dónde empieza
 el código de cada línea de cada función, sin coste al ejecutar. Los tipos de
 muestra son `samples` y `cpu` (nanosegundos); `alloc_objects`,
 `alloc_space`, `inuse_objects` e `inuse_space`, este el primero que se
-muestra; y `tasks`. Las muestras de CPU llevan la etiqueta `thread`, y las de
+muestra, o `alloc_space` en el perfil de un test o de un benchmark, que no
+tiene memoria viva; y `tasks`. Las muestras de CPU llevan la etiqueta `thread`, y las de
 tareas, `state`; las de CPU llevan también los labels de la tarea que
 corría (`profile.withLabels`, 14.26 de la librería estándar). En un perfil de
 memoria, el asignador y su muestreo no cuentan como marcos: el más interno es

@@ -81,8 +81,9 @@ such a program under qemu-user.
 In VS Code, and Cursor, VSCodium and Windsurf, the Tondo extension
 (`editors/vscode`), which `tondo setup` installs, brings all of it: the
 language server below, debugging with `tondo dap`, live builds that change
-as files are saved, the tests in the Testing view, tasks, and the tools of
-`tondo mcp` for VS Code's agents. *Tondo: Get Started* walks through it.
+as files are saved, the tests in the Testing view, profiles with each hot
+line's share at its end, tasks, and the tools of `tondo mcp` for VS Code's
+agents. *Tondo: Get Started* walks through it.
 
 `tondo lsp` is a language server: diagnostics as you type, hover, go to
 definition, references, rename, completion, signatures, inlay types,

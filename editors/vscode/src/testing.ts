@@ -10,10 +10,15 @@ import * as vscode from 'vscode';
 import { isProject } from './binary';
 import { Ran, exec, settings } from './cli';
 import { Documents } from './docs';
+import { ShowProfile } from './profiles';
 import { Covered, Listed, Outcome, Served, benchLine, covered, listed, served, testEvent } from './report';
 
 /** Registers the tests; what it returns takes the language server's. */
-export function registerTesting(context: vscode.ExtensionContext, output: vscode.OutputChannel): (params: Served) => void {
+export function registerTesting(
+  context: vscode.ExtensionContext,
+  output: vscode.OutputChannel,
+  showProfile: ShowProfile,
+): (params: Served) => void {
   const controller = vscode.tests.createTestController('tondo', 'Tondo');
   context.subscriptions.push(controller);
   // Each project's item, and the project of each item.
@@ -168,7 +173,11 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
   /** Shows the events of `tondo test` in a project on the run `current`
    *  gives; `ended` is told when a report ends a run, and whether the
    *  tests compiled. */
-  function follower(dir: string, current: () => vscode.TestRun | undefined, ended: (compiled: boolean, ids: Set<string>) => void) {
+  function follower(
+    dir: string,
+    current: () => vscode.TestRun | undefined,
+    ended: (compiled: boolean, ids: Set<string>, profiles: string[]) => void,
+  ) {
     const item = (id: string) => {
       const found = projects.get(dir);
       let match: vscode.TestItem | undefined;
@@ -267,7 +276,7 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
         case 'report':
           // The report decides, after every retry.
           event.outcomes.forEach((outcome) => finish(testRun, outcome));
-          ended(event.compiled, new Set(event.outcomes.map((outcome) => outcome.id)));
+          ended(event.compiled, new Set(event.outcomes.map((outcome) => outcome.id)), event.profiles);
           break;
       }
     };
@@ -309,6 +318,7 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
     }
     const testRun = controller.createTestRun(request);
     const benchmarking = request.profile?.label === 'Benchmark';
+    const profiling = request.profile?.label === 'Profile';
     const asked = benchmarking ? [] : (request.include ?? documents.all());
     const docs = asked.filter((item) => documents.owns(item) && !request.exclude?.includes(item));
     if (docs.length > 0) {
@@ -325,8 +335,15 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
       started.forEach((item) => testRun.enqueued(item));
       let reported = false;
       let ran = new Set<string>();
-      const follow = follower(dir, () => testRun, (compiled, ids) => ((reported = compiled), (ran = ids)));
-      const args = testArgs(dir, items, false, benchmarking);
+      let profiles: string[] = [];
+      const follow = follower(dir, () => testRun, (compiled, ids, written) => ((reported = compiled), (ran = ids), (profiles = written)));
+      // A profile of each test, or of what the benchmarks measure when
+      // only benchmarks are chosen.
+      const benchmarks = profiling && started.length > 0 && started.every((item) => item.tags.some((tag) => tag.id === benchmark.id));
+      const args = testArgs(dir, items, false, benchmarking || benchmarks);
+      if (profiling) {
+        args.push('--profile', 'cpu');
+      }
       const report = path.join(os.tmpdir(), `tondo-coverage-${process.pid}-${Date.now()}.json`);
       const coverage = request.profile?.kind === vscode.TestRunProfileKind.Coverage;
       if (coverage) {
@@ -361,6 +378,12 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
       }
       if (benchmarking) {
         void vscode.commands.executeCommand('markdown.showPreviewToSide', vscode.Uri.file(measured));
+      }
+      if (profiling && profiles.length > 0) {
+        const chosen = profiles.length === 1 ? profiles[0] : await vscode.window.showQuickPick(profiles, { placeHolder: 'Which profile?' });
+        if (chosen) {
+          await showProfile(dir, path.resolve(dir, chosen));
+        }
       }
       // What the report does not name did not run.
       started.filter((item) => !ran.has(item.id)).forEach((item) => testRun.skipped(item));
@@ -420,6 +443,7 @@ export function registerTesting(context: vscode.ExtensionContext, output: vscode
 
   controller.createRunProfile('Run', vscode.TestRunProfileKind.Run, run, true, undefined, true);
   controller.createRunProfile('Benchmark', vscode.TestRunProfileKind.Run, run, false, benchmark);
+  controller.createRunProfile('Profile', vscode.TestRunProfileKind.Run, run, false);
   // A snapshot written as the test now makes it, then the test again.
   context.subscriptions.push(
     vscode.commands.registerCommand('tondo.updateSnapshot', async (asked: { test: vscode.TestItem }) => {

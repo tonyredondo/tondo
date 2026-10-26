@@ -190,6 +190,7 @@ impl Server {
             "definition" | "references" | "hover" | "complete" | "rename" | "symbols" | "implementations" | "calls" => {
                 language(name, args)
             }
+            "profile" => profile(args),
             "explain" => {
                 let code = args.need("code")?;
                 let explained = crate::explain::explain(&code)
@@ -1164,6 +1165,103 @@ struct Ran {
     timed_out: bool,
 }
 
+/// The tool `profile`: profiles a program, a running one, a test or the
+/// benchmarks of a project, then reads each profile it wrote.
+fn profile(args: &Args) -> Result<Reply, String> {
+    let kind = args.text("kind").unwrap_or_else(|| "cpu".into());
+    if !matches!(kind.as_str(), "cpu" | "memory" | "tasks") {
+        return Err(format!("no profile of `{kind}`: cpu, memory or tasks"));
+    }
+    let top = args.number("top").map_or(15, |n| n.max(1.0) as usize);
+    let path = args.path().display().to_string();
+    let mut argv: Vec<String> = Vec::new();
+    let (profiles, base): (Vec<PathBuf>, PathBuf) = if args.text("test").is_some() || args.flag("bench") {
+        if kind == "tasks" {
+            return Err("tests are profiled for cpu or memory".into());
+        }
+        argv.extend([
+            "test".into(),
+            path.clone(),
+            "--profile".into(),
+            kind.clone(),
+            "--test-format".into(),
+            "json".into(),
+        ]);
+        if let Some(test) = args.text("test") {
+            argv.extend(["--exact".into(), test]);
+        }
+        if args.flag("bench") {
+            argv.push("--bench".into());
+        }
+        let ran = execute(&argv, None, Some(Duration::from_secs(600)))?;
+        let report: Value = serde_json::from_str(&ran.stdout).map_err(|_| ran.stderr.trim().to_string())?;
+        let dir = PathBuf::from(&path);
+        let written = report["profiles"].as_array().cloned().unwrap_or_default();
+        (written.iter().filter_map(|p| Some(dir.join(p["profile"].as_str()?))).collect(), dir)
+    } else {
+        let output = std::env::temp_dir().join(format!("tondo-mcp-{}-{kind}.pprof", std::process::id()));
+        argv.extend([
+            "profile".into(),
+            format!("--{kind}"),
+            "--output".into(),
+            output.display().to_string(),
+            "--json".into(),
+        ]);
+        let duration = args.number("duration");
+        if let Some(seconds) = duration {
+            argv.extend(["--duration".into(), seconds.to_string()]);
+        }
+        match args.text("program") {
+            Some(program) => argv.push(program),
+            None => {
+                argv.extend(["--".into(), path.clone()]);
+                argv.extend(args.list("args"));
+            }
+        }
+        let limit = duration.map_or(120.0, |d| d + 60.0);
+        let ran = execute(&argv, None, Some(Duration::from_secs_f64(limit)))?;
+        if ran.code != Some(0) {
+            return Err(ran.stderr.trim().to_string());
+        }
+        let base = if Path::new(&path).is_dir() {
+            PathBuf::from(&path)
+        } else {
+            Path::new(&path).parent().unwrap_or(Path::new(".")).to_path_buf()
+        };
+        (vec![output], base)
+    };
+    if profiles.is_empty() {
+        return Err(
+            "nothing was sampled: the program or the tests ended before the first millisecond of processor time".into(),
+        );
+    }
+    let mut summaries = Vec::new();
+    let mut text = String::new();
+    for file in &profiles {
+        let read = crate::profile::read(file)?;
+        let hot = crate::profile::hot(&read, None)?;
+        let summary = crate::profile::summary(file, &read, &hot, top, &base);
+        text.push_str(&format!(
+            "{} of {}, {} in all\n",
+            hot.kind,
+            file.display(),
+            crate::profile::amount(hot.total, &hot.unit)
+        ));
+        for line in summary["lines"].as_array().into_iter().flatten().take(top) {
+            let share = line["flat"].as_i64().unwrap_or(0) as f64 * 100.0 / hot.total.max(1) as f64;
+            text.push_str(&format!(
+                "{share:5.1}%  {}:{} in {}  {}\n",
+                line["file"].as_str().unwrap_or_default(),
+                line["line"],
+                line["function"].as_str().unwrap_or_default(),
+                line["source"].as_str().unwrap_or_default()
+            ));
+        }
+        summaries.push(summary);
+    }
+    Ok(Reply::new(text, json!({ "profiles": summaries })))
+}
+
 /// Runs `tondo` with arguments, in a process group of its own that a
 /// timeout ends whole.
 fn execute(argv: &[String], stdin: Option<String>, timeout: Option<Duration>) -> Result<Ran, String> {
@@ -1568,6 +1666,24 @@ imports. Given a directory or file inside a project, its project, and the module
         description: "The functions that call the function at a place, or with `direction: outgoing`, those it calls.",
         kind: Kind::Reads,
         params: &[FILE, LINE, COLUMN, ("direction", "string", "incoming, the default, or outgoing.")],
+    },
+    Tool {
+        name: "profile",
+        description: "Where a program spends its time, what it allocates, or where its tasks wait: the functions and \
+the program's own lines that take the most, each line with its code. Profiles `path`, a .to file or a project, run \
+with `args` until it ends or `duration` passes; or a running `program`; or with `test`, that test of the project, and \
+with `bench`, the benchmarks of `test` or of all, what they measure.",
+        kind: Kind::Runs,
+        params: &[
+            ("path", "string", "The program, a .to file or a project directory; the server's directory by default."),
+            ("program", "string", "A running program's process ID or name, instead of `path`."),
+            ("kind", "string", "cpu (the default), memory or tasks."),
+            ("args", "strings", "The program's arguments."),
+            ("duration", "number", "Seconds to profile for, instead of until the program ends."),
+            ("test", "string", "The id of a test of the project to profile, as `tondo test --list` gives it."),
+            ("bench", "boolean", "Profile what the benchmarks measure."),
+            ("top", "number", "How many functions and lines to give: 15 by default."),
+        ],
     },
     Tool {
         name: "explain",

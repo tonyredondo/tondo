@@ -173,8 +173,9 @@ pub(crate) fn build(
                 ("inuse_space", "bytes"),
             ];
             let mut builder = Builder::new(program, &types, ("space", "bytes"), rate as i64);
-            builder.default_type("inuse_space");
             let samples = memory["samples"].as_array().cloned().unwrap_or_default();
+            // What a test or a benchmark allocated has no memory alive.
+            builder.default_type(if samples.is_empty() { "alloc_space" } else { "inuse_space" });
             for sample in &samples {
                 let size = sample["size"].as_f64().unwrap_or(0.0);
                 // A sample stands for 1 / (1 − e^(−size / rate)) allocations.
@@ -473,10 +474,44 @@ pub fn amount(value: i64, unit: &str) -> String {
     }
 }
 
-/// The source of a line, when its file is here to read.
-fn source(file: &str, line: i64) -> Option<String> {
-    let text = std::fs::read_to_string(file).ok()?;
+/// The source of a line, when its file is here to read, from `base`.
+fn source(base: &Path, file: &str, line: i64) -> Option<String> {
+    let text = std::fs::read_to_string(base.join(file)).ok()?;
     text.lines().nth(line as usize - 1).map(|l| l.trim().to_string())
+}
+
+/// What a profile says as data (`tondo-profile-show-0.1/1`): its sample
+/// types, the total, the `top` functions and lines, with the source of
+/// each line read from `base`, and what each label took.
+pub fn summary(path: &Path, profile: &Profile, hot: &Hot, top: usize, base: &Path) -> Value {
+    let functions: Vec<Value> = hot
+        .functions
+        .iter()
+        .take(top)
+        .map(|(function, file, flat, cum)| json!({ "function": function, "file": file, "flat": flat, "cum": cum }))
+        .collect();
+    let lines: Vec<Value> = hot
+        .lines
+        .iter()
+        .take(top)
+        .map(|(file, line, function, flat, cum)| {
+            let source = source(base, file, *line);
+            json!({ "file": file, "line": line, "function": function, "flat": flat, "cum": cum, "source": source })
+        })
+        .collect();
+    let labels: Vec<Value> =
+        hot.labels.iter().map(|(key, value, total)| json!({ "label": key, "value": value, "total": total })).collect();
+    json!({
+        "profile": path,
+        "type": hot.kind,
+        "unit": hot.unit,
+        "types": profile.sample_types.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>(),
+        "total": hot.total,
+        "duration_ms": profile.duration / 1_000_000,
+        "functions": functions,
+        "lines": lines,
+        "labels": labels,
+    })
 }
 
 /// `tondo profile show`: the functions, or with `lines` the lines, that
@@ -497,27 +532,8 @@ pub fn show(
         std::fs::write(html, page).map_err(|e| format!("cannot write {}: {e}", html.display()))?;
     }
     if as_json {
-        let functions: Vec<Value> = hot
-            .functions
-            .iter()
-            .take(top)
-            .map(|(function, file, flat, cum)| json!({ "function": function, "file": file, "flat": flat, "cum": cum }))
-            .collect();
-        let lines: Vec<Value> = hot.lines.iter().take(top).map(|(file, line, function, flat, cum)| {
-            json!({ "file": file, "line": line, "function": function, "flat": flat, "cum": cum, "source": source(file, *line) })
-        }).collect();
-        let fields = json!({
-            "profile": path,
-            "type": hot.kind,
-            "unit": hot.unit,
-            "types": profile.sample_types.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>(),
-            "total": hot.total,
-            "duration_ms": profile.duration / 1_000_000,
-            "functions": functions,
-            "lines": lines,
-            "labels": hot.labels.iter().map(|(key, value, total)| json!({ "label": key, "value": value, "total": total })).collect::<Vec<_>>(),
-            "html": html,
-        });
+        let mut fields = summary(path, &profile, &hot, top, Path::new("."));
+        fields["html"] = json!(html);
         crate::cli::print_json("profile-show", true, fields);
         return Ok(());
     }
@@ -529,7 +545,7 @@ pub fn show(
     if lines {
         out.push_str(&format!("{:>9} {:>6} {:>9} {:>6}  line\n", "flat", "flat%", "cum", "cum%"));
         for (file, line, function, flat, cum) in hot.lines.iter().take(top) {
-            let text = source(file, *line).map_or(String::new(), |s| format!("  {s}"));
+            let text = source(Path::new("."), file, *line).map_or(String::new(), |s| format!("  {s}"));
             out.push_str(&format!(
                 "{:>9} {:>5.1}% {:>9} {:>5.1}%  {file}:{line} in {function}{text}\n",
                 amount(*flat, &hot.unit),

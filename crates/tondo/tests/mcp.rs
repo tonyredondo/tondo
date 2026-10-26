@@ -252,6 +252,58 @@ fn runs_tests_and_debugs() {
     agent.stop();
 }
 
+const PROFILED: &str = "import std.console
+
+fn fib(n: Int): Int {
+    if n < 2 {
+        return n
+    }
+    fib(n - 1) + fib(n - 2)
+}
+
+fn main() {
+    console.println(\"{fib(32)}\")
+}
+";
+
+const PROFILED_TESTS: &str = "import std.testing
+
+test slow {
+    assert(fib(29) == 514229)
+}
+
+test joining {
+    testing.bench(\"join\", () { \"{[1, 2, 3]}\" })
+}
+";
+
+/// An agent finds where the time goes: in the program, in a test, and in
+/// what a benchmark measures.
+#[test]
+fn profiles_for_agents() {
+    let files = [
+        ("tondo.toml", "[package]\nname = \"app\"\n"),
+        ("src/main.to", PROFILED),
+        ("src/main_test.to", PROFILED_TESTS),
+    ];
+    let dir = project("mcp_profile", &files);
+    let mut agent = Agent::start(&dir);
+    let (profiled, text) = agent.call("profile", json!({}));
+    let profile = &profiled["profiles"][0];
+    assert_eq!((&profile["type"], &profile["functions"][0]["function"]), (&json!("cpu"), &json!("fib")), "{profiled}");
+    // The line that recurses is in every stack, with its code.
+    let line = profile["lines"].as_array().unwrap().iter().find(|l| l["line"] == 7).expect("fib's call");
+    assert_eq!((&line["file"], &line["source"]), (&json!("src/main.to"), &json!("fib(n - 1) + fib(n - 2)")));
+    assert!(text.contains("src/main.to:7 in fib  fib(n - 1) + fib(n - 2)"), "{text}");
+    let (profiled, _) = agent.call("profile", json!({ "test": "app::unit::app::slow" }));
+    assert_eq!(profiled["profiles"][0]["functions"][0]["function"], "fib", "{profiled}");
+    let (profiled, _) = agent.call("profile", json!({ "bench": true, "kind": "memory" }));
+    let profile = &profiled["profiles"][0];
+    assert_eq!(profile["type"], "alloc_space", "{profiled}");
+    assert!(profile["total"].as_i64().unwrap() > 0, "{profiled}");
+    agent.stop();
+}
+
 /// `tondo setup` writes the skill for Claude Code and Codex, registers
 /// the server with their commands, and installs the extension in the
 /// editors, here with commands that say how they were run; `gh` gives an

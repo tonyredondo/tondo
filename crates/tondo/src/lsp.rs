@@ -392,7 +392,13 @@ impl Server {
         });
         let Some(span) = main.or(module.statements.first().map(|s| s.span)) else { return Some(json!([])) };
         let range = self.range(file, span);
-        let lenses: Vec<Value> = [("Run", "tondo.run"), ("Debug", "tondo.debug"), ("Debug Live", "tondo.debugLive")]
+        let commands = [
+            ("Run", "tondo.run"),
+            ("Debug", "tondo.debug"),
+            ("Debug Live", "tondo.debugLive"),
+            ("Profile", "tondo.profile"),
+        ];
+        let lenses: Vec<Value> = commands
             .iter()
             .map(|(title, command)| json!({ "range": range, "command": { "title": title, "command": command, "arguments": [uri] } }))
             .collect();

@@ -130,6 +130,7 @@ interface Report {
   compiled?: boolean;
   suites?: Entry[];
   tests?: Entry[];
+  profiles?: { test: string; bench: string | null; profile: string }[] | null;
 }
 
 /** What the language server sends of a project's tests as they change
@@ -236,7 +237,7 @@ export type TestEvent =
   | { event: 'start'; id: string }
   | { event: 'output'; id: string; text: string }
   | { event: 'end'; outcome: Outcome; duration: number }
-  | { event: 'report'; compiled: boolean; outcomes: Outcome[] };
+  | { event: 'report'; compiled: boolean; outcomes: Outcome[]; profiles: string[] };
 
 export function testEvent(line: string): TestEvent | undefined {
   let value;
@@ -264,7 +265,12 @@ export function testEvent(line: string): TestEvent | undefined {
     case 'end':
       return { event: 'end', outcome: outcome(value.id ?? '', value.status ?? '', value as Attempt), duration: value.duration_ms ?? 0 };
     case 'report':
-      return { event: 'report', compiled: value.report?.compiled !== false, outcomes: reported(value.report ?? {}) };
+      return {
+        event: 'report',
+        compiled: value.report?.compiled !== false,
+        outcomes: reported(value.report ?? {}),
+        profiles: (value.report?.profiles ?? []).map((written) => written.profile),
+      };
     default:
       return undefined;
   }
@@ -310,7 +316,7 @@ export function programOf(where: Place, file: string): { program: string; cwd: s
 
 /** What the extension needs of `tondo`, as `tondo version --json` lists
  *  its features. */
-export const NEEDED = ['json', 'graph', 'test-events', 'test-exact-many', 'test-watch', 'test-coverage', 'lsp-tests', 'explain', 'new', 'test-bench'];
+export const NEEDED = ['json', 'graph', 'test-events', 'test-exact-many', 'test-watch', 'test-coverage', 'lsp-tests', 'explain', 'new', 'test-bench', 'profile'];
 
 /** Why a `tondo` cannot serve this extension, from what `tondo version
  *  --json` printed, or `undefined` when it can. */
@@ -505,4 +511,43 @@ export function failures(stderr: string): Map<number, string> {
     }
   }
   return found;
+}
+
+/** What `tondo profile show --json` says of a profile's lines: their
+ *  file, line and what they took, their own and with what they call. */
+export interface HotLines {
+  type: string;
+  unit: string;
+  total: number;
+  lines: { file: string; line: number; flat: number; cum: number }[];
+}
+
+export function hotLines(json: string): HotLines {
+  const shown = JSON.parse(json) as { format?: string; type: string; unit: string; total: number; lines: HotLines['lines'] };
+  if (shown.format !== 'tondo-profile-show-0.1/1') {
+    throw new Error('tondo profile show gave no profile');
+  }
+  return { type: shown.type, unit: shown.unit, total: shown.total, lines: shown.lines };
+}
+
+/** What a line took, as its end shows it: its share and amount, and with
+ *  what it calls when that is more; nothing for a line that took little. */
+export function share(flat: number, cum: number, total: number, unit: string): string | undefined {
+  if (total <= 0 || Math.max(flat, cum) / total < 0.005) {
+    return undefined;
+  }
+  const percent = (value: number) => `${((value / total) * 100).toFixed(1)}%`;
+  const amount = (value: number) =>
+    unit === 'nanoseconds'
+      ? value >= 1e9
+        ? `${(value / 1e9).toFixed(2)}s`
+        : `${Math.round(value / 1e6)}ms`
+      : unit === 'bytes'
+        ? value >= 1 << 20
+          ? `${(value / (1 << 20)).toFixed(1)}MiB`
+          : `${(value / 1024).toFixed(1)}KiB`
+        : `${value}`;
+  const own = flat > 0 ? `${percent(flat)} (${amount(flat)})` : '';
+  const calls = cum > flat ? `${percent(cum)} with what it calls` : '';
+  return `🔥 ${[own, calls].filter((part) => part).join(', ')}`;
 }

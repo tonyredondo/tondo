@@ -441,7 +441,15 @@ fn tells_tests_and_lenses() {
         .iter()
         .map(|l| (l["command"]["title"].as_str().unwrap(), l["command"]["command"].as_str().unwrap()))
         .collect();
-    assert_eq!(titles, [("Run", "tondo.run"), ("Debug", "tondo.debug"), ("Debug Live", "tondo.debugLive")]);
+    assert_eq!(
+        titles,
+        [
+            ("Run", "tondo.run"),
+            ("Debug", "tondo.debug"),
+            ("Debug Live", "tondo.debugLive"),
+            ("Profile", "tondo.profile")
+        ]
+    );
     assert_eq!(lenses[0]["range"]["start"], json!({ "line": 2, "character": 3 }));
     assert_eq!(lenses[0]["command"]["arguments"], json!([opened]));
 

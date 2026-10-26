@@ -355,6 +355,22 @@
         "command": "tondo.updateSnapshot",
         "title": "Update Snapshot",
         "category": "Tondo"
+      },
+      {
+        "command": "tondo.profile",
+        "title": "Profile",
+        "category": "Tondo",
+        "icon": "$(flame)"
+      },
+      {
+        "command": "tondo.showProfile",
+        "title": "Show a Profile…",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.clearProfile",
+        "title": "Clear the Profile",
+        "category": "Tondo"
       }
     ],
     "menus": {
@@ -386,6 +402,14 @@
         {
           "command": "tondo.updateSnapshot",
           "when": "false"
+        },
+        {
+          "command": "tondo.profile",
+          "when": "resourceLangId == tondo"
+        },
+        {
+          "command": "tondo.clearProfile",
+          "when": "tondo.profiled"
         }
       ],
       "view/title": [

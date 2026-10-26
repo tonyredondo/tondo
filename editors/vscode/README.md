@@ -52,6 +52,13 @@ project, running, debugging and testing it.
 - **Modules**: the *Tondo Modules* view shows each project's packages,
   modules, files and imports, from `tondo graph`; *Show the Module Graph*
   writes it in Mermaid.
+- **Profiles**: *Profile* over `main` runs the program under `tondo profile`
+  in a terminal, until it ends or is stopped; the *Profile* profile of the
+  Testing view profiles the tests chosen, or what benchmarks measure. Each
+  hot line of the program then shows its share at its end, as `🔥 64.4%
+  (94ms)`, and the flame graph opens beside the code. *Show a Profile…*
+  opens any pprof file, a CI artifact or one `std.profile` wrote, and
+  *Clear the Profile* takes it away.
 - **Running programs**, those started with `TONDO_DIAGNOSTICS=1` and debug
   builds: *Attach* picks them by name; *Watch a Running Program's
   Counters* shows them in the *Tondo Counters* view as they change; *Trace

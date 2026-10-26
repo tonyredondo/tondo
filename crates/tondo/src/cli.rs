@@ -250,6 +250,7 @@ pub const FEATURES: &[&str] = &[
     "test-watch",
     "test-coverage",
     "test-bench",
+    "profile",
     "lsp-tests",
     "lsp-lenses",
     "explain",
