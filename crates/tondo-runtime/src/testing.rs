@@ -463,7 +463,7 @@ fn pairs(map: *mut MapObject) -> Vec<(String, String)> {
 }
 
 /// The elements of an `Array[String]`.
-fn strings(array: *mut ArrayHeader) -> Vec<String> {
+pub(crate) fn strings(array: *mut ArrayHeader) -> Vec<String> {
     if array.is_null() {
         return Vec::new();
     }

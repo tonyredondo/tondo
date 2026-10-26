@@ -1,0 +1,44 @@
+// A program profiles itself (std.profile): where its processor time goes,
+// with labels its tasks inherit, what it allocated, and where its tasks
+// are, each in pprof's format and as folded stacks.
+import std.console
+import std.profile
+
+fn fib(n: Int): Int {
+    if n < 2 {
+        return n
+    }
+    fib(n - 1) + fib(n - 2)
+}
+
+fn crunch(): Int {
+    var total = 0
+    for _ in 0..40 {
+        total += fib(24)
+    }
+    total
+}
+
+fn main() {
+    profile.startMemory()
+    var kept: Array[String] = []
+    for i in 0..2000 {
+        kept.push("entry {i} ".repeat(40))
+    }
+    let cpu = profile.startCpu()
+    let job = profile.withLabels(["job": "crunch"], () { spawn crunch() })
+    let total = job.wait()
+    let taken = cpu.stop()
+    // A gzipped pprof, and a stack that went through `fib`.
+    let bytes = taken.pprof()
+    console.println("{bytes.length() > 20} {bytes[0]} {bytes[1]}")
+    console.println("{taken.folded().contains("crunch;fib")}")
+    let memory = profile.memory()
+    console.println("{memory.folded().contains("main")} {kept.length()}")
+    console.println("{profile.tasks().folded().contains("main")} {total}")
+}
+
+// expect-stdout: true 31 139
+// expect-stdout: true
+// expect-stdout: true 2000
+// expect-stdout: true 1854720

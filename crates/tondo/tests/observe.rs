@@ -223,6 +223,48 @@ fn profiles_time_memory_and_tasks() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("the profile has no `space`: it has samples, cpu"));
 }
 
+const LABELED: &str = r#"import std.profile
+
+fn fib(n: Int): Int {
+    if n < 2 {
+        return n
+    }
+    fib(n - 1) + fib(n - 2)
+}
+
+fn main() {
+    for _ in 0..120 {
+        profile.withLabels(["endpoint": "/users"], () { fib(25) })
+        profile.withLabels(["endpoint": "/orders"], () { fib(23) })
+    }
+}
+"#;
+
+#[test]
+fn profiles_carry_labels() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("profile-labels");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("labeled.to"), LABELED).unwrap();
+    let run = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
+        assert!(output.status.success(), "{args:?}: {}", String::from_utf8_lossy(&output.stderr));
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    run(&["profile", "--output", "labeled.pprof", "--", "labeled.to"]);
+    let shown: Value = serde_json::from_str(&run(&["profile", "show", "labeled.pprof", "--json"])).unwrap();
+    let labels: Vec<(&str, &str, i64)> = shown["labels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| (l["label"].as_str().unwrap(), l["value"].as_str().unwrap(), l["total"].as_i64().unwrap()))
+        .collect();
+    // fib(25) takes more than twice what fib(23) does.
+    let [("endpoint", "/users", users), ("endpoint", "/orders", orders)] = labels[..] else { panic!("{shown}") };
+    assert!(users > orders, "{shown}");
+    let text = run(&["profile", "show", "labeled.pprof"]);
+    assert!(text.contains("by label:\n") && text.contains("%  endpoint=/users\n"), "{text}");
+}
+
 const DUMPED: &str = r#"import std.console
 
 fn sleeper(woken: Receiver[Int]) {

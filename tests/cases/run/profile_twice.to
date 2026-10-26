@@ -1,0 +1,11 @@
+// One profile of the processor time at a time, and memory only once it is
+// sampled.
+import std.profile
+
+fn main() {
+    let _first = profile.startCpu()
+    let _second = profile.startCpu()
+}
+
+// expect-panic: P0008
+// expect-stderr: panic[P0008]: explicit-panic: a profile of the processor time is being made already: stop it first, as `let cpu = profile.startCpu()` and then `cpu.stop()`

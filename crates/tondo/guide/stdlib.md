@@ -189,6 +189,13 @@ https://ui.perfetto.dev with each run of a task and where it waited, and
 `app-<pid>.folded`, a CPU profile, one stack a line with its samples, which
 shows where the time goes.
 
+A program profiles itself with `std.profile`, as a continuous profiler
+does: `let cpu = profile.startCpu()`, then `cpu.stop().pprof()`, the bytes
+of a pprof file; `profile.startMemory()` and `profile.memory()`;
+`profile.tasks()`. `profile.withLabels(["endpoint": path], () { handle(request) })`
+labels the samples of its work, and of the tasks it starts, so a profile
+divides the time by them.
+
 `tondo profile -- app.to` (or `tondo profile app --duration 10`) writes
 `app-<pid>.cpu.pprof`, a profile with the function and line of every frame
 for `go tool pprof`, speedscope or Datadog; `--memory` profiles what it

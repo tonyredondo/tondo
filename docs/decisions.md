@@ -2395,3 +2395,21 @@ each into pprof, named after its test and benchmark. Sampling the threads
 records no events, which nobody would read; counting allocations slows
 them, so a benchmark profiled for memory is not compared with one that
 was not.
+
+## 2026-10-26 — std.profile and labels
+
+A continuous profiler, as dd-trace-go's, lives in the program: it takes a
+profile every so often and sends it. `std.profile` lets a Tondo program do
+that, with the same pprof as `tondo profile`, so the encoder moved to the
+runtime, which the toolchain includes as a file. In the process the
+runtime names its own frames from the executable's table of symbols,
+which the loader does not export, and its Rust names it demangles.
+
+Labels divide a profile, by endpoint or by span. A task carries the number
+of its set, which the tasks it starts inherit, and a sample keeps that
+number, which a signal handler can read; sets live in a table of fixed
+size whose slots are taken in turn, each number with its slot's
+generation, so labels made per request do not grow without end and a
+sample whose set was replaced has none, rather than another's.
+`withLabels` takes a body that gives anything, a result included, so a
+body that fails is passed on with `?` like any call.

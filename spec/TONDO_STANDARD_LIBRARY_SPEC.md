@@ -1493,6 +1493,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.executor` | Core + gated | `threads` para pools bloqueantes | 0.1 | Pools acotados, actores y bridge de trabajo bloqueante sobre las tareas del lenguaje |
 | `std.log` | Core | — | 0.1 | Eventos estructurados con niveles, en texto o JSON, sobre un `io.Writer` |
 | `std.diagnostics` | Core | — | 0.1 | Contadores y gauges del programa, que `tondo counters` muestra |
+| `std.profile` | Core | — | 0.1 | Perfiles que el programa hace de sí mismo, en el formato de pprof, y labels que los dividen |
 | `std.console` | Capability-gated | `console` | 0.1 | stdin, stdout, stderr, texto, bytes y flushing |
 | `std.env` | Hosted | — | 0.1 | Argumentos, entorno y directorio de trabajo |
 | `std.fs` | Hosted | — | 0.1 | Filesystem, metadata y archivos |
@@ -3843,6 +3844,63 @@ pub fn Gauge.value(self): Int
   su total; `add` con un número negativo es un pánico, porque lo que baja es
   un `Gauge`. Un `Gauge` es un nivel que sube y baja.
 - Cambiar o leer un contador es una operación atómica, sin locks.
+
+### 14.26 `std.profile`
+
+`std.profile` deja que el programa haga perfiles de sí mismo, como los de
+`tondo profile` (7.15 del toolchain): dónde gasta su tiempo de procesador, qué
+asigna y retiene, y dónde están sus tareas; para guardarlos o enviarlos a un
+servicio, como hace un profiler continuo. Y labels que los dividen:
+
+~~~tondo
+import std.fs
+import std.profile
+
+fn serve(request: Request): Response ! fs.FsError {
+    let cpu = profile.startCpu()
+    let response = profile.withLabels(["endpoint": request.path], () { handle(request) })
+    fs.writeBytes("cpu.pprof", cpu.stop().pprof())?
+    response
+}
+~~~
+
+La superficie es:
+
+~~~tondo pseudocode
+pub type Profile
+pub type CpuProfile
+
+pub fn startCpu(): CpuProfile
+pub fn CpuProfile.stop(self): Profile
+pub fn startMemory()
+pub fn memory(): Profile
+pub fn tasks(): Profile
+pub fn Profile.pprof(self): Array[Byte]
+pub fn Profile.folded(self): String
+pub fn withLabels[T: ~Copy](labels: Map[String, String], body: fn(): T): T
+~~~
+
+- `startCpu` muestrea dónde están los hilos del programa cada milisegundo de
+  procesador, hasta `stop`; solo hay uno a la vez, y otro `startCpu` antes de
+  `stop` es un pánico que lo dice. Sus muestras llevan la etiqueta `thread` y
+  los labels de la tarea que corría.
+- `startMemory` muestrea desde entonces lo que el programa asigna, una
+  asignación por cada 512 KiB de media, como `TONDO_DIAGNOSTICS=1`; `memory`
+  da la memoria viva y lo que asignó cada pila, como `tondo profile
+  --memory`. Sin muestreo, `memory` es un pánico que dice cómo encenderlo.
+- `tasks` da dónde está cada tarea, con la etiqueta `state`.
+- `pprof` da el perfil en el formato de pprof, comprimido con gzip, con la
+  función, el archivo y la línea de cada marco, los del runtime y los de C
+  por su nombre; `folded`, una línea por pila, sus marcos desde el más externo
+  unidos por `;` y cuánto tomó.
+- `withLabels` ejecuta `body` con esos labels, además de los que la tarea ya
+  tenía, que los del mismo nombre reemplazan; las tareas que lanza los
+  heredan. Da lo que da `body`: un cuerpo que puede fallar da su resultado,
+  que se propaga con `?`. Los perfiles de `std.profile`, los de `tondo
+  profile` y los de `tondo test --profile` llevan los labels. El runtime
+  guarda un número limitado de conjuntos de labels distintos, así que los que
+  cambian en cada petición, como el de un span, no crecen sin fin: la muestra
+  de un conjunto que ya se reemplazó no lleva labels.
 
 ---
 

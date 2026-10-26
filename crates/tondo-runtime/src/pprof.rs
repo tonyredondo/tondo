@@ -1,7 +1,7 @@
 //! Profiles in pprof's format (`profile.proto` of github.com/google/pprof),
-//! gzipped: what `tondo profile` writes, which `go tool pprof`, speedscope,
-//! Pyroscope and Datadog read. It needs only the standard library, so that
-//! the runtime can use this same file.
+//! gzipped: what `tondo profile` writes and `std.profile` gives, which `go
+//! tool pprof`, speedscope, Pyroscope and Datadog read. It needs only the
+//! standard library, so that the toolchain uses this same file.
 
 use std::collections::HashMap;
 

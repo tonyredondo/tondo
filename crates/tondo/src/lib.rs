@@ -38,6 +38,7 @@ pub mod observe;
 pub mod ownership;
 pub mod parallel;
 pub mod parser;
+#[path = "../../tondo-runtime/src/pprof.rs"]
 pub mod pprof;
 pub mod profile;
 pub mod project;

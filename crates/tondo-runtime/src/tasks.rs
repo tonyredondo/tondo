@@ -257,6 +257,9 @@ pub(crate) struct Task {
     pub(crate) in_domain: bool,
     /// Where it was started, for stack traces.
     origin: Option<Arc<Origin>>,
+    /// The set of labels of `profile.withLabels` it carries, `0` for none,
+    /// which its samples record and the tasks it starts inherit.
+    labels: std::sync::atomic::AtomicU32,
 }
 
 /// A callback a thread of C makes, which a task runs while the thread
@@ -356,6 +359,16 @@ thread_local! {
 #[inline(never)]
 pub(crate) fn current() -> *mut Task {
     CURRENT.with(|c| c.get())
+}
+
+/// The labels of the running task, which a signal handler may read.
+pub(crate) fn labels() -> u32 {
+    unsafe { current().as_ref() }.map_or(0, |task| task.labels.load(Ordering::Relaxed))
+}
+
+/// Gives the running task the labels `set`; the ones it had.
+pub(crate) fn set_labels(set: u32) -> u32 {
+    unsafe { current().as_ref() }.map_or(0, |task| task.labels.swap(set, Ordering::Relaxed))
 }
 
 /// The bounds of the running task's stack, above its guard.
@@ -1624,9 +1637,10 @@ fn new_task(stack: Stack, body: *mut u8, code: *const u8, kind: ResultKind, join
         finished: false,
         main: join.is_null(),
         foreign: std::ptr::null(),
-        // A task started on a virtual clock keeps it.
+        // A task started on a virtual clock keeps it, and its labels.
         in_domain: !current().is_null() && unsafe { (*current()).in_domain },
         origin: None,
+        labels: std::sync::atomic::AtomicU32::new(labels()),
     }));
     tasks().insert(task as usize);
     super::clock::woke(task);

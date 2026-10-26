@@ -2262,6 +2262,7 @@ impl<'a> Checker<'a> {
         if matches!(
             module,
             StdModule::InternalHttp
+                | StdModule::InternalCodec
                 | StdModule::InternalToml
                 | StdModule::InternalYaml
                 | StdModule::InternalMsgpack
@@ -2384,6 +2385,7 @@ impl<'a> Checker<'a> {
             (
                 Some(ModuleName::Module(
                     StdModule::InternalHttp
+                    | StdModule::InternalCodec
                     | StdModule::InternalToml
                     | StdModule::InternalYaml
                     | StdModule::InternalMsgpack

@@ -263,6 +263,8 @@ pub(crate) struct Recording {
     events: Vec<Value>,
     pub(crate) samples: Vec<Value>,
     pub(crate) frames: serde_json::Map<String, Value>,
+    /// The sets of labels the samples name, by number.
+    pub(crate) labels: serde_json::Map<String, Value>,
     pub(crate) dropped: u64,
     pub(crate) lost: u64,
 }
@@ -462,6 +464,9 @@ impl Recording {
         }
         if let Some(Value::Object(frames)) = chunk.remove("frames") {
             self.frames.extend(frames);
+        }
+        if let Some(Value::Object(labels)) = chunk.remove("labels") {
+            self.labels.extend(labels);
         }
         self.dropped += chunk.get("dropped").and_then(Value::as_u64).unwrap_or(0);
         self.lost += chunk.get("lost").and_then(Value::as_u64).unwrap_or(0);

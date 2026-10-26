@@ -666,10 +666,11 @@ fn profiled(
         let bench = collected["bench"].as_str().map(str::to_string);
         let empty = serde_json::Map::new();
         let frames = collected["frames"].as_object().unwrap_or(&empty);
+        let labels = collected["labels"].as_object().unwrap_or(&empty);
         let samples = collected["samples"].as_array().cloned().unwrap_or_default();
         let memory = serde_json::json!({ "memory": { "rate": collected["rate"], "samples": [], "allocated": collected["allocated"] } });
         let program = executable.display().to_string();
-        let (builder, count) = crate::profile::build(kind, &program, frames, &samples, Some(&memory))?;
+        let (builder, count) = crate::profile::build(kind, &program, frames, labels, &samples, Some(&memory))?;
         // A test too short to be sampled has no profile.
         if count == 0 {
             continue;

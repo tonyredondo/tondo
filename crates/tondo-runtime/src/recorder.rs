@@ -168,6 +168,8 @@ struct Slot {
     thread: UnsafeCell<u32>,
     at: UnsafeCell<u64>,
     stack: UnsafeCell<Stack>,
+    /// The labels of the task that ran (`labels`).
+    labels: UnsafeCell<u32>,
 }
 
 unsafe impl Sync for Slot {}
@@ -228,14 +230,18 @@ extern "C" fn sample(_: i32, info: *mut libc::siginfo_t, context: *mut libc::c_v
         *slot.thread.get() = thread();
         *slot.at.get() = now();
         *slot.stack.get() = stack;
+        *slot.labels.get() = crate::tasks::labels();
     }
     slot.written.store(sequence + 1, Ordering::Release);
     unsafe { *errno = saved };
 }
 
+/// A sample: when, on which thread, where, and the labels of its task.
+pub(crate) type Sample = (u64, u32, Stack, u32);
+
 /// The samples taken since the last time, and how many were lost because
 /// the ring went round before the tool took them.
-pub(crate) fn take_samples() -> (Vec<(u64, u32, Stack)>, u64) {
+pub(crate) fn take_samples() -> (Vec<Sample>, u64) {
     let mut read = READ.lock().unwrap_or_else(|e| e.into_inner());
     let next = NEXT.load(Ordering::Acquire);
     let mut lost = 0;
@@ -257,7 +263,7 @@ pub(crate) fn take_samples() -> (Vec<(u64, u32, Stack)>, u64) {
             *read += 1;
             continue;
         }
-        let copied = unsafe { (*slot.at.get(), *slot.thread.get(), *slot.stack.get()) };
+        let copied = unsafe { (*slot.at.get(), *slot.thread.get(), *slot.stack.get(), *slot.labels.get()) };
         std::sync::atomic::fence(Ordering::Acquire);
         if slot.written.load(Ordering::Relaxed) == before {
             out.push(copied);
@@ -320,7 +326,7 @@ pub(crate) fn sample_threads() {
     }
 }
 
-fn stop_sampling() {
+pub(crate) fn stop_sampling() {
     timer(0);
     SAMPLING.store(false, Ordering::SeqCst);
 }

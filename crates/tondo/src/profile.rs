@@ -67,7 +67,9 @@ pub fn profile(
         frames.extend(more.clone());
     }
     let program = recorded.info["program"].as_str().unwrap_or_default().to_string();
-    let (builder, count) = build(kind, &program, &frames, &recorded.recording.samples, recorded.asked.as_ref())?;
+    let recording = &recorded.recording;
+    let (builder, count) =
+        build(kind, &program, &frames, &recording.labels, &recording.samples, recorded.asked.as_ref())?;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
     let elapsed = recorded.started.elapsed();
     let bytes = builder.finish((now - elapsed).as_nanos() as i64, elapsed.as_nanos() as i64);
@@ -107,6 +109,7 @@ pub(crate) fn build(
     kind: Kind,
     program: &str,
     frames: &serde_json::Map<String, Value>,
+    labels: &serde_json::Map<String, Value>,
     samples: &[Value],
     asked: Option<&Value>,
 ) -> Result<(Builder, usize), String> {
@@ -146,7 +149,15 @@ pub(crate) fn build(
                 Builder::new(program, &[("samples", "count"), ("cpu", "nanoseconds")], ("cpu", "nanoseconds"), PERIOD);
             for sample in samples {
                 let thread = sample[1].to_string();
-                add(&mut builder, &sample[2], &[1, PERIOD], &[("thread", &thread)]);
+                // The thread, and the labels of the task that ran.
+                let set = labels.get(&sample[3].to_string()).and_then(Value::as_array).cloned().unwrap_or_default();
+                let named: Vec<(String, String)> = set
+                    .iter()
+                    .filter_map(|pair| Some((pair[0].as_str()?.to_string(), pair[1].as_str()?.to_string())))
+                    .collect();
+                let mut tags: Vec<(&str, &str)> = vec![("thread", &thread)];
+                tags.extend(named.iter().map(|(name, value)| (name.as_str(), value.as_str())));
+                add(&mut builder, &sample[2], &[1, PERIOD], &tags);
             }
             Ok((builder, samples.len()))
         }
@@ -201,13 +212,16 @@ pub(crate) fn build(
 /// A frame as `show` reads it: its function, file and line.
 pub type Located = (String, String, i64);
 
+/// A sample as `show` reads it: its frames, its values and its labels.
+pub type Sampled = (Vec<Located>, Vec<i64>, Vec<(String, String)>);
+
 /// A profile as `show` reads it.
 pub struct Profile {
     pub sample_types: Vec<(String, String)>,
     pub default_type: String,
     /// Each sample's frames, innermost first, as function, file and line,
-    /// and its values.
-    pub samples: Vec<(Vec<Located>, Vec<i64>)>,
+    /// its values and its labels.
+    pub samples: Vec<Sampled>,
     pub duration: i64,
 }
 
@@ -294,15 +308,20 @@ fn decode(bytes: &[u8]) -> Option<Profile> {
                 types.push((get(1), get(2)));
             }
             2 => {
-                let (mut ids, mut values) = (Vec::new(), Vec::new());
+                let (mut ids, mut values, mut labels) = (Vec::new(), Vec::new(), Vec::new());
                 for (field, value, data) in fields(data)? {
                     match field {
                         1 => ids.extend(integers(value, data)),
                         2 => values.extend(integers(value, data).into_iter().map(|v| v as i64)),
+                        3 => {
+                            let parts = fields(data)?;
+                            let get = |n| parts.iter().find(|(f, ..)| *f == n).map_or(0, |(_, v, _)| *v);
+                            labels.push((get(1), get(2)));
+                        }
                         _ => {}
                     }
                 }
-                samples.push((ids, values));
+                samples.push((ids, values, labels));
             }
             4 => {
                 let (mut id, mut lines) = (0, Vec::new());
@@ -334,7 +353,7 @@ fn decode(bytes: &[u8]) -> Option<Profile> {
     let sample_types: Vec<(String, String)> = types.iter().map(|&(t, u)| (text(t), text(u))).collect();
     let samples = samples
         .into_iter()
-        .map(|(ids, values)| {
+        .map(|(ids, values, labels)| {
             // A location may hold the lines of functions inlined into
             // another, the innermost first.
             let frames = ids
@@ -345,7 +364,8 @@ fn decode(bytes: &[u8]) -> Option<Profile> {
                     (text(name), text(file), line)
                 })
                 .collect();
-            (frames, values)
+            let labels = labels.iter().map(|&(key, value)| (text(key), text(value))).collect();
+            (frames, values, labels)
         })
         .collect();
     let default_type = match default_type {
@@ -368,6 +388,9 @@ pub struct Hot {
     pub lines: Vec<(String, i64, String, i64, i64)>,
     /// The stacks, outermost first, with their values, for a flame graph.
     pub stacks: Vec<(Vec<String>, i64)>,
+    /// What each value of each label took, the largest first; `thread`
+    /// aside.
+    pub labels: Vec<(String, String, i64)>,
 }
 
 pub fn hot(profile: &Profile, kind: Option<&str>) -> Result<Hot, String> {
@@ -381,12 +404,16 @@ pub fn hot(profile: &Profile, kind: Option<&str>) -> Result<Hot, String> {
     let mut functions: HashMap<(String, String), (i64, i64)> = HashMap::new();
     let mut lines: HashMap<(String, i64), (String, i64, i64)> = HashMap::new();
     let mut stacks: HashMap<Vec<String>, i64> = HashMap::new();
-    for (frames, values) in &profile.samples {
+    let mut labeled: HashMap<(String, String), i64> = HashMap::new();
+    for (frames, values, labels) in &profile.samples {
         let value = values.get(index).copied().unwrap_or(0);
         if value == 0 || frames.is_empty() {
             continue;
         }
         total += value;
+        for (key, label) in labels.iter().filter(|(key, _)| key != "thread") {
+            *labeled.entry((key.clone(), label.clone())).or_default() += value;
+        }
         let mut seen_functions = std::collections::HashSet::new();
         let mut seen_lines = std::collections::HashSet::new();
         let located = |(_, file, line): &&(String, String, i64)| *line > 0 && !file.is_empty();
@@ -421,7 +448,9 @@ pub fn hot(profile: &Profile, kind: Option<&str>) -> Result<Hot, String> {
     lines.sort_by(|a, b| b.3.cmp(&a.3).then(b.4.cmp(&a.4)).then(a.0.cmp(&b.0)).then(a.1.cmp(&b.1)));
     let mut stacks: Vec<(Vec<String>, i64)> = stacks.into_iter().collect();
     stacks.sort();
-    Ok(Hot { kind: wanted.to_string(), unit, total, functions, lines, stacks })
+    let mut labels: Vec<(String, String, i64)> = labeled.into_iter().map(|((k, v), total)| (k, v, total)).collect();
+    labels.sort_by(|a, b| a.0.cmp(&b.0).then(b.2.cmp(&a.2)).then(a.1.cmp(&b.1)));
+    Ok(Hot { kind: wanted.to_string(), unit, total, functions, lines, stacks, labels })
 }
 
 /// A value in its unit, as people read it.
@@ -486,6 +515,7 @@ pub fn show(
             "duration_ms": profile.duration / 1_000_000,
             "functions": functions,
             "lines": lines,
+            "labels": hot.labels.iter().map(|(key, value, total)| json!({ "label": key, "value": value, "total": total })).collect::<Vec<_>>(),
             "html": html,
         });
         crate::cli::print_json("profile-show", true, fields);
@@ -519,6 +549,12 @@ pub fn show(
                 amount(*cum, &hot.unit),
                 percent(*cum),
             ));
+        }
+    }
+    if !hot.labels.is_empty() {
+        out.push_str("by label:\n");
+        for (key, value, total) in &hot.labels {
+            out.push_str(&format!("{:>9} {:>5.1}%  {key}={value}\n", amount(*total, &hot.unit), percent(*total)));
         }
     }
     if let Some(html) = html {

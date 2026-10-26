@@ -1,0 +1,84 @@
+// std.profile (standard library 14.26): profiles a program makes of
+// itself, in pprof's format, as `tondo profile` writes them: where its
+// processor time goes, what it allocates and holds, and where its tasks
+// are; and labels that divide them, as by endpoint.
+
+import std.internal.codec as native
+
+/// A profile: in pprof's format, for a file or a service, and as folded
+/// stacks.
+pub type Profile = {
+    priv native: native.Native
+}
+
+/// A profile of the processor time, which runs until `stop`.
+pub type CpuProfile = {
+    priv started: Bool
+}
+
+/// Begins a profile of where the program's threads spend their processor
+/// time, sampled each millisecond, until `stop`; one at a time.
+pub fn startCpu(): CpuProfile {
+    if not native.profileCpuStart() {
+        panic(
+            "a profile of the processor time is being made already: stop it first, as `let cpu = profile.startCpu()` and then `cpu.stop()`",
+        )
+    }
+    CpuProfile { started: true }
+}
+
+/// What was sampled since `startCpu`.
+pub fn CpuProfile.stop(self): Profile {
+    Profile { native: native.profileCpuStop() }
+}
+
+/// Samples what the program allocates from now on, about one allocation
+/// in each 512 KiB, which `memory` reports.
+pub fn startMemory() {
+    native.profileMemoryStart()
+}
+
+/// The memory alive now and what the program allocated, by the stack that
+/// allocated it, from the samples since `startMemory`.
+pub fn memory(): Profile {
+    if not native.profileMemorySampled() {
+        panic(
+            "profile.memory() reports the samples of what the program allocates: call profile.startMemory() first, or start the program with TONDO_DIAGNOSTICS=1",
+        )
+    }
+    Profile { native: native.profileMemory() }
+}
+
+/// Where each task of the program is now.
+pub fn tasks(): Profile {
+    Profile { native: native.profileTasks() }
+}
+
+/// The profile in pprof's format, gzipped, as `go tool pprof`, Datadog and
+/// `tondo profile show` read it.
+pub fn Profile.pprof(self): Array[Byte] {
+    native.profilePprof(self.native)
+}
+
+/// The profile as folded stacks: a line for each stack, its frames from
+/// the outermost joined by `;`, and how much it took.
+pub fn Profile.folded(self): String {
+    native.profileFolded(self.native)
+}
+
+/// Runs `body` with `labels`, which the samples of its processor time carry,
+/// and those of the tasks it starts, so that a profile divides the time by
+/// them; labels already there stay, and those of the same names are
+/// replaced. It gives what `body` gives: a body that can fail gives its
+/// result, to pass on with `?`.
+pub fn withLabels[T: ~Copy](labels: Map[String, String], body: fn(): T): T {
+    var names: Array[String] = []
+    var values: Array[String] = []
+    for (name, value) in labels {
+        names.push(name)
+        values.push(value)
+    }
+    let previous = native.labelsPush(names, values)
+    defer native.labelsRestore(previous)
+    body()
+}

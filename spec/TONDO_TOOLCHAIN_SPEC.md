@@ -966,7 +966,7 @@ campos de su resultado:
 | `ps` | `tondo-ps-0.1/1` | `programs` |
 | `trace` | `tondo-trace-0.1/1` | `timeline`, `profile`, `events`, `samples`, `lost` y `ended` |
 | `profile` | `tondo-profile-0.1/1` | `profile`, la ruta; `kind`; `samples`; `duration_ms`; `lost` y `ended` |
-| `profile show` | `tondo-profile-show-0.1/1` | `profile`, `type`, `unit`, `types`, `total`, `duration_ms`, `functions` (`function`, `file`, `flat`, `cum`), `lines` (`file`, `line`, `function`, `flat`, `cum`, `source`) y `html` |
+| `profile show` | `tondo-profile-show-0.1/1` | `profile`, `type`, `unit`, `types`, `total`, `duration_ms`, `functions` (`function`, `file`, `flat`, `cum`), `lines` (`file`, `line`, `function`, `flat`, `cum`, `source`), `labels` (`label`, `value`, `total`) y `html` |
 | `dump` | `tondo-dump-0.1/1` | `file` y `summary` |
 | `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `tasks`, `task`, `heap`, `objects` u `object` |
 | `reload` | `tondo-reload-0.1/1` | `changed`, `added`, `moves`, `stays` y `converted`; si no puede, `ok` falso, `message` y `restart` |
@@ -1049,8 +1049,10 @@ el código de cada línea de cada función, sin coste al ejecutar. Los tipos de
 muestra son `samples` y `cpu` (nanosegundos); `alloc_objects`,
 `alloc_space`, `inuse_objects` e `inuse_space`, este el primero que se
 muestra; y `tasks`. Las muestras de CPU llevan la etiqueta `thread`, y las de
-tareas, `state`. En un perfil de memoria, el asignador y su muestreo no
-cuentan como marcos: el más interno es lo que pidió la memoria.
+tareas, `state`; las de CPU llevan también los labels de la tarea que
+corría (`profile.withLabels`, 14.26 de la librería estándar). En un perfil de
+memoria, el asignador y su muestreo no cuentan como marcos: el más interno es
+lo que pidió la memoria.
 
 `tondo profile show <profile>` lee un perfil de pprof, de Tondo o no: el
 tipo de muestra que el perfil muestra primero, u otro con `--sample`, en
@@ -1062,6 +1064,7 @@ y de la librería estándar, así que señala el programa; con su texto cuando
 el archivo está. `--html <path>` escribe además un flame graph en un archivo
 HTML sin scripts: cada función, una caja tan ancha como su parte sobre la de
 quien la llamó, cuyo título dice cuánto, y la tabla de funciones. Con
+labels, dice además cuánto tomó cada valor de cada uno, salvo `thread`. Con
 `--json`, `tondo-profile-show-0.1/1` (7.12).
 
 ## 8. Determinismo

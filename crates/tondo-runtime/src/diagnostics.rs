@@ -788,13 +788,18 @@ fn recorded(session: &mut Session) -> String {
         };
     }
     out.push_str("],\"samples\":[");
-    for (index, (at, thread, sampled)) in samples.iter().enumerate() {
+    let mut labels = Labels::default();
+    for (index, (at, thread, sampled, set)) in samples.iter().enumerate() {
         let comma = if index == 0 { "" } else { "," };
         let frames = stack(sampled.frames());
-        let _ = write!(out, "{comma}[{at},{thread},{frames}]");
+        let _ = write!(out, "{comma}[{at},{thread},{frames},{}]", labels.number(*set));
     }
     session.described = std::mem::take(&mut frames.described);
-    let _ = write!(out, "],\"frames\":{{{}}},\"dropped\":{dropped},\"lost\":{lost}}}", frames.json);
+    let _ = write!(
+        out,
+        "],\"labels\":{{{}}},\"frames\":{{{}}},\"dropped\":{dropped},\"lost\":{lost}}}",
+        labels.json, frames.json
+    );
     out
 }
 
@@ -960,6 +965,29 @@ pub(crate) fn crash_dump(reason: &str, message: &str, here: Vec<usize>, stop: bo
         Ok(()) => writeln!(std::io::stderr(), "tondo runtime: a dump of the program is in {}", path.display()),
         Err(e) => writeln!(std::io::stderr(), "tondo runtime: cannot write a dump to {}: {e}", path.display()),
     };
+}
+
+/// The sets of labels a document's samples refer to by number, each
+/// described once: `"number": [["name", "value"], ...]`.
+#[derive(Default)]
+pub(crate) struct Labels {
+    described: std::collections::HashSet<u32>,
+    pub(crate) json: String,
+}
+
+impl Labels {
+    /// The number of a sample's set, describing it if it is new; `0`, for
+    /// none or for a set no longer kept.
+    pub(crate) fn number(&mut self, set: u32) -> u32 {
+        let Some(labels) = super::labels::get(set) else { return 0 };
+        if self.described.insert(set) {
+            let pairs: Vec<String> =
+                labels.iter().map(|(name, value)| format!("[{},{}]", quoted(name), quoted(value))).collect();
+            let comma = if self.json.is_empty() { "" } else { "," };
+            let _ = write!(self.json, "{comma}\"{set}\":[{}]", pairs.join(","));
+        }
+        set
+    }
 }
 
 /// The frames a document refers to by address, each described once.
