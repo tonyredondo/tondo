@@ -2504,5 +2504,7 @@ benchmark runs faster than Go's. A task that waits there longer than
 20 microseconds, because its worker runs on, is taken by an idle worker,
 which is woken for it at most once every 100 microseconds, so stages of
 a pipeline still run in parallel; and the queue goes first now and then,
-so two tasks that wake each other do not hold back the others. New tasks
-go to the queue, as before.
+so two tasks that wake each other do not hold back the others. A task
+that a task starts goes to its worker's own queue, which an idle worker
+takes half of when it finds nothing else, so spawning many tasks no
+longer takes the queue's lock for each.
