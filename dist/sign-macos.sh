@@ -98,9 +98,17 @@ Accepted) ;;
     exit 1
     ;;
 esac
-spctl --assess --type open --context context:primary-signature -v "$executable" 2>&1 | tee "$work/assessed"
-grep -q "Notarized Developer ID" "$work/assessed" || {
-    say "Gatekeeper does not take $executable for a notarized one"
-    exit 1
-}
+# Apple publishes the ticket of an accepted submission a little later, so
+# Gatekeeper is asked for some minutes before the build goes on without.
+deadline=$(($(date +%s) + 300))
+until spctl --assess --type open --context context:primary-signature -v "$executable" >"$work/assessed" 2>&1 &&
+    grep -q "Notarized Developer ID" "$work/assessed"; do
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+        cat "$work/assessed"
+        say "Apple notarized $executable, and Gatekeeper takes it for a notarized one once Apple publishes its ticket"
+        exit 0
+    fi
+    sleep 15
+done
+cat "$work/assessed"
 say "notarized $executable"
