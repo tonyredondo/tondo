@@ -525,12 +525,17 @@ pub(crate) fn start() {
     let on = |name: &str| std::env::var_os(name).is_some_and(|value| value == "1");
     let debugged = on("TONDO_DEBUG");
     let live = super::live::on() && std::env::var_os("TONDO_DIAGNOSTICS").is_none_or(|value| value != "0");
-    if !on("TONDO_DIAGNOSTICS") && !on("TONDO_TRACE") && !debugged && !live && std::env::var_os("TONDO_DUMP").is_none()
-    {
+    // `cpu`: a profile of processor time, which counting the memory would
+    // change.
+    let processor = std::env::var_os("TONDO_TRACE").is_some_and(|value| value == "cpu");
+    let traced = on("TONDO_TRACE") || processor;
+    if !on("TONDO_DIAGNOSTICS") && !traced && !debugged && !live && std::env::var_os("TONDO_DUMP").is_none() {
         return;
     }
-    super::heap::prepare();
-    hook(WATCHED);
+    if !processor || on("TONDO_DIAGNOSTICS") {
+        super::heap::prepare();
+        hook(WATCHED);
+    }
     // `tondo debug -- program` debugs that program, not those it starts.
     if debugged {
         unsafe { std::env::remove_var("TONDO_DEBUG") };
@@ -566,7 +571,7 @@ pub(crate) fn start() {
     }
     // `tondo trace -- program` traces from the start: the program waits
     // for it, a while, before `main`. Its own programs are not traced.
-    if std::env::var_os("TONDO_TRACE").is_some_and(|value| value == "1") {
+    if traced {
         unsafe { std::env::remove_var("TONDO_TRACE") };
         super::recorder::start();
         let session = SESSION.lock().unwrap_or_else(|e| e.into_inner());
@@ -644,6 +649,11 @@ fn answer(client: &mut UnixStream, pending: &mut Vec<u8>) -> bool {
             _ if line.starts_with("again ") => super::live::again(&line["again ".len()..]),
             _ if line.starts_with("patch ") => super::live::patch(&line["patch ".len()..]),
             "counters" => counters(),
+            "memory" => {
+                let mut frames = Frames::default();
+                let memory = memory(&mut frames);
+                format!("{{\"memory\":{memory},\"frames\":{{{}}}}}", frames.json)
+            }
             "trace" => trace(client),
             "dump" => dump("request", "", None, Some(std::time::Duration::from_millis(250))),
             "stop" => {
@@ -704,7 +714,9 @@ fn push(session: &mut Option<Session>) {
     }
 }
 
-/// Ends the trace: what is left goes to the tool, and then why it ended.
+/// Ends the trace: what is left goes to the tool, and then why it ended;
+/// as the program exits, with its memory, which is not there to ask for
+/// afterwards.
 fn end_trace(session: &mut Option<Session>, why: &str) {
     if session.is_none() {
         return;
@@ -712,8 +724,31 @@ fn end_trace(session: &mut Option<Session>, why: &str) {
     super::recorder::stop();
     push(session);
     if let Some(mut tracer) = session.take() {
-        let _ = writeln!(tracer.stream, "{{\"end\":\"{why}\"}}");
+        let mut frames = Frames { described: std::mem::take(&mut tracer.described), json: String::new() };
+        let memory = if why == "exit" { memory(&mut frames) } else { "null".into() };
+        let _ = writeln!(tracer.stream, "{{\"end\":\"{why}\",\"memory\":{memory},\"frames\":{{{}}}}}", frames.json);
     }
+}
+
+/// The samples of the memory alive and what each stack allocated in all,
+/// as JSON (toolchain 7.15).
+fn memory(frames: &mut Frames) -> String {
+    let (samples, dropped) = super::heap::alive();
+    let (allocated, unstacked) = super::heap::allocations();
+    let mut out =
+        format!("{{\"rate\":{},\"dropped\":{dropped},\"unstacked\":{unstacked},\"samples\":[", super::heap::RATE);
+    for (index, (size, stack)) in samples.iter().enumerate() {
+        let comma = if index == 0 { "" } else { "," };
+        let _ = write!(out, "{comma}{{\"size\":{size},\"stack\":{}}}", frames.list(stack));
+    }
+    out.push_str("],\"allocated\":[");
+    for (index, (objects, bytes, stack)) in allocated.iter().enumerate() {
+        let comma = if index == 0 { "" } else { "," };
+        let _ =
+            write!(out, "{comma}{{\"objects\":{objects:.1},\"bytes\":{bytes:.0},\"stack\":{}}}", frames.list(stack));
+    }
+    out.push_str("]}");
+    out
 }
 
 /// A line of JSON with the events and samples recorded since the last one,

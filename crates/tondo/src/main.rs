@@ -73,6 +73,7 @@ fn main() -> ExitCode {
         "ps" => ps_command(&args[1..]),
         "counters" => counters_command(&args[1..]),
         "trace" => trace_command(&args[1..]),
+        "profile" => profile_command(&args[1..]),
         "dump" => dump_command(&args[1..]),
         "debug" => debug_command(&args[1..]),
         "target" => target_command(&args[1..]),
@@ -982,28 +983,107 @@ fn trace_command(args: &[OsString]) -> Result<ExitCode, String> {
             other => return Err(usage(&format!("trace does not take `{other}`"))),
         }
     }
-    let target = match (name, program) {
-        (Some(name), None) => tondo::observe::Traced::Running(name),
+    let Some(target) = traced_target("trace", name, program)? else { return Ok(ExitCode::FAILURE) };
+    tondo::observe::trace(target, duration, output, json).map(|()| ExitCode::SUCCESS)
+}
+
+/// What `trace` or `profile` looks at: a running program, by its process
+/// ID or name, or one it starts after `--`, a Tondo program built first as
+/// `tondo run` builds it; none when that does not compile.
+fn traced_target(
+    command: &str,
+    name: Option<String>,
+    program: Option<Vec<OsString>>,
+) -> Result<Option<tondo::observe::Traced>, String> {
+    match (name, program) {
+        (Some(name), None) => Ok(Some(tondo::observe::Traced::Running(name))),
         (None, Some(program)) if !program.is_empty() => {
-            // A Tondo program is built first, as `tondo run` builds it.
             let first = Path::new(&program[0]);
             let source = first.extension().is_some_and(|e| e == "to") || first.join("tondo.toml").is_file();
             let executable = match source {
                 true => match cached_executable(first, &BuildOptions::default())? {
                     Some(executable) => executable,
-                    None => return Ok(ExitCode::FAILURE),
+                    None => return Ok(None),
                 },
                 false => first.to_path_buf(),
             };
-            tondo::observe::Traced::Started(executable, program[1..].to_vec())
+            Ok(Some(tondo::observe::Traced::Started(executable, program[1..].to_vec())))
         }
-        _ => {
-            return Err(usage(
-                "trace takes a running program, its process ID or its name, or a program to start after `--`",
-            ));
+        _ => Err(format!(
+            "{command} takes a running program, its process ID or its name, or a program to start after `--`\n{USAGE}"
+        )),
+    }
+}
+
+/// `tondo profile` (toolchain 7.15): a profile of a running program, or of
+/// one it starts; `tondo profile show` reads one.
+fn profile_command(args: &[OsString]) -> Result<ExitCode, String> {
+    use tondo::profile::Kind;
+    let usage = |message: &str| format!("{message}\n{USAGE}");
+    if args.first().is_some_and(|a| a == "show") {
+        return profile_show(&args[1..]);
+    }
+    let (mut name, mut duration, mut output, mut program, mut json) = (None, None, None, None, false);
+    let mut kind = None;
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        match arg.to_str().unwrap_or_default() {
+            "--" => {
+                program = Some(rest.by_ref().cloned().collect::<Vec<_>>());
+                break;
+            }
+            "--json" => json = true,
+            flag @ ("--cpu" | "--memory" | "--tasks") => {
+                let chosen = match flag {
+                    "--cpu" => Kind::Cpu,
+                    "--memory" => Kind::Memory,
+                    _ => Kind::Tasks,
+                };
+                if kind.is_some_and(|k| k != chosen) {
+                    return Err(usage("a profile is of one thing: --cpu, --memory or --tasks"));
+                }
+                kind = Some(chosen);
+            }
+            "--duration" => {
+                let seconds = rest.next().and_then(|s| s.to_str()?.parse::<f64>().ok()).filter(|s| *s > 0.0);
+                let seconds = seconds.ok_or_else(|| usage("--duration takes seconds, as --duration 10"))?;
+                duration = Some(std::time::Duration::from_secs_f64(seconds));
+            }
+            "--output" => output = Some(PathBuf::from(rest.next().ok_or_else(|| usage("--output takes a path"))?)),
+            other if !other.starts_with('-') && name.is_none() => name = Some(other.to_string()),
+            other => return Err(usage(&format!("profile does not take `{other}`"))),
         }
-    };
-    tondo::observe::trace(target, duration, output, json).map(|()| ExitCode::SUCCESS)
+    }
+    let Some(target) = traced_target("profile", name, program)? else { return Ok(ExitCode::FAILURE) };
+    tondo::profile::profile(target, kind.unwrap_or(Kind::Cpu), duration, output, json).map(|()| ExitCode::SUCCESS)
+}
+
+/// `tondo profile show <file> [--top <n>] [--lines] [--sample <type>]
+/// [--html <file>] [--json]`.
+fn profile_show(args: &[OsString]) -> Result<ExitCode, String> {
+    let usage = |message: &str| format!("{message}\n{USAGE}");
+    let (mut file, mut top, mut lines, mut sample, mut html, mut json) = (None, 20, false, None, None, false);
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        match arg.to_str().unwrap_or_default() {
+            "--json" => json = true,
+            "--lines" => lines = true,
+            "--top" => {
+                top = rest
+                    .next()
+                    .and_then(|n| n.to_str()?.parse::<usize>().ok())
+                    .filter(|n| *n > 0)
+                    .ok_or_else(|| usage("--top takes how many, as --top 10"))?;
+            }
+            "--sample" => sample = Some(rest.next().ok_or_else(|| usage("--sample takes a type, as inuse_space"))?),
+            "--html" => html = Some(PathBuf::from(rest.next().ok_or_else(|| usage("--html takes a path"))?)),
+            other if !other.starts_with('-') && file.is_none() => file = Some(PathBuf::from(other)),
+            other => return Err(usage(&format!("profile show does not take `{other}`"))),
+        }
+    }
+    let file = file.ok_or_else(|| usage("profile show takes a profile, as `tondo profile show app.cpu.pprof`"))?;
+    let sample = sample.map(|s| s.to_string_lossy().into_owned());
+    tondo::profile::show(&file, sample.as_deref(), top, lines, html.as_deref(), json).map(|()| ExitCode::SUCCESS)
 }
 
 /// Resolves the named dependencies, or all of them, again instead of

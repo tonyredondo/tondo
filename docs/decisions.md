@@ -2349,3 +2349,24 @@ improve without breaking tools. The HTML is one file that loads nothing
 and runs no script, so a CI artifact opens anywhere: its charts are SVG,
 the samples of each benchmark, its change with its interval, and the
 coverage of each file.
+
+## 2026-10-26 — Profiles: pprof, with lines
+
+`tondo trace` already sampled where each thread is every millisecond of
+processor time, but named only functions, and only as folded stacks. A
+profile is useful when it names the line, and when the tools people
+already use read it, so `tondo profile` writes pprof, which `go tool
+pprof`, speedscope, Pyroscope and Datadog read, with the function, file
+and line of every frame. The compiler already knew where the code of each
+statement starts; it now keeps that, compressed as runs of lines, beside
+the table of calls of stack traces: less than 1% of a binary, and nothing
+to run, so a program in production can be profiled without building it
+again. The encoder needs only the standard library, so the runtime can
+use it when programs profile themselves.
+
+A profile of processor time does not count memory, which would change what
+it measures; a profile of memory does, as sampling memory was always
+turned on only for the tools. Besides the samples of live memory, each
+stack's samples now add up to what it allocated, which is what to cut
+first. `show` credits each line of the program with what the runtime and
+the standard library do for it, so the lines it lists are the program's.

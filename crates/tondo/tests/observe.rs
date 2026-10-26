@@ -137,6 +137,92 @@ fn trace_of_a_started_program() {
     assert!(output.status.success() && said.contains("; the program exited with status 101"), "{said}");
 }
 
+const ALLOCATING: &str = r#"import std.console
+import std.time
+
+fn chunk(i: Int): String {
+    "item {i} ".repeat(50)
+}
+
+fn sleeper() {
+    time.sleep(time.seconds(10))
+}
+
+fn main() {
+    var kept: Array[String] = []
+    for i in 0..20000 {
+        kept.push(chunk(i))
+    }
+    let jobs = [spawn sleeper(), spawn sleeper()]
+    console.println("{kept.length()}")
+    time.sleep(time.seconds(10))
+    _ = jobs
+}
+"#;
+
+#[test]
+fn profiles_time_memory_and_tasks() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("profile");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("busy.to"), TRACED).unwrap();
+    std::fs::write(dir.join("allocating.to"), ALLOCATING).unwrap();
+    let run = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
+        assert!(output.status.success(), "{args:?}: {}", String::from_utf8_lossy(&output.stderr));
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    let show = |args: &[&str]| -> Value {
+        serde_json::from_str(&run(&[&["profile", "show"], args, &["--json"]].concat())).unwrap()
+    };
+    // Processor time, by function and by the program's own lines.
+    run(&["profile", "--output", "cpu.pprof", "--", "busy.to"]);
+    let cpu = show(&["cpu.pprof"]);
+    assert_eq!(
+        (&cpu["format"], &cpu["type"], &cpu["unit"]),
+        (&json!("tondo-profile-show-0.1/1"), &json!("cpu"), &json!("nanoseconds"))
+    );
+    let functions: Vec<&str> =
+        cpu["functions"].as_array().unwrap().iter().map(|f| f["function"].as_str().unwrap()).collect();
+    assert!(functions.contains(&"fib") && functions.contains(&"crunch"), "{cpu}");
+    let fib = cpu["lines"].as_array().unwrap().iter().find(|l| l["function"] == "fib").expect("a line of fib");
+    assert_eq!((&fib["file"], &fib["line"]), (&json!("busy.to"), &json!(4)), "{cpu}");
+    assert!(fib["source"].as_str().unwrap().contains("fib(n - 1) + fib(n - 2)"), "{fib}");
+    let text = run(&["profile", "show", "cpu.pprof", "--lines", "--top", "3"]);
+    assert!(text.contains("busy.to:4 in fib  if n < 2 { n } else { fib(n - 1) + fib(n - 2) }"), "{text}");
+    run(&["profile", "show", "cpu.pprof", "--html", "flame.html"]);
+    let page = std::fs::read_to_string(dir.join("flame.html")).unwrap();
+    assert!(page.contains("<svg") && page.contains("<title>fib") && !page.contains("<script"), "{page}");
+    // Memory, as the program left it: what it holds and what it allocated.
+    run(&["profile", "--memory", "--duration", "2", "--output", "memory.pprof", "--", "allocating.to"]);
+    let memory = show(&["memory.pprof"]);
+    assert_eq!(memory["type"], "inuse_space", "{memory}");
+    assert_eq!(memory["types"], json!(["alloc_objects", "alloc_space", "inuse_objects", "inuse_space"]));
+    // Twenty thousand strings of about 450 bytes, estimated from samples.
+    let held = memory["total"].as_i64().unwrap();
+    assert!((4_000_000..20_000_000).contains(&held), "{memory}");
+    let line = &memory["lines"][0];
+    assert_eq!((&line["file"], &line["line"]), (&json!("allocating.to"), &json!(5)), "{memory}");
+    // Where each task waits.
+    run(&["profile", "--tasks", "--duration", "1", "--output", "tasks.pprof", "--", "allocating.to"]);
+    let tasks = show(&["tasks.pprof"]);
+    assert_eq!(tasks["total"], 3, "{tasks}");
+    let sleeping = tasks["lines"].as_array().unwrap().iter().find(|l| l["line"] == 9).expect("the sleepers' line");
+    assert_eq!(sleeping["flat"], 2, "{tasks}");
+    // What goes with what.
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["profile", "--cpu", "--memory", "--", "busy.to"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&output.stderr).contains("a profile is of one thing"));
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["profile", "show", "cpu.pprof", "--sample", "space"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&output.stderr).contains("the profile has no `space`: it has samples, cpu"));
+}
+
 const DUMPED: &str = r#"import std.console
 
 fn sleeper(woken: Receiver[Int]) {

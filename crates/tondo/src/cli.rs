@@ -198,6 +198,19 @@ pub const COMMANDS: &[Command] = &[
         summary: &["record what a program's tasks do, for Perfetto,", "and a profile of where it spends its time"],
     },
     Command {
+        name: "profile",
+        usage: &[
+            "tondo profile <pid|name> [--cpu | --memory | --tasks] [--duration <seconds>] [--output <path>] [--json]",
+            "tondo profile [--cpu | --memory | --tasks] [--duration <seconds>] [--output <path>] [--json] -- <program> [<argument>...]",
+            "tondo profile show <profile> [--top <n>] [--lines] [--sample <type>] [--html <path>] [--json]",
+        ],
+        summary: &[
+            "where a program spends its time, what it allocates and",
+            "holds, or where its tasks are, in pprof's format; show",
+            "reads one: the functions and lines that take the most",
+        ],
+    },
+    Command {
         name: "target",
         usage: &["tondo target pack [<dir>] [--json]"],
         summary: &["write this machine's target, for a tondo elsewhere", "to build for it (TONDO_TARGETS=<dir>)"],

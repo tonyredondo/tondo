@@ -189,6 +189,19 @@ https://ui.perfetto.dev with each run of a task and where it waited, and
 `app-<pid>.folded`, a CPU profile, one stack a line with its samples, which
 shows where the time goes.
 
+`tondo profile -- app.to` (or `tondo profile app --duration 10`) writes
+`app-<pid>.cpu.pprof`, a profile with the function and line of every frame
+for `go tool pprof`, speedscope or Datadog; `--memory` profiles what it
+allocates and holds, `--tasks` where its tasks wait. `tondo profile show
+<file>` gives the functions that take the most, `--lines` the program's
+lines with their code, `--html flame.html` a flame graph, `--json` data:
+
+```text
+     flat  flat%       cum   cum%  line
+     94ms  64.4%      94ms  64.4%  busy.to:14 in words  total += text.split(" ").length()
+     45ms  30.8%      45ms  30.8%  busy.to:13 in words  let text = "word {i} and more words"
+```
+
 `tondo dump app` writes `app-<pid>.dump.json`: every task, where it waits or
 runs, where it was spawned and the locks it holds, the counters, and the
 live memory by where it was allocated. `tondo dump read <file>` shows it

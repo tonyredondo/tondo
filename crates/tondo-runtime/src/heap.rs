@@ -1,7 +1,9 @@
 //! Samples of what the program allocates, always taken, as Go takes them:
 //! one allocation for about every 512 KiB, at random intervals so that no
 //! size is favoured, kept with the stack that made it for as long as it
-//! lives. A dump shows them: where the live memory was allocated.
+//! lives, and added to what that stack allocated in all. A dump shows
+//! them: where the live memory was allocated; and a profile of memory
+//! (toolchain 7.15) both.
 
 use std::cell::{Cell, UnsafeCell};
 use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering};
@@ -39,11 +41,94 @@ static ADDRESSES: [AtomicUsize; BUCKETS * WAYS] = [const { AtomicUsize::new(EMPT
 static SAMPLES: AtomicPtr<Sample> = AtomicPtr::new(std::ptr::null_mut());
 static DROPPED: AtomicU64 = AtomicU64::new(0);
 
-/// Makes the samples' table, before any sample is taken.
+/// What each stack that allocated a sample allocated in all, as the
+/// allocations and bytes its samples stand for, `f64` bits; `key` is the
+/// stack's hash, `0` for none yet and `1` while it is written. A stack that
+/// finds no room is counted, not kept.
+const STACKS: usize = 4096;
+
+struct Allocated {
+    key: AtomicU64,
+    frames: UnsafeCell<[usize; FRAMES]>,
+    objects: AtomicU64,
+    bytes: AtomicU64,
+}
+
+unsafe impl Sync for Allocated {}
+
+static ALLOCATED: AtomicPtr<Allocated> = AtomicPtr::new(std::ptr::null_mut());
+static UNSTACKED: AtomicU64 = AtomicU64::new(0);
+
+/// Makes the samples' tables, before any sample is taken.
 pub(crate) fn prepare() {
     if SAMPLES.load(Ordering::Acquire).is_null() {
         SAMPLES.store(super::zeroed(BUCKETS * WAYS), Ordering::Release);
     }
+    if ALLOCATED.load(Ordering::Acquire).is_null() {
+        ALLOCATED.store(super::zeroed(STACKS), Ordering::Release);
+    }
+}
+
+/// Adds a sample of `size` bytes to what its stack allocated: as the
+/// allocations and bytes it stands for, `1 / (1 − e^(−size / RATE))` of
+/// them.
+fn allocated_by(frames: &[usize; FRAMES], size: usize) {
+    let table = ALLOCATED.load(Ordering::Acquire);
+    if table.is_null() {
+        return;
+    }
+    let table = unsafe { std::slice::from_raw_parts(table, STACKS) };
+    let weight = 1.0 / (1.0 - (-(size as f64) / RATE as f64).exp());
+    let hash = frames.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &f| (h ^ f as u64).wrapping_mul(0x100_0000_01b3)) | 2;
+    let add = |cell: &AtomicU64, amount: f64| {
+        let mut old = cell.load(Ordering::Relaxed);
+        while let Err(now) = cell.compare_exchange_weak(
+            old,
+            (f64::from_bits(old) + amount).to_bits(),
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            old = now;
+        }
+    };
+    let start = hash as usize % STACKS;
+    for probe in 0..16 {
+        let slot = &table[(start + probe) % STACKS];
+        let key = slot.key.load(Ordering::Acquire);
+        if key == hash
+            || key == 0 && slot.key.compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed).is_ok() && {
+                unsafe { *slot.frames.get() = *frames };
+                slot.key.store(hash, Ordering::Release);
+                true
+            }
+        {
+            add(&slot.objects, weight);
+            add(&slot.bytes, weight * size as f64);
+            return;
+        }
+    }
+    UNSTACKED.fetch_add(1, Ordering::Relaxed);
+}
+
+/// What each stack allocated since the samples began: the allocations and
+/// bytes, and the stack, innermost first; and how many stacks found no
+/// room.
+pub(crate) fn allocations() -> (Vec<(f64, f64, Vec<usize>)>, u64) {
+    let table = ALLOCATED.load(Ordering::Acquire);
+    if table.is_null() {
+        return (Vec::new(), 0);
+    }
+    let table = unsafe { std::slice::from_raw_parts(table, STACKS) };
+    let out = table
+        .iter()
+        .filter(|slot| slot.key.load(Ordering::Acquire) > 1)
+        .map(|slot| {
+            let frames = unsafe { *slot.frames.get() };
+            let (objects, bytes) = (slot.objects.load(Ordering::Relaxed), slot.bytes.load(Ordering::Relaxed));
+            (f64::from_bits(objects), f64::from_bits(bytes), frames.into_iter().take_while(|&f| f != 0).collect())
+        })
+        .collect();
+    (out, UNSTACKED.load(Ordering::Relaxed))
 }
 
 fn samples() -> &'static [Sample] {
@@ -110,6 +195,7 @@ fn take(address: usize, size: usize) {
     for (slot, frame) in frames.iter_mut().zip(walk) {
         *slot = frame;
     }
+    allocated_by(&frames, size);
     let bucket = bucket(address);
     let samples = samples();
     for slot in (bucket * WAYS..(bucket + 1) * WAYS).filter(|&slot| slot < samples.len()) {

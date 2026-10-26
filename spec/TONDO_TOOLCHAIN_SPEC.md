@@ -255,6 +255,9 @@ tondo ps [--json]
 tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--json]
 tondo trace <pid|name> [--duration <seconds>] [--output <path>] [--json]
 tondo trace [--duration <seconds>] [--output <path>] [--json] -- <program> [<argument>...]
+tondo profile <pid|name> [--cpu | --memory | --tasks] [--duration <seconds>] [--output <path>] [--json]
+tondo profile [--cpu | --memory | --tasks] [--duration <seconds>] [--output <path>] [--json] -- <program> [<argument>...]
+tondo profile show <profile> [--top <n>] [--lines] [--sample <type>] [--html <path>] [--json]
 tondo dump <pid|name> [--output <path>] [--json]
 tondo dump read <file> [tasks | task <id> | heap | objects | object <address>] [--json]
 tondo debug [--json] [--live] <file.to|project|executable|pid|name> [-- <argument>...]
@@ -315,7 +318,8 @@ tondo version [--json]
 - `lsp` sirve a un editor (sección 7.4), y `mcp`, a un agente; `setup`
   prepara los agentes y los editores (sección 7.9).
 - `ps`, `counters`, `trace` y `dump` observan los programas en ejecución
-  (sección 7.5); `debug` depura uno, y `dap` hace lo mismo para un editor
+  (sección 7.5), y `profile` dice dónde gastan su tiempo y su memoria
+  (sección 7.15); `debug` depura uno, y `dap` hace lo mismo para un editor
   (sección 7.6).
 - `help` y `<comando> --help` muestran el uso de un comando, o de todos;
   `completions` escribe el script que completa los comandos y sus opciones en
@@ -961,6 +965,8 @@ campos de su resultado:
 | `setup` | `tondo-setup-0.1/1` | `tondo`, `version`, `agents` (`name`, `skill` y `mcp`), `editors` (`name` y `extension`), `on_path` y `messages`, lo que dice sin `--json` |
 | `ps` | `tondo-ps-0.1/1` | `programs` |
 | `trace` | `tondo-trace-0.1/1` | `timeline`, `profile`, `events`, `samples`, `lost` y `ended` |
+| `profile` | `tondo-profile-0.1/1` | `profile`, la ruta; `kind`; `samples`; `duration_ms`; `lost` y `ended` |
+| `profile show` | `tondo-profile-show-0.1/1` | `profile`, `type`, `unit`, `types`, `total`, `duration_ms`, `functions` (`function`, `file`, `flat`, `cum`), `lines` (`file`, `line`, `function`, `flat`, `cum`, `source`) y `html` |
 | `dump` | `tondo-dump-0.1/1` | `file` y `summary` |
 | `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `tasks`, `task`, `heap`, `objects` u `object` |
 | `reload` | `tondo-reload-0.1/1` | `changed`, `added`, `moves`, `stays` y `converted`; si no puede, `ok` falso, `message` y `restart` |
@@ -1018,6 +1024,45 @@ código que no existe es un error del toolchain (estado 3).
 - `tondo clean` vacía la caché de builds (sección 6); con `--all`, también
   los repositorios y archivos descargados, que el siguiente build descarga
   de nuevo.
+
+### 7.15 Perfiles
+
+`tondo profile` dice dónde gasta un programa su tiempo de procesador, qué
+memoria asigna y retiene, o dónde están sus tareas, nombrado como en
+`counters` (7.5) o uno que arranca tras `--` y compila como `run`:
+
+- `--cpu`, por defecto: las muestras de cada milisegundo de procesador de
+  7.5, hasta que el programa termina, pasa `--duration` o llega Ctrl-C. El
+  programa que arranca no cuenta su memoria, que cambiaría lo que mide.
+- `--memory`: las muestras de memoria de 7.5, la viva y todo lo que asignó
+  cada pila desde que empezó a muestrear, al terminar `--duration` o
+  Ctrl-C, o al acabar el programa. Cada muestra cuenta como las
+  asignaciones y bytes que representa, `1 / (1 − e^(−n / 512 KiB))` de ellas.
+- `--tasks`: dónde está cada tarea, como en `dump`, al terminar `--duration`.
+
+Escribe el perfil en el formato de pprof (`profile.proto`), comprimido con
+gzip, en `<output>` o en `<programa>-<pid>.<cpu|memory|tasks>.pprof`, que
+leen `go tool pprof`, speedscope, Pyroscope y Datadog. Cada marco tiene su
+función, su archivo y su línea, también el más interno de una muestra: el
+compilador guarda, junto a la tabla de llamadas de las trazas, dónde empieza
+el código de cada línea de cada función, sin coste al ejecutar. Los tipos de
+muestra son `samples` y `cpu` (nanosegundos); `alloc_objects`,
+`alloc_space`, `inuse_objects` e `inuse_space`, este el primero que se
+muestra; y `tasks`. Las muestras de CPU llevan la etiqueta `thread`, y las de
+tareas, `state`. En un perfil de memoria, el asignador y su muestreo no
+cuentan como marcos: el más interno es lo que pidió la memoria.
+
+`tondo profile show <profile>` lee un perfil de pprof, de Tondo o no: el
+tipo de muestra que el perfil muestra primero, u otro con `--sample`, en
+total y por función, `--top` de ellas (20 por defecto), cada una con lo
+suyo (`flat`, donde la muestra está) y con lo que llama (`cum`). Con
+`--lines`, por línea: lo suyo de una línea es lo que gasta la línea más
+interna del código del programa de cada pila, con lo que llama del runtime
+y de la librería estándar, así que señala el programa; con su texto cuando
+el archivo está. `--html <path>` escribe además un flame graph en un archivo
+HTML sin scripts: cada función, una caja tan ancha como su parte sobre la de
+quien la llamó, cuyo título dice cuánto, y la tabla de funciones. Con
+`--json`, `tondo-profile-show-0.1/1` (7.12).
 
 ## 8. Determinismo
 

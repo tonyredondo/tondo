@@ -58,7 +58,7 @@ fn running() -> Vec<Value> {
     found
 }
 
-fn program_name(info: &Value) -> &str {
+pub(crate) fn program_name(info: &Value) -> &str {
     let program = info["program"].as_str().unwrap_or_default();
     program.rsplit('/').next().unwrap_or(program)
 }
@@ -258,18 +258,38 @@ extern "C" fn interrupted(_: i32) {
 
 /// What a trace gathered.
 #[derive(Default)]
-struct Recording {
+pub(crate) struct Recording {
     clock: u64,
     events: Vec<Value>,
-    samples: Vec<Value>,
-    frames: serde_json::Map<String, Value>,
-    dropped: u64,
-    lost: u64,
+    pub(crate) samples: Vec<Value>,
+    pub(crate) frames: serde_json::Map<String, Value>,
+    pub(crate) dropped: u64,
+    pub(crate) lost: u64,
 }
 
-/// `tondo trace`: records until the program ends, `duration` passes or
-/// Ctrl-C, then writes the timeline and the profile.
-pub fn trace(traced: Traced, duration: Option<Duration>, output: Option<PathBuf>, as_json: bool) -> Result<(), String> {
+/// What `record` got: the program's `info` and process, what the trace
+/// recorded, how a program it started ended when not well and not by the
+/// trace, and the answer to what it asked as it stopped, or the memory a
+/// program that exited said it had.
+pub(crate) struct Recorded {
+    pub(crate) info: Value,
+    pub(crate) pid: u32,
+    pub(crate) recording: Recording,
+    pub(crate) end: Option<String>,
+    pub(crate) asked: Option<Value>,
+    pub(crate) started: std::time::Instant,
+}
+
+/// Records what a program does until it ends, `duration` passes or
+/// Ctrl-C, which ends a program it started too. Before it stops a program
+/// that runs, it asks it `ask`, as `memory` or `dump`, on a connection of
+/// its own. A program it starts counts its memory only when `counting`.
+pub(crate) fn record(
+    traced: Traced,
+    duration: Option<Duration>,
+    ask: Option<&str>,
+    counting: bool,
+) -> Result<Recorded, String> {
     let (mut program, mut child) = match traced {
         Traced::Running(name) => (connect(&name)?, None),
         Traced::Started(executable, arguments) => {
@@ -277,7 +297,7 @@ pub fn trace(traced: Traced, duration: Option<Duration>, output: Option<PathBuf>
             // Its own process group, so that Ctrl-C ends the trace first.
             let child = std::process::Command::new(&executable)
                 .args(&arguments)
-                .env("TONDO_TRACE", "1")
+                .env("TONDO_TRACE", if counting { "1" } else { "cpu" })
                 .process_group(0)
                 .spawn()
                 .map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
@@ -295,12 +315,16 @@ pub fn trace(traced: Traced, duration: Option<Duration>, output: Option<PathBuf>
     let _ = program.reader.get_ref().set_read_timeout(Some(Duration::from_millis(200)));
     let started_at = std::time::Instant::now();
     let mut stopping = false;
+    let mut asked = None;
     let mut line = String::new();
     loop {
         let stop = INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst)
             || duration.is_some_and(|duration| started_at.elapsed() >= duration);
         if stop && !stopping {
             stopping = true;
+            if let Some(request) = ask {
+                asked = Program::connect(program.pid).ok().and_then(|mut other| other.ask(request).ok());
+            }
             let _ = writeln!(program.writer, "stop");
         }
         match program.reader.read_line(&mut line) {
@@ -309,6 +333,13 @@ pub fn trace(traced: Traced, duration: Option<Duration>, output: Option<PathBuf>
                 let Ok(chunk) = serde_json::from_str::<Value>(&line) else { break };
                 line.clear();
                 if chunk.get("end").is_some() {
+                    // A program that exits says what memory it had.
+                    if !chunk["memory"].is_null() && asked.is_none() {
+                        if let Some(Value::Object(frames)) = chunk.get("frames") {
+                            recording.frames.extend(frames.clone());
+                        }
+                        asked = Some(json!({ "memory": chunk["memory"], "frames": {} }));
+                    }
                     break;
                 }
                 recording.add(chunk);
@@ -332,16 +363,24 @@ pub fn trace(traced: Traced, duration: Option<Duration>, output: Option<PathBuf>
             end = Some(ended(status, "the program"));
         }
     }
+    let pid = program.pid;
+    Ok(Recorded { info, pid, recording, end, asked, started: started_at })
+}
+
+/// `tondo trace`: records until the program ends, `duration` passes or
+/// Ctrl-C, then writes the timeline and the profile.
+pub fn trace(traced: Traced, duration: Option<Duration>, output: Option<PathBuf>, as_json: bool) -> Result<(), String> {
+    let Recorded { info, pid, recording, end, .. } = record(traced, duration, None, true)?;
     let base = output
         .map(|path| path.with_extension(""))
-        .unwrap_or_else(|| PathBuf::from(format!("{}-{}", program_name(&info), program.pid)));
+        .unwrap_or_else(|| PathBuf::from(format!("{}-{}", program_name(&info), pid)));
     let timeline = base.with_extension("json");
     let profile = base.with_extension("folded");
     let write = |path: &PathBuf, text: String| {
         std::fs::write(path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))
     };
     let names = Names::new(&recording.frames, info["program"].as_str().unwrap_or_default());
-    write(&timeline, recording.timeline(&info, program.pid, &names))?;
+    write(&timeline, recording.timeline(&info, pid, &names))?;
     write(&profile, recording.profile(&names))?;
     let mut summary = format!(
         "{} events and {} samples: {} (open it in https://ui.perfetto.dev) and {} (a CPU profile for flamegraph.pl, inferno or speedscope)",
@@ -549,19 +588,19 @@ impl Recording {
 /// The names of the addresses of a trace: the program's functions as the
 /// runtime describes them, and others from the symbols of the file that
 /// holds them.
-struct Names<'a> {
+pub(crate) struct Names<'a> {
     frames: &'a serde_json::Map<String, Value>,
     program: String,
     symbols: std::cell::RefCell<std::collections::HashMap<String, Vec<Function>>>,
 }
 
 impl<'a> Names<'a> {
-    fn new(frames: &'a serde_json::Map<String, Value>, program: &str) -> Names<'a> {
+    pub(crate) fn new(frames: &'a serde_json::Map<String, Value>, program: &str) -> Names<'a> {
         Names { frames, program: program.to_string(), symbols: Default::default() }
     }
 
     /// A frame's function.
-    fn function(&self, address: &str) -> String {
+    pub(crate) fn function(&self, address: &str) -> String {
         let frame = &self.frames[address];
         if let Some(function) = frame["function"].as_str() {
             return function.to_string();

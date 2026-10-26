@@ -678,6 +678,19 @@ fn int_type(int: IntTy) -> ir::Type {
     }
 }
 
+/// `value` in LEB128: seven bits a byte, the lowest first.
+fn leb128(out: &mut Vec<u8>, mut value: u64) {
+    loop {
+        let byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value == 0 {
+            out.push(byte);
+            return;
+        }
+        out.push(byte | 0x80);
+    }
+}
+
 fn symbol_name(index: usize, name: &str) -> String {
     let clean: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
     format!("tondo_f{index}_{clean}")
@@ -1158,12 +1171,14 @@ fn call_body_with<'t, G: Gen<'t> + ?Sized>(
 type DebugBinding = (String, Ty, FuncId);
 
 /// A compiled function for stack traces: its name, size and, for each
-/// call, the offset it returns to and where its source starts.
+/// call, the offset it returns to and where its source starts; and where
+/// the code of each statement starts, for profiles.
 struct Traced {
     id: FuncId,
     name: String,
     size: u32,
     calls: Vec<(u32, u32)>,
+    lines: Vec<(u32, u32)>,
     sites: Vec<(u32, Option<Ty>)>,
 }
 
@@ -1187,6 +1202,9 @@ struct Compiled {
     relocs: Vec<cranelift_module::ModuleReloc>,
     size: u32,
     calls: Vec<(u32, u32)>,
+    /// Where each run of code of one statement starts, and the statement's
+    /// site, `0` for code of none.
+    lines: Vec<(u32, u32)>,
 }
 
 /// Compiles a function's IR to machine code.
@@ -1223,6 +1241,10 @@ fn compile_one(
         relocs,
         size: code.code_info().total_size,
         calls,
+        lines: sources
+            .iter()
+            .map(|s| (s.start, if s.loc.as_abs().is_default() { 0 } else { s.loc.as_abs().bits() }))
+            .collect(),
     })
 }
 
@@ -1876,7 +1898,8 @@ impl Codegen<'_> {
                 .define_function_bytes(job.id, code.alignment, &code.bytes, &code.relocs)
                 .map_err(|e| format!("{e:?}"))?;
             if let Some(name) = job.traced {
-                self.traced.push(Traced { id: job.id, name, size: code.size, calls: code.calls, sites: job.sites });
+                let (size, calls, lines, sites) = (code.size, code.calls, code.lines, job.sites);
+                self.traced.push(Traced { id: job.id, name, size, calls, lines, sites });
             }
         }
         Ok(())
@@ -2270,8 +2293,12 @@ impl Codegen<'_> {
     }
 
     /// The stack trace table (the runtime's `trace::Table`): each function's
-    /// code and size, and in one blob its name and calls, then the names
-    /// the calls refer to: their files, and the types they assign.
+    /// code and size, and in one blob its name, its calls and its lines,
+    /// then the names they refer to: their files, and the types the calls
+    /// assign. A function's lines are its file and, in as many bytes as
+    /// they take, where each run of code of one line starts and its line,
+    /// each as the difference from the run before, in LEB128, the line's
+    /// zigzag; line `0` is code of no line.
     fn trace_table(&mut self, id: DataId) {
         let pad = |blob: &mut Vec<u8>| blob.resize(blob.len().next_multiple_of(4), 0);
         let mut blob = Vec::new();
@@ -2304,6 +2331,33 @@ impl Codegen<'_> {
                     blob.extend_from_slice(&value.to_le_bytes());
                 }
             }
+            let mut file = None;
+            let mut runs: Vec<(u32, i64)> = Vec::new();
+            for &(start, site) in &function.lines {
+                let line = match site {
+                    0 => 0,
+                    site => {
+                        let (path, line, _) = self.sources.position(function.sites[site as usize - 1].0);
+                        file.get_or_insert(path);
+                        line as i64
+                    }
+                };
+                if runs.last().is_none_or(|&(_, last)| last != line) {
+                    runs.push((start, line));
+                }
+            }
+            let mut encoded = Vec::new();
+            let (mut offset, mut line) = (0u32, 0i64);
+            for (start, now) in runs {
+                leb128(&mut encoded, (start - offset) as u64);
+                leb128(&mut encoded, ((now - line) << 1 ^ (now - line) >> 63) as u64);
+                (offset, line) = (start, now);
+            }
+            let file = file.map_or(u32::MAX, |path| name(&mut files, path));
+            blob.extend_from_slice(&file.to_le_bytes());
+            blob.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
+            blob.extend_from_slice(&encoded);
+            pad(&mut blob);
         }
         let files_at = blob.len() as u64;
         blob.extend_from_slice(&(files.len() as u32).to_le_bytes());

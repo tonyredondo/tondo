@@ -14,9 +14,12 @@ use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 /// The table the compiler writes: one entry per function of the program,
 /// whose `meta` offset in `blob` holds its name's length, its number of
 /// calls, the name and, 4-aligned, the calls as `[return offset, line,
-/// column, file, type]`. At `files` in `blob`: the count of the names the
-/// calls refer to, their files and the types they assign, and each one's
-/// length and text, 4-aligned. No type is `u32::MAX`.
+/// column, file, type]`; then its file, the length of its lines and,
+/// 4-aligned, its lines: where each run of code of one line starts and its
+/// line, as differences from the run before in LEB128, the line's zigzag,
+/// line `0` being code of none. At `files` in `blob`: the count of the
+/// names the calls refer to, their files and the types they assign, and
+/// each one's length and text, 4-aligned. No type or file is `u32::MAX`.
 #[repr(C)]
 pub struct Table {
     functions: *const Function,
@@ -151,6 +154,56 @@ fn resolve(address: usize) -> Option<Frame> {
     }
 }
 
+/// A number in LEB128 at `cursor`, which it moves past it.
+unsafe fn leb128(blob: *const u8, cursor: &mut usize, end: usize) -> u64 {
+    let (mut value, mut shift) = (0u64, 0);
+    while *cursor < end {
+        let byte = unsafe { *blob.add(*cursor) };
+        *cursor += 1;
+        value |= ((byte & 0x7f) as u64) << shift;
+        shift += 7;
+        if byte & 0x80 == 0 {
+            break;
+        }
+    }
+    value
+}
+
+/// The name a table's files list has at `index`.
+unsafe fn named(table: &Table, index: u32) -> &'static str {
+    let blob = table.blob;
+    let mut cursor = table.files as usize + 4;
+    for _ in 0..index {
+        cursor = aligned(cursor + 4, unsafe { u32_at(blob, cursor) } as usize);
+    }
+    unsafe { text_at(blob, cursor + 4, u32_at(blob, cursor) as usize) }
+}
+
+/// The file and line of the statement whose code holds `pc`.
+pub(crate) fn line(pc: usize) -> Option<(&'static str, u32)> {
+    let (table, start, index) = find(pc + 1)?;
+    unsafe {
+        let blob = table.blob;
+        let meta = (*table.functions.add(index)).meta as usize;
+        let (name_len, calls) = (u32_at(blob, meta) as usize, u32_at(blob, meta + 4) as usize);
+        let lines = aligned(meta + 8, name_len) + calls * 20;
+        let file = u32_at(blob, lines);
+        let (mut cursor, end) = (lines + 8, lines + 8 + u32_at(blob, lines + 4) as usize);
+        let offset = (pc - start) as u64;
+        let (mut at, mut line, mut found) = (0u64, 0i64, 0i64);
+        while cursor < end {
+            at += leb128(blob, &mut cursor, end);
+            let zigzag = leb128(blob, &mut cursor, end);
+            line += (zigzag >> 1) as i64 ^ -((zigzag & 1) as i64);
+            if at > offset {
+                break;
+            }
+            found = line;
+        }
+        (found > 0 && file != u32::MAX).then(|| (named(table, file), found as u32))
+    }
+}
+
 /// Where a walk of the stack from `fp` should start to reach compiled code:
 /// at `fp`, unless no frame of compiled code follows it, because code
 /// without frame pointers in between, as Rust's standard library, used the
@@ -199,7 +252,8 @@ pub(crate) fn describe(address: usize) -> Option<Described> {
     unsafe {
         let meta = (*table.functions.add(index)).meta as usize;
         let function = text_at(table.blob, meta + 8, u32_at(table.blob, meta) as usize);
-        Some(Described { function, at: None, ty: None })
+        // Where it is runs, for a sample, by the lines of its function.
+        Some(Described { function, at: line(address), ty: None })
     }
 }
 
