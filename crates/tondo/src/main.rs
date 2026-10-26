@@ -121,10 +121,16 @@ fn main() -> ExitCode {
         "debug" => debug_command(&args[1..]),
         "target" => target_command(&args[1..]),
         "dap" => {
-            let build = |path: &Path, live| {
+            let program = |path: &Path, live| {
                 cached_executable(path, &BuildOptions { debug: true, live, ..BuildOptions::default() })
             };
-            tondo::dap::serve(&build).map(|()| ExitCode::SUCCESS)
+            let tests = |path: &Path| {
+                let build =
+                    TestBuild { library: false, debug: true, statically: false, target: None, diagnostics_json: false };
+                let built = build_tests(path, &build)?;
+                Ok(built.map(|(executable, tree)| (executable, tree.nodes.into_iter().map(|n| n.id).collect())))
+            };
+            tondo::dap::serve(tondo::dap::Builds { program: &program, tests: &tests }).map(|()| ExitCode::SUCCESS)
         }
         "version" | "--version" | "-V" => {
             println!("tondo {} (native, cranelift)", driver::VERSION);
@@ -414,44 +420,17 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     options.schedules = schedules.map(|count| (count, seed, chosen));
     // The build is reused while nothing it reads changes.
     driver::ready(target)?;
-    let dir = runner::build_dir(&path, statically, debug, target)?;
     options.launcher = target.map(Target::launcher).transpose()?.flatten();
-    let (executable, tree_file) = (dir.join("tests"), dir.join("tree"));
-    let tree = match runner::Tree::load(&tree_file).filter(|_| executable.is_file()) {
-        Some(tree) => tree,
-        None => {
-            let analysis = driver::analyze_tests(&path, library)?;
-            if diagnostics_json {
-                eprint!("{}", analysis.diags.render_json(&analysis.sources, &analysis.source_id));
-            } else if !analysis.diags.list.is_empty() {
-                eprint!("{}", analysis.diags.render(&analysis.sources));
+    let built = build_tests(&path, &TestBuild { library, debug, statically, target, diagnostics_json })?;
+    let Some((executable, tree)) = built else {
+        // A report says it did not compile (testing 15.6).
+        return Ok(match runner::uncompiled(&path, &options) {
+            Err(runner::Failure::Output(message)) => {
+                eprintln!("tondo: {message}");
+                ExitCode::from(TOOL_FAILURE)
             }
-            let Some(program) = &analysis.program else {
-                // A report says it did not compile (testing 15.6).
-                return Ok(match runner::uncompiled(&path, &options) {
-                    Err(runner::Failure::Output(message)) => {
-                        eprintln!("tondo: {message}");
-                        ExitCode::from(TOOL_FAILURE)
-                    }
-                    _ => ExitCode::FAILURE,
-                });
-            };
-            let locations = program.tests.iter().map(|n| analysis.sources.location(n.span)).collect();
-            let tree = runner::Tree { nodes: program.tests.clone(), locations };
-            std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-            // Linked aside and renamed, so another run of the same tests keeps its own.
-            let partial = executable.with_extension(format!("partial-{}", std::process::id()));
-            driver::link(
-                &driver::object(&analysis, debug, target)?,
-                &partial,
-                &analysis.libraries,
-                driver::Linking { strip: false, statically, target },
-            )?;
-            std::fs::rename(&partial, &executable)
-                .map_err(|e| format!("cannot write {}: {e}", executable.display()))?;
-            tree.save(&tree_file)?;
-            tree
-        }
+            _ => ExitCode::FAILURE,
+        });
     };
     match runner::test(&path, &executable, &tree, &options) {
         Ok(failed) => Ok(if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS }),
@@ -465,6 +444,47 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         }
         Err(runner::Failure::Interrupted(forced)) => Ok(ExitCode::from(if forced { TOOL_FAILURE } else { 4 })),
     }
+}
+
+/// How a project's tests are built.
+struct TestBuild {
+    library: bool,
+    debug: bool,
+    statically: bool,
+    target: Option<Target>,
+    diagnostics_json: bool,
+}
+
+/// The executable of a project's tests and their tree, built unless what
+/// it reads is unchanged; none, after its diagnostics, when it does not
+/// compile.
+fn build_tests(path: &Path, build: &TestBuild) -> Result<Option<(PathBuf, tondo::runner::Tree)>, String> {
+    let dir = tondo::runner::build_dir(path, build.statically, build.debug, build.target)?;
+    let (executable, tree_file) = (dir.join("tests"), dir.join("tree"));
+    if let Some(tree) = tondo::runner::Tree::load(&tree_file).filter(|_| executable.is_file()) {
+        return Ok(Some((executable, tree)));
+    }
+    let analysis = driver::analyze_tests(path, build.library)?;
+    if build.diagnostics_json {
+        eprint!("{}", analysis.diags.render_json(&analysis.sources, &analysis.source_id));
+    } else if !analysis.diags.list.is_empty() {
+        eprint!("{}", analysis.diags.render(&analysis.sources));
+    }
+    let Some(program) = &analysis.program else { return Ok(None) };
+    let locations = program.tests.iter().map(|n| analysis.sources.location(n.span)).collect();
+    let tree = tondo::runner::Tree { nodes: program.tests.clone(), locations };
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    // Linked aside and renamed, so another run of the same tests keeps its own.
+    let partial = executable.with_extension(format!("partial-{}", std::process::id()));
+    driver::link(
+        &driver::object(&analysis, build.debug, build.target)?,
+        &partial,
+        &analysis.libraries,
+        driver::Linking { strip: false, statically: build.statically, target: build.target },
+    )?;
+    std::fs::rename(&partial, &executable).map_err(|e| format!("cannot write {}: {e}", executable.display()))?;
+    tree.save(&tree_file)?;
+    Ok(Some((executable, tree)))
 }
 
 /// Checks the examples of a Markdown document (21.6): their records as

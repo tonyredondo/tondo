@@ -38,6 +38,8 @@ registered with both. Then `tondo guide` teaches the language.
 With an agent, open this repository in it and ask it to set Tondo up:
 [`AGENTS.md`](AGENTS.md) tells it how, and how to check that it works.
 Editors use `tondo lsp`; `tondo guide projects` says how to set one up.
+VS Code has an extension in [`editors/vscode`](editors/vscode): every CI
+run leaves its `.vsix` as an artifact.
 
 ## Using it
 
@@ -101,6 +103,7 @@ again.
 | `tests/projects` | Projects of several modules, with expectations in the same comments |
 | `spec` | Language, standard library, testing, toolchain and LLM-form specifications |
 | `docs/decisions.md` | Short records of design decisions |
+| `editors/vscode` | The VS Code extension, in TypeScript: `npm test` runs its tests, `npm run package` makes the `.vsix` |
 
 ```text
 cargo fmt --all -- --check
@@ -146,6 +149,7 @@ Every milestone ends with programs that compile to native executables and run.
 | **H14** | Libraries for C: a `pub extern fn` with a body is a function C calls by its symbol; `tondo build --library` writes a shared library that publishes only those, which the toolchain's own linker makes as ELF and Mach-O, a static library, and a header of what they publish with its documentation; the runtime starts at the first call, and each call runs on the thread that makes it | Done |
 | **Targets 2** | `--target x86_64-linux` and `aarch64-linux` from any machine: static executables, with another architecture's runtime in a pack that `tondo target pack` writes; `tondo run` and `tondo test` run them under qemu; CI builds `tondo` across and tests it under emulation | Done |
 | **Live builds** | `--live`: a debug build whose code changes while it runs; `tondo reload` puts in what its files say now, keeping the program's state, and `tondo run --watch` does it as they are saved; under `tondo debug --live`, `reload` where the program stopped, Edit and Continue, and `restart` of the stopped frame; closures made before a reload run the new code, running frames move to the new code at their next statement with their values (on-stack replacement), and the values of a type that gains or loses fields or variants convert as their frames move, parameters, captures and numbers included, renamed fields, variants and types keeping their values, results and lent values converting back, and closures follow when their function gains or loses others; what `Ref`s, channels and `std.sync` values hold converts in place while every task stops at a statement, a task waiting for a channel, a lock or a line starting its statement again; through calls by slots, patches the toolchain's own linker lays out, and tables of the running image; in `tondo mcp`, sessions of live programs and `reload` | Done |
+| **VS Code** | An extension over `tondo lsp`, `tondo dap` and `tondo mcp`: editing with every feature of the language server, formatting on save, *Run* and *Debug* over `main` or with F5, live builds that take in what is saved (Edit and Continue), the tests in the Testing view with failures on their lines and one test debugged alone, tasks with their errors in Problems, and `tondo mcp`'s tools for VS Code's agents; its `.vsix` from every CI run | Done |
 | **Agents** | `tondo setup`, which gives Claude Code and Codex the skill and the server; `tondo mcp`, a Model Context Protocol server in both eras of the protocol: every command as a tool with structured results, the compiler's fixes applied, the language server's navigation and rename, runs with input and a timeout, tests with their report, running programs observed and debugging sessions; the guide, the skill and the standard modules' APIs as resources | Done |
 
 The first cut deliberately leaves out the following. They are part of the

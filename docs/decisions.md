@@ -2094,3 +2094,22 @@ function's references renamed. The object is the same, byte for byte,
 which every case of the tests confirms in each kind of build. A function
 that calls C is built again in its turn, since whether it calls a symbol
 directly depends on the calls before it.
+
+## 2026-10-26 — The VS Code extension
+
+The extension lives in this repository, in `editors/vscode`, so that it
+changes with what it drives: everything it does is `tondo`'s, through
+`tondo lsp`, `tondo dap`, `tondo test --test-format json` and `tondo mcp`,
+and it only connects them to VS Code. It is TypeScript with one runtime
+dependency, the official language client, bundled with esbuild into one
+file. What does not need VS Code, finding `tondo` and reading the tests'
+list and report, is tested with Node's own runner in CI, which also makes
+the `.vsix`; running VS Code itself in CI would test VS Code more than the
+extension. It is not published to the Marketplace or Open VSX yet: that
+needs a publisher account, which is the maintainer's to create.
+
+Debugging one test needed `tondo dap` to build a project's tests and run
+one of them: `launch` takes the test's id, builds the tests with debug
+information as `tondo test --debug` would, gives the executable a plan of
+that test alone, and turns the runner's frames into a line that says how
+the test ended.

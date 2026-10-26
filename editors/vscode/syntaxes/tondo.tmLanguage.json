@@ -1,0 +1,246 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Tondo",
+  "scopeName": "source.tondo",
+  "patterns": [
+    {
+      "include": "#shebang"
+    },
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#characters"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#annotations"
+    },
+    {
+      "include": "#declarations"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#calls"
+    },
+    {
+      "include": "#operators"
+    }
+  ],
+  "repository": {
+    "shebang": {
+      "match": "\\A#!.*$",
+      "name": "comment.line.shebang.tondo"
+    },
+    "comments": {
+      "patterns": [
+        {
+          "match": "//.*$",
+          "name": "comment.line.double-slash.tondo"
+        },
+        {
+          "include": "#block-comment"
+        }
+      ]
+    },
+    "block-comment": {
+      "begin": "/\\*",
+      "end": "\\*/",
+      "name": "comment.block.tondo",
+      "patterns": [
+        {
+          "include": "#block-comment"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "begin": "r\"",
+          "end": "\"",
+          "name": "string.quoted.raw.tondo"
+        },
+        {
+          "begin": "\"",
+          "end": "\"",
+          "name": "string.quoted.double.tondo",
+          "patterns": [
+            {
+              "match": "\\\\(?:[nrt0\\\\\"']|u\\{[0-9A-Fa-f]{1,6}\\})",
+              "name": "constant.character.escape.tondo"
+            },
+            {
+              "match": "\\{\\{|\\}\\}",
+              "name": "constant.character.escape.brace.tondo"
+            },
+            {
+              "begin": "\\{",
+              "end": "\\}",
+              "beginCaptures": {
+                "0": {
+                  "name": "punctuation.section.interpolation.begin.tondo"
+                }
+              },
+              "endCaptures": {
+                "0": {
+                  "name": "punctuation.section.interpolation.end.tondo"
+                }
+              },
+              "name": "meta.interpolation.tondo",
+              "contentName": "source.tondo",
+              "patterns": [
+                {
+                  "include": "$self"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "characters": {
+      "match": "'(?:\\\\(?:[nrt0\\\\\"']|u\\{[0-9A-Fa-f]{1,6}\\})|[^'\\\\])'",
+      "name": "constant.character.tondo"
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "match": "\\b0x[0-9A-Fa-f][0-9A-Fa-f_]*(?:[iu](?:8|16|32|64))?\\b",
+          "name": "constant.numeric.hex.tondo"
+        },
+        {
+          "match": "\\b0b[01][01_]*(?:[iu](?:8|16|32|64))?\\b",
+          "name": "constant.numeric.binary.tondo"
+        },
+        {
+          "match": "\\b0o[0-7][0-7_]*(?:[iu](?:8|16|32|64))?\\b",
+          "name": "constant.numeric.octal.tondo"
+        },
+        {
+          "match": "\\b\\d[\\d_]*(?:\\.\\d[\\d_]*)?(?:[eE][+-]?\\d+)?(?:[iu](?:8|16|32|64)|f(?:32|64))?\\b",
+          "name": "constant.numeric.decimal.tondo"
+        }
+      ]
+    },
+    "annotations": {
+      "match": "@[A-Za-z_][A-Za-z0-9_]*",
+      "name": "storage.type.annotation.tondo"
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(fn)\\s+(?:([A-Z][A-Za-z0-9_]*)\\.)?([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.function.tondo"
+            },
+            "2": {
+              "name": "entity.name.type.tondo"
+            },
+            "3": {
+              "name": "entity.name.function.tondo"
+            }
+          }
+        },
+        {
+          "match": "\\b(type|enum|trait)\\s+([A-Z][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.type.tondo"
+            },
+            "2": {
+              "name": "entity.name.type.tondo"
+            }
+          }
+        },
+        {
+          "match": "\\b(test|suite)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.test.tondo"
+            },
+            "2": {
+              "name": "entity.name.function.test.tondo"
+            }
+          }
+        },
+        {
+          "match": "\\b(import)\\s+([A-Za-z_][A-Za-z0-9_.]*)",
+          "captures": {
+            "1": {
+              "name": "keyword.control.import.tondo"
+            },
+            "2": {
+              "name": "entity.name.namespace.tondo"
+            }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "match": "\\b(if|else|match|for|in|break|continue|return|fail|select|spawn|defer|with)\\b",
+          "name": "keyword.control.tondo"
+        },
+        {
+          "match": "\\b(and|or|not|as)\\b",
+          "name": "keyword.operator.word.tondo"
+        },
+        {
+          "match": "\\b(fn|type|enum|trait|impl|let|var|mut|ref|const|alias|derive|extern|unsafe|pub|priv|import|test|suite)\\b",
+          "name": "keyword.other.tondo"
+        },
+        {
+          "match": "\\bself\\b",
+          "name": "variable.language.self.tondo"
+        }
+      ]
+    },
+    "constants": {
+      "match": "\\b(true|false|none|some|ok|err)\\b",
+      "name": "constant.language.tondo"
+    },
+    "types": {
+      "match": "\\b[A-Z][A-Za-z0-9_]*\\b",
+      "name": "entity.name.type.tondo"
+    },
+    "calls": {
+      "match": "\\b([a-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+      "captures": {
+        "1": {
+          "name": "entity.name.function.call.tondo"
+        }
+      }
+    },
+    "operators": {
+      "patterns": [
+        {
+          "match": "=>|->",
+          "name": "keyword.operator.arrow.tondo"
+        },
+        {
+          "match": "\\.\\.=|\\.\\.\\.|\\.\\.",
+          "name": "keyword.operator.range.tondo"
+        },
+        {
+          "match": "==|!=|<=|>=|<<=|>>=|<<|>>|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^=|[+\\-*/%<>=&|^!?]",
+          "name": "keyword.operator.tondo"
+        }
+      ]
+    }
+  }
+}

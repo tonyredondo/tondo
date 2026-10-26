@@ -148,3 +148,25 @@ jobs:
           name: tondo-${{ matrix.target }}
           path: dist/tondo-${{ matrix.target }}.tar.gz
           if-no-files-found: error
+
+  # The VS Code extension: its tests, then the .vsix as an artifact.
+  vscode:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tondo-vscode
+          path: editors/vscode/*.vsix
+          if-no-files-found: error

@@ -557,7 +557,9 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
 `tondo dap` habla el Debug Adapter Protocol por su entrada y su salida, para
 un editor: `launch` compila y arranca un programa como `tondo debug`, o lo
 arranca si es un ejecutable, y `attach` se adjunta a uno por su proceso o su
-nombre. Los breakpoints, con su condición, los pasos, la pausa, las tareas
+nombre. Con `"test"`, el id de un test del proyecto que `tondo test --list`
+da, `launch` compila los tests del proyecto como un build de depuración y
+ejecuta ese test solo; la consola dice cómo terminó. Los breakpoints, con su condición, los pasos, la pausa, las tareas
 (`threads`), la pila, los bindings (`variables`) y `evaluate` de un nombre
 son las órdenes de `tondo debug`; la salida del programa va a la consola del
 editor.

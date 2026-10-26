@@ -75,6 +75,12 @@ such a program under qemu-user.
 
 ## Editors
 
+In VS Code, the Tondo extension (`editors/vscode`; each CI run leaves its
+`.vsix`, which `code --install-extension` installs) brings all of it: the
+language server below, debugging with `tondo dap`, live builds that change
+as files are saved, the tests in the Testing view, tasks, and the tools of
+`tondo mcp` for VS Code's agents.
+
 `tondo lsp` is a language server: diagnostics as you type, hover, go to
 definition, references, rename, completion, signatures, inlay types,
 semantic highlighting, symbols, formatting, and each error's repairs as

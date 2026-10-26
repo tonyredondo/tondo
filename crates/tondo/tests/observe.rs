@@ -299,6 +299,77 @@ fn dap_read(reader: &mut impl BufRead) -> Value {
     serde_json::from_slice(&body).unwrap()
 }
 
+/// The debugger runs one test of a project, stopping in it, and says how
+/// it ended.
+#[test]
+fn debug_adapter_runs_a_test() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("daptests");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/main.to"), "pub fn add(a: Int, b: Int): Int {\n    a + b\n}\n\nfn main() {}\n")
+        .unwrap();
+    let tests = "test adds {\n    assert(add(1, 2) == 3)\n}\n\ntest fails {\n    let sum = add(1, 2)\n    assert(sum == 4, \"wrong sum\")\n}\n";
+    std::fs::write(dir.join("src/main_test.to"), tests).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .arg("dap")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    let mut output = BufReader::new(child.stdout.take().unwrap());
+    let mut seq = 0;
+    let mut send = |command: &str, arguments: Value| {
+        seq += 1;
+        let text = json!({ "seq": seq, "type": "request", "command": command, "arguments": arguments }).to_string();
+        std::io::Write::write_all(&mut input, format!("Content-Length: {}\r\n\r\n{text}", text.len()).as_bytes())
+            .unwrap();
+    };
+    let mut events = Vec::new();
+    let response = |output: &mut BufReader<_>, command: &str, events: &mut Vec<Value>| loop {
+        let message = dap_read(output);
+        if message["type"] == "response" && message["command"] == command {
+            assert_eq!(message["success"], true, "{message}");
+            return message;
+        }
+        events.push(message);
+    };
+    send("initialize", json!({ "adapterID": "tondo" }));
+    response(&mut output, "initialize", &mut events);
+    send("launch", json!({ "program": ".", "cwd": dir, "test": "daptests::unit::daptests::fails" }));
+    response(&mut output, "launch", &mut events);
+    let path = dir.join("src/main_test.to");
+    send("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [{ "line": 7 }] }));
+    response(&mut output, "setBreakpoints", &mut events);
+    send("configurationDone", json!({}));
+    response(&mut output, "configurationDone", &mut events);
+    let stopped = loop {
+        let message = events.pop().unwrap_or_else(|| dap_read(&mut output));
+        if message["event"] == "stopped" {
+            break message;
+        }
+    };
+    send("stackTrace", json!({ "threadId": stopped["body"]["threadId"] }));
+    let trace = response(&mut output, "stackTrace", &mut events);
+    assert_eq!(trace["body"]["stackFrames"][0]["line"], 7, "{trace}");
+    // The failing assertion stops on its line again as it reports.
+    let mut said = String::new();
+    send("continue", json!({ "threadId": 1 }));
+    loop {
+        let message = if events.is_empty() { dap_read(&mut output) } else { events.remove(0) };
+        match message["event"].as_str() {
+            Some("output") => said.push_str(message["body"]["output"].as_str().unwrap_or_default()),
+            Some("stopped") => send("continue", json!({ "threadId": 1 })),
+            Some("terminated") => break,
+            _ => {}
+        }
+    }
+    assert!(said.contains("the test failed: panic[P0007]: assertion-failed: wrong sum"), "{said}");
+    assert!(!said.contains('\x1e'), "{said}");
+    send("disconnect", json!({}));
+    drop(input);
+    child.wait().unwrap();
+}
+
 #[test]
 fn debug_adapter() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dap");

@@ -85,12 +85,39 @@ impl Debuggee {
     }
 }
 
-/// Serves an editor until it disconnects.
-/// Builds a program for debugging, live or not: its executable, or none
+/// What the debugger builds, for debugging: a program, live or not, and a
+/// project's tests, with the identity of each node of their tree; none
 /// when it does not compile.
-pub type Build<'a> = &'a dyn Fn(&Path, bool) -> Result<Option<PathBuf>, String>;
+pub struct Builds<'a> {
+    pub program: BuildProgram<'a>,
+    pub tests: BuildTests<'a>,
+}
 
-pub fn serve(build: Build) -> Result<(), String> {
+pub type BuildProgram<'a> = &'a dyn Fn(&Path, bool) -> Result<Option<PathBuf>, String>;
+pub type BuildTests<'a> = &'a dyn Fn(&Path) -> Result<Option<(PathBuf, Vec<String>)>, String>;
+
+/// What a frame of the runner inside a test build shows in the editor's
+/// console (testing 7): `\x1e<nonce> <sequence>` alone marks the output so
+/// far; a frame, its kind, node and the length of the payload that follows,
+/// which says how the test debugged, `tested`, ended, or what it logged.
+fn test_frame(header: &str, stream: &mut impl BufRead, tested: Option<u32>) -> Option<String> {
+    let words: Vec<&str> = header.split_whitespace().collect();
+    let [_, _, kind, node, length] = words[..] else { return None };
+    let mut payload = vec![0; length.parse().ok()?];
+    stream.read_exact(&mut payload).ok()?;
+    let payload = String::from_utf8_lossy(&payload);
+    let payload: Vec<&str> = payload.split('\0').filter(|part| !part.is_empty()).collect();
+    let this = node.parse().ok() == tested;
+    match kind {
+        "error" | "panic" if this => Some(format!("the test failed: {}\n", payload.join(": ").trim_end())),
+        "end" if this => Some("the test passed\n".into()),
+        "log" => Some(format!("{}\n", payload.join(" "))),
+        _ => None,
+    }
+}
+
+/// Serves an editor until it disconnects.
+pub fn serve(builds: Builds) -> Result<(), String> {
     let editor = Editor { out: Arc::new(Mutex::new((std::io::stdout(), 0))) };
     let stdin = std::io::stdin();
     let mut input = stdin.lock();
@@ -107,7 +134,7 @@ pub fn serve(build: Build) -> Result<(), String> {
                 "supportsEvaluateForHovers": true,
                 "supportsRestartFrame": true,
             })),
-            "launch" | "attach" => match start(command, arguments, build, &editor) {
+            "launch" | "attach" => match start(command, arguments, &builds, &editor) {
                 Ok(started) => {
                     debuggee = Some(started);
                     editor.respond(&request, Ok(json!({})));
@@ -139,26 +166,45 @@ pub fn serve(build: Build) -> Result<(), String> {
 }
 
 /// Starts the program the editor names, or attaches to a running one.
-fn start(command: &str, arguments: &Value, build: Build, editor: &Editor) -> Result<Debuggee, String> {
+fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> Result<Debuggee, String> {
     let root =
         arguments["cwd"].as_str().map(PathBuf::from).unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-    let (program, child) = if command == "launch" {
+    let (program, child, tested) = if command == "launch" {
         let program = arguments["program"]
             .as_str()
             .ok_or("`launch` takes a `program`: a .to file, a project or an executable")?;
         let path = root.join(program);
-        let executable = if path.is_file() && path.extension().is_none_or(|e| e != "to") {
+        // A test of the project: its tests' executable, which runs the plan
+        // it is given, that test alone.
+        let mut plan = None;
+        let mut tested = None;
+        let executable = if let Some(test) = arguments["test"].as_str() {
+            let (executable, ids) = (builds.tests)(&path)?
+                .ok_or_else(|| format!("the tests of {program} do not compile: `tondo test {program}` shows why"))?;
+            let Some(node) = ids.iter().position(|id| id == test) else {
+                return Err(format!("{program} has no test `{test}`: `tondo test --list {program}` lists them"));
+            };
+            let file = std::env::temp_dir().join(format!("tondo-debug-plan-{}", std::process::id()));
+            std::fs::write(&file, node.to_string()).map_err(|e| format!("cannot write {}: {e}", file.display()))?;
+            plan = Some(file);
+            tested = Some(node as u32);
+            executable
+        } else if path.is_file() && path.extension().is_none_or(|e| e != "to") {
             path
         } else {
             // A live build's code changes with the custom request `reload`.
             let live = arguments["live"].as_bool().unwrap_or(false);
-            build(&path, live)?
+            (builds.program)(&path, live)?
                 .ok_or_else(|| format!("{program} does not compile: `tondo check {program}` shows why"))?
         };
         use std::os::unix::process::CommandExt;
         let arguments: Vec<String> =
             arguments["args"].as_array().into_iter().flatten().filter_map(|a| a.as_str().map(str::to_string)).collect();
-        let child = std::process::Command::new(&executable)
+        let mut command = std::process::Command::new(&executable);
+        if let Some(plan) = &plan {
+            command.env("TONDO_TEST_PLAN", plan);
+        }
+        let child = command
             .args(&arguments)
             .current_dir(&root)
             .env("TONDO_DEBUG", "1")
@@ -168,14 +214,14 @@ fn start(command: &str, arguments: &Value, build: Build, editor: &Editor) -> Res
             .process_group(0)
             .spawn()
             .map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
-        (observe::started(&executable, child.id())?, Some(child))
+        (observe::started(&executable, child.id())?, Some(child), tested)
     } else {
         let name = match (&arguments["processId"], &arguments["program"]) {
             (Value::Number(pid), _) => pid.to_string(),
             (_, Value::String(name)) => name.clone(),
             _ => return Err("`attach` takes a `processId` or a program's name".into()),
         };
-        (observe::connect(&name)?, None)
+        (observe::connect(&name)?, None, None)
     };
     let pid = program.pid;
     let observe::Program { mut writer, reader, .. } = program;
@@ -185,6 +231,11 @@ fn start(command: &str, arguments: &Value, build: Build, editor: &Editor) -> Res
     // The program waits before `main` until `configurationDone`, which the
     // editor shows only when it asked to stop there.
     let entry = arguments["stopOnEntry"] == true;
+    // The streams of the program's output read to their end, which the
+    // editor gets before it hears that the program ended.
+    let drained = Arc::new((Mutex::new(0), std::sync::Condvar::new()));
+    let streams = if child.is_some() { 2 } else { 0 };
+    let read_out = drained.clone();
     // What the program says: events go to the editor as they come; answers
     // to the command waiting for them.
     std::thread::spawn(move || {
@@ -203,6 +254,10 @@ fn start(command: &str, arguments: &Value, build: Build, editor: &Editor) -> Res
                 events
                     .event("stopped", json!({ "reason": reason, "threadId": stop["task"], "allThreadsStopped": true }));
             } else if value.get("exited").is_some() {
+                let (count, ended) = &*read_out;
+                let count = count.lock().unwrap_or_else(|e| e.into_inner());
+                let wait = std::time::Duration::from_secs(2);
+                drop(ended.wait_timeout_while(count, wait, |count| *count < streams));
                 events.event("terminated", json!({}));
             } else if answer.send(value).is_err() {
                 break;
@@ -218,10 +273,24 @@ fn start(command: &str, arguments: &Value, build: Build, editor: &Editor) -> Res
         ] {
             let Some(stream) = stream else { continue };
             let editor = editor_events.clone();
+            let drained = drained.clone();
             std::thread::spawn(move || {
-                for line in BufReader::new(stream).lines().map_while(Result::ok) {
-                    editor.event("output", json!({ "category": category, "output": format!("{line}\n") }));
+                let mut stream = BufReader::new(stream);
+                let mut line = String::new();
+                while matches!(stream.read_line(&mut line), Ok(n) if n > 0) {
+                    let shown = match line.strip_prefix('\x1e') {
+                        // A test's frame, from the runner inside a test build.
+                        Some(frame) => test_frame(frame, &mut stream, tested),
+                        None => Some(std::mem::take(&mut line)),
+                    };
+                    if let Some(output) = shown {
+                        editor.event("output", json!({ "category": category, "output": output }));
+                    }
+                    line.clear();
                 }
+                let (count, ended) = &*drained;
+                *count.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+                ended.notify_all();
             });
         }
     }

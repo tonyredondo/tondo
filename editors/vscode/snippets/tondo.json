@@ -1,0 +1,57 @@
+{
+  "main": {
+    "prefix": "main",
+    "body": ["import std.console", "", "fn main() {", "\tconsole.println(\"${1:hello}\")$0", "}"],
+    "description": "A program's main function"
+  },
+  "fn": {
+    "prefix": "fn",
+    "body": ["fn ${1:name}(${2}): ${3:Unit} {", "\t$0", "}"],
+    "description": "A function"
+  },
+  "pub fn": {
+    "prefix": "pubfn",
+    "body": ["pub fn ${1:name}(${2}): ${3:Unit} {", "\t$0", "}"],
+    "description": "A public function"
+  },
+  "type": {
+    "prefix": "type",
+    "body": ["type ${1:Name} = { ${2:field}: ${3:Int} }"],
+    "description": "A record type"
+  },
+  "enum": {
+    "prefix": "enum",
+    "body": ["enum ${1:Name} {", "\t${2:First}", "\t${3:Second}(${4:Int})", "}"],
+    "description": "An enum"
+  },
+  "match": {
+    "prefix": "match",
+    "body": ["match ${1:value} {", "\t${2:pattern} => ${3:result}", "\t_ => $0", "}"],
+    "description": "A match"
+  },
+  "for": {
+    "prefix": "for",
+    "body": ["for ${1:item} in ${2:items} {", "\t$0", "}"],
+    "description": "A loop over a collection"
+  },
+  "if": {
+    "prefix": "if",
+    "body": ["if ${1:condition} {", "\t$0", "}"],
+    "description": "An if"
+  },
+  "test": {
+    "prefix": "test",
+    "body": ["test ${1:name} {", "\tassert(${2:condition})$0", "}"],
+    "description": "A test"
+  },
+  "suite": {
+    "prefix": "suite",
+    "body": ["suite ${1:name} {", "\ttest ${2:name} {", "\t\tassert(${3:condition})$0", "\t}", "}"],
+    "description": "A suite of tests"
+  },
+  "spawn": {
+    "prefix": "spawn",
+    "body": ["let ${1:job} = spawn ${2:work}()", "let ${3:result} = $1.wait()$0"],
+    "description": "A task and its result"
+  }
+}

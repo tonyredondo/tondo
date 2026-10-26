@@ -1,0 +1,314 @@
+{
+  "name": "tondo",
+  "displayName": "Tondo",
+  "description": "The Tondo language: editing, debugging, tests, live builds, and its tools for agents.",
+  "version": "0.1.0",
+  "publisher": "tondo",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tonyredondo/tondo"
+  },
+  "engines": {
+    "vscode": "^1.101.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Debuggers",
+    "Testing",
+    "Formatters",
+    "Linters",
+    "AI"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:tondo",
+    "workspaceContains:**/tondo.toml",
+    "workspaceContains:**/*.to",
+    "onDebugResolve:tondo",
+    "onDebugDynamicConfigurations:tondo"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "tondo",
+        "aliases": [
+          "Tondo"
+        ],
+        "extensions": [
+          ".to"
+        ],
+        "firstLine": "^#!.*\\btondo\\b",
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "tondo",
+        "scopeName": "source.tondo",
+        "path": "./syntaxes/tondo.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "tondo",
+        "path": "./snippets/tondo.json"
+      }
+    ],
+    "configuration": {
+      "title": "Tondo",
+      "properties": {
+        "tondo.path": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "The `tondo` executable. Empty: the one on `PATH`, or in `~/.cargo/bin` or `~/.local/bin`."
+        },
+        "tondo.reloadOnSave": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "While a live build is debugged, put in the code of a Tondo file when it is saved (Edit and Continue)."
+        }
+      }
+    },
+    "configurationDefaults": {
+      "[tondo]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "tondo.tondo"
+      }
+    },
+    "breakpoints": [
+      {
+        "language": "tondo"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "tondo",
+        "label": "Tondo",
+        "languages": [
+          "tondo"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "program"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "A .to file, a project's directory or an executable.",
+                "default": "${file}"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The program's arguments.",
+                "default": []
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Where the program runs.",
+                "default": "${workspaceFolder}"
+              },
+              "live": {
+                "type": "boolean",
+                "description": "A live build, whose code changes as its files are saved.",
+                "default": false
+              },
+              "test": {
+                "type": "string",
+                "description": "The id of one of the project's tests, to run alone (`tondo test --list` lists them)."
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Stop before the program starts.",
+                "default": false
+              }
+            }
+          },
+          "attach": {
+            "properties": {
+              "processId": {
+                "type": [
+                  "number",
+                  "string"
+                ],
+                "description": "The process of a running debug build, or its name (`tondo ps` lists them)."
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "tondo",
+            "request": "launch",
+            "name": "Debug the program",
+            "program": "${workspaceFolder}",
+            "cwd": "${workspaceFolder}"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Tondo: Debug the program",
+            "body": {
+              "type": "tondo",
+              "request": "launch",
+              "name": "Debug the program",
+              "program": "^\"\\${workspaceFolder}\"",
+              "cwd": "^\"\\${workspaceFolder}\""
+            }
+          },
+          {
+            "label": "Tondo: Debug the program live",
+            "body": {
+              "type": "tondo",
+              "request": "launch",
+              "name": "Debug the program live",
+              "program": "^\"\\${workspaceFolder}\"",
+              "cwd": "^\"\\${workspaceFolder}\"",
+              "live": true
+            }
+          },
+          {
+            "label": "Tondo: Attach to a program",
+            "body": {
+              "type": "tondo",
+              "request": "attach",
+              "name": "Attach",
+              "processId": "^\"\\${command:pickProcess}\""
+            }
+          }
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": "tondo.run",
+        "title": "Run",
+        "category": "Tondo",
+        "icon": "$(play)"
+      },
+      {
+        "command": "tondo.debug",
+        "title": "Debug",
+        "category": "Tondo",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "tondo.runLive",
+        "title": "Run Live (Reloads as Files Are Saved)",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.debugLive",
+        "title": "Debug Live (Edit and Continue)",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.reload",
+        "title": "Reload the Debugged Program",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.restartLanguageServer",
+        "title": "Restart the Language Server",
+        "category": "Tondo"
+      }
+    ],
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "tondo.run",
+          "when": "resourceLangId == tondo",
+          "group": "navigation@0"
+        },
+        {
+          "command": "tondo.debug",
+          "when": "resourceLangId == tondo",
+          "group": "navigation@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "tondo.reload",
+          "when": "debugType == tondo"
+        }
+      ]
+    },
+    "taskDefinitions": [
+      {
+        "type": "tondo",
+        "required": [
+          "command"
+        ],
+        "properties": {
+          "command": {
+            "type": "string",
+            "enum": [
+              "check",
+              "build",
+              "run",
+              "test",
+              "fmt",
+              "watch"
+            ],
+            "description": "What tondo does."
+          },
+          "target": {
+            "type": "string",
+            "description": "A .to file or a project's directory; the workspace folder by default."
+          }
+        }
+      }
+    ],
+    "problemMatchers": [
+      {
+        "name": "tondo",
+        "owner": "tondo",
+        "source": "tondo",
+        "fileLocation": [
+          "autoDetect",
+          "${cwd}"
+        ],
+        "pattern": [
+          {
+            "regexp": "^(error|warning)\\[(\\w+)\\]: (.*)$",
+            "severity": 1,
+            "code": 2,
+            "message": 3
+          },
+          {
+            "regexp": "^\\s*--> (.*):(\\d+):(\\d+)$",
+            "file": 1,
+            "line": 2,
+            "column": 3
+          }
+        ]
+      }
+    ],
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "tondo",
+        "label": "Tondo"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p . && esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --minify --outfile=out/extension.js",
+    "watch": "tsc -w -p .",
+    "test": "npm run compile && node --test out/test/",
+    "package": "npm run compile && vsce package --skip-license"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^11.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/vscode": "~1.101.0",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}
