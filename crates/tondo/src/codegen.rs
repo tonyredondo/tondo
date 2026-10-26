@@ -56,6 +56,8 @@ const REFLECT_VALUE: i64 = 40;
 /// Size of an array header in the runtime (`ArrayHeader`): `len` is at 8 and
 /// a deque's `head` at 24. An array's `head` is always 0.
 const ARRAY_HEADER: i64 = 32;
+/// Where a string's length is in its header (`Str`), after its count.
+const STRING_LENGTH: i32 = 8;
 
 /// Runtime entry points (see `tondo-runtime`).
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -84,7 +86,7 @@ enum Rt {
     StrTransform,
     StrSliceChecked,
     StrFromChars,
-    SbNew,
+    SbStart,
     SbStr,
     SbI64,
     SbU64,
@@ -318,7 +320,7 @@ impl Rt {
             Rt::StrTransform => ("tondo_rt_str_transform", &[I64, I32], &[I64]),
             Rt::StrSliceChecked => ("tondo_rt_str_slice_checked", &[I64, I64, I64, I64], &[I64]),
             Rt::StrFromChars => ("tondo_rt_str_from_chars", &[I64], &[I64]),
-            Rt::SbNew => ("tondo_rt_sb_new", &[], &[I64]),
+            Rt::SbStart => ("tondo_rt_sb_start", &[I64, I64], &[]),
             Rt::SbStr => ("tondo_rt_sb_str", &[I64, I64], &[]),
             Rt::SbI64 => ("tondo_rt_sb_i64", &[I64, I64], &[]),
             Rt::SbU64 => ("tondo_rt_sb_u64", &[I64, I64], &[]),
@@ -1574,6 +1576,8 @@ trait Gen<'t> {
     fn callback(&mut self, target: FnId, ty: Ty, closure: bool) -> FuncId;
     fn declare_func_in_func(&mut self, id: FuncId, func: &mut ir::Function) -> ir::FuncRef;
     fn declare_data_in_func(&mut self, id: DataId, func: &mut ir::Function) -> ir::GlobalValue;
+    /// The runtime's count of reasons to check for cancellation.
+    fn attention(&mut self) -> DataId;
 
     /// A debug build's function, with the bindings it shows: its number.
     fn debug_function(&mut self, name: String, described: Vec<DebugBinding>) -> u32;
@@ -1723,6 +1727,9 @@ impl<'t> Gen<'t> for Codegen<'t> {
     }
     fn declare_data_in_func(&mut self, id: DataId, func: &mut ir::Function) -> ir::GlobalValue {
         self.module.declare_data_in_func(id, func)
+    }
+    fn attention(&mut self) -> DataId {
+        self.module.declare_data("tondo_rt_attention", Linkage::Import, true, false).expect("the runtime's attention")
     }
     fn debug_function(&mut self, name: String, described: Vec<DebugBinding>) -> u32 {
         self.debug_functions.push((name, described));
@@ -4022,7 +4029,17 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             if back && self.e.cg.meta() {
                 self.e.call_rt(Rt::MetaStep, &[]);
             }
-            self.terminator(&block.terminator);
+            match self.loop_test(index, &block.terminator) {
+                // The loop's test again at its end, so that a turn takes one
+                // jump instead of two.
+                Some(head) => {
+                    for stmt in &head.stmts {
+                        self.statement(stmt);
+                    }
+                    self.terminator(&head.terminator);
+                }
+                None => self.terminator(&block.terminator),
+            }
         }
         self.e.fb.seal_all_blocks();
         let config = self.e.cg.isa().frontend_config();
@@ -4168,14 +4185,28 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// The address of `sequence[index]`, panicking with `P0001` out of
     /// bounds.
     fn element_address(&mut self, sequence: ir::Value, ty: Ty, index: ir::Value, span: Span) -> ir::Value {
-        let (position, inside) = self.position(sequence, index);
+        // An index from the start, in bounds, takes one comparison; one
+        // from the end, or out of bounds, takes the cold path.
+        let length = self.e.fb.ins().load(types::I64, flags(), sequence, 8);
+        let (found, from_end, next) = (self.e.fb.create_block(), self.e.fb.create_block(), self.e.fb.create_block());
+        let address = self.e.fb.append_block_param(next, POINTER);
+        let inside = self.e.fb.ins().icmp(IntCC::UnsignedLessThan, index, length);
+        self.e.fb.ins().brif(inside, found, &[], from_end, &[]);
+        self.e.fb.switch_to_block(found);
+        let element = self.element_at(sequence, ty, index);
+        self.e.fb.ins().jump(next, &[element.into()]);
+        self.e.fb.set_cold_block(from_end);
+        self.e.fb.switch_to_block(from_end);
+        let (wrapped, inside) = self.position(sequence, index);
         let outside = self.e.fb.ins().bxor_imm_u(inside, 1);
         let deque = self.e.cg.sequence_parts(ty).1;
-        self.panic_values_if(outside, 1, span, |this| {
-            let length = this.e.fb.ins().load(types::I64, flags(), sequence, 8);
-            ((deque as u32) << 17 | 0x140, index, length, ty)
-        });
-        self.element_at(sequence, ty, position)
+        self.panic_values_if(outside, 1, span, |_| ((deque as u32) << 17 | 0x140, index, length, ty));
+        let rest = self.e.fb.current_block().unwrap();
+        self.e.fb.set_cold_block(rest);
+        let element = self.element_at(sequence, ty, wrapped);
+        self.e.fb.ins().jump(next, &[element.into()]);
+        self.e.fb.switch_to_block(next);
+        address
     }
 
     /// An index as a position, counting from the end when negative (10.3),
@@ -4299,11 +4330,21 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
 
     /// Makes the array stored at `slot` unique before a write (copy-on-write).
     fn make_unique(&mut self, slot: ir::Value, element: Ty) {
+        // Nearly always the only reference already: no call.
+        let array = self.e.fb.ins().load(POINTER, flags(), slot, 0);
+        let count = self.e.fb.ins().atomic_load(types::I64, flags(), array);
+        let unique = self.e.fb.ins().icmp_imm_s(IntCC::Equal, count, 1);
+        let (copy, done) = (self.e.fb.create_block(), self.e.fb.create_block());
+        self.e.fb.ins().brif(unique, done, &[], copy, &[]);
+        self.e.fb.set_cold_block(copy);
+        self.e.fb.switch_to_block(copy);
         let size = self.e.element_size(element);
         let extra = self.e.fb.ins().iconst(POINTER, 0);
         let retain = self.e.glue_or_null(Glue::Retain, element);
         let release = self.e.glue_or_null(Glue::Release, element);
         self.e.call_rt(Rt::ArrayUnique, &[slot, size, extra, retain, release]);
+        self.e.fb.ins().jump(done, &[]);
+        self.e.fb.switch_to_block(done);
     }
 
     /// Stores a variable into a fresh stack slot so the runtime can update it.
@@ -5364,7 +5405,23 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 Val::Scalar(self.e.call_rt(Rt::Spawn, &[object, kind, size, align, release, visit]).unwrap())
             }
             Rvalue::Select(cases, blocking, span) => Val::Scalar(self.select(cases, *blocking, *span)),
-            Rvalue::Cancelled => Val::Scalar(self.e.call_rt(Rt::Cancelled, &[]).unwrap()),
+            Rvalue::Cancelled => {
+                // Without a reason to ask the runtime, nearly always, no call.
+                let id = self.e.cg.attention();
+                let attention = self.e.cg.declare_data_in_func(id, self.e.fb.func);
+                let address = self.e.fb.ins().symbol_value(POINTER, attention);
+                let reasons = self.e.fb.ins().load(types::I32, flags(), address, 0);
+                let (ask, done) = (self.e.fb.create_block(), self.e.fb.create_block());
+                let answer = self.e.fb.append_block_param(done, types::I8);
+                let none = self.e.fb.ins().iconst(types::I8, 0);
+                self.e.fb.ins().brif(reasons, ask, &[], done, &[none.into()]);
+                self.e.fb.set_cold_block(ask);
+                self.e.fb.switch_to_block(ask);
+                let asked = self.e.call_rt(Rt::Cancelled, &[]).unwrap();
+                self.e.fb.ins().jump(done, &[asked.into()]);
+                self.e.fb.switch_to_block(done);
+                Val::Scalar(answer)
+            }
             // What the probe of the line that starts here said; no line
             // starts here, no restart.
             Rvalue::Restart(point) => Val::Scalar(match self.probed.take() {
@@ -5530,6 +5587,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             return self.mutate_map(mutation, target, &values, collection_ty, place, ty);
         }
         let (element, deque) = self.e.cg.sequence_parts(collection_ty);
+        if mutation == Mutation::Push && !deque {
+            self.push(target, element, values[0]);
+            return None;
+        }
         let size = self.e.element_size(element);
         let retain_glue = self.e.glue_or_null(Glue::Retain, element);
         let release_glue = self.e.glue_or_null(Glue::Release, element);
@@ -5576,6 +5637,60 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             (Some(found), Some(out)) => self.removal_result(place, ty, element, out, found),
             _ => None,
         }
+    }
+
+    /// `values.push(value)`: in place when the array is the only reference
+    /// to its storage and has room, as nearly always; else by the runtime,
+    /// which copies or grows it.
+    fn push(&mut self, target: &Place, element: Ty, value: Val) {
+        let var = match self.storage[target.local.0 as usize] {
+            Storage::Var(var) if target.path.is_empty() => Some(var),
+            _ => None,
+        };
+        let address = match var {
+            Some(_) => None,
+            None => Some(self.pointer_to(target, true)),
+        };
+        let array = match (var, address) {
+            (Some(var), _) => self.e.fb.use_var(var),
+            (None, Some(address)) => self.e.fb.ins().load(POINTER, flags(), address, 0),
+            (None, None) => unreachable!(),
+        };
+        let count = self.e.fb.ins().atomic_load(types::I64, flags(), array);
+        let length = self.e.fb.ins().load(types::I64, flags(), array, 8);
+        let capacity = self.e.fb.ins().load(types::I64, flags(), array, 16);
+        let unique = self.e.fb.ins().icmp_imm_s(IntCC::Equal, count, 1);
+        let room = self.e.fb.ins().icmp(IntCC::UnsignedLessThan, length, capacity);
+        let in_place = self.e.fb.ins().band(unique, room);
+        let (fast, slow, done) = (self.e.fb.create_block(), self.e.fb.create_block(), self.e.fb.create_block());
+        self.e.fb.ins().brif(in_place, fast, &[], slow, &[]);
+        self.e.fb.switch_to_block(fast);
+        let size = self.e.cg.layout(element).size as i64;
+        let offset = self.e.fb.ins().imul_imm_s(length, size);
+        let at = self.e.fb.ins().iadd(array, offset);
+        let at = self.e.fb.ins().iadd_imm_s(at, ARRAY_HEADER);
+        self.e.store_val(at, element, value);
+        let longer = self.e.fb.ins().iadd_imm_s(length, 1);
+        self.e.fb.ins().store(flags(), longer, array, 8);
+        self.e.fb.ins().jump(done, &[]);
+        self.e.fb.set_cold_block(slow);
+        self.e.fb.switch_to_block(slow);
+        // The value may live in the storage the runtime moves.
+        let source = self.copy_to_stack(element, value);
+        let size = self.e.element_size(element);
+        let retain = self.e.glue_or_null(Glue::Retain, element);
+        let release = self.e.glue_or_null(Glue::Release, element);
+        let slot = match (var, address) {
+            (Some(var), _) => self.spill(var),
+            (None, Some(address)) => address,
+            (None, None) => unreachable!(),
+        };
+        self.e.call_rt(Rt::ArrayPush, &[slot, source, size, retain, release]);
+        if let Some(var) = var {
+            self.unspill(var, slot);
+        }
+        self.e.fb.ins().jump(done, &[]);
+        self.e.fb.switch_to_block(done);
     }
 
     /// The address of a copy of `value` on the stack.
@@ -6638,7 +6753,18 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let index = self.e.fb.ins().iconst(types::I64, index as i64);
                 self.e.call_rt(Rt::ConsoleSet, &[index, values[0]])
             }
-            Callee::Std(StdFn::Native(index)) => self.e.call_rt(Rt::Native(index), &values),
+            Callee::Std(StdFn::Native(index)) => {
+                // Arithmetic the processor does in one instruction.
+                let ins = self.e.fb.ins();
+                match crate::hir::NATIVES[index as usize].symbol {
+                    "tondo_rt_math_sqrt" => Some(ins.sqrt(values[0])),
+                    "tondo_rt_math_floor" => Some(ins.floor(values[0])),
+                    "tondo_rt_math_ceil" => Some(ins.ceil(values[0])),
+                    "tondo_rt_math_trunc" => Some(ins.trunc(values[0])),
+                    "tondo_rt_math_round" => Some(ins.nearest(values[0])),
+                    _ => self.e.call_rt(Rt::Native(index), &values),
+                }
+            }
             Callee::Std(StdFn::Process(ProcessFn::Exit)) => self.e.call_rt(Rt::Process(ProcessFn::Exit), &values),
             Callee::Std(StdFn::Process(ProcessFn::Detach)) => self.e.call_rt(Rt::Process(ProcessFn::Detach), &values),
             Callee::Std(StdFn::ConsoleEprint) => self.e.call_rt(Rt::ConsoleEprint, &values),
@@ -6800,6 +6926,23 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.pointer_to(place, true)
     }
 
+    /// The head of the loop that `terminator`, ending block `index`, jumps
+    /// back to, when it is only a test: comparisons and a branch. A build
+    /// that steps, counts or replaces code goes through the head itself.
+    fn loop_test(&self, index: usize, terminator: &Terminator) -> Option<&'a crate::mir::BlockData> {
+        let Terminator::Goto(target) = terminator else { return None };
+        let head = &self.body.blocks[target.0 as usize];
+        let test = head.stmts.len() <= 2
+            && head.stmts.iter().all(|stmt| {
+                matches!(stmt, Statement::Assign(place, value, _)
+                    if place.path.is_empty() && matches!(**value, Rvalue::Binary(BinOp::Lt | BinOp::Le | BinOp::Gt
+                        | BinOp::Ge | BinOp::Eq | BinOp::Ne, _, _)))
+            })
+            && matches!(head.terminator, Terminator::Branch(..));
+        let plain = self.debug.is_none() && self.e.cg.coverage().is_none() && !self.e.cg.meta() && !self.e.cg.live();
+        (target.0 as usize <= index && test && plain).then_some(head)
+    }
+
     fn terminator(&mut self, terminator: &Terminator) {
         match terminator {
             Terminator::Goto(target) => {
@@ -6865,7 +7008,31 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     ) {
         let (failed, next) = (self.e.fb.create_block(), self.e.fb.create_block());
         self.e.fb.set_cold_block(failed);
-        self.e.fb.ins().brif(condition, failed, &[], next, &[]);
+        // On `not ok`, a branch on `ok` with the targets swapped, which
+        // Cranelift makes one jump with the comparison that gave `ok`.
+        let dfg = &self.e.fb.func.dfg;
+        let constant = |value: ir::Value| match dfg.value_def(value) {
+            ir::ValueDef::Result(inst, _) => match dfg.insts[inst] {
+                ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } => Some(imm.bits()),
+                _ => None,
+            },
+            _ => None,
+        };
+        let negated = match dfg.value_def(condition) {
+            ir::ValueDef::Result(inst, _) => match dfg.insts[inst] {
+                ir::InstructionData::Binary { opcode: ir::Opcode::Bxor, args: [ok, one] }
+                    if constant(one) == Some(1) =>
+                {
+                    Some(ok)
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        match negated {
+            Some(ok) => self.e.fb.ins().brif(ok, next, &[], failed, &[]),
+            None => self.e.fb.ins().brif(condition, failed, &[], next, &[]),
+        };
         self.e.fb.switch_to_block(failed);
         let (detail, a, b, ty) = values(self);
         let a = self.wide(a, detail & 0x100 != 0);
@@ -6914,15 +7081,53 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     }
 
     fn concat(&mut self, pieces: &[Piece]) -> ir::Value {
-        let builder = self.e.call_rt(Rt::SbNew, &[]).unwrap();
+        // A string alone is that string.
+        if let [Piece::Value(operand, ty)] = pieces
+            && self.e.cg.types().repr(*ty) == Ty::STRING
+        {
+            let text = self.scalar(operand);
+            self.e.call_rt(Rt::StrRetain, &[text]);
+            return text;
+        }
+        // Room for the text and the strings, and a guess for the rest, so
+        // that the text is allocated once.
+        let mut known = 0;
+        let mut room = None;
+        let mut values = Vec::new();
+        for piece in pieces {
+            match piece {
+                Piece::Text(text) => known += text.len() as i64,
+                Piece::Value(operand, ty) => {
+                    let value = self.operand(operand);
+                    match (self.e.cg.types().kind(self.e.cg.types().repr(*ty)), value) {
+                        (TyKind::String, Val::Scalar(text)) => {
+                            let length = self.e.fb.ins().load(types::I64, flags(), text, STRING_LENGTH);
+                            room = Some(room.map_or(length, |room| self.e.fb.ins().iadd(room, length)));
+                        }
+                        (TyKind::Int(_) | TyKind::Float(_), _) => known += 24,
+                        _ => known += 16,
+                    }
+                    values.push(value);
+                }
+            }
+        }
+        let room = match room {
+            Some(room) => self.e.fb.ins().iadd_imm_s(room, known),
+            None => self.e.fb.ins().iconst(types::I64, known),
+        };
+        let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 3);
+        let slot = self.e.fb.create_sized_stack_slot(data);
+        let builder = self.e.fb.ins().stack_addr(POINTER, slot, 0);
+        self.e.call_rt(Rt::SbStart, &[builder, room]);
+        let mut values = values.into_iter();
         for piece in pieces {
             match piece {
                 Piece::Text(text) => {
                     let text = self.e.string_ptr(text);
                     self.e.call_rt(Rt::SbStr, &[builder, text]);
                 }
-                Piece::Value(operand, ty) => {
-                    let value = self.operand(operand);
+                Piece::Value(_, ty) => {
+                    let value = values.next().unwrap();
                     self.e.append_display(builder, *ty, value);
                 }
             }

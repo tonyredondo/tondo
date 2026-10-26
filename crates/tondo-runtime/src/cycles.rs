@@ -108,8 +108,8 @@ pub(crate) fn remember(cell: *const u8, kind: Kind) {
     registry.created += 1;
     // Far behind, this thread waits for the collector at its next safe
     // point, so that garbage cannot grow much faster than it goes.
-    if registry.created >= BEHIND * registry.threshold {
-        OWES.with(|owes| owes.set(true));
+    if registry.created >= BEHIND * registry.threshold && !OWES.with(|owes| owes.replace(true)) {
+        super::tasks::attend(true);
     }
     if registry.created == registry.threshold {
         drop(registry);
@@ -132,7 +132,9 @@ pub(crate) fn owed() -> bool {
 /// Waits until the collector has caught up, out of Tondo code; not for
 /// long, since a task that runs long without a safe point holds it back.
 pub(crate) fn assist() {
-    OWES.with(|owes| owes.set(false));
+    if OWES.with(|owes| owes.replace(false)) {
+        super::tasks::attend(false);
+    }
     let mut done = DONE.lock().unwrap_or_else(|e| e.into_inner());
     let seen = *done;
     let deadline = std::time::Instant::now() + Duration::from_millis(100);

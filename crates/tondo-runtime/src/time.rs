@@ -62,16 +62,16 @@ fn fraction(value: u64, width: usize) -> String {
 /// A `Duration` as Go writes it: `1h2m3.5s`, `1.5s`, `250ms`, `1.5µs`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_duration(b: *mut Builder, nanos: i64) {
-    let out = unsafe { &mut (*b).0 };
+    let out = unsafe { &mut *b };
     if nanos == 0 {
-        out.extend_from_slice(b"0s");
+        out.extend(b"0s");
         return;
     }
     if nanos < 0 {
         out.push(b'-');
     }
     let n = nanos.unsigned_abs();
-    let decimal = |out: &mut Vec<u8>, whole: u64, rest: u64, width: usize, unit: &str| {
+    let decimal = |out: &mut Builder, whole: u64, rest: u64, width: usize, unit: &str| {
         let rest = fraction(rest, width);
         let point = if rest.is_empty() { "" } else { "." };
         write!(out, "{whole}{point}{rest}{unit}").unwrap();
@@ -97,7 +97,7 @@ pub unsafe extern "C" fn tondo_rt_sb_duration(b: *mut Builder, nanos: i64) {
 /// A `DateTime` in RFC 3339, UTC.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_datetime(b: *mut Builder, fields: *const i64) {
-    let out = unsafe { &mut (*b).0 };
+    let out = unsafe { &mut *b };
     let f = unsafe { std::slice::from_raw_parts(fields, 7) };
     write!(out, "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}", f[0], f[1], f[2], f[3], f[4], f[5]).unwrap();
     let rest = fraction(f[6].clamp(0, 999_999_999) as u64, 9);

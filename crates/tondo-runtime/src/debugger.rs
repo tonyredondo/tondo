@@ -639,9 +639,9 @@ const WHOLE: usize = 1 << 20;
 
 /// A value as the debugger shows it, at most `limit` bytes.
 fn show(glue: Show, address: usize, limit: usize) -> String {
-    let builder = super::tondo_rt_sb_new();
-    unsafe { glue(builder, address as *const u8) };
-    let text = unsafe { super::tondo_rt_sb_finish(builder) };
+    let mut builder = super::Builder::new(0);
+    unsafe { glue(&mut builder, address as *const u8) };
+    let text = builder.finish();
     let shown = String::from_utf8_lossy(unsafe { str_bytes(text) }).into_owned();
     unsafe { super::tondo_rt_str_release(text) };
     clip(shown, limit)

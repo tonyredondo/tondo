@@ -707,34 +707,62 @@ pub fn Array[T].sortedWith(self, compare: fn(T, T): Int): Array[T] {
     mergeSort(self, compare)
 }
 
+/// A stable merge sort: runs of a few elements put in order by insertion,
+/// then merged in pairs of doubling width from one array to the other.
 fn mergeSort[T](items: Array[T], compare: fn(T, T): Int): Array[T] {
     let length = items.length()
-    if length <= 1 {
-        return items
-    }
-    let half = length / 2
-    let left = mergeSort(items[:half], compare)
-    let right = mergeSort(items[half:], compare)
-    var out: Array[T] = []
-    var (i, j) = (0, 0)
-    for i < left.length() and j < right.length() {
-        if compare(right[j], left[i]) < 0 {
-            out.push(right[j])
-            j += 1
-        } else {
-            out.push(left[i])
-            i += 1
+    let run = 16
+    var from = items
+    var start = 0
+    for start < length {
+        let end = if start + run < length { start + run } else { length }
+        for i in start + 1..end {
+            let item = from[i]
+            var j = i
+            for j > start and compare(item, from[j - 1]) < 0 {
+                from[j] = from[j - 1]
+                j -= 1
+            }
+            from[j] = item
         }
+        start = end
     }
-    for i < left.length() {
-        out.push(left[i])
-        i += 1
+    var to = from
+    var width = run
+    for width < length {
+        var left = 0
+        for left < length {
+            let middle = if left + width < length { left + width } else { length }
+            let right = if middle + width < length { middle + width } else { length }
+            var (i, j, k) = (left, middle, left)
+            for i < middle and j < right {
+                if compare(from[j], from[i]) < 0 {
+                    to[k] = from[j]
+                    j += 1
+                } else {
+                    to[k] = from[i]
+                    i += 1
+                }
+                k += 1
+            }
+            for i < middle {
+                to[k] = from[i]
+                i += 1
+                k += 1
+            }
+            for j < right {
+                to[k] = from[j]
+                j += 1
+                k += 1
+            }
+            left = right
+        }
+        let merged = to
+        to = from
+        from = merged
+        width *= 2
     }
-    for j < right.length() {
-        out.push(right[j])
-        j += 1
-    }
-    out
+    from
 }
 
 pub fn Array[T].reversed(self): Array[T] {

@@ -137,6 +137,32 @@ unsafe impl GlobalAlloc for Counting {
         }
         unsafe { System.dealloc(ptr, layout) }
     }
+
+    /// The system's, which grows and shrinks a block in place when it can.
+    /// A budget and a watch see a block freed and another allocated; a
+    /// benchmark counts a block that grows as an allocation.
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        use super::diagnostics::{BUDGET, MEASURED, WATCHED, hooks};
+        let hooks = hooks();
+        if hooks & (BUDGET | WATCHED) != 0 {
+            let block = unsafe { self.alloc(Layout::from_size_align_unchecked(new_size, layout.align())) };
+            if !block.is_null() {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(ptr, block, layout.size().min(new_size));
+                    self.dealloc(ptr, layout);
+                }
+            }
+            return block;
+        }
+        let mut block = unsafe { System.realloc(ptr, layout, new_size) };
+        if block.is_null() && super::cycles::collect_for_memory() {
+            block = unsafe { System.realloc(ptr, layout, new_size) };
+        }
+        if hooks & MEASURED != 0 && !block.is_null() && new_size > layout.size() {
+            super::bench::allocated(new_size);
+        }
+        block
+    }
 }
 
 /// Counts an allocation of a `meta` program against its budget; one that

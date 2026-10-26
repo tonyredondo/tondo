@@ -791,5 +791,5 @@ pub unsafe extern "C" fn tondo_rt_sb_process_error(b: *mut super::Builder, tag: 
         3 => format!("exited with code {code}"),
         _ => "host".to_string(),
     };
-    unsafe { (*b).0.extend_from_slice(text.as_bytes()) }
+    unsafe { (*b).extend(text.as_bytes()) }
 }

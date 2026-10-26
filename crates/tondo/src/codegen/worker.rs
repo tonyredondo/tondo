@@ -27,6 +27,7 @@ enum Asked {
     CFunction(ir::Signature),
     DebugFunction(String, Vec<DebugBinding>),
     FunctionSites,
+    Attention,
     DebugSite(u32, u32),
     PointSite(u32, u32),
     PointLayout(u32, StateLayout),
@@ -237,6 +238,9 @@ impl<'t> Gen<'t> for Worker<'_, '_, 't> {
     fn map_glue(&mut self, ty: Ty) -> DataId {
         DataId::from_u32(self.ask(Asked::MapGlue(ty)))
     }
+    fn attention(&mut self) -> DataId {
+        DataId::from_u32(self.ask(Asked::Attention))
+    }
     fn closure_code(&mut self, body: FnId) -> FuncId {
         // Without a live build, a closure keeps its body itself.
         match self.shared.live {
@@ -365,6 +369,7 @@ pub(super) fn replay(cg: &mut Codegen, bodies: &[Body], built: &mut Built) {
                 0
             }
             Asked::FunctionSites => Gen::function_sites(cg).expect("a live build").0.as_u32(),
+            Asked::Attention => Gen::attention(cg).as_u32(),
             Asked::DebugSite(start, function) => {
                 let index = Gen::debug_site(cg, start, function);
                 first_site.get_or_insert(index);

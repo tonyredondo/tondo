@@ -1390,14 +1390,14 @@ pub unsafe extern "C" fn tondo_rt_array_contains(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_array(b: *mut Builder, a: *mut ArrayHeader, size: usize, display: DisplayGlue) {
     unsafe {
-        (*b).0.push(b'[');
+        (*b).push(b'[');
         for k in 0..(*a).len {
             if k > 0 {
-                (*b).0.extend_from_slice(b", ");
+                (*b).extend(b", ");
             }
             display(b, element(a, size, k));
         }
-        (*b).0.push(b']');
+        (*b).push(b']');
     }
 }
 
@@ -1741,9 +1741,9 @@ pub unsafe extern "C" fn tondo_rt_sb_map(
     value: Option<DisplayGlue>,
 ) {
     unsafe {
-        let out = &mut (*b).0;
+        let out = &mut *b;
         if value.is_none() {
-            out.extend_from_slice(b"Set");
+            out.extend(b"Set");
         }
         out.push(b'[');
         if (*m).len() == 0 && value.is_some() {
@@ -1751,16 +1751,16 @@ pub unsafe extern "C" fn tondo_rt_sb_map(
         }
         for index in 0..(*m).len() {
             if index > 0 {
-                (*b).0.extend_from_slice(b", ");
+                (*b).extend(b", ");
             }
             let entry = (*m).entry(index);
             key(b, entry);
             if let Some(value) = value {
-                (*b).0.extend_from_slice(b": ");
+                (*b).extend(b": ");
                 value(b, entry.add((*m).value_offset));
             }
         }
-        (*b).0.push(b']');
+        (*b).push(b']');
     }
 }
 
@@ -1774,64 +1774,182 @@ pub unsafe extern "C" fn tondo_rt_str_hash(s: *const Str) -> u64 {
 // String builder (interpolation)
 // ---------------------------------------------------------------------------
 
-pub struct Builder(Vec<u8>);
+/// Text being built, as interpolation builds it: a string with room for
+/// more, which `finish` makes the string built without copying it. The code
+/// that interpolates keeps it on its stack.
+#[repr(C)]
+pub struct Builder {
+    /// A string whose header's `len` is its room while it is built; null
+    /// while it has none.
+    text: *mut Str,
+    len: usize,
+}
 
+impl Builder {
+    pub fn new(room: usize) -> Builder {
+        let mut builder = Builder { text: std::ptr::null_mut(), len: 0 };
+        if room > 0 {
+            builder.grow(room);
+        }
+        builder
+    }
+
+    fn room(&self) -> usize {
+        if self.text.is_null() { 0 } else { unsafe { (*self.text).len } }
+    }
+
+    pub fn extend(&mut self, bytes: &[u8]) {
+        if self.len + bytes.len() > self.room() {
+            self.grow(bytes.len());
+        }
+        unsafe {
+            let end = (self.text as *mut u8).add(HEADER + self.len);
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), end, bytes.len());
+        }
+        self.len += bytes.len();
+    }
+
+    pub fn push(&mut self, byte: u8) {
+        self.extend(&[byte]);
+    }
+
+    #[cold]
+    fn grow(&mut self, more: usize) {
+        let room = (self.len + more).max(self.room() * 2);
+        let layout = str_layout(room);
+        let text = unsafe {
+            if self.text.is_null() {
+                alloc(layout)
+            } else {
+                std::alloc::realloc(self.text as *mut u8, str_layout(self.room()), layout.size())
+            }
+        };
+        if text.is_null() {
+            handle_alloc_error(layout);
+        }
+        self.text = text as *mut Str;
+        unsafe { (*self.text).len = room }
+    }
+
+    /// The string built, with as many bytes as it holds.
+    pub fn finish(self) -> *mut Str {
+        if self.text.is_null() {
+            return str_new(&[]);
+        }
+        let mut text = self.text as *mut u8;
+        if self.room() != self.len {
+            let layout = str_layout(self.len);
+            text = unsafe { std::alloc::realloc(text, str_layout(self.room()), layout.size()) };
+            if text.is_null() {
+                handle_alloc_error(layout);
+            }
+        }
+        let text = text as *mut Str;
+        unsafe { text.write(Str { rc: AtomicUsize::new(1), len: self.len }) };
+        LIVE_OBJECTS.made();
+        text
+    }
+}
+
+impl Write for Builder {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.extend(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Starts the builder at `b`, with room for `room` bytes.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_sb_new() -> *mut Builder {
-    Box::into_raw(Box::new(Builder(Vec::new())))
+pub unsafe extern "C" fn tondo_rt_sb_start(b: *mut Builder, room: usize) {
+    unsafe { b.write(Builder::new(room)) }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_str(b: *mut Builder, s: *const Str) {
-    unsafe { (*b).0.extend_from_slice(str_bytes(s)) }
+    unsafe { (*b).extend(str_bytes(s)) }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_i64(b: *mut Builder, value: i64) {
-    unsafe { write!((*b).0, "{value}").unwrap() }
+    let mut digits = [0; 20];
+    let text = decimal(value.unsigned_abs(), &mut digits);
+    unsafe {
+        if value < 0 {
+            (*b).push(b'-');
+        }
+        (*b).extend(text);
+    }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_u64(b: *mut Builder, value: u64) {
-    unsafe { write!((*b).0, "{value}").unwrap() }
+    let mut digits = [0; 20];
+    unsafe { (*b).extend(decimal(value, &mut digits)) }
+}
+
+/// The decimal digits of `value`, two at a time, at the end of `digits`.
+fn decimal(mut value: u64, digits: &mut [u8; 20]) -> &[u8] {
+    const PAIRS: &[u8; 200] = b"0001020304050607080910111213141516171819\
+2021222324252627282930313233343536373839\
+4041424344454647484950515253545556575859\
+6061626364656667686970717273747576777879\
+8081828384858687888990919293949596979899";
+    let mut at = digits.len();
+    while value >= 100 {
+        let pair = (value % 100) as usize * 2;
+        value /= 100;
+        at -= 2;
+        digits[at..at + 2].copy_from_slice(&PAIRS[pair..pair + 2]);
+    }
+    if value >= 10 {
+        at -= 2;
+        digits[at..at + 2].copy_from_slice(&PAIRS[value as usize * 2..value as usize * 2 + 2]);
+    } else {
+        at -= 1;
+        digits[at] = b'0' + value as u8;
+    }
+    &digits[at..]
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_bool(b: *mut Builder, value: u8) {
     let text: &[u8] = if value != 0 { b"true" } else { b"false" };
-    unsafe { (*b).0.extend_from_slice(text) }
+    unsafe { (*b).extend(text) }
 }
 
 /// Floats use the shortest decimal form that reads back as the same value,
 /// always distinguishable from an integer: `1.0`, `0.1`, `1e-7`, `NaN`, `inf`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_f64(b: *mut Builder, value: f64) {
-    unsafe { write!((*b).0, "{value:?}").unwrap() }
+    unsafe { write!(*b, "{value:?}").unwrap() }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_f32(b: *mut Builder, value: f32) {
-    unsafe { write!((*b).0, "{value:?}").unwrap() }
+    unsafe { write!(*b, "{value:?}").unwrap() }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_char(b: *mut Builder, value: u32) {
     let c = char::from_u32(value).unwrap_or(char::REPLACEMENT_CHARACTER);
-    unsafe { write!((*b).0, "{c}").unwrap() }
+    unsafe { write!(*b, "{c}").unwrap() }
 }
 
 /// A text in quotes, escaped as JSON escapes it, as a debugger shows it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_quoted(b: *mut Builder, s: *const Str) {
     let text = String::from_utf8_lossy(unsafe { str_bytes(s) });
-    unsafe { write!((*b).0, "{text:?}").unwrap() }
+    unsafe { write!(*b, "{text:?}").unwrap() }
 }
 
 /// Consumes the builder and returns an owned string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_finish(b: *mut Builder) -> *mut Str {
-    let builder = unsafe { Box::from_raw(b) };
-    str_new(&builder.0)
+    unsafe { b.read() }.finish()
 }
 
 // ---------------------------------------------------------------------------
@@ -2228,14 +2346,17 @@ mod tests {
 
     #[test]
     fn builder_formats_scalars() {
-        let b = tondo_rt_sb_new();
+        let mut builder = Builder::new(2);
+        let b = &mut builder as *mut Builder;
         let s = str_new("x=".as_bytes());
         unsafe {
             tondo_rt_sb_str(b, s);
             tondo_rt_sb_i64(b, -42);
+            tondo_rt_sb_i64(b, i64::MIN);
+            tondo_rt_sb_u64(b, 1_000_000);
             tondo_rt_sb_bool(b, 1);
             let out = tondo_rt_sb_finish(b);
-            assert_eq!(str_bytes(out), b"x=-42true");
+            assert_eq!(str_bytes(out), b"x=-42-92233720368547758081000000true");
             tondo_rt_str_release(out);
             tondo_rt_str_release(s);
         }

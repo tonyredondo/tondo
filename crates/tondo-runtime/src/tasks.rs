@@ -21,7 +21,7 @@ use std::collections::BinaryHeap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -594,6 +594,22 @@ fn wait_pinned(task: *mut Task) {
 
 /// Set while the cycle collector needs every thread out of Tondo code.
 static STOPPING: AtomicBool = AtomicBool::new(false);
+
+/// How many reasons there are for compiled code to call
+/// `tondo_rt_cancelled` after a call that may wait: a stop of the world, a
+/// thread that owes the collector, an exploration of orders, a task
+/// cancelled or one whose statement starts again. Compiled code reads it,
+/// and at zero, nearly always, goes on without the call.
+#[unsafe(export_name = "tondo_rt_attention")]
+pub static ATTENTION: AtomicU32 = AtomicU32::new(0);
+
+/// One more reason, or one less, to call `tondo_rt_cancelled`.
+pub(crate) fn attend(more: bool) {
+    match more {
+        true => ATTENTION.fetch_add(1, Ordering::SeqCst),
+        false => ATTENTION.fetch_sub(1, Ordering::SeqCst),
+    };
+}
 static RESUMED: Condvar = Condvar::new();
 static RESUMED_LOCK: Mutex<()> = Mutex::new(());
 /// A thread that ever ran Tondo code: whether it runs it now, and while
@@ -694,6 +710,7 @@ fn safe_point() {
 /// gives up after `timeout`, when a task runs long without one.
 pub(crate) fn stop_world(timeout: Duration) -> bool {
     STOPPING.store(true, Ordering::SeqCst);
+    attend(true);
     let deadline = Instant::now() + timeout;
     let threads = IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).clone();
     loop {
@@ -710,6 +727,7 @@ pub(crate) fn stop_world(timeout: Duration) -> bool {
 
 pub(crate) fn resume_world() {
     STOPPING.store(false, Ordering::SeqCst);
+    attend(false);
     let _resumed = RESUMED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     RESUMED.notify_all();
 }
@@ -979,6 +997,11 @@ fn run(task: *mut Task) {
         if (*task).finished {
             let mut task = Box::from_raw(task);
             let was_main = task.main;
+            for asked in [&task.cancelled, &task.again] {
+                if asked.load(Ordering::SeqCst) {
+                    attend(false);
+                }
+            }
             if let Some(stack) = task.stack.take() {
                 recycle(stack);
             }
@@ -1703,6 +1726,8 @@ pub unsafe extern "C" fn tondo_rt_callback(
 pub fn run_main(code: unsafe extern "C" fn() -> i32) -> i32 {
     let others = os_threads().unwrap_or(0).saturating_sub(RUNTIME_THREADS.load(Ordering::SeqCst));
     BEFORE.store(others, Ordering::SeqCst);
+    // Before any compiled code reads `ATTENTION`.
+    exploring();
     let task = new_task(
         Stack::new(MAIN_STACK),
         std::ptr::null_mut(),
@@ -1816,8 +1841,8 @@ pub(crate) fn wait_again(id: u64) -> bool {
         // the flag; a wait that ended first leaves no flag behind.
         lock(&t.waiting_lock);
         let woken = !t.waiting.is_null() && (*t.waiting).claim(CANCELLED);
-        if woken {
-            t.again.store(true, Ordering::SeqCst);
+        if woken && !t.again.swap(true, Ordering::SeqCst) {
+            attend(true);
         }
         unlock(&t.waiting_lock);
         if woken {
@@ -1945,13 +1970,17 @@ pub extern "C" fn tondo_rt_cancelled() -> u8 {
     if exploring().is_some() {
         give_way();
     }
-    if cancelled() {
+    let Some(task) = (unsafe { current().as_ref() }) else { return 0 };
+    if task.cancelled.load(Ordering::Acquire) {
         return 1;
     }
     // A live build's reload ended the wait: the statement starts again.
-    let task = current();
-    match !task.is_null() && unsafe { (*task).again.swap(false, Ordering::AcqRel) } {
-        true => 2,
+    // Read first: a swap at every call would cost more than the call.
+    match task.again.load(Ordering::Relaxed) && task.again.swap(false, Ordering::AcqRel) {
+        true => {
+            attend(false);
+            2
+        }
         false => 0,
     }
 }
@@ -1965,7 +1994,10 @@ fn exploring() -> Option<&'static AtomicU64> {
     static SEED: std::sync::OnceLock<Option<AtomicU64>> = std::sync::OnceLock::new();
     SEED.get_or_init(|| {
         let text = std::env::var("TONDO_RT_SCHEDULE").ok()?;
-        u64::from_str_radix(&text, 16).ok().map(AtomicU64::new)
+        let seed = u64::from_str_radix(&text, 16).ok()?;
+        // Every call that may wait gives way.
+        attend(true);
+        Some(AtomicU64::new(seed))
     })
     .as_ref()
 }
@@ -2002,7 +2034,9 @@ fn give_way() {
 unsafe fn cancel_task(task: *mut Task) {
     unsafe {
         let t = &mut *task;
-        t.cancelled.store(true, Ordering::SeqCst);
+        if !t.cancelled.swap(true, Ordering::SeqCst) {
+            attend(true);
+        }
         lock(&t.waiting_lock);
         let woken = !t.waiting.is_null() && (*t.waiting).claim(CANCELLED);
         unlock(&t.waiting_lock);
