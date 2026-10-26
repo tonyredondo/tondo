@@ -7361,7 +7361,17 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     (_, true) => ins.smul_overflow(a, b),
                     (_, false) => ins.umul_overflow(a, b),
                 };
-                self.panic_values_if(overflow, 5, span, |_| (detail, a, b, ty));
+                // The left operand of a sum or a difference, for the panic's
+                // message, from the result, which wraps: the code that goes on
+                // needs to keep only the result.
+                self.panic_values_if(overflow, 5, span, |this| {
+                    let left = match op {
+                        BinOp::Add => this.e.fb.ins().isub(result, b),
+                        BinOp::Sub => this.e.fb.ins().iadd(result, b),
+                        _ => a,
+                    };
+                    (detail, left, b, ty)
+                });
                 result
             }
             BinOp::Div | BinOp::Rem => {
