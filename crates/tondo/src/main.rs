@@ -291,9 +291,13 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         update_snapshots: false,
         launcher: None,
         bench: None,
+        save_baseline: None,
+        baseline: None,
+        max_regression: None,
     };
     let mut diagnostics_json = false;
     let (mut bench, mut bench_time) = (false, 3.0);
+    let (mut save, mut baseline, mut against) = (None, None, None);
     let (mut statically, mut debug, mut library, mut watch) = (false, false, false, false);
     let mut target = None;
     let usage = |message: String| format!("{message}\n{USAGE}");
@@ -357,6 +361,18 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
                     .ok()
                     .filter(|s| s.is_finite() && *s > 0.0)
                     .ok_or_else(|| usage("--bench-time takes a positive number of seconds".into()))?;
+            }
+            "--save-baseline" => save = Some(value()?),
+            "--baseline" => baseline = Some(value()?),
+            "--against" => against = Some(value()?),
+            "--max-regression" => {
+                let percent = value()?
+                    .trim_end_matches('%')
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|p| p.is_finite() && *p >= 0.0)
+                    .ok_or_else(|| usage("--max-regression takes a percent, as `--max-regression 5`".into()))?;
+                options.max_regression = Some(percent / 100.0);
             }
             "--coverage" => options.coverage = true,
             "--watch" => watch = true,
@@ -488,6 +504,25 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     if given("--bench-time") && !bench {
         return Err(usage("--bench-time is how long each benchmark measures for: it goes with --bench".into()));
     }
+    let comparing = ["--save-baseline", "--baseline", "--against", "--max-regression"];
+    if !bench && let Some(flag) = comparing.iter().find(|f| given(f)) {
+        return Err(usage(format!("{flag} is about benchmarks: it goes with --bench")));
+    }
+    if baseline.is_some() && against.is_some() {
+        return Err(usage("--baseline and --against are two things to compare with: choose one".into()));
+    }
+    if given("--max-regression") && baseline.is_none() && against.is_none() {
+        return Err(usage(
+            "--max-regression compares with a baseline: add --baseline <name> or --against <revision>".into(),
+        ));
+    }
+    if options.list
+        && let Some(flag) = comparing.iter().find(|f| given(f))
+    {
+        return Err(usage(format!("--list measures nothing, so it does not go with {flag}")));
+    }
+    options.save_baseline = save.map(|name| baseline_path(&path, &name)).transpose()?;
+    options.baseline = baseline.map(|name| baseline_path(&path, &name).map(runner::Baseline::Saved)).transpose()?;
     if bench {
         // Benchmarks run one at a time, in the optimized build that counts
         // nothing.
@@ -527,10 +562,74 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     options.launcher = target.map(Target::launcher).transpose()?.flatten();
     let (list, coverage) = (options.list, options.counting());
     let build = TestBuild { library, debug, statically, target, diagnostics_json, list, coverage };
+    if let Some(reference) = against {
+        options.baseline = Some(runner::Baseline::Revision(revision_tests(&path, &reference, &build)?));
+    }
     if watch {
         return watch_tests(&path, &build, &mut options);
     }
     run_tests(&path, &build, &options)
+}
+
+/// Where a baseline of benchmarks is (testing 10.4): a name, as `main`, is
+/// `target/bench/main.json` in the project; a path is itself.
+fn baseline_path(project: &Path, name: &str) -> Result<PathBuf, String> {
+    if name.contains('/') || name.ends_with(".json") {
+        return Ok(PathBuf::from(name));
+    }
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)) {
+        return Err(format!(
+            "{name:?} cannot name a baseline: use letters, digits, `.`, `_` and `-`, as `main`, or give a path"
+        ));
+    }
+    let root = if project.is_file() { project.parent().unwrap_or(project) } else { project };
+    Ok(root.join("target/bench").join(format!("{name}.json")))
+}
+
+/// The tests of the project as a git revision has it, for `--against`
+/// (testing 10.4): its files, extracted once per commit into the cache,
+/// and their tests built as these are.
+fn revision_tests(path: &Path, reference: &str, build: &TestBuild) -> Result<tondo::runner::Revision, String> {
+    use std::process::{Command, Stdio};
+    let git = |dir: &Path, args: &[&str]| -> Option<String> {
+        let output = Command::new("git").arg("-C").arg(dir).args(args).output().ok()?;
+        output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
+    let project = path.canonicalize().map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let root = git(&project, &["rev-parse", "--show-toplevel"]).map(PathBuf::from).ok_or(format!(
+        "--against compares with a revision of the project's git repository, and {} is in none",
+        path.display()
+    ))?;
+    let commit = git(&root, &["rev-parse", "--verify", "--quiet", &format!("{reference}^{{commit}}")])
+        .filter(|c| !c.is_empty())
+        .ok_or(format!("git knows no revision {reference}: give a branch, a tag or a commit, as `--against main`"))?;
+    let within =
+        project.strip_prefix(root.canonicalize().unwrap_or(root.clone())).unwrap_or(Path::new("")).to_path_buf();
+    let tree = driver::cache_entry("revision", &commit);
+    if !tree.join(".complete").is_file() {
+        let _ = std::fs::remove_dir_all(&tree);
+        std::fs::create_dir_all(&tree).map_err(|e| format!("cannot create {}: {e}", tree.display()))?;
+        let mut archive = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(["archive", "--format=tar", &commit])
+            .stdout(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("cannot run git: {e}"))?;
+        let stdout = archive.stdout.take().expect("piped");
+        let extracted = Command::new("tar").arg("-x").arg("-C").arg(&tree).stdin(stdout).status();
+        let archived = archive.wait().map_err(|e| e.to_string())?;
+        if !archived.success() || !extracted.is_ok_and(|s| s.success()) {
+            let _ = std::fs::remove_dir_all(&tree);
+            return Err(format!("cannot extract {reference} from git"));
+        }
+        std::fs::write(tree.join(".complete"), &commit).map_err(|e| e.to_string())?;
+    }
+    let dir = tree.join(within);
+    eprintln!("tondo: building the tests of {reference} ({}) to compare with", &commit[..commit.len().min(12)]);
+    let (executable, tree) = build_tests(&dir, build)?
+        .ok_or(format!("the tests of {reference} do not compile, so there is nothing to compare with"))?;
+    Ok(tondo::runner::Revision { name: reference.to_string(), commit, dir, executable, tree })
 }
 
 /// Builds the tests and runs those selected, as `tondo test` does once.

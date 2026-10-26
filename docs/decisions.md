@@ -2316,3 +2316,20 @@ not slowed by counting. What the closure gives goes to an opaque call, so
 the optimizer keeps the work that made it. The spread reported is the
 median of the distances to the median, which a sample delayed by
 something else does not stretch.
+
+## 2026-10-26 — Comparing benchmarks, and a gate for CI
+
+A benchmark compared with numbers measured on another machine, or at
+another time on a shared runner, measures the machines. So besides a
+baseline saved with `--save-baseline`, `--against <revision>` extracts that
+revision from git, once per commit into the cache, builds its tests with
+the same compiler, and runs each unit there and then here, one after the
+other: both sides share the machine and the moment. That is the comparison
+a CI gate should use.
+
+A change is judged by the interval of the change of the median, from a
+thousand resamples of each side's samples with a fixed seed, so the same
+measures always give the same verdict: slower or faster only when the
+whole interval says so and the change is past 1%. `--max-regression`
+fails the run on a slower verdict past the percent given, or on more
+allocations or bytes per run, which are exact and need no statistics.

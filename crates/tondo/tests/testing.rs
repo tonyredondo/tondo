@@ -1096,3 +1096,76 @@ test plain {
     let (_, stderr, _) = tondo(&dir, &["test"]);
     assert!(stderr.contains("error[E2006]"), "{stderr}");
 }
+
+#[test]
+fn compares_benchmarks_with_baselines() {
+    let tests = "\
+import std.testing
+
+test fibonacci {
+    testing.bench(\"fib 15\", () { fib(15) })
+}
+";
+    let dir = project("benchmark-baselines", tests);
+    let source = |extra: &str| {
+        format!(
+            "pub fn fib(n: Int): Int {{\n    if n < 2 {{\n        return n\n    }}\n    fib(n - 1) + fib(n - 2){extra}\n}}\n\nfn main() {{}}\n"
+        )
+    };
+    std::fs::write(dir.join("src/main.to"), source("")).unwrap();
+    let bench = ["test", "--bench", "--bench-time", "0.2"];
+    let (_, stderr, status) = tondo(&dir, &[&bench[..], &["--save-baseline", "main"]].concat());
+    assert_eq!(status, 0, "{stderr}");
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("target/bench/main.json")).unwrap()).unwrap();
+    assert_eq!(saved["format"], "tondo-bench-baseline-0.1/1");
+    assert_eq!(saved["benchmarks"][0]["test"], "app::unit::app::fibonacci");
+    assert_eq!(saved["benchmarks"][0]["name"], "fib 15");
+    // Three times the work is slower, beyond what is allowed.
+    std::fs::write(dir.join("src/main.to"), source(" + 0 * (fib(n - 1) + fib(n - 2))")).unwrap();
+    let compare = [&bench[..], &["--baseline", "main", "--max-regression", "5"]].concat();
+    let (stdout, _, status) = tondo(&dir, &compare);
+    assert_eq!(status, 1, "{stdout}");
+    assert!(stdout.contains("% slower, REGRESSED\n"), "{stdout}");
+    assert!(stdout.contains("benchmarks that regressed beyond 5%:\n  app::unit::app::fibonacci fib 15: "), "{stdout}");
+    let (stdout, _, _) = tondo(&dir, &[&compare[..], &["--test-format", "json"]].concat());
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(report["bench"]["baseline"]["kind"], "saved");
+    assert_eq!(report["bench"]["max_regression_percent"].as_f64(), Some(5.0));
+    let compared = &report["tests"][0]["attempts"][0]["benchmarks"][0]["baseline"];
+    assert_eq!(compared["verdict"], "slower", "{compared}");
+    assert!(compared["change_percent"].as_f64().unwrap() > 50.0, "{compared}");
+    assert!(compared["regressed"].as_str().unwrap().ends_with("% slower"), "{compared}");
+    // Against a revision: the committed one, built and run alongside.
+    let git = |args: &[&str]| {
+        let status = Command::new("git").args(args).current_dir(&dir).status().unwrap();
+        assert!(status.success(), "git {args:?}");
+    };
+    std::fs::remove_dir_all(dir.join(".git")).unwrap();
+    std::fs::write(dir.join(".gitignore"), "target/\n").unwrap();
+    std::fs::write(dir.join("src/main.to"), source("")).unwrap();
+    git(&["init", "-q"]);
+    git(&["add", "."]);
+    git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "fast"]);
+    std::fs::write(dir.join("src/main.to"), source(" + 0 * (fib(n - 1) + fib(n - 2))")).unwrap();
+    let against = [&bench[..], &["--against", "HEAD", "--max-regression", "5"]].concat();
+    let (stdout, stderr, status) = tondo(&dir, &against);
+    assert_eq!(status, 1, "{stdout}{stderr}");
+    assert!(stderr.contains("tondo: building the tests of HEAD ("), "{stderr}");
+    assert!(stdout.contains("% slower, REGRESSED\n"), "{stdout}");
+    // The same code is not slower.
+    std::fs::write(dir.join("src/main.to"), source("")).unwrap();
+    let (stdout, _, status) = tondo(&dir, &[&bench[..], &["--against", "HEAD", "--max-regression", "50"]].concat());
+    assert_eq!(status, 0, "{stdout}");
+    // What goes with what.
+    for (args, said) in [
+        (vec!["test", "--baseline", "main"], "--baseline is about benchmarks: it goes with --bench"),
+        (vec!["test", "--bench", "--max-regression", "5"], "--max-regression compares with a baseline"),
+        (vec!["test", "--bench", "--baseline", "main", "--against", "HEAD"], "choose one"),
+        (vec!["test", "--bench", "--against", "nowhere"], "git knows no revision nowhere"),
+    ] {
+        let (_, stderr, status) = tondo(&dir, &args);
+        assert_ne!(status, 0);
+        assert!(stderr.contains(said), "{args:?}: {stderr}");
+    }
+}

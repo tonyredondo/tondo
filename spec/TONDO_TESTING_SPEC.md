@@ -1935,7 +1935,7 @@ las dos magnitudes sustituye a la otra.
 | Exit | Condición |
 |---|---|
 | `0` | Compilación correcta, ningún agregado falló, quedó `blocked-setup` ni es `flaky-pass`, y todo skip se permite por la política default; o selección vacía solicitada con `--allow-empty`. `--allow-flaky` elimina únicamente la condición `flaky-pass`. Una campaña repeat con count mayor que uno exige además que todos los intentos sean `passed`. |
-| `1` | Error al materializar inputs del plan, error de compilación, selección vacía no permitida, algún agregado falló/quedó `blocked-setup`, existe `flaky-pass` sin `--allow-flaky`, `--deny-skips` encontró `skipped`/`blocked-skip`, una campaña repeat con count mayor que uno observó cualquier intento no `passed` o falló una comprobación de snapshot. |
+| `1` | Error al materializar inputs del plan, error de compilación, selección vacía no permitida, algún agregado falló/quedó `blocked-setup`, existe `flaky-pass` sin `--allow-flaky`, `--deny-skips` encontró `skipped`/`blocked-skip`, una campaña repeat con count mayor que uno observó cualquier intento no `passed` o falló una comprobación de snapshot, o un benchmark empeoró más que `--max-regression` (10.4). |
 | `2` | Uso inválido de CLI. |
 | `3` | Fallo interno del toolchain, pérdida de fiabilidad o imposibilidad de serializar/publicar un output solicitado. |
 | `4` | La invocación fue interrumpida externamente y el runner recuperó su aislamiento dentro del grace period. No existe reporte completo. |
@@ -2118,7 +2118,9 @@ tondo test [<project> | --project <dir>]
            [--json]
            [--report <json|junit|coverage|lcov>=<path>]...
            [--coverage]
-           [--bench [--bench-time <seconds>]]
+           [--bench [--bench-time <seconds>] [--save-baseline <name|path>]
+                    [--baseline <name|path> | --against <revision>]
+                    [--max-regression <percent>]]
            [--show-output]
            [--deny-skips]
            [--allow-flaky]
@@ -2337,6 +2339,41 @@ para personas pone bajo la línea de cada test una línea por benchmark:
 test app::unit::app::parsing ... ok
   parse 10       1.973 µs/op  ±0.5%  51 allocs/op  1685 B/op
   parse 1000     173.3 µs/op  ±0.4%  4017 allocs/op  85613 B/op
+~~~
+
+Las medidas se comparan con una línea base:
+
+- `--save-baseline <name>` escribe lo que midieron los benchmarks en
+  `target/bench/<name>.json` del proyecto (15.12); un argumento con `/` o que
+  termina en `.json` es la ruta del archivo.
+- `--baseline <name>` compara con una línea base guardada, que nombra igual.
+  Si se midió en otra máquina, la comparación mide también la diferencia
+  entre máquinas: el reporte dice dónde se midió.
+- `--against <revision>` compara con la revisión de git del repositorio del
+  proyecto que nombra, como `main` o `origin/main`: extrae sus archivos, una
+  vez por commit en la caché, compila sus tests como estos, y ejecuta cada
+  unidad (8.7) primero en ellos y después en estos, una tras otra en la misma
+  máquina. Es la comparación para un gate de CI, que no depende de dónde se
+  midió antes. Un benchmark que la revisión no tiene es nuevo.
+
+Con una línea base, cada benchmark dice cuánto cambió la mediana, el intervalo
+en que está ese cambio con un 95% de confianza (de mil remuestreos con
+repetición de las muestras de cada lado, con una semilla fija) y su veredicto:
+`slower` si todo el intervalo es mayor que cero y el cambio pasa del 1%,
+`faster` si todo es menor y el cambio baja del −1%, y `same` en otro caso.
+
+`--max-regression <percent>` hace fallar la invocación (9.6) si un benchmark
+es `slower` en más de ese porcentaje, o si sus asignaciones o sus bytes por
+ejecución, que son exactos, crecen más que ese porcentaje. La salida para
+personas añade el cambio a la línea de cada benchmark y lista al final los
+que empeoraron:
+
+~~~text
+test app::unit::app::fibonacci ... ok
+  fib 20     65.05 µs/op  ±0.5%  0 allocs/op  0 B/op  +79.2% slower, REGRESSED
+
+benchmarks that regressed beyond 5%:
+  app::unit::app::fibonacci fib 20: 79.2% slower
 ~~~
 
 ## 11. Frontera con `assert` y `std.testing`
@@ -3897,8 +3934,12 @@ en qué máquina, para no comparar como iguales medidas de máquinas distintas:
 ~~~
 
 `cpu` es el modelo del procesador como lo nombra el sistema, o la arquitectura
-si no lo nombra; `cpus`, los hilos que puede ejecutar a la vez. Cada benchmark
-de un intento tiene esta forma:
+si no lo nombra; `cpus`, los hilos que puede ejecutar a la vez. Le siguen
+`baseline` y `max_regression_percent`, `null` sin `--baseline`, `--against` ni
+`--max-regression`. Una línea base guardada es
+`{"kind": "saved", "path", "toolchain", "os", "arch", "cpu"}`, con la máquina
+donde se midió, y una revisión, `{"kind": "revision", "ref", "commit"}`. Cada
+benchmark de un intento tiene esta forma:
 
 ~~~json
 {
@@ -3914,15 +3955,62 @@ de un intento tiene esta forma:
   },
   "allocations_per_op": 0.000,
   "bytes_per_op": 0.000,
-  "samples_ns_per_op": [16.890, 16.478, 16.310]
+  "samples_ns_per_op": [16.890, 16.478, 16.310],
+  "baseline": {
+    "ns_per_op": 15.020,
+    "allocations_per_op": 0.000,
+    "bytes_per_op": 0.000,
+    "change_percent": 7.443,
+    "interval_percent": [6.210, 8.115],
+    "verdict": "slower",
+    "regressed": "7.4% slower"
+  }
 }
 ~~~
 
 `runs_per_sample` son las ejecuciones del cuerpo en cada muestra y `samples`,
 cuántas hay; `samples_ns_per_op` da los nanosegundos por ejecución de cada una,
 en el orden en que se tomaron. `deviation` es la mediana de las distancias a la
-mediana. Las medidas, en nanosegundos, asignaciones o bytes por ejecución, son
-números decimales con exactamente tres decimales, sin exponente.
+mediana. `baseline` es `null` sin línea base o para un benchmark que no tiene;
+da la mediana, las asignaciones y los bytes de la línea base, el cambio de la
+mediana y su intervalo en porcentaje, el veredicto y, con
+`--max-regression`, por qué empeoró, o `null`. Las medidas, en nanosegundos,
+asignaciones, bytes o porcentajes, son números decimales con exactamente tres
+decimales, sin exponente.
+
+### 15.12 Líneas base de benchmarks
+
+`--save-baseline` escribe `tondo-bench-baseline-0.1/1`, en una línea: la
+máquina, como el campo `bench` del reporte sin `baseline` ni
+`max_regression_percent`, y las medidas de cada benchmark de cada test, en el
+orden del reporte:
+
+~~~json
+{
+  "format": "tondo-bench-baseline-0.1/1",
+  "environment": {
+    "time_ms": 3000,
+    "toolchain": "tondo 0.1.0",
+    "os": "linux",
+    "arch": "x86_64",
+    "cpu": "AMD Ryzen 9 5950X 16-Core Processor",
+    "cpus": 32
+  },
+  "benchmarks": [
+    {
+      "test": "app::unit::app::parsing",
+      "name": "parse 10",
+      "runs_per_sample": 367839,
+      "allocations_per_op": 0.000,
+      "bytes_per_op": 0.000,
+      "samples_ns_per_op": [16.890, 16.478, 16.310]
+    }
+  ]
+}
+~~~
+
+`--baseline` lee ese formato y compara cada benchmark con el del mismo test y
+el mismo nombre.
 
 ## 16. Conformidad
 
@@ -3951,7 +4039,9 @@ los ejecutan en cada plataforma de CI. El compilador nativo implementa hoy:
 - `testing.withVirtualTime` con `settle` y `advance`, y los pánicos `P2003` a
   `P2005`;
 - los benchmarks: `testing.bench` y `testing.keep`, `--bench` y
-  `--bench-time`, `P2009` y su reporte (10.4, 15.11).
+  `--bench-time`, `P2009` y su reporte; las líneas base con
+  `--save-baseline`, `--baseline` y `--against`, y `--max-regression`
+  (10.4, 15.11, 15.12).
 
 Queda pendiente rechazar la mezcla de `Instant` de dominios distintos (7.9).
 
@@ -4089,6 +4179,8 @@ tondo test --update-snapshots --jobs 1
 tondo test --artifacts target/test-artifacts
 tondo test --test-format json
 tondo test --bench --bench-time 5
+tondo test --bench --save-baseline main
+tondo test --bench --against origin/main --max-regression 5
 tondo test \
     --report junit=artifacts/tests.xml \
     --report json=artifacts/tests.json

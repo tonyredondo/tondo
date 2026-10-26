@@ -81,6 +81,30 @@ pub struct Options {
     /// `--bench`: runs the benchmarks alone, each measuring for this long
     /// (10.4).
     pub bench: Option<Duration>,
+    /// `--save-baseline`: where the benchmarks' measures are written.
+    pub save_baseline: Option<PathBuf>,
+    /// What the benchmarks are compared with.
+    pub baseline: Option<Baseline>,
+    /// `--max-regression`, as a fraction: a benchmark slower or allocating
+    /// more than that fails the run.
+    pub max_regression: Option<f64>,
+}
+
+/// What `--bench` compares with: a baseline saved before, or the tests of
+/// another revision, run on this machine one after another with these.
+pub enum Baseline {
+    Saved(PathBuf),
+    Revision(Revision),
+}
+
+/// The tests of a revision, built: its name and commit, where its project
+/// is, its executable and its tree.
+pub struct Revision {
+    pub name: String,
+    pub commit: String,
+    pub dir: PathBuf,
+    pub executable: PathBuf,
+    pub tree: Tree,
 }
 
 /// What a `--report` writes (10, 15.5, 15.10).
@@ -384,6 +408,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     if let (Some((count, seed, _)), false) = (options.schedules, options.json) {
         say!("{count} orders of the tasks from seed {seed:016x}");
     }
+    let none = bench::Baselines::default();
     let mut context = json::Context {
         tree,
         options,
@@ -393,6 +418,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         rounds: &[],
         snapshots: (&snapshots.before, &snapshots.before, None),
         compiled: true,
+        baselines: &none,
     };
     if options.list {
         if options.json {
@@ -404,6 +430,18 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     }
     let started = std::time::Instant::now();
     let mut printer = human::Printer::new(tree, &plan, options);
+    printer.baselines = match &options.baseline {
+        Some(Baseline::Saved(path)) => bench::read_baseline(path).map_err(Failure::Input)?,
+        Some(Baseline::Revision(revision)) => bench::Baselines {
+            measures: Default::default(),
+            source: Some(json::obj(vec![
+                ("kind", json::str("revision")),
+                ("ref", json::str(revision.name.clone())),
+                ("commit", json::str(revision.commit.clone())),
+            ])),
+        },
+        None => bench::Baselines::default(),
+    };
     let artifacts = store::Artifacts {
         root: options.artifacts.clone().unwrap_or_else(|| dir.join("target/test-artifacts")),
         error: std::sync::Mutex::new(None),
@@ -426,7 +464,10 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     };
     let run = worker::Run { executable, dir, tree, options, stores };
     interrupt::listen();
-    let (attempts, rounds) = campaign(&run, &plan, &mut printer);
+    let (attempts, rounds) = match &options.baseline {
+        Some(Baseline::Revision(revision)) => (against(&run, revision, &plan, &mut printer), Vec::new()),
+        _ => campaign(&run, &plan, &mut printer),
+    };
     let _ = std::fs::remove_file(&entries);
     // Tests did not run, so there is no report, and snapshots stay (7.10).
     if interrupt::requested() {
@@ -445,7 +486,30 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         return Err(Failure::Interrupted(interrupt::forced()));
     }
     let aggregates = aggregates(tree, &attempts);
-    let failed = failed(&aggregates, &attempts, options);
+    let mut failed = failed(&aggregates, &attempts, options);
+    let baselines = std::mem::take(&mut printer.baselines);
+    // What each test's benchmarks measured, the last time it ran.
+    let measured: Vec<(String, &Benchmark)> = aggregates
+        .iter()
+        .flat_map(|a| a.attempts[a.decisive].benchmarks.iter().map(move |b| (tree.id(a.node).to_string(), b)))
+        .collect();
+    // A benchmark slower or allocating more than allowed fails the run.
+    let regressions: Vec<String> = measured
+        .iter()
+        .filter_map(|(test, b)| {
+            let base = baselines.measures.get(&(test.clone(), b.name.clone()))?;
+            let why = bench::compare(b, base, options.max_regression).regressed?;
+            Some(format!("{test} {}: {why}", b.name))
+        })
+        .collect();
+    failed |= !regressions.is_empty();
+    if let (Some(path), Some(time)) = (&options.save_baseline, options.bench) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| Failure::Output(format!("cannot create {}: {e}", parent.display())))?;
+        }
+        publish(path, &(bench::baseline(bench::environment(time), &measured).text() + "\n"))?;
+    }
     // Updated snapshots are published only after a run without failures,
     // skips or blocks (9.7).
     let after = if options.update_snapshots {
@@ -469,6 +533,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         None => (&snapshots.before, &snapshots.before, None),
     };
     context.rounds = &rounds;
+    context.baselines = &baselines;
     let report = context.report(&aggregates);
     let covered = match &counts {
         Some(counts) => {
@@ -481,6 +546,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     if options.json {
         say!("{}", json::reported(&report, options));
     } else {
+        printer.regressions = regressions;
         human::report(tree, &printer, &aggregates, &owners, options, failed, started.elapsed());
         if let Some(covered) = covered.as_ref().filter(|_| options.coverage) {
             print!("{}", covered.summary());
@@ -561,7 +627,9 @@ pub fn uncompiled(dir: &Path, options: &Options) -> Result<(), Failure> {
     let ownership = owners::resolve(dir, &options.codeowners).map_err(Failure::Input)?;
     let tree = Tree { nodes: Vec::new(), locations: Vec::new() };
     let snapshots = store::Snapshots::read(dir, &package(dir)).map_err(Failure::Input)?;
+    let none = bench::Baselines::default();
     let context = json::Context {
+        baselines: &none,
         tree: &tree,
         options,
         owners: &[],
@@ -611,14 +679,7 @@ fn campaign(run: &worker::Run, plan: &[u32], printer: &mut human::Printer) -> (V
     let mut rounds = Vec::new();
     for iteration in (1..=options.iterations()).take_while(|_| !interrupt::requested()) {
         printer.begin(iteration, 0, plan);
-        // Each top-level suite or test is a unit of the first round.
-        let mut units: Vec<Vec<u32>> = Vec::new();
-        for &test in plan {
-            match units.last_mut() {
-                Some(unit) if top(tree, unit[0]) == top(tree, test) => unit.push(test),
-                _ => units.push(vec![test]),
-            }
-        }
+        let units = units(tree, plan);
         let context = Context { round: 0, iteration, unit: None };
         let units = units.into_iter().map(|u| (u, context)).collect();
         attempts.extend(worker::execute(run, units, |note| printer.note(note)));
@@ -636,6 +697,49 @@ fn campaign(run: &worker::Run, plan: &[u32], printer: &mut human::Printer) -> (V
         attempts.extend(worker::execute(run, units, |note| printer.note(note)));
     }
     (attempts, rounds)
+}
+
+/// The units of a first round: each top-level suite or test, with its
+/// tests of the plan.
+fn units(tree: &Tree, plan: &[u32]) -> Vec<Vec<u32>> {
+    let mut units: Vec<Vec<u32>> = Vec::new();
+    for &test in plan {
+        match units.last_mut() {
+            Some(unit) if top(tree, unit[0]) == top(tree, test) => unit.push(test),
+            _ => units.push(vec![test]),
+        }
+    }
+    units
+}
+
+/// `--against` (10.4): each unit of the plan runs in the revision's tests,
+/// when they have its tests, and then in these, one after the other on this
+/// machine; what the revision's benchmarks measure is the baseline.
+fn against(run: &worker::Run, revision: &Revision, plan: &[u32], printer: &mut human::Printer) -> Vec<Attempt> {
+    let (tree, options) = (run.tree, run.options);
+    let stores = worker::Stores { update: false, counts: None, ..run.stores };
+    let theirs =
+        worker::Run { executable: &revision.executable, dir: &revision.dir, tree: &revision.tree, options, stores };
+    let node = |id: &str| (1..revision.tree.nodes.len() as u32).find(|&n| revision.tree.id(n) == id);
+    printer.begin(1, 0, plan);
+    let context = Context { round: 0, iteration: 1, unit: None };
+    let mut attempts = Vec::new();
+    for unit in units(tree, plan) {
+        let mapped: Vec<u32> = unit.iter().filter_map(|&t| node(tree.id(t))).collect();
+        if !mapped.is_empty() {
+            for attempt in worker::execute(&theirs, vec![(mapped, context)], |_| {}) {
+                let id = revision.tree.id(attempt.node).to_string();
+                for benchmark in attempt.benchmarks {
+                    printer.baselines.measures.insert((id.clone(), benchmark.name.clone()), benchmark);
+                }
+            }
+        }
+        if interrupt::requested() {
+            break;
+        }
+        attempts.extend(worker::execute(run, vec![(unit, context)], |note| printer.note(note)));
+    }
+    attempts
 }
 
 fn top(tree: &Tree, mut node: u32) -> u32 {

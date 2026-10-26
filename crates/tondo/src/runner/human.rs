@@ -43,6 +43,11 @@ pub(super) struct Printer<'a> {
     timeout: Duration,
     /// The seed of `--schedules`, to name each iteration's.
     schedules: Option<u64>,
+    /// What the benchmarks compare with (10.4).
+    pub(super) baselines: super::bench::Baselines,
+    max_regression: Option<f64>,
+    /// The benchmarks that regressed beyond `--max-regression`.
+    pub(super) regressions: Vec<String>,
 }
 
 impl<'a> Printer<'a> {
@@ -54,7 +59,21 @@ impl<'a> Printer<'a> {
         let events = options.events.then_some(options);
         let schedules = options.schedules.map(|(_, seed, _)| seed);
         let (expected, known) = (Vec::new(), HashMap::new());
-        Printer { quiet, events, tree, plan, expected, known, printed: 0, timeout, schedules }
+        let (baselines, max_regression) = (Default::default(), options.max_regression);
+        Printer {
+            quiet,
+            events,
+            tree,
+            plan,
+            expected,
+            known,
+            printed: 0,
+            timeout,
+            schedules,
+            baselines,
+            max_regression,
+            regressions: Vec::new(),
+        }
     }
 
     /// A pass over `tests`: an iteration of the plan, or a retry round.
@@ -87,7 +106,13 @@ impl<'a> Printer<'a> {
             say!("test {} ... {}", self.tree.id(attempt.node), short(self.tree, &attempt.status));
             // What its benchmarks measured, under `--bench`.
             if !attempt.benchmarks.is_empty() {
-                say!("{}", super::bench::lines(&attempt.benchmarks).trim_end());
+                let lines = super::bench::lines(
+                    self.tree.id(attempt.node),
+                    &attempt.benchmarks,
+                    &self.baselines,
+                    self.max_regression,
+                );
+                say!("{}", lines.trim_end());
             }
             self.printed += 1;
         }
@@ -257,6 +282,13 @@ pub(super) fn report(
     }
     if !sections.is_empty() {
         say!("\n{}", sections.join("\n"));
+    }
+    if !printer.regressions.is_empty() {
+        let max = options.max_regression.unwrap_or_default() * 100.0;
+        say!("\nbenchmarks that regressed beyond {max}%:");
+        for regression in &printer.regressions {
+            say!("  {regression}");
+        }
     }
     let tests: Vec<&Aggregate> = aggregates.iter().filter(|a| !tree.suite(a.node)).collect();
     let count = |f: &dyn Fn(&Aggregate) -> bool| tests.iter().filter(|a| f(a)).count();

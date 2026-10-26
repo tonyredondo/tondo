@@ -166,6 +166,8 @@ pub(super) struct Context<'a> {
     /// update was published.
     pub snapshots: (&'a str, &'a str, Option<bool>),
     pub compiled: bool,
+    /// What the benchmarks compare with, and the regression allowed.
+    pub baselines: &'a super::bench::Baselines,
 }
 
 impl Context<'_> {
@@ -358,7 +360,14 @@ impl Context<'_> {
             "limits",
             obj(vec![("jobs", int(options.jobs)), ("timeout_ms", int(options.timeout.as_millis() as usize))]),
         ));
-        fields.push(("bench", options.bench.map_or(Value::Null, super::bench::environment)));
+        let bench = options.bench.map(|time| {
+            let Value::Object(mut fields) = super::bench::environment(time) else { unreachable!("an object") };
+            fields.push(("baseline".into(), self.baselines.source.clone().unwrap_or(Value::Null)));
+            let max = options.max_regression.map_or(Value::Null, |m| super::bench::decimal(m * 100.0));
+            fields.push(("max_regression_percent".into(), max));
+            Value::Object(fields)
+        });
+        fields.push(("bench", bench.unwrap_or(Value::Null)));
         let (suites, tests) = self.forest();
         let find = |node: u32| aggregates.iter().find(|a| a.node == node);
         let nodes = |list: &[u32]| {
@@ -429,7 +438,13 @@ impl Context<'_> {
         fields.push(("artifacts", artifacts(attempt)));
         fields.push(("snapshots", snapshots(attempt)));
         fields.push(("virtual_time", virtual_time(attempt)));
-        fields.push(("benchmarks", Value::Array(attempt.benchmarks.iter().map(super::bench::json).collect())));
+        let max = self.options.max_regression;
+        let id = self.tree.id(attempt.node);
+        let benchmarks = attempt.benchmarks.iter().map(|b| {
+            let base = self.baselines.measures.get(&(id.to_string(), b.name.clone()));
+            super::bench::json(b, base.map(|base| super::bench::compare(b, base, max)).as_ref())
+        });
+        fields.push(("benchmarks", Value::Array(benchmarks.collect())));
         fields.push(("logs", Value::Array(attempt.logs.iter().map(|l| str(l.clone())).collect())));
         fields.push(("stdout", stream(&attempt.stdout)));
         fields.push(("stderr", stream(&attempt.stderr)));
@@ -603,7 +618,7 @@ pub(super) fn note_event(tree: &Tree, note: &Note, options: &Options) -> Value {
             ("logs", Value::Array(attempt.logs.iter().map(|l| str(l.clone())).collect())),
             ("stdout", stream(&attempt.stdout)),
             ("stderr", stream(&attempt.stderr)),
-            ("benchmarks", Value::Array(attempt.benchmarks.iter().map(super::bench::json).collect())),
+            ("benchmarks", Value::Array(attempt.benchmarks.iter().map(|b| super::bench::json(b, None)).collect())),
         ]);
     }
     obj(fields)

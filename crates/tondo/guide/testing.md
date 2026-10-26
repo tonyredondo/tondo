@@ -88,3 +88,10 @@ test parsing {
   `--test-format json` gives every sample, and the machine.
 - What the closure gives is kept, so the work that made it is not optimized
   away; `testing.keep(value)` keeps a value the closure does not give.
+- `--save-baseline main` keeps what was measured in
+  `target/bench/main.json`, and `--baseline main` compares with it: each
+  benchmark says how much it changed, and whether that is `slower`,
+  `faster` or the `same` with 95% confidence.
+- `--against main` builds the tests of a git revision and runs each next to
+  these on the same machine; with `--max-regression 5`, a benchmark 5%
+  slower, or allocating more, fails the run: a gate for CI.
