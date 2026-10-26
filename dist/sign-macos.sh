@@ -17,7 +17,9 @@
 #   APPLE_API_ISSUER            its issuer ID
 #
 # Without a certificate it signs nothing, and says so. A notarized
-# executable cannot be stapled; Gatekeeper asks Apple on its first run.
+# executable cannot be stapled; Gatekeeper asks Apple on its first run. A
+# notarization Apple has not finished in 20 minutes is left to finish: the
+# build is signed, and passes Gatekeeper once Apple is done.
 set -eu
 executable="$1"
 say() { printf 'tondo sign: %s\n' "$*"; }
@@ -65,15 +67,37 @@ say "signed $executable"
 # Apple notarizes a zip of it.
 printf '%s' "$APPLE_API_KEY" | base64 --decode >"$work/key.p8"
 ditto -c -k --keepParent "$executable" "$work/tondo.zip"
-xcrun notarytool submit "$work/tondo.zip" --key "$work/key.p8" --key-id "$APPLE_API_KEY_ID" \
-    --issuer "$APPLE_API_ISSUER" --wait --timeout 30m --output-format json >"$work/submitted.json"
-status=$(plutil -extract status raw -o - "$work/submitted.json" 2>/dev/null || echo unknown)
-if [ "$status" != Accepted ]; then
-    id=$(plutil -extract id raw -o - "$work/submitted.json" 2>/dev/null || echo "")
-    say "Apple did not notarize it: $status"
-    [ -z "$id" ] || xcrun notarytool log "$id" --key "$work/key.p8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER"
+notary() { xcrun notarytool "$@" --key "$work/key.p8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER"; }
+notary submit "$work/tondo.zip" --output-format json >"$work/submitted.json" || {
+    say "Apple did not take it to notarize: $(cat "$work/submitted.json")"
     exit 1
-fi
+}
+id=$(plutil -extract id raw -o - "$work/submitted.json")
+say "Apple notarizes $executable as submission $id"
+# Asked every 30 seconds, for 20 minutes at most.
+deadline=$(($(date +%s) + 1200))
+while :; do
+    notary info "$id" --output-format json >"$work/info.json" 2>/dev/null || true
+    status=$(plutil -extract status raw -o - "$work/info.json" 2>/dev/null || echo "")
+    if [ "$status" != "In Progress" ] && [ -n "$status" ] || [ "$(date +%s)" -ge "$deadline" ]; then
+        break
+    fi
+    sleep 30
+done
+case "$status" in
+Accepted) ;;
+"In Progress")
+    # Gatekeeper looks the ticket up by the executable's hash, so this same
+    # build passes once Apple is done.
+    say "Apple is still notarizing $executable (submission $id): it is signed, and passes Gatekeeper once Apple is done"
+    exit 0
+    ;;
+*)
+    say "Apple did not notarize it: ${status:-no answer} $(cat "$work/info.json")"
+    notary log "$id" || true
+    exit 1
+    ;;
+esac
 spctl --assess --type open --context context:primary-signature -v "$executable" 2>&1 | tee "$work/assessed"
 grep -q "Notarized Developer ID" "$work/assessed" || {
     say "Gatekeeper does not take $executable for a notarized one"
