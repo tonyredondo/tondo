@@ -9791,6 +9791,25 @@ impl<'a> Checker<'a> {
         Self::mk(hir::ExprKind::Array(values), ty, span)
     }
 
+    /// Type arguments given to what takes none: a path of an unknown name,
+    /// as a module not imported, says so; any other, that it takes none.
+    fn not_generic(&mut self, cx: &FnCx, segments: &[ast::Ident], span: Span) -> hir::Expr {
+        let first = segments[0].name.as_str();
+        if self.lookup(cx, first).is_some()
+            || self.visible_capture(cx, first)
+            || self.names.contains_key(first)
+            || self.intrinsic_owner(first).is_some()
+            || self.type_named(first).is_some()
+        {
+            let path = segments.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".");
+            let message = format!("`{path}` takes no type arguments: call it as `{path}(...)`");
+            self.diags.error("E1104", span, message);
+        } else {
+            self.unknown_name(cx, first, segments[0].span);
+        }
+        Self::error_expr(span)
+    }
+
     /// `Array.new[T]()` and `Array.withCapacity[T](capacity)`.
     fn generic_call(
         &mut self,
@@ -9837,7 +9856,7 @@ impl<'a> Checker<'a> {
                         ast::Expr { kind: ast::ExprKind::Path(vec![segments[0].clone()]), span: segments[0].span };
                     Some(self.expr(cx, &receiver, None))
                 }
-                _ => return self.unsupported_expr(span, "generic functions"),
+                _ => return self.not_generic(cx, segments, span),
             };
             let types: Vec<Ty> = type_args.iter().map(|t| self.resolve_type(t)).collect();
             let method = ast::Ident { name: (*method).to_string(), span: segments[1].span };
@@ -10015,7 +10034,7 @@ impl<'a> Checker<'a> {
         let (op, params) = match names.as_slice() {
             ["Array" | "Deque", "new"] => (hir::ArrayOp::New, Vec::new()),
             ["Array", "withCapacity"] => (hir::ArrayOp::WithCapacity, vec![Ty::INT]),
-            _ => return self.unsupported_expr(span, "generic functions"),
+            _ => return self.not_generic(cx, segments, span),
         };
         let [element] = type_args else {
             self.diags.error("E1104", span, format!("`{}` takes one type argument", names[0]));

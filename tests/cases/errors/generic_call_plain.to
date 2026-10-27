@@ -1,0 +1,9 @@
+// Type arguments on a function of a module that takes none.
+
+import std.console
+
+fn main() {
+    console.println[Int]("hello")
+}
+
+// expect-error: E1104

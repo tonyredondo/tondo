@@ -1,0 +1,9 @@
+// Type arguments on a call of a module not imported: the import is missing.
+
+type User = { id: Int, name: String }
+
+fn main() {
+    _ = json.decode[User]("{{ \"id\": 1, \"name\": \"Ada\" }}")
+}
+
+// expect-error: E1001
