@@ -26,7 +26,7 @@ fn h(value: Int | String): String {
 
 fn main() {
     let pair: (Int, Int) | String = "x"
-    let w: Int | String = 1
+    let w: Int | A = 1
     let text = "{w}"
 }
 
@@ -35,4 +35,4 @@ fn main() {
 // expect-error: E1202 `String` alone would bind any value
 // expect-error: E1202 `Bool` is not a member of `Int | String`
 // expect-error: E1102 a tuple cannot be a union member: wrap it in a newtype
-// expect-error: E1105 `match` on its members
+// expect-error: E1105 `A` does not; `match` on its members

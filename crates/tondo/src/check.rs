@@ -3733,7 +3733,8 @@ impl<'a> Checker<'a> {
                     Some(vec![*element])
                 }
                 TyKind::Map(key, value) | TyKind::Result(key, value) => Some(vec![*key, *value]),
-                TyKind::Tuple(items) => Some(items.clone()),
+                // A union shows the member it holds.
+                TyKind::Tuple(items) | TyKind::Union(items) => Some(items.clone()),
                 _ => None,
             };
             if let Some(parts) = parts {
@@ -11238,8 +11239,15 @@ impl<'a> Checker<'a> {
                     self.interpolating = outer;
                     if !self.satisfies(value.ty, DISPLAY, &[]) {
                         let mut message = format!("{} does not implement `Display`", self.display(value.ty));
-                        if self.types.members(value.ty).is_some() {
-                            message.push_str(": `match` on its members to format each one");
+                        if let Some(members) = self.types.members(value.ty).map(<[Ty]>::to_vec) {
+                            let lacking: Vec<Ty> =
+                                members.into_iter().filter(|&m| !self.satisfies(m, DISPLAY, &[])).collect();
+                            let lacking: Vec<String> =
+                                lacking.into_iter().map(|m| format!("`{}`", self.types.display(m))).collect();
+                            message.push_str(&format!(
+                                ": {} does not; `match` on its members to format each one",
+                                lacking.join(" and ")
+                            ));
                         } else if let TyKind::Handle(Handle::Ref, _) = self.types.kind(value.ty) {
                             message.push_str(": an identity has no text; show what it identifies with `.value`");
                         } else if matches!(self.types.kind(value.ty), TyKind::Adt(_)) {

@@ -84,6 +84,7 @@ fn main() {
 - `T ! E` is `Result[T, E]`: `ok(value)` or `err(error)`; `!E` alone has no
   success value. See `tondo guide errors`.
 - `A | B` is a union of types; `match` on the member's type with `Int(n)`.
+  `"{value}"` shows the member it holds, when every member has `Display`.
 
 ```tondo
 import std.console

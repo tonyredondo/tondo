@@ -2943,6 +2943,31 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
             self.fb.switch_to_block(done);
             return;
         }
+        // A union: the member it holds, with its own `Display`.
+        if let Some(members) = types.members(types.repr(ty)).map(<[Ty]>::to_vec) {
+            let tag = self.tag(ty, value);
+            let done = self.fb.create_block();
+            for (variant, &member) in members.iter().enumerate() {
+                let (this, next) = (self.fb.create_block(), self.fb.create_block());
+                let is_this = self.fb.ins().icmp_imm_s(IntCC::Equal, tag, variant as i64);
+                self.fb.ins().brif(is_this, this, &[], next, &[]);
+                self.fb.switch_to_block(this);
+                let payload = match value {
+                    Val::Memory(address) => {
+                        let slot = self.cg.slot(ty, Proj::Variant(variant as u32, 0));
+                        let address = self.component_address(address, &slot);
+                        self.value_at(address, member)
+                    }
+                    _ => Val::Zero,
+                };
+                self.append_display(builder, member, payload);
+                self.fb.ins().jump(done, &[]);
+                self.fb.switch_to_block(next);
+            }
+            self.fb.ins().jump(done, &[]);
+            self.fb.switch_to_block(done);
+            return;
+        }
         // A tuple: `(a, b)`, each part with its own `Display`.
         if let TyKind::Tuple(items) = types.kind(types.repr(ty)).clone() {
             let open = self.string_ptr("(");

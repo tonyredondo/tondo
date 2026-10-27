@@ -1,0 +1,20 @@
+// A union shows the member it holds, when every member has `Display`.
+
+import std.console
+
+alias Scalar = Int | Float | Bool | String
+
+fn main() {
+    let data: Map[String, Scalar] = ["key": "users", "entries": 12, "ratio": 0.75, "fresh": true]
+    for (name, value) in data {
+        console.println("{name}: {value}")
+    }
+    let values: Array[Int | String] = [1, "two"]
+    console.println("{values} {data.get("entries")}")
+}
+
+// expect-stdout: key: users
+// expect-stdout: entries: 12
+// expect-stdout: ratio: 0.75
+// expect-stdout: fresh: true
+// expect-stdout: [1, two] some(12)

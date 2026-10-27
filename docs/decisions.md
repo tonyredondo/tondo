@@ -2781,3 +2781,14 @@ the top. It is off by default, because a list of the files a server keeps
 is not something every server should show; the page is plain HTML with
 absolute links, so that it works at a folder's path with or without its
 final `/`.
+
+## 2026-10-27 — A union shows the member it holds
+
+A union had no `Display`, and one could not be written for it: neither a
+union nor its members are the module's own, so `impl Display for Scalar` of
+`alias Scalar = Int | Float | Bool | String` broke the coherence rule. Only a
+newtype could take one, at the cost of wrapping each value. A union now has
+`Display` when each of its members does, as arrays, options, maps and tuples
+have when their parts do, and shows the member it holds. That lets a map of
+plain values of several types, as the data a panic carries, be shown without
+a `match`; an error names the members that lack it.
