@@ -1358,18 +1358,23 @@ fn run(task: *mut Task) {
     unsafe {
         let in_domain = (*task).in_domain;
         if (*task).finished {
-            let mut task = Box::from_raw(task);
-            let was_main = task.main;
-            for asked in [&task.cancelled, &task.again] {
+            let (was_main, join) = ((*task).main, (*task).join);
+            for asked in [&(*task).cancelled, &(*task).again] {
                 if asked.load(Ordering::SeqCst) {
                     attend(false);
                 }
             }
-            if let Some(stack) = task.stack.take() {
+            if let Some(stack) = (*task).stack.take() {
                 recycle(stack);
             }
-            unregister(&*task as *const Task as usize);
-            drop(task);
+            unregister(task as usize);
+            // A spawned task lives in its join's block.
+            if join.is_null() {
+                drop(Box::from_raw(task));
+            } else {
+                std::ptr::drop_in_place(task);
+                let_go(join);
+            }
             super::clock::stopped(in_domain);
             if was_main {
                 MAIN_DONE.store(true, Ordering::SeqCst);
@@ -2063,17 +2068,19 @@ pub(crate) fn ending() -> Option<i32> {
     Some(status as i32)
 }
 
+/// A new task, in `place` or in a block of its own when that is null.
 fn new_task(
     stack: Option<Stack>,
     body: *mut u8,
     code: *const u8,
     kind: ResultKind,
     join: *mut JoinObject,
+    place: *mut Task,
 ) -> *mut Task {
     super::diagnostics::TASKS_SPAWNED.add(1);
     static IDS: AtomicU64 = AtomicU64::new(1);
     let sp = stack.as_ref().map_or(std::ptr::null_mut(), |stack| unsafe { initial_stack(stack.top()) });
-    let task = Box::into_raw(Box::new(Task {
+    let task = Task {
         sp,
         id: IDS.fetch_add(1, Ordering::Relaxed),
         stack,
@@ -2095,7 +2102,14 @@ fn new_task(
         in_domain: !current().is_null() && unsafe { (*current()).in_domain },
         origin: None,
         labels: std::sync::atomic::AtomicU32::new(labels()),
-    }));
+    };
+    let task = match place.is_null() {
+        true => Box::into_raw(Box::new(task)),
+        false => unsafe {
+            place.write(task);
+            place
+        },
+    };
     register(task as usize);
     super::clock::woke(task);
     task
@@ -2123,8 +2137,14 @@ pub unsafe extern "C" fn tondo_rt_callback(
     }
     super::trace::guard_thread(false);
     let call = ForeignCall { inner, frame, done: Mutex::new(false), finished: Condvar::new() };
-    let task =
-        new_task(Some(task_stack()), std::ptr::null_mut(), std::ptr::null(), ResultKind::Nothing, std::ptr::null_mut());
+    let task = new_task(
+        Some(task_stack()),
+        std::ptr::null_mut(),
+        std::ptr::null(),
+        ResultKind::Nothing,
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+    );
     unsafe {
         (*task).main = false;
         (*task).foreign = &call;
@@ -2164,6 +2184,7 @@ pub fn run_main(code: unsafe extern "C" fn() -> i32) -> i32 {
         std::ptr::null_mut(),
         code as *const u8,
         ResultKind::Integer,
+        std::ptr::null_mut(),
         std::ptr::null_mut(),
     );
     schedule(task);
@@ -2529,6 +2550,35 @@ pub struct JoinObject {
     /// Visits the result for the cycle collector, when it may refer back
     /// to the join, which is then registered with it.
     visit: Option<Visit>,
+    /// Who holds the block: the program, until its references are gone
+    /// and the task is done, and the task, until it is freed.
+    holders: AtomicU8,
+}
+
+/// A spawned task's join, the task itself while it is alive, and a result
+/// of up to 16 bytes, in one allocation, which the thread that spawned the
+/// task usually frees too.
+#[repr(C)]
+struct Spawned {
+    join: JoinObject,
+    task: std::mem::MaybeUninit<Task>,
+    result: [u64; 2],
+}
+
+/// Lets go of a spawned task's block for the program or for the task; the
+/// last frees it.
+unsafe fn let_go(join: *mut JoinObject) {
+    unsafe {
+        if (*join).holders.fetch_sub(1, Ordering::AcqRel) != 1 {
+            return;
+        }
+        let block = join as *mut Spawned;
+        let result = (*join).result;
+        if !result.is_null() && result != (&raw mut (*block).result).cast() {
+            std::alloc::dealloc(result, std::alloc::Layout::from_size_align((*join).size, (*join).align).unwrap());
+        }
+        drop(Box::from_raw(block));
+    }
 }
 
 /// Starts a task that calls the closure `body`, a `fn` object it takes,
@@ -2545,28 +2595,36 @@ pub unsafe extern "C" fn tondo_rt_spawn(
 ) -> *mut JoinObject {
     start_workers();
     let align = align.max(8);
-    let result = if size == 0 {
-        std::ptr::null_mut()
-    } else {
-        unsafe { std::alloc::alloc(std::alloc::Layout::from_size_align(size, align).unwrap()) }
-    };
     LIVE_OBJECTS.made();
-    let join = Box::into_raw(Box::new(JoinObject {
-        rc: AtomicUsize::new(1),
-        lock: AtomicBool::new(false),
-        done: false,
-        taken: false,
-        waiters: Vec::new(),
-        result,
-        size,
-        align,
-        release,
-        group: std::ptr::null_mut(),
-        index: 0,
-        task: std::ptr::null_mut(),
-        detached: false,
-        visit,
+    let block = Box::into_raw(Box::new(Spawned {
+        join: JoinObject {
+            rc: AtomicUsize::new(1),
+            lock: AtomicBool::new(false),
+            done: false,
+            taken: false,
+            waiters: Vec::new(),
+            result: std::ptr::null_mut(),
+            size,
+            align,
+            release,
+            group: std::ptr::null_mut(),
+            index: 0,
+            task: std::ptr::null_mut(),
+            detached: false,
+            visit,
+            holders: AtomicU8::new(2),
+        },
+        task: std::mem::MaybeUninit::uninit(),
+        result: [0; 2],
     }));
+    let join = block as *mut JoinObject;
+    unsafe {
+        (*join).result = match size {
+            0 => std::ptr::null_mut(),
+            _ if size <= 16 && align <= 8 => (&raw mut (*block).result).cast(),
+            _ => std::alloc::alloc(std::alloc::Layout::from_size_align(size, align).unwrap()),
+        };
+    }
     if visit.is_some() {
         cycles::remember(join as *const u8, Kind::Join);
     }
@@ -2578,7 +2636,7 @@ pub unsafe extern "C" fn tondo_rt_spawn(
         3 => ResultKind::Float32,
         _ => ResultKind::Memory,
     };
-    let task = new_task(None, body, code, kind, join);
+    let task = new_task(None, body, code, kind, join, unsafe { (&raw mut (*block).task).cast() });
     unsafe {
         (*join).task = task;
         let spawned = super::trace::spawned(origin());
@@ -2819,12 +2877,8 @@ unsafe fn free_join(join: *mut JoinObject) {
         {
             release((*join).result);
         }
-        if !(*join).result.is_null() {
-            let layout = std::alloc::Layout::from_size_align((*join).size, (*join).align).unwrap();
-            std::alloc::dealloc((*join).result, layout);
-        }
-        drop(Box::from_raw(join));
         LIVE_OBJECTS.gone();
+        let_go(join);
     }
 }
 
