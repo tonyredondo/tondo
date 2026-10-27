@@ -557,6 +557,11 @@ impl Prover<'_> {
                         let low = if facts.range(a).0 >= 0 { 0 } else { -(b.1 - 1) };
                         Some((low, b.1 - 1))
                     }
+                    // A quotient by one grows with the dividend.
+                    BinOp::Div if b.0 == Node::Zero && b.1 > 0 => {
+                        let (low, high) = facts.range(a);
+                        Some((low / b.1, high / b.1))
+                    }
                     _ => None,
                 },
                 _ => None,
