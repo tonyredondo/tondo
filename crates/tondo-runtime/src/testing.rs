@@ -336,12 +336,14 @@ impl State {
                 unsafe { std::env::set_var(name, value) };
             }
         }
-        // A finished task is freed just after it ends.
+        // A finished task is freed just after it ends. The test's task
+        // sleeps meanwhile, not its thread: a task it woke may wait to run
+        // there next.
         for _ in 0..100 {
             if crate::tasks::alive().iter().all(|task| self.tasks.contains(task)) {
                 return Vec::new();
             }
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            crate::tasks::tondo_rt_sleep(1_000_000);
         }
         crate::tasks::leaked(&self.tasks)
     }
