@@ -165,7 +165,7 @@ fn store(dir: &Path, tree: &Tree, test: u32, fuzzed: &mut Fuzzed) {
 fn signature(status: &Status) -> Option<String> {
     let at = |text: &str| text.lines().find_map(|l| l.trim_start().strip_prefix("--> ").map(str::to_string));
     Some(match status {
-        Status::Panic(text) => {
+        Status::Panic(text, _) => {
             let code = text.split(']').next().unwrap_or_default();
             format!("panic {code} {}", at(text).unwrap_or_default())
         }

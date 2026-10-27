@@ -1,0 +1,9 @@
+// A computed code that is not the program's own is `P0017`, which shows it.
+
+fn main() {
+    let code = "Cache.Corrupt"
+    panic("the index is corrupt", code: code)
+}
+
+// expect-panic: P0017
+// expect-stderr:   code: Cache.Corrupt

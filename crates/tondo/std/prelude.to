@@ -6,7 +6,12 @@ import std.internal.math as mathNative
 import std.internal.reflect as reflectNative
 import std.internal.text as textNative
 import std.math as __math
+import std.panics as __panics
 import std.text as __text
+
+/// A panic that a `recover` stopped (language 15.9): its code, message,
+/// data, location and stack.
+pub alias Panic = __panics.Panic
 
 // ---------------------------------------------------------------------------
 // Order and sums

@@ -578,6 +578,33 @@ señal fatal o en un deadlock deja su volcado allí antes de terminar. `dump`
 nombra cada marco, así que su volcado se lee en otra máquina; uno al fallar
 se nombra al leerlo, con el ejecutable del programa.
 
+Con `TONDO_PANIC_FORMAT=json`, lo que termina un programa por un fallo se
+escribe en la salida de error como una línea JSON, en lugar del informe de
+texto (15.7 del lenguaje), para las herramientas y los agregadores de logs.
+Su `format` es `tondo-panic-0.1/1`, y sus campos, en orden alfabético:
+
+- `kind`: `panic`; `fault`, una señal fatal o un stack overflow; o `error`,
+  el error con que termina `main` (20.10 del lenguaje).
+- `code`, el código del pánico, `P0001` o uno propio, y `name`, el nombre
+  estable de uno del lenguaje (`bounds`), del fallo (`stack-overflow`,
+  `SIGSEGV`) o `null`; `error_type`, el tipo de un `error`, o `null`.
+- `message`, el mensaje o el `Display` del error, y `data`, los datos del
+  pánico (15.7 y 22.2 del lenguaje), cada uno con su tipo de JSON (un
+  `Float` que no es finito, como su texto), o `null`.
+- `source`, la ubicación (`file`, `line` y `column`), y `stack`, los frames
+  como en el informe de un test que falla (15.3 de testing): `function`,
+  `source`, `task`, que es `0` en la tarea del fallo y crece en cada tarea que
+  la lanzó, y `times`.
+- `recovered`: `true` en un pánico que el programa recuperó y que la
+  biblioteca informa, como el de un handler de `std.http`.
+
+~~~json
+{"code":"cache.corrupt","data":{"entries":12,"key":"users","ratio":0.75},"error_type":null,"format":"tondo-panic-0.1/1","kind":"panic","message":"the cache index is corrupt","name":null,"recovered":false,"source":{"column":9,"file":"src/cache.to","line":41},"stack":[{"function":"Cache.load","source":{"column":9,"file":"src/cache.to","line":41},"task":0,"times":1}]}
+~~~
+
+Sin la variable, o con otro valor, el informe es el de texto. El volcado de
+`TONDO_DUMP` describe su pánico con el mismo objeto.
+
 `dump read` muestra un volcado: sin más, un resumen, con por qué se tomó, la
 memoria, las tareas por estado y dónde esperan, y dónde se asignó la memoria
 viva; `tasks`, cada tarea con los marcos del programa; `task <id>`, una con
@@ -735,7 +762,8 @@ lenguaje, cada una con un texto para el modelo y su resultado como datos
   `hover`, `complete`, `symbols`, y `rename`, que reescribe los archivos.
 - Proyectos: `new_project`, `add_dependency` y `remove_dependency`.
 - Builds: `build`; `run`, con su entrada y un tiempo tras el que el programa
-  termina, 60 s si no se dice; `test`, con lo que imprime y su informe JSON, y su cobertura si se pide,
+  termina, 60 s si no se dice, y el fallo con que termine como `panic`, el
+  objeto de `tondo-panic-0.1/1` (7.5), en sus datos; `test`, con lo que imprime y su informe JSON, y su cobertura si se pide,
   y sus benchmarks con `bench`, comparados con `baseline` o `against`, y
   con `fuzz` la búsqueda de `--fuzz` durante tantos segundos (10.6 de testing);
   `doc_test`, `bind`, `update` y `target_pack`.
@@ -751,12 +779,15 @@ lenguaje, cada una con un texto para el modelo y su resultado como datos
   que pare. `debug_stop` cierra la sesión.
 - Programas vivos (sección 7.10): `run_start` arranca uno, con `watch` si se
   pide, y da su sesión; `run_output` da lo que imprimió desde la última vez,
-  `run_input` le escribe en la entrada, `run_stop` lo termina y `reload`
+  y su fallo como `panic` si terminó con uno; `run_input` le escribe en la
+  entrada, `run_stop` lo termina y `reload`
   cambia su código, o el de un build vivo en ejecución nombrado como en
   `counters`.
 
 Una herramienta que hace lo que un comando con `--json` da el JSON del
-comando (sección 7.12) como sus datos.
+comando (sección 7.12) como sus datos. Las que ejecutan un programa lo
+arrancan con `TONDO_PANIC_FORMAT=json` (7.5), así que un fallo llega como
+datos y no como texto que haya que interpretar.
 
 Las líneas y las columnas cuentan desde 1, las columnas en caracteres, como
 en los diagnósticos, y los paths son relativos al directorio del servidor. Lo
@@ -1017,6 +1048,8 @@ que se dieron o relativos a su proyecto, y los de `graph`, absolutos.
   resultado mientras corre. `doc-test` escribe sus registros (21.6 del
   lenguaje), y `counters` y `debug` con `--json`, un objeto por línea mientras
   corren.
+- Un programa con `TONDO_PANIC_FORMAT=json` escribe su fallo en stderr como
+  `tondo-panic-0.1/1` (7.5).
 - Un campo nuevo puede aparecer en la misma versión de un formato; quitar o
   cambiar uno cambia la versión.
 

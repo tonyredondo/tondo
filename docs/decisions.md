@@ -2792,3 +2792,19 @@ newtype could take one, at the cost of wrapping each value. A union now has
 have when their parts do, and shows the member it holds. That lets a map of
 plain values of several types, as the data a panic carries, be shown without
 a `match`; an error names the members that lack it.
+
+## 2026-10-27 — A panic has a code, a message and data, and a JSON form
+
+A panic said only a message under `P0008`, so code that wanted to tell one
+panic from another, a log aggregator or an agent read text. `panic` now
+takes the program's own code, dotted camelCase words that cannot be the
+language's `P` codes, and data, a map whose values are `Int`, `Float`,
+`Bool` or `String`, rather than `Any`, which Tondo does not have and which
+would make a panic carry anything at all: a panic always has the same
+shape. The report shows the data the program gave; the language's panics
+carry their values too, an index and a length, without repeating them. A
+literal code that is not one is a compile error, a computed one `P0017`.
+`TONDO_PANIC_FORMAT=json` makes a program write how it failed, a panic,
+`main`'s error or a fault, as one line of `tondo-panic-0.1/1`, which the MCP
+tool `run` sets and returns as data and which a test's failure shares; the
+panic's data come to `tondo test` in a frame of their own.

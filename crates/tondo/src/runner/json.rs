@@ -587,7 +587,7 @@ pub(super) fn status_name(status: &Status) -> &'static str {
         Status::Passed => "passed",
         Status::Skipped(_) => "skipped",
         Status::Error { .. } => "failed-error",
-        Status::Panic(_) => "failed-panic",
+        Status::Panic(..) => "failed-panic",
         Status::Timeout | Status::Limit { timeout: true, .. } => "timeout",
         Status::Limit { timeout: false, .. } => "resource-limit",
         Status::Crashed(_) => "crashed",
@@ -681,17 +681,30 @@ fn skip(status: &Status) -> Value {
 /// The failure of an attempt (15.3), or `null`.
 pub(super) fn failure(status: &Status, options: &Options) -> Value {
     let mut stack = Vec::new();
+    let mut data = Value::Null;
     let (kind, code, error_type, message, location) = match status {
         Status::Error { message, error_type, location } => {
             ("error", None, Some(error_type.clone()), message.clone(), location.clone())
         }
-        Status::Panic(text) => {
-            // `panic[P0007]: name: message`, then ` --> location` and the
-            // stack trace.
+        Status::Panic(text, given) => {
+            // `panic[P0007]: name: message`, then the lines of its data,
+            // ` --> location` and the stack trace.
             let (first, location) = located(text);
             let code = first.strip_prefix("panic[").and_then(|r| r.split_once(']')).map(|(c, _)| c.to_string());
-            let message = first.split_once("]: ").map_or(first, |(_, m)| m).to_string();
+            let given: Option<serde_json::Value> = given.as_deref().and_then(|text| serde_json::from_str(text).ok());
+            // The report shows the data the program gave, a line each,
+            // after the message (language 15.7).
+            let language =
+                code.as_deref().is_some_and(|c| c.starts_with('P') && c[1..].bytes().all(|b| b.is_ascii_digit()));
+            let shown = match (&given, language && !matches!(code.as_deref(), Some("P0008" | "P0017"))) {
+                (Some(serde_json::Value::Object(members)), false) => members.len(),
+                _ => 0,
+            };
+            let lines: Vec<&str> = first.lines().collect();
+            let first = lines[..lines.len() - shown.min(lines.len().saturating_sub(1))].join("\n");
+            let message = first.split_once("]: ").map_or(first.as_str(), |(_, m)| m).to_string();
             stack = frames(text);
+            data = given.as_ref().map_or(Value::Null, converted);
             ("panic", code, None, message, location.map(str::to_string))
         }
         Status::Timeout => ("timeout", None, None, format!("timed out after {}s", options.timeout.as_secs_f64()), None),
@@ -713,10 +726,28 @@ pub(super) fn failure(status: &Status, options: &Options) -> Value {
         ("code", opt(code.as_deref())),
         ("error_type", opt(error_type.as_deref())),
         ("message", str(message)),
+        ("data", data),
         ("source", source(location.as_deref())),
         ("comparison", comparison),
         ("stack", Value::Array(stack)),
     ])
+}
+
+/// A JSON value the runtime wrote, as a value of the report.
+fn converted(value: &serde_json::Value) -> Value {
+    match value {
+        serde_json::Value::Null => Value::Null,
+        serde_json::Value::Bool(b) => Value::Bool(*b),
+        serde_json::Value::Number(n) => match n.as_i64() {
+            Some(n) => Value::Int(n),
+            None => Value::Number(n.to_string()),
+        },
+        serde_json::Value::String(s) => Value::Str(s.clone()),
+        serde_json::Value::Array(items) => Value::Array(items.iter().map(converted).collect()),
+        serde_json::Value::Object(members) => {
+            Value::Object(members.iter().map(|(k, v)| (k.clone(), converted(v))).collect())
+        }
+    }
 }
 
 /// The frames of a panic's stack trace: each `  function  file:line:column`

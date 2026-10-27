@@ -35,6 +35,7 @@ mod meta;
 mod msgpack;
 mod native;
 mod net;
+mod panics;
 mod poll;
 mod pprof;
 mod process;
@@ -2283,6 +2284,7 @@ fn panic_name(code: u32) -> &'static str {
         14 => "reentrant-lock",
         15 => "invalid-environment-name",
         16 => "nul-in-c-string",
+        17 => "invalid-panic-code",
         2001 => "test-skip-during-cleanup",
         2002 => "test-tag-conflict",
         2003 => "test-virtual-time-deadlock",
@@ -2341,11 +2343,24 @@ pub unsafe extern "C" fn tondo_rt_panic(mut code: u32, message: *const Str, loca
         run_cleanups();
         tasks::end_all(0)
     }
-    let mut text = format!("panic[P{code:04}]: {}", panic_name(code));
-    if let Some(message) = message {
-        text.push_str(": ");
-        text.push_str(&message);
+    // An assertion's data are its condition and the sides it compared.
+    if code == 7
+        && let Some(message) = &message
+    {
+        let line = |prefix: &str| message.lines().find_map(|l| l.strip_prefix(prefix)).map(str::to_string);
+        let condition = line("  condition: ")
+            .or_else(|| line("condition: "))
+            .unwrap_or_else(|| message.lines().next().unwrap_or_default().to_string());
+        let mut data = vec![("condition", panics::Datum::Text(condition))];
+        if let (Some(left), Some(right)) = (line("  left:  "), line("  right: ")) {
+            data.push(("left", panics::Datum::Text(left)));
+            data.push(("right", panics::Datum::Text(right)));
+        }
+        panics::language_data(data);
     }
+    let panic = panics::Panic::new(code, panic_name(code), message.unwrap_or_default(), location);
+    let text = panic.headline();
+    let location = &panic.location;
     let prefix = if suppressed { "suppressed while unwinding: " } else { "" };
     if recorder::on() {
         let task = tasks::current_id();
@@ -2356,9 +2371,17 @@ pub unsafe extern "C" fn tondo_rt_panic(mut code: u32, message: *const Str, loca
         debugger::panicked(&text);
     }
     let report = format!("{prefix}{text}\n --> {location}{}", trace::report());
-    // A test build reports it to `tondo test` instead.
+    // A test build reports it to `tondo test` instead, with its data.
+    testing::panic_data(&panic);
     if !testing::terminal(code, &report) {
-        let _ = writeln!(std::io::stderr(), "{report}");
+        match panics::json_reports() {
+            true => {
+                let _ = writeln!(std::io::stderr(), "{}", panic.json(&trace::report_json(), false, suppressed));
+            }
+            false => {
+                let _ = writeln!(std::io::stderr(), "{report}");
+            }
+        }
         if !suppressed {
             diagnostics::crash_dump("panic", &format!("{text}\n --> {location}"), trace::here_frames(), true);
         }
@@ -2428,6 +2451,21 @@ pub unsafe extern "C" fn tondo_rt_panic_values(
         };
         format!("{low} to {high}")
     };
+    let int = |value: &str| value.parse::<i64>().map_or(panics::Datum::Text(value.to_string()), panics::Datum::Int);
+    let data = match code {
+        1 => vec![("index", panics::Datum::Int(a)), ("length", panics::Datum::Int(b))],
+        3 => vec![("left", int(&left))],
+        5 => vec![
+            ("operation", panics::Datum::Text(operator.to_string())),
+            ("left", int(&left)),
+            ("right", int(&right)),
+            ("type", panics::Datum::Text(ty.to_string())),
+        ],
+        6 => vec![("left", panics::Datum::Int(a)), ("right", panics::Datum::Int(b))],
+        10 => vec![("count", int(&right)), ("width", panics::Datum::Int(i64::from(bits)))],
+        _ => Vec::new(),
+    };
+    panics::language_data(data);
     let message = match code {
         1 if op == 1 => {
             format!("index {a} is out of bounds for the C array {ty}: the index must be from 0 to {}", b - 1)
@@ -2444,11 +2482,23 @@ pub unsafe extern "C" fn tondo_rt_panic_values(
     panic_with(code, &message, location)
 }
 
-/// Reports the error a fallible `main` returned (spec 20.10).
+/// Reports the error a fallible `main` returned (spec 20.10), of the type
+/// `ty`: its text, or with `TONDO_PANIC_FORMAT=json` a line of
+/// `tondo-panic-0.1/1` (toolchain 7.5).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_report_error(description: *const Str) {
+pub unsafe extern "C" fn tondo_rt_report_error(description: *const Str, ty: *const Str) {
     flush_stdout();
     let text = String::from_utf8_lossy(unsafe { str_bytes(description) });
+    if panics::json_reports() {
+        let ty = String::from_utf8_lossy(unsafe { str_bytes(ty) });
+        let _ = writeln!(
+            std::io::stderr(),
+            "{{\"code\":null,\"data\":null,\"error_type\":{},\"format\":\"tondo-panic-0.1/1\",\"kind\":\"error\",\"message\":{},\"name\":null,\"recovered\":false,\"source\":null,\"stack\":[]}}",
+            diagnostics::quoted(&ty),
+            diagnostics::quoted(&text),
+        );
+        return;
+    }
     let _ = writeln!(std::io::stderr(), "error: {text}");
 }
 

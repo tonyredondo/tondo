@@ -238,7 +238,7 @@ fn short(tree: &Tree, status: &Status) -> String {
         Status::Timeout | Status::Limit { timeout: true, .. } => "TIMEOUT".into(),
         Status::Limit { timeout: false, .. } => "RESOURCE LIMIT".into(),
         Status::Crashed(_) => "CRASHED".into(),
-        Status::Error { .. } | Status::Panic(_) => "FAILED".into(),
+        Status::Error { .. } | Status::Panic(..) => "FAILED".into(),
     }
 }
 
@@ -250,7 +250,7 @@ pub(super) fn detail(tree: &Tree, attempt: &Attempt, timeout: Duration) -> Strin
             let location = location.as_deref().unwrap_or(&tree.locations[attempt.node as usize]);
             format!("error: {message}\n --> {location}")
         }
-        Status::Panic(text) => text.clone(),
+        Status::Panic(text, _) => text.clone(),
         Status::Timeout => format!("timed out after {}s", timeout.as_secs_f64()),
         Status::Crashed(how) | Status::Limit { message: how, .. } => how.clone(),
         Status::Skipped(reason) => format!("skipped: {reason}"),

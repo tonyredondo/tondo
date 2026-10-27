@@ -1113,6 +1113,9 @@ pub const NATIVES: &[Native] = {
     const fn fuzz(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "fuzz", name, receiver: None, params, result, symbol }
     }
+    const fn panics(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
+        Native { module: "panic", name, receiver: None, params, result, symbol }
+    }
     const fn r(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "regex", name, receiver: Some(Regex), params, result, symbol }
     }
@@ -1413,6 +1416,12 @@ pub const NATIVES: &[Native] = {
         fuzz("end", &[], Unit, "tondo_rt_fuzz_end"),
         fuzz("replaying", &[], Bool, "tondo_rt_fuzz_replaying"),
         fuzz("encoded", &[String], Unit, "tondo_rt_fuzz_encoded"),
+        // `std.internal.panic`: what a panic carries beyond its message (15.7).
+        panics("code", &[String], Unit, "tondo_rt_panic_code"),
+        panics("int", &[String, Int], Unit, "tondo_rt_panic_int"),
+        panics("float", &[String, Float], Unit, "tondo_rt_panic_float"),
+        panics("bool", &[String, Bool], Unit, "tondo_rt_panic_bool"),
+        panics("text", &[String, String], Unit, "tondo_rt_panic_text"),
     ]
 };
 

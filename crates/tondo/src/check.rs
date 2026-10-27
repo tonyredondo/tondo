@@ -89,6 +89,7 @@ fn check_with<'a>(
         scripting: false,
         naming: String::new(),
         comparing: None,
+        panic_datum: None,
         closure_name: None,
         measuring: None,
         wires: HashMap::new(),
@@ -223,6 +224,8 @@ enum StdModule {
     InternalNet,
     /// `std.internal.fuzz`: the runtime's side of `testing.fuzz`.
     InternalFuzz,
+    /// `std.internal.panic`: what a panic carries beyond its message.
+    InternalPanic,
 }
 
 /// The types `std.process` declares when imported.
@@ -646,6 +649,9 @@ struct Checker<'a> {
     /// While the operands of a comparison meet, whose mismatch is one:
     /// whether the value coerced is the left one.
     comparing: Option<bool>,
+    /// While a panic's `data` is checked, the type of its values, whose
+    /// mismatch says to write a text instead.
+    panic_datum: Option<Ty>,
     closure_name: Option<String>,
     /// The test whose body is checked, which `testing.bench` makes a
     /// benchmark.
@@ -1426,6 +1432,68 @@ impl<'a> Checker<'a> {
             }
             _ => "\"any\"".into(),
         }
+    }
+
+    /// `panic(message, code:, data:)` (15.7): the message, and the
+    /// program's own code and data, which the standard library hands the
+    /// runtime just before the panic.
+    fn panic_call(&mut self, cx: &mut FnCx, args: &[ast::Arg], span: Span) -> hir::Expr {
+        let mut given: [Option<&ast::Expr>; 3] = [None; 3];
+        for (index, arg) in args.iter().enumerate() {
+            let slot = match (arg.name.as_ref().map(|n| n.name.as_str()), index) {
+                (Some("message"), _) | (None, 0) => 0,
+                (Some("code"), _) | (None, 1) => 1,
+                (Some("data"), _) | (None, 2) => 2,
+                (Some(other), _) => {
+                    let message = format!("`panic` takes `message`, `code` and `data`, not `{other}`");
+                    self.diags.error("E1102", arg.value.span, message);
+                    continue;
+                }
+                (None, _) => return self.arity_error(span, 3, args.len()),
+            };
+            given[slot] = Some(&arg.value);
+        }
+        let [Some(message), code, data] = given else {
+            return self.arity_error(span, 1, 0);
+        };
+        let message = self.expr(cx, message, Some(Ty::STRING));
+        let message = self.coerce(message, Ty::STRING);
+        let panic = Self::mk(hir::ExprKind::Panic(Box::new(message), 8), Ty::NEVER, span);
+        if code.is_none() && data.is_none() {
+            return panic;
+        }
+        let mut stmts = Vec::new();
+        if let Some(code) = code {
+            if let ast::ExprKind::Str(segments) = &code.kind
+                && let [ast::StrSegment::Text(text)] = segments.as_slice()
+                && !own_panic_code(text)
+            {
+                let message = format!(
+                    "`{text}` is not a code of the program's own: write segments of a lowercase letter followed by letters and digits, separated by `.`, as `cache.corrupt`; codes `P` with digits are the language's"
+                );
+                self.diags.error("E1305", code.span, message);
+            }
+            let code = self.expr(cx, code, Some(Ty::STRING));
+            let code = self.coerce(code, Ty::STRING);
+            stmts.push(hir::Stmt::Expr(self.panics_call("panics.stageCode", code, span)));
+        }
+        if let Some(data) = data {
+            let datum = self.types.union(&[Ty::INT, Ty::F64, Ty::BOOL, Ty::STRING]);
+            let map = self.map_type(Ty::STRING, datum);
+            let outer = self.panic_datum.replace(datum);
+            let data = self.expr(cx, data, Some(map));
+            let data = self.coerce(data, map);
+            self.panic_datum = outer;
+            stmts.push(hir::Stmt::Expr(self.panics_call("panics.stageData", data, span)));
+        }
+        let block = hir::Block { stmts, tail: Some(Box::new(panic)), ty: Ty::NEVER };
+        Self::mk(hir::ExprKind::Block(block), Ty::NEVER, span)
+    }
+
+    /// A call of a function of the standard library's `std.panics`.
+    fn panics_call(&mut self, name: &str, value: hir::Expr, span: Span) -> hir::Expr {
+        let Some(&ModuleName::Fn(id)) = self.names.get(name) else { unreachable!("the prelude brings `std.panics`") };
+        Self::mk(hir::ExprKind::Call(Callee::Fn(id), Vec::new(), vec![value]), Ty::UNIT, span)
     }
 
     /// `testing.bench(name, () { ... })` (testing 10.4), in a test's own
@@ -2368,6 +2436,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "cbor"] => StdModule::InternalCbor,
             ["std", "internal", "net"] => StdModule::InternalNet,
             ["std", "internal", "fuzz"] => StdModule::InternalFuzz,
+            ["std", "internal", "panic"] => StdModule::InternalPanic,
             ["std", "internal", "channel"] => StdModule::InternalChannel,
             ["std", rest @ ..] => {
                 let name = rest.join(".");
@@ -8275,6 +8344,10 @@ impl<'a> Checker<'a> {
                     let (left, right) = if self.comparing == Some(true) { (found, other) } else { (other, found) };
                     format!("cannot compare {left} with {right}: both sides of a comparison have one type")
                 }
+                _ if self.panic_datum == Some(expected) => format!(
+                    "a panic's data holds an `Int`, a `Float`, a `Bool` or a `String`, not {}: write its text, as `\"{{value}}\"`",
+                    self.display(value.ty)
+                ),
                 _ if expected == Ty::STRING && value.ty == Ty::CHAR => {
                     "expected `String`, found `Char`: interpolate it, as `\"{c}\"`, for a `String`".to_string()
                 }
@@ -11744,14 +11817,7 @@ impl<'a> Checker<'a> {
             return Self::mk(hir::ExprKind::Variant(variant, values), ty, span);
         }
         match (names.as_slice(), self.names.get(names[0]).copied()) {
-            (["panic"], _) => {
-                let [message] = args else {
-                    return self.arity_error(span, 1, args.len());
-                };
-                let message = self.expr(cx, &message.value, Some(Ty::STRING));
-                let message = self.coerce(message, Ty::STRING);
-                Self::mk(hir::ExprKind::Panic(Box::new(message), 8), Ty::NEVER, span)
-            }
+            (["panic"], _) => self.panic_call(cx, args, span),
             (["assert"], _) => {
                 let Some((condition, parts)) = args.split_first() else {
                     return self.arity_error(span, 1, 0);
@@ -11902,7 +11968,8 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalMsgpack
                     | StdModule::InternalCbor
                     | StdModule::InternalNet
-                    | StdModule::InternalFuzz),
+                    | StdModule::InternalFuzz
+                    | StdModule::InternalPanic),
                 )),
             ) => {
                 // `joined(values, separator)`: the elements' `Display`, with
@@ -11952,6 +12019,7 @@ impl<'a> Checker<'a> {
                     StdModule::InternalCbor => "cbor",
                     StdModule::InternalNet => "net",
                     StdModule::InternalFuzz => "fuzz",
+                    StdModule::InternalPanic => "panic",
                     _ => "reflect",
                 };
                 let found =
@@ -13343,4 +13411,14 @@ fn bound_names(pattern: &ast::Pattern, names: &mut Vec<String>) {
         ast::PatternKind::Tuple(parts) => parts.iter().for_each(|part| bound_names(part, names)),
         _ => {}
     }
+}
+
+/// Whether a panic's code is the program's own: segments of a lowercase
+/// letter followed by letters and digits, separated by dots (15.7).
+fn own_panic_code(code: &str) -> bool {
+    !code.is_empty()
+        && code.split('.').all(|segment| {
+            let mut chars = segment.chars();
+            chars.next().is_some_and(|c| c.is_ascii_lowercase()) && chars.all(|c| c.is_ascii_alphanumeric())
+        })
 }

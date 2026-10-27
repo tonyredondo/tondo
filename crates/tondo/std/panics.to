@@ -1,0 +1,33 @@
+// What a panic carries beyond its message (language 15.7), which `panic`
+// hands the runtime through these functions, and the value of a panic
+// that `recover` stops (15.9). The prelude names `Panic`.
+
+import std.internal.panic as panicNative
+
+/// A panic that a `recover` stopped (15.9): its code, `P0001` or the
+/// program's own, its message, its data, where it happened and its stack,
+/// as its report shows them.
+pub type Panic = {
+    code: String
+    message: String
+    data: Map[String, Int | Float | Bool | String]
+    location: String
+    stack: String
+}
+
+/// The program's own code of the panic about to be raised.
+pub fn stageCode(code: String) {
+    panicNative.code(code)
+}
+
+/// The data of the panic about to be raised.
+pub fn stageData(data: Map[String, Int | Float | Bool | String]) {
+    for (key, value) in data {
+        match value {
+            Int(number) => panicNative.int(key, number)
+            Float(number) => panicNative.float(key, number)
+            Bool(flag) => panicNative.bool(key, flag)
+            String(text) => panicNative.text(key, text)
+        }
+    }
+}

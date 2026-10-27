@@ -281,6 +281,7 @@ impl Server {
         }
         let mut child = Command::new(tondo()?)
             .args(&argv)
+            .env("TONDO_PANIC_FORMAT", "json")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1116,7 +1117,16 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         _ => unreachable!("every tool has its command"),
     }
     let stdin = args.text("stdin").filter(|_| name == "run");
-    let ran = execute(&argv, stdin, timeout.map(Duration::from_secs_f64))?;
+    let mut ran = execute(&argv, stdin, timeout.map(Duration::from_secs_f64))?;
+    // A program's failure is data, and text a person reads (toolchain 7.5).
+    let failure = match name == "run" {
+        true => {
+            let (failure, stderr) = failure_of(&ran.stderr);
+            ran.stderr = stderr;
+            failure
+        }
+        false => None,
+    };
     // What the command gives as JSON is the result's data.
     let json = !matches!(name, "compact" | "api" | "guide" | "run" | "test" | "doc_test")
         || (name == "test" && args.flag("list"));
@@ -1126,6 +1136,9 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
     let mut structured = json!({ "exit_code": ran.code, "stdout": ran.stdout, "stderr": ran.stderr });
     if ran.timed_out {
         structured["timed_out"] = json!(true);
+    }
+    if let Some(failure) = failure {
+        structured["panic"] = failure;
     }
     if name == "test"
         && let Some(parsed) = std::fs::read(&report).ok().and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
@@ -1271,11 +1284,79 @@ fn profile(args: &Args) -> Result<Reply, String> {
     Ok(Reply::new(text, json!({ "profiles": summaries })))
 }
 
+/// The failure that a program run with `TONDO_PANIC_FORMAT=json` wrote to
+/// its standard error (toolchain 7.5), its first one, and the error output
+/// with each such line as the text a person reads.
+fn failure_of(stderr: &str) -> (Option<Value>, String) {
+    let mut found = None;
+    let mut text = String::new();
+    for line in stderr.split_inclusive('\n') {
+        let report = serde_json::from_str::<Value>(line.trim_end()).ok().filter(|v| v["format"] == "tondo-panic-0.1/1");
+        match report {
+            Some(report) => {
+                text.push_str(&report_text(&report));
+                found.get_or_insert(report);
+            }
+            None => text.push_str(line),
+        }
+    }
+    (found, text)
+}
+
+/// A failure of `tondo-panic-0.1/1` as the program would have written it.
+fn report_text(report: &Value) -> String {
+    let field = |key: &str| report[key].as_str().unwrap_or_default();
+    let place = |source: &Value| match (source["file"].as_str(), source["line"].as_u64(), source["column"].as_u64()) {
+        (Some(file), Some(line), Some(column)) => format!("{file}:{line}:{column}"),
+        _ => String::new(),
+    };
+    let mut text = match field("kind") {
+        "error" => return format!("error: {}\n", field("message")),
+        "fault" => format!("fatal: {}: {}", field("name"), field("message")),
+        _ => {
+            let mut text = format!("panic[{}]: ", field("code"));
+            if let Some(name) = report["name"].as_str() {
+                text.push_str(&format!("{name}: "));
+            }
+            text.push_str(field("message"));
+            if report["name"].is_null()
+                && let Some(data) = report["data"].as_object()
+            {
+                for (key, value) in data {
+                    let shown = value.as_str().map_or_else(|| value.to_string(), str::to_string);
+                    text.push_str(&format!("\n  {key}: {shown}"));
+                }
+            }
+            text.push_str(&format!("\n --> {}", place(&report["source"])));
+            text
+        }
+    };
+    let mut task = None;
+    for frame in report["stack"].as_array().into_iter().flatten() {
+        let this = frame["task"].as_u64().unwrap_or(0);
+        if task != Some(this) {
+            text.push_str(if this == 0 { "\nstack:" } else { "\nin a task spawned at:" });
+            task = Some(this);
+        }
+        text.push_str(&format!("\n  {}  {}", frame["function"].as_str().unwrap_or_default(), place(&frame["source"])));
+        if let Some(times) = frame["times"].as_u64().filter(|&t| t > 1) {
+            text.push_str(&format!("  ({times} times)"));
+        }
+    }
+    text.push('\n');
+    text
+}
+
 /// Runs `tondo` with arguments, in a process group of its own that a
 /// timeout ends whole.
 fn execute(argv: &[String], stdin: Option<String>, timeout: Option<Duration>) -> Result<Ran, String> {
     use std::os::unix::process::CommandExt;
-    let mut child = Command::new(tondo()?)
+    let mut command = Command::new(tondo()?);
+    // A program's failure comes as data (toolchain 7.5).
+    if argv.first().is_some_and(|command| command == "run") {
+        command.env("TONDO_PANIC_FORMAT", "json");
+    }
+    let mut child = command
         .args(argv)
         .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
@@ -1361,6 +1442,7 @@ impl Run {
         };
         let (stdout, out_end) = take(&self.stdout, self.read.0);
         let (stderr, err_end) = take(&self.stderr, self.read.1);
+        let (failure, stderr) = failure_of(&stderr);
         self.read = (out_end, err_end);
         let code = self.status.and_then(|status| status.code());
         let mut text = match (stdout.is_empty(), stderr.is_empty()) {
@@ -1375,8 +1457,11 @@ impl Run {
                 text.push_str(&format!("{id} ended, exit code {}\n", code.map_or("none".into(), |c| c.to_string())))
             }
         }
-        let structured = json!({ "session": id, "pid": self.child.id(), "stdout": stdout, "stderr": stderr,
+        let mut structured = json!({ "session": id, "pid": self.child.id(), "stdout": stdout, "stderr": stderr,
             "running": self.status.is_none(), "exit_code": code });
+        if let Some(failure) = failure {
+            structured["panic"] = failure;
+        }
         Reply::new(text, structured)
     }
 

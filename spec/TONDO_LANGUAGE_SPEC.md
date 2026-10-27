@@ -5275,14 +5275,29 @@ Esto conserva una diferencia visible entre “salir de esta función” y “con
 `panic` es un intrinsic del prelude con la firma exacta:
 
 ~~~tondo
-fn panic(message: String): Never
+fn panic(message: String, code: String? = none, data: Map[String, Int | Float | Bool | String] = [:]): Never
 ~~~
 
-Acepta exactamente un `String`, no puede sobrecargarse ni reemplazarse mediante
-imports. Su argumento se evalúa por completo antes de comenzar el pánico; la
-invocación produce `P0008` y el mensaje pasa al diagnóstico runtime. Interpolación,
-formato y construcción de mensajes ocurren antes de la llamada mediante las reglas
-ordinarias.
+No puede sobrecargarse ni reemplazarse mediante imports. Sus argumentos se
+evalúan por completo antes de comenzar el pánico, y el mensaje pasa al
+diagnóstico runtime. Interpolación, formato y construcción de mensajes ocurren
+antes de la llamada mediante las reglas ordinarias.
+
+Sin `code`, la invocación produce `P0008`. Con él, el pánico lleva ese código
+propio, que es lo que lo distingue de los demás. Un código
+propio es uno o más segmentos separados por `.`, cada uno una letra minúscula
+seguida de letras y dígitos ASCII, como `cache.corrupt` o
+`billing.limitExceeded`; los códigos `P` seguidos de dígitos son del lenguaje
+(22.2). Un literal que no es un código propio es `E1305`; un código calculado
+que no lo es produce `P0017`, con ese texto en `data` como `code`. `data` lleva
+los detalles del pánico, un valor básico por clave, que el informe muestra. Los valores entran tal cual, porque cada miembro
+de la unión la satisface (9.6); uno de otro tipo es un error de compilación que
+dice que se escriba su texto, `"{value}"`. No hay otra forma de lanzar un pánico
+ni otro valor que lanzar: un pánico siempre tiene código, mensaje y datos.
+
+~~~tondo
+panic("the cache index is corrupt", code: "cache.corrupt", data: ["key": key, "entries": count, "ratio": 0.75])
+~~~
 
 Un pánico representa un invariante roto, por ejemplo:
 
@@ -5332,6 +5347,25 @@ racha del mismo frame, como en una recursión, aparece una vez con su número de
 repeticiones. Una tarea añade dónde se lanzó, y la tarea que la lanzó el suyo,
 hasta `main`; un callback que hace un thread de C lo indica. Un deadlock (`P0013`)
 lista dónde espera cada tarea y dónde se lanzó.
+
+Un pánico con código propio se informa con él, y con su `data` debajo del
+mensaje, una línea por clave en el orden del map:
+
+~~~text
+panic[cache.corrupt]: the cache index is corrupt
+  key: users
+  entries: 12
+  ratio: 0.75
+ --> src/cache.to:41:9
+stack:
+  Cache.load  src/cache.to:41:9
+  main        src/main.to:12:5
+~~~
+
+Los pánicos del lenguaje también llevan `data`, con las claves de 22.2, pero su
+mensaje ya dice esos valores y el informe no los repite. Con la variable de
+entorno `TONDO_PANIC_FORMAT=json`, el informe es una línea JSON para las
+herramientas (7.5 de la especificación del toolchain).
 
 Un stack overflow, un acceso inválido a memoria, un aborto, una instrucción
 ilegal o un fallo aritmético, fuera de este modelo, se reportan antes de que la
@@ -7871,6 +7905,7 @@ oculten un diagnóstico independiente.
 | `E1302` | `invalid-fail-context` | `fail` aparece sin error compatible. |
 | `E1303` | `discarded-result` | Un `Result` u `Option` se abandona como sentencia sin uso ni `_ =`. |
 | `E1304` | `invalid-result-construction` | `ok`, `err`, `some` o `none` carece de contexto único o payload válido. |
+| `E1305` | `invalid-panic-code` | El `code` literal de `panic` no es un código propio (15.7). |
 
 #### Ownership, préstamos y cleanup
 
@@ -7972,31 +8007,37 @@ oculten un diagnóstico independiente.
 
 #### Pánicos del lenguaje
 
-| Código | Nombre estable | Condición runtime |
-|---|---|---|
-| `P0001` | `bounds` | Índice o límite directo fuera del rango permitido. |
-| `P0002` | `zero-slice-step` | Slice con paso cero. |
-| `P0003` | `integer-division-by-zero` | División o resto entero por cero. |
-| `P0004` | `overlapping-borrow` | Check dinámico de regiones o transferencia atómica detecta solapamiento. |
-| `P0005` | `checked-overflow` | Aritmética entera representable excedida. |
-| `P0006` | `array-shape-mismatch` | Operación vectorizada recibe longitudes incompatibles. |
-| `P0007` | `assertion-failed` | `assert` recibe `false`. |
-| `P0008` | `explicit-panic` | Invocación explícita de `panic`. |
-| `P0010` | `invalid-shift-count` | Conteo de shift negativo, no representable como `Int` o mayor o igual que el ancho izquierdo. |
-| `P0011` | `invalid-repeat-count` | `Array.repeat` recibe un conteo negativo. |
-| `P0012` | `closed-channel` | `send` sobre un canal cerrado. |
-| `P0013` | `deadlock` | Todas las tareas esperan, ninguna puede avanzar y nada de C puede despertarlas (16.16). |
-| `P0014` | `reentrant-lock` | Una tarea vuelve a tomar un lock de `std.sync` que ya tiene. |
-| `P0015` | `invalid-environment-name` | `env.set`, `setAll` o `remove` recibe un nombre vacío o con `=` o `NUL`, o un valor con `NUL`. |
-| `P0016` | `nul-in-c-string` | Un texto con un byte cero dentro pasa a C como `ffi.CString`. |
-| `P2001` | `test-skip-during-cleanup` | `testing.skip` intenta omitir un nodo durante cleanup, unwind o teardown. |
-| `P2002` | `test-tag-conflict` | `testing.tags` intenta cambiar el valor ya asociado a una key en el mismo envelope. |
-| `P2003` | `test-virtual-time-deadlock` | Un dominio temporal virtual queda quiescente sin timer ni evento interno capaz de progresar. |
-| `P2004` | `overlapping-test-virtual-time` | Un envelope intenta mantener más de un dominio temporal virtual activo. |
-| `P2005` | `test-virtual-time-range` | Un avance temporal virtual es negativo o excede el rango representable. |
-| `P2006` | `test-artifact-conflict` | Un attachment tiene nombre o media type inválido, o repite nombre en el mismo intento. |
-| `P2007` | `test-snapshot-mismatch` | Un snapshot esperado falta o difiere fuera del modo explícito de actualización. |
-| `P2008` | `test-snapshot-conflict` | Un snapshot tiene nombre inválido o repite una key en el mismo intento. |
+| Código | Nombre estable | Condición runtime | `data` |
+|---|---|---|---|
+| `P0001` | `bounds` | Índice o límite directo fuera del rango permitido. | `index`, `length` |
+| `P0002` | `zero-slice-step` | Slice con paso cero. | — |
+| `P0003` | `integer-division-by-zero` | División o resto entero por cero. | `left` |
+| `P0004` | `overlapping-borrow` | Check dinámico de regiones o transferencia atómica detecta solapamiento. | — |
+| `P0005` | `checked-overflow` | Aritmética entera representable excedida. | `operation`, `left`, `right`, `type` |
+| `P0006` | `array-shape-mismatch` | Operación vectorizada recibe longitudes incompatibles. | `left`, `right` |
+| `P0007` | `assertion-failed` | `assert` recibe `false`. | `condition`; `left` y `right` si compara |
+| `P0008` | `explicit-panic` | Invocación explícita de `panic`. | los del programa |
+| `P0010` | `invalid-shift-count` | Conteo de shift negativo, no representable como `Int` o mayor o igual que el ancho izquierdo. | `count`, `width` |
+| `P0011` | `invalid-repeat-count` | `Array.repeat` recibe un conteo negativo. | `count` |
+| `P0012` | `closed-channel` | `send` sobre un canal cerrado. | — |
+| `P0013` | `deadlock` | Todas las tareas esperan, ninguna puede avanzar y nada de C puede despertarlas (16.16). | — |
+| `P0014` | `reentrant-lock` | Una tarea vuelve a tomar un lock de `std.sync` que ya tiene. | — |
+| `P0015` | `invalid-environment-name` | `env.set`, `setAll` o `remove` recibe un nombre vacío o con `=` o `NUL`, o un valor con `NUL`. | `name` |
+| `P0016` | `nul-in-c-string` | Un texto con un byte cero dentro pasa a C como `ffi.CString`. | — |
+| `P0017` | `invalid-panic-code` | El `code` calculado de `panic` no es un código propio (15.7). | `code` |
+| `P2001` | `test-skip-during-cleanup` | `testing.skip` intenta omitir un nodo durante cleanup, unwind o teardown. | — |
+| `P2002` | `test-tag-conflict` | `testing.tags` intenta cambiar el valor ya asociado a una key en el mismo envelope. | — |
+| `P2003` | `test-virtual-time-deadlock` | Un dominio temporal virtual queda quiescente sin timer ni evento interno capaz de progresar. | — |
+| `P2004` | `overlapping-test-virtual-time` | Un envelope intenta mantener más de un dominio temporal virtual activo. | — |
+| `P2005` | `test-virtual-time-range` | Un avance temporal virtual es negativo o excede el rango representable. | — |
+| `P2006` | `test-artifact-conflict` | Un attachment tiene nombre o media type inválido, o repite nombre en el mismo intento. | — |
+| `P2007` | `test-snapshot-mismatch` | Un snapshot esperado falta o difiere fuera del modo explícito de actualización. | — |
+| `P2008` | `test-snapshot-conflict` | Un snapshot tiene nombre inválido o repite una key en el mismo intento. | — |
+
+En `data`, los índices, longitudes y conteos son `Int`; `operation`, `type`,
+`condition`, `name` y `code` son `String`; los operandos de `P0003` y `P0005`
+son `Int`, o su texto si no caben en `Int`; y los lados de `P0006` son `Int` y
+los de `P0007`, el texto con que los muestra el mensaje.
 
 Un runtime incluye el código `P` y el nombre estable en su diagnóstico. OOM
 irrecuperable y los aborts fuera del modelo de 15.7 no reciben un código `P`.
@@ -10135,6 +10176,7 @@ Copy Equatable Key Send Share
 Call CallMut CallOnce
 Display
 NumericConversionError
+Panic
 ~~~
 
 También expone los intrinsics:

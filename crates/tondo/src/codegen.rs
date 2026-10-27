@@ -376,7 +376,7 @@ impl Rt {
             Rt::WeakGet => ("tondo_rt_weak_get", &[I64], &[I64]),
             Rt::GcEdge => ("tondo_rt_gc_edge", &[I64, I64, I8, I64, I64], &[]),
             Rt::BoxUnique => ("tondo_rt_box_unique", &[I64, I64, I64], &[]),
-            Rt::ReportError => ("tondo_rt_report_error", &[I64], &[]),
+            Rt::ReportError => ("tondo_rt_report_error", &[I64, I64], &[]),
             Rt::TestStart => ("tondo_rt_test_start", &[I64, I64], &[]),
             Rt::CoverageStart => ("tondo_rt_coverage_start", &[I64, I64], &[]),
             Rt::TestMembers => ("tondo_rt_test_members", &[I64, I64], &[]),
@@ -2791,7 +2791,8 @@ impl Codegen<'_> {
                     _ => Val::Zero,
                 };
                 let description = e.describe(error, error_value, true);
-                e.call_rt(Rt::ReportError, &[description]);
+                let ty = e.type_name(error, error_value);
+                e.call_rt(Rt::ReportError, &[description, ty]);
                 e.call_rt(Rt::StrRelease, &[description]);
                 e.refcount(result, value, true);
                 let one = e.fb.ins().iconst(types::I32, 1);
@@ -3341,6 +3342,33 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
             }
             Val::Zero => self.fb.ins().iconst(types::I8, 0),
         }
+    }
+
+    /// The name of the type of a value: of the member a union holds.
+    fn type_name(&mut self, ty: Ty, value: Val) -> ir::Value {
+        let types = self.cg.types();
+        let Some(members) = types.members(types.repr(ty)).map(<[Ty]>::to_vec) else {
+            let name = types.display(ty);
+            return self.string_ptr(&name);
+        };
+        let tag = self.tag(ty, value);
+        let done = self.fb.create_block();
+        self.fb.append_block_param(done, POINTER);
+        for (variant, &member) in members.iter().enumerate() {
+            let (this, next) = (self.fb.create_block(), self.fb.create_block());
+            let is_this = self.fb.ins().icmp_imm_s(IntCC::Equal, tag, variant as i64);
+            self.fb.ins().brif(is_this, this, &[], next, &[]);
+            self.fb.switch_to_block(this);
+            let name = self.cg.types().display(member);
+            let name = self.string_ptr(&name);
+            self.fb.ins().jump(done, &[name.into()]);
+            self.fb.switch_to_block(next);
+        }
+        let name = self.cg.types().display(ty);
+        let fallback = self.string_ptr(&name);
+        self.fb.ins().jump(done, &[fallback.into()]);
+        self.fb.switch_to_block(done);
+        self.fb.block_params(done)[0]
     }
 
     /// A string describing an error that reached the end of `main`: its text

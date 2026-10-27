@@ -608,6 +608,19 @@ pub(crate) fn virtual_time(now: u64, automatic: u64, explicit: u64, settles: u64
 
 /// Reports the panic or the skip that ends the worker; whether the
 /// process runs tests.
+/// Gives `tondo test` the data of the panic it is about to be told of, as
+/// JSON, when it has any (testing 15.3).
+pub(crate) fn panic_data(panic: &crate::panics::Panic) {
+    if panic.data.is_empty() {
+        return;
+    }
+    let json = panic.data_json();
+    with(|r| {
+        let node = r.current();
+        r.frame("panic-data", node, json.as_bytes());
+    });
+}
+
 pub(crate) fn terminal(code: u32, text: &str) -> bool {
     crate::fuzz::interrupted();
     with(|r| {

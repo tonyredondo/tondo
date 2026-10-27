@@ -3566,6 +3566,11 @@ exactamente:
   "code": "P0007",
   "error_type": null,
   "message": "assertion-failed: value == 42",
+  "data": {
+    "condition": "value == 42",
+    "left": "41",
+    "right": "42"
+  },
   "source": {
     "file": "src/math_test.to",
     "line": 3,
@@ -3581,8 +3586,10 @@ exactamente:
 
 - `kind` es `error`, `panic`, `resource-limit`, `timeout`, `crashed` o
   `infrastructure`.
-- `code` es el `Pdddd` o código versionado de tooling disponible; en otro caso
-  es `null`.
+- `code` es el `Pdddd`, el código propio de un pánico (15.7 del lenguaje) o
+  el código versionado de tooling disponible; en otro caso es `null`.
+- `data` son los datos de un pánico (15.7 y 22.2 del lenguaje), cada uno con
+  su tipo de JSON; `null` en los demás kinds.
 - `error_type` contiene la identidad nominal visible de un error recuperable y
   es `null` para los demás kinds.
 - `message` es presentación humana y nunca actúa como identidad.

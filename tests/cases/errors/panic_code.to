@@ -1,0 +1,14 @@
+// A literal code that is not the program's own, and data a panic cannot hold.
+
+type Point = { x: Int }
+
+fn main() {
+    panic("one", code: "P0001")
+}
+
+fn other() {
+    panic("two", data: ["point": Point { x: 1 }])
+}
+
+// expect-error: E1305 `P0001` is not a code of the program's own
+// expect-error: E1102 a panic's data holds an `Int`, a `Float`, a `Bool` or a `String`, not `Point`

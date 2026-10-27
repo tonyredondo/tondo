@@ -110,3 +110,17 @@ the call that led there; `in a task spawned at:` continues in the task that
 started this one. `assert(a == b)` shows both sides (`left:` and `right:`). A
 deadlock lists where every task waits, and a stack overflow or a crash in C
 prints `fatal:` with the same trace.
+
+A panic can carry the program's own code, dotted words such as
+`cache.corrupt`, and data, plain values by name, which its report shows:
+
+```tondo
+fn main() {
+    let key = "users"
+    panic("the cache index is corrupt", code: "cache.corrupt", data: ["key": key, "entries": 12])
+}
+```
+
+With `TONDO_PANIC_FORMAT=json`, the program writes how it failed, a panic,
+`main`'s error or a crash, as one line of JSON on standard error, for tools;
+the MCP tool `run` gives it as data.

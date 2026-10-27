@@ -161,6 +161,8 @@ struct Session<'a> {
     /// Starts and outcomes told by a frame, until stdout reaches that
     /// frame.
     done: Vec<(Note, u64)>,
+    /// The data of the panic whose frame comes next.
+    panic_data: Option<String>,
 }
 
 fn worker(
@@ -276,6 +278,7 @@ fn worker(
         pending: Vec::new(),
         stdout_frames: 0,
         done: Vec::new(),
+        panic_data: None,
     };
     let mut open = 2;
     let mut timed_out = false;
@@ -651,13 +654,15 @@ impl Session<'_> {
                     self.done.push((Note::Fuzzing(node, name.to_string(), searched), sequence));
                 }
             }
+            "panic-data" => self.panic_data = Some(text),
             "skip" | "panic" => {
+                let data = self.panic_data.take();
                 if let Some(entry) = self.running.iter_mut().rev().find(|(o, _, _)| o.node == node) {
                     // The first terminal counts; a panic while it cleans up wins over a skip.
                     entry.0.status = match (&entry.0.status, kind) {
                         (Status::Passed, "skip") => Status::Skipped(text),
-                        (Status::Passed | Status::Skipped(_), _) => Status::Panic(text),
-                        (Status::Panic(first), _) => Status::Panic(format!("{first}\n{text}")),
+                        (Status::Passed | Status::Skipped(_), _) => Status::Panic(text, data),
+                        (Status::Panic(first, data), _) => Status::Panic(format!("{first}\n{text}"), data.clone()),
                         (other, _) => other.clone(),
                     };
                 }

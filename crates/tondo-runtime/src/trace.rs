@@ -590,6 +590,60 @@ pub(crate) fn report() -> String {
     stack(walk, crate::tasks::origin(), "stack")
 }
 
+/// The frames of the running task from here and of the tasks that
+/// started it, as the JSON array of a panic's `stack` (toolchain 7.5): each
+/// with its function, its place, `task`, 0 here and one more for each task
+/// further back, and how many `times` it repeats in a row.
+pub(crate) fn report_json() -> String {
+    let mut out = String::new();
+    write_frames_json(&mut out, here(), crate::tasks::origin());
+    out
+}
+
+/// A text as a JSON string, without allocating, as a signal handler may.
+pub(crate) fn write_quoted(out: &mut dyn Write, text: &str) {
+    let _ = out.write_char('"');
+    for c in text.chars() {
+        let _ = match c {
+            '"' => out.write_str("\\\""),
+            '\\' => out.write_str("\\\\"),
+            '\n' => out.write_str("\\n"),
+            '\t' => out.write_str("\\t"),
+            '\r' => out.write_str("\\r"),
+            c if (c as u32) < 0x20 => write!(out, "\\u{:04x}", c as u32),
+            c => out.write_char(c),
+        };
+    }
+    let _ = out.write_char('"');
+}
+
+/// The frames of a stack and of the tasks that started it, as a JSON array
+/// (see `report_json`), without allocating.
+fn write_frames_json(out: &mut dyn Write, addresses: impl Iterator<Item = usize>, origin: Option<&Origin>) {
+    let mut first = true;
+    let mut push = |out: &mut dyn Write, task: usize, addresses: &mut dyn Iterator<Item = usize>| {
+        for (frame, times) in runs(addresses) {
+            let _ = out.write_str(if first { "{\"function\":" } else { ",{\"function\":" });
+            first = false;
+            write_quoted(out, frame.function);
+            let _ = write!(out, ",\"source\":{{\"column\":{},\"file\":", frame.column);
+            write_quoted(out, frame.file);
+            let _ = write!(out, ",\"line\":{}}},\"task\":{task},\"times\":{times}}}", frame.line);
+        }
+    };
+    let _ = out.write_char('[');
+    let mut addresses = addresses;
+    push(out, 0, &mut addresses);
+    let mut origin = origin;
+    let mut task = 1;
+    while let Some(Origin::Spawned { addresses, count, parent, .. }) = origin {
+        push(out, task, &mut addresses[..*count].iter().copied());
+        task += 1;
+        origin = *parent;
+    }
+    let _ = out.write_char(']');
+}
+
 /// A stack and the origins of its task, under `title`.
 pub(crate) fn stack(walk: Walk, origin: Option<&Origin>, title: &str) -> String {
     let mut out = String::new();
@@ -681,6 +735,9 @@ static PREVIOUS: std::sync::OnceLock<[libc::sigaction; 5]> = std::sync::OnceLock
 /// make. The first call installs the handler. A thread of C that calls a
 /// library keeps the signal stack it has.
 pub(crate) fn guard_thread(runtime: bool) {
+    // The handler reads the format of reports, which reading the
+    // environment there could not.
+    crate::panics::json_reports();
     static INSTALLED: std::sync::Once = std::sync::Once::new();
     INSTALLED.call_once(|| unsafe {
         let mut action: libc::sigaction = std::mem::zeroed();
@@ -818,21 +875,48 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
         let task = crate::tasks::current();
         let bounds = crate::tasks::stack_bounds().unwrap_or((0, 0));
         let in_c = find(pc).is_none() && crate::tasks::c_frame().is_some();
-        if (bounds.0.saturating_sub(crate::tasks::GUARD)..bounds.0).contains(&address) {
+        let json = crate::panics::json_reports();
+        if json {
+            let _ = out.write_str("{\"code\":null,\"data\":null,\"error_type\":null,\"format\":\"tondo-panic-0.1/1\",\"kind\":\"fault\",\"message\":\"");
+        }
+        let overflow = (bounds.0.saturating_sub(crate::tasks::GUARD)..bounds.0).contains(&address);
+        if overflow {
             let size = (bounds.1 - bounds.0 + crate::tasks::GUARD) >> 20;
             let whose = if !task.is_null() && crate::tasks::is_main(task) { "the main task" } else { "a task" };
-            let _ = write!(out, "fatal: stack overflow: {whose} used all of its {size} MiB stack");
+            let _ = match json {
+                true => write!(out, "{whose} used all of its {size} MiB stack"),
+                false => write!(out, "fatal: stack overflow: {whose} used all of its {size} MiB stack"),
+            };
         } else {
+            let (name, what) = match signal {
+                libc::SIGABRT => ("SIGABRT", "the program aborted"),
+                libc::SIGILL => ("SIGILL", "illegal instruction at"),
+                libc::SIGFPE => ("SIGFPE", "arithmetic fault at"),
+                libc::SIGBUS => ("SIGBUS", "invalid memory access at"),
+                _ => ("SIGSEGV", "invalid memory access at"),
+            };
+            if !json {
+                let _ = write!(out, "fatal: {name}: ");
+            }
             let _ = match signal {
-                libc::SIGABRT => write!(out, "fatal: SIGABRT: the program aborted"),
-                libc::SIGILL => write!(out, "fatal: SIGILL: illegal instruction at {pc:#x}"),
-                libc::SIGFPE => write!(out, "fatal: SIGFPE: arithmetic fault at {pc:#x}"),
-                libc::SIGBUS => write!(out, "fatal: SIGBUS: invalid memory access at {address:#x}"),
-                _ => write!(out, "fatal: SIGSEGV: invalid memory access at {address:#x}"),
+                libc::SIGABRT => write!(out, "{what}"),
+                libc::SIGILL | libc::SIGFPE => write!(out, "{what} {pc:#x}"),
+                _ => write!(out, "{what} {address:#x}"),
             };
             if in_c {
                 let _ = write!(out, ", inside a function of C");
             }
+        }
+        if json {
+            let name = match signal {
+                _ if overflow => "stack-overflow",
+                libc::SIGABRT => "SIGABRT",
+                libc::SIGILL => "SIGILL",
+                libc::SIGFPE => "SIGFPE",
+                libc::SIGBUS => "SIGBUS",
+                _ => "SIGSEGV",
+            };
+            let _ = write!(out, "\",\"name\":\"{name}\",\"recovered\":false,\"source\":null,\"stack\":");
         }
         // A fault inside C starts the trace where the program called it;
         // one in compiled code, at the call it may have been making.
@@ -843,7 +927,13 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
         let walk = walk(fp, bounds);
         let first = (resolve(link).is_some() && walk.clone().next() != Some(link)).then_some(link);
         let origin = if task.is_null() { None } else { crate::tasks::origin_of(task) };
-        write_stack(&mut out, "stack", || first.into_iter().chain(walk.clone()), origin);
+        match json {
+            true => {
+                write_frames_json(&mut out, first.into_iter().chain(walk.clone()), origin);
+                let _ = out.write_char('}');
+            }
+            false => write_stack(&mut out, "stack", || first.into_iter().chain(walk.clone()), origin),
+        }
         let _ = writeln!(out);
         out.flush();
         // A dump at a fault is as good as the memory it reads.

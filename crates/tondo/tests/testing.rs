@@ -704,7 +704,7 @@ fn writes_json_and_junit_reports() {
         "{\"format\":\"tondo-test-report-0.1/1\",\"edition\":\"0.1\",",
         "\"compiled\":true,\"selection\":{\"kind\":\"all\",\"value\":null},",
         "\"stack\":[{\"function\":\"test failsAnAssertion\",\"source\":{\"file\":\"src/main_test.to\",\"line\":11,\"column\":5},\"task\":0,\"times\":1}]",
-        "\"failure\":{\"kind\":\"error\",\"code\":null,\"error_type\":\"ParseError\",\"message\":\"ParseError.Empty\",\"source\":{\"file\":\"src/main_test.to\",\"line\":15,\"column\":18},\"comparison\":null,\"stack\":[]}",
+        "\"failure\":{\"kind\":\"error\",\"code\":null,\"error_type\":\"ParseError\",\"message\":\"ParseError.Empty\",\"data\":null,\"source\":{\"file\":\"src/main_test.to\",\"line\":15,\"column\":18},\"comparison\":null,\"stack\":[]}",
         "\"comparison\":{\"left\":\"4\",\"right\":\"5\"},\"stack\":[{\"function\":\"test failsAnAssertion\"",
         "\"blocked_by\":{\"id\":\"sample::unit::sample::brokenSetup\",\"attempt\":1}",
         "\"skip\":{\"reason\":\"needs a database\",\"source\":{\"file\":\"src/main_test.to\",\"line\":20,\"column\":5}}",
@@ -1094,6 +1094,9 @@ suite group {
     assert_eq!(events[9]["stdout"]["data"], "said\n");
     // The two sides of the comparison, for a diff.
     assert_eq!(events[2]["failure"]["comparison"], serde_json::json!({ "left": "1", "right": "2" }));
+    // And the panic's data.
+    let data = serde_json::json!({ "condition": "1 == 2", "left": "1", "right": "2" });
+    assert_eq!(events[2]["failure"]["data"], data);
     let report = &events.last().unwrap()["report"];
     assert_eq!((&report["format"], &report["summary"]["failed_panic"]), (&"tondo-test-report-0.1/1".into(), &1.into()));
 

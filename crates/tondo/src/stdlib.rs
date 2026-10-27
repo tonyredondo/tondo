@@ -21,6 +21,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("regex", include_str!("../std/regex.to")),
     ("reflect", include_str!("../std/reflect.to")),
     ("prelude", include_str!("../std/prelude.to")),
+    ("panics", include_str!("../std/panics.to")),
     ("math", include_str!("../std/math.to")),
     ("meta", include_str!("../std/meta.to")),
     ("encoding", include_str!("../std/encoding.to")),

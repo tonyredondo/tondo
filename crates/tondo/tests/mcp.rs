@@ -207,6 +207,17 @@ fn runs_tests_and_debugs() {
     let (ran, _) = agent.call("run", json!({ "stdin": "read\n" }));
     assert_eq!(ran["stdout"], "read 42\n", "{ran}");
     assert_eq!(ran["exit_code"], 0);
+    // A failure is data, and the text a person reads.
+    let panics = "panic(\"the index is corrupt\", code: \"cache.corrupt\", data: [\"entries\": 12])\n";
+    std::fs::create_dir_all(dir.join("scripts")).unwrap();
+    std::fs::write(dir.join("scripts/corrupt.to"), panics).unwrap();
+    let (ran, text) = agent.call("run", json!({ "path": "scripts/corrupt.to" }));
+    assert_eq!(
+        (&ran["panic"]["code"], &ran["panic"]["data"]["entries"]),
+        (&json!("cache.corrupt"), &json!(12)),
+        "{ran}"
+    );
+    assert!(text.contains("panic[cache.corrupt]: the index is corrupt\n  entries: 12\n --> "), "{text}");
 
     let (tested, text) = agent.call("test", json!({ "coverage": true }));
     assert_eq!(tested["coverage"]["format"], "tondo-coverage-0.1/1", "{tested}");

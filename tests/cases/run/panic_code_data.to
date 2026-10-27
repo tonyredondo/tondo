@@ -1,0 +1,14 @@
+// A panic with the program's own code and its data, which the report shows
+// below the message.
+
+fn main() {
+    let key = "users"
+    let count = 12
+    panic("the cache index is corrupt", code: "cache.corrupt", data: ["key": key, "entries": count, "ratio": 0.75])
+}
+
+// expect-panic: cache.corrupt
+// expect-stderr: panic[cache.corrupt]: the cache index is corrupt
+// expect-stderr:   key: users
+// expect-stderr:   entries: 12
+// expect-stderr:   ratio: 0.75

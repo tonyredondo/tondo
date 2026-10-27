@@ -227,8 +227,8 @@ pub enum Status {
         location: Option<String>,
     },
     /// The panic's report, as the runtime prints it, with any suppressed
-    /// while unwinding after it.
-    Panic(String),
+    /// while unwinding after it; and its data, as JSON, when it has any.
+    Panic(String, Option<String>),
     Timeout,
     Crashed(String),
     /// Under `--fuzz`, an input that ran past `--fuzz-timeout` or held more
@@ -247,7 +247,7 @@ impl Status {
     fn failed(&self) -> bool {
         matches!(
             self,
-            Status::Error { .. } | Status::Panic(_) | Status::Timeout | Status::Crashed(_) | Status::Limit { .. }
+            Status::Error { .. } | Status::Panic(..) | Status::Timeout | Status::Crashed(_) | Status::Limit { .. }
         )
     }
 }
