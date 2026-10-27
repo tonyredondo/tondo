@@ -2680,3 +2680,20 @@ needing a restart, which Run Live does by itself, as `--watch` does, and
 Debug Live offers. The debugger had turned the program's own refusal
 into a failure, so that a change needing a restart read as a broken
 reload: it now reads the program's answer as `tondo debug` does.
+
+## 2026-10-27 — An executable for macOS names its own functions
+
+A profile of a program for macOS named the program's code, which the
+compiler's table describes, and nothing else: the runner's frames under a
+test, the runtime's and the C library's showed as `tests+0x57cb0`. Two
+things were missing. `tondo` read the executable's symbols from address 0,
+where `object` puts a Mach-O file's base, while the runtime gives offsets
+from the Mach header, which the `__TEXT` segment loads at 0x1_0000_0000;
+the base is now the address of the segment that maps the file's start, for
+ELF as well. And the linker wrote only the symbols other files can see,
+while the runtime's and the compiler's functions are local: it now writes
+the local symbols of code too, unless it strips, so that `tondo`, the
+runtime's own reading for `std.profile`, and debuggers find them, as the
+ELF linker always did. The flame graph's page takes the editor's colors in
+VS Code, or the system's light or dark, and its width, with Tondo's code
+in warm colors and the rest in grey.

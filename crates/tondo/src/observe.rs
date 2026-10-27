@@ -656,10 +656,15 @@ impl<'a> Names<'a> {
 type Function = (u64, u64, String);
 
 fn functions(path: &str) -> Vec<Function> {
-    use object::{Object, ObjectSymbol};
+    use object::{Object, ObjectSegment, ObjectSymbol};
     let Ok(data) = std::fs::read(path) else { return Vec::new() };
     let Ok(file) = object::File::parse(data.as_slice()) else { return Vec::new() };
-    let base = file.relative_address_base();
+    // Offsets count from where the file's header is loaded: the segment
+    // that maps it, at 0x1_0000_0000 in an executable for macOS.
+    let base = file
+        .segments()
+        .find(|s| s.file_range().0 == 0 && s.file_range().1 > 0)
+        .map_or(file.relative_address_base(), |s| s.address());
     // Mach-O writes every symbol with an underscore before its name.
     let macho = file.format() == object::BinaryFormat::MachO;
     let name = |raw: &str| demangled(if macho { raw.strip_prefix('_').unwrap_or(raw) } else { raw });
@@ -1130,4 +1135,21 @@ fn object_text(object: &Value) -> String {
         None => out.push_str("  no task's stack reaches it: the runtime holds it, or it is garbage of a cycle\n"),
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    /// A function of an executable for macOS is found by its offset from
+    /// where the executable's header is loaded, as the runtime gives it.
+    #[test]
+    fn names_functions_of_macho_executables() {
+        let path = std::env::temp_dir().join(format!("tondo-symbols-{}", std::process::id()));
+        std::fs::write(&path, crate::link::macho::example(false)).unwrap();
+        let functions = super::functions(&path.display().to_string());
+        let _ = std::fs::remove_file(&path);
+        let at = |name: &str| functions.iter().find(|(_, _, n)| n == name).map(|(offset, ..)| *offset);
+        let main = at("main").expect("main");
+        assert!(main < 0x1_0000, "{main:#x}");
+        assert_eq!(at("helper"), Some(main + 4));
+    }
 }

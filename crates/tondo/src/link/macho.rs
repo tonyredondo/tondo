@@ -190,6 +190,9 @@ struct Input<'a> {
     sections: Vec<Sect<'a>>,
     symbols: Vec<Sym>,
     atoms: Vec<Atom>,
+    /// The functions it keeps to itself, by name, section and address,
+    /// which the symbol table names too, for profiles and debuggers.
+    locals: Vec<(&'a [u8], usize, u64)>,
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
@@ -524,7 +527,21 @@ impl<'a> Linker<'a> {
                 }
             }
         }
-        let input = Input { name, sections, symbols, atoms };
+        let locals =
+            symbols
+                .iter()
+                .enumerate()
+                .filter_map(|(n, sym)| {
+                    let section = sections.get((sym.sect as usize).checked_sub(1)?)?;
+                    let (n_type, _) = kinds[n];
+                    // C's and Rust's names start with `_`; the assembler's
+                    // labels, as `ltmp0`, do not.
+                    let local = n_type & (N_STAB | N_EXT) == 0 && n_type & N_TYPE == N_SECT;
+                    (local && section.attributes & S_ATTR_PURE_INSTRUCTIONS != 0 && names[n].starts_with(b"_"))
+                        .then_some((names[n], sym.sect as usize - 1, sym.value))
+                })
+                .collect();
+        let input = Input { name, sections, symbols, atoms, locals };
         // Each defined global points at its atom.
         for sym in &input.symbols {
             if let Some(id) = sym.global
@@ -2041,6 +2058,14 @@ impl Linker<'_> {
             order.into_iter().enumerate().map(|(n, o)| (o, (n + 1) as u8)).collect()
         };
         if !strip {
+            for input in &self.inputs {
+                for &(name, section, value) in &input.locals {
+                    let Some((atom, start)) = input.atom_at(section, value) else { continue };
+                    let Some((out, at)) = input.atoms[atom].place else { continue };
+                    let sect = section_number.get(&out).copied().unwrap_or(0);
+                    add(&mut entries, &mut counts, 0, name, N_SECT, sect, 0, self.outs[out].addr + at + value - start);
+                }
+            }
             for global in 0..self.globals.len() {
                 if let Def::Atom { input, atom, .. } = self.globals[global].def
                     && let Some((out, _)) = self.inputs[input as usize].atoms[atom as usize].place
@@ -2370,6 +2395,36 @@ impl Linker<'_> {
     }
 }
 
+/// An executable for macOS of two functions that return: `main`, and
+/// `helper` after it, which its object keeps to itself.
+#[cfg(test)]
+pub(crate) fn example(strip: bool) -> Vec<u8> {
+    use object::write::{Object as Written, StandardSection, Symbol, SymbolSection};
+    use object::{Architecture, BinaryFormat, Endianness, SymbolFlags, SymbolKind, SymbolScope};
+    let mut written = Written::new(BinaryFormat::MachO, Architecture::Aarch64, Endianness::Little);
+    written.set_mangling(object::write::Mangling::None);
+    let text = written.section_id(StandardSection::Text);
+    let ret = [0xc0, 0x03, 0x5f, 0xd6];
+    for (name, scope) in [("_main", SymbolScope::Dynamic), ("_helper", SymbolScope::Compilation)] {
+        let value = written.append_section_data(text, &ret, 4);
+        let (section, flags, kind) = (SymbolSection::Section(text), SymbolFlags::None, SymbolKind::Text);
+        written.add_symbol(Symbol { name: name.into(), value, size: 4, kind, scope, weak: false, section, flags });
+    }
+    let object = written.write().unwrap();
+    link(Inputs {
+        arch: Arch::Arm64,
+        objects: vec![("example.o".into(), &object[..])],
+        archives: Vec::new(),
+        dylibs: Vec::new(),
+        rpaths: Vec::new(),
+        entry: "_main".into(),
+        library: None,
+        strip,
+        identifier: "example".into(),
+    })
+    .unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     /// Looks a name up as dyld does: down the edge the name starts with.
@@ -2426,5 +2481,21 @@ mod tests {
         }
         assert_eq!(lookup(&trie, b"_words"), None);
         assert_eq!(lookup(&trie, b"_missing"), None);
+    }
+
+    /// The functions an object keeps to itself are named in the symbol
+    /// table too, where they are, so that a profile names them; not when
+    /// the executable is stripped.
+    #[test]
+    fn names_local_functions() {
+        use object::{Object as _, ObjectSymbol as _};
+        let linked = super::example(false);
+        let file = object::File::parse(&linked[..]).unwrap();
+        let address = |name: &str| file.symbols().find(|s| s.name() == Ok(name)).map(|s| (s.address(), s.is_local()));
+        let (main, _) = address("_main").unwrap();
+        assert_eq!(address("_helper"), Some((main + 4, true)));
+        let stripped = super::example(true);
+        let file = object::File::parse(&stripped[..]).unwrap();
+        assert!(file.symbols().all(|s| s.name() != Ok("_helper")));
     }
 }

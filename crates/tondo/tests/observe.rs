@@ -186,6 +186,8 @@ fn profiles_time_memory_and_tasks() {
     let functions: Vec<&str> =
         cpu["functions"].as_array().unwrap().iter().map(|f| f["function"].as_str().unwrap()).collect();
     assert!(functions.contains(&"fib") && functions.contains(&"crunch"), "{cpu}");
+    // Every function of the executable has its name, the runtime's too.
+    assert!(!functions.iter().any(|f| f.starts_with("busy+0x")), "{cpu}");
     let fib = cpu["lines"].as_array().unwrap().iter().find(|l| l["function"] == "fib").expect("a line of fib");
     assert_eq!((&fib["file"], &fib["line"]), (&json!("busy.to"), &json!(4)), "{cpu}");
     assert!(fib["source"].as_str().unwrap().contains("fib(n - 1) + fib(n - 2)"), "{fib}");

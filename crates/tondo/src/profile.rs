@@ -412,6 +412,19 @@ pub fn hot(profile: &Profile, kind: Option<&str>) -> Result<Hot, String> {
     let mut lines: HashMap<(String, i64), (String, i64, i64)> = HashMap::new();
     let mut stacks: HashMap<Vec<String>, i64> = HashMap::new();
     let mut labeled: HashMap<(String, String), i64> = HashMap::new();
+    // Code of no line, as a prologue, has no file: it is in the file of
+    // the function of its name, when one function of the profile has it.
+    let mut homes: HashMap<&str, Option<&str>> = HashMap::new();
+    for (function, file, _) in profile.samples.iter().flat_map(|(frames, ..)| frames).filter(|f| !f.1.is_empty()) {
+        let home = homes.entry(function).or_insert(Some(file));
+        if *home != Some(file.as_str()) {
+            *home = None;
+        }
+    }
+    let home = |function: &str, file: &str| match homes.get(function) {
+        Some(Some(home)) if file.is_empty() => home.to_string(),
+        _ => file.to_string(),
+    };
     for (frames, values, labels) in &profile.samples {
         let value = values.get(index).copied().unwrap_or(0);
         if value == 0 || frames.is_empty() {
@@ -430,7 +443,7 @@ pub fn hot(profile: &Profile, kind: Option<&str>) -> Result<Hot, String> {
             .or_else(|| frames.iter().position(|frame| located(&frame)));
         for (depth, (function, file, line)) in frames.iter().enumerate() {
             let flat = if depth == 0 { value } else { 0 };
-            let key = (function.clone(), file.clone());
+            let key = (function.clone(), home(function, file));
             if seen_functions.insert(key.clone()) {
                 let entry = functions.entry(key).or_default();
                 entry.0 += flat;
@@ -597,36 +610,37 @@ struct Node {
     children: Vec<(String, Node)>,
 }
 
-/// The boxes of a flame graph as they are drawn: how wide a unit is, the
-/// total, the unit, how deep it got, and the boxes so far, each level's
-/// height to fill in once the depth is known.
+/// The boxes of a flame graph as they are drawn: the total, the unit, the
+/// functions of Tondo code, how deep it got, and the boxes so far, each
+/// level's height to fill in once the depth is known.
 struct Drawing<'a> {
-    scale: f64,
     total: i64,
     unit: &'a str,
+    compiled: std::collections::HashSet<&'a str>,
     depth: usize,
     out: String,
 }
 
 impl Drawing<'_> {
+    /// Each box an `svg` of its own, placed and sized in percents of the
+    /// width, which clips its name to it.
     fn draw(&mut self, node: &Node, x: f64, level: usize) {
         let mut at = x;
         for (name, child) in &node.children {
-            let w = child.value as f64 * self.scale;
-            if w >= 0.5 {
+            let w = child.value as f64 * 100.0 / self.total.max(1) as f64;
+            if w >= 0.05 {
                 self.depth = self.depth.max(level + 1);
+                // Tondo's code warm, the runtime's and the system's grey.
                 let hue = name.bytes().fold(0u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32)) % 40;
-                let share = child.value as f64 * 100.0 / self.total.max(1) as f64;
-                let label = match w > 40.0 {
-                    true => escape(&name.chars().take((w / 7.0) as usize).collect::<String>()),
-                    false => String::new(),
+                let fill = match self.compiled.contains(name.as_str()) {
+                    true => format!("hsl({},80%,62%)", 10 + hue),
+                    false => format!("hsl(215,{}%,72%)", 8 + hue / 4),
                 };
                 self.out.push_str(&format!(
-                    "<g><title>{} — {} ({share:.1}%)</title><rect x=\"{at:.1}\" y=\"{{Y{level}}}\" width=\"{w:.1}\" height=\"17\" fill=\"hsl({},80%,60%)\"/><text x=\"{:.1}\" y=\"{{T{level}}}\">{label}</text></g>\n",
+                    "<svg x=\"{at:.3}%\" y=\"{{Y{level}}}\" width=\"{w:.3}%\" height=\"17\"><title>{} — {} ({w:.1}%)</title><rect width=\"100%\" height=\"100%\" fill=\"{fill}\"/><text x=\"4\" y=\"12.5\">{}</text></svg>\n",
                     escape(name),
                     amount(child.value, self.unit),
-                    10 + hue,
-                    at + 3.0
+                    escape(name),
                 ));
                 self.draw(child, at, level + 1);
             }
@@ -637,7 +651,8 @@ impl Drawing<'_> {
 
 /// A flame graph of the stacks in one HTML page without scripts: each
 /// function a box as wide as its share, above what called it; its title
-/// says how much.
+/// says how much. Its colors are the editor's in VS Code, or light or
+/// dark as the system's.
 pub fn flame_page(title: &str, hot: &Hot) -> String {
     let mut root = Node::default();
     for (stack, value) in &hot.stacks {
@@ -655,36 +670,44 @@ pub fn flame_page(title: &str, hot: &Hot) -> String {
             node.value += value;
         }
     }
-    let (width, row) = (1200.0, 18.0);
-    let scale = if root.value == 0 { 0.0 } else { width / root.value as f64 };
-    let mut drawing = Drawing { scale, total: root.value, unit: &hot.unit, depth: 0, out: String::new() };
+    let row = 18.0;
+    let compiled = hot.functions.iter().filter(|(_, file, ..)| !file.is_empty()).map(|(f, ..)| f.as_str()).collect();
+    let mut drawing = Drawing { total: root.value, unit: &hot.unit, compiled, depth: 0, out: String::new() };
     drawing.draw(&root, 0.0, 0);
     let (depth, mut boxes) = (drawing.depth, drawing.out);
     // Callers at the bottom, as flame graphs are read.
-    let height = depth as f64 * row + 4.0;
+    let height = depth as f64 * row;
     for level in 0..depth {
         let y = height - (level + 1) as f64 * row;
-        boxes = boxes
-            .replace(&format!("{{Y{level}}}"), &format!("{y:.1}"))
-            .replace(&format!("{{T{level}}}"), &format!("{:.1}", y + 13.0));
+        boxes = boxes.replace(&format!("{{Y{level}}}"), &format!("{y:.1}"));
     }
     let percent = |value: i64| if hot.total == 0 { 0.0 } else { value as f64 * 100.0 / hot.total as f64 };
     let mut rows = String::new();
     for (function, file, flat, cum) in hot.functions.iter().take(30) {
         rows.push_str(&format!(
-            "<tr><td class=\"n\">{}</td><td class=\"n\">{:.1}%</td><td class=\"n\">{}</td><td class=\"n\">{:.1}%</td><td><code>{}</code> {}</td></tr>\n",
+            "<tr><td class=\"n\">{}</td><td class=\"n\">{:.1}%</td><td class=\"n\">{}</td><td class=\"n\">{:.1}%</td><td><code>{}</code> <span class=\"muted\">{}</span></td></tr>\n",
             amount(*flat, &hot.unit), percent(*flat), amount(*cum, &hot.unit), percent(*cum), escape(function), escape(file)
         ));
     }
+    let name = title.rsplit(['/', '\\']).next().unwrap_or(title);
     format!(
-        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><title>{title}</title><style>\
-body{{font:14px/1.5 system-ui,sans-serif;margin:2rem auto;max-width:76rem;padding:0 1rem;color:#1f2328}}\
-svg text{{font:11px monospace;pointer-events:none}}table{{border-collapse:collapse}}\
-td,th{{padding:.2rem .6rem;border-bottom:1px solid #d0d7de;text-align:left}}td.n{{text-align:right;font-variant-numeric:tabular-nums}}\
-</style></head><body>\n<h1>{title}</h1>\n<p>{} of {} in all. Each box is a function, as wide as its share, above what called it; hover it for how much.</p>\n\
-<svg width=\"{width}\" height=\"{height:.0}\" role=\"img\">\n{boxes}</svg>\n<h2>Functions</h2>\n<table><tr><th>flat</th><th>flat%</th><th>cum</th><th>cum%</th><th>function</th></tr>\n{rows}</table>\n</body></html>\n",
+        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><title>{name}</title><style>\
+:root{{--fg:#1f2328;--bg:#fff;--muted:#59636e;--line:#d0d7de;--code:#eff1f3}}\
+@media (prefers-color-scheme:dark){{:root{{--fg:#e6edf3;--bg:#0d1117;--muted:#9198a1;--line:#3d444d;--code:#262c36}}}}\
+body{{font:13px/1.5 var(--vscode-font-family,system-ui,sans-serif);margin:1.5rem;color:var(--vscode-foreground,var(--fg));background:var(--vscode-editor-background,var(--bg))}}\
+h1{{font-size:1.25rem;margin:0}}h2{{font-size:1rem;margin:1.5rem 0 .5rem}}\
+.muted{{color:var(--vscode-descriptionForeground,var(--muted))}}.path{{font-size:12px;word-break:break-all;margin:.1rem 0 1rem}}\
+svg{{display:block;width:100%}}svg rect{{stroke:var(--vscode-editor-background,var(--bg));stroke-width:1}}\
+svg text{{font:11px var(--vscode-editor-font-family,ui-monospace,monospace);fill:#1b1b1b;pointer-events:none}}\
+table{{border-collapse:collapse}}th{{text-align:left;font-weight:600}}\
+td,th{{padding:.2rem .6rem;border-bottom:1px solid var(--vscode-panel-border,var(--line))}}td.n{{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}}\
+code{{font-family:var(--vscode-editor-font-family,ui-monospace,monospace);background:var(--vscode-textCodeBlock-background,var(--code));padding:0 .3em;border-radius:3px}}\
+</style></head><body>\n<h1>{} profile, {} in all</h1>\n<p class=\"muted path\">{title}</p>\n\
+<p class=\"muted\">Each box is a function, as wide as its share, above what called it; hover it for how much. Tondo's code is warm, the runtime's and the system's grey.</p>\n\
+<svg height=\"{height:.0}\" role=\"img\">\n{boxes}</svg>\n<h2>Functions</h2>\n<table><tr><th>flat</th><th>flat%</th><th>cum</th><th>cum%</th><th>function</th></tr>\n{rows}</table>\n</body></html>\n",
         escape(&hot.kind),
         amount(hot.total, &hot.unit),
+        name = escape(name),
         title = escape(title),
     )
 }
@@ -717,5 +740,27 @@ mod tests {
         assert_eq!(amount(2 * PERIOD, "nanoseconds"), "2ms");
         let page = flame_page("cpu", &hot);
         assert!(page.contains("<title>parse — 2ms (66.7%)</title>") && !page.contains("<script"), "{page}");
+    }
+
+    /// Code of no line, as a function's prologue, counts as its function's.
+    #[test]
+    fn code_of_no_line_is_its_functions() {
+        let mut builder =
+            Builder::new("app", &[("samples", "count"), ("cpu", "nanoseconds")], ("cpu", "nanoseconds"), PERIOD);
+        let main = || Frame { address: 0x20, function: "main", file: "src/main.to", line: 9 };
+        builder.sample(
+            &[Frame { address: 0x10, function: "fib", file: "src/main.to", line: 4 }, main()],
+            &[1, PERIOD],
+            &[],
+        );
+        builder.sample(&[Frame { address: 0x30, function: "fib", file: "", line: 0 }, main()], &[1, PERIOD], &[]);
+        let path = std::env::temp_dir().join(format!("tondo-profile-prologue-{}.pprof", std::process::id()));
+        std::fs::write(&path, builder.finish(0, 2 * PERIOD)).unwrap();
+        let read = read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let functions: Vec<(String, String, i64)> =
+            hot(&read, None).unwrap().functions.into_iter().map(|(f, file, flat, _)| (f, file, flat)).collect();
+        assert_eq!(functions[0], ("fib".to_string(), "src/main.to".to_string(), 2 * PERIOD));
+        assert_eq!(functions.len(), 2);
     }
 }
