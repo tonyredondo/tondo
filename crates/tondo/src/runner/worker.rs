@@ -45,6 +45,16 @@ pub(super) struct Run<'a> {
     /// search ends, as milliseconds since the epoch, or `0` for never.
     pub targets: &'a [Target],
     pub until: u64,
+    /// While reducing an input that failed: the inputs to try instead.
+    pub replay: Option<&'a Replay>,
+}
+
+/// The inputs a worker tries in a call, as `tondo test` reduces one that
+/// failed there: a file of one input a line.
+pub(super) struct Replay {
+    pub test: u32,
+    pub call: String,
+    pub file: std::path::PathBuf,
 }
 
 /// A call of `testing.fuzz` the search runs in: its test, its name, its
@@ -208,6 +218,10 @@ fn worker(
         let (limit, memory) = (fuzz.map_or(1000, |f| f.timeout.as_millis()), fuzz.map_or(2048, |f| f.memory));
         let fields = format!("{test}\t{call}\t{corpus}\t{stop}\t{until}\t{literals}\t{limit}\t{memory}");
         command.env("TONDO_FUZZ", fields);
+        if let Some(replay) = run.replay {
+            let (test, call) = (tree.id(replay.test), super::fuzz::directory(&replay.call));
+            command.env("TONDO_FUZZ_REPLAY", format!("{test}\t{call}\t{}", replay.file.display()));
+        }
         timeout = Duration::from_secs(10 * 365 * 24 * 3600);
     }
     if let Some(seed) = run.options.schedule(context.iteration) {
@@ -597,13 +611,15 @@ impl Session<'_> {
             }
             "fuzz" => {
                 let parts: Vec<&str> = text.split('\0').collect();
-                if let [name, inputs, json, file, seed, failed, searched] = parts[..]
+                if let [name, inputs, json, file, seed, failed, searched, tried] = parts[..]
                     && let Some(entry) = self.running.iter_mut().rev().find(|(o, _, _)| o.node == node)
                 {
                     let input = (failed == "1").then(|| FuzzInput {
                         json: json.to_string(),
                         file: (!file.is_empty()).then(|| file.to_string()),
                         seed: seed.parse().ok(),
+                        tried: tried.parse().ok(),
+                        reduced_from: None,
                     });
                     let (name, inputs, search) =
                         (name.to_string(), inputs.parse().unwrap_or(0), Searched::read(searched));

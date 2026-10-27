@@ -1410,6 +1410,8 @@ pub const NATIVES: &[Native] = {
         fuzz("invalid", &[String], Unit, "tondo_rt_fuzz_invalid"),
         fuzz("failed", &[], Unit, "tondo_rt_fuzz_failed"),
         fuzz("end", &[], Unit, "tondo_rt_fuzz_end"),
+        fuzz("replaying", &[], Bool, "tondo_rt_fuzz_replaying"),
+        fuzz("encoded", &[String], Unit, "tondo_rt_fuzz_encoded"),
     ]
 };
 

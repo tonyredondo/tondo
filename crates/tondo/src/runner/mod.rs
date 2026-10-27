@@ -320,6 +320,10 @@ pub struct FuzzInput {
     pub json: String,
     pub file: Option<String>,
     pub seed: Option<u64>,
+    /// While reducing it, which of the inputs tried it is.
+    pub tried: Option<usize>,
+    /// Once reduced, how many bytes it had before.
+    pub reduced_from: Option<usize>,
 }
 
 /// What a benchmark measured: the runs of each sample, the nanoseconds a
@@ -566,7 +570,17 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         counts: counts.as_deref(),
         profiles: collected.as_ref().map(|(kind, dir)| (*kind, dir.as_path())),
     };
-    let run = worker::Run { executable, dir, tree, options, stores, bench: options.bench, targets: &[], until: 0 };
+    let run = worker::Run {
+        executable,
+        dir,
+        tree,
+        options,
+        stores,
+        bench: options.bench,
+        targets: &[],
+        until: 0,
+        replay: None,
+    };
     interrupt::listen();
     let (attempts, rounds) = match &options.baseline {
         Some(Baseline::Revision(revision)) => (against(&run, revision, &plan, &mut printer), Vec::new()),
@@ -958,7 +972,17 @@ fn against(run: &worker::Run, revision: &Revision, plan: &[u32], printer: &mut h
     let ours = worker::Run { stores: worker::Stores { ..run.stores }, bench, ..*run };
     let stores = worker::Stores { update: false, counts: None, ..run.stores };
     let (executable, dir, theirs_tree) = (&revision.executable, &revision.dir, &revision.tree);
-    let theirs = worker::Run { executable, dir, tree: theirs_tree, options, stores, bench, targets: &[], until: 0 };
+    let theirs = worker::Run {
+        executable,
+        dir,
+        tree: theirs_tree,
+        options,
+        stores,
+        bench,
+        targets: &[],
+        until: 0,
+        replay: None,
+    };
     let node = |id: &str| (1..revision.tree.nodes.len() as u32).find(|&n| revision.tree.id(n) == id);
     printer.begin(1, 0, plan);
     let context = Context { round: 0, iteration: 1, unit: None, target: None };
@@ -1093,6 +1117,22 @@ pub fn schedule_seed(seed: u64, iteration: u32) -> u64 {
     z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     z ^ (z >> 31)
+}
+
+/// What a test build run outside `tondo test`, as under a debugger, reads
+/// from the project at `dir`: its snapshots and the inputs of its fuzz
+/// store, each written to a file, as the variables that name them.
+pub fn test_environment(dir: &Path) -> Result<Vec<(&'static str, PathBuf)>, String> {
+    let package = package(dir);
+    let snapshots = store::Snapshots::read(dir, &package)?;
+    let id = std::process::id();
+    let (entries, fuzzed) = (
+        std::env::temp_dir().join(format!("tondo-debug-snapshots-{id}")),
+        std::env::temp_dir().join(format!("tondo-debug-fuzz-{id}")),
+    );
+    std::fs::write(&entries, snapshots.for_worker()).map_err(|e| e.to_string())?;
+    std::fs::write(&fuzzed, store::fuzz_inputs(dir, &package)).map_err(|e| e.to_string())?;
+    Ok(vec![("TONDO_TEST_SNAPSHOTS", entries), ("TONDO_TEST_FUZZ", fuzzed)])
 }
 
 /// Where the test build of the project at `path` is kept: a directory

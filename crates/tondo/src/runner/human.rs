@@ -134,6 +134,14 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// The input a call failed with is being reduced.
+    pub(super) fn reducing(&mut self, test: &str, call: &str, bytes: usize) {
+        if !self.quiet {
+            let test = test.rsplit("::").next().unwrap_or(test);
+            say!("  {test} \u{203a} {call}: an input failed; reducing its {bytes} bytes");
+        }
+    }
+
     /// The search ended: the tests' lines follow.
     pub(super) fn fuzzing_ends(&mut self) {
         if let Some(fuzzing) = self.fuzz.take()
@@ -251,7 +259,7 @@ pub(super) fn detail(tree: &Tree, attempt: &Attempt, timeout: Duration) -> Strin
 }
 
 /// What an attempt wrote: stdout, stderr, logs and tags.
-fn written(attempt: &Attempt) -> String {
+fn written(tree: &Tree, attempt: &Attempt) -> String {
     let mut text = String::new();
     for (label, bytes) in [("stdout", &attempt.stdout), ("stderr", &attempt.stderr)] {
         if !bytes.is_empty() {
@@ -278,14 +286,34 @@ fn written(attempt: &Attempt) -> String {
             clock.settles
         ));
     }
-    // The input a call of `testing.fuzz` failed with (10.6).
+    // The input a call of `testing.fuzz` failed with (10.6): one the
+    // search found says how, where it was kept, and how to run it again.
     for (fuzzed, input) in attempt.fuzz.iter().filter_map(|f| Some((f, f.input.as_ref()?))) {
         let from = match (&input.file, input.seed) {
-            (Some(file), _) => format!("its input in {file}"),
+            (Some(file), _) if fuzzed.search.is_none() => format!("its input in {file}"),
             (None, Some(seed)) => format!("seed {seed}"),
-            (None, None) => "an input".into(),
+            _ => "an input".into(),
         };
-        text.push_str(&format!("fuzz `{}` failed with {from}:\n  {}\n", fuzzed.name, input.json));
+        let Some(searched) = &fuzzed.search else {
+            text.push_str(&format!("fuzz `{}` failed with {from}:\n  {}\n", fuzzed.name, input.json));
+            continue;
+        };
+        let reduced = match input.reduced_from {
+            Some(bytes) => format!(", reduced from {bytes} to {} bytes", input.json.len()),
+            None => String::new(),
+        };
+        text.push_str(&format!(
+            "fuzz `{}` failed after {} ({} inputs) with an input{reduced}:\n  {}\n",
+            fuzzed.name,
+            clock(searched.elapsed_ms),
+            count(searched.inputs),
+            input.json
+        ));
+        if let Some(file) = &input.file {
+            text.push_str(&format!("saved in {file}, which `tondo test` runs from now on\n"));
+        }
+        let id = tree.id(attempt.node);
+        text.push_str(&format!("reproduce: tondo test --exact {id}\ndebug:     tondo debug --test {id}\n"));
     }
     for artifact in &attempt.artifacts {
         text.push_str(&format!(
@@ -346,7 +374,7 @@ pub(super) fn report(
             if !detail.is_empty() {
                 text.push_str(&format!("{detail}\n"));
             }
-            text.push_str(&written(decisive));
+            text.push_str(&written(tree, decisive));
         } else {
             for (index, attempt) in aggregate.attempts.iter().enumerate() {
                 let when = match (attempt.iteration, attempt.round, options.schedule(attempt.iteration)) {
@@ -360,7 +388,7 @@ pub(super) fn report(
                     _ => detail(tree, attempt, printer.timeout()),
                 };
                 text.push_str(&format!("attempt {}{when}: {status}\n", index + 1));
-                text.push_str(&written(attempt));
+                text.push_str(&written(tree, attempt));
             }
         }
         // The first order that failed, to run again.

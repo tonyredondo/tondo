@@ -16,6 +16,9 @@ use std::time::Duration;
 pub enum Debugged {
     Started(PathBuf, Vec<std::ffi::OsString>),
     Running(String),
+    /// A test of a project: its tests' executable, the test's node, which
+    /// runs alone, and the variables that give it the project's stores.
+    Test(PathBuf, u32, Vec<(&'static str, PathBuf)>),
 }
 
 static INTERRUPTED: AtomicBool = AtomicBool::new(false);
@@ -50,6 +53,46 @@ quit                                            end the program and the debugger
 /// a program it started.
 pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
     let (program, child) = match debugged {
+        Debugged::Test(executable, node, environment) => {
+            use std::os::unix::process::CommandExt;
+            let plan = std::env::temp_dir().join(format!("tondo-debug-plan-{}", std::process::id()));
+            std::fs::write(&plan, node.to_string()).map_err(|e| format!("cannot write {}: {e}", plan.display()))?;
+            let mut child = std::process::Command::new(&executable)
+                .env("TONDO_DEBUG", "1")
+                .env("TONDO_TEST_PLAN", &plan)
+                .envs(environment)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .process_group(0)
+                .spawn()
+                .map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
+            // What the test writes, with the runner's frames as what they
+            // say: how the test ended, and its logs.
+            for (stream, stdout) in [
+                (child.stdout.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>), true),
+                (child.stderr.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>), false),
+            ] {
+                let Some(stream) = stream else { continue };
+                std::thread::spawn(move || {
+                    let mut stream = std::io::BufReader::new(stream);
+                    let mut line = String::new();
+                    while matches!(stream.read_line(&mut line), Ok(n) if n > 0) {
+                        let shown = match line.strip_prefix('\x1e') {
+                            Some(frame) => crate::dap::test_frame(frame, &mut stream, Some(node)),
+                            None => Some(std::mem::take(&mut line)),
+                        };
+                        match (shown, stdout) {
+                            (Some(text), true) => print!("{text}"),
+                            (Some(text), false) => eprint!("{text}"),
+                            _ => {}
+                        }
+                        line.clear();
+                    }
+                });
+            }
+            (observe::started(&executable, child.id())?, Some(child))
+        }
         Debugged::Started(executable, arguments) => {
             use std::os::unix::process::CommandExt;
             // Its own process group, so that Ctrl-C pauses it instead of

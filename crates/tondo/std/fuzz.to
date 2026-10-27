@@ -21,6 +21,11 @@ fn run[T: serialization.Encode + serialization.Decode, E, F: CallMut[fn(T): !E]]
     for native.next() {
         match json.decode[T](native.input()) {
             ok(value) => {
+                // What the input is, as `json.encode` writes it, when
+                // `tondo test` reduces one that failed.
+                if native.replaying() {
+                    native.encoded(json.encode(value))
+                }
                 match each(value) {
                     ok(_) => {}
                     err(error) => {

@@ -5,10 +5,12 @@
 //! fails goes to the fuzz store, and the attempts of a test's workers
 //! become one.
 
-use super::worker::{self, Note, Target};
-use super::{Attempt, Context, Fuzz, Fuzzed, Searched, Tree, human, interrupt};
+use super::worker::{self, Note, Replay, Target};
+use super::{Attempt, Context, Fuzz, FuzzInput, Fuzzed, Searched, Status, Tree, human, interrupt};
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 /// The directory of a call under its test's: its name, with what is not a
 /// letter, a digit, `.`, `_` or `-` as `_` (testing 15.14).
@@ -92,6 +94,15 @@ pub(super) fn campaign(run: &worker::Run, plan: &[u32], printer: &mut human::Pri
         let mut merged = list[0].clone();
         merged.fuzz = merge(&list);
         for fuzzed in &mut merged.fuzz {
+            // What the search found, as small as it fails the same way.
+            if let Some(input) = fuzzed.input.as_mut().filter(|i| i.file.is_none() && i.seed.is_none())
+                && let Some(index) = targets.iter().position(|t| t.test == merged.node && t.call == fuzzed.name)
+                && !interrupt::requested()
+            {
+                printer.reducing(tree.id(merged.node), &fuzzed.name, input.json.len());
+                let reducing = worker::Run { stores: worker::Stores { ..run.stores }, ..searching };
+                reduce(&reducing, index, input, &merged.status);
+            }
             store(run.dir, tree, merged.node, fuzzed);
         }
         attempts.push(merged);
@@ -146,5 +157,199 @@ fn store(dir: &Path, tree: &Tree, test: u32, fuzzed: &mut Fuzzed) {
     }
     if super::store::write_atomically(&path, input.json.as_bytes()).is_ok() {
         input.file = Some(relative.display().to_string());
+    }
+}
+
+/// What makes two failures the same, for reducing: the status, the code,
+/// and where it happened.
+fn signature(status: &Status) -> Option<String> {
+    let at = |text: &str| text.lines().find_map(|l| l.trim_start().strip_prefix("--> ").map(str::to_string));
+    Some(match status {
+        Status::Panic(text) => {
+            let code = text.split(']').next().unwrap_or_default();
+            format!("panic {code} {}", at(text).unwrap_or_default())
+        }
+        Status::Error { error_type, location, .. } => format!("error {error_type} {location:?}"),
+        Status::Limit { timeout, .. } => format!("limit {timeout}"),
+        Status::Timeout => "timeout".into(),
+        Status::Crashed(_) => "crashed".into(),
+        _ => return None,
+    })
+}
+
+/// How simple an input is: the length of its text, then the size of its
+/// numbers; a reduction makes it simpler.
+fn simplicity(value: &Value) -> (usize, f64) {
+    fn numbers(value: &Value) -> f64 {
+        match value {
+            Value::Number(n) => n.as_f64().unwrap_or(0.0).abs(),
+            Value::Array(items) => items.iter().map(numbers).sum(),
+            Value::Object(members) => members.values().map(numbers).sum(),
+            _ => 0.0,
+        }
+    }
+    (value.to_string().len(), numbers(value))
+}
+
+/// Simpler values than `value`, each changed in one place: lists without
+/// halves or elements, maps without members, shorter texts, numbers
+/// nearer 0, `false`, and `null`.
+fn smaller(value: &Value) -> Vec<Value> {
+    let mut out = Vec::new();
+    let mut paths = Vec::new();
+    walk(value, &mut Vec::new(), &mut paths);
+    for path in paths {
+        let Some(node) = at(value, &path) else { continue };
+        for replacement in replacements(node) {
+            let mut changed = value.clone();
+            if let Some(slot) = at_mut(&mut changed, &path) {
+                *slot = replacement;
+                out.push(changed);
+            }
+        }
+    }
+    let before = simplicity(value);
+    out.retain(|candidate| simplicity(candidate) < before);
+    out.sort_by(|a, b| simplicity(a).partial_cmp(&simplicity(b)).unwrap_or(std::cmp::Ordering::Equal));
+    out.dedup();
+    out.truncate(500);
+    out
+}
+
+fn replacements(node: &Value) -> Vec<Value> {
+    let mut out = Vec::new();
+    match node {
+        Value::Array(items) if !items.is_empty() => {
+            out.push(Value::Array(Vec::new()));
+            if items.len() > 1 {
+                out.push(Value::Array(items[items.len() / 2..].to_vec()));
+                out.push(Value::Array(items[..items.len() / 2].to_vec()));
+            }
+            for index in 0..items.len().min(32) {
+                let mut fewer = items.clone();
+                fewer.remove(index);
+                out.push(Value::Array(fewer));
+            }
+        }
+        Value::Object(members) => {
+            for key in members.keys().take(32) {
+                let mut fewer = members.clone();
+                fewer.remove(key);
+                out.push(Value::Object(fewer));
+            }
+        }
+        Value::String(text) if !text.is_empty() => {
+            let chars: Vec<char> = text.chars().collect();
+            out.push(Value::String(String::new()));
+            if chars.len() > 1 {
+                out.push(Value::String(chars[chars.len() / 2..].iter().collect()));
+                out.push(Value::String(chars[..chars.len() / 2].iter().collect()));
+            }
+            for index in 0..chars.len().min(32) {
+                let mut fewer = chars.clone();
+                fewer.remove(index);
+                out.push(Value::String(fewer.into_iter().collect()));
+            }
+        }
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64().filter(|&i| i != 0) {
+                out.extend([0, i / 2, i - i.signum()].map(Value::from));
+            } else if let Some(f) = n.as_f64().filter(|&f| f != 0.0) {
+                out.extend([0.0, f.trunc(), (f / 2.0).trunc()].map(Value::from));
+            }
+        }
+        Value::Bool(true) => out.push(Value::Bool(false)),
+        _ => {}
+    }
+    if !node.is_null() {
+        out.push(Value::Null);
+    }
+    out
+}
+
+fn walk(value: &Value, path: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
+    out.push(path.clone());
+    let children: Vec<&Value> = match value {
+        Value::Array(items) => items.iter().collect(),
+        Value::Object(members) => members.values().collect(),
+        _ => return,
+    };
+    for (index, child) in children.into_iter().enumerate() {
+        path.push(index);
+        walk(child, path, out);
+        path.pop();
+    }
+}
+
+fn at<'a>(value: &'a Value, path: &[usize]) -> Option<&'a Value> {
+    let Some((&first, rest)) = path.split_first() else { return Some(value) };
+    match value {
+        Value::Array(items) => at(items.get(first)?, rest),
+        Value::Object(members) => at(members.values().nth(first)?, rest),
+        _ => None,
+    }
+}
+
+fn at_mut<'a>(value: &'a mut Value, path: &[usize]) -> Option<&'a mut Value> {
+    let Some((&first, rest)) = path.split_first() else { return Some(value) };
+    match value {
+        Value::Array(items) => at_mut(items.get_mut(first)?, rest),
+        Value::Object(members) => at_mut(members.values_mut().nth(first)?, rest),
+        _ => None,
+    }
+}
+
+/// Reduces an input that failed (testing 10.6): tries simpler ones in a
+/// worker that runs only them, keeping each that fails the same way, for
+/// at most 30 seconds; the input becomes the last kept, as `json.encode`
+/// writes it, saying how many bytes it had.
+fn reduce(run: &worker::Run, target: usize, input: &mut FuzzInput, failure: &Status) {
+    let Some(wanted) = signature(failure) else { return };
+    let Ok(mut current) = serde_json::from_str::<Value>(&input.json) else { return };
+    let original = input.json.len();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let file = std::env::temp_dir().join(format!("tondo-fuzz-tried-{}", std::process::id()));
+    // The input itself first: it fails again, as `json.encode` writes it.
+    let mut candidates = vec![current.clone()];
+    candidates.extend(smaller(&current));
+    let mut reduced = false;
+    let test = run.targets[target].test;
+    'rounds: while Instant::now() < deadline && !interrupt::requested() {
+        let mut offset = 0;
+        let mut kept = None;
+        while offset < candidates.len() && Instant::now() < deadline && !interrupt::requested() {
+            let lines: Vec<String> = candidates[offset..].iter().map(Value::to_string).collect();
+            if std::fs::write(&file, lines.join("\n")).is_err() {
+                break 'rounds;
+            }
+            let replay = Replay { test, call: run.targets[target].call.clone(), file: file.clone() };
+            let trying = worker::Run { replay: Some(&replay), stores: worker::Stores { ..run.stores }, ..*run };
+            let context = Context { round: 0, iteration: 1, unit: None, target: Some(target as u32) };
+            let attempts = worker::execute(&trying, vec![(vec![test], context)], |_| {});
+            let Some(attempt) = attempts.into_iter().find(|a| a.node == test) else { break 'rounds };
+            let failed =
+                attempt.fuzz.iter().filter(|f| f.name == run.targets[target].call).find_map(|f| f.input.clone());
+            let Some(tried) = failed.as_ref().and_then(|f| f.tried) else { break };
+            if signature(&attempt.status).as_deref() == Some(wanted.as_str()) {
+                kept = Some((offset + tried, failed.map(|f| f.json).unwrap_or_default()));
+                break;
+            }
+            offset += tried + 1;
+        }
+        let Some((index, json)) = kept else { break };
+        input.json = json;
+        if index == 0 && !reduced {
+            // The input as it was, written as `json.encode` writes it.
+            reduced = true;
+            candidates = smaller(&current);
+            continue;
+        }
+        current = candidates[index].clone();
+        reduced = true;
+        candidates = smaller(&current);
+    }
+    let _ = std::fs::remove_file(&file);
+    if reduced && input.json.len() < original {
+        input.reduced_from = Some(original);
     }
 }

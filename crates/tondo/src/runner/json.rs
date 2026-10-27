@@ -757,7 +757,7 @@ fn fuzzed(fuzzed: &super::Fuzzed) -> Value {
             ("json", str(input.json.clone())),
             ("file", input.file.clone().map_or(Value::Null, str)),
             ("seed", input.seed.map_or(Value::Null, |s| int(s as usize))),
-            ("reduced_from", Value::Null),
+            ("reduced_from", input.reduced_from.map_or(Value::Null, int)),
         ])
     });
     let search = fuzzed.search.as_ref().map_or(Value::Null, |searched| {

@@ -2,7 +2,7 @@
 //! and reports, what it selects, and the errors a test file can have.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 fn sample() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/testing/sample")
@@ -375,9 +375,26 @@ test plain {}
     let store = dir.join("fuzz/unit/app/measuresDepth/depth");
     let saved: Vec<_> = std::fs::read_dir(&store).unwrap().flatten().map(|e| e.path()).collect();
     assert_eq!(saved.len(), 1, "{saved:?}");
+    // Reduced, as json.encode writes it, with how to run it again.
     let input = std::fs::read_to_string(&saved[0]).unwrap();
-    assert!(input.matches('[').count() > 3, "{input}");
+    assert_eq!(input, "\"[[[[\"");
+    assert!(stdout.contains(":\n  \"[[[[\"\nsaved in fuzz/unit/app/measuresDepth/depth/"), "{stdout}");
+    assert!(stdout.contains("reproduce: tondo test --exact app::unit::app::measuresDepth\n"), "{stdout}");
+    assert!(stdout.contains("debug:     tondo debug --test app::unit::app::measuresDepth\n"), "{stdout}");
     assert!(dir.join("target/fuzz/unit/app/measuresDepth/depth").is_dir());
+    // The debugger runs the test alone, with the input, and stops where it
+    // panics.
+    let mut debugger = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--test", "app::unit::app::measuresDepth"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(debugger.stdin.as_mut().unwrap(), b"continue\nquit\n").unwrap();
+    let output = debugger.wait_with_output().unwrap();
+    let said = String::from_utf8_lossy(&output.stdout);
+    assert!(said.contains("stopped at src/main.to:10 in depth (panic[P0001]"), "{said}");
     // From now on, the input that failed fails the test.
     let (stdout, _, status) = tondo(&dir, &["test"]);
     assert_eq!(status, 1, "{stdout}");
@@ -443,7 +460,7 @@ test commands {
     std::fs::write(dir.join("src/main.to"), code).unwrap();
     let (stdout, _, status) = tondo(&dir, &["test", "--fuzz", "--fuzz-time", "60", "--jobs", "2"]);
     assert_eq!(status, 1, "{stdout}");
-    assert!(stdout.contains("fuzz `version` failed with its input in fuzz/unit/app/versions/version/"), "{stdout}");
+    assert!(stdout.contains("saved in fuzz/unit/app/versions/version/"), "{stdout}");
     assert!(stdout.contains(":\n  51017\n"), "{stdout}");
     assert!(stdout.contains(":\n  \"deploy-now\"\n"), "{stdout}");
 }
@@ -504,11 +521,13 @@ test deepens {
     assert_eq!(status, 1, "{stdout}");
     for part in [
         "test app::unit::app::spins ... TIMEOUT\n",
-        "an input ran longer than --fuzz-timeout, 0.5s\nfuzz `spin` failed with its input in fuzz/unit/app/spins/spin/",
+        "an input ran longer than --fuzz-timeout, 0.5s\nfuzz `spin` failed after ",
+        "saved in fuzz/unit/app/spins/spin/",
         "test app::unit::app::grows ... RESOURCE LIMIT\n",
-        "more than --fuzz-memory 200\nfuzz `grow` failed with its input in fuzz/unit/app/grows/grow/",
+        "more than --fuzz-memory 200\nfuzz `grow` failed after ",
+        "saved in fuzz/unit/app/grows/grow/",
         "test app::unit::app::deepens ... CRASHED\n",
-        "fuzz `deep` failed with its input in fuzz/unit/app/deepens/deep/",
+        "saved in fuzz/unit/app/deepens/deep/",
     ] {
         assert!(stdout.contains(part), "missing {part:?} in {stdout}");
     }

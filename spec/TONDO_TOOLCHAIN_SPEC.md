@@ -261,6 +261,7 @@ tondo profile show <profile> [--top <n>] [--lines] [--sample <type>] [--html <pa
 tondo dump <pid|name> [--output <path>] [--json]
 tondo dump read <file> [tasks | task <id> | heap | objects | object <address>] [--json]
 tondo debug [--json] [--live] <file.to|project|executable|pid|name> [-- <argument>...]
+tondo debug [--json] --test <id> [<project>]
 tondo dap
 tondo reload <pid|name> [--json]
 tondo completions bash|zsh|fish
@@ -599,7 +600,9 @@ tiene nada de eso, ni su coste.
 `tondo debug` depura un build de depuración: compila con `--debug` un archivo
 `.to` o un proyecto, o arranca un ejecutable, y el programa espera antes de
 `main` a que se le diga que siga; o se adjunta a uno en ejecución, nombrado
-como en `counters`, que arrancó con `TONDO_DIAGNOSTICS=1`. Lee una orden por
+como en `counters`, que arrancó con `TONDO_DIAGNOSTICS=1`. `--test <id>` depura
+un test del proyecto, solo, con sus snapshots y las entradas de su fuzz store
+(10.6 de testing): dice cómo terminó en lugar de los frames del runner. Lee una orden por
 línea, de la terminal o de su entrada, y con `--json` escribe cada respuesta
 y cada evento como una línea de JSON, para una herramienta o un modelo:
 

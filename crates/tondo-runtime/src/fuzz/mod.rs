@@ -19,11 +19,13 @@ use std::sync::Mutex;
 /// Where an input comes from: a seed, by index, or a file of the store,
 /// from the package's directory.
 /// Where an input comes from: a seed, by index, a file of the store, from
-/// the package's directory, or the search.
+/// the package's directory, the search, or the inputs `tondo test` tries
+/// as it reduces one that failed, by index.
 enum Origin {
     Seed(usize),
     File(String),
     Made,
+    Tried(usize),
 }
 
 struct Call {
@@ -37,6 +39,25 @@ struct Call {
     read: bool,
     /// In the call `tondo test --fuzz` searches in.
     search: Option<Search>,
+    /// In the call whose failing input `tondo test` reduces: the inputs
+    /// to try, which are the only ones it runs.
+    tried: Option<Vec<String>>,
+    /// The input that runs as `json.encode` writes it, while reducing.
+    encoded: Option<String>,
+}
+
+/// The inputs `tondo test` tries as it reduces one that failed, in
+/// `TONDO_FUZZ_REPLAY`: the test's identity, the call's directory, and a
+/// file of one input a line, separated by tabs.
+fn tried(test: &str, call: &str) -> Option<Vec<String>> {
+    let text = std::env::var("TONDO_FUZZ_REPLAY").ok()?;
+    let mut parts = text.splitn(3, '\t');
+    let (Some(for_test), Some(for_call), Some(file)) = (parts.next(), parts.next(), parts.next()) else { return None };
+    if for_test != test || for_call != call {
+        return None;
+    }
+    let lines = std::fs::read_to_string(file).ok()?;
+    Some(lines.lines().map(str::to_string).collect())
 }
 
 /// The fuzz store, by test and directory of the call: each input's file
@@ -121,7 +142,9 @@ pub unsafe extern "C" fn tondo_rt_fuzz_begin(name: *const Str, shape: *const Str
     let search = search::target()
         .filter(|target| target.test == id && target.call == directory(&name))
         .map(|target| Search::new(target, &shape));
-    state.call = Some(Call { name, seeds: Vec::new(), stored, given: 0, current: None, read: false, search });
+    let tried = tried(&id, &directory(&name));
+    let (given, current, read, encoded) = (0, None, false, None);
+    state.call = Some(Call { name, seeds: Vec::new(), stored, given, current, read, search, tried, encoded });
 }
 
 /// A seed, as the JSON `json.encode` wrote for it.
@@ -143,7 +166,11 @@ pub extern "C" fn tondo_rt_fuzz_next() -> u8 {
         search.after(json);
     }
     let index = call.given;
-    call.current = if index < call.seeds.len() {
+    call.encoded = None;
+    call.current = if let Some(tried) = &call.tried {
+        let Some(json) = tried.get(index) else { return 0 };
+        Some((json.clone(), Origin::Tried(index)))
+    } else if index < call.seeds.len() {
         Some((call.seeds[index].clone(), Origin::Seed(index)))
     } else if let Some((file, json)) = call.stored.get(index - call.seeds.len()) {
         Some((json.clone(), Origin::File(file.clone())))
@@ -185,8 +212,9 @@ pub unsafe extern "C" fn tondo_rt_fuzz_invalid(message: *const Str) {
         let origin = match call.current.as_ref().map(|(_, origin)| origin) {
             Some(Origin::File(file)) => format!("{file} does not read as the input of `{}`", call.name),
             Some(Origin::Seed(index)) => format!("seed {index} of `{}` does not read back as its type", call.name),
-            // One the search made that is not the type's is not tried.
-            Some(Origin::Made) | None => return,
+            // One the search made, or one tried while reducing, that is not
+            // the type's is not run.
+            Some(Origin::Made | Origin::Tried(_)) | None => return,
         };
         (call.name.clone(), origin)
     };
@@ -195,6 +223,22 @@ pub unsafe extern "C" fn tondo_rt_fuzz_invalid(message: *const Str) {
         false => format!("fix the file to be an input of `{name}`, or delete it"),
     };
     fail(2011, format!("{origin}: {message}; {fix}"));
+}
+
+/// Whether `tondo test` reduces an input of this call, which then gives
+/// each as `json.encode` writes it.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_fuzz_replaying() -> u8 {
+    state().call.as_ref().is_some_and(|c| c.tried.is_some()) as u8
+}
+
+/// The input that runs, as `json.encode` writes it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_fuzz_encoded(json: *const Str) {
+    let json = String::from_utf8_lossy(unsafe { crate::str_bytes(json) }).into_owned();
+    if let Some(call) = state().call.as_mut() {
+        call.encoded = Some(json);
+    }
 }
 
 /// The body failed with the input that runs: the call ends with it.
@@ -238,16 +282,20 @@ pub(crate) fn interrupted() {
 }
 
 /// Tells `tondo test` what a call did: its name, the inputs it ran, the
-/// one it failed with, as JSON, file and seed, whether it failed, and what
-/// its search did, separated by NUL.
+/// one it failed with, as JSON, file, seed and index among those tried,
+/// whether it failed, and what its search did, separated by NUL.
 fn report(call: &Call, failed: bool) {
-    let (json, file, seed) = match call.current.as_ref().filter(|_| failed) {
-        Some((json, Origin::File(file))) => (json.as_str(), file.as_str(), String::new()),
-        Some((json, Origin::Seed(index))) => (json.as_str(), "", index.to_string()),
-        Some((json, Origin::Made)) => (json.as_str(), "", String::new()),
-        None => ("", "", String::new()),
+    let (json, file, seed, tried) = match call.current.as_ref().filter(|_| failed) {
+        Some((json, Origin::File(file))) => (json.as_str(), file.as_str(), String::new(), String::new()),
+        Some((json, Origin::Seed(index))) => (json.as_str(), "", index.to_string(), String::new()),
+        Some((json, Origin::Made)) => (json.as_str(), "", String::new(), String::new()),
+        Some((json, Origin::Tried(index))) => {
+            (call.encoded.as_deref().unwrap_or(json), "", String::new(), index.to_string())
+        }
+        None => ("", "", String::new(), String::new()),
     };
     let searched = call.search.as_ref().map_or(String::new(), Search::progress);
-    let payload = format!("{}\0{}\0{}\0{file}\0{seed}\0{}\0{searched}", call.name, call.given, json, failed as u8);
+    let (name, given, failed) = (&call.name, call.given, failed as u8);
+    let payload = format!("{name}\0{given}\0{json}\0{file}\0{seed}\0{failed}\0{searched}\0{tried}");
     crate::testing::report("fuzz", payload.as_bytes());
 }

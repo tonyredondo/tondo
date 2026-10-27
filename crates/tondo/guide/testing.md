@@ -135,7 +135,11 @@ test parsesAnyDocument {
   with values from the code's literals and from what its comparisons
   meet, keeps those that run code of the project or its dependencies no
   input ran before, and stops at Ctrl-C, after `--fuzz-time` seconds, or
-  when an input fails, which it saves to the store. Put the code it tries
-  in the project's sources, not in the test file: only theirs is counted. `--jobs` workers share the
+  when an input fails, which it reduces while it fails the same way and
+  saves to the store. Put the code it tries in the project's sources, not
+  in the test file: only theirs is counted. An input that runs longer than
+  `--fuzz-timeout` (1 s), holds more than `--fuzz-memory` MiB (2048) or
+  crashes fails too. `tondo debug --test <id>` stops the test where it
+  fails. `--jobs` workers share the
   search; what it found is in `target/fuzz/`, or `--fuzz-corpus <dir>`,
   and the next search starts from it.

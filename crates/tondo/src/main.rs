@@ -914,15 +914,45 @@ fn counters_command(args: &[OsString]) -> Result<ExitCode, String> {
 fn debug_command(args: &[OsString]) -> Result<ExitCode, String> {
     let usage = |message: &str| format!("{message}\n{USAGE}");
     let (mut json, mut target, mut program_args, mut live) = (false, None, Vec::new(), false);
+    let mut test = None;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.to_str().unwrap_or_default() {
             "--json" => json = true,
             "--live" => live = true,
+            "--test" => {
+                test = Some(
+                    rest.next()
+                        .ok_or_else(|| usage("--test takes the id of a test, as `tondo test --list` gives it"))?,
+                );
+            }
             "--" => program_args = rest.by_ref().cloned().collect(),
             other if !other.starts_with('-') && target.is_none() => target = Some(arg.clone()),
             other => return Err(usage(&format!("debug does not take `{other}`"))),
         }
+    }
+    // A test of a project, alone, built to be debugged.
+    if let Some(test) = test {
+        let project = target.map_or_else(|| PathBuf::from("."), PathBuf::from);
+        let build = TestBuild {
+            library: false,
+            debug: true,
+            statically: false,
+            target: None,
+            diagnostics_json: false,
+            list: false,
+            coverage: false,
+            fuzz: false,
+        };
+        let Some((executable, tree)) = build_tests(&project, &build)? else { return Ok(ExitCode::FAILURE) };
+        let test = test.to_string_lossy();
+        let Some(node) = tree.nodes.iter().position(|n| n.id == test && !n.suite) else {
+            return Err(format!("there is no test `{test}`: `tondo test --list` lists them"));
+        };
+        let root = if project.is_file() { project.parent().unwrap_or(&project).to_path_buf() } else { project.clone() };
+        let environment = tondo::runner::test_environment(&root)?;
+        let status = tondo::debug::debug(tondo::debug::Debugged::Test(executable, node as u32, environment), json)?;
+        return Ok(ExitCode::from(status.clamp(0, 255) as u8));
     }
     let target = target.ok_or_else(|| {
         usage("debug takes a program: a .to file, a project, an executable, or a running one's process ID or name")

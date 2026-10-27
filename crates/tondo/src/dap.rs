@@ -125,7 +125,7 @@ pub type BuildTests<'a> = &'a dyn Fn(&Path) -> Result<Option<(PathBuf, Vec<Strin
 /// console (testing 7): `\x1e<nonce> <sequence>` alone marks the output so
 /// far; a frame, its kind, node and the length of the payload that follows,
 /// which says how the test debugged, `tested`, ended, or what it logged.
-fn test_frame(header: &str, stream: &mut impl BufRead, tested: Option<u32>) -> Option<String> {
+pub(crate) fn test_frame(header: &str, stream: &mut impl BufRead, tested: Option<u32>) -> Option<String> {
     let words: Vec<&str> = header.split_whitespace().collect();
     let [_, _, kind, node, length] = words[..] else { return None };
     let mut payload = vec![0; length.parse().ok()?];
@@ -348,6 +348,7 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
         // it is given, that test alone.
         let mut plan = None;
         let mut tested = None;
+        let mut environment = Vec::new();
         let executable = if let Some(test) = arguments["test"].as_str() {
             let (executable, ids) = (builds.tests)(&path)?
                 .ok_or_else(|| format!("the tests of {program} do not compile: `tondo test {program}` shows why"))?;
@@ -358,6 +359,8 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
             std::fs::write(&file, node.to_string()).map_err(|e| format!("cannot write {}: {e}", file.display()))?;
             plan = Some(file);
             tested = Some(node as u32);
+            // The project's snapshots and the inputs of its fuzz store.
+            environment = crate::runner::test_environment(&path)?;
             executable
         } else if path.is_file() && path.extension().is_none_or(|e| e != "to") {
             path
@@ -380,6 +383,7 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
         let mut command = std::process::Command::new(&executable);
         if let Some(plan) = &plan {
             command.env("TONDO_TEST_PLAN", plan);
+            command.envs(environment);
         }
         command.envs(variables);
         let child = command
