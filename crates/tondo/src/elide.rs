@@ -24,11 +24,17 @@ fn whole(place: &Place) -> Option<Local> {
 
 fn elide_once(body: &mut Body, types: &Types) -> bool {
     let live = live_in(&body.blocks, body.locals.len());
-    // What is lent keeps its storage: a loan holds its address.
+    // What is lent keeps its storage, as a loan holds its address; and a
+    // binding that borrows writes through it to what it borrows.
     let mut lent = vec![false; body.locals.len()];
     for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
-        if let Statement::Lend(_, place) = statement {
-            lent[place.local.0 as usize] = true;
+        match statement {
+            Statement::Lend(alias, place) => {
+                lent[place.local.0 as usize] = true;
+                lent[alias.0 as usize] = true;
+            }
+            Statement::LendAt(alias, _) => lent[alias.0 as usize] = true,
+            _ => {}
         }
     }
     // And what the parameters, which may be the caller's own through a

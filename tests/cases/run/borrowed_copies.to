@@ -1,0 +1,27 @@
+import std.console
+
+// A binding that borrows an element writes through to it, even when the
+// value it took is then only copied: the copy must not take the value in
+// its place.
+
+fn twice(n: Int): Int {
+    n * 2
+}
+
+fn main() {
+    var values = [1, 2, 3]
+    var last = 0
+    for mut value in values {
+        value = twice(value)
+        last = value
+    }
+    var ages = ["ada": 36]
+    for (_, var age) in ages {
+        age = 7
+        let copy = age
+        last += copy
+    }
+    console.println("{values} {ages} {last}")
+}
+
+// expect-stdout: [2, 4, 6] [ada: 7] 13
