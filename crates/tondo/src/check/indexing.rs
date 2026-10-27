@@ -233,6 +233,7 @@ impl Checker<'_> {
                             ty: Some(self.types.display(field.ty)),
                             def: key.and_then(|key| index?.of(&key)),
                             builtin: None,
+                            private: field.private,
                         });
                     }
                 }
@@ -242,29 +243,42 @@ impl Checker<'_> {
                     ty: Some(self.types.display(*inner)),
                     def: None,
                     builtin: None,
+                    private: false,
                 }),
                 AdtKind::Enum(_) => {}
             }
         }
+        // The methods a value has: those that take `self`, not its type's
+        // other functions, as `Builder.new`.
         let key = self.owner_key(ty);
         let mut methods: Vec<(String, u32)> = self
             .methods
             .iter()
-            .filter(|((owner, _), _)| *owner == key)
+            .filter(|((owner, _), id)| {
+                *owner == key && self.signatures.get(id.0 as usize).is_some_and(|s| s.receiver.is_some())
+            })
             .map(|((_, name), id)| (name.clone(), id.0))
             .collect();
         methods.sort();
         for (name, id) in methods {
             let def = self.index.as_ref().and_then(|index| index.of(&Key::Fn(id)));
-            members.push(Member { name, method: true, ty: None, def, builtin: None });
+            members.push(Member { name, method: true, ty: None, def, builtin: None, private: false });
         }
         // What the runtime implements, as `tondo api` documents it.
         let shown = self.types.display(ty);
         let intrinsic = shown.split('[').next().unwrap_or_default().to_string();
         for name in crate::api::builtin_methods(&intrinsic) {
-            if !members.iter().any(|m| m.name == name) {
+            let on_values = crate::api::builtin_doc(&intrinsic, name).is_some_and(|(d, _)| crate::api::takes_self(&d));
+            if on_values && !members.iter().any(|m| m.name == name) {
                 let builtin = Some(intrinsic.clone());
-                members.push(Member { name: name.to_string(), method: true, ty: None, def: None, builtin });
+                members.push(Member {
+                    name: name.to_string(),
+                    method: true,
+                    ty: None,
+                    def: None,
+                    builtin,
+                    private: false,
+                });
             }
         }
         for implementation in &self.impls {
@@ -273,9 +287,17 @@ impl Checker<'_> {
             }
             let id = implementation.trait_id;
             for method in &self.traits[id.0 as usize].methods {
-                if !members.iter().any(|m| m.name == method.name) {
+                if method.signature.receiver.is_some() && !members.iter().any(|m| m.name == method.name) {
                     let def = self.index.as_ref().and_then(|i| i.of(&Key::TraitMethod(id.0, method.name.clone())));
-                    members.push(Member { name: method.name.clone(), method: true, ty: None, def, builtin: None });
+                    let member = Member {
+                        name: method.name.clone(),
+                        method: true,
+                        ty: None,
+                        def,
+                        builtin: None,
+                        private: false,
+                    };
+                    members.push(member);
                 }
             }
         }

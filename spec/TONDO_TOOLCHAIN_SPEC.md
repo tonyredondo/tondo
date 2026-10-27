@@ -451,12 +451,18 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
 - Renombrar una declaración del programa cambia cada referencia; un campo
   escrito con el nombre de una variable, `User { name }`, pasa a
   `User { fullName: name }`.
-- Autocompletado: tras `valor.`, los campos y métodos de su tipo, también los
-  que implementa el runtime con su documentación de `tondo api`; tras
-  `modulo.`, sus declaraciones públicas; y si no, las variables y parámetros
-  de la función hasta el cursor, las declaraciones del módulo, los módulos que
-  usa, los que no importa todavía, con el `import` que los trae, y las
-  palabras clave.
+- Autocompletado: tras `valor.`, los campos y métodos que ese valor puede
+  usar, también los que implementa el runtime: no las funciones de su tipo
+  sin `self`, ni los campos `priv` o las funciones no públicas de otro
+  módulo; tras `modulo.`, que el archivo importa, sus declaraciones públicas,
+  las de un módulo estándar como las muestra `tondo api`; tras `Tipo.` o
+  `modulo.Tipo.`, sus funciones sin `self`, como `Builder.new`, y las
+  variantes de un enum; y si no, las variables y parámetros de la función
+  hasta el cursor, las declaraciones del módulo, los módulos que usa, los que
+  no importa todavía, con el `import` que los trae, y las palabras clave.
+  Cada elemento lleva su declaración y su documentación; el de una función,
+  sus parámetros y su resultado junto al nombre, y al elegirlo escribe sus
+  paréntesis, salvo si los hay ya, y abre la ayuda de sus parámetros.
 - Resaltado semántico de cada nombre según lo que declara (módulo, tipo, enum,
   trait, parámetro, variable, campo, variante, función, método), de las
   palabras clave, los textos, los números y los comentarios.

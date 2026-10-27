@@ -296,6 +296,12 @@ fn completion_and_highlighting() {
     };
     assert_eq!(complete(&mut editor, "ada."), ["name", "age", "describe"]);
     assert_eq!(complete(&mut editor, "models."), ["User", "Role", "make"]);
+    // A standard module, a type's functions and an enum's variants.
+    let console = complete(&mut editor, "console.");
+    assert!(console.contains(&"println".to_string()) && console.contains(&"readLine".to_string()), "{console:?}");
+    assert_eq!(complete(&mut editor, "models.Role."), ["Admin", "Member"]);
+    let strings = complete(&mut editor, "String.");
+    assert!(strings.contains(&"fromBytes".to_string()) && !strings.contains(&"length".to_string()), "{strings:?}");
     let strings = complete(&mut editor, "\"text\".");
     assert!(strings.contains(&"length".to_string()) && strings.contains(&"split".to_string()), "{strings:?}");
     let names = complete(&mut editor, "gr");

@@ -47,6 +47,30 @@ pub fn builtin_methods(owner: &str) -> Vec<&'static str> {
         .collect()
 }
 
+/// Whether a function's declaration takes `self`, as a method of a value
+/// does: `fn Array.length(self): Int`, not `fn String.fromBytes(...)`.
+pub fn takes_self(declaration: &str) -> bool {
+    let Some(params) = parameters(declaration) else { return false };
+    let first = params.trim_start();
+    let first = first.strip_prefix("mut ").or_else(|| first.strip_prefix("var ")).unwrap_or(first);
+    first.strip_prefix("self").is_some_and(|rest| !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
+}
+
+/// A function declaration from the `(` of its parameters on: what follows
+/// its name and type parameters.
+pub fn parameters(declaration: &str) -> Option<&str> {
+    let mut depth = 0;
+    for (at, c) in declaration.char_indices() {
+        match c {
+            '[' => depth += 1,
+            ']' => depth -= 1,
+            '(' if depth == 0 => return Some(&declaration[at + 1..]),
+            _ => {}
+        }
+    }
+    None
+}
+
 /// The declaration and documentation of a method the runtime implements,
 /// as `tondo api` shows them: `pub fn Array.length(self): Int`.
 pub fn builtin_doc(owner: &str, name: &str) -> Option<(String, String)> {

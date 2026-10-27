@@ -56,6 +56,8 @@ pub struct Member {
     pub def: Option<usize>,
     /// `Array`, `String`: the intrinsic type whose documentation has it.
     pub builtin: Option<String>,
+    /// A field declared `priv`, which only its own module sees.
+    pub private: bool,
 }
 
 /// A type the program's expressions have, and its members.

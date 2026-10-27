@@ -977,14 +977,31 @@ impl Server {
             return Some(json!({ "isIncomplete": false, "items": self.names(latest, offset) }));
         }
         let end = start - 1;
-        // A module alias the program uses: its public declarations.
-        let alias_start = text[..end].rfind(|c: char| !(c.is_alphanumeric() || c == '_')).map_or(0, |i| i + 1);
-        let alias = &text[alias_start..end];
-        let analyses = std::iter::once(latest).chain(self.earlier.get(&root).into_iter().flatten());
-        for analyzed in analyses {
-            if let Some(items) = self.module_members(analyzed, alias) {
-                return Some(json!({ "isIncomplete": false, "items": items }));
+        // A module the file imports, a type, or a type of a module: what it
+        // declares. Otherwise a value, whose members follow.
+        let chain_start =
+            text[..end].rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.')).map_or(0, |i| i + 1);
+        let parts: Vec<&str> = text[chain_start..end].split('.').collect();
+        let imports = imports(&text);
+        let here = source.module.clone();
+        let call = text[cursor..].starts_with('(');
+        let analyses: Vec<&Analyzed> =
+            std::iter::once(latest).chain(self.earlier.get(&root).into_iter().flatten()).collect();
+        let found = match parts[..] {
+            [alias] if let Some(module) = imports.get(alias) => {
+                analyses.iter().find_map(|analyzed| self.module_members(analyzed, module, call))
             }
+            [alias, name] if let Some(module) = imports.get(alias) => {
+                analyses.iter().find_map(|analyzed| self.type_members(analyzed, Some(module), name, call))
+            }
+            [name] if name.starts_with(|c: char| c.is_uppercase()) => analyses.iter().find_map(|analyzed| {
+                self.type_members(analyzed, None, name, call)
+                    .or_else(|| self.type_members(analyzed, Some(&here), name, call))
+            }),
+            _ => None,
+        };
+        if let Some(items) = found {
+            return Some(json!({ "isIncomplete": false, "items": items }));
         }
         // A value: what is before the dot parses once a name follows it.
         let mut written = text.clone();
@@ -997,16 +1014,24 @@ impl Server {
         let analyzed = self.analyzed(&root, open)?;
         let file = analyzed.paths.iter().position(|p| p.as_deref() == Some(path.as_path()))?;
         let base = analyzed.analysis.sources.file(file).base;
-        let items = self.members(&analyzed, base + end as u32).unwrap_or_default();
+        let items = self.members(&analyzed, base + end as u32, &here, call).unwrap_or_default();
         Some(json!({ "isIncomplete": false, "items": items }))
     }
 
-    /// The public declarations of the module the program knows as `alias`.
-    fn module_members(&self, analyzed: &Analyzed, alias: &str) -> Option<Vec<Value>> {
+    /// The public declarations of `module`: a standard one's, as `tondo
+    /// api` shows them, or one of the program's.
+    fn module_members(&self, analyzed: &Analyzed, module: &str, call: bool) -> Option<Vec<Value>> {
+        if let Some(text) = crate::api::standard(module) {
+            let items = crate::api::declarations(&text)
+                .iter()
+                .filter(|d| d["kind"] != "impl" && !d["name"].as_str().unwrap_or(".").contains('.'))
+                .map(|d| declared_item(d, call))
+                .collect();
+            return Some(items);
+        }
         let index = analyzed.analysis.index.as_ref()?;
         let sources = &analyzed.analysis.sources;
-        let module = index.defs.iter().find(|d| d.kind == DefKind::Module && d.name == alias)?;
-        let module = sources.file_of(module.decl_span.start).module.clone();
+        (0..sources.len()).find(|&i| sources.file(i).module == module)?;
         let items = index
             .defs
             .iter()
@@ -1016,32 +1041,109 @@ impl Server {
                     && sources.file_of(d.decl_span.start).module == module
                     && sources.slice(d.decl_span).starts_with("pub ")
             })
-            .map(|(id, d)| self.item(analyzed, &d.name, d.kind, Some(id)))
+            .map(|(id, d)| self.item(analyzed, &d.name, d.kind, Some(id), call))
             .collect();
         Some(items)
     }
 
-    /// The members of the type of the innermost expression that ends at
-    /// `end`, before a dot.
-    fn members(&self, analyzed: &Analyzed, end: u32) -> Option<Vec<Value>> {
+    /// What a type gives by its name: its functions that take no `self`,
+    /// as `Builder.new`, and an enum's variants. The type is of `module`,
+    /// or with none, one the compiler gives, as `String`.
+    fn type_members(&self, analyzed: &Analyzed, module: Option<&str>, name: &str, call: bool) -> Option<Vec<Value>> {
+        let standard = match module {
+            Some(module) => crate::api::standard(module),
+            None => crate::api::standard("prelude"),
+        };
+        if let Some(text) = standard {
+            let declarations = crate::api::declarations(&text);
+            let prefix = format!("{name}.");
+            let mut items = Vec::new();
+            for d in &declarations {
+                let (kind, declared) = (d["kind"].as_str().unwrap_or(""), d["name"].as_str().unwrap_or(""));
+                let code = d["declaration"].as_str().unwrap_or("");
+                if kind == "fn" && declared.starts_with(&prefix) && !crate::api::takes_self(code) {
+                    let mut d = d.clone();
+                    d["name"] = json!(&declared[prefix.len()..]);
+                    items.push(declared_item(&d, call));
+                } else if kind == "enum" && declared == name {
+                    items.extend(variants(code).into_iter().map(|v| json!({ "label": v, "kind": 20 })));
+                } else if kind == "alias"
+                    && declared == name
+                    && let Some((owner, target)) = code.split_once('=').and_then(|(_, t)| t.trim().split_once('.'))
+                {
+                    // Another standard module's type, as `json.ErrorKind`.
+                    let module = format!("std.{owner}");
+                    return self.type_members(analyzed, Some(&module), target.trim(), call);
+                }
+            }
+            let known = declarations
+                .iter()
+                .any(|d| d["name"] == name || d["name"].as_str().is_some_and(|n| n.starts_with(&prefix)));
+            if known {
+                return Some(items);
+            }
+            if module.is_some_and(|m| m.starts_with("std.")) {
+                return None;
+            }
+        }
+        let module = module?;
         let index = analyzed.analysis.index.as_ref()?;
+        let sources = &analyzed.analysis.sources;
+        let of_module = |d: &crate::index::Def| sources.file_of(d.decl_span.start).module == module;
+        let ty = index
+            .defs
+            .iter()
+            .find(|d| matches!(d.kind, DefKind::Type | DefKind::Enum) && d.name == name && of_module(d))?;
+        let mut items = Vec::new();
+        for (id, d) in index.defs.iter().enumerate().filter(|(_, d)| of_module(d)) {
+            let text = sources.slice(d.decl_span);
+            let owned = text.strip_prefix("pub ").unwrap_or(text).starts_with(&format!("fn {name}."));
+            match d.kind {
+                DefKind::Function | DefKind::Method if owned && !crate::api::takes_self(&header(text)) => {
+                    items.push(self.item(analyzed, &d.name, DefKind::Function, Some(id), call))
+                }
+                DefKind::Variant if ty.decl_span.start <= d.decl_span.start && d.decl_span.end <= ty.decl_span.end => {
+                    items.push(self.item(analyzed, &d.name, d.kind, Some(id), false))
+                }
+                _ => {}
+            }
+        }
+        Some(items)
+    }
+
+    /// The members of the type of the innermost expression that ends at
+    /// `end`, before a dot, that the module `here` sees: not another's
+    /// private fields, nor the functions it does not make public.
+    fn members(&self, analyzed: &Analyzed, end: u32, here: &str, call: bool) -> Option<Vec<Value>> {
+        let index = analyzed.analysis.index.as_ref()?;
+        let sources = &analyzed.analysis.sources;
         let (_, shape) =
             index.types.iter().filter(|(span, _)| span.end == end).min_by_key(|(span, _)| span.end - span.start)?;
         let shape = &index.shapes[*shape];
+        let hidden = |member: &crate::index::Member| {
+            let Some(def) = member.def.map(|d| &index.defs[d]) else { return false };
+            let theirs = sources.file_of(def.decl_span.start).module != here;
+            let public = !member.method || sources.slice(def.decl_span).starts_with("pub ");
+            theirs && (member.private || !public)
+        };
         let items = shape
             .members
             .iter()
+            .filter(|member| !hidden(member))
             .map(|member| {
                 let kind = if member.method { DefKind::Method } else { DefKind::Field };
-                let mut item = self.item(analyzed, &member.name, kind, member.def);
+                let mut item = self.item(analyzed, &member.name, kind, member.def, call);
                 if let (None, Some(ty)) = (member.def, &member.ty) {
                     item["detail"] = json!(ty);
                 }
                 if let Some(owner) = &member.builtin
                     && let Some((header, docs)) = crate::api::builtin_doc(owner, &member.name)
                 {
-                    item["detail"] = json!(header);
-                    item["documentation"] = json!({ "kind": "markdown", "value": docs });
+                    item = declared_item(
+                        &json!({ "kind": "fn", "name": member.name, "declaration": header, "doc": docs }),
+                        call,
+                    );
+                    item["kind"] = json!(2);
                 }
                 item
             })
@@ -1074,7 +1176,7 @@ impl Server {
                 _ => false,
             };
             if visible && seen.insert(def.name.clone()) {
-                items.push(self.item(analyzed, &def.name, def.kind, Some(id)));
+                items.push(self.item(analyzed, &def.name, def.kind, Some(id), false));
             }
         }
         // The modules this file names.
@@ -1086,7 +1188,7 @@ impl Server {
                 && span.end <= end
                 && seen.insert(found.name.clone())
             {
-                items.push(self.item(analyzed, &found.name, DefKind::Module, Some(def)));
+                items.push(self.item(analyzed, &found.name, DefKind::Module, Some(def), false));
             }
         }
         // The modules the file does not import yet, with their import.
@@ -1121,8 +1223,10 @@ impl Server {
         items
     }
 
-    /// A completion item, with the declaration's header and documentation.
-    fn item(&self, analyzed: &Analyzed, name: &str, kind: DefKind, def: Option<usize>) -> Value {
+    /// A completion item, with the declaration's header and documentation;
+    /// a function's with its parameters and result beside its name, and,
+    /// unless the call is written already (`call`), its parentheses.
+    fn item(&self, analyzed: &Analyzed, name: &str, kind: DefKind, def: Option<usize>, call: bool) -> Value {
         let number = match kind {
             DefKind::Function => 3,
             DefKind::Method => 2,
@@ -1148,6 +1252,9 @@ impl Server {
         let docs = docs_before(file, def.decl_span.start);
         if !docs.is_empty() {
             item["documentation"] = json!({ "kind": "markdown", "value": docs });
+        }
+        if matches!(def.kind, DefKind::Function | DefKind::Method) {
+            callable(&mut item, &detail, call);
         }
         item
     }
@@ -1382,6 +1489,89 @@ fn header(text: &str) -> String {
         start += line.len();
     }
     text[..end].trim_end().to_string()
+}
+
+/// The names a file imports modules under: `json` for `import std.json`,
+/// `j` for `import std.json as j`.
+fn imports(text: &str) -> HashMap<String, String> {
+    text.lines()
+        .filter_map(|line| {
+            let rest = line.trim().strip_prefix("import ")?;
+            let (path, alias) = match rest.split_once(" as ") {
+                Some((path, alias)) => (path.trim(), alias.trim()),
+                None => (rest.trim(), rest.trim().rsplit('.').next()?),
+            };
+            Some((alias.to_string(), path.to_string()))
+        })
+        .collect()
+}
+
+/// A completion item of a declaration as `tondo api` gives it: its kind,
+/// name, text and documentation.
+fn declared_item(declared: &Value, call: bool) -> Value {
+    let kind = match declared["kind"].as_str().unwrap_or("") {
+        "fn" => 3,
+        "enum" => 13,
+        "trait" => 8,
+        "const" => 21,
+        _ => 22,
+    };
+    let code = declared["declaration"].as_str().unwrap_or("");
+    let detail = one_line(code.split(" {").next().unwrap_or(code));
+    let mut item = json!({ "label": declared["name"], "kind": kind, "detail": detail });
+    if let Some(docs) = declared["doc"].as_str().filter(|docs| !docs.is_empty()) {
+        item["documentation"] = json!({ "kind": "markdown", "value": docs });
+    }
+    if kind == 3 {
+        callable(&mut item, &detail, call);
+    }
+    item
+}
+
+/// A declaration written over several lines, on one.
+fn one_line(text: &str) -> String {
+    let joined = text.lines().map(str::trim).collect::<Vec<_>>().join(" ");
+    joined.replace("( ", "(").replace(", )", ")").replace(",)", ")")
+}
+
+/// A function's item: its parameters but `self` and its result beside
+/// its name, and its parentheses inserted with the cursor between them,
+/// unless the call is written already, then the hints of its parameters.
+fn callable(item: &mut Value, declaration: &str, call: bool) {
+    let declaration = one_line(declaration);
+    let Some(after) = crate::api::parameters(&declaration) else { return };
+    let mut rest = after;
+    if crate::api::takes_self(&declaration) {
+        let close = after.find(')').unwrap_or(after.len());
+        rest = match after.find(',').filter(|&comma| comma < close) {
+            Some(comma) => after[comma + 1..].trim_start(),
+            None => &after[close..],
+        };
+    }
+    item["labelDetails"] = json!({ "detail": format!("({rest}") });
+    if call {
+        return;
+    }
+    let name = item["label"].as_str().unwrap_or_default().to_string();
+    if rest.starts_with(')') {
+        item["insertText"] = json!(format!("{name}()"));
+    } else {
+        item["insertText"] = json!(format!("{name}($0)"));
+        item["insertTextFormat"] = json!(2);
+        item["command"] = json!({ "title": "", "command": "editor.action.triggerParameterHints" });
+    }
+}
+
+/// The variants an `enum` declaration names.
+fn variants(declaration: &str) -> Vec<String> {
+    let Some(body) = declaration.split_once('{').map(|(_, body)| body) else { return Vec::new() };
+    body.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("//") && !line.starts_with('}'))
+        .filter_map(|line| line.split(|c: char| !(c.is_alphanumeric() || c == '_')).next())
+        .filter(|name| !name.is_empty())
+        .map(String::from)
+        .collect()
 }
 
 /// The `///` lines just above an offset, without their marks.
