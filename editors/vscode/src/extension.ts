@@ -3,7 +3,7 @@
 
 import * as vscode from 'vscode';
 import { LanguageClient, LanguageClientOptions, ServerOptions } from 'vscode-languageclient/node';
-import { findTondo } from './binary';
+import { findTondo, misconfigured } from './binary';
 import { exec } from './cli';
 import { registerDebugging } from './debugging';
 import { registerLive } from './live';
@@ -24,6 +24,9 @@ let onTests: (params: Served) => void = () => undefined;
 export function tondo(): string {
   const configured = vscode.workspace.getConfiguration('tondo').get<string>('path', '');
   const found = findTondo(configured);
+  if (!found && configured.trim()) {
+    throw new Error(`Tondo: ${misconfigured(configured)}`);
+  }
   if (!found) {
     throw new Error(
       'Tondo is not installed: run `sh dist/install.sh` from its repository (Tondo: Install tondo), or set `tondo.path` to its executable.',
@@ -39,6 +42,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   registerStatus(context, output);
   const showProfile = registerProfiles(context, output);
   onTests = registerTesting(context, output, showProfile);
+  // Before the language server starts, so that a `tondo.path` fixed after
+  // it failed to start starts it.
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration('tondo.path')) {
+        void checkVersion();
+        void restartClient(output);
+      }
+    }),
+  );
   await startClient(output);
   registerDebugging(context);
   registerLive(context, output);
@@ -64,12 +77,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         const ran = await exec(['explain', uri.path], process.cwd());
         return ran.stdout || ran.stderr;
       },
-    }),
-    vscode.workspace.onDidChangeConfiguration((event) => {
-      if (event.affectsConfiguration('tondo.path')) {
-        void checkVersion();
-        void restartClient(output);
-      }
     }),
   );
 }
@@ -111,7 +118,12 @@ async function startClient(output: vscode.LogOutputChannel): Promise<void> {
   };
   client = new LanguageClient('tondo', 'Tondo', server, options);
   client.onNotification('tondo/tests', (params: Served) => onTests(params));
-  await client.start();
+  try {
+    await client.start();
+  } catch (error) {
+    client = undefined;
+    void vscode.window.showErrorMessage(`Tondo: \`${command} lsp\` did not start: ${(error as Error).message}`);
+  }
 }
 
 async function restartClient(output: vscode.LogOutputChannel): Promise<void> {

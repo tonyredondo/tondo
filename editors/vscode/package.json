@@ -61,7 +61,7 @@
         "tondo.path": {
           "type": "string",
           "default": "",
-          "markdownDescription": "The `tondo` executable. Empty: the one on `PATH`, or in `~/.cargo/bin` or `~/.local/bin`."
+          "markdownDescription": "The `tondo` executable, or the directory it is in, as a download's `bin` or the download itself; `~` is your home. Empty: the one on `PATH`, or in `~/.cargo/bin` or `~/.local/bin`."
         },
         "tondo.reloadOnSave": {
           "type": "boolean",

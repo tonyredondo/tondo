@@ -42,10 +42,12 @@ async function show(item: vscode.StatusBarItem): Promise<void> {
     item.tooltip = problem ?? `tondo ${version.version} for ${version.target}: the Tondo menu`;
     item.command = 'tondo.menu';
     void vscode.commands.executeCommand('setContext', 'tondo.installed', true);
-  } catch {
+  } catch (error) {
+    // Not installed, or not where `tondo.path` says: why, and the setting.
+    const configured = vscode.workspace.getConfiguration('tondo').get<string>('path', '').trim();
     item.text = '$(warning) Tondo';
-    item.tooltip = 'tondo is not installed: how to get it';
-    item.command = 'tondo.install';
+    item.tooltip = configured ? (error as Error).message : 'tondo is not installed: how to get it';
+    item.command = configured ? { title: 'Settings', command: 'workbench.action.openSettings', arguments: ['tondo.path'] } : 'tondo.install';
   }
   item.show();
 }

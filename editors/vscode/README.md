@@ -82,7 +82,9 @@ project, running, debugging and testing it.
 
 ## Settings
 
-- `tondo.path`: the `tondo` executable, when it is not found by itself.
+- `tondo.path`: the `tondo` executable, when it is not found by itself, or
+  the directory it is in, as a download's folder; `~` is your home.
+  Changing it starts the language server again.
 - `tondo.reloadOnSave`: whether a live build takes in its files when they
   are saved or change (on by default); off, *Tondo: Reload* does it.
 - `tondo.run.args` and `tondo.run.env`: the arguments and the variables of
