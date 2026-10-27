@@ -15,6 +15,9 @@ use std::time::Duration;
 const GRACE: Duration = Duration::from_secs(10);
 
 static REQUESTED: AtomicBool = AtomicBool::new(false);
+/// Under `--fuzz`, while workers search: the files that stop them, which
+/// the first interruption makes instead of stopping the run.
+static SOFT: Mutex<Vec<std::path::PathBuf>> = Mutex::new(Vec::new());
 static FORCED: AtomicBool = AtomicBool::new(false);
 /// The workers alive, by process id, which is also their group's.
 static WORKERS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
@@ -22,6 +25,12 @@ static WORKERS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 /// Whether the run was interrupted.
 pub(super) fn requested() -> bool {
     REQUESTED.load(Ordering::SeqCst)
+}
+
+/// From now on the first interruption makes these files, which end the
+/// search of `--fuzz` and let the run end as it does; none to end that.
+pub(super) fn soften(stops: Vec<std::path::PathBuf>) {
+    *SOFT.lock().unwrap_or_else(|e| e.into_inner()) = stops;
 }
 
 /// Whether a worker had to be killed.
@@ -86,6 +95,15 @@ fn listening() {
     };
     std::thread::spawn(move || {
         next();
+        // A search ends, and the run ends as it does.
+        let stops = std::mem::take(&mut *SOFT.lock().unwrap_or_else(|e| e.into_inner()));
+        if !stops.is_empty() {
+            for stop in &stops {
+                let _ = std::fs::write(stop, "");
+            }
+            eprintln!("\nstopping the search; interrupt again to end the run now");
+            next();
+        }
         REQUESTED.store(true, Ordering::SeqCst);
         eprintln!("\ninterrupted: the running tests are being cancelled; interrupt again to end them now");
         signal(libc::SIGTERM);

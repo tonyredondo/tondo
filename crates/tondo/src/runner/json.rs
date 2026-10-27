@@ -380,7 +380,16 @@ impl Context<'_> {
             ])
         });
         fields.push(("profiles", options.profile.map_or(Value::Null, |_| Value::Array(profiles.collect()))));
-        fields.push(("fuzz", Value::Null));
+        let fuzz = options.fuzz.as_ref().map_or(Value::Null, |fuzz| {
+            let corpus = fuzz.corpus.clone().unwrap_or_else(|| std::path::PathBuf::from("target/fuzz"));
+            obj(vec![
+                ("time_ms", fuzz.time.map_or(Value::Null, |t| int(t.as_millis() as usize))),
+                ("timeout_ms", int(fuzz.timeout.as_millis() as usize)),
+                ("memory_mib", int(fuzz.memory as usize)),
+                ("corpus", str(corpus.display().to_string())),
+            ])
+        });
+        fields.push(("fuzz", fuzz));
         let (suites, tests) = self.forest();
         let find = |node: u32| aggregates.iter().find(|a| a.node == node);
         let nodes = |list: &[u32]| {
@@ -612,6 +621,7 @@ pub(super) fn note_event(tree: &Tree, note: &Note, options: &Options) -> Value {
         Note::Started(node, context) => ("start", *node, context.iteration, context.round),
         Note::Wrote(node, context, ..) => ("output", *node, context.iteration, context.round),
         Note::Ended(attempt) => ("end", attempt.node, attempt.iteration, attempt.round),
+        Note::Fuzzing(node, ..) => ("fuzz", *node, 1, 0),
     };
     let mut fields = vec![
         ("event", str(event)),
@@ -633,9 +643,27 @@ pub(super) fn note_event(tree: &Tree, note: &Note, options: &Options) -> Value {
             ("stdout", stream(&attempt.stdout)),
             ("stderr", stream(&attempt.stderr)),
             ("benchmarks", Value::Array(attempt.benchmarks.iter().map(|b| super::bench::json(b, None)).collect())),
+            ("fuzz", Value::Array(attempt.fuzz.iter().map(fuzzed).collect())),
         ]);
     }
+    if let Note::Fuzzing(_, name, searched) = note {
+        fields.push(("name", str(name.clone())));
+        fields.extend(searched_fields(searched));
+    }
     obj(fields)
+}
+
+/// What a search did (15.15): the inputs it tried, for how long, its
+/// corpus, the counters reached and those there are, and how long since it
+/// found something new.
+fn searched_fields(searched: &super::Searched) -> Vec<(&'static str, Value)> {
+    vec![
+        ("inputs", int(searched.inputs as usize)),
+        ("elapsed_ms", int(searched.elapsed_ms as usize)),
+        ("corpus", int(searched.corpus as usize)),
+        ("coverage", obj(vec![("reached", int(searched.reached as usize)), ("total", int(searched.total as usize))])),
+        ("new_ms", int(searched.new_ms as usize)),
+    ]
 }
 
 /// Why an attempt skipped, and where, or `null`.
@@ -728,10 +756,15 @@ fn fuzzed(fuzzed: &super::Fuzzed) -> Value {
             ("reduced_from", Value::Null),
         ])
     });
+    let search = fuzzed.search.as_ref().map_or(Value::Null, |searched| {
+        let mut fields = searched_fields(searched);
+        fields.retain(|(key, _)| !matches!(*key, "inputs" | "new_ms"));
+        obj(fields)
+    });
     obj(vec![
         ("name", str(fuzzed.name.clone())),
         ("inputs", int(fuzzed.inputs as usize)),
-        ("search", Value::Null),
+        ("search", search),
         ("input", input),
     ])
 }

@@ -296,9 +296,12 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         baseline: None,
         max_regression: None,
         profile: None,
+        fuzz: None,
     };
     let mut diagnostics_json = false;
     let (mut bench, mut bench_time) = (false, 3.0);
+    let mut fuzz = runner::Fuzz { time: None, timeout: std::time::Duration::from_secs(1), memory: 2048, corpus: None };
+    let mut fuzzing = false;
     let (mut save, mut baseline, mut against) = (None, None, None);
     let (mut statically, mut debug, mut library, mut watch) = (false, false, false, false);
     let mut target = None;
@@ -357,6 +360,21 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             }
             "--list" => options.list = true,
             "--bench" => bench = true,
+            "--fuzz" => fuzzing = true,
+            "--fuzz-time" | "--fuzz-timeout" => {
+                let seconds = value()?
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|s| s.is_finite() && *s > 0.0)
+                    .ok_or_else(|| usage(format!("{flag} takes a positive number of seconds")))?;
+                let duration = std::time::Duration::from_secs_f64(seconds);
+                match flag.as_str() {
+                    "--fuzz-time" => fuzz.time = Some(duration),
+                    _ => fuzz.timeout = duration,
+                }
+            }
+            "--fuzz-memory" => fuzz.memory = count(&value()?, "--fuzz-memory")?.max(1),
+            "--fuzz-corpus" => fuzz.corpus = Some(PathBuf::from(value()?)),
             "--bench-time" => {
                 bench_time = value()?
                     .parse::<f64>()
@@ -551,6 +569,21 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         }
         options.bench = Some(std::time::Duration::from_secs_f64(bench_time));
     }
+    let fuzz_flags = ["--fuzz-time", "--fuzz-timeout", "--fuzz-memory", "--fuzz-corpus"];
+    if !fuzzing && let Some(flag) = fuzz_flags.iter().find(|f| given(f)) {
+        return Err(usage(format!("{flag} is about the search of fuzz tests: it goes with --fuzz")));
+    }
+    if fuzzing {
+        // The search counts what runs, and runs until it is told to stop.
+        let searching = ["--list", "--bench", "--coverage", "--retry", "--repeat", "--schedules", "--watch"];
+        if let Some(flag) = searching.iter().chain(&["--update-snapshots"]).find(|f| given(f)) {
+            return Err(usage(format!("--fuzz searches for inputs that fail; it does not go with {flag}")));
+        }
+        if options.counting() {
+            return Err(usage("--fuzz counts what runs for itself; it does not go with a report of coverage".into()));
+        }
+        options.fuzz = Some(fuzz);
+    }
     let once = ["--list", "--update-snapshots", "--report"];
     if watch && let Some(flag) = once.iter().find(|f| given(f)) {
         return Err(usage(format!("--watch runs the tests again and again; it does not go with {flag}")));
@@ -572,7 +605,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         driver::ready(target)?;
     }
     options.launcher = target.map(Target::launcher).transpose()?.flatten();
-    let (list, coverage) = (options.list, options.counting());
+    let (list, coverage) = (options.list, options.counting() || options.fuzz.is_some());
     let build = TestBuild { library, debug, statically, target, diagnostics_json, list, coverage };
     if let Some(reference) = against {
         options.baseline = Some(runner::Baseline::Revision(revision_tests(&path, &reference, &build)?));

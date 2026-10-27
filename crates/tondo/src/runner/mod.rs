@@ -13,6 +13,7 @@ macro_rules! say {
 mod bench;
 mod coverage;
 mod document;
+mod fuzz;
 mod human;
 mod interrupt;
 mod json;
@@ -91,6 +92,19 @@ pub struct Options {
     pub max_regression: Option<f64>,
     /// `--profile`: a profile of each test, or of each benchmark (10.5).
     pub profile: Option<crate::profile::Kind>,
+    /// `--fuzz`: searches for inputs that fail the calls of
+    /// `testing.fuzz` (10.6).
+    pub fuzz: Option<Fuzz>,
+}
+
+/// What `--fuzz` searches with: until when, how long an input and how
+/// much memory a worker may take, and where the corpus is kept.
+#[derive(Clone)]
+pub struct Fuzz {
+    pub time: Option<Duration>,
+    pub timeout: Duration,
+    pub memory: u64,
+    pub corpus: Option<PathBuf>,
 }
 
 /// What `--bench` compares with: a baseline saved before, or the tests of
@@ -259,12 +273,35 @@ pub struct Attempt {
 }
 
 /// What a call of `testing.fuzz` did: its name, how many inputs it ran,
-/// and the one it failed with, if any.
+/// the one it failed with, if any, and under `--fuzz` what its search did.
 #[derive(Clone, Debug)]
 pub struct Fuzzed {
     pub name: String,
     pub inputs: u64,
     pub input: Option<FuzzInput>,
+    pub search: Option<Searched>,
+}
+
+/// What a search did: the inputs it tried, for how long, how many it kept
+/// in the corpus, the counters some input reached and those there are,
+/// and how long since it found something new.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Searched {
+    pub inputs: u64,
+    pub elapsed_ms: u64,
+    pub corpus: u64,
+    pub reached: u64,
+    pub total: u64,
+    pub new_ms: u64,
+}
+
+impl Searched {
+    /// What the runtime says, as numbers separated by spaces.
+    pub(super) fn read(text: &str) -> Option<Searched> {
+        let numbers: Vec<u64> = text.split(' ').filter_map(|n| n.parse().ok()).collect();
+        let [inputs, elapsed_ms, corpus, reached, total, new_ms] = numbers[..] else { return None };
+        Some(Searched { inputs, elapsed_ms, corpus, reached, total, new_ms })
+    }
 }
 
 /// An input a test failed with: its JSON, and its file in the fuzz store,
@@ -323,6 +360,9 @@ struct Context {
     round: u32,
     iteration: u32,
     unit: Option<u32>,
+    /// Under `--fuzz`, the call of `testing.fuzz` the worker searches in,
+    /// by its index in the run's targets.
+    target: Option<u32>,
 }
 
 impl Attempt {
@@ -388,9 +428,13 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     let owners: Vec<Vec<String>> = (0..tree.nodes.len() as u32).map(|n| ownership.of(tree.file(n))).collect();
     let snapshots = store::Snapshots::read(dir, &package(dir)).map_err(Failure::Input)?;
     let mut selected = select::select(tree, &options.selector);
-    // `--bench` runs the benchmarks alone.
+    // `--bench` runs the benchmarks alone, and `--fuzz` the tests that
+    // fuzz.
     if options.bench.is_some() {
         selected.retain(|&test| tree.nodes[test as usize].bench);
+    }
+    if options.fuzz.is_some() {
+        selected.retain(|&test| tree.nodes[test as usize].fuzz);
     }
     // Each `--exact` names a suite or test.
     let missing: Vec<String> = match &options.selector {
@@ -406,6 +450,12 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
             Selector::All if options.bench.is_some() => "the project has no benchmarks: a test that calls \
                 `testing.bench(\"name\", () { ... })` in its body is one"
                 .into(),
+            Selector::All if options.fuzz.is_some() => "the project has no fuzz tests: a test that calls \
+                `testing.fuzz(\"parse\", [\"[1]\"], (text: String) { _ = json.parse(text) })` in its body is one"
+                .into(),
+            _ if options.fuzz.is_some() && missing.is_empty() => {
+                "no fuzz test is selected: --fuzz runs the tests that call `testing.fuzz`".into()
+            }
             _ if options.bench.is_some() && missing.is_empty() => {
                 "no benchmark is selected: --bench runs the tests that call `testing.bench`".into()
             }
@@ -507,10 +557,11 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         counts: counts.as_deref(),
         profiles: collected.as_ref().map(|(kind, dir)| (*kind, dir.as_path())),
     };
-    let run = worker::Run { executable, dir, tree, options, stores, bench: options.bench };
+    let run = worker::Run { executable, dir, tree, options, stores, bench: options.bench, targets: &[], until: 0 };
     interrupt::listen();
     let (attempts, rounds) = match &options.baseline {
         Some(Baseline::Revision(revision)) => (against(&run, revision, &plan, &mut printer), Vec::new()),
+        _ if let Some(searching) = &options.fuzz => (fuzz::campaign(&run, &plan, &mut printer, searching), Vec::new()),
         _ => campaign(&run, &plan, &mut printer),
     };
     let _ = std::fs::remove_file(&entries);
@@ -849,7 +900,7 @@ fn campaign(run: &worker::Run, plan: &[u32], printer: &mut human::Printer) -> (V
     for iteration in (1..=options.iterations()).take_while(|_| !interrupt::requested()) {
         printer.begin(iteration, 0, plan);
         let units = units(tree, plan);
-        let context = Context { round: 0, iteration, unit: None };
+        let context = Context { round: 0, iteration, unit: None, target: None };
         let units = units.into_iter().map(|u| (u, context)).collect();
         attempts.extend(worker::execute(run, units, |note| printer.note(note)));
     }
@@ -861,8 +912,10 @@ fn campaign(run: &worker::Run, plan: &[u32], printer: &mut human::Printer) -> (V
         let tests: Vec<u32> = units.iter().flat_map(|(_, tests)| tests.iter().copied()).collect();
         printer.begin(1, round, &tests);
         rounds.push(units.clone());
-        let units =
-            units.into_iter().map(|(unit, tests)| (tests, Context { round, iteration: 1, unit: Some(unit) })).collect();
+        let units = units
+            .into_iter()
+            .map(|(unit, tests)| (tests, Context { round, iteration: 1, unit: Some(unit), target: None }))
+            .collect();
         attempts.extend(worker::execute(run, units, |note| printer.note(note)));
     }
     (attempts, rounds)
@@ -896,10 +949,10 @@ fn against(run: &worker::Run, revision: &Revision, plan: &[u32], printer: &mut h
     let ours = worker::Run { stores: worker::Stores { ..run.stores }, bench, ..*run };
     let stores = worker::Stores { update: false, counts: None, ..run.stores };
     let (executable, dir, theirs_tree) = (&revision.executable, &revision.dir, &revision.tree);
-    let theirs = worker::Run { executable, dir, tree: theirs_tree, options, stores, bench };
+    let theirs = worker::Run { executable, dir, tree: theirs_tree, options, stores, bench, targets: &[], until: 0 };
     let node = |id: &str| (1..revision.tree.nodes.len() as u32).find(|&n| revision.tree.id(n) == id);
     printer.begin(1, 0, plan);
-    let context = Context { round: 0, iteration: 1, unit: None };
+    let context = Context { round: 0, iteration: 1, unit: None, target: None };
     let mut attempts = Vec::new();
     for unit in units(tree, plan) {
         let mapped: Vec<u32> = unit.iter().filter_map(|&t| node(tree.id(t))).collect();

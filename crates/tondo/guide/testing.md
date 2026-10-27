@@ -131,3 +131,10 @@ test parsesAnyDocument {
   `fuzz/<kind>/<module>/<suites...>/<test>/<name>/<hash>.json`: commit them,
   so that each stays a regression test. A failure says which input, and
   from which file; one that no longer reads as the type is `P2011`.
+- `tondo test --fuzz` then searches: it changes inputs knowing their type,
+  keeps those that run code of the project no input ran before, and stops
+  at Ctrl-C, after `--fuzz-time` seconds, or when an input fails, which it
+  saves to the store. Put the code it tries in the project's sources, not
+  in the test file: only theirs is counted. `--jobs` workers share the
+  search; what it found is in `target/fuzz/`, or `--fuzz-corpus <dir>`,
+  and the next search starts from it.

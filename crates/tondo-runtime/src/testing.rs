@@ -158,11 +158,12 @@ static COUNTED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize:
 /// little-endian order.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_coverage_start(counters: *mut u64, count: usize) {
+    // The search of `tondo test --fuzz` reads them too.
+    COUNTERS.store(counters, Ordering::SeqCst);
+    COUNTED.store(count, Ordering::SeqCst);
     if std::env::var_os("TONDO_TEST_COVERAGE").is_none() {
         return;
     }
-    COUNTERS.store(counters, Ordering::SeqCst);
-    COUNTED.store(count, Ordering::SeqCst);
     extern "C" fn written(_: *mut u8) {
         let (counters, count) = (COUNTERS.load(Ordering::SeqCst), COUNTED.load(Ordering::SeqCst));
         let Some(dir) = std::env::var_os("TONDO_TEST_COVERAGE") else { return };
@@ -175,6 +176,16 @@ pub unsafe extern "C" fn tondo_rt_coverage_start(counters: *mut u64, count: usiz
         fn __cxa_atexit(function: extern "C" fn(*mut u8), argument: *mut u8, object: *mut u8) -> i32;
     }
     unsafe { __cxa_atexit(written, std::ptr::null_mut(), std::ptr::null_mut()) };
+}
+
+/// The counters of a build that counts what runs, for the fuzzer to read
+/// and clear; none in another build.
+pub(crate) fn counters() -> &'static mut [u64] {
+    let (counters, count) = (COUNTERS.load(Ordering::SeqCst), COUNTED.load(Ordering::SeqCst));
+    if counters.is_null() {
+        return &mut [];
+    }
+    unsafe { std::slice::from_raw_parts_mut(counters, count) }
 }
 
 /// Under `tondo test`, `SIGTERM` is its request to stop (testing 7.10):

@@ -4290,11 +4290,15 @@ los ejecutan en cada plataforma de CI. El compilador nativo implementa hoy:
 - los reportes para personas en Markdown y HTML (15.13);
 - los perfiles de tests y benchmarks con `--profile` (10.5);
 - `testing.fuzz` con sus semillas y el fuzz store, `E2007`, `P2010` y `P2011`,
-  y su campo `fuzz` en la lista, el reporte y los eventos (10.6, 15.14,
-  15.15).
+  y su campo `fuzz` en la lista, el reporte y los eventos; y la búsqueda de
+  `--fuzz` guiada por los contadores del código del proyecto, con mutaciones
+  que conocen la forma de la entrada, `--fuzz-time`, `--fuzz-corpus` y Ctrl-C
+  (10.6, 15.14, 15.15).
 
-Queda pendiente rechazar la mezcla de `Instant` de dominios distintos (7.9),
-y la búsqueda de `--fuzz` (10.6).
+Queda pendiente rechazar la mezcla de `Instant` de dominios distintos (7.9);
+y de `--fuzz`, los contadores de las dependencias, los operandos de las
+comparaciones y los literales, `--fuzz-timeout` y `--fuzz-memory` por
+entrada, y reducir la entrada que falla (10.6).
 
 ## 17. Referencia rápida
 

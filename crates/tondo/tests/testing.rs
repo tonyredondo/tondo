@@ -330,6 +330,77 @@ test plain {}
     assert!(stderr.contains("error[E2007]"), "{stderr}");
 }
 
+/// `tondo test --fuzz` (testing 10.6): the search finds an input that only
+/// counting what runs leads to, keeps it in the store, and `tondo test`
+/// fails with it from then on; a search that finds none ends in time.
+#[test]
+fn fuzz_search_finds_inputs_that_fail() {
+    // The code it tries is the project's, whose runs count.
+    let code = "\
+pub fn depth(text: String): Int {
+    var open = 0
+    for c in text.chars() {
+        if c == '[' {
+            open += 1
+        }
+    }
+    if open > 3 {
+        let empty: Array[Int] = []
+        return empty[0]
+    }
+    open
+}
+
+fn main() {}
+";
+    let tests = "\
+import std.testing
+
+test measuresDepth {
+    testing.fuzz(\"depth\", [\"[a]\", \"b\"], (text: String) {
+        assert(depth(text) >= 0)
+    })
+}
+
+test plain {}
+";
+    let dir = project("fuzz-search", tests);
+    std::fs::write(dir.join("src/main.to"), code).unwrap();
+    let (stdout, _, status) = tondo(&dir, &["test", "--fuzz", "--fuzz-time", "60"]);
+    assert_eq!(status, 1, "{stdout}");
+    assert!(stdout.starts_with("fuzzing 1 call on 1 worker for 1:00\n"), "{stdout}");
+    assert!(stdout.contains("test app::unit::app::measuresDepth ... FAILED\n  depth  "), "{stdout}");
+    assert!(stdout.contains("index 0 is out of bounds"), "{stdout}");
+    assert!(!stdout.contains("app::plain"), "only the tests that fuzz search: {stdout}");
+    let store = dir.join("fuzz/unit/app/measuresDepth/depth");
+    let saved: Vec<_> = std::fs::read_dir(&store).unwrap().flatten().map(|e| e.path()).collect();
+    assert_eq!(saved.len(), 1, "{saved:?}");
+    let input = std::fs::read_to_string(&saved[0]).unwrap();
+    assert!(input.matches('[').count() > 3, "{input}");
+    assert!(dir.join("target/fuzz/unit/app/measuresDepth/depth").is_dir());
+    // From now on, the input that failed fails the test.
+    let (stdout, _, status) = tondo(&dir, &["test"]);
+    assert_eq!(status, 1, "{stdout}");
+    assert!(stdout.contains("fuzz `depth` failed with its input in fuzz/unit/app/measuresDepth/depth/"), "{stdout}");
+    // Fixed, a search that finds nothing ends when its time does.
+    std::fs::remove_dir_all(dir.join("fuzz")).unwrap();
+    std::fs::write(dir.join("src/main.to"), code.replace("open > 3", "open > 1000000")).unwrap();
+    let args = ["test", "--fuzz", "--fuzz-time", "1", "--jobs", "2", "--test-format", "json"];
+    let (stdout, _, status) = tondo(&dir, &args);
+    assert_eq!(status, 0, "{stdout}");
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(report["fuzz"]["time_ms"], 1000, "{report}");
+    let call = &report["tests"][0]["attempts"][0]["fuzz"][0];
+    assert!(call["search"]["corpus"].as_u64().unwrap() > 0, "{call}");
+    assert!(call["search"]["coverage"]["reached"].as_u64().unwrap() > 0, "{call}");
+    assert_eq!(call["input"], serde_json::Value::Null, "{call}");
+    // Its flags go with --fuzz, and --fuzz goes alone.
+    let (_, stderr, _) = tondo(&dir, &["test", "--fuzz-time", "1"]);
+    assert!(stderr.contains("--fuzz-time is about the search of fuzz tests: it goes with --fuzz"), "{stderr}");
+    let (_, stderr, _) = tondo(&dir, &["test", "--fuzz", "--bench"]);
+    assert!(stderr.contains("--fuzz searches for inputs that fail; it does not go with --bench"), "{stderr}");
+}
+
 /// A project in the target directory, a repository of its own, with the
 /// given test file.
 fn project(name: &str, tests: &str) -> PathBuf {

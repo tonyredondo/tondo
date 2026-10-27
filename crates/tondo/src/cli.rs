@@ -126,12 +126,14 @@ pub const COMMANDS: &[Command] = &[
             "                    | html=<path>]... [--coverage]",
             "          [--bench [--bench-time <seconds>] [--save-baseline <name>] [--baseline <name> | --against <rev>]",
             "                   [--max-regression <percent>]] [--profile cpu|memory]",
+            "          [--fuzz [--fuzz-time <seconds>] [--fuzz-timeout <seconds>] [--fuzz-memory <MiB>] [--fuzz-corpus <dir>]]",
             "          [--diagnostic-format human|json] [--artifacts <dir>] [--update-snapshots]",
             "          [--static] [--debug] [--library] [--target <target>]",
         ],
         summary: &[
             "run the tests of a project (of a library); with --watch,",
-            "again as its files change; --bench measures its benchmarks",
+            "again as its files change; --bench measures its benchmarks,",
+            "and --fuzz searches for inputs that fail its fuzz tests",
         ],
     },
     Command {

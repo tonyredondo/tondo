@@ -6,7 +6,9 @@
 
 use super::interrupt;
 use super::store::{Artifacts, Snapshots};
-use super::{Artifact, Attempt, Benchmark, Context, FuzzInput, Fuzzed, Options, Snapshot, Status, Tree, VirtualClock};
+use super::{
+    Artifact, Attempt, Benchmark, Context, FuzzInput, Fuzzed, Options, Searched, Snapshot, Status, Tree, VirtualClock,
+};
 use std::collections::VecDeque;
 use std::io::Read;
 use std::path::Path;
@@ -39,20 +41,39 @@ pub(super) struct Run<'a> {
     pub stores: Stores<'a>,
     /// How long each benchmark measures for, under `--bench`.
     pub bench: Option<std::time::Duration>,
+    /// Under `--fuzz`, the calls the workers search in, and when the
+    /// search ends, as milliseconds since the epoch, or `0` for never.
+    pub targets: &'a [Target],
+    pub until: u64,
+}
+
+/// A call of `testing.fuzz` the search runs in: its test, its name, its
+/// corpus directory and the file that stops its workers.
+pub(super) struct Target {
+    pub test: u32,
+    pub call: String,
+    pub corpus: std::path::PathBuf,
+    pub stop: std::path::PathBuf,
 }
 
 /// What the workers tell as they run: a suite or test that started, in a
-/// pass, what it wrote (to stdout or not), or the outcome of an attempt.
+/// pass, what it wrote (to stdout or not), the outcome of an attempt, or
+/// how the search of a call of `testing.fuzz` goes.
 pub(super) enum Note {
     Started(u32, Context),
     Wrote(u32, Context, bool, Vec<u8>),
     Ended(Box<Attempt>),
+    Fuzzing(u32, String, super::Searched),
 }
 
 /// Runs each unit's tests, starting each unit in a new worker, `--jobs`
 /// units at a time; `report` sees each start and attempt as it is known.
 pub(super) fn execute(run: &Run, units: Vec<(Vec<u32>, Context)>, mut report: impl FnMut(&Note)) -> Vec<Attempt> {
-    let threads = run.options.jobs.max(1).min(units.len());
+    // A search runs each of its workers at once.
+    let threads = match run.targets.is_empty() {
+        true => run.options.jobs.max(1).min(units.len()),
+        false => units.len(),
+    };
     let queue = Mutex::new(VecDeque::from(units));
     let (sender, receiver) = mpsc::channel();
     let mut attempts = Vec::new();
@@ -138,7 +159,7 @@ fn worker(
     context: Context,
     sender: &mpsc::Sender<Note>,
 ) -> Result<(), String> {
-    let (executable, dir, tree, timeout, stores) =
+    let (executable, dir, tree, mut timeout, stores) =
         (run.executable, run.dir, run.tree, run.options.timeout, &run.stores);
     let plan =
         std::env::temp_dir().join(format!("tondo-plan-{}-{:?}", std::process::id(), std::thread::current().id()));
@@ -176,6 +197,13 @@ fn worker(
     }
     if let Some(time) = run.bench {
         command.env("TONDO_TEST_BENCH", time.as_secs_f64().to_string());
+    }
+    // A worker that searches runs its test until the search ends.
+    if let Some(target) = context.target.and_then(|t| run.targets.get(t as usize)) {
+        let call = super::fuzz::directory(&target.call);
+        let (corpus, stop) = (target.corpus.display(), target.stop.display());
+        command.env("TONDO_FUZZ", format!("{}\t{call}\t{corpus}\t{stop}\t{}", tree.id(target.test), run.until));
+        timeout = Duration::from_secs(10 * 365 * 24 * 3600);
     }
     if let Some(seed) = run.options.schedule(context.iteration) {
         command.env("TONDO_RT_SCHEDULE", format!("{seed:x}"));
@@ -304,7 +332,7 @@ fn send(tree: &Tree, remaining: &mut VecDeque<u32>, note: Note, sender: &mpsc::S
         blocked
     };
     let skipped = matches!(outcome.status, Status::Skipped(_));
-    let context = Context { round: outcome.round, iteration: outcome.iteration, unit: outcome.unit };
+    let context = Context { round: outcome.round, iteration: outcome.iteration, unit: outcome.unit, target: None };
     let _ = sender.send(Note::Ended(Box::new(outcome)));
     // The suites inside that held those tests are blocked too.
     let mut suites: Vec<u32> = Vec::new();
@@ -564,7 +592,7 @@ impl Session<'_> {
             }
             "fuzz" => {
                 let parts: Vec<&str> = text.split('\0').collect();
-                if let [name, inputs, json, file, seed, failed] = parts[..]
+                if let [name, inputs, json, file, seed, failed, searched] = parts[..]
                     && let Some(entry) = self.running.iter_mut().rev().find(|(o, _, _)| o.node == node)
                 {
                     let input = (failed == "1").then(|| FuzzInput {
@@ -572,7 +600,16 @@ impl Session<'_> {
                         file: (!file.is_empty()).then(|| file.to_string()),
                         seed: seed.parse().ok(),
                     });
-                    entry.0.fuzz.push(Fuzzed { name: name.to_string(), inputs: inputs.parse().unwrap_or(0), input });
+                    let (name, inputs, search) =
+                        (name.to_string(), inputs.parse().unwrap_or(0), Searched::read(searched));
+                    entry.0.fuzz.push(Fuzzed { name, inputs, input, search });
+                }
+            }
+            "fuzzing" => {
+                if let Some((name, progress)) = text.split_once('\0')
+                    && let Some(searched) = Searched::read(progress)
+                {
+                    self.done.push((Note::Fuzzing(node, name.to_string(), searched), sequence));
                 }
             }
             "skip" | "panic" => {

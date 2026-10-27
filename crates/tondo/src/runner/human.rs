@@ -3,9 +3,9 @@
 //! skipped, with every attempt and what it wrote.
 
 use super::worker::Note;
-use super::{Aggregate, Attempt, Options, Status, Tree};
-use std::collections::HashMap;
-use std::time::Duration;
+use super::{Aggregate, Attempt, Options, Searched, Status, Tree};
+use std::collections::{BTreeMap, HashMap};
+use std::time::{Duration, Instant};
 
 /// The suites and tests of a plan with their owners, in canonical order.
 pub(super) fn list(tree: &Tree, plan: &[u32], owners: &[Vec<String>]) {
@@ -48,6 +48,18 @@ pub(super) struct Printer<'a> {
     max_regression: Option<f64>,
     /// The benchmarks that regressed beyond `--max-regression`.
     pub(super) regressions: Vec<String>,
+    /// Under `--fuzz`, how each call's search goes, and how it is shown.
+    fuzz: Option<Fuzzing>,
+}
+
+/// The lines of a search: each call's, as its last report says, the lines
+/// drawn on a terminal, which change in place, or when each was last
+/// printed elsewhere.
+struct Fuzzing {
+    calls: BTreeMap<(String, String), Searched>,
+    terminal: bool,
+    drawn: usize,
+    printed: HashMap<(String, String), Instant>,
 }
 
 impl<'a> Printer<'a> {
@@ -73,6 +85,62 @@ impl<'a> Printer<'a> {
             baselines,
             max_regression,
             regressions: Vec::new(),
+            fuzz: None,
+        }
+    }
+
+    /// The search of `--fuzz` begins: how many calls, on how many workers,
+    /// until when.
+    pub(super) fn fuzzing_begins(&mut self, calls: usize, workers: usize, time: Option<Duration>) {
+        use std::io::IsTerminal;
+        let terminal = !self.quiet && std::io::stdout().is_terminal();
+        self.fuzz = Some(Fuzzing { calls: BTreeMap::new(), terminal, drawn: 0, printed: HashMap::new() });
+        if self.quiet {
+            return;
+        }
+        let until = match time {
+            Some(time) => format!("for {}", clock(time.as_millis() as u64)),
+            None => "until Ctrl-C (--fuzz-time sets a limit)".into(),
+        };
+        let plural = |n: usize| if n == 1 { "" } else { "s" };
+        say!("fuzzing {calls} call{} on {workers} worker{} {until}", plural(calls), plural(workers));
+    }
+
+    /// How a call's search goes: on a terminal its line changes in place,
+    /// elsewhere it is printed every 10 seconds.
+    pub(super) fn fuzzing(&mut self, node: u32, call: &str, searched: &Searched) {
+        if let Some(options) = self.events {
+            let note = Note::Fuzzing(node, call.to_string(), *searched);
+            say!("{}", super::json::note_event(self.tree, &note, options).text());
+        }
+        let test = self.tree.id(node);
+        let Some(fuzzing) = self.fuzz.as_mut().filter(|_| !self.quiet) else { return };
+        let key = (test.to_string(), call.to_string());
+        fuzzing.calls.insert(key.clone(), *searched);
+        if fuzzing.terminal {
+            let mut out = String::new();
+            if fuzzing.drawn > 0 {
+                out.push_str(&format!("\x1b[{}A", fuzzing.drawn));
+            }
+            for ((test, call), searched) in &fuzzing.calls {
+                out.push_str(&format!("\x1b[2K{}\n", search_line(test, call, searched)));
+            }
+            fuzzing.drawn = fuzzing.calls.len();
+            print!("{out}");
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+        } else if fuzzing.printed.get(&key).is_none_or(|at| at.elapsed() >= Duration::from_secs(10)) {
+            fuzzing.printed.insert(key, Instant::now());
+            say!("{}", search_line(test, call, searched));
+        }
+    }
+
+    /// The search ended: the tests' lines follow.
+    pub(super) fn fuzzing_ends(&mut self) {
+        if let Some(fuzzing) = self.fuzz.take()
+            && !self.quiet
+            && !fuzzing.calls.is_empty()
+        {
+            say!("");
         }
     }
 
@@ -113,6 +181,22 @@ impl<'a> Printer<'a> {
                     self.max_regression,
                 );
                 say!("{}", lines.trim_end());
+            }
+            // What the search of each call did, under `--fuzz`.
+            for fuzzed in &attempt.fuzz {
+                if let Some(searched) = &fuzzed.search {
+                    let coverage = match searched.total {
+                        0 => String::new(),
+                        total => format!(", coverage {}%", searched.reached * 100 / total),
+                    };
+                    say!(
+                        "  {}  {} inputs in {}, corpus {}{coverage}",
+                        fuzzed.name,
+                        count(searched.inputs),
+                        clock(searched.elapsed_ms),
+                        searched.corpus
+                    );
+                }
             }
             self.printed += 1;
         }
@@ -312,4 +396,45 @@ pub(super) fn report(
         count(&|a| matches!(a.status, Status::Blocked(_, false))),
         elapsed.as_secs_f64()
     );
+}
+
+/// A call's search in a line: its test and name, how long, the inputs and
+/// how many a second, the corpus, the share of counters reached, and how
+/// long since something new.
+fn search_line(test: &str, call: &str, searched: &Searched) -> String {
+    let test = test.rsplit("::").next().unwrap_or(test);
+    let rate = match searched.elapsed_ms {
+        0 => 0,
+        ms => searched.inputs * 1000 / ms,
+    };
+    let coverage = match searched.total {
+        0 => String::new(),
+        total => format!("  coverage {}%", searched.reached * 100 / total),
+    };
+    format!(
+        "  {test} \u{203a} {call}  {}  {} inputs  {}/s  corpus {}{coverage}  new {} ago",
+        clock(searched.elapsed_ms),
+        count(searched.inputs),
+        count(rate),
+        searched.corpus,
+        clock(searched.new_ms),
+    )
+}
+
+/// A duration as a clock: `0:42`, `12:05`, `1:02:05`.
+fn clock(ms: u64) -> String {
+    let seconds = ms / 1000;
+    match seconds {
+        0..3600 => format!("{}:{:02}", seconds / 60, seconds % 60),
+        _ => format!("{}:{:02}:{:02}", seconds / 3600, seconds / 60 % 60, seconds % 60),
+    }
+}
+
+/// A count as people read it: `912`, `41k`, `1.7M`.
+fn count(n: u64) -> String {
+    match n {
+        0..10_000 => n.to_string(),
+        10_000..1_000_000 => format!("{}k", n / 1000),
+        _ => format!("{:.1}M", n as f64 / 1e6),
+    }
 }
