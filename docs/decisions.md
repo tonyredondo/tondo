@@ -2716,3 +2716,17 @@ and runs until Ctrl-C or `--fuzz-time`; an `err` of the body is a failure,
 like an `assert`. The loop is written in Tondo, `std/fuzz.to`, which the
 compiler calls with the input's type and the body's error, inferred as for
 `testing.bench`; the runtime gives it the inputs.
+
+## 2026-10-27 — A response's text is read in the charset it names
+
+`Response.text()` read every body as UTF-8, and failed on the pages that
+servers still send as ISO-8859-1, as google.es does. It now reads the
+`charset` of the content type, and `lines()` and `Request.text()` with it:
+UTF-8 when it names none, and Windows-1252 for that name and for the labels
+of Latin-1 and ASCII, as the WHATWG Encoding standard has browsers read
+them, which is a table of 32 characters. Other charsets, as Shift_JIS or
+UTF-16, would need the large tables of a library of encodings for bodies
+that are rare now: a body in one fails with an error that names it and
+says to read its bytes. The body is still read once, but a second read,
+which gave nothing and said nothing, now fails and says to keep what the
+first read gave.

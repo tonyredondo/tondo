@@ -3622,7 +3622,15 @@ pub fn WebSocket.close(self): Unit ! HttpError
 - El cuerpo llega mientras se lee, una sola vez: entero con `text`, `bytes` o
   `json`, que decodifica mientras llega; como `io.Reader` con `body`; por líneas
   con `lines`; como Server-Sent Events con `events`; o hacia un stream con
-  `copyTo`. `Display` de una respuesta es su estado: `200 OK`.
+  `copyTo`. Una segunda lectura falla con `HttpError.Body`, que dice que se
+  guarde lo que dio la primera. `Display` de una respuesta es su estado:
+  `200 OK`.
+- `text` y `lines` leen el texto en el `charset` de su `Content-Type`: UTF-8
+  si no nombra ninguno, y Windows-1252 para `windows-1252` y para las
+  etiquetas de Latin-1 y ASCII (`iso-8859-1`, `latin1`, `us-ascii`), como los
+  navegadores. Con otro charset, o con bytes que no son el UTF-8 que esperan,
+  fallan con `HttpError.Body`, que dice que se lean sus bytes con `bytes`.
+  `events` lee UTF-8, como manda Server-Sent Events.
 - `Body.json` usa `std.json`, cuyas implementaciones automáticas existen para
   los tipos del programa en cuanto este importa `std.http`. `Body.stream` y
   `Part.stream` leen el stream mientras envían; sin `length`, el cuerpo va por
@@ -3762,7 +3770,8 @@ pub alias Tls = net.Tls
   envía como `application/problem+json` (RFC 9457). Con un estado de 500 o más
   el cliente solo ve `internal server error` y el mensaje va a la salida de
   error. Los helpers de `Request` fallan con un `Problem` 400 que explica qué
-  falta, así que `?` basta para validar la entrada.
+  falta, así que `?` basta para validar la entrada. `Request.text` lee el
+  `charset` como `Response.text`.
 - El middleware rodea las rutas de su app y la respuesta a los paths sin ruta;
   el primero añadido es el exterior. `mount` añade las rutas de otra app bajo
   un prefijo, con el middleware de esa app solo alrededor de ellas.

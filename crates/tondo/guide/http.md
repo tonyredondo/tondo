@@ -43,6 +43,12 @@ fn main(): !http.HttpError {
 }
 ```
 
+- A response's body is read once: keep what `text()` gives to read it
+  again, as `text.lines()`.
+- `text()` and `lines()` read the `charset` of the content type: UTF-8, or
+  Windows-1252 for it and for Latin-1 and ASCII, as browsers do. Another
+  charset is an error that says to read the bytes with `bytes()`.
+
 ## Server
 
 ```tondo

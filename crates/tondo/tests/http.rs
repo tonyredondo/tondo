@@ -107,6 +107,15 @@ fn serve(stream: TcpStream) {
         ),
         "/lines" => respond(&mut stream, "200 OK", &[], b"{\"n\":1}\n{\"n\":2}\n{\"n\":3}\n"),
         "/big" => respond(&mut stream, "200 OK", &[], &vec![b'x'; 1 << 20]),
+        "/latin" => respond(
+            &mut stream,
+            "200 OK",
+            &[("content-type", "text/plain; charset=ISO-8859-1".into())],
+            b"a\xf1o \x80\nl\xednea\n",
+        ),
+        "/sjis" => {
+            respond(&mut stream, "200 OK", &[("content-type", "text/plain; charset=Shift_JIS".into())], b"\x93\xfa")
+        }
         _ => respond(&mut stream, "500 Internal Server Error", &[], b"unknown path"),
     }
 }
@@ -154,6 +163,11 @@ fn main(): !(http.HttpError | fs.FsError) {
     for line in hello.lines() {
         console.println("{line.isErr()}")
     }
+    console.print(http.get("{base}/latin")?.text()?)
+    for line in http.get("{base}/latin")?.lines() {
+        console.println(line?)
+    }
+    console.println("{http.get("{base}/sjis")?.text()}")
 
     let client = http.Client.new(baseUrl: base, headers: ["X-Test": "client"])
     let ada: Person = client.get("/json")?.json()?
@@ -217,6 +231,11 @@ fn main(): !(http.HttpError | fs.FsError) {
 200 OK HTTP/1.1 some(yes) [a=1, b=2]
 hello GET q=a%20b
 true
+año €
+línea
+año €
+línea
+err(the body: it is in `shift_jis`, a charset Tondo does not decode: read its bytes with `bytes()` instead)
 ada 36
 application/json 23
 {\"name\":\"ada\",\"age\":36}
@@ -344,6 +363,7 @@ fn run(name: &str, program: &str, files: &[(&str, String)]) -> (String, String, 
 #[test]
 fn server_routes_files_and_uploads() {
     let program = r#"import std.console
+import std.encoding
 import std.fs
 import std.http
 import std.io
@@ -366,6 +386,7 @@ fn main(): !(http.HttpError | fs.FsError) {
         http.Reply.json(User { id, name: "ada", email: "ada@example.com" })
     })
     app.get("/users/me", (request) { http.Reply.text("me") })
+    app.post("/text", (request) { http.Reply.text(request.text()?) })
     app.post("/users", (request) {
         let input: NewUser = request.json()?
         http.Reply.json(User { id: 1, name: input.name, email: input.email }, status: 201)
@@ -415,6 +436,8 @@ fn main(): !(http.HttpError | fs.FsError) {
     console.println("{client.post("/users", body: http.Body.text("nope"))}")
     console.println(client.get("/search", query: ["q": "a b", "page": "2"])?.text()?)
     console.println(client.get("/search?tag=x&tag=y")?.text()?)
+    let latin = encoding.hexDecode("61f16f2080").expect("hexadecimal")
+    console.println(client.post("/text", body: http.Body.bytes(latin, contentType: "text/plain; charset=latin1"))?.text()?)
     console.println("{client.get("/boom")}")
     console.println("{client.get("/nowhere")}")
     console.println("{client.delete("/users/1")}")
@@ -468,7 +491,7 @@ fn produce(events: Sender[http.Event]) {
 "#;
     let (stdout, stderr, success) = run("http-server", program, &[("data/letters.txt", "0123456789abcdefghij".into())]);
     let base = stdout.lines().next().unwrap_or_default().to_string();
-    let expected = "BASE\n200 some(tondo) {\"id\":42,\"name\":\"ada\",\"email\":\"ada@example.com\"}\nme\nerr(GET BASE/users/x answered 400 Bad Request)\n404 some(application/problem+json) {\"status\":404,\"detail\":\"no user 7\"}\n201 {\"id\":1,\"name\":\"bo\",\"email\":\"bo@example.com\"}\nerr(POST BASE/users answered 400 Bad Request)\nsome(a b) [] some(2)\nnone [x, y] none\nerr(GET BASE/boom answered 500 Internal Server Error)\nerr(GET BASE/nowhere answered 404 Not Found)\nerr(DELETE BASE/users/1 answered 405 Method Not Allowed)\nerr(GET BASE/admin/stats answered 401 Unauthorized)\nstats\nevent tick one some(1)\nevent message two\nlines none\nsome(echo: hi)\nsome(bytes) some(text/plain) 0123456789abcdefghij\n206 some(bytes 10-19/20) abcdefghij\n206 hij\n304\nerr(GET BASE/files/letters.txt answered 416 Range Not Satisfiable)\nerr(GET BASE/files/missing.txt answered 404 Not Found)\nerr(GET BASE/files/..%2Fsecret answered 403 Forbidden)\nsome(20)\n201 [{\"path\":\"up/notes.txt\",\"size\":6}]\n200 [{\"path\":\"up/notes.txt\",\"size\":11}]\nhello world\n[{\"path\":\"batch/a.bin\",\"size\":3},{\"path\":\"batch/b.bin\",\"size\":4}]\ndefg\n".replace("BASE", &base);
+    let expected = "BASE\n200 some(tondo) {\"id\":42,\"name\":\"ada\",\"email\":\"ada@example.com\"}\nme\nerr(GET BASE/users/x answered 400 Bad Request)\n404 some(application/problem+json) {\"status\":404,\"detail\":\"no user 7\"}\n201 {\"id\":1,\"name\":\"bo\",\"email\":\"bo@example.com\"}\nerr(POST BASE/users answered 400 Bad Request)\nsome(a b) [] some(2)\nnone [x, y] none\naño €\nerr(GET BASE/boom answered 500 Internal Server Error)\nerr(GET BASE/nowhere answered 404 Not Found)\nerr(DELETE BASE/users/1 answered 405 Method Not Allowed)\nerr(GET BASE/admin/stats answered 401 Unauthorized)\nstats\nevent tick one some(1)\nevent message two\nlines none\nsome(echo: hi)\nsome(bytes) some(text/plain) 0123456789abcdefghij\n206 some(bytes 10-19/20) abcdefghij\n206 hij\n304\nerr(GET BASE/files/letters.txt answered 416 Range Not Satisfiable)\nerr(GET BASE/files/missing.txt answered 404 Not Found)\nerr(GET BASE/files/..%2Fsecret answered 403 Forbidden)\nsome(20)\n201 [{\"path\":\"up/notes.txt\",\"size\":6}]\n200 [{\"path\":\"up/notes.txt\",\"size\":11}]\nhello world\n[{\"path\":\"batch/a.bin\",\"size\":3},{\"path\":\"batch/b.bin\",\"size\":4}]\ndefg\n".replace("BASE", &base);
     assert_eq!(stdout, expected, "{stderr}");
     assert!(success, "{stderr}");
     assert!(stderr.contains("http: 500 the database is down"), "{stderr}");

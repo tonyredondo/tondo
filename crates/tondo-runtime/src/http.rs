@@ -542,6 +542,8 @@ struct Chunks {
     chunk: Bytes,
     /// Whether another read took the body before this one.
     taken: bool,
+    /// Whether to give the body's Windows-1252 as UTF-8.
+    windows_1252: bool,
 }
 
 impl Host for Chunks {
@@ -552,6 +554,7 @@ impl Host for Chunks {
         while self.chunk.is_empty() {
             let Some(body) = self.body.as_mut() else { return Ok(0) };
             match runtime().block_on(body.chunk()) {
+                Ok(Some(chunk)) if self.windows_1252 => self.chunk = windows_1252(&chunk).into_bytes().into(),
                 Ok(Some(chunk)) => self.chunk = chunk,
                 Ok(None) => self.body = None,
                 Err(error) => return Err(std::io::Error::other(error)),
@@ -564,17 +567,38 @@ impl Host for Chunks {
     }
 }
 
-/// The body as a stream of `std.io`, read as the program asks; one that
-/// fails when another read already took it.
+/// The body as a stream of `std.io`, read as the program asks, in UTF-8
+/// when it is Windows-1252; one that fails when another read already took
+/// it.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_body(object: *mut NativeObject) -> *mut StreamObject {
+pub extern "C" fn tondo_rt_http_body(object: *mut NativeObject, windows_1252: u8) -> *mut StreamObject {
     let response = response(object);
     let body = response.body.lock().unwrap_or_else(|e| e.into_inner()).take();
     let taken = body.is_none();
     if taken {
         *response.failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(("body", ALREADY_READ.into()));
     }
-    crate::io::stream(Box::new(Chunks { body, chunk: Bytes::new(), taken }), Mode::Long, false)
+    crate::io::stream(
+        Box::new(Chunks { body, chunk: Bytes::new(), taken, windows_1252: windows_1252 != 0 }),
+        Mode::Long,
+        false,
+    )
+}
+
+/// Windows-1252 as text, as browsers read the labels of Latin-1 and ASCII
+/// too: Latin-1 but for its own characters from 0x80 to 0x9F.
+fn windows_1252(bytes: &[u8]) -> String {
+    const HIGH: [char; 32] = [
+        '€', '\u{81}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{8d}', 'Ž', '\u{8f}', '\u{90}', '‘',
+        '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '\u{9d}', 'ž', 'Ÿ',
+    ];
+    bytes.iter().map(|&b| if (0x80..0xa0).contains(&b) { HIGH[usize::from(b - 0x80)] } else { char::from(b) }).collect()
+}
+
+/// Bytes of Windows-1252 as text.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_http_windows_1252(data: *mut ArrayHeader) -> *mut Str {
+    str_new(windows_1252(&bytes_of(data)).as_bytes())
 }
 
 // ---------------------------------------------------------------------------

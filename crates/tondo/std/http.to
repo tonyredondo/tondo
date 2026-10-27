@@ -225,11 +225,19 @@ pub fn Response.bytes(self): Array[Byte] ! HttpError {
     bytes
 }
 
-/// The body as UTF-8 text.
+/// The body as text, in the charset its content type names (`windows1252`).
 pub fn Response.text(self): String ! HttpError {
-    match String.fromBytes(self.bytes()?) {
+    let windows = match windows1252(self.header("content-type").unwrapOr("")) {
+        ok(windows) => windows
+        err(why) => fail HttpError.Body("{why}: read its bytes with `bytes()` instead")
+    }
+    let bytes = self.bytes()?
+    if windows {
+        return httpNative.windows1252(bytes)
+    }
+    match String.fromBytes(bytes) {
         ok(decoded) => decoded
-        err(_) => fail HttpError.Body("it is not UTF-8 text")
+        err(_) => fail HttpError.Body("it is not UTF-8 text: read its bytes with `bytes()` instead")
     }
 }
 
@@ -246,17 +254,62 @@ pub fn Response.json[T: __serialization.Decode](self): T ! HttpError {
 
 /// The body as a stream, read as the program asks for it.
 pub fn Response.body(self): __io.Reader {
-    httpNative.body(self.native)
+    httpNative.body(self.native, false)
 }
 
-/// The body's lines, as they arrive: newline-delimited JSON, logs.
+/// The body's lines, as they arrive, in the charset `text()` reads:
+/// newline-delimited JSON, logs.
 pub fn Response.lines(self): Lines {
-    Lines { input: self.body(), response: self.native, done: false }
+    match windows1252(self.header("content-type").unwrapOr("")) {
+        ok(windows) => Lines {
+            input: httpNative.body(self.native, windows)
+            response: self.native
+            failure: ""
+            done: false
+        }
+        err(why) => Lines {
+            input: __io.reader("")
+            response: self.native
+            failure: "{why}: read its bytes with `bytes()` instead"
+            done: false
+        }
+    }
 }
 
-/// The body's Server-Sent Events, as they arrive.
+/// The body's Server-Sent Events, as they arrive, in UTF-8 as they are.
 pub fn Response.events(self): Events {
-    Events { source: self.lines() }
+    Events { source: Lines { input: self.body(), response: self.native, failure: "", done: false } }
+}
+
+/// Whether text of a content type is Windows-1252, which browsers also
+/// read for the labels of Latin-1 and ASCII, or UTF-8, which it is when it
+/// names no charset; why not, for any other charset.
+fn windows1252(contentType: String): Bool ! String {
+    var charset = "utf-8"
+    for parameter in contentType.split(";") {
+        let pair = parameter.trim().toLower()
+        if pair.startsWith("charset=") {
+            charset = pair.removePrefix("charset=").trim().removePrefix("\"").removeSuffix("\"")
+        }
+    }
+    if charset == "utf-8" or charset == "utf8" {
+        return false
+    }
+    let labels = [
+        "windows-1252",
+        "cp1252",
+        "iso-8859-1",
+        "iso8859-1",
+        "iso_8859-1",
+        "latin1",
+        "l1",
+        "us-ascii",
+        "ascii",
+    ]
+    if labels.any((label) { label == charset }) {
+        return true
+    }
+    fail "it is in `{charset}`, a charset Tondo does not decode"
 }
 
 /// Writes the body to a stream as it arrives; how many bytes it wrote.
@@ -283,6 +336,8 @@ pub fn Response.copyTo(self, output: __io.Writer): Int ! HttpError {
 pub type Lines = {
     priv input: __io.Reader
     priv response: httpNative.Native
+    /// Why the body is not text Tondo reads, or empty.
+    priv failure: String
     priv done: Bool
 }
 
@@ -290,6 +345,10 @@ impl Iterator[String ! HttpError] for Lines {
     fn next(mut self): (String ! HttpError)? {
         if self.done {
             return none
+        }
+        if not self.failure.isEmpty() {
+            self.done = true
+            return some(err(HttpError.Body(self.failure)))
         }
         match self.input.readLine() {
             ok(some(line)) => some(ok(line))
@@ -299,9 +358,14 @@ impl Iterator[String ! HttpError] for Lines {
             }
             err(error) => {
                 self.done = true
+                let why = match error {
+                    __io.IoError.InvalidData =>
+                        "it is not UTF-8 text: read its bytes with `bytes()` instead"
+                    _ => "{error}"
+                }
                 match failed(self.response) {
                     err(recorded) => some(err(recorded))
-                    ok(_) => some(err(HttpError.Body("{error}")))
+                    ok(_) => some(err(HttpError.Body(why)))
                 }
             }
         }
@@ -963,9 +1027,18 @@ pub fn Request.bytes(self): Array[Byte] ! Problem {
     bytes
 }
 
-/// The body as UTF-8 text.
+/// The body as text, in the charset its content type names, as
+/// `Response.text()` reads it.
 pub fn Request.text(self): String ! Problem {
-    match String.fromBytes(self.bytes()?) {
+    let windows = match windows1252(self.header("content-type").unwrapOr("")) {
+        ok(windows) => windows
+        err(why) => fail Problem.badRequest("the body: {why}")
+    }
+    let bytes = self.bytes()?
+    if windows {
+        return httpNative.windows1252(bytes)
+    }
+    match String.fromBytes(bytes) {
         ok(text) => text
         err(_) => fail Problem.badRequest("the body is not UTF-8 text")
     }
