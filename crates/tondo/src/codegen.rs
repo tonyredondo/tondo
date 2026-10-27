@@ -241,6 +241,7 @@ enum Rt {
     RecoverCatch,
     UnwindHold,
     UnwindResume,
+    UnwindReturn,
     JoinWaitTimeout,
     JoinCancel,
     JoinDetach,
@@ -496,6 +497,7 @@ impl Rt {
             Rt::RecoverCatch => ("tondo_rt_recover_catch", &[], &[]),
             Rt::UnwindHold => ("tondo_rt_unwind_hold", &[], &[]),
             Rt::UnwindResume => ("tondo_rt_unwind_resume", &[], &[]),
+            Rt::UnwindReturn => ("tondo_rt_unwind_return", &[], &[]),
             Rt::JoinWaitTimeout => ("tondo_rt_join_wait_timeout", &[I64, I64, I64], &[I8]),
             Rt::JoinCancel => ("tondo_rt_join_cancel", &[I64], &[]),
             Rt::JoinDetach => ("tondo_rt_join_detach", &[I64], &[]),
@@ -1233,6 +1235,7 @@ struct Traced {
     name: String,
     size: u32,
     calls: Vec<(u32, u32)>,
+    handlers: Vec<(u32, u32)>,
     lines: Vec<(u32, u32)>,
     sites: Vec<Site>,
     inlined: Vec<crate::mir::Inlined>,
@@ -1263,6 +1266,8 @@ struct Compiled {
     relocs: Vec<cranelift_module::ModuleReloc>,
     size: u32,
     calls: Vec<(u32, u32)>,
+    /// Each `try_call`'s return address and handler.
+    handlers: Vec<(u32, u32)>,
     /// Where each run of code of one statement starts, and the statement's
     /// site, `0` for code of none.
     lines: Vec<(u32, u32)>,
@@ -1290,6 +1295,16 @@ fn compile_one(
             (!loc.is_default()).then(|| (call.ret_addr, loc.bits()))
         })
         .collect();
+    let handlers = code
+        .buffer
+        .call_sites()
+        .filter_map(|call| match call.exception_handlers {
+            [cranelift_codegen::MachExceptionHandler::Default(at)] if at.is_offset() => {
+                Some((call.ret_addr, at.as_offset()))
+            }
+            _ => None,
+        })
+        .collect();
     let relocs = code
         .buffer
         .relocs()
@@ -1302,6 +1317,7 @@ fn compile_one(
         relocs,
         size: code.code_info().total_size,
         calls,
+        handlers,
         lines: sources
             .iter()
             .map(|s| (s.start, if s.loc.as_abs().is_default() { 0 } else { s.loc.as_abs().bits() }))
@@ -1975,7 +1991,8 @@ impl Codegen<'_> {
                 .map_err(|e| format!("{e:?}"))?;
             if let Some(name) = job.traced {
                 let (size, calls, lines, sites, inlined) = (code.size, code.calls, code.lines, job.sites, job.inlined);
-                self.traced.push(Traced { id: job.id, name, size, calls, lines, sites, inlined });
+                let handlers = code.handlers;
+                self.traced.push(Traced { id: job.id, name, size, calls, handlers, lines, sites, inlined });
             }
         }
         Ok(())
@@ -2487,16 +2504,31 @@ impl Codegen<'_> {
             data.write_function_addr(index as u32 * 16, code);
         }
         self.module.define_data(functions, &data).expect("trace functions");
-        let mut header = vec![0u8; 32];
+        // Each `try_call`'s handler: the function, its return address and
+        // the handler, in the order of the functions and their code.
+        let mut handlers = Vec::new();
+        for (index, function) in self.traced.iter().enumerate() {
+            for &(ret, at) in &function.handlers {
+                for value in [index as u32, ret, at] {
+                    handlers.extend_from_slice(&value.to_le_bytes());
+                }
+            }
+        }
+        let handled = handlers.len() as u64 / 12;
+        let handlers = define(&mut self.module, "tondo_trace_handlers", handlers);
+        let mut header = vec![0u8; 48];
         header[8..16].copy_from_slice(&(self.traced.len() as u64).to_le_bytes());
         header[24..32].copy_from_slice(&files_at.to_le_bytes());
+        header[40..48].copy_from_slice(&handled.to_le_bytes());
         let mut data = DataDescription::new();
         data.define(header.into_boxed_slice());
         data.set_align(8);
         let functions = self.module.declare_data_in_data(functions, &mut data);
         let blob = self.module.declare_data_in_data(blob, &mut data);
+        let handlers = self.module.declare_data_in_data(handlers, &mut data);
         data.write_data_addr(0, functions, 0);
         data.write_data_addr(16, blob, 0);
+        data.write_data_addr(32, handlers, 0);
         self.module.define_data(id, &data).expect("trace table");
     }
 
@@ -2827,6 +2859,13 @@ impl Codegen<'_> {
         }
         Ok(id)
     }
+}
+
+/// What a `try_call` calls: a function, or code at an address.
+#[derive(Clone, Copy)]
+enum Called {
+    Direct(ir::FuncRef),
+    Indirect(ir::SigRef, ir::Value),
 }
 
 /// Code emission shared by function bodies and glue functions.
@@ -4051,6 +4090,11 @@ struct FnCodegen<'a, 'b> {
     /// whose panics all jumped there, so that it asks nothing.
     unwind_to: Option<ir::Block>,
     quiet_check: bool,
+    /// Whether the statement being built called compiled code with a
+    /// `try_call`, and whether the block it is in returns: where a panic
+    /// that unwinds the function goes to its caller's way.
+    tried: bool,
+    returns: bool,
 }
 
 /// What a function of a debug build keeps for its probes (toolchain 7.6):
@@ -4159,6 +4203,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             literal: literals(body),
             unwind_to: None,
             quiet_check: false,
+            tried: false,
+            returns: false,
         }
     }
 
@@ -4223,13 +4269,22 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.carrying =
                     debug.line.is_some() && !self.body.points.iter().any(|p| p.continues.0 as usize == index);
             }
+            let returns = matches!(block.terminator, Terminator::Return(_));
+            let mut quiet = false;
             for (at, stmt) in block.stmts.iter().enumerate() {
                 self.count_ways(index, at);
+                // The panic goes to the caller from the last `UnwindResume`
+                // of a block that returns.
+                self.returns = returns && !block.stmts[at + 1..].iter().any(resumes);
                 // A statement a check for a panic follows: its panics
-                // unwind to where the check goes (15.9).
+                // unwind to where the check goes (15.9). The check asks
+                // nothing after one whose panics all went there.
                 self.unwind_to = unwind_target(block, at).map(|target| self.blocks[target.0 as usize]);
-                self.quiet_check = at > 0 && self.inline_only(&block.stmts[at - 1]);
+                self.quiet_check = quiet;
+                self.tried = false;
+                quiet = self.inline_only(stmt);
                 self.statement(stmt);
+                quiet |= self.tried;
             }
             self.unwind_to = None;
             self.count_ways(index, block.stmts.len());
@@ -7133,8 +7188,17 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let result = match callee {
             Callee::Fn(id) => {
                 let state = self.osr_arg.take();
-                let call = call_body_with(self.e.cg, &mut self.e.fb, id, &values, state);
-                self.e.fb.inst_results(call).first().copied()
+                match self.unwind_to.filter(|_| state.is_none() && self.e.cg.slot_of(id).is_none()) {
+                    Some(unwind) => {
+                        let func = self.e.cg.function(id);
+                        let callee = self.e.cg.declare_func_in_func(func, self.e.fb.func);
+                        self.try_call(Called::Direct(callee), &values, unwind, &spilled)
+                    }
+                    None => {
+                        let call = call_body_with(self.e.cg, &mut self.e.fb, id, &values, state);
+                        self.e.fb.inst_results(call).first().copied()
+                    }
+                }
             }
             Callee::Std(StdFn::ConsolePrint) => self.e.call_rt(Rt::ConsolePrint, &values),
             Callee::Std(StdFn::ConsolePrintln) => self.e.call_rt(Rt::ConsolePrintln, &values),
@@ -7178,6 +7242,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Callee::Std(StdFn::RecoverLeave) => self.e.call_rt(Rt::RecoverLeave, &[]),
             Callee::Std(StdFn::RecoverCatch) => self.e.call_rt(Rt::RecoverCatch, &[]),
             Callee::Std(StdFn::UnwindHold) => self.e.call_rt(Rt::UnwindHold, &[]),
+            // A function that returns from here goes to its caller's way,
+            // through its frame's return address (15.9).
+            Callee::Std(StdFn::UnwindResume) if self.returns => self.e.call_rt(Rt::UnwindReturn, &[]),
             Callee::Std(StdFn::UnwindResume) => self.e.call_rt(Rt::UnwindResume, &[]),
             Callee::Std(StdFn::ClockBegin) => {
                 values.push(self.location(self.span));
@@ -7304,12 +7371,59 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         }
         let signature = self.e.cg.uniform_signature(&params, &loans, result_ty);
         let signature = self.e.fb.import_signature(signature);
-        let call = self.e.fb.ins().call_indirect(signature, code, &values);
-        let result = self.e.fb.inst_results(call).first().copied();
+        let result = match self.unwind_to.filter(|_| !self.e.cg.live()) {
+            Some(unwind) => self.try_call(Called::Indirect(signature, code), &values, unwind, &spilled),
+            None => {
+                let call = self.e.fb.ins().call_indirect(signature, code, &values);
+                self.e.fb.inst_results(call).first().copied()
+            }
+        };
         for (var, slot) in spilled {
             self.unspill(var, slot);
         }
         result
+    }
+
+    /// A call of compiled code that a panic may unwind (15.9), as a
+    /// `try_call`: when the callee unwinds, the runtime makes it return to
+    /// the handler, which goes the way the check after the call would have.
+    /// A call that returns as usual costs nothing more, and needs no check.
+    fn try_call(
+        &mut self,
+        callee: Called,
+        args: &[ir::Value],
+        unwind: ir::Block,
+        spilled: &[(Variable, ir::Value)],
+    ) -> Option<ir::Value> {
+        use cranelift_codegen::ir::{BlockArg, BlockCall, ExceptionTableData, ExceptionTableItem};
+        let signature = match callee {
+            Called::Direct(callee) => self.e.fb.func.dfg.ext_funcs[callee].signature,
+            Called::Indirect(signature, _) => signature,
+        };
+        let returns: Vec<ir::Type> =
+            self.e.fb.func.dfg.signatures[signature].returns.iter().map(|r| r.value_type).collect();
+        let (next, handler) = (self.e.fb.create_block(), self.e.fb.create_block());
+        for &ty in &returns {
+            self.e.fb.append_block_param(next, ty);
+        }
+        let pool = &mut self.e.fb.func.dfg.value_lists;
+        let normal = BlockCall::new(next, (0..returns.len() as u32).map(BlockArg::TryCallRet), pool);
+        let caught = BlockCall::new(handler, [], pool);
+        let table = ExceptionTableData::new(signature, normal, [ExceptionTableItem::Default(caught)]);
+        let table = self.e.fb.func.dfg.exception_tables.push(table);
+        match callee {
+            Called::Direct(callee) => self.e.fb.ins().try_call(callee, args, table),
+            Called::Indirect(_, code) => self.e.fb.ins().try_call_indirect(code, args, table),
+        };
+        self.e.fb.switch_to_block(handler);
+        self.e.fb.set_cold_block(handler);
+        for &(var, slot) in spilled {
+            self.unspill(var, slot);
+        }
+        self.e.fb.ins().jump(unwind, &[]);
+        self.e.fb.switch_to_block(next);
+        self.tried = true;
+        self.e.fb.block_params(next).first().copied()
     }
 
     /// The address a loan of `place` passes; a local held in a variable is
@@ -7388,7 +7502,21 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
                 let condition = self.scalar(condition);
                 let (then, otherwise) = (self.blocks[then.0 as usize], self.blocks[otherwise.0 as usize]);
-                self.e.fb.ins().brif(condition, then, &[], otherwise, &[]);
+                // A condition known here, as a check for a panic that asks
+                // nothing, is a jump.
+                let dfg = &self.e.fb.func.dfg;
+                let known = match dfg.value_def(condition) {
+                    ir::ValueDef::Result(inst, _) => match dfg.insts[inst] {
+                        ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } => Some(imm.bits() != 0),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                match known {
+                    Some(true) => self.e.fb.ins().jump(then, &[]),
+                    Some(false) => self.e.fb.ins().jump(otherwise, &[]),
+                    None => self.e.fb.ins().brif(condition, then, &[], otherwise, &[]),
+                };
             }
             Terminator::Return(value) => match self.operand(value) {
                 Val::Scalar(value) => {
@@ -7946,6 +8074,12 @@ fn words(name: &str) -> String {
         text.extend(c.to_lowercase());
     }
     text
+}
+
+/// Whether a statement lets a panic go on after a frame's cleanups.
+fn resumes(statement: &Statement) -> bool {
+    matches!(statement, Statement::Assign(_, rvalue, _)
+        if matches!(**rvalue, Rvalue::Call(Callee::Std(StdFn::UnwindResume), _)))
 }
 
 /// Where the panics of the statement at `at` unwind to: the target of the

@@ -29,6 +29,10 @@ pub struct Table {
     count: u64,
     blob: *const u8,
     files: u64,
+    /// Each `try_call`'s handler, as `[function, return address, handler]`
+    /// offsets, in the order of the functions and their code.
+    handlers: *const [u32; 3],
+    handled: u64,
 }
 
 #[repr(C)]
@@ -112,6 +116,17 @@ fn find(address: usize) -> Option<(&'static Table, usize, usize)> {
         };
         Some((table, entries[index].code, index))
     })
+}
+
+/// Where the code that called through `address`, a return address, goes
+/// when what it called unwinds from a panic (language 15.9): its
+/// `try_call`'s handler.
+pub(crate) fn handler(address: usize) -> Option<usize> {
+    let (table, start, index) = find(address)?;
+    let handlers = unsafe { std::slice::from_raw_parts(table.handlers, table.handled as usize) };
+    let key = [index as u32, (address - start) as u32];
+    let at = handlers.partition_point(|h| [h[0], h[1]] < key);
+    handlers.get(at).filter(|h| [h[0], h[1]] == key).map(|h| start + h[2] as usize)
 }
 
 unsafe fn u32_at(blob: *const u8, offset: usize) -> u32 {

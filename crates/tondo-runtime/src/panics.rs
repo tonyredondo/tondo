@@ -448,6 +448,36 @@ pub extern "C" fn tondo_rt_unwind_resume() {
     }
 }
 
+/// `tondo_rt_unwind_resume` where the function then returns: with the
+/// frame of the compiled code that calls it, whose frame record holds the
+/// caller's frame, then the return address.
+#[cfg(target_arch = "x86_64")]
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_unwind_return() {
+    std::arch::naked_asm!("mov rdi, rbp", "jmp {resume}", resume = sym resume_returning)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_unwind_return() {
+    std::arch::naked_asm!("mov x0, x29", "b {resume}", resume = sym resume_returning)
+}
+
+/// The function returns to its caller's way when the call was a
+/// `try_call`: its return address becomes the call's handler, and the
+/// caller unwinds from there without a check after each call.
+unsafe extern "C" fn resume_returning(frame: *mut usize) {
+    tondo_rt_unwind_resume();
+    if task().is_some_and(|task| task.unwinding.is_some()) {
+        let returns = unsafe { frame.add(1) };
+        if let Some(handler) = crate::trace::handler(unsafe { *returns }) {
+            unsafe { *returns = handler };
+        }
+    }
+}
+
 /// Drops a panic that a cleanup suppressed, already reported.
 fn settle(task: &mut crate::tasks::Task) {
     if !task.paused.is_empty() && task.unwinding.take().is_some() {

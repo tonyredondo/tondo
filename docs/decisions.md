@@ -2834,3 +2834,21 @@ there. Programs without a `recover` compile as before; with one, the checks
 cost about 7% on a loop of calls and 2% of size. `std.sync` locks are let
 go rather than poisoned, as the cleanups run, and `std.http` answers a
 handler's panic with `500`, reporting it with the request's method and path.
+
+## 2026-10-27 — A `recover` costs nothing where nothing panics
+
+The first cut checked for a panic after every statement that may raise
+one, and each check split the code into blocks that the optimizer counted
+as cost: a program with a `recover`, as every server of `std.http`, lost
+inlining, unrolling and the closures it calls directly, up to four times
+slower on a loop of closure calls. The optimizer now counts only the code
+that runs when nothing panics, and a call it inlines unwinds straight to
+its caller's cleanups, with no check after it. A call it does not inline is
+a `try_call` of Cranelift: a function that unwinds makes its frame's return
+address the handler of the call that called it, which a table beside the
+stack traces' gives, so a call that returns costs nothing more; a
+two-instruction entry of the runtime reads the frame record, so leaf
+functions keep going without frame pointers. Arithmetic of floats and the
+operations that only add or take an element need no check, nor do those
+the optimizations proved cannot panic. The benchmarks of `bench/` run
+within their noise of the same programs without a `recover`.

@@ -655,6 +655,7 @@ pub fn compile(
         crate::moves::moves(&mut bodies);
         crate::unroll::unroll(&mut bodies, &program.types);
         crate::prove::prove(&mut bodies, &program.types);
+        lower::drop_dead_checks(&mut bodies);
     }
     let options = codegen::Options { meta: analysis.meta, debug, target: triple, live, coverage: None, fuzz: false };
     codegen::compile(program, &bodies, &analysis.sources, options)

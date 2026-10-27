@@ -204,14 +204,44 @@ fn calls(body: &Body, local: Local) -> bool {
     })
 }
 
-/// A function's statements and branches.
+/// A function's statements and branches, but the way a panic unwinds:
+/// its checks and the cleanups they lead to cost nothing until one does.
 fn cost(body: &Body) -> usize {
-    body.blocks
-        .iter()
-        .map(|block| {
+    let warm = warm(body);
+    body.blocks.iter().zip(warm).filter(|(_, warm)| *warm).map(|(block, _)| block_cost(block)).sum()
+}
+
+fn block_cost(block: &BlockData) -> usize {
+    match checked(block) {
+        Some(_) => block.stmts.len() - 1,
+        None => {
             block.stmts.len() + usize::from(!matches!(block.terminator, Terminator::Goto(_) | Terminator::Return(_)))
-        })
-        .sum()
+        }
+    }
+}
+
+/// Where the check that ends the block unwinds to, if one does.
+fn checked(block: &BlockData) -> Option<BlockId> {
+    block.stmts.len().checked_sub(2).and_then(|at| unwinds(block, at))
+}
+
+/// The blocks a call runs unless a panic unwinds it (15.9).
+fn warm(body: &Body) -> Vec<bool> {
+    let mut warm = vec![false; body.blocks.len()];
+    let mut pending = vec![0];
+    while let Some(block) = pending.pop() {
+        if std::mem::replace(&mut warm[block], true) {
+            continue;
+        }
+        let data = &body.blocks[block];
+        match (&data.terminator, checked(data)) {
+            (Terminator::Branch(_, _, next), Some(_)) => pending.push(next.0 as usize),
+            (Terminator::Branch(_, then, otherwise), None) => pending.extend([then.0 as usize, otherwise.0 as usize]),
+            (Terminator::Goto(next), _) => pending.push(next.0 as usize),
+            _ => {}
+        }
+    }
+    warm
 }
 
 /// Whether a function is worth inlining and can be: it is small,
@@ -221,11 +251,9 @@ fn small(body: &Body) -> bool {
     if body.osr.is_some() || !body.points.is_empty() {
         return false;
     }
-    let mut cost = 0;
+    let cost = self::cost(body);
     for block in &body.blocks {
-        cost += usize::from(!matches!(block.terminator, Terminator::Goto(_) | Terminator::Return(_)));
         for statement in &block.stmts {
-            cost += 1;
             match statement {
                 Statement::DeferPush(..) | Statement::DeferPop | Statement::OsrLoad(_) => return false,
                 Statement::Assign(_, rvalue, _) => match &**rvalue {
@@ -310,16 +338,25 @@ fn inline_into(caller: &Body, index: usize, small: &[Option<Body>]) -> Option<Bo
     // as one of the caller's did, whose targets are its old numbers.
     let mut starts = Vec::with_capacity(caller.blocks.len());
     let mut ends = Vec::new();
-    // The blocks that check for a panic as a call did, whose unwinding is
-    // the caller's old number.
+    // The blocks that check for a panic as a call did, and those of the
+    // callee that unwound to its caller, whose unwinding is the caller's
+    // old number.
     let mut checks = Vec::new();
+    let mut unwound = Vec::new();
     for (index, block) in caller.blocks.iter().enumerate() {
         let quiet = quieted(block, &callee_of);
         let block = quiet.as_ref().unwrap_or(block);
         starts.push(BlockId(blocks.len() as u32));
         let scope = caller.scopes.get(index).copied().flatten();
         let mut current = Vec::new();
+        // A call inlined unwinds to the caller's way itself: the check
+        // after it goes, and so does the check for a cancellation after
+        // that when the code inlined cannot wait.
+        let mut then = None;
         for (at, statement) in block.stmts.iter().enumerate() {
+            if then.is_some() {
+                break;
+            }
             let Some(callee) = callee_of(statement) else {
                 current.push(statement.clone());
                 continue;
@@ -367,6 +404,10 @@ fn inline_into(caller: &Body, index: usize, small: &[Option<Body>]) -> Option<Bo
                     rename.statement(statement);
                 }
                 copied.terminator = match copied.terminator {
+                    Terminator::Return(_) if unwind.is_some() && resumes(callee_block) => {
+                        unwound.push((blocks.len(), unwind.unwrap_or(BlockId(0))));
+                        Terminator::Goto(BlockId(0))
+                    }
                     Terminator::Return(mut value) => {
                         rename.operand(&mut value);
                         // Of no line: it is neither the callee's nor the call's.
@@ -388,15 +429,22 @@ fn inline_into(caller: &Body, index: usize, small: &[Option<Body>]) -> Option<Bo
                 };
                 blocks.push(copied);
             }
+            if let (Some(_), Terminator::Branch(_, _, next)) = (unwind, &block.terminator) {
+                then = Some(past_cancellation(&caller.blocks, *next, callee));
+            }
         }
         ends.push(blocks.len());
-        blocks.push(BlockData { stmts: current, terminator: block.terminator.clone() });
+        let terminator = then.map_or_else(|| block.terminator.clone(), Terminator::Goto);
+        blocks.push(BlockData { stmts: current, terminator });
         scopes.push(scope);
     }
     for check in checks {
         if let Terminator::Branch(condition, unwind, entry) = &blocks[check].terminator {
             blocks[check].terminator = Terminator::Branch(condition.clone(), starts[unwind.0 as usize], *entry);
         }
+    }
+    for (block, unwind) in unwound {
+        blocks[block].terminator = Terminator::Goto(starts[unwind.0 as usize]);
     }
     for end in ends {
         let at = |target: BlockId| starts[target.0 as usize];
@@ -518,11 +566,18 @@ fn guard_calls(caller: &Body, guards: &[Option<Guard>]) -> Option<Body> {
     let (mut blocks, mut scopes): (Vec<BlockData>, Vec<Option<u32>>) = (Vec::new(), Vec::new());
     let mut starts = Vec::with_capacity(caller.blocks.len());
     let mut ends = Vec::new();
+    // The calls that keep the check for a panic after them (15.9), whose
+    // unwinding is the caller's old number.
+    let mut checks = Vec::new();
     for (index, block) in caller.blocks.iter().enumerate() {
         starts.push(BlockId(blocks.len() as u32));
         let scope = caller.scopes.get(index).copied().flatten();
         let mut current = Vec::new();
+        let mut resume = None;
         for (at, statement) in block.stmts.iter().enumerate() {
+            if resume.is_some() {
+                break;
+            }
             let Some(guard) = guard_of(statement) else {
                 current.push(statement.clone());
                 continue;
@@ -535,6 +590,7 @@ fn guard_calls(caller: &Body, guards: &[Option<Guard>]) -> Option<Body> {
                 current.push(statement.clone());
                 continue;
             }
+            let checked = unwinds(block, at).map(|unwind| (unwind, block.stmts[at + 1].clone()));
             let rename =
                 bind(&mut body, &guard.body, arguments, &mut current, *span, &|local| guard.named.contains(&local));
             // The test, then the way out, then the call, then the rest of
@@ -574,12 +630,28 @@ fn guard_calls(caller: &Body, guards: &[Option<Guard>]) -> Option<Body> {
                 };
                 blocks.push(copied);
             }
-            blocks.push(BlockData { stmts: vec![statement.clone()], terminator: Terminator::Goto(after) });
+            // The call keeps the check after it, where a panic it unwinds
+            // from goes on; the way out cannot panic.
+            match (checked, &block.terminator) {
+                (Some((unwind, check)), Terminator::Branch(Operand::Copy(asked), _, next)) => {
+                    checks.push((blocks.len(), unwind));
+                    let terminator = Terminator::Branch(Operand::Copy(asked.clone()), unwind, after);
+                    blocks.push(BlockData { stmts: vec![statement.clone(), check], terminator });
+                    resume = Some(*next);
+                }
+                _ => blocks.push(BlockData { stmts: vec![statement.clone()], terminator: Terminator::Goto(after) }),
+            }
             scopes.resize(blocks.len(), scope);
         }
         ends.push(blocks.len());
-        blocks.push(BlockData { stmts: current, terminator: block.terminator.clone() });
+        let terminator = resume.map_or_else(|| block.terminator.clone(), Terminator::Goto);
+        blocks.push(BlockData { stmts: current, terminator });
         scopes.push(scope);
+    }
+    for (check, unwind) in checks {
+        if let Terminator::Branch(condition, _, after) = &blocks[check].terminator {
+            blocks[check].terminator = Terminator::Branch(condition.clone(), starts[unwind.0 as usize], *after);
+        }
     }
     for end in ends {
         let at = |target: BlockId| starts[target.0 as usize];
@@ -609,13 +681,6 @@ fn quieted<'b>(block: &BlockData, callee_of: &impl Fn(&Statement) -> Option<&'b 
     let checks = matches!(**rvalue, Rvalue::Cancelled)
         && matches!(&**compare, Rvalue::Binary(crate::ast::BinOp::Eq, Operand::Copy(read), _) if *read == *asked)
         && *condition == *is;
-    let waits = |callee: &Body| {
-        callee
-            .blocks
-            .iter()
-            .flat_map(|b| &b.stmts)
-            .any(|s| matches!(s, Statement::Assign(_, r, _) if matches!(**r, Rvalue::Cancelled)))
-    };
     if !checks || callee_of(call).is_none_or(waits) {
         return None;
     }
@@ -623,6 +688,40 @@ fn quieted<'b>(block: &BlockData, callee_of: &impl Fn(&Statement) -> Option<&'b 
     quiet.stmts.truncate(block.stmts.len() - 2);
     quiet.terminator = Terminator::Goto(*next);
     Some(quiet)
+}
+
+/// Whether a block ends the way a panic unwinds a function, to its caller.
+fn resumes(block: &BlockData) -> bool {
+    block.stmts.iter().any(|statement| {
+        matches!(statement, Statement::Assign(_, rvalue, _)
+            if matches!(**rvalue, Rvalue::Call(Callee::Std(crate::hir::StdFn::UnwindResume), _)))
+    })
+}
+
+/// Where the code after an inlined call goes on: `next`, or past the
+/// check for a cancellation there when the code inlined cannot wait.
+fn past_cancellation(blocks: &[BlockData], next: BlockId, callee: &Body) -> BlockId {
+    let block = &blocks[next.0 as usize];
+    let [Statement::Assign(asked, rvalue, _), Statement::Assign(is, compare, _)] = &block.stmts[..] else {
+        return next;
+    };
+    let Terminator::Branch(Operand::Copy(condition), _, after) = &block.terminator else { return next };
+    let checks = matches!(**rvalue, Rvalue::Cancelled)
+        && matches!(&**compare, Rvalue::Binary(crate::ast::BinOp::Eq, Operand::Copy(read), _) if *read == *asked)
+        && *condition == *is;
+    if !checks || waits(callee) {
+        return next;
+    }
+    *after
+}
+
+/// Whether a function may wait, and so be cancelled there.
+fn waits(callee: &Body) -> bool {
+    callee
+        .blocks
+        .iter()
+        .flat_map(|b| &b.stmts)
+        .any(|s| matches!(s, Statement::Assign(_, r, _) if matches!(**r, Rvalue::Cancelled)))
 }
 
 /// How the callee's locals are the caller's: a parameter is the argument,

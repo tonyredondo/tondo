@@ -57,6 +57,22 @@ pub fn lower(program: &hir::Program, live: bool) -> Vec<Body> {
     lower_all(waits, recovering)
 }
 
+/// Drops the checks for a panic after statements the optimizations made
+/// unable to panic, as a subtraction proved exact (15.9).
+pub fn drop_dead_checks(bodies: &mut [Body]) {
+    for body in bodies {
+        for block in &mut body.blocks {
+            let [.., statement, Statement::Assign(asked, rvalue, _)] = &block.stmts[..] else { continue };
+            let Terminator::Branch(Operand::Copy(condition), _, next) = &block.terminator else { continue };
+            if !matches!(**rvalue, Rvalue::Unwinding) || condition != asked || may_panic(statement) {
+                continue;
+            }
+            block.terminator = Terminator::Goto(*next);
+            block.stmts.pop();
+        }
+    }
+}
+
 /// Whether a statement may panic and return, when a `recover` stops it:
 /// a call, an operation of the runtime, checked arithmetic or a read or
 /// write by an index (15.9).
@@ -77,6 +93,14 @@ fn may_panic(statement: &Statement) -> bool {
                         operands.iter().any(read)
                     }
                     Rvalue::Discriminant(place) => checked(place),
+                    // What only adds or takes an element: an index or a key
+                    // of the program's own type may panic.
+                    Rvalue::Mutate(mutation, place, operands, ..) => {
+                        use hir::Mutation::*;
+                        checked(place)
+                            || operands.iter().any(read)
+                            || !matches!(mutation, Push | PushFront | Pop | PopFront | RemoveAt | Clear)
+                    }
                     Rvalue::Exact(..)
                     | Rvalue::Increment(_)
                     | Rvalue::FnValue(_)
@@ -374,6 +398,35 @@ impl Builder<'_> {
         self.types.needs_drop(ty)
     }
 
+    /// Whether a statement only computes with floats, which never panics:
+    /// their arithmetic, and the functions of `std.math` the processor
+    /// computes.
+    fn computes_floats(&self, statement: &Statement) -> bool {
+        let Statement::Assign(place, rvalue, _) = statement else { return false };
+        let plain = |operand: &Operand| match operand {
+            Operand::Copy(place) => !place.path.iter().any(|p| matches!(p, Proj::Index(..))),
+            Operand::Const(_) => true,
+        };
+        let float = matches!(self.types.kind(self.place_ty(place)), TyKind::Float(_));
+        plain(&Operand::Copy(place.clone()))
+            && match &**rvalue {
+                Rvalue::Binary(_, a, b) => float && plain(a) && plain(b),
+                Rvalue::Unary(_, a) => float && plain(a),
+                Rvalue::Call(hir::Callee::Std(hir::StdFn::Native(index)), arguments) => {
+                    arguments.iter().all(plain)
+                        && matches!(
+                            hir::NATIVES[*index as usize].symbol,
+                            "tondo_rt_math_sqrt"
+                                | "tondo_rt_math_floor"
+                                | "tondo_rt_math_ceil"
+                                | "tondo_rt_math_trunc"
+                                | "tondo_rt_math_round"
+                        )
+                }
+                _ => false,
+            }
+    }
+
     fn place_ty(&self, place: &Place) -> Ty {
         place.path.iter().fold(self.locals[place.local.0 as usize], |ty, &proj| project(self.types, ty, proj))
     }
@@ -429,7 +482,7 @@ impl Builder<'_> {
     }
 
     fn push(&mut self, stmt: Statement) {
-        let check = self.recovering && self.cleaning == 0 && may_panic(&stmt);
+        let check = self.recovering && self.cleaning == 0 && may_panic(&stmt) && !self.computes_floats(&stmt);
         self.blocks[self.current.0 as usize].0.push(stmt);
         if check {
             self.unwind_check();
