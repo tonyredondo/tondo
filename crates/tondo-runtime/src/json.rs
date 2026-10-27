@@ -34,10 +34,12 @@ enum Frame {
         started: bool,
     },
     /// Where its keys start among the reader's, the current one last;
-    /// past a few, also in a set, to find a repeated one.
+    /// past a few, also in a set, to find a repeated one; and a bit for
+    /// each of them, which a key whose bit is not set cannot repeat.
     Object {
         first: usize,
         set: Option<HashSet<String>>,
+        bits: u64,
         expect_key: bool,
         started: bool,
     },
@@ -296,8 +298,15 @@ impl Reader {
                 return self.fail("expected `:` after a key");
             }
             self.position += 1;
-            let Some(&Frame::Object { first, .. }) = self.frames.last() else { unreachable!("an object is open") };
-            let repeated = if self.duplicates {
+            let Some(&Frame::Object { first, bits, .. }) = self.frames.last() else {
+                unreachable!("an object is open")
+            };
+            let bit =
+                1u64 << (self.text.bytes().fold(self.text.len() as u32, |h, b| h.wrapping_mul(31) ^ b as u32) % 64);
+            if let Some(Frame::Object { bits, .. }) = self.frames.last_mut() {
+                *bits |= bit;
+            }
+            let repeated = if self.duplicates || bits & bit == 0 && self.key_ends.len() - first < FEW_KEYS {
                 false
             } else if self.key_ends.len() - first < FEW_KEYS {
                 (first..self.key_ends.len()).any(|at| self.key(at) == self.text)
@@ -349,8 +358,13 @@ impl Reader {
                 }
                 self.position += 1;
                 if byte == b'{' {
-                    let frame =
-                        Frame::Object { first: self.key_ends.len(), set: None, expect_key: true, started: false };
+                    let frame = Frame::Object {
+                        first: self.key_ends.len(),
+                        set: None,
+                        bits: 0,
+                        expect_key: true,
+                        started: false,
+                    };
                     self.frames.push(frame);
                     BEGIN_OBJECT
                 } else {
