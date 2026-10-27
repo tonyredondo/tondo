@@ -441,7 +441,12 @@ impl Reader {
         let mut out = std::mem::take(&mut self.text).into_bytes();
         out.clear();
         let read = self.string_into(&mut out);
-        let valid = read.and_then(|()| std::str::from_utf8(&out).map(|_| ()).map_err(|_| "invalid UTF-8 in string"));
+        // Text read from a string is UTF-8 already: a run of it ends at an
+        // ASCII byte, and an escape adds a whole character.
+        let valid = read.and_then(|()| match self.source {
+            None => Ok(()),
+            Some(_) => std::str::from_utf8(&out).map(|_| ()).map_err(|_| "invalid UTF-8 in string"),
+        });
         if valid.is_err() {
             out.clear();
         }
