@@ -160,6 +160,7 @@ enum Rt {
     ArraySliceChecked,
     ArrayConcat,
     ArraySortedInts,
+    IntText,
     ArraySortedStrings,
     ArrayRepeat,
     ArrayEq,
@@ -399,6 +400,7 @@ impl Rt {
             Rt::ArraySliceChecked => ("tondo_rt_array_slice_checked", &[I64, I64, I64, I64, I64], &[I64]),
             Rt::ArrayConcat => ("tondo_rt_array_concat", &[I64, I64, I64, I64, I64], &[I64]),
             Rt::ArraySortedInts => ("tondo_rt_array_sorted_ints", &[I64], &[I64]),
+            Rt::IntText => ("tondo_rt_int_text", &[I64], &[I64]),
             Rt::ArraySortedStrings => ("tondo_rt_array_sorted_strings", &[I64], &[I64]),
             Rt::ArrayRepeat => ("tondo_rt_array_repeat", &[I64, I64, I64, I64, I64], &[I64]),
             Rt::ArrayEq => ("tondo_rt_array_eq", &[I64, I64, I64, I64], &[I8]),
@@ -7265,6 +7267,15 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let value = if rt == Rt::StrAppendInt { self.wide(value, signed) } else { value };
                 return self.e.call_rt(rt, &[text, value]).unwrap();
             }
+        }
+        // An integer alone, `"{i}"`, in one call.
+        if let [Piece::Value(operand, ty)] = pieces
+            && let Some(TyKind::Int(int)) = plain(self, *ty)
+            && (int.signed() || int.bits() < 64)
+        {
+            let value = self.scalar(operand);
+            let value = self.wide(value, int.signed());
+            return self.e.call_rt(Rt::IntText, &[value]).unwrap();
         }
         // A string alone is that string.
         if let [Piece::Value(operand, ty)] = pieces

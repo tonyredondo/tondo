@@ -1956,6 +1956,44 @@ pub unsafe extern "C" fn tondo_rt_str_append(s: *mut Str, t: *const Str) -> *mut
 }
 
 /// `x = "{x}{i}"`, as `tondo_rt_str_append`.
+/// `"{i}"`: an integer's digits, in a string of their own; those of 0 to
+/// 99, as Go's, from strings the program keeps, which take no allocation.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_int_text(value: i64) -> *mut Str {
+    #[repr(C)]
+    struct Small {
+        header: Str,
+        digits: [u8; 8],
+    }
+    static SMALL: [Small; 100] = {
+        let mut table =
+            [const { Small { header: Str { rc: AtomicUsize::new(IMMORTAL), len: 1 }, digits: [0; 8] } }; 100];
+        let mut n = 0;
+        while n < 100 {
+            match n < 10 {
+                true => table[n].digits[0] = b'0' + n as u8,
+                false => {
+                    table[n].header.len = 2;
+                    table[n].digits[0] = b'0' + (n / 10) as u8;
+                    table[n].digits[1] = b'0' + (n % 10) as u8;
+                }
+            }
+            n += 1;
+        }
+        table
+    };
+    if (0..100).contains(&value) {
+        return &SMALL[value as usize] as *const Small as *mut Str;
+    }
+    let mut digits = [0; 21];
+    let text = decimal(value.unsigned_abs(), (&mut digits[1..]).try_into().unwrap());
+    let start = 21 - text.len() - usize::from(value < 0);
+    if value < 0 {
+        digits[start] = b'-';
+    }
+    str_new(&digits[start..])
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_append_int(s: *mut Str, value: i64) -> *mut Str {
     let mut digits = [0; 21];

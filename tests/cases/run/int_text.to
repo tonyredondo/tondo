@@ -1,0 +1,32 @@
+import std.console
+
+// An integer alone in an interpolation is its digits; those of 0 to 99
+// come from strings the program keeps, which appending to leaves as they
+// were.
+
+fn main() {
+    let small = "{7}"
+    var grown = small
+    grown = "{grown}a"
+    grown = "{grown}b"
+    console.println("{small} {grown} {"{42}" == "42"} {"{7}".length()}")
+    for value in [0, 9, 10, 99, 100, -1, -100, -9223372036854775807 - 1, 9223372036854775807] {
+        let text = "{value}"
+        console.println("{text} {text.length()}")
+    }
+    let byte: UInt8 = 255
+    let small32: Int32 = -5
+    console.println("{byte} {small32}")
+}
+
+// expect-stdout: 7 7ab true 1
+// expect-stdout: 0 1
+// expect-stdout: 9 1
+// expect-stdout: 10 2
+// expect-stdout: 99 2
+// expect-stdout: 100 3
+// expect-stdout: -1 2
+// expect-stdout: -100 4
+// expect-stdout: -9223372036854775808 20
+// expect-stdout: 9223372036854775807 19
+// expect-stdout: 255 -5
