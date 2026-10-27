@@ -6715,6 +6715,23 @@ impl<'a> Checker<'a> {
                         cx.result = value.ty;
                         Some(value)
                     }
+                    // `return err(e)` in a function that fails: its error
+                    // leaves by `fail`, as `return` gives its success.
+                    Some(ast::Expr { kind: ast::ExprKind::Construct(constructor, error), .. })
+                        if *constructor == "err"
+                            && cx.error.is_some()
+                            && !matches!(self.types.kind(result), TyKind::Result(..)) =>
+                    {
+                        let written = format!("fail {}", self.sources.slice(error.span));
+                        let message = format!(
+                            "`return` gives a function's success, also when it can fail; its error leaves with `fail`: \
+                             write `{written}`"
+                        );
+                        self.diags.error("E1304", stmt.span, message);
+                        self.diags.fix(format!("write `{written}`"), true, vec![(stmt.span, written)]);
+                        self.expr(cx, error, None);
+                        None
+                    }
                     Some(value) => {
                         let value = self.expr(cx, value, Some(result));
                         if result == Ty::UNIT && ![Ty::UNIT, Ty::NEVER, Ty::ERROR].contains(&value.ty) {

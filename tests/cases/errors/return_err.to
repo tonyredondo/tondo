@@ -1,0 +1,13 @@
+// `return` gives a function's success; its error leaves with `fail`.
+
+fn check(n: Int): Unit ! String {
+    if n < 0 {
+        return err("negative")
+    }
+}
+
+fn main() {
+    _ = check(1)
+}
+
+// expect-error: E1304
