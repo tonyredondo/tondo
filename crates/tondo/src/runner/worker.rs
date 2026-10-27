@@ -218,6 +218,16 @@ fn worker(
         let (limit, memory) = (fuzz.map_or(1000, |f| f.timeout.as_millis()), fuzz.map_or(2048, |f| f.memory));
         let fields = format!("{test}\t{call}\t{corpus}\t{stop}\t{until}\t{literals}\t{limit}\t{memory}");
         command.env("TONDO_FUZZ", fields);
+        // A crash is an input that fails, which the runner reports: no core
+        // dump, which would take long and fill the disk.
+        #[cfg(unix)]
+        unsafe {
+            std::os::unix::process::CommandExt::pre_exec(&mut command, || {
+                let none = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+                libc::setrlimit(libc::RLIMIT_CORE, &none);
+                Ok(())
+            });
+        }
         if let Some(replay) = run.replay {
             let (test, call) = (tree.id(replay.test), super::fuzz::directory(&replay.call));
             command.env("TONDO_FUZZ_REPLAY", format!("{test}\t{call}\t{}", replay.file.display()));

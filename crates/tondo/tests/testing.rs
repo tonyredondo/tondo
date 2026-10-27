@@ -490,9 +490,11 @@ pub fn grow(n: Int): Int {
     n
 }
 
+extern fn abort(): Never
+
 pub fn deep(n: Int): Int {
     if n == 99 {
-        return deep(n) + 1
+        unsafe { abort() }
     }
     n
 }
@@ -516,13 +518,26 @@ test deepens {
 ";
     let dir = project("fuzz-limits", tests);
     std::fs::write(dir.join("src/main.to"), code).unwrap();
-    let args = ["test", "--fuzz", "--fuzz-time", "120", "--fuzz-timeout", "0.5", "--fuzz-memory", "200", "--jobs", "3"];
-    let (stdout, _, status) = tondo(&dir, &args);
+    // An input that hangs, alone, with a short limit.
+    let spins = ["test", "--fuzz", "--fuzz-time", "120", "--fuzz-timeout", "0.5", "--exact", "app::unit::app::spins"];
+    let (stdout, _, status) = tondo(&dir, &spins);
     assert_eq!(status, 1, "{stdout}");
     for part in [
         "test app::unit::app::spins ... TIMEOUT\n",
         "an input ran longer than --fuzz-timeout, 0.5s\nfuzz `spin` failed after ",
         "saved in fuzz/unit/app/spins/spin/",
+    ] {
+        assert!(stdout.contains(part), "missing {part:?} in {stdout}");
+    }
+    // Those that hold too much or crash, with time for it even under
+    // emulation.
+    let args = ["test", "--fuzz", "--fuzz-time", "120", "--fuzz-timeout", "60", "--fuzz-memory", "200", "--jobs", "2"];
+    let (stdout, _, status) = tondo(&dir, &[&args[..], &["--exact", "app::unit::app::grows"]].concat());
+    assert_eq!(status, 1, "{stdout}");
+    let (crashed, _, status) = tondo(&dir, &[&args[..], &["--exact", "app::unit::app::deepens"]].concat());
+    assert_eq!(status, 1, "{crashed}");
+    let stdout = stdout + &crashed;
+    for part in [
         "test app::unit::app::grows ... RESOURCE LIMIT\n",
         "more than --fuzz-memory 200\nfuzz `grow` failed after ",
         "saved in fuzz/unit/app/grows/grow/",
