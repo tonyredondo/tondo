@@ -4,7 +4,10 @@ import std.console
 // the variant a function returned, `a and b` whose short way is false,
 // and the payload of a known variant read from where it came from.
 
-type Point = { x: Int, y: Int }
+type Point = {
+    x: Int
+    y: Int
+}
 
 fn half(n: Int): Int ! String {
     if n % 2 != 0 {
@@ -22,7 +25,41 @@ fn found(points: Array[Point], x: Int): Point? {
     none
 }
 
+fn Point.move(mut self) {
+    self.x += 100
+}
+
+fn wrapped(point: Point): Point? {
+    some(point)
+}
+
+// A payload is read from where it came from only while that has not
+// changed: by an assignment, a field's, a method that borrows it, or a
+// binding that borrows it.
+fn changed() {
+    var n = 1
+    let first = some(n)
+    n = 2
+    var point = Point { x: 1, y: 2 }
+    let second = wrapped(point)
+    point.x = 3
+    let third = wrapped(point)
+    point.move()
+    var points = [Point { x: 5, y: 6 }]
+    let fourth = wrapped(points[0])
+    for mut each in points {
+        each.x = 7
+    }
+    match (first, second, third, fourth) {
+        (some(a), some(b), some(c), some(d)) => console.println(
+            "{a} {n} {b.x} {c.x} {point.x} {d.x} {points[0].x}",
+        )
+        _ => console.println("none")
+    }
+}
+
 fn main() {
+    changed()
     var total = 0
     var odd = ""
     for n in 0..7 {
@@ -53,6 +90,7 @@ fn main() {
     console.println("{steps} {values}")
 }
 
+// expect-stdout: 1 2 1 3 103 5 7
 // expect-stdout: 312 odd 5
 // expect-stdout: [-1, 10, 20, -1]
 // expect-stdout: 2 [6, 2, 4, 1, 5]

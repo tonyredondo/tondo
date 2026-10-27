@@ -64,10 +64,13 @@ fn thread_one(body: &mut Body, types: &Types) {
         if !wanted.iter().any(|&w| w) {
             return;
         }
-        let unknowable: Vec<bool> = aliases.iter().zip(&lent).zip(&wanted).map(|((a, l), w)| *a || *l || !*w).collect();
+        // What may change with no statement that names it, and what facts
+        // are kept about.
+        let changing: Vec<bool> = aliases.iter().zip(&lent).map(|(a, l)| *a || *l).collect();
+        let followed: Vec<bool> = changing.iter().zip(&wanted).map(|(c, w)| !*c && *w).collect();
         for _ in 0..3 {
             let copied = duplicate(body);
-            let folded = fold(body, &unknowable);
+            let folded = fold(body, &changing, &followed);
             if !copied && !folded {
                 break;
             }
@@ -249,7 +252,7 @@ fn duplicate(body: &mut Body) -> bool {
 }
 
 /// Folds what each way knows into the tests and reads it reaches.
-fn fold(body: &mut Body, aliases: &[bool]) -> bool {
+fn fold(body: &mut Body, changing: &[bool], followed: &[bool]) -> bool {
     let count = body.blocks.len();
     let number = order(body);
     let mut blocks: Vec<usize> = (0..count).filter(|&b| number[b] != usize::MAX).collect();
@@ -265,7 +268,7 @@ fn fold(body: &mut Body, aliases: &[bool]) -> bool {
         for &block in &blocks {
             let Some(mut known) = entry[block].clone() else { continue };
             for statement in &body.blocks[block].stmts {
-                learn(statement, &mut known, aliases);
+                learn(statement, &mut known, changing, followed);
             }
             for to in successors(&body.blocks[block].terminator) {
                 let merged = match &entry[to] {
@@ -287,7 +290,7 @@ fn fold(body: &mut Body, aliases: &[bool]) -> bool {
         let mut statements = std::mem::take(&mut body.blocks[block].stmts);
         for statement in &mut statements {
             folded |= rewrite(statement, &known, &body.locals);
-            learn(statement, &mut known, aliases);
+            learn(statement, &mut known, changing, followed);
         }
         body.blocks[block].stmts = statements;
         let terminator = &mut body.blocks[block].terminator;
@@ -310,8 +313,9 @@ fn fold(body: &mut Body, aliases: &[bool]) -> bool {
     folded
 }
 
-/// What a statement teaches, and what it makes stale.
-fn learn(statement: &Statement, known: &mut HashMap<Local, Known>, aliases: &[bool]) {
+/// What a statement teaches of the locals followed, and what it makes
+/// stale; a fact never rests on what may change unseen.
+fn learn(statement: &Statement, known: &mut HashMap<Local, Known>, changing: &[bool], followed: &[bool]) {
     let (mut used, mut defined) = (Vec::new(), Vec::new());
     statement_locals(statement, &mut used, &mut defined);
     // A loan of a local may change it, as a call it is passed to.
@@ -334,14 +338,14 @@ fn learn(statement: &Statement, known: &mut HashMap<Local, Known>, aliases: &[bo
     }
     let Statement::Assign(place, value, _) = statement else { return };
     let Some(local) = whole(place) else { return };
-    if aliases[local.0 as usize] {
+    if !followed[local.0 as usize] {
         return;
     }
     let fact = match &**value {
         Rvalue::Variant(variant, components) => Some(Known::Variant(*variant, components.clone())),
         Rvalue::Use(Operand::Const(constant)) => Some(Known::Const(constant.clone())),
         Rvalue::Use(Operand::Copy(source)) => {
-            whole(source).filter(|&s| s != local && !aliases[s.0 as usize]).map(Known::Copy)
+            whole(source).filter(|&s| s != local && !changing[s.0 as usize]).map(Known::Copy)
         }
         _ => None,
     };
@@ -349,9 +353,9 @@ fn learn(statement: &Statement, known: &mut HashMap<Local, Known>, aliases: &[bo
         Known::Variant(_, components) => components.iter().any(|operand| {
             let mut used = Vec::new();
             operand_uses(operand, &mut used);
-            used.iter().any(|local| aliases[local.0 as usize])
+            used.iter().any(|local| changing[local.0 as usize])
         }),
-        Known::Copy(other) => aliases[other.0 as usize],
+        Known::Copy(other) => changing[other.0 as usize],
         Known::Const(_) => false,
     };
     if let Some(fact) = fact.filter(|fact| !mentions(fact, local) && !stale(fact)) {
