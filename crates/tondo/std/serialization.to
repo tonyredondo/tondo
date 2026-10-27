@@ -328,6 +328,23 @@ impl Decode for Int {
     }
 }
 
+/// A byte is an integer from 0 to 255.
+impl Encode for Byte {
+    fn encode[S: Sink](self, out: S) {
+        out.int(Int(self))
+    }
+}
+
+impl Decode for Byte {
+    fn decode[S: Source](input: S, first: Event): Byte ! Error {
+        let value = Decode.decode[Int](input, first)?
+        match Byte(value) {
+            ok(byte) => byte
+            err(_) => fail input.failure(ErrorKind.Range, "{value} is not a byte, from 0 to 255")
+        }
+    }
+}
+
 impl Encode for Float {
     fn encode[S: Sink](self, out: S) {
         out.float(self)

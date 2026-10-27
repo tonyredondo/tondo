@@ -2730,3 +2730,14 @@ that are rare now: a body in one fails with an error that names it and
 says to read its bytes. The body is still read once, but a second read,
 which gave nothing and said nothing, now fails and says to keep what the
 first read gave.
+
+## 2026-10-27 — A `Byte` encodes as an integer from 0 to 255
+
+`Byte` had no `Encode` or `Decode`, so neither had an `Array[Byte]` nor a
+record with one, and a fuzz test of a binary parser had to take a
+`serialization.Bytes`. A byte is now an integer from 0 to 255 in every
+format, so an `Array[Byte]` is a list of them, as JSON readers of other
+languages write it, and one out of range fails as `Range`;
+`serialization.Bytes` stays the type for bytes that a format holds as its
+own, natively or as base64. The fuzzer knows the shape: it makes and changes
+a list of bytes as bytes, with flipped bits and the values at their edges.

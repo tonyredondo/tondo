@@ -1353,8 +1353,8 @@ impl<'a> Checker<'a> {
     }
 
     /// What `json.encode` writes for a value of `ty`, as the fuzzer reads it
-    /// (testing 10.6), in JSON: `"int"`, `"float"`, `"bool"`, `"text"`,
-    /// `"bytes"` and `"datetime"`; `{"option": s}`, `{"list": s}` and
+    /// (testing 10.6), in JSON: `"int"`, `"byte"`, `"float"`, `"bool"`,
+    /// `"text"`, `"bytes"` and `"datetime"`; `{"option": s}`, `{"list": s}` and
     /// `{"map": s}`; and for a record, enum or newtype, `{"ref": n}`, its
     /// index in `defs`, whose entry is `{"record": [[key, s]...]}`,
     /// `{"enum": [[name, payload]...]}` or its value's shape, so that one
@@ -1363,6 +1363,7 @@ impl<'a> Checker<'a> {
         let quoted = |text: &str| serde_json::Value::String(text.to_string()).to_string();
         match self.types.kind(ty).clone() {
             _ if ty == Ty::INT => "\"int\"".into(),
+            _ if ty == Ty::BYTE => "\"byte\"".into(),
             _ if ty == Ty::F64 => "\"float\"".into(),
             _ if ty == Ty::BOOL => "\"bool\"".into(),
             _ if ty == Ty::STRING => "\"text\"".into(),

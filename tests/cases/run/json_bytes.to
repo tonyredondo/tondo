@@ -1,0 +1,29 @@
+// A `Byte` is an integer from 0 to 255, so an `Array[Byte]` is a list of
+// them; `serialization.Bytes` is base64 in a text format.
+
+import std.console
+import std.json
+import std.serialization
+
+type Packet = {
+    kind: Byte
+    data: Array[Byte]
+}
+
+fn main(): !json.JsonError {
+    let packet = Packet { kind: Byte(7u8), data: "hi".bytes() }
+    let text = json.encode(packet)
+    console.println(text)
+    let back: Packet = json.decode(text)?
+    console.println("{Int(back.kind)} {String.fromBytes(back.data).unwrapOr("")}")
+    console.println(json.encode(serialization.Bytes("hi".bytes())))
+    match json.decode[Array[Byte]]("[0, 255, 256]") {
+        ok(_) => console.println("unexpected")
+        err(error) => console.println("{error}")
+    }
+}
+
+// expect-stdout: {"kind":7,"data":[104,105]}
+// expect-stdout: 7 hi
+// expect-stdout: "aGk="
+// expect-stdout: 256 is not a byte, from 0 to 255 at $[2] (line 1, column 13)

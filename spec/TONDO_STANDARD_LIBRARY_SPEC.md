@@ -2363,8 +2363,8 @@ pub trait Decode {
 }
 ~~~
 
-- `Encode` y `Decode` están implementados para `Int`, `Float`, `Bool`,
-  `String`, `T?`, `Array[T]`, `Map[String, V]` y `time.DateTime` (texto RFC 3339
+- `Encode` y `Decode` están implementados para `Int`, `Byte` (un entero de 0
+  a 255), `Float`, `Bool`, `String`, `T?`, `Array[T]`, `Map[String, V]` y `time.DateTime` (texto RFC 3339
   en UTC, o el `DateTime` del formato), y el compilador los implementa
   para cada record, enum y newtype del programa cuyas partes los implementan,
   cuando el programa trae `std.serialization` directamente o por un formato. Una

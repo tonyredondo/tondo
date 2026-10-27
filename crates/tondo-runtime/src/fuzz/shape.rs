@@ -7,6 +7,8 @@ use super::value::Json;
 #[derive(Clone, Debug)]
 pub(crate) enum Shape {
     Int,
+    /// A `Byte`: an integer from 0 to 255.
+    Byte,
     Float,
     Bool,
     Text,
@@ -62,6 +64,7 @@ fn shape(json: &Json) -> Shape {
     match json {
         Json::Text(name) => match name.as_str() {
             "int" => Shape::Int,
+            "byte" => Shape::Byte,
             "float" => Shape::Float,
             "bool" => Shape::Bool,
             "text" => Shape::Text,
@@ -194,6 +197,7 @@ impl Shapes {
         let deep = depth > 6;
         match shape {
             Shape::Int => Json::Int(int(rng, dictionary)),
+            Shape::Byte => Json::Int(i64::from(rng.next() as u8)),
             Shape::Float => Json::Float(float(rng)),
             Shape::Bool => Json::Bool(rng.chance(2)),
             Shape::Text => Json::Text(text(rng, dictionary)),
@@ -210,6 +214,7 @@ impl Shapes {
                 true => Json::Null,
                 false => self.generate(inner, rng, dictionary, depth + 1),
             },
+            Shape::List(inner) if matches!(**inner, Shape::Byte) => byte_list(bytes(rng)),
             Shape::List(inner) => {
                 let count = if deep { 0 } else { rng.below(4) };
                 Json::List((0..count).map(|_| self.generate(inner, rng, dictionary, depth + 1)).collect())
@@ -353,6 +358,13 @@ impl Shapes {
         match (node, resolved.as_ref()) {
             (node @ Json::Null, Some(Shape::Option(inner))) => *node = self.generate(inner, rng, dictionary, depth),
             (node, Some(Shape::Option(_))) if rng.chance(3) => *node = Json::Null,
+            (Json::Int(value), Some(Shape::Byte)) => {
+                *value = match rng.below(3) {
+                    0 => *value ^ 1 << rng.below(8),
+                    1 => [0, 1, 0x7f, 0x80, 0xff][rng.below(5)],
+                    _ => i64::from(rng.next() as u8),
+                } & 0xff
+            }
             (Json::Int(value), _) => *value = mutate_int(*value, rng, dictionary),
             (Json::Float(value), _) => *value = mutate_float(*value, rng),
             (Json::Bool(value), _) => *value = !*value,
@@ -372,6 +384,14 @@ impl Shapes {
                 }
             }
             (Json::Text(text), _) => mutate_text(text, rng, dictionary),
+            // A list of bytes changes as bytes do.
+            (node @ Json::List(_), Some(Shape::List(inner))) if matches!(**inner, Shape::Byte) => {
+                let Json::List(items) = node else { return };
+                let mut data: Vec<u8> =
+                    items.iter().map(|item| if let Json::Int(n) = item { *n as u8 } else { 0 }).collect();
+                mutate_bytes(&mut data, rng);
+                *node = byte_list(data);
+            }
             (Json::List(items), shape) => {
                 let element = match shape {
                     Some(Shape::List(inner)) => Some((**inner).clone()),
@@ -575,6 +595,10 @@ fn mutate_bytes(data: &mut Vec<u8>, rng: &mut Rng) {
         _ => data.insert(at, rng.next() as u8),
     }
     data.truncate(4096);
+}
+
+fn byte_list(data: Vec<u8>) -> Json {
+    Json::List(data.into_iter().map(|byte| Json::Int(i64::from(byte))).collect())
 }
 
 const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

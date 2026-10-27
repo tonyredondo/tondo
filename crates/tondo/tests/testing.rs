@@ -334,6 +334,37 @@ test plain {}
 /// counting what runs leads to, keeps it in the store, and `tondo test`
 /// fails with it from then on; a search that finds none ends in time.
 #[test]
+fn fuzz_search_changes_bytes() {
+    let code = "\
+pub fn header(data: Array[Byte]): Int {
+    if data.length() > 1 and data[0] == Byte(255u8) and data[1] == Byte(128u8) {
+        let empty: Array[Int] = []
+        return empty[0]
+    }
+    data.length()
+}
+
+fn main() {}
+";
+    let tests = "\
+import std.testing
+
+test readsHeaders {
+    testing.fuzz(\"header\", [[Byte(1u8)]], (data: Array[Byte]) {
+        assert(header(data) >= 0)
+    })
+}
+";
+    let dir = project("fuzz-bytes", tests);
+    std::fs::write(dir.join("src/main.to"), code).unwrap();
+    let (stdout, _, status) = tondo(&dir, &["test", "--fuzz", "--fuzz-time", "60"]);
+    assert_eq!(status, 1, "{stdout}");
+    let store = dir.join("fuzz/unit/app/readsHeaders/header");
+    let saved: Vec<_> = std::fs::read_dir(&store).unwrap().flatten().map(|e| e.path()).collect();
+    assert_eq!(std::fs::read_to_string(&saved[0]).unwrap(), "[255,128]", "{stdout}");
+}
+
+#[test]
 fn fuzz_search_finds_inputs_that_fail() {
     // The code it tries is the project's, whose runs count.
     let code = "\
