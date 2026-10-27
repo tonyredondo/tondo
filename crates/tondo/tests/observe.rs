@@ -235,7 +235,7 @@ fn fib(n: Int): Int {
 }
 
 fn main() {
-    for _ in 0..120 {
+    for _ in 0..480 {
         profile.withLabels(["endpoint": "/users"], () { fib(25) })
         profile.withLabels(["endpoint": "/orders"], () { fib(23) })
     }
