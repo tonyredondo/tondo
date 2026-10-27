@@ -1,0 +1,31 @@
+import std.console
+
+// `xs[i]` in `for i in 0..xs.length()` reads without a check of bounds
+// while the loop keeps the array's length; one that changes it, as this
+// one does once it has read two elements, is checked still.
+
+fn total(xs: Array[Int]): Int {
+    var sum = 0
+    for i in 0..xs.length() {
+        sum += xs[i] * i
+    }
+    sum
+}
+
+fn main() {
+    console.println("{total([4, 5, 6])} {total([])}")
+    var words = ["a", "b", "c"]
+    var joined = ""
+    for i in 0..words.length() {
+        joined = "{joined}{words[i]}"
+        if i == 1 {
+            _ = words.pop()
+        }
+    }
+    console.println(joined)
+}
+
+// expect-stdout: 17 0
+// expect-panic: P0001
+// expect-stderr: panic[P0001]: bounds: index 2 is out of bounds for an array of length 2: valid indices are 0 to 1, and -2 to -1 from the end
+// expect-stderr:  --> index_loop.to:20:28

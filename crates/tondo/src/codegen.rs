@@ -4209,7 +4209,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 ty = project(self.e.cg.types(), ty, proj);
                 continue;
             }
-            if let Proj::Index(index, span) = proj {
+            if let Proj::Index(index, _) | Proj::InBounds(index) = proj {
                 let element = project(self.e.cg.types(), ty, proj);
                 let sequence = match base {
                     Some(address) => {
@@ -4229,7 +4229,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     }
                 };
                 let index = self.scalar(&Operand::local(index));
-                base = Some(self.element_address(sequence, ty, index, span));
+                base = Some(match proj {
+                    Proj::Index(_, span) => self.element_address(sequence, ty, index, span),
+                    _ => self.element_at(sequence, ty, index),
+                });
                 ty = element;
                 continue;
             }

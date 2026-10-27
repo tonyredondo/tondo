@@ -2525,3 +2525,16 @@ of a thousand short tasks takes a third less on 32 cores now, and long
 tasks are shared out twice as fast, as the woken worker no longer gives
 up its turn as soon as it wakes. Idle workers also look at the others'
 queues without the queue's lock, which they took in turns.
+
+## 2026-10-27 — Loops over an array's indexes read without checks
+
+`xs[i]` in `for i in 0..xs.length()` reads its element without a check of
+bounds when the loop only reads the elements of `xs` and its length:
+`i` starts at zero and stays under the length the loop read once, which
+nothing in it can change. Anything else that names `xs` in the loop, an
+assignment, a mutation, a loan or `xs` passed whole to a call, which may
+borrow it, keeps the check, as do live builds, whose frames may move to
+code that reads them differently. The proof is made on the MIR of the
+loop, without a pass of its own, and is the one Go's compiler makes for
+the same loop; summing 10,000 integers this way took 4.1 µs and takes
+2.5, where Go takes 2.2.

@@ -23,6 +23,9 @@ pub enum Proj {
     /// An array element at the index held by the local; out-of-bounds
     /// accesses panic at the span.
     Index(Local, Span),
+    /// An array element at an index that the loop it is read in keeps
+    /// within bounds: `xs[i]` in `for i in 0..xs.length()`.
+    InBounds(Local),
     /// The value a `Ref[T]` identifies, which is only read.
     Deref,
     /// The captures of a closure in a `fn` value, of the type given, which
@@ -73,7 +76,7 @@ pub fn project(types: &Types, ty: Ty, proj: Proj) -> Ty {
             types.variants(ty).expect("payload of an enum")[variant as usize][index as usize]
         }
         // Iteration also indexes maps (entries as `(K, V)`) and sets.
-        Proj::Index(..) => match types.kind(types.repr(ty)) {
+        Proj::Index(..) | Proj::InBounds(_) => match types.kind(types.repr(ty)) {
             TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) | TyKind::CArray(element, _) => {
                 *element
             }
@@ -435,7 +438,7 @@ pub fn live_in(blocks: &[BlockData], locals: usize) -> Vec<Vec<Local>> {
 fn place_uses(place: &Place, used: &mut Vec<Local>) {
     used.push(place.local);
     for projection in &place.path {
-        if let Proj::Index(index, _) = projection {
+        if let Proj::Index(index, _) | Proj::InBounds(index) = projection {
             used.push(*index);
         }
     }

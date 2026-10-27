@@ -232,7 +232,7 @@ fn small(body: &Body) -> bool {
     for block in &mut copy {
         let mut indexes = |place: &mut Place| {
             for projection in &place.path {
-                if let Proj::Index(index, _) = projection {
+                if let Proj::Index(index, _) | Proj::InBounds(index) = projection {
                     named.insert(*index);
                 }
             }
@@ -449,7 +449,7 @@ impl Rename {
 
     fn place(&self, place: &mut Place) {
         for projection in &mut place.path {
-            if let Proj::Index(index, _) = projection {
+            if let Proj::Index(index, _) | Proj::InBounds(index) = projection {
                 *index = self.local(*index);
             }
         }
@@ -488,7 +488,7 @@ impl Rename {
 }
 
 /// Every place a statement names, operands' included.
-fn visit_statement(statement: &mut Statement, f: &mut impl FnMut(&mut Place)) {
+pub(crate) fn visit_statement(statement: &mut Statement, f: &mut impl FnMut(&mut Place)) {
     match statement {
         Statement::Assign(place, rvalue, _) => {
             f(place);
@@ -501,7 +501,7 @@ fn visit_statement(statement: &mut Statement, f: &mut impl FnMut(&mut Place)) {
     }
 }
 
-fn visit_terminator(terminator: &mut Terminator, f: &mut impl FnMut(&mut Place)) {
+pub(crate) fn visit_terminator(terminator: &mut Terminator, f: &mut impl FnMut(&mut Place)) {
     match terminator {
         Terminator::Branch(operand, ..) | Terminator::Return(operand) => visit_operand(operand, f),
         Terminator::Panic { message: Some(operand), .. } => visit_operand(operand, f),
