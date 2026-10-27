@@ -82,8 +82,9 @@ fn thread_one(body: &mut Body, types: &Types) {
 /// What a way knows of a local's value.
 #[derive(Clone, PartialEq, Debug)]
 enum Known {
-    /// An enum's variant and its payload's components.
-    Variant(u32, Vec<Operand>),
+    /// An enum's variant and its payload's components, shared by the
+    /// facts of every block that knows them.
+    Variant(u32, std::rc::Rc<[Operand]>),
     Const(Const),
     /// The same value as another local.
     Copy(Local),
@@ -273,6 +274,8 @@ fn fold(body: &mut Body, changing: &[bool], followed: &[bool]) -> bool {
             for to in successors(&body.blocks[block].terminator) {
                 let merged = match &entry[to] {
                     None => known.clone(),
+                    // What the way in knows already, it keeps.
+                    Some(old) if old.iter().all(|(l, k)| known.get(l) == Some(k)) => continue,
                     Some(old) => {
                         old.iter().filter(|(l, k)| known.get(l) == Some(k)).map(|(l, k)| (*l, k.clone())).collect()
                     }
@@ -342,7 +345,7 @@ fn learn(statement: &Statement, known: &mut HashMap<Local, Known>, changing: &[b
         return;
     }
     let fact = match &**value {
-        Rvalue::Variant(variant, components) => Some(Known::Variant(*variant, components.clone())),
+        Rvalue::Variant(variant, components) => Some(Known::Variant(*variant, components.as_slice().into())),
         Rvalue::Use(Operand::Const(constant)) => Some(Known::Const(constant.clone())),
         Rvalue::Use(Operand::Copy(source)) => {
             whole(source).filter(|&s| s != local && !changing[s.0 as usize]).map(Known::Copy)
