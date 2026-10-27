@@ -249,6 +249,15 @@ fn runs_tests_and_debugs() {
     assert_eq!(benchmark["name"], "twice", "{measured}");
     assert!(benchmark["ns_per_op"]["median"].as_f64().unwrap() > 0.0, "{benchmark}");
     assert!(text.contains("  twice "), "{text}");
+
+    // A search for an input that fails, kept and reduced (testing 10.6).
+    let fuzz = "import std.testing\n\ntest parsesCodes {\n    testing.fuzz(\"code\", [1], (n: Int) {\n        assert(n != 4242)\n    })\n}\n";
+    std::fs::write(dir.join("src/fuzz_test.to"), fuzz).unwrap();
+    let (searched, text) = agent.call("test", json!({ "fuzz": 60 }));
+    let call = &searched["report"]["tests"][0]["attempts"][0]["fuzz"][0];
+    assert_eq!(call["input"]["json"], "4242", "{searched}");
+    assert!(call["input"]["file"].as_str().unwrap().starts_with("fuzz/unit/mcp_run/parsesCodes/code/"), "{call}");
+    assert!(text.contains("reproduce: tondo test --exact mcp_run::unit::mcp_run::parsesCodes"), "{text}");
     agent.stop();
 }
 

@@ -16,9 +16,30 @@ export interface Listed {
   suite: boolean;
   /** A test whose body calls `testing.bench` (testing 10.4). */
   bench?: boolean;
+  /** A test whose body calls `testing.fuzz` (testing 10.6). */
+  fuzz?: boolean;
   file?: string;
   line?: number;
   column?: number;
+}
+
+/** What a call of `testing.fuzz` did: the inputs it ran, the one it
+ *  failed with and where it is kept, and under `--fuzz` its search. */
+export interface Fuzzed {
+  name: string;
+  inputs: number;
+  input?: { json: string; file?: string; seed?: number; reducedFrom?: number };
+  search?: Searched;
+}
+
+/** How a search goes: its inputs, time, corpus and coverage. */
+export interface Searched {
+  inputs: number;
+  elapsedMs: number;
+  corpus: number;
+  reached: number;
+  total: number;
+  newMs?: number;
 }
 
 /** What a benchmark measured, and how it compares with its baseline. */
@@ -56,6 +77,8 @@ export interface Outcome {
   logs: string;
   /** What its benchmarks measured, under `--bench`. */
   benchmarks: Measured[];
+  /** What its calls of `testing.fuzz` did (testing 15.15). */
+  fuzz: Fuzzed[];
   /** What it said of itself with `testing.tags`, which only the report
    *  has (testing 9.4). */
   tags: Record<string, string>;
@@ -83,6 +106,46 @@ interface Entry {
   decisive_attempt?: number;
   attempts?: Attempt[];
   bench?: boolean;
+  fuzz?: boolean;
+}
+
+interface FuzzJson {
+  name: string;
+  inputs?: number;
+  input?: { json: string; file?: string | null; seed?: number | null; reduced_from?: number | null } | null;
+  search?: SearchJson | null;
+}
+
+interface SearchJson {
+  inputs?: number;
+  elapsed_ms?: number;
+  corpus?: number;
+  coverage?: { reached?: number; total?: number };
+  new_ms?: number;
+}
+
+function searched(search: SearchJson, inputs: number): Searched {
+  return {
+    inputs: search.inputs ?? inputs,
+    elapsedMs: search.elapsed_ms ?? 0,
+    corpus: search.corpus ?? 0,
+    reached: search.coverage?.reached ?? 0,
+    total: search.coverage?.total ?? 0,
+    newMs: search.new_ms,
+  };
+}
+
+function fuzzed(call: FuzzJson): Fuzzed {
+  const input = call.input
+    ? {
+        json: call.input.json,
+        file: call.input.file ?? undefined,
+        seed: call.input.seed ?? undefined,
+        reducedFrom: call.input.reduced_from ?? undefined,
+      }
+    : undefined;
+  const inputs = call.inputs ?? 0;
+  return { name: call.name, inputs, input, search: call.search ? searched(call.search, inputs) : undefined };
 }
 
 interface Benchmark {
@@ -107,6 +170,7 @@ interface Attempt {
   stderr?: Stream;
   benchmarks?: Benchmark[];
   tags?: Record<string, string>;
+  fuzz?: FuzzJson[];
 }
 
 interface Stream {
@@ -123,6 +187,7 @@ export function listed(json: string): Listed[] {
     name: entry.name,
     suite,
     bench: entry.bench === true,
+    fuzz: entry.fuzz === true,
     file: entry.source?.file,
     line: entry.source?.line,
     column: entry.source?.column,
@@ -147,6 +212,7 @@ export interface Served {
     name: string;
     suite: boolean;
     bench?: boolean;
+    fuzz?: boolean;
     location?: { uri: string; range: { start: { line: number; character: number } } };
   }[];
 }
@@ -159,6 +225,7 @@ export function served(params: Served): { dir: string; nodes: Listed[] } {
     name: test.name,
     suite: test.suite,
     bench: test.bench === true,
+    fuzz: test.fuzz === true,
     file: test.location ? fileURLToPath(test.location.uri) : undefined,
     line: test.location ? test.location.range.start.line + 1 : undefined,
     column: test.location ? test.location.range.start.character + 1 : undefined,
@@ -209,6 +276,7 @@ function outcome(id: string, status: string, attempt: Attempt | undefined): Outc
         : undefined,
     })),
     tags: attempt?.tags ?? {},
+    fuzz: (attempt?.fuzz ?? []).map(fuzzed),
   };
 }
 
@@ -249,6 +317,7 @@ export type TestEvent =
   | { event: 'start'; id: string }
   | { event: 'output'; id: string; text: string }
   | { event: 'end'; outcome: Outcome; duration: number }
+  | { event: 'fuzz'; id: string; name: string; search: Searched }
   | { event: 'report'; compiled: boolean; outcomes: Outcome[]; profiles: Profiled[] };
 
 /** A profile `--profile` wrote: of a test, or of one of its benchmarks. */
@@ -283,6 +352,10 @@ export function testEvent(line: string): TestEvent | undefined {
       return { event: 'output', id: value.id ?? '', text: text(value.stdout) + text(value.stderr) };
     case 'end':
       return { event: 'end', outcome: outcome(value.id ?? '', value.status ?? '', value as Attempt), duration: value.duration_ms ?? 0 };
+    case 'fuzz': {
+      const search = value as SearchJson & { name?: string };
+      return { event: 'fuzz', id: value.id ?? '', name: search.name ?? '', search: searched(search, search.inputs ?? 0) };
+    }
     case 'report':
       return {
         event: 'report',
@@ -339,7 +412,7 @@ export function programOf(where: Place, file: string): { program: string; cwd: s
 
 /** What the extension needs of `tondo`, as `tondo version --json` lists
  *  its features. */
-export const NEEDED = ['json', 'graph', 'test-events', 'test-exact-many', 'test-watch', 'test-coverage', 'lsp-tests', 'explain', 'new', 'test-bench', 'profile'];
+export const NEEDED = ['json', 'graph', 'test-events', 'test-exact-many', 'test-watch', 'test-coverage', 'lsp-tests', 'explain', 'new', 'test-bench', 'profile', 'test-fuzz'];
 
 /** Why a `tondo` cannot serve this extension, from what `tondo version
  *  --json` printed, or `undefined` when it can. */
@@ -639,4 +712,21 @@ export function reloadShown(reload: Reload): Shown {
   return reload.stays?.length
     ? { state: 'partly', text: `applied ${what}, but some frames keep the old code`, details }
     : { state: 'applied', text: `applied ${what}`, details };
+}
+
+/** A search in a line, as `tondo test --fuzz` shows it: its time, inputs
+ *  and how many a second, corpus, and the share of the code it reached. */
+export function searchLine(name: string, search: Searched): string {
+  const seconds = Math.floor(search.elapsedMs / 1000);
+  const clock = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+  const count = (n: number) => (n < 10_000 ? `${n}` : n < 1_000_000 ? `${Math.floor(n / 1000)}k` : `${(n / 1e6).toFixed(1)}M`);
+  const rate = search.elapsedMs > 0 ? Math.floor((search.inputs * 1000) / search.elapsedMs) : 0;
+  const coverage = search.total > 0 ? `  coverage ${Math.floor((search.reached * 100) / search.total)}%` : '';
+  return `${name}  ${clock}  ${count(search.inputs)} inputs  ${count(rate)}/s  corpus ${search.corpus}${coverage}`;
+}
+
+/** What a test is, as the editor marks it: a benchmark, a fuzz test, or
+ *  a plain test. */
+export function kindMark(node: { bench?: boolean; fuzz?: boolean }): string {
+  return node.fuzz ? '🔎 fuzz' : node.bench ? '⏱ benchmark' : '';
 }

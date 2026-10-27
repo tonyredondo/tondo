@@ -140,6 +140,6 @@ test parsesAnyDocument {
   in the test file: only theirs is counted. An input that runs longer than
   `--fuzz-timeout` (1 s), holds more than `--fuzz-memory` MiB (2048) or
   crashes fails too. `tondo debug --test <id>` stops the test where it
-  fails. `--jobs` workers share the
+  fails. Through `tondo mcp`, the `test` tool searches with `fuzz: seconds`. `--jobs` workers share the
   search; what it found is in `target/fuzz/`, or `--fuzz-corpus <dir>`,
   and the next search starts from it.

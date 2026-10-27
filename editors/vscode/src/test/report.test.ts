@@ -23,6 +23,8 @@ import {
   reloadShown,
   reloaded,
   rendered,
+  kindMark,
+  searchLine,
   running,
   served,
   share,
@@ -211,7 +213,17 @@ test('the tests the language server sends are a list, with each file whole', () 
     ],
   });
   assert.equal(sent.dir, '/w/app');
-  assert.deepEqual(sent.nodes[0], { id: 'app::unit::app::group', parent: null, name: 'group', suite: true, bench: false, file: '/w/app/src/main_test.to', line: 5, column: 7 });
+  assert.deepEqual(sent.nodes[0], {
+    id: 'app::unit::app::group',
+    parent: null,
+    name: 'group',
+    suite: true,
+    bench: false,
+    fuzz: false,
+    file: '/w/app/src/main_test.to',
+    line: 5,
+    column: 7,
+  });
   assert.equal(sent.nodes[1].file, undefined);
 });
 
@@ -380,4 +392,32 @@ test('a reload says whether the program runs the new code, or why not', () => {
   const errors = reloadShown({ message: "error[E1001]: ...\nnot reloaded: the program goes on as it was", restart: false });
   assert.equal(errors.state, 'errors');
   assert.throws(() => reloaded('{"format":"tondo-error-0.1/1","ok":false,"message":"no program 42 runs"}'), /no program 42 runs/);
+});
+
+test('a call of testing.fuzz says what it searched and the input it failed with', () => {
+  const end = testEvent(
+    JSON.stringify({
+      event: 'end',
+      id: 'p::unit::p::parses',
+      status: 'failed-panic',
+      fuzz: [
+        {
+          name: 'parse',
+          inputs: 480122,
+          search: { elapsed_ms: 12034, corpus: 312, coverage: { reached: 186, total: 214 } },
+          input: { json: '"[[[["', file: 'fuzz/unit/p/parses/parse/3f2a9c4e81d07b55.json', seed: null, reduced_from: 214 },
+        },
+      ],
+    }),
+  );
+  assert.ok(end?.event === 'end');
+  const [call] = end.outcome.fuzz;
+  assert.deepEqual(call.input, { json: '"[[[["', file: 'fuzz/unit/p/parses/parse/3f2a9c4e81d07b55.json', seed: undefined, reducedFrom: 214 });
+  assert.equal(call.search?.corpus, 312);
+  const progress = testEvent('{"event":"fuzz","id":"p::unit::p::parses","name":"parse","inputs":1700000,"elapsed_ms":42000,"corpus":312,"coverage":{"reached":87,"total":100},"new_ms":3000}');
+  assert.ok(progress?.event === 'fuzz');
+  assert.equal(searchLine(progress.name, progress.search), 'parse  0:42  1.7M inputs  40k/s  corpus 312  coverage 87%');
+  assert.equal(kindMark({ fuzz: true }), '🔎 fuzz');
+  assert.equal(kindMark({ bench: true }), '⏱ benchmark');
+  assert.equal(kindMark({}), '');
 });

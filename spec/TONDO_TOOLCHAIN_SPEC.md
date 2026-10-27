@@ -730,7 +730,8 @@ lenguaje, cada una con un texto para el modelo y su resultado como datos
 - Proyectos: `new_project`, `add_dependency` y `remove_dependency`.
 - Builds: `build`; `run`, con su entrada y un tiempo tras el que el programa
   termina, 60 s si no se dice; `test`, con lo que imprime y su informe JSON, y su cobertura si se pide,
-  y sus benchmarks con `bench`, comparados con `baseline` o `against`;
+  y sus benchmarks con `bench`, comparados con `baseline` o `against`, y
+  con `fuzz` la búsqueda de `--fuzz` durante tantos segundos (10.6 de testing);
   `doc_test`, `bind`, `update` y `target_pack`.
 - Programas en ejecución: `ps`, `counters`, `trace`, `dump` y `dump_read`.
 - Perfiles (sección 7.15): `profile` perfila un programa hasta que termina o
@@ -988,7 +989,7 @@ campos de su resultado:
 | `dump` | `tondo-dump-0.1/1` | `file` y `summary` |
 | `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `tasks`, `task`, `heap`, `objects` u `object` |
 | `reload` | `tondo-reload-0.1/1` | `changed`, `added`, `moves`, `stays` y `converted`; si no puede, `ok` falso, `message` y `restart` |
-| `version` | `tondo-version-0.1/1` | `version`, `backend`, `target` y `features`, lo que ofrece a las herramientas además de sus comandos: `json`, `graph`, `test-events`, `test-exact-many`, `test-watch`, `test-coverage`, `lsp-tests`, `lsp-lenses`, `explain`, `new`, `add` y `fix` |
+| `version` | `tondo-version-0.1/1` | `version`, `backend`, `target` y `features`, lo que ofrece a las herramientas además de sus comandos: `json`, `graph`, `test-events`, `test-exact-many`, `test-watch`, `test-coverage`, `test-bench`, `test-fuzz`, `profile`, `lsp-tests`, `lsp-lenses`, `explain`, `new`, `add` y `fix` |
 | `new`, `init` | `tondo-new-0.1/1`, `tondo-init-0.1/1` | `project`, `name` y `files`, los que escribió |
 | `add`, `remove` | `tondo-add-0.1/1`, `tondo-remove-0.1/1` | `alias`, y con `add` la tabla, `table` |
 | `fix` | `tondo-fix-0.1/1` | `applied` y `skipped`, cada reparación con su `id` y su `title`, `compiles` y los `diagnostics` de después; `ok` si compila |

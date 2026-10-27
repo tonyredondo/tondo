@@ -53,9 +53,16 @@ project, running, debugging and testing it.
   *Benchmark* profile measures the tests that call `testing.bench`: each
   benchmark's time, spread and allocations go to its output, and the
   report opens beside the code, compared with a baseline when the settings
-  give one. What a test says of itself with `testing.tags` shows beside its
-  name in the Testing view after it runs, as `component=users,
-  kind=integration`, and in its output.
+  give one. A test that calls `testing.fuzz` is searched with *Fuzz Test*,
+  beside it in the Testing view and in the menu of its button in the
+  editor, until its notification's Stop or `tondo.fuzz.time` seconds: how
+  the search goes shows in the test's output, and an input that fails, as
+  small as it still fails, in the failure, with a link to its file in the
+  project's `fuzz/` store, which every run tries from then on. Each kind
+  of test is marked, beside its name and at the end of its line in the
+  editor: `⏱ benchmark`, `🔎 fuzz`. What a test says of itself with
+  `testing.tags` shows beside its name too after it runs, as
+  `component=users, kind=integration`, and in its output.
 - **Modules**: the *Tondo Modules* view shows each project's packages,
   modules, files and imports, from `tondo graph`; *Show the Module Graph*
   writes it in Mermaid.
@@ -94,3 +101,5 @@ project, running, debugging and testing it.
   Testing view, as `["--jobs", "4"]`, and the tests' variables.
 - `tondo.bench.args`: what the *Benchmark* profile adds to `tondo test
   --bench`, as `["--against", "main", "--max-regression", "5"]`.
+- `tondo.fuzz.time`: how many seconds *Fuzz Test* searches for; `0`, the
+  default, until it is stopped.

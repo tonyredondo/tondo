@@ -11,7 +11,7 @@ import { isProject } from './binary';
 import { Ran, exec, settings } from './cli';
 import { Documents } from './docs';
 import { ShowProfile } from './profiles';
-import { Covered, Listed, Outcome, Profiled, Served, benchLine, covered, listed, served, tagLine, testEvent } from './report';
+import { Covered, Listed, Outcome, Profiled, Served, benchLine, covered, kindMark, listed, searchLine, served, tagLine, testEvent } from './report';
 
 /** Registers the tests; what it returns takes the language server's. */
 export function registerTesting(
@@ -24,8 +24,41 @@ export function registerTesting(
   // Each project's item, and the project of each item.
   const projects = new Map<string, vscode.TestItem>();
   const projectOf = new WeakMap<vscode.TestItem, string>();
-  // The tests that are benchmarks, which the Benchmark profile measures.
+  // The tests that are benchmarks, which the Benchmark profile measures,
+  // and those that fuzz, which the Fuzz profile searches with.
   const benchmark = new vscode.TestTag('bench');
+  const fuzzing = new vscode.TestTag('fuzz');
+  // Each test's kind, as its item and its line in the editor show it, and
+  // the tags its last run said, by id.
+  const kinds = new Map<string, Listed>();
+  const tagged = new Map<string, string>();
+  const shown = new Map<string, string[]>();
+  const describe = (item: vscode.TestItem) => {
+    const node = kinds.get(item.id);
+    const parts = [node ? kindMark(node) : '', tagged.get(item.id) ?? ''].filter((part) => part !== '');
+    item.description = parts.length > 0 ? parts.join(' · ') : undefined;
+  };
+  const marked = vscode.window.createTextEditorDecorationType({
+    after: { margin: '0 0 0 1.5em', color: new vscode.ThemeColor('editorCodeLens.foreground') },
+  });
+  context.subscriptions.push(marked);
+  // A benchmark's and a fuzz test's line says so at its end.
+  const mark = (editors: readonly vscode.TextEditor[]) => {
+    for (const editor of editors) {
+      const file = editor.document.uri.fsPath;
+      const lines = [...kinds.values()].filter((n) => n.file === file && n.line && kindMark(n) !== '');
+      editor.setDecorations(
+        marked,
+        lines
+          .filter((n) => n.line! <= editor.document.lineCount)
+          .map((n) => {
+            const end = editor.document.lineAt(n.line! - 1).range.end;
+            return { range: new vscode.Range(end, end), renderOptions: { after: { contentText: kindMark(n) } } };
+          }),
+      );
+    }
+  };
+  context.subscriptions.push(vscode.window.onDidChangeVisibleTextEditors(mark));
 
   async function discoverAll(): Promise<void> {
     const found = await vscode.workspace.findFiles('**/{tondo.toml,src/main.to}', '**/{target,node_modules,.git}/**');
@@ -77,6 +110,10 @@ export function registerTesting(
   function show(dir: string, nodes: Listed[]): void {
     const project = projectItem(dir);
     project.error = undefined;
+    for (const id of shown.get(dir) ?? []) {
+      kinds.delete(id);
+    }
+    shown.set(dir, nodes.map((node) => node.id));
     const before = new Map<string, vscode.TestItem>();
     const gather = (item: vscode.TestItem): void =>
       item.children.forEach((child) => {
@@ -90,7 +127,9 @@ export function registerTesting(
       const kept = before.get(node.id);
       const item = kept && kept.uri?.fsPath === uri?.fsPath ? kept : controller.createTestItem(node.id, node.name, uri);
       item.label = node.name;
-      item.tags = node.bench ? [benchmark] : [];
+      item.tags = node.fuzz ? [fuzzing] : node.bench ? [benchmark] : [];
+      kinds.set(node.id, { ...node, file: node.file ? path.resolve(dir, node.file) : undefined });
+      describe(item);
       if (node.line) {
         const position = new vscode.Position(node.line - 1, Math.max((node.column ?? 1) - 1, 0));
         item.range = new vscode.Range(position, position);
@@ -111,6 +150,11 @@ export function registerTesting(
     }
     items.forEach((item) => item.children.replace(children.get(item) ?? []));
     project.children.replace(roots);
+    // Which tests fuzz and which measure, for the menus of their items.
+    const ids = (kind: 'fuzz' | 'bench') => [...kinds.values()].filter((n) => n[kind] === true).map((n) => n.id);
+    void vscode.commands.executeCommand('setContext', 'tondo.fuzzTests', ids('fuzz'));
+    void vscode.commands.executeCommand('setContext', 'tondo.benchTests', ids('bench'));
+    mark(vscode.window.visibleTextEditors);
   }
 
   controller.resolveHandler = async (item) => {
@@ -201,7 +245,16 @@ export function registerTesting(
       if (!test) {
         return;
       }
-      const text = outcome.message ?? outcome.verdict;
+      let text = outcome.message ?? outcome.verdict;
+      // The input a call of `testing.fuzz` failed with, and where it is.
+      const fuzzed = outcome.fuzz.find((call) => call.input);
+      if (fuzzed?.input) {
+        const reduced = fuzzed.input.reducedFrom ? `, reduced from ${fuzzed.input.reducedFrom} bytes` : '';
+        text += `\n\nfuzz \`${fuzzed.name}\` failed with this input${reduced}:\n  ${fuzzed.input.json}`;
+        if (fuzzed.input.file) {
+          text += `\nsaved in ${fuzzed.input.file}, which every run tries from now on`;
+        }
+      }
       // A comparison shows as a diff: what was expected on the right.
       const message = outcome.comparison
         ? vscode.TestMessage.diff(text, outcome.comparison.right, outcome.comparison.left)
@@ -215,6 +268,12 @@ export function registerTesting(
         const at = locate(frame.file, frame.line, frame.column);
         return new vscode.TestMessageStackFrame(frame.function, at?.uri, at?.range.start);
       });
+      const messages = [message];
+      if (fuzzed?.input?.file) {
+        const input = new vscode.TestMessage(`the input \`${fuzzed.name}\` failed with`);
+        input.location = new vscode.Location(vscode.Uri.file(path.resolve(dir, fuzzed.input.file)), new vscode.Position(0, 0));
+        messages.push(input);
+      }
       switch (outcome.verdict) {
         case 'passed':
           testRun.passed(test, duration);
@@ -223,13 +282,15 @@ export function registerTesting(
           testRun.skipped(test);
           break;
         case 'failed':
-          testRun.failed(test, message, duration);
+          testRun.failed(test, messages, duration);
           break;
         case 'errored':
-          testRun.errored(test, message, duration);
+          testRun.errored(test, messages, duration);
           break;
       }
     };
+    // How each search goes, in its test's output every 5 seconds.
+    const searched = new Map<string, number>();
     return (line: string) => {
       const event = testEvent(line);
       const testRun = current();
@@ -273,6 +334,15 @@ export function registerTesting(
           }
           break;
         }
+        case 'fuzz': {
+          const test = item(event.id);
+          const key = `${event.id} ${event.name}`;
+          if (test && Date.now() - (searched.get(key) ?? 0) >= 5000) {
+            searched.set(key, Date.now());
+            testRun.appendOutput(`${searchLine(event.name, event.search)}\r\n`, undefined, test);
+          }
+          break;
+        }
         case 'report':
           // The report decides, after every retry.
           event.outcomes.forEach((outcome) => {
@@ -282,7 +352,8 @@ export function registerTesting(
             const test = item(outcome.id);
             const tags = tagLine(outcome.tags);
             if (test) {
-              test.description = tags || undefined;
+              tagged.set(test.id, tags);
+              describe(test);
               if (tags) {
                 testRun.appendOutput(`tags: ${tags}\r\n`, undefined, test);
               }
@@ -331,7 +402,8 @@ export function registerTesting(
     const testRun = controller.createTestRun(request);
     const benchmarking = request.profile?.label === 'Benchmark';
     const profiling = request.profile?.label === 'Profile';
-    const asked = benchmarking ? [] : (request.include ?? documents.all());
+    const searching = request.profile?.label === 'Fuzz';
+    const asked = benchmarking || searching ? [] : (request.include ?? documents.all());
     const docs = asked.filter((item) => documents.owns(item) && !request.exclude?.includes(item));
     if (docs.length > 0) {
       await documents.run(testRun, docs, token);
@@ -340,10 +412,12 @@ export function registerTesting(
       if (token.isCancellationRequested) {
         break;
       }
-      // A benchmark run runs the benchmarks alone.
+      // A benchmark run runs the benchmarks alone, and a fuzz run the
+      // tests that fuzz.
+      const has = (item: vscode.TestItem, tag: vscode.TestTag) => item.tags.some((t) => t.id === tag.id);
       const started = items
         .flatMap((item) => tests(item, []))
-        .filter((item) => !benchmarking || item.tags.some((tag) => tag.id === benchmark.id));
+        .filter((item) => (!benchmarking || has(item, benchmark)) && (!searching || has(item, fuzzing)));
       started.forEach((item) => testRun.enqueued(item));
       let reported = false;
       let ran = new Set<string>();
@@ -355,6 +429,11 @@ export function registerTesting(
       const args = testArgs(dir, items, false, benchmarking || benchmarks);
       if (profiling) {
         args.push('--profile', 'cpu');
+      }
+      // A search until it is stopped, or for `tondo.fuzz.time` seconds.
+      if (searching) {
+        const time = vscode.workspace.getConfiguration('tondo', vscode.Uri.file(dir)).get<number>('fuzz.time', 0);
+        args.push('--fuzz', ...(time > 0 ? ['--fuzz-time', String(time)] : []));
       }
       const report = path.join(os.tmpdir(), `tondo-coverage-${process.pid}-${Date.now()}.json`);
       const coverage = request.profile?.kind === vscode.TestRunProfileKind.Coverage;
@@ -464,14 +543,28 @@ export function registerTesting(
   }
 
   controller.createRunProfile('Run', vscode.TestRunProfileKind.Run, run, true, undefined, true);
-  controller.createRunProfile('Benchmark', vscode.TestRunProfileKind.Run, run, false, benchmark);
+  const measure = controller.createRunProfile('Benchmark', vscode.TestRunProfileKind.Run, run, false, benchmark);
+  const fuzz = controller.createRunProfile('Fuzz', vscode.TestRunProfileKind.Run, run, false, fuzzing);
   const profile = controller.createRunProfile('Profile', vscode.TestRunProfileKind.Run, run, false);
   // The profile's run, beside each test's Run and Debug, and in their
   // menus, where VS Code offers only the default profiles.
+  const included = (test?: vscode.TestItem, chosen?: vscode.TestItem[]) => (chosen?.length ? chosen : test ? [test] : undefined);
   context.subscriptions.push(
     vscode.commands.registerCommand('tondo.profileTest', (test?: vscode.TestItem, chosen?: vscode.TestItem[]) => {
-      const include = chosen?.length ? chosen : test ? [test] : undefined;
-      return run(new vscode.TestRunRequest(include, undefined, profile), new vscode.CancellationTokenSource().token);
+      const request = new vscode.TestRunRequest(included(test, chosen), undefined, profile);
+      return run(request, new vscode.CancellationTokenSource().token);
+    }),
+    vscode.commands.registerCommand('tondo.benchmarkTest', (test?: vscode.TestItem, chosen?: vscode.TestItem[]) => {
+      const request = new vscode.TestRunRequest(included(test, chosen), undefined, measure);
+      return run(request, new vscode.CancellationTokenSource().token);
+    }),
+    // A search runs until it is stopped, from a notification.
+    vscode.commands.registerCommand('tondo.fuzzTest', (test?: vscode.TestItem, chosen?: vscode.TestItem[]) => {
+      const request = new vscode.TestRunRequest(included(test, chosen), undefined, fuzz);
+      const title = `Fuzzing ${test?.label ?? 'the tests that fuzz'}: Stop ends the search and keeps what it found`;
+      return vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, (_, token) =>
+        run(request, token),
+      );
     }),
   );
   // A snapshot written as the test now makes it, then the test again.

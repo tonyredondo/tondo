@@ -63,6 +63,12 @@
           "default": "",
           "markdownDescription": "The `tondo` executable, or the directory it is in, as a download's `bin` or the download itself; `~` is your home. Empty: the one on `PATH`, or in `~/.cargo/bin` or `~/.local/bin`."
         },
+        "tondo.fuzz.time": {
+          "type": "number",
+          "default": 0,
+          "scope": "resource",
+          "markdownDescription": "How many seconds *Fuzz Test* searches for inputs that fail; `0`: until it is stopped from its notification."
+        },
         "tondo.reloadOnSave": {
           "type": "boolean",
           "default": true,
@@ -289,6 +295,18 @@
         "icon": "$(flame)"
       },
       {
+        "command": "tondo.benchmarkTest",
+        "title": "Benchmark Test",
+        "category": "Tondo",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "tondo.fuzzTest",
+        "title": "Fuzz Test",
+        "category": "Tondo",
+        "icon": "$(search-fuzzy)"
+      },
+      {
         "command": "tondo.restartLanguageServer",
         "title": "Restart the Language Server",
         "category": "Tondo"
@@ -423,6 +441,14 @@
           "when": "false"
         },
         {
+          "command": "tondo.benchmarkTest",
+          "when": "false"
+        },
+        {
+          "command": "tondo.fuzzTest",
+          "when": "false"
+        },
+        {
           "command": "tondo.profile",
           "when": "resourceLangId == tondo"
         },
@@ -462,9 +488,29 @@
       ],
       "testing/item/context": [
         {
+          "command": "tondo.fuzzTest",
+          "when": "controllerId == tondo && testId in tondo.fuzzTests",
+          "group": "inline"
+        },
+        {
+          "command": "tondo.benchmarkTest",
+          "when": "controllerId == tondo && testId in tondo.benchTests",
+          "group": "inline"
+        },
+        {
           "command": "tondo.profileTest",
           "when": "controllerId == tondo && testId =~ /^(?!doc:)/",
           "group": "inline"
+        },
+        {
+          "command": "tondo.fuzzTest",
+          "when": "controllerId == tondo && testId in tondo.fuzzTests",
+          "group": "1_run"
+        },
+        {
+          "command": "tondo.benchmarkTest",
+          "when": "controllerId == tondo && testId in tondo.benchTests",
+          "group": "1_run"
         },
         {
           "command": "tondo.profileTest",
@@ -473,6 +519,14 @@
         }
       ],
       "testing/item/gutter": [
+        {
+          "command": "tondo.fuzzTest",
+          "when": "controllerId == tondo && testId in tondo.fuzzTests"
+        },
+        {
+          "command": "tondo.benchmarkTest",
+          "when": "controllerId == tondo && testId in tondo.benchTests"
+        },
         {
           "command": "tondo.profileTest",
           "when": "controllerId == tondo && testId =~ /^(?!doc:)/"

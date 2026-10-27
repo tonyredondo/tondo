@@ -1032,6 +1032,10 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             if let Some(percent) = args.number("max_regression") {
                 argv.extend(["--max-regression".to_string(), percent.to_string()]);
             }
+            // A search for inputs that fail, for so many seconds (testing 10.6).
+            if let Some(seconds) = args.number("fuzz") {
+                argv.extend(["--fuzz".to_string(), "--fuzz-time".to_string(), seconds.to_string()]);
+            }
             building(&mut argv);
             argv.extend(args.list("flags"));
         }
@@ -1769,8 +1773,8 @@ program that runs past `timeout` is ended.",
         name: "test",
         description: "Run a project's tests: what failed and why, and the report of each test as data. `filter`, \
 `glob` or `exact` selects them, `list` only lists them, `bench` measures the benchmarks (tests that call \
-`testing.bench`) and compares them with `baseline` or `against` a git revision, and `flags` takes the other \
-options of `tondo test`.",
+`testing.bench`) and compares them with `baseline` or `against` a git revision, `fuzz` searches for inputs that \
+fail the tests that call `testing.fuzz`, and `flags` takes the other options of `tondo test`.",
         kind: Kind::Runs,
         params: &[
             ("path", "string", "The project directory; the server's directory by default."),
@@ -1782,6 +1786,12 @@ options of `tondo test`.",
             LIBRARY,
             ("update_snapshots", "boolean", "Record the snapshots instead of checking them."),
             ("bench", "boolean", "Measure the benchmarks alone: time, spread and allocations of a run."),
+            (
+                "fuzz",
+                "number",
+                "Search for this many seconds for inputs that fail the tests that call `testing.fuzz`: each failure \
+is reduced and kept in the project's `fuzz/` store, which every run of the tests tries from then on.",
+            ),
             ("bench_time", "number", "With `bench`: the seconds each benchmark measures for, 3 by default."),
             ("save_baseline", "string", "With `bench`: keep the measures under this name, as `main`."),
             ("baseline", "string", "With `bench`: compare with the measures kept under this name."),
