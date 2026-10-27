@@ -101,3 +101,33 @@ test parsing {
 - `--against main` builds the tests of a git revision and runs each next to
   these on the same machine; with `--max-regression 5`, a benchmark 5%
   slower, or allocating more, fails the run: a gate for CI.
+
+## Fuzzing
+
+```text
+// src/parse_test.to
+import std.json
+import std.testing
+
+test parsesAnyDocument {
+    testing.fuzz("parse", ["{}", "[1, 2]", "\"x\""], (text: String) {
+        match json.parse(text) {
+            ok(value) => assert(json.parse(json.encode(value)) == ok(value)),
+            err(_) => {}
+        }
+    })
+}
+```
+
+- A test that calls `testing.fuzz(name, seeds, closure)` in its own body
+  tries inputs; anywhere else the call is `E2007`. The input is a value of
+  any type with `Encode` and `Decode`, which records, enums and newtypes get
+  by themselves: a `String`, an `Array[Byte]`, a `Request { ... }`.
+- An input fails when the closure does: an `assert` or a panic ends the
+  test, and an error ends the call, which gives it (`?` passes it on).
+  Handle in the closure what the code must reject.
+- `tondo test` runs the closure with each seed, then with each input that
+  failed before, kept as JSON in
+  `fuzz/<kind>/<module>/<suites...>/<test>/<name>/<hash>.json`: commit them,
+  so that each stays a regression test. A failure says which input, and
+  from which file; one that no longer reads as the type is `P2011`.

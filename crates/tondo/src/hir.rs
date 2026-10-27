@@ -46,6 +46,8 @@ pub struct TestNodeInfo {
     pub suite: bool,
     /// A test whose body calls `testing.bench` (testing 10.4).
     pub bench: bool,
+    /// A test whose body calls `testing.fuzz` (testing 10.6).
+    pub fuzz: bool,
     pub span: Span,
 }
 
@@ -1108,6 +1110,9 @@ pub const NATIVES: &[Native] = {
     const fn net(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "net", name, receiver: None, params, result, symbol }
     }
+    const fn fuzz(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
+        Native { module: "fuzz", name, receiver: None, params, result, symbol }
+    }
     const fn r(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "regex", name, receiver: Some(Regex), params, result, symbol }
     }
@@ -1397,6 +1402,14 @@ pub const NATIVES: &[Native] = {
         math("pow", &[Float, Float], Float, "tondo_rt_math_pow"),
         math("fma", &[Float, Float, Float], Float, "tondo_rt_math_fma"),
         math("classify", &[Float], Int, "tondo_rt_math_class"),
+        // `std.internal.fuzz`: the inputs of `testing.fuzz` (testing 10.6).
+        fuzz("begin", &[String], Unit, "tondo_rt_fuzz_begin"),
+        fuzz("seed", &[String], Unit, "tondo_rt_fuzz_seed"),
+        fuzz("next", &[], Bool, "tondo_rt_fuzz_next"),
+        fuzz("input", &[], String, "tondo_rt_fuzz_input"),
+        fuzz("invalid", &[String], Unit, "tondo_rt_fuzz_invalid"),
+        fuzz("failed", &[], Unit, "tondo_rt_fuzz_failed"),
+        fuzz("end", &[], Unit, "tondo_rt_fuzz_end"),
     ]
 };
 

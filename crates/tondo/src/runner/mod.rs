@@ -137,14 +137,16 @@ pub struct Tree {
 
 impl Tree {
     /// Writes the tree beside the executable it describes, one node a line:
-    /// its parent, whether it is a suite, whether a benchmark, its identity
-    /// and its location.
+    /// its parent, whether it is a suite, a benchmark and a fuzz test, its
+    /// identity and its location.
     pub fn save(&self, path: &Path) -> Result<(), String> {
         let lines: Vec<String> = self
             .nodes
             .iter()
             .zip(&self.locations)
-            .map(|(n, location)| format!("{}\t{}\t{}\t{}\t{location}", n.parent, n.suite as u8, n.bench as u8, n.id))
+            .map(|(n, location)| {
+                format!("{}\t{}\t{}\t{}\t{}\t{location}", n.parent, n.suite as u8, n.bench as u8, n.fuzz as u8, n.id)
+            })
             .collect();
         let partial = path.with_extension(format!("partial-{}", std::process::id()));
         std::fs::write(&partial, lines.join("\n")).map_err(|e| format!("cannot write {}: {e}", partial.display()))?;
@@ -156,13 +158,14 @@ impl Tree {
         let text = std::fs::read_to_string(path).ok()?;
         let mut tree = Tree { nodes: Vec::new(), locations: Vec::new() };
         for line in text.lines() {
-            let mut parts = line.splitn(5, '\t');
+            let mut parts = line.splitn(6, '\t');
             let parent = parts.next()?.parse().ok()?;
             let suite = parts.next()? == "1";
             let bench = parts.next()? == "1";
+            let fuzz = parts.next()? == "1";
             let id = parts.next()?.to_string();
             let span = crate::source::Span::new(0, 0);
-            tree.nodes.push(TestNodeInfo { id, parent, suite, bench, span });
+            tree.nodes.push(TestNodeInfo { id, parent, suite, bench, fuzz, span });
             tree.locations.push(parts.next()?.to_string());
         }
         Some(tree)
@@ -251,6 +254,26 @@ pub struct Attempt {
     pub virtual_time: Vec<VirtualClock>,
     /// What its benchmarks measured, in order (10.4).
     pub benchmarks: Vec<Benchmark>,
+    /// What its calls of `testing.fuzz` did, in order (10.6).
+    pub fuzz: Vec<Fuzzed>,
+}
+
+/// What a call of `testing.fuzz` did: its name, how many inputs it ran,
+/// and the one it failed with, if any.
+#[derive(Clone, Debug)]
+pub struct Fuzzed {
+    pub name: String,
+    pub inputs: u64,
+    pub input: Option<FuzzInput>,
+}
+
+/// An input a test failed with: its JSON, and its file in the fuzz store,
+/// from the package's directory, or the index of the seed it is.
+#[derive(Clone, Debug)]
+pub struct FuzzInput {
+    pub json: String,
+    pub file: Option<String>,
+    pub seed: Option<u64>,
 }
 
 /// What a benchmark measured: the runs of each sample, the nanoseconds a
@@ -320,6 +343,7 @@ impl Attempt {
             snapshots: Vec::new(),
             virtual_time: Vec::new(),
             benchmarks: Vec::new(),
+            fuzz: Vec::new(),
         }
     }
 }
@@ -455,6 +479,9 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     };
     let entries = std::env::temp_dir().join(format!("tondo-snapshots-{}", std::process::id()));
     std::fs::write(&entries, snapshots.for_worker()).map_err(|e| Failure::Output(e.to_string()))?;
+    // The inputs each call of `testing.fuzz` failed with before (10.6).
+    let fuzzed = std::env::temp_dir().join(format!("tondo-fuzz-{}", std::process::id()));
+    std::fs::write(&fuzzed, store::fuzz_inputs(dir, &package(dir))).map_err(|e| Failure::Output(e.to_string()))?;
     // With coverage, where the workers write their counts.
     let counts =
         options.counting().then(|| std::env::temp_dir().join(format!("tondo-coverage-{}", std::process::id())));
@@ -475,6 +502,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         artifacts: &artifacts,
         snapshots: &snapshots,
         entries: &entries,
+        fuzzed: &fuzzed,
         update: options.update_snapshots,
         counts: counts.as_deref(),
         profiles: collected.as_ref().map(|(kind, dir)| (*kind, dir.as_path())),
@@ -486,6 +514,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         _ => campaign(&run, &plan, &mut printer),
     };
     let _ = std::fs::remove_file(&entries);
+    let _ = std::fs::remove_file(&fuzzed);
     // Tests did not run, so there is no report, and snapshots stay (7.10).
     if interrupt::requested() {
         let ran: std::collections::HashSet<u32> = attempts.iter().map(|a| a.node).filter(|&n| !tree.suite(n)).collect();

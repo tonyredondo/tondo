@@ -119,6 +119,11 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "`testing.bench` is called outside a test's own body: in a function, a closure, a `defer` or a suite's setup.",
     ),
     (
+        "E2007",
+        "fuzz-outside-test-body",
+        "`testing.fuzz` is called outside a test's own body: in a function, a closure, a `defer` or a suite's setup.",
+    ),
+    (
         "E2101",
         "invalid-derive-target",
         "What `derive` names is not a nominal type of this module, or its binders differ.",
@@ -204,6 +209,16 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "P2009",
         "test-bench-conflict",
         "A benchmark's name is empty or has a control character, or repeats in the same test.",
+    ),
+    (
+        "P2010",
+        "test-fuzz-conflict",
+        "A call of `testing.fuzz` has a name that is empty or has a control character, or repeats in the same test.",
+    ),
+    (
+        "P2011",
+        "test-fuzz-input-invalid",
+        "An input of the fuzz store is not JSON, or does not read as the type of the call that runs it.",
     ),
 ];
 

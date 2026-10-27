@@ -2122,6 +2122,8 @@ tondo test [<project> | --project <dir>]
                     [--baseline <name|path> | --against <revision>]
                     [--max-regression <percent>]]
            [--profile <cpu|memory>]
+           [--fuzz [--fuzz-time <seconds>] [--fuzz-timeout <seconds>]
+                   [--fuzz-memory <MiB>] [--fuzz-corpus <dir>]]
            [--show-output]
            [--deny-skips]
            [--allow-flaky]
@@ -2394,6 +2396,114 @@ letras, dígitos, `.`, `_` ni `-` como `_`. Un test demasiado corto para tener
 una muestra no tiene perfil. La salida para personas lista los perfiles al
 final, y el reporte, en `profiles` (15.1).
 
+### 10.6 Fuzzing
+
+Un test que hace fuzzing llama a `testing.fuzz(name, seeds, body)` en su
+propio cuerpo, como un benchmark llama a `testing.bench` (10.4): el análisis
+lo sabe sin ejecutar nada y la lista (15.4) lo marca con `fuzz`.
+`testing.fuzz` en cualquier otro lugar es `E2007`.
+
+~~~tondo
+test parsesAnyDocument {
+    testing.fuzz("parse", ["{}", "[1, 2]", "\"x\""], (text: String) {
+        match json.parse(text) {
+            ok(value) => assert(json.parse(json.encode(value)) == ok(value)),
+            err(_) => {}
+        }
+    })?
+}
+~~~
+
+La entrada es un valor de cualquier tipo `T` con `serialization.Encode` y
+`serialization.Decode`, que el compilador implementa para cada record, enum y
+newtype cuyas partes los tienen (14.7 de la librería estándar): un `String`,
+un `Array[Byte]` o un `Request { method, path, headers }`. Las semillas son
+valores de ese tipo, escritos en el código. Una entrada falla cuando el cuerpo
+falla: un `assert` o un pánico terminan el test, como siempre, y un `err`
+termina la llamada, que devuelve ese error. Lo que el código debe rechazar se
+trata en el cuerpo.
+
+Cada entrada se guarda como el JSON que `json.encode` escribe para ella. Las
+que fallaron están en el fuzz store del paquete (15.14), junto a su test:
+
+~~~text
+fuzz/<kind>/<module>/<suites...>/<test>/<name>/<hash>.json
+~~~
+
+Sin `--fuzz`, `testing.fuzz` ejecuta el cuerpo con cada semilla, en orden, y
+después con cada entrada del store de esa llamada, en el orden de sus nombres:
+una entrada que falló una vez es un test de regresión para siempre, sin nada
+aleatorio. Una entrada del store que ya no se lee como `T` es `P2011`, que
+nombra el archivo: se corrige o se borra.
+
+`--fuzz` ejecuta solo los tests de la selección que hacen fuzzing. Cada llamada
+a `testing.fuzz` repite primero lo de sin `--fuzz`, y si pasa busca entradas
+que fallen:
+
+1. El build de tests cuenta lo que se ejecuta como `--coverage` (10.3), del
+   código del proyecto y de sus dependencias, no de la stdlib, y registra los
+   operandos de cada comparación de enteros o de textos de ese código
+   (`==`, `!=`, `<`, `<=`, `>`, `>=` y los patrones literales de `match`).
+2. Parte de las semillas, del store y del corpus (más abajo), o de valores
+   generados si no hay ninguno. Cada entrada nueva sale de una anterior por
+   una mutación que conoce la forma de `T`: un número cambia de valor, también
+   a los de frontera (0, −1, el máximo, NaN); un texto cambia por bytes sin
+   dejar de ser UTF-8 válido; una lista pierde, repite o intercambia
+   elementos; un opcional pasa a `none` o a un valor; un enum cambia de
+   variante; una parte se cambia por la de otra entrada. Toma valores de los
+   textos y enteros literales del código y de los operandos de sus
+   comparaciones.
+3. Cuenta en cada entrada lo que se ejecutó. Una entrada que lleva algún
+   contador a un tramo que ninguna anterior alcanzó (1, 2, 3, de 4 a 7, de 8
+   a 15, de 16 a 31, de 32 a 127, 128 o más) entra en el corpus.
+4. Una entrada que falla termina la búsqueda de esa llamada. El runner la
+   reduce mientras siga fallando igual, con el mismo estado, código y lugar:
+   quita elementos y campos opcionales, acorta textos y acerca números a 0. La
+   reducida va al store, y el test falla con ella.
+
+Una entrada falla también si tarda más de `--fuzz-timeout` segundos, 1 por
+defecto (`timeout`), o si la memoria viva del trabajador pasa de
+`--fuzz-memory` MiB, 2048 por defecto (`resource-limit`); un trabajador que
+muere en una entrada falla con ella (`crashed`). Un trabajador ejecuta las
+entradas una tras otra, sin empezar otro proceso.
+
+La búsqueda sigue hasta Ctrl-C, hasta que pasan `--fuzz-time` segundos o hasta
+que cada llamada falla. Ctrl-C la termina sin interrumpir la invocación: el
+reporte se escribe. Los trabajadores (`--jobs`) se reparten las llamadas; dos
+de la misma llamada comparten lo que encuentran. El corpus de cada llamada,
+las entradas que alcanzaron algo nuevo, se guarda en `target/fuzz/` del
+proyecto, con la forma del store, y la siguiente búsqueda empieza por él;
+`--fuzz-corpus <dir>` lo guarda en ese directorio, que varias máquinas o
+ejecuciones de CI pueden compartir. `--fuzz` no admite `--bench`, `--coverage`
+ni un reporte de cobertura, `--retry`, `--repeat`, `--schedules`, `--watch`
+ni `--update-snapshots`.
+
+En una terminal, la salida para personas da una línea por llamada que cambia
+mientras busca, y fuera de una terminal una cada 10 segundos:
+
+~~~text
+fuzzing 2 tests on 16 workers until Ctrl-C (--fuzz-time sets a limit)
+  parsesAnyDocument › parse     0:42  1.7M inputs  41k/s  corpus 312  coverage 87%  new 3s ago
+  decodesRequests › decode      0:42  0.9M inputs  22k/s  corpus 120  coverage 64%  new 11s ago
+~~~
+
+Un fallo dice qué falló, con la entrada reducida, dónde quedó y cómo
+reproducirlo:
+
+~~~text
+FAILED parsesAnyDocument › parse after 0:12 (480k inputs)
+  index 3 is out of bounds at src/parse.to:41:12
+  input, reduced from 214 to 4 bytes:
+    "[[\u0000"
+  saved in fuzz/unit/app/parsesAnyDocument/parse/3f2a9c4e81d07b55.json, which `tondo test` runs from now on
+  reproduce: tondo test --exact app::unit::app::parsesAnyDocument
+  debug:     tondo debug --test app::unit::app::parsesAnyDocument
+~~~
+
+Al terminar, cada test dice por llamada cuántas entradas probó, en cuánto
+tiempo, su corpus y su cobertura. El reporte (15.1) da lo mismo en `fuzz`
+de cada intento, y los eventos (15.9) el progreso de cada llamada.
+
 ## 11. Frontera con `assert` y `std.testing`
 
 ### 11.1 Núcleo suficiente
@@ -2439,6 +2549,11 @@ pub fn VirtualTime.advance(self, duration: time.Duration)
 
 pub fn bench[T, E, F: CallMut[fn(): T ! E]](name: String, body: F): ! E
 pub fn keep[T](value: T)
+pub fn fuzz[
+    T: serialization.Encode + serialization.Decode,
+    E,
+    F: CallMut[fn(T): Unit ! E],
+](name: String, seeds: Array[T], body: F): ! E
 ~~~
 
 Se utilizan mediante resolución de módulo ordinaria:
@@ -2491,7 +2606,10 @@ el cuerpo, su error y el tipo concreto de la closure, y exige `CallMut` porque
 ejecuta el cuerpo muchas veces. Como `withVirtualTime`, infiere el error del
 cuerpo, `Never` si no falla, y la llamada lo propaga con el `?` ordinario.
 `keep` recibe cualquier valor y lo da por usado: el optimizador no puede
-eliminar lo que lo calculó.
+eliminar lo que lo calculó. `fuzz` recibe también una closure escrita en la
+llamada, que ejecuta con cada entrada, así que exige `CallMut`; es genérica
+sobre la entrada, que se escribe y se lee como JSON, el error del cuerpo y el
+tipo de la closure.
 
 `VirtualTime` es un tipo opaco test-only con `Copy`, `Send` y `Share`, sin
 `Equatable`, `Key` ni `Display`. El usuario nunca lo construye:
@@ -2516,9 +2634,14 @@ Estas operaciones son intrínsecas y selladas dentro de un artefacto de test:
   produce `P2009` si su nombre está vacío, tiene un carácter de control o ya
   nombra otro benchmark del mismo test, y devuelve el error del cuerpo.
 - `keep` devuelve `Unit`.
+- `fuzz` ejecuta su cuerpo con cada semilla y cada entrada guardada, o busca
+  entradas que fallen conforme a 10.6 con `--fuzz`; produce `P2010` si su
+  nombre está vacío, tiene un carácter de control o ya nombra otra llamada
+  del mismo test, y `P2011` si una entrada guardada no se lee como su tipo; y
+  devuelve el error del cuerpo.
 - Llamadas desde helpers, closures o tasks estructuradas conservan el envelope
-  de la entrada que las alcanzó; `bench` solo se admite en el cuerpo de un
-  test (`E2006`).
+  de la entrada que las alcanzó; `bench` y `fuzz` solo se admiten en el cuerpo
+  de un test (`E2006`, `E2007`).
 - Ninguna expone ID, nombre, path, estado, runner ni referencia a otro nodo.
 - No existe `TestContext`, `currentTest()`, registro runtime ni callback de
   lifecycle.
@@ -2918,7 +3041,8 @@ resultado sin exponer un `catch`.
 
 Benchmarks, coverage, fuzzing, mutation testing y property testing son modos de
 tooling construidos sobre fuentes y artefactos explícitos. No cambian la
-semántica de `test`.
+semántica de `test`: un benchmark (10.4) y un test que hace fuzzing (10.6) son
+tests que llaman a `testing.bench` y a `testing.fuzz`.
 
 ## 14. Diagnósticos nuevos
 
@@ -2932,6 +3056,7 @@ Tondo 0.1 incluye estos códigos en su registro normativo:
 | `E2004` | `empty-test-suite` | Una suite no contiene ningún miembro directo y, por tanto, ningún test descendiente. |
 | `E2005` | `invalid-suite-capture` | Un descendiente intenta capturar `var`, préstamo, valor afín o un tipo que no cumple `Copy + Send + Share`. |
 | `E2006` | `bench-outside-test-body` | `testing.bench` aparece fuera del cuerpo de un test: en una función, una closure, un `defer` o el setup de una suite. |
+| `E2007` | `fuzz-outside-test-body` | `testing.fuzz` aparece fuera del cuerpo de un test: en una función, una closure, un `defer` o el setup de una suite. |
 
 El runtime de test añade nueve pánicos:
 
@@ -2946,6 +3071,8 @@ El runtime de test añade nueve pánicos:
 | `P2007` | `test-snapshot-mismatch` | Un snapshot esperado no existe o sus bytes difieren del `String` actual fuera de update mode. |
 | `P2008` | `test-snapshot-conflict` | Un snapshot tiene nombre inválido o repite una key ya comprobada en el mismo intento. |
 | `P2009` | `test-bench-conflict` | Un benchmark tiene un nombre vacío o con un carácter de control, o repite el nombre de otro benchmark del mismo test. |
+| `P2010` | `test-fuzz-conflict` | Una llamada a `testing.fuzz` tiene un nombre vacío o con un carácter de control, o repite el nombre de otra del mismo test. |
+| `P2011` | `test-fuzz-input-invalid` | Una entrada del fuzz store no es JSON o no se lee como el tipo de la llamada que la ejecuta. |
 
 `testing.failNow` reutiliza `P0007`; no añade otro código.
 
@@ -3054,6 +3181,7 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
   },
   "bench": null,
   "profiles": null,
+  "fuzz": null,
   "suites": [
     {
       "id": "application::unit::math::arithmetic",
@@ -3087,6 +3215,7 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
           "snapshots": [],
           "virtual_time": [],
           "benchmarks": [],
+          "fuzz": [],
           "logs": [],
           "stdout": {"encoding": "utf8", "data": ""},
           "stderr": {"encoding": "utf8", "data": ""}
@@ -3110,6 +3239,7 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
       },
       "owners": ["@tondo/math"],
       "bench": false,
+      "fuzz": false,
       "status": "passed",
       "decisive_attempt": 1,
       "attempts": [
@@ -3130,6 +3260,7 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
           "snapshots": [],
           "virtual_time": [],
           "benchmarks": [],
+          "fuzz": [],
           "logs": [],
           "stdout": {"encoding": "utf8", "data": ""},
           "stderr": {"encoding": "utf8", "data": ""}
@@ -3191,6 +3322,9 @@ test dice con `bench` si es un benchmark (10.4), y cada intento da en
 sin `--bench`. `profiles` es `null` sin `--profile`, y con él da cada perfil
 escrito como `{"test", "bench", "profile"}`: el id del test, el nombre del
 benchmark o `null`, y la ruta del archivo desde el directorio del proyecto.
+`fuzz` es `null` sin `--fuzz`, y con él da sus límites (15.15). Cada test dice
+con `fuzz` si hace fuzzing (10.6), y cada intento da en `fuzz` lo que hizo
+cada llamada a `testing.fuzz`, en el orden en que terminaron (15.15).
 
 `ownership.mode` es `auto`, `explicit` o `none`. `source` y `sha256` son strings
 cuando se utilizó un CODEOWNERS y `null` en otro caso. `source` siempre es
@@ -3560,7 +3694,8 @@ bloqueo, logs ni output:
         "column": 10
       },
       "owners": ["@tondo/math"],
-      "bench": false
+      "bench": false,
+      "fuzz": false
     }
   ]
 }
@@ -3885,10 +4020,14 @@ para que un editor muestre cada resultado cuando llega. Cada línea tiene
   `start` y `stdout` o `stderr`, con la forma de 15.1. Llega después de su
   `start` y antes de su `end`, en trozos que no siguen las líneas.
 - `end`, al conocerse el resultado de un intento: los campos de `start` y
-  `status`, `duration_ms`, `failure`, `skip`, `logs`, `stdout`, `stderr` y
-  `benchmarks`, con los valores del intento en el reporte (15.3). Un test bloqueado por su
+  `status`, `duration_ms`, `failure`, `skip`, `logs`, `stdout`, `stderr`,
+  `benchmarks` y `fuzz`, con los valores del intento en el reporte (15.3). Un test bloqueado por su
   suite tiene `end` sin `start`. Su `end` repite todo lo que el intento
   escribió.
+- `fuzz`, con `--fuzz`, una vez por segundo mientras una llamada a
+  `testing.fuzz` busca, y al terminar: los campos de `start` y `name`,
+  `inputs`, `elapsed_ms`, `corpus`, `coverage` y `new_ms`, el tiempo desde
+  que encontró algo nuevo (15.15).
 - `report`, la última línea: `report` es el reporte `tondo-test-report-0.1/1`
   completo, el mismo de `--test-format json`, que decide el resultado de
   cada test tras sus retries.
@@ -4056,6 +4195,68 @@ CI. El HTML es un archivo que no carga nada ni ejecuta scripts: dibuja en SVG
 las muestras de cada benchmark, el cambio con su intervalo y la cobertura de
 cada archivo.
 
+### 15.14 Fuzz store canónico
+
+El fuzz store de un paquete de test es el directorio `fuzz/` de su raíz, con
+un archivo por entrada que falló (10.6):
+
+~~~text
+fuzz/<kind>/<module>/<suites...>/<test>/<name>/<hash>.json
+~~~
+
+Los directorios siguen el ID del test, sin el paquete, como los de
+`snapshots/` (15.7), y después el nombre de la llamada, con los caracteres que
+no son letras, dígitos, `.`, `_` ni `-` como `_`. El archivo contiene el JSON
+que `json.encode` escribe para la entrada, en UTF-8, sin `LF` final; `<hash>`
+son los 16 primeros dígitos hexadecimales en minúsculas del SHA-256 de esos
+bytes, así que la misma entrada encontrada dos veces es el mismo archivo. Se
+añade al repositorio como cualquier fuente: `tondo test` lo ejecuta, y solo
+`--fuzz` escribe en él. Un archivo cuyo test o llamada ya no existe es stale
+pero válido. El corpus de `target/fuzz/` o de `--fuzz-corpus` tiene la misma
+forma.
+
+### 15.15 Fuzzing
+
+Con `--fuzz`, el campo `fuzz` del reporte da los límites de la búsqueda:
+
+~~~json
+{
+  "time_ms": null,
+  "timeout_ms": 1000,
+  "memory_mib": 2048,
+  "corpus": "target/fuzz"
+}
+~~~
+
+`time_ms` es `--fuzz-time` o `null` si la búsqueda siguió hasta Ctrl-C o hasta
+que fallaron todas las llamadas. Cada llamada de un intento, en su `fuzz`,
+tiene esta forma:
+
+~~~json
+{
+  "name": "parse",
+  "inputs": 480122,
+  "search": {
+    "elapsed_ms": 12034,
+    "corpus": 312,
+    "coverage": {"reached": 186, "total": 214}
+  },
+  "input": {
+    "json": "\"[[\\u0000\"",
+    "file": "fuzz/unit/app/parsesAnyDocument/parse/3f2a9c4e81d07b55.json",
+    "seed": null,
+    "reduced_from": 214
+  }
+}
+~~~
+
+`inputs` cuenta las entradas que ejecutó el cuerpo. `search` es `null` sin
+`--fuzz`; `coverage` cuenta los contadores (10.3) que alguna entrada alcanzó y
+los que hay. `input` es `null` si ninguna entrada falló, y si no la entrada con
+la que falló el intento: su JSON; el archivo del store, desde la raíz del
+paquete, o `null` para una semilla, cuyo índice da `seed`; y con `--fuzz`, en
+`reduced_from`, los bytes de la entrada antes de reducirla.
+
 ## 16. Conformidad
 
 La conformidad se comprueba con los tests del repositorio: los casos de
@@ -4087,9 +4288,13 @@ los ejecutan en cada plataforma de CI. El compilador nativo implementa hoy:
   `--save-baseline`, `--baseline` y `--against`, y `--max-regression`
   (10.4, 15.11, 15.12);
 - los reportes para personas en Markdown y HTML (15.13);
-- los perfiles de tests y benchmarks con `--profile` (10.5).
+- los perfiles de tests y benchmarks con `--profile` (10.5);
+- `testing.fuzz` con sus semillas y el fuzz store, `E2007`, `P2010` y `P2011`,
+  y su campo `fuzz` en la lista, el reporte y los eventos (10.6, 15.14,
+  15.15).
 
-Queda pendiente rechazar la mezcla de `Instant` de dominios distintos (7.9).
+Queda pendiente rechazar la mezcla de `Instant` de dominios distintos (7.9),
+y la búsqueda de `--fuzz` (10.6).
 
 ## 17. Referencia rápida
 
@@ -4204,6 +4409,18 @@ test sorting {
 }
 ~~~
 
+### Fuzzing
+
+~~~tondo
+import std.testing
+
+test parsesAnyDocument {
+    testing.fuzz("parse", ["{}", "[1, 2]"], (text: String) {
+        _ = json.parse(text)
+    })
+}
+~~~
+
 ### Comandos
 
 ~~~text
@@ -4227,6 +4444,8 @@ tondo test --test-format json
 tondo test --bench --bench-time 5
 tondo test --bench --save-baseline main
 tondo test --bench --against origin/main --max-regression 5
+tondo test --fuzz
+tondo test --fuzz --fuzz-time 60 --fuzz-corpus /cache/fuzz
 tondo test \
     --report junit=artifacts/tests.xml \
     --report json=artifacts/tests.json

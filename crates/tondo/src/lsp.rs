@@ -358,7 +358,7 @@ impl Server {
             let name = node.id.rsplit("::").next().unwrap_or(&node.id);
             tests
                 .push(json!({ "id": node.id, "parent": parent, "name": name, "suite": node.suite, "bench": node.bench,
-                    "location": location }));
+                    "fuzz": node.fuzz, "location": location }));
         }
         let tests = Value::Array(tests);
         if self.listed.get(root) != Some(&tests) {

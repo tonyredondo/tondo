@@ -254,9 +254,11 @@ impl Context<'_> {
             ("source", source(Some(&tree.locations[node as usize]))),
             ("owners", Value::Array(self.owners[node as usize].iter().map(|o| str(o.clone())).collect())),
         ];
-        // A test says whether it is a benchmark (10.4).
+        // A test says whether it is a benchmark (10.4), and whether it
+        // fuzzes (10.6).
         if !tree.suite(node) {
             fields.push(("bench", Value::Bool(tree.nodes[node as usize].bench)));
+            fields.push(("fuzz", Value::Bool(tree.nodes[node as usize].fuzz)));
         }
         fields
     }
@@ -378,6 +380,7 @@ impl Context<'_> {
             ])
         });
         fields.push(("profiles", options.profile.map_or(Value::Null, |_| Value::Array(profiles.collect()))));
+        fields.push(("fuzz", Value::Null));
         let (suites, tests) = self.forest();
         let find = |node: u32| aggregates.iter().find(|a| a.node == node);
         let nodes = |list: &[u32]| {
@@ -455,6 +458,7 @@ impl Context<'_> {
             super::bench::json(b, base.map(|base| super::bench::compare(b, base, max)).as_ref())
         });
         fields.push(("benchmarks", Value::Array(benchmarks.collect())));
+        fields.push(("fuzz", Value::Array(attempt.fuzz.iter().map(fuzzed).collect())));
         fields.push(("logs", Value::Array(attempt.logs.iter().map(|l| str(l.clone())).collect())));
         fields.push(("stdout", stream(&attempt.stdout)));
         fields.push(("stderr", stream(&attempt.stderr)));
@@ -711,6 +715,25 @@ fn frames(text: &str) -> Vec<Value> {
         }
     }
     frames
+}
+
+/// What a call of `testing.fuzz` did, as an attempt's `fuzz` says it
+/// (15.15).
+fn fuzzed(fuzzed: &super::Fuzzed) -> Value {
+    let input = fuzzed.input.as_ref().map_or(Value::Null, |input| {
+        obj(vec![
+            ("json", str(input.json.clone())),
+            ("file", input.file.clone().map_or(Value::Null, str)),
+            ("seed", input.seed.map_or(Value::Null, |s| int(s as usize))),
+            ("reduced_from", Value::Null),
+        ])
+    });
+    obj(vec![
+        ("name", str(fuzzed.name.clone())),
+        ("inputs", int(fuzzed.inputs as usize)),
+        ("search", Value::Null),
+        ("input", input),
+    ])
 }
 
 #[cfg(test)]

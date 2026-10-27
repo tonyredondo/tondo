@@ -2697,3 +2697,22 @@ runtime's own reading for `std.profile`, and debuggers find them, as the
 ELF linker always did. The flame graph's page takes the editor's colors in
 VS Code, or the system's light or dark, and its width, with Tondo's code
 in warm colors and the rest in grey.
+
+## 2026-10-27 — A test fuzzes by calling `testing.fuzz`, with typed inputs kept as JSON
+
+Fuzzing follows benchmarks: a test that calls `testing.fuzz(name, seeds,
+body)` in its own body fuzzes, which the analysis knows, rather than a
+keyword or an annotation. Its input is a value of any type with `Encode`
+and `Decode`, which the compiler writes for records, enums and newtypes,
+not raw bytes as libFuzzer takes: seeds are written as values in the code,
+and every input is kept as the JSON `json.encode` writes, so that a failure
+reads and edits like a snapshot. Without `--fuzz` the body runs with each
+seed and each input that failed before, from the `fuzz/` store beside
+`snapshots/`, committed: a failure found once is a test of regression with
+nothing random. The search of `--fuzz` mutates inputs knowing their type's
+shape, is guided by the counters of `--coverage` over the project and its
+dependencies and by the operands of its comparisons, reduces what fails,
+and runs until Ctrl-C or `--fuzz-time`; an `err` of the body is a failure,
+like an `assert`. The loop is written in Tondo, `std/fuzz.to`, which the
+compiler calls with the input's type and the body's error, inferred as for
+`testing.bench`; the runtime gives it the inputs.

@@ -573,6 +573,11 @@ pub(crate) fn current() -> u32 {
     with(|r| r.current()).unwrap_or(0)
 }
 
+/// The identity of a node.
+pub(crate) fn id(node: u32) -> String {
+    with(|r| r.ids[node as usize].clone()).unwrap_or_default()
+}
+
 /// Tells `tondo test` something of the entry that runs.
 pub(crate) fn report(kind: &str, payload: &[u8]) {
     with(|r| {
@@ -593,6 +598,7 @@ pub(crate) fn virtual_time(now: u64, automatic: u64, explicit: u64, settles: u64
 /// Reports the panic or the skip that ends the worker; whether the
 /// process runs tests.
 pub(crate) fn terminal(code: u32, text: &str) -> bool {
+    crate::fuzz::interrupted();
     with(|r| {
         let node = r.current();
         r.frame(if code == SKIP { "skip" } else { "panic" }, node, text.as_bytes());

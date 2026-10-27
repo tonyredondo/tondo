@@ -220,6 +220,8 @@ enum StdModule {
     InternalMsgpack,
     InternalCbor,
     InternalNet,
+    /// `std.internal.fuzz`: the runtime's side of `testing.fuzz`.
+    InternalFuzz,
 }
 
 /// The types `std.process` declares when imported.
@@ -1120,7 +1122,14 @@ impl<'a> Checker<'a> {
     /// The root of a test build's tree (testing 3.2): a function that runs
     /// the top-level suites and tests of the test files.
     fn tests(&mut self, module: &ast::Module, package: &str) -> hir::Function {
-        let root = hir::TestNodeInfo { id: String::new(), parent: 0, suite: true, bench: false, span: Span::new(0, 0) };
+        let root = hir::TestNodeInfo {
+            id: String::new(),
+            parent: 0,
+            suite: true,
+            bench: false,
+            fuzz: false,
+            span: Span::new(0, 0),
+        };
         self.test_nodes.push(root);
         let mut nodes = Vec::new();
         let mut prefixes = Vec::new();
@@ -1215,6 +1224,83 @@ impl<'a> Checker<'a> {
         };
         let block = hir::Block { stmts, tail: Some(Box::new(run)), ty };
         Self::mk(hir::ExprKind::Block(block), ty, span)
+    }
+
+    /// `testing.fuzz(name, seeds, (input: T) { ... })` (testing 10.6), in a
+    /// test's own body, which makes the test one that fuzzes: a call of the
+    /// loop the standard library writes for it, `fuzz.run`, with the input's
+    /// type, the body's error, `Never` if it does not fail, and the body's.
+    fn fuzz(&mut self, cx: &mut FnCx, args: &[ast::Arg], span: Span) -> hir::Expr {
+        const EXAMPLE: &str = "testing.fuzz(\"parse\", [\"{}\"], (text: String) { _ = json.parse(text) })";
+        match self.measuring {
+            Some(test) if cx.test_member => self.test_nodes[test as usize].fuzz = true,
+            _ => {
+                let message = format!(
+                    "`testing.fuzz` tries inputs in the body of a `test`, which it makes a fuzz test: call it there, \
+                     as `test parsesAnything {{ {EXAMPLE} }}`, not in a closure, a function or a suite's setup"
+                );
+                self.diags.error("E2007", span, message);
+            }
+        }
+        let [name, seeds, body] = args else {
+            return self.arity_error(span, 3, args.len());
+        };
+        let ast::ExprKind::Closure(closure) = &body.value.kind else {
+            let message = format!("`fuzz` takes a name, the seeds and a closure that tries an input: `{EXAMPLE}`");
+            self.diags.error("E1102", body.value.span, message);
+            return Self::error_expr(span);
+        };
+        let name = self.expr(cx, &name.value, Some(Ty::STRING));
+        let name = self.coerce(name, Ty::STRING);
+        // The input's type: the closure's parameter's, or the seeds'.
+        let written = closure.params.first().and_then(|p| p.ty.as_ref()).map(|t| self.resolve_type(t));
+        let seeds_ty = written.map(|t| self.types.intern(TyKind::Array(t)));
+        let seeds = self.expr(cx, &seeds.value, seeds_ty);
+        let seeds = match seeds_ty {
+            Some(ty) => self.coerce(seeds, ty),
+            None => seeds,
+        };
+        let input = match *self.types.kind(seeds.ty) {
+            TyKind::Array(input) if !self.types.has_params(input) => input,
+            TyKind::Error => return Self::error_expr(span),
+            _ => {
+                let message = "the seeds of `testing.fuzz` are an array of inputs; with none, write the input's \
+                               type on the closure's parameter: `testing.fuzz(\"parse\", [], (text: String) { ... })`";
+                self.diags.error("E1101", seeds.span, message);
+                return Self::error_expr(span);
+            }
+        };
+        // Inputs are written and read as JSON.
+        for path in ["serialization.Encode", "serialization.Decode"] {
+            let Some(&id) = self.trait_names.get(path) else { continue };
+            if input != Ty::ERROR && !self.satisfies(input, id, &[]) {
+                let message = format!(
+                    "{} does not implement `{path}`, which the input of `testing.fuzz` needs, as it is written and \
+                     read as JSON; the compiler implements it for records, enums and newtypes whose parts all \
+                     implement it",
+                    self.display(input)
+                );
+                self.diags.error("E1105", seeds.span, message);
+                return Self::error_expr(span);
+            }
+        }
+        let expected = self.types.intern(TyKind::Fn(vec![input], Ty::UNIT, false, Vec::new(), false));
+        let kind = ClosureKind { deferred: false, is_unsafe: closure.is_unsafe, test: false, infer_error: true };
+        let parts = (&closure.params[..], closure.result.as_ref());
+        let block = &closure.body;
+        let value = self
+            .closure_with(cx, parts, Some(expected), kind, span, |this, cx, success| this.block(cx, block, success));
+        let Some((_, _, info)) = self.types.closure(value.ty) else { return Self::error_expr(span) };
+        let error = match *self.types.kind(info.result) {
+            TyKind::Result(_, error) => error,
+            _ => Ty::NEVER,
+        };
+        let Some(&ModuleName::Fn(run)) = self.names.get("fuzz.run") else {
+            unreachable!("std.testing brings the loop of `testing.fuzz`")
+        };
+        let ty = self.types.intern(TyKind::Result(Ty::UNIT, error));
+        let call = hir::ExprKind::Call(Callee::Fn(run), vec![input, error, value.ty], vec![name, seeds, value]);
+        Self::mk(call, ty, span)
     }
 
     /// `testing.bench(name, () { ... })` (testing 10.4), in a test's own
@@ -1572,7 +1658,8 @@ impl<'a> Checker<'a> {
             }
             let index = self.test_nodes.len() as u32;
             let suite = matches!(node, ast::TestNode::Suite(_));
-            self.test_nodes.push(hir::TestNodeInfo { id: id.clone(), parent, suite, bench: false, span: name.span });
+            let info = hir::TestNodeInfo { id: id.clone(), parent, suite, bench: false, fuzz: false, span: name.span };
+            self.test_nodes.push(info);
             let unit = self.types.intern(TyKind::Fn(Vec::new(), Ty::UNIT, false, Vec::new(), false));
             let kind = ClosureKind { deferred: false, is_unsafe: false, test: true, infer_error: false };
             self.closure_name = Some(format!("{} {}", if suite { "suite" } else { "test" }, name.name));
@@ -2155,6 +2242,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "msgpack"] => StdModule::InternalMsgpack,
             ["std", "internal", "cbor"] => StdModule::InternalCbor,
             ["std", "internal", "net"] => StdModule::InternalNet,
+            ["std", "internal", "fuzz"] => StdModule::InternalFuzz,
             ["std", "internal", "channel"] => StdModule::InternalChannel,
             ["std", rest @ ..] => {
                 let name = rest.join(".");
@@ -11461,6 +11549,7 @@ impl<'a> Checker<'a> {
                     }
                     "withVirtualTime" => return self.with_virtual_time(cx, args, span),
                     "bench" => return self.bench(cx, args, span),
+                    "fuzz" => return self.fuzz(cx, args, span),
                     "keep" => {
                         let [arg] = args else {
                             return self.arity_error(span, 1, args.len());
@@ -11514,7 +11603,8 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalYaml
                     | StdModule::InternalMsgpack
                     | StdModule::InternalCbor
-                    | StdModule::InternalNet),
+                    | StdModule::InternalNet
+                    | StdModule::InternalFuzz),
                 )),
             ) => {
                 // `joined(values, separator)`: the elements' `Display`, with
@@ -11563,6 +11653,7 @@ impl<'a> Checker<'a> {
                     StdModule::InternalMsgpack => "msgpack",
                     StdModule::InternalCbor => "cbor",
                     StdModule::InternalNet => "net",
+                    StdModule::InternalFuzz => "fuzz",
                     _ => "reflect",
                 };
                 let found =

@@ -1,0 +1,35 @@
+// The loop of `testing.fuzz` (testing 10.6), which the compiler calls for
+// it: the body runs with each input the runtime gives, read as JSON into
+// its type; first the seeds, written as JSON, and the inputs of the fuzz
+// store, then, under `tondo test --fuzz`, those it makes.
+
+import std.internal.fuzz as native
+import std.json
+import std.serialization
+
+fn run[T: serialization.Encode + serialization.Decode, E, F: CallMut[fn(T): !E]](
+    name: String,
+    seeds: Array[T],
+    body: F,
+): !E {
+    native.begin(name)
+    for seed in seeds {
+        native.seed(json.encode(seed))
+    }
+    var each = body
+    for native.next() {
+        match json.decode[T](native.input()) {
+            ok(value) => {
+                match each(value) {
+                    ok(_) => {}
+                    err(error) => {
+                        native.failed()
+                        fail error
+                    }
+                }
+            }
+            err(error) => native.invalid("{error}")
+        }
+    }
+    native.end()
+}

@@ -248,6 +248,88 @@ suite returns {
     assert!(stderr.contains("error[E2003]"), "{stderr}");
 }
 
+/// `testing.fuzz` (testing 10.6) without `--fuzz`: each seed, then each
+/// input of the fuzz store, as a test of regression.
+#[test]
+fn fuzz_tests_run_their_seeds_and_stored_inputs() {
+    let tests = "\
+import std.testing
+
+fn middle(values: Array[Int]): Int {
+    values[values.length() / 2]
+}
+
+test findsTheMiddle {
+    testing.fuzz(\"middle\", [[1, 2, 3], [4]], (values: Array[Int]) {
+        _ = middle(values)
+    })
+}
+
+test parsesNumbers {
+    testing.fuzz(\"parse\", [\"12\", \"x\"], (text: String) {
+        _ = Int.parse(text)?
+    })?
+}
+
+test namesTwice {
+    testing.fuzz(\"same\", [1], (n: Int) { assert(n > 0) })
+    testing.fuzz(\"same\", [2], (n: Int) { assert(n > 0) })
+}
+
+test plain {}
+";
+    let dir = project("fuzz-regression", tests);
+    let (stdout, _, status) = tondo(&dir, &["test"]);
+    assert_eq!(status, 1, "{stdout}");
+    for part in [
+        "test app::unit::app::findsTheMiddle ... ok\n",
+        "fuzz `parse` failed with seed 1:\n  \"x\"\n",
+        "panic[P2010]: test-fuzz-conflict: this test already calls `testing.fuzz` with the name \"same\"",
+    ] {
+        assert!(stdout.contains(part), "missing {part:?} in {stdout}");
+    }
+    // An input that failed before is in the store, and runs every time.
+    let store = dir.join("fuzz/unit/app/findsTheMiddle/middle");
+    std::fs::create_dir_all(&store).unwrap();
+    std::fs::write(store.join("0123456789abcdef.json"), "[]").unwrap();
+    let exact = ["test", "--exact", "app::unit::app::findsTheMiddle"];
+    let (stdout, _, status) = tondo(&dir, &exact);
+    assert_eq!(status, 1, "{stdout}");
+    let file = "fuzz/unit/app/findsTheMiddle/middle/0123456789abcdef.json";
+    assert!(stdout.contains("index 0 is out of bounds"), "{stdout}");
+    assert!(stdout.contains(&format!("fuzz `middle` failed with its input in {file}:\n  []\n")), "{stdout}");
+    let (stdout, _, _) = tondo(&dir, &[&exact[..], &["--test-format", "json"]].concat());
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(report["fuzz"], serde_json::Value::Null);
+    let calls = &report["tests"][0]["attempts"][0]["fuzz"];
+    assert_eq!(calls[0]["name"], "middle", "{calls}");
+    assert_eq!(calls[0]["inputs"], 3, "{calls}");
+    assert_eq!(calls[0]["input"]["json"], "[]", "{calls}");
+    assert_eq!(calls[0]["input"]["file"], file, "{calls}");
+    // One that no longer reads as the input says so, and where it is.
+    std::fs::write(store.join("0123456789abcdef.json"), "\"text\"").unwrap();
+    let (stdout, _, _) = tondo(&dir, &exact);
+    assert!(stdout.contains(&format!("panic[P2011]: test-fuzz-input-invalid: {file} does not read")), "{stdout}");
+    // The list says which tests fuzz.
+    let (stdout, _, _) = tondo(&dir, &["test", "--list", "--test-format", "json"]);
+    let list: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let marked: Vec<(&str, bool)> = list["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| (t["name"].as_str().unwrap(), t["fuzz"].as_bool().unwrap()))
+        .collect();
+    assert_eq!(marked, [("findsTheMiddle", true), ("namesTwice", true), ("parsesNumbers", true), ("plain", false)]);
+    // Only a test's own body fuzzes.
+    std::fs::write(
+        dir.join("src/main_test.to"),
+        "import std.testing\n\nfn helper() {\n    testing.fuzz(\"x\", [1], (n: Int) {})\n}\n\ntest uses {\n    helper()\n}\n",
+    )
+    .unwrap();
+    let (_, stderr, _) = tondo(&dir, &["test"]);
+    assert!(stderr.contains("error[E2007]"), "{stderr}");
+}
+
 /// A project in the target directory, a repository of its own, with the
 /// given test file.
 fn project(name: &str, tests: &str) -> PathBuf {

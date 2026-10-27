@@ -193,6 +193,15 @@ fn written(attempt: &Attempt) -> String {
             clock.settles
         ));
     }
+    // The input a call of `testing.fuzz` failed with (10.6).
+    for (fuzzed, input) in attempt.fuzz.iter().filter_map(|f| Some((f, f.input.as_ref()?))) {
+        let from = match (&input.file, input.seed) {
+            (Some(file), _) => format!("its input in {file}"),
+            (None, Some(seed)) => format!("seed {seed}"),
+            (None, None) => "an input".into(),
+        };
+        text.push_str(&format!("fuzz `{}` failed with {from}:\n  {}\n", fuzzed.name, input.json));
+    }
     for artifact in &attempt.artifacts {
         text.push_str(&format!(
             "artifact {}: {}, {} bytes, objects/{}\n",

@@ -22,6 +22,7 @@ mod debugger;
 mod diagnostics;
 mod env;
 mod fs;
+mod fuzz;
 mod heap;
 mod http;
 mod io;
@@ -2291,6 +2292,8 @@ fn panic_name(code: u32) -> &'static str {
         2007 => "test-snapshot-mismatch",
         2008 => "test-snapshot-conflict",
         2009 => "test-bench-conflict",
+        2010 => "test-fuzz-conflict",
+        2011 => "test-fuzz-input-invalid",
         _ => "unknown",
     }
 }

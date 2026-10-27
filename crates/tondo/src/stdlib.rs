@@ -35,6 +35,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("executor", include_str!("../std/executor.to")),
     ("diagnostics", include_str!("../std/diagnostics.to")),
     ("profile", include_str!("../std/profile.to")),
+    ("fuzz", include_str!("../std/fuzz.to")),
 ];
 
 /// Each standard module's name and source.
@@ -56,10 +57,11 @@ pub fn text(name: &str) -> Option<&'static str> {
 pub(crate) fn source(path: &[ast::Ident]) -> Option<(&'static str, &'static str)> {
     match path {
         [std, name] if std.name == "std" => {
-            // `std.testing` brings `std.json`, which `testing.snapshot`
-            // encodes values with, and `std.time` its parts in Tondo.
+            // `std.testing` brings the loop of `testing.fuzz`, and with
+            // it `std.json`, which `testing.snapshot` encodes values with;
+            // and `std.time` its parts in Tondo.
             let name = match name.name.as_str() {
-                "testing" => "json",
+                "testing" => "fuzz",
                 "time" => "datetime",
                 name => name,
             };

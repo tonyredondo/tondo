@@ -1,9 +1,44 @@
-//! The snapshot store and the artifact store (testing 15.7, 15.8).
+//! The snapshot store, the artifact store and the fuzz store (testing
+//! 15.7, 15.8, 15.14).
 
 use crate::hash::{sha256, sha256_hex};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+
+/// The inputs of the fuzz store of the package at `dir` for its workers:
+/// each `fuzz/<kind>/<module>/<suites...>/<test>/<name>/<hash>.json`, as
+/// four lengths on a line, then the test's identity, the call's directory,
+/// the file from `dir` and its JSON. Other files are not inputs.
+pub(super) fn fuzz_inputs(dir: &Path, package: &str) -> Vec<u8> {
+    let root = dir.join("fuzz");
+    let mut out = Vec::new();
+    let mut pending = vec![root.clone()];
+    while let Some(directory) = pending.pop() {
+        let Ok(list) = std::fs::read_dir(&directory) else { continue };
+        for path in list.flatten().map(|entry| entry.path()) {
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            let steps: Vec<String> =
+                path.strip_prefix(&root).unwrap_or(&path).iter().map(|s| s.to_string_lossy().into_owned()).collect();
+            let (true, Ok(json)) =
+                (steps.len() >= 5 && path.extension().is_some_and(|e| e == "json"), std::fs::read(&path))
+            else {
+                continue;
+            };
+            let id = format!("{package}::{}", steps[..steps.len() - 2].join("::"));
+            let call = steps[steps.len() - 2].as_bytes();
+            let file = format!("fuzz/{}", steps.join("/"));
+            out.extend_from_slice(format!("{} {} {} {}\n", id.len(), call.len(), file.len(), json.len()).as_bytes());
+            for part in [id.as_bytes(), call, file.as_bytes(), &json] {
+                out.extend_from_slice(part);
+            }
+        }
+    }
+    out
+}
 
 /// The snapshot store of a package: a file `<name>.snap` for each snapshot
 /// under `snapshots/`, in a directory for its test, which holds the value.

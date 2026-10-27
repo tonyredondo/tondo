@@ -29,7 +29,7 @@ const BUILTINS: &str = include_str!("../std/api/builtins.to");
 
 /// The standard modules written in Tondo that a program imports, without
 /// the ones only the toolchain uses.
-const HIDDEN: &[&str] = &["datetime"];
+const HIDDEN: &[&str] = &["datetime", "fuzz"];
 
 /// The methods `std/api/builtins.to` gives `owner`, such as `String`.
 pub fn builtin_methods(owner: &str) -> Vec<&'static str> {

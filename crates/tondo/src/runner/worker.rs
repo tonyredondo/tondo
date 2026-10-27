@@ -6,7 +6,7 @@
 
 use super::interrupt;
 use super::store::{Artifacts, Snapshots};
-use super::{Artifact, Attempt, Benchmark, Context, Options, Snapshot, Status, Tree, VirtualClock};
+use super::{Artifact, Attempt, Benchmark, Context, FuzzInput, Fuzzed, Options, Snapshot, Status, Tree, VirtualClock};
 use std::collections::VecDeque;
 use std::io::Read;
 use std::path::Path;
@@ -20,6 +20,8 @@ pub(super) struct Stores<'a> {
     pub artifacts: &'a Artifacts,
     pub snapshots: &'a Snapshots,
     pub entries: &'a Path,
+    /// The inputs of the fuzz store, for the worker.
+    pub fuzzed: &'a Path,
     pub update: bool,
     /// With coverage, where each worker writes its counts.
     pub counts: Option<&'a Path>,
@@ -159,6 +161,7 @@ fn worker(
         .env("TONDO_TEST_PLAN", &plan)
         .env("TONDO_TEST_NONCE", &nonce)
         .env("TONDO_TEST_SNAPSHOTS", stores.entries)
+        .env("TONDO_TEST_FUZZ", stores.fuzzed)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -557,6 +560,19 @@ impl Session<'_> {
                         entry.0.duration += now - *started;
                         *started = now;
                     }
+                }
+            }
+            "fuzz" => {
+                let parts: Vec<&str> = text.split('\0').collect();
+                if let [name, inputs, json, file, seed, failed] = parts[..]
+                    && let Some(entry) = self.running.iter_mut().rev().find(|(o, _, _)| o.node == node)
+                {
+                    let input = (failed == "1").then(|| FuzzInput {
+                        json: json.to_string(),
+                        file: (!file.is_empty()).then(|| file.to_string()),
+                        seed: seed.parse().ok(),
+                    });
+                    entry.0.fuzz.push(Fuzzed { name: name.to_string(), inputs: inputs.parse().unwrap_or(0), input });
                 }
             }
             "skip" | "panic" => {
