@@ -1,0 +1,49 @@
+import std.console
+
+// Operands are evaluated left to right (language 5.12): a binding read
+// keeps the value it had then, even when an operand after it changes the
+// binding, in a text, a call, a tuple, a record, an array or a sum.
+
+type Pair = {
+    before: Array[Int]
+    removed: Int?
+}
+
+fn shown(before: Array[Int], removed: Int?): String {
+    "{before} {removed}"
+}
+
+fn grown(values: var Array[Int]): Int {
+    values.push(0)
+    values.length()
+}
+
+fn main() {
+    var a = [1, 2, 3]
+    console.println("{a} {a.removeAt(-1)} {a}")
+    var b = [1, 2, 3]
+    console.println(shown(b, b.removeAt(0)))
+    var c = [1, 2, 3]
+    console.println("{(c, c.pop())}")
+    var d = [1, 2, 3]
+    let pair = Pair { before: d, removed: d.pop() }
+    console.println("{pair.before} {pair.removed}")
+    var e = [1, 2]
+    let nested = [
+        e,
+        {
+            e.push(9)
+            e
+        },
+    ]
+    console.println("{nested}")
+    var f = [5]
+    console.println("{f.length() + grown(var f)} {f}")
+}
+
+// expect-stdout: [1, 2, 3] some(3) [1, 2]
+// expect-stdout: [1, 2, 3] some(1)
+// expect-stdout: ([1, 2, 3], some(3))
+// expect-stdout: [1, 2, 3] some(3)
+// expect-stdout: [[1, 2], [1, 2, 9]]
+// expect-stdout: 3 [5, 0]

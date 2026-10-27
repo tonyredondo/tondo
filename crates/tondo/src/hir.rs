@@ -1399,3 +1399,146 @@ pub const NATIVES: &[Native] = {
         math("classify", &[Float], Int, "tondo_rt_math_class"),
     ]
 };
+
+/// The locals an expression may change: those it lends to a call or a
+/// method, changes in place or assigns, in any block it holds. A closure
+/// changes only its own copies of what it captures (11.8), so calling one
+/// changes none.
+pub fn written(e: &Expr, out: &mut Vec<LocalId>) {
+    let many = |items: &[Expr], out: &mut Vec<LocalId>| items.iter().for_each(|item| written(item, out));
+    match &e.kind {
+        ExprKind::Loan(place) | ExprKind::CursorNext(place, _) => out.push(place.local),
+        ExprKind::Region(place, bounds) => {
+            out.push(place.local);
+            bounds.iter().flatten().for_each(|bound| written(bound, out));
+        }
+        ExprKind::Mutate(_, place, arguments) => {
+            out.push(place.local);
+            many(arguments, out);
+        }
+        ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Char(_)
+        | ExprKind::Bool(_)
+        | ExprKind::Str(_)
+        | ExprKind::Unit
+        | ExprKind::Local(_)
+        | ExprKind::FnValue(..)
+        | ExprKind::ExternFn(_)
+        | ExprKind::Layout(..)
+        | ExprKind::Error => {}
+        ExprKind::Aggregate(items)
+        | ExprKind::Array(items)
+        | ExprKind::Set(items)
+        | ExprKind::ArrayOp(_, items)
+        | ExprKind::StrOp(_, items)
+        | ExprKind::Pointer(_, items)
+        | ExprKind::MapOp(_, items)
+        | ExprKind::Call(_, _, items)
+        | ExprKind::Reflect(_, _, items)
+        | ExprKind::TaskOp(_, items) => many(items, out),
+        ExprKind::Record(values) | ExprKind::Variant(_, values) | ExprKind::TestMembers(values) => {
+            values.iter().for_each(|(_, value)| written(value, out))
+        }
+        ExprKind::Field(inner, _)
+        | ExprKind::Retype(inner)
+        | ExprKind::RefValue(inner)
+        | ExprKind::Length(inner)
+        | ExprKind::Try(inner)
+        | ExprKind::Convert(inner)
+        | ExprKind::Fixed(inner)
+        | ExprKind::Erase(inner, _)
+        | ExprKind::Callback(inner, _)
+        | ExprKind::Spawn(inner)
+        | ExprKind::Unary(_, inner)
+        | ExprKind::Panic(inner, _) => written(inner, out),
+        ExprKind::With(base, values) => {
+            written(base, out);
+            values.iter().for_each(|(_, value)| written(value, out));
+        }
+        ExprKind::Match(scrutinee, arms) => {
+            written(scrutinee, out);
+            for arm in arms {
+                arm.guard.iter().for_each(|guard| written(guard, out));
+                written(&arm.body, out);
+            }
+        }
+        ExprKind::Index(left, right) | ExprKind::Binary(_, left, right) => {
+            written(left, out);
+            written(right, out);
+        }
+        ExprKind::Slice(base, bounds) => {
+            written(base, out);
+            bounds.iter().flatten().for_each(|bound| written(bound, out));
+        }
+        ExprKind::Map(entries) => entries.iter().for_each(|(key, value)| {
+            written(key, out);
+            written(value, out);
+        }),
+        ExprKind::CallValue(function, arguments) => {
+            written(function, out);
+            many(arguments, out);
+        }
+        ExprKind::Select(arms, otherwise) => {
+            for arm in arms {
+                written(&arm.operation, out);
+                written(&arm.body, out);
+            }
+            otherwise.iter().for_each(|otherwise| written(otherwise, out));
+        }
+        ExprKind::If(condition, then, otherwise) => {
+            written(condition, out);
+            written_block(then, out);
+            otherwise.iter().for_each(|otherwise| written(otherwise, out));
+        }
+        ExprKind::Block(block) => written_block(block, out),
+        ExprKind::Interpolate(segments) => segments.iter().for_each(|segment| {
+            if let Segment::Value(value) = segment {
+                written(value, out);
+            }
+        }),
+        ExprKind::Assert { condition, parts, detail, .. } => {
+            written(condition, out);
+            many(parts, out);
+            detail.iter().for_each(|detail| written(detail, out));
+        }
+    }
+}
+
+fn written_block(block: &Block, out: &mut Vec<LocalId>) {
+    for statement in &block.stmts {
+        match statement {
+            Stmt::Let(_, value) | Stmt::Destructure(_, value) | Stmt::Expr(value) | Stmt::Fail(value) => {
+                written(value, out)
+            }
+            Stmt::Assign { local, value, .. } => {
+                out.push(*local);
+                written(value, out);
+            }
+            Stmt::AssignSlice { local, bounds, value, .. } => {
+                out.push(*local);
+                bounds.iter().flatten().for_each(|bound| written(bound, out));
+                written(value, out);
+            }
+            Stmt::Defer { closure, .. } => written(closure, out),
+            Stmt::Lend { place, .. } => out.push(place.local),
+            Stmt::LockSync { handle, .. } => written(handle, out),
+            Stmt::Return(value) => value.iter().for_each(|value| written(value, out)),
+            Stmt::AwaitChange(..) | Stmt::Break | Stmt::Continue => {}
+            Stmt::Loop { condition, body } => {
+                condition.iter().for_each(|condition| written(condition, out));
+                written_block(body, out);
+            }
+            Stmt::ForEach { source, body, .. } => {
+                written(source, out);
+                written_block(body, out);
+            }
+            Stmt::ForRange { start, end, body, .. } => {
+                written(start, out);
+                written(end, out);
+                written_block(body, out);
+            }
+        }
+    }
+    block.tail.iter().for_each(|tail| written(tail, out));
+}

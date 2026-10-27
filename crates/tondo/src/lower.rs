@@ -955,6 +955,32 @@ impl Builder<'_> {
     }
 
     /// A copy of `value` in a new temporary of the frame.
+    /// The operands of expressions evaluated in order (5.12): a binding read
+    /// is copied when an expression after it may change it, as in
+    /// `f(xs, xs.removeAt(0))`, so that it gives the value it had then.
+    fn in_order<'h>(&mut self, exprs: impl IntoIterator<Item = &'h hir::Expr>) -> Vec<Operand> {
+        let exprs: Vec<&hir::Expr> = exprs.into_iter().collect();
+        let later = later_written(&exprs);
+        exprs
+            .iter()
+            .zip(later)
+            .map(|(e, later)| {
+                let operand = self.expr(e);
+                self.kept(operand, &later, e)
+            })
+            .collect()
+    }
+
+    /// An operand, copied if it reads a binding that `later` may change.
+    fn kept(&mut self, operand: Operand, later: &[hir::LocalId], e: &hir::Expr) -> Operand {
+        let changed =
+            |this: &Self, place: &Place| later.iter().any(|&l| this.hir_locals[l.0 as usize] == Some(place.local));
+        match &operand {
+            Operand::Copy(place) if changed(self, place) => self.copy_operand(operand, e.ty, e.span),
+            _ => operand,
+        }
+    }
+
     fn copy_operand(&mut self, value: Operand, ty: Ty, span: Span) -> Operand {
         let local = self.new_local(ty);
         self.assign(Place::local(local), Rvalue::Use(value), span);
@@ -1419,17 +1445,31 @@ impl Builder<'_> {
     /// The pieces of an interpolation, those of one inside it among them, as
     /// a generic value's `Display` is.
     fn pieces(&mut self, segments: &[hir::Segment]) -> Vec<Piece> {
-        let mut pieces = Vec::new();
-        for segment in segments {
-            match segment {
-                hir::Segment::Text(text) => pieces.push(Piece::Text(text.clone())),
-                hir::Segment::Value(hir::Expr { kind: hir::ExprKind::Interpolate(inner), .. }) => {
-                    pieces.extend(self.pieces(inner))
+        fn flat<'h>(segments: &'h [hir::Segment], out: &mut Vec<&'h hir::Segment>) {
+            for segment in segments {
+                match segment {
+                    hir::Segment::Value(hir::Expr { kind: hir::ExprKind::Interpolate(inner), .. }) => flat(inner, out),
+                    segment => out.push(segment),
                 }
-                hir::Segment::Value(value) => pieces.push(Piece::Value(self.expr(value), value.ty)),
             }
         }
-        pieces
+        let mut segments_flat = Vec::new();
+        flat(segments, &mut segments_flat);
+        let values: Vec<&hir::Expr> = segments_flat
+            .iter()
+            .filter_map(|segment| match segment {
+                hir::Segment::Value(value) => Some(value),
+                hir::Segment::Text(_) => None,
+            })
+            .collect();
+        let mut operands = self.in_order(values.iter().copied()).into_iter();
+        segments_flat
+            .into_iter()
+            .map(|segment| match segment {
+                hir::Segment::Text(text) => Piece::Text(text.clone()),
+                hir::Segment::Value(value) => Piece::Value(operands.next().expect("one per value"), value.ty),
+            })
+            .collect()
     }
 
     /// For operands that move into a collection: which must be retained
@@ -1503,7 +1543,8 @@ impl Builder<'_> {
         let mut operands = Vec::new();
         let mut loans: Vec<Lent> = Vec::new();
         let mut regions = Vec::new();
-        for arg in args {
+        let later = later_written(&args.iter().collect::<Vec<_>>());
+        for (index, arg) in args.iter().enumerate() {
             if let hir::ExprKind::Region(place, bounds) = &arg.kind {
                 // The place and bounds are fixed now, for the copy back.
                 let place = self.place(place.local, &place.path);
@@ -1534,7 +1575,12 @@ impl Builder<'_> {
             if let (true, Operand::Copy(place)) = (loan, &operand) {
                 loans.push((place.clone(), None));
             }
-            operands.push(if reads_lent { self.copy_operand(operand, arg.ty, arg.span) } else { operand });
+            let operand = match (reads_lent, loan) {
+                (true, _) => self.copy_operand(operand, arg.ty, arg.span),
+                (false, false) => self.kept(operand, &later[index], arg),
+                (false, true) => operand,
+            };
+            operands.push(operand);
         }
         self.check_disjoint(&loans, span);
         for region in &mut regions {
@@ -1592,14 +1638,15 @@ impl Builder<'_> {
                 Operand::local(local)
             }
             hir::ExprKind::Aggregate(items) => {
-                let components = items.iter().map(|item| self.expr(item)).collect();
+                let components = self.in_order(items);
                 self.aggregate(e.ty, components, e.span)
             }
             hir::ExprKind::Record(values) => {
                 // Evaluate in source order, then place in declaration order.
                 let mut components = vec![Operand::Const(Const::Unit); values.len()];
-                for (index, value) in values {
-                    components[*index as usize] = self.expr(value);
+                let evaluated = self.in_order(values.iter().map(|(_, value)| value));
+                for ((index, _), value) in values.iter().zip(evaluated) {
+                    components[*index as usize] = value;
                 }
                 self.aggregate(e.ty, components, e.span)
             }
@@ -1625,15 +1672,16 @@ impl Builder<'_> {
             hir::ExprKind::Variant(variant, values) => {
                 let count = self.types.variants(e.ty).expect("enum")[*variant as usize].len();
                 let mut components = vec![Operand::Const(Const::Unit); count];
-                for (index, value) in values {
-                    components[*index as usize] = self.expr(value);
+                let evaluated = self.in_order(values.iter().map(|(_, value)| value));
+                for ((index, _), value) in values.iter().zip(evaluated) {
+                    components[*index as usize] = value;
                 }
                 self.variant(e.ty, *variant, components, e.span)
             }
             hir::ExprKind::Match(scrutinee, arms) => self.match_expr(e, scrutinee, arms),
             hir::ExprKind::Array(items) => {
                 let TyKind::Array(element) = *self.types.kind(e.ty) else { unreachable!() };
-                let values: Vec<Operand> = items.iter().map(|item| self.expr(item)).collect();
+                let values: Vec<Operand> = self.in_order(items);
                 let counted = self.needs_drop(element);
                 let retain = values
                     .iter()
@@ -1654,7 +1702,7 @@ impl Builder<'_> {
                 self.temp(e.ty, Rvalue::Slice(base, parts, e.span), e.span)
             }
             hir::ExprKind::ArrayOp(op, operands) => {
-                let operands = operands.iter().map(|o| self.expr(o)).collect();
+                let operands = self.in_order(operands);
                 self.temp(e.ty, Rvalue::ArrayOp(*op, operands, e.span), e.span)
             }
             // The callee receives the place's address (see `Body::loans`).
@@ -1665,12 +1713,12 @@ impl Builder<'_> {
                 self.temp(e.ty, Rvalue::Length(collection), e.span)
             }
             hir::ExprKind::StrOp(op, operands) => {
-                let operands = operands.iter().map(|o| self.expr(o)).collect();
+                let operands = self.in_order(operands);
                 self.temp(e.ty, Rvalue::StrOp(*op, operands, e.span), e.span)
             }
             hir::ExprKind::Pointer(op, operands) => {
                 let types: Vec<Ty> = operands.iter().map(|o| o.ty).collect();
-                let operands: Vec<Operand> = operands.iter().map(|o| self.expr(o)).collect();
+                let operands: Vec<Operand> = self.in_order(operands);
                 let retain = *op == hir::PointerOp::Write && self.move_flags(&operands[1..], &[true], &types[1..])[0];
                 self.temp(e.ty, Rvalue::Pointer(*op, operands, retain), e.span)
             }
@@ -1680,7 +1728,7 @@ impl Builder<'_> {
                 let TyKind::Map(_, value) = *self.types.kind(e.ty) else { unreachable!() };
                 let result = self.types.lookup(&TyKind::Option(value));
                 for (key, value) in entries {
-                    let operands = vec![self.expr(key), self.expr(value)];
+                    let operands = self.in_order([key, value]);
                     let flags = self.move_flags(&operands, &[true, true], &[key.ty, value.ty]);
                     let rvalue = Rvalue::Mutate(hir::Mutation::Insert, place.clone(), operands, flags, e.span);
                     // A repeated dynamic key replaces the value (10.12); the
@@ -1701,13 +1749,13 @@ impl Builder<'_> {
                 set
             }
             hir::ExprKind::MapOp(op, operands) => {
-                let operands = operands.iter().map(|o| self.expr(o)).collect();
+                let operands = self.in_order(operands);
                 self.temp(e.ty, Rvalue::MapOp(*op, operands, e.span), e.span)
             }
             hir::ExprKind::Mutate(mutation, place, values) => {
                 let place = self.place(place.local, &place.path);
                 let types: Vec<Ty> = values.iter().map(|v| v.ty).collect();
-                let operands: Vec<Operand> = values.iter().map(|v| self.expr(v)).collect();
+                let operands: Vec<Operand> = self.in_order(values);
                 // Inserted values move into the collection; positions and
                 // looked-up keys do not.
                 let flags = self.move_flags(&operands, &mutation.moves(operands.len()), &types);
@@ -1754,7 +1802,7 @@ impl Builder<'_> {
             }
             hir::ExprKind::Layout(ty, align) => self.temp(Ty::INT, Rvalue::Layout(*ty, *align), e.span),
             hir::ExprKind::Reflect(op, ty, values) => {
-                let operands: Vec<Operand> = values.iter().map(|v| self.expr(v)).collect();
+                let operands: Vec<Operand> = self.in_order(values);
                 // A boxed value moves into the box, or is retained there.
                 let retain = *op == hir::ReflectOp::Box && self.move_flags(&operands, &[true], &[values[0].ty])[0];
                 self.temp(e.ty, Rvalue::Reflect(*op, *ty, operands, retain), e.span)
@@ -1799,7 +1847,7 @@ impl Builder<'_> {
             hir::ExprKind::Select(arms, otherwise) => self.select(e, arms, otherwise.as_deref()),
             hir::ExprKind::TaskOp(op, operands) => {
                 let types: Vec<Ty> = operands.iter().map(|o| o.ty).collect();
-                let values: Vec<Operand> = operands.iter().map(|o| self.expr(o)).collect();
+                let values: Vec<Operand> = self.in_order(operands);
                 // A join moves into a group, a value into a channel, and a
                 // state into its cell.
                 let moves: Vec<bool> = (0..values.len()).map(|i| op.moves_in(i)).collect();
@@ -1853,8 +1901,7 @@ impl Builder<'_> {
                 Operand::local(result)
             }
             hir::ExprKind::Binary(op, left, right) => {
-                let left = self.expr(left);
-                let right = self.expr(right);
+                let [left, right]: [Operand; 2] = self.in_order([&**left, &**right]).try_into().expect("two operands");
                 self.temp(e.ty, Rvalue::Binary(*op, left, right), e.span)
             }
             hir::ExprKind::If(condition, then, otherwise) => self.if_expr(e, condition, then, otherwise.as_deref()),
@@ -1967,7 +2014,7 @@ impl Builder<'_> {
                 hir::ExprKind::Call(_, _, operands) => (None, operands),
                 _ => unreachable!("the checker allows only these operations"),
             };
-            let values: Vec<Operand> = operands.iter().map(|o| self.expr(o)).collect();
+            let values: Vec<Operand> = self.in_order(operands);
             let retain = op == Some(hir::TaskOp::Send) && {
                 let ty = operands[1].ty;
                 self.needs_drop(ty) && matches!(values[1], Operand::Copy(_)) && !self.take_temporary(&values[1])
@@ -2114,4 +2161,15 @@ fn stmt_kind(stmt: &hir::Stmt) -> &'static str {
         hir::Stmt::Continue => "continue",
         hir::Stmt::Loop { .. } | hir::Stmt::ForEach { .. } | hir::Stmt::ForRange { .. } => "for",
     }
+}
+
+/// For each expression, the bindings the ones after it may change.
+fn later_written(exprs: &[&hir::Expr]) -> Vec<Vec<hir::LocalId>> {
+    let mut later = vec![Vec::new(); exprs.len()];
+    for at in (0..exprs.len().saturating_sub(1)).rev() {
+        let mut changed = later[at + 1].clone();
+        hir::written(exprs[at + 1], &mut changed);
+        later[at] = changed;
+    }
+    later
 }
