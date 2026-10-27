@@ -15,39 +15,39 @@ and Tondo's `--bench` count allocations the same way, each in its own
 allocator. The goal is every row at or under 1.0×.
 
 The tables were measured on an AMD Ryzen 9 5950X, Linux, with Go 1.27.
-Now, at 97b0b22:
+Now, at bd240e1:
 
 | Benchmark | Tondo | Go | Tondo/Go | Allocs/op Tondo | Allocs/op Go |
 |---|---:|---:|---:|---:|---:|
-| strings/split 100 | 1.29 µs | 741.9 ns | 1.73× ⚠ | 101 | 1 |
-| json/decode struct | 1.59 µs | 1.26 µs | 1.25× ⚠ | 12 | 4 |
-| strings/builder 100 | 938.8 ns | 763.9 ns | 1.23× ⚠ | 6 | 8 |
-| calls/closure 1000 | 253.6 ns | 206.8 ns | 1.23× ⚠ | 1 | 0 |
-| loops/sum 1000000 | 822.54 µs | 720.24 µs | 1.14× ⚠ | 0 | 0 |
-| loops/collatz 10000 | 927.59 µs | 839.13 µs | 1.11× ⚠ | 0 | 0 |
-| strings/int to text 1000 | 12.41 µs | 11.48 µs | 1.08× ⚠ | 900 | 900 |
-| floats/sqrt 100000 | 179.95 µs | 171.40 µs | 1.05× ⚠ | 0 | 0 |
-| floats/mandelbrot 64 | 138.54 µs | 139.28 µs | 0.99× | 0 | 0 |
-| json/encode 100 structs | 28.74 µs | 29.35 µs | 0.98× | 15 | 4 |
-| arrays/index sum 10000 | 2.07 µs | 2.23 µs | 0.93× | 0 | 0 |
-| json/parse object | 3.06 µs | 3.54 µs | 0.87× | 39 | 36 |
-| tasks/spawn 1000 | 146.51 µs | 172.85 µs | 0.85× | 2271 | 2002 |
-| strings/contains 1000 | 12.4 ns | 15.7 ns | 0.79× | 0 | 0 |
-| tasks/channel 10000 | 203.85 µs | 282.74 µs | 0.72× | 316 | 2 |
-| json/parse 1000 numbers | 90.26 µs | 127.95 µs | 0.71× | 916 | 2015 |
-| strings/interpolate | 23.1 ns | 32.9 ns | 0.70× | 1 | 1 |
-| maps/lookup 10000 ints | 52.99 µs | 76.25 µs | 0.69× | 0 | 0 |
-| calls/fib 25 | 194.95 µs | 289.45 µs | 0.67× | 0 | 0 |
-| arrays/map filter sum 10000 | 20.18 µs | 30.81 µs | 0.65× | 28 | 16 |
-| structs/users 1000 | 18.81 µs | 37.36 µs | 0.50× | 1010 | 1910 |
-| maps/insert 1000 strings | 35.59 µs | 98.59 µs | 0.36× | 1030 | 1920 |
-| structs/points 1000 | 2.16 µs | 6.46 µs | 0.33× | 10 | 12 |
-| maps/insert 10000 ints | 131.90 µs | 488.00 µs | 0.27× | 42 | 79 |
-| arrays/push 1000 | 790.7 ns | 3.03 µs | 0.26× | 10 | 12 |
-| regex/match 1000 | 37.45 µs | 153.02 µs | 0.24× | 0 | 0 |
-| arrays/sort 10000 | 66.24 µs | 357.43 µs | 0.19× | 1 | 1 |
+| strings/split 100 | 1.26 µs | 743.2 ns | 1.69× ⚠ | 101 | 1 |
+| calls/closure 1000 | 268.2 ns | 207.1 ns | 1.29× ⚠ | 1 | 0 |
+| loops/collatz 10000 | 978.63 µs | 839.90 µs | 1.17× ⚠ | 0 | 0 |
+| loops/sum 1000000 | 818.31 µs | 723.85 µs | 1.13× ⚠ | 0 | 0 |
+| strings/int to text 1000 | 12.28 µs | 11.40 µs | 1.08× ⚠ | 900 | 900 |
+| floats/sqrt 100000 | 180.09 µs | 170.95 µs | 1.05× ⚠ | 0 | 0 |
+| json/decode struct | 1.28 µs | 1.27 µs | 1.01× ⚠ | 12 | 4 |
+| floats/mandelbrot 64 | 138.65 µs | 139.38 µs | 0.99× | 0 | 0 |
+| json/encode 100 structs | 29.21 µs | 29.38 µs | 0.99× | 15 | 4 |
+| arrays/index sum 10000 | 2.14 µs | 2.22 µs | 0.96× | 0 | 0 |
+| strings/builder 100 | 717.4 ns | 753.0 ns | 0.95× | 6 | 8 |
+| tasks/spawn 1000 | 145.62 µs | 170.86 µs | 0.85× | 2259 | 2002 |
+| strings/contains 1000 | 12.4 ns | 15.8 ns | 0.78× | 0 | 0 |
+| calls/fib 25 | 214.34 µs | 289.61 µs | 0.74× | 0 | 0 |
+| tasks/channel 10000 | 206.41 µs | 287.00 µs | 0.72× | 316 | 2 |
+| maps/lookup 10000 ints | 52.31 µs | 73.76 µs | 0.71× | 0 | 0 |
+| strings/interpolate | 22.4 ns | 32.9 ns | 0.68× | 1 | 1 |
+| json/parse object | 2.25 µs | 3.55 µs | 0.63× | 39 | 36 |
+| arrays/map filter sum 10000 | 20.23 µs | 32.00 µs | 0.63× | 28 | 16 |
+| json/parse 1000 numbers | 68.64 µs | 125.17 µs | 0.55× | 916 | 2015 |
+| structs/users 1000 | 18.89 µs | 37.63 µs | 0.50× | 1010 | 1910 |
+| maps/insert 1000 strings | 35.71 µs | 98.99 µs | 0.36× | 1030 | 1920 |
+| structs/points 1000 | 2.15 µs | 6.32 µs | 0.34× | 10 | 12 |
+| arrays/push 1000 | 814.0 ns | 3.01 µs | 0.27× | 10 | 12 |
+| maps/insert 10000 ints | 131.41 µs | 508.68 µs | 0.26× | 42 | 79 |
+| regex/match 1000 | 37.52 µs | 153.38 µs | 0.24× | 0 | 0 |
+| arrays/sort 10000 | 68.43 µs | 356.76 µs | 0.19× | 1 | 1 |
 
-8 of 27 benchmarks are slower than Go.
+7 of 27 benchmarks are slower than Go.
 
 `tasks/spawn` takes one of two times a run, for Tondo and Go alike: the
 5950X's two sets of eight cores share no cache, and a run whose threads
