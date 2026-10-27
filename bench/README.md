@@ -15,44 +15,44 @@ and Tondo's `--bench` count allocations the same way, each in its own
 allocator. The goal is every row at or under 1.0×.
 
 The tables were measured on an AMD Ryzen 9 5950X, Linux, with Go 1.27.
-Now, at 23bfd25:
+Now, at 97b0b22:
 
 | Benchmark | Tondo | Go | Tondo/Go | Allocs/op Tondo | Allocs/op Go |
 |---|---:|---:|---:|---:|---:|
-| json/decode struct | 3.05 µs | 1.28 µs | 2.39× ⚠ | 52 | 4 |
-| strings/builder 100 | 1.40 µs | 748.8 ns | 1.86× ⚠ | 6 | 8 |
-| strings/split 100 | 1.30 µs | 734.2 ns | 1.77× ⚠ | 101 | 1 |
-| tasks/spawn 1000 | 269.30 µs | 170.55 µs | 1.58× ⚠ | 2207 | 2002 |
-| calls/fib 25 | 387.24 µs | 286.90 µs | 1.35× ⚠ | 0 | 0 |
-| loops/sum 1000000 | 928.65 µs | 717.74 µs | 1.29× ⚠ | 0 | 0 |
-| calls/closure 1000 | 243.1 ns | 205.5 ns | 1.18× ⚠ | 1 | 0 |
-| loops/collatz 10000 | 930.43 µs | 836.94 µs | 1.11× ⚠ | 0 | 0 |
-| strings/int to text 1000 | 12.29 µs | 11.35 µs | 1.08× ⚠ | 900 | 900 |
-| floats/sqrt 100000 | 181.33 µs | 169.90 µs | 1.07× ⚠ | 0 | 0 |
-| json/encode 100 structs | 31.25 µs | 29.42 µs | 1.06× ⚠ | 114 | 4 |
-| floats/mandelbrot 64 | 137.90 µs | 138.56 µs | 1.00× | 0 | 0 |
-| arrays/index sum 10000 | 2.06 µs | 2.17 µs | 0.95× | 0 | 0 |
-| json/parse object | 3.38 µs | 3.58 µs | 0.94× | 65 | 36 |
-| strings/interpolate | 28.6 ns | 32.6 ns | 0.88× | 1 | 1 |
-| strings/contains 1000 | 12.3 ns | 15.7 ns | 0.78× | 0 | 0 |
-| tasks/channel 10000 | 209.76 µs | 279.39 µs | 0.75× | 316 | 2 |
-| json/parse 1000 numbers | 95.34 µs | 127.75 µs | 0.75× | 1913 | 2015 |
-| maps/lookup 10000 ints | 52.24 µs | 75.07 µs | 0.70× | 0 | 0 |
-| arrays/map filter sum 10000 | 19.93 µs | 30.32 µs | 0.66× | 28 | 16 |
-| structs/users 1000 | 20.68 µs | 37.31 µs | 0.55× | 1010 | 1910 |
-| maps/insert 1000 strings | 40.54 µs | 98.66 µs | 0.41× | 1030 | 1920 |
-| arrays/push 1000 | 1.03 µs | 3.04 µs | 0.34× | 10 | 12 |
-| structs/points 1000 | 2.16 µs | 6.45 µs | 0.33× | 10 | 12 |
-| maps/insert 10000 ints | 131.79 µs | 485.65 µs | 0.27× | 42 | 79 |
-| regex/match 1000 | 40.90 µs | 152.44 µs | 0.27× | 0 | 0 |
-| arrays/sort 10000 | 65.88 µs | 354.48 µs | 0.19× | 1 | 1 |
+| strings/split 100 | 1.29 µs | 741.9 ns | 1.73× ⚠ | 101 | 1 |
+| json/decode struct | 1.59 µs | 1.26 µs | 1.25× ⚠ | 12 | 4 |
+| strings/builder 100 | 938.8 ns | 763.9 ns | 1.23× ⚠ | 6 | 8 |
+| calls/closure 1000 | 253.6 ns | 206.8 ns | 1.23× ⚠ | 1 | 0 |
+| loops/sum 1000000 | 822.54 µs | 720.24 µs | 1.14× ⚠ | 0 | 0 |
+| loops/collatz 10000 | 927.59 µs | 839.13 µs | 1.11× ⚠ | 0 | 0 |
+| strings/int to text 1000 | 12.41 µs | 11.48 µs | 1.08× ⚠ | 900 | 900 |
+| floats/sqrt 100000 | 179.95 µs | 171.40 µs | 1.05× ⚠ | 0 | 0 |
+| floats/mandelbrot 64 | 138.54 µs | 139.28 µs | 0.99× | 0 | 0 |
+| json/encode 100 structs | 28.74 µs | 29.35 µs | 0.98× | 15 | 4 |
+| arrays/index sum 10000 | 2.07 µs | 2.23 µs | 0.93× | 0 | 0 |
+| json/parse object | 3.06 µs | 3.54 µs | 0.87× | 39 | 36 |
+| tasks/spawn 1000 | 146.51 µs | 172.85 µs | 0.85× | 2271 | 2002 |
+| strings/contains 1000 | 12.4 ns | 15.7 ns | 0.79× | 0 | 0 |
+| tasks/channel 10000 | 203.85 µs | 282.74 µs | 0.72× | 316 | 2 |
+| json/parse 1000 numbers | 90.26 µs | 127.95 µs | 0.71× | 916 | 2015 |
+| strings/interpolate | 23.1 ns | 32.9 ns | 0.70× | 1 | 1 |
+| maps/lookup 10000 ints | 52.99 µs | 76.25 µs | 0.69× | 0 | 0 |
+| calls/fib 25 | 194.95 µs | 289.45 µs | 0.67× | 0 | 0 |
+| arrays/map filter sum 10000 | 20.18 µs | 30.81 µs | 0.65× | 28 | 16 |
+| structs/users 1000 | 18.81 µs | 37.36 µs | 0.50× | 1010 | 1910 |
+| maps/insert 1000 strings | 35.59 µs | 98.59 µs | 0.36× | 1030 | 1920 |
+| structs/points 1000 | 2.16 µs | 6.46 µs | 0.33× | 10 | 12 |
+| maps/insert 10000 ints | 131.90 µs | 488.00 µs | 0.27× | 42 | 79 |
+| arrays/push 1000 | 790.7 ns | 3.03 µs | 0.26× | 10 | 12 |
+| regex/match 1000 | 37.45 µs | 153.02 µs | 0.24× | 0 | 0 |
+| arrays/sort 10000 | 66.24 µs | 357.43 µs | 0.19× | 1 | 1 |
 
-11 of 27 benchmarks are slower than Go.
+8 of 27 benchmarks are slower than Go.
 
 `tasks/spawn` takes one of two times a run, for Tondo and Go alike: the
 5950X's two sets of eight cores share no cache, and a run whose threads
 land on both pays for each task that crosses. Tondo takes 144 or 265 µs,
-Go 171 or 265 µs; the table caught Tondo's slower one.
+Go 171 or 265 µs.
 
 On 2026-10-26, before any of the work they call for:
 
