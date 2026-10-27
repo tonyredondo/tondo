@@ -1,4 +1,5 @@
-// Tasks of `tondo`: check, build, run, test, fmt and watch. Check and
+// Tasks of `tondo`: check, build, run, test, fmt and watch, which runs a
+// live build that takes in its files as they change (live.ts). Check and
 // build read the diagnostics of `--json` into the Problems panel, with
 // their ranges, and show them in the terminal.
 
@@ -26,7 +27,7 @@ export function tondoTask(command: Command, target: string, folder?: vscode.Work
   const program = settings('run', target);
   const args =
     command === 'watch'
-      ? ['run', target, '--watch', '--', ...program.args]
+      ? ['run', target, '--live', '--', ...program.args]
       : command === 'run'
         ? ['run', target, '--', ...program.args]
         : [command, target];

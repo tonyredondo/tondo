@@ -2661,3 +2661,22 @@ that part or the function returns. A whole local moved and then released
 loses both statements. Decoding the benchmark's object went from 1.54
 to 1.38 µs, parsing one from 3.1 to 2.4 µs, and a thousand numbers from
 85 to 69 µs.
+
+## 2026-10-27 — The editor says what became of each change to a live build
+
+Saving a file under Debug Live showed, for five seconds, which functions
+changed, and a change the program could not take in came as an error,
+the same as one that did not compile; Run Live said it only in its
+terminal. Nobody could tell, after a save, whether the program ran the
+new code or had to start again. The extension now reloads both itself:
+Debug Live through the debugger's `reload`, whose refusals are answers
+with `message` and `restart` as in `tondo reload --json`, and Run Live,
+which runs `tondo run --live` rather than `--watch`, through `tondo
+reload <pid> --json` when a file is saved or changes on disk. A status
+bar item stays while the program runs and says what became of the last
+change: applied; applied with frames that finish on the old code; not
+applied, the files not compiling, with the program on its old code; or
+needing a restart, which Run Live does by itself, as `--watch` does, and
+Debug Live offers. The debugger had turned the program's own refusal
+into a failure, so that a change needing a restart read as a broken
+reload: it now reads the program's answer as `tondo debug` does.

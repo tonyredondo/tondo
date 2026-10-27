@@ -1,6 +1,6 @@
-// Running and debugging with `tondo dap`, and live builds whose code
-// changes as their files are saved. The lenses over `main` come from the
-// language server, with these commands.
+// Running and debugging with `tondo dap`, live builds included, whose
+// code changes as their files are saved (live.ts). The lenses over `main`
+// come from the language server, with these commands.
 
 import * as path from 'node:path';
 import * as vscode from 'vscode';
@@ -34,15 +34,6 @@ export function registerDebugging(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('tondo.runLive', (uri?: vscode.Uri) => run(uri, 'watch')),
     vscode.commands.registerCommand('tondo.debug', (uri?: vscode.Uri) => debug(uri, false)),
     vscode.commands.registerCommand('tondo.debugLive', (uri?: vscode.Uri) => debug(uri, true)),
-    vscode.commands.registerCommand('tondo.reload', () => reload(vscode.debug.activeDebugSession, true)),
-    // Edit and Continue: a live build debugged takes in what is saved.
-    vscode.workspace.onDidSaveTextDocument((document) => {
-      const session = vscode.debug.activeDebugSession;
-      const enabled = vscode.workspace.getConfiguration('tondo').get<boolean>('reloadOnSave', true);
-      if (enabled && document.languageId === 'tondo' && session?.type === 'tondo' && session.configuration.live) {
-        void reload(session, false);
-      }
-    }),
   );
 }
 
@@ -90,27 +81,3 @@ async function debug(uri: vscode.Uri | undefined, live: boolean): Promise<void> 
 async function launched(file: string): Promise<{ program: string; cwd: string; args: string[]; env: Record<string, string> }> {
   return { ...(await programFor(file)), ...settings('run', file) };
 }
-
-/** Puts in the code of the files as they are now, and says what changed. */
-async function reload(session: vscode.DebugSession | undefined, asked: boolean): Promise<void> {
-  if (session?.type !== 'tondo') {
-    if (asked) {
-      void vscode.window.showInformationMessage('Reload changes a live build while it is debugged: start one with Tondo: Debug Live.');
-    }
-    return;
-  }
-  try {
-    const reloaded = (await session.customRequest('reload')) as { changed?: string[]; added?: string[] };
-    const changed = reloaded.changed ?? [];
-    const added = reloaded.added ?? [];
-    const what = [
-      changed.length ? `changed ${changed.join(', ')}` : '',
-      added.length ? `added ${added.join(', ')}` : '',
-    ].filter((part) => part !== '');
-    vscode.window.setStatusBarMessage(`Tondo: reloaded${what.length ? ': ' + what.join('; ') : ''}`, 5000);
-  } catch (error) {
-    void vscode.window.showWarningMessage(`Tondo: ${(error as Error).message}`);
-  }
-}
-
-/** Run, debug and debug live over `fn main`. */

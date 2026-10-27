@@ -770,6 +770,48 @@ impl Adapter {
     }
 }
 
+const TICKING: &str = "import std.console
+import std.time
+
+enum Mode {
+    Quiet
+    Loud
+}
+
+let _mode = Ref(Mode.Quiet)
+for {
+    console.println(\"v1\")
+    time.sleep(time.milliseconds(100))
+}
+";
+
+/// Debug Live: the request `reload` says what changed, or why it did not,
+/// and whether the change needs the program started again.
+#[test]
+fn debug_adapter_reloads_a_live_build() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dap-live");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("ticking.to");
+    std::fs::write(&file, TICKING).unwrap();
+    let mut adapter = Adapter::start();
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("launch", json!({ "program": "ticking.to", "cwd": dir, "live": true }));
+    adapter.until("initialized");
+    adapter.ask("configurationDone", json!({}));
+    std::fs::write(&file, TICKING.replace("\"v1\"", "\"v2\"")).unwrap();
+    let reloaded = adapter.ask("reload", json!({}));
+    assert_eq!(reloaded["changed"], json!(["main"]), "{reloaded}");
+    std::fs::write(&file, TICKING.replace("\"v1\")", "\"v2\"")).unwrap();
+    let refused = adapter.ask("reload", json!({}));
+    assert_eq!(refused["restart"], false, "{refused}");
+    assert!(refused["message"].as_str().unwrap().contains("not reloaded"), "{refused}");
+    std::fs::write(&file, TICKING.replace("    Quiet\n", "").replace("Ref(Mode.Quiet)", "Ref(Mode.Loud)")).unwrap();
+    let refused = adapter.ask("reload", json!({}));
+    assert_eq!(refused["restart"], true, "{refused}");
+    adapter.stop();
+}
+
 #[test]
 fn debug_adapter_stops_at_panics_and_opens_dumps() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dap-panics");

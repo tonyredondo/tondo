@@ -95,12 +95,18 @@ impl Debuggee {
     }
 
     fn ask(&mut self, command: &str) -> Result<Value, String> {
-        writeln!(self.writer, "{command}").map_err(|_| "the program ended".to_string())?;
-        let answer = self.answers.recv().map_err(|_| "the program ended".to_string())?;
+        let answer = self.answer(command)?;
         match answer["error"].as_str() {
             Some(error) => Err(error.to_string()),
             None => Ok(answer),
         }
+    }
+
+    /// The program's answer as it is, with its `error`: a reload reads
+    /// why the program refused it.
+    fn answer(&mut self, command: &str) -> Result<Value, String> {
+        writeln!(self.writer, "{command}").map_err(|_| "the program ended".to_string())?;
+        self.answers.recv().map_err(|_| "the program ended".to_string())
     }
 }
 
@@ -661,9 +667,11 @@ fn handle(
         // Tondo's own: a live build's code as its files are now.
         "reload" => {
             let pid = program.pid;
-            match crate::live::reload(pid, &mut |request| program.ask(request)) {
+            match crate::live::reload(pid, &mut |request| program.answer(request)) {
                 Ok(reloaded) => Ok(reloaded.json()),
-                Err(refused) => Err(refused.message()),
+                Err(crate::live::Refused::Failed(message)) => Err(message),
+                // Not done, which the editor shows apart from a failure.
+                Err(refused) => Ok(refused.json()),
             }
         }
         "disconnect" | "terminate" => Ok(json!({})),

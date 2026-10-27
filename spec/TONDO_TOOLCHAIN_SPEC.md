@@ -900,7 +900,10 @@ el código que tiene ahora: el programa para en la primera línea de esa
 llamada. Lo que el frame ya hizo no se deshace. Solo reinicia el frame donde
 paró la tarea, y no el de una clausura. `tondo dap` lanza un build vivo con
 `"live": true`, atiende la petición propia `reload` y `restartFrame` del
-frame donde paró la tarea.
+frame donde paró la tarea. La respuesta de `reload` tiene los campos de
+`tondo reload --json` (sección 7.12): si no se aplica, sin ser un error,
+`message` y `restart`, que dice si el cambio pide arrancar el programa de
+nuevo; el editor muestra así qué fue de cada cambio.
 
 `tondo run --watch` arranca un build vivo y, cuando cambian sus archivos, lo
 cambia como `reload`; si el cambio pide arrancarlo de nuevo, o el programa

@@ -20,6 +20,8 @@ import {
   outcomes,
   place,
   programOf,
+  reloadShown,
+  reloaded,
   rendered,
   running,
   served,
@@ -354,4 +356,23 @@ test("a profile's hot lines, and how much each took at its end", () => {
   const report = testEvent(JSON.stringify({ event: 'report', report: { compiled: true, profiles: [{ test: 'p::unit::p::slow', bench: null, profile: 'target/profiles/p.unit.p.slow.cpu.pprof' }] } }));
   assert.ok(report?.event === 'report');
   assert.deepEqual(report.profiles, ['target/profiles/p.unit.p.slow.cpu.pprof']);
+});
+
+test('a reload says whether the program runs the new code, or why not', () => {
+  const applied = reloadShown(reloaded('{"format":"tondo-reload-0.1/1","ok":true,"changed":["main","reply"],"added":[],"moves":2,"stays":[],"converted":[]}'));
+  assert.equal(applied.state, 'applied');
+  assert.equal(applied.text, 'applied main, reply');
+  assert.deepEqual(applied.details, ['Changed: main, reply.', 'Frames on the old code move to the new at their next statement.']);
+  const partly = reloadShown({ changed: ['a', 'b'], added: ['c'], stays: ['frames of `a` finish on the old code: its parameters or result changed'] });
+  assert.equal(partly.state, 'partly');
+  assert.equal(partly.text, 'applied 3 functions, but some frames keep the old code');
+  assert.equal(reloadShown({ changed: [], added: [], moves: 0, stays: [], converted: [] }).state, 'same');
+  const restart = reloadShown(
+    reloaded('{"format":"tondo-reload-0.1/1","ok":false,"message":"not reloaded: `Mode` changed what it is made of: start the program again","restart":true}'),
+  );
+  assert.equal(restart.state, 'restart');
+  assert.deepEqual(restart.details, ['`Mode` changed what it is made of: start the program again']);
+  const errors = reloadShown({ message: "error[E1001]: ...\nnot reloaded: the program goes on as it was", restart: false });
+  assert.equal(errors.state, 'errors');
+  assert.throws(() => reloaded('{"format":"tondo-error-0.1/1","ok":false,"message":"no program 42 runs"}'), /no program 42 runs/);
 });

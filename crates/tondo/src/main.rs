@@ -914,10 +914,7 @@ fn reload_command(args: &[OsString]) -> Result<ExitCode, String> {
         let (ok, fields) = match reloaded {
             Ok(reloaded) => (true, reloaded.json()),
             Err(tondo::live::Refused::Failed(message)) => return Err(message),
-            Err(refused) => {
-                let restart = matches!(refused, tondo::live::Refused::Restart(_));
-                (false, serde_json::json!({ "message": refused.message(), "restart": restart }))
-            }
+            Err(refused) => (false, refused.json()),
         };
         print_json("reload", ok, fields);
         return Ok(if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE });

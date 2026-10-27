@@ -35,6 +35,11 @@ project, running, debugging and testing it.
 - **Live builds**: *Tondo: Debug Live* starts a build whose code changes
   while it runs: saving a file puts its new code in, keeping the program's
   state (Edit and Continue). *Tondo: Run Live* does the same in a terminal.
+  While one runs, the status bar says *Live*, and after each change what
+  became of it: applied; applied, but with frames that finish on the old
+  code; not applied because the files do not compile, while the program
+  goes on with its old code; or needing the program started again, which
+  Run Live does by itself and Debug Live offers.
 - **Tests** in the Testing view: every test and suite of the workspace's
   projects, with buttons beside them in the editor, each result and what it
   writes shown as they come. A failure shows its message on the line that
@@ -73,8 +78,8 @@ project, running, debugging and testing it.
 ## Settings
 
 - `tondo.path`: the `tondo` executable, when it is not found by itself.
-- `tondo.reloadOnSave`: whether saving a file reloads a live build being
-  debugged (on by default).
+- `tondo.reloadOnSave`: whether a live build takes in its files when they
+  are saved or change (on by default); off, *Tondo: Reload* does it.
 - `tondo.run.args` and `tondo.run.env`: the arguments and the variables of
   the programs run or debugged from the editor without a `launch.json`,
   and of the tasks; a `launch.json` gives its own `args` and `env`.

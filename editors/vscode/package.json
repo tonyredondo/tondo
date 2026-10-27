@@ -66,7 +66,7 @@
         "tondo.reloadOnSave": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "While a live build is debugged, put in the code of a Tondo file when it is saved (Edit and Continue)."
+          "markdownDescription": "While a live build runs, from *Debug Live* or *Run Live*, put in the code of its Tondo files when they are saved or change (Edit and Continue). Off: *Tondo: Reload* puts it in."
         },
         "tondo.run.args": {
           "type": "array",
@@ -264,7 +264,7 @@
       },
       {
         "command": "tondo.runLive",
-        "title": "Run Live (Reloads as Files Are Saved)",
+        "title": "Run Live (Reloads as Files Change)",
         "category": "Tondo"
       },
       {
@@ -274,7 +274,12 @@
       },
       {
         "command": "tondo.reload",
-        "title": "Reload the Debugged Program",
+        "title": "Reload the Live Program",
+        "category": "Tondo"
+      },
+      {
+        "command": "tondo.restartLive",
+        "title": "Restart the Live Program",
         "category": "Tondo"
       },
       {
@@ -389,7 +394,11 @@
       "commandPalette": [
         {
           "command": "tondo.reload",
-          "when": "debugType == tondo"
+          "when": "tondo.live"
+        },
+        {
+          "command": "tondo.restartLive",
+          "when": "tondo.live"
         },
         {
           "command": "tondo.stopCounters",

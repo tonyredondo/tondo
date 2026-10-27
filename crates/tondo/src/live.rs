@@ -984,6 +984,12 @@ impl Refused {
             Refused::Restart(message) | Refused::Failed(message) => format!("not reloaded: {message}"),
         }
     }
+
+    /// As `tondo reload --json` and the debugger's `reload` say it: why,
+    /// and whether the change needs the program started again.
+    pub fn json(&self) -> serde_json::Value {
+        serde_json::json!({ "message": self.message(), "restart": matches!(self, Refused::Restart(_)) })
+    }
 }
 
 impl Reloaded {

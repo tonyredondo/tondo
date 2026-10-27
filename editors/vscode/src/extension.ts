@@ -6,6 +6,7 @@ import { LanguageClient, LanguageClientOptions, ServerOptions } from 'vscode-lan
 import { findTondo } from './binary';
 import { exec } from './cli';
 import { registerDebugging } from './debugging';
+import { registerLive } from './live';
 import { registerModules } from './modules';
 import { registerObserving } from './observe';
 import { registerProfiles } from './profiles';
@@ -40,6 +41,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   onTests = registerTesting(context, output, showProfile);
   await startClient(output);
   registerDebugging(context);
+  registerLive(context, output);
   registerModules(context);
   registerObserving(context, output);
   void vscode.commands.executeCommand('setContext', 'tondo.active', true);

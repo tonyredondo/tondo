@@ -2,8 +2,8 @@
 // --list --test-format json` lists, the events and the report of `tondo
 // test --test-format events` (testing 15), the project of a path from
 // `tondo graph --json`, the diagnostics of `tondo check --json`, what
-// `tondo doc-test` says of a document's examples, and `tondo version
-// --json`.
+// `tondo doc-test` says of a document's examples, what a reload of a live
+// build did, and `tondo version --json`.
 
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -550,4 +550,70 @@ export function share(flat: number, cum: number, total: number, unit: string): s
   const own = flat > 0 ? `${percent(flat)} (${amount(flat)})` : '';
   const calls = cum > flat ? `${percent(cum)} with what it calls` : '';
   return `🔥 ${[own, calls].filter((part) => part).join(', ')}`;
+}
+
+/** What a reload of a live build did (toolchain 7.10), as `tondo reload
+ *  --json` and the debugger's `reload` say it: the functions it changed
+ *  and added, how many places move frames to the new code, where frames
+ *  stay on the old code and what converting values does; or, when it was
+ *  not done, why, and whether the change needs the program started
+ *  again. */
+export interface Reload {
+  changed?: string[];
+  added?: string[];
+  moves?: number;
+  stays?: string[];
+  converted?: string[];
+  message?: string;
+  restart?: boolean;
+}
+
+export function reloaded(json: string): Reload {
+  const said = JSON.parse(json) as Reload & { format?: string };
+  if (said.format !== 'tondo-reload-0.1/1') {
+    throw new Error(said.message ?? 'tondo reload failed');
+  }
+  return said;
+}
+
+/** A reload as the editor shows it: `applied` when the program runs the
+ *  new code, `partly` when some frames may finish on the old code, `same`
+ *  when nothing changed, `restart` when the change needs the program
+ *  started again and `errors` when the files do not compile; a few words,
+ *  and the rest. */
+export interface Shown {
+  state: 'applied' | 'partly' | 'same' | 'restart' | 'errors';
+  text: string;
+  details: string[];
+}
+
+export function reloadShown(reload: Reload): Shown {
+  const why = (reload.message ?? '').replace(/^[^]*not reloaded: /, '');
+  if (reload.restart) {
+    return { state: 'restart', text: 'restart to apply', details: [why] };
+  }
+  if (reload.message !== undefined) {
+    return {
+      state: 'errors',
+      text: 'not applied, the files do not compile',
+      details: ['The program goes on with its old code; the Problems panel shows the errors.'],
+    };
+  }
+  const changed = reload.changed ?? [];
+  const added = reload.added ?? [];
+  const names = [...changed, ...added];
+  const details = [
+    ...(changed.length ? [`Changed: ${changed.join(', ')}.`] : []),
+    ...(added.length ? [`Added: ${added.join(', ')}.`] : []),
+    ...(reload.moves ? ['Frames on the old code move to the new at their next statement.'] : []),
+    ...(reload.converted ?? []),
+    ...(reload.stays ?? []),
+  ];
+  if (details.length === 0) {
+    return { state: 'same', text: 'nothing changed', details };
+  }
+  const what = names.length === 0 ? 'the change' : names.length <= 2 ? names.join(', ') : `${names.length} functions`;
+  return reload.stays?.length
+    ? { state: 'partly', text: `applied ${what}, but some frames keep the old code`, details }
+    : { state: 'applied', text: `applied ${what}`, details };
 }
