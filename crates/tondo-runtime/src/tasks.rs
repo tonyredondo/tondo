@@ -340,7 +340,7 @@ struct Queue {
     /// A worker waits for the network's events instead (`poll`).
     polling: bool,
     /// A worker was woken for the tasks scheduled and has not looked at
-    /// the queue yet: it takes them, so no other is woken for them.
+    /// the queue yet: the first that looks takes over `SEEKING`.
     waking: bool,
     /// Waits for the network's events, which the watcher counts.
     polls: u64,
@@ -449,6 +449,9 @@ struct Next {
     /// How many there are, which a worker that would take some reads
     /// without the lock.
     count: AtomicUsize,
+    /// Since when they wait: since the first was started, or since others
+    /// last took some.
+    waiting: AtomicU64,
 }
 
 struct Local(VecDeque<*mut Task>);
@@ -462,11 +465,23 @@ impl Next {
 }
 
 /// Half of the tasks another worker started and has not run, the first to
-/// run here and the rest to this worker's own.
-fn steal() -> Option<*mut Task> {
-    let own = OWN_NEXT.with(Cell::get)?;
+/// run here and the rest to this worker's own, and whether more wait; or
+/// whether some wait for less than `NEXT_WAIT`, to look at again in a
+/// moment. Tasks wait that long before another worker takes them, as a task
+/// next does: those that end sooner end on the worker that started them,
+/// in the caches where they were made, and the others are shared out as
+/// soon.
+fn steal() -> Result<(*mut Task, bool), bool> {
+    let Some(own) = OWN_NEXT.with(Cell::get) else { return Err(false) };
+    let now = nanos();
+    let mut young = false;
     for other in nexts().filter(|other| !std::ptr::eq(*other, own)) {
         if other.count.load(Ordering::Relaxed) == 0 {
+            continue;
+        }
+        let since = other.waiting.load(Ordering::Relaxed);
+        if now.saturating_sub(since) < NEXT_WAIT.as_nanos() as u64 {
+            young = true;
             continue;
         }
         let Ok(mut theirs) = other.tasks.try_lock() else { continue };
@@ -474,15 +489,24 @@ fn steal() -> Option<*mut Task> {
         if count == 0 {
             continue;
         }
+        let more = theirs.0.len() > 1;
         let mut taken: VecDeque<*mut Task> = theirs.0.drain(..count).collect();
         other.count.fetch_sub(count, Ordering::Relaxed);
+        other.waiting.store(now, Ordering::Relaxed);
         drop(theirs);
-        let first = taken.pop_front();
-        own.count.fetch_add(taken.len(), Ordering::Relaxed);
-        own.tasks().0.extend(taken);
-        return first;
+        let Some(first) = taken.pop_front() else { continue };
+        if !taken.is_empty() {
+            // They waited already: another worker may take some at once.
+            let mut mine = own.tasks();
+            if mine.0.is_empty() {
+                own.waiting.store(since, Ordering::Relaxed);
+            }
+            mine.0.extend(taken.iter().copied());
+            own.count.fetch_add(taken.len(), Ordering::Relaxed);
+        }
+        return Ok((first, more));
     }
-    None
+    Err(young)
 }
 
 /// The first of the tasks this worker's tasks started.
@@ -519,6 +543,12 @@ const NEXT_WAIT: Duration = Duration::from_micros(20);
 static NEXT_WOKE: AtomicU64 = AtomicU64::new(0);
 /// How many workers sleep, as the queue counts them, read without its lock.
 static IDLE: AtomicUsize = AtomicUsize::new(0);
+/// A worker was woken for tasks, or looks for them since: no other is woken
+/// until it finds one or sleeps again, and then it wakes the next if more
+/// wait, as Go's scheduler wakes a thread only when none looks for work.
+/// Workers that look at once would read what the busy ones write all the
+/// time, and slow them. Set under the queue's lock.
+static SEEKING: AtomicBool = AtomicBool::new(false);
 
 fn nanos() -> u64 {
     static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
@@ -577,12 +607,7 @@ fn schedule(task: *mut Task) {
             return;
         }
         NEXT_WOKE.store(now, Ordering::Relaxed);
-        let mut queue = queue();
-        if queue.idle > 0 && !queue.waking {
-            queue.waking = true;
-            drop(queue);
-            READY.notify_one();
-        }
+        wake_idle();
         return;
     }
     enqueue(task);
@@ -596,28 +621,45 @@ fn enqueue(task: *mut Task) {
         && exploring().is_none()
         && let Some(own) = OWN_NEXT.with(Cell::get)
     {
-        own.tasks().0.push_back(task);
+        let mut tasks = own.tasks();
+        tasks.0.push_back(task);
+        let first = tasks.0.len() == 1;
+        drop(tasks);
         own.count.fetch_add(1, Ordering::Relaxed);
-        if IDLE.load(Ordering::Relaxed) > 0 {
-            let mut queue = queue();
-            if queue.idle > 0 && !queue.waking {
-                queue.waking = true;
-                drop(queue);
-                READY.notify_one();
-            }
+        // The first that waits wakes a worker, which takes some once they
+        // waited for a while; the next wait with it.
+        if first {
+            own.waiting.store(nanos(), Ordering::Relaxed);
+            wake_idle();
         }
         return;
     }
     let mut queue = queue();
     queue.runnable.push_back(task);
-    if LOOKS_NEXT.with(|next| next.replace(false)) || queue.waking {
+    if LOOKS_NEXT.with(|next| next.replace(false)) || SEEKING.load(Ordering::Relaxed) {
         return;
     }
     // One worker woken at a time, not one for each task: the one woken
-    // wakes the next if it finds more, as Go's scheduler wakes a thread
-    // only when none is looking for work.
-    queue.waking = queue.idle > 0;
+    // wakes the next if it finds more.
+    if queue.idle > 0 {
+        queue.waking = true;
+        SEEKING.store(true, Ordering::Relaxed);
+    }
     wake_one(queue);
+}
+
+/// Wakes a worker that sleeps to look for tasks, unless one looks already.
+fn wake_idle() {
+    if IDLE.load(Ordering::Relaxed) == 0 || SEEKING.load(Ordering::Relaxed) {
+        return;
+    }
+    let mut queue = queue();
+    if queue.idle > 0 && !SEEKING.load(Ordering::Relaxed) {
+        queue.waking = true;
+        SEEKING.store(true, Ordering::Relaxed);
+        drop(queue);
+        READY.notify_one();
+    }
 }
 
 thread_local! {
@@ -1106,6 +1148,7 @@ fn work(main: bool) -> i32 {
                 since: AtomicU64::new(0),
                 tasks: Mutex::new(Local(VecDeque::new())),
                 count: AtomicUsize::new(0),
+                waiting: AtomicU64::new(0),
             }));
             let index = NEXT_COUNT.fetch_add(1, Ordering::AcqRel);
             if let Some(slot) = NEXTS.get(index) {
@@ -1117,6 +1160,8 @@ fn work(main: bool) -> i32 {
     // A worker just woken looks once more, a moment later, for a task
     // waiting next to a worker that runs another, before it sleeps again.
     let (mut woken, mut waited) = (false, false);
+    // This worker looks for tasks for `SEEKING`.
+    let mut seeker = false;
     loop {
         // The task made runnable by the one that ran here, but now and then
         // the queue first, so that two tasks that wake each other do not
@@ -1140,8 +1185,9 @@ fn work(main: bool) -> i32 {
                 queue().runnable.push_back(task);
             }
         }
-        let task = {
+        let (task, more) = {
             let mut queue = queue();
+            let (mut looked, mut stealing) = (false, false);
             loop {
                 // Exploring orders this thread is the only worker: after a
                 // panic it runs the other tasks' cleanups itself.
@@ -1151,6 +1197,9 @@ fn work(main: bool) -> i32 {
                     return MAIN_STATUS.load(Ordering::SeqCst) as i32;
                 }
                 if !main && queue.surplus > 0 {
+                    if seeker {
+                        SEEKING.store(false, Ordering::Relaxed);
+                    }
                     queue.surplus -= 1;
                     queue.workers -= 1;
                     if let Some(next) = OWN_NEXT.with(Cell::get) {
@@ -1181,28 +1230,34 @@ fn work(main: bool) -> i32 {
                     _ => queue.runnable.pop_front(),
                 };
                 if let Some(task) = next {
-                    if !queue.runnable.is_empty() && queue.idle > 0 && !queue.waking {
-                        queue.waking = true;
-                        READY.notify_one();
+                    break (task, !queue.runnable.is_empty());
+                }
+                // Tasks another worker started, looked for without the
+                // queue's lock, which the workers that look would otherwise
+                // take in turns; then the queue once more, which may have
+                // changed meanwhile.
+                if !looked {
+                    looked = true;
+                    drop(queue);
+                    // Its own first: one of them went to the queue, for
+                    // fairness, and another worker may have run it.
+                    if let Some(task) = own_started() {
+                        break (task, false);
                     }
-                    break task;
+                    match steal() {
+                        Ok(found) => break found,
+                        Err(young) => stealing = young,
+                    }
+                    queue = self::queue();
+                    continue;
                 }
-                // Its own first: one of them went to the queue, for
-                // fairness, and another worker may have run it.
-                if let Some(task) = own_started() {
-                    break task;
-                }
-                // Tasks another worker started; or one next to a worker that
-                // runs another for long, one there for less looked at again
-                // in a moment.
-                if let Some(task) = steal() {
-                    break task;
-                }
-                // Only a worker just woken looks at the others' next, which
-                // they write all the time.
+                // Or one next to a worker that runs another for long, one
+                // there for less looked at again in a moment. Only a worker
+                // just woken looks at the others' next, which they write
+                // all the time.
                 let (taken, young) = if woken || waited { take_next() } else { (None, false) };
                 if let Some(task) = taken {
-                    break task;
+                    break (task, false);
                 }
                 // With sockets to poll, an idle worker waits for their
                 // events, unless another one does, and runs what they wake
@@ -1213,7 +1268,9 @@ fn work(main: bool) -> i32 {
                     IDLE.fetch_add(1, Ordering::Relaxed);
                 }
                 let mut next = queue.timers.peek().map(|t| t.at);
-                waited = young && woken;
+                // A worker that looks for tasks looks again in a moment at
+                // those that wait for less, and goes on looking.
+                waited = (young && woken) || (stealing && seeker);
                 if waited {
                     let soon = Instant::now() + NEXT_WAIT;
                     next = Some(next.map_or(soon, |at| at.min(soon)));
@@ -1227,9 +1284,14 @@ fn work(main: bool) -> i32 {
                     Stalled::MaybeC => next = Some(Instant::now() + RECHECK),
                     Stalled::No => {}
                 }
+                if seeker && !waited {
+                    seeker = false;
+                    SEEKING.store(false, Ordering::Relaxed);
+                }
                 if let Some((poller, polled)) = polling {
                     drop(queue);
                     queue = poll(poller, polled, next);
+                    looked = false;
                     continue;
                 }
                 queue = match next {
@@ -1241,11 +1303,21 @@ fn work(main: bool) -> i32 {
                 };
                 queue.idle -= 1;
                 IDLE.fetch_sub(1, Ordering::Relaxed);
-                // Woken for a task, or after waiting a moment for one.
+                // Woken for a task, or after waiting a moment for one. The
+                // first to look after a wake looks for what it was for.
                 woken = queue.waking && !woken;
-                queue.waking = false;
+                seeker |= std::mem::take(&mut queue.waking);
+                looked = false;
             }
         };
+        // Found: the next worker looks, if more wait.
+        if seeker {
+            seeker = false;
+            SEEKING.store(false, Ordering::Relaxed);
+        }
+        if more {
+            wake_idle();
+        }
         (woken, waited) = (false, false);
         run(task);
     }

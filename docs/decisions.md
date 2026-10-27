@@ -2508,3 +2508,20 @@ so two tasks that wake each other do not hold back the others. A task
 that a task starts goes to its worker's own queue, which an idle worker
 takes half of when it finds nothing else, so spawning many tasks no
 longer takes the queue's lock for each.
+
+## 2026-10-27 — One worker looks for tasks at a time
+
+Tasks that a task starts wait 20 microseconds in their worker's own queue
+before an idle worker takes half of them, as a task next does: short
+ones end on the worker that started them, in the caches where they were
+made, and long ones are shared out about as soon. Only one woken worker
+looks for tasks at a time, as Go wakes a thread only when none spins: it
+looks again after the 20 microseconds if what it found was too young,
+and once it finds a task it wakes the next if more wait. Before, a loop
+that started a thousand tasks woke a worker a hundred times and had them
+stolen three at a time, by workers that read the lines its worker wrote
+at each start, and that worker lost more than the others gained; a round
+of a thousand short tasks takes a third less on 32 cores now, and long
+tasks are shared out twice as fast, as the woken worker no longer gives
+up its turn as soon as it wakes. Idle workers also look at the others'
+queues without the queue's lock, which they took in turns.

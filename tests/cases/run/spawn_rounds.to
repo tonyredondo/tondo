@@ -1,0 +1,31 @@
+import std.console
+
+// Rounds of tasks too short to share out: each worker runs those it
+// started, now and then one through the shared queue for fairness, and
+// none sleeps while tasks of its own wait.
+
+fn square(n: Int): Int {
+    n * n
+}
+
+fn round(count: Int): Int {
+    var jobs: Array[Join[Int]] = []
+    for i in 0..count {
+        jobs.push(spawn square(i))
+    }
+    var total = 0
+    for job in jobs {
+        total += job.wait()
+    }
+    total
+}
+
+fn main() {
+    var total = 0
+    for _ in 0..200 {
+        total += round(1000)
+    }
+    console.println("{total}")
+}
+
+// expect-stdout: 66566700000
