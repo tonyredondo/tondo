@@ -1011,6 +1011,8 @@ fn stalled(queue: &Queue) -> Stalled {
         || queue.idle + pinned.count() + usize::from(queue.polling) < queue.workers
         || HOST_WORK.load(Ordering::SeqCst) != 0
         || MAIN_DONE.load(Ordering::SeqCst)
+        // A reload's barrier, which the tool that holds it lets go.
+        || crate::live::barrier()
         || nexts().any(|next| !next.task.load(Ordering::Acquire).is_null() || !next.tasks().0.is_empty())
     {
         return Stalled::No;

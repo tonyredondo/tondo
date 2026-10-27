@@ -773,18 +773,19 @@ impl Adapter {
     }
 }
 
-const TICKING: &str = "import std.console
-import std.time
-
-enum Mode {
+const TICKING: &str = "enum Mode {
     Quiet
     Loud
 }
 
+fn word(): String {
+    \"v1\"
+}
+
 let _mode = Ref(Mode.Quiet)
+var turns = 0
 for {
-    console.println(\"v1\")
-    time.sleep(time.milliseconds(100))
+    turns = (turns + word().length()) % 1000
 }
 ";
 
@@ -804,8 +805,8 @@ fn debug_adapter_reloads_a_live_build() {
     adapter.ask("configurationDone", json!({}));
     std::fs::write(&file, TICKING.replace("\"v1\"", "\"v2\"")).unwrap();
     let reloaded = adapter.ask("reload", json!({}));
-    assert_eq!(reloaded["changed"], json!(["main"]), "{reloaded}");
-    std::fs::write(&file, TICKING.replace("\"v1\")", "\"v2\"")).unwrap();
+    assert_eq!(reloaded["changed"], json!(["word"]), "{reloaded}");
+    std::fs::write(&file, TICKING.replace("\"v1\"\n}", "\"v2\"\n")).unwrap();
     let refused = adapter.ask("reload", json!({}));
     assert_eq!(refused["restart"], false, "{refused}");
     assert!(refused["message"].as_str().unwrap().contains("not reloaded"), "{refused}");
