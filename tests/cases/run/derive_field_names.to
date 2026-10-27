@@ -1,0 +1,17 @@
+import std.console
+import std.json
+import std.time
+
+// Fields named as the modules the prelude imports, `text` and `math`, in
+// a type whose encoding and decoding the toolchain writes.
+
+type Note = { text: String, math: Int }
+
+fn main() {
+    let note = Note { text: "a", math: 2 }
+    let encoded = json.encode(note)
+    let decoded = json.decode[Note](encoded)
+    console.println("{encoded} {decoded.map((n) { n.text })} {time.seconds(1)}")
+}
+
+// expect-stdout: {"text":"a","math":2} ok(a) 1s

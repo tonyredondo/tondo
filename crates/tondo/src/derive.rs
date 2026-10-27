@@ -502,10 +502,10 @@ impl Generator<'_> {
                         }
                         ast::VariantPayload::Record(fields) => {
                             let names: Vec<String> =
-                                fields.iter().map(|f| format!("{}: __{}", f.name.name, f.name.name)).collect();
+                                fields.iter().map(|f| format!("{}: __field_{}", f.name.name, f.name.name)).collect();
                             out.push_str(&format!("            {path} {{ {} }} => {{\n", names.join(", ")));
                             out.push_str(&format!("                out.beginMap(1)\n                out.key({key})\n"));
-                            out.push_str(&self.write_fields(fields, "__", "                "));
+                            out.push_str(&self.write_fields(fields, "__field_", "                "));
                             out.push_str("                out.endMap()\n            }\n");
                         }
                     }
@@ -558,15 +558,16 @@ impl Generator<'_> {
         out
     }
 
-    /// The statements that read the members of a map into `__name`
-    /// locals, one per field, until its end.
+    /// The statements that read the members of a map into `__field_name`
+    /// locals, one per field, until its end: named apart from the modules
+    /// the prelude imports as `__name`, as `__text`.
     fn read_fields(&self, fields: &[ast::FieldDecl], indent: &str) -> String {
         let s = self.alias;
         let mut out = String::new();
         for field in fields.iter().filter(|f| !ignored(f)) {
             let ty = self.text(&field.ty);
             let local = if ty.ends_with('?') { format!("({ty})?") } else { format!("{ty}?") };
-            out.push_str(&format!("{indent}var __{}: {local} = none\n", field.name.name));
+            out.push_str(&format!("{indent}var __field_{}: {local} = none\n", field.name.name));
         }
         out.push_str(&format!(
             "{indent}for {{\n{indent}    match input.nextKey()? {{\n{indent}        some(__member) => {{\n"
@@ -576,7 +577,7 @@ impl Generator<'_> {
         ));
         for field in fields.iter().filter(|f| !ignored(f)) {
             out.push_str(&format!(
-                "{indent}                {:?} => {{\n{indent}                    __{} = some({s}.Decode.decode[{}](input, __memberEvent)?)\n{indent}                }}\n",
+                "{indent}                {:?} => {{\n{indent}                    __field_{} = some({s}.Decode.decode[{}](input, __memberEvent)?)\n{indent}                }}\n",
                 wire(field),
                 field.name.name,
                 self.text(&field.ty)
@@ -589,7 +590,7 @@ impl Generator<'_> {
         out
     }
 
-    /// The fields of a record literal from the `__name` locals.
+    /// The fields of a record literal from the `__field_name` locals.
     fn fields(&self, fields: &[ast::FieldDecl], indent: &str) -> String {
         let mut out = String::new();
         for field in fields {
@@ -597,9 +598,11 @@ impl Generator<'_> {
             let value = if ignored(field) {
                 "none".to_string()
             } else if self.text(&field.ty).ends_with('?') {
-                format!("match __{name} {{\n{indent}    some(__value) => __value\n{indent}    none => none\n{indent}}}")
+                format!(
+                    "match __field_{name} {{\n{indent}    some(__value) => __value\n{indent}    none => none\n{indent}}}"
+                )
             } else {
-                format!("input.required(__{name}, {:?})?", wire(field))
+                format!("input.required(__field_{name}, {:?})?", wire(field))
             };
             out.push_str(&format!("{indent}{name}: {value}\n"));
         }
@@ -915,7 +918,7 @@ impl Generator<'_> {
                     }
                     ast::VariantPayload::Record(fields) => {
                         let parts: Vec<(String, String)> =
-                            fields.iter().map(|f| (f.name.name.clone(), format!("__{}", f.name.name))).collect();
+                            fields.iter().map(|f| (f.name.name.clone(), format!("__field_{}", f.name.name))).collect();
                         let bound: Vec<String> = parts.iter().map(|(f, l)| format!("{f}: {l}")).collect();
                         (format!("{name}.{variant} {{ {} }}", bound.join(", ")), parts)
                     }
