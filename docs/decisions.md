@@ -2624,7 +2624,10 @@ call of the allocator for each piece appended. Pieces of up to 16 bytes,
 as most are, are also copied with two moves of a word rather than a call
 of `memcpy`, for a new string, an interpolation and an append. A hundred
 appends of a word and a number went from 1.40 to 0.89 µs, and an
-interpolation from 29.8 to 23.6 ns.
+interpolation from 29.8 to 23.6 ns. A text of up to 16 bytes known when
+compiling, as a literal a function is called with, is then appended by
+the compiled code itself, as an element is pushed, when the string is
+held only there and has the room: 0.71 µs, under Go's 0.76.
 
 ## 2026-10-27 — An array of constants is made once
 

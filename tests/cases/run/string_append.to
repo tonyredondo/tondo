@@ -1,7 +1,9 @@
 // `x = "{x}..."` appends to the string in its own block when nothing else
 // holds it; a copy, a field lent by `mut self` and the string read again
 // in the same text all keep their values. A value of a type that shows
-// itself, made of an integer as a `Duration`, is shown as it shows.
+// itself, made of an integer as a `Duration`, is shown as it shows. A
+// short text known when compiling is written in place, of any length up
+// to 16 bytes, and past that, into a shared string or a literal, copied.
 import std.console
 import std.format
 import std.time
@@ -40,6 +42,28 @@ fn main() {
     var waited = "waited "
     waited = "{waited}{time.hours(2)}"
     console.println("{waited} {time.seconds(1)}")
+    var known = format.Builder.new()
+    for _ in 0..3 {
+        known.add("a")
+        known.add("bc")
+        known.add("def")
+        known.add("ghij")
+        known.add("klmno")
+        known.add("pqrstuv")
+        known.add("wxyz0123")
+        known.add("456789abcdefghi")
+        known.add("ñ0123456789abcde")
+        known.add("ABCDEFGHIJKLMNOPQ")
+        known.addLine("|")
+    }
+    console.print(known.text())
+    var shared = "s"
+    shared = "{shared}-"
+    let other = shared
+    shared = "{shared}+"
+    var literal = "lit"
+    literal = "{literal}!"
+    console.println("{shared} {other} {literal}")
 }
 
 // expect-stdout: a012 a
@@ -48,3 +72,7 @@ fn main() {
 // expect-stdout: 1000 012345678901
 // expect-stdout: x42true
 // expect-stdout: waited 2h0m0s 1s
+// expect-stdout: abcdefghijklmnopqrstuvwxyz0123456789abcdefghiñ0123456789abcdeABCDEFGHIJKLMNOPQ|
+// expect-stdout: abcdefghijklmnopqrstuvwxyz0123456789abcdefghiñ0123456789abcdeABCDEFGHIJKLMNOPQ|
+// expect-stdout: abcdefghijklmnopqrstuvwxyz0123456789abcdefghiñ0123456789abcdeABCDEFGHIJKLMNOPQ|
+// expect-stdout: s-+ s- lit!

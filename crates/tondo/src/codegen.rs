@@ -56,8 +56,11 @@ const REFLECT_VALUE: i64 = 40;
 /// Size of an array header in the runtime (`ArrayHeader`): `len` is at 8 and
 /// a deque's `head` at 24. An array's `head` is always 0.
 const ARRAY_HEADER: i64 = 32;
-/// Where a string's length is in its header (`Str`), after its count.
+/// Where a string's length is in its header (`Str`), after its count, its
+/// room after that, and where its bytes start.
 const STRING_LENGTH: i32 = 8;
+const STRING_ROOM: i32 = 16;
+const STRING_BYTES: i64 = 24;
 /// The count of a static array: so many references that releases never
 /// bring it to one, so that a change copies it, as one of a shared array.
 const SHARED_FOREVER: u64 = 1 << 62;
@@ -3952,8 +3955,9 @@ struct FnCodegen<'a, 'b> {
     starts: HashMap<(usize, usize), Vec<Span>>,
     ways: HashMap<(usize, usize), Vec<usize>>,
     /// Locals that only ever hold a string literal, which counts no
-    /// references: retaining and releasing them does nothing.
-    literal: HashSet<Local>,
+    /// references: retaining and releasing them does nothing; and the
+    /// literal, when it is always the same.
+    literal: HashMap<Local, Option<String>>,
 }
 
 /// What a function of a debug build keeps for its probes (toolchain 7.6):
@@ -4999,7 +5003,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     self.mark(place.local, false);
                 }
                 let ty = self.place_ty(place);
-                if !self.e.cg.types().needs_drop(ty) || place.path.is_empty() && self.literal.contains(&place.local) {
+                if !self.e.cg.types().needs_drop(ty) || place.path.is_empty() && self.literal.contains_key(&place.local)
+                {
                     return;
                 }
                 let value = self.read(place);
@@ -7348,6 +7353,51 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         }
     }
 
+    /// `x = "{x}text"`: the text's bytes written after the string's own,
+    /// as `push` adds an element, when nothing else holds the string and
+    /// its room takes them; or else the runtime's append.
+    fn append_text(&mut self, place: &Place, text: &str) -> ir::Value {
+        let string = self.scalar(&Operand::Copy(place.clone()));
+        let count = self.e.fb.ins().atomic_load(types::I64, flags(), string);
+        let length = self.e.fb.ins().load(types::I64, flags(), string, STRING_LENGTH);
+        let room = self.e.fb.ins().load(types::I64, flags(), string, STRING_ROOM);
+        let longer = self.e.fb.ins().iadd_imm_s(length, text.len() as i64);
+        let unique = self.e.fb.ins().icmp_imm_s(IntCC::Equal, count, 1);
+        let fits = self.e.fb.ins().icmp(IntCC::UnsignedLessThanOrEqual, longer, room);
+        let in_place = self.e.fb.ins().band(unique, fits);
+        let (fast, slow, done) = (self.e.fb.create_block(), self.e.fb.create_block(), self.e.fb.create_block());
+        let result = self.e.fb.append_block_param(done, POINTER);
+        self.e.fb.ins().brif(in_place, fast, &[], slow, &[]);
+        self.e.fb.switch_to_block(fast);
+        let end = self.e.fb.ins().iadd(string, length);
+        // The bytes in words of 8, 4, 2 and 1 bytes, stored as constants.
+        let bytes = text.as_bytes();
+        let mut at = 0;
+        while at < bytes.len() {
+            let (width, ty) = match bytes.len() - at {
+                8.. => (8, types::I64),
+                4..=7 => (4, types::I32),
+                2..=3 => (2, types::I16),
+                _ => (1, types::I8),
+            };
+            let mut word = [0u8; 8];
+            word[..width].copy_from_slice(&bytes[at..at + width]);
+            let value = self.e.fb.ins().iconst(ty, u64::from_le_bytes(word) as i64);
+            let unaligned = MemFlagsData::new().with_notrap();
+            self.e.fb.ins().store(unaligned, value, end, (STRING_BYTES + at as i64) as i32);
+            at += width;
+        }
+        self.e.fb.ins().store(flags(), longer, string, STRING_LENGTH);
+        self.e.fb.ins().jump(done, &[string.into()]);
+        self.e.fb.set_cold_block(slow);
+        self.e.fb.switch_to_block(slow);
+        let text = self.e.string_ptr(text);
+        let appended = self.e.call_rt(Rt::StrAppend, &[string, text]).unwrap();
+        self.e.fb.ins().jump(done, &[appended.into()]);
+        self.e.fb.switch_to_block(done);
+        result
+    }
+
     fn concat(&mut self, pieces: &[Piece]) -> ir::Value {
         // A type shown as what it is made of: one that shows itself, as a
         // `Duration` made of an `Int`, goes through its `Display`.
@@ -7356,6 +7406,21 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             let shows = this.e.cg.display().contains_key(&ty) || types.shown.contains_key(&ty);
             (!shows).then(|| types.kind(types.repr(ty)).clone())
         };
+        // `x = "{x}text"` with a short text known now, in place.
+        let known = match pieces {
+            [Piece::Taken(place), Piece::Text(text) | Piece::Value(Operand::Const(Const::Str(text)), _)] => {
+                Some((place, text.clone()))
+            }
+            [Piece::Taken(place), Piece::Value(Operand::Copy(of), _)] if of.path.is_empty() => {
+                self.literal.get(&of.local).cloned().flatten().map(|text| (place, text))
+            }
+            _ => None,
+        };
+        if let Some((place, text)) = known
+            && (1..=16).contains(&text.len())
+        {
+            return self.append_text(place, &text);
+        }
         // `x = "{x}{s}"` and `x = "{x}{i}"` in one call.
         if let [Piece::Taken(place), Piece::Value(operand, ty)] = pieces
             && let Some(kind) = plain(self, *ty)
@@ -7616,14 +7681,27 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
 
 /// The locals a function assigns a string literal and nothing else, nor
 /// lends to what could change them: a call, a `select`, a task or a
-/// mutation.
-fn literals(body: &Body) -> HashSet<Local> {
+/// mutation; and the literal, when it is always the same.
+fn literals(body: &Body) -> HashMap<Local, Option<String>> {
     let mut assigned: HashMap<Local, bool> = HashMap::new();
+    let mut texts: HashMap<Local, Option<String>> = HashMap::new();
     for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
         let (mut used, mut defined) = (Vec::new(), Vec::new());
         crate::mir::statement_locals(statement, &mut used, &mut defined);
-        let literal = matches!(statement,
-            Statement::Assign(place, rvalue, _) if place.path.is_empty() && matches!(**rvalue, Rvalue::Use(Operand::Const(Const::Str(_)))));
+        let literal = match statement {
+            Statement::Assign(place, rvalue, _) if place.path.is_empty() => match &**rvalue {
+                Rvalue::Use(Operand::Const(Const::Str(text))) => Some(text),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let (Some(text), Statement::Assign(place, ..)) = (literal, statement) {
+            let same = texts.entry(place.local).or_insert_with(|| Some(text.clone()));
+            if same.as_ref() != Some(text) {
+                *same = None;
+            }
+        }
+        let literal = literal.is_some();
         let lends = matches!(statement, Statement::Assign(_, rvalue, _) if matches!(**rvalue,
             Rvalue::Call(..) | Rvalue::CallIndirect(..) | Rvalue::CallOsr(..) | Rvalue::Select(..) | Rvalue::TaskOp(..)
             | Rvalue::Spawn(..) | Rvalue::Mutate(..) | Rvalue::Pointer(..)));
@@ -7640,7 +7718,7 @@ fn literals(body: &Body) -> HashSet<Local> {
     assigned
         .into_iter()
         .filter(|&(local, literal)| literal && !params.contains(&local))
-        .map(|(local, _)| local)
+        .map(|(local, _)| (local, texts.remove(&local).flatten()))
         .collect()
 }
 
