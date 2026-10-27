@@ -2642,3 +2642,22 @@ shared, so the data is writable. A live build makes the array each
 time still: a reload that converts an array replaces and frees it. A
 million calls that walk a constant array of three names went from a
 million allocations to none.
+
+## 2026-10-27 — What an owner gives up moves rather than being counted
+
+After inlining, a value read out of a local that owns it, a payload a
+match binds or the result a `?` unwraps, is retained for where it goes,
+and the local is released later without that part having been read
+again: three atomic operations for a string decoded from an event,
+where moving it takes none. A pass over the MIR after inlining, `moves`,
+turns such a retain into the zeroing of the part in the local, as the
+lowering already does for a binding a match takes by value: the copy
+keeps the local's reference, and the local releases the rest. It does
+so only when the local is the function's own, not a parameter, its
+result or what a binding borrows or lends; when the part is reached
+through fields and variants only; and when on every way on the local is
+released, whole or by a part that holds this one, before anything reads
+that part or the function returns. A whole local moved and then released
+loses both statements. Decoding the benchmark's object went from 1.54
+to 1.38 µs, parsing one from 3.1 to 2.4 µs, and a thousand numbers from
+85 to 69 µs.

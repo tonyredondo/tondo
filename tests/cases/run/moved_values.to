@@ -1,0 +1,82 @@
+import std.console
+
+// A value read out of a local that owns it moves, rather than being
+// counted again, when the local only releases it after; one read out of a
+// parameter, an element of one, or a local read again is counted.
+
+type Box = {
+    name: String
+    tags: Array[String]
+}
+
+enum Event {
+    Text(String)
+    Pair(String, String)
+    Nothing
+}
+
+fn text(event: Event): String {
+    match event {
+        Event.Text(value) => value
+        Event.Pair(first, _) => first
+        Event.Nothing => ""
+    }
+}
+
+fn made(n: Int): Event {
+    if n % 3 == 0 {
+        return Event.Text("t{n}")
+    }
+    if n % 3 == 1 {
+        return Event.Pair("a{n}", "b{n}")
+    }
+    Event.Nothing
+}
+
+fn firstOf(n: Int): String {
+    let event = made(n)
+    match event {
+        Event.Text(value) => value
+        Event.Pair(first, second) => "{first}{second}"
+        Event.Nothing => "none"
+    }
+}
+
+fn twice(n: Int): String {
+    let event = made(n)
+    let once = text(event)
+    let again = text(event)
+    "{once}{again}"
+}
+
+fn kept(boxes: Array[Box]): Array[String] {
+    var names: Array[String] = []
+    for box in boxes {
+        names.push(box.name)
+    }
+    names
+}
+
+fn main() {
+    var all: Array[String] = []
+    for n in 0..6 {
+        all.push(firstOf(n))
+        all.push(twice(n))
+    }
+    console.println("{all}")
+    let boxes = [Box { name: "x", tags: ["p"] }, Box { name: "y", tags: [] }]
+    console.println("{kept(boxes)} {boxes[0].name} {boxes[0].tags}")
+    var last = ""
+    for n in 0..4 {
+        let parsed: String ! String = if n % 2 == 0 { ok("v{n}") } else { err("e{n}") }
+        match parsed {
+            ok(value) => last = value
+            err(message) => last = "{last}/{message}"
+        }
+    }
+    console.println(last)
+}
+
+// expect-stdout: [t0, t0t0, a1b1, a1a1, none, , t3, t3t3, a4b4, a4a4, none, ]
+// expect-stdout: [x, y] x [p]
+// expect-stdout: v2/e3

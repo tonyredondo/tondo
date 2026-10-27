@@ -36,6 +36,7 @@ pub mod meta;
 pub mod mir;
 pub mod modules;
 pub mod mono;
+pub mod moves;
 pub mod observe;
 pub mod ownership;
 pub mod parallel;

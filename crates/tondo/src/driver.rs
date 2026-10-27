@@ -621,6 +621,7 @@ pub fn compile(
         crate::inline::inline(&mut bodies);
         crate::elide::elide(&mut bodies, &program.types);
         crate::thread::thread(&mut bodies, &program.types);
+        crate::moves::moves(&mut bodies);
         crate::unroll::unroll(&mut bodies, &program.types);
         crate::prove::prove(&mut bodies, &program.types);
     }
