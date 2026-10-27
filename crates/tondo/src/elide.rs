@@ -6,16 +6,24 @@
 //! have to move its releases.
 
 use crate::mir::*;
-use crate::types::Types;
+use crate::types::{TyKind, Types};
 
 pub fn elide(bodies: &mut [Body], types: &Types) {
-    for body in bodies {
-        for _ in 0..8 {
+    crate::parallel::each_mut(bodies, |body| {
+        // A chain of copies goes in one round; a second finds what the
+        // first made possible.
+        for _ in 0..2 {
             if !elide_once(body, types) {
                 break;
             }
         }
-    }
+    });
+}
+
+/// A value kept in memory, whose copies cost: what Cranelift holds in
+/// registers it copies for nothing already.
+fn in_memory(types: &Types, ty: crate::types::Ty) -> bool {
+    matches!(types.kind(types.repr(ty)), TyKind::Tuple(_) | TyKind::Adt(_) | TyKind::Option(_) | TyKind::Result(..))
 }
 
 fn whole(place: &Place) -> Option<Local> {
@@ -23,6 +31,17 @@ fn whole(place: &Place) -> Option<Local> {
 }
 
 fn elide_once(body: &mut Body, types: &Types) -> bool {
+    let candidate = |statement: &Statement| match statement {
+        Statement::Assign(target, value, _) => {
+            target.path.is_empty()
+                && matches!(&**value, Rvalue::Use(Operand::Copy(source)) if source.path.is_empty())
+                && in_memory(types, body.locals[target.local.0 as usize])
+        }
+        _ => false,
+    };
+    if !body.blocks.iter().flat_map(|block| &block.stmts).any(candidate) {
+        return false;
+    }
     let live = live_in(&body.blocks, body.locals.len());
     // What is lent keeps its storage, as a loan holds its address; and a
     // binding that borrows writes through it to what it borrows.
@@ -51,15 +70,20 @@ fn elide_once(body: &mut Body, types: &Types) -> bool {
     };
     let mut changed = false;
     for block in 0..body.blocks.len() {
-        let after: Vec<Local> = match &body.blocks[block].terminator {
-            Terminator::Goto(to) => live[to.0 as usize].clone(),
+        if !body.blocks[block].stmts.iter().any(candidate) {
+            continue;
+        }
+        let after: std::collections::HashSet<Local> = match &body.blocks[block].terminator {
+            Terminator::Goto(to) => live[to.0 as usize].iter().copied().collect(),
             Terminator::Branch(_, then, otherwise) => {
                 live[then.0 as usize].iter().chain(&live[otherwise.0 as usize]).copied().collect()
             }
-            _ => Vec::new(),
+            _ => Default::default(),
         };
         let mut terminator_used = Vec::new();
         terminator_uses(&body.blocks[block].terminator, &mut terminator_used);
+        // What each statement reads and writes, kept as the block changes.
+        let mut effects: Vec<(Vec<Local>, Vec<Local>)> = body.blocks[block].stmts.iter().map(locals).collect();
         let mut copy = 0;
         while copy < body.blocks[block].stmts.len() {
             let statements = &body.blocks[block].stmts;
@@ -78,6 +102,7 @@ fn elide_once(body: &mut Body, types: &Types) -> bool {
             let ty = body.locals[from.0 as usize];
             if from == to
                 || ty != body.locals[to.0 as usize]
+                || !in_memory(types, ty)
                 || types.needs_drop(ty)
                 || seen[from.0 as usize]
                 || lent[to.0 as usize]
@@ -89,7 +114,7 @@ fn elide_once(body: &mut Body, types: &Types) -> bool {
             // since, and the value made without reading `to`.
             let mut made = None;
             for index in (0..copy).rev() {
-                let (used, defined) = locals(&statements[index]);
+                let (used, defined) = &effects[index];
                 if defined.contains(&from) {
                     let whole_value =
                         matches!(&statements[index], Statement::Assign(place, ..) if place.path.is_empty());
@@ -105,19 +130,18 @@ fn elide_once(body: &mut Body, types: &Types) -> bool {
                 continue;
             };
             // `from` is not read again before it takes another value.
-            let mut read_later = None;
-            for statement in &statements[copy + 1..] {
-                let (used, defined) = locals(statement);
-                if used.contains(&from) {
-                    read_later = Some(true);
-                    break;
-                }
-                if defined.contains(&from) {
-                    read_later = Some(false);
-                    break;
-                }
-            }
-            let read_later = read_later.unwrap_or_else(|| terminator_used.contains(&from) || after.contains(&from));
+            let read_later = effects[copy + 1..]
+                .iter()
+                .find_map(|(used, defined)| {
+                    if used.contains(&from) {
+                        Some(true)
+                    } else if defined.contains(&from) {
+                        Some(false)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| terminator_used.contains(&from) || after.contains(&from));
             if read_later {
                 copy += 1;
                 continue;
@@ -126,7 +150,11 @@ fn elide_once(body: &mut Body, types: &Types) -> bool {
             if let Statement::Assign(place, ..) = &mut statements[made] {
                 place.local = to;
             }
+            for local in effects[made].1.iter_mut().filter(|local| **local == from) {
+                *local = to;
+            }
             statements.remove(copy);
+            effects.remove(copy);
             changed = true;
         }
     }

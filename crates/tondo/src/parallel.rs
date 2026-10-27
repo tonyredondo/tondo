@@ -8,6 +8,12 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock};
 
+/// `f` of each item, which it may change, on every core as `map` runs.
+pub fn each_mut<T: Send>(items: &mut [T], f: impl Fn(&mut T) + Sync) {
+    let cells: Vec<Mutex<&mut T>> = items.iter_mut().map(Mutex::new).collect();
+    map(&cells, 1, |cell| f(&mut cell.lock().unwrap_or_else(|e| e.into_inner())));
+}
+
 /// `f` of each item, in the items' order, on every core when there are at
 /// least `grain` items for each: each thread takes the next item as it
 /// finishes one. A call while another runs, as from inside `f`, runs on the

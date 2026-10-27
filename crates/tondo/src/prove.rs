@@ -19,17 +19,9 @@ use std::collections::HashMap;
 /// calls, which may change what they borrow.
 pub fn prove(bodies: &mut [Body], types: &Types) {
     let loans: Vec<Vec<bool>> = bodies.iter().map(|body| body.loans.clone()).collect();
-    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
-    let chunk = bodies.len().div_ceil(threads).max(1);
-    std::thread::scope(|scope| {
-        for part in bodies.chunks_mut(chunk) {
-            let loans = &loans;
-            scope.spawn(move || {
-                for body in part {
-                    let Some(relevant) = relevant(body, types) else { continue };
-                    Prover { body, types, loans, relevant }.run();
-                }
-            });
+    crate::parallel::each_mut(bodies, |body| {
+        if let Some(relevant) = relevant(body, types) {
+            Prover { body, types, loans: &loans, relevant }.run();
         }
     });
 }

@@ -20,7 +20,11 @@ use std::collections::HashMap;
 const SHORT: usize = 4;
 
 pub fn thread(bodies: &mut [Body], types: &Types) {
-    for body in bodies {
+    crate::parallel::each_mut(bodies, |body| thread_one(body, types));
+}
+
+fn thread_one(body: &mut Body, types: &Types) {
+    {
         // A binding that borrows writes through to what it borrows, which
         // may change under it: it is never known, and always written; nor
         // is what is lent known, which a binding may change.
@@ -36,7 +40,31 @@ pub fn thread(bodies: &mut [Body], types: &Types) {
                 _ => {}
             }
         }
-        let unknowable: Vec<bool> = aliases.iter().zip(&lent).map(|(a, l)| *a || *l).collect();
+        // What a fact about may fold something: a test, the enum whose
+        // tag is read, a tag compared with a constant, or a payload read.
+        let mut wanted = vec![false; body.locals.len()];
+        for block in &body.blocks {
+            if let Terminator::Branch(Operand::Copy(place), ..) = &block.terminator {
+                wanted[place.local.0 as usize] = true;
+            }
+            for statement in &block.stmts {
+                let Statement::Assign(_, value, _) = statement else { continue };
+                match &**value {
+                    Rvalue::Discriminant(place) => wanted[place.local.0 as usize] = true,
+                    Rvalue::Binary(BinOp::Eq | BinOp::Ne, Operand::Copy(place), Operand::Const(_)) => {
+                        wanted[place.local.0 as usize] = true
+                    }
+                    Rvalue::Use(Operand::Copy(place)) if matches!(place.path.first(), Some(Proj::Variant(..))) => {
+                        wanted[place.local.0 as usize] = true
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if !wanted.iter().any(|&w| w) {
+            return;
+        }
+        let unknowable: Vec<bool> = aliases.iter().zip(&lent).zip(&wanted).map(|((a, l), w)| *a || *l || !*w).collect();
         for _ in 0..3 {
             let copied = duplicate(body);
             let folded = fold(body, &unknowable);
@@ -74,12 +102,18 @@ fn whole(place: &Place) -> Option<Local> {
 /// unused one may drop: not a read of an element by an index it checks,
 /// which may panic.
 fn pure(statement: &Statement) -> bool {
+    let checked =
+        |place: &Place| place.path.iter().any(|projection| matches!(projection, Proj::Index(..) | Proj::Deref));
+    let read = |operand: &Operand| matches!(operand, Operand::Copy(place) if checked(place));
     match statement {
         Statement::Assign(place, value, _) => {
-            let mut checked = false;
-            crate::inline::visit_rvalue(&mut value.clone(), &mut |place: &mut Place| {
-                checked |= place.path.iter().any(|projection| matches!(projection, Proj::Index(..) | Proj::Deref));
-            });
+            let checked = match &**value {
+                Rvalue::Use(operand) => read(operand),
+                Rvalue::Variant(_, operands) | Rvalue::Aggregate(operands) => operands.iter().any(read),
+                Rvalue::Discriminant(place) => checked(place),
+                Rvalue::Binary(_, a, b) => read(a) || read(b),
+                _ => false,
+            };
             place.path.is_empty()
                 && !checked
                 && matches!(
