@@ -2027,6 +2027,11 @@ impl Parser<'_> {
                 self.bump();
                 ExprKind::None
             }
+            // `recover` is a word of the language only before a block (15.9).
+            Tok::Ident(name) if name == "recover" && self.nth(1) == &Tok::LBrace => {
+                self.bump();
+                ExprKind::Recover(self.block()?)
+            }
             Tok::Ident(name) => {
                 self.bump();
                 ExprKind::Path(vec![Ident { name, span: start }])

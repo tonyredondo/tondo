@@ -1,0 +1,7 @@
+// What `recover` gives is a result, which must be used.
+
+fn main() {
+    recover { 1 }
+}
+
+// expect-error: E1303

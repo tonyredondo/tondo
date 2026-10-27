@@ -108,8 +108,14 @@ fn all_ctors<'a>(types: &Types, ty: Ty, heads: impl Iterator<Item = &'a Pat>) ->
         TyKind::Bool => Some(vec![Ctor::Bool(false), Ctor::Bool(true)]),
         TyKind::Never => Some(Vec::new()),
         TyKind::Int(_) | TyKind::String => None,
+        // A variant that holds a `Never`, as `ok` of `Never ! E`, has no value.
         _ => match types.variants(ty) {
-            Some(variants) => Some((0..variants.len() as u32).map(Ctor::Variant).collect()),
+            Some(variants) => Some(
+                (0..variants.len() as u32)
+                    .map(Ctor::Variant)
+                    .filter(|ctor| !fields(types, ty, ctor).iter().any(|&field| types.repr(field) == Ty::NEVER))
+                    .collect(),
+            ),
             None => Some(vec![Ctor::Single]),
         },
     }

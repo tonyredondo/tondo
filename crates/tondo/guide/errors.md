@@ -124,3 +124,27 @@ fn main() {
 With `TONDO_PANIC_FORMAT=json`, the program writes how it failed, a panic,
 `main`'s error or a crash, as one line of JSON on standard error, for tools;
 the MCP tool `run` gives it as data.
+
+`recover { ... }` stops a panic of its block, of what it calls and of the
+tasks it starts: it is a `T ! Panic`, `ok` with the block's value or `err`
+with the panic's `code`, `message`, `data`, `location` and `stack`. On the
+way, `defer`s run, what was held is released, `std.sync` locks are let go
+and the block's other tasks are cancelled; `p.resume()` lets the panic go
+on. Recover at the edge of a request or a job, not around each call: a
+panic is still a bug, and `std.http` already answers `500` for a handler
+that panics. A deadlock, a crash, `testing.skip` and `testing.failNow` are
+never stopped.
+
+```tondo
+import std.console
+
+fn main() {
+    let values = [3, 4]
+    let third = recover { values[2] }.unwrapOr(0)
+    console.println("{third}")
+    match recover { panic("broken", code: "cache.corrupt") } {
+        err(p) if p.code == "cache.corrupt" => console.println("rebuild: {p.message}")
+        err(p) => p.resume()
+    }
+}
+```

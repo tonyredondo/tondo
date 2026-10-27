@@ -301,6 +301,9 @@ pub enum Rvalue {
     Select(Vec<SelectCase>, bool, Span),
     /// Whether the current task is cancelled (11.15).
     Cancelled,
+    /// Whether the statement before panicked, and the code unwinds to the
+    /// nearest `recover` (15.9).
+    Unwinding,
     /// In a live build, what the probe of the line that starts at the
     /// point said: go on (0), restart the frame (1), or move it to the new
     /// code (2) (toolchain 7.10).
@@ -533,6 +536,7 @@ fn rvalue_uses(rvalue: &Rvalue, used: &mut Vec<Local>) {
         | Rvalue::Callback(..)
         | Rvalue::Layout(..)
         | Rvalue::Cancelled
+        | Rvalue::Unwinding
         | Rvalue::Restart(_)
         | Rvalue::Transfer(_)
         | Rvalue::OsrPoint => {}

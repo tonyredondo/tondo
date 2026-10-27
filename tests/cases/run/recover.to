@@ -1,0 +1,115 @@
+// `recover` stops a panic of its block: in it, in what it calls, or a
+// task of it; what the abandoned frames held is released and their
+// `defer`s run, a lock is let go, and the program goes on.
+
+import std.console
+import std.sync
+
+type Item = { name: String, tags: Array[String] }
+
+fn build(count: Int): Array[Item] {
+    var items: Array[Item] = []
+    for i in 0..count {
+        items.push(Item { name: "item {i}", tags: ["a", "b"] })
+    }
+    let empty: Array[Int] = []
+    console.println("{empty[0]}")
+    items
+}
+
+fn divide(a: Int, b: Int): Int {
+    defer console.println("divide ends")
+    a / b
+}
+
+fn late(index: Int): Int {
+    let empty: Array[Int] = []
+    empty[index]
+}
+
+fn worker(n: Int, out: Sender[Int]) {
+    out.send(late(n))
+}
+
+fn main() {
+    for _ in 0..100 {
+        let _ = recover { build(3) }
+    }
+    let total = recover { divide(10, 0) }.unwrapOr(-1)
+    console.println("total {total}")
+    let xs = [1, 2, 3]
+    match recover { xs[7] } {
+        ok(value) => console.println("got {value}")
+        err(p) => console.println("{p.code}: {p.message}")
+    }
+    match recover { panic("broken", code: "cache.corrupt", data: ["entries": 12]) } {
+        err(p) => console.println("{p.code} {p.data}")
+    }
+    let counter = sync.Mutex(0)
+    let _ = recover {
+        counter.update((value) {
+            value += 1
+            panic("in the lock")
+        })
+    }
+    counter.update((value) { value += 1 })
+    console.println("counter {counter.get()}")
+    match recover {
+        counter.update((_) { counter.update((again) { again += 1 }) })
+    } {
+        ok(_) => console.println("no")
+        err(p) => console.println("again: {p.code} {counter.get()}")
+    }
+    match recover {
+        let job = spawn late(2)
+        job.wait()
+    } {
+        ok(_) => console.println("no")
+        err(p) => console.println("task: {p.code}")
+    }
+    // Waiting for what the task would have sent ends too.
+    match recover {
+        let (out, results) = channel[Int](0)
+        let _job = spawn worker(1, out)
+        results.receive()
+    } {
+        ok(_) => console.println("no")
+        err(p) => console.println("waiting: {p.code}")
+    }
+    let outer = recover {
+        match recover { panic("deep", code: "deep.one") } {
+            err(p) => p.resume()
+        }
+    }
+    match outer {
+        err(p) => console.println("outer: {p.code}")
+    }
+    let text = "abc"
+    match recover { text[9] } {
+        ok(_) => console.println("no")
+        err(p) => console.println("string: {p.code}")
+    }
+    let (out, _inbox) = channel[String](0)
+    out.close()
+    match recover {
+        select {
+            out.send("sent {text}") => 1
+            else => 2
+        }
+    } {
+        ok(_) => console.println("no")
+        err(p) => console.println("select: {p.code}")
+    }
+}
+
+// expect-stdout: divide ends
+// expect-stdout: total -1
+// expect-stdout: P0001: index 7 is out of bounds for an array of length 3: valid indices are 0 to 2, and -3 to -1 from the end
+// expect-stdout: cache.corrupt [entries: 12]
+// expect-stdout: counter 2
+// expect-stdout: again: P0014 2
+// expect-stdout: task: P0001
+// expect-stdout: waiting: P0001
+// expect-stdout: outer: deep.one
+// expect-stdout: string: P0001
+// expect-stdout: select: P0012

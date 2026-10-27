@@ -2,7 +2,7 @@
 //! allocator, C strings, and the calls of C functions that take `...`.
 
 use super::io::{array_bytes, byte_array};
-use super::{ArrayHeader, Str, str_bytes, str_new, tondo_rt_panic};
+use super::{ArrayHeader, Str, str_bytes, str_new};
 
 unsafe extern "C" {
     fn calloc(count: usize, size: usize) -> *mut u8;
@@ -30,8 +30,8 @@ pub unsafe extern "C" fn tondo_rt_memory_release(block: *mut u8, _size: i64) {
 pub unsafe extern "C" fn tondo_rt_c_string(text: *const Str, location: *const Str) -> *mut u8 {
     let bytes = unsafe { str_bytes(text) };
     if let Some(at) = bytes.iter().position(|&b| b == 0) {
-        let message = str_new(format!("the text has a zero byte at {at}, so C would see it end there").as_bytes());
-        unsafe { tondo_rt_panic(16, message, location) }
+        super::raise(16, &format!("the text has a zero byte at {at}, so C would see it end there"), location);
+        return std::ptr::null_mut();
     }
     let copy = tondo_rt_memory_allocate(bytes.len() as i64 + 1);
     unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), copy, bytes.len()) };

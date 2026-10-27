@@ -3727,13 +3727,14 @@ de la llamada: `spawn detached(x)` lanza una función llamada `detached`.
 `job.detach()` suelta igual una tarea cuyo `Join` ya se tiene. Para esperar a
 varias tareas que corren a la vez se reúnen en un `Group` (11.12).
 
-Una tarea suelta sigue sujeta a las demás reglas: un pánico en ella termina el
-programa, y cancelar la tarea que la lanzó no la cancela. Cuando `main`
-termina, el runtime cancela las tareas sueltas que sigan corriendo y espera su
-cleanup antes de finalizar el proceso.
+Una tarea suelta sigue sujeta a las demás reglas: un pánico que ella misma no
+recupera (15.9) termina el programa, y cancelar la tarea que la lanzó no la
+cancela. Cuando `main` termina, el runtime cancela las tareas sueltas que sigan
+corriendo y espera su cleanup antes de finalizar el proceso.
 
-Un pánico en cualquier tarea termina el programa: el runtime informa el pánico,
-ejecuta los `defer` pendientes de esa tarea y cancela todas las demás (11.15),
+Un pánico que ningún `recover` detiene (15.9) termina el programa: el runtime
+informa el pánico, ejecuta los `defer` pendientes de esa tarea y cancela todas
+las demás (11.15),
 que ejecutan los suyos al llegar a su siguiente espera. El proceso termina
 cuando la tarea principal y las demás han acabado, o a los cinco segundos si
 alguna sigue calculando sin esperar.
@@ -5284,13 +5285,14 @@ diagnóstico runtime. Interpolación, formato y construcción de mensajes ocurre
 antes de la llamada mediante las reglas ordinarias.
 
 Sin `code`, la invocación produce `P0008`. Con él, el pánico lleva ese código
-propio, que es lo que lo distingue de los demás. Un código
+propio, que es lo que lo distingue para quien lo recupera (15.9). Un código
 propio es uno o más segmentos separados por `.`, cada uno una letra minúscula
 seguida de letras y dígitos ASCII, como `cache.corrupt` o
 `billing.limitExceeded`; los códigos `P` seguidos de dígitos son del lenguaje
 (22.2). Un literal que no es un código propio es `E1305`; un código calculado
 que no lo es produce `P0017`, con ese texto en `data` como `code`. `data` lleva
-los detalles del pánico, un valor básico por clave, que el informe muestra. Los valores entran tal cual, porque cada miembro
+los detalles del pánico, un valor básico por clave, que el informe muestra y
+`recover` entrega con su tipo. Los valores entran tal cual, porque cada miembro
 de la unión la satisface (9.6); uno de otro tipo es un error de compilación que
 dice que se escriba su texto, `"{value}"`. No hay otra forma de lanzar un pánico
 ni otro valor que lanzar: un pánico siempre tiene código, mensaje y datos.
@@ -5316,7 +5318,7 @@ Un pánico representa un invariante roto, por ejemplo:
 Un pánico:
 
 - No forma parte de `! E`.
-- No puede capturarse en Tondo 0.1.
+- Solo se detiene en un `recover`, que lo convierte en un valor (15.9).
 - Desenrolla scopes mediante el orden único de 8.10 y ejecuta en LIFO los
   `defer` y las acciones de salida del código que abandona.
 - Dentro de concurrencia estructurada, cancela hermanos, espera su cleanup y se propaga como pánico hasta el scope propietario.
@@ -5414,6 +5416,88 @@ panic[P0007]: assertion-failed: name == "Ada"
 La condición y las partes siguen la evaluación ordinaria de argumentos de izquierda a derecha; los mensajes no son cierres lazy implícitos.
 
 Las aserciones no se eliminan en builds optimizadas. Si una comprobación puede eliminarse, deberá existir una operación de debug explícita en tooling, no cambiar la semántica de `assert`.
+
+### 15.9 `recover`
+
+`recover bloque` es una expresión que detiene los pánicos del bloque. Si el
+bloque termina, vale `ok` con su valor; si un pánico lo interrumpe, vale `err`
+con ese pánico. Su tipo es `T ! Panic`, con `T` el tipo del bloque, así que se
+maneja como cualquier resultado: con `match`, con `unwrapOr` o propagándolo con
+`?` desde una función cuyo error incluye `Panic`.
+
+~~~tondo
+// Recuperarse y seguir como si nada:
+let total = recover { sum(values) }.unwrapOr(0)
+
+// Decidir qué se recupera; lo demás sigue su camino:
+let reply = match recover { route(request) } {
+    ok(reply) => reply
+    err(p) if p.code == "db.corrupt" => p.resume()
+    err(p) => {
+        console.eprintln("{p}")
+        Reply.text("internal error", status: 500)
+    }
+}
+
+// Leer sus datos con su tipo:
+let entry = match recover { cache.load(key) } {
+    ok(value) => value
+    err(p) if p.code == "cache.corrupt" => match p.data.get("entries") {
+        some(Int(entries)) if entries > 1000 => cache.rebuild()
+        _ => p.resume()
+    }
+    err(p) => p.resume()
+}
+
+// O hacer de él un error del canal de la función:
+fn handle(request: Request): Reply ! (AppError | Panic) {
+    recover { route(request) }?
+}
+~~~
+
+`recover` solo es una palabra del lenguaje seguido de `{` en posición de
+expresión; en otro sitio es un nombre.
+
+- El bloque es un bloque ordinario: `return`, `break`, `continue`, `?` y `fail`
+  salen de él como de cualquier otro. Solo un pánico lo convierte en `err`.
+- Un pánico dentro del bloque, en él o en lo que llama, desenrolla hasta el
+  `recover` como dice 15.7: ejecuta en LIFO los `defer` y las acciones de
+  salida de lo que abandona, suelta los locks de `std.sync` que tenía y cancela
+  y espera las tareas que pertenecen al bloque. Lo que cambió antes del pánico
+  queda como estaba.
+- Una tarea lanzada dentro del bloque sin `detached`, o lanzada por una de
+  ellas, pertenece al bloque. Su pánico detiene la tarea que ejecuta el bloque
+  en cuanto puede, a más tardar en su siguiente espera o al final del bloque;
+  al desenrollarse, cancela las demás tareas del bloque, y el `recover` vale
+  `err` con ese pánico. Si su `Join` salió del bloque y este ya terminó, el
+  pánico sigue en quien la espera. Una tarea `detached` pertenece solo a los
+  `recover` que ella misma ejecuta.
+- Con varios `recover` anidados, el pánico se detiene en el más interno. Uno
+  que no está dentro de ninguno termina el programa (11.11).
+- `p.resume()` continúa el mismo pánico, con su código, su ubicación y su
+  traza, hacia el siguiente `recover` o el final del programa. Su tipo es
+  `Never`, así que cierra cualquier rama.
+- Nunca se recuperan, y terminan el programa como hoy: un deadlock (`P0013`);
+  la memoria agotada, un stack overflow, una señal fatal y un fallo dentro de
+  C, que quedan fuera del modelo de pánico (15.7); un pánico en código que C
+  llamó, porque un stack de C no puede desenrollarse; y lo que termina un test
+  sin ser un pánico, como `testing.skip` y `testing.failNow`. Un pánico
+  durante el desenrollado se informa como suprimido y el desenrollado sigue
+  (15.7).
+
+`Panic` es un tipo del prelude:
+
+~~~tondo pseudocode
+pub type Panic = {
+    code: String                // "P0001", "cache.corrupt"
+    message: String
+    data: Map[String, Int | Float | Bool | String]
+    location: String            // "src/cache.to:41:9"
+    stack: String               // la traza, como la escribe el informe
+}
+pub fn Panic.resume(self): Never
+impl Display for Panic          // el informe de 15.7
+~~~
 
 ---
 
@@ -9878,7 +9962,7 @@ Ausencia se representa con `T?`. Esto impide que cualquier referencia o valor pu
 
 ### 25.2 Excepciones
 
-No existen `throw`, `try`, `catch` ni stack unwinding recuperable. Los errores forman parte de la firma y se manejan con `?` o `match`.
+No existen `throw`, `try`, `catch` ni excepciones. Los errores forman parte de la firma y se manejan con `?` o `match`. Un pánico, que señala un invariante roto, no es un error: solo se detiene donde un `recover` lo convierte en un valor de forma fija, con código, mensaje y datos (15.9). No se lanza otra cosa que un pánico ni se captura por tipo.
 
 ### 25.3 Clases y herencia
 

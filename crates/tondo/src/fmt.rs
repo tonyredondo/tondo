@@ -1083,6 +1083,7 @@ impl Formatter<'_> {
                 concat(vec![text(if *detached { "spawn detached " } else { "spawn " }), self.expr(call)])
             }
             ExprKind::Unsafe(block) => concat(vec![text("unsafe "), self.value_block(block)]),
+            ExprKind::Recover(block) => concat(vec![text("recover "), self.value_block(block)]),
             ExprKind::SyncLiteral(path, literal) => concat(vec![text(path_text(path)), self.expr(literal)]),
         }
     }

@@ -500,6 +500,8 @@ pub struct Expr {
 pub enum ExprKind {
     /// `unsafe { ... }`: a region where raw operations are allowed (16.12).
     Unsafe(Block),
+    /// `recover { ... }` (15.9).
+    Recover(Block),
     Int {
         value: u64,
         suffix: Option<&'static str>,

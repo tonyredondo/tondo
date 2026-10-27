@@ -35,6 +35,8 @@ pub struct Program {
 /// The code of the panic that `testing.skip` ends a test or suite with,
 /// which the runner reports as a skip.
 pub const SKIP: u32 = 2000;
+/// `testing.failNow`, a failed assertion (`P0007`) that no `recover` stops.
+pub const FAIL_NOW: u32 = 2012;
 
 /// A node of the test tree (testing 3.2).
 #[derive(Clone)]
@@ -373,6 +375,9 @@ pub enum ExprKind {
     /// `panic(message)`, or a panic with another code: `testing.failNow`
     /// fails as an assertion (`P0007`) and `testing.skip` with `SKIP`.
     Panic(Box<Expr>, u32),
+    /// `recover { ... }` (15.9): the block's value as `ok`, or the panic
+    /// that stopped it as `err`, which the expression reads.
+    Recover(Block, Box<Expr>),
     /// The members of the suite (or of the root of the test tree) whose
     /// setup is done: each node with the closure, erased to a `fn()`, that
     /// runs it (testing 7.3).
@@ -813,6 +818,19 @@ pub enum StdFn {
     TestTags,
     /// Tells the runner where an error leaves a test or a setup.
     TestWhere,
+    /// A panic with the code, whose message is the argument, where the
+    /// code unwinds when the call returns (15.9).
+    PanicUnwind(u32),
+    /// A `recover` block starts, ends as code does (true when a task of it
+    /// ended with a panic), ends another way, and stops the panic that
+    /// unwinds to it (15.9).
+    RecoverEnter,
+    RecoverEnd,
+    RecoverLeave,
+    RecoverCatch,
+    /// The cleanups of a frame a panic unwinds start and end (15.9).
+    UnwindHold,
+    UnwindResume,
     /// `testing.attach(name, mediaType, data)` and
     /// `testing.snapshot(name, actual)` (testing 9.7).
     TestAttach,
@@ -1422,6 +1440,20 @@ pub const NATIVES: &[Native] = {
         panics("float", &[String, Float], Unit, "tondo_rt_panic_float"),
         panics("bool", &[String, Bool], Unit, "tondo_rt_panic_bool"),
         panics("text", &[String, String], Unit, "tondo_rt_panic_text"),
+        panics("caughtCode", &[], String, "tondo_rt_caught_code"),
+        panics("caughtMessage", &[], String, "tondo_rt_caught_message"),
+        panics("caughtLocation", &[], String, "tondo_rt_caught_location"),
+        panics("caughtStack", &[], String, "tondo_rt_caught_stack"),
+        panics("caughtCount", &[], Int, "tondo_rt_caught_count"),
+        panics("caughtKey", &[Int], String, "tondo_rt_caught_key"),
+        panics("caughtKind", &[Int], Int, "tondo_rt_caught_kind"),
+        panics("caughtInt", &[Int], Int, "tondo_rt_caught_int"),
+        panics("caughtFloat", &[Int], Float, "tondo_rt_caught_float"),
+        panics("caughtBool", &[Int], Bool, "tondo_rt_caught_bool"),
+        panics("caughtText", &[Int], String, "tondo_rt_caught_text"),
+        panics("name", &[String], String, "tondo_rt_panic_name"),
+        panics("restage", &[String, String, String], Unit, "tondo_rt_panic_restage"),
+        panics("report", &[String, String, String, String], Unit, "tondo_rt_panic_report"),
     ]
 };
 
@@ -1517,6 +1549,10 @@ pub fn written(e: &Expr, out: &mut Vec<LocalId>) {
             otherwise.iter().for_each(|otherwise| written(otherwise, out));
         }
         ExprKind::Block(block) => written_block(block, out),
+        ExprKind::Recover(block, caught) => {
+            written_block(block, out);
+            written(caught, out);
+        }
         ExprKind::Interpolate(segments) => segments.iter().for_each(|segment| {
             if let Segment::Value(value) = segment {
                 written(value, out);

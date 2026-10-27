@@ -120,7 +120,7 @@ fn check_with<'a>(
 }
 
 /// Prelude type names (26.3); they cannot be redeclared unqualified.
-pub(crate) const PRELUDE_TYPES: [&str; 42] = [
+pub(crate) const PRELUDE_TYPES: [&str; 43] = [
     "NumericConversionError",
     "Bool",
     "Int",
@@ -163,6 +163,7 @@ pub(crate) const PRELUDE_TYPES: [&str; 42] = [
     "Send",
     "Share",
     "Display",
+    "Panic",
 ];
 
 enum TypeName {
@@ -1490,6 +1491,23 @@ impl<'a> Checker<'a> {
         Self::mk(hir::ExprKind::Block(block), Ty::NEVER, span)
     }
 
+    /// `recover { ... }` (15.9): the block's value, or the panic that
+    /// stopped it, as `T ! Panic`.
+    fn recover(&mut self, cx: &mut FnCx, block: &ast::Block, expected: Option<Ty>, span: Span) -> hir::Expr {
+        let Some(panic) = self.type_named("Panic") else { unreachable!("the prelude names `Panic`") };
+        let inner = match expected.map(|t| self.types.kind(t)) {
+            Some(TyKind::Result(ok, error)) if *error == panic => Some(*ok),
+            _ => None,
+        };
+        let block = self.block(cx, block, inner);
+        let ty = self.types.intern(TyKind::Result(block.ty, panic));
+        let Some(&ModuleName::Fn(caught)) = self.names.get("panics.caught") else {
+            unreachable!("the prelude brings `std.panics`")
+        };
+        let caught = Self::mk(hir::ExprKind::Call(Callee::Fn(caught), Vec::new(), Vec::new()), panic, span);
+        Self::mk(hir::ExprKind::Recover(block, Box::new(caught)), ty, span)
+    }
+
     /// A call of a function of the standard library's `std.panics`.
     fn panics_call(&mut self, name: &str, value: hir::Expr, span: Span) -> hir::Expr {
         let Some(&ModuleName::Fn(id)) = self.names.get(name) else { unreachable!("the prelude brings `std.panics`") };
@@ -2805,6 +2823,13 @@ impl<'a> Checker<'a> {
                     };
                     self.aliases.push(entry);
                     self.declare_type_name(&decl.name, TypeName::Alias(self.aliases.len() - 1));
+                    // The prelude's aliases are everywhere, by their own name,
+                    // as `Panic`.
+                    if let Some(bare) = decl.name.name.strip_prefix("prelude.")
+                        && PRELUDE_TYPES.contains(&bare)
+                    {
+                        self.type_names.insert(bare.to_string(), TypeName::Alias(self.aliases.len() - 1));
+                    }
                     continue;
                 }
                 ast::Item::Fn(_)
@@ -8626,6 +8651,7 @@ impl<'a> Checker<'a> {
             ast::ExprKind::With { base, updates } => self.with_expr(cx, base, updates, span),
             ast::ExprKind::Try(inner) => self.try_expr(cx, inner, expected, span),
             ast::ExprKind::Closure(closure) => self.closure(cx, closure, expected, span),
+            ast::ExprKind::Recover(block) => self.recover(cx, block, expected, span),
             ast::ExprKind::Unsafe(block) => {
                 self.meta_denied(span, "`unsafe`");
                 let outer = std::mem::replace(&mut cx.unsafe_region, true);
@@ -8811,7 +8837,12 @@ impl<'a> Checker<'a> {
                 self.unify(inference, a, c);
                 inference.map.entry(b).or_insert(Ty::NEVER);
             }
-            (TyKind::Result(a, b), TyKind::Result(c, d)) | (TyKind::Map(a, b), TyKind::Map(c, d)) => {
+            // A value of `Never ! E` is one, as `recover { panic(...) }`.
+            (TyKind::Result(a, b), TyKind::Result(c, d)) => {
+                self.unify_argument(inference, a, c);
+                self.unify_argument(inference, b, d);
+            }
+            (TyKind::Map(a, b), TyKind::Map(c, d)) => {
                 self.unify(inference, a, c);
                 self.unify(inference, b, d);
             }
@@ -11908,7 +11939,7 @@ impl<'a> Checker<'a> {
                         };
                         let message = self.expr(cx, &arg.value, Some(Ty::STRING));
                         let message = Box::new(self.coerce(message, Ty::STRING));
-                        let code = if *member == "failNow" { 7 } else { hir::SKIP };
+                        let code = if *member == "failNow" { hir::FAIL_NOW } else { hir::SKIP };
                         return Self::mk(hir::ExprKind::Panic(message, code), Ty::NEVER, span);
                     }
                     "withVirtualTime" => return self.with_virtual_time(cx, args, span),

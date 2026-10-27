@@ -232,6 +232,15 @@ enum Rt {
     ReceiveTimeout,
     Select,
     Cancelled,
+    PanicUnwind,
+    PanicValuesUnwind,
+    Unwinding,
+    RecoverEnter,
+    RecoverEnd,
+    RecoverLeave,
+    RecoverCatch,
+    UnwindHold,
+    UnwindResume,
     JoinWaitTimeout,
     JoinCancel,
     JoinDetach,
@@ -478,6 +487,15 @@ impl Rt {
             Rt::ReceiveTimeout => ("tondo_rt_channel_receive_timeout", &[I64, I64, I64], &[I8]),
             Rt::Select => ("tondo_rt_select", &[I64, I64, I8, I64], &[I64]),
             Rt::Cancelled => ("tondo_rt_cancelled", &[], &[I8]),
+            Rt::PanicUnwind => ("tondo_rt_panic_unwind", &[I32, I64, I64], &[]),
+            Rt::PanicValuesUnwind => ("tondo_rt_panic_values_unwind", &[I32, I32, I64, I64, I64], &[]),
+            Rt::Unwinding => ("tondo_rt_unwinding", &[], &[I8]),
+            Rt::RecoverEnter => ("tondo_rt_recover_enter", &[], &[]),
+            Rt::RecoverEnd => ("tondo_rt_recover_end", &[], &[I8]),
+            Rt::RecoverLeave => ("tondo_rt_recover_leave", &[], &[]),
+            Rt::RecoverCatch => ("tondo_rt_recover_catch", &[], &[]),
+            Rt::UnwindHold => ("tondo_rt_unwind_hold", &[], &[]),
+            Rt::UnwindResume => ("tondo_rt_unwind_resume", &[], &[]),
             Rt::JoinWaitTimeout => ("tondo_rt_join_wait_timeout", &[I64, I64, I64], &[I8]),
             Rt::JoinCancel => ("tondo_rt_join_cancel", &[I64], &[]),
             Rt::JoinDetach => ("tondo_rt_join_detach", &[I64], &[]),
@@ -4028,6 +4046,11 @@ struct FnCodegen<'a, 'b> {
     /// references: retaining and releasing them does nothing; and the
     /// literal, when it is always the same.
     literal: HashMap<Local, Option<String>>,
+    /// While a statement that a check for a panic follows is built: where
+    /// its panics unwind to (15.9). And whether that check follows one
+    /// whose panics all jumped there, so that it asks nothing.
+    unwind_to: Option<ir::Block>,
+    quiet_check: bool,
 }
 
 /// What a function of a debug build keeps for its probes (toolchain 7.6):
@@ -4134,6 +4157,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             starts: HashMap::new(),
             ways: HashMap::new(),
             literal: literals(body),
+            unwind_to: None,
+            quiet_check: false,
         }
     }
 
@@ -4200,8 +4225,13 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             for (at, stmt) in block.stmts.iter().enumerate() {
                 self.count_ways(index, at);
+                // A statement a check for a panic follows: its panics
+                // unwind to where the check goes (15.9).
+                self.unwind_to = unwind_target(block, at).map(|target| self.blocks[target.0 as usize]);
+                self.quiet_check = at > 0 && self.inline_only(&block.stmts[at - 1]);
                 self.statement(stmt);
             }
+            self.unwind_to = None;
             self.count_ways(index, block.stmts.len());
             // A jump back to an earlier block closes a loop: a step.
             let back = match &block.terminator {
@@ -5701,6 +5731,25 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Rvalue::Select(cases, blocking, span) => Val::Scalar(self.select(cases, *blocking, *span)),
             // A live build's patches link only the runtime's functions.
             Rvalue::Cancelled if self.e.cg.live() => Val::Scalar(self.e.call_rt(Rt::Cancelled, &[]).unwrap()),
+            // After a statement whose panics jumped to the unwinding
+            // themselves, nothing to ask.
+            Rvalue::Unwinding if self.quiet_check => Val::Scalar(self.e.fb.ins().iconst(types::I8, 0)),
+            Rvalue::Unwinding => {
+                let id = self.e.cg.attention();
+                let attention = self.e.cg.declare_data_in_func(id, self.e.fb.func);
+                let address = self.e.fb.ins().symbol_value(POINTER, attention);
+                let reasons = self.e.fb.ins().load(types::I32, flags(), address, 0);
+                let (ask, done) = (self.e.fb.create_block(), self.e.fb.create_block());
+                let answer = self.e.fb.append_block_param(done, types::I8);
+                let none = self.e.fb.ins().iconst(types::I8, 0);
+                self.e.fb.ins().brif(reasons, ask, &[], done, &[none.into()]);
+                self.e.fb.set_cold_block(ask);
+                self.e.fb.switch_to_block(ask);
+                let asked = self.e.call_rt(Rt::Unwinding, &[]).unwrap();
+                self.e.fb.ins().jump(done, &[asked.into()]);
+                self.e.fb.switch_to_block(done);
+                Val::Scalar(answer)
+            }
             Rvalue::Cancelled => {
                 // Without a reason to ask the runtime, nearly always, no call.
                 let id = self.e.cg.attention();
@@ -7117,6 +7166,19 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let location = self.location(self.span);
                 self.e.call_rt(Rt::TestWhere, &[location])
             }
+            Callee::Std(StdFn::PanicUnwind(code)) => {
+                let code = self.e.fb.ins().iconst(types::I32, i64::from(code));
+                let location = self.location(self.span);
+                values.insert(0, code);
+                values.push(location);
+                self.e.call_rt(Rt::PanicUnwind, &values)
+            }
+            Callee::Std(StdFn::RecoverEnter) => self.e.call_rt(Rt::RecoverEnter, &[]),
+            Callee::Std(StdFn::RecoverEnd) => self.e.call_rt(Rt::RecoverEnd, &[]),
+            Callee::Std(StdFn::RecoverLeave) => self.e.call_rt(Rt::RecoverLeave, &[]),
+            Callee::Std(StdFn::RecoverCatch) => self.e.call_rt(Rt::RecoverCatch, &[]),
+            Callee::Std(StdFn::UnwindHold) => self.e.call_rt(Rt::UnwindHold, &[]),
+            Callee::Std(StdFn::UnwindResume) => self.e.call_rt(Rt::UnwindResume, &[]),
             Callee::Std(StdFn::ClockBegin) => {
                 values.push(self.location(self.span));
                 self.e.call_rt(Rt::ClockBegin, &values)
@@ -7417,10 +7479,46 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.fb.ins().stack_store(types::I64, a, slot, 0);
         self.e.fb.ins().stack_store(types::I64, b, slot, 8);
         let values = self.e.fb.ins().stack_addr(POINTER, slot, 0);
-        self.e.call_rt(Rt::PanicValues, &[code, detail, values, name, location]);
-        self.e.fb.ins().trap(TrapCode::user(1).unwrap());
+        match self.unwind_to {
+            // A panic a `recover` may stop returns, and unwinds (15.9).
+            Some(target) => {
+                self.e.call_rt(Rt::PanicValuesUnwind, &[code, detail, values, name, location]);
+                self.e.fb.ins().jump(target, &[]);
+            }
+            None => {
+                self.e.call_rt(Rt::PanicValues, &[code, detail, values, name, location]);
+                self.e.fb.ins().trap(TrapCode::user(1).unwrap());
+            }
+        }
         self.e.fb.set_srcloc(outer);
         self.e.fb.switch_to_block(next);
+    }
+
+    /// Whether a statement's panics are all checks of its own, whose cold
+    /// paths jump to the unwinding: no call that may panic and return.
+    fn inline_only(&mut self, statement: &Statement) -> bool {
+        let mut scalar = |operand: &Operand| match operand {
+            Operand::Copy(place) => {
+                let ty = self.body.place_ty(self.e.cg.types(), place);
+                matches!(self.e.cg.class(ty), Class::Scalar(_) | Class::Zero)
+            }
+            Operand::Const(_) => true,
+        };
+        match statement {
+            Statement::Assign(_, rvalue, _) => match &**rvalue {
+                Rvalue::Binary(_, a, b) | Rvalue::Exact(_, a, b) => scalar(a) && scalar(b),
+                Rvalue::Unary(_, a) | Rvalue::Increment(a) => scalar(a),
+                Rvalue::Use(_)
+                | Rvalue::Aggregate(_)
+                | Rvalue::Variant(..)
+                | Rvalue::Discriminant(_)
+                | Rvalue::Length(_)
+                | Rvalue::Layout(..)
+                | Rvalue::Convert(_) => true,
+                _ => false,
+            },
+            _ => true,
+        }
     }
 
     /// An integer as 64 bits.
@@ -7848,4 +7946,21 @@ fn words(name: &str) -> String {
         text.extend(c.to_lowercase());
     }
     text
+}
+
+/// Where the panics of the statement at `at` unwind to: the target of the
+/// check that follows it, `asked = Unwinding` and a branch on it (15.9).
+fn unwind_target(block: &crate::mir::BlockData, at: usize) -> Option<crate::mir::BlockId> {
+    let Some(Statement::Assign(asked, rvalue, _)) = block.stmts.get(at + 1) else { return None };
+    if !matches!(**rvalue, Rvalue::Unwinding) || !asked.path.is_empty() || at + 2 != block.stmts.len() {
+        return None;
+    }
+    match &block.terminator {
+        Terminator::Branch(Operand::Copy(condition), then, _)
+            if condition.path.is_empty() && condition.local == asked.local =>
+        {
+            Some(*then)
+        }
+        _ => None,
+    }
 }

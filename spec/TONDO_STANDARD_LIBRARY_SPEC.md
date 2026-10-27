@@ -1828,6 +1828,10 @@ let id = requests.add(1)
   otros lenguajes hace una variable de condición, sin `notify` ni wakeups
   espurios visibles. `get` devuelve una copia del valor y `set` lo reemplaza.
 - `RwLock` admite varios `read` a la vez y un único `update`.
+- Si un pánico interrumpe el cierre de un `update`, `tryUpdate`, `updateWhen`
+  o `read`, el lock se suelta al desenrollar y el valor queda como lo dejó el
+  cierre (15.9 del lenguaje). Ningún lock queda envenenado: la siguiente tarea
+  lo toma con normalidad.
 - Ninguna tarea espera indefinidamente un lock disputado: si una tarea lleva
   más de un milisegundo perdiéndolo frente a otras, el lock pasa a entregarse
   en orden de llegada hasta vaciar la cola, también a un escritor frente a
@@ -3770,7 +3774,13 @@ pub alias Tls = net.Tls
   envía como `application/problem+json` (RFC 9457). Con un estado de 500 o más
   el cliente solo ve `internal server error` y el mensaje va a la salida de
   error. Los helpers de `Request` fallan con un `Problem` 400 que explica qué
-  falta, así que `?` basta para validar la entrada. `Request.text` lee el
+  falta, así que `?` basta para validar la entrada.
+- El servidor ejecuta cada petición dentro de un `recover` (15.9 del
+  lenguaje). Un handler o un middleware que entra en pánico responde `500`
+  como un `Problem` de 500, el informe del pánico va a la salida de error con
+  el método y el path de la petición en su `data`, y el servidor sigue
+  atendiendo las demás. Los pánicos que no se recuperan (15.9) terminan el
+  programa igual que en cualquier otro sitio. `Request.text` lee el
   `charset` como `Response.text`.
 - El middleware rodea las rutas de su app y la respuesta a los paths sin ruta;
   el primero añadido es el exterior. `mount` añade las rutas de otra app bajo

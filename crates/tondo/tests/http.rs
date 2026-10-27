@@ -397,6 +397,10 @@ fn main(): !(http.HttpError | fs.FsError) {
     app.get("/boom", (request) {
         fail http.Problem.from("the database is down")
     })
+    app.get("/crash", (_) {
+        let empty: Array[String] = []
+        http.Reply.text(empty[0])
+    })
     app.get("/events", (request) {
         let (sender, receiver) = channel[http.Event](4)
         spawn detached produce(sender)
@@ -490,6 +494,9 @@ fn main(): !(http.HttpError | fs.FsError) {
     let folder = client.get("/browse/up")?.text()?
     console.println("{folder.contains("<a href=\"/browse/\">../</a>")} {folder.contains("/browse/up/notes.txt")}")
     console.println("{client.get("/files/up")}")
+    // A handler that panics answers 500, and the server goes on.
+    console.println("{client.get("/crash")}")
+    console.println(client.get("/users/me")?.text()?)
     server.stop()
 }
 
@@ -501,10 +508,12 @@ fn produce(events: Sender[http.Event]) {
 "#;
     let (stdout, stderr, success) = run("http-server", program, &[("data/letters.txt", "0123456789abcdefghij".into())]);
     let base = stdout.lines().next().unwrap_or_default().to_string();
-    let expected = "BASE\n200 some(tondo) {\"id\":42,\"name\":\"ada\",\"email\":\"ada@example.com\"}\nme\nerr(GET BASE/users/x answered 400 Bad Request)\n404 some(application/problem+json) {\"status\":404,\"detail\":\"no user 7\"}\n201 {\"id\":1,\"name\":\"bo\",\"email\":\"bo@example.com\"}\nerr(POST BASE/users answered 400 Bad Request)\nsome(a b) [] some(2)\nnone [x, y] none\naño €\nerr(GET BASE/boom answered 500 Internal Server Error)\nerr(GET BASE/nowhere answered 404 Not Found)\nerr(DELETE BASE/users/1 answered 405 Method Not Allowed)\nerr(GET BASE/admin/stats answered 401 Unauthorized)\nstats\nevent tick one some(1)\nevent message two\nlines none\nsome(echo: hi)\nsome(bytes) some(text/plain) 0123456789abcdefghij\n206 some(bytes 10-19/20) abcdefghij\n206 hij\n304\nerr(GET BASE/files/letters.txt answered 416 Range Not Satisfiable)\nerr(GET BASE/files/missing.txt answered 404 Not Found)\nerr(GET BASE/files/..%2Fsecret answered 403 Forbidden)\nsome(20)\n201 [{\"path\":\"up/notes.txt\",\"size\":6}]\n200 [{\"path\":\"up/notes.txt\",\"size\":11}]\nhello world\n[{\"path\":\"batch/a.bin\",\"size\":3},{\"path\":\"batch/b.bin\",\"size\":4}]\ndefg\ntrue true true false\ntrue true\nerr(GET BASE/files/up answered 404 Not Found)\n".replace("BASE", &base);
+    let expected = "BASE\n200 some(tondo) {\"id\":42,\"name\":\"ada\",\"email\":\"ada@example.com\"}\nme\nerr(GET BASE/users/x answered 400 Bad Request)\n404 some(application/problem+json) {\"status\":404,\"detail\":\"no user 7\"}\n201 {\"id\":1,\"name\":\"bo\",\"email\":\"bo@example.com\"}\nerr(POST BASE/users answered 400 Bad Request)\nsome(a b) [] some(2)\nnone [x, y] none\naño €\nerr(GET BASE/boom answered 500 Internal Server Error)\nerr(GET BASE/nowhere answered 404 Not Found)\nerr(DELETE BASE/users/1 answered 405 Method Not Allowed)\nerr(GET BASE/admin/stats answered 401 Unauthorized)\nstats\nevent tick one some(1)\nevent message two\nlines none\nsome(echo: hi)\nsome(bytes) some(text/plain) 0123456789abcdefghij\n206 some(bytes 10-19/20) abcdefghij\n206 hij\n304\nerr(GET BASE/files/letters.txt answered 416 Range Not Satisfiable)\nerr(GET BASE/files/missing.txt answered 404 Not Found)\nerr(GET BASE/files/..%2Fsecret answered 403 Forbidden)\nsome(20)\n201 [{\"path\":\"up/notes.txt\",\"size\":6}]\n200 [{\"path\":\"up/notes.txt\",\"size\":11}]\nhello world\n[{\"path\":\"batch/a.bin\",\"size\":3},{\"path\":\"batch/b.bin\",\"size\":4}]\ndefg\ntrue true true false\ntrue true\nerr(GET BASE/files/up answered 404 Not Found)\nerr(GET BASE/crash answered 500 Internal Server Error)\nme\n".replace("BASE", &base);
     assert_eq!(stdout, expected, "{stderr}");
     assert!(success, "{stderr}");
     assert!(stderr.contains("http: 500 the database is down"), "{stderr}");
+    assert!(stderr.contains("panic[P0001]: bounds: index 0 is out of bounds: the array is empty\n"), "{stderr}");
+    assert!(stderr.contains("  method: GET\n  path: /crash\n"), "{stderr}");
 }
 
 #[test]

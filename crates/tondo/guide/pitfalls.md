@@ -15,6 +15,7 @@ Every error message says what to write; `tondo check --json` has it as data.
 | `\|x\| x * 2`, `x => x * 2` | `(x) { x * 2 }` |
 | `struct P { }` and `impl P { fn m() }` | `type P = { }` and `fn P.m(self)` |
 | `try`, `catch`, `throw` | `T ! E`, `?`, `match`, `fail error` |
+| `defer func() { recover() }()` | `recover { ... }`, a `T ! Panic` |
 | `async`, `await` | plain calls; `spawn f()` and `.wait()` |
 | `go f()`, a promise nobody awaits | `spawn detached f()`; a plain `spawn` is waited at the end of its block |
 | `switch` | `match` |

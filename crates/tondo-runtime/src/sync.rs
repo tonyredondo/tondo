@@ -180,8 +180,8 @@ fn held() -> &'static mut Vec<(usize, bool, *const Str)> {
 
 /// Takes the lock to read (`mode` 0), to change (1), or to change if it is
 /// free (2). Returns the guard, or 0 when `try` finds it taken or the task
-/// is cancelled. Taking it again from the task that holds it, in a way
-/// that would wait forever, panics with `P0014`.
+/// is cancelled or unwinds. Taking it again from the task that holds it,
+/// in a way that would wait forever, panics with `P0014`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sync_lock(object: *mut SyncObject, mode: u8, location: *const Str) -> usize {
     if cancelled() {
@@ -201,7 +201,9 @@ pub unsafe extern "C" fn tondo_rt_sync_lock(object: *mut SyncObject, mode: u8, l
             message
                 .push_str(&format!(": it took it at {}", String::from_utf8_lossy(unsafe { super::str_bytes(taken) })));
         }
-        super::panic_with(14, &message, location);
+        // A `recover` stops it: the code unwinds and lets the lock go.
+        super::raise(14, &message, location);
+        return 0;
     }
     let guard = address | (!exclusive) as usize;
     let o = unsafe { &mut *object };
@@ -448,7 +450,8 @@ pub struct PermitObject {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_semaphore_new(permits: i64, location: *const Str) -> *mut SemaphoreObject {
     if permits <= 0 {
-        super::panic_with(1, &format!("a semaphore needs at least 1 permit, and this one has {permits}"), location);
+        super::raise(1, &format!("a semaphore needs at least 1 permit, and this one has {permits}"), location);
+        return std::ptr::null_mut();
     }
     LIVE_OBJECTS.made();
     Box::into_raw(Box::new(SemaphoreObject {
@@ -565,7 +568,8 @@ pub struct BarrierObject {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_barrier_new(parties: i64, location: *const Str) -> *mut BarrierObject {
     if parties <= 0 {
-        super::panic_with(1, &format!("a barrier needs at least 1 party, and this one has {parties}"), location);
+        super::raise(1, &format!("a barrier needs at least 1 party, and this one has {parties}"), location);
+        return std::ptr::null_mut();
     }
     LIVE_OBJECTS.made();
     Box::into_raw(Box::new(BarrierObject {
@@ -717,7 +721,8 @@ pub unsafe extern "C" fn tondo_rt_atomic_add(
             };
             let message =
                 format!("the atomic {} + {} does not fit in {name} ({low} to {high})", decode(current), delta);
-            super::panic_with(5, &message, location);
+            super::raise(5, &message, location);
+            return current;
         }
         let next = next as u64 & (u64::MAX >> (64 - bits));
         if unsafe { tondo_rt_atomic_exchange(object, width, current, next) } == current {

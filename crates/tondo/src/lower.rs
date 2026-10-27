@@ -36,20 +36,77 @@ use std::rc::Rc;
 
 pub fn lower(program: &hir::Program, live: bool) -> Vec<Body> {
     // Each function on its own, on every core.
-    let lower_all = |waits: Option<&[bool]>| -> Vec<Body> {
+    let lower_all = |waits: Option<&[bool]>, recovering: bool| -> Vec<Body> {
         let restart = |index: usize, f: &hir::Function| (live && !f.test).then_some(hir::FnId(index as u32));
         let indices: Vec<usize> = (0..program.functions.len()).collect();
         crate::parallel::map(&indices, 1, |&i| {
             let f = &program.functions[i];
-            lower_function(&program.types, f, waits, restart(i, f))
+            lower_function(&program.types, f, waits, restart(i, f), recovering)
         })
     };
-    let plain = lower_all(None);
+    let plain = lower_all(None, false);
     let waits = waiting(&plain);
-    if !waits.contains(&true) {
+    // A program with a `recover` unwinds to it from any panic (15.9).
+    let recovering = plain.iter().flat_map(|b| &b.blocks).flat_map(|b| &b.stmts).any(|s| {
+        matches!(s, Statement::Assign(_, r, _) if matches!(**r, Rvalue::Call(hir::Callee::Std(hir::StdFn::RecoverEnter), _)))
+    });
+    if !waits.contains(&true) && !recovering {
         return plain;
     }
-    lower_all(Some(&waits))
+    let waits = waits.contains(&true).then_some(&waits[..]);
+    lower_all(waits, recovering)
+}
+
+/// Whether a statement may panic and return, when a `recover` stops it:
+/// a call, an operation of the runtime, checked arithmetic or a read or
+/// write by an index (15.9).
+fn may_panic(statement: &Statement) -> bool {
+    let checked = |place: &Place| place.path.iter().any(|p| matches!(p, Proj::Index(..)));
+    let read = |operand: &Operand| matches!(operand, Operand::Copy(place) if checked(place));
+    match statement {
+        Statement::Assign(place, rvalue, _) => {
+            checked(place)
+                || match &**rvalue {
+                    Rvalue::Use(o) | Rvalue::Length(o) | Rvalue::Convert(o) => read(o),
+                    Rvalue::Unary(op, o) => *op == crate::ast::UnaryOp::Neg || read(o),
+                    Rvalue::Binary(op, a, b) => {
+                        use crate::ast::BinOp::*;
+                        !matches!(op, Eq | Ne | Lt | Le | Gt | Ge | BitAnd | BitOr | BitXor) || read(a) || read(b)
+                    }
+                    Rvalue::Aggregate(operands) | Rvalue::Variant(_, operands) | Rvalue::Array(operands, _) => {
+                        operands.iter().any(read)
+                    }
+                    Rvalue::Discriminant(place) => checked(place),
+                    Rvalue::Exact(..)
+                    | Rvalue::Increment(_)
+                    | Rvalue::FnValue(_)
+                    | Rvalue::ExternFn(_)
+                    | Rvalue::Callback(..)
+                    | Rvalue::Layout(..)
+                    | Rvalue::Erase(..)
+                    | Rvalue::Spawn(..)
+                    | Rvalue::Cancelled
+                    | Rvalue::Unwinding
+                    | Rvalue::Restart(_)
+                    | Rvalue::Transfer(_)
+                    | Rvalue::OsrPoint => false,
+                    Rvalue::Call(hir::Callee::Std(function), _) => !matches!(
+                        function,
+                        hir::StdFn::RecoverEnter
+                            | hir::StdFn::RecoverEnd
+                            | hir::StdFn::RecoverLeave
+                            | hir::StdFn::RecoverCatch
+                            | hir::StdFn::UnwindHold
+                            | hir::StdFn::UnwindResume
+                    ),
+                    _ => true,
+                }
+        }
+        Statement::Lend(_, place) | Statement::Retain(place) | Statement::Release(place) | Statement::Moved(place) => {
+            checked(place)
+        }
+        _ => false,
+    }
 }
 
 /// What `x = "{x}..."` appends to the string at `x`, a local or its
@@ -144,6 +201,8 @@ enum Exit {
     Release(Local),
     /// The call of a registered `defer` (13.7).
     Defer(Rc<hir::Expr>),
+    /// The end of a `recover` block (15.9).
+    Recover,
 }
 
 /// Where a statement starts again: its first block, how many scopes and
@@ -202,9 +261,24 @@ struct Builder<'a> {
     /// rather than copy them: the arm has no guard, so the match uses
     /// nothing of it after them.
     moving: Option<Local>,
+    /// Whether the program has a `recover`: then a statement that may panic
+    /// is followed by a check that unwinds to the nearest one (15.9).
+    recovering: bool,
+    /// The `recover` blocks being lowered, innermost last: how many scopes
+    /// and frames were open outside it, and where it stops a panic.
+    recovers: Vec<(usize, usize, BlockId)>,
+    /// The cleanups that unwind from each state of the scopes and frames,
+    /// made once each.
+    unwinds: HashMap<Vec<u64>, BlockId>,
 }
 
-fn lower_function(types: &Types, function: &hir::Function, waits: Option<&[bool]>, restart: Option<hir::FnId>) -> Body {
+fn lower_function(
+    types: &Types,
+    function: &hir::Function,
+    waits: Option<&[bool]>,
+    restart: Option<hir::FnId>,
+    recovering: bool,
+) -> Body {
     let mut b = Builder {
         types,
         function,
@@ -231,6 +305,9 @@ fn lower_function(types: &Types, function: &hir::Function, waits: Option<&[bool]
         blocks_of: HashMap::new(),
         made_by: HashMap::new(),
         moving: None,
+        recovering,
+        recovers: Vec::new(),
+        unwinds: HashMap::new(),
     };
     // A live build's first block is where a frame from the old code comes
     // in, which `osr_entry` fills once the points are known.
@@ -352,7 +429,141 @@ impl Builder<'_> {
     }
 
     fn push(&mut self, stmt: Statement) {
+        let check = self.recovering && self.cleaning == 0 && may_panic(&stmt);
         self.blocks[self.current.0 as usize].0.push(stmt);
+        if check {
+            self.unwind_check();
+        }
+    }
+
+    /// After a statement that may panic: whether it did, and if so, the
+    /// way to the nearest `recover` (15.9).
+    fn unwind_check(&mut self) {
+        let unwind = self.unwind_target();
+        let asked = self.new_local(Ty::BOOL);
+        let check = Statement::Assign(Place::local(asked), Box::new(Rvalue::Unwinding), Span::default());
+        self.blocks[self.current.0 as usize].0.push(check);
+        let next = self.new_block();
+        self.terminate(Terminator::Branch(Operand::local(asked), unwind, next));
+        self.switch_to(next);
+    }
+
+    /// The way a panic unwinds from here: the panic waits while what the
+    /// scopes and frames hold is released and their cleanups run, then it
+    /// goes on to the caller, or to the `recover` that stops it. Made once
+    /// for each state of the scopes and frames.
+    fn unwind_target(&mut self) -> BlockId {
+        let (scope_depth, frame_depth, catch) = match self.recovers.last() {
+            Some(&(scopes, frames, catch)) => (scopes, frames, Some(catch)),
+            None => (0, 0, None),
+        };
+        let mut key: Vec<u64> = Vec::new();
+        for scope in &self.scopes[scope_depth..] {
+            for exit in scope {
+                key.push(match exit {
+                    Exit::Release(local) => u64::from(local.0),
+                    Exit::Defer(call) => Rc::as_ptr(call) as u64 | 1 << 63,
+                    Exit::Recover => u64::MAX - 1,
+                });
+            }
+            key.push(u64::MAX);
+        }
+        for frame in &self.frames[frame_depth..] {
+            key.extend(frame.iter().map(|local| u64::from(local.0) | 1 << 62));
+            key.push(u64::MAX);
+        }
+        key.push(catch.map_or(u64::MAX, |c| u64::from(c.0)));
+        if let Some(&block) = self.unwinds.get(&key) {
+            return block;
+        }
+        let current = self.current;
+        let block = self.new_block();
+        self.switch_to(block);
+        self.cleaning += 1;
+        self.std_call(hir::StdFn::UnwindHold, Span::default());
+        self.cleanup_to(scope_depth, frame_depth);
+        match catch {
+            Some(catch) => self.goto(catch),
+            None => {
+                self.std_call(hir::StdFn::UnwindResume, Span::default());
+                let result = match self.ret {
+                    Some(ret) => {
+                        self.push(Statement::Clear(ret));
+                        Operand::local(ret)
+                    }
+                    None => Operand::Const(Const::Unit),
+                };
+                self.terminate(Terminator::Return(result));
+            }
+        }
+        self.cleaning -= 1;
+        self.unwinds.insert(key, block);
+        self.switch_to(current);
+        block
+    }
+
+    /// A call of the runtime for its effect.
+    fn std_call(&mut self, function: hir::StdFn, span: Span) {
+        let unit = self.new_local(Ty::UNIT);
+        let call = Rvalue::Call(hir::Callee::Std(function), Vec::new());
+        self.push(Statement::Assign(Place::local(unit), Box::new(call), span));
+    }
+
+    /// `recover { ... }` (15.9): `ok` with the block's value, or `err` with
+    /// the panic that stopped it, which `caught` reads, once the cleanups of
+    /// what the panic abandoned ran on its way here.
+    fn recover(&mut self, e: &hir::Expr, block: &hir::Block, caught: &hir::Expr) -> Operand {
+        let result = self.new_local(e.ty);
+        self.std_call(hir::StdFn::RecoverEnter, e.span);
+        let (catch, join) = (self.new_block(), self.new_block());
+        // Leaving the block another way, by `return`, `break`, `?`, `fail`
+        // or a cancellation, ends it too.
+        self.scopes.push(vec![Exit::Recover]);
+        self.recovers.push((self.scopes.len(), self.frames.len(), catch));
+        self.in_frame(|b| {
+            let value = b.block(block);
+            if block.ty != Ty::NEVER {
+                let ok = b.variant(e.ty, OK, vec![value], e.span);
+                b.store(Place::local(result), ok, e.span);
+            }
+        });
+        self.recovers.pop();
+        self.scopes.pop();
+        // Its tasks are done: if one ended with a panic, the block's value
+        // goes and the `recover` stops the panic.
+        let call = Rvalue::Call(hir::Callee::Std(hir::StdFn::RecoverEnd), Vec::new());
+        let failed = self.temp(Ty::BOOL, call, e.span);
+        let given = self.new_block();
+        self.terminate(Terminator::Branch(failed, given, join));
+        self.switch_to(given);
+        if block.ty != Ty::NEVER {
+            self.push(Statement::Release(Place::local(result)));
+        }
+        self.goto(catch);
+        self.switch_to(catch);
+        self.std_call(hir::StdFn::RecoverCatch, e.span);
+        self.in_frame(|b| {
+            let panic = b.expr(caught);
+            let err = b.variant(e.ty, ERR, vec![panic], e.span);
+            b.store(Place::local(result), err, e.span);
+        });
+        self.goto(join);
+        self.switch_to(join);
+        self.own(result);
+        Operand::local(result)
+    }
+
+    /// A panic with `code` and `message`: where a `recover` may stop it,
+    /// a call that returns and unwinds (15.9); otherwise the end.
+    fn panic_with(&mut self, code: u32, message: Operand, span: Span) {
+        if self.recovering && self.cleaning == 0 && code < 2000 {
+            let unit = self.new_local(Ty::UNIT);
+            let call = Rvalue::Call(hir::Callee::Std(hir::StdFn::PanicUnwind(code)), vec![message]);
+            self.push(Statement::Assign(Place::local(unit), Box::new(call), span));
+            self.terminate(Terminator::Unreachable);
+            return;
+        }
+        self.terminate(Terminator::Panic { code, message: Some(message), span });
     }
 
     /// Ends the current block. Code lowered afterwards lands in a fresh,
@@ -673,6 +884,7 @@ impl Builder<'_> {
     fn exit_action(&mut self, exit: Exit) {
         match exit {
             Exit::Release(local) => self.push(Statement::Release(Place::local(local))),
+            Exit::Recover => self.std_call(hir::StdFn::RecoverLeave, Span::default()),
             Exit::Defer(call) => {
                 // Unregister it first, so a panic in the cleanup cannot run it again.
                 self.push(Statement::DeferPop);
@@ -1062,7 +1274,7 @@ impl Builder<'_> {
                     Piece::Text(" of the same array".into()),
                 ];
                 let message = self.temp(Ty::STRING, Rvalue::Concat(pieces), span);
-                self.terminate(Terminator::Panic { code: 4, message: Some(message), span });
+                self.panic_with(4, message, span);
                 self.switch_to(next);
             }
         }
@@ -1910,9 +2122,10 @@ impl Builder<'_> {
                 let pieces = self.pieces(segments);
                 self.temp(Ty::STRING, Rvalue::Concat(pieces), e.span)
             }
+            hir::ExprKind::Recover(block, caught) => self.recover(e, block, caught),
             hir::ExprKind::Panic(message, code) => {
                 let message = self.expr(message);
-                self.terminate(Terminator::Panic { code: *code, message: Some(message), span: e.span });
+                self.panic_with(*code, message, e.span);
                 Operand::Const(Const::Unit)
             }
             hir::ExprKind::Assert { condition, parts, source, detail } => {
@@ -1933,7 +2146,7 @@ impl Builder<'_> {
                     pieces.push(Piece::Value(self.expr(detail), Ty::STRING));
                 }
                 let message = self.temp(Ty::STRING, Rvalue::Concat(pieces), e.span);
-                self.terminate(Terminator::Panic { code: 7, message: Some(message), span: e.span });
+                self.panic_with(7, message, e.span);
                 self.switch_to(ok);
                 Operand::Const(Const::Unit)
             }

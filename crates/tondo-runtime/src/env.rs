@@ -46,9 +46,15 @@ fn invalid(name: &[u8], value: &[u8]) -> Option<String> {
     }
 }
 
-fn check(name: &[u8], value: &[u8], location: *const Str) {
-    if let Some(message) = invalid(name, value) {
-        super::panic_with(15, &message, location)
+/// Whether a name and value may go in the environment: otherwise a panic,
+/// and false when a `recover` stops it.
+fn check(name: &[u8], value: &[u8], location: *const Str) -> bool {
+    match invalid(name, value) {
+        Some(message) => {
+            super::raise(15, &message, location);
+            false
+        }
+        None => true,
     }
 }
 
@@ -93,8 +99,9 @@ pub unsafe extern "C" fn tondo_rt_env_vars(glue: *const MapGlue) -> *mut MapObje
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_env_set(name: *const Str, value: *const Str, location: *const Str) {
     let (name, value) = unsafe { (str_bytes(name), str_bytes(value)) };
-    check(name, value, location);
-    table().as_mut().unwrap().insert(name.to_vec(), value.to_vec());
+    if check(name, value, location) {
+        table().as_mut().unwrap().insert(name.to_vec(), value.to_vec());
+    }
 }
 
 /// `env.setAll(values)`: a `Map[String, String]`, whose entries are two
@@ -107,17 +114,17 @@ pub unsafe extern "C" fn tondo_rt_env_set_all(values: *mut MapObject, location: 
             (str_bytes(*entry).to_vec(), str_bytes(*entry.add(1)).to_vec())
         })
         .collect();
-    for (name, value) in &entries {
-        check(name, value, location);
+    if entries.iter().all(|(name, value)| check(name, value, location)) {
+        table().as_mut().unwrap().extend(entries);
     }
-    table().as_mut().unwrap().extend(entries);
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_env_remove(name: *const Str, location: *const Str) {
     let name = unsafe { str_bytes(name) };
-    check(name, b"", location);
-    table().as_mut().unwrap().remove(name);
+    if check(name, b"", location) {
+        table().as_mut().unwrap().remove(name);
+    }
 }
 
 #[unsafe(no_mangle)]

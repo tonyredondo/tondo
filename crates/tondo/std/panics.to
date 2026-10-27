@@ -31,3 +31,66 @@ pub fn stageData(data: Map[String, Int | Float | Bool | String]) {
         }
     }
 }
+
+/// The panic the last `recover` stopped, which the compiler reads where it
+/// stops one (15.9).
+pub fn caught(): Panic {
+    var data: Map[String, Int | Float | Bool | String] = [:]
+    var index = 0
+    let count = panicNative.caughtCount()
+    for index < count {
+        let key = panicNative.caughtKey(index)
+        match panicNative.caughtKind(index) {
+            0 => data[key] = panicNative.caughtInt(index)
+            1 => data[key] = panicNative.caughtFloat(index)
+            2 => data[key] = panicNative.caughtBool(index)
+            _ => data[key] = panicNative.caughtText(index)
+        }
+        index += 1
+    }
+    Panic {
+        code: panicNative.caughtCode()
+        message: panicNative.caughtMessage()
+        data
+        location: panicNative.caughtLocation()
+        stack: panicNative.caughtStack()
+    }
+}
+
+/// Goes on with the same panic, with its code, location and stack, to the
+/// next `recover` or the end of the program (15.9).
+pub fn Panic.resume(self): Never {
+    panicNative.restage(self.code, self.location, self.stack)
+    stageData(self.data)
+    panic(self.message)
+}
+
+/// Writes the panic to standard error as the report of one that the
+/// program recovered, with more data: as a server writes the panic of a
+/// request it answered (14.24.1 of the standard library).
+pub fn report(stopped: Panic, more: Map[String, Int | Float | Bool | String]) {
+    var data = stopped.data
+    for (key, value) in more {
+        data[key] = value
+    }
+    stageData(data)
+    panicNative.report(stopped.code, stopped.message, stopped.location, stopped.stack)
+}
+
+/// The report of the panic (15.7).
+impl Display for Panic {
+    fn display(self): String {
+        let name = panicNative.name(self.code)
+        var text = match name.isEmpty() {
+            true => "panic[{self.code}]: {self.message}"
+            false => "panic[{self.code}]: {name}: {self.message}"
+        }
+        // The data the program gave; the language's are in its message.
+        if name.isEmpty() or self.code == "P0008" or self.code == "P0017" {
+            for (key, value) in self.data {
+                text = "{text}\n  {key}: {value}"
+            }
+        }
+        "{text}\n --> {self.location}\n{self.stack}"
+    }
+}

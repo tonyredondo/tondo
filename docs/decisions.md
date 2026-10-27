@@ -2808,3 +2808,29 @@ literal code that is not one is a compile error, a computed one `P0017`.
 `main`'s error or a fault, as one line of `tondo-panic-0.1/1`, which the MCP
 tool `run` sets and returns as data and which a test's failure shares; the
 panic's data come to `tondo test` in a frame of their own.
+
+## 2026-10-27 — `recover` stops a panic, by returning
+
+A panic ended the program, so a server could not survive a bug in one
+handler, and a tool that runs plugins or jobs could not report one and go
+on. Go's `recover()` in a deferred function, and `try`/`catch`, are
+ceremony and catch by type; `recover { ... }` is an expression of type
+`T ! Panic` instead, handled as any result, with the panic's code, message,
+data, place and stack, and `p.resume()` to let it go on. It stops what the
+block runs: its code, what it calls, and the tasks it starts without
+`detached`, the first of whose panics stops the block's task as soon as it
+can, at the latest at its next wait, so that a worker that panics cannot
+leave the block waiting forever. A deadlock, a crash, a panic in code that
+C called and the test runner's `skip` and `failNow` are never stopped.
+
+It unwinds without tables of unwinding and without walking the stack.
+In a program with a `recover`, a statement that may panic is followed by a
+check of one global word, the reasons the runtime has to be asked
+anything, which is zero but while something happens; a panic records itself
+in its task and returns, and the check leads to the frame's cleanups, which
+release what the frame holds and run its `defer`s, and then to the caller,
+or to the `recover`. A panic the compiler raises inline jumps straight
+there. Programs without a `recover` compile as before; with one, the checks
+cost about 7% on a loop of calls and 2% of size. `std.sync` locks are let
+go rather than poisoned, as the cleanups run, and `std.http` answers a
+handler's panic with `500`, reporting it with the request's method and path.

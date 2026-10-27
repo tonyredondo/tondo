@@ -205,6 +205,42 @@ FAILED. 1 passed; 1 failed; 0 skipped; 0 blocked
     assert_eq!((untimed(&stdout).as_str(), status), (expected, 1));
 }
 
+/// A `recover` in a test stops a panic, but not `testing.failNow` or
+/// `testing.skip`: they end the test.
+#[test]
+fn recover_lets_fail_now_and_skip_end_the_test() {
+    let tests = "\
+import std.testing
+
+test recovers {
+    let caught = recover { panic(\"stopped\") }
+    assert(caught.isErr())
+}
+
+test failsNow {
+    let _ = recover { testing.failNow(\"given up\") }
+    assert(false, \"not reached\")
+}
+
+test skips {
+    let _ = recover { testing.skip(\"later\") }
+    assert(false, \"not reached\")
+}
+";
+    let dir = project("recover", tests);
+    let (stdout, stderr, status) = tondo(&dir, &["test"]);
+    assert_eq!(status, 1, "{stderr}");
+    for line in [
+        "app::unit::app::failsNow ... FAILED",
+        "app::unit::app::recovers ... ok",
+        "app::unit::app::skips ... skipped: later",
+        "given up",
+    ] {
+        assert!(stdout.contains(line), "missing {line:?} in {stdout}");
+    }
+    assert!(!stdout.contains("not reached"), "{stdout}");
+}
+
 #[test]
 fn rejects_wrong_tests() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("testing-errors");

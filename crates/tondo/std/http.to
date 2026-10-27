@@ -10,6 +10,7 @@ import std.internal.http as httpNative
 import std.io as __io
 import std.json as __json
 import std.net as __net
+import std.panics as __panics
 import std.serialization as __serialization
 import std.time as __time
 
@@ -1671,9 +1672,20 @@ fn answer(incoming: httpNative.Native, handler: fn(Request): Reply ! Problem) {
         headerList: httpNative.requestHeaders(incoming)
         params: [:]
     }
-    let reply = match handler(request) {
-        ok(reply) => reply
-        err(problem) => problemReply(problem)
+    // A handler that panics answers `500`, and the server goes on
+    // (14.24.1); the report says which request it was.
+    let reply = match recover { handler(request) } {
+        ok(ok(reply)) => reply
+        ok(err(problem)) => problemReply(problem)
+        err(stopped) => {
+            __panics.report(stopped, ["method": request.verb, "path": request.target])
+            let body = "{{\"status\":500,\"detail\":\"internal server error\"}}"
+            Reply {
+                code: 500
+                headerList: ["content-type", "application/problem+json"]
+                payload: Payload.Data(body.bytes())
+            }
+        }
     }
     send(incoming, reply)
 }

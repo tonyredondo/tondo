@@ -612,7 +612,7 @@ impl Checker<'_> {
                 };
                 merge(then, otherwise)
             }
-            ExprKind::Block(block) => self.block(block, flow),
+            ExprKind::Block(block) | ExprKind::Recover(block, _) => self.block(block, flow),
             ExprKind::Call(callee, _, args) => {
                 let modes = (self.modes)(*callee);
                 let taken =

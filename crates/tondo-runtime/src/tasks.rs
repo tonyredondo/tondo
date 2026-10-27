@@ -289,6 +289,26 @@ pub(crate) struct Task {
     /// The set of labels of `profile.withLabels` it carries, `0` for none,
     /// which its samples record and the tasks it starts inherit.
     labels: std::sync::atomic::AtomicU32,
+    /// The `recover` blocks it is running, innermost last (language 15.9),
+    /// with the tasks of each once it starts one.
+    pub(crate) recovers: Vec<Option<Arc<super::panics::Owner>>>,
+    /// The `recover` it belongs to: started without `detached` inside one,
+    /// or by a task that belongs to one.
+    pub(crate) owner: Option<Arc<super::panics::Owner>>,
+    /// Detached since: it belongs to no `recover` but its own.
+    pub(crate) free: AtomicBool,
+    /// A task of one of its `recover`s ended with a panic, which stops it
+    /// as a cancellation would, without cancelling it.
+    pub(crate) alarm: AtomicBool,
+    /// The panic it unwinds from: compiled code returns until a `recover`
+    /// stops it.
+    pub(crate) unwinding: Option<Box<super::panics::Record>>,
+    /// Panics whose unwinding waits while the cleanups of a frame run,
+    /// innermost last.
+    pub(crate) paused: Vec<Option<Box<super::panics::Record>>>,
+    /// The panic the last `recover` stopped, which the standard library
+    /// reads into a `Panic`.
+    pub(crate) caught: Option<Box<super::panics::Record>>,
 }
 
 /// A callback a thread of C makes, which a task runs while the thread
@@ -1874,6 +1894,12 @@ extern "C" fn trampoline() -> ! {
                 }
             }
             super::tondo_rt_fn_release(body as *mut super::FnObject);
+            // A panic it ended with goes to its `recover`, or to whoever
+            // waits for it.
+            if let Some(panic) = (*task).unwinding.take() {
+                attend(false);
+                (*join).panic = super::panics::deliver(&*task, panic);
+            }
             if complete(join) {
                 let mut detached = DETACHED.lock().unwrap_or_else(|e| e.into_inner());
                 detached.retain(|&j| j != join as usize);
@@ -2135,6 +2161,14 @@ fn new_task(
         in_domain: !current().is_null() && unsafe { (*current()).in_domain },
         origin: None,
         labels: std::sync::atomic::AtomicU32::new(labels()),
+        recovers: Vec::new(),
+        // A task started inside a `recover` belongs to it, until detached.
+        owner: super::panics::owner_of_new(),
+        free: AtomicBool::new(false),
+        alarm: AtomicBool::new(false),
+        unwinding: None,
+        paused: Vec::new(),
+        caught: None,
     };
     let task = match place.is_null() {
         true => Box::into_raw(Box::new(task)),
@@ -2285,7 +2319,8 @@ impl Wait {
     pub(crate) fn block(&self) -> usize {
         let task = unsafe { &mut *self.task };
         lock(&task.waiting_lock);
-        if task.cancelled.load(Ordering::Acquire) && self.claim(CANCELLED) {
+        let stopped = task.cancelled.load(Ordering::Acquire) || task.alarm.load(Ordering::Acquire);
+        if stopped && self.claim(CANCELLED) {
             unlock(&task.waiting_lock);
             return CANCELLED;
         }
@@ -2444,7 +2479,7 @@ pub(crate) unsafe fn channel_commit(
 /// Whether the current task is cancelled.
 pub(crate) fn cancelled() -> bool {
     let task = current();
-    !task.is_null() && unsafe { (*task).cancelled.load(Ordering::Acquire) }
+    !task.is_null() && unsafe { (*task).cancelled.load(Ordering::Acquire) || (*task).alarm.load(Ordering::Acquire) }
 }
 
 /// Checked by compiled code after every call that may wait: a cancelled
@@ -2459,6 +2494,10 @@ pub extern "C" fn tondo_rt_cancelled() -> u8 {
     let Some(task) = (unsafe { current().as_ref() }) else { return 0 };
     if task.cancelled.load(Ordering::Acquire) {
         return 1;
+    }
+    // A panic unwinds to a `recover` (language 15.9).
+    if task.unwinding.is_some() {
+        return 3;
     }
     // A live build's reload ended the wait: the statement starts again.
     // Read first: a swap at every call would cost more than the call.
@@ -2536,6 +2575,24 @@ unsafe fn cancel_task(task: *mut Task) {
     }
 }
 
+/// Stops `task`, which runs a `recover` a task of which ended with a panic
+/// (language 15.9), as soon as it can: its wait ends as a cancellation's
+/// would, and it unwinds from there. Called while it runs the `recover`.
+pub(crate) unsafe fn alarm(task: *mut Task) {
+    unsafe {
+        let t = &mut *task;
+        if !t.alarm.swap(true, Ordering::SeqCst) {
+            attend(true);
+        }
+        lock(&t.waiting_lock);
+        let woken = !t.waiting.is_null() && (*t.waiting).claim(CANCELLED);
+        unlock(&t.waiting_lock);
+        if woken {
+            notify(task);
+        }
+    }
+}
+
 /// A short spin lock over one object's state.
 pub(crate) fn lock(flag: &AtomicBool) {
     while flag.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
@@ -2590,6 +2647,9 @@ pub struct JoinObject {
     /// Who holds the block: the program, until its references are gone
     /// and the task is done, and the task, until it is freed.
     holders: AtomicU8,
+    /// The panic the task ended with, which goes on in whoever waits for
+    /// it (language 15.9).
+    panic: Option<Box<super::panics::Record>>,
 }
 
 /// A spawned task's join, the task itself while it is alive, and a result
@@ -2650,6 +2710,7 @@ pub unsafe extern "C" fn tondo_rt_spawn(
             detached: false,
             visit,
             holders: AtomicU8::new(2),
+            panic: None,
         },
         task: std::mem::MaybeUninit::uninit(),
         result: [0; 2],
@@ -2727,6 +2788,10 @@ pub unsafe extern "C" fn tondo_rt_join_detach(join: *mut JoinObject) {
             j.detached = true;
             j.rc.fetch_add(1, Ordering::Relaxed);
             detached.push(join as usize);
+            // A detached task belongs to no `recover` but its own.
+            if !j.task.is_null() {
+                (*j.task).free.store(true, Ordering::Release);
+            }
         }
         unlock(&j.lock);
     }
@@ -2811,6 +2876,12 @@ unsafe fn take(join: *mut JoinObject, out: *mut u8) {
 pub unsafe extern "C" fn tondo_rt_join_wait(join: *mut JoinObject, out: *mut u8) {
     unsafe {
         if !cancelled() && finish(join, false) {
+            if let Some(panic) = (*join).panic.take() {
+                // The task's panic goes on here (language 15.9).
+                std::ptr::write_bytes(out, 0, (*join).size);
+                super::panics::rethrow(panic);
+                return;
+            }
             take(join, out);
         } else {
             std::ptr::write_bytes(out, 0, (*join).size);
@@ -2904,11 +2975,15 @@ unsafe fn free_join(join: *mut JoinObject) {
         if (*join).visit.is_some() {
             cycles::forget(join as *const u8);
         }
-        // A cancelled task cancels the tasks it still owns (11.15).
-        if cancelled() {
+        // A cancelled task cancels the tasks it still owns (11.15), and so
+        // does one that unwinds from a panic (language 15.9).
+        if cancelled() || super::panics::cleaning() {
             cancel_join(join);
         }
         finish(join, true);
+        if let Some(panic) = (*join).panic.take() {
+            super::panics::rethrow(panic);
+        }
         if !(*join).taken
             && let Some(release) = (*join).release
         {
@@ -3328,9 +3403,7 @@ unsafe fn close_waits(c: &mut ChannelObject) -> Vec<*mut Task> {
     woken
 }
 
-fn closed_panic(location: *const Str) -> ! {
-    super::panic_with(12, "cannot send on this channel: it was closed", location)
-}
+const CLOSED_MESSAGE: &str = "cannot send on this channel: it was closed";
 
 /// Moves the value at `value` into the channel if it can without waiting,
 /// with the channel locked: `Some(task)` with a receiver to notify, or
@@ -3394,7 +3467,9 @@ pub unsafe extern "C" fn tondo_rt_channel_send(sender: *mut SenderObject, value:
         lock(&c.lock);
         if c.closed {
             unlock(&c.lock);
-            closed_panic(location);
+            drop_unsent(c, value);
+            super::raise(12, CLOSED_MESSAGE, location);
+            return;
         }
         if let Some(woken) = try_send(c, value) {
             unlock(&c.lock);
@@ -3413,7 +3488,8 @@ pub unsafe extern "C" fn tondo_rt_channel_send(sender: *mut SenderObject, value:
             return;
         }
         if std::ptr::read_volatile(&waiter.state) == CLOSED {
-            closed_panic(location);
+            drop_unsent(c, value);
+            super::raise(12, CLOSED_MESSAGE, location);
         }
     }
 }
@@ -3680,9 +3756,12 @@ unsafe fn select(cases: &mut [Case], blocking: bool, location: *const Str) -> i6
         }
         for &index in &order {
             let case = &mut cases[index];
+            // A panic that a `recover` stops ends the `select` as a
+            // cancellation would, and the code unwinds (language 15.9).
             if case.kind == SEND && (*(*(case.handle as *mut SenderObject)).channel).closed {
                 unlock_all(&locks);
-                closed_panic(location);
+                super::raise(12, CLOSED_MESSAGE, location);
+                return -2;
             }
             if let Some(woken) = try_case(case) {
                 unlock_all(&locks);
@@ -3741,7 +3820,9 @@ unsafe fn select(cases: &mut [Case], blocking: bool, location: *const Str) -> i6
             RECEIVE => case.found = (waiters[won].state == MOVED) as u8,
             SEND if waiters[won].state == CLOSED => {
                 unlock_all(&locks);
-                closed_panic(location);
+                timers_ended(sleeps);
+                super::raise(12, CLOSED_MESSAGE, location);
+                return -2;
             }
             WAIT => take(case.handle as *mut JoinObject, case.value),
             NEXT => {

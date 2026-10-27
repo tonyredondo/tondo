@@ -310,21 +310,44 @@ fn inline_into(caller: &Body, index: usize, small: &[Option<Body>]) -> Option<Bo
     // as one of the caller's did, whose targets are its old numbers.
     let mut starts = Vec::with_capacity(caller.blocks.len());
     let mut ends = Vec::new();
+    // The blocks that check for a panic as a call did, whose unwinding is
+    // the caller's old number.
+    let mut checks = Vec::new();
     for (index, block) in caller.blocks.iter().enumerate() {
         let quiet = quieted(block, &callee_of);
         let block = quiet.as_ref().unwrap_or(block);
         starts.push(BlockId(blocks.len() as u32));
         let scope = caller.scopes.get(index).copied().flatten();
         let mut current = Vec::new();
-        for statement in &block.stmts {
+        for (at, statement) in block.stmts.iter().enumerate() {
             let Some(callee) = callee_of(statement) else {
                 current.push(statement.clone());
                 continue;
             };
             let Statement::Assign(destination, rvalue, span) = statement else { unreachable!() };
             let Rvalue::Call(_, arguments) = &**rvalue else { unreachable!() };
+            let mut assigns = Vec::new();
+            let rename = bind(&mut body, callee, arguments, &mut assigns, *span, &|_| true);
+            // A parameter that takes an argument read by an index may
+            // panic: it unwinds as the call would have (15.9).
+            let unwind = unwinds(block, at);
+            for assign in assigns {
+                let checked = unwind.is_some() && reads_index(&assign);
+                current.push(assign);
+                if let (true, Some(unwind)) = (checked, unwind) {
+                    let asked = Local(body.locals.len() as u32);
+                    body.locals.push(crate::types::Ty::BOOL);
+                    body.names.push(None);
+                    body.origins.push(Origin::Made(Vec::new(), 0));
+                    current.push(Statement::Assign(Place::local(asked), Box::new(Rvalue::Unwinding), Span::default()));
+                    checks.push(blocks.len());
+                    let next = BlockId(blocks.len() as u32 + 1);
+                    let terminator = Terminator::Branch(Operand::local(asked), unwind, next);
+                    blocks.push(BlockData { stmts: std::mem::take(&mut current), terminator });
+                    scopes.push(scope);
+                }
+            }
             let entry = BlockId(blocks.len() as u32 + 1);
-            let rename = bind(&mut body, callee, arguments, &mut current, *span, &|_| true);
             blocks.push(BlockData { stmts: std::mem::take(&mut current), terminator: Terminator::Goto(entry) });
             scopes.push(scope);
             // The call, and the calls inlined into the callee, inside it.
@@ -369,6 +392,11 @@ fn inline_into(caller: &Body, index: usize, small: &[Option<Body>]) -> Option<Bo
         ends.push(blocks.len());
         blocks.push(BlockData { stmts: current, terminator: block.terminator.clone() });
         scopes.push(scope);
+    }
+    for check in checks {
+        if let Terminator::Branch(condition, unwind, entry) = &blocks[check].terminator {
+            blocks[check].terminator = Terminator::Branch(condition.clone(), starts[unwind.0 as usize], *entry);
+        }
     }
     for end in ends {
         let at = |target: BlockId| starts[target.0 as usize];
@@ -494,13 +522,19 @@ fn guard_calls(caller: &Body, guards: &[Option<Guard>]) -> Option<Body> {
         starts.push(BlockId(blocks.len() as u32));
         let scope = caller.scopes.get(index).copied().flatten();
         let mut current = Vec::new();
-        for statement in &block.stmts {
+        for (at, statement) in block.stmts.iter().enumerate() {
             let Some(guard) = guard_of(statement) else {
                 current.push(statement.clone());
                 continue;
             };
             let Statement::Assign(destination, rvalue, span) = statement else { unreachable!() };
             let Rvalue::Call(_, arguments) = &**rvalue else { unreachable!() };
+            // Arguments read by an index, where a panic may unwind: the
+            // call stays as it is (15.9).
+            if indexed(arguments) && unwinds(block, at).is_some() {
+                current.push(statement.clone());
+                continue;
+            }
             let rename =
                 bind(&mut body, &guard.body, arguments, &mut current, *span, &|local| guard.named.contains(&local));
             // The test, then the way out, then the call, then the rest of
@@ -788,8 +822,35 @@ pub(crate) fn visit_rvalue(rvalue: &mut Rvalue, f: &mut impl FnMut(&mut Place)) 
         | Rvalue::Callback(..)
         | Rvalue::Layout(..)
         | Rvalue::Cancelled
+        | Rvalue::Unwinding
         | Rvalue::Restart(_)
         | Rvalue::Transfer(_)
         | Rvalue::OsrPoint => {}
     }
+}
+
+/// Where the check that follows the statement at `at` unwinds a panic to,
+/// when one does: `asked = Unwinding` and a branch on it end the block
+/// (15.9).
+fn unwinds(block: &BlockData, at: usize) -> Option<BlockId> {
+    let Some(Statement::Assign(asked, rvalue, _)) = block.stmts.get(at + 1) else { return None };
+    if !matches!(**rvalue, Rvalue::Unwinding) || at + 2 != block.stmts.len() {
+        return None;
+    }
+    match &block.terminator {
+        Terminator::Branch(Operand::Copy(condition), unwind, _) if condition == asked => Some(*unwind),
+        _ => None,
+    }
+}
+
+/// Whether arguments read an element by an index, which may panic.
+fn indexed(arguments: &[Operand]) -> bool {
+    arguments.iter().any(
+        |argument| matches!(argument, Operand::Copy(place) if place.path.iter().any(|p| matches!(p, Proj::Index(..)))),
+    )
+}
+
+/// Whether a parameter's assignment reads its argument by an index.
+fn reads_index(statement: &Statement) -> bool {
+    matches!(statement, Statement::Assign(_, rvalue, _) if matches!(&**rvalue, Rvalue::Use(argument) if indexed(std::slice::from_ref(argument))))
 }

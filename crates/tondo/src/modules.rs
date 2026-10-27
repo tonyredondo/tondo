@@ -889,7 +889,7 @@ impl Linker<'_> {
                     }
                 }
             }
-            ExprKind::Unsafe(block) => self.block(block),
+            ExprKind::Unsafe(block) | ExprKind::Recover(block) => self.block(block),
             ExprKind::Closure(closure) => self.scoped(|linker| {
                 for param in &mut closure.params {
                     linker.binding(&param.name);

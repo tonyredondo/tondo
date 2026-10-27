@@ -189,7 +189,8 @@ pub unsafe extern "C" fn tondo_rt_str_at(s: *const Str, index: i64, location: *c
     match unsafe { tondo_rt_str_get(s, index) } {
         -1 => {
             let length = unsafe { tondo_rt_str_length(s) } as usize;
-            panic_with(1, &out_of_bounds(index, length, "string"), location)
+            raise(1, &out_of_bounds(index, length, "string"), location);
+            0
         }
         c => c as u32,
     }
@@ -891,7 +892,8 @@ pub unsafe extern "C" fn tondo_rt_array_insert(
         if position < 0 || position as usize > len {
             let message =
                 format!("cannot insert at index {at} of an array of length {len}: {}", valid_indices(len, len));
-            panic_with(1, &message, location);
+            raise(1, &message, location);
+            return;
         }
         let at = position;
         let at = at as usize;
@@ -1013,11 +1015,12 @@ unsafe fn slice_range(
 ) -> (i64, usize) {
     let n = len as i128;
     if step == 0 {
-        panic_with(
+        raise(
             2,
             "the step of a slice is 0: a slice steps forwards with a positive step and backwards with a negative one",
             location,
         );
+        return (0, 0);
     }
     let step_wide = step as i128;
     let explicit = |value: i64| if value < 0 { value as i128 + n } else { value as i128 };
@@ -1089,7 +1092,8 @@ pub unsafe extern "C" fn tondo_rt_array_check_region(
                 } else {
                     format!("one call lends two slices of an array that share the element at index {at}")
                 };
-                panic_with(4, &message, location);
+                raise(4, &message, location);
+                return;
             }
         }
     }
@@ -1139,7 +1143,8 @@ pub unsafe extern "C" fn tondo_rt_array_assign_slice(
                 "the slice selects {count} elements and the array assigned to it has {}: they must have the same length",
                 (*source).len
             );
-            panic_with(6, &message, location);
+            raise(6, &message, location);
+            return;
         }
         let mut snapshot = vec![0u8; count * size];
         for k in 0..count {
@@ -1176,7 +1181,10 @@ macro_rules! integer_numbers {
                     0 => a.checked_add(b),
                     1 => a.checked_sub(b),
                     2 => a.checked_mul(b),
-                    _ if b == 0 => panic_with(3, &format!("{a} {operator} 0 in arithmetic on arrays"), location),
+                    _ if b == 0 => {
+                        raise(3, &format!("{a} {operator} 0 in arithmetic on arrays"), location);
+                        Some(0)
+                    }
                     3 => a.checked_div(b),
                     // `MIN % -1` is 0 (18.3).
                     _ => Some(a.wrapping_rem(b)),
@@ -1186,7 +1194,8 @@ macro_rules! integer_numbers {
                         "{a} {operator} {b} in arithmetic on arrays does not fit in {} ({} to {})",
                         $name, <$t>::MIN, <$t>::MAX
                     );
-                    panic_with(5, &message, location)
+                    raise(5, &message, location);
+                    0
                 })
             }
         }
@@ -1253,7 +1262,8 @@ unsafe fn check_shape(a: *const u8, da: u32, b: *const u8, db: u32, location: *c
                 (*x).len,
                 (*y).len
             );
-            panic_with(6, &message, location);
+            raise(6, &message, location);
+            return;
         }
         if da > 1 && db > 1 {
             for k in 0..(*x).len {
@@ -1319,6 +1329,9 @@ pub unsafe extern "C" fn tondo_rt_array_arith(
 ) -> *mut ArrayHeader {
     unsafe {
         check_shape(a, da, b, db, location);
+        if panics::unwinding() {
+            return std::ptr::null_mut();
+        }
         let mut result: *mut ArrayHeader = std::ptr::null_mut();
         lifted(a, da, b, db, op, number, &mut result as *mut _ as *mut u8, location);
         result
@@ -1383,7 +1396,8 @@ pub unsafe extern "C" fn tondo_rt_array_concat(
         let (la, lb) = ((*a).len, (*b).len);
         if (la as i128 + lb as i128) > i64::MAX as i128 {
             let message = format!("arrays of lengths {la} and {lb} together are longer than an array can be");
-            panic_with(5, &message, location);
+            raise(5, &message, location);
+            return std::ptr::null_mut();
         }
         let new = array_copy(a, size, retain, 0, 1, la, la + lb);
         for k in 0..lb {
@@ -1407,13 +1421,15 @@ pub unsafe extern "C" fn tondo_rt_array_repeat(
 ) -> *mut ArrayHeader {
     unsafe {
         if count < 0 {
-            panic_with(11, &format!("an array cannot repeat {count} times: the count must not be negative"), location);
+            raise(11, &format!("an array cannot repeat {count} times: the count must not be negative"), location);
+            return std::ptr::null_mut();
         }
         let len = (*a).len;
         let total = len as i128 * count as i128;
         if total > i64::MAX as i128 {
             let message = format!("an array of length {len} repeated {count} times is longer than an array can be");
-            panic_with(5, &message, location);
+            raise(5, &message, location);
+            return std::ptr::null_mut();
         }
         let total = total as usize;
         let new = array_alloc(size, total, total);
@@ -2266,7 +2282,7 @@ pub fn finish_stdout() -> Option<i32> {
 /// Process exit status of a panic (spec 20.10: distinct from error exits).
 pub const PANIC_EXIT_CODE: i32 = 101;
 
-fn panic_name(code: u32) -> &'static str {
+pub(crate) fn panic_name(code: u32) -> &'static str {
     match code {
         1 => "bounds",
         2 => "zero-slice-step",
@@ -2315,6 +2331,9 @@ pub extern "C" fn tondo_rt_defer_push(code: tasks::Cleanup, closure: *mut u8) {
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_defer_pop() {
     tasks::pop_cleanup();
+    // A `defer` that ran before this one and panicked while a panic
+    // unwinds was reported as suppressed, and is done (language 15.7).
+    panics::defer_runs();
 }
 
 fn run_cleanups() {
@@ -2326,7 +2345,39 @@ fn run_cleanups() {
 /// as suppressed and the remaining cleanups still run. `message` may be
 /// null; `location` is a static `file:line:column` string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_panic(mut code: u32, message: *const Str, location: *const Str) -> ! {
+pub unsafe extern "C" fn tondo_rt_panic(code: u32, message: *const Str, location: *const Str) -> ! {
+    unsafe { end_in_panic(code, message, location) }
+}
+
+/// A panic where compiled code unwinds when the call returns: one that a
+/// `recover` of the running task stops is recorded, and the call returns
+/// (language 15.9); any other ends the program.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_panic_unwind(code: u32, message: *const Str, location: *const Str) {
+    if unsafe { panics::record(code, message, location) } {
+        return;
+    }
+    unsafe { end_in_panic(code, message, location) }
+}
+
+/// A panic of the runtime: recorded when a `recover` of the running task
+/// stops it, and the caller returns at once with a value nobody uses;
+/// otherwise the program ends here.
+pub(crate) fn raise(code: u32, message: &str, location: *const Str) {
+    let message = str_new(message.as_bytes());
+    if unsafe { panics::record(code, message, location) } {
+        unsafe { tondo_rt_str_release(message) };
+        return;
+    }
+    unsafe { end_in_panic(code, message, location) }
+}
+
+/// Reports a panic nothing recovers and ends the program.
+unsafe fn end_in_panic(mut code: u32, message: *const Str, location: *const Str) -> ! {
+    // `testing.failNow` reports as a failed assertion, which no `recover` stops.
+    if code == panics::FAIL_NOW {
+        code = 7;
+    }
     flush_stdout();
     let message = (!message.is_null()).then(|| String::from_utf8_lossy(unsafe { str_bytes(message) }).into_owned());
     let mut location = String::from_utf8_lossy(unsafe { str_bytes(location) }).into_owned();
@@ -2358,6 +2409,7 @@ pub unsafe extern "C" fn tondo_rt_panic(mut code: u32, message: *const Str, loca
         }
         panics::language_data(data);
     }
+    let resumed = panics::resumed_stack();
     let panic = panics::Panic::new(code, panic_name(code), message.unwrap_or_default(), location);
     let text = panic.headline();
     let location = &panic.location;
@@ -2370,13 +2422,16 @@ pub unsafe extern "C" fn tondo_rt_panic(mut code: u32, message: *const Str, loca
     if !suppressed {
         debugger::panicked(&text);
     }
-    let report = format!("{prefix}{text}\n --> {location}{}", trace::report());
+    let frames = resumed.as_deref().map(panics::frames_of);
+    let stack = resumed.unwrap_or_else(trace::report);
+    let report = format!("{prefix}{text}\n --> {location}{stack}");
     // A test build reports it to `tondo test` instead, with its data.
     testing::panic_data(&panic);
     if !testing::terminal(code, &report) {
         match panics::json_reports() {
             true => {
-                let _ = writeln!(std::io::stderr(), "{}", panic.json(&trace::report_json(), false, suppressed));
+                let frames = frames.unwrap_or_else(trace::report_json);
+                let _ = writeln!(std::io::stderr(), "{}", panic.json(&frames, false, suppressed));
             }
             false => {
                 let _ = writeln!(std::io::stderr(), "{report}");
@@ -2433,6 +2488,27 @@ pub unsafe extern "C" fn tondo_rt_panic_values(
     ty: *const Str,
     location: *const Str,
 ) -> ! {
+    let message = unsafe { values_message(code, detail, values, ty) };
+    panic_with(code, &message, location)
+}
+
+/// `tondo_rt_panic_values` where compiled code unwinds when it returns
+/// (language 15.9).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_panic_values_unwind(
+    code: u32,
+    detail: u32,
+    values: *const [i64; 2],
+    ty: *const Str,
+    location: *const Str,
+) {
+    let message = unsafe { values_message(code, detail, values, ty) };
+    raise(code, &message, location)
+}
+
+/// The message of a panic of compiled code, from its values, whose data it
+/// stages.
+unsafe fn values_message(code: u32, detail: u32, values: *const [i64; 2], ty: *const Str) -> String {
     let [a, b] = unsafe { *values };
     let (bits, op) = (detail & 0xff, detail >> 16);
     let show = |value: i64, signed: bool| {
@@ -2466,7 +2542,7 @@ pub unsafe extern "C" fn tondo_rt_panic_values(
         _ => Vec::new(),
     };
     panics::language_data(data);
-    let message = match code {
+    match code {
         1 if op == 1 => {
             format!("index {a} is out of bounds for the C array {ty}: the index must be from 0 to {}", b - 1)
         }
@@ -2478,8 +2554,7 @@ pub unsafe extern "C" fn tondo_rt_panic_values(
         6 => format!("an array of length {a} cannot become the C array {ty}: it needs exactly {b} elements"),
         10 => format!("{left} {operator} {right}: a shift of {ty} must be from 0 to {}", bits - 1),
         _ => String::new(),
-    };
-    panic_with(code, &message, location)
+    }
 }
 
 /// Reports the error a fallible `main` returned (spec 20.10), of the type

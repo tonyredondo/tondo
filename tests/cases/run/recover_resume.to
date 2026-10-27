@@ -1,0 +1,25 @@
+// A panic a `recover` goes on with ends the program as it was, where it
+// happened; a `defer` that panics while it unwinds is suppressed.
+
+import std.console
+
+fn noisy(): Int {
+    defer {
+        let empty: Array[Int] = []
+        console.println("{empty[3]}")
+    }
+    defer console.println("second defer ran")
+    panic("first", code: "noisy.first")
+}
+
+fn main() {
+    match recover { noisy() } {
+        ok(_) => console.println("no")
+        err(p) => p.resume()
+    }
+}
+
+// expect-panic: noisy.first
+// expect-stdout: second defer ran
+// expect-stderr: suppressed while unwinding: panic[P0001]: bounds: index 3 is out of bounds: the array is empty
+// expect-stderr:  --> recover_resume.to:12:5
