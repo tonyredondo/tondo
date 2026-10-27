@@ -739,6 +739,55 @@ impl Lexer<'_> {
         None
     }
 
+    /// At a `{` of a string: where its `}` is, when what is between reads as
+    /// text rather than an expression, as JSON: it has `\"`, which no
+    /// expression has, or a `:` outside brackets, braces and quotes, which
+    /// no expression has either, and no string of its own, whose quotes
+    /// would end the string it is in.
+    fn braced_text(&mut self) -> Option<usize> {
+        let saved = self.pos;
+        self.pos += 1;
+        let (mut depth, mut nest, mut text, mut strings) = (0usize, 0usize, false, false);
+        let found = loop {
+            let Some(c) = self.peek() else { break None };
+            match c {
+                '\n' => break None,
+                '\\' if self.peek_at(1) == Some('"') => {
+                    text = true;
+                    self.pos += 2;
+                    continue;
+                }
+                '"' => {
+                    strings = true;
+                    self.skip_nested_string();
+                    continue;
+                }
+                '\'' => {
+                    self.pos += 1;
+                    while let Some(c) = self.peek() {
+                        self.pos += c.len_utf8();
+                        match c {
+                            '\\' => self.pos += self.peek().map_or(0, char::len_utf8),
+                            '\'' | '\n' => break,
+                            _ => {}
+                        }
+                    }
+                    continue;
+                }
+                '(' | '[' => nest += 1,
+                ')' | ']' => nest = nest.saturating_sub(1),
+                '{' => depth += 1,
+                '}' if depth == 0 => break (text && !strings).then_some(self.pos),
+                '}' => depth -= 1,
+                ':' if nest == 0 && depth == 0 => text = true,
+                _ => {}
+            }
+            self.pos += c.len_utf8();
+        };
+        self.pos = saved;
+        found
+    }
+
     fn skip_nested_string(&mut self) {
         let multiline = self.rest().starts_with("\"\"\"");
         self.pos += if multiline { 3 } else { 1 };
@@ -788,6 +837,8 @@ impl Lexer<'_> {
                     return;
                 }
                 '\\' if !raw => self.pos += 1 + self.rest()[1..].chars().next().map_or(0, char::len_utf8),
+                // Braces that hold text are text, which says so below.
+                '{' if !raw && self.peek_at(1) != Some('{') && self.braced_text().is_some() => self.pos += 1,
                 '{' if !raw && self.peek_at(1) != Some('{') => {
                     self.pos += 1;
                     if self.skip_interpolation(multiline).is_some() {
@@ -827,6 +878,9 @@ impl Lexer<'_> {
         let mut parts = Vec::new();
         let mut text = String::new();
         let mut line_start = multiline;
+        // Braces that hold text, as JSON: where each is, to write it twice,
+        // and how many are open.
+        let (mut doubled, mut open_text) = (Vec::new(), 0usize);
         while self.pos < to {
             if line_start {
                 line_start = false;
@@ -868,12 +922,28 @@ impl Lexer<'_> {
                     text.push('{');
                     self.pos += 2;
                 }
+                '{' if !raw && let Some(close) = self.braced_text() => {
+                    doubled.extend([self.pos, close]);
+                    open_text += 1;
+                    text.push('{');
+                    self.pos += 1;
+                }
+                '}' if !raw && open_text > 0 => {
+                    open_text -= 1;
+                    text.push('}');
+                    self.pos += 1;
+                }
                 '{' if !raw => {
                     let open_at = self.pos;
                     self.pos += 1;
                     match self.skip_interpolation(multiline) {
                         Some(close) if self.text[open_at + 1..close].trim().is_empty() => {
-                            self.error("E0003", open_at, close + 1, "empty interpolation");
+                            self.error(
+                                "E0003",
+                                open_at,
+                                close + 1,
+                                "empty interpolation; braces of the text are written twice: `{{}}`",
+                            );
                             self.pos = close + 1;
                         }
                         Some(close) => {
@@ -910,6 +980,23 @@ impl Lexer<'_> {
         if !text.is_empty() || parts.is_empty() {
             parts.push(StrPart::Text(text));
         }
+        // The literal with each brace of its text written twice.
+        if let (Some(&first), Some(&close)) = (doubled.first(), doubled.get(1)) {
+            let mut fixed = String::new();
+            for (at, c) in self.text[start..after].char_indices() {
+                fixed.push(c);
+                if doubled.contains(&(start + at)) {
+                    fixed.push(c);
+                }
+            }
+            let message = format!(
+                "`{{` in a string starts an interpolation, as in `\"Hello, {{name}}\"`, and these braces hold text: \
+                 write each brace of the text twice, `{{{{` and `}}}}`: {fixed}"
+            );
+            self.error("E0003", first, close + 1, message);
+            let edits = doubled.iter().map(|&at| (self.span(at, at), self.text[at..at + 1].to_string())).collect();
+            self.diags.fix("write the braces of the text twice", true, edits);
+        }
         self.pos = after;
         self.push(Tok::Str(parts), start);
     }
@@ -918,6 +1005,27 @@ impl Lexer<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Braces that hold text, as JSON, read as text, with one error that
+    /// gives the literal with them written twice; an interpolation inside
+    /// stays one.
+    #[test]
+    fn braces_that_hold_text_are_text() {
+        let text = r#"let a = "{ \"id\": 1, \"user\": { \"name\": \"{name}\" } }"
+let b = "\"{field.replace("\"", "\"\"")}\""
+let c = "{"{get("http://127.0.0.1:1/")}".startsWith("err(no")}""#;
+        let mut sources = SourceMap::default();
+        let index = sources.add(std::path::Path::new("braces.to"), text.to_string());
+        let mut diags = Diagnostics::default();
+        let tokens = lex(sources.file(index), None, &mut diags);
+        assert_eq!(diags.list.len(), 1, "{:?}", diags.list.iter().map(|d| &d.message).collect::<Vec<_>>());
+        assert!(diags.list[0].message.ends_with(r#""{{ \"id\": 1, \"user\": {{ \"name\": \"{name}\" }} }}""#));
+        let Tok::Str(parts) = &tokens.iter().find(|t| matches!(t.tok, Tok::Str(_))).unwrap().tok else {
+            unreachable!()
+        };
+        assert_eq!(parts[0], StrPart::Text(r#"{ "id": 1, "user": { "name": ""#.into()));
+        assert!(matches!(parts[1], StrPart::Expr(_)));
+    }
     use crate::source::SourceMap;
     use std::path::Path;
 

@@ -1,0 +1,7 @@
+// Braces that hold text, as JSON, are written twice: `{{` and `}}`.
+
+fn main() {
+    let doc = "{ \"id\": 1, \"name\": \"Ada\" }"
+}
+
+// expect-error: E0003
