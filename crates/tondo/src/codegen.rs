@@ -7070,7 +7070,34 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             })
             && matches!(head.terminator, Terminator::Branch(..));
         let plain = self.debug.is_none() && self.e.cg.coverage().is_none() && !self.e.cg.meta() && !self.e.cg.live();
-        (target.0 as usize <= index && test && plain).then_some(head)
+        let Terminator::Branch(_, then, otherwise) = head.terminator else { return None };
+        // One way of the test leaves the loop, so that its copy enters the
+        // loop at one block, where Cranelift sees a loop it hoists from: a
+        // test whose both ways go on in the loop, the first of `a and b`,
+        // would enter it at two.
+        let leaves = |way: crate::mir::BlockId| !self.reaches(way, index, target.0 as usize);
+        (target.0 as usize <= index && test && plain && (leaves(then) || leaves(otherwise))).then_some(head)
+    }
+
+    /// Whether block `to` can be reached from `from` without passing
+    /// through `head`.
+    fn reaches(&self, from: crate::mir::BlockId, to: usize, head: usize) -> bool {
+        let mut seen = vec![false; self.body.blocks.len()];
+        let mut pending = vec![from.0 as usize];
+        while let Some(block) = pending.pop() {
+            if block == to {
+                return true;
+            }
+            if block == head || std::mem::replace(&mut seen[block], true) {
+                continue;
+            }
+            match self.body.blocks[block].terminator {
+                Terminator::Goto(next) => pending.push(next.0 as usize),
+                Terminator::Branch(_, then, otherwise) => pending.extend([then.0 as usize, otherwise.0 as usize]),
+                _ => {}
+            }
+        }
+        false
     }
 
     fn terminator(&mut self, terminator: &Terminator) {
