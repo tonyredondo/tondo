@@ -1,0 +1,44 @@
+import std.console
+
+// Integers and strings are sorted by the runtime, other types by the
+// prelude's merge sort; both give the same order, and the array sorted
+// stays as it was.
+
+type Version = { major: Int, minor: Int }
+
+fn main() {
+    let numbers = [3, -1, 3, 9223372036854775807, 0, -9223372036854775807, 2]
+    console.println("{numbers.sorted()} {numbers}")
+    let empty: Array[Int] = []
+    console.println("{empty.sorted()} {[7].sorted()}")
+    let words = ["pear", "", "Zed", "ápice", "apple", "pear"]
+    console.println("{words.sorted()} {words.length()}")
+    var inPlace = ["b", "c", "a"]
+    inPlace.sort()
+    console.println("{inPlace}")
+
+    var seed = 42
+    var many: Array[Int] = []
+    for _ in 0..5000 {
+        seed = (seed * 1_103_515_245 + 12345) % 2_147_483_648
+        many.push(seed % 1000)
+    }
+    let sorted = many.sorted()
+    var ordered = true
+    for i in 1..sorted.length() {
+        if sorted[i - 1] > sorted[i] { ordered = false }
+    }
+    console.println("{ordered} {sorted.sum() == many.sum()} {sorted == many.sortedWith((a, b) { a - b })}")
+
+    console.println("{[2.5, -1.0, 0.0].sorted()}")
+    let versions = [Version { major: 2, minor: 0 }, Version { major: 1, minor: 5 }]
+    console.println("{versions.sortedBy((v) { v.major }).map((v) { v.minor })}")
+}
+
+// expect-stdout: [-9223372036854775807, -1, 0, 2, 3, 3, 9223372036854775807] [3, -1, 3, 9223372036854775807, 0, -9223372036854775807, 2]
+// expect-stdout: [] [7]
+// expect-stdout: [, Zed, apple, pear, pear, ápice] 6
+// expect-stdout: [a, b, c]
+// expect-stdout: true true true
+// expect-stdout: [-1.0, 0.0, 2.5]
+// expect-stdout: [5, 0]

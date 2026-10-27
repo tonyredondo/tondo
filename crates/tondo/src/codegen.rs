@@ -159,6 +159,8 @@ enum Rt {
     ArraySlice,
     ArraySliceChecked,
     ArrayConcat,
+    ArraySortedInts,
+    ArraySortedStrings,
     ArrayRepeat,
     ArrayEq,
     ArrayContains,
@@ -396,6 +398,8 @@ impl Rt {
             Rt::ArraySlice => ("tondo_rt_array_slice", &[I64, I64, I64, I64, I8, I64, I8, I64, I64], &[I64]),
             Rt::ArraySliceChecked => ("tondo_rt_array_slice_checked", &[I64, I64, I64, I64, I64], &[I64]),
             Rt::ArrayConcat => ("tondo_rt_array_concat", &[I64, I64, I64, I64, I64], &[I64]),
+            Rt::ArraySortedInts => ("tondo_rt_array_sorted_ints", &[I64], &[I64]),
+            Rt::ArraySortedStrings => ("tondo_rt_array_sorted_strings", &[I64], &[I64]),
             Rt::ArrayRepeat => ("tondo_rt_array_repeat", &[I64, I64, I64, I64, I64], &[I64]),
             Rt::ArrayEq => ("tondo_rt_array_eq", &[I64, I64, I64, I64], &[I8]),
             Rt::ArrayContains => ("tondo_rt_array_contains", &[I64, I64, I64, I64], &[I8]),
@@ -5651,6 +5655,28 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let display = self.e.glue_address(Glue::Display, element);
                 self.e.call_rt(Rt::SbJoin, &[builder, array, size, display, separator]);
                 Val::Scalar(self.e.call_rt(Rt::SbFinish, &[builder]).unwrap())
+            }
+            ArrayOp::NativeOrder | ArrayOp::SortedNatively => {
+                let element = self.e.cg.types().repr(element_of(self.operand_ty(&operands[0])));
+                let rt = match element {
+                    Ty::INT => Some(Rt::ArraySortedInts),
+                    Ty::STRING => Some(Rt::ArraySortedStrings),
+                    _ => None,
+                };
+                match (op, rt) {
+                    (ArrayOp::NativeOrder, _) => Val::Scalar(self.e.fb.ins().iconst(types::I8, rt.is_some() as i64)),
+                    (_, Some(rt)) => {
+                        let array = self.scalar(&operands[0]);
+                        Val::Scalar(self.e.call_rt(rt, &[array]).unwrap())
+                    }
+                    // Behind a `nativeOrder` that is false.
+                    (_, None) => {
+                        self.e.fb.ins().trap(TrapCode::user(1).unwrap());
+                        let block = self.e.fb.create_block();
+                        self.e.fb.switch_to_block(block);
+                        Val::Scalar(self.e.fb.ins().iconst(POINTER, 0))
+                    }
+                }
             }
             ArrayOp::Contains => {
                 let element = self.operand_ty(&operands[0]);

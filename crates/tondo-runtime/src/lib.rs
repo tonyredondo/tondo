@@ -1337,6 +1337,36 @@ pub unsafe extern "C" fn tondo_rt_array_slice_checked(
     unsafe { array_copy(a, size, retain, start, 1, (end - start) as usize, (end - start) as usize) }
 }
 
+/// `Array[Int].sorted()`: the integers in order, in a new array. Equal
+/// integers cannot be told apart, so the sort need not keep them as they
+/// were, and pattern-defeating quicksort is faster than a merge.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_array_sorted_ints(a: *mut ArrayHeader) -> *mut ArrayHeader {
+    unsafe {
+        let len = (*a).len;
+        let new = array_copy(a, 8, None, 0, 1, len, len);
+        std::slice::from_raw_parts_mut(element(new, 8, 0) as *mut i64, len).sort_unstable();
+        new
+    }
+}
+
+/// `Array[String].sorted()`: the strings in order, in a new array that
+/// holds them too; equal strings cannot be told apart either.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_array_sorted_strings(a: *mut ArrayHeader) -> *mut ArrayHeader {
+    unsafe {
+        let len = (*a).len;
+        let new = array_copy(a, 8, Some(tondo_rt_str_retain_glue), 0, 1, len, len);
+        let strings = std::slice::from_raw_parts_mut(element(new, 8, 0) as *mut *const Str, len);
+        strings.sort_unstable_by(|a, b| str_bytes(*a).cmp(str_bytes(*b)));
+        new
+    }
+}
+
+unsafe extern "C" fn tondo_rt_str_retain_glue(slot: *mut u8) {
+    unsafe { tondo_rt_str_retain(*(slot as *const *const Str)) }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_array_concat(
     a: *mut ArrayHeader,

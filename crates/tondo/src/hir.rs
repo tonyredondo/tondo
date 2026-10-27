@@ -440,6 +440,13 @@ pub enum ArrayOp {
     /// The elements as text with a separator between them: `joined` of
     /// `std.internal.text`, which `Array.join` is.
     Join,
+    /// Whether the runtime puts the elements in order: those whose equal
+    /// values cannot be told apart, as integers and strings, which it sorts
+    /// without keeping equal ones as they were. `nativeOrder` of
+    /// `std.internal.text`.
+    NativeOrder,
+    /// The elements in order, which the runtime sorts: `sortedNatively`.
+    SortedNatively,
 }
 
 /// How `LockSync` takes a lock.

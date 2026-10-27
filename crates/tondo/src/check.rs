@@ -11527,6 +11527,17 @@ impl<'a> Checker<'a> {
                     let joined = hir::ExprKind::ArrayOp(hir::ArrayOp::Join, vec![values, separator]);
                     return Self::mk(joined, Ty::STRING, span);
                 }
+                // `nativeOrder(values)` and `sortedNatively(values)`: what
+                // the runtime sorts, as `Array.sorted` does.
+                if module == StdModule::InternalText && matches!(*member, "nativeOrder" | "sortedNatively") {
+                    let [values] = args else { return self.arity_error(span, 1, args.len()) };
+                    let values = self.expr(cx, &values.value, None);
+                    let (op, ty) = match *member {
+                        "nativeOrder" => (hir::ArrayOp::NativeOrder, Ty::BOOL),
+                        _ => (hir::ArrayOp::SortedNatively, values.ty),
+                    };
+                    return Self::mk(hir::ExprKind::ArrayOp(op, vec![values]), ty, span);
+                }
                 if module == StdModule::InternalReflect && matches!(*member, "box" | "describe") {
                     let [arg] = args else {
                         return self.arity_error(span, 1, args.len());
