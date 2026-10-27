@@ -2546,3 +2546,16 @@ names, and reads each element without a check but in live builds. Summing
 10,000 integers by index went from 6.2 to 2.5 µs, with a panic's values
 passed to the runtime in memory rather than in the registers of a call,
 which a loop's own values had been moved around for.
+
+## 2026-10-27 — Short counted loops run four turns at a time
+
+A loop over a range of `Int`s whose body is short, 24 statements or
+fewer, and holds no loop runs its body four times in a row while four
+turns remain, and the last turns as before. A bound `last - 3` is
+computed once before it, when it fits, so a turn of four tests the range
+once and jumps once; `continue` and `break` in a copy go to the loop's
+own step and exit, so each turn means what it did. It runs after
+inlining and before `prove`, which then sees each copy's index under the
+length that bounds the loop, and only where `prove` does. A closure
+applied a thousand times took 36% less, and summing integers by index
+10%. Cranelift does not unroll, nor does Go's compiler.

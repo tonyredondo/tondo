@@ -619,6 +619,7 @@ pub fn compile(
     let debug = debug || live.is_some();
     if !debug && !analysis.meta {
         crate::inline::inline(&mut bodies);
+        crate::unroll::unroll(&mut bodies, &program.types);
         crate::prove::prove(&mut bodies, &program.types);
     }
     let options = codegen::Options { meta: analysis.meta, debug, target: triple, live, coverage: None };

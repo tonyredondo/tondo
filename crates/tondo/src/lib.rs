@@ -51,3 +51,4 @@ pub mod stdlib;
 pub mod target;
 pub mod toml;
 pub mod types;
+pub mod unroll;

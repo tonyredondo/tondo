@@ -1,0 +1,65 @@
+import std.console
+
+// Short counted loops run four turns at a time while four remain: every
+// count of turns, `continue`, `break`, a `return` from inside, bounds at
+// the ends of `Int` and a closure made in each turn all mean what they
+// mean in a loop that runs one turn at a time.
+
+fn sum(from: Int, to: Int): Int {
+    var total = 0
+    for i in from..to {
+        total += i
+    }
+    total
+}
+
+fn turns(from: Int, to: Int): (Int, Int) {
+    var count = 0
+    var last = 0
+    for i in from..to {
+        count += 1
+        last = i
+    }
+    (count, last)
+}
+
+fn firstOver(xs: Array[Int], limit: Int): Int {
+    for i in 0..xs.length() {
+        if xs[i] > limit {
+            return i
+        }
+    }
+    return -1
+}
+
+fn main() {
+    var counts: Array[Int] = []
+    for n in 0..9 {
+        counts.push(sum(0, n))
+    }
+    console.println("{counts}")
+    var odd = 0
+    for i in 0..10 {
+        if i % 2 == 0 {
+            continue
+        }
+        if i > 7 {
+            break
+        }
+        odd += i
+    }
+    console.println("{odd} {firstOver([1, 5, 9, 2, 8], 7)} {firstOver([1], 7)}")
+    let max = 9223372036854775807
+    let min = -9223372036854775807 - 1
+    console.println("{turns(max - 5, max)} {turns(min, min + 3)} {turns(min, min + 7)}")
+    var made: Array[fn(): Int] = []
+    for i in 0..6 {
+        made.push(() { i * 10 })
+    }
+    console.println("{made.map((f) { f() })}")
+}
+
+// expect-stdout: [0, 0, 1, 3, 6, 10, 15, 21, 28]
+// expect-stdout: 16 2 -1
+// expect-stdout: (5, 9223372036854775806) (3, -9223372036854775806) (7, -9223372036854775802)
+// expect-stdout: [0, 10, 20, 30, 40, 50]
