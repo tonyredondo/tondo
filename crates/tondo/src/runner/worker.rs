@@ -202,7 +202,9 @@ fn worker(
     if let Some(target) = context.target.and_then(|t| run.targets.get(t as usize)) {
         let call = super::fuzz::directory(&target.call);
         let (corpus, stop) = (target.corpus.display(), target.stop.display());
-        command.env("TONDO_FUZZ", format!("{}\t{call}\t{corpus}\t{stop}\t{}", tree.id(target.test), run.until));
+        let literals = executable.with_file_name("dictionary");
+        let (test, until, literals) = (tree.id(target.test), run.until, literals.display());
+        command.env("TONDO_FUZZ", format!("{test}\t{call}\t{corpus}\t{stop}\t{until}\t{literals}"));
         timeout = Duration::from_secs(10 * 365 * 24 * 3600);
     }
     if let Some(seed) = run.options.schedule(context.iteration) {

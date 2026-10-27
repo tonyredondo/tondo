@@ -78,6 +78,9 @@ enum Rt {
     StrRetain,
     StrRelease,
     StrEq,
+    /// What the counted code of a build for `--fuzz` compares.
+    FuzzCompare,
+    FuzzCompareText,
     StrCmp,
     StrLength,
     StrGet,
@@ -319,6 +322,8 @@ impl Rt {
             Rt::StrRetain => ("tondo_rt_str_retain", &[I64], &[]),
             Rt::StrRelease => ("tondo_rt_str_release", &[I64], &[]),
             Rt::StrEq => ("tondo_rt_str_eq", &[I64, I64], &[I8]),
+            Rt::FuzzCompare => ("tondo_rt_fuzz_compare", &[I64, I64], &[]),
+            Rt::FuzzCompareText => ("tondo_rt_fuzz_compare_text", &[I64, I64], &[]),
             Rt::StrCmp => ("tondo_rt_str_cmp", &[I64, I64], &[I32]),
             Rt::StrLength => ("tondo_rt_str_length", &[I64], &[I64]),
             Rt::StrGet => ("tondo_rt_str_get", &[I64, I64], &[I64]),
@@ -732,11 +737,15 @@ pub struct Options<'o> {
     pub target: Option<&'o str>,
     pub live: Option<&'o mut crate::live::Build>,
     pub coverage: Option<&'o mut Vec<Counted>>,
+    /// The build `tondo test --fuzz` searches with (testing 10.6): it counts
+    /// the dependencies' code too, and tells the runtime what the counted
+    /// code compares.
+    pub fuzz: bool,
 }
 
 /// Compiles the program to an object file.
 pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options: Options) -> Result<Vec<u8>, String> {
-    let Options { meta, debug, target, mut live, coverage } = options;
+    let Options { meta, debug, target, mut live, coverage, fuzz } = options;
     let mut flags = settings::builder();
     // A debug build keeps the code as written, statement after statement.
     flags.set("opt_level", if debug { "none" } else { "speed" }).map_err(|e| e.to_string())?;
@@ -783,6 +792,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         forwarders: HashMap::new(),
         pending_forwarders: Vec::new(),
         coverage: None,
+        fuzz,
     };
     if coverage.is_some() {
         let counters =
@@ -999,6 +1009,8 @@ struct Codegen<'a> {
     /// A test build that counts what runs (testing 10.3): its counters,
     /// and what each counts.
     coverage: Option<(DataId, Vec<Counted>)>,
+    /// A build for the search of `--fuzz`.
+    fuzz: bool,
 }
 
 /// What a counter of a test build with coverage counts (testing 10.3):
@@ -1588,6 +1600,8 @@ trait Gen<'t> {
     fn debug(&self) -> bool;
     /// In a test build with coverage, its counters.
     fn coverage(&self) -> Option<DataId>;
+    /// A build for the search of `--fuzz`.
+    fn fuzzing(&self) -> bool;
     /// A counter of what `counted` says: its number.
     fn counter(&mut self, counted: Counted) -> usize;
     /// Where the counter `index` is among the counters, as an
@@ -1717,6 +1731,9 @@ impl<'t> Gen<'t> for Codegen<'t> {
     }
     fn coverage(&self) -> Option<DataId> {
         self.coverage.as_ref().map(|(counters, _)| *counters)
+    }
+    fn fuzzing(&self) -> bool {
+        self.fuzz
     }
     fn counter(&mut self, counted: Counted) -> usize {
         let (_, all) = self.coverage.as_mut().expect("a build with coverage");
@@ -4667,12 +4684,41 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.fb.ins().store(flags(), count, address, 0);
     }
 
+    /// In a build for `--fuzz`, tells the runtime the operands of a
+    /// comparison of integers or texts of the counted code, which the
+    /// search takes values from (testing 10.6).
+    fn compared(&mut self, op: BinOp, left: &Operand, right: &Operand, ty: Ty) {
+        if !self.e.cg.fuzzing() || !matches!(op, BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge)
+        {
+            return;
+        }
+        let span = self.body.span;
+        if span == Span::default() || !self.counts(self.e.cg.sources().file_of(span.start)) {
+            return;
+        }
+        let types = self.e.cg.types();
+        let rt = match types.kind(types.repr(ty)) {
+            TyKind::String => Rt::FuzzCompareText,
+            TyKind::Int(_) if types.as_int(ty).map(IntTy::bits) == Some(64) => Rt::FuzzCompare,
+            _ => return,
+        };
+        if let (Val::Scalar(a), Val::Scalar(b)) = (self.operand(left), self.operand(right)) {
+            self.e.call_rt(rt, &[a, b]);
+        }
+    }
+
+    /// Whether coverage counts a file: the project's own code, and for the
+    /// search of `--fuzz` its dependencies' too.
+    fn counts(&self, file: &crate::source::SourceFile) -> bool {
+        file.own || (file.dependency && self.e.cg.fuzzing())
+    }
+
     /// With coverage, a run of the line a statement of the project's code
     /// starts on, once for statements one after another on a line.
     fn count_line(&mut self, span: Span) {
         let file = self.e.cg.sources().file_of(span.start);
         let (line, _) = file.line_col(span.start);
-        if !file.own || self.counted == Some((file.base, line)) {
+        if !self.counts(file) || self.counted == Some((file.base, line)) {
             return;
         }
         self.counted = Some((file.base, line));
@@ -4686,7 +4732,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             return;
         }
         let file = self.e.cg.sources().file_of(span.start);
-        if file.own {
+        if self.counts(file) {
             let (line, _) = file.line_col(span.start);
             let name = self.body.name.clone();
             self.count(Counted::Function { file: file.logical.clone(), line, name });
@@ -4703,7 +4749,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         for n in ways {
             let way = &self.body.ways[n];
             let file = self.e.cg.sources().file_of(way.span.start);
-            if !file.own || way.span == Span::default() {
+            if !self.counts(file) || way.span == Span::default() {
                 continue;
             }
             let (line, column) = file.line_col(way.span.start);
@@ -7541,6 +7587,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     fn binary(&mut self, op: BinOp, left: &Operand, right: &Operand, span: Span) -> ir::Value {
         let ty = self.operand_ty(left);
         let right_ty = self.operand_ty(right);
+        self.compared(op, left, right, ty);
         let is_array = |ty: Ty| matches!(self.e.cg.types().kind(self.e.cg.types().repr(ty)), TyKind::Array(_));
         if !matches!(op, BinOp::Eq | BinOp::Ne) && (is_array(ty) || is_array(right_ty)) {
             return self.array_arithmetic(op, left, right, span);

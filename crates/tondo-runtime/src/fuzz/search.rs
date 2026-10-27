@@ -10,24 +10,27 @@ use super::shape::{Dictionary, Rng, Shapes};
 use super::value::{Json, parse};
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 /// What `tondo test` tells a worker that searches, in `TONDO_FUZZ`: the
 /// call it searches in, by its test and directory, and where its corpus
-/// is, the stop file, and the time it ends at, as milliseconds since the
-/// epoch or `0` for none, separated by tabs.
+/// is, the stop file, the time it ends at, as milliseconds since the epoch
+/// or `0` for none, and the file of the code's literals, separated by tabs.
 pub(crate) struct Target {
     pub test: String,
     pub call: String,
     corpus: PathBuf,
     stop: PathBuf,
     deadline: Option<std::time::SystemTime>,
+    literals: PathBuf,
 }
 
 pub(crate) fn target() -> Option<Target> {
     let text = std::env::var("TONDO_FUZZ").ok()?;
     let parts: Vec<&str> = text.split('\t').collect();
-    let [test, call, corpus, stop, deadline] = parts[..] else { return None };
+    let [test, call, corpus, stop, deadline, literals] = parts[..] else { return None };
     let deadline = deadline.parse::<u64>().ok().filter(|&ms| ms > 0);
     Some(Target {
         test: test.to_string(),
@@ -35,7 +38,68 @@ pub(crate) fn target() -> Option<Target> {
         corpus: PathBuf::from(corpus),
         stop: PathBuf::from(stop),
         deadline: deadline.map(|ms| std::time::UNIX_EPOCH + Duration::from_millis(ms)),
+        literals: PathBuf::from(literals),
     })
+}
+
+/// The literals of the code the build counts, as the compiler wrote them:
+/// `{"texts": [...], "ints": [...]}`.
+fn literals(path: &PathBuf) -> Dictionary {
+    let mut dictionary = Dictionary::default();
+    let Some(Json::Map(members)) = std::fs::read_to_string(path).ok().and_then(|text| parse(&text)) else {
+        return dictionary;
+    };
+    for (key, value) in members {
+        let Json::List(items) = value else { continue };
+        for item in items {
+            match (key.as_str(), item) {
+                ("texts", Json::Text(text)) => dictionary.texts.push(text),
+                ("ints", Json::Int(n)) => dictionary.ints.push(n),
+                _ => {}
+            }
+        }
+    }
+    dictionary
+}
+
+/// Whether a worker searches: only then are comparisons noted.
+static SEARCHING: AtomicBool = AtomicBool::new(false);
+/// The integers the counted code compared lately, as a ring.
+const RING: usize = 64;
+static INTS: [AtomicI64; RING] = [const { AtomicI64::new(0) }; RING];
+static INTS_AT: AtomicUsize = AtomicUsize::new(0);
+/// The texts it compared lately, short ones.
+static TEXTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// What the code of a build for `--fuzz` compares: the operands of a
+/// comparison of integers.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_fuzz_compare(a: i64, b: i64) {
+    if SEARCHING.load(Ordering::Relaxed) && a != b {
+        for value in [a, b] {
+            let at = INTS_AT.fetch_add(1, Ordering::Relaxed) % RING;
+            INTS[at].store(value, Ordering::Relaxed);
+        }
+    }
+}
+
+/// The operands of a comparison of texts.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_fuzz_compare_text(a: *const crate::Str, b: *const crate::Str) {
+    if !SEARCHING.load(Ordering::Relaxed) {
+        return;
+    }
+    let (a, b) = unsafe { (crate::str_bytes(a), crate::str_bytes(b)) };
+    if a == b {
+        return;
+    }
+    if let Ok(mut texts) = TEXTS.try_lock()
+        && texts.len() < RING
+    {
+        for text in [a, b].into_iter().filter(|t| (1..=64).contains(&t.len())) {
+            texts.push(String::from_utf8_lossy(text).into_owned());
+        }
+    }
 }
 
 struct Entry {
@@ -81,10 +145,12 @@ fn range(count: u64) -> u8 {
 impl Search {
     pub(crate) fn new(target: Target, shape: &str) -> Search {
         let now = Instant::now();
+        let dictionary = literals(&target.literals);
+        SEARCHING.store(true, Ordering::Relaxed);
         let mut search = Search {
             target,
             shapes: Shapes::read(shape),
-            dictionary: Dictionary::default(),
+            dictionary,
             corpus: Vec::new(),
             files: HashSet::new(),
             seen: vec![0; crate::testing::counters().len()],
@@ -125,6 +191,31 @@ impl Search {
         if new {
             self.last_new = Instant::now();
             self.keep(json, true);
+        }
+        self.compared();
+    }
+
+    /// Takes in what the input's comparisons met, for the next inputs.
+    fn compared(&mut self) {
+        const MOST: usize = 4096;
+        let ints = INTS_AT.swap(0, Ordering::Relaxed).min(RING);
+        for slot in &INTS[..ints] {
+            let value = slot.load(Ordering::Relaxed);
+            if !self.dictionary.ints.contains(&value) {
+                if self.dictionary.ints.len() >= MOST {
+                    self.dictionary.ints.remove(0);
+                }
+                self.dictionary.ints.push(value);
+            }
+        }
+        let texts = std::mem::take(&mut *TEXTS.lock().unwrap_or_else(|e| e.into_inner()));
+        for text in texts {
+            if !self.dictionary.texts.contains(&text) {
+                if self.dictionary.texts.len() >= MOST {
+                    self.dictionary.texts.remove(0);
+                }
+                self.dictionary.texts.push(text);
+            }
         }
     }
 

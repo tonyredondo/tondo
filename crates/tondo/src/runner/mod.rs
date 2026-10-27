@@ -1093,14 +1093,16 @@ pub fn build_dir(
     statically: bool,
     debug: bool,
     counting: bool,
+    fuzz: bool,
     target: Option<crate::target::Target>,
 ) -> Result<PathBuf, String> {
     let identity = crate::driver::compiler_identity();
     let linking = format!(
-        "{}{}{}{}",
+        "{}{}{}{}{}",
         if statically { "static" } else { "" },
         if debug { "debug" } else { "" },
         if counting { "coverage" } else { "" },
+        if fuzz { "fuzz" } else { "" },
         target.map_or("", crate::target::Target::name)
     );
     let mut parts = vec![identity.into_bytes(), linking.as_bytes().to_vec()];

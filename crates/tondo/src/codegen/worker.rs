@@ -55,6 +55,7 @@ pub(super) struct Shared<'s, 't> {
     live: Option<(DataId, &'s [u32], u32)>,
     debug: bool,
     coverage: Option<DataId>,
+    fuzz: bool,
 }
 
 impl<'s, 't> Shared<'s, 't> {
@@ -81,6 +82,7 @@ impl<'s, 't> Shared<'s, 't> {
             live: cg.live.as_ref().map(|live| (live.slots, &live.slot_of[..], Gen::site_base(cg))),
             debug: cg.debug.is_some(),
             coverage: Gen::coverage(cg),
+            fuzz: Gen::fuzzing(cg),
         }
     }
 }
@@ -209,6 +211,9 @@ impl<'t> Gen<'t> for Worker<'_, '_, 't> {
     }
     fn coverage(&self) -> Option<DataId> {
         self.shared.coverage
+    }
+    fn fuzzing(&self) -> bool {
+        self.shared.fuzz
     }
     fn counter(&mut self, counted: Counted) -> usize {
         self.ask(Asked::Counter(counted));

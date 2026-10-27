@@ -401,6 +401,53 @@ test plain {}
     assert!(stderr.contains("--fuzz searches for inputs that fail; it does not go with --bench"), "{stderr}");
 }
 
+/// The search takes values from the code: its literals, and what its
+/// comparisons meet, as a number no literal holds (testing 10.6).
+#[test]
+fn fuzz_search_takes_values_from_the_code() {
+    let code = "\
+fn secret(): Int {
+    3001 * 17
+}
+
+pub fn version(n: Int): Int {
+    if n == secret() {
+        let empty: Array[Int] = []
+        return empty[1]
+    }
+    n
+}
+
+pub fn command(text: String): Int {
+    if text == \"deploy-now\" {
+        let empty: Array[Int] = []
+        return empty[0]
+    }
+    0
+}
+
+fn main() {}
+";
+    let tests = "\
+import std.testing
+
+test versions {
+    testing.fuzz(\"version\", [1], (n: Int) { _ = version(n) })
+}
+
+test commands {
+    testing.fuzz(\"command\", [\"stop\"], (text: String) { _ = command(text) })
+}
+";
+    let dir = project("fuzz-values", tests);
+    std::fs::write(dir.join("src/main.to"), code).unwrap();
+    let (stdout, _, status) = tondo(&dir, &["test", "--fuzz", "--fuzz-time", "60", "--jobs", "2"]);
+    assert_eq!(status, 1, "{stdout}");
+    assert!(stdout.contains("fuzz `version` failed with its input in fuzz/unit/app/versions/version/"), "{stdout}");
+    assert!(stdout.contains(":\n  51017\n"), "{stdout}");
+    assert!(stdout.contains(":\n  \"deploy-now\"\n"), "{stdout}");
+}
+
 /// A project in the target directory, a repository of its own, with the
 /// given test file.
 fn project(name: &str, tests: &str) -> PathBuf {

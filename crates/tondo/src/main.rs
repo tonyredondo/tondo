@@ -90,6 +90,7 @@ fn main() -> ExitCode {
                     diagnostics_json: false,
                     list: false,
                     coverage: false,
+                    fuzz: false,
                 };
                 let built = build_tests(path, &build)?;
                 Ok(built.map(|(executable, tree)| (executable, tree.nodes.into_iter().map(|n| n.id).collect())))
@@ -606,7 +607,8 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     options.launcher = target.map(Target::launcher).transpose()?.flatten();
     let (list, coverage) = (options.list, options.counting() || options.fuzz.is_some());
-    let build = TestBuild { library, debug, statically, target, diagnostics_json, list, coverage };
+    let fuzz = options.fuzz.is_some();
+    let build = TestBuild { library, debug, statically, target, diagnostics_json, list, coverage, fuzz };
     if let Some(reference) = against {
         options.baseline = Some(runner::Baseline::Revision(revision_tests(&path, &reference, &build)?));
     }
@@ -781,13 +783,17 @@ struct TestBuild {
     list: bool,
     /// Counting what runs, for coverage (testing 10.3).
     coverage: bool,
+    /// For the search of `--fuzz`, which counts dependencies too and takes
+    /// values from the code (10.6).
+    fuzz: bool,
 }
 
 /// The executable of a project's tests and their tree, built unless what
 /// it reads is unchanged; none, after its diagnostics, when it does not
 /// compile. A list gets the tree without the executable.
 fn build_tests(path: &Path, build: &TestBuild) -> Result<Option<(PathBuf, tondo::runner::Tree)>, String> {
-    let dir = tondo::runner::build_dir(path, build.statically, build.debug, build.coverage, build.target)?;
+    let (coverage, fuzz) = (build.coverage, build.fuzz);
+    let dir = tondo::runner::build_dir(path, build.statically, build.debug, coverage, fuzz, build.target)?;
     let (executable, tree_file) = (dir.join("tests"), dir.join("tree"));
     if let Some(tree) = tondo::runner::Tree::load(&tree_file).filter(|_| build.list || executable.is_file()) {
         return Ok(Some((executable, tree)));
@@ -810,8 +816,14 @@ fn build_tests(path: &Path, build: &TestBuild) -> Result<Option<(PathBuf, tondo:
     let partial = executable.with_extension(format!("partial-{}", std::process::id()));
     let object = match build.coverage {
         true => {
-            let (object, counted) = driver::object_counting(&analysis, build.debug, build.target)?;
+            let (object, counted) = driver::object_counting(&analysis, build.debug, build.target, build.fuzz)?;
             tondo::runner::save_counted(&dir.join("counted"), &counted)?;
+            // What the search takes values from: the counted code's literals.
+            if build.fuzz {
+                let (texts, ints) = driver::literals(&analysis);
+                let dictionary = serde_json::json!({ "texts": texts, "ints": ints }).to_string();
+                std::fs::write(dir.join("dictionary"), dictionary).map_err(|e| e.to_string())?;
+            }
             object
         }
         false => driver::object(&analysis, build.debug, build.target)?,

@@ -32,6 +32,9 @@ pub struct SourceFile {
     /// The project's own code, which coverage counts (testing 10.3): not
     /// its tests, dependencies or the standard library.
     pub own: bool,
+    /// A dependency's code, which the search of `--fuzz` counts too
+    /// (testing 10.6).
+    pub dependency: bool,
     line_starts: Vec<u32>,
 }
 
@@ -76,8 +79,9 @@ impl SourceMap {
         let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into());
         let module = path.file_stem().map_or_else(String::new, |s| s.to_string_lossy().into());
         let logical = name.clone();
-        let own = false;
-        self.files.push(SourceFile { name, path: path.to_owned(), logical, module, text, base, own, line_starts });
+        let (own, dependency) = (false, false);
+        let path = path.to_owned();
+        self.files.push(SourceFile { name, path, logical, module, text, base, own, dependency, line_starts });
         self.files.len() - 1
     }
 
@@ -90,6 +94,16 @@ impl SourceMap {
     /// Marks a file as the project's own code.
     pub fn set_own(&mut self, index: usize) {
         self.files[index].own = true;
+    }
+
+    /// Every file.
+    pub fn files(&self) -> impl Iterator<Item = &SourceFile> {
+        self.files.iter()
+    }
+
+    /// Marks a file as a dependency's code.
+    pub fn set_dependency(&mut self, index: usize) {
+        self.files[index].dependency = true;
     }
 
     pub fn len(&self) -> usize {

@@ -207,6 +207,9 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
                     relative.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
                 if package_index > 0 {
                     logical.insert(0, package.name.clone());
+                    if !package.tests_only {
+                        sources.set_dependency(first + index);
+                    }
                 } else {
                     sources.set_own(first + index);
                 }
@@ -589,19 +592,47 @@ pub fn object(analysis: &Analysis, debug: bool, target: Option<Target>) -> Resul
     compile(analysis, debug, target, None)
 }
 
+/// The literals of the code the search of `--fuzz` counts, the project's
+/// and its dependencies': the texts without interpolation and the
+/// integers, each once, which mutations take values from (testing 10.6).
+pub fn literals(analysis: &Analysis) -> (Vec<String>, Vec<i64>) {
+    let (mut texts, mut ints) = (std::collections::BTreeSet::new(), std::collections::BTreeSet::new());
+    for file in analysis.sources.files().filter(|f| f.own || f.dependency) {
+        for token in crate::lexer::lex(file, None, &mut Diagnostics::default()) {
+            match token.tok {
+                crate::lexer::Tok::Str(parts) => {
+                    if let [crate::lexer::StrPart::Text(text)] = &parts[..]
+                        && (1..=64).contains(&text.len())
+                    {
+                        texts.insert(text.clone());
+                    }
+                }
+                crate::lexer::Tok::Int { value, .. } if value > 1 => {
+                    ints.insert(value as i64);
+                }
+                _ => {}
+            }
+        }
+    }
+    (texts.into_iter().take(4096).collect(), ints.into_iter().take(4096).collect())
+}
+
 /// The object of a test build that counts what runs of the project's code
-/// (testing 10.3), with what each of its counters counts.
+/// (testing 10.3), with what each of its counters counts; for the search
+/// of `--fuzz`, of its dependencies' too, telling the runtime what that
+/// code compares (10.6).
 pub fn object_counting(
     analysis: &Analysis,
     debug: bool,
     target: Option<Target>,
+    fuzz: bool,
 ) -> Result<(Vec<u8>, Vec<codegen::Counted>), String> {
     let program = analysis.program.as_ref().expect("object_counting() requires a checked program");
     let bodies = lower::lower(program, false);
     let mut counted = Vec::new();
     let triple = target.map(Target::triple);
     let options =
-        codegen::Options { meta: analysis.meta, debug, target: triple, live: None, coverage: Some(&mut counted) };
+        codegen::Options { meta: analysis.meta, debug, target: triple, live: None, coverage: Some(&mut counted), fuzz };
     let object = codegen::compile(program, &bodies, &analysis.sources, options)?;
     Ok((object, counted))
 }
@@ -625,7 +656,7 @@ pub fn compile(
         crate::unroll::unroll(&mut bodies, &program.types);
         crate::prove::prove(&mut bodies, &program.types);
     }
-    let options = codegen::Options { meta: analysis.meta, debug, target: triple, live, coverage: None };
+    let options = codegen::Options { meta: analysis.meta, debug, target: triple, live, coverage: None, fuzz: false };
     codegen::compile(program, &bodies, &analysis.sources, options)
 }
 
