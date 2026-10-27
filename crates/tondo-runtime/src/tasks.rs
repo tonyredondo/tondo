@@ -252,6 +252,8 @@ pub(crate) struct Task {
     sp: *mut u8,
     /// Its number in a trace, from 1 for the main task.
     id: u64,
+    /// Where the set of tasks alive keeps it.
+    slot: usize,
     /// None before a spawned task first runs: one started and not run yet
     /// holds no stack, as when a loop starts thousands at once.
     stack: Option<Stack>,
@@ -1367,7 +1369,7 @@ fn run(task: *mut Task) {
             if let Some(stack) = (*task).stack.take() {
                 recycle(stack);
             }
-            unregister(task as usize);
+            unregister(task);
             // A spawned task lives in its join's block.
             if join.is_null() {
                 drop(Box::from_raw(task));
@@ -1865,35 +1867,27 @@ extern "C" fn trampoline() -> ! {
 /// runner counts them before and after a test.
 /// The tasks alive, in shards that a task's address picks, so that the
 /// threads that start and end tasks seldom wait for each other.
-static TASKS: [Mutex<Tasks>; SHARDS] = [const { Mutex::new(Tasks::with_hasher(Shuffle)) }; SHARDS];
+static TASKS: [Mutex<Tasks>; SHARDS] = [const { Mutex::new(Tasks::new()) }; SHARDS];
 const SHARDS: usize = 16;
 
-type Tasks = std::collections::HashSet<usize, Shuffle>;
-
-/// A task's address, its bits mixed: what a set of tasks hashes it by.
-#[derive(Clone, Copy, Default)]
-struct Shuffle;
-
-impl std::hash::BuildHasher for Shuffle {
-    type Hasher = Shuffled;
-    fn build_hasher(&self) -> Shuffled {
-        Shuffled(0)
-    }
+/// A shard's tasks, each in a slot it knows, so that a task comes and goes
+/// without a search; a slot let go of, 0, serves the next.
+struct Tasks {
+    slots: Vec<usize>,
+    free: Vec<usize>,
 }
 
-struct Shuffled(u64);
+impl Tasks {
+    const fn new() -> Tasks {
+        Tasks { slots: Vec::new(), free: Vec::new() }
+    }
 
-impl std::hash::Hasher for Shuffled {
-    fn finish(&self) -> u64 {
-        self.0
+    fn iter(&self) -> impl Iterator<Item = &usize> {
+        self.slots.iter().filter(|&&task| task != 0)
     }
-    fn write(&mut self, bytes: &[u8]) {
-        for &byte in bytes {
-            self.0 = (self.0 ^ byte as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
-        }
-    }
-    fn write_usize(&mut self, value: usize) {
-        self.0 = (value as u64 >> 6).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+
+    fn len(&self) -> usize {
+        self.slots.len() - self.free.len()
     }
 }
 
@@ -1901,12 +1895,26 @@ fn shard(task: usize) -> std::sync::MutexGuard<'static, Tasks> {
     TASKS[(task >> 6) % SHARDS].lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn register(task: usize) {
-    shard(task).insert(task);
+fn register(task: *mut Task) {
+    let mut shard = shard(task as usize);
+    let slot = match shard.free.pop() {
+        Some(slot) => {
+            shard.slots[slot] = task as usize;
+            slot
+        }
+        None => {
+            shard.slots.push(task as usize);
+            shard.slots.len() - 1
+        }
+    };
+    unsafe { (*task).slot = slot };
 }
 
-fn unregister(task: usize) {
-    shard(task).remove(&task);
+fn unregister(task: *mut Task) {
+    let mut shard = shard(task as usize);
+    let slot = unsafe { (*task).slot };
+    shard.slots[slot] = 0;
+    shard.free.push(slot);
 }
 
 /// Every task alive, with every shard locked, in order: while they are, no
@@ -2083,6 +2091,7 @@ fn new_task(
     let task = Task {
         sp,
         id: IDS.fetch_add(1, Ordering::Relaxed),
+        slot: 0,
         stack,
         body,
         code,
@@ -2110,7 +2119,7 @@ fn new_task(
             place
         },
     };
-    register(task as usize);
+    register(task);
     super::clock::woke(task);
     task
 }
