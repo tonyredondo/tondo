@@ -2559,3 +2559,19 @@ inlining and before `prove`, which then sees each copy's index under the
 length that bounds the loop, and only where `prove` does. A closure
 applied a thousand times took 36% less, and summing integers by index
 10%. Cranelift does not unroll, nor does Go's compiler.
+
+## 2026-10-27 — What inlining hands around is not made twice
+
+Inlining leaves a call's result in the callee's result local, copied into
+the caller's, and a test of what the caller got right after the callee
+decided it: `math.sqrt(x).unwrapOr(0.0)` made a `Result` in memory,
+copied it twice, and read its tag back. After inlining, a copy of a value
+read nowhere after takes the value directly (`elide`), and a short block
+that ends in a test is copied into each way into it (`thread`), where
+what the way knows folds the test: the variant an enum local was given,
+a constant, or the local a value was copied from; a known variant's
+payload is read from where it came from, and a value read by nothing is
+not made. A binding that borrows, and what it borrows, are never known
+and always written. Copies keep the scope of inlining of their block, so
+that traces still name each function, and are merged into the block
+before them only within one scope.

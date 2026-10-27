@@ -1,0 +1,58 @@
+import std.console
+
+// A test of what a way into it already decided, as inlining leaves it:
+// the variant a function returned, `a and b` whose short way is false,
+// and the payload of a known variant read from where it came from.
+
+type Point = { x: Int, y: Int }
+
+fn half(n: Int): Int ! String {
+    if n % 2 != 0 {
+        fail "odd {n}"
+    }
+    n / 2
+}
+
+fn found(points: Array[Point], x: Int): Point? {
+    for point in points {
+        if point.x == x {
+            return some(point)
+        }
+    }
+    none
+}
+
+fn main() {
+    var total = 0
+    var odd = ""
+    for n in 0..7 {
+        total += half(n).unwrapOr(100)
+        match half(n) {
+            ok(value) => total += value
+            err(message) => odd = message
+        }
+    }
+    console.println("{total} {odd}")
+    let points = [Point { x: 1, y: 10 }, Point { x: 2, y: 20 }]
+    var ys: Array[Int] = []
+    for x in 0..4 {
+        match found(points, x) {
+            some(point) => ys.push(point.y)
+            none => ys.push(-1)
+        }
+    }
+    console.println("{ys}")
+    var i = 0
+    var steps = 0
+    var values = [3, 1, 4, 1, 5]
+    for i < values.length() and values[i] != 4 {
+        values[i] *= 2
+        steps += 1
+        i += 1
+    }
+    console.println("{steps} {values}")
+}
+
+// expect-stdout: 312 odd 5
+// expect-stdout: [-1, 10, 20, -1]
+// expect-stdout: 2 [6, 2, 4, 1, 5]

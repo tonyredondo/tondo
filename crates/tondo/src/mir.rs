@@ -222,7 +222,7 @@ pub enum Statement {
     OsrLoad(u32),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Operand {
     Copy(Place),
     Const(Const),
@@ -234,7 +234,7 @@ impl Operand {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Const {
     Int(i128, Ty),
     /// The bits of an `f64`; `Float32` constants are exactly representable.
@@ -453,7 +453,7 @@ fn place_uses(place: &Place, used: &mut Vec<Local>) {
     }
 }
 
-fn operand_uses(operand: &Operand, used: &mut Vec<Local>) {
+pub(crate) fn operand_uses(operand: &Operand, used: &mut Vec<Local>) {
     if let Operand::Copy(place) = operand {
         place_uses(place, used);
     }

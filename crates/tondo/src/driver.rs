@@ -620,6 +620,7 @@ pub fn compile(
     if !debug && !analysis.meta {
         crate::inline::inline(&mut bodies);
         crate::elide::elide(&mut bodies, &program.types);
+        crate::thread::thread(&mut bodies, &program.types);
         crate::unroll::unroll(&mut bodies, &program.types);
         crate::prove::prove(&mut bodies, &program.types);
     }

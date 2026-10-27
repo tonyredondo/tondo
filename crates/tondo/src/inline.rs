@@ -523,7 +523,7 @@ fn visit_bounds(bounds: &mut [Option<Operand>; 3], f: &mut impl FnMut(&mut Place
     bounds.iter_mut().flatten().for_each(|operand| visit_operand(operand, f));
 }
 
-fn visit_rvalue(rvalue: &mut Rvalue, f: &mut impl FnMut(&mut Place)) {
+pub(crate) fn visit_rvalue(rvalue: &mut Rvalue, f: &mut impl FnMut(&mut Place)) {
     match rvalue {
         Rvalue::Use(o)
         | Rvalue::Unary(_, o)
