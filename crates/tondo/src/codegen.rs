@@ -348,7 +348,7 @@ impl Rt {
             Rt::ConsoleStream => ("tondo_rt_console_stream", &[I64], &[I64]),
             Rt::ConsoleSet => ("tondo_rt_console_set", &[I64, I64], &[]),
             Rt::Panic => ("tondo_rt_panic", &[I32, I64, I64], &[]),
-            Rt::PanicValues => ("tondo_rt_panic_values", &[I32, I32, I64, I64, I64, I64], &[]),
+            Rt::PanicValues => ("tondo_rt_panic_values", &[I32, I32, I64, I64, I64], &[]),
             Rt::Trace => ("tondo_rt_trace", &[I64], &[]),
             Rt::DebugTable => ("tondo_rt_debug_table", &[I64], &[]),
             Rt::DebugLine => ("tondo_rt_debug_line", &[I64, I64, I64], &[I8]),
@@ -7175,7 +7175,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let outer = self.e.fb.srcloc();
         let site = self.site(span.start, None);
         self.e.fb.set_srcloc(site);
-        self.e.call_rt(Rt::PanicValues, &[code, detail, a, b, name, location]);
+        let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 3);
+        let slot = self.e.fb.create_sized_stack_slot(data);
+        self.e.fb.ins().stack_store(types::I64, a, slot, 0);
+        self.e.fb.ins().stack_store(types::I64, b, slot, 8);
+        let values = self.e.fb.ins().stack_addr(POINTER, slot, 0);
+        self.e.call_rt(Rt::PanicValues, &[code, detail, values, name, location]);
         self.e.fb.ins().trap(TrapCode::user(1).unwrap());
         self.e.fb.set_srcloc(outer);
         self.e.fb.switch_to_block(next);

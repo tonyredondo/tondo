@@ -2327,15 +2327,17 @@ fn valid_indices(last: usize, len: usize) -> String {
 /// and the width of the left one in bits below; `ty` names its type.
 /// Operations: `+ - * / %`, negation, `<< >>` from 0; for `P0001`, 0
 /// indexes an array, 1 a C array and 2 a deque.
+/// The values come in memory, `[a, b]`: as arguments, they would ask the
+/// code that checks to keep them in the registers of a call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_panic_values(
     code: u32,
     detail: u32,
-    a: i64,
-    b: i64,
+    values: *const [i64; 2],
     ty: *const Str,
     location: *const Str,
 ) -> ! {
+    let [a, b] = unsafe { *values };
     let (bits, op) = (detail & 0xff, detail >> 16);
     let show = |value: i64, signed: bool| {
         let unsigned = value as u64 & (u64::MAX >> (64 - bits.clamp(1, 64)));

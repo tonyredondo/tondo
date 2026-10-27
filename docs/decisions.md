@@ -2536,5 +2536,7 @@ assignment, a mutation, a loan or `xs` passed whole to a call, which may
 borrow it, keeps the check, as do live builds, whose frames may move to
 code that reads them differently. The proof is made on the MIR of the
 loop, without a pass of its own, and is the one Go's compiler makes for
-the same loop; summing 10,000 integers this way took 4.1 µs and takes
-2.5, where Go takes 2.2.
+the same loop: summing 10,000 integers this way went from 6.2 to 4.1 µs,
+and to 2.5 once a panic's values went to the runtime in memory rather
+than in the registers of a call, which the loop's own values had been
+moved around for.
