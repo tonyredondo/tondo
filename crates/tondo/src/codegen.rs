@@ -7389,6 +7389,15 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         }
         if matches!(op, BinOp::Eq | BinOp::Ne) {
             let (a, b) = (self.operand(left), self.operand(right));
+            // Integers, characters and booleans differ by one comparison,
+            // which a branch on it takes as is.
+            let types = self.e.cg.types();
+            if op == BinOp::Ne
+                && let (Val::Scalar(a), Val::Scalar(b)) = (a, b)
+                && matches!(types.kind(types.repr(ty)), TyKind::Int(_) | TyKind::Char | TyKind::Bool)
+            {
+                return self.e.fb.ins().icmp(IntCC::NotEqual, a, b);
+            }
             let equal = self.e.equal(ty, a, b);
             return if op == BinOp::Eq { equal } else { self.e.fb.ins().bxor_imm_u(equal, 1) };
         }
