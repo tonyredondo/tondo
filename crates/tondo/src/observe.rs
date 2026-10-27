@@ -495,13 +495,14 @@ impl Recording {
                 Some("stop") if event[4] == "waits" && !labels.contains_key(&task) => &event[5],
                 _ => continue,
             };
-            let outermost = stack
-                .as_array()
-                .into_iter()
-                .flatten()
-                .rev()
-                .filter_map(Value::as_str)
-                .find_map(|address| self.frames.get(address).and_then(|frame| frame["function"].as_str()));
+            // At each address the outermost function, the one its code was
+            // inlined in.
+            let outermost =
+                stack.as_array().into_iter().flatten().rev().filter_map(Value::as_str).find_map(|address| {
+                    let frame = self.frames.get(address)?;
+                    let calls = frame["inlined"].as_array().and_then(|calls| calls.last());
+                    calls.and_then(|call| call["function"].as_str()).or_else(|| frame["function"].as_str())
+                });
             if let Some(function) = outermost {
                 labels.insert(task, function.strip_prefix("spawn ").unwrap_or(function).to_string());
             }
