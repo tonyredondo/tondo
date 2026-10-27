@@ -511,6 +511,11 @@ fn steal() -> Result<(*mut Task, bool), bool> {
     Err(young)
 }
 
+/// Whether tasks wait in a worker's own queue.
+fn waiting_somewhere() -> bool {
+    nexts().any(|next| next.count.load(Ordering::SeqCst) > 0)
+}
+
 /// The first of the tasks this worker's tasks started.
 fn own_started() -> Option<*mut Task> {
     let own = OWN_NEXT.with(Cell::get)?;
@@ -627,38 +632,39 @@ fn enqueue(task: *mut Task) {
         tasks.0.push_back(task);
         let first = tasks.0.len() == 1;
         drop(tasks);
-        own.count.fetch_add(1, Ordering::Relaxed);
-        // The first that waits wakes a worker, which takes some once they
-        // waited for a while; the next wait with it.
         if first {
             own.waiting.store(nanos(), Ordering::Relaxed);
-            wake_idle();
         }
+        // Counted before the idle workers are read: a worker that goes to
+        // sleep counts itself idle before it reads these (`work`), so one of
+        // the two sees the other.
+        own.count.fetch_add(1, Ordering::SeqCst);
+        wake_idle();
         return;
     }
     let mut queue = queue();
     queue.runnable.push_back(task);
-    if LOOKS_NEXT.with(|next| next.replace(false)) || SEEKING.load(Ordering::Relaxed) {
+    if LOOKS_NEXT.with(|next| next.replace(false)) || SEEKING.load(Ordering::SeqCst) {
         return;
     }
     // One worker woken at a time, not one for each task: the one woken
     // wakes the next if it finds more.
     if queue.idle > 0 {
         queue.waking = true;
-        SEEKING.store(true, Ordering::Relaxed);
+        SEEKING.store(true, Ordering::SeqCst);
     }
     wake_one(queue);
 }
 
 /// Wakes a worker that sleeps to look for tasks, unless one looks already.
 fn wake_idle() {
-    if IDLE.load(Ordering::Relaxed) == 0 || SEEKING.load(Ordering::Relaxed) {
+    if IDLE.load(Ordering::SeqCst) == 0 || SEEKING.load(Ordering::SeqCst) {
         return;
     }
     let mut queue = queue();
-    if queue.idle > 0 && !SEEKING.load(Ordering::Relaxed) {
+    if queue.idle > 0 && !SEEKING.load(Ordering::SeqCst) {
         queue.waking = true;
-        SEEKING.store(true, Ordering::Relaxed);
+        SEEKING.store(true, Ordering::SeqCst);
         drop(queue);
         READY.notify_one();
     }
@@ -1200,7 +1206,7 @@ fn work(main: bool) -> i32 {
                 }
                 if !main && queue.surplus > 0 {
                     if seeker {
-                        SEEKING.store(false, Ordering::Relaxed);
+                        SEEKING.store(false, Ordering::SeqCst);
                     }
                     queue.surplus -= 1;
                     queue.workers -= 1;
@@ -1267,12 +1273,27 @@ fn work(main: bool) -> i32 {
                 let polling = claim(&mut queue);
                 if polling.is_none() {
                     queue.idle += 1;
-                    IDLE.fetch_add(1, Ordering::Relaxed);
+                    IDLE.fetch_add(1, Ordering::SeqCst);
                 }
                 let mut next = queue.timers.peek().map(|t| t.at);
                 // A worker that looks for tasks looks again in a moment at
                 // those that wait for less, and goes on looking.
                 waited = (young && woken) || (stealing && seeker);
+                if !waited {
+                    // Before it sleeps, one that looked for tasks stops, and
+                    // then, counted idle, looks at the workers' queues once
+                    // more: tasks started meanwhile, or too young to take,
+                    // whose worker may not come back to them soon, as one
+                    // that waits in a call of C. Unless another worker looks
+                    // for them, this one does again in a moment.
+                    if seeker {
+                        seeker = false;
+                        SEEKING.store(false, Ordering::SeqCst);
+                    }
+                    if waiting_somewhere() && !SEEKING.swap(true, Ordering::SeqCst) {
+                        (seeker, waited) = (true, true);
+                    }
+                }
                 if waited {
                     let soon = Instant::now() + NEXT_WAIT;
                     next = Some(next.map_or(soon, |at| at.min(soon)));
@@ -1285,10 +1306,6 @@ fn work(main: bool) -> i32 {
                     // Look again later: the threads of C may end.
                     Stalled::MaybeC => next = Some(Instant::now() + RECHECK),
                     Stalled::No => {}
-                }
-                if seeker && !waited {
-                    seeker = false;
-                    SEEKING.store(false, Ordering::Relaxed);
                 }
                 if let Some((poller, polled)) = polling {
                     drop(queue);
@@ -1304,7 +1321,7 @@ fn work(main: bool) -> i32 {
                     None => READY.wait(queue).unwrap_or_else(|e| e.into_inner()),
                 };
                 queue.idle -= 1;
-                IDLE.fetch_sub(1, Ordering::Relaxed);
+                IDLE.fetch_sub(1, Ordering::SeqCst);
                 // Woken for a task, or after waiting a moment for one. The
                 // first to look after a wake looks for what it was for.
                 woken = queue.waking && !woken;
@@ -1312,10 +1329,12 @@ fn work(main: bool) -> i32 {
                 looked = false;
             }
         };
-        // Found: the next worker looks, if more wait.
+        // Found: the next worker looks, if more wait anywhere.
+        let mut more = more;
         if seeker {
             seeker = false;
-            SEEKING.store(false, Ordering::Relaxed);
+            SEEKING.store(false, Ordering::SeqCst);
+            more = more || waiting_somewhere() || !queue().runnable.is_empty();
         }
         if more {
             wake_idle();
