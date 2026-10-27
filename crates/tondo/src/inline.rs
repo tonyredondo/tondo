@@ -8,7 +8,9 @@
 //! The MIR's ownership is explicit, so the copied code keeps it: a
 //! parameter is borrowed, and the result is owned by where it goes.
 //! Each block of inlined code knows the call it came from, so that a stack
-//! trace still shows the inlined function's frame.
+//! trace still shows the inlined function's frame. A call that stays, of
+//! a larger function or of the caller itself, makes the function's first
+//! test before it when that test may return at once (`Guard`).
 
 use crate::hir::Callee;
 use crate::mir::*;
@@ -20,12 +22,27 @@ use std::collections::{HashMap, HashSet};
 const SMALL: usize = 30;
 /// How many times calls in code just inlined are inlined in turn.
 const ROUNDS: usize = 3;
+/// The most statements a function's guard may have, its test and its way
+/// out together, to be copied into its callers.
+const GUARD: usize = 4;
 /// The most statements a function may have to be copied for a `fn` value
 /// it is passed, and how many such copies a program may have.
 const SPECIALIZED: usize = 400;
 const COPIES: usize = 256;
 
 pub fn inline(bodies: &mut Vec<Body>) {
+    inline_small(bodies);
+    let guards: Vec<Option<Guard>> = bodies.iter().map(Guard::of).collect();
+    if guards.iter().any(Option::is_some) {
+        crate::parallel::each_mut(bodies, |body| {
+            if let Some(guarded) = guard_calls(body, &guards) {
+                *body = guarded;
+            }
+        });
+    }
+}
+
+fn inline_small(bodies: &mut Vec<Body>) {
     let mut copies = HashMap::new();
     for _ in 0..ROUNDS {
         specialize(bodies, &mut copies);
@@ -307,7 +324,7 @@ fn inline_into(caller: &Body, index: usize, small: &[Option<Body>]) -> Option<Bo
             let Statement::Assign(destination, rvalue, span) = statement else { unreachable!() };
             let Rvalue::Call(_, arguments) = &**rvalue else { unreachable!() };
             let entry = BlockId(blocks.len() as u32 + 1);
-            let rename = bind(&mut body, callee, arguments, &mut current, *span);
+            let rename = bind(&mut body, callee, arguments, &mut current, *span, &|_| true);
             blocks.push(BlockData { stmts: std::mem::take(&mut current), terminator: Terminator::Goto(entry) });
             scopes.push(scope);
             // The call, and the calls inlined into the callee, inside it.
@@ -372,6 +389,182 @@ fn inline_into(caller: &Body, index: usize, small: &[Option<Body>]) -> Option<Bo
     Some(body)
 }
 
+/// Where a guard's test goes for the rest of the function.
+const REST: BlockId = BlockId(u32::MAX);
+
+/// A function's guard, when it starts with a test of its parameters that
+/// may return at once, as `if n < 2 { return n }`: its entry, whose test
+/// goes to `REST` for the rest, and the blocks from the test to that
+/// return, which only compute; and the locals they name. A caller makes
+/// the test itself, as GCC splits a function's head from its body, and
+/// calls the function only for the rest: a call less where the test
+/// returns, as for half the calls of a recursion, and a test more where
+/// it does not.
+struct Guard {
+    body: Body,
+    named: HashSet<Local>,
+}
+
+impl Guard {
+    fn of(body: &Body) -> Option<Guard> {
+        if body.osr.is_some() || !body.points.is_empty() {
+            return None;
+        }
+        // The test, and the blocks that only compute on the way to it.
+        let (mut test, mut before) = (Vec::new(), Vec::new());
+        let mut at = BlockId(0);
+        let (condition, then, otherwise) = loop {
+            let block = body.blocks.get(at.0 as usize)?;
+            if before.contains(&at) || !block.stmts.iter().all(crate::thread::pure) {
+                return None;
+            }
+            before.push(at);
+            test.extend(block.stmts.iter().cloned());
+            match &block.terminator {
+                Terminator::Goto(next) => at = *next,
+                Terminator::Branch(condition, then, otherwise) => break (condition, then, otherwise),
+                _ => return None,
+            }
+        };
+        // The blocks from a way of the test to a return, if they only
+        // compute.
+        let way_out = |start: BlockId| {
+            let mut path: Vec<BlockId> = Vec::new();
+            let mut at = start;
+            loop {
+                let block = &body.blocks[at.0 as usize];
+                if before.contains(&at) || path.contains(&at) || !block.stmts.iter().all(crate::thread::pure) {
+                    return None;
+                }
+                path.push(at);
+                match block.terminator {
+                    Terminator::Goto(next) => at = next,
+                    Terminator::Return(_) => return Some(path),
+                    _ => return None,
+                }
+            }
+        };
+        let path = way_out(*then).or_else(|| way_out(*otherwise))?;
+        if test.len() + path.iter().map(|at| body.blocks[at.0 as usize].stmts.len()).sum::<usize>() > GUARD {
+            return None;
+        }
+        let new = |target: BlockId| match path.iter().position(|&at| at == target) {
+            Some(index) => BlockId(index as u32 + 1),
+            None => REST,
+        };
+        let mut blocks = vec![BlockData {
+            stmts: test,
+            terminator: Terminator::Branch(condition.clone(), new(*then), new(*otherwise)),
+        }];
+        for at in &path {
+            let mut block = body.blocks[at.0 as usize].clone();
+            if let Terminator::Goto(next) = block.terminator {
+                block.terminator = Terminator::Goto(new(next));
+            }
+            blocks.push(block);
+        }
+        let (mut named, mut defined) = (Vec::new(), Vec::new());
+        for block in &blocks {
+            block.stmts.iter().for_each(|statement| statement_locals(statement, &mut named, &mut defined));
+            terminator_uses(&block.terminator, &mut named);
+        }
+        named.extend(defined);
+        Some(Guard { body: Body { blocks, ..body.clone() }, named: named.into_iter().collect() })
+    }
+}
+
+/// The caller with the guards of the functions it calls before the calls,
+/// unless it calls none that has one.
+fn guard_calls(caller: &Body, guards: &[Option<Guard>]) -> Option<Body> {
+    let guard_of = |statement: &Statement| match statement {
+        Statement::Assign(_, rvalue, _) => match &**rvalue {
+            Rvalue::Call(Callee::Fn(id), _) => guards[id.0 as usize].as_ref(),
+            _ => None,
+        },
+        _ => None,
+    };
+    if !caller.blocks.iter().flat_map(|block| &block.stmts).any(|statement| guard_of(statement).is_some()) {
+        return None;
+    }
+    let mut body = caller.clone();
+    let (mut blocks, mut scopes): (Vec<BlockData>, Vec<Option<u32>>) = (Vec::new(), Vec::new());
+    let mut starts = Vec::with_capacity(caller.blocks.len());
+    let mut ends = Vec::new();
+    for (index, block) in caller.blocks.iter().enumerate() {
+        starts.push(BlockId(blocks.len() as u32));
+        let scope = caller.scopes.get(index).copied().flatten();
+        let mut current = Vec::new();
+        for statement in &block.stmts {
+            let Some(guard) = guard_of(statement) else {
+                current.push(statement.clone());
+                continue;
+            };
+            let Statement::Assign(destination, rvalue, span) = statement else { unreachable!() };
+            let Rvalue::Call(_, arguments) = &**rvalue else { unreachable!() };
+            let rename = bind(&mut body, &guard.body, arguments, &mut current, *span, &|local| {
+                guard.named.contains(&local)
+            });
+            // The test, then the way out, then the call, then the rest of
+            // the caller's block.
+            let test = &guard.body.blocks[0];
+            current.extend(test.stmts.iter().map(|statement| {
+                let mut statement = statement.clone();
+                rename.statement(&mut statement);
+                statement
+            }));
+            let first = blocks.len() as u32;
+            let call = BlockId(first + guard.body.blocks.len() as u32);
+            let after = BlockId(call.0 + 1);
+            let at = |target: BlockId| if target == REST { call } else { BlockId(first + target.0) };
+            let Terminator::Branch(mut condition, then, otherwise) = test.terminator.clone() else { unreachable!() };
+            rename.operand(&mut condition);
+            blocks.push(BlockData {
+                stmts: std::mem::take(&mut current),
+                terminator: Terminator::Branch(condition, at(then), at(otherwise)),
+            });
+            for out in &guard.body.blocks[1..] {
+                let mut copied = out.clone();
+                for statement in &mut copied.stmts {
+                    rename.statement(statement);
+                }
+                copied.terminator = match copied.terminator {
+                    Terminator::Return(mut value) => {
+                        rename.operand(&mut value);
+                        if !matches!(value, Operand::Const(Const::Unit)) {
+                            let result = Box::new(Rvalue::Use(value));
+                            copied.stmts.push(Statement::Assign(destination.clone(), result, Span::default()));
+                        }
+                        Terminator::Goto(after)
+                    }
+                    Terminator::Goto(target) => Terminator::Goto(at(target)),
+                    _ => unreachable!(),
+                };
+                blocks.push(copied);
+            }
+            blocks.push(BlockData { stmts: vec![statement.clone()], terminator: Terminator::Goto(after) });
+            scopes.resize(blocks.len(), scope);
+        }
+        ends.push(blocks.len());
+        blocks.push(BlockData { stmts: current, terminator: block.terminator.clone() });
+        scopes.push(scope);
+    }
+    for end in ends {
+        let at = |target: BlockId| starts[target.0 as usize];
+        blocks[end].terminator = match &blocks[end].terminator {
+            Terminator::Goto(target) => Terminator::Goto(at(*target)),
+            Terminator::Branch(condition, then, otherwise) => {
+                Terminator::Branch(condition.clone(), at(*then), at(*otherwise))
+            }
+            other => other.clone(),
+        };
+    }
+    body.blocks = blocks;
+    body.scopes = scopes;
+    body.starts.clear();
+    body.ways.clear();
+    Some(body)
+}
+
 /// The block without the check for cancellation after its last call, when
 /// that call is inlined and the code inlined cannot wait: only a wait
 /// lets a task be cancelled, and none is left in the call to check after.
@@ -408,7 +601,14 @@ struct Rename {
     places: HashMap<Local, Place>,
 }
 
-fn bind(body: &mut Body, callee: &Body, arguments: &[Operand], into: &mut Vec<Statement>, span: Span) -> Rename {
+fn bind(
+    body: &mut Body,
+    callee: &Body,
+    arguments: &[Operand],
+    into: &mut Vec<Statement>,
+    span: Span,
+    keep: &dyn Fn(Local) -> bool,
+) -> Rename {
     let mut rename = Rename { locals: HashMap::new(), places: HashMap::new() };
     let defined = defined(callee);
     for (index, (&param, argument)) in callee.params.iter().zip(arguments).enumerate() {
@@ -424,7 +624,7 @@ fn bind(body: &mut Body, callee: &Body, arguments: &[Operand], into: &mut Vec<St
     }
     for (index, &ty) in callee.locals.iter().enumerate() {
         let local = Local(index as u32);
-        if rename.locals.contains_key(&local) || rename.places.contains_key(&local) {
+        if rename.locals.contains_key(&local) || rename.places.contains_key(&local) || !keep(local) {
             continue;
         }
         rename.locals.insert(local, Local(body.locals.len() as u32));

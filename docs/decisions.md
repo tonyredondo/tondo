@@ -2575,3 +2575,18 @@ not made. A binding that borrows, and what it borrows, are never known
 and always written. Copies keep the scope of inlining of their block, so
 that traces still name each function, and are merged into the block
 before them only within one scope.
+
+## 2026-10-27 — A caller makes its callee's first test
+
+A function that starts with a test of its parameters that may return at
+once, as `if n < 2 { return n }` or a `match` whose first arm makes a
+value, has that test and that way out copied into each caller that still
+calls it after inlining, as GCC splits a function's head from its body:
+the caller calls only when the test does not return. Half the calls of a
+recursion end in its base case, and each paid for a frame, the registers
+it saves and restores, for a comparison; Cranelift does not delay saving
+them past such a test, as LLVM does. The test and its way out hold four
+statements at most, each of which only computes, with no read that may
+panic, so that making the test again in the callee changes nothing. The
+call's arguments are read by both, and the result goes where the call's
+did. `fib(35)` went from 52 to 29 ms, and Go's takes 37.

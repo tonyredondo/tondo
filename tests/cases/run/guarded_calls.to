@@ -1,0 +1,97 @@
+import std.console
+
+// Calls of functions that start with a test that may return at once,
+// which the caller makes itself before it calls: a recursion's base case,
+// a match on an enum, a way out that makes a variant or reads a field, a
+// method on a loan, and a call whose result goes where its argument was.
+
+type Point = {
+    x: Int
+    y: Int
+}
+
+enum Tree {
+    Leaf
+    Node(Int, Tree, Tree)
+}
+
+type Counter = {
+    count: Int
+}
+
+fn fib(n: Int): Int {
+    if n < 2 {
+        return n
+    }
+    fib(n - 1) + fib(n - 2)
+}
+
+fn total(tree: Tree): Int {
+    match tree {
+        Tree.Leaf => 0
+        Tree.Node(value, left, right) => value + total(left) + total(right)
+    }
+}
+
+fn countdown(n: Int): Int? {
+    if n <= 0 {
+        return none
+    }
+    match countdown(n - 1) {
+        some(rest) => some(rest + n)
+        none => some(n)
+    }
+}
+
+fn walk(point: Point, steps: Int): Int {
+    if steps == 0 {
+        return point.y
+    }
+    walk(Point { x: point.x + 1, y: point.y + point.x }, steps - 1)
+}
+
+fn Counter.bump(mut self, times: Int) {
+    if times == 0 {
+        return
+    }
+    self.count += times
+    self.bump(times - 1)
+}
+
+fn halve(n: Int): Int {
+    if n < 4 {
+        return n
+    }
+    console.println("halving {n}")
+    n / 2
+}
+
+fn main() {
+    console.println("fib {fib(20)}")
+    let tree = Tree.Node(
+        1,
+        Tree.Node(2, Tree.Leaf, Tree.Leaf),
+        Tree.Node(3, Tree.Node(4, Tree.Leaf, Tree.Leaf), Tree.Leaf),
+    )
+    console.println("total {total(tree)} {total(Tree.Leaf)}")
+    console.println("countdown {countdown(4)} {countdown(0)}")
+    console.println("walk {walk(Point { x: 1, y: 0 }, 4)}")
+    var counter = Counter { count: 0 }
+    counter.bump(3)
+    console.println("count {counter.count}")
+    var n = 20
+    for _ in 0..4 {
+        n = halve(n)
+    }
+    console.println("n {n}")
+}
+
+// expect-stdout: fib 6765
+// expect-stdout: total 10 0
+// expect-stdout: countdown some(10) none
+// expect-stdout: walk 10
+// expect-stdout: count 6
+// expect-stdout: halving 20
+// expect-stdout: halving 10
+// expect-stdout: halving 5
+// expect-stdout: n 2

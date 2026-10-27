@@ -101,7 +101,7 @@ fn whole(place: &Place) -> Option<Local> {
 /// A statement that only computes a value, which a copy may repeat and an
 /// unused one may drop: not a read of an element by an index it checks,
 /// which may panic.
-fn pure(statement: &Statement) -> bool {
+pub(crate) fn pure(statement: &Statement) -> bool {
     let checked =
         |place: &Place| place.path.iter().any(|projection| matches!(projection, Proj::Index(..) | Proj::Deref));
     let read = |operand: &Operand| matches!(operand, Operand::Copy(place) if checked(place));
