@@ -2491,7 +2491,10 @@ paid twice the instructions Go's do. Four rules of its instruction
 selection make the signed ones one instruction too, on x86-64 and arm64.
 The maintainer chose to keep the patched crate in `vendor/`, which
 `[patch.crates-io]` puts in place, over waiting for Cranelift to take the
-rules: `vendor/README.md` says what changed and how to update it.
+rules: `vendor/README.md` says what changed and how to update it. On
+2026-10-27 a third change made a multiplication by 3, 5, 7 or 9, as a
+remainder by a constant has, a shift and an addition, as Go makes it:
+`i * i % 7` over a million integers went from 849 to 816 µs, Go's 820.
 
 ## 2026-10-26 — A notified task runs next
 

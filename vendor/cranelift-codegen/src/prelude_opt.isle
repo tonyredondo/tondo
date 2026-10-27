@@ -634,8 +634,17 @@
 ;; }
 (decl apply_div_const_magic_s64_finish (Opcode Value i64 Value) Value)
 (rule (apply_div_const_magic_s64_finish (Opcode.Srem) numerator divisor qf)
-      (let ((tt Value (imul $I64 qf (iconst_s $I64 divisor))))
+      (let ((tt Value (times_constant_s64 qf divisor)))
         (isub $I64 numerator tt)))
+
+;; Tondo: `qf * divisor` by 3, 5, 7 or 9 with a shift, as `simplify` turns a
+;; multiplication by them, which it does not see here.
+(decl times_constant_s64 (Value i64) Value)
+(rule 1 (times_constant_s64 x 3) (iadd $I64 x (ishl $I64 x (iconst_s $I64 1))))
+(rule 1 (times_constant_s64 x 5) (iadd $I64 x (ishl $I64 x (iconst_s $I64 2))))
+(rule 1 (times_constant_s64 x 9) (iadd $I64 x (ishl $I64 x (iconst_s $I64 3))))
+(rule 1 (times_constant_s64 x 7) (isub $I64 (ishl $I64 x (iconst_s $I64 3)) x))
+(rule 0 (times_constant_s64 x divisor) (imul $I64 x (iconst_s $I64 divisor)))
 (rule (apply_div_const_magic_s64_finish (Opcode.Sdiv) _numerator _divisor qf)
       qf)
 

@@ -173,6 +173,18 @@
 (rule (simplify (imul ty x (iconst_u _ 2)))
       (iadd ty x x))
 
+;; Tondo: x*3, x*5 and x*9 == x+(x<<1, 2 or 3), one `lea` on x86-64 and one
+;; shifted `add` on arm64; and x*7 == (x<<3)-x. A multiplication waits for
+;; the one unit that multiplies, as a division by a constant's does.
+(rule (simplify (imul ty x (iconst_u _ 3)))
+      (iadd ty x (ishl ty x (iconst ty (imm64 1)))))
+(rule (simplify (imul ty x (iconst_u _ 5)))
+      (iadd ty x (ishl ty x (iconst ty (imm64 2)))))
+(rule (simplify (imul ty x (iconst_u _ 9)))
+      (iadd ty x (ishl ty x (iconst ty (imm64 3)))))
+(rule (simplify (imul ty x (iconst_u _ 7)))
+      (isub ty (ishl ty x (iconst ty (imm64 3))) x))
+
 ;; x*c == x<<log2(c) when c is a power of two.
 ;;
 ;; Note that the type of `iconst` must be the same as the type of `imul`,
