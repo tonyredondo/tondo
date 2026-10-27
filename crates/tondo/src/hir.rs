@@ -1133,6 +1133,7 @@ pub const NATIVES: &[Native] = {
         m(JsonReader, "integer", &[], Int, "tondo_rt_json_integer"),
         m(JsonReader, "text", &[], String, "tondo_rt_json_text"),
         m(JsonReader, "skip", &[Int], Int, "tondo_rt_json_skip"),
+        m(JsonReader, "field", &[Strings, Bool], Int, "tondo_rt_json_field"),
         m(JsonReader, "fail", &[String], Unit, "tondo_rt_json_fail"),
         m(JsonReader, "where", &[Int], String, "tondo_rt_json_where"),
         m(JsonReader, "raw", &[Int], String, "tondo_rt_json_raw"),

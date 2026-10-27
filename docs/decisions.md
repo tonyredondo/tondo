@@ -2593,3 +2593,21 @@ statements at most, each of which only computes, with no read that may
 panic, so that making the test again in the callee changes nothing. The
 call's arguments are read by both, and the result goes where the call's
 did. `fib(35)` went from 52 to 29 ms, and Go's takes 37.
+
+## 2026-10-27 — A source finds a record's keys among its fields
+
+Decoding a JSON object into a record made a string for each key, and an
+event, with its own string, for the first token of each member the record
+has no field for: in a document with ten members and five fields, more
+than half of the time. `Source` has a new method, `nextField(names)`,
+with a default that does what derived decoders did: it gives the index of
+the next member's key among the record's keys, and skips, or rejects,
+the members of none of them, failing at the same position as before.
+JSON's reader compares the key in place and skips an unknown member
+without events; it also reads every string and number into one buffer it
+keeps, and the keys of the objects open into another, rather than a
+string each. A record's derived decoder matches the index, not the key.
+The maintainer chose this over a format-specific decoder: other formats
+keep working through the default. Decoding the benchmark's ten-member
+object went from 3.05 to 1.58 µs, and from 52 to 13 allocations; Go's
+takes 1.28 µs.

@@ -469,6 +469,27 @@ impl serialization.Source for Reader {
         self.rejectUnknown
     }
 
+    fn nextField(self, names: Array[String]): Int? ! JsonError {
+        // The index, or -2 at the end, -3 for a field rejected, -1 for
+        // another error.
+        let found = self.native.field(names, self.rejectUnknown)
+        if found >= 0 {
+            return some(found)
+        }
+        if found == -2 {
+            return none
+        }
+        if found == -3 {
+            fail self.error(ErrorKind.Unknown)
+        }
+        let kind = if self.native.where(0).startsWith("cannot read") {
+            ErrorKind.Io
+        } else {
+            ErrorKind.Syntax
+        }
+        fail self.error(kind)
+    }
+
     fn rawJson(self, first: serialization.Event): String? {
         let json = self.native.raw(bracket(first))
         if json.length() == 0 {

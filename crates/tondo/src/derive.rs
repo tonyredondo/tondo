@@ -560,33 +560,30 @@ impl Generator<'_> {
 
     /// The statements that read the members of a map into `__field_name`
     /// locals, one per field, until its end: named apart from the modules
-    /// the prelude imports as `__name`, as `__text`.
+    /// the prelude imports as `__name`, as `__text`. The source finds each
+    /// key among the fields' and skips the members of none of them.
     fn read_fields(&self, fields: &[ast::FieldDecl], indent: &str) -> String {
         let s = self.alias;
         let mut out = String::new();
-        for field in fields.iter().filter(|f| !ignored(f)) {
+        let read: Vec<&ast::FieldDecl> = fields.iter().filter(|f| !ignored(f)).collect();
+        for field in &read {
             let ty = self.text(&field.ty);
             let local = if ty.ends_with('?') { format!("({ty})?") } else { format!("{ty}?") };
             out.push_str(&format!("{indent}var __field_{}: {local} = none\n", field.name.name));
         }
-        out.push_str(&format!(
-            "{indent}for {{\n{indent}    match input.nextKey()? {{\n{indent}        some(__member) => {{\n"
-        ));
-        out.push_str(&format!(
-            "{indent}            let __memberEvent = input.value()?\n{indent}            match __member {{\n"
-        ));
-        for field in fields.iter().filter(|f| !ignored(f)) {
+        let names: Vec<String> = read.iter().map(|field| format!("{:?}", wire(field))).collect();
+        out.push_str(&format!("{indent}let __fieldNames: Array[String] = [{}]\n", names.join(", ")));
+        out.push_str(&format!("{indent}for {{\n{indent}    match input.nextField(__fieldNames)? {{\n"));
+        for (index, field) in read.iter().enumerate() {
             out.push_str(&format!(
-                "{indent}                {:?} => {{\n{indent}                    __field_{} = some({s}.Decode.decode[{}](input, __memberEvent)?)\n{indent}                }}\n",
-                wire(field),
+                "{indent}        some({index}) => {{\n{indent}            __field_{} = some({s}.Decode.decode[{}](input, input.value()?)?)\n{indent}        }}\n",
                 field.name.name,
                 self.text(&field.ty)
             ));
         }
         out.push_str(&format!(
-            "{indent}                _ => input.unknownField(__member, __memberEvent)?\n{indent}            }}\n"
+            "{indent}        some(_) => {{}}\n{indent}        none => break\n{indent}    }}\n{indent}}}\n"
         ));
-        out.push_str(&format!("{indent}        }}\n{indent}        none => break\n{indent}    }}\n{indent}}}\n"));
         out
     }
 

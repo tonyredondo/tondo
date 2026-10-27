@@ -33,10 +33,10 @@ enum Frame {
         index: usize,
         started: bool,
     },
-    /// The keys read so far, the current one last; past a few, also in a
-    /// set, to find a repeated one.
+    /// Where its keys start among the reader's, the current one last;
+    /// past a few, also in a set, to find a repeated one.
     Object {
-        keys: Vec<String>,
+        first: usize,
         set: Option<HashSet<String>>,
         expect_key: bool,
         started: bool,
@@ -78,6 +78,10 @@ struct Reader {
     frames: Vec<Frame>,
     /// The text of the last string, key or number.
     text: String,
+    /// The keys of the objects open, one after another, and where each
+    /// ends: one buffer for them all rather than a string each.
+    keys: String,
+    key_ends: Vec<usize>,
     /// The last number, when it is an integer that fits `Int`.
     integer: Option<i64>,
     done: bool,
@@ -106,8 +110,12 @@ impl Reader {
             lines_before: 0,
             column_carry: 0,
             pinned: None,
-            frames: Vec::new(),
-            text: String::new(),
+            frames: Vec::with_capacity(8),
+            // Room for a usual document's text and keys from the start,
+            // rather than a few allocations to grow into it.
+            text: String::with_capacity(64),
+            keys: String::with_capacity(128),
+            key_ends: Vec::with_capacity(16),
             integer: None,
             done: false,
             root_seen: false,
@@ -176,13 +184,35 @@ impl Reader {
         self.position -= keep;
     }
 
+    /// The key `at` of the objects open.
+    fn key(&self, at: usize) -> &str {
+        let start = if at == 0 { 0 } else { self.key_ends[at - 1] };
+        &self.keys[start..self.key_ends[at]]
+    }
+
     /// The JSON path of the value at the current position.
     fn path(&self) -> String {
         let mut path = String::from("$");
+        // An object's keys end where those of the next object open start.
+        let firsts: Vec<usize> = self
+            .frames
+            .iter()
+            .filter_map(|frame| match frame {
+                Frame::Object { first, .. } => Some(*first),
+                _ => None,
+            })
+            .collect();
+        let mut object = 0;
         for frame in &self.frames {
             match frame {
                 Frame::Array { index, started: true } => write!(path, "[{}]", index.saturating_sub(1)).unwrap(),
-                Frame::Object { keys, .. } if let Some(key) = keys.last() => {
+                Frame::Object { first, .. } => {
+                    let end = firsts.get(object + 1).copied().unwrap_or(self.key_ends.len());
+                    object += 1;
+                    if end == *first {
+                        continue;
+                    }
+                    let key = self.key(end - 1);
                     if !key.is_empty() && key.chars().all(|c| c.is_alphanumeric() || c == '_') {
                         write!(path, ".{key}").unwrap()
                     } else {
@@ -235,7 +265,10 @@ impl Reader {
             let close = if array { b']' } else { b'}' };
             if self.peek() == Some(close) {
                 self.position += 1;
-                self.frames.pop();
+                if let Some(Frame::Object { first, .. }) = self.frames.pop() {
+                    self.keys.truncate(if first == 0 { 0 } else { self.key_ends[first - 1] });
+                    self.key_ends.truncate(first);
+                }
                 return self.after_value(if array { END_ARRAY } else { END_OBJECT });
             }
             if started {
@@ -255,31 +288,37 @@ impl Reader {
             if self.peek() != Some(b'"') {
                 return self.fail("expected a key in quotes");
             }
-            let name = match self.string() {
-                Ok(name) => name,
-                Err(message) => return self.fail(message),
-            };
+            if let Err(message) = self.string() {
+                return self.fail(message);
+            }
             self.skip_space();
             if self.peek() != Some(b':') {
                 return self.fail("expected `:` after a key");
             }
             self.position += 1;
-            let duplicates = self.duplicates;
-            let Some(Frame::Object { keys, set, expect_key, started }) = self.frames.last_mut() else {
-                unreachable!("an object is open")
+            let Some(&Frame::Object { first, .. }) = self.frames.last() else { unreachable!("an object is open") };
+            let repeated = if self.duplicates {
+                false
+            } else if self.key_ends.len() - first < FEW_KEYS {
+                (first..self.key_ends.len()).any(|at| self.key(at) == self.text)
+            } else {
+                let mut set = match self.frames.last_mut() {
+                    Some(Frame::Object { set, .. }) => set.take(),
+                    _ => None,
+                }
+                .unwrap_or_else(|| (first..self.key_ends.len()).map(|at| self.key(at).to_string()).collect());
+                let repeated = !set.insert(self.text.clone());
+                if let Some(Frame::Object { set: kept, .. }) = self.frames.last_mut() {
+                    *kept = Some(set);
+                }
+                repeated
             };
-            if keys.len() == FEW_KEYS {
-                *set = Some(keys.iter().cloned().collect());
+            self.keys.push_str(&self.text);
+            self.key_ends.push(self.keys.len());
+            if let Some(Frame::Object { expect_key, started, .. }) = self.frames.last_mut() {
+                *started = true;
+                *expect_key = false;
             }
-            let repeated = match set {
-                Some(set) => !set.insert(name.clone()),
-                None => keys.contains(&name),
-            } && !duplicates;
-            self.text.clear();
-            self.text.push_str(&name);
-            keys.push(name);
-            *started = true;
-            *expect_key = false;
             if repeated {
                 let message = format!("duplicate key {:?}", self.text);
                 return self.fail(message);
@@ -310,7 +349,8 @@ impl Reader {
                 }
                 self.position += 1;
                 if byte == b'{' {
-                    let frame = Frame::Object { keys: Vec::new(), set: None, expect_key: true, started: false };
+                    let frame =
+                        Frame::Object { first: self.key_ends.len(), set: None, expect_key: true, started: false };
                     self.frames.push(frame);
                     BEGIN_OBJECT
                 } else {
@@ -319,10 +359,7 @@ impl Reader {
                 }
             }
             b'"' => match self.string() {
-                Ok(text) => {
-                    self.text = text;
-                    self.after_value(STRING)
-                }
+                Ok(()) => self.after_value(STRING),
                 Err(message) => self.fail(message),
             },
             b't' | b'f' | b'n' => {
@@ -339,10 +376,9 @@ impl Reader {
                 }
             }
             b'-' | b'0'..=b'9' => match self.number() {
-                Ok(text) => {
-                    let integral = !text.contains(['.', 'e', 'E']);
-                    self.integer = if integral { text.parse().ok() } else { None };
-                    self.text = text;
+                Ok(()) => {
+                    let integral = !self.text.contains(['.', 'e', 'E']);
+                    self.integer = if integral { self.text.parse().ok() } else { None };
                     self.after_value(NUMBER)
                 }
                 Err(message) => self.fail(message),
@@ -351,7 +387,8 @@ impl Reader {
         }
     }
 
-    fn number(&mut self) -> Result<String, &'static str> {
+    /// A number, into `text`.
+    fn number(&mut self) -> Result<(), &'static str> {
         let start = self.position;
         let digits = |r: &mut Reader| {
             let begin = r.position;
@@ -385,7 +422,9 @@ impl Reader {
                 return Err("invalid number: digits must follow the exponent");
             }
         }
-        Ok(String::from_utf8_lossy(&self.input[start..self.position]).into_owned())
+        self.text.clear();
+        self.text.push_str(std::str::from_utf8(&self.input[start..self.position]).unwrap_or_default());
+        Ok(())
     }
 
     fn hex4(&mut self) -> Result<u32, &'static str> {
@@ -397,14 +436,32 @@ impl Reader {
         Ok(value)
     }
 
-    fn string(&mut self) -> Result<String, &'static str> {
+    /// A string, into `text`, reusing its buffer.
+    fn string(&mut self) -> Result<(), &'static str> {
+        let mut out = std::mem::take(&mut self.text).into_bytes();
+        out.clear();
+        let read = self.string_into(&mut out);
+        let valid = read.and_then(|()| std::str::from_utf8(&out).map(|_| ()).map_err(|_| "invalid UTF-8 in string"));
+        if valid.is_err() {
+            out.clear();
+        }
+        // Valid UTF-8, or empty.
+        self.text = unsafe { String::from_utf8_unchecked(out) };
+        valid
+    }
+
+    fn string_into(&mut self, out: &mut Vec<u8>) -> Result<(), &'static str> {
         self.position += 1;
-        let mut out: Vec<u8> = Vec::new();
         loop {
+            // The bytes that need nothing done, at once.
+            let rest = &self.input[self.position.min(self.input.len())..];
+            let run = rest.iter().position(|&b| b == b'"' || b == b'\\' || b < 0x20).unwrap_or(rest.len());
+            out.extend_from_slice(&rest[..run]);
+            self.position += run;
             let Some(byte) = self.peek() else { return Err("unterminated string") };
             self.position += 1;
             match byte {
-                b'"' => return String::from_utf8(out).map_err(|_| "invalid UTF-8 in string"),
+                b'"' => return Ok(()),
                 b'\\' => {
                     let Some(escape) = self.peek() else { return Err("unterminated string") };
                     self.position += 1;
@@ -518,6 +575,51 @@ pub unsafe extern "C" fn tondo_rt_json_text(object: *mut ReaderObject) -> *mut S
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_skip(object: *mut ReaderObject, event: i64) -> i64 {
     reader(object).skip(event)
+}
+
+/// What `field` gives at the end of an object, and for a member none of
+/// the names is when unknown fields are rejected.
+const FIELDS_END: i64 = -2;
+const UNKNOWN: i64 = -3;
+
+/// `reader.field(names, reject)`: the next member of an object, read up to
+/// its value, as a derived decoder numbers its fields: the index of its key
+/// among `names`, compared in place, with no string made for it. A member
+/// none of them is skipped whole and gives the number of names, or, when
+/// `reject`, fails after its value's first token, as `unknownField` does.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_json_field(
+    object: *mut ReaderObject,
+    names: *mut crate::ArrayHeader,
+    reject: u8,
+) -> i64 {
+    let mut r = reader(object);
+    match r.next() {
+        KEY => {}
+        END_OBJECT => return FIELDS_END,
+        ERROR => return ERROR,
+        _ => return r.fail("expected a key"),
+    }
+    let count = unsafe { (*names).len };
+    for index in 0..count {
+        let name = unsafe { str_bytes(*(crate::element(names, 8, index) as *const *const Str)) };
+        if name == r.text.as_bytes() {
+            return index as i64;
+        }
+    }
+    let key = (reject != 0).then(|| r.text.clone());
+    let first = r.next();
+    if first == ERROR {
+        return ERROR;
+    }
+    if let Some(key) = key {
+        r.fail(format!("unknown field `{key}`"));
+        return UNKNOWN;
+    }
+    match r.skip(first) {
+        ERROR => ERROR,
+        _ => count as i64,
+    }
 }
 
 /// The text of the value whose first event was `event`, skipping the rest

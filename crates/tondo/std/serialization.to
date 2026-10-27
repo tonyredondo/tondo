@@ -150,6 +150,25 @@ pub trait Source {
         }
     }
 
+    /// The next member of a map, read up to its value: the index of its
+    /// key in `names`, or `none` at the map's end. A member whose key is
+    /// none of them is skipped whole, or fails when unknown fields are
+    /// rejected, and gives `names.length()`. A format that reads keys in
+    /// place compares them there, with no string made for each.
+    fn nextField(self, names: Array[String]): Int? ! Error {
+        let key = match self.nextKey()? {
+            some(key) => key
+            none => return none
+        }
+        for index in 0..names.length() {
+            if names[index] == key {
+                return some(index)
+            }
+        }
+        self.unknownField(key, self.value()?)?
+        some(names.length())
+    }
+
     /// A member the type does not have: skipped, or an error when unknown
     /// fields are rejected.
     fn unknownField(self, key: String, first: Event): !Error {

@@ -2328,6 +2328,7 @@ pub trait Source {
     fn rejectsUnknown(self): Bool
     fn value(self): Event ! Error
     fn nextKey(self): String? ! Error
+    fn nextField(self, names: Array[String]): Int? ! Error
     fn unknownField(self, key: String, first: Event): Unit ! Error
     fn beginMap(self, first: Event, name: String): Unit ! Error
     fn beginList(self, first: Event, name: String): Unit ! Error
@@ -2373,6 +2374,15 @@ pub trait Decode {
   es `Null`; un formato sin null (`omitsNone`) omite el campo, y un campo
   opcional ausente se decodifica como `none`. Un campo obligatorio ausente da
   `Missing`; uno desconocido se ignora salvo que el `Source` lo rechace.
+- Un record se lee miembro a miembro con `nextField(names)`, donde `names`
+  son sus claves en orden de declaración: da el índice en `names` de la
+  clave del miembro siguiente, leído hasta su valor, o `none` al final del
+  mapa. Un miembro cuya clave no está en `names` se salta entero, o falla
+  como desconocido si el `Source` los rechaza, y da `names.length()`. La
+  implementación por defecto usa `nextKey`, `value` y `unknownField`; un
+  formato que lee las claves en su sitio las compara ahí, sin crear una
+  cadena para cada una, y salta los valores desconocidos sin crear sus
+  eventos.
 - Un newtype es su valor. Una variante sin payload es su nombre como texto; una
   con payload es un mapa de una sola clave, el nombre, cuyo valor es el payload,
   una lista si tiene varios componentes o un mapa si tiene campos.

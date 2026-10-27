@@ -1,0 +1,61 @@
+import std.console
+import std.json
+
+// Keys as a decoder reads them: compared with its fields' in place, the
+// members it has no field for skipped whole with what they hold, a key
+// repeated in a small or a large object rejected unless allowed, and the
+// path of an error inside arrays and objects.
+
+type Point = {
+    x: Int
+    y: Int
+}
+
+type Shape = {
+    name: String
+    points: Array[Point]
+    @name("fill color")
+    fill: String?
+}
+
+fn show(result: Shape ! json.JsonError) {
+    match result {
+        ok(shape) => console.println(
+            "{shape.name} {shape.points.length()} {shape.points[0].x} {shape.fill}",
+        )
+        err(error) => console.println("{error}")
+    }
+}
+
+fn point(result: Point ! json.JsonError) {
+    match result {
+        ok(found) => console.println("{found.x} {found.y}")
+        err(error) => console.println("{error}")
+    }
+}
+
+fn main() {
+    show(
+        json.decode(
+            r"""{"name": "tri", "extra": {"a": [1, {"b": 2}], "c": "d"}, "points": [{"x": 1, "z": {"k": [1]}, "y": 2}], "fill color": "red"}""",
+        ),
+    )
+    show(json.decode(r"""{"name": "a", "points": [{"x": 1, "y": 2}, {"x": "no", "y": 1}]}"""))
+    show(json.decode(r"""{"name": "a", "points": [], "fill color": 3}"""))
+    point(json.decode(r"""{"x": 1, "x": 2, "y": 3}"""))
+    point(json.decode(r"""{"x": 1, "x": 2, "y": 3}""", allowDuplicateKeys: true))
+    var members: Array[String] = []
+    for i in 0..20 {
+        members.push("\"k{i}\": {i}")
+    }
+    point(json.decode("{{\"x\": 1, \"y\": 2, {members.join(", ")}}}"))
+    point(json.decode("{{\"x\": 1, \"y\": 2, {members.join(", ")}, \"k7\": 0}}"))
+}
+
+// expect-stdout: tri 1 1 some(red)
+// expect-stdout: expected an integer, found a string at $.points[1].x (line 1, column 54)
+// expect-stdout: expected a string, found a number at $["fill color"] (line 1, column 44)
+// expect-stdout: duplicate key "x" at $.x (line 1, column 14)
+// expect-stdout: 2 3
+// expect-stdout: 1 2
+// expect-stdout: duplicate key "k7" at $.k7 (line 1, column 223)
