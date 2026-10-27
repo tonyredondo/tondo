@@ -8,7 +8,7 @@
 //! signal handler.
 
 use std::fmt::Write;
-use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 
 /// The table the compiler writes: one entry per function of the program,
@@ -423,7 +423,7 @@ fn here() -> Walk {
 /// origin, or a thread of C that called back. Always behind an `Arc`.
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Origin {
-    Spawned { addresses: [usize; SPAWN_DEPTH], count: usize, parent: Option<Arc<Origin>>, depth: usize },
+    Spawned { addresses: [usize; SPAWN_DEPTH], count: usize, parent: Option<&'static Origin>, depth: usize },
     Foreign,
 }
 
@@ -444,36 +444,53 @@ const SPAWN_DEPTH: usize = 30;
 /// would otherwise hold all of them.
 const ORIGINS: usize = 16;
 
-/// The origin of a task the running one spawns from here.
+/// Where every callback that a thread of C makes comes from.
+pub(crate) static FOREIGN: Origin = Origin::Foreign;
+
+/// The origins kept, by their frames, depth and parent.
+type Kept = std::collections::HashMap<([usize; SPAWN_DEPTH], usize, usize, usize), &'static Origin>;
+
+/// The origin of a task the running one spawns from here. An origin is
+/// kept for the life of the program, one for each place a task spawns from
+/// and origin of that task, of which a program has few: a task holds its
+/// own without a count, which every task spawned from one place would
+/// change, on whatever core it ends.
 #[inline(always)]
-pub(crate) fn spawned(parent: Option<Arc<Origin>>) -> Arc<Origin> {
+pub(crate) fn spawned(parent: Option<&'static Origin>) -> &'static Origin {
     let mut addresses = [0; SPAWN_DEPTH];
     let mut count = 0;
     for (slot, address) in addresses.iter_mut().zip(here()) {
         *slot = address;
         count += 1;
     }
-    let depth = match parent.as_deref() {
+    let depth = match parent {
         Some(Origin::Spawned { depth, .. }) => depth + 1,
         _ => 1,
     };
     let parent = parent.filter(|_| depth < ORIGINS);
-    // A loop spawns from the same place many times: one origin serves all.
+    // A loop spawns from the same place many times: the last origin serves
+    // all, without a look at the others.
     thread_local! {
-        static LAST: std::cell::RefCell<Option<Arc<Origin>>> = const { std::cell::RefCell::new(None) };
+        static LAST: std::cell::Cell<Option<&'static Origin>> = const { std::cell::Cell::new(None) };
     }
-    LAST.with_borrow_mut(|last| {
-        if let Some(found) = last
-            && let Origin::Spawned { addresses: a, count: c, parent: p, .. } = &**found
-            && a[..*c] == addresses[..count]
-            && p.as_ref().map(Arc::as_ptr) == parent.as_ref().map(Arc::as_ptr)
-        {
-            return found.clone();
-        }
-        let origin = Arc::new(Origin::Spawned { addresses, count, parent, depth });
-        *last = Some(origin.clone());
-        origin
-    })
+    let same = |origin: &Origin| {
+        matches!(origin, Origin::Spawned { addresses: a, count: c, parent: p, depth: d }
+        if a[..*c] == addresses[..count] && p.map(std::ptr::from_ref) == parent.map(std::ptr::from_ref) && *d == depth)
+    };
+    if let Some(found) = LAST.get()
+        && same(found)
+    {
+        return found;
+    }
+    static KEPT: Mutex<Option<Kept>> = Mutex::new(None);
+    let key = (addresses, count, depth, parent.map_or(0, |p| std::ptr::from_ref(p) as usize));
+    let mut kept = KEPT.lock().unwrap_or_else(|e| e.into_inner());
+    let origin = *kept
+        .get_or_insert_with(Default::default)
+        .entry(key)
+        .or_insert_with(|| Box::leak(Box::new(Origin::Spawned { addresses, count, parent, depth })));
+    LAST.set(Some(origin));
+    origin
 }
 
 /// The runs of the same frame of compiled code in a stack, innermost
@@ -544,7 +561,7 @@ fn write_stack<I: Iterator<Item = usize>>(
                 if parent.is_none() && *depth >= ORIGINS {
                     let _ = write!(out, "\n(and {ORIGINS} or more tasks before it)");
                 }
-                origin = parent.as_deref();
+                origin = *parent;
             }
             Origin::Foreign => {
                 let _ = write!(out, "\nin a callback that a thread of C made");
@@ -565,7 +582,7 @@ pub(crate) fn caller() -> Option<String> {
 /// the lines that follow a report.
 pub(crate) fn report() -> String {
     let walk = here();
-    stack(walk, crate::tasks::origin().as_deref(), "stack")
+    stack(walk, crate::tasks::origin(), "stack")
 }
 
 /// A stack and the origins of its task, under `title`.
@@ -819,7 +836,7 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
         let walk = walk(fp, bounds);
         let first = (resolve(link).is_some() && walk.clone().next() != Some(link)).then_some(link);
         let origin = if task.is_null() { None } else { crate::tasks::origin_of(task) };
-        write_stack(&mut out, "stack", || first.into_iter().chain(walk.clone()), origin.as_deref());
+        write_stack(&mut out, "stack", || first.into_iter().chain(walk.clone()), origin);
         let _ = writeln!(out);
         out.flush();
         // A dump at a fault is as good as the memory it reads.

@@ -285,7 +285,7 @@ pub(crate) struct Task {
     /// Whether its clock is a test's virtual clock (testing 7.9).
     pub(crate) in_domain: bool,
     /// Where it was started, for stack traces.
-    origin: Option<Arc<Origin>>,
+    origin: Option<&'static Origin>,
     /// The set of labels of `profile.withLabels` it carries, `0` for none,
     /// which its samples record and the tasks it starts inherit.
     labels: std::sync::atomic::AtomicU32,
@@ -412,13 +412,13 @@ pub(crate) fn stack_bounds() -> Option<(usize, usize)> {
 }
 
 /// Where the running task was started.
-pub(crate) fn origin() -> Option<Arc<Origin>> {
+pub(crate) fn origin() -> Option<&'static Origin> {
     unsafe { origin_of(current()) }
 }
 
 /// Where a task was started.
-pub(crate) unsafe fn origin_of(task: *mut Task) -> Option<Arc<Origin>> {
-    unsafe { task.as_ref()?.origin.clone() }
+pub(crate) unsafe fn origin_of(task: *mut Task) -> Option<&'static Origin> {
+    unsafe { task.as_ref()?.origin }
 }
 
 /// The running task's number in a trace, or 0 outside any task.
@@ -1451,7 +1451,7 @@ unsafe fn waiting_at(task: *mut Task) -> String {
         } else {
             return "\nTITLE: a call to C".into();
         };
-        super::trace::stack(walk, (*task).origin.as_deref(), "TITLE")
+        super::trace::stack(walk, (*task).origin, "TITLE")
     }
 }
 
@@ -1578,7 +1578,7 @@ pub(crate) fn snapshot(here: Option<Vec<usize>>) -> Vec<Shot> {
                 main: shown.main,
                 state,
                 stack,
-                spawned: shown.origin.as_deref().map(|o| o.frames().to_vec()).unwrap_or_default(),
+                spawned: shown.origin.map(|o| o.frames().to_vec()).unwrap_or_default(),
                 locks,
                 cancelled: shown.cancelled.load(Ordering::Relaxed),
             }
@@ -1983,7 +1983,7 @@ pub(crate) fn leaked(before: &std::collections::HashSet<usize>) -> Vec<String> {
         .into_iter()
         .map(|task| unsafe {
             let task = task as *mut Task;
-            let origin = || super::trace::stack(super::trace::walk(0, (0, 0)), (*task).origin.as_deref(), "TITLE");
+            let origin = || super::trace::stack(super::trace::walk(0, (0, 0)), (*task).origin, "TITLE");
             match (*task).state.load(Ordering::Acquire) {
                 PARKED => waiting_at(task).replacen("TITLE", "a task waits at", 1),
                 PINNED => format!("\na task waits in a call to C{}", origin()),
@@ -2157,7 +2157,7 @@ pub unsafe extern "C" fn tondo_rt_callback(
     unsafe {
         (*task).main = false;
         (*task).foreign = &call;
-        (*task).origin = Some(Arc::new(Origin::Foreign));
+        (*task).origin = Some(&super::trace::FOREIGN);
     }
     FOREIGN_CALLS.fetch_add(1, Ordering::SeqCst);
     run(task);
