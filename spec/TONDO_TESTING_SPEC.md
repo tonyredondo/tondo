@@ -2447,7 +2447,7 @@ que fallen:
 2. Parte de las semillas, del store y del corpus (más abajo), o de valores
    generados si no hay ninguno. Cada entrada nueva sale de una anterior por
    una mutación que conoce la forma de `T`: un número cambia de valor, también
-   a los de frontera (0, −1, el máximo, NaN); un texto cambia por bytes sin
+   a los de frontera (0, −1, los extremos; JSON no tiene NaN ni infinitos); un texto cambia por bytes sin
    dejar de ser UTF-8 válido; una lista pierde, repite o intercambia
    elementos; un opcional pasa a `none` o a un valor; un enum cambia de
    variante; una parte se cambia por la de otra entrada. Toma valores de los
