@@ -1,0 +1,35 @@
+import std.console
+
+// An array of constants is made once, in the program's data: changing it,
+// or a copy of it, changes a copy of its own, each time the literal runs.
+
+fn changed(): Array[Int] {
+    var xs = [1, 2, 3]
+    xs[0] = 10
+    xs.push(4)
+    xs
+}
+
+fn main() {
+    let a = changed()
+    let b = changed()
+    console.println("{a} {b}")
+    let names = ["ana", "bo"]
+    var copy = names
+    copy[1] = "cy"
+    console.println("{names} {copy}")
+    let flags = [true, false, true]
+    let chars = ['a', 'ñ']
+    let floats = [1.5, -2.25]
+    let small: Array[UInt8] = [1u8, 255u8]
+    let bytes = [Byte(1u8), Byte(255u8)]
+    console.println("{flags} {chars} {floats} {small} {bytes}")
+    var grid = [[1, 2], [3, 4]]
+    grid[0][1] = 9
+    console.println("{grid} {[[1, 2], [3, 4]]}")
+}
+
+// expect-stdout: [10, 2, 3, 4] [10, 2, 3, 4]
+// expect-stdout: [ana, bo] [ana, cy]
+// expect-stdout: [true, false, true] [a, ñ] [1.5, -2.25] [1, 255] [1, 255]
+// expect-stdout: [[1, 9], [3, 4]] [[1, 2], [3, 4]]

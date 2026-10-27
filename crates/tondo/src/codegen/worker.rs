@@ -15,6 +15,7 @@ const NAMED: u32 = 1 << 31;
 /// What a function's IR asked to declare, or to record, in order.
 enum Asked {
     String(String),
+    StaticArray(usize, Vec<Const>),
     Identity(Ty),
     Glue(Glue, Ty),
     Runtime(Rt),
@@ -223,6 +224,9 @@ impl<'t> Gen<'t> for Worker<'_, '_, 't> {
     fn string(&mut self, text: &str) -> DataId {
         DataId::from_u32(self.ask(Asked::String(text.to_string())))
     }
+    fn static_array(&mut self, size: usize, elements: Vec<Const>) -> DataId {
+        DataId::from_u32(self.ask(Asked::StaticArray(size, elements)))
+    }
     fn identity(&mut self, ty: Ty) -> DataId {
         DataId::from_u32(self.ask(Asked::Identity(ty)))
     }
@@ -355,6 +359,7 @@ pub(super) fn replay(cg: &mut Codegen, bodies: &[Body], built: &mut Built) {
         };
         ids[n] = match asked {
             Asked::String(text) => cg.string(&text).as_u32(),
+            Asked::StaticArray(size, elements) => cg.static_array(size, &elements).as_u32(),
             Asked::Identity(ty) => cg.identity(ty).as_u32(),
             Asked::Glue(kind, ty) => Codegen::glue(cg, kind, ty).as_u32(),
             Asked::Runtime(rt) => Codegen::runtime(cg, rt).as_u32(),

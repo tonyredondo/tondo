@@ -58,6 +58,9 @@ const REFLECT_VALUE: i64 = 40;
 const ARRAY_HEADER: i64 = 32;
 /// Where a string's length is in its header (`Str`), after its count.
 const STRING_LENGTH: i32 = 8;
+/// The count of a static array: so many references that releases never
+/// bring it to one, so that a change copies it, as one of a shared array.
+const SHARED_FOREVER: u64 = 1 << 62;
 
 /// Runtime entry points (see `tondo-runtime`).
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -752,6 +755,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         functions: Vec::new(),
         runtime: HashMap::new(),
         strings: HashMap::new(),
+        arrays: 0,
         shapes,
         glue: HashMap::new(),
         pending_glue: Vec::new(),
@@ -946,6 +950,8 @@ struct Codegen<'a> {
     functions: Vec<FuncId>,
     runtime: HashMap<Rt, FuncId>,
     strings: HashMap<String, DataId>,
+    /// How many static arrays there are, which names the next.
+    arrays: usize,
     shapes: Shapes<'a>,
     glue: HashMap<(Glue, Ty), FuncId>,
     pending_glue: Vec<(Glue, Ty, FuncId)>,
@@ -1586,6 +1592,8 @@ trait Gen<'t> {
     fn counter_offset(&mut self, fb: &mut FunctionBuilder, index: usize) -> ir::Value;
 
     fn string(&mut self, text: &str) -> DataId;
+    /// A static array of constants, each `size` bytes.
+    fn static_array(&mut self, size: usize, elements: Vec<Const>) -> DataId;
     fn identity(&mut self, ty: Ty) -> DataId;
     fn glue(&mut self, kind: Glue, ty: Ty) -> FuncId;
     fn runtime(&mut self, rt: Rt) -> FuncId;
@@ -1717,6 +1725,9 @@ impl<'t> Gen<'t> for Codegen<'t> {
     }
     fn string(&mut self, text: &str) -> DataId {
         Codegen::string(self, text)
+    }
+    fn static_array(&mut self, size: usize, elements: Vec<Const>) -> DataId {
+        Codegen::static_array(self, size, &elements)
     }
     fn identity(&mut self, ty: Ty) -> DataId {
         Codegen::identity(self, ty)
@@ -2543,6 +2554,48 @@ impl Codegen<'_> {
     /// the digest of its shape.
     fn identity_key(&self, ty: Ty) -> String {
         crate::live::type_key(self.types, ty)
+    }
+
+    /// A static array of constants: `[count][length][room][head]`, then
+    /// each element's bytes, a string's the address of its literal. Its
+    /// count is written to as it is shared, never freed.
+    fn static_array(&mut self, size: usize, elements: &[Const]) -> DataId {
+        let mut bytes = Vec::with_capacity(ARRAY_HEADER as usize + size * elements.len());
+        let length = elements.len() as u64;
+        for word in [SHARED_FOREVER, length, length, 0] {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        let mut texts = Vec::new();
+        for element in elements {
+            let at = bytes.len();
+            match element {
+                Const::Int(value, _) => bytes.extend_from_slice(&(*value as i64).to_le_bytes()[..size]),
+                Const::Float(bits, _) if size == 4 => {
+                    bytes.extend_from_slice(&(f64::from_bits(*bits) as f32).to_bits().to_le_bytes())
+                }
+                Const::Float(bits, _) => bytes.extend_from_slice(&bits.to_le_bytes()),
+                Const::Bool(value) => bytes.push(*value as u8),
+                Const::Char(c) => bytes.extend_from_slice(&(*c as u32).to_le_bytes()),
+                Const::Str(text) => {
+                    texts.push((at, self.string(text)));
+                    bytes.extend_from_slice(&[0; 8]);
+                }
+                Const::Unit => {}
+            }
+            bytes.resize(at + size, 0);
+        }
+        let name = format!("tondo_array{}", self.arrays);
+        self.arrays += 1;
+        let id = self.module.declare_data(&name, Linkage::Local, true, false).expect("array declaration");
+        let mut data = DataDescription::new();
+        data.define(bytes.into_boxed_slice());
+        data.set_align(8);
+        for (at, text) in texts {
+            let text = self.module.declare_data_in_data(text, &mut data);
+            data.write_data_addr(at as u32, text, 0);
+        }
+        self.module.define_data(id, &data).expect("array definition");
+        id
     }
 
     /// A static, immortal string object: `[refcount][length][room][bytes]`.
@@ -4500,6 +4553,35 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.store_val(address, ty, value);
     }
 
+    /// The elements of an array literal when all are constants of its
+    /// element's type that the program's data can hold; never in a live
+    /// build, whose reloads replace the arrays they convert and free them.
+    fn constants(&mut self, values: &[Operand], ty: Ty) -> Option<Vec<Const>> {
+        if self.e.cg.live() {
+            return None;
+        }
+        let types = self.e.cg.types();
+        let TyKind::Array(element) = *types.kind(types.repr(ty)) else { return None };
+        let element = types.repr(element);
+        let fits = |constant: &Const| match constant {
+            Const::Int(_, of) | Const::Float(_, of) => types.repr(*of) == element,
+            Const::Bool(_) => element == Ty::BOOL,
+            Const::Char(_) => element == Ty::CHAR,
+            Const::Str(_) => element == Ty::STRING,
+            Const::Unit => false,
+        };
+        if values.is_empty() {
+            return None;
+        }
+        values
+            .iter()
+            .map(|value| match value {
+                Operand::Const(constant) if fits(constant) => Some(constant.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn operand(&mut self, operand: &Operand) -> Val {
         match operand {
             Operand::Copy(place) => self.read(place),
@@ -5174,6 +5256,16 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     }
                     _ => Val::Scalar(self.convert_total(value, from, ty)),
                 }
+            }
+            Rvalue::Array(values, _) if let Some(elements) = self.constants(values, ty) => {
+                let TyKind::Array(element) = *self.e.cg.types().kind(self.e.cg.types().repr(ty)) else {
+                    unreachable!()
+                };
+                // Made once, in the program's data, rather than each time.
+                let size = self.e.cg.layout(element).size as usize;
+                let id = self.e.cg.static_array(size, elements);
+                let global = self.e.cg.declare_data_in_func(id, self.e.fb.func);
+                Val::Scalar(self.e.fb.ins().symbol_value(POINTER, global))
             }
             Rvalue::Array(values, retain) => {
                 let TyKind::Array(element) = *self.e.cg.types().kind(self.e.cg.types().repr(ty)) else {

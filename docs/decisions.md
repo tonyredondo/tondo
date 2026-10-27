@@ -2625,3 +2625,17 @@ as most are, are also copied with two moves of a word rather than a call
 of `memcpy`, for a new string, an interpolation and an append. A hundred
 appends of a word and a number went from 1.40 to 0.89 µs, and an
 interpolation from 29.8 to 23.6 ns.
+
+## 2026-10-27 — An array of constants is made once
+
+An array literal whose elements are all constants, integers, floats,
+booleans, characters or strings, was made anew each time it ran, a
+constant's at each use, as the field names a derived decoder hands its
+source. It is now made once, in the program's data, with a count of
+2^62 that no release brings to one: changing it, or a copy of it, copies
+it first, as for any array that is shared, so each run of the literal
+still sees the value it wrote. The count is written as the array is
+shared, so the data is writable. A live build makes the array each
+time still: a reload that converts an array replaces and frees it. A
+million calls that walk a constant array of three names went from a
+million allocations to none.
