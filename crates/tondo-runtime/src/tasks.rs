@@ -2518,8 +2518,12 @@ fn give_way() {
 unsafe fn cancel_task(task: *mut Task) {
     unsafe {
         let t = &mut *task;
-        if !t.cancelled.swap(true, Ordering::SeqCst) {
-            attend(true);
+        // Attention first: a task that sees itself cancelled, as a lock
+        // that returns at once without its guard, unwinds only if compiled
+        // code then calls `tondo_rt_cancelled`.
+        attend(true);
+        if t.cancelled.swap(true, Ordering::SeqCst) {
+            attend(false);
         }
         lock(&t.waiting_lock);
         let woken = !t.waiting.is_null() && (*t.waiting).claim(CANCELLED);
