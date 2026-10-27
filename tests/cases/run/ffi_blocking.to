@@ -1,14 +1,15 @@
 // A call of C that blocks its worker for long gets another worker in its
-// place, so 256 calls of 400ms take far less than rounds of one per core:
-// over 3s up to 32 cores. The limit leaves room for slow CI machines.
+// place, so 256 calls of 2s take far less than rounds of one per core:
+// 16s or more up to 32 cores. The limit leaves room for emulation under
+// load, which starts the other workers slowly.
 import std.console
 import std.ffi
 import std.time
 
-extern fn usleep(microseconds: ffi.CUInt): ffi.CInt
+extern fn sleep(seconds: ffi.CUInt): ffi.CUInt
 
 fn nap() {
-    unsafe { usleep(400000) }
+    unsafe { sleep(2) }
 }
 
 fn main() {
@@ -18,7 +19,7 @@ fn main() {
         group.add(spawn nap())
     }
     _ = group.wait()
-    console.println("{start.elapsed().milliseconds() < 3000}")
+    console.println("{start.elapsed().milliseconds() < 10000}")
 }
 
 // expect-stdout: true
