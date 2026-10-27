@@ -1,0 +1,11 @@
+// `?` in a function that declares no error says what to declare.
+
+fn port(text: String): Int {
+    Int.parse(text)?
+}
+
+fn main() {
+    _ = port("80")
+}
+
+// expect-error: E1301

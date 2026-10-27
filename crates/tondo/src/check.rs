@@ -782,8 +782,15 @@ struct FnCx {
     /// Error type of a fallible function (`T ! E`), or of a script whose
     /// errors are still being inferred.
     error: Option<Ty>,
-    /// A root script infers its error type from `?` and `fail` (20.3).
+    /// A root script and `main` infer their error type from `?` and
+    /// `fail` (20.3).
     infer_error: bool,
+    /// What a function that declares no error propagates, and where it
+    /// first does: one diagnostic at its end says how to declare it.
+    undeclared: Option<(Ty, Span, &'static str)>,
+    /// Whether this is a declared function's body, which gathers
+    /// `undeclared` rather than reporting each `?`.
+    gathers: bool,
     /// One entry per enclosing loop: whether a `break` targets it.
     loops: Vec<bool>,
     /// The current path has unconditionally left the enclosing block.
@@ -4529,6 +4536,8 @@ impl<'a> Checker<'a> {
             result: success,
             error,
             infer_error: false,
+            undeclared: None,
+            gathers: false,
             loops: Vec::new(),
             diverged: false,
             parent: None,
@@ -4599,6 +4608,10 @@ impl<'a> Checker<'a> {
         }
         let success = (!cx.infer_result).then_some(cx.result);
         cx.result_span = f.result.as_ref().map(|t| (t.span, f.public));
+        // `main` without a declared error infers it, as a script does (20.2).
+        let main = f.result.is_none() && Some(id) == self.main_fn();
+        cx.infer_error = main;
+        cx.gathers = true;
         cx.body = true;
         cx.unsafe_region = signature.is_unsafe;
         cx.unsafe_body = signature.is_unsafe;
@@ -4607,9 +4620,20 @@ impl<'a> Checker<'a> {
             self.record_witness(&cx, opaque, &body, f);
         }
         self.unused(&cx, &params);
+        if let Some((error, at, code)) = cx.undeclared {
+            self.undeclared_error(f, signature.result, error, at, code);
+        }
         self.type_params = outer_types;
         self.self_type = outer_self;
         self.implementing = outer_implementing;
+        let result = match cx.error {
+            Some(error) if main => {
+                let result = self.types.intern(TyKind::Result(Ty::UNIT, error));
+                self.signatures[id.0 as usize].result = result;
+                result
+            }
+            _ => signature.result,
+        };
         let mut function = hir::Function {
             name: self.naming.clone(),
             generics: signature.generics,
@@ -4617,7 +4641,7 @@ impl<'a> Checker<'a> {
             loans,
             fallible: cx.error.is_some(),
             locals: cx.locals,
-            result: signature.result,
+            result,
             body,
             moves: HashSet::new(),
             test: false,
@@ -4704,10 +4728,109 @@ impl<'a> Checker<'a> {
                 Some(channel)
             }
             Some(error) => Some(error),
+            None if cx.gathers => {
+                cx.undeclared = Some(match cx.undeclared {
+                    Some((before, at, code)) => (self.types.union(&[before, produced]), at, code),
+                    None => (produced, span, code),
+                });
+                None
+            }
             None => {
                 self.diags.error(code, span, "this function cannot fail; declare its result as `T ! E`");
                 None
             }
+        }
+    }
+
+    /// `?` or `fail` in a function that declares no error: what it
+    /// propagates, with the result that declares it and the imports that
+    /// name it.
+    fn undeclared_error(&mut self, f: &ast::FnDecl, success: Ty, error: Ty, at: Span, code: &'static str) {
+        if self.types.has_error(error) {
+            return;
+        }
+        let result = self.types.intern(TyKind::Result(success, error));
+        let declared = self.types.display(result);
+        let message = format!(
+            "`{}` cannot fail, but this propagates {}: declare its result as `{declared}`",
+            f.name.name,
+            self.display(error)
+        );
+        self.diags.error(code, at, message);
+        let mut edits = match &f.result {
+            Some(written) => vec![(written.span, declared.clone())],
+            None => {
+                // After the parameters' `)`.
+                let body = f.body.as_ref().map_or(f.span.end, |b| b.span.start);
+                let between = self.sources.slice(Span::new(f.name.span.end, body));
+                let Some(close) = between.rfind(')') else { return };
+                let place = f.name.span.end + close as u32 + 1;
+                vec![(Span::new(place, place), format!(": {declared}"))]
+            }
+        };
+        edits.extend(self.imports_naming(error, at));
+        // Callers of a function that now fails must handle it.
+        self.diags.fix(format!("declare the result as `{declared}`"), false, edits);
+    }
+
+    /// The imports a file lacks to name a type as it is shown, as
+    /// `text.TextError` needs `import std.text`.
+    fn imports_naming(&self, ty: Ty, at: Span) -> Vec<(Span, String)> {
+        let file = self.sources.file_of(at.start);
+        let imported: HashSet<&str> = file
+            .text
+            .lines()
+            .filter_map(|line| {
+                let path = line.strip_prefix("import ")?.trim();
+                Some(match path.split_once(" as ") {
+                    Some((_, alias)) => alias.trim(),
+                    None => path.rsplit('.').next().unwrap_or(path),
+                })
+            })
+            .collect();
+        let shown = self.types.display(ty);
+        let mut modules: Vec<&str> = shown
+            .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.'))
+            .filter_map(|name| name.rsplit_once('.').map(|(module, _)| module))
+            .filter(|module| !module.contains('.') && !imported.contains(module))
+            .collect();
+        modules.dedup();
+        let (mut after, mut offset) = (0, 0);
+        for line in file.text.split_inclusive('\n') {
+            offset += line.len();
+            if line.starts_with("import ") {
+                after = offset;
+            }
+        }
+        let place = Span::new(file.base + after as u32, file.base + after as u32);
+        let standard = crate::api::standard_modules();
+        modules
+            .into_iter()
+            .filter_map(|module| {
+                let path = format!("std.{module}");
+                let path = match standard.contains(&path) {
+                    true => path,
+                    false => self.module_paths.iter().find(|p| p.last().is_some_and(|l| l == module))?.join("."),
+                };
+                Some((place, format!("import {path}\n")))
+            })
+            .collect()
+    }
+
+    /// `main` used as a value or called: where the program starts, whose
+    /// error its body infers (20.2), is not.
+    fn main_called(&mut self, span: Span) -> hir::Expr {
+        let message = "`main` is where the program starts, and nothing calls it: move what it does to a function, \
+                       and call that";
+        self.diags.error("E1803", span, message);
+        Self::error_expr(span)
+    }
+
+    /// The root module's `main`.
+    fn main_fn(&self) -> Option<FnId> {
+        match self.names.get("main") {
+            Some(&ModuleName::Fn(id)) => Some(id),
+            _ => None,
         }
     }
 
@@ -9650,7 +9773,9 @@ impl<'a> Checker<'a> {
                         if let Some((written, public)) = cx.result_span {
                             let widened = self.types.display(result);
                             let title = format!("declare the result as `{widened}`");
-                            self.diags.fix(title, !public, vec![(written, widened)]);
+                            let mut edits = vec![(written, widened)];
+                            edits.extend(self.imports_naming(error, span));
+                            self.diags.fix(title, !public, edits);
                         }
                     }
                 }
@@ -11187,6 +11312,7 @@ impl<'a> Checker<'a> {
             return Self::error_expr(span);
         }
         match self.names.get(&first.name) {
+            Some(&ModuleName::Fn(id)) if Some(id) == self.main_fn() => self.main_called(span),
             Some(&ModuleName::Fn(id)) if segments.len() == 1 => {
                 self.index_refer(first, crate::index::Key::Fn(id.0));
                 self.fn_value(id, Vec::new(), expected, span)
@@ -11652,6 +11778,7 @@ impl<'a> Checker<'a> {
                 let value = self.coerce(value, inner);
                 Self::mk(hir::ExprKind::Retype(Box::new(value)), ty, span)
             }
+            ([_], Some(ModuleName::Fn(id))) if Some(id) == self.main_fn() => self.main_called(span),
             ([_], Some(ModuleName::Fn(id))) => {
                 self.index_refer(&segments[0], crate::index::Key::Fn(id.0));
                 let signature = self.signatures[id.0 as usize].clone();

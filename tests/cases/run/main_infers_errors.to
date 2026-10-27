@@ -1,0 +1,34 @@
+// `main` without a declared error fails with what its body propagates.
+
+import std.console
+
+enum ConfigError {
+    Missing(String)
+}
+
+impl Display for ConfigError {
+    fn display(self): String {
+        match self {
+            ConfigError.Missing(path) => "the file `{path}` is missing"
+        }
+    }
+}
+
+fn load(path: String): Int ! ConfigError {
+    if path.isEmpty() {
+        return 0
+    }
+    fail ConfigError.Missing(path)
+}
+
+fn main() {
+    console.println("{load("")?}")
+    let port = Int.parse("8080")?
+    console.println("{port}")
+    load("app.toml")?
+}
+
+// expect-stdout: 0
+// expect-stdout: 8080
+// expect-exit: 1
+// expect-stderr: error: the file `app.toml` is missing

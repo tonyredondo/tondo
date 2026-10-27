@@ -2741,3 +2741,17 @@ languages write it, and one out of range fails as `Range`;
 `serialization.Bytes` stays the type for bytes that a format holds as its
 own, natively or as base64. The fuzzer knows the shape: it makes and changes
 a list of bytes as bytes, with flipped bits and the values at their edges.
+
+## 2026-10-27 — `main` infers its errors
+
+A `main` that used `?` had to declare the union of everything it
+propagated, as `!(serialization.Error | process.ProcessError |
+text.TextError)`, and import modules only to name those errors. The
+implicit `main` of a script and the body of a test already inferred that
+union, because no one imports their signature, and neither does anyone
+import `main`'s: `fn main()` now infers it too, and a declared error stays
+what it was. So that nothing sees the signature before its body is
+checked, nothing calls `main` or takes it as a value (`E1803`). Every other
+function declares its errors, which are its interface; when one propagates
+an error it does not declare, a single `E1301` names all it propagates, and
+its repair writes the result and the imports those errors need.

@@ -1,0 +1,11 @@
+// Nothing calls `main`, whose body infers its error.
+
+fn main() {
+    again()
+}
+
+fn again() {
+    main()
+}
+
+// expect-error: E1803

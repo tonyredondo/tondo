@@ -36,7 +36,7 @@ fn address(host: String, text: String): String ! ConfigError {
     "{host}:{number}"
 }
 
-fn main(): !ConfigError {
+fn main() {
     console.println(address("localhost", "8080")?)
     match port("") {
         ok(value) => console.println("{value}")
@@ -54,9 +54,11 @@ fn main(): !ConfigError {
 - Convert with `result.mapErr((e) { ... })`, default with
   `result.unwrapOr(value)`, and turn an option into a result with
   `option.okOr(error)`.
-- `main` may fail: `fn main(): !E`. The program then prints `error: ` and the
-  error's `Display` (or its variant), and exits with status 1. A script's
-  `?` and `fail` at the top level do the same, with no signature to write.
+- `main` fails with what its `?` and `fail` propagate, with no error to
+  declare, as a script's top level does. The program then prints `error: `
+  and the error's `Display` (or its variant), and exits with status 1;
+  `process.exit(code)` ends it with another status. Any other function
+  declares what it propagates, which `E1301` writes for it.
 
 ## Optional values
 

@@ -6903,6 +6903,15 @@ fn main(): !(ConfigError | NetworkError) {
 }
 ~~~
 
+Sin error declarado, `main` falla con lo que propaga su cuerpo:
+
+~~~tondo
+fn main() {
+    let config = loadConfig()?
+    start(config)?
+}
+~~~
+
 Un punto de entrada puede esperar y usar `spawn` como cualquier función; el
 runtime ejecuta `main` como la primera tarea sin exponer un executor ni un
 wrapper en la firma:
@@ -6925,7 +6934,10 @@ fn main(): !AppError {
 - No es genérica.
 - No es un método.
 - Devuelve `Unit`.
-- Puede declarar un error `E` mediante `: !E`.
+- Puede declarar un error `E` mediante `: !E`. Si no declara ninguno, el
+  compilador infiere localmente la unión cerrada de errores que propaga su
+  cuerpo, como en un script (20.3), porque su firma no es una API importable.
+- Nada la llama ni la usa como valor.
 - Puede esperar e iniciar tareas, pero no puede ser `unsafe`.
 - No puede sobrecargarse.
 
