@@ -2,6 +2,8 @@
 // (standard library 10.3). Streams are shared handles: copies use the
 // same stream, each operation is atomic, and the last copy closes it.
 
+/// Why a stream failed: it is closed, its data is not UTF-8 where text was
+/// wanted, or the host failed.
 pub enum IoError {
     Closed
     InvalidData
@@ -17,15 +19,20 @@ pub type Reader
 /// Shared memory a writer appends to and a reader reads.
 pub type Buffer
 
+/// Writes the text.
 pub fn Writer.write(self, text: String): Unit ! IoError
 
 /// Writes the text and one LF.
 pub fn Writer.writeLine(self, text: String): Unit ! IoError
 
+/// Writes the bytes.
 pub fn Writer.writeBytes(self, data: Array[Byte]): Unit ! IoError
 
+/// Hands what the stream keeps to where it goes.
 pub fn Writer.flush(self): Unit ! IoError
 
+/// Closes the stream now, with the error of its last writes if they fail;
+/// it also closes when its last copy goes, losing that error.
 pub fn Writer.close(self): Unit ! IoError
 
 /// The next line without its `\n` or `\r\n`, or `none` at the end.
@@ -37,21 +44,28 @@ pub fn Reader.read(self, max: Int): Array[Byte]? ! IoError
 /// The rest, as UTF-8 text.
 pub fn Reader.readText(self): String ! IoError
 
+/// Closes the stream now; it also closes when its last copy goes.
 pub fn Reader.close(self): Unit ! IoError
 
+/// An empty buffer in memory.
 pub fn Buffer(): Buffer
 
+/// A writer that appends to the buffer.
 pub fn Buffer.writer(self): Writer
 
 /// Reads what the buffer holds at that moment.
 pub fn Buffer.reader(self): Reader
 
+/// What the buffer holds, as UTF-8 text.
 pub fn Buffer.text(self): String ! IoError
 
+/// What the buffer holds.
 pub fn Buffer.bytes(self): Array[Byte]
 
+/// The number of bytes the buffer holds.
 pub fn Buffer.length(self): Int
 
+/// Empties the buffer.
 pub fn Buffer.clear(self)
 
 /// A reader of a fixed text.

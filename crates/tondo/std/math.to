@@ -19,6 +19,7 @@ impl Display for MathError {
     }
 }
 
+/// The square root; a negative value is `MathError.Domain`.
 pub fn sqrt(value: Float): Float ! MathError {
     if value < 0.0 {
         fail MathError.Domain
@@ -26,10 +27,12 @@ pub fn sqrt(value: Float): Float ! MathError {
     mathNative.sqrt(value)
 }
 
+/// `base` raised to `exponent`.
 pub fn pow(base: Float, exponent: Float): Float {
     mathNative.pow(base, exponent)
 }
 
+/// e raised to the value.
 pub fn exp(value: Float): Float {
     mathNative.exp(value)
 }
@@ -42,6 +45,8 @@ pub fn ln(value: Float): Float ! MathError {
     mathNative.ln(value)
 }
 
+/// The base-10 logarithm of a value above zero; another is
+/// `MathError.Domain`.
 pub fn log10(value: Float): Float ! MathError {
     if value <= 0.0 {
         fail MathError.Domain
@@ -49,6 +54,8 @@ pub fn log10(value: Float): Float ! MathError {
     mathNative.log10(value)
 }
 
+/// The base-2 logarithm of a value above zero; another is
+/// `MathError.Domain`.
 pub fn log2(value: Float): Float ! MathError {
     if value <= 0.0 {
         fail MathError.Domain
@@ -56,14 +63,17 @@ pub fn log2(value: Float): Float ! MathError {
     mathNative.log2(value)
 }
 
+/// The sine of an angle in radians.
 pub fn sin(value: Float): Float {
     mathNative.sin(value)
 }
 
+/// The cosine of an angle in radians.
 pub fn cos(value: Float): Float {
     mathNative.cos(value)
 }
 
+/// The tangent of an angle in radians.
 pub fn tan(value: Float): Float {
     mathNative.tan(value)
 }
@@ -84,6 +94,7 @@ pub fn acos(value: Float): Float ! MathError {
     mathNative.acos(value)
 }
 
+/// The angle in radians, from `-π/2` to `π/2`, whose tangent is the value.
 pub fn atan(value: Float): Float {
     mathNative.atan(value)
 }
@@ -98,10 +109,12 @@ pub fn hypot(x: Float, y: Float): Float {
     mathNative.hypot(x, y)
 }
 
+/// The largest integer not above the value: `-1.0` for `-0.5`.
 pub fn floor(value: Float): Float {
     mathNative.floor(value)
 }
 
+/// The smallest integer not below the value: `1.0` for `0.5`.
 pub fn ceil(value: Float): Float {
     mathNative.ceil(value)
 }
@@ -116,6 +129,7 @@ pub fn roundTiesAway(value: Float): Float {
     mathNative.roundAway(value)
 }
 
+/// The integer part of the value, toward zero: `-1.0` for `-1.7`.
 pub fn truncate(value: Float): Float {
     mathNative.trunc(value)
 }

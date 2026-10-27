@@ -1,6 +1,8 @@
 // std.text: the error of text operations (standard library 14.1). The
 // methods of `String` and `Char` are in the prelude: `tondo api prelude`.
 
+/// Why a text operation failed: an index outside the text, one inside a
+/// character, a limit reached, or data that is not UTF-8 or not a number.
 pub enum TextError {
     InvalidIndex
     InvalidBoundary

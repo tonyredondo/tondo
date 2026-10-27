@@ -18,54 +18,75 @@ pub type DateTime = {
     nanosecond: Int
 }
 
+/// Why a date or time could not be made: it does not exist, as February 30.
 pub enum TimeError {
     InvalidDateTime
 }
 
+/// A duration of `count` nanoseconds.
 pub fn nanoseconds(count: Int): Duration
 
+/// A duration of `count` microseconds; one that does not fit panics.
 pub fn microseconds(count: Int): Duration
 
+/// A duration of `count` milliseconds; one that does not fit panics.
 pub fn milliseconds(count: Int): Duration
 
+/// A duration of `count` seconds; one that does not fit panics.
 pub fn seconds(count: Int): Duration
 
+/// A duration of `count` minutes; one that does not fit panics.
 pub fn minutes(count: Int): Duration
 
+/// A duration of `count` hours; one that does not fit panics.
 pub fn hours(count: Int): Duration
 
 /// Readings divide and truncate toward zero.
 pub fn Duration.nanoseconds(self): Int
 
+/// The whole microseconds, truncated toward zero.
 pub fn Duration.microseconds(self): Int
 
+/// The whole milliseconds, truncated toward zero.
 pub fn Duration.milliseconds(self): Int
 
+/// The whole seconds, truncated toward zero: `-1` for -1.5 s.
 pub fn Duration.seconds(self): Int
 
+/// The whole minutes, truncated toward zero.
 pub fn Duration.minutes(self): Int
 
+/// The whole hours, truncated toward zero.
 pub fn Duration.hours(self): Int
 
+/// The sum of the two durations; one that does not fit panics.
 pub fn Duration.add(self, other: Duration): Duration
 
+/// This duration less `other`; one that does not fit panics.
 pub fn Duration.subtract(self, other: Duration): Duration
 
+/// The duration `factor` times; one that does not fit panics.
 pub fn Duration.multiply(self, factor: Int): Duration
 
+/// Whether the duration is zero.
 pub fn Duration.isZero(self): Bool
 
+/// Whether the duration is below zero.
 pub fn Duration.isNegative(self): Bool
 
+/// Whether this duration is shorter than `other`.
 pub fn Duration.isLessThan(self, other: Duration): Bool
 
+/// The current moment of the monotonic clock, for measuring durations.
 pub fn now(): Instant
 
 /// `now().since(self)`.
 pub fn Instant.elapsed(self): Duration
 
+/// The time from `earlier` to this moment.
 pub fn Instant.since(self, earlier: Instant): Duration
 
+/// The moment `delta` after this one.
 pub fn Instant.add(self, delta: Duration): Instant
 
 /// Stops the task, not the thread, at least `delay`; a `select` operation.

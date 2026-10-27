@@ -6,44 +6,59 @@ import std.internal.memory
 
 // C's types, as the Tondo types of the same size and sign on the targets
 // Tondo supports. They are aliases, so their values are ordinary numbers.
+
+/// C's `char`, a byte.
 pub alias CChar = Byte
 
+/// C's `short`.
 pub alias CShort = Int16
 
+/// C's `unsigned short`.
 pub alias CUShort = UInt16
 
+/// C's `int`.
 pub alias CInt = Int32
 
+/// C's `unsigned int`.
 pub alias CUInt = UInt32
 
+/// C's `long`, of 64 bits on the supported targets.
 pub alias CLong = Int
 
+/// C's `unsigned long`, of 64 bits on the supported targets.
 pub alias CULong = UInt64
 
+/// C's `long long`.
 pub alias CLongLong = Int
 
+/// C's `unsigned long long`.
 pub alias CULongLong = UInt64
 
+/// C's `size_t`.
 pub alias CSize = UInt64
 
+/// C's `ssize_t`.
 pub alias CSSize = Int
 
+/// C's `float`.
 pub alias CFloat = Float32
 
+/// C's `double`.
 pub alias CDouble = Float
 
+/// C's `bool`.
 pub alias CBool = Bool
 
-// A C string: the address of bytes that end with a zero byte. A `String`
-// passed to a C function that takes one becomes such a copy for the call.
+/// A C string: the address of bytes that end with a zero byte. A `String`
+/// passed to a C function that takes one becomes such a copy for the call.
 pub alias CString = memory.CString
 
-// What C's `void*` points to: any `Pointer[T]` converts to
-// `Pointer[ffi.Void]`.
+/// What C's `void*` points to: any `Pointer[T]` converts to
+/// `Pointer[ffi.Void]`.
 pub alias Void = memory.Void
 
-// A `va_list` of C, which only C makes: a function C calls may receive a
-// `Pointer[VaList]` and pass it along, as to `vsnprintf`.
+/// A `va_list` of C, which only C makes: a function C calls may receive a
+/// `Pointer[VaList]` and pass it along, as to `vsnprintf`.
 pub extern type VaList
 
 @symbol("free")
@@ -52,18 +67,18 @@ extern fn cFree(pointer: Pointer[Void]?)
 @symbol("memmove")
 extern fn cMove(to: Pointer[Void], from: Pointer[Void], size: Int): Pointer[Void]
 
-// The size in bytes of a value of `T` in memory.
+/// The size in bytes of a value of `T` in memory.
 pub fn sizeOf[T](): Int {
     memory.sizeOf[T]()
 }
 
-// The alignment in bytes of a value of `T` in memory.
+/// The alignment in bytes of a value of `T` in memory.
 pub fn alignOf[T](): Int {
     memory.alignOf[T]()
 }
 
-// Zeroed memory for `count` values of `T`, from C's allocator: C may free
-// it, and `free` gives it back.
+/// Zeroed memory for `count` values of `T`, from C's allocator: C may free
+/// it, and `free` gives it back.
 pub fn allocate[T: ~Copy](count: Int = 1): Pointer[T] {
     if count < 0 {
         panic("ffi.allocate takes a count that is not negative, not {count}")
@@ -72,14 +87,14 @@ pub fn allocate[T: ~Copy](count: Int = 1): Pointer[T] {
     unsafe { block.cast[T]() }
 }
 
-// Gives back memory from `allocate`, `toCString` or C's allocator; `none`
-// does nothing, as in C.
+/// Gives back memory from `allocate`, `toCString` or C's allocator; `none`
+/// does nothing, as in C.
 pub unsafe fn free(pointer: Pointer[Void]?) {
     cFree(pointer)
 }
 
-// Copies `count` values of `T` from one address to another; the regions
-// may overlap.
+/// Copies `count` values of `T` from one address to another; the regions
+/// may overlap.
 pub unsafe fn copy[T](from: Pointer[T], to: Pointer[T], count: Int = 1) {
     if count < 0 {
         panic("ffi.copy takes a count that is not negative, not {count}")
@@ -87,27 +102,27 @@ pub unsafe fn copy[T](from: Pointer[T], to: Pointer[T], count: Int = 1) {
     cMove(to, from, count * memory.sizeOf[T]())
 }
 
-// A copy of the text that ends with a zero byte, for C to keep; `free`
-// gives it back. Text with a zero byte inside panics (`P0016`).
+/// A copy of the text that ends with a zero byte, for C to keep; `free`
+/// gives it back. Text with a zero byte inside panics (`P0016`).
 pub fn toCString(text: String): CString {
     memory.cString(text)
 }
 
-// The text of a C string, up to its zero byte; bytes that are not UTF-8
-// become U+FFFD.
+/// The text of a C string, up to its zero byte; bytes that are not UTF-8
+/// become U+FFFD.
 pub unsafe fn fromCString(text: CString): String {
     memory.fromCString(text)
 }
 
-// The text of a C array of characters, such as a struct's
-// `@count(16) name: CChar`, up to its first zero byte; bytes that are not
-// UTF-8 become U+FFFD.
+/// The text of a C array of characters, such as a struct's
+/// `@count(16) name: CChar`, up to its first zero byte; bytes that are not
+/// UTF-8 become U+FFFD.
 pub fn fromCChars(chars: Array[CChar]): String {
     memory.fromCChars(chars)
 }
 
-// The text as a C array of `count` characters: its bytes, then zero bytes.
-// Text that does not fit with a zero byte after it panics.
+/// The text as a C array of `count` characters: its bytes, then zero bytes.
+/// Text that does not fit with a zero byte after it panics.
 pub fn toCChars(text: String, count: Int): Array[CChar] {
     let encoded = text.bytes()
     if encoded.length() >= count {
@@ -116,29 +131,29 @@ pub fn toCChars(text: String, count: Int): Array[CChar] {
     encoded.concat([Byte(0u8)].repeat(count - encoded.length()))
 }
 
-// A value for C to hand back to a callback, as C passes data through a
-// `void*`: a copy of it in memory from `allocate`. `fromContext` reads it
-// and `freeContext` gives it back.
+/// A value for C to hand back to a callback, as C passes data through a
+/// `void*`: a copy of it in memory from `allocate`. `fromContext` reads it
+/// and `freeContext` gives it back.
 pub fn context[T: ~Copy](value: T): Pointer[Void] {
     let block = allocate[T]()
     unsafe { block.write(value) }
     block
 }
 
-// The value of a context made by `context`, which must hold a `T`.
+/// The value of a context made by `context`, which must hold a `T`.
 pub unsafe fn fromContext[T](data: Pointer[Void]): T {
     let block = data.cast[T]()
     block.read()
 }
 
-// Gives back a context made by `context`, with the value it holds.
+/// Gives back a context made by `context`, with the value it holds.
 pub unsafe fn freeContext[T: ~Copy](data: Pointer[Void]) {
     let block = data.cast[T]()
     _ = memory.take[T](block)
     cFree(data)
 }
 
-// A copy of `count` bytes at an address.
+/// A copy of `count` bytes at an address.
 pub unsafe fn bytes(from: Pointer[Byte], count: Int): Array[Byte] {
     memory.bytes(from, count)
 }

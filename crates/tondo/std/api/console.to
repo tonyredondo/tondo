@@ -11,6 +11,7 @@ pub fn println(text: String)
 /// Writes to standard error, unbuffered.
 pub fn eprint(text: String)
 
+/// Writes the text and one LF to standard error.
 pub fn eprintln(text: String)
 
 /// The next line of standard input without its `\n` or `\r\n`, or `none` at
@@ -19,18 +20,22 @@ pub fn readLine(): String?
 
 /// Delivers what standard output holds; the first failure since the last
 /// flush.
-pub fn flush(): Unit ! io.IoError
+pub fn flush(): !io.IoError
 
 /// The current streams, as `std.io` streams.
 pub fn stdout(): io.Writer
 
+/// The current standard error, as a `std.io` stream.
 pub fn stderr(): io.Writer
 
+/// The current standard input, as a `std.io` stream.
 pub fn stdin(): io.Reader
 
 /// Replaces a stream for the whole program, all its tasks included.
 pub fn setOutput(writer: io.Writer)
 
+/// Replaces standard error for the whole program, all its tasks included.
 pub fn setError(writer: io.Writer)
 
+/// Replaces standard input for the whole program, all its tasks included.
 pub fn setInput(reader: io.Reader)

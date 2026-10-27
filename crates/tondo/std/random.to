@@ -57,10 +57,12 @@ pub fn Random.float(mut self): Float {
     Float(self.bits() >> 10) / 9007199254740992.0
 }
 
+/// `true` or `false`, each as likely.
 pub fn Random.bool(mut self): Bool {
     self.bits() & 1 == 1
 }
 
+/// `count` random bytes.
 pub fn Random.bytes(mut self, count: Int): Array[Byte] {
     let bytes = codecNative.randomBytes(self.seed, self.drawn, count)
     self.drawn += (count + 7) / 8

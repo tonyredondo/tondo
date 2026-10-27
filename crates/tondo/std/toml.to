@@ -47,6 +47,7 @@ pub fn Value.find(self, path: String): Value? {
     found
 }
 
+/// The string, or `none` when the value is not one.
 pub fn Value.asText(self): String? {
     match self {
         Value.Text(text) => text
@@ -54,6 +55,7 @@ pub fn Value.asText(self): String? {
     }
 }
 
+/// The integer, or `none` when the value is not one.
 pub fn Value.asInt(self): Int? {
     match self {
         Value.Int(value) => value
@@ -70,6 +72,7 @@ pub fn Value.asFloat(self): Float? {
     }
 }
 
+/// The boolean, or `none` when the value is not one.
 pub fn Value.asBool(self): Bool? {
     match self {
         Value.Bool(value) => value
@@ -77,6 +80,8 @@ pub fn Value.asBool(self): Bool? {
     }
 }
 
+/// The date and time as RFC 3339 text, or `none` when the value is not
+/// one.
 pub fn Value.asDateTime(self): String? {
     match self {
         Value.DateTime(text) => text
@@ -84,6 +89,7 @@ pub fn Value.asDateTime(self): String? {
     }
 }
 
+/// The elements, or `none` when the value is not an array.
 pub fn Value.asArray(self): Array[Value]? {
     match self {
         Value.Array(items) => items
@@ -91,6 +97,7 @@ pub fn Value.asArray(self): Array[Value]? {
     }
 }
 
+/// The keys and values, or `none` when the value is not a table.
 pub fn Value.asTable(self): Map[String, Value]? {
     match self {
         Value.Table(members) => members

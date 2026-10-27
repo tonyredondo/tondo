@@ -75,6 +75,9 @@ pub type Pool = {
     priv size: Int
 }
 
+/// A pool that runs up to `workers` jobs at a time and keeps up to
+/// `capacity` more waiting for a worker; fewer than one worker or a negative
+/// capacity is an error.
 pub fn pool(workers: Int, capacity: Int): Pool ! ExecutorError {
     if workers < 1 {
         fail ExecutorError.InvalidWorkers(workers)
@@ -199,6 +202,7 @@ fn close[M](mailbox: WeakRef[Sender[M]]) {
     }
 }
 
+/// An address to send the actor messages, which does not keep it alive.
 pub fn Actor[M, E].reference(self): ActorRef[M] {
     ActorRef { mailbox: WeakRef(self.mailbox) }
 }

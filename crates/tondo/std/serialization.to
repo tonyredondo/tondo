@@ -38,6 +38,7 @@ pub enum Event {
 // Errors
 // ---------------------------------------------------------------------------
 
+/// What kind of error reading or writing a value met.
 pub enum ErrorKind {
     /// The input is not in the format.
     Syntax

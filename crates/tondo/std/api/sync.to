@@ -5,6 +5,8 @@
 /// A value behind a lock; closures see it while they hold the lock.
 pub fn Mutex(value: T): Mutex[T]
 
+/// Runs `change` with the value locked for this task alone, and gives its
+/// result; the lock is let go when it returns, also on cancellation.
 pub fn Mutex.update(self, change: fn(var T): R): R
 
 /// `none` without waiting when another holds the lock.
@@ -13,25 +15,37 @@ pub fn Mutex.tryUpdate(self, change: fn(var T): R): R?
 /// Waits until `ready` holds, then changes the value under the same lock.
 pub fn Mutex.updateWhen(self, ready: fn(T): Bool, change: fn(var T): R): R
 
+/// A copy of the value, read under the lock.
 pub fn Mutex.get(self): T
 
+/// Replaces the value under the lock.
 pub fn Mutex.set(self, value: T)
 
 /// Many readers or one writer.
 pub fn RwLock(value: T): RwLock[T]
 
+/// Runs `observe` with the value locked for reading, which other readers
+/// share, and gives its result.
 pub fn RwLock.read(self, observe: fn(T): R): R
 
+/// Runs `change` with the value locked for this task alone, and gives its
+/// result.
 pub fn RwLock.update(self, change: fn(var T): R): R
 
+/// A copy of the value, read under a read lock.
 pub fn RwLock.get(self): T
 
+/// Replaces the value under the write lock.
 pub fn RwLock.set(self, value: T)
 
+/// A semaphore with `permits` permits; a number below one panics.
 pub fn Semaphore(permits: Int): Semaphore
 
+/// Waits for a free permit and takes it; it comes back when the `Permit` is
+/// released or dropped.
 pub fn Semaphore.acquire(self): Permit
 
+/// A free permit, or `none` at once when there is none.
 pub fn Semaphore.tryAcquire(self): Permit?
 
 /// A permit goes back when released or abandoned.
@@ -40,31 +54,45 @@ pub fn Permit.release(self)
 /// A value initialised once; failures leave it empty for the next try.
 pub fn Once.new[T](): Once[T]
 
+/// The value, made by `init` the first time; other tasks wait meanwhile,
+/// and when `init` fails or is cancelled, the next call tries again.
 pub fn Once.getOrInit(self, init: fn(): T): T
 
+/// The value, or `none` before it is made.
 pub fn Once.get(self): T?
 
+/// Whether the value is made.
 pub fn Once.isReady(self): Bool
 
 /// Waits for `parties` tasks; `true` in exactly one of them per round.
 pub fn Barrier(parties: Int): Barrier
 
+/// Waits until the barrier's number of tasks arrive: `true` in exactly one
+/// of them each round; the barrier is then used again.
 pub fn Barrier.wait(self): Bool
 
 /// Sequentially consistent; lock-free for integers, `Bool`, `Char`, `Byte`.
 pub fn Atomic(value: T): Atomic[T]
 
+/// The value.
 pub fn Atomic.load(self): T
 
+/// Replaces the value.
 pub fn Atomic.store(self, value: T)
 
+/// Replaces the value and gives the one it had.
 pub fn Atomic.swap(self, value: T): T
 
+/// Replaces the value with `desired` if it is `expected`: `Exchanged` with
+/// the value it had, or `Mismatch` with the one it has, which never fails
+/// for no reason.
 pub fn Atomic.compareExchange(self, expected: T, desired: T): CompareExchange[T]
 
 /// The new value.
 pub fn Atomic.add(self, delta: T): T
 
+/// What `compareExchange` did: `Exchanged(previous)` when the value was the
+/// one expected and was replaced, `Mismatch(observed)` when it was not.
 pub enum CompareExchange[T] {
     Exchanged(T)
     Mismatch(T)
@@ -77,8 +105,12 @@ pub enum CompareExchange[T] {
 /// Fixed length.
 pub type Array[T]
 
+/// A map that tasks share, read without locks: `sync.Map["a": 1]`,
+/// `sync.Map.new[K, V]()` or `sync.Map(entries)`.
 pub type Map[K: Key, V]
 
+/// A set that tasks share, read without locks: `sync.Set["a"]`,
+/// `sync.Set.new[K]()` or `sync.Set(keys)`.
 pub type Set[K: Key]
 
 /// LIFO, the top at the end.
@@ -87,53 +119,87 @@ pub type Stack[T]
 /// FIFO with many producers and consumers.
 pub type Queue[T]
 
+/// The number of elements, which never changes.
 pub fn Array.length(self): Int
 
+/// The element at `index`, counting from the end when it is negative, or
+/// `none` outside the array.
 pub fn Array.get(self, index: Int): T?
 
+/// Replaces the element at `index` and gives the one it had; an index
+/// outside the array is `CollectionError.InvalidIndex`.
 pub fn Array.set(self, index: Int, value: T): T ! collections.CollectionError
 
+/// Replaces the element at `index` with `desired` if it is `expected`, as
+/// `Atomic.compareExchange` does.
 pub fn Array.compareExchange(self, index: Int, expected: T, desired: T): CompareExchange[T] ! collections.CollectionError
 
+/// A copy of the elements at one instant.
 pub fn Array.snapshot(self): Array[T]
 
+/// The number of entries: exact without concurrent writes, and with them,
+/// one that may count some of them.
 pub fn Map.length(self): Int
 
+/// The value of `key`, or `none` when the map does not have it.
 pub fn Map.get(self, key: K): V?
 
+/// Whether the map has `key`.
 pub fn Map.contains(self, key: K): Bool
 
+/// Puts `value` under `key` and gives the value it replaced, if any.
 pub fn Map.insert(self, key: K, value: V): V?
 
+/// Removes `key` and gives its value, or `none` when the map did not have
+/// it.
 pub fn Map.remove(self, key: K): V?
 
 /// `expected = none` compares with absence; `desired = none` removes.
 pub fn Map.compareExchange(self, key: K, expected: V?, desired: V?): CompareExchange[V?]
 
+/// A copy of the entries at one instant, in no particular order.
 pub fn Map.snapshot(self): Map[K, V]
 
+/// The number of values: exact without concurrent writes, and with them,
+/// one that may count some of them.
 pub fn Set.length(self): Int
 
+/// Whether the set has `key`.
 pub fn Set.contains(self, key: K): Bool
 
+/// Adds `key`: `true` when it was new.
 pub fn Set.insert(self, key: K): Bool
 
+/// Removes `key`: `true` when the set had it.
 pub fn Set.remove(self, key: K): Bool
 
+/// A copy of the values at one instant, in no particular order.
 pub fn Set.snapshot(self): Set[K]
 
+/// Adds the value on top.
 pub fn Stack.push(self, value: T)
 
+/// Removes the value on top and gives it, or `none` at once when the stack
+/// is empty.
 pub fn Stack.pop(self): T?
 
+/// The value at `index` from the bottom, counting from the top when it is
+/// negative, or `none` outside the stack.
 pub fn Stack.get(self, index: Int): T?
 
+/// A copy of the values at one instant, from the bottom to the top.
 pub fn Stack.snapshot(self): Array[T]
 
+/// Adds the value at the back.
 pub fn Queue.push(self, value: T)
 
+/// Removes the value at the front and gives it, or `none` at once when the
+/// queue is empty.
 pub fn Queue.popFront(self): T?
 
+/// The value at `index` from the front, counting from the back when it is
+/// negative, or `none` outside the queue.
 pub fn Queue.get(self, index: Int): T?
 
+/// A copy of the values at one instant, from the front to the back.
 pub fn Queue.snapshot(self): Deque[T]

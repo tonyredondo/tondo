@@ -335,3 +335,26 @@ fn skip_brackets(text: &str) -> &str {
     }
     text
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every public declaration of the standard library says what it does,
+    /// which `tondo api` and an editor's completion show.
+    #[test]
+    fn every_standard_declaration_is_documented() {
+        let mut missing = Vec::new();
+        for module in standard_modules() {
+            let text = standard(&module).expect("a standard module");
+            for declared in declarations(&text) {
+                let kind = declared["kind"].as_str().unwrap_or_default();
+                let documented = !declared["doc"].as_str().unwrap_or_default().is_empty();
+                if matches!(kind, "fn" | "type" | "enum" | "trait" | "const" | "alias") && !documented {
+                    missing.push(format!("{module}: {}", declared["name"]));
+                }
+            }
+        }
+        assert!(missing.is_empty(), "write a `///` line above each of these:\n{}", missing.join("\n"));
+    }
+}

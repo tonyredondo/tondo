@@ -13,6 +13,7 @@ pub enum FsError {
     Host
 }
 
+/// What an entry is: a file, a directory, a symbolic link or something else.
 pub enum FileKind {
     File
     Directory
@@ -41,20 +42,29 @@ pub enum OpenMode {
 /// An open file, with one owner; it closes when abandoned.
 pub type File
 
+/// The content of the file as text; one that is not UTF-8 is
+/// `FsError.InvalidData`.
 pub fn readText(path: String): String ! FsError
 
+/// The content of the file as bytes.
 pub fn readBytes(path: String): Array[Byte] ! FsError
 
 /// Writes through a temporary file and a rename: readers see the old or the
 /// new content, never half of it.
 pub fn writeText(path: String, text: String): Unit ! FsError
 
+/// Writes through a temporary file and a rename: readers see the old or the
+/// new content, never half of it.
 pub fn writeBytes(path: String, data: Array[Byte]): Unit ! FsError
 
+/// Adds the text at the end of the file, which it creates if missing.
 pub fn appendText(path: String, text: String): Unit ! FsError
 
+/// Whether the path names an entry; a link to nothing does not count.
 pub fn exists(path: String): Bool
 
+/// What the entry at the path is, without following a link: its kind, its
+/// size in bytes and whether it is read-only.
 pub fn metadata(path: String): Metadata ! FsError
 
 /// The names of the entries, sorted by bytes.
@@ -63,32 +73,44 @@ pub fn list(path: String): Array[String] ! FsError
 /// Creates the missing parents too; an existing directory is fine.
 pub fn createDirectory(path: String): Unit ! FsError
 
+/// Moves the entry to `to`, replacing a file there.
 pub fn rename(from: String, to: String): Unit ! FsError
 
+/// Copies the file's content to `to`, replacing a file there.
 pub fn copy(from: String, to: String): Unit ! FsError
 
 /// A file, a link or an empty directory; with `recursive`, a directory and
 /// its content.
 pub fn remove(path: String, recursive: Bool = false): Unit ! FsError
 
+/// The file opened as `mode` says.
 pub fn open(path: String, mode: OpenMode): File ! FsError
 
 /// The next line without its `\n` or `\r\n`, or `none` at the end.
 pub fn File.readLine(var self): String? ! FsError
 
+/// Up to `max` bytes, or `none` at the end of the file.
 pub fn File.read(var self, max: Int): Array[Byte]? ! FsError
 
+/// The rest of the file as text; one that is not UTF-8 is
+/// `FsError.InvalidData`.
 pub fn File.readText(var self): String ! FsError
 
+/// Writes the text at the file's position.
 pub fn File.write(var self, text: String): Unit ! FsError
 
+/// Writes the bytes at the file's position.
 pub fn File.writeBytes(var self, data: Array[Byte]): Unit ! FsError
 
+/// Hands the writes kept for the file to the system, without closing it.
 pub fn File.flush(var self): Unit ! FsError
 
+/// Closes the file now, with the error of its last writes if they fail;
+/// abandoned, it closes by itself and loses that error.
 pub fn File.close(self): Unit ! FsError
 
 /// The file as a stream of `std.io`; it closes with the stream's last copy.
 pub fn File.writer(self): io.Writer
 
+/// The file as a stream of `std.io`; it closes with the stream's last copy.
 pub fn File.reader(self): io.Reader

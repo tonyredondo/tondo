@@ -66,6 +66,7 @@ pub type GenericView = {
     bounds: Array[String]
 }
 
+/// What a declaration is: a record, an enum or a newtype.
 pub enum DeclarationKind {
     Record
     Enum
@@ -83,6 +84,7 @@ pub type Declaration = {
     priv wrapped: TypeRef?
 }
 
+/// The declaration's name, without its type parameters.
 pub fn Declaration.name(self): String {
     self.declared
 }
@@ -92,6 +94,7 @@ pub fn Declaration.module(self): String {
     self.path
 }
 
+/// What the declaration is.
 pub fn Declaration.kind(self): DeclarationKind {
     self.form
 }
@@ -108,14 +111,17 @@ pub fn Declaration.typeName(self): String {
     "{self.declared}[{names.join(", ")}]"
 }
 
+/// The declaration's type parameters, with their bounds.
 pub fn Declaration.generics(self): Array[GenericView] {
     self.binders
 }
 
+/// A record's fields, in declaration order; none for another kind.
 pub fn Declaration.fields(self): Array[FieldView] {
     self.members
 }
 
+/// An enum's variants, in declaration order; none for another kind.
 pub fn Declaration.variants(self): Array[VariantView] {
     self.cases
 }
@@ -133,6 +139,7 @@ pub type DeriveRequest = {
     priv outputLimit: Int
 }
 
+/// The record, enum or newtype the `derive` names.
 pub fn DeriveRequest.target(self): Declaration {
     self.declaration
 }
@@ -143,6 +150,7 @@ pub fn DeriveRequest.traitName(self): String {
     self.traitText
 }
 
+/// A builder of the code the provider writes for the `derive`.
 pub fn DeriveRequest.sourceBuilder(self): SourceBuilder {
     SourceBuilder {
         written: none
@@ -179,10 +187,12 @@ pub type GenerateRequest = {
     priv outputLimit: Int
 }
 
+/// The files the generator reads, as the project names them.
 pub fn GenerateRequest.inputs(self): Array[Input] {
     self.inputList
 }
 
+/// The input called `name`; another name is `Error.UnknownInput`.
 pub fn GenerateRequest.input(self, name: String): Input ! Error {
     for input in self.inputList {
         if input.name == name {
@@ -197,10 +207,12 @@ pub fn GenerateRequest.outputs(self): Array[String] {
     self.outputList
 }
 
+/// The declarations of the program the generator may read.
 pub fn GenerateRequest.declarations(self): Array[Declaration] {
     self.declarationList
 }
 
+/// A builder of the modules the generator writes.
 pub fn GenerateRequest.sourceBuilder(self): SourceBuilder {
     SourceBuilder {
         written: none
@@ -279,6 +291,8 @@ pub fn SourceBuilder.error(mut self, message: String) {
     self.problems.push(message)
 }
 
+/// What the provider gives back: the code it wrote and the problems it
+/// found; with neither, `Error.MissingOutput`.
 pub fn SourceBuilder.finishDerive(self): DeriveResponse ! Error {
     if self.written.isNone() and self.problems.length() == 0 {
         fail Error.MissingOutput("derive")

@@ -181,6 +181,8 @@ pub fn String.words(self): Array[String] {
     textNative.words(self)
 }
 
+/// The text written `count` times in a row; empty when `count` is not
+/// positive.
 pub fn String.repeat(self, count: Int): String {
     textNative.repeat(self, count)
 }
@@ -207,10 +209,12 @@ fn padding(length: Int, width: Int, fill: String): String {
     }
 }
 
+/// The text without the whitespace at its start.
 pub fn String.trimStart(self): String {
     textNative.trimStart(self)
 }
 
+/// The text without the whitespace at its end.
 pub fn String.trimEnd(self): String {
     textNative.trimEnd(self)
 }
@@ -284,22 +288,27 @@ pub fn Char.isDigit(self): Bool {
     textNative.charIs(self, 0)
 }
 
+/// Whether the scalar is a letter of any script, as Unicode's `Alphabetic`.
 pub fn Char.isLetter(self): Bool {
     textNative.charIs(self, 1)
 }
 
+/// Whether the scalar is whitespace, as Unicode's `White_Space`.
 pub fn Char.isWhitespace(self): Bool {
     textNative.charIs(self, 2)
 }
 
+/// Whether the scalar is uppercase, as Unicode's `Uppercase`.
 pub fn Char.isUpper(self): Bool {
     textNative.charIs(self, 3)
 }
 
+/// Whether the scalar is lowercase, as Unicode's `Lowercase`.
 pub fn Char.isLower(self): Bool {
     textNative.charIs(self, 4)
 }
 
+/// Whether the scalar is a letter or a number of any script.
 pub fn Char.isAlphanumeric(self): Bool {
     textNative.charIs(self, 5)
 }
@@ -328,14 +337,17 @@ pub fn Char.from(code: Int): Char? {
 // Int and Float
 // ---------------------------------------------------------------------------
 
+/// The value without its sign; `Int.min` has none in `Int`, and panics.
 pub fn Int.abs(self): Int {
     if self < 0 { -self } else { self }
 }
 
+/// The smaller of the two.
 pub fn Int.min(self, other: Int): Int {
     if other < self { other } else { self }
 }
 
+/// The larger of the two.
 pub fn Int.max(self, other: Int): Int {
     if other > self { other } else { self }
 }
@@ -368,26 +380,32 @@ pub fn Int.toString(self, radix: Int = 10): String {
     textNative.int(self, radix)
 }
 
+/// The value without its sign.
 pub fn Float.abs(self): Float {
     if self < 0.0 { -self } else { self }
 }
 
+/// The smaller of the two; the value itself when either is NaN.
 pub fn Float.min(self, other: Float): Float {
     if other < self { other } else { self }
 }
 
+/// The larger of the two; the value itself when either is NaN.
 pub fn Float.max(self, other: Float): Float {
     if other > self { other } else { self }
 }
 
+/// The value inside `low` to `high`.
 pub fn Float.clamp(self, low: Float, high: Float): Float {
     self.max(low).min(high)
 }
 
+/// The largest integer not above the value: `-1.0` for `-0.5`.
 pub fn Float.floor(self): Float {
     mathNative.floor(self)
 }
 
+/// The smallest integer not below the value: `1.0` for `0.5`.
 pub fn Float.ceil(self): Float {
     mathNative.ceil(self)
 }
@@ -397,26 +415,32 @@ pub fn Float.round(self): Float {
     mathNative.round(self)
 }
 
+/// The integer part of the value, toward zero: `-1.0` for `-1.7`.
 pub fn Float.truncate(self): Float {
     mathNative.trunc(self)
 }
 
+/// The square root; an error for a negative value.
 pub fn Float.sqrt(self): Float ! __math.MathError {
     __math.sqrt(self)
 }
 
+/// The value raised to `exponent`.
 pub fn Float.pow(self, exponent: Float): Float {
     mathNative.pow(self, exponent)
 }
 
+/// Whether the value is not a number, as `0.0 / 0.0`.
 pub fn Float.isNaN(self): Bool {
     mathNative.classify(self) == 2
 }
 
+/// Whether the value is infinite, of either sign.
 pub fn Float.isInfinite(self): Bool {
     mathNative.classify(self) == 1
 }
 
+/// Whether the value is neither infinite nor NaN.
 pub fn Float.isFinite(self): Bool {
     mathNative.classify(self) == 0
 }
@@ -430,6 +454,7 @@ pub fn Float.toFixed(self, decimals: Int): String {
 // Option and Result
 // ---------------------------------------------------------------------------
 
+/// Whether there is a value.
 pub fn Option[T].isSome(self): Bool {
     match self {
         some(_) => true
@@ -437,10 +462,12 @@ pub fn Option[T].isSome(self): Bool {
     }
 }
 
+/// Whether there is no value.
 pub fn Option[T].isNone(self): Bool {
     not self.isSome()
 }
 
+/// The function's result for the value, or `none` when there is none.
 pub fn Option[T].map[U](self, transform: fn(T): U): U? {
     match self {
         some(value) => some(transform(value))
@@ -456,6 +483,7 @@ pub fn Option[T].andThen[U](self, next: fn(T): U?): U? {
     }
 }
 
+/// The value, or `fallback` when there is none.
 pub fn Option[T].unwrapOr(self, fallback: T): T {
     match self {
         some(value) => value
@@ -471,6 +499,7 @@ pub fn Option[T].orElse(self, other: T?): T? {
     }
 }
 
+/// The value when it passes the test, or `none`.
 pub fn Option[T].filter(self, keep: fn(T): Bool): T? {
     match self {
         some(value) if keep(value) => some(value)
@@ -494,6 +523,7 @@ pub fn Option[T].expect(self, message: String): T {
     }
 }
 
+/// Whether it holds a value.
 pub fn Result[T, E].isOk(self): Bool {
     match self {
         ok(_) => true
@@ -501,10 +531,12 @@ pub fn Result[T, E].isOk(self): Bool {
     }
 }
 
+/// Whether it holds an error.
 pub fn Result[T, E].isErr(self): Bool {
     not self.isOk()
 }
 
+/// The function's result for the value, or the same error.
 pub fn Result[T, E].map[U](self, transform: fn(T): U): U ! E {
     match self {
         ok(value) => transform(value)
@@ -512,6 +544,7 @@ pub fn Result[T, E].map[U](self, transform: fn(T): U): U ! E {
     }
 }
 
+/// The same value, or the function's result for the error.
 pub fn Result[T, E].mapErr[F](self, transform: fn(E): F): T ! F {
     match self {
         ok(value) => value
@@ -527,6 +560,7 @@ pub fn Result[T, E].andThen[U](self, next: fn(T): U ! E): U ! E {
     }
 }
 
+/// The value, or `fallback` when it holds an error.
 pub fn Result[T, E].unwrapOr(self, fallback: T): T {
     match self {
         ok(value) => value
@@ -534,6 +568,7 @@ pub fn Result[T, E].unwrapOr(self, fallback: T): T {
     }
 }
 
+/// The value, or `none` when it holds an error.
 pub fn Result[T, E].ok(self): T? {
     match self {
         ok(value) => some(value)
@@ -541,6 +576,7 @@ pub fn Result[T, E].ok(self): T? {
     }
 }
 
+/// The error, or `none` when it holds a value.
 pub fn Result[T, E].err(self): E? {
     match self {
         ok(_) => none
@@ -560,14 +596,17 @@ pub fn Result[T, E].expect(self, message: String): T {
 // Array
 // ---------------------------------------------------------------------------
 
+/// The first element, or `none` when the array is empty.
 pub fn Array[T].first(self): T? {
     self.get(0)
 }
 
+/// The last element, or `none` when the array is empty.
 pub fn Array[T].last(self): T? {
     self.get(self.length() - 1)
 }
 
+/// The function's result for each element, in order.
 pub fn Array[T].map[U](self, transform: fn(T): U): Array[U] {
     var out: Array[U] = []
     for item in self {
@@ -576,6 +615,7 @@ pub fn Array[T].map[U](self, transform: fn(T): U): Array[U] {
     out
 }
 
+/// The elements that pass the test, in order.
 pub fn Array[T].filter(self, keep: fn(T): Bool): Array[T] {
     var out: Array[T] = []
     for item in self {
@@ -586,6 +626,8 @@ pub fn Array[T].filter(self, keep: fn(T): Bool): Array[T] {
     out
 }
 
+/// The elements of the arrays the function gives for each element, in
+/// order.
 pub fn Array[T].flatMap[U](self, transform: fn(T): Array[U]): Array[U] {
     var out: Array[U] = []
     for item in self {
@@ -605,6 +647,7 @@ pub fn Array[T].reduce[A](self, initial: A, combine: fn(A, T): A): A {
     total
 }
 
+/// Whether some element passes the test; `false` for an empty array.
 pub fn Array[T].any(self, predicate: fn(T): Bool): Bool {
     for item in self {
         if predicate(item) {
@@ -614,6 +657,7 @@ pub fn Array[T].any(self, predicate: fn(T): Bool): Bool {
     false
 }
 
+/// Whether every element passes the test; `true` for an empty array.
 pub fn Array[T].all(self, predicate: fn(T): Bool): Bool {
     for item in self {
         if not predicate(item) {
@@ -654,6 +698,7 @@ pub fn Array[T].count(self, predicate: fn(T): Bool): Int {
     total
 }
 
+/// The sum of the elements; zero for an empty array.
 pub fn Array[T: Numeric].sum(self): T {
     var total = Numeric.zero[T]()
     for item in self {
@@ -662,6 +707,8 @@ pub fn Array[T: Numeric].sum(self): T {
     total
 }
 
+/// The smallest element, the first of equal ones, or `none` when the array
+/// is empty.
 pub fn Array[T: Ordered].min(self): T? {
     var found: T? = none
     for item in self {
@@ -673,6 +720,8 @@ pub fn Array[T: Ordered].min(self): T? {
     found
 }
 
+/// The largest element, the first of equal ones, or `none` when the array
+/// is empty.
 pub fn Array[T: Ordered].max(self): T? {
     var found: T? = none
     for item in self {
@@ -770,6 +819,7 @@ fn mergeSort[T](items: Array[T], compare: fn(T, T): Int): Array[T] {
     from
 }
 
+/// The elements in the opposite order.
 pub fn Array[T].reversed(self): Array[T] {
     self[::-1]
 }
@@ -878,11 +928,14 @@ pub fn Array[T].sortBy[K: Ordered](mut self, key: fn(T): K) {
     self[:] = sorted
 }
 
+/// Puts the elements in the opposite order.
 pub fn Array[T].reverse(mut self) {
     let reversed = self.reversed()
     self[:] = reversed
 }
 
+/// Exchanges the elements at `i` and `j`; an index out of the array
+/// panics.
 pub fn Array[T].swap(mut self, i: Int, j: Int) {
     let first = self[i]
     self[i] = self[j]
@@ -913,6 +966,7 @@ pub fn Map[K: Key, V].getOr(self, key: K, fallback: V): V {
     }
 }
 
+/// The same keys, each with the function's result for its value.
 pub fn Map[K: Key, V].mapValues[W](self, transform: fn(V): W): Map[K, W] {
     var out: Map[K, W] = [:]
     for (key, value) in self {
@@ -921,6 +975,7 @@ pub fn Map[K: Key, V].mapValues[W](self, transform: fn(V): W): Map[K, W] {
     out
 }
 
+/// The entries that pass the test, in the same order.
 pub fn Map[K: Key, V].filter(self, keep: fn(K, V): Bool): Map[K, V] {
     var out: Map[K, V] = [:]
     for (key, value) in self {
@@ -940,6 +995,7 @@ pub fn Map[K: Key, V].merge(self, other: Map[K, V]): Map[K, V] {
     out
 }
 
+/// The values in either set.
 pub fn Set[T: Key].union(self, other: Set[T]): Set[T] {
     var out = self
     for item in other {
@@ -948,6 +1004,7 @@ pub fn Set[T: Key].union(self, other: Set[T]): Set[T] {
     out
 }
 
+/// The values in both sets.
 pub fn Set[T: Key].intersection(self, other: Set[T]): Set[T] {
     var out: Set[T] = Set[]
     for item in self {
@@ -958,6 +1015,7 @@ pub fn Set[T: Key].intersection(self, other: Set[T]): Set[T] {
     out
 }
 
+/// The values of this set that are not in `other`.
 pub fn Set[T: Key].difference(self, other: Set[T]): Set[T] {
     var out: Set[T] = Set[]
     for item in self {
@@ -1099,6 +1157,7 @@ pub trait Iterator[T] {
     }
 }
 
+/// The iterator `map` gives: each value of the source through the function.
 pub type MapIterator[I, T, U] = {
     priv source: I
     priv transform: fn(T): U
@@ -1113,6 +1172,7 @@ impl[I: Iterator[T], T, U] Iterator[U] for MapIterator[I, T, U] {
     }
 }
 
+/// The iterator `filter` gives: the values of the source that pass the test.
 pub type FilterIterator[I, T] = {
     priv source: I
     priv keep: fn(T): Bool
@@ -1133,6 +1193,7 @@ impl[I: Iterator[T], T] Iterator[T] for FilterIterator[I, T] {
     }
 }
 
+/// The iterator `take` gives: the first values of the source, up to a count.
 pub type TakeIterator[I, T] = {
     priv source: I
     priv remaining: Int
@@ -1149,6 +1210,7 @@ impl[I: Iterator[T], T] Iterator[T] for TakeIterator[I, T] {
     }
 }
 
+/// The iterator `skip` gives: the values of the source after a count.
 pub type SkipIterator[I, T] = {
     priv source: I
     priv count: Int
@@ -1167,6 +1229,8 @@ impl[I: Iterator[T], T] Iterator[T] for SkipIterator[I, T] {
     }
 }
 
+/// The iterator `takeWhile` gives: the values of the source until one fails
+/// the test.
 pub type TakeWhileIterator[I, T] = {
     priv source: I
     priv predicate: fn(T): Bool
@@ -1188,6 +1252,8 @@ impl[I: Iterator[T], T] Iterator[T] for TakeWhileIterator[I, T] {
     }
 }
 
+/// The iterator `skipWhile` gives: the values of the source from the first
+/// that fails the test.
 pub type SkipWhileIterator[I, T] = {
     priv source: I
     priv predicate: fn(T): Bool
@@ -1213,6 +1279,7 @@ impl[I: Iterator[T], T] Iterator[T] for SkipWhileIterator[I, T] {
     }
 }
 
+/// The iterator `enumerate` gives: each value of the source with its index.
 pub type EnumerateIterator[I, T] = {
     priv source: I
     priv index: Int
@@ -1232,6 +1299,8 @@ impl[I: Iterator[T], T] Iterator[(Int, T)] for EnumerateIterator[I, T] {
     }
 }
 
+/// The iterator `zip` gives: the values of two iterators in pairs, until
+/// either ends.
 pub type ZipIterator[I, J, T, U] = {
     priv first: I
     priv second: J
@@ -1250,6 +1319,7 @@ impl[I: Iterator[T], J: Iterator[U], T, U] Iterator[(T, U)] for ZipIterator[I, J
     }
 }
 
+/// The iterator `chain` gives: the values of one iterator, then another's.
 pub type ChainIterator[I, J, T] = {
     priv first: I
     priv second: J
@@ -1269,6 +1339,8 @@ impl[I: Iterator[T], J: Iterator[T], T] Iterator[T] for ChainIterator[I, J, T] {
     }
 }
 
+/// The iterator `flatMap` gives: the elements of each array the function
+/// makes of a value of the source.
 pub type FlatMapIterator[I, T, U] = {
     priv source: I
     priv transform: fn(T): Array[U]

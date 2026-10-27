@@ -4,11 +4,16 @@
 /// Adds a component, or gives the second path when it is absolute.
 pub fn join(base: String, part: String): String
 
+/// The path without its last component, or `none` when it has one alone:
+/// `some("docs")` for `docs/guide.md`.
 pub fn parent(path: String): String?
 
+/// The last component, or `none` when there is none: `some("guide.md")` for
+/// `docs/guide.md`.
 pub fn fileName(path: String): String?
 
 /// Without the dot.
 pub fn extension(path: String): String?
 
+/// Whether the path starts at the root, as `/tmp` does.
 pub fn isAbsolute(path: String): Bool

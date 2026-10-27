@@ -51,10 +51,12 @@ pub fn Counter.add(self, amount: Int = 1) {
     native.metricAdd(self.id, amount)
 }
 
+/// The count so far.
 pub fn Counter.value(self): Int {
     native.metricValue(self.id)
 }
 
+/// Sets the level.
 pub fn Gauge.set(self, value: Int) {
     native.metricSet(self.id, value)
 }
@@ -64,6 +66,7 @@ pub fn Gauge.add(self, amount: Int) {
     native.metricAdd(self.id, amount)
 }
 
+/// The level now.
 pub fn Gauge.value(self): Int {
     native.metricValue(self.id)
 }

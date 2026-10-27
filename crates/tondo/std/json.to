@@ -37,6 +37,7 @@ pub fn number(text: String): Number ! JsonError {
     }
 }
 
+/// The number's JSON text, as it was read.
 pub fn Number.text(self): String {
     self.digits
 }
@@ -60,6 +61,7 @@ impl Display for Number {
     }
 }
 
+/// Whether the value is `null`.
 pub fn Value.isNull(self): Bool {
     match self {
         Value.Null => true
@@ -104,6 +106,7 @@ pub fn Value.item(self, index: Int): Value {
     }
 }
 
+/// The string, or `none` when the value is not one.
 pub fn Value.asText(self): String? {
     match self {
         Value.Text(text) => text
@@ -111,6 +114,8 @@ pub fn Value.asText(self): String? {
     }
 }
 
+/// The number as an `Int`, or `none` when the value is not a number that
+/// is an integer and fits.
 pub fn Value.asInt(self): Int? {
     match self {
         Value.Number(digits) => digits.toInt()
@@ -118,6 +123,8 @@ pub fn Value.asInt(self): Int? {
     }
 }
 
+/// The number as the nearest `Float`, or `none` when the value is not a
+/// number.
 pub fn Value.asFloat(self): Float? {
     match self {
         Value.Number(digits) => digits.toFloat()
@@ -125,6 +132,7 @@ pub fn Value.asFloat(self): Float? {
     }
 }
 
+/// The boolean, or `none` when the value is not one.
 pub fn Value.asBool(self): Bool? {
     match self {
         Value.Bool(value) => value
@@ -132,6 +140,7 @@ pub fn Value.asBool(self): Bool? {
     }
 }
 
+/// The elements, or `none` when the value is not an array.
 pub fn Value.asArray(self): Array[Value]? {
     match self {
         Value.Array(items) => items
@@ -139,6 +148,7 @@ pub fn Value.asArray(self): Array[Value]? {
     }
 }
 
+/// The members, or `none` when the value is not an object.
 pub fn Value.asObject(self): Map[String, Value]? {
     match self {
         Value.Object(members) => members
@@ -189,6 +199,9 @@ pub type Reader = {
     priv rejectUnknown: Bool
 }
 
+/// A reader of a JSON document, event by event: members a type does not
+/// have are ignored or rejected as `unknownFields` says, and a key repeated
+/// in an object is an error unless `allowDuplicateKeys`.
 pub fn reader(
     text: String,
     unknownFields: UnknownFields = UnknownFields.Ignore,
@@ -355,14 +368,17 @@ pub fn writer(pretty: Bool = false, canonical: Bool = false): Writer {
     Writer { native: jsonnative.writer(pretty, canonical) }
 }
 
+/// Writes `null`.
 pub fn Writer.null(self) {
     self.native.word(0)
 }
 
+/// Writes `true` or `false`.
 pub fn Writer.bool(self, value: Bool) {
     self.native.word(if value { 1 } else { 2 })
 }
 
+/// Writes the integer.
 pub fn Writer.int(self, value: Int) {
     self.native.int(value)
 }
@@ -372,30 +388,38 @@ pub fn Writer.float(self, value: Float) {
     self.native.float(value)
 }
 
+/// Writes the number as its JSON text.
 pub fn Writer.number(self, value: Number) {
     self.native.number(value.digits)
 }
 
+/// Writes the text as a JSON string, escaped.
 pub fn Writer.string(self, value: String) {
     self.native.string(value)
 }
 
+/// Writes the key of the next member of the object being written.
 pub fn Writer.key(self, name: String) {
     self.native.key(name)
 }
 
+/// Starts an array; `endArray` ends it.
 pub fn Writer.beginArray(self) {
     self.native.bracket(true, false)
 }
 
+/// Ends the array being written.
 pub fn Writer.endArray(self) {
     self.native.bracket(false, false)
 }
 
+/// Starts an object, whose members are each a `key` and a value;
+/// `endObject` ends it.
 pub fn Writer.beginObject(self) {
     self.native.bracket(true, true)
 }
 
+/// Ends the object being written.
 pub fn Writer.endObject(self) {
     self.native.bracket(false, true)
 }
@@ -658,6 +682,7 @@ pub fn raw(text: String): Raw ! JsonError {
     Raw { json: text }
 }
 
+/// The JSON text, as it was given or read.
 pub fn Raw.text(self): String {
     self.json
 }

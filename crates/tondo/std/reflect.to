@@ -931,6 +931,7 @@ pub type TypeId = {
     priv value: Int
 }
 
+/// Which primitive type a type is.
 pub enum PrimitiveKind {
     Bool
     Int
@@ -950,6 +951,7 @@ pub enum PrimitiveKind {
     Never
 }
 
+/// Which generic type a type applies: `Array[T]`, `Map[K, V]`, `T?`.
 pub enum AppliedKind {
     Array
     Map
@@ -960,11 +962,15 @@ pub enum AppliedKind {
     Other
 }
 
+/// Which reference a type is: a `Ref[T]` or a `Pointer[T]`.
 pub enum ReferenceKind {
     Ref
     Pointer
 }
 
+/// What kind of type a type is: a primitive, a record, an enum, a newtype,
+/// a tuple, a union, a function, a generic type applied, a reference, or
+/// one whose inside is hidden.
 pub enum TypeKind {
     Primitive(PrimitiveKind)
     Record
@@ -978,6 +984,7 @@ pub enum TypeKind {
     Opaque
 }
 
+/// A capability a type has: `Copy`, `Equatable`, `Key`, `Send` or `Share`.
 pub enum TypeCapability {
     Copy
     Equatable
@@ -986,12 +993,15 @@ pub enum TypeCapability {
     Share
 }
 
+/// What a variant holds: nothing, a tuple, or fields.
 pub enum VariantPayloadKind {
     Unit
     Tuple
     Record
 }
 
+/// How a parameter receives its argument: by value, or lent as `ref`,
+/// `mut` or `var`.
 pub enum ParameterMode {
     Value
     Ref
@@ -1051,18 +1061,24 @@ pub fn typeOf[T: Reflect](value: T): TypeInfo {
     typeInfo[T]()
 }
 
+/// The type's identity, the same for the same type everywhere in the
+/// program.
 pub fn TypeInfo.id(self): TypeId {
     self.typeId
 }
 
+/// The type's name with its module: `app.models.User`.
 pub fn TypeInfo.qualifiedName(self): String {
     self.name
 }
 
+/// What kind of type it is.
 pub fn TypeInfo.kind(self): TypeKind {
     self.describe().kind
 }
 
+/// The type arguments of a generic type, in order: `[Int]` for
+/// `Array[Int]`.
 pub fn TypeInfo.genericArguments(self): Array[TypeInfo] {
     self.describe().generics
 }
@@ -1082,18 +1098,22 @@ pub fn TypeInfo.capabilities(self): Set[TypeCapability] {
     found
 }
 
+/// A record's fields, in declaration order; none for another type.
 pub fn TypeInfo.fields(self): Array[FieldInfo] {
     self.describe().fields
 }
 
+/// An enum's variants, in declaration order; none for another type.
 pub fn TypeInfo.variants(self): Array[VariantInfo] {
     self.describe().variants
 }
 
+/// The type's methods.
 pub fn TypeInfo.methods(self): Array[MethodInfo] {
     self.describe().methods
 }
 
+/// A tuple's element types, in order; none for another type.
 pub fn TypeInfo.tupleElements(self): Array[TypeInfo] {
     self.describe().elements
 }
@@ -1118,22 +1138,28 @@ pub type FieldInfo = {
     priv info: TypeInfo
 }
 
+/// A field's description, as the code the compiler writes for a type
+/// makes it.
 pub fn FieldInfo.of(name: String, ordinal: Int, docs: String?, info: TypeInfo): FieldInfo {
     FieldInfo { fieldName: name, position: ordinal, text: docs, info }
 }
 
+/// The field's name.
 pub fn FieldInfo.name(self): String {
     self.fieldName
 }
 
+/// The field's position among the record's fields, from zero.
 pub fn FieldInfo.ordinal(self): Int {
     self.position
 }
 
+/// The field's `///` documentation, if it has some.
 pub fn FieldInfo.docs(self): String? {
     self.text
 }
 
+/// The field's type.
 pub fn FieldInfo.typeInfo(self): TypeInfo {
     self.info
 }
@@ -1147,6 +1173,8 @@ pub type VariantInfo = {
     priv named: Array[FieldInfo]
 }
 
+/// A variant's description, as the code the compiler writes for a type
+/// makes it.
 pub fn VariantInfo.of(
     name: String,
     ordinal: Int,
@@ -1163,22 +1191,27 @@ pub fn VariantInfo.of(
     }
 }
 
+/// The variant's name.
 pub fn VariantInfo.name(self): String {
     self.variantName
 }
 
+/// The variant's position among the enum's variants, from zero.
 pub fn VariantInfo.ordinal(self): Int {
     self.position
 }
 
+/// What the variant holds: nothing, a tuple, or fields.
 pub fn VariantInfo.payloadKind(self): VariantPayloadKind {
     self.payload
 }
 
+/// The types of a tuple payload's elements; none for another payload.
 pub fn VariantInfo.tupleElements(self): Array[TypeInfo] {
     self.parts
 }
 
+/// The fields of a record payload; none for another payload.
 pub fn VariantInfo.fields(self): Array[FieldInfo] {
     self.named
 }
@@ -1190,18 +1223,23 @@ pub type MethodInfo = {
     priv signature: FunctionInfo
 }
 
+/// A method's description, as the code the compiler writes for a type
+/// makes it.
 pub fn MethodInfo.of(name: String, receiver: ParameterMode, function: FunctionInfo): MethodInfo {
     MethodInfo { methodName: name, mode: receiver, signature: function }
 }
 
+/// The method's name.
 pub fn MethodInfo.name(self): String {
     self.methodName
 }
 
+/// How the method takes `self`.
 pub fn MethodInfo.receiver(self): ParameterMode {
     self.mode
 }
 
+/// The method's signature.
 pub fn MethodInfo.function(self): FunctionInfo {
     self.signature
 }
@@ -1213,18 +1251,23 @@ pub type ParameterInfo = {
     priv passing: ParameterMode
 }
 
+/// A parameter's description, as the code the compiler writes for a type
+/// makes it.
 pub fn ParameterInfo.of(index: Int, info: TypeInfo, mode: ParameterMode): ParameterInfo {
     ParameterInfo { index, info, passing: mode }
 }
 
+/// The parameter's position, from zero.
 pub fn ParameterInfo.position(self): Int {
     self.index
 }
 
+/// The parameter's type.
 pub fn ParameterInfo.typeInfo(self): TypeInfo {
     self.info
 }
 
+/// How the parameter receives its argument.
 pub fn ParameterInfo.mode(self): ParameterMode {
     self.passing
 }
@@ -1237,6 +1280,8 @@ pub type FunctionInfo = {
     priv unsafeCall: Bool
 }
 
+/// A function's description, as the code the compiler writes for a type
+/// makes it.
 pub fn FunctionInfo.of(
     parameters: Array[ParameterInfo],
     outcome: TypeInfo,
@@ -1246,18 +1291,22 @@ pub fn FunctionInfo.of(
     FunctionInfo { params: parameters, result: outcome, isVariadic: variadic, unsafeCall: isUnsafe }
 }
 
+/// The function's parameters, in order.
 pub fn FunctionInfo.parameters(self): Array[ParameterInfo] {
     self.params
 }
 
+/// The type the function returns.
 pub fn FunctionInfo.outcome(self): TypeInfo {
     self.result
 }
 
+/// Whether the function's last parameter takes any number of arguments.
 pub fn FunctionInfo.variadic(self): Bool {
     self.isVariadic
 }
 
+/// Whether the function is `unsafe`.
 pub fn FunctionInfo.isUnsafe(self): Bool {
     self.unsafeCall
 }

@@ -7,10 +7,12 @@ pub type Builder = {
     priv built: String
 }
 
+/// An empty builder.
 pub fn Builder.new(): Builder {
     Builder { built: "" }
 }
 
+/// Adds the value as it displays.
 pub fn Builder.add[T: Display](mut self, value: T) {
     self.built = "{self.built}{value}"
 }
@@ -20,6 +22,7 @@ pub fn Builder.addLine[T: Display](mut self, value: T) {
     self.built = "{self.built}{value}\n"
 }
 
+/// Whether nothing was added.
 pub fn Builder.isEmpty(self): Bool {
     self.built.isEmpty()
 }

@@ -4,8 +4,10 @@
 /// The number of characters.
 pub fn String.length(self): Int
 
+/// The number of UTF-8 bytes, which `length` counts as characters.
 pub fn String.byteLength(self): Int
 
+/// Whether the text has no characters.
 pub fn String.isEmpty(self): Bool
 
 /// The character at a scalar index.
@@ -14,23 +16,31 @@ pub fn String.get(self, index: Int): Char?
 /// The characters from `start` up to `end`, by scalar index.
 pub fn String.slice(self, start: Int, end: Int): String ! text.TextError
 
+/// The text followed by `other`, as `"{a}{b}"` writes it.
 pub fn String.concat(self, other: String): String
 
+/// Whether `needle` appears in the text; an empty one always does.
 pub fn String.contains(self, needle: String): Bool
 
+/// Whether the text begins with `prefix`.
 pub fn String.startsWith(self, prefix: String): Bool
 
+/// Whether the text ends with `suffix`.
 pub fn String.endsWith(self, suffix: String): Bool
 
 /// The scalar index of the first `needle`.
 pub fn String.find(self, needle: String): Int?
 
+/// The text with every `from` replaced by `to`.
 pub fn String.replace(self, from: String, to: String): String
 
+/// The text without the whitespace at either end.
 pub fn String.trim(self): String
 
+/// The text with its ASCII letters in lowercase; other characters stay.
 pub fn String.toLowerAscii(self): String
 
+/// The text with its ASCII letters in uppercase; other characters stay.
 pub fn String.toUpperAscii(self): String
 
 /// The UTF-8 bytes.
@@ -39,69 +49,106 @@ pub fn String.bytes(self): Array[Byte]
 /// UTF-8 bytes as text; others are `TextError.InvalidData`.
 pub fn String.fromBytes(bytes: Array[Byte]): String ! text.TextError
 
+/// The number of elements.
 pub fn Array.length(self): Int
 
+/// Whether the array has no elements.
 pub fn Array.isEmpty(self): Bool
 
+/// The element at `index`, counting from the end when it is negative, or
+/// `none` outside the array.
 pub fn Array.get(self, index: Int): T?
 
 /// The elements from `start` up to `end`.
 pub fn Array.slice(self, start: Int, end: Int): Array[T] ! collections.CollectionError
 
+/// The elements of this array, then those of `other`.
 pub fn Array.concat(self, other: Array[T]): Array[T]
 
+/// The elements written `count` times in a row; a negative `count` panics.
 pub fn Array.repeat(self, count: Int): Array[T]
 
+/// Adds the value at the end.
 pub fn Array.push(var self, value: T)
 
+/// Removes the last element and gives it, or `none` when the array is
+/// empty.
 pub fn Array.pop(var self): T?
 
+/// Puts the value at `index`, counting from the end when it is negative,
+/// and the elements from there one further; `index` may be the length, and
+/// beyond it panics.
 pub fn Array.insert(var self, index: Int, value: T)
 
-pub fn Array.removeAt(var self, index: Int): T
+/// Removes the element at `index`, counting from the end when it is
+/// negative, and gives it, or `none` outside the array.
+pub fn Array.removeAt(var self, index: Int): T?
 
+/// Removes every element.
 pub fn Array.clear(var self)
 
+/// The number of elements.
 pub fn Deque.length(self): Int
 
+/// The element at `index` from the front, counting from the back when it is
+/// negative, or `none` outside the deque.
 pub fn Deque.get(self, index: Int): T?
 
+/// Adds the value at the back.
 pub fn Deque.push(var self, value: T)
 
+/// Adds the value at the front.
 pub fn Deque.pushFront(var self, value: T)
 
+/// Removes the element at the back and gives it, or `none` when the deque
+/// is empty.
 pub fn Deque.pop(var self): T?
 
+/// Removes the element at the front and gives it, or `none` when the deque
+/// is empty.
 pub fn Deque.popFront(var self): T?
 
+/// The number of entries.
 pub fn Map.length(self): Int
 
+/// The value of `key`, or `none` when the map does not have it.
 pub fn Map.get(self, key: K): V?
 
+/// Whether the map has `key`.
 pub fn Map.contains(self, key: K): Bool
 
 /// `map[key] = value` inserts or replaces.
 pub fn Map.insert(var self, key: K, value: V): V?
 
+/// Removes `key` and gives its value, or `none` when the map did not have
+/// it.
 pub fn Map.remove(var self, key: K): V?
 
+/// Removes every entry.
 pub fn Map.clear(var self)
 
 /// Lazy cursors in insertion order.
 pub fn Map.keys(self): MapKeys[K, V]
 
+/// The values, as a lazy cursor in insertion order.
 pub fn Map.values(self): MapValues[K, V]
 
+/// Lazy cursors over each key with its value, in insertion order.
 pub fn Map.entries(self): MapEntries[K, V]
 
+/// The number of values.
 pub fn Set.length(self): Int
 
+/// Whether the set has the value.
 pub fn Set.contains(self, value: T): Bool
 
+/// Adds the value: `true` when it was new, `false` when the set had it.
 pub fn Set.insert(var self, value: T): Bool
 
+/// Removes the value: `true` when the set had it.
 pub fn Set.remove(var self, value: T): Bool
 
+/// Lazy cursors over the values, in insertion order.
 pub fn Set.values(self): SetValues[T]
 
 /// `channel[T](capacity)`: a channel's two ends; without capacity it has no
@@ -111,8 +158,11 @@ pub fn channel[T](capacity: Int = -1): (Sender[T], Receiver[T])
 /// Waits while the channel is full; sending to a closed channel panics.
 pub fn Sender.send(self, value: T)
 
+/// Closes the channel: receivers get the values sent before, then `none`;
+/// sending after it panics.
 pub fn Sender.close(self)
 
+/// Whether the channel is closed.
 pub fn Sender.isClosed(self): Bool
 
 /// Another sender of the same channel.
@@ -121,18 +171,24 @@ pub fn Sender.copy(self): Sender[T]
 /// The next value, or `none` once closed and empty, or after `timeout`.
 pub fn Receiver.receive(self, timeout: time.Duration? = none): T?
 
+/// Whether the channel is closed; values sent before may still wait to be
+/// received.
 pub fn Receiver.isClosed(self): Bool
 
 /// `spawn call(arguments)` starts a task (language 11.11).
 pub fn Join.wait(self): T
 
+/// Cancels the task and waits until it ends, its cleanup run (language
+/// 11.15).
 pub fn Join.cancel(self)
 
 /// Lets the task run on without anyone waiting.
 pub fn Join.detach(self)
 
+/// An empty group of tasks whose results are `T` (language 11.12).
 pub fn Group.new[T](): Group[T]
 
+/// Adds a task to the group.
 pub fn Group.add(var self, job: Join[T])
 
 /// Every result, in order; with `T = R ! E`, the first error cancels the rest.
@@ -141,8 +197,11 @@ pub fn Group.wait(self): Array[T]
 /// The next task to finish, or `none` when the group is empty.
 pub fn Group.next(var self): T?
 
+/// Cancels every task of the group and waits until they end.
 pub fn Group.cancel(self)
 
+/// The number of tasks that have not been taken out yet, by `next` or
+/// `wait`.
 pub fn Group.length(self): Int
 
 /// `Ref(value)`: a new identity holding the value (language 16.10). Its

@@ -4,6 +4,9 @@
 import std.internal.codec as codecNative
 import std.io as __io
 
+/// Why a CSV stream could not be read: a quote out of place, a quoted field
+/// that does not end, a record with other than the header's number of
+/// fields, or the stream failed.
 pub enum CsvError {
     /// A quote inside a field that does not start with one, or text after a
     /// closing quote, at this line and column.
@@ -40,6 +43,8 @@ pub type Rows = {
     priv done: Bool
 }
 
+/// The records of the stream, each as its fields, read as they are asked
+/// for.
 pub fn rows(input: __io.Reader, separator: Char = ','): Rows {
     Rows { input, separator, line: 0, done: false }
 }
@@ -101,6 +106,8 @@ pub type Records = {
     priv header: Array[String]?
 }
 
+/// The records of the stream whose first record is the header, each as a
+/// map from the header's names to its fields.
 pub fn records(input: __io.Reader, separator: Char = ','): Records {
     Records { source: rows(input, separator), header: none }
 }
@@ -155,10 +162,12 @@ pub type Writer = {
     priv separator: Char
 }
 
+/// A writer of CSV records to the stream, with `separator` between fields.
 pub fn Writer.new(output: __io.Writer, separator: Char = ','): Writer {
     Writer { output, separator }
 }
 
+/// Writes the fields as one record, quoting those that need it.
 pub fn Writer.write(self, fields: Array[String]): !__io.IoError {
     self.output.writeLine(csvLine(fields, self.separator))?
 }

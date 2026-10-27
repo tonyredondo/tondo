@@ -22,6 +22,7 @@ pub enum Value {
     Map(Map[String, Value])
 }
 
+/// Whether the value is null.
 pub fn Value.isNull(self): Bool {
     match self {
         Value.Null => true
@@ -54,6 +55,7 @@ pub fn Value.find(self, path: String): Value? {
     found
 }
 
+/// The string, or `none` when the value is not one.
 pub fn Value.asText(self): String? {
     match self {
         Value.Text(text) => text
@@ -61,6 +63,7 @@ pub fn Value.asText(self): String? {
     }
 }
 
+/// The integer, or `none` when the value is not one.
 pub fn Value.asInt(self): Int? {
     match self {
         Value.Int(value) => value
@@ -77,6 +80,7 @@ pub fn Value.asFloat(self): Float? {
     }
 }
 
+/// The boolean, or `none` when the value is not one.
 pub fn Value.asBool(self): Bool? {
     match self {
         Value.Bool(value) => value
@@ -84,6 +88,7 @@ pub fn Value.asBool(self): Bool? {
     }
 }
 
+/// The elements, or `none` when the value is not an array.
 pub fn Value.asArray(self): Array[Value]? {
     match self {
         Value.Array(items) => items
@@ -91,6 +96,7 @@ pub fn Value.asArray(self): Array[Value]? {
     }
 }
 
+/// The entries, or `none` when the value is not a map.
 pub fn Value.asMap(self): Map[String, Value]? {
     match self {
         Value.Map(members) => members

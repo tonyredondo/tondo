@@ -98,22 +98,31 @@ pub fn Logger.log(self, level: Level, message: String, fields: Map[String, Strin
     _ = self.output.writeLine(line)
 }
 
+/// Writes the event at level `Trace`, with its fields, if the logger takes
+/// that level.
 pub fn Logger.trace(self, message: String, fields: Map[String, String] = [:]) {
     self.log(Level.Trace, message, fields)
 }
 
+/// Writes the event at level `Debug`, with its fields, if the logger takes
+/// that level.
 pub fn Logger.debug(self, message: String, fields: Map[String, String] = [:]) {
     self.log(Level.Debug, message, fields)
 }
 
+/// Writes the event at level `Info`, with its fields, if the logger takes
+/// that level.
 pub fn Logger.info(self, message: String, fields: Map[String, String] = [:]) {
     self.log(Level.Info, message, fields)
 }
 
+/// Writes the event at level `Warn`, with its fields, if the logger takes
+/// that level.
 pub fn Logger.warn(self, message: String, fields: Map[String, String] = [:]) {
     self.log(Level.Warn, message, fields)
 }
 
+/// Writes the event at level `Error`, with its fields.
 pub fn Logger.error(self, message: String, fields: Map[String, String] = [:]) {
     self.log(Level.Error, message, fields)
 }

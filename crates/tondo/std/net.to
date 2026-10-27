@@ -190,12 +190,14 @@ pub fn Stream.readText(self, timeout: __time.Duration? = none): String ! NetErro
     }
 }
 
+/// Writes the text, waiting at most `timeout` when there is one.
 pub fn Stream.write(self, text: String, timeout: __time.Duration? = none): !NetError {
     if netNative.write(self.native, text, millis(timeout)) != 0 {
         self.ended(1)?
     }
 }
 
+/// Writes the bytes, waiting at most `timeout` when there is one.
 pub fn Stream.writeBytes(self, data: Array[Byte], timeout: __time.Duration? = none): !NetError {
     if netNative.writeBytes(self.native, data, millis(timeout)) != 0 {
         self.ended(1)?
@@ -229,10 +231,12 @@ pub fn Stream.writer(self): __io.Writer {
     netNative.writer(self.native)
 }
 
+/// This end's address and port.
 pub fn Stream.localAddress(self): Address {
     addressOf(self.native, 0)
 }
 
+/// The other end's address and port.
 pub fn Stream.remoteAddress(self): Address {
     addressOf(self.native, 1)
 }
@@ -243,6 +247,7 @@ pub type Tls = {
     privateKey: String
 }
 
+/// A certificate chain and its private key, from PEM files.
 pub fn Tls.files(certificate: String, privateKey: String): Tls {
     Tls { certificate, privateKey }
 }
@@ -265,6 +270,7 @@ pub fn listen(host: String, port: Int, tls: Tls? = none): Listener ! NetError {
     Listener { native: made(netNative.listen(host, port, certificate, key))? }
 }
 
+/// The address and port it accepts connections at.
 pub fn Listener.address(self): Address {
     addressOf(self.native, 0)
 }
@@ -307,6 +313,7 @@ pub fn bind(host: String, port: Int): Socket ! NetError {
     Socket { native: made(netNative.bind(host, port))? }
 }
 
+/// The address and port the socket is bound to.
 pub fn Socket.address(self): Address {
     addressOf(self.native, 0)
 }

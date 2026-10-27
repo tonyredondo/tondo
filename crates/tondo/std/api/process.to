@@ -11,6 +11,9 @@ pub fn shell(text: String): Command
 /// Delivers pending console output and ends the program, without `defer`s.
 pub fn exit(code: Int): Never
 
+/// Where a process reads its standard input from: the program's (`Inherit`),
+/// nothing (`Null`), a fixed text or bytes, a file (`<`), a stream of
+/// `std.io`, or the program through the `Process` (`Pipe`).
 pub enum Input {
     Inherit
     Null
@@ -21,6 +24,10 @@ pub enum Input {
     Pipe
 }
 
+/// Where a process writes its output: the program's (`Inherit`), nowhere
+/// (`Null`), into the `ProcessOutput` (`Capture`), a file (`>`), the end of
+/// one (`>>`), a stream of `std.io`, standard output (`Stdout`, for standard
+/// error: `2>&1`), or the program through the `Process` (`Pipe`).
 pub enum Output {
     Inherit
     Null
@@ -32,11 +39,15 @@ pub enum Output {
     Pipe
 }
 
+/// How a process ended: its exit code, `128 + signal` when a signal ended
+/// it, and whether it succeeded; a pipeline succeeds when every stage does.
 pub type ExitStatus = {
     code: Int
     success: Bool
 }
 
+/// What a process wrote: its standard output, its standard error, both in
+/// the order they came, and the status of each stage.
 pub type ProcessOutput = {
     stdout: Array[Byte]
     stderr: Array[Byte]
@@ -44,6 +55,9 @@ pub type ProcessOutput = {
     statuses: Array[ExitStatus]
 }
 
+/// Why a process could not run: its program was not found or not allowed,
+/// its output was not UTF-8, a stage failed under `check`, or the host
+/// failed otherwise.
 pub enum ProcessError {
     NotFound
     PermissionDenied
@@ -56,27 +70,38 @@ pub enum ProcessError {
 /// A process started and not yet waited for.
 pub type Process
 
+/// The command run in the directory `path`.
 pub fn Command.directory(self, path: String): Command
 
+/// The command with the environment variable `name` set to `value`.
 pub fn Command.env(self, name: String, value: String): Command
 
+/// The command without the environment variable `name`.
 pub fn Command.removeEnv(self, name: String): Command
 
+/// The command with no environment variables but those it sets.
 pub fn Command.clearEnv(self): Command
 
+/// The command reading its standard input from `input`.
 pub fn Command.stdin(self, input: Input): Command
 
+/// The command writing its standard output to `output`.
 pub fn Command.stdout(self, output: Output): Command
 
+/// The command writing its standard error to `output`.
 pub fn Command.stderr(self, output: Output): Command
 
 /// Sends standard error where standard output goes: `2>&1`.
 pub fn Command.mergeStderr(self): Command
 
+/// The pipeline's first stage reading its standard input from `input`.
 pub fn Pipeline.stdin(self, input: Input): Pipeline
 
+/// The pipeline's last stage writing its standard output to `output`.
 pub fn Pipeline.stdout(self, output: Output): Pipeline
 
+/// Sends the standard error of every stage where its standard output
+/// goes: `|&`.
 pub fn Pipeline.mergeStderr(self): Pipeline
 
 /// On a Command or a Pipeline: with the program's streams, waits.
@@ -97,18 +122,27 @@ pub fn start(self): Process ! ProcessError
 /// Standard output as UTF-8.
 pub fn ProcessOutput.text(self): String ! ProcessError
 
+/// The process's standard input, when it was started with `Input.Pipe`.
 pub fn Process.stdin(self): io.Writer
 
+/// The process's standard output, when it was started with `Output.Pipe`.
 pub fn Process.stdout(self): io.Reader
 
+/// The process's standard error, when it was started with `Output.Pipe`.
 pub fn Process.stderr(self): io.Reader
 
+/// The system's identifier of the process, of the last stage for a
+/// pipeline.
 pub fn Process.id(self): Int
 
+/// Waits until every stage ends and gives the status.
 pub fn Process.wait(self): ExitStatus ! ProcessError
 
+/// Waits until every stage ends and gives what it captured.
 pub fn Process.output(self): ProcessOutput ! ProcessError
 
+/// As `output`, failing with `ProcessError.Failed` when a stage did not
+/// succeed.
 pub fn Process.check(self): ProcessOutput ! ProcessError
 
 /// Ends every stage and waits for them.

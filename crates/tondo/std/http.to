@@ -59,10 +59,12 @@ pub type Body = {
     priv content: Content
 }
 
+/// A body of text, sent as UTF-8 with its content type.
 pub fn Body.text(text: String, contentType: String = "text/plain; charset=utf-8"): Body {
     Body { content: Content.Data(text.bytes(), contentType) }
 }
 
+/// A body of bytes, sent with its content type.
 pub fn Body.bytes(bytes: Array[Byte], contentType: String = "application/octet-stream"): Body {
     Body { content: Content.Data(bytes, contentType) }
 }
@@ -111,6 +113,7 @@ pub type Part = {
     priv contentType: String
 }
 
+/// A field of a multipart form: its name and its text.
 pub fn Part.field(name: String, value: String): Part {
     Part { name, source: Source.Field(value), fileName: "", contentType: "" }
 }
@@ -160,6 +163,7 @@ impl Display for Response {
     }
 }
 
+/// The status code: `200`, `404`.
 pub fn Response.status(self): Int {
     self.code
 }
@@ -214,6 +218,7 @@ pub fn Response.headers(self): Map[String, String] {
     out
 }
 
+/// The whole body, read as it arrives.
 pub fn Response.bytes(self): Array[Byte] ! HttpError {
     let bytes = httpNative.readAll(self.native)
     failed(self.native)?
@@ -359,6 +364,11 @@ pub type Client = {
     priv limit: __time.Duration?
 }
 
+/// A client that keeps its connections for later requests: `baseUrl` goes
+/// before each relative URL and `headers` with each request, whose own
+/// headers win; `timeout` limits a request, its body included,
+/// `connectTimeout` its connection; it follows up to `redirects` redirects,
+/// and trusts the certificates of the PEM file `trust` too.
 pub fn Client.new(
     baseUrl: String = "",
     headers: Map[String, String] = [:],
@@ -375,6 +385,8 @@ pub fn Client.new(
     Client { native: connection, base: baseUrl, defaults: headers, limit: timeout }
 }
 
+/// Sends a `GET`; a status of 400 or more is `HttpError.Status`, with the
+/// response.
 pub fn Client.get(
     self,
     url: String,
@@ -385,6 +397,7 @@ pub fn Client.get(
     self.request("GET", url, none, query, headers, timeout)?
 }
 
+/// Sends a `HEAD`: the headers alone.
 pub fn Client.head(
     self,
     url: String,
@@ -395,6 +408,7 @@ pub fn Client.head(
     self.request("HEAD", url, none, query, headers, timeout)?
 }
 
+/// Sends a `DELETE`.
 pub fn Client.delete(
     self,
     url: String,
@@ -405,6 +419,7 @@ pub fn Client.delete(
     self.request("DELETE", url, none, query, headers, timeout)?
 }
 
+/// Sends a `POST` with the body.
 pub fn Client.post(
     self,
     url: String,
@@ -416,6 +431,7 @@ pub fn Client.post(
     self.request("POST", url, body, query, headers, timeout)?
 }
 
+/// Sends a `PUT` with the body.
 pub fn Client.put(
     self,
     url: String,
@@ -427,6 +443,7 @@ pub fn Client.put(
     self.request("PUT", url, body, query, headers, timeout)?
 }
 
+/// Sends a `PATCH` with the body.
 pub fn Client.patch(
     self,
     url: String,
@@ -483,6 +500,8 @@ pub fn Client.request(
 
 // A request without a client: one connection each.
 
+/// Sends a `GET` on a connection of its own; a status of 400 or more is
+/// `HttpError.Status`, with the response.
 pub fn get(
     url: String,
     query: Map[String, String] = [:],
@@ -492,6 +511,7 @@ pub fn get(
     Client.new().request("GET", url, none, query, headers, timeout)?
 }
 
+/// Sends a `HEAD` on a connection of its own: the headers alone.
 pub fn head(
     url: String,
     query: Map[String, String] = [:],
@@ -501,6 +521,7 @@ pub fn head(
     Client.new().request("HEAD", url, none, query, headers, timeout)?
 }
 
+/// Sends a `DELETE` on a connection of its own.
 pub fn delete(
     url: String,
     query: Map[String, String] = [:],
@@ -510,6 +531,7 @@ pub fn delete(
     Client.new().request("DELETE", url, none, query, headers, timeout)?
 }
 
+/// Sends a `POST` with the body, on a connection of its own.
 pub fn post(
     url: String,
     body: Body? = none,
@@ -520,6 +542,7 @@ pub fn post(
     Client.new().request("POST", url, body, query, headers, timeout)?
 }
 
+/// Sends a `PUT` with the body, on a connection of its own.
 pub fn put(
     url: String,
     body: Body? = none,
@@ -530,6 +553,7 @@ pub fn put(
     Client.new().request("PUT", url, body, query, headers, timeout)?
 }
 
+/// Sends a `PATCH` with the body, on a connection of its own.
 pub fn patch(
     url: String,
     body: Body? = none,
@@ -568,6 +592,8 @@ pub type WebSocket = {
     priv closed: Bool
 }
 
+/// Opens a WebSocket (RFC 6455), over TLS for `wss://`; `timeout` limits
+/// its handshake.
 pub fn WebSocket.connect(
     url: String,
     headers: Map[String, String] = [:],
@@ -587,6 +613,7 @@ pub fn WebSocket.connect(
     WebSocket { native: socket, closed: false }
 }
 
+/// Sends a message, of text or bytes.
 pub fn WebSocket.send(self, message: Message): !HttpError {
     let problem = match message {
         Message.Text(text) => httpNative.wsSend(self.native, false, text, [])
@@ -597,10 +624,12 @@ pub fn WebSocket.send(self, message: Message): !HttpError {
     }
 }
 
+/// Sends a text message.
 pub fn WebSocket.sendText(self, text: String): !HttpError {
     self.send(Message.Text(text))?
 }
 
+/// Sends a binary message.
 pub fn WebSocket.sendBytes(self, bytes: Array[Byte]): !HttpError {
     self.send(Message.Binary(bytes))?
 }
@@ -756,26 +785,33 @@ impl Display for Problem {
     }
 }
 
+/// A problem with an HTTP status and a message, which the server sends as
+/// `application/problem+json`.
 pub fn Problem.new(status: Int, message: String): Problem {
     Problem { status, message }
 }
 
+/// A `400 Bad Request` problem.
 pub fn Problem.badRequest(message: String): Problem {
     Problem { status: 400, message }
 }
 
+/// A `401 Unauthorized` problem.
 pub fn Problem.unauthorized(message: String = "authentication is required"): Problem {
     Problem { status: 401, message }
 }
 
+/// A `403 Forbidden` problem.
 pub fn Problem.forbidden(message: String = "this is not allowed"): Problem {
     Problem { status: 403, message }
 }
 
+/// A `404 Not Found` problem.
 pub fn Problem.notFound(message: String = "not found"): Problem {
     Problem { status: 404, message }
 }
 
+/// A `409 Conflict` problem.
 pub fn Problem.conflict(message: String): Problem {
     Problem { status: 409, message }
 }
@@ -797,6 +833,7 @@ pub type Request = {
     priv params: Map[String, String]
 }
 
+/// The method: `GET`, `POST`.
 pub fn Request.method(self): String {
     self.verb
 }
@@ -806,6 +843,7 @@ pub fn Request.path(self): String {
     self.target
 }
 
+/// The protocol: `HTTP/1.1` or `HTTP/2`.
 pub fn Request.version(self): String {
     self.protocol
 }
@@ -905,6 +943,7 @@ pub fn Request.headers(self): Map[String, String] {
     out
 }
 
+/// The whole body; one that cannot be read is a `400` problem.
 pub fn Request.bytes(self): Array[Byte] ! Problem {
     let bytes = httpNative.requestRead(self.native)
     let failure = httpNative.failure(self.native)
@@ -989,10 +1028,12 @@ pub fn Upload.fileName(self): String {
     self.file
 }
 
+/// The content type the client gave the file.
 pub fn Upload.contentType(self): String {
     self.kind
 }
 
+/// The whole file; one that cannot be read is a `400` problem.
 pub fn Upload.bytes(self): Array[Byte] ! Problem {
     let bytes = httpNative.uploadRead(self.native)
     let failure = httpNative.failure(self.native)
@@ -1002,6 +1043,7 @@ pub fn Upload.bytes(self): Array[Byte] ! Problem {
     bytes
 }
 
+/// The file as UTF-8 text; one that is not is a `400` problem.
 pub fn Upload.text(self): String ! Problem {
     match String.fromBytes(self.bytes()?) {
         ok(text) => text
@@ -1065,6 +1107,7 @@ pub type Reply = {
     priv payload: Payload
 }
 
+/// A reply of text, as `text/plain; charset=utf-8`.
 pub fn Reply.text(text: String, status: Int = 200): Reply {
     Reply {
         code: status
@@ -1073,6 +1116,7 @@ pub fn Reply.text(text: String, status: Int = 200): Reply {
     }
 }
 
+/// A reply of HTML, as `text/html; charset=utf-8`.
 pub fn Reply.html(html: String, status: Int = 200): Reply {
     Reply {
         code: status
@@ -1091,6 +1135,7 @@ pub fn Reply.json[T: __serialization.Encode](value: T, status: Int = 200): Reply
     }
 }
 
+/// A reply of bytes, with their content type.
 pub fn Reply.bytes(
     bytes: Array[Byte],
     contentType: String = "application/octet-stream",
@@ -1125,6 +1170,8 @@ pub fn Reply.events(events: Receiver[Event]): Reply {
     Reply { code: 200, headerList: ["cache-control", "no-cache"], payload: Payload.Events(events) }
 }
 
+/// A reply that sends the client to `url`: `302 Found` unless another
+/// status.
 pub fn Reply.redirect(url: String, status: Int = 302): Reply {
     Reply { code: status, headerList: ["location", url], payload: Payload.Data([]) }
 }
@@ -1134,6 +1181,7 @@ pub fn Reply.empty(status: Int = 204): Reply {
     Reply { code: status, headerList: [], payload: Payload.Data([]) }
 }
 
+/// A `404 Not Found` reply, as a problem.
 pub fn Reply.notFound(): Reply {
     problemReply(Problem.notFound())
 }
@@ -1146,6 +1194,7 @@ pub fn Reply.header(self, name: String, value: String): Reply {
     Reply { code: self.code, headerList: headers, payload: self.payload }
 }
 
+/// The reply's status code.
 pub fn Reply.status(self): Int {
     self.code
 }
@@ -1188,26 +1237,35 @@ pub type App = {
     priv docs: (String, String, String)?
 }
 
+/// An app without routes.
 pub fn App.new(): App {
     App { routes: [], layers: [], operations: [], schemas: [:], docs: none }
 }
 
+/// Routes `GET` and `HEAD` requests of `path`, whose `:name` segments are
+/// parameters and whose last may be `*name`, the rest of the path.
 pub fn App.get(mut self, path: String, handler: fn(Request): Reply ! Problem) {
     self.route("GET", path, handler)
 }
 
+/// Routes `POST` requests of `path`, whose `:name` segments are parameters.
 pub fn App.post(mut self, path: String, handler: fn(Request): Reply ! Problem) {
     self.route("POST", path, handler)
 }
 
+/// Routes `PUT` requests of `path`, whose `:name` segments are parameters.
 pub fn App.put(mut self, path: String, handler: fn(Request): Reply ! Problem) {
     self.route("PUT", path, handler)
 }
 
+/// Routes `PATCH` requests of `path`, whose `:name` segments are
+/// parameters.
 pub fn App.patch(mut self, path: String, handler: fn(Request): Reply ! Problem) {
     self.route("PATCH", path, handler)
 }
 
+/// Routes `DELETE` requests of `path`, whose `:name` segments are
+/// parameters.
 pub fn App.delete(mut self, path: String, handler: fn(Request): Reply ! Problem) {
     self.route("DELETE", path, handler)
 }

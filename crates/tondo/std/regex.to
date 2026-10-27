@@ -13,6 +13,8 @@ pub type RegexOptions = {
     ungreedy: Bool
 }
 
+/// Every option off: case-sensitive, `^` and `$` at the ends of the text,
+/// `.` not matching `\n`, and greedy repetition.
 pub fn RegexOptions.defaults(): RegexOptions {
     RegexOptions {
         caseInsensitive: false
@@ -35,6 +37,8 @@ pub type RegexLimits = {
     maxReplacementBytes: Int
 }
 
+/// The default limits: patterns of up to 64 KiB, inputs of up to 16 MiB and
+/// a million matches.
 pub fn RegexLimits.defaults(): RegexLimits {
     RegexLimits {
         maxPatternBytes: 65536
@@ -48,6 +52,7 @@ pub fn RegexLimits.defaults(): RegexLimits {
     }
 }
 
+/// What went wrong with a pattern, an input or a replacement.
 pub enum RegexErrorKind {
     InvalidSyntax
     UnexpectedEnd
@@ -70,6 +75,7 @@ pub enum RegexErrorKind {
     InvalidBoundary
 }
 
+/// When an error happened: compiling the pattern, matching or replacing.
 pub enum RegexPhase {
     Compile
     Match
