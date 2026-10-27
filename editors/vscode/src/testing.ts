@@ -11,7 +11,7 @@ import { isProject } from './binary';
 import { Ran, exec, settings } from './cli';
 import { Documents } from './docs';
 import { ShowProfile } from './profiles';
-import { Covered, Listed, Outcome, Served, benchLine, covered, listed, served, testEvent } from './report';
+import { Covered, Listed, Outcome, Profiled, Served, benchLine, covered, listed, served, tagLine, testEvent } from './report';
 
 /** Registers the tests; what it returns takes the language server's. */
 export function registerTesting(
@@ -176,7 +176,7 @@ export function registerTesting(
   function follower(
     dir: string,
     current: () => vscode.TestRun | undefined,
-    ended: (compiled: boolean, ids: Set<string>, profiles: string[]) => void,
+    ended: (compiled: boolean, ids: Set<string>, profiles: Profiled[]) => void,
   ) {
     const item = (id: string) => {
       const found = projects.get(dir);
@@ -275,7 +275,19 @@ export function registerTesting(
         }
         case 'report':
           // The report decides, after every retry.
-          event.outcomes.forEach((outcome) => finish(testRun, outcome));
+          event.outcomes.forEach((outcome) => {
+            finish(testRun, outcome);
+            // What it said of itself with `testing.tags`, beside its name
+            // and in its output.
+            const test = item(outcome.id);
+            const tags = tagLine(outcome.tags);
+            if (test) {
+              test.description = tags || undefined;
+              if (tags) {
+                testRun.appendOutput(`tags: ${tags}\r\n`, undefined, test);
+              }
+            }
+          });
           ended(event.compiled, new Set(event.outcomes.map((outcome) => outcome.id)), event.profiles);
           break;
       }
@@ -335,7 +347,7 @@ export function registerTesting(
       started.forEach((item) => testRun.enqueued(item));
       let reported = false;
       let ran = new Set<string>();
-      let profiles: string[] = [];
+      let profiles: Profiled[] = [];
       const follow = follower(dir, () => testRun, (compiled, ids, written) => ((reported = compiled), (ran = ids), (profiles = written)));
       // A profile of each test, or of what the benchmarks measure when
       // only benchmarks are chosen.
@@ -379,10 +391,20 @@ export function registerTesting(
       if (benchmarking) {
         void vscode.commands.executeCommand('markdown.showPreviewToSide', vscode.Uri.file(measured));
       }
-      if (profiling && profiles.length > 0) {
-        const chosen = profiles.length === 1 ? profiles[0] : await vscode.window.showQuickPick(profiles, { placeHolder: 'Which profile?' });
+      if (profiling && profiles.length === 0) {
+        void vscode.window.showInformationMessage(
+          'Tondo: no profile, as no test ran a millisecond of processor, the least a sample takes. A benchmark (testing.bench) runs fast code often enough to profile it.',
+        );
+      } else if (profiling) {
+        const picks = profiles.map((profiled) => ({
+          label: profiled.test.split('::').pop() ?? profiled.test,
+          description: profiled.bench,
+          detail: profiled.file,
+          file: profiled.file,
+        }));
+        const chosen = picks.length === 1 ? picks[0] : await vscode.window.showQuickPick(picks, { placeHolder: "Which test's profile?" });
         if (chosen) {
-          await showProfile(dir, path.resolve(dir, chosen));
+          await showProfile(dir, path.resolve(dir, chosen.file));
         }
       }
       // What the report does not name did not run.
@@ -443,7 +465,15 @@ export function registerTesting(
 
   controller.createRunProfile('Run', vscode.TestRunProfileKind.Run, run, true, undefined, true);
   controller.createRunProfile('Benchmark', vscode.TestRunProfileKind.Run, run, false, benchmark);
-  controller.createRunProfile('Profile', vscode.TestRunProfileKind.Run, run, false);
+  const profile = controller.createRunProfile('Profile', vscode.TestRunProfileKind.Run, run, false);
+  // The profile's run, beside each test's Run and Debug, and in their
+  // menus, where VS Code offers only the default profiles.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tondo.profileTest', (test?: vscode.TestItem, chosen?: vscode.TestItem[]) => {
+      const include = chosen?.length ? chosen : test ? [test] : undefined;
+      return run(new vscode.TestRunRequest(include, undefined, profile), new vscode.CancellationTokenSource().token);
+    }),
+  );
   // A snapshot written as the test now makes it, then the test again.
   context.subscriptions.push(
     vscode.commands.registerCommand('tondo.updateSnapshot', async (asked: { test: vscode.TestItem }) => {

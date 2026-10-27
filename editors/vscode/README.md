@@ -53,13 +53,18 @@ project, running, debugging and testing it.
   *Benchmark* profile measures the tests that call `testing.bench`: each
   benchmark's time, spread and allocations go to its output, and the
   report opens beside the code, compared with a baseline when the settings
-  give one.
+  give one. What a test says of itself with `testing.tags` shows beside its
+  name in the Testing view after it runs, as `component=users,
+  kind=integration`, and in its output.
 - **Modules**: the *Tondo Modules* view shows each project's packages,
   modules, files and imports, from `tondo graph`; *Show the Module Graph*
   writes it in Mermaid.
 - **Profiles**: *Profile* over `main` runs the program under `tondo profile`
-  in a terminal, until it ends or is stopped; the *Profile* profile of the
-  Testing view profiles the tests chosen, or what benchmarks measure. Each
+  in a terminal, until it ends or is stopped; *Profile Test*, the flame
+  beside each test in the Testing view and in the menu of its button in
+  the editor, profiles the tests chosen, or what benchmarks measure. A
+  test needs a millisecond of processor for a sample: fast code is
+  profiled through a benchmark. Each
   hot line of the program then shows its share at its end, as `🔥 64.4%
   (94ms)`, and the flame graph opens beside the code. *Show a Profile…*
   opens any pprof file, a CI artifact or one `std.profile` wrote, and

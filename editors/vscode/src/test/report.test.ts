@@ -26,6 +26,7 @@ import {
   running,
   served,
   share,
+  tagLine,
   testEvent,
   traced,
   verdict,
@@ -63,7 +64,9 @@ test('a report says how each test ended, why and where', () => {
         name: 'adds',
         status: 'passed',
         decisive_attempt: 1,
-        attempts: [{ failure: null, skip: null, logs: ['logged'], stdout: stream('out\n'), stderr: stream('') }],
+        attempts: [
+          { failure: null, skip: null, logs: ['logged'], stdout: stream('out\n'), stderr: stream(''), tags: { component: 'users', kind: 'unit' } },
+        ],
       },
       {
         id: 'p::unit::p::fails',
@@ -92,6 +95,8 @@ test('a report says how each test ended, why and where', () => {
   const [passed, failed, skipped] = outcomes(report);
   assert.equal(passed.verdict, 'passed');
   assert.equal(passed.output, 'out\nlogged\n');
+  assert.equal(tagLine(passed.tags), 'component=users, kind=unit');
+  assert.equal(tagLine(failed.tags), '');
   assert.equal(failed.verdict, 'failed');
   assert.equal(failed.message, 'assertion-failed: wrong sum');
   assert.deepEqual([failed.file, failed.line, failed.column], ['src/main_test.to', 7, 5]);
@@ -355,7 +360,7 @@ test("a profile's hot lines, and how much each took at its end", () => {
   assert.throws(() => hotLines('{"format":"tondo-error-0.1/1"}'));
   const report = testEvent(JSON.stringify({ event: 'report', report: { compiled: true, profiles: [{ test: 'p::unit::p::slow', bench: null, profile: 'target/profiles/p.unit.p.slow.cpu.pprof' }] } }));
   assert.ok(report?.event === 'report');
-  assert.deepEqual(report.profiles, ['target/profiles/p.unit.p.slow.cpu.pprof']);
+  assert.deepEqual(report.profiles, [{ test: 'p::unit::p::slow', bench: undefined, file: 'target/profiles/p.unit.p.slow.cpu.pprof' }]);
 });
 
 test('a reload says whether the program runs the new code, or why not', () => {

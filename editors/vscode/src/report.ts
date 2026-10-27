@@ -56,6 +56,9 @@ export interface Outcome {
   logs: string;
   /** What its benchmarks measured, under `--bench`. */
   benchmarks: Measured[];
+  /** What it said of itself with `testing.tags`, which only the report
+   *  has (testing 9.4). */
+  tags: Record<string, string>;
 }
 
 export interface Frame {
@@ -103,6 +106,7 @@ interface Attempt {
   stdout?: Stream;
   stderr?: Stream;
   benchmarks?: Benchmark[];
+  tags?: Record<string, string>;
 }
 
 interface Stream {
@@ -204,7 +208,15 @@ function outcome(id: string, status: string, attempt: Attempt | undefined): Outc
         ? { percent: b.baseline.change_percent, verdict: b.baseline.verdict, regressed: b.baseline.regressed ?? undefined }
         : undefined,
     })),
+    tags: attempt?.tags ?? {},
   };
+}
+
+/** A test's tags in a line: `component=users, kind=integration`. */
+export function tagLine(tags: Record<string, string>): string {
+  return Object.entries(tags)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(', ');
 }
 
 /** A time per run in the unit that reads best, as `tondo test` shows it. */
@@ -237,7 +249,14 @@ export type TestEvent =
   | { event: 'start'; id: string }
   | { event: 'output'; id: string; text: string }
   | { event: 'end'; outcome: Outcome; duration: number }
-  | { event: 'report'; compiled: boolean; outcomes: Outcome[]; profiles: string[] };
+  | { event: 'report'; compiled: boolean; outcomes: Outcome[]; profiles: Profiled[] };
+
+/** A profile `--profile` wrote: of a test, or of one of its benchmarks. */
+export interface Profiled {
+  test: string;
+  bench?: string;
+  file: string;
+}
 
 export function testEvent(line: string): TestEvent | undefined {
   let value;
@@ -269,7 +288,11 @@ export function testEvent(line: string): TestEvent | undefined {
         event: 'report',
         compiled: value.report?.compiled !== false,
         outcomes: reported(value.report ?? {}),
-        profiles: (value.report?.profiles ?? []).map((written) => written.profile),
+        profiles: (value.report?.profiles ?? []).map((written) => ({
+          test: written.test,
+          bench: written.bench ?? undefined,
+          file: written.profile,
+        })),
       };
     default:
       return undefined;

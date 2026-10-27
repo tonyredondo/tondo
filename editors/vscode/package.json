@@ -283,6 +283,12 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.profileTest",
+        "title": "Profile Test",
+        "category": "Tondo",
+        "icon": "$(flame)"
+      },
+      {
         "command": "tondo.restartLanguageServer",
         "title": "Restart the Language Server",
         "category": "Tondo"
@@ -413,6 +419,10 @@
           "when": "false"
         },
         {
+          "command": "tondo.profileTest",
+          "when": "false"
+        },
+        {
           "command": "tondo.profile",
           "when": "resourceLangId == tondo"
         },
@@ -448,6 +458,24 @@
           "command": "tondo.moduleGraph",
           "when": "view == tondoModules && viewItem == project",
           "group": "inline"
+        }
+      ],
+      "testing/item/context": [
+        {
+          "command": "tondo.profileTest",
+          "when": "controllerId == tondo && testId =~ /^(?!doc:)/",
+          "group": "inline"
+        },
+        {
+          "command": "tondo.profileTest",
+          "when": "controllerId == tondo && testId =~ /^(?!doc:)/",
+          "group": "1_run"
+        }
+      ],
+      "testing/item/gutter": [
+        {
+          "command": "tondo.profileTest",
+          "when": "controllerId == tondo && testId =~ /^(?!doc:)/"
         }
       ],
       "testing/message/context": [
