@@ -483,6 +483,17 @@ fn steal() -> Option<*mut Task> {
     None
 }
 
+/// The first of the tasks this worker's tasks started.
+fn own_started() -> Option<*mut Task> {
+    let own = OWN_NEXT.with(Cell::get)?;
+    if own.count.load(Ordering::Relaxed) == 0 {
+        return None;
+    }
+    let task = own.tasks().0.pop_front()?;
+    own.count.fetch_sub(1, Ordering::Relaxed);
+    Some(task)
+}
+
 /// The tasks waiting in workers' own queues.
 fn waiting_local() -> Vec<*mut Task> {
     nexts().flat_map(|next| next.tasks().0.iter().copied().collect::<Vec<_>>()).collect()
@@ -1119,9 +1130,7 @@ fn work(main: bool) -> i32 {
                 queue().runnable.push_back(task);
             }
             // Then the tasks its tasks started.
-            let started = (next.count.load(Ordering::Relaxed) > 0).then(|| next.tasks().0.pop_front()).flatten();
-            if let Some(task) = started {
-                next.count.fetch_sub(1, Ordering::Relaxed);
+            if let Some(task) = own_started() {
                 if !runs.is_multiple_of(61) {
                     run(task);
                     continue;
@@ -1174,6 +1183,11 @@ fn work(main: bool) -> i32 {
                         queue.waking = true;
                         READY.notify_one();
                     }
+                    break task;
+                }
+                // Its own first: one of them went to the queue, for
+                // fairness, and another worker may have run it.
+                if let Some(task) = own_started() {
                     break task;
                 }
                 // Tasks another worker started; or one next to a worker that
