@@ -61,7 +61,8 @@ mod yaml;
 // Strings
 // ---------------------------------------------------------------------------
 
-/// Header of every string. The UTF-8 bytes follow the header.
+/// Header of every string. The UTF-8 bytes follow the header, with room
+/// for `cap` of them, which a string appended to in place grows into.
 ///
 /// String literals are emitted by the compiler as static objects with the
 /// same layout and `rc == IMMORTAL`, so retain and release ignore them.
@@ -69,10 +70,11 @@ mod yaml;
 pub struct Str {
     rc: AtomicUsize,
     len: usize,
+    cap: usize,
 }
 
 const IMMORTAL: usize = usize::MAX;
-const HEADER: usize = std::mem::size_of::<Str>();
+pub(crate) const HEADER: usize = std::mem::size_of::<Str>();
 
 /// Heap objects (strings and boxes) currently allocated. Checked at exit when
 /// `TONDO_RT_CHECK_LEAKS` is set, which the compiler's tests use to verify
@@ -91,9 +93,9 @@ pub fn str_new(bytes: &[u8]) -> *mut Str {
         if ptr.is_null() {
             handle_alloc_error(layout);
         }
-        ptr.write(Str { rc: AtomicUsize::new(1), len: bytes.len() });
+        ptr.write(Str { rc: AtomicUsize::new(1), len: bytes.len(), cap: bytes.len() });
         LIVE_OBJECTS.made();
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), (ptr as *mut u8).add(HEADER), bytes.len());
+        copy_short(bytes, (ptr as *mut u8).add(HEADER));
         ptr
     }
 }
@@ -125,7 +127,7 @@ pub unsafe extern "C" fn tondo_rt_str_release(s: *mut Str) {
         1 => {
             fence(Ordering::Acquire);
             LIVE_OBJECTS.gone();
-            unsafe { dealloc(s as *mut u8, str_layout((*s).len)) }
+            unsafe { dealloc(s as *mut u8, str_layout((*s).cap)) }
         }
         0 => runtime_fault("string released after it was freed"),
         _ => {}
@@ -1836,8 +1838,7 @@ pub unsafe extern "C" fn tondo_rt_str_hash(s: *const Str) -> u64 {
 /// that interpolates keeps it on its stack.
 #[repr(C)]
 pub struct Builder {
-    /// A string whose header's `len` is its room while it is built; null
-    /// while it has none.
+    /// A string whose header's `cap` is its room; null while it has none.
     text: *mut Str,
     len: usize,
 }
@@ -1852,17 +1853,14 @@ impl Builder {
     }
 
     fn room(&self) -> usize {
-        if self.text.is_null() { 0 } else { unsafe { (*self.text).len } }
+        if self.text.is_null() { 0 } else { unsafe { (*self.text).cap } }
     }
 
     pub fn extend(&mut self, bytes: &[u8]) {
         if self.len + bytes.len() > self.room() {
             self.grow(bytes.len());
         }
-        unsafe {
-            let end = (self.text as *mut u8).add(HEADER + self.len);
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), end, bytes.len());
-        }
+        unsafe { copy_short(bytes, (self.text as *mut u8).add(HEADER + self.len)) }
         self.len += bytes.len();
     }
 
@@ -1887,7 +1885,7 @@ impl Builder {
             handle_alloc_error(layout);
         }
         self.text = text as *mut Str;
-        unsafe { (*self.text).len = if grown { meta::usable(text, layout.size()) - HEADER } else { room } }
+        unsafe { (*self.text).cap = if grown { meta::usable(text, layout.size()) - HEADER } else { room } }
     }
 
     /// The string built. Its block keeps room it does not use, as much as it
@@ -1899,16 +1897,18 @@ impl Builder {
             return str_new(&[]);
         }
         let mut text = self.text as *mut u8;
+        let mut cap = self.room();
         let counted = diagnostics::hooks() & (diagnostics::BUDGET | diagnostics::WATCHED) != 0;
-        if self.room() - self.len > self.len.max(16) || (counted && self.room() != self.len) {
+        if cap - self.len > self.len.max(16) || (counted && cap != self.len) {
             let layout = str_layout(self.len);
-            text = unsafe { std::alloc::realloc(text, str_layout(self.room()), layout.size()) };
+            text = unsafe { std::alloc::realloc(text, str_layout(cap), layout.size()) };
             if text.is_null() {
                 handle_alloc_error(layout);
             }
+            cap = self.len;
         }
         let text = text as *mut Str;
-        unsafe { text.write(Str { rc: AtomicUsize::new(1), len: self.len }) };
+        unsafe { text.write(Str { rc: AtomicUsize::new(1), len: self.len, cap }) };
         LIVE_OBJECTS.made();
         text
     }
@@ -1967,13 +1967,14 @@ pub extern "C" fn tondo_rt_int_text(value: i64) -> *mut Str {
     }
     static SMALL: [Small; 100] = {
         let mut table =
-            [const { Small { header: Str { rc: AtomicUsize::new(IMMORTAL), len: 1 }, digits: [0; 8] } }; 100];
+            [const { Small { header: Str { rc: AtomicUsize::new(IMMORTAL), len: 1, cap: 1 }, digits: [0; 8] } }; 100];
         let mut n = 0;
         while n < 100 {
             match n < 10 {
                 true => table[n].digits[0] = b'0' + n as u8,
                 false => {
                     table[n].header.len = 2;
+                    table[n].header.cap = 2;
                     table[n].digits[0] = b'0' + (n / 10) as u8;
                     table[n].digits[1] = b'0' + (n % 10) as u8;
                 }
@@ -2005,15 +2006,46 @@ pub unsafe extern "C" fn tondo_rt_str_append_int(s: *mut Str, value: i64) -> *mu
     unsafe { append(s, &digits[start..]) }
 }
 
+/// Copies `bytes` to `to`: a few bytes, as a string's usual piece, in two
+/// moves of a word that may overlap rather than a call of `memcpy`.
+#[inline(always)]
+unsafe fn copy_short(bytes: &[u8], to: *mut u8) {
+    let (from, n) = (bytes.as_ptr(), bytes.len());
+    unsafe {
+        match n {
+            8..=16 => {
+                to.cast::<u64>().write_unaligned(from.cast::<u64>().read_unaligned());
+                to.add(n - 8).cast::<u64>().write_unaligned(from.add(n - 8).cast::<u64>().read_unaligned());
+            }
+            4..=7 => {
+                to.cast::<u32>().write_unaligned(from.cast::<u32>().read_unaligned());
+                to.add(n - 4).cast::<u32>().write_unaligned(from.add(n - 4).cast::<u32>().read_unaligned());
+            }
+            1..=3 => {
+                *to = *from;
+                *to.add(n / 2) = *from.add(n / 2);
+                *to.add(n - 1) = *from.add(n - 1);
+            }
+            0 => {}
+            _ => std::ptr::copy_nonoverlapping(from, to, n),
+        }
+    }
+}
+
 unsafe fn append(s: *mut Str, bytes: &[u8]) -> *mut Str {
     unsafe {
         let len = (*s).len;
-        if (*s).rc.load(Ordering::Acquire) == 1
-            && str_layout(len + bytes.len()).size() <= meta::usable(s as *const u8, str_layout(len).size())
-        {
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), (s as *mut u8).add(HEADER + len), bytes.len());
-            (*s).len = len + bytes.len();
-            return s;
+        if (*s).rc.load(Ordering::Acquire) == 1 {
+            // The room its header knows, and once that is used, the room
+            // its block has besides, which the allocator may have given.
+            if len + bytes.len() > (*s).cap {
+                (*s).cap = (*s).cap.max(meta::usable(s as *const u8, str_layout((*s).cap).size()) - HEADER);
+            }
+            if len + bytes.len() <= (*s).cap {
+                copy_short(bytes, (s as *mut u8).add(HEADER + len));
+                (*s).len = len + bytes.len();
+                return s;
+            }
         }
         let mut builder = Builder::new(0);
         if tondo_rt_sb_adopt(&mut builder, s, bytes.len()) == 0 {
@@ -2033,7 +2065,7 @@ pub unsafe extern "C" fn tondo_rt_sb_adopt(b: *mut Builder, s: *mut Str, room: u
         if (*s).rc.load(Ordering::Acquire) == 1 {
             // The block may hold more than the string: room it grows into.
             let len = (*s).len;
-            (*s).len = meta::usable(s as *const u8, str_layout(len).size()) - HEADER;
+            (*s).cap = (*s).cap.max(meta::usable(s as *const u8, str_layout((*s).cap).size()) - HEADER);
             b.write(Builder { text: s, len });
             if len + room > (*b).room() {
                 (*b).grow(room);

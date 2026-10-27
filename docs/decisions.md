@@ -2611,3 +2611,17 @@ The maintainer chose this over a format-specific decoder: other formats
 keep working through the default. Decoding the benchmark's ten-member
 object went from 3.05 to 1.58 µs, and from 52 to 13 allocations; Go's
 takes 1.28 µs.
+
+## 2026-10-27 — A string knows its room
+
+A string appended to in place, as `x = "{x}{y}"` and `format.Builder`
+make one, asked the allocator each time how much its block held. The
+header of a string is now 24 bytes, not 16: its count, its length and
+its room, which an append checks first and asks the allocator about only
+once that room is used. The maintainer chose the 8 bytes more for every
+string, which the specification leaves to the implementation, over a
+call of the allocator for each piece appended. Pieces of up to 16 bytes,
+as most are, are also copied with two moves of a word rather than a call
+of `memcpy`, for a new string, an interpolation and an append. A hundred
+appends of a word and a number went from 1.40 to 0.89 µs, and an
+interpolation from 29.8 to 23.6 ns.

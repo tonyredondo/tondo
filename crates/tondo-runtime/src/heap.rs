@@ -323,11 +323,12 @@ pub(crate) fn objects() -> Option<Objects> {
                 edges.push((from, to));
             }
         }
-        // A string's header is its count and length, then its bytes.
+        // A string's header is its count, length and room, then its bytes.
         let is_string = super::trace::describe(site).and_then(|d| d.ty) == Some("String");
         let text = is_string.then(|| {
-            let length = unsafe { *((address + 8) as *const usize) }.min(size.saturating_sub(16)).min(200);
-            let bytes = unsafe { std::slice::from_raw_parts((address + 16) as *const u8, length) };
+            let header = super::HEADER;
+            let length = unsafe { *((address + 8) as *const usize) }.min(size.saturating_sub(header)).min(200);
+            let bytes = unsafe { std::slice::from_raw_parts((address + header) as *const u8, length) };
             String::from_utf8_lossy(bytes).into_owned()
         });
         list.push((address, size, site, text));

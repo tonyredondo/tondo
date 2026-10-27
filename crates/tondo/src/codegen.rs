@@ -2545,13 +2545,14 @@ impl Codegen<'_> {
         crate::live::type_key(self.types, ty)
     }
 
-    /// A static, immortal string object: `[refcount][length][bytes]`.
+    /// A static, immortal string object: `[refcount][length][room][bytes]`.
     fn string(&mut self, text: &str) -> DataId {
         if let Some(&id) = self.strings.get(text) {
             return id;
         }
-        let mut bytes = Vec::with_capacity(16 + text.len());
+        let mut bytes = Vec::with_capacity(24 + text.len());
         bytes.extend_from_slice(&IMMORTAL.to_le_bytes());
+        bytes.extend_from_slice(&(text.len() as u64).to_le_bytes());
         bytes.extend_from_slice(&(text.len() as u64).to_le_bytes());
         bytes.extend_from_slice(text.as_bytes());
         let name = format!("tondo_str{}", self.strings.len());
