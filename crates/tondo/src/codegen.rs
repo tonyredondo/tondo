@@ -5567,6 +5567,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 Val::Scalar(match op {
                     BinOp::Add => ins.iadd(a, b),
                     BinOp::Sub => ins.isub(a, b),
+                    BinOp::Div => ins.udiv(a, b),
+                    BinOp::Rem => ins.urem(a, b),
                     _ => ins.imul(a, b),
                 })
             }

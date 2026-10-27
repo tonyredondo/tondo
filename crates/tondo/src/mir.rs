@@ -262,7 +262,8 @@ pub enum Rvalue {
     /// Unchecked `+ 1`, used by range iteration after its bound check.
     Increment(Operand),
     /// A sum, difference or product of `Int`s that `prove` showed cannot
-    /// overflow: without the check.
+    /// overflow, without the check; or a quotient or remainder of one it
+    /// showed is not negative by a power of two, without signs.
     Exact(BinOp, Operand, Operand),
     Call(Callee, Vec<Operand>),
     /// A named function as a `fn(...)` value: a static object.

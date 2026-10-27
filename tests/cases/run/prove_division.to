@@ -1,0 +1,22 @@
+import std.console
+
+// A remainder or quotient by a power of two of an index the compiler
+// shows is not negative is a mask or a shift; one of an index that may be
+// negative keeps the sign, as `%` and `/` have it.
+
+fn main() {
+    var signed: Array[Int] = []
+    for i in -6..6 {
+        signed.push(i % 4)
+        signed.push(i / 4)
+    }
+    console.println("{signed}")
+    var masked: Array[Int] = []
+    for i in 0..9 {
+        masked.push(i % 4 + i / 4 * 10)
+    }
+    console.println("{masked}")
+}
+
+// expect-stdout: [-2, -1, -1, -1, 0, -1, -3, 0, -2, 0, -1, 0, 0, 0, 1, 0, 2, 0, 3, 0, 0, 1, 1, 1]
+// expect-stdout: [0, 1, 2, 3, 10, 11, 12, 13, 20]

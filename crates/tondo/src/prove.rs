@@ -66,7 +66,7 @@ fn relevant(body: &mut Body, types: &Types) -> Option<Vec<bool>> {
             if let Statement::Assign(place, rvalue, _) = statement
                 && place.path.is_empty()
                 && ints[place.local.0 as usize]
-                && let Rvalue::Binary(BinOp::Add | BinOp::Sub | BinOp::Mul, a, b) = &**rvalue
+                && let Rvalue::Binary(BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem, a, b) = &**rvalue
             {
                 any = true;
                 for operand in [a, b] {
@@ -386,11 +386,20 @@ impl Prover<'_> {
             let (range_a, range_b) = (facts.range(a), facts.range(b));
             let (low, high) = arithmetic(*op, range_a, range_b);
             if low >= i64::MIN as i128 && high <= i64::MAX as i128 {
-                let Rvalue::Binary(op, a, b) = std::mem::replace(&mut **rvalue, Rvalue::Cancelled) else {
-                    unreachable!()
-                };
-                **rvalue = Rvalue::Exact(op, a, b);
+                exact(rvalue);
             }
+        } else if let Statement::Assign(place, rvalue, _) = statement
+            && place.path.is_empty()
+            && self.typed_int(place.local)
+            && let Rvalue::Binary(crate::ast::BinOp::Div | crate::ast::BinOp::Rem, a, b) = &**rvalue
+            && let (Some(a), Some((Node::Zero, divisor))) = (self.value(a), self.value(b))
+            && divisor > 0
+            && (divisor as u128).is_power_of_two()
+            && facts.range(a).0 >= 0
+        {
+            // A dividend not below zero by a power of two: a shift or a
+            // mask, without the work signs take.
+            exact(rvalue);
         }
     }
 
@@ -560,6 +569,12 @@ impl Prover<'_> {
             facts.add(node, Node::Zero, high);
         }
     }
+}
+
+/// `Exact` in place of the `Binary` it was.
+fn exact(rvalue: &mut Rvalue) {
+    let Rvalue::Binary(op, a, b) = std::mem::replace(rvalue, Rvalue::Cancelled) else { unreachable!() };
+    *rvalue = Rvalue::Exact(op, a, b);
 }
 
 /// The range of `a op b` for `a` and `b` in theirs.
