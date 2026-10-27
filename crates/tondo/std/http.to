@@ -237,7 +237,10 @@ pub fn Response.text(self): String ! HttpError {
 pub fn Response.json[T: __serialization.Decode](self): T ! HttpError {
     match __json.decodeFrom[T](self.body()) {
         ok(value) => value
-        err(error) => fail HttpError.Body("{error}")
+        err(error) => {
+            failed(self.native)?
+            fail HttpError.Body("{error}")
+        }
     }
 }
 
@@ -248,7 +251,7 @@ pub fn Response.body(self): __io.Reader {
 
 /// The body's lines, as they arrive: newline-delimited JSON, logs.
 pub fn Response.lines(self): Lines {
-    Lines { input: self.body(), done: false }
+    Lines { input: self.body(), response: self.native, done: false }
 }
 
 /// The body's Server-Sent Events, as they arrive.
@@ -264,7 +267,10 @@ pub fn Response.copyTo(self, output: __io.Writer): Int ! HttpError {
         let chunk = match input.read(65536) {
             ok(some(chunk)) => chunk
             ok(none) => return total
-            err(error) => fail HttpError.Body("{error}")
+            err(error) => {
+                failed(self.native)?
+                fail HttpError.Body("{error}")
+            }
         }
         match output.writeBytes(chunk) {
             ok(_) => total += chunk.length()
@@ -276,6 +282,7 @@ pub fn Response.copyTo(self, output: __io.Writer): Int ! HttpError {
 /// The lines of a body, as `Response.lines()` gives them.
 pub type Lines = {
     priv input: __io.Reader
+    priv response: httpNative.Native
     priv done: Bool
 }
 
@@ -292,7 +299,10 @@ impl Iterator[String ! HttpError] for Lines {
             }
             err(error) => {
                 self.done = true
-                some(err(HttpError.Body("{error}")))
+                match failed(self.response) {
+                    err(recorded) => some(err(recorded))
+                    ok(_) => some(err(HttpError.Body("{error}")))
+                }
             }
         }
     }

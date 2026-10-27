@@ -511,13 +511,16 @@ pub extern "C" fn tondo_rt_http_headers(object: *mut NativeObject) -> *mut Array
     string_array(&response(object).headers)
 }
 
+/// Why a second read of a response's body has nothing.
+const ALREADY_READ: &str = "it was already read, and a response's body is read once: keep what the first \
+    read gave, as `let text = response.text()?`, and read that again, as `text.lines()`";
+
 /// The whole body; on a failure, what was read and the failure recorded.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_read_all(object: *mut NativeObject) -> *mut ArrayHeader {
     let response = response(object);
     let Some(body) = response.body.lock().unwrap_or_else(|e| e.into_inner()).take() else {
-        *response.failure.lock().unwrap_or_else(|e| e.into_inner()) =
-            Some(("body", "the body was already read".into()));
+        *response.failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(("body", ALREADY_READ.into()));
         return byte_array(&[]);
     };
     match wait(async move { body.bytes().await }) {
@@ -537,10 +540,15 @@ pub extern "C" fn tondo_rt_http_read_all(object: *mut NativeObject) -> *mut Arra
 struct Chunks {
     body: Option<reqwest::Response>,
     chunk: Bytes,
+    /// Whether another read took the body before this one.
+    taken: bool,
 }
 
 impl Host for Chunks {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        if self.taken {
+            return Err(std::io::Error::other(ALREADY_READ));
+        }
         while self.chunk.is_empty() {
             let Some(body) = self.body.as_mut() else { return Ok(0) };
             match runtime().block_on(body.chunk()) {
@@ -556,12 +564,17 @@ impl Host for Chunks {
     }
 }
 
-/// The body as a stream of `std.io`, read as the program asks; an empty
-/// one when a reader already took it.
+/// The body as a stream of `std.io`, read as the program asks; one that
+/// fails when another read already took it.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_body(object: *mut NativeObject) -> *mut StreamObject {
-    let body = response(object).body.lock().unwrap_or_else(|e| e.into_inner()).take();
-    crate::io::stream(Box::new(Chunks { body, chunk: Bytes::new() }), Mode::Long, false)
+    let response = response(object);
+    let body = response.body.lock().unwrap_or_else(|e| e.into_inner()).take();
+    let taken = body.is_none();
+    if taken {
+        *response.failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(("body", ALREADY_READ.into()));
+    }
+    crate::io::stream(Box::new(Chunks { body, chunk: Bytes::new(), taken }), Mode::Long, false)
 }
 
 // ---------------------------------------------------------------------------

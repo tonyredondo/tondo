@@ -151,6 +151,9 @@ fn main(): !(http.HttpError | fs.FsError) {
     let hello = http.get("{base}/hello", query: ["q": "a b"], headers: ["X-Test": "yes"])?
     console.println("{hello.status()} {hello.reason()} {hello.version()} {hello.header("X-ECHO")} {hello.headerValues("set-cookie")}")
     console.println(hello.text()?)
+    for line in hello.lines() {
+        console.println("{line.isErr()}")
+    }
 
     let client = http.Client.new(baseUrl: base, headers: ["X-Test": "client"])
     let ada: Person = client.get("/json")?.json()?
@@ -213,6 +216,7 @@ fn main(): !(http.HttpError | fs.FsError) {
     let expected = "\
 200 OK HTTP/1.1 some(yes) [a=1, b=2]
 hello GET q=a%20b
+true
 ada 36
 application/json 23
 {\"name\":\"ada\",\"age\":36}
