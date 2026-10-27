@@ -632,14 +632,17 @@ fn enqueue(task: *mut Task) {
         tasks.0.push_back(task);
         let first = tasks.0.len() == 1;
         drop(tasks);
-        if first {
-            own.waiting.store(nanos(), Ordering::Relaxed);
-        }
         // Counted before the idle workers are read: a worker that goes to
         // sleep counts itself idle before it reads these (`work`), so one of
-        // the two sees the other.
+        // the two sees the other. The first that waits wakes a worker, which
+        // takes some once they waited for a while, and wakes the next if
+        // more wait; the next wait with it, so that short tasks end where
+        // they started.
         own.count.fetch_add(1, Ordering::SeqCst);
-        wake_idle();
+        if first {
+            own.waiting.store(nanos(), Ordering::Relaxed);
+            wake_idle();
+        }
         return;
     }
     let mut queue = queue();
