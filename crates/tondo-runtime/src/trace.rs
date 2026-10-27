@@ -468,18 +468,18 @@ pub(crate) fn spawned(parent: Option<&'static Origin>) -> &'static Origin {
         _ => 1,
     };
     let parent = parent.filter(|_| depth < ORIGINS);
-    // A loop spawns from the same place many times: the last origin serves
-    // all, without a look at the others.
+    // A loop spawns from the same places many times, from several when its
+    // turns run four at a time: the last few origins serve them all,
+    // without a look at the others.
     thread_local! {
-        static LAST: std::cell::Cell<Option<&'static Origin>> = const { std::cell::Cell::new(None) };
+        static LAST: std::cell::Cell<[Option<&'static Origin>; RECENT]> = const { std::cell::Cell::new([None; RECENT]) };
     }
     let same = |origin: &Origin| {
         matches!(origin, Origin::Spawned { addresses: a, count: c, parent: p, depth: d }
         if a[..*c] == addresses[..count] && p.map(std::ptr::from_ref) == parent.map(std::ptr::from_ref) && *d == depth)
     };
-    if let Some(found) = LAST.get()
-        && same(found)
-    {
+    let mut recent = LAST.get();
+    if let Some(found) = recent.iter().flatten().find(|origin| same(origin)) {
         return found;
     }
     static KEPT: Mutex<Option<Kept>> = Mutex::new(None);
@@ -489,9 +489,14 @@ pub(crate) fn spawned(parent: Option<&'static Origin>) -> &'static Origin {
         .get_or_insert_with(Default::default)
         .entry(key)
         .or_insert_with(|| Box::leak(Box::new(Origin::Spawned { addresses, count, parent, depth })));
-    LAST.set(Some(origin));
+    recent.rotate_right(1);
+    recent[0] = Some(origin);
+    LAST.set(recent);
     origin
 }
+
+/// The origins each thread keeps at hand.
+const RECENT: usize = 8;
 
 /// The runs of the same frame of compiled code in a stack, innermost
 /// first, as in a recursion: each frame and how many times it repeats.
