@@ -252,6 +252,8 @@ pub(crate) struct Task {
     sp: *mut u8,
     /// Its number in a trace, from 1 for the main task.
     id: u64,
+    /// None before a spawned task first runs: one started and not run yet
+    /// holds no stack, as when a loop starts thousands at once.
     stack: Option<Stack>,
     /// The closure the task runs: a `fn` object, released afterwards.
     body: *mut u8,
@@ -1257,6 +1259,13 @@ fn run(task: *mut Task) {
     if traced {
         recorder::record(recorder::Event::Run { task: unsafe { (*task).id } });
     }
+    unsafe {
+        if (*task).stack.is_none() {
+            let stack = task_stack();
+            (*task).sp = initial_stack(stack.top());
+            (*task).stack = Some(stack);
+        }
+    }
     enter_tondo();
     unsafe { switch(home(), (*task).sp) };
     leave_tondo();
@@ -1982,14 +1991,20 @@ pub(crate) fn ending() -> Option<i32> {
     Some(status as i32)
 }
 
-fn new_task(stack: Stack, body: *mut u8, code: *const u8, kind: ResultKind, join: *mut JoinObject) -> *mut Task {
+fn new_task(
+    stack: Option<Stack>,
+    body: *mut u8,
+    code: *const u8,
+    kind: ResultKind,
+    join: *mut JoinObject,
+) -> *mut Task {
     super::diagnostics::TASKS_SPAWNED.add(1);
     static IDS: AtomicU64 = AtomicU64::new(1);
-    let sp = unsafe { initial_stack(stack.top()) };
+    let sp = stack.as_ref().map_or(std::ptr::null_mut(), |stack| unsafe { initial_stack(stack.top()) });
     let task = Box::into_raw(Box::new(Task {
         sp,
         id: IDS.fetch_add(1, Ordering::Relaxed),
-        stack: Some(stack),
+        stack,
         body,
         code,
         kind,
@@ -2037,7 +2052,7 @@ pub unsafe extern "C" fn tondo_rt_callback(
     super::trace::guard_thread(false);
     let call = ForeignCall { inner, frame, done: Mutex::new(false), finished: Condvar::new() };
     let task =
-        new_task(task_stack(), std::ptr::null_mut(), std::ptr::null(), ResultKind::Nothing, std::ptr::null_mut());
+        new_task(Some(task_stack()), std::ptr::null_mut(), std::ptr::null(), ResultKind::Nothing, std::ptr::null_mut());
     unsafe {
         (*task).main = false;
         (*task).foreign = &call;
@@ -2073,7 +2088,7 @@ pub fn run_main(code: unsafe extern "C" fn() -> i32) -> i32 {
     // Before any compiled code reads `ATTENTION`.
     exploring();
     let task = new_task(
-        Stack::new(MAIN_STACK),
+        Some(Stack::new(MAIN_STACK)),
         std::ptr::null_mut(),
         code as *const u8,
         ResultKind::Integer,
@@ -2491,7 +2506,7 @@ pub unsafe extern "C" fn tondo_rt_spawn(
         3 => ResultKind::Float32,
         _ => ResultKind::Memory,
     };
-    let task = new_task(task_stack(), body, code, kind, join);
+    let task = new_task(None, body, code, kind, join);
     unsafe {
         (*join).task = task;
         let spawned = super::trace::spawned(origin());
