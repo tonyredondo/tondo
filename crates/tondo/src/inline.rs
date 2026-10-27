@@ -501,9 +501,8 @@ fn guard_calls(caller: &Body, guards: &[Option<Guard>]) -> Option<Body> {
             };
             let Statement::Assign(destination, rvalue, span) = statement else { unreachable!() };
             let Rvalue::Call(_, arguments) = &**rvalue else { unreachable!() };
-            let rename = bind(&mut body, &guard.body, arguments, &mut current, *span, &|local| {
-                guard.named.contains(&local)
-            });
+            let rename =
+                bind(&mut body, &guard.body, arguments, &mut current, *span, &|local| guard.named.contains(&local));
             // The test, then the way out, then the call, then the rest of
             // the caller's block.
             let test = &guard.body.blocks[0];
