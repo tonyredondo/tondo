@@ -1403,7 +1403,7 @@ pub const NATIVES: &[Native] = {
         math("fma", &[Float, Float, Float], Float, "tondo_rt_math_fma"),
         math("classify", &[Float], Int, "tondo_rt_math_class"),
         // `std.internal.fuzz`: the inputs of `testing.fuzz` (testing 10.6).
-        fuzz("begin", &[String], Unit, "tondo_rt_fuzz_begin"),
+        fuzz("begin", &[String, String], Unit, "tondo_rt_fuzz_begin"),
         fuzz("seed", &[String], Unit, "tondo_rt_fuzz_seed"),
         fuzz("next", &[], Bool, "tondo_rt_fuzz_next"),
         fuzz("input", &[], String, "tondo_rt_fuzz_input"),

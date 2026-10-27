@@ -91,6 +91,7 @@ fn check_with<'a>(
         comparing: None,
         closure_name: None,
         measuring: None,
+        wires: HashMap::new(),
         intrinsic_owners: HashMap::new(),
         trait_modules: HashMap::new(),
         conversion_error: Ty::ERROR,
@@ -347,6 +348,20 @@ impl CallTarget {
     fn new(callee: Callee, signature: Signature, expected: Option<Ty>) -> CallTarget {
         CallTarget { callee, signature, explicit: Vec::new(), prebound: HashMap::new(), expected }
     }
+}
+
+/// The key a field has in every format: `@name`, its own, or none with
+/// `@ignore`.
+fn wire(field: &ast::FieldDecl) -> Option<String> {
+    let mut wire = Some(field.name.name.clone());
+    for annotation in &field.annotations {
+        match (annotation.name.name.as_str(), &annotation.argument) {
+            ("ignore", _) => return None,
+            ("name", Some(ast::AnnotationArg::Text(text))) => wire = Some(text.clone()),
+            _ => {}
+        }
+    }
+    wire
 }
 
 /// The prelude trait used by interpolation (19.6).
@@ -635,6 +650,10 @@ struct Checker<'a> {
     /// The test whose body is checked, which `testing.bench` makes a
     /// benchmark.
     measuring: Option<u32>,
+    /// The key each field of a record, or of a variant as `Type.Variant`,
+    /// has in every format: `@name`, its own, or none with `@ignore`; for
+    /// the shapes of fuzz inputs.
+    wires: HashMap<String, Vec<Option<String>>>,
     /// The standard functions whose values depend on the moment or the
     /// machine, which the `meta` profile cannot call, with their names.
     unrepeatable: HashMap<FnId, &'static str>,
@@ -1231,7 +1250,7 @@ impl<'a> Checker<'a> {
     /// loop the standard library writes for it, `fuzz.run`, with the input's
     /// type, the body's error, `Never` if it does not fail, and the body's.
     fn fuzz(&mut self, cx: &mut FnCx, args: &[ast::Arg], span: Span) -> hir::Expr {
-        const EXAMPLE: &str = "testing.fuzz(\"parse\", [\"{}\"], (text: String) { _ = json.parse(text) })";
+        const EXAMPLE: &str = "testing.fuzz(\"parse\", [\"[1]\"], (text: String) { _ = json.parse(text) })";
         match self.measuring {
             Some(test) if cx.test_member => self.test_nodes[test as usize].fuzz = true,
             _ => {
@@ -1299,8 +1318,106 @@ impl<'a> Checker<'a> {
             unreachable!("std.testing brings the loop of `testing.fuzz`")
         };
         let ty = self.types.intern(TyKind::Result(Ty::UNIT, error));
-        let call = hir::ExprKind::Call(Callee::Fn(run), vec![input, error, value.ty], vec![name, seeds, value]);
-        Self::mk(call, ty, span)
+        let mut defs = Vec::new();
+        let root = self.fuzz_shape(input, &mut defs, &mut HashMap::new());
+        let shape = Self::mk(
+            hir::ExprKind::Str(format!("{{\"root\":{root},\"defs\":[{}]}}", defs.join(","))),
+            Ty::STRING,
+            span,
+        );
+        let types = vec![input, error, value.ty];
+        Self::mk(hir::ExprKind::Call(Callee::Fn(run), types, vec![name, shape, seeds, value]), ty, span)
+    }
+
+    /// The shape of a record, or of a variant's fields, `key` naming their
+    /// keys in `wires`: each written field's key and shape.
+    fn fuzz_record(
+        &mut self,
+        key: &str,
+        fields: &[Field],
+        defs: &mut Vec<String>,
+        named: &mut HashMap<Ty, usize>,
+    ) -> String {
+        let wires = self.wires.get(key).cloned().unwrap_or_default();
+        let mut members = Vec::new();
+        for (at, field) in fields.iter().enumerate() {
+            let wire = match wires.get(at) {
+                Some(None) => continue,
+                Some(Some(wire)) => wire.clone(),
+                None => field.name.clone(),
+            };
+            let shape = self.fuzz_shape(field.ty, defs, named);
+            members.push(format!("[{},{shape}]", serde_json::Value::String(wire)));
+        }
+        format!("{{\"record\":[{}]}}", members.join(","))
+    }
+
+    /// What `json.encode` writes for a value of `ty`, as the fuzzer reads it
+    /// (testing 10.6), in JSON: `"int"`, `"float"`, `"bool"`, `"text"`,
+    /// `"bytes"` and `"datetime"`; `{"option": s}`, `{"list": s}` and
+    /// `{"map": s}`; and for a record, enum or newtype, `{"ref": n}`, its
+    /// index in `defs`, whose entry is `{"record": [[key, s]...]}`,
+    /// `{"enum": [[name, payload]...]}` or its value's shape, so that one
+    /// that holds itself ends. What the fuzzer cannot tell is `"any"`.
+    fn fuzz_shape(&mut self, ty: Ty, defs: &mut Vec<String>, named: &mut HashMap<Ty, usize>) -> String {
+        let quoted = |text: &str| serde_json::Value::String(text.to_string()).to_string();
+        match self.types.kind(ty).clone() {
+            _ if ty == Ty::INT => "\"int\"".into(),
+            _ if ty == Ty::F64 => "\"float\"".into(),
+            _ if ty == Ty::BOOL => "\"bool\"".into(),
+            _ if ty == Ty::STRING => "\"text\"".into(),
+            _ if Some(ty) == self.datetime => "\"datetime\"".into(),
+            TyKind::Option(inner) => format!("{{\"option\":{}}}", self.fuzz_shape(inner, defs, named)),
+            TyKind::Array(inner) => format!("{{\"list\":{}}}", self.fuzz_shape(inner, defs, named)),
+            TyKind::Map(key, value) if key == Ty::STRING => {
+                format!("{{\"map\":{}}}", self.fuzz_shape(value, defs, named))
+            }
+            TyKind::Adt(id) => {
+                if let Some(&index) = named.get(&ty) {
+                    return format!("{{\"ref\":{index}}}");
+                }
+                let (kind, instance, own) = {
+                    let adt = self.types.adt(id);
+                    (adt.kind.clone(), adt.instance.clone(), adt.name.clone())
+                };
+                let name = match &instance {
+                    Some((template, _)) => self.types.template(*template).name.clone(),
+                    None => own,
+                };
+                if name == "serialization.Bytes" {
+                    return "\"bytes\"".into();
+                }
+                let index = defs.len();
+                named.insert(ty, index);
+                defs.push(String::new());
+                let def = match &kind {
+                    AdtKind::Newtype(inner) => self.fuzz_shape(*inner, defs, named),
+                    AdtKind::Record(fields) => self.fuzz_record(&name, fields, defs, named),
+                    AdtKind::Enum(variants) => {
+                        let mut shown = Vec::new();
+                        for variant in variants {
+                            let payload = match &variant.payload {
+                                Payload::Unit => "null".to_string(),
+                                Payload::Tuple(items) if items.len() == 1 => self.fuzz_shape(items[0], defs, named),
+                                Payload::Tuple(items) => {
+                                    let items: Vec<String> =
+                                        items.iter().map(|&t| self.fuzz_shape(t, defs, named)).collect();
+                                    format!("{{\"tuple\":[{}]}}", items.join(","))
+                                }
+                                Payload::Record(fields) => {
+                                    self.fuzz_record(&format!("{name}.{}", variant.name), fields, defs, named)
+                                }
+                            };
+                            shown.push(format!("[{},{payload}]", quoted(&variant.name)));
+                        }
+                        format!("{{\"enum\":[{}]}}", shown.join(","))
+                    }
+                };
+                defs[index] = def;
+                format!("{{\"ref\":{index}}}")
+            }
+            _ => "\"any\"".into(),
+        }
     }
 
     /// `testing.bench(name, () { ... })` (testing 10.4), in a test's own
@@ -2790,7 +2907,8 @@ impl<'a> Checker<'a> {
                 ast::Item::Type(ast::TypeDecl { body: ast::TypeBody::Record(fields), foreign: true, .. }) => {
                     AdtKind::Record(self.c_fields(fields))
                 }
-                ast::Item::Type(ast::TypeDecl { body: ast::TypeBody::Record(fields), .. }) => {
+                ast::Item::Type(ast::TypeDecl { name, body: ast::TypeBody::Record(fields), .. }) => {
+                    self.wires.insert(name.name.clone(), fields.iter().map(wire).collect());
                     AdtKind::Record(self.field_decls(fields))
                 }
                 ast::Item::Type(ast::TypeDecl { body: ast::TypeBody::Opaque, .. }) => AdtKind::Record(Vec::new()),
@@ -2807,7 +2925,11 @@ impl<'a> Checker<'a> {
                             ast::VariantPayload::Tuple(items) => {
                                 Payload::Tuple(items.iter().map(|t| self.resolve_type(t)).collect())
                             }
-                            ast::VariantPayload::Record(fields) => Payload::Record(self.field_decls(fields)),
+                            ast::VariantPayload::Record(fields) => {
+                                let key = format!("{}.{}", decl.name.name, variant.name.name);
+                                self.wires.insert(key, fields.iter().map(wire).collect());
+                                Payload::Record(self.field_decls(fields))
+                            }
                         };
                         variants.push(Variant { name: variant.name.name.clone(), payload });
                     }

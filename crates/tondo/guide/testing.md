@@ -110,7 +110,7 @@ import std.json
 import std.testing
 
 test parsesAnyDocument {
-    testing.fuzz("parse", ["{}", "[1, 2]", "\"x\""], (text: String) {
+    testing.fuzz("parse", ["{{}}", "[1, 2]", "\"x\""], (text: String) {
         match json.parse(text) {
             ok(value) => assert(json.parse(json.encode(value)) == ok(value)),
             err(_) => {}

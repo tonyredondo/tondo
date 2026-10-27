@@ -9,10 +9,11 @@ import std.serialization
 
 fn run[T: serialization.Encode + serialization.Decode, E, F: CallMut[fn(T): !E]](
     name: String,
+    shape: String,
     seeds: Array[T],
     body: F,
 ): !E {
-    native.begin(name)
+    native.begin(name, shape)
     for seed in seeds {
         native.seed(json.encode(seed))
     }

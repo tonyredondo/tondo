@@ -89,8 +89,9 @@ fn read_store() -> Store {
 /// Starts the call `name` of the test that runs: a name that is empty, has
 /// a control character or that the test already used is `P2010`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_fuzz_begin(name: *const Str) {
+pub unsafe extern "C" fn tondo_rt_fuzz_begin(name: *const Str, shape: *const Str) {
     let name = String::from_utf8_lossy(unsafe { crate::str_bytes(name) }).into_owned();
+    let _shape = String::from_utf8_lossy(unsafe { crate::str_bytes(shape) }).into_owned();
     if name.is_empty() || name.chars().any(char::is_control) {
         fail(2010, format!("{name:?} cannot name a call of `testing.fuzz`: it is empty or has a control character"));
     }
