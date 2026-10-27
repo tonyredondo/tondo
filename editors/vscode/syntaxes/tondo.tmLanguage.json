@@ -197,6 +197,10 @@
           "name": "keyword.control.tondo"
         },
         {
+          "match": "\\brecover\\b(?=\\s*\\{)",
+          "name": "keyword.control.tondo"
+        },
+        {
           "match": "\\b(and|or|not|as)\\b",
           "name": "keyword.operator.word.tondo"
         },

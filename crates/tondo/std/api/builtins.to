@@ -151,6 +151,16 @@ pub fn Set.remove(var self, value: T): Bool
 /// Lazy cursors over the values, in insertion order.
 pub fn Set.values(self): SetValues[T]
 
+/// Panics: ends the program, or the `recover { ... }` around it, which
+/// gives `err(p)` with the `Panic` (language 15.7, 15.9). `code` is the
+/// program's own, dotted camelCase words such as `cache.corrupt`; `data`
+/// shows under the message.
+pub fn panic(message: String, code: String? = none, data: Map[String, Int | Float | Bool | String] = [:]): Never
+
+/// Panics with `P0007` when `condition` is false; a comparison shows both
+/// sides (language 15.7).
+pub fn assert(condition: Bool, message: String = "")
+
 /// `channel[T](capacity)`: a channel's two ends; without capacity it has no
 /// limit (language 11.13).
 pub fn channel[T](capacity: Int = -1): (Sender[T], Receiver[T])

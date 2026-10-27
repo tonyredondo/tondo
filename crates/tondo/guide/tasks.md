@@ -35,7 +35,9 @@ fn main() {
   server does for each connection, and a `Group` waits for many at once.
 - With `Group[T ! E]`, `wait()` gives `Array[T] ! E`: the first error cancels
   the others.
-- A panic in any task ends the program.
+- A panic in a task ends the program, unless the task was started in a
+  `recover { ... }`, without `detached`: its panic stops that block, which
+  cancels its other tasks (see `tondo guide errors`).
 
 ## Channels and select
 
@@ -81,6 +83,8 @@ A `Sender` moves (the channel closes when its last sender goes); a
 
 `std.sync` has `Mutex`, `RwLock`, `Atomic`, `Semaphore`, `Once`, `Barrier`
 and shared collections (`sync.Map`, `sync.Queue`…); `tondo api std.sync`.
+A lock is let go when its closure returns, is cancelled or panics: a panic
+that a `recover` stops leaves it free, never poisoned.
 
 ```tondo
 import std.console

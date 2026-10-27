@@ -6,7 +6,8 @@
 pub fn Mutex(value: T): Mutex[T]
 
 /// Runs `change` with the value locked for this task alone, and gives its
-/// result; the lock is let go when it returns, also on cancellation.
+/// result; the lock is let go when it returns, also on cancellation or a
+/// panic, which leaves it free for the next.
 pub fn Mutex.update(self, change: fn(var T): R): R
 
 /// `none` without waiting when another holds the lock.

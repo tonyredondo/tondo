@@ -180,7 +180,7 @@ pub fn serve(builds: Builds) -> Result<(), String> {
                 "supportsExceptionInfoRequest": true,
                 "supportsSetVariable": true,
                 "exceptionBreakpointFilters": [
-                    { "filter": "panic", "label": "Panics", "description": "Stop where a task panics, before it unwinds", "default": true }
+                    { "filter": "panic", "label": "Panics", "description": "Stop where a task panics and no recover stops it", "default": true }
                 ],
             })),
             "disconnect" | "terminate" if dumped.is_some() => Ok(json!({})),

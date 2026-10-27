@@ -49,6 +49,16 @@
     "body": ["suite ${1:name} {", "\ttest ${2:name} {", "\t\tassert(${3:condition})$0", "\t}", "}"],
     "description": "A suite of tests"
   },
+  "recover": {
+    "prefix": "recover",
+    "body": [
+      "match recover { ${1:work()} } {",
+      "\tok(${2:value}) => $0",
+      "\terr(p) => ${3:p.resume()}",
+      "}"
+    ],
+    "description": "Stop a panic: ok with the value, err with the Panic"
+  },
   "spawn": {
     "prefix": "spawn",
     "body": ["let ${1:job} = spawn ${2:work}()", "let ${3:result} = $1.wait()$0"],

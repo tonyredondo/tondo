@@ -39,6 +39,9 @@ suite slow {
 ```
 
 - `assert(condition)` and `assert(condition, "message")` fail a test.
+- `recover { ... }` tests that code panics, and how:
+  `assert(recover { parse(bad) }.isErr())`, or `match` its `err(p)` to read
+  `p.code` and `p.data`. It does not stop `testing.skip` or `failNow`.
 - `std.testing`: `log`, `tags`, `skip(reason)`, `failNow(message)`,
   `attach(name, mediaType, bytes)`, `snapshot(name, value)` (compares the
   value's JSON with a file; `tondo test --update-snapshots` writes it), and

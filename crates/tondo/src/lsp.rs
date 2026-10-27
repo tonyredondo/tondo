@@ -1367,10 +1367,17 @@ impl Server {
                 tokens.push((at, end, kind, 0));
             }
         };
-        for token in &lexed {
+        for (index, token) in lexed.iter().enumerate() {
             let (start, end) = (token.span.start - base, token.span.end - base);
             match &token.tok {
                 crate::lexer::Tok::Kw(_) => add(start, end, 11),
+                // `recover` is a word of the language before `{`.
+                crate::lexer::Tok::Ident(name)
+                    if name == "recover"
+                        && lexed.get(index + 1).is_some_and(|next| next.tok == crate::lexer::Tok::LBrace) =>
+                {
+                    add(start, end, 11)
+                }
                 crate::lexer::Tok::Str(_) | crate::lexer::Tok::Char(_) => add(start, end, 13),
                 crate::lexer::Tok::Int { .. } | crate::lexer::Tok::Float { .. } => add(start, end, 14),
                 // A type the program does not declare, as `Int` or `Array`.
@@ -1527,9 +1534,9 @@ const TOKEN_TYPES: [&str; 16] = [
 ];
 
 /// The keywords completion offers.
-const KEYWORDS: [&str; 24] = [
+const KEYWORDS: [&str; 25] = [
     "let", "var", "fn", "pub", "type", "enum", "trait", "impl", "const", "import", "if", "else", "for", "in", "match",
-    "return", "break", "continue", "fail", "spawn", "defer", "select", "none", "some",
+    "return", "break", "continue", "fail", "spawn", "defer", "select", "recover", "none", "some",
 ];
 
 /// The root a file is analyzed under: the project around it, or the file

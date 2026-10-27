@@ -1102,7 +1102,7 @@ impl Parser<'_> {
         match word.as_str() {
             "loop" => Some("a loop until `break` is `for { ... }`"),
             "try" => Some(
-                "there is no `try`: a function that can fail returns `T ! E`; `?` passes a failure on and `match` handles it",
+                "there is no `try`: a function that can fail returns `T ! E`; `?` passes a failure on and `match` handles it; `recover { ... }` stops a panic",
             ),
             "do" => Some("a loop that runs at least once is `for { ... }` with `if done { break }` at its end"),
             _ => None,

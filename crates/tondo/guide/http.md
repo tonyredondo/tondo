@@ -100,6 +100,8 @@ fn find(id: Int): User? {
 - A handler fails with `http.Problem` (`Problem.notFound()`,
   `Problem.badRequest(message)`), sent as `application/problem+json`; other
   errors become 500s. Bad input to a typed handler is a 400 that says why.
+- A handler or middleware that panics answers 500; the panic is reported on
+  standard error with the request's method and path, and the server goes on.
 - `app.mount("/admin", adminApp)` adds another app's routes with its own
   middleware. `app.start()` serves in a task of its own and gives a `Server`
   with `url()` and `stop()`, for tests.

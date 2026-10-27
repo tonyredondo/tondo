@@ -31,7 +31,8 @@ const LIMIT: usize = 256 * 1024;
 const INSTRUCTIONS: &str = "Tondo's toolchain. Tondo is a new language: read the guide before writing it \
 (the `guide` tool, or the tondo://guide resources), and `api` for what a module offers. After each edit, \
 `check` the program: each diagnostic says how to repair it, and `fix` applies the compiler's safe fixes. \
-`run` and `test` build and run it; `debug_start` debugs a build. A program that keeps running is a \
+`run` and `test` build and run it, and a failure comes with its code, data and stack as `panic`; \
+`debug_start` debugs a build. A program that keeps running is a \
 `run_start` session, whose code `reload` changes after an edit without starting it again. Paths are relative to \
 the server's directory; lines and columns count from 1, columns in characters.";
 
@@ -1285,8 +1286,9 @@ fn profile(args: &Args) -> Result<Reply, String> {
 }
 
 /// The failure that a program run with `TONDO_PANIC_FORMAT=json` wrote to
-/// its standard error (toolchain 7.5), its first one, and the error output
-/// with each such line as the text a person reads.
+/// its standard error (toolchain 7.5), the one it ended with rather than
+/// one a `recover` stopped or one suppressed while unwinding, and the error
+/// output with each such line as the text a person reads.
 fn failure_of(stderr: &str) -> (Option<Value>, String) {
     let mut found = None;
     let mut text = String::new();
@@ -1295,7 +1297,9 @@ fn failure_of(stderr: &str) -> (Option<Value>, String) {
         match report {
             Some(report) => {
                 text.push_str(&report_text(&report));
-                found.get_or_insert(report);
+                if report["recovered"] != true && report["suppressed"] != true {
+                    found.get_or_insert(report);
+                }
             }
             None => text.push_str(line),
         }
@@ -1314,7 +1318,10 @@ fn report_text(report: &Value) -> String {
         "error" => return format!("error: {}\n", field("message")),
         "fault" => format!("fatal: {}: {}", field("name"), field("message")),
         _ => {
-            let mut text = format!("panic[{}]: ", field("code"));
+            let mut text = match report["suppressed"] == true {
+                true => format!("suppressed while unwinding: panic[{}]: ", field("code")),
+                false => format!("panic[{}]: ", field("code")),
+            };
             if let Some(name) = report["name"].as_str() {
                 text.push_str(&format!("{name}: "));
             }
@@ -1846,7 +1853,8 @@ and the header <name>.h.",
     Tool {
         name: "run",
         description: "Build and run a program, with its arguments and standard input: its exit code and output. A \
-program that runs past `timeout` is ended.",
+program that runs past `timeout` is ended. One that panics, crashes or fails in `main` gives `panic`: its code, \
+message, data, source and stack, as data.",
         kind: Kind::Runs,
         params: &[
             PATH,

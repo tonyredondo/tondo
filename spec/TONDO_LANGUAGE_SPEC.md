@@ -632,6 +632,10 @@ actuar como binding sin paréntesis (`E1202`): `ok =>` nunca captura
 silenciosamente cualquier valor. `none` sí es palabra reservada, porque como
 binding de un patrón ocultaría la ausencia.
 
+`recover` tampoco es palabra reservada: seguido de `{` en posición de
+expresión es siempre la expresión `recover` (15.9); en cualquier otra posición
+es un nombre ordinario.
+
 `Some`, `None`, `Ok` y `Err` no son nombres del lenguaje. Cuando uno de ellos no
 resuelve a una declaración visible, el diagnóstico `E1001` indica la forma
 canónica en minúscula, y ningún patrón puede introducir un binding con esos
@@ -9275,9 +9279,13 @@ primary_expression
                 | record_literal
                 | option_result_constructor
                 | unsafe_expression
+                | recover_expression
                 | block ;
 
 unsafe_expression = "unsafe", block ;
+
+(* `recover` es contextual: solo seguido de `{` (5.5, 15.9). *)
+recover_expression = "recover", block ;
 
 literal         = integer_literal
                 | float_literal

@@ -36,7 +36,7 @@ step                                            to the next line, into calls (s)
 next                                            to the next line of this function (n)
 finish                                          until this function returns (f)
 pause                                           stop every task, as Ctrl-C does
-catch panic|none                                stop where a task panics, before it unwinds (the default), or not
+catch panic|none                                stop where a task panics and no recover stops it (the default), or not
 set <name> <value>                              change a binding of the frame where the task stopped: a number, Bool, Char, String
 locals                                          the bindings that hold a value (l)
 print <path>                                    a binding or a part of it: user.name, items[2], map[\"key\"] (p)

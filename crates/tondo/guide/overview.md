@@ -58,15 +58,18 @@ with statements cannot be imported.
 - The last expression of a block is its value; `return` is for early exits.
 - Errors are values in the signature: `fn load(): Config ! LoadError`; `?`
   propagates and `fail Error.Variant` fails. `T?` is an optional value with
-  `some(x)` and `none`; results are `ok(x)` and `err(e)`.
+  `some(x)` and `none`; results are `ok(x)` and `err(e)`. A bug panics;
+  `recover { ... }` stops a panic, as a `T ! Panic`, at the edge of a
+  request or a job.
 - Strings interpolate with `{expr}`; `{{` is a literal brace. `+` does not
   join strings.
 - Methods are declared outside the type: `fn User.greet(self): String`.
   `mut self` changes fields, `var self` can replace the value.
 - A trait method on a concrete value is called through the trait:
   `Display.display(user)`; inside generic code, `value.display()`.
-- `match`, `test`, `derive`, `with`, `as` and `select` are keywords. There is
-  no `if let`, no `|` in patterns and no `null`.
+- `match`, `test`, `derive`, `with`, `as` and `select` are keywords, and
+  `recover` before `{`. There is no `if let`, no `|` in patterns and no
+  `null`.
 - Collections are values: assigning copies (cheaply). `push` needs `var`.
 - `tondo fmt` decides the layout: write compactly and let it format.
 
@@ -126,7 +129,7 @@ skill and the server.
 ```text
 syntax       declarations, control flow, match, closures, loops
 types        records, enums, newtypes, unions, generics, traits
-errors       T ! E, ?, fail, Option, panics, main's errors
+errors       T ! E, ?, fail, Option, panics, recover, main's errors
 collections  Array, Map, Set, Deque, ranges, iterators
 text         strings, characters, bytes, formatting
 tasks        spawn, Group, channels, select, cancellation, std.sync

@@ -234,7 +234,8 @@ set count 3 | catch none        change a binding; do not stop at panics
 tasks | task 2 | pause | delete 1 | quit
 ```
 
-A panic stops where the program's code panicked, before it unwinds. When
+A panic that no `recover` stops stops the debugger where the program's code
+panicked, before it unwinds. When
 one task stops, all stop at their next line, and go on together.
 `tondo dap` is the same debugger for an editor (Debug Adapter Protocol).
 

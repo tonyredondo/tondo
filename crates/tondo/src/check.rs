@@ -2782,6 +2782,10 @@ impl<'a> Checker<'a> {
     fn shown_type_name(&self, name: &str, module: u32) -> String {
         match name.strip_prefix("prelude.") {
             Some(bare) if PRELUDE_TYPES.contains(&bare) && Some(module) == self.prelude => bare.to_string(),
+            // `Panic`, which the prelude names from `std.panics`.
+            _ if self.module_paths.get(module as usize).is_some_and(|path| path == &["std", "panics"]) => {
+                name.strip_prefix("panics.").unwrap_or(name).to_string()
+            }
             _ => name.to_string(),
         }
     }
@@ -2865,7 +2869,16 @@ impl<'a> Checker<'a> {
                 templates.push((item, name, template, generics, params));
                 continue;
             }
-            let (id, ty) = self.types.declare_adt(name.name.clone());
+            let module = match item {
+                ast::Item::Type(decl) => decl.module,
+                ast::Item::Enum(decl) => decl.module,
+                _ => unreachable!(),
+            };
+            let shown = match self.module_paths.get(module as usize).is_some_and(|path| path == &["std", "panics"]) {
+                true => self.shown_type_name(&name.name, module),
+                false => name.name.clone(),
+            };
+            let (id, ty) = self.types.declare_adt(shown);
             if let ast::Item::Type(decl) = item
                 && decl.foreign
             {
@@ -8225,10 +8238,16 @@ impl<'a> Checker<'a> {
         // result or an option the program has to see (11.9).
         if expected == Ty::UNIT && value.ty != Ty::NEVER && !self.types.has_error(value.ty) {
             if self.must_use(value.ty) {
-                let message = format!(
-                    "a value of type {} is not used; pass a failure on with `?`, handle it with `match`, or discard it with `_ = ...`",
-                    self.display(value.ty)
-                );
+                let message = match value.kind {
+                    hir::ExprKind::Recover(..) => format!(
+                        "what `recover` gives, of type {}, is not used; read it with `match`, `.unwrapOr(...)` or `.isErr()`, or discard it with `_ = ...`",
+                        self.display(value.ty)
+                    ),
+                    _ => format!(
+                        "a value of type {} is not used; pass a failure on with `?`, handle it with `match`, or discard it with `_ = ...`",
+                        self.display(value.ty)
+                    ),
+                };
                 self.diags.error("E1303", value.span, message);
                 let start = Span::new(value.span.start, value.span.start);
                 self.diags.fix("discard it with `_ = ...`", false, vec![(start, "_ = ".into())]);
@@ -11558,6 +11577,9 @@ impl<'a> Checker<'a> {
             }
             "sleep" => "`time.sleep(time.milliseconds(10))` waits, after `import std.time`".into(),
             "exit" => "`process.exit(code)` ends the program, after `import std.process`".into(),
+            "recover" | "catch_unwind" | "rescue" => {
+                "`recover { ... }` stops a panic of its block: `ok` with its value, or `err(p)` with the `Panic`".into()
+            }
             _ if crate::api::standard_modules().contains(&format!("std.{name}")) => {
                 format!("`{name}` is a standard module: add `import std.{name}` at the top of the file")
             }

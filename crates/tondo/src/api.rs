@@ -145,7 +145,27 @@ pub fn summary(module: &str) -> Option<String> {
 pub fn standard(name: &str) -> Option<String> {
     if name == "prelude" {
         let source = crate::stdlib::text("prelude")?;
-        return Some(format!("{}\n{BUILTINS}", render(source, false)));
+        // `Panic` is the prelude's, from a module of the toolchain: its
+        // type, its method and its `Display`, in place of the alias.
+        let panics = render(crate::stdlib::text("panics")?, false);
+        let panic: Vec<&str> = panics
+            .trim_end()
+            .split("\n\n")
+            .filter(|part| {
+                part.lines().any(|line| {
+                    ["pub type Panic ", "pub fn Panic.", "impl Display for Panic"].iter().any(|p| line.starts_with(p))
+                })
+            })
+            .collect();
+        let prelude: Vec<String> = render(source, false)
+            .trim_end()
+            .split("\n\n")
+            .map(|part| match part.lines().any(|line| line.starts_with("pub alias Panic ")) {
+                true => panic.join("\n\n"),
+                false => part.to_string(),
+            })
+            .collect();
+        return Some(format!("{}\n\n{BUILTINS}", prelude.join("\n\n")));
     }
     let name = name.strip_prefix("std.")?;
     if let Some((_, text)) = INTRINSIC.iter().find(|(n, _)| *n == name) {

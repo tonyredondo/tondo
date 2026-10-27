@@ -4,4 +4,4 @@ fn main() {
     recover { 1 }
 }
 
-// expect-error: E1303
+// expect-error: E1303 what `recover` gives, of type `Int ! Panic`, is not used; read it with `match`, `.unwrapOr(...)` or `.isErr()`, or discard it with `_ = ...`
