@@ -242,6 +242,9 @@ pub fn link(mut modules: Vec<ModuleSource>, root: usize, packages: &[PackageInfo
             for import in written.iter().filter(|i| !linker.used.contains(i.alias_name())) {
                 let message = format!("`{}` is imported but never used: remove the import", import.alias_name());
                 linker.diags.warning("W1001", import.span, message);
+                if import.line != import.span {
+                    linker.diags.fix("remove the import", true, vec![(import.line, String::new())]);
+                }
             }
         }
     }

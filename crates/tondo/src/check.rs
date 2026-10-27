@@ -4795,14 +4795,6 @@ impl<'a> Checker<'a> {
             .filter(|module| !module.contains('.') && !imported.contains(module))
             .collect();
         modules.dedup();
-        let (mut after, mut offset) = (0, 0);
-        for line in file.text.split_inclusive('\n') {
-            offset += line.len();
-            if line.starts_with("import ") {
-                after = offset;
-            }
-        }
-        let place = Span::new(file.base + after as u32, file.base + after as u32);
         let standard = crate::api::standard_modules();
         modules
             .into_iter()
@@ -4812,9 +4804,30 @@ impl<'a> Checker<'a> {
                     true => path,
                     false => self.module_paths.iter().find(|p| p.last().is_some_and(|l| l == module))?.join("."),
                 };
-                Some((place, format!("import {path}\n")))
+                Some((self.import_place(at, &path), format!("import {path}\n")))
             })
             .collect()
+    }
+
+    /// Where an import of `path` goes in the file of `at`: before the first
+    /// import that sorts after it, as the formatter orders them, or after
+    /// the last one, or at the file's start.
+    fn import_place(&self, at: Span, path: &str) -> Span {
+        let file = self.sources.file_of(at.start);
+        let mut place = None;
+        let mut offset = 0;
+        for line in file.text.split_inclusive('\n') {
+            if let Some(written) = line.strip_prefix("import ") {
+                if written.trim() > path {
+                    place = Some(offset);
+                    break;
+                }
+                place = Some(offset + line.len());
+            }
+            offset += line.len();
+        }
+        let place = file.base + place.unwrap_or(0) as u32;
+        Span::new(place, place)
     }
 
     /// `main` used as a value or called: where the program starts, whose
@@ -11487,16 +11500,7 @@ impl<'a> Checker<'a> {
         } else if let Some(path) = module
             .or_else(|| crate::api::standard_modules().contains(&format!("std.{name}")).then(|| format!("std.{name}")))
         {
-            // After the file's last import, or at its start.
-            let file = self.sources.file_of(span.start);
-            let (mut at, mut offset) = (0, 0);
-            for line in file.text.split_inclusive('\n') {
-                offset += line.len();
-                if line.starts_with("import ") {
-                    at = offset;
-                }
-            }
-            let place = Span::new(file.base + at as u32, file.base + at as u32);
+            let place = self.import_place(span, &path);
             self.diags.fix(format!("add `import {path}`"), true, vec![(place, format!("import {path}\n"))]);
         }
     }
@@ -12157,6 +12161,18 @@ impl<'a> Checker<'a> {
             }
             (_, None) => {
                 self.unknown_path(cx, segments, span);
+                // The arguments' unknown names too, as other modules not
+                // imported, and the bindings they use; not what follows from
+                // a call of nothing.
+                let before = self.diags.list.len();
+                for arg in args.iter().filter(|a| !matches!(a.value.kind, ast::ExprKind::Closure(_))) {
+                    self.expr(cx, &arg.value, None);
+                }
+                let mut index = 0;
+                self.diags.list.retain(|d| {
+                    index += 1;
+                    index <= before || d.code == Some("E1001")
+                });
                 Self::error_expr(span)
             }
             _ => self.unsupported_expr(callee.span, "calling this expression"),

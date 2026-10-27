@@ -343,7 +343,11 @@ impl Parser<'_> {
         let alias = if self.eat_kw(Kw::As) { Some(self.ident()?) } else { None };
         let span = start.to(self.prev_span());
         self.end_of_statement()?;
-        Ok(Import { path, alias, span })
+        let (base, text) = (self.file.base, &self.file.text);
+        let end = (span.end - base) as usize;
+        let line_end = text[end..].find('\n').map_or(text.len(), |at| end + at + 1);
+        let line = Span::new(span.start, base + line_end as u32);
+        Ok(Import { path, alias, span, line })
     }
 
     fn at_declaration(&self) -> bool {

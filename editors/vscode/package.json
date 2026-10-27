@@ -124,7 +124,10 @@
     "configurationDefaults": {
       "[tondo]": {
         "editor.formatOnSave": true,
-        "editor.defaultFormatter": "tondo.tondo"
+        "editor.defaultFormatter": "tondo.tondo",
+        "editor.codeActionsOnSave": {
+          "source.organizeImports": "explicit"
+        }
       }
     },
     "breakpoints": [

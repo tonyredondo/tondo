@@ -2755,3 +2755,18 @@ checked, nothing calls `main` or takes it as a value (`E1803`). Every other
 function declares its errors, which are its interface; when one propagates
 an error it does not declare, a single `E1301` names all it propagates, and
 its repair writes the result and the imports those errors need.
+
+## 2026-10-27 — The toolchain writes a file's imports
+
+Every module a file uses is imported, the standard library's too: the
+imports say at a glance what a file touches, to a reader and to an agent,
+and modules are not names that a variable called `text` or `json` could
+hide. Writing them is the toolchain's work instead, as `goimports` does for
+Go. A name of a module the file does not import is `E1001` with a safe
+repair that adds the import where the formatter would sort it, and an
+unused import is `W1001` with one that removes its line; the arguments of a
+call of an unknown name are checked for unknown names too, so that one pass
+finds every import missing. The language server's `source.organizeImports`
+applies those repairs, which the VS Code extension runs on save, and
+`tondo fix`, and the tool `fix` of agents, apply them with the rest of the
+safe repairs, inserting where another repair removes.

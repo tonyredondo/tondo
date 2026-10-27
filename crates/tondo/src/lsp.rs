@@ -264,7 +264,7 @@ impl Server {
                 "documentSymbolProvider": true,
                 "documentFormattingProvider": true,
                 "completionProvider": { "triggerCharacters": ["."] },
-                "codeActionProvider": { "codeActionKinds": ["quickfix", "source.fixAll"] },
+                "codeActionProvider": { "codeActionKinds": ["quickfix", "source.fixAll", "source.organizeImports"] },
                 "documentHighlightProvider": true,
                 "workspaceSymbolProvider": true,
                 "signatureHelpProvider": { "triggerCharacters": ["(", ","] },
@@ -1372,9 +1372,15 @@ impl Server {
         let mut actions = Vec::new();
         let mut all: Vec<Value> = Vec::new();
         let mut taken: Vec<Span> = Vec::new();
+        // The imports the file lacks and those it does not use.
+        let mut imports: Vec<(Span, String)> = Vec::new();
         for diagnostic in &analyzed.analysis.diags.list {
             let Some(span) = diagnostic.span.filter(|&span| inside(span)) else { continue };
             for fix in &diagnostic.fixes {
+                if fix.safe && (fix.title == "remove the import" || fix.title.starts_with("add `import ")) {
+                    imports
+                        .extend(fix.edits.iter().filter(|edit| !imports.contains(edit)).cloned().collect::<Vec<_>>());
+                }
                 let edits = self.edits(analyzed, &fix.edits);
                 if span.start <= to && from <= span.end && wants("quickfix") {
                     actions.push(json!({
@@ -1395,6 +1401,14 @@ impl Server {
                     }
                 }
             }
+        }
+        if !imports.is_empty() && wants("source.organizeImports") {
+            imports.sort_by(|(a, x), (b, y)| (a.start, x).cmp(&(b.start, y)));
+            actions.push(json!({
+                "title": "Organize imports",
+                "kind": "source.organizeImports",
+                "edit": { "changes": self.edits(analyzed, &imports) },
+            }));
         }
         if !all.is_empty() && wants("source.fixAll") {
             let uri = params["textDocument"]["uri"].clone();

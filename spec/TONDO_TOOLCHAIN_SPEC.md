@@ -480,7 +480,10 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   `tondo explain` dice de él (sección 7.13).
 - Las reparaciones de los diagnósticos (22.4 del lenguaje), cada una como
   acción `quickfix`, preferida si es `safe`, y una acción `source.fixAll` que
-  aplica las seguras del archivo que no se tocan entre sí.
+  aplica las seguras del archivo que no se tocan entre sí. La acción
+  `source.organizeImports` añade, en orden, los imports de los módulos que el
+  archivo nombra sin importar y quita los que no usa; la extensión de VS
+  Code la aplica al guardar.
 - Code lenses *Run*, *Debug*, *Debug Live* y *Profile* sobre el `main` de un
   programa, o sobre la primera sentencia de un script, en el archivo que lo
   contiene, con las órdenes `tondo.run`, `tondo.debug`, `tondo.debugLive` y
@@ -1039,7 +1042,8 @@ código que no existe es un error del toolchain (estado 3).
   <alias>` la quita y vuelve a escribir `tondo.lock`.
 - `tondo fix` aplica las reparaciones `safe` de los diagnósticos (22.4 del
   lenguaje) a los archivos del programa, las que no se tocan entre sí, y
-  comprueba de nuevo; da `1` si sigue sin compilar.
+  comprueba de nuevo; da `1` si sigue sin compilar. Entre ellas están los
+  imports que faltan, en orden, y quitar los que no se usan.
 - `tondo clean` vacía la caché de builds (sección 6); con `--all`, también
   los repositorios y archivos descargados, que el siguiente build descarga
   de nuevo.

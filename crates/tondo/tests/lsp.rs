@@ -664,5 +664,14 @@ fn checks_the_workspace_and_imports_modules() {
     );
     let import = actions.as_array().unwrap().iter().find(|a| a["title"] == "add `import app.shapes`").unwrap();
     assert_eq!(import["edit"]["changes"][&uri][0]["newText"], "import app.shapes\n");
+    // On save, the imports the file lacks and not those it does not use.
+    let organize = editor.request(
+        "textDocument/codeAction",
+        json!({ "textDocument": { "uri": uri }, "range": range,
+            "context": { "diagnostics": [], "only": ["source.organizeImports"] } }),
+    );
+    let [organize] = organize.as_array().unwrap().as_slice() else { panic!("{organize}") };
+    assert_eq!(organize["kind"], "source.organizeImports");
+    assert_eq!(organize["edit"]["changes"][&uri][0]["newText"], "import app.shapes\n");
     editor.stop();
 }

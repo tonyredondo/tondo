@@ -232,6 +232,7 @@ fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap
                     path: vec![ident("std"), ident(module_name)],
                     alias: Some(ident(&fallback)),
                     span,
+                    line: span,
                 });
             }
             let name = match kind {

@@ -23,7 +23,8 @@ project, running, debugging and testing it.
   it names; signature help; inlay hints of types and parameters; symbols;
   folding and smart selection; semantic highlighting; *Run* and *Debug*
   over `main` or a script; and formatting, of a selection too, on save by
-  default.
+  default, when the imports a file lacks are added and those it does not use
+  removed.
 - **Running and debugging**, from `tondo dap`: *Run* and *Debug* over
   `fn main`, in the editor's title bar, or with F5 on any Tondo file, which
   runs its project or the file alone as a script. Breakpoints with

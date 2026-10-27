@@ -627,10 +627,12 @@ fn fix(args: &Args) -> Result<Reply, String> {
     for (index, fix) in chosen {
         let fix = &list[index].fixes[fix];
         let entry = json!({ "id": ids[index], "title": fix.title });
-        let clashes = |span: &Span| {
-            edits.iter().any(|(e, _)| e.start == span.start || (e.start < span.end && span.start < e.end))
-        };
-        if fix.edits.iter().any(|(span, _)| !own(sources.file_of(span.start))) {
+        // Insertions may share a place, and with an edit that starts there.
+        let clashes = |span: &Span| edits.iter().any(|(e, _)| e.start < span.end && span.start < e.end);
+        if fix.edits.iter().all(|(span, text)| edits.contains(&(*span, text.as_str()))) {
+            // The same repair, as an import that several names lack.
+            applied.push(entry);
+        } else if fix.edits.iter().any(|(span, _)| !own(sources.file_of(span.start))) {
             skipped.push(json!({ "fix": entry, "why": "it edits a file outside the program" }));
         } else if fix.edits.iter().any(|(span, _)| clashes(span)) {
             skipped.push(json!({ "fix": entry, "why": "it overlaps another fix: `fix` again applies it" }));
@@ -639,7 +641,10 @@ fn fix(args: &Args) -> Result<Reply, String> {
             applied.push(entry);
         }
     }
-    edits.sort_by_key(|(span, _)| std::cmp::Reverse(span.start));
+    // From the end, so that each edit leaves the places of the rest; at one
+    // place, what it replaces before what it inserts, and insertions so that
+    // they read in order.
+    edits.sort_by(|(a, x), (b, y)| b.start.cmp(&a.start).then(b.end.cmp(&a.end)).then(y.cmp(x)));
     let mut changed: Vec<(u32, String)> = Vec::new();
     for (span, replacement) in edits {
         let file = sources.file_of(span.start);

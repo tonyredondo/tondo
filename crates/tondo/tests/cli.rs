@@ -175,6 +175,14 @@ fn manages_projects() {
         (0, &json!("tondo-fix-0.1/1"), 1)
     );
     assert!(std::fs::read_to_string(dir.join("fixable.to")).unwrap().contains("some(1)"));
+    // Imports too: those the file lacks, in order, and not those it does
+    // not use.
+    let program = "import std.console\nimport std.process\n\nfn main() {\n    console.println(json.encode(time.seconds(1).seconds()))\n}\n";
+    std::fs::write(dir.join("imports.to"), program).unwrap();
+    let (_, status) = json(&dir, &["fix", "imports.to", "--json"]);
+    assert_eq!(status, 0);
+    let fixed = std::fs::read_to_string(dir.join("imports.to")).unwrap();
+    assert!(fixed.starts_with("import std.console\nimport std.json\nimport std.time\n\nfn main"), "{fixed}");
 
     // What a code means, with the guide's examples of it.
     let (explained, _, status) = tondo(&dir, &["explain", "E1003"]);

@@ -45,6 +45,9 @@ pub struct Import {
     pub path: Vec<Ident>,
     pub alias: Option<Ident>,
     pub span: Span,
+    /// Its whole line, which removing it deletes; its `span` when the
+    /// import is not written.
+    pub line: Span,
 }
 
 #[derive(Clone, Debug)]
