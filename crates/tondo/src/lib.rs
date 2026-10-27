@@ -43,6 +43,7 @@ pub mod parser;
 pub mod pprof;
 pub mod profile;
 pub mod project;
+pub mod prove;
 pub mod runner;
 pub mod setup;
 pub mod source;

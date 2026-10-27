@@ -261,6 +261,9 @@ pub enum Rvalue {
     Binary(BinOp, Operand, Operand),
     /// Unchecked `+ 1`, used by range iteration after its bound check.
     Increment(Operand),
+    /// A sum, difference or product of `Int`s that `prove` showed cannot
+    /// overflow: without the check.
+    Exact(BinOp, Operand, Operand),
     Call(Callee, Vec<Operand>),
     /// A named function as a `fn(...)` value: a static object.
     FnValue(hir::FnId),
@@ -473,7 +476,7 @@ fn rvalue_uses(rvalue: &Rvalue, used: &mut Vec<Local>) {
         | Rvalue::Fixed(o, _)
         | Rvalue::Erase(o, ..)
         | Rvalue::Spawn(o, _) => operand_uses(o, used),
-        Rvalue::Binary(_, a, b) => {
+        Rvalue::Binary(_, a, b) | Rvalue::Exact(_, a, b) => {
             operand_uses(a, used);
             operand_uses(b, used);
         }

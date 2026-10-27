@@ -1374,12 +1374,8 @@ impl Builder<'_> {
             }
             hir::Stmt::ForRange { local, start, end, inclusive, body } => {
                 let ty = start.ty;
-                let from_zero = !*inclusive && matches!(start.kind, hir::ExprKind::Int(first) if first >= 0);
                 let start = self.expr(start);
                 let end = self.expr(end);
-                // `0..xs.length()`, outside a live build, whose frames may
-                // move to code that reads them differently.
-                let bounds = from_zero.then(|| self.length_of(&end)).flatten().filter(|_| self.restart.is_none());
                 let cursor = self.new_local(ty);
                 self.assign(Place::local(cursor), Rvalue::Use(start), Span::default());
                 let last = self.new_local(ty);
@@ -1399,13 +1395,7 @@ impl Builder<'_> {
                 self.switch_to(body_block);
                 let binding = self.bind(*local);
                 self.assign(Place::local(binding), Rvalue::Use(Operand::local(cursor)), Span::default());
-                let first = self.blocks.len();
                 self.loop_body(body, exit, step);
-                if let Some(array) = bounds {
-                    let blocks: Vec<usize> =
-                        std::iter::once(body_block.0 as usize).chain(first..self.blocks.len()).collect();
-                    self.in_bounds(array, binding, &blocks);
-                }
                 // The successor is only computed while `cursor < last`, so the
                 // increment cannot overflow even at the type's maximum.
                 self.switch_to(step);
@@ -1422,98 +1412,6 @@ impl Builder<'_> {
                 self.assign(Place::local(cursor), Rvalue::Increment(Operand::local(cursor)), Span::default());
                 self.goto(head);
                 self.switch_to(exit);
-            }
-        }
-    }
-
-    /// The array whose length the operand is, a local's, just computed.
-    fn length_of(&self, operand: &Operand) -> Option<Local> {
-        let Operand::Copy(Place { local: length, path }) = operand else { return None };
-        let (statements, _) = &self.blocks[self.current.0 as usize];
-        match statements.last()? {
-            Statement::Assign(target, rvalue, _)
-                if target.local == *length && target.path.is_empty() && path.is_empty() =>
-            {
-                match &**rvalue {
-                    Rvalue::Length(Operand::Copy(array))
-                        if array.path.is_empty()
-                            && matches!(
-                                self.types.kind(self.types.repr(self.locals[array.local.0 as usize])),
-                                TyKind::Array(_)
-                            ) =>
-                    {
-                        Some(array.local)
-                    }
-                    _ => None,
-                }
-            }
-            _ => None,
-        }
-    }
-
-    /// Reads `array[index]` without a check in the blocks of a loop that
-    /// keeps `index` under the array's length: when they only read its
-    /// elements and its length, and release it on the way out. Anything
-    /// else might change its length: an assignment, a mutation, a loan, or
-    /// the array passed whole to a call, which may borrow it.
-    fn in_bounds(&mut self, array: Local, index: Local, blocks: &[usize]) {
-        let mut whole = 0;
-        let mut allowed = 0;
-        let mut written = false;
-        for &block in blocks {
-            let (statements, terminator) = &mut self.blocks[block];
-            for statement in statements.iter_mut() {
-                let targets: Vec<&Place> = match statement {
-                    Statement::Assign(place, rvalue, _) => {
-                        let mut targets = vec![&*place];
-                        match &**rvalue {
-                            Rvalue::Mutate(_, place, ..) | Rvalue::AssignSlice(place, ..) => targets.push(place),
-                            Rvalue::Concat(pieces) => targets.extend(pieces.iter().filter_map(|piece| match piece {
-                                Piece::Taken(place) => Some(place),
-                                _ => None,
-                            })),
-                            Rvalue::Length(Operand::Copy(place)) if place.local == array && place.path.is_empty() => {
-                                allowed += 1
-                            }
-                            _ => {}
-                        }
-                        targets
-                    }
-                    Statement::Lend(_, place) | Statement::Moved(place) => vec![&*place],
-                    Statement::Release(place) if place.local == array && place.path.is_empty() => {
-                        allowed += 1;
-                        Vec::new()
-                    }
-                    Statement::Clear(local) if *local == array => {
-                        written = true;
-                        Vec::new()
-                    }
-                    _ => Vec::new(),
-                };
-                written |= targets.iter().any(|place| place.local == array);
-                crate::inline::visit_statement(statement, &mut |place| {
-                    whole += usize::from(place.local == array && place.path.is_empty())
-                });
-            }
-            if let Some(terminator) = terminator {
-                crate::inline::visit_terminator(terminator, &mut |place| {
-                    whole += usize::from(place.local == array && place.path.is_empty())
-                });
-            }
-        }
-        if written || whole > allowed {
-            return;
-        }
-        let mut read = |place: &mut Place| {
-            if place.local == array && matches!(place.path.first(), Some(Proj::Index(at, _)) if *at == index) {
-                place.path[0] = Proj::InBounds(index);
-            }
-        };
-        for &block in blocks {
-            let (statements, terminator) = &mut self.blocks[block];
-            statements.iter_mut().for_each(|statement| crate::inline::visit_statement(statement, &mut read));
-            if let Some(terminator) = terminator {
-                crate::inline::visit_terminator(terminator, &mut read);
             }
         }
     }

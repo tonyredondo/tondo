@@ -1,0 +1,32 @@
+import std.console
+
+// What the compiler proves of indexes must not outlive what proves it:
+// `xs[i - 1]` at `i` 0 counts from the end, and an index the loop checked
+// against a length that a loan then shortened is checked again.
+
+fn shrink(xs: var Array[Int]) {
+    _ = xs.pop()
+}
+
+fn main() {
+    var xs = [10, 20, 30, 40]
+    var i = 0
+    var total = 0
+    for i < xs.length() {
+        total += xs[i - 1]
+        i += 1
+    }
+    console.println("{total}")
+    var at = 0
+    for at < xs.length() {
+        shrink(var xs)
+        shrink(var xs)
+        console.println("{xs[at]}")
+        at += 1
+    }
+}
+
+// expect-stdout: 100
+// expect-stdout: 10
+// expect-panic: P0001
+// expect-stderr: panic[P0001]: bounds: index 1 is out of bounds: the array is empty

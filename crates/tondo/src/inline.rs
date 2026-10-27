@@ -533,7 +533,7 @@ fn visit_rvalue(rvalue: &mut Rvalue, f: &mut impl FnMut(&mut Place)) {
         | Rvalue::Fixed(o, _)
         | Rvalue::Erase(o, ..)
         | Rvalue::Spawn(o, _) => visit_operand(o, f),
-        Rvalue::Binary(_, a, b) => {
+        Rvalue::Binary(_, a, b) | Rvalue::Exact(_, a, b) => {
             visit_operand(a, f);
             visit_operand(b, f);
         }

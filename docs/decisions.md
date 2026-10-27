@@ -2526,19 +2526,23 @@ tasks are shared out twice as fast, as the woken worker no longer gives
 up its turn as soon as it wakes. Idle workers also look at the others'
 queues without the queue's lock, which they took in turns.
 
-## 2026-10-27 — Loops over an array's indexes read without checks
+## 2026-10-27 — The compiler proves indexes and sums
 
-`xs[i]` in `for i in 0..xs.length()` reads its element without a check of
-bounds when the loop only reads the elements of `xs` and its length:
-`i` starts at zero and stays under the length the loop read once, which
-nothing in it can change. Anything else that names `xs` in the loop, an
-assignment, a mutation, a loan or `xs` passed whole to a call, which may
-borrow it, keeps the check, as do live builds, whose frames may move to
-code that reads them differently. The proof is made on the MIR of the
-loop, without a pass of its own, and is the one Go's compiler makes for
-the same loop: summing 10,000 integers this way went from 6.2 to 4.1 µs,
-and to 2.5 once a panic's values went to the runtime in memory rather
-than in the registers of a call, which the loop's own values had been
-moved around for. `for x in xs` over an array or a deque needs no proof:
-it walks a snapshot that nothing else names, under its length, and reads
-each element without a check.
+A pass over each function's MIR, `prove`, after inlining and outside
+debug and live builds, proves what Go's `prove` pass does: that `xs[i]`
+is within `xs`, and that a sum, a difference or a product of `Int`s
+cannot overflow. It keeps bounds on differences, `a - b <= k`, between
+integer locals, zero and the lengths of array locals, closed under
+transitivity: the condition of a branch adds one on each way, `x = y + c`
+moves them, and at a loop's head those a turn does not keep are dropped.
+Anything that may change a length forgets it: a mutation, an assignment,
+a loan, or the array passed whole to a call that may borrow it. A read
+or write it proves becomes `InBounds`, and an operation `Exact`, which
+codegen compiles without their checks; it follows only the locals that
+index arrays or take part in arithmetic, and what those come from or are
+compared with, so that compiling costs no more. `for x in xs` over an
+array or a deque needs no proof: it walks a snapshot that nothing else
+names, and reads each element without a check but in live builds. Summing
+10,000 integers by index went from 6.2 to 2.5 µs, with a panic's values
+passed to the runtime in memory rather than in the registers of a call,
+which a loop's own values had been moved around for.

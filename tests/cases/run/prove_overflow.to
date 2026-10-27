@@ -1,0 +1,16 @@
+import std.console
+
+// A sum the compiler cannot prove keeps its check: a loop bounds `m`,
+// not `n`, which overflows on the second turn.
+
+fn main() {
+    var n = 9223372036854775807 - 1
+    for m in 0..2 {
+        n += 1
+        console.println("{m} {n} {m + 1}")
+    }
+}
+
+// expect-stdout: 0 9223372036854775807 1
+// expect-panic: P0005
+// expect-stderr: panic[P0005]: checked-overflow: 9223372036854775807 + 1 does not fit in Int (-9223372036854775808 to 9223372036854775807)

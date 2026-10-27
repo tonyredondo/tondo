@@ -5561,6 +5561,15 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let value = self.scalar(operand);
                 Val::Scalar(self.e.fb.ins().iadd_imm_s(value, 1))
             }
+            Rvalue::Exact(op, left, right) => {
+                let (a, b) = (self.scalar(left), self.scalar(right));
+                let ins = self.e.fb.ins();
+                Val::Scalar(match op {
+                    BinOp::Add => ins.iadd(a, b),
+                    BinOp::Sub => ins.isub(a, b),
+                    _ => ins.imul(a, b),
+                })
+            }
             Rvalue::Binary(op, left, right) => Val::Scalar(self.binary(*op, left, right, span)),
             Rvalue::Concat(pieces) => Val::Scalar(self.concat(pieces)),
         };
