@@ -7243,9 +7243,18 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     }
 
     fn concat(&mut self, pieces: &[Piece]) -> ir::Value {
+        // A type shown as what it is made of: one that shows itself, as a
+        // `Duration` made of an `Int`, goes through its `Display`.
+        let plain = |this: &Self, ty: Ty| {
+            let types = this.e.cg.types();
+            let shows = this.e.cg.display().contains_key(&ty) || types.shown.contains_key(&ty);
+            (!shows).then(|| types.kind(types.repr(ty)).clone())
+        };
         // `x = "{x}{s}"` and `x = "{x}{i}"` in one call.
-        if let [Piece::Taken(place), Piece::Value(operand, ty)] = pieces {
-            let appended = match *self.e.cg.types().kind(self.e.cg.types().repr(*ty)) {
+        if let [Piece::Taken(place), Piece::Value(operand, ty)] = pieces
+            && let Some(kind) = plain(self, *ty)
+        {
+            let appended = match kind {
                 TyKind::String => Some((Rt::StrAppend, false)),
                 TyKind::Int(int) if int.signed() || int.bits() < 64 => Some((Rt::StrAppendInt, int.signed())),
                 _ => None,
@@ -7259,6 +7268,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         }
         // A string alone is that string.
         if let [Piece::Value(operand, ty)] = pieces
+            && plain(self, *ty).is_some()
             && self.e.cg.types().repr(*ty) == Ty::STRING
         {
             let text = self.scalar(operand);

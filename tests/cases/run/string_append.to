@@ -1,8 +1,10 @@
 // `x = "{x}..."` appends to the string in its own block when nothing else
 // holds it; a copy, a field lent by `mut self` and the string read again
-// in the same text all keep their values.
+// in the same text all keep their values. A value of a type that shows
+// itself, made of an integer as a `Duration`, is shown as it shows.
 import std.console
 import std.format
+import std.time
 
 type Log = { text: String }
 
@@ -35,6 +37,9 @@ fn main() {
     built.add(42)
     built.addLine(true)
     console.print(built.text())
+    var waited = "waited "
+    waited = "{waited}{time.hours(2)}"
+    console.println("{waited} {time.seconds(1)}")
 }
 
 // expect-stdout: a012 a
@@ -42,3 +47,4 @@ fn main() {
 // expect-stdout: abab
 // expect-stdout: 1000 012345678901
 // expect-stdout: x42true
+// expect-stdout: waited 2h0m0s 1s
