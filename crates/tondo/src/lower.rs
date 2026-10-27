@@ -976,6 +976,11 @@ impl Builder<'_> {
                     self.assign(Place::local(copy), Rvalue::Use(Operand::local(index)), span);
                     Proj::Index(copy, at)
                 }
+                Proj::InBounds(index) => {
+                    let copy = self.new_local(Ty::INT);
+                    self.assign(Place::local(copy), Rvalue::Use(Operand::local(index)), span);
+                    Proj::InBounds(copy)
+                }
                 step => step,
             });
         }
@@ -1340,7 +1345,15 @@ impl Builder<'_> {
                     let Operand::Copy(place) = scalar else { unreachable!() };
                     place
                 } else {
-                    Place::local(snapshot).index(cursor, array.span)
+                    // An array's snapshot keeps its length, which the cursor
+                    // stays under: no check (but in a live build, whose
+                    // frames may move to code that reads them differently).
+                    let sequence =
+                        matches!(self.types.kind(self.types.repr(array.ty)), TyKind::Array(_) | TyKind::Deque(_));
+                    match sequence && self.restart.is_none() {
+                        true => Place::local(snapshot).in_bounds(cursor),
+                        false => Place::local(snapshot).index(cursor, array.span),
+                    }
                 };
                 self.bind_pattern(pattern, &element);
                 self.in_frame(|b| b.block(body));

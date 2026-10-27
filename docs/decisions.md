@@ -2539,4 +2539,6 @@ loop, without a pass of its own, and is the one Go's compiler makes for
 the same loop: summing 10,000 integers this way went from 6.2 to 4.1 µs,
 and to 2.5 once a panic's values went to the runtime in memory rather
 than in the registers of a call, which the loop's own values had been
-moved around for.
+moved around for. `for x in xs` over an array or a deque needs no proof:
+it walks a snapshot that nothing else names, under its length, and reads
+each element without a check.

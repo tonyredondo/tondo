@@ -63,6 +63,11 @@ impl Place {
         self.with(Proj::Index(index, span))
     }
 
+    /// An element at an index known to be within bounds.
+    pub fn in_bounds(&self, index: Local) -> Place {
+        self.with(Proj::InBounds(index))
+    }
+
     pub fn deref(&self) -> Place {
         self.with(Proj::Deref)
     }
