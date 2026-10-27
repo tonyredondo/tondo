@@ -4294,11 +4294,11 @@ los ejecutan en cada plataforma de CI. El compilador nativo implementa hoy:
   `--fuzz` guiada por los contadores del código del proyecto y de sus
   dependencias, con mutaciones que conocen la forma de la entrada y toman
   valores de los literales y de las comparaciones, `--fuzz-time`,
-  `--fuzz-corpus` y Ctrl-C (10.6, 15.14, 15.15).
+  `--fuzz-corpus`, `--fuzz-timeout`, `--fuzz-memory`, los crashes y Ctrl-C
+  (10.6, 15.14, 15.15).
 
-Queda pendiente rechazar la mezcla de `Instant` de dominios distintos (7.9);
-y de `--fuzz`, `--fuzz-timeout` y `--fuzz-memory` por entrada, y reducir la
-entrada que falla (10.6).
+Queda pendiente rechazar la mezcla de `Instant` de dominios distintos (7.9),
+y de `--fuzz`, reducir la entrada que falla (10.6).
 
 ## 17. Referencia rápida
 

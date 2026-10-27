@@ -231,6 +231,12 @@ pub enum Status {
     Panic(String),
     Timeout,
     Crashed(String),
+    /// Under `--fuzz`, an input that ran past `--fuzz-timeout` or held more
+    /// than `--fuzz-memory` (testing 10.6): which, and what it did.
+    Limit {
+        timeout: bool,
+        message: String,
+    },
     /// Not run: a suite around it failed (`blocked-setup`) or skipped
     /// (`blocked-skip`).
     Blocked(u32, bool),
@@ -239,7 +245,10 @@ pub enum Status {
 impl Status {
     /// One of the failures of an executed attempt.
     fn failed(&self) -> bool {
-        matches!(self, Status::Error { .. } | Status::Panic(_) | Status::Timeout | Status::Crashed(_))
+        matches!(
+            self,
+            Status::Error { .. } | Status::Panic(_) | Status::Timeout | Status::Crashed(_) | Status::Limit { .. }
+        )
     }
 }
 

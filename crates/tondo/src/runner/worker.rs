@@ -204,7 +204,10 @@ fn worker(
         let (corpus, stop) = (target.corpus.display(), target.stop.display());
         let literals = executable.with_file_name("dictionary");
         let (test, until, literals) = (tree.id(target.test), run.until, literals.display());
-        command.env("TONDO_FUZZ", format!("{test}\t{call}\t{corpus}\t{stop}\t{until}\t{literals}"));
+        let fuzz = run.options.fuzz.as_ref();
+        let (limit, memory) = (fuzz.map_or(1000, |f| f.timeout.as_millis()), fuzz.map_or(2048, |f| f.memory));
+        let fields = format!("{test}\t{call}\t{corpus}\t{stop}\t{until}\t{literals}\t{limit}\t{memory}");
+        command.env("TONDO_FUZZ", fields);
         timeout = Duration::from_secs(10 * 365 * 24 * 3600);
     }
     if let Some(seed) = run.options.schedule(context.iteration) {
@@ -605,6 +608,14 @@ impl Session<'_> {
                     let (name, inputs, search) =
                         (name.to_string(), inputs.parse().unwrap_or(0), Searched::read(searched));
                     entry.0.fuzz.push(Fuzzed { name, inputs, input, search });
+                }
+            }
+            // An input of the search ran past its limit: the worker ends.
+            "limit" => {
+                if let Some((kind, message)) = text.split_once('\0')
+                    && let Some(entry) = self.running.iter_mut().rev().find(|(o, _, _)| o.node == node)
+                {
+                    entry.0.status = Status::Limit { timeout: kind == "timeout", message: message.to_string() };
                 }
             }
             "fuzzing" => {

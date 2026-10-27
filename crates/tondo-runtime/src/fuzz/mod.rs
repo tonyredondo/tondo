@@ -211,7 +211,20 @@ pub extern "C" fn tondo_rt_fuzz_failed() {
 pub extern "C" fn tondo_rt_fuzz_end() {
     let call = state().call.take();
     if let Some(call) = call {
+        if let Some(search) = &call.search {
+            search.idle();
+        }
         report(&call, false);
+    }
+}
+
+/// A fault ends the worker in the call that runs: it ends with the input
+/// that ran, if its state can be had without waiting.
+pub(crate) fn faulted() {
+    let Ok(mut state) = STATE.try_lock() else { return };
+    if let Some(call) = state.call.take() {
+        drop(state);
+        report(&call, true);
     }
 }
 

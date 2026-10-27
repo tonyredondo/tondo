@@ -807,6 +807,8 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
             forward(signal, info, context);
             return;
         }
+        // Under `tondo test --fuzz`, the input that faulted.
+        crate::fuzz::faulted();
         // The output the program wrote so far comes first.
         if let Some(mut stdout) = crate::try_stdout() {
             write_all(1, &stdout.buffer);

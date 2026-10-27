@@ -448,6 +448,72 @@ test commands {
     assert!(stdout.contains(":\n  \"deploy-now\"\n"), "{stdout}");
 }
 
+/// An input that runs too long, holds too much or crashes the worker
+/// fails as such, and is kept as any other (testing 10.6).
+#[test]
+fn fuzz_search_ends_inputs_past_their_limits() {
+    let code = "\
+pub fn spin(n: Int): Int {
+    if n == 777 {
+        var i = 0
+        for {
+            i = (i + 1) % 1000
+        }
+    }
+    n
+}
+
+pub fn grow(n: Int): Int {
+    if n == 4242 {
+        var big: Array[Int] = []
+        for {
+            big.push(1)
+        }
+    }
+    n
+}
+
+pub fn deep(n: Int): Int {
+    if n == 99 {
+        return deep(n) + 1
+    }
+    n
+}
+
+fn main() {}
+";
+    let tests = "\
+import std.testing
+
+test spins {
+    testing.fuzz(\"spin\", [1], (n: Int) { _ = spin(n) })
+}
+
+test grows {
+    testing.fuzz(\"grow\", [1], (n: Int) { _ = grow(n) })
+}
+
+test deepens {
+    testing.fuzz(\"deep\", [1], (n: Int) { _ = deep(n) })
+}
+";
+    let dir = project("fuzz-limits", tests);
+    std::fs::write(dir.join("src/main.to"), code).unwrap();
+    let args = ["test", "--fuzz", "--fuzz-time", "120", "--fuzz-timeout", "0.5", "--fuzz-memory", "200", "--jobs", "3"];
+    let (stdout, _, status) = tondo(&dir, &args);
+    assert_eq!(status, 1, "{stdout}");
+    for part in [
+        "test app::unit::app::spins ... TIMEOUT\n",
+        "an input ran longer than --fuzz-timeout, 0.5s\nfuzz `spin` failed with its input in fuzz/unit/app/spins/spin/",
+        "test app::unit::app::grows ... RESOURCE LIMIT\n",
+        "more than --fuzz-memory 200\nfuzz `grow` failed with its input in fuzz/unit/app/grows/grow/",
+        "test app::unit::app::deepens ... CRASHED\n",
+        "fuzz `deep` failed with its input in fuzz/unit/app/deepens/deep/",
+    ] {
+        assert!(stdout.contains(part), "missing {part:?} in {stdout}");
+    }
+}
+
 /// A project in the target directory, a repository of its own, with the
 /// given test file.
 fn project(name: &str, tests: &str) -> PathBuf {

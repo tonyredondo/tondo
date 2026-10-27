@@ -11,13 +11,14 @@ use super::value::{Json, parse};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 /// What `tondo test` tells a worker that searches, in `TONDO_FUZZ`: the
 /// call it searches in, by its test and directory, and where its corpus
 /// is, the stop file, the time it ends at, as milliseconds since the epoch
-/// or `0` for none, and the file of the code's literals, separated by tabs.
+/// or `0` for none, the file of the code's literals, and the milliseconds
+/// and MiB an input may take, separated by tabs.
 pub(crate) struct Target {
     pub test: String,
     pub call: String,
@@ -25,12 +26,14 @@ pub(crate) struct Target {
     stop: PathBuf,
     deadline: Option<std::time::SystemTime>,
     literals: PathBuf,
+    timeout: Duration,
+    memory: u64,
 }
 
 pub(crate) fn target() -> Option<Target> {
     let text = std::env::var("TONDO_FUZZ").ok()?;
     let parts: Vec<&str> = text.split('\t').collect();
-    let [test, call, corpus, stop, deadline, literals] = parts[..] else { return None };
+    let [test, call, corpus, stop, deadline, literals, timeout, memory] = parts[..] else { return None };
     let deadline = deadline.parse::<u64>().ok().filter(|&ms| ms > 0);
     Some(Target {
         test: test.to_string(),
@@ -39,7 +42,68 @@ pub(crate) fn target() -> Option<Target> {
         stop: PathBuf::from(stop),
         deadline: deadline.map(|ms| std::time::UNIX_EPOCH + Duration::from_millis(ms)),
         literals: PathBuf::from(literals),
+        timeout: Duration::from_millis(timeout.parse().unwrap_or(1000)),
+        memory: memory.parse().unwrap_or(2048),
     })
+}
+
+/// Since when the input that runs runs, in milliseconds from `EPOCH`, or
+/// `0` while none does.
+static RUNNING_SINCE: AtomicU64 = AtomicU64::new(0);
+static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+fn now_ms() -> u64 {
+    EPOCH.get_or_init(Instant::now).elapsed().as_millis() as u64 + 1
+}
+
+/// Watches the inputs that run, from a thread of its own: one that runs
+/// past `timeout`, or with the process holding more than `memory` MiB,
+/// ends the worker, telling `tondo test` which and why.
+fn watch(timeout: Duration, memory: u64) {
+    let _ = std::thread::Builder::new().stack_size(256 * 1024).spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_millis(10));
+            let since = RUNNING_SINCE.load(Ordering::Relaxed);
+            if since != 0 && now_ms().saturating_sub(since) > timeout.as_millis() as u64 {
+                limit("timeout", format!("an input ran longer than --fuzz-timeout, {}s", timeout.as_secs_f64()));
+            }
+            let held = resident() >> 20;
+            if since != 0 && held > memory {
+                limit(
+                    "memory",
+                    format!("an input left the worker holding {held} MiB, more than --fuzz-memory {memory}"),
+                );
+            }
+        }
+    });
+}
+
+/// The memory the process holds, as the allocator sees it.
+fn resident() -> u64 {
+    unsafe extern "C" {
+        fn mi_process_info(
+            elapsed: *mut usize,
+            user: *mut usize,
+            system: *mut usize,
+            current_rss: *mut usize,
+            peak_rss: *mut usize,
+            current_commit: *mut usize,
+            peak_commit: *mut usize,
+            page_faults: *mut usize,
+        );
+    }
+    let mut values = [0usize; 8];
+    let [a, b, c, d, e, f, g, h] = values.each_mut().map(|v| v as *mut usize);
+    unsafe { mi_process_info(a, b, c, d, e, f, g, h) };
+    values[3] as u64
+}
+
+/// Ends the worker in the input that runs, which went past a limit.
+fn limit(kind: &str, message: String) -> ! {
+    super::interrupted();
+    crate::testing::report("limit", format!("{kind}\0{message}").as_bytes());
+    crate::flush_stdout();
+    unsafe { libc::_exit(1) }
 }
 
 /// The literals of the code the build counts, as the compiler wrote them:
@@ -147,6 +211,7 @@ impl Search {
         let now = Instant::now();
         let dictionary = literals(&target.literals);
         SEARCHING.store(true, Ordering::Relaxed);
+        watch(target.timeout, target.memory);
         let mut search = Search {
             target,
             shapes: Shapes::read(shape),
@@ -168,14 +233,21 @@ impl Search {
         search
     }
 
-    /// Clears the counters before an input runs.
+    /// Clears the counters before an input runs, which runs from now.
     pub(crate) fn before(&mut self) {
         crate::testing::counters().fill(0);
+        RUNNING_SINCE.store(now_ms(), Ordering::Relaxed);
+    }
+
+    /// No input runs.
+    pub(crate) fn idle(&self) {
+        RUNNING_SINCE.store(0, Ordering::Relaxed);
     }
 
     /// Rates the input that ran: one that reached a new range of some
     /// counter joins the corpus.
     pub(crate) fn after(&mut self, json: &str) {
+        self.idle();
         self.inputs += 1;
         let mut new = false;
         for (seen, &count) in self.seen.iter_mut().zip(crate::testing::counters().iter()) {
