@@ -906,7 +906,37 @@ fn decimal(value: i64, buffer: &mut [u8; 20]) -> &str {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_write_float(object: *mut WriterObject, value: f64) {
-    writer(object).leaf(float_text(value));
+    let mut w = writer(object);
+    // A float of the usual size is written from the stack, without a
+    // string of its own for each.
+    if !w.canonical && (1e-7..1e21).contains(&value.abs()) {
+        let mut text = Short { bytes: [0; 32], length: 0 };
+        if write!(text, "{value}").is_ok() {
+            return w.leaf_text(text.as_str());
+        }
+    }
+    w.leaf(float_text(value));
+}
+
+/// Up to 32 bytes of text on the stack, which `write!` fills.
+struct Short {
+    bytes: [u8; 32],
+    length: usize,
+}
+
+impl Short {
+    fn as_str(&self) -> &str {
+        std::str::from_utf8(&self.bytes[..self.length]).unwrap_or("0")
+    }
+}
+
+impl std::fmt::Write for Short {
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        let end = self.length + text.len();
+        self.bytes.get_mut(self.length..end).ok_or(std::fmt::Error)?.copy_from_slice(text.as_bytes());
+        self.length = end;
+        Ok(())
+    }
 }
 
 /// A number already validated as JSON text; canonical output rewrites it as
