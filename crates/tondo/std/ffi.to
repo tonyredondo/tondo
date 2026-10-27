@@ -1,4 +1,4 @@
-// `std.ffi`: what calling C needs (standard library 19.3). C functions are
+// std.ffi: what calling C needs (standard library 19.3). C functions are
 // declared with `extern fn` and C structs with `extern type`; this module
 // names C's types and gives memory and strings that C can use.
 

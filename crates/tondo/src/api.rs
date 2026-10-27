@@ -122,6 +122,25 @@ pub fn standard_modules() -> Vec<String> {
     names
 }
 
+/// What a standard module is for, from the comment at its top: `the
+/// filesystem. Operations wait without blocking a worker.`
+pub fn summary(module: &str) -> Option<String> {
+    let name = module.strip_prefix("std.")?;
+    let source = match INTRINSIC.iter().find(|(n, _)| *n == name) {
+        Some((_, text)) => text,
+        None => crate::stdlib::text(name).filter(|_| !HIDDEN.contains(&name))?,
+    };
+    let lines: Vec<&str> = source.lines().map_while(|line| line.strip_prefix("// ")).collect();
+    let mut text = lines.join(" ");
+    // Where the specification has it is for its readers.
+    while let Some(start) = text.find(" (standard library ") {
+        let Some(end) = text[start..].find(')') else { break };
+        text.replace_range(start..start + end + 1, "");
+    }
+    let text = text.strip_prefix(module)?.strip_prefix(": ")?;
+    Some(text.to_string())
+}
+
 /// The API of a standard module: `std.http`, `std.fs` or `prelude`.
 pub fn standard(name: &str) -> Option<String> {
     if name == "prelude" {

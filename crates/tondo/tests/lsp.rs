@@ -306,6 +306,28 @@ fn completion_and_highlighting() {
     assert!(strings.contains(&"length".to_string()) && strings.contains(&"split".to_string()), "{strings:?}");
     let names = complete(&mut editor, "gr");
     assert!(names.contains(&"greet".to_string()) && names.contains(&"ada".to_string()), "{names:?}");
+    // In an import, the modules: `std` and the project's first, then the
+    // standard ones, each with what it is for.
+    let imports = |editor: &mut Editor, typed: &str| -> Vec<Value> {
+        let text = format!("{typed}\n{MAIN}");
+        editor.notify(
+            "textDocument/didChange",
+            json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": text }] }),
+        );
+        let position = json!({ "line": 0, "character": typed.len() });
+        let result =
+            editor.request("textDocument/completion", json!({ "textDocument": { "uri": uri }, "position": position }));
+        result["items"].as_array().unwrap().clone()
+    };
+    let labels =
+        |items: &[Value]| -> Vec<String> { items.iter().map(|i| i["label"].as_str().unwrap().to_string()).collect() };
+    let roots = labels(&imports(&mut editor, "import "));
+    assert!(roots.contains(&"std".to_string()) && roots.contains(&"app".to_string()), "{roots:?}");
+    let standard = imports(&mut editor, "import std.");
+    let http = standard.iter().find(|i| i["label"] == "http").expect("std.http");
+    assert!(http["labelDetails"]["description"].as_str().unwrap().starts_with("an HTTP client"), "{http}");
+    assert!(!labels(&standard).contains(&"internal".to_string()));
+    assert_eq!(labels(&imports(&mut editor, "import app.")), ["models"]);
 
     let tokens = editor.request("textDocument/semanticTokens/full", json!({ "textDocument": { "uri": uri } }));
     let data: Vec<u64> = tokens["data"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap()).collect();

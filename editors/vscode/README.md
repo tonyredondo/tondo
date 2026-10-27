@@ -20,7 +20,8 @@ project, running, debugging and testing it.
   code means; hover; go to definition, type definition and
   implementations; references; call and type hierarchies; rename, of
   files and folders too; completion, which writes the import of a module
-  it names; signature help; inlay hints of types and parameters; symbols;
+  it names, and in an `import` lists the modules there are, each standard
+  one with what it offers; signature help; inlay hints of types and parameters; symbols;
   folding and smart selection; semantic highlighting; *Run* and *Debug*
   over `main` or a script; and formatting, of a selection too, on save by
   default, when the imports a file lacks are added and those it does not use

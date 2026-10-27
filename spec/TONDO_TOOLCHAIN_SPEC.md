@@ -461,6 +461,9 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   variantes de un enum; y si no, las variables y parámetros de la función
   hasta el cursor, las declaraciones del módulo, los módulos que usa, los que
   no importa todavía, con el `import` que los trae, y las palabras clave.
+  En un `import`, el siguiente segmento de los módulos que puede nombrar:
+  `std`, el paquete y sus dependencias, y tras `std.` los módulos estándar,
+  cada uno con lo que ofrece según el comentario que lo abre.
   Cada elemento lleva su declaración y su documentación; el de una función,
   sus parámetros y su resultado junto al nombre, y al elegirlo escribe sus
   paréntesis, salvo si los hay ya, y abre la ayuda de sus parámetros.

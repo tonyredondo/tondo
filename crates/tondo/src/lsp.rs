@@ -88,6 +88,55 @@ struct Analyzed {
     tests: Option<Vec<crate::hir::TestNodeInfo>>,
 }
 
+/// The next segment of the modules an import can name after what it
+/// has written: `std`, the project's and its dependencies' first; then,
+/// after `std.`, the standard modules, each with what it is for.
+fn importable(analyzed: &Analyzed, here: &str, written: &str) -> Vec<Value> {
+    if written.contains(' ') {
+        return Vec::new();
+    }
+    let prefix = written.rfind('.').map_or("", |at| &written[..=at]);
+    let mut modules: Vec<(String, Option<String>, &str)> = crate::api::standard_modules()
+        .into_iter()
+        .filter(|m| m.starts_with("std."))
+        .map(|m| {
+            let about = crate::api::summary(&m);
+            (m, about, "the standard library")
+        })
+        .collect();
+    let sources = &analyzed.analysis.sources;
+    for file in (0..sources.len()).map(|i| sources.file(i)) {
+        let module = &file.module;
+        if file.path.as_os_str().is_empty() || module.starts_with("std") || module == here || module == "prelude" {
+            continue;
+        }
+        let whose = if file.dependency { "a dependency" } else { "the project" };
+        if (file.own || file.dependency) && !modules.iter().any(|(m, ..)| m == module) {
+            modules.push((module.clone(), None, whose));
+        }
+    }
+    let mut items: Vec<Value> = Vec::new();
+    for (module, about, whose) in &modules {
+        let Some(rest) = module.strip_prefix(prefix) else { continue };
+        let (segment, deeper) = rest.split_once('.').map_or((rest, false), |(segment, _)| (segment, true));
+        if segment.is_empty() || items.iter().any(|item| item["label"] == segment) {
+            continue;
+        }
+        let mut item = json!({ "label": segment, "kind": 9, "detail": format!("{prefix}{segment}") });
+        match (deeper, about) {
+            (true, _) => item["labelDetails"] = json!({ "description": whose }),
+            (false, Some(about)) => {
+                let short = about.split(". ").next().unwrap_or(about).trim_end_matches('.');
+                item["labelDetails"] = json!({ "description": short });
+                item["documentation"] = json!({ "kind": "markdown", "value": about });
+            }
+            (false, None) => item["labelDetails"] = json!({ "description": format!("a module of {whose}") }),
+        }
+        items.push(item);
+    }
+    items
+}
+
 /// What the columns of positions count.
 #[derive(Default, Clone, Copy, PartialEq)]
 enum Units {
@@ -972,6 +1021,11 @@ impl Server {
         let source = latest.analysis.sources.file(file);
         let text = source.text.clone();
         let cursor = (offset - source.base) as usize;
+        // In an import, the modules there are.
+        let line = text[..cursor].rfind('\n').map_or(0, |at| at + 1);
+        if let Some(written) = text[line..cursor].strip_prefix("import ") {
+            return Some(json!({ "isIncomplete": false, "items": importable(latest, &source.module, written) }));
+        }
         let start = text[..cursor].rfind(|c: char| !(c.is_alphanumeric() || c == '_')).map_or(0, |i| i + 1);
         if !text[..start].ends_with('.') {
             return Some(json!({ "isIncomplete": false, "items": self.names(latest, offset) }));
