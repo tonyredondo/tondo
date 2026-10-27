@@ -2417,7 +2417,7 @@ test parsesAnyDocument {
 La entrada es un valor de cualquier tipo `T` con `serialization.Encode` y
 `serialization.Decode`, que el compilador implementa para cada record, enum y
 newtype cuyas partes los tienen (14.7 de la librería estándar): un `String`,
-un `Array[Byte]` o un `Request { method, path, headers }`. Las semillas son
+un `serialization.Bytes` o un `Request { method, path, headers }`. Las semillas son
 valores de ese tipo, escritos en el código. Una entrada falla cuando el cuerpo
 falla: un `assert` o un pánico terminan el test, como siempre, y un `err`
 termina la llamada, que devuelve ese error. Lo que el código debe rechazar se

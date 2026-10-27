@@ -122,7 +122,7 @@ test parsesAnyDocument {
 - A test that calls `testing.fuzz(name, seeds, closure)` in its own body
   tries inputs; anywhere else the call is `E2007`. The input is a value of
   any type with `Encode` and `Decode`, which records, enums and newtypes get
-  by themselves: a `String`, an `Array[Byte]`, a `Request { ... }`.
+  by themselves: a `String`, a `serialization.Bytes`, a `Request { ... }`.
 - An input fails when the closure does: an `assert` or a panic ends the
   test, and an error ends the call, which gives it (`?` passes it on).
   Handle in the closure what the code must reject.
