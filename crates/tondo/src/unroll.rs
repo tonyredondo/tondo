@@ -123,8 +123,23 @@ fn find(body: &Body, types: &Types, done: &[usize]) -> Option<Counted> {
             if successors(&blocks[block].terminator).contains(&head) {
                 continue 'steps;
             }
-            // Neither the counter nor the bound changes in the body.
+            // Neither the counter nor the bound changes in the body, which
+            // calls nothing and starts no task: a turn that does costs more
+            // than its test, and four in a row change how tasks share out.
             for statement in &blocks[block].stmts {
+                if let Statement::Assign(_, value, _) = statement
+                    && matches!(
+                        &**value,
+                        Rvalue::Call(..)
+                            | Rvalue::CallIndirect(..)
+                            | Rvalue::CallOsr(..)
+                            | Rvalue::Spawn(..)
+                            | Rvalue::TaskOp(..)
+                            | Rvalue::Select(..)
+                    )
+                {
+                    continue 'steps;
+                }
                 let changed = match statement {
                     Statement::Assign(place, ..) | Statement::Lend(_, place) | Statement::Moved(place) => place.local,
                     Statement::Clear(local) => *local,
