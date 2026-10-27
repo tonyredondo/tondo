@@ -2770,3 +2770,14 @@ finds every import missing. The language server's `source.organizeImports`
 applies those repairs, which the VS Code extension runs on save, and
 `tondo fix`, and the tool `fix` of agents, apply them with the rest of the
 safe repairs, inserting where another repair removes.
+
+## 2026-10-27 — `App.files` lists a folder when asked
+
+A folder served with `App.files` answered `404` at its own path, so a user
+could fetch a file only by knowing its name. `listing: true` answers a
+folder's path with an HTML page of its entries, folders first, each file
+with its size and a link that downloads it, and a link to the parent but at
+the top. It is off by default, because a list of the files a server keeps
+is not something every server should show; the page is plain HTML with
+absolute links, so that it works at a folder's path with or without its
+final `/`.

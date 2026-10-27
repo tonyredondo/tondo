@@ -3747,7 +3747,7 @@ pub fn App.get(mut self, path: String, handler: fn(Request): Reply ! Problem)   
 pub fn App.route(mut self, method: String, path: String, handler: fn(Request): Reply ! Problem, operation: String = "")
 pub fn App.use(mut self, middleware: fn(Request, fn(Request): Reply ! Problem): Reply ! Problem)
 pub fn App.mount(mut self, prefix: String, other: App)
-pub fn App.files(mut self, prefix: String, directory: String)
+pub fn App.files(mut self, prefix: String, directory: String, listing: Bool = false)
 pub fn App.uploads(mut self, prefix: String, directory: String)
 pub fn App.websocket(mut self, path: String, handler: fn(WebSocket): Unit ! HttpError)
 pub fn App.openApi(mut self, path: String = "/openapi.json", title: String = "API", version: String = "1.0")
@@ -3781,7 +3781,10 @@ pub alias Tls = net.Tls
   `If-Modified-Since` con `304`, y a un rango fuera del archivo con `416`;
   `If-Range` mantiene el rango solo si el archivo no cambió. `download` lo
   envía como adjunto con ese nombre. `App.files` sirve así los archivos de una
-  carpeta, sin dejar salir de ella un path con `..` (`403`).
+  carpeta, sin dejar salir de ella un path con `..` (`403`). Con `listing`, el
+  path de una carpeta responde con una página HTML de sus entradas, primero
+  las carpetas, cada una con un enlace para abrirla y cada archivo con su
+  tamaño y un enlace para descargarlo; sin `listing`, es `404`.
 - `App.uploads` recibe archivos en una carpeta: `PUT` escribe el cuerpo en ese
   archivo, desde el byte que diga `Content-Range: bytes inicio-fin/total`, así
   que una subida se reanuda tras un `HEAD` que dice cuánto llegó; `POST` con un

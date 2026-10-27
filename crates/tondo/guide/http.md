@@ -80,6 +80,7 @@ fn main(): !http.HttpError {
     })
 
     app.files("/downloads", "public")         // GET with ranges: downloads resume
+    app.files("/browse", "public", listing: true)   // and a page of each folder
     app.uploads("/downloads", "public")       // PUT (resumable) and multipart POST
     app.websocket("/chat", (socket) {
         for message in socket {

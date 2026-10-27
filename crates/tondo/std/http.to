@@ -5,6 +5,7 @@
 
 import std.console as __console
 import std.encoding as __encoding
+import std.fs as __fs
 import std.internal.http as httpNative
 import std.io as __io
 import std.json as __json
@@ -1402,12 +1403,101 @@ pub fn App.mount(mut self, prefix: String, other: App) {
 
 /// Serves the files under a directory at `{prefix}/...`: `GET` and `HEAD`,
 /// with ranges, so downloads resume. Paths cannot leave the directory.
-pub fn App.files(mut self, prefix: String, directory: String) {
+/// With `listing`, a directory's path answers with a page of its entries,
+/// to open them or download the files.
+pub fn App.files(mut self, prefix: String, directory: String, listing: Bool = false) {
+    let base = prefix.removeSuffix("/")
     self.route(
         "GET",
-        "{prefix.removeSuffix("/")}/*path",
-        (request) { Reply.file(inside(directory, request.param("path"))?) },
+        "{base}/*path",
+        (request) {
+            let relative = request.param("path")
+            let path = inside(directory, relative)?
+            if listing and isDirectory(path) {
+                return listingPage(base, relative, path)
+            }
+            Reply.file(path)
+        },
     )
+}
+
+fn isDirectory(path: String): Bool {
+    match __fs.metadata(path) {
+        ok(entry) => match entry.kind {
+            __fs.FileKind.Directory => true
+            _ => false
+        }
+        err(_) => false
+    }
+}
+
+/// The page of a directory's entries, folders first: a link to open each,
+/// and one to download each file.
+fn listingPage(base: String, relative: String, path: String): Reply ! Problem {
+    let names = match __fs.list(path) {
+        ok(names) => names
+        err(_) => fail Problem.notFound()
+    }
+    let parts = segments(relative)
+    let encoded = parts.map((part) { __encoding.urlEncode(part) })
+    let here = if encoded.isEmpty() { base } else { "{base}/{encoded.join("/")}" }
+    var rows: Array[String] = []
+    if not parts.isEmpty() {
+        let up = encoded.take(encoded.length() - 1).join("/")
+        rows.push("<tr><td><a href=\"{base}/{up}\">../</a></td><td></td><td></td></tr>")
+    }
+    var files: Array[String] = []
+    for name in names {
+        let href = "{here}/{__encoding.urlEncode(name)}"
+        let shown = escaped(name)
+        if isDirectory("{path.removeSuffix("/")}/{name}") {
+            rows.push("<tr><td><a href=\"{href}\">{shown}/</a></td><td></td><td></td></tr>")
+        } else {
+            let size = match __fs.metadata("{path.removeSuffix("/")}/{name}") {
+                ok(entry) => sizeText(entry.size)
+                err(_) => ""
+            }
+            let link = "<a href=\"{href}\">{shown}</a>"
+            let download = "<a href=\"{href}\" download>download</a>"
+            files.push("<tr><td>{link}</td><td class=\"size\">{size}</td><td>{download}</td></tr>")
+        }
+    }
+    rows.extend(files)
+    let title = escaped("{base}/{parts.join("/")}")
+    let style = [
+        "body {{ font: 15px system-ui, sans-serif; margin: 2em auto; max-width: 50em; padding: 0 1em }}",
+        "table {{ border-collapse: collapse; width: 100% }}",
+        "td {{ padding: .4em .6em; border-bottom: 1px solid #8884 }}",
+        "td.size {{ text-align: right; color: #888 }}",
+        "a {{ text-decoration: none }}",
+    ]
+    var page = [
+        "<!doctype html>",
+        "<html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\">",
+        "<title>{title}</title><style>{style.join(" ")}</style></head>",
+        "<body><h1>{title}</h1><table>",
+    ]
+    page.extend(rows)
+    page.push("</table></body></html>\n")
+    Reply.html(page.join("\n"))
+}
+
+fn sizeText(size: Int): String {
+    if size < 1024 {
+        return "{size} B"
+    }
+    var tenths = size * 10 / 1024
+    for unit in ["KB", "MB", "GB"] {
+        if tenths < 10240 or unit == "GB" {
+            return "{tenths / 10}.{tenths % 10} {unit}"
+        }
+        tenths = tenths / 1024
+    }
+    "{size} B"
+}
+
+fn escaped(text: String): String {
+    text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
 }
 
 /// Takes uploads into a directory at `{prefix}/...`: `PUT` writes its body
