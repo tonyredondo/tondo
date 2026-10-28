@@ -259,10 +259,13 @@ Se adoptan:
 - Énfasis en legibilidad y costos visibles.
 - Pocos mecanismos de abstracción.
 - Una frontera `unsafe` pequeña y explícita para interoperabilidad de bajo nivel.
+- Un contexto que acompaña a la ejecución sin pasarlo como parámetro, que se
+  cambia para un ámbito y se restaura al salir. En Tondo cada contexto se
+  declara con su tipo, se lee por su nombre y se hereda entre tareas (11.16), en
+  lugar de ser un parámetro oculto de cada llamada con campos fijos.
 
 No se adoptan:
 
-- Contextos implícitos.
 - Punteros o memoria manual en código seguro.
 
 ### 3.6 Python y NumPy
@@ -603,7 +606,7 @@ true       type       unsafe     var        with
 | `type` | Declarar un record o newtype nominal |
 | `unsafe` | Delimitar operaciones raw o declarar precondiciones del llamador |
 | `var` | Binding mutable o préstamo exclusivo con cambio estructural |
-| `with` | Construir explícitamente un record actualizado |
+| `with` | Construir explícitamente un record actualizado, o cambiar un contexto (11.16) |
 
 `ok`, `err` y `some` no son palabras reservadas, sino **constructores
 contextuales** de `Result` y `Option`. Un identificador no calificado `ok`, `err`
@@ -634,7 +637,10 @@ binding de un patrón ocultaría la ausencia.
 
 `recover` tampoco es palabra reservada: seguido de `{` en posición de
 expresión es siempre la expresión `recover` (15.9); en cualquier otra posición
-es un nombre ordinario.
+es un nombre ordinario. Lo mismo ocurre con `context` al principio de una
+declaración seguido de un nombre, que declara un contexto (11.16), y con
+`within` al principio de una expresión seguido de una expresión y un bloque,
+que pone un plazo (11.17).
 
 `Some`, `None`, `Ok` y `Err` no son nombres del lenguaje. Cuando uno de ellos no
 resuelve a una declaración visible, el diagnóstico `E1001` indica la forma
@@ -1930,7 +1936,8 @@ type Account = {
 
 `@name("text")` da el nombre del campo fuera del programa e `@ignore` lo omite;
 un campo ignorado es opcional, porque al decodificarse queda `none`. Otra
-anotación es error.
+anotación es error; los campos de un contexto admiten en su lugar `@log` y
+`@label` (11.16).
 
 ### 9.3 Actualización de records
 
@@ -3855,6 +3862,173 @@ también. Un cálculo que no espera no se interrumpe. Una espera dentro de un
 propias tareas, que se cancelan y se esperan. Cuando `cancel()` regresa, la
 tarea ya terminó.
 
+### 11.16 Contextos
+
+Un contexto es un record con nombre que acompaña a la ejecución: cualquier
+función lee sus campos sin recibirlos como parámetros, y una sentencia `with`
+los cambia desde ese punto hasta el final de su bloque. Sirve para lo que
+pertenece a la ejecución y no a cada llamada: la petición que se atiende, el
+usuario autenticado, la traza en curso o el tracer del proceso.
+
+~~~tondo pseudocode
+/// La traza del trabajo que corre: de su span cuelgan los nuevos.
+pub context Trace = {
+    tracer: Tracer? = none
+    span: Span? = none
+    sampled: Bool = true
+}
+~~~
+
+`context Nombre = { campos }` declara a la vez el tipo record `Nombre` y su
+contexto. Cada campo lleva un valor inicial constante (6.5), el que se lee
+antes de cualquier `with`; un valor que solo existe al ejecutar, como un tracer,
+se declara opcional y se pone en `main`. Los campos deben cumplir `Send`
+(16.13), porque los contextos viajan con las tareas. Un campo `priv` solo se lee
+y se cambia en el módulo que declara el contexto, como en un record (7.6). Un
+contexto no es genérico.
+
+**Leer.** `Trace.span` es el valor actual del campo `span`: en el módulo que lo
+declara, `Trace.span`; desde otro, `tracer.Trace.span`. Leer nunca falla y no
+busca nada por nombre. El nombre del tipo delante distingue a la vista un valor
+del contexto de un binding local.
+
+**Cambiar.** La sentencia `with` cambia campos del contexto con la forma con
+que se actualiza un record (9.3):
+
+~~~tondo pseudocode
+fn traced(request: Request, next: Handler): Reply {
+    let span = tracer.startSpan("http.request")
+    defer span.finish()
+    with Trace { span: some(span), sampled: true }
+    with Auth { user: request.user() }
+    with Request {
+        id: request.header("x-request-id").unwrapOr(uuid.v4())
+        locale: request.locale()
+    }
+    next(request)
+}
+~~~
+
+- Evalúa los valores en orden y, desde la sentencia siguiente hasta el final
+  del bloque que contiene el `with`, el contexto tiene esos campos cambiados;
+  los demás conservan su valor actual. `{ span }` abrevia `{ span: span }`, como
+  en un record literal.
+- Al salir del bloque, de cualquier forma, el contexto vuelve a ser el de
+  antes: al terminar, con `return`, `break`, `continue`, `?` o `fail`, al
+  desenrollar un pánico (15.9) y al cancelar la tarea (11.15). La restauración
+  es una acción de salida del bloque, en orden LIFO con los `defer` y las
+  liberaciones: un `defer` escrito después del `with` todavía lo ve.
+- Varios campos de un contexto van en un solo `with`; varios contextos, en
+  sentencias seguidas, sin anidar. Para un ámbito más corto basta un bloque
+  como valor:
+
+  ~~~tondo pseudocode
+  let reply = {
+      with Trace { span: some(span) }
+      next(request)
+  }
+  ~~~
+
+- `with` es una sentencia: no da valor y solo aparece dentro de un cuerpo de
+  función, cierre o test. En el cuerpo de un bucle dura una iteración.
+- Un cambio nunca sube: una función no cambia el contexto de quien la llama, y
+  el `with` de un cierre vale para el cuerpo de ese cierre.
+
+**Tareas.** `spawn`, también `spawn detached`, da a la nueva tarea el contexto
+de la tarea que la lanza en ese punto. Desde ahí cada una tiene el suyo: los
+`with` de la hija no cambian el del padre ni los del padre el de la hija. Un
+valor puesto en `main` antes de arrancar un servidor llega así a cada petición:
+
+~~~tondo pseudocode
+fn main() {
+    let t = tracer.start(config)
+    with Trace { tracer: some(t) }
+    app.listen(port: 8080)
+}
+~~~
+
+Un cierre se ejecuta con el contexto de la tarea y del punto donde se llama, no
+donde se creó: una función guardada y llamada después por otra tarea ve el
+contexto de esa tarea.
+
+**Inmutabilidad.** El contexto de una tarea es un valor: cada `with` crea uno
+nuevo, y nada cambia un contexto que otra tarea o un bloque exterior ya tiene.
+Los campos son valores de Tondo; un estado compartido que cambia se pone a
+propósito como un handle (`Ref`, los tipos de `std.sync`).
+
+**Coste.** Leer un campo es de coste constante. Un `with` crea el contexto nuevo
+copiando una tabla con una entrada por cada contexto que declara el programa,
+no por cada valor; `spawn` comparte el contexto de la tarea sin copiarlo.
+
+**Lo que ven las herramientas.** Un campo puede llevar `@log` o `@label`, con un
+nombre o, sin él, el del campo:
+
+~~~tondo pseudocode
+pub context Request = {
+    @log("request_id") id: String = ""
+    @label route: String = ""
+    locale: String = "en"
+}
+~~~
+
+- Un campo `@log` que no tiene su valor inicial va en cada evento de `std.log`
+  y en el informe de un pánico (15.7), con ese nombre y el texto de su
+  `Display`. Así un id puesto una vez en un middleware aparece en todo lo que
+  la petición escribe.
+- Un campo `@label` es un label de los perfiles de `std.profile` y de `tondo
+  profile` (14.26 de la librería): lo llevan las muestras de las tareas que
+  tienen ese valor. Un label con muchos valores distintos, como un id de
+  petición, parte el perfil en trozos que no se pueden comparar; para eso está
+  `@log`.
+- El tipo del campo debe tener `Display`. Un campo `T?` cuenta solo cuando es
+  `some`, con el `Display` de lo que tiene.
+
+`tondo debug`, `tondo dump` y el language server muestran los contextos de cada
+tarea y de dónde viene cada valor (7.4, 7.5 y 7.6 del toolchain).
+
+`context` solo es una palabra del lenguaje al principio de una declaración,
+seguido del nombre (5.5). Un campo sin valor inicial constante, que no cumple
+`Send`, o con una anotación que no es `@log` ni `@label` o cuyo tipo no tiene
+`Display`, produce `E1616`. Un `with` sobre algo que no es un contexto, con un
+campo que no existe o repetido, o fuera de un cuerpo, produce `E1617`.
+
+### 11.17 Plazos: `within`
+
+`within plazo bloque` ejecuta el bloque con un plazo de `plazo`, un
+`time.Duration`, contado desde ese momento:
+
+~~~tondo pseudocode
+fn profile(id: Int): Profile ! (HttpError | time.TimedOut) {
+    let user = within time.seconds(2) { fetchUser(id) }?
+    let posts = within time.milliseconds(500) { fetchPosts(id) }.unwrapOr([])
+    Profile { user, posts }
+}
+~~~
+
+- Si el bloque termina, `within` vale su valor. Si el plazo vence antes, el
+  bloque se cancela como dice 11.15: se detiene en su siguiente espera, ejecuta
+  sus `defer`, libera lo que tenía y cancela y espera las tareas que le
+  pertenecen, y `within` vale `err(time.TimedOut)`. Un cálculo que no espera no
+  se interrumpe: si termina, aunque sea tarde, vale su valor.
+- Su tipo es `T ! time.TimedOut` para un bloque de tipo `T`, y
+  `R ! (E | time.TimedOut)` para uno de tipo `R ! E`, así que `?` pasa
+  cualquiera de los dos (15.3).
+- El plazo forma parte del contexto (11.16): lo ven el código del bloque y las
+  tareas que lanza sin `detached`. Un `within` dentro de otro conserva el plazo
+  que vence antes. `time.deadline()` y `time.remaining()` lo leen, y las
+  operaciones de la librería estándar que cruzan la red lo envían al otro
+  lado. Una tarea `detached` no hereda el plazo, porque por definición puede
+  durar más que el bloque, pero sí los demás contextos.
+- Una espera con su propio timeout, como `receive(timeout:)`, lo conserva: vale
+  el que vence antes.
+- `time.TimedOut` no es un pánico: `recover` no lo detiene, ni `within` detiene
+  pánicos. Una cancelación de la tarea entera dentro del bloque sigue siendo una
+  cancelación, no un `TimedOut`.
+
+`within` solo es una palabra del lenguaje al principio de una expresión,
+seguido de una expresión y un bloque (5.5). La expresión del plazo se lee como
+la condición de `if`, sin un record literal antes de `{`.
+
 ---
 
 ## 12. Genéricos y traits
@@ -5366,6 +5540,18 @@ panic[cache.corrupt]: the cache index is corrupt
 stack:
   Cache.load  src/cache.to:41:9
   main        src/main.to:12:5
+~~~
+
+Los campos `@log` del contexto de la tarea (11.16) van detrás de la ubicación,
+en una línea `context:` con `nombre=valor` separados por espacios:
+
+~~~text
+panic[cache.corrupt]: the cache index is corrupt
+  key: users
+ --> src/cache.to:41:9
+context: request_id=7f3a9c
+stack:
+  Cache.load  src/cache.to:41:9
 ~~~
 
 Los pánicos del lenguaje también llevan `data`, con las claves de 22.2, pero su
@@ -8028,6 +8214,8 @@ oculten un diagnóstico independiente.
 | `E1612` | `invalid-select-operand` | Un brazo de `select` no es `receive`, `send`, `wait`, `next` ni `sleep`. |
 | `E1613` | `invalid-select-shape` | `select` está vacío, repite `else`, lo sitúa antes de otro brazo o usa un binding refutable. |
 | `E1615` | `conflicting-select-ownership` | Dos brazos reservan el mismo dueño afín de formas incompatibles. |
+| `E1616` | `invalid-context-declaration` | Un campo de un contexto no tiene valor inicial constante, no cumple `Send` o tiene una anotación que no es `@log` ni `@label`, o cuyo tipo no tiene `Display`. |
+| `E1617` | `invalid-context-change` | `with` cambia algo que no es un contexto, un campo que no existe o repetido, o aparece fuera de un cuerpo. |
 
 #### Unsafe, programas y constantes
 
@@ -8690,6 +8878,7 @@ script_statement
                 = statement ;
 
 top_decl        = const_decl
+                | context_decl
                 | type_decl
                 | alias_decl
                 | enum_decl
@@ -8995,6 +9184,7 @@ block           = "{", { NL | statement }, [ tail_expression ],
                   { NL }, "}" ;
 
 statement       = binding_decl, statement_end
+                | context_stmt, statement_end
                 | assignment, statement_end
                 | return_stmt, statement_end
                 | fail_stmt, statement_end
@@ -9015,6 +9205,22 @@ break_stmt      = "break" ;
 continue_stmt   = "continue" ;
 
 defer_stmt      = "defer", ( postfix_expression | block ) ;
+
+(* `context` y `within` son contextuales (5.5, 11.16, 11.17). *)
+context_decl    = [ visibility ], "context", identifier, "=",
+                  context_body, declaration_end ;
+context_body    = "{", { NL },
+                  [ context_field,
+                    { field_separator, context_field },
+                    [ field_separator ] ],
+                  { NL }, "}" ;
+context_field   = { annotation, { NL } }, [ "priv" ], field_name, ":",
+                  type_expr, "=", expression ;
+
+context_stmt    = "with", type_path, "{", { NL },
+                  record_initializer,
+                  { field_separator, record_initializer },
+                  [ field_separator ], { NL }, "}" ;
 
 expression_stmt = expression ;
 tail_expression = expression ;
@@ -9280,12 +9486,15 @@ primary_expression
                 | option_result_constructor
                 | unsafe_expression
                 | recover_expression
+                | within_expression
                 | block ;
 
 unsafe_expression = "unsafe", block ;
 
 (* `recover` es contextual: solo seguido de `{` (5.5, 15.9). *)
 recover_expression = "recover", block ;
+
+within_expression = "within", expression, block ;
 
 literal         = integer_literal
                 | float_literal
@@ -10032,7 +10241,7 @@ dónde aparece ausencia utilizan `match` u operaciones nombradas.
 
 ### 25.11 Globals mutables
 
-Un módulo solo admite constantes y declaraciones. Los `let` y `var` top-level de un script son locales del `main` implícito, no globals. Estado global controlado se construye mediante tipos de sincronización o inicialización explícita en el punto de entrada.
+Un módulo solo admite constantes y declaraciones. Los `let` y `var` top-level de un script son locales del `main` implícito, no globals. Estado global controlado se construye mediante tipos de sincronización o inicialización explícita en el punto de entrada. Un valor de todo el proceso, como un tracer o una configuración, se pone en un contexto al principio de `main` (11.16): lo ve todo el código y las tareas que corren debajo, sin que nada pueda cambiarlo a sus espaldas.
 
 ### 25.12 Inicializadores e imports con efectos
 

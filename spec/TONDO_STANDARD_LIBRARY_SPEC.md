@@ -1646,6 +1646,27 @@ pub fn sleep(delay: Duration)
 `select` (11.14 del lenguaje); un retraso cero o negativo no espera. Los
 timeouts de `wait`, `receive` y `select` reciben también un `Duration`.
 
+Un bloque `within` (11.17 del lenguaje) pone un plazo a lo que ejecuta. Su
+error, y lo que se lee del plazo actual:
+
+~~~tondo pseudocode
+pub type TimedOut = {
+    limit: Duration
+}
+
+pub fn deadline(): Instant?
+pub fn remaining(): Duration?
+~~~
+
+- `TimedOut` es el error de un `within` cuyo plazo venció; `limit` es el plazo
+  que se le dio. `Display` dice `timed out after 2s`.
+- `deadline` es el instante en que vence el plazo de la tarea, el más cercano
+  de los `within` que la contienen, o `none` sin plazo. `remaining` es lo que
+  falta hasta él, cero si ya venció.
+- El cliente de `std.http` y las operaciones de red usan el plazo como límite
+  de cada espera, y un protocolo que sabe llevarlo al otro lado, como gRPC con
+  `grpc-timeout`, lo envía.
+
 #### 14.3.4 Fecha y hora UTC
 
 ~~~tondo pseudocode
@@ -3307,7 +3328,9 @@ pub fn Uuid.compare(self, other: Uuid): Int
 ### 14.18 `std.log`
 
 `std.log` escribe eventos estructurados, una línea por evento, en texto o JSON.
-No hay logger global: el programa crea el suyo y lo pasa a quien lo usa.
+El logger de la ejecución está en el contexto `log.Context` (11.16 del
+lenguaje): las funciones del módulo escriben con él, así que nadie tiene que
+pasarlo, y un logger también se crea y se pasa como cualquier valor.
 
 ~~~tondo
 import std.log
@@ -3317,6 +3340,26 @@ logger.info("server started", ["port": "8080"])
 let request = logger.withFields(["request": "{id}"])
 request.warn("slow query", ["table": "users", "took": "{elapsed}"])
 // 2026-10-23T09:12:03.5Z WARN slow query request=42 table=users took=1.2s
+~~~
+
+Con el contexto, `main` pone el logger y un middleware sus campos, y el
+código de debajo solo escribe:
+
+~~~tondo pseudocode
+fn main() {
+    with log.Context { logger: some(log.Logger.new(format: log.Format.Json)) }
+    app.listen(port: 8080)
+}
+
+fn tagged(request: http.Request, next: http.Handler): http.Reply {
+    with log.Context { logger: some(log.current().withFields(["path": request.target])) }
+    next(request)
+}
+
+fn find(id: Int): User ! NotFound {
+    log.debug("looking up", ["id": "{id}"])    // con path y los campos @log
+    ...
+}
 ~~~
 
 La superficie es:
@@ -3337,12 +3380,29 @@ pub fn Logger.info(self, message: String, fields: Map[String, String] = [:])
 pub fn Logger.warn(self, message: String, fields: Map[String, String] = [:])
 pub fn Logger.error(self, message: String, fields: Map[String, String] = [:])
 pub fn Logger.flush(self): Unit ! io.IoError
+
+pub context Context = {
+    logger: Logger? = none
+}
+
+pub fn current(): Logger
+pub fn trace(message: String, fields: Map[String, String] = [:])
+pub fn debug(message: String, fields: Map[String, String] = [:])
+pub fn info(message: String, fields: Map[String, String] = [:])
+pub fn warn(message: String, fields: Map[String, String] = [:])
+pub fn error(message: String, fields: Map[String, String] = [:])
 ~~~
 
 - Sin `output`, el logger escribe en la salida de error. Escribe los eventos de
   su nivel o superiores; `isEnabled` evita construir campos costosos.
 - `withFields` da el mismo logger con más campos en cada evento; los campos de
   la llamada se añaden detrás y ganan en una clave repetida.
+- `current` es `Context.logger`, o sin él un logger como `Logger.new()`, que
+  escribe en la salida de error desde `Info`; `trace`, `debug`, `info`, `warn`
+  y `error` del módulo escriben con `current()`.
+- Cada evento, de cualquier logger, lleva también los campos `@log` de los
+  contextos de la tarea (11.16 del lenguaje): detrás de los del logger y antes
+  de los de la llamada, que ganan en una clave repetida.
 - `Text` escribe `tiempo NIVEL mensaje clave=valor ...`, con el valor entre
   comillas y escapado como JSON si está vacío o tiene espacios, `=`, comillas o
   saltos de línea. `Json` escribe un objeto por línea con `time`, `level`,
@@ -3927,7 +3987,10 @@ pub fn withLabels[T: ~Copy](labels: Map[String, String], body: fn(): T): T
   unidos por `;` y cuánto tomó.
 - `withLabels` ejecuta `body` con esos labels, además de los que la tarea ya
   tenía, que los del mismo nombre reemplazan; las tareas que lanza los
-  heredan. Da lo que da `body`: un cuerpo que puede fallar da su resultado,
+  heredan. Los labels son un contexto de `std.profile` (11.16 del lenguaje):
+  `withLabels` lo cambia mientras corre `body`, y los campos `@label` de los
+  contextos de la tarea se añaden a los suyos, como si se hubieran dado en un
+  `withLabels`. Da lo que da `body`: un cuerpo que puede fallar da su resultado,
   que se propaga con `?`. Los perfiles de `std.profile`, los de `tondo
   profile` y los de `tondo test --profile` llevan los labels. El runtime
   guarda un número limitado de conjuntos de labels distintos, así que los que

@@ -432,7 +432,9 @@ no esté guardado. Tras un cambio, cuando la escritura se detiene, analiza de
 nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
 
 - Hover: el tipo de una variable o un parámetro, la cabecera de una función o
-  un campo, la declaración de un tipo, y la documentación `///`; de lo que
+  un campo, la declaración de un tipo, y la documentación `///`; de la lectura
+  de un contexto (`Trace.span`, 11.16 del lenguaje), además, los `with` de la
+  función que le dan valor antes de ese punto, o que vale lo que hereda; de lo que
   implementa el runtime, como `text.length()` o `console.println`, lo que
   muestra `tondo api`.
 - Las apariciones en el archivo de lo que está bajo el cursor, y los símbolos
@@ -570,8 +572,8 @@ Mientras nada traza el programa, grabar no cuesta más que comprobarlo.
 `dump` escribe un volcado de un programa en ejecución, nombrado como en
 `counters`, en `<output>` o en `<programa>-<pid>.dump.json`: un JSON con sus
 contadores, cada tarea con su estado (`waits`, `ready`, `runs` o `in C`), la
-pila de donde está, dónde se lanzó y dónde tomó los locks que tiene, y su
-memoria viva. Para ver dónde están las tareas que corren, los workers se
+pila de donde está, dónde se lanzó y dónde tomó los locks que tiene, sus
+contextos con los campos que no tienen su valor inicial, y su memoria viva. Para ver dónde están las tareas que corren, los workers se
 paran un momento, y el que no llega a un punto donde pararse da su pila por
 una señal. Con `TONDO_DUMP=<dir>`, un programa que acaba en un pánico, en una
 señal fatal o en un deadlock deja su volcado allí antes de terminar. `dump`
@@ -597,6 +599,8 @@ Su `format` es `tondo-panic-0.1/1`, y sus campos, en orden alfabético:
   la lanzó, y `times`.
 - `recovered`: `true` en un pánico que el programa recuperó y que la
   biblioteca informa, como el de un handler de `std.http`.
+- `context`, los campos `@log` del contexto de la tarea (11.16 del lenguaje)
+  como textos, o `null` sin ninguno.
 
 ~~~json
 {"code":"cache.corrupt","data":{"entries":12,"key":"users","ratio":0.75},"error_type":null,"format":"tondo-panic-0.1/1","kind":"panic","message":"the cache index is corrupt","name":null,"recovered":false,"source":{"column":9,"file":"src/cache.to","line":41},"stack":[{"function":"Cache.load","source":{"column":9,"file":"src/cache.to","line":41},"task":0,"times":1}]}
@@ -668,6 +672,10 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   empezar la línea que llamó.
 - `set <name> <value>` cambia un binding de la función donde paró la tarea:
   un número, `Bool`, `Char`, `Byte` o `String`.
+- `context` muestra los contextos de la tarea parada (11.16 del lenguaje), con
+  sus campos como `locals`, y para cada campo que no tiene su valor inicial,
+  el `with` que se lo dio: el archivo, la línea y la función, o que lo heredó
+  de la tarea que la lanzó.
 - `quit` termina el programa que arrancó; al acabar la entrada, el programa
   sigue sin el depurador.
 
@@ -681,7 +689,8 @@ volcado (sección 7.5), `launch` lo abre sin programa: sus tareas como hilos,
 sus pilas, el estado de cada una y la memoria por dónde se creó. Los
 breakpoints, con su condición, sus hits y sus logpoints, los pasos, la pausa,
 las tareas (`threads`), la pila de cada una con los bindings de cada función,
-desplegables por partes (`variables`), `evaluate` de una ruta, `setVariable`
+desplegables por partes (`variables`), un ámbito `Context` en cada marco con
+los contextos de la tarea, `evaluate` de una ruta, `setVariable`
 y la excepción de un pánico (el filtro `panic`, con `exceptionInfo`) son las
 órdenes de `tondo debug`; la salida del programa y los logpoints van a la
 consola del editor.
