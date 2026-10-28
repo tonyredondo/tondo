@@ -7208,7 +7208,7 @@ pub trait Number: Additive {
     fn dividedBy(self, other: Self): Self
 }
 
-pub trait Integer: Number
+pub trait Integer: Number + Ordered + Display   // Ordered: 14.5 de la librería
 ~~~
 
 - **Operadores.** Sobre un tipo que implementa `Additive`, `a + b` es

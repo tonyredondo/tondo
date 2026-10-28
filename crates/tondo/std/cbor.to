@@ -270,10 +270,7 @@ impl serialization.Sink for Writer {
     }
 
     fn number(self, digits: String) {
-        match Int.parse(digits) {
-            ok(value) => cbornative.writeInt(self.native, value)
-            err(_) => cbornative.writeFloat(self.native, Float.parse(digits).unwrapOr(0.0))
-        }
+        cbornative.writeNumber(self.native, digits)
     }
 
     fn text(self, value: String) {

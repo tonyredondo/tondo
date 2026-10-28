@@ -140,9 +140,9 @@ pub fn fma(a: Float, b: Float, c: Float): Float {
 }
 
 /// The greatest common divisor, never negative.
-pub fn gcd(a: Int, b: Int): Int {
-    var x = a.abs()
-    var y = b.abs()
+pub fn gcd[T: Integer](a: T, b: T): T {
+    var x = magnitude(a)
+    var y = magnitude(b)
     for y != 0 {
         let rest = x % y
         x = y
@@ -151,10 +151,15 @@ pub fn gcd(a: Int, b: Int): Int {
     x
 }
 
+/// The value without its sign; the least of a signed type panics.
+fn magnitude[T: Integer](value: T): T {
+    if value < 0 { 0 - value } else { value }
+}
+
 /// The least common multiple, never negative.
-pub fn lcm(a: Int, b: Int): Int {
+pub fn lcm[T: Integer](a: T, b: T): T {
     if a == 0 or b == 0 {
         return 0
     }
-    (a / gcd(a, b) * b).abs()
+    magnitude(a / gcd(a, b) * b)
 }

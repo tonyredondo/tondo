@@ -302,29 +302,159 @@ pub trait Decode {
     fn decode[S: Source](input: S, first: Event): Self ! Error
 }
 
+/// An integer of any width: an `Int` when it is one, or its digits, so
+/// that no integer goes through a float (14.7).
+fn encodeInteger[T: Integer, S: Sink](value: T, out: S) {
+    let small = Int.wrapping(value)
+    if T.wrapping(small) == value and (small < 0) == (value < 0) {
+        out.int(small)
+    } else {
+        out.number(value.toString())
+    }
+}
+
+/// An integer of `T`, named `name`, from an `Int` or a number's digits.
+fn decodeInteger[T: Integer, S: Source](input: S, first: Event, name: String): T ! Error {
+    match first {
+        Event.Int(value) => {
+            let narrow = T.wrapping(value)
+            if Int.wrapping(narrow) == value and (narrow < 0) == (value < 0) {
+                return narrow
+            }
+            fail input.failure(ErrorKind.Range, "{value} is not an integer that fits `{name}`")
+        }
+        Event.Number(digits) => match T.parse(digits) {
+            ok(value) => value
+            err(_) => fail input.failure(
+                ErrorKind.Range,
+                "{digits} is not an integer that fits `{name}`",
+            )
+        }
+        Event.Float(value) => fail input.failure(
+            ErrorKind.Range,
+            "{value} is not an integer that fits `{name}`",
+        )
+        _ => fail input.mismatch(first, "an integer")
+    }
+}
+
 impl Encode for Int {
     fn encode[S: Sink](self, out: S) {
-        out.int(self)
+        encodeInteger(self, out)
     }
 }
 
 impl Decode for Int {
     fn decode[S: Source](input: S, first: Event): Int ! Error {
-        match first {
-            Event.Int(value) => value
-            Event.Number(digits) => match Int.parse(digits) {
-                ok(value) => value
-                err(_) => fail input.failure(
-                    ErrorKind.Range,
-                    "{digits} is not an integer that fits `Int`",
-                )
-            }
-            Event.Float(value) => fail input.failure(
-                ErrorKind.Range,
-                "{value} is not an integer that fits `Int`",
-            )
-            _ => fail input.mismatch(first, "an integer")
-        }
+        decodeInteger[Int, S](input, first, "Int")
+    }
+}
+
+impl Encode for Int8 {
+    fn encode[S: Sink](self, out: S) {
+        encodeInteger(self, out)
+    }
+}
+
+impl Decode for Int8 {
+    fn decode[S: Source](input: S, first: Event): Int8 ! Error {
+        decodeInteger[Int8, S](input, first, "Int8")
+    }
+}
+
+impl Encode for Int16 {
+    fn encode[S: Sink](self, out: S) {
+        encodeInteger(self, out)
+    }
+}
+
+impl Decode for Int16 {
+    fn decode[S: Source](input: S, first: Event): Int16 ! Error {
+        decodeInteger[Int16, S](input, first, "Int16")
+    }
+}
+
+impl Encode for Int32 {
+    fn encode[S: Sink](self, out: S) {
+        encodeInteger(self, out)
+    }
+}
+
+impl Decode for Int32 {
+    fn decode[S: Source](input: S, first: Event): Int32 ! Error {
+        decodeInteger[Int32, S](input, first, "Int32")
+    }
+}
+
+impl Encode for Int128 {
+    fn encode[S: Sink](self, out: S) {
+        encodeInteger(self, out)
+    }
+}
+
+impl Decode for Int128 {
+    fn decode[S: Source](input: S, first: Event): Int128 ! Error {
+        decodeInteger[Int128, S](input, first, "Int128")
+    }
+}
+
+impl Encode for UInt {
+    fn encode[S: Sink](self, out: S) {
+        encodeInteger(self, out)
+    }
+}
+
+impl Decode for UInt {
+    fn decode[S: Source](input: S, first: Event): UInt ! Error {
+        decodeInteger[UInt, S](input, first, "UInt")
+    }
+}
+
+impl Encode for UInt8 {
+    fn encode[S: Sink](self, out: S) {
+        encodeInteger(self, out)
+    }
+}
+
+impl Decode for UInt8 {
+    fn decode[S: Source](input: S, first: Event): UInt8 ! Error {
+        decodeInteger[UInt8, S](input, first, "UInt8")
+    }
+}
+
+impl Encode for UInt16 {
+    fn encode[S: Sink](self, out: S) {
+        encodeInteger(self, out)
+    }
+}
+
+impl Decode for UInt16 {
+    fn decode[S: Source](input: S, first: Event): UInt16 ! Error {
+        decodeInteger[UInt16, S](input, first, "UInt16")
+    }
+}
+
+impl Encode for UInt32 {
+    fn encode[S: Sink](self, out: S) {
+        encodeInteger(self, out)
+    }
+}
+
+impl Decode for UInt32 {
+    fn decode[S: Source](input: S, first: Event): UInt32 ! Error {
+        decodeInteger[UInt32, S](input, first, "UInt32")
+    }
+}
+
+impl Encode for UInt128 {
+    fn encode[S: Sink](self, out: S) {
+        encodeInteger(self, out)
+    }
+}
+
+impl Decode for UInt128 {
+    fn decode[S: Source](input: S, first: Event): UInt128 ! Error {
+        decodeInteger[UInt128, S](input, first, "UInt128")
     }
 }
 
@@ -359,6 +489,32 @@ impl Decode for Float {
             // A number a format read is valid; its text needs no checking.
             Event.Number(digits) => serialtext.parseFloat(digits)
             _ => fail input.mismatch(first, "a number")
+        }
+    }
+}
+
+/// A finite `Float32` is its shortest digits, as `0.1`, which a text
+/// writes as they are and a binary format as the float they round to.
+impl Encode for Float32 {
+    fn encode[S: Sink](self, out: S) {
+        if self.isFinite() { out.number("{self}") } else { out.float(Float(self)) }
+    }
+}
+
+impl Decode for Float32 {
+    fn decode[S: Source](input: S, first: Event): Float32 ! Error {
+        // A number's digits round once, to 32 bits.
+        match first {
+            Event.Number(digits) => match Float32.parse(digits) {
+                ok(value) => return value
+                err(_) => {}
+            }
+            _ => {}
+        }
+        let value = Decode.decode[Float](input, first)?
+        match Float32(value) {
+            ok(single) => single
+            err(_) => fail input.failure(ErrorKind.Range, "{value} does not fit in `Float32`")
         }
     }
 }

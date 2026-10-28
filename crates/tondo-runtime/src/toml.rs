@@ -332,6 +332,22 @@ pub extern "C" fn tondo_rt_toml_write_int(object: *mut NativeObject, value: i64)
     scalar(object, Value::from(value));
 }
 
+/// A number its digits write: TOML's integers have 64 bits with a sign,
+/// and one past them cannot be written.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_toml_write_number(object: *mut NativeObject, digits: *const Str) {
+    let text = text(digits);
+    match (text.parse::<i64>(), crate::numbers::integer_digits(&text)) {
+        (Ok(value), _) => scalar(object, Value::from(value)),
+        (Err(_), Some(_)) => {
+            if let Some(mut writer) = writer(object) {
+                writer.fail(format!("{text} does not fit in TOML, whose integers have 64 bits with a sign"));
+            }
+        }
+        (Err(_), None) => scalar(object, Value::from(crate::text::parse_float(&text).unwrap_or(0.0))),
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_toml_write_float(object: *mut NativeObject, value: f64) {
     scalar(object, Value::from(value));

@@ -79,8 +79,10 @@ struct Decoder<'a> {
 /// A scalar of a data item.
 enum Item {
     Int(i64),
-    Big(u64),
-    Negative(u64),
+    /// An integer past `Int`, up to 128 bits.
+    Big(u128),
+    /// The integer `-1 - n` past `Int`, up to 128 bits.
+    Negative(u128),
     Float(f64),
     Text(String),
     Bytes(Vec<u8>),
@@ -205,11 +207,11 @@ impl Decoder<'_> {
         Ok(Some(match major {
             0 => {
                 let value = definite(self, argument)?;
-                i64::try_from(value).map_or(Item::Big(value), Item::Int)
+                i64::try_from(value).map_or(Item::Big(value.into()), Item::Int)
             }
             1 => {
                 let value = definite(self, argument)?;
-                i64::try_from(value).map_or(Item::Negative(value), |v| Item::Int(-1 - v))
+                i64::try_from(value).map_or(Item::Negative(value.into()), |v| Item::Int(-1 - v))
             }
             2 => Item::Bytes(self.chunks(2, argument, at)?),
             3 => match String::from_utf8(self.chunks(3, argument, at)?) {
@@ -271,10 +273,10 @@ impl Decoder<'_> {
             2 | 3 => match self.item()? {
                 Some(Item::Bytes(bytes)) => {
                     let significant: Vec<u8> = bytes.iter().copied().skip_while(|&b| b == 0).collect();
-                    if significant.len() > 8 {
-                        return self.fail(format!("an integer (tag {tag}) is larger than 64 bits (byte {at})"));
+                    if significant.len() > 16 {
+                        return self.fail(format!("an integer (tag {tag}) is larger than 128 bits (byte {at})"));
                     }
-                    let value = significant.iter().fold(0u64, |value, &byte| value << 8 | byte as u64);
+                    let value = significant.iter().fold(0u128, |value, &byte| value << 8 | byte as u128);
                     Ok(Some(match (tag, i64::try_from(value)) {
                         (2, Ok(value)) => Item::Int(value),
                         (2, Err(_)) => Item::Big(value),
@@ -316,7 +318,7 @@ impl Decoder<'_> {
                         Item::Text(text) => text,
                         Item::Int(value) => value.to_string(),
                         Item::Big(value) => value.to_string(),
-                        Item::Negative(value) => format!("-{}", value as u128 + 1),
+                        Item::Negative(value) => negative(value),
                         _ => return self.fail(format!("a map key is not text or an integer (byte {at})")),
                     };
                     self.push(KEY).text = key.clone();
@@ -325,7 +327,7 @@ impl Decoder<'_> {
                     match item {
                         Item::Int(value) => self.push(INT).int = value,
                         Item::Big(value) => self.push(NUMBER).text = value.to_string(),
-                        Item::Negative(value) => self.push(NUMBER).text = format!("-{}", value as u128 + 1),
+                        Item::Negative(value) => self.push(NUMBER).text = negative(value),
                         Item::Float(value) => self.push(FLOAT).float = value,
                         Item::Text(text) => self.push(TEXT).text = text,
                         Item::Bytes(bytes) => self.push(BYTES).bytes = bytes,
@@ -455,6 +457,41 @@ pub extern "C" fn tondo_rt_cbor_where(object: *mut NativeObject, part: i64) -> *
 // ---------------------------------------------------------------------------
 
 /// The head of a major type with its argument, in its shortest form.
+/// The digits of `-1 - n`, which may be past 128 bits.
+fn negative(n: u128) -> String {
+    match n.checked_add(1) {
+        Some(magnitude) => format!("-{magnitude}"),
+        None => "-340282366920938463463374607431768211456".into(),
+    }
+}
+
+/// An integer its digits write, as the shortest major type 0 or 1, or past
+/// 64 bits as tag 2 or 3 with its bytes (RFC 8949, 3.4.3); a float when the
+/// digits are not an integer's. Whether it could.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_cbor_write_number(object: *mut NativeObject, digits: *const Str) {
+    let text = String::from_utf8_lossy(unsafe { str_bytes(digits) }).into_owned();
+    let Some((negative, magnitude)) = crate::numbers::integer_digits(&text) else {
+        let value = crate::text::parse_float(&text).unwrap_or(0.0);
+        return write(object, |out| float(out, value));
+    };
+    // `-n` is `-1 - (n - 1)`.
+    let (major, tag, argument) = match negative && magnitude > 0 {
+        true => (1, 3, magnitude - 1),
+        false => (0, 2, magnitude),
+    };
+    write(object, |out| match u64::try_from(argument) {
+        Ok(argument) => head(out, major, argument),
+        Err(_) => {
+            let bytes = argument.to_be_bytes();
+            let significant: Vec<u8> = bytes.iter().copied().skip_while(|&b| b == 0).collect();
+            head(out, 6, tag);
+            head(out, 2, significant.len() as u64);
+            out.extend(significant);
+        }
+    });
+}
+
 fn head(out: &mut Vec<u8>, major: u8, argument: u64) {
     let major = major << 5;
     match argument {

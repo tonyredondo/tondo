@@ -32,7 +32,7 @@ fn main(): !(cbor.CborError | time.TimeError) {
         "40", "4401020304", "60", "6449455446", "62c3bc", "63e6b0b4",
         "80", "8301820203820405", "a26161016162820203", "a201020304",
         "5f42010243030405ff", "7f657374726561646d696e67ff", "9fff", "9f018202039f0405ffff",
-        "bf61610161629f0203ffff", "c249010000000000000000", "ff", "8201", "1c",
+        "bf61610161629f0203ffff", "c249010000000000000000", "c25101000000000000000000000000000000000000", "ff", "8201", "1c",
     ]
     for vector in vectors {
         match cbor.parse(encoding.hexDecode(vector).unwrapOr([])) {
@@ -96,7 +96,8 @@ fn main(): !(cbor.CborError | time.TimeError) {
 // expect-stdout: 9fff []
 // expect-stdout: 9f018202039f0405ffff [1,[2,3],[4,5]]
 // expect-stdout: bf61610161629f0203ffff {"a":1,"b":[2,3]}
-// expect-stdout: c249010000000000000000 an integer (tag 2) is larger than 64 bits (byte 0) at $
+// expect-stdout: c249010000000000000000 18446744073709552000
+// expect-stdout: c25101000000000000000000000000000000000000 an integer (tag 2) is larger than 128 bits (byte 0) at $
 // expect-stdout: ff a break outside an indefinite container (byte 0) at $
 // expect-stdout: 8201 the input ends inside a data item (byte 2) at $[1]
 // expect-stdout: 1c additional information 28 is reserved (byte 0) at $

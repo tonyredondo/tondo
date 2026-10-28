@@ -2924,3 +2924,17 @@ or a duration adds without inventing a product, a decimal does all four. A
 trait may now require others, which is what `Number` needs; it receives
 none of their methods. `Integer` is closed over the ten integers and gives
 generic code everything a concrete integer has.
+
+## 2026-10-28 — An integer past `Int` travels as its digits
+
+The serialization events carry an `Int` or a number's digits, and the
+formats had turned digits that did not fit into a float, so a `UInt64`
+trace id lost its last digits. Every integer now writes itself as an `Int`
+when it is one and as its digits otherwise, and each format writes the
+digits as its own integer: JSON and YAML as they are, CBOR as a major type
+or past 64 bits as a bignum tag, MessagePack up to 64 bits unsigned, and
+TOML up to its signed 64 bits; what a format cannot hold fails instead of
+rounding. The impls of every width are one line each over two functions
+generic on `Integer`, which is why `Integer` also requires `Ordered` and
+`Display`. A `Float32` writes its shortest digits, so that JSON says
+`0.1` and not the `Float` it widens to.

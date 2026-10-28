@@ -206,6 +206,19 @@ pub unsafe extern "C" fn tondo_rt_int_from_bytes(
     unsafe { *out = [value as u64, (value >> 64) as u64] };
 }
 
+/// The integer of 128 bits at most a number's digits write, as its sign
+/// and magnitude; `None` for a float's digits, or more than 128 bits.
+pub(crate) fn integer_digits(text: &str) -> Option<(bool, u128)> {
+    let (negative, digits) = match text.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, text.strip_prefix('+').unwrap_or(text)),
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse::<u128>().ok().map(|magnitude| (negative, magnitude))
+}
+
 /// The float a text writes, as a `Float32` when `single`, into `out`;
 /// whether it is one.
 #[unsafe(no_mangle)]

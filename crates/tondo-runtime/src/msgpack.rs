@@ -459,6 +459,32 @@ pub extern "C" fn tondo_rt_msgpack_write_int(object: *mut NativeObject, value: i
     });
 }
 
+/// An integer its digits write, in its shortest form; past 64 bits it has
+/// none, and writing fails. A float when the digits are not an integer's.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_msgpack_write_number(object: *mut NativeObject, digits: *const Str) {
+    let text = String::from_utf8_lossy(unsafe { crate::str_bytes(digits) }).into_owned();
+    match crate::numbers::integer_digits(&text) {
+        Some((false, magnitude)) if magnitude <= u64::MAX as u128 => write(object, |out| {
+            let _ = rmp::encode::write_uint(out, magnitude as u64);
+        }),
+        Some((true, magnitude)) if magnitude <= 1 << 63 => write(object, |out| {
+            let _ = rmp::encode::write_sint(out, (magnitude as i128).wrapping_neg() as i64);
+        }),
+        Some(_) => {
+            if let Some(mut writer) = writer(object) {
+                writer.fail(format!("{text} does not fit in MessagePack, whose integers have 64 bits"));
+            }
+        }
+        None => {
+            let value = crate::text::parse_float(&text).unwrap_or(0.0);
+            write(object, |out| {
+                let _ = rmp::encode::write_f64(out, value);
+            });
+        }
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_msgpack_write_float(object: *mut NativeObject, value: f64) {
     write(object, |out| {

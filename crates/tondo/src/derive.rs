@@ -47,7 +47,8 @@ impl Kind {
     fn builtin(self, name: &str, args: &[ast::TypeExpr]) -> Option<bool> {
         let string = |ty: &ast::TypeExpr| matches!(&ty.kind, ast::TypeKind::Path { segments, args } if args.is_empty() && segments.len() == 1 && segments[0].name == "String");
         Some(match (self, name, args) {
-            (Kind::Serialization, "Int" | "Byte" | "Float" | "Bool" | "String", []) => true,
+            (Kind::Serialization, name, []) if crate::types::IntTy::from_name(name).is_some() => true,
+            (Kind::Serialization, "Byte" | "Float" | "Float64" | "Float32" | "Bool" | "String", []) => true,
             (Kind::Serialization, "Array" | "Option", [_]) => true,
             (Kind::Serialization, "Map", [key, _]) => string(key),
             (

@@ -1,0 +1,39 @@
+// Every number in every format (14.7): integers past `Int` as their digits,
+// never through a float, and a `Float32` as its shortest digits; random
+// integers of any width (14.22) and `gcd` of any integer.
+
+import std.cbor
+import std.console
+import std.json
+import std.math
+import std.messagepack
+import std.random
+import std.toml
+import std.yaml
+
+type Ids = { trace: UInt128, span: UInt, small: Int8, ratio: Float32, delta: Int128 }
+
+fn main(): Unit ! json.JsonError {
+    let ids = Ids { trace: UInt128.max, span: UInt.max, small: -5, ratio: 0.1, delta: Int128.min }
+    let text = json.encode(ids)
+    console.println(text)
+    let back = json.decode[Ids](text)?
+    console.println("{back.trace == ids.trace} {back.span} {back.small} {back.ratio} {back.delta == ids.delta}")
+    console.println("{json.decode[UInt8]("256")} {json.decode[Int8]("-128")} {json.decode[UInt]("18446744073709551615")}")
+    let same = (i: Ids) { i.trace == ids.trace and i.delta == ids.delta and i.span == ids.span and i.ratio == ids.ratio }
+    console.println("{cbor.decode[Ids](cbor.encode(ids)).map(same)} {yaml.decode[Ids](yaml.encode(ids)).map(same)}")
+    console.println("{messagepack.decode[UInt](messagepack.encode(UInt.max))}")
+    console.println("{toml.encode(["big": UInt.max])}")
+    var dice = random.Random.seeded(7)
+    console.println("{dice.int(1..=6)} {dice.int(1..=6)} {dice.int(250u8..=255u8)} {dice.int(-5i128..5i128)}")
+    console.println("{math.gcd(12, 18)} {math.gcd(-12i8, 0i8)} {math.lcm(4u32, 6u32)} {math.gcd(Int128.max, 3i128)}")
+}
+
+// expect-stdout: {"trace":340282366920938463463374607431768211455,"span":18446744073709551615,"small":-5,"ratio":0.1,"delta":-170141183460469231731687303715884105728}
+// expect-stdout: true 18446744073709551615 -5 0.1 true
+// expect-stdout: err(256 is not an integer that fits `UInt8` at $ (line 1, column 4)) ok(-128) ok(18446744073709551615)
+// expect-stdout: ok(true) ok(true)
+// expect-stdout: ok(18446744073709551615)
+// expect-stdout: err(18446744073709551615 does not fit in TOML, whose integers have 64 bits with a sign at $.big)
+// expect-stdout: 4 1 254 0
+// expect-stdout: 6 12 12 1

@@ -289,10 +289,7 @@ impl serialization.Sink for Writer {
     }
 
     fn number(self, digits: String) {
-        match Int.parse(digits) {
-            ok(value) => yamlnative.writeInt(self.native, value)
-            err(_) => yamlnative.writeFloat(self.native, Float.parse(digits).unwrapOr(0.0))
-        }
+        yamlnative.writeNumber(self.native, digits)
     }
 
     fn text(self, value: String) {

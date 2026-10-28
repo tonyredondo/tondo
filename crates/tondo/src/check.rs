@@ -1934,7 +1934,7 @@ impl<'a> Checker<'a> {
         let accepted = match self.number_kind(value.ty) {
             Some(Kind::Float(_)) => entry.op == NumOp::Saturating,
             Some(_) => true,
-            None => value.ty == Ty::ERROR,
+            None => value.ty == Ty::ERROR || self.bound_by(value.ty, self.integer),
         };
         if !accepted {
             let what = if entry.op == NumOp::Saturating { "a number or a `Byte`" } else { "an integer or a `Byte`" };

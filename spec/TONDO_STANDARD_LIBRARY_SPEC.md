@@ -2402,7 +2402,8 @@ pub trait Decode {
   una lista si tiene varios componentes o un mapa si tiene campos.
 - Un entero que cabe en `Int` se escribe con `int`, y otro, como un `UInt`
   grande o uno de 128 bits, con `number` y sus dígitos: ningún entero pasa por
-  un float. Un `Float32` se escribe con `float`.
+  un float. Un `Float32` finito se escribe con `number` y sus dígitos más
+  cortos, `0.1`, y otro con `float`.
 - `Decode` acepta para un número cualquiera de `Int`, `Float` y `Number`, y para
   un entero da `Range` cuando no cabe en su tipo.
 - Un `Error` lleva dónde ocurrió como camino (`$.users[2].age`), línea y
@@ -2916,7 +2917,8 @@ impl Display for Value                     // como JSON
   sin signo que no cabe en `Int` es un `Number`: un `UInt` en un campo `UInt`,
   un error para un campo `Int`, un `Float` en `Value`. Un entero escrito con
   `number` es el entero del formato si cabe en 64 bits, con o sin signo; uno
-  mayor no tiene forma en MessagePack y da `Unsupported`.
+  mayor no tiene forma en MessagePack, y `encode` hace pánico con lo
+  ocurrido.
 - Un `Encode` escrito a mano que declara otro número de elementos de los que
   escribe es un error de programa: `encode` hace pánico con lo ocurrido.
 - Los errores de lectura llevan el camino y el byte donde ocurrieron.
