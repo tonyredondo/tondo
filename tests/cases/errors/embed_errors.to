@@ -1,0 +1,17 @@
+// `std.embed` reads a file of the package when the program compiles, at a
+// literal path relative to this file.
+
+import std.embed
+
+fn main() {
+    let name = "notes.txt"
+    _ = embed.text(name)
+    _ = embed.text("missing.txt")
+    _ = embed.bytes("/etc/hostname")
+    _ = embed.files("embed_errors.to")
+}
+
+// expect-error: E1904 `embed.text` reads its file when the program compiles, so its path is a string literal
+// expect-error: E1904 there is no `missing.txt` next to this file
+// expect-error: E1904 `/etc/hostname` is not a path relative to this file
+// expect-error: E1904 `embed_errors.to` is a file: `embed.bytes("embed_errors.to")` or `embed.text("embed_errors.to")` reads it

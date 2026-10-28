@@ -216,9 +216,11 @@ aparece con un rename atómico.
 
 La caché guarda también lo que un build puede volver a hacer: el runtime del
 compilador, y los ejecutables de `run`, de las pruebas y de los providers y
-generadores, en `run/`, `test/` y `meta/`. Al escribir su runtime, un
-compilador borra los de otras versiones, y una entrada de esos directorios
-que nadie usa en 30 días se borra.
+generadores, en `run/`, `test/` y `meta/`, por el compilador y los archivos
+que el build lee: sus fuentes y manifiestos, providers, generadores y sus
+inputs, y los archivos que embebe (14.27 de la librería estándar). Al
+escribir su runtime, un compilador borra los de otras versiones, y una
+entrada de esos directorios que nadie usa en 30 días se borra.
 
 Para descargar, el toolchain usa `git`, `curl`, `tar` y `unzip` del sistema.
 Si falta una herramienta, el error lo dice. Con `tondo.lock` y la caché
@@ -447,7 +449,8 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
 - Definición y referencias de variables, parámetros (también en argumentos con
   nombre), funciones, métodos, tipos, campos, variantes, constantes, traits,
   anotaciones (también sus campos en los argumentos de un uso) y módulos; las
-  de la librería estándar se abren desde una copia en la caché.
+  de la librería estándar se abren desde una copia en la caché. La de la ruta
+  de `embed.text` o `embed.bytes` es el archivo que lee.
 - La definición del tipo de un binding, un campo o un parámetro; las
   implementaciones de un trait o de un tipo (sus `impl`) y de un método de un
   trait; quién llama a una función y a quién llama (call hierarchy); y los
@@ -466,7 +469,8 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   hasta el cursor, las declaraciones del módulo, los módulos que usa, los que
   no importa todavía, con el `import` que los trae, y las palabras clave.
   Tras `@`, las anotaciones visibles, y dentro de sus paréntesis los campos
-  que faltan, como los parámetros de una llamada.
+  que faltan, como los parámetros de una llamada. En la ruta de `std.embed`,
+  lo que hay en el directorio escrito hasta el cursor.
   En un `import`, el siguiente segmento de los módulos que puede nombrar:
   `std`, el paquete y sus dependencias, y tras `std.` los módulos estándar,
   cada uno con lo que ofrece según el comentario que lo abre.
@@ -961,8 +965,8 @@ frame donde paró la tarea. La respuesta de `reload` tiene los campos de
 `message` y `restart`, que dice si el cambio pide arrancar el programa de
 nuevo; el editor muestra así qué fue de cada cambio.
 
-`tondo run --watch` arranca un build vivo y, cuando cambian sus archivos, lo
-cambia como `reload`; si el cambio pide arrancarlo de nuevo, o el programa
+`tondo run --watch` arranca un build vivo y, cuando cambian sus archivos,
+también los que embebe, lo cambia como `reload`; si el cambio pide arrancarlo de nuevo, o el programa
 ya terminó, lo vuelve a ejecutar, y si los archivos no compilan muestra los
 diagnósticos y el programa sigue con su código. Atiende un cambio cuando los
 archivos dejan de cambiar, así que lee entero uno que se guarda en varias
@@ -979,8 +983,9 @@ entrega en cada línea, como a una terminal, para la herramienta que la lee.
 ### 7.11 `tondo graph`
 
 `tondo graph` muestra de qué está hecho un programa: sus paquetes y sus
-dependencias, los módulos de cada paquete con sus archivos, y los módulos
-que importa cada uno, también los de `std`. No compila: lee los imports.
+dependencias, los módulos de cada paquete con sus archivos, los módulos que
+importa cada uno, también los de `std`, y los archivos que embebe. No
+compila: lee los imports y las llamadas a `std.embed`.
 
 ~~~text
 $ tondo graph
@@ -989,9 +994,12 @@ app  src/main.to
   -> app.models
   -> shapes
 app.models  src/models/role.to src/models/user.to
+  -> std.embed
   -> std.json
+  embeds src/models/roles.csv
 shapes  shapes/src/shapes.to
 std.console
+std.embed
 std.json
 ~~~
 
@@ -1028,7 +1036,7 @@ campos de su resultado:
 | `expand` | `tondo-expand-0.1/1` | `expansions`, cada una con `derive`, `location` y `source`, y `diagnostics` |
 | `fmt` | `tondo-fmt-0.1/1` | `files`, cada uno con `file` y `changed` (o lo cambiaría, con `--check`), `compact` o `diagnostics` |
 | `api` | `tondo-api-0.1/1` | `module` o `file` y `declarations`, cada una con `kind`, `name`, `declaration` y `doc`; sin argumento, `modules` con ellos; con `--list`, `modules`, sus nombres |
-| `graph` | `tondo-graph-0.1/1` | `root`, `project`, `focus` (el módulo del path, o `null`), `packages` con `name`, `dir`, `dependencies` y `dev_dependencies` (`alias` y `package`) y `tests_only`, y salvo con `--packages`, `modules` con `name`, `package`, `files` e `imports` (`module`, `file` y `line`) |
+| `graph` | `tondo-graph-0.1/1` | `root`, `project`, `focus` (el módulo del path, o `null`), `packages` con `name`, `dir`, `dependencies` y `dev_dependencies` (`alias` y `package`) y `tests_only`, y salvo con `--packages`, `modules` con `name`, `package`, `files`, `imports` (`module`, `file` y `line`) y `embeds` (`path`, `file` y `line`) |
 | `guide` | `tondo-guide-0.1/1` | `topic` y `text`; `topics` con `--list`; `skill` con `--skill` |
 | `update` | `tondo-update-0.1/1` | `lock` y `packages`, con `name`, `dir` y `tests_only` |
 | `bind` | `tondo-bind-0.1/1` | `file`, `module`, `libraries` y `added`, las que añadió a `tondo.toml` |

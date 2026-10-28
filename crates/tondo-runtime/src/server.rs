@@ -416,10 +416,6 @@ pub unsafe extern "C" fn tondo_rt_http_respond_file(
 ) -> *mut Str {
     let r = request(object);
     let (path, download, mut extra) = (text(path), text(download), strings(headers));
-    let (method, conditions) = (
-        r.method.clone(),
-        ["if-none-match", "if-modified-since", "range", "if-range"].map(|name| r.header(name).map(String::from)),
-    );
     let opened = {
         let path = path.clone();
         wait(async move {
@@ -439,29 +435,100 @@ pub unsafe extern "C" fn tondo_rt_http_respond_file(
     let length = metadata.len();
     let modified = metadata.modified().ok();
     let seconds = modified.and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
-    let etag = format!("\"{length:x}-{seconds:x}\"");
-    let last_modified = modified.map(httpdate::fmt_http_date).unwrap_or_default();
-    let [none_match, modified_since, asked, if_range] = conditions;
-    let unchanged = match (none_match, modified_since) {
-        (Some(tags), _) => tags.split(',').any(|tag| tag.trim() == etag || tag.trim() == "*"),
-        (None, Some(since)) => httpdate::parse_http_date(&since)
-            .ok()
-            .and_then(|since| since.duration_since(std::time::UNIX_EPOCH).ok())
-            .is_some_and(|since| since.as_secs() >= seconds),
-        _ => false,
-    };
-    let mime = mime_guess::from_path(&path).first_or_octet_stream().to_string();
-    extra.extend(["accept-ranges".into(), "bytes".into(), "etag".into(), etag.clone()]);
-    if !last_modified.is_empty() {
-        extra.extend(["last-modified".into(), last_modified.clone()]);
-    }
     if !download.is_empty() {
         let name = download.replace(['"', '\\'], "_");
         extra.extend(["content-disposition".into(), format!("attachment; filename=\"{name}\"")]);
     }
+    let entity = Entity {
+        length,
+        etag: format!("\"{length:x}-{seconds:x}\""),
+        modified: modified.map(|m| (seconds, httpdate::fmt_http_date(m))),
+        mime: mime_guess::from_path(&path).first_or_octet_stream().to_string(),
+    };
+    respond_entity(r, extra, entity, |first, size| {
+        let chunks = futures_util::stream::unfold((file, first, size), |(mut file, at, left)| async move {
+            if left == 0 {
+                return None;
+            }
+            if at > 0
+                && let Err(error) = file.seek(std::io::SeekFrom::Start(at)).await
+            {
+                return Some((Err(error), (file, 0, 0)));
+            }
+            let mut buffer = vec![0; left.min(64 * 1024) as usize];
+            match file.read(&mut buffer).await {
+                Ok(0) => None,
+                Ok(count) => {
+                    buffer.truncate(count);
+                    Some((Ok(Frame::data(Bytes::from(buffer))), (file, 0, left - count as u64)))
+                }
+                Err(error) => Some((Err(error), (file, 0, 0))),
+            }
+        });
+        BodyExt::boxed_unsync(StreamBody::new(chunks))
+    });
+    str_new(b"")
+}
+
+/// Responds with an embedded file (standard library 14.27) as with a file
+/// on disk: its content type from `name`, and the `ETag` of its `tag`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_http_respond_bytes(
+    object: *mut NativeObject,
+    headers: *mut ArrayHeader,
+    name: *const Str,
+    data: *mut ArrayHeader,
+    tag: *const Str,
+) {
+    let (name, tag) = (text(name), text(tag));
+    // The array's bytes in place: an embedded array is never changed.
+    let data: &[u8] = match data.is_null() {
+        true => &[],
+        false => unsafe { std::slice::from_raw_parts(super::element(data, 1, 0), (*data).len) },
+    };
+    let entity = Entity {
+        length: data.len() as u64,
+        etag: format!("\"{tag}\""),
+        modified: None,
+        mime: mime_guess::from_path(&name).first_or_octet_stream().to_string(),
+    };
+    respond_entity(request(object), strings(headers), entity, |first, size| {
+        full(Bytes::copy_from_slice(&data[first as usize..(first + size) as usize]))
+    });
+}
+
+/// What a file answers with: its length, its `ETag`, when it changed, in
+/// seconds and as HTTP writes it, and its content type.
+struct Entity {
+    length: u64,
+    etag: String,
+    modified: Option<(u64, String)>,
+    mime: String,
+}
+
+/// Responds with an entity as its request's conditions ask: 304 when it did
+/// not change, 416 for a range outside it, or the range asked for (206) or
+/// all of it, whose bytes `body` gives from a first byte and a size.
+fn respond_entity(r: &Request, mut extra: Vec<String>, entity: Entity, body: impl FnOnce(u64, u64) -> Body) {
+    let [none_match, modified_since, asked, if_range] =
+        ["if-none-match", "if-modified-since", "range", "if-range"].map(|name| r.header(name).map(String::from));
+    let Entity { length, etag, modified, mime } = entity;
+    let unchanged = match (none_match, modified_since, &modified) {
+        (Some(tags), _, _) => tags.split(',').any(|tag| tag.trim() == etag || tag.trim() == "*"),
+        (None, Some(since), Some((seconds, _))) => httpdate::parse_http_date(&since)
+            .ok()
+            .and_then(|since| since.duration_since(std::time::UNIX_EPOCH).ok())
+            .is_some_and(|since| since.as_secs() >= *seconds),
+        _ => false,
+    };
+    let last_modified = modified.map(|(_, text)| text).unwrap_or_default();
+    extra.extend(["accept-ranges".into(), "bytes".into(), "etag".into(), etag.clone()]);
+    if !last_modified.is_empty() {
+        extra.extend(["last-modified".into(), last_modified.clone()]);
+    }
     if unchanged {
         r.send(response(304, &extra, full(Bytes::new())));
-        return str_new(b"");
+        return;
     }
     // A range holds only while the file is the one `If-Range` names.
     let asked = asked.filter(|_| if_range.as_ref().is_none_or(|tag| *tag == etag || *tag == last_modified));
@@ -470,7 +537,7 @@ pub unsafe extern "C" fn tondo_rt_http_respond_file(
         Some(Err(())) => {
             extra.extend(["content-range".into(), format!("bytes */{length}")]);
             r.send(response(416, &extra, full(Bytes::new())));
-            return str_new(b"");
+            return;
         }
         _ => (200, 0, length.saturating_sub(1)),
     };
@@ -479,31 +546,11 @@ pub unsafe extern "C" fn tondo_rt_http_respond_file(
     if status == 206 {
         extra.extend(["content-range".into(), format!("bytes {first}-{last}/{length}")]);
     }
-    if method == "HEAD" || size == 0 {
+    if r.method == "HEAD" || size == 0 {
         r.send(response(status, &extra, full(Bytes::new())));
-        return str_new(b"");
+        return;
     }
-    let chunks = futures_util::stream::unfold((file, first, size), |(mut file, at, left)| async move {
-        if left == 0 {
-            return None;
-        }
-        if at > 0
-            && let Err(error) = file.seek(std::io::SeekFrom::Start(at)).await
-        {
-            return Some((Err(error), (file, 0, 0)));
-        }
-        let mut buffer = vec![0; left.min(64 * 1024) as usize];
-        match file.read(&mut buffer).await {
-            Ok(0) => None,
-            Ok(count) => {
-                buffer.truncate(count);
-                Some((Ok(Frame::data(Bytes::from(buffer))), (file, 0, left - count as u64)))
-            }
-            Err(error) => Some((Err(error), (file, 0, 0))),
-        }
-    });
-    r.send(response(status, &extra, BodyExt::boxed_unsync(StreamBody::new(chunks))));
-    str_new(b"")
+    r.send(response(status, &extra, body(first, size)));
 }
 
 /// Writes the body to a file as it arrives, from `offset` on, which keeps

@@ -36,6 +36,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("executor", include_str!("../std/executor.to")),
     ("diagnostics", include_str!("../std/diagnostics.to")),
     ("profile", include_str!("../std/profile.to")),
+    ("embed", include_str!("../std/embed.to")),
     ("fuzz", include_str!("../std/fuzz.to")),
 ];
 

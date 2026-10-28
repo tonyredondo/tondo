@@ -9,6 +9,7 @@ prelude`).
 std.console    print, println, eprintln, readLine, the streams
 std.io         Writer, Reader, Buffer: streams for files, processes, memory
 std.fs         read and write files, list, open, metadata
+std.embed      files of the package kept in the executable, read when it compiles
 std.path       join, parent, fileName, extension
 std.env        args, environment, current directory
 std.process    run programs and pipelines, capture output
@@ -89,6 +90,31 @@ fn main(): !toml.TomlError {
 ```
 
 TOML has no null: a `none` field is left out when written.
+
+## Files in the executable
+
+`std.embed` reads files of the package when the program compiles and keeps
+them in the executable, which then needs nothing next to it:
+
+```text
+import std.embed
+import std.http
+
+const Help: String = embed.text("help.txt")          // a UTF-8 file
+const Logo: Array[Byte] = embed.bytes("logo.png")    // any file
+const Site: embed.Files = embed.files("public")      // a directory, but hidden files
+
+fn main(): !http.HttpError {
+    var app = http.App.new()
+    app.embedded("/", Site)       // as app.files, from memory; "/" is index.html
+    app.listen(port: 8080)?
+}
+```
+
+The path is a literal, relative to the file that writes it, inside the
+package. `Site.read("css/site.css")` and `Site.text(path)` give a file, or
+`none`; `Site.paths()` lists them. A changed file rebuilds `tondo run` and
+reloads `--watch`; `tondo graph` shows what each module embeds.
 
 ## The network
 

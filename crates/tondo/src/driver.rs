@@ -498,6 +498,24 @@ fn load(path: &Path, sources: &mut SourceMap, diags: &mut Diagnostics) -> Result
 
 /// The source files a build of `path` reads, for cache keys.
 pub fn inputs(path: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut inputs = sources(path)?;
+    embedded(&mut inputs);
+    Ok(inputs)
+}
+
+/// Adds the files the sources among `inputs` embed (standard library 14.27).
+fn embedded(inputs: &mut Vec<PathBuf>) {
+    let mut found = Vec::new();
+    for input in inputs.iter().filter(|p| p.extension().is_some_and(|e| e == "to")) {
+        if let Ok(text) = std::fs::read_to_string(input) {
+            found.extend(crate::embed::inputs(input, &text));
+        }
+    }
+    inputs.extend(found);
+}
+
+/// The files of a build but those its sources embed.
+fn sources(path: &Path) -> Result<Vec<PathBuf>, String> {
     if !path.is_dir() {
         return Ok(vec![path.to_path_buf()]);
     }
@@ -521,9 +539,10 @@ pub fn inputs(path: &Path) -> Result<Vec<PathBuf>, String> {
 /// The files a test build of the project at `path` reads: those of its
 /// build, its unit test companions and its integration test roots.
 pub fn test_inputs(path: &Path) -> Result<Vec<PathBuf>, String> {
-    let mut inputs = inputs(path)?;
+    let mut inputs = sources(path)?;
     let (companions, roots) = project::test_sources(path, "")?;
     inputs.extend(companions.into_iter().chain(roots).map(|f| f.path));
+    embedded(&mut inputs);
     Ok(inputs)
 }
 

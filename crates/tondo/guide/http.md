@@ -105,4 +105,7 @@ fn find(id: Int): User? {
 - `app.mount("/admin", adminApp)` adds another app's routes with its own
   middleware. `app.start()` serves in a task of its own and gives a `Server`
   with `url()` and `stop()`, for tests.
+- `app.embedded("/", Site)` serves the files of `const Site: embed.Files =
+  embed.files("public")`, kept in the executable, as `files` serves a
+  directory; a folder answers with its `index.html` (`tondo guide stdlib`).
 - TLS: `app.listen(port: 443, tls: http.Tls.files("cert.pem", "key.pem"))`.

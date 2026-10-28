@@ -35,6 +35,14 @@ pub struct Module {
     pub package: String,
     pub files: Vec<PathBuf>,
     pub imports: Vec<Import>,
+    /// The files and directories its files embed (standard library 14.27).
+    pub embeds: Vec<Embed>,
+}
+
+pub struct Embed {
+    pub path: PathBuf,
+    pub file: PathBuf,
+    pub line: u32,
 }
 
 pub struct Import {
@@ -59,7 +67,8 @@ pub fn graph(path: &Path) -> Result<Graph, String> {
             dev_dependencies: Vec::new(),
             tests_only: false,
         };
-        let module = Module { name: name.clone(), package: name, files: vec![path.clone()], imports: Vec::new() };
+        let files = vec![path.clone()];
+        let module = Module { name: name.clone(), package: name, files, imports: Vec::new(), embeds: Vec::new() };
         let mut graph =
             Graph { root: path, project: false, focus: None, packages: vec![package], modules: vec![module] };
         resolve_imports(&mut graph, &[Vec::new()])?;
@@ -85,6 +94,7 @@ pub fn graph(path: &Path) -> Result<Graph, String> {
                     package: package.name.clone(),
                     files: vec![file.path],
                     imports: Vec::new(),
+                    embeds: Vec::new(),
                 }),
             }
         }
@@ -146,9 +156,15 @@ fn resolve_imports(graph: &mut Graph, aliases: &[Vec<(String, String)>]) -> Resu
                 imports.push(Import { module, file: path.clone(), line });
             }
         }
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        for (_, written, line) in crate::embed::calls(&path, &text) {
+            if let Ok(found) = crate::embed::resolve(&path, &written) {
+                graph.modules[index].embeds.push(Embed { path: found, file: path.clone(), line: line as u32 });
+            }
+        }
     }
     for name in standard {
-        let module = Module { name, package: "std".into(), files: Vec::new(), imports: Vec::new() };
+        let module = Module { name, package: "std".into(), files: Vec::new(), imports: Vec::new(), embeds: Vec::new() };
         graph.modules.push(module);
     }
     Ok(())
@@ -250,7 +266,18 @@ impl Graph {
                         .iter()
                         .map(|i| serde_json::json!({ "module": i.module, "file": i.file, "line": i.line }))
                         .collect();
-                    serde_json::json!({ "name": m.name, "package": m.package, "files": m.files, "imports": imports })
+                    let embeds: Vec<serde_json::Value> = m
+                        .embeds
+                        .iter()
+                        .map(|e| serde_json::json!({ "path": e.path, "file": e.file, "line": e.line }))
+                        .collect();
+                    serde_json::json!({
+                        "name": m.name,
+                        "package": m.package,
+                        "files": m.files,
+                        "imports": imports,
+                        "embeds": embeds,
+                    })
                 })
                 .collect();
             value["modules"] = modules.into();
@@ -337,6 +364,15 @@ impl Graph {
                     out.push('\n');
                     for import in &module.imports {
                         out.push_str(&format!("  -> {}\n", import.module));
+                    }
+                    let mut embeds: Vec<String> = module
+                        .embeds
+                        .iter()
+                        .map(|e| format!("{}{}", self.shown(&e.path), if e.path.is_dir() { "/" } else { "" }))
+                        .collect();
+                    embeds.dedup();
+                    if !embeds.is_empty() {
+                        out.push_str(&format!("  embeds {}\n", embeds.join(" ")));
                     }
                 }
             }

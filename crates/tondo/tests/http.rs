@@ -363,11 +363,14 @@ fn run(name: &str, program: &str, files: &[(&str, String)]) -> (String, String, 
 #[test]
 fn server_routes_files_and_uploads() {
     let program = r#"import std.console
+import std.embed
 import std.encoding
 import std.fs
 import std.http
 import std.io
 import std.time
+
+const Site: embed.Files = embed.files("site")
 
 pub type NewUser = { name: String, email: String }
 pub type User = { id: Int, name: String, email: String }
@@ -423,6 +426,7 @@ fn main(): !(http.HttpError | fs.FsError) {
     app.files("/files", "data")
     app.uploads("/files", "data")
     app.files("/browse", "data", listing: true)
+    app.embedded("/site", Site)
 
     let server = app.start()?
     let client = http.Client.new(baseUrl: server.url())
@@ -494,6 +498,15 @@ fn main(): !(http.HttpError | fs.FsError) {
     let folder = client.get("/browse/up")?.text()?
     console.println("{folder.contains("<a href=\"/browse/\">../</a>")} {folder.contains("/browse/up/notes.txt")}")
     console.println("{client.get("/files/up")}")
+    // Embedded files, from memory: a folder's index, ranges and `ETag`s;
+    // not the hidden ones.
+    let index = client.get("/site/")?
+    console.println("{index.header("content-type")} {index.text()?}")
+    let style = client.get("/site/css/site.css", headers: ["Range": "bytes=2-"])?
+    console.println("{style.status()} {style.header("content-type")} {style.text()?}")
+    let tag = style.header("etag").unwrapOr("")
+    console.println("{client.get("/site/css/site.css", headers: ["If-None-Match": tag])?.status()}")
+    console.println("{client.get("/site/.env")}")
     // A handler that panics answers 500, and the server goes on.
     console.println("{client.get("/crash")}")
     console.println(client.get("/users/me")?.text()?)
@@ -506,9 +519,15 @@ fn produce(events: Sender[http.Event]) {
     events.close()
 }
 "#;
-    let (stdout, stderr, success) = run("http-server", program, &[("data/letters.txt", "0123456789abcdefghij".into())]);
+    let files = [
+        ("data/letters.txt", "0123456789abcdefghij".into()),
+        ("site/index.html", "<h1>home</h1>".into()),
+        ("site/css/site.css", "body {}".into()),
+        ("site/.env", "secret".into()),
+    ];
+    let (stdout, stderr, success) = run("http-server", program, &files);
     let base = stdout.lines().next().unwrap_or_default().to_string();
-    let expected = "BASE\n200 some(tondo) {\"id\":42,\"name\":\"ada\",\"email\":\"ada@example.com\"}\nme\nerr(GET BASE/users/x answered 400 Bad Request)\n404 some(application/problem+json) {\"status\":404,\"detail\":\"no user 7\"}\n201 {\"id\":1,\"name\":\"bo\",\"email\":\"bo@example.com\"}\nerr(POST BASE/users answered 400 Bad Request)\nsome(a b) [] some(2)\nnone [x, y] none\naño €\nerr(GET BASE/boom answered 500 Internal Server Error)\nerr(GET BASE/nowhere answered 404 Not Found)\nerr(DELETE BASE/users/1 answered 405 Method Not Allowed)\nerr(GET BASE/admin/stats answered 401 Unauthorized)\nstats\nevent tick one some(1)\nevent message two\nlines none\nsome(echo: hi)\nsome(bytes) some(text/plain) 0123456789abcdefghij\n206 some(bytes 10-19/20) abcdefghij\n206 hij\n304\nerr(GET BASE/files/letters.txt answered 416 Range Not Satisfiable)\nerr(GET BASE/files/missing.txt answered 404 Not Found)\nerr(GET BASE/files/..%2Fsecret answered 403 Forbidden)\nsome(20)\n201 [{\"path\":\"up/notes.txt\",\"size\":6}]\n200 [{\"path\":\"up/notes.txt\",\"size\":11}]\nhello world\n[{\"path\":\"batch/a.bin\",\"size\":3},{\"path\":\"batch/b.bin\",\"size\":4}]\ndefg\ntrue true true false\ntrue true\nerr(GET BASE/files/up answered 404 Not Found)\nerr(GET BASE/crash answered 500 Internal Server Error)\nme\n".replace("BASE", &base);
+    let expected = "BASE\n200 some(tondo) {\"id\":42,\"name\":\"ada\",\"email\":\"ada@example.com\"}\nme\nerr(GET BASE/users/x answered 400 Bad Request)\n404 some(application/problem+json) {\"status\":404,\"detail\":\"no user 7\"}\n201 {\"id\":1,\"name\":\"bo\",\"email\":\"bo@example.com\"}\nerr(POST BASE/users answered 400 Bad Request)\nsome(a b) [] some(2)\nnone [x, y] none\naño €\nerr(GET BASE/boom answered 500 Internal Server Error)\nerr(GET BASE/nowhere answered 404 Not Found)\nerr(DELETE BASE/users/1 answered 405 Method Not Allowed)\nerr(GET BASE/admin/stats answered 401 Unauthorized)\nstats\nevent tick one some(1)\nevent message two\nlines none\nsome(echo: hi)\nsome(bytes) some(text/plain) 0123456789abcdefghij\n206 some(bytes 10-19/20) abcdefghij\n206 hij\n304\nerr(GET BASE/files/letters.txt answered 416 Range Not Satisfiable)\nerr(GET BASE/files/missing.txt answered 404 Not Found)\nerr(GET BASE/files/..%2Fsecret answered 403 Forbidden)\nsome(20)\n201 [{\"path\":\"up/notes.txt\",\"size\":6}]\n200 [{\"path\":\"up/notes.txt\",\"size\":11}]\nhello world\n[{\"path\":\"batch/a.bin\",\"size\":3},{\"path\":\"batch/b.bin\",\"size\":4}]\ndefg\ntrue true true false\ntrue true\nerr(GET BASE/files/up answered 404 Not Found)\nsome(text/html) <h1>home</h1>\n206 some(text/css) dy {}\n304\nerr(GET BASE/site/.env answered 404 Not Found)\nerr(GET BASE/crash answered 500 Internal Server Error)\nme\n".replace("BASE", &base);
     assert_eq!(stdout, expected, "{stderr}");
     assert!(success, "{stderr}");
     assert!(stderr.contains("http: 500 the database is down"), "{stderr}");

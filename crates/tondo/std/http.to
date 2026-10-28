@@ -4,6 +4,7 @@
 // transport.
 
 import std.console as __console
+import std.embed as __embed
 import std.encoding as __encoding
 import std.fs as __fs
 import std.internal.http as httpNative
@@ -1181,6 +1182,8 @@ enum Payload {
     Data(Array[Byte])
     Stream(__io.Reader)
     File(String, String)
+    /// An embedded file: its path, its bytes and the digest of its `ETag`.
+    Embedded(String, Array[Byte], String)
     Events(Receiver[Event])
     Socket(fn(WebSocket): !HttpError)
 }
@@ -1418,6 +1421,36 @@ pub fn App.files(mut self, prefix: String, directory: String, listing: Bool = fa
                 return listingPage(base, relative, path)
             }
             Reply.file(path)
+        },
+    )
+}
+
+/// Serves the files of an `embed.Files` at `{prefix}/...`, from the
+/// program's memory, as `files` serves a directory: `GET` and `HEAD`, with
+/// ranges, the content type of each file's extension and an `ETag` of its
+/// contents. A folder's path answers with its `index.html`, when it has one.
+pub fn App.embedded(mut self, prefix: String, files: __embed.Files) {
+    let base = prefix.removeSuffix("/")
+    self.route(
+        "GET",
+        "{base}/*path",
+        (request) {
+            let relative = request.param("path")
+            let index = if relative.isEmpty() or relative.endsWith("/") {
+                "{relative}index.html"
+            } else {
+                "{relative}/index.html"
+            }
+            for name in [relative, index] {
+                match files.read(name) {
+                    some(contents) => {
+                        let payload = Payload.Embedded(name, contents, files.tag(name).unwrapOr(""))
+                        return Reply { code: 200, headerList: [], payload }
+                    }
+                    none => {}
+                }
+            }
+            fail Problem.notFound()
         },
     )
 }
@@ -1705,6 +1738,13 @@ fn send(incoming: httpNative.Native, reply: Reply) {
                 send(incoming, problemReply(Problem.notFound()))
             }
         }
+        Payload.Embedded(name, contents, tag) => httpNative.respondBytes(
+            incoming,
+            reply.headerList,
+            name,
+            contents,
+            tag,
+        )
         Payload.Events(events) => {
             let pipe = httpNative.pipe()
             let output = httpNative.pipeWriter(pipe)

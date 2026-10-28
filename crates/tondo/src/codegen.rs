@@ -836,6 +836,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         runtime: HashMap::new(),
         strings: HashMap::new(),
         arrays: 0,
+        byte_arrays: HashMap::new(),
         shapes,
         glue: HashMap::new(),
         pending_glue: Vec::new(),
@@ -1040,6 +1041,8 @@ struct Codegen<'a> {
     strings: HashMap<String, DataId>,
     /// How many static arrays there are, which names the next.
     arrays: usize,
+    /// The static arrays of embedded files, by their bytes.
+    byte_arrays: HashMap<std::sync::Arc<[u8]>, DataId>,
     shapes: Shapes<'a>,
     glue: HashMap<(Glue, Ty), FuncId>,
     pending_glue: Vec<(Glue, Ty, FuncId)>,
@@ -1703,6 +1706,7 @@ trait Gen<'t> {
     fn string(&mut self, text: &str) -> DataId;
     /// A static array of constants, each `size` bytes.
     fn static_array(&mut self, size: usize, elements: Vec<Const>) -> DataId;
+    fn bytes(&mut self, bytes: &std::sync::Arc<[u8]>) -> DataId;
     fn identity(&mut self, ty: Ty) -> DataId;
     fn glue(&mut self, kind: Glue, ty: Ty) -> FuncId;
     fn runtime(&mut self, rt: Rt) -> FuncId;
@@ -1840,6 +1844,9 @@ impl<'t> Gen<'t> for Codegen<'t> {
     }
     fn static_array(&mut self, size: usize, elements: Vec<Const>) -> DataId {
         Codegen::static_array(self, size, &elements)
+    }
+    fn bytes(&mut self, bytes: &std::sync::Arc<[u8]>) -> DataId {
+        Codegen::bytes(self, bytes)
     }
     fn identity(&mut self, ty: Ty) -> DataId {
         Codegen::identity(self, ty)
@@ -2708,6 +2715,10 @@ impl Codegen<'_> {
                     texts.push((at, self.string(text)));
                     bytes.extend_from_slice(&[0; 8]);
                 }
+                Const::Bytes(contents, _) => {
+                    texts.push((at, self.bytes(contents)));
+                    bytes.extend_from_slice(&[0; 8]);
+                }
                 Const::Unit => {}
             }
             bytes.resize(at + size, 0);
@@ -2723,6 +2734,29 @@ impl Codegen<'_> {
             data.write_data_addr(at as u32, text, 0);
         }
         self.module.define_data(id, &data).expect("array definition");
+        id
+    }
+
+    /// The static `Array[Byte]` of an embedded file's bytes, shared as any
+    /// static array is.
+    fn bytes(&mut self, contents: &std::sync::Arc<[u8]>) -> DataId {
+        if let Some(&id) = self.byte_arrays.get(contents) {
+            return id;
+        }
+        let length = contents.len() as u64;
+        let mut bytes = Vec::with_capacity(ARRAY_HEADER as usize + contents.len());
+        for word in [SHARED_FOREVER, length, length, 0] {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        bytes.extend_from_slice(contents);
+        let name = format!("tondo_array{}", self.arrays);
+        self.arrays += 1;
+        let id = self.module.declare_data(&name, Linkage::Local, true, false).expect("array declaration");
+        let mut data = DataDescription::new();
+        data.define(bytes.into_boxed_slice());
+        data.set_align(8);
+        self.module.define_data(id, &data).expect("array definition");
+        self.byte_arrays.insert(contents.clone(), id);
         id
     }
 
@@ -4441,6 +4475,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Operand::Const(Const::Char(_)) => Ty::CHAR,
             Operand::Const(Const::Bool(_)) => Ty::BOOL,
             Operand::Const(Const::Str(_)) => Ty::STRING,
+            Operand::Const(Const::Bytes(_, ty)) => *ty,
             Operand::Const(Const::Unit) => Ty::UNIT,
         }
     }
@@ -4844,6 +4879,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Const::Bool(_) => element == Ty::BOOL,
             Const::Char(_) => element == Ty::CHAR,
             Const::Str(_) => element == Ty::STRING,
+            Const::Bytes(_, of) => types.repr(*of) == element,
             Const::Unit => false,
         };
         if values.is_empty() {
@@ -4876,6 +4912,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Operand::Const(Const::Char(c)) => Val::Scalar(self.e.fb.ins().iconst(types::I32, *c as i64)),
             Operand::Const(Const::Bool(value)) => Val::Scalar(self.e.fb.ins().iconst(types::I8, *value as i64)),
             Operand::Const(Const::Str(text)) => Val::Scalar(self.e.string_ptr(text)),
+            Operand::Const(Const::Bytes(bytes, _)) => {
+                let id = self.e.cg.bytes(bytes);
+                let global = self.e.cg.declare_data_in_func(id, self.e.fb.func);
+                Val::Scalar(self.e.fb.ins().symbol_value(POINTER, global))
+            }
             Operand::Const(Const::Unit) => Val::Zero,
         }
     }

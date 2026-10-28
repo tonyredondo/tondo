@@ -15,6 +15,7 @@ pub mod diag;
 pub mod doctest;
 pub mod driver;
 pub mod elide;
+pub mod embed;
 pub mod exhaust;
 pub mod explain;
 pub mod fmt;

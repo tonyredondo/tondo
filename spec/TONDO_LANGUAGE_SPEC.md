@@ -1017,6 +1017,9 @@ Una constante debe poder evaluarse en compilación usando:
   ejecuta su body.
 - Operadores puros sobre constantes.
 - Otras constantes ya resueltas sin ciclos.
+- Archivos del paquete, que `embed.text`, `embed.bytes` y `embed.files` leen
+  al compilar (14.27 de la librería estándar):
+  `const Page: String = embed.text("page.html")`.
 
 Tondo 0.1 no introduce una keyword `comptime` ni permite llamar a funciones de
 usuario durante evaluación constante. Los programas generadores de la sección
@@ -8462,6 +8465,7 @@ oculten un diagnóstico independiente.
 | `E1901` | `nonconstant-expression` | Un `const` usa una operación no evaluable en compilación. |
 | `E1902` | `constant-cycle` | Dependencias entre constantes forman un ciclo. |
 | `E1903` | `constant-panic` | La evaluación constante produciría un pánico. |
+| `E1904` | `invalid-embed` | `std.embed` recibe una ruta que no es un literal, sale del paquete o no existe, un directorio donde va un archivo o al revés, o un archivo que no es UTF-8 en `text`. |
 
 #### Testing
 

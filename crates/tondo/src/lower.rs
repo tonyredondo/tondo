@@ -2009,6 +2009,7 @@ impl Builder<'_> {
             }
             hir::ExprKind::Bool(value) => Operand::Const(Const::Bool(*value)),
             hir::ExprKind::Str(text) => Operand::Const(Const::Str(text.clone())),
+            hir::ExprKind::Bytes(bytes) => Operand::Const(Const::Bytes(bytes.clone(), e.ty)),
             hir::ExprKind::Unit => Operand::Const(Const::Unit),
             hir::ExprKind::Local(id) => {
                 let local = self.hir_locals[id.0 as usize].expect("local lowered before use");

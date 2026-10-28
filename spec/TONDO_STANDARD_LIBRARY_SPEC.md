@@ -1494,6 +1494,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.log` | Core | — | 0.1 | Eventos estructurados con niveles, en texto o JSON, sobre un `io.Writer` |
 | `std.diagnostics` | Core | — | 0.1 | Contadores y gauges del programa, que `tondo counters` muestra |
 | `std.profile` | Core | — | 0.1 | Perfiles que el programa hace de sí mismo, en el formato de pprof, y labels que los dividen |
+| `std.embed` | Core | — | 0.1 | Archivos del paquete leídos al compilar y guardados en el ejecutable |
 | `std.console` | Capability-gated | `console` | 0.1 | stdin, stdout, stderr, texto, bytes y flushing |
 | `std.env` | Hosted | — | 0.1 | Argumentos, entorno y directorio de trabajo |
 | `std.fs` | Hosted | — | 0.1 | Filesystem, metadata y archivos |
@@ -1544,6 +1545,8 @@ actualizar esta especificación y el tracker antes de implementar.
 - `std.log` escribe sobre un `io.Writer` explícito; no existe logger global.
 - Los argumentos del programa se obtienen mediante `std.env.args()`.
 - `std.env` no lee el entorno durante la compilación.
+- `std.embed` lee archivos del paquete durante la compilación, nunca al
+  ejecutar, y no concede acceso al filesystem.
 - `std.testing` solo existe en source sets de test y no forma parte de producción.
 - Streams, canales, red y sincronización solo aparecen bajo sus propietarios
   canónicos; ningún módulo existente los introduce indirectamente.
@@ -3791,6 +3794,7 @@ app.use((request, next) {
     reply.header("x-served-by", "tondo")
 })
 app.files("/downloads", "public")               // GET y HEAD con rangos
+app.embedded("/", Site)                         // los de un embed.Files (14.27)
 app.uploads("/downloads", "public")             // PUT reanudable y POST multipart
 app.listen(port: 8080)?
 ~~~
@@ -3852,6 +3856,7 @@ pub fn App.route(mut self, method: String, path: String, handler: fn(Request): R
 pub fn App.use(mut self, middleware: fn(Request, fn(Request): Reply ! Problem): Reply ! Problem)
 pub fn App.mount(mut self, prefix: String, other: App)
 pub fn App.files(mut self, prefix: String, directory: String, listing: Bool = false)
+pub fn App.embedded(mut self, prefix: String, files: embed.Files)
 pub fn App.uploads(mut self, prefix: String, directory: String)
 pub fn App.websocket(mut self, path: String, handler: fn(WebSocket): Unit ! HttpError)
 pub fn App.openApi(mut self, path: String = "/openapi.json", title: String = "API", version: String = "1.0")
@@ -3895,6 +3900,10 @@ pub alias Tls = net.Tls
   path de una carpeta responde con una página HTML de sus entradas, primero
   las carpetas, cada una con un enlace para abrirla y cada archivo con su
   tamaño y un enlace para descargarlo; sin `listing`, es `404`.
+- `App.embedded` sirve igual los archivos de un `embed.Files` (14.27), desde la
+  memoria del programa: el content type de su extensión, un `ETag` de su
+  contenido, `304`, rangos y `416`. El path de una carpeta responde con su
+  `index.html`, si lo tiene, y si no es `404`.
 - `App.uploads` recibe archivos en una carpeta: `PUT` escribe el cuerpo en ese
   archivo, desde el byte que diga `Content-Range: bytes inicio-fin/total`, así
   que una subida se reanuda tras un `HEAD` que dice cuánto llegó; `POST` con un
@@ -4036,6 +4045,69 @@ pub fn withLabels[T: ~Copy](labels: Map[String, String], body: fn(): T): T
   guarda un número limitado de conjuntos de labels distintos, así que los que
   cambian en cada petición, como el de un span, no crecen sin fin: la muestra
   de un conjunto que ya se reemplazó no lleva labels.
+
+### 14.27 `std.embed`
+
+`std.embed` guarda en el ejecutable archivos del paquete, leídos al compilar:
+páginas, plantillas, datos o un sitio entero, que el programa usa sin
+buscarlos en el disco al ejecutar:
+
+~~~tondo
+import std.embed
+import std.http
+
+const Banner: String = embed.text("banner.txt")
+const Logo: Array[Byte] = embed.bytes("static/logo.png")
+const Site: embed.Files = embed.files("static")
+
+fn main(): !http.HttpError {
+    var app = http.App.new()
+    app.get("/banner", (request) { http.Reply.text(Banner) })
+    app.embedded("/", Site)
+    app.listen(port: 8080)?
+}
+~~~
+
+La superficie es:
+
+~~~tondo pseudocode
+pub type Files
+
+pub fn text(path: String): String
+pub fn bytes(path: String): Array[Byte]
+pub fn files(path: String): Files
+pub fn Files.read(self, path: String): Array[Byte]?
+pub fn Files.text(self, path: String): String?
+pub fn Files.paths(self): Array[String]
+pub fn Files.list(self, directory: String): Array[String]
+pub fn Files.tag(self, path: String): String?
+~~~
+
+- `text`, `bytes` y `files` se evalúan al compilar: su argumento es un
+  literal de string y su resultado una constante (6.5 del lenguaje), que vale
+  en una `const` y en cualquier expresión. El ejecutable lleva los bytes entre
+  sus datos, sin copiarlos al arrancar ni al usarlos, y al ejecutar no lee el
+  disco.
+- La ruta es relativa al directorio del archivo que la escribe, con `/` en
+  todos los sistemas, y no sale del paquete: del directorio de su
+  `tondo.toml`, o del de un programa de un solo archivo.
+- `text` lee un archivo UTF-8 y `bytes` cualquiera. `files` lee un directorio
+  y todo lo que hay debajo, salvo los archivos y directorios cuyo nombre
+  empieza por `.`.
+- Un archivo que no existe, un directorio donde va un archivo o al revés, una
+  ruta que sale del paquete, un archivo que no es UTF-8 en `text` y un
+  argumento que no es un literal son `E1904`; el error dice qué hay en ese
+  directorio y qué escribir.
+- `Files.paths()` da las rutas de sus archivos, relativas al directorio
+  embebido, con `/` y en orden. `read` y `text` dan el contenido de una de
+  ellas, `none` si no está, y `text` también si no es UTF-8. `list` da lo que
+  hay directamente en una carpeta, `""` la de arriba, con `/` al final de las
+  subcarpetas. `tag` da un resumen del contenido de un archivo, el `ETag` con
+  que `std.http` lo sirve.
+- Los archivos embebidos son entradas del build: `tondo run`, `tondo test` y
+  `--watch` compilan de nuevo cuando cambian (6 y 7.10 del toolchain).
+- Un provider o un generador no embebe: lo que lee le llega como input (27.5
+  del lenguaje), y `std.embed` es `E2108`.
 
 ---
 

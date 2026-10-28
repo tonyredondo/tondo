@@ -898,6 +898,16 @@ impl Server {
 
     fn definition(&mut self, params: &Value) -> Option<Value> {
         self.prepare(params)?;
+        // The file the path of `embed.text` or `embed.bytes` reads.
+        if let Some((analyzed, file, offset)) = self.at(params)
+            && let source = analyzed.analysis.sources.file(file)
+            && let Some((_, whole)) = embed_path(&source.text, (offset - source.base) as usize)
+        {
+            let path = analyzed.paths[file].clone()?;
+            let found = crate::embed::resolve(&path, &whole).ok().filter(|found| found.is_file())?;
+            let start = json!({ "line": 0, "character": 0 });
+            return Some(json!({ "uri": self.uri(&found), "range": { "start": start, "end": start } }));
+        }
         if let Some((analyzed, _, target, _)) = self.imported(params) {
             let base = analyzed.analysis.sources.file(target?).base;
             return self.location(analyzed, Span::new(base, base));
@@ -1032,6 +1042,10 @@ impl Server {
         let source = latest.analysis.sources.file(file);
         let text = source.text.clone();
         let cursor = (offset - source.base) as usize;
+        // In the path of `std.embed`, what the directory written has.
+        if let Some((typed, _)) = embed_path(&text, cursor) {
+            return Some(json!({ "isIncomplete": false, "items": embed_entries(&path, &typed) }));
+        }
         // In an import, the modules there are.
         let line = text[..cursor].rfind('\n').map_or(0, |at| at + 1);
         if let Some(written) = text[line..cursor].strip_prefix("import ") {
@@ -1685,6 +1699,50 @@ fn header(text: &str) -> String {
         start += line.len();
     }
     text[..end].trim_end().to_string()
+}
+
+/// The path of a call of `std.embed` the cursor is in, as in
+/// `embed.text("static/in`: the path written up to the cursor, and all of it.
+fn embed_path(text: &str, cursor: usize) -> Option<(String, String)> {
+    let line = text[..cursor].rfind('\n').map_or(0, |at| at + 1);
+    let before = &text[line..cursor];
+    let open = before.rfind('"')?;
+    let call = before[..open].strip_suffix('(')?;
+    let start = call.rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.')).map_or(0, |at| at + 1);
+    let (alias, kind) = call[start..].rsplit_once('.')?;
+    crate::embed::Kind::of(kind)?;
+    if imports(text).get(alias).map(String::as_str) != Some("std.embed") {
+        return None;
+    }
+    let typed = before[open + 1..].to_string();
+    let rest = &text[cursor..];
+    let end = rest.find(['"', '\n']).unwrap_or(rest.len());
+    let whole = format!("{typed}{}", &rest[..end]);
+    Some((typed, whole))
+}
+
+/// What the directory of a path being written for `std.embed` has, from the
+/// file `source`: its files, and its directories with `/`, but hidden ones.
+fn embed_entries(source: &Path, typed: &str) -> Vec<Value> {
+    let folder = typed.rfind('/').map_or("", |at| &typed[..=at]);
+    let Ok(entries) = std::fs::read_dir(source.parent().unwrap_or(Path::new(".")).join(folder)) else {
+        return Vec::new();
+    };
+    let mut items: Vec<(String, bool)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            (!name.starts_with('.')).then(|| (name, entry.path().is_dir()))
+        })
+        .collect();
+    items.sort();
+    items
+        .into_iter()
+        .map(|(name, dir)| {
+            let label = if dir { format!("{name}/") } else { name };
+            json!({ "label": label, "kind": if dir { 19 } else { 17 } })
+        })
+        .collect()
 }
 
 /// The names a file imports modules under: `json` for `import std.json`,

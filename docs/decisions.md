@@ -2961,3 +2961,23 @@ root can be a public function, which is how a library writes a router; and
 a method takes its own type arguments, `info.annotation[Check]()`, which the
 grammar always allowed and the checker now does.
 
+## 2026-10-29 — Embedded files are constants of the program
+
+Go embeds templates, pages and data with `//go:embed`, and Gin and Hugo serve
+them from memory; Tondo needed files next to the executable. `embed.text`,
+`embed.bytes` and `embed.files` of `std.embed` read files of the package
+when the program compiles: a call is a constant, so it goes in a `const` or
+any expression, rather than a new kind of declaration, a table of the
+manifest or an annotation. The path is a literal relative to the file that
+writes it, as Rust's `include_str!`, and cannot leave the package; hidden
+files of a directory are left out, as Go does, so `.env` does not ship.
+
+The bytes become a static array of the program's data, as constant arrays
+already are, so nothing is copied when the program starts or uses them; an
+`embed.Files` is two sorted arrays and a digest of each file, which
+`app.embedded` serves as its `ETag`. What a build reads must be known before
+it compiles, for the caches of `run` and `test` and for `--watch`, so the
+toolchain finds the calls in the sources' tokens, as `tondo graph` finds
+imports, instead of asking the checker. A provider or generator does not
+embed: what it reads comes as an input.
+

@@ -1,0 +1,9 @@
+import std.embed
+
+/// The site, kept in the executable.
+pub const Site: embed.Files = embed.files("static")
+
+/// The bytes of a file of the site, read from a module's own directory.
+pub fn raw(): Array[Byte] {
+    embed.bytes("static/raw.bin")
+}

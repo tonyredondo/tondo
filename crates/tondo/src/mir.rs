@@ -242,6 +242,8 @@ pub enum Const {
     Char(char),
     Bool(bool),
     Str(String),
+    /// An embedded file's bytes, of its `Array[Byte]` type.
+    Bytes(std::sync::Arc<[u8]>, Ty),
     Unit,
 }
 

@@ -302,6 +302,9 @@ pub enum ExprKind {
     Char(char),
     Bool(bool),
     Str(String),
+    /// The bytes of an embedded file (standard library 14.27), an
+    /// `Array[Byte]` the program's data holds.
+    Bytes(std::sync::Arc<[u8]>),
     Unit,
     Local(LocalId),
     /// Tuple elements or record fields in declaration order.
@@ -1334,6 +1337,7 @@ pub const NATIVES: &[Native] = {
         http("respond", &[Object, Int, Strings, Bytes], Unit, "tondo_rt_http_respond"),
         http("respondStream", &[Object, Int, Strings, IoReader], Unit, "tondo_rt_http_respond_stream"),
         http("respondFile", &[Object, Strings, String, String], String, "tondo_rt_http_respond_file"),
+        http("respondBytes", &[Object, Strings, String, Bytes, String], Unit, "tondo_rt_http_respond_bytes"),
         http("saveBody", &[Object, String, Int], Int, "tondo_rt_http_save_body"),
         http("requestForm", &[Object], Object, "tondo_rt_http_request_form"),
         http("formNext", &[Object], Object, "tondo_rt_http_form_next"),
@@ -1550,6 +1554,7 @@ pub fn written(e: &Expr, out: &mut Vec<LocalId>) {
         | ExprKind::Char(_)
         | ExprKind::Bool(_)
         | ExprKind::Str(_)
+        | ExprKind::Bytes(_)
         | ExprKind::Unit
         | ExprKind::Local(_)
         | ExprKind::FnValue(..)

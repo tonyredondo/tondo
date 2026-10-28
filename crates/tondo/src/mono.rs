@@ -262,6 +262,7 @@ impl Mono<'_> {
             | ExprKind::Char(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
+            | ExprKind::Bytes(_)
             | ExprKind::Unit
             | ExprKind::Local(_)
             | ExprKind::ExternFn(_)

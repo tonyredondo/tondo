@@ -358,6 +358,40 @@ fn completes_and_explains_annotations() {
     editor.stop();
 }
 
+const EMBEDDING: &str = "import std.embed\n\nconst Page: String = embed.text(\"static/index.html\")\n\nfn main() {}\n";
+
+#[test]
+fn goes_to_and_completes_embedded_paths() {
+    let dir = project(
+        "lsp-embed",
+        &[
+            ("tondo.toml", "[package]\nname = \"app\"\n"),
+            ("src/main.to", EMBEDDING),
+            ("src/static/index.html", "<h1>home</h1>\n"),
+            ("src/static/css/site.css", "body {}\n"),
+            ("src/static/.env", "secret\n"),
+        ],
+    );
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("src/main.to"));
+    let found = editor.at("textDocument/definition", &uri, EMBEDDING, "\"static/index.html\"", "index", json!({}));
+    assert_eq!(found["uri"], format!("file://{}", dir.join("src/static/index.html").display()), "{found}");
+    // In the path, what the directory written so far has, but hidden files.
+    let text = EMBEDDING.replace("\"static/index.html\")", "\"static/");
+    editor.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": text }] }),
+    );
+    let line = text.lines().position(|l| l.contains("static/")).unwrap();
+    let character = text.lines().nth(line).unwrap().len();
+    let position = json!({ "line": line, "character": character });
+    let result =
+        editor.request("textDocument/completion", json!({ "textDocument": { "uri": uri }, "position": position }));
+    let labels: Vec<&str> = result["items"].as_array().unwrap().iter().map(|i| i["label"].as_str().unwrap()).collect();
+    assert_eq!(labels, ["css/", "index.html"]);
+    editor.stop();
+}
+
 #[test]
 fn diagnostics_follow_the_edits() {
     let dir = project("lsp-diagnostics", &[("main.to", "fn main() {\n    let x: Int = \"text\"\n    _ = x\n}\n")]);

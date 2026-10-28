@@ -117,6 +117,11 @@ pub const CODES: &[(&str, &str, &str)] = &[
     ("E1901", "nonconstant-expression", "A `const` uses an operation that cannot run while compiling."),
     ("E1902", "constant-cycle", "Constants depend on each other in a cycle."),
     ("E1903", "constant-panic", "Evaluating a constant would panic."),
+    (
+        "E1904",
+        "invalid-embed",
+        "`std.embed` gets a path that is not a literal, leaves the package or does not exist, a directory for a file or the other way round, or a file that is not UTF-8 for `text`.",
+    ),
     ("E2001", "test-node-outside-test-source", "A `suite` or `test` in a source that is not a test source."),
     ("E2002", "duplicate-test-node", "Two suites or tests have the same identity among their siblings."),
     (

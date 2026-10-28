@@ -531,7 +531,7 @@ fn constant(value: &mut hir::Expr) -> bool {
 fn constant_parts(value: &mut hir::Expr) -> Option<Vec<&mut hir::Expr>> {
     use hir::ExprKind as K;
     Some(match &mut value.kind {
-        K::Int(_) | K::Float(_) | K::Char(_) | K::Bool(_) | K::Str(_) | K::Unit => Vec::new(),
+        K::Int(_) | K::Float(_) | K::Char(_) | K::Bool(_) | K::Str(_) | K::Bytes(_) | K::Unit => Vec::new(),
         K::Unary(_, inner) | K::Retype(inner) | K::Convert(inner) => vec![inner],
         K::Binary(_, left, right) => vec![left, right],
         K::Aggregate(items) | K::Array(items) | K::Set(items) => items.iter_mut().collect(),
@@ -3604,6 +3604,73 @@ impl<'a> Checker<'a> {
             .unwrap_or_default();
         let items = values.into_iter().map(|value| self.reflect_value(value)).collect();
         Self::mk(hir::ExprKind::Array(items), result, span)
+    }
+
+    /// `embed.text`, `embed.bytes` and `embed.files` (standard library
+    /// 14.27): what they name in the package, read now and kept as a
+    /// constant.
+    fn embedded(&mut self, kind: crate::embed::Kind, args: &[ast::Arg], result: Ty, span: Span) -> hir::Expr {
+        use crate::embed::{Kind, Read};
+        let name = match kind {
+            Kind::Text => "embed.text",
+            Kind::Bytes => "embed.bytes",
+            Kind::Files => "embed.files",
+        };
+        if self.meta_denied(span, &format!("`{name}`, which reads the package's files,")) {
+            return Self::error_expr(span);
+        }
+        let written = match args {
+            [arg] => match &arg.value.kind {
+                ast::ExprKind::Str(segments) => segments
+                    .iter()
+                    .map(|s| match s {
+                        ast::StrSegment::Text(text) => Some(text.as_str()),
+                        ast::StrSegment::Expr(_) => None,
+                    })
+                    .collect::<Option<String>>(),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(written) = written else {
+            let message = format!(
+                "`{name}` reads its file when the program compiles, so its path is a string literal: `{name}(\"static/index.html\")`"
+            );
+            self.diags.error("E1904", span, message);
+            return Self::error_expr(span);
+        };
+        let source = self.sources.file_of(span.start).path.clone();
+        let read = match crate::embed::read(&source, &written, kind) {
+            Ok(read) => read,
+            Err(why) => {
+                self.diags.error("E1904", args[0].value.span, why);
+                return Self::error_expr(span);
+            }
+        };
+        let bytes = self.types.intern(TyKind::Array(Ty::BYTE));
+        match read {
+            Read::Text(text) => Self::mk(hir::ExprKind::Str(text), result, span),
+            Read::Bytes(contents) => Self::mk(hir::ExprKind::Bytes(contents.into()), result, span),
+            Read::Files(files) => {
+                // `embed.Files`: the paths in order, the contents and a digest of each.
+                let strings = self.types.intern(TyKind::Array(Ty::STRING));
+                let arrays = self.types.intern(TyKind::Array(bytes));
+                let text = |text: String| Self::mk(hir::ExprKind::Str(text), Ty::STRING, span);
+                let names = files.iter().map(|(name, _)| text(name.clone())).collect();
+                let tags = files.iter().map(|(_, contents)| text(crate::hash::sha256_hex(contents)[..16].to_string()));
+                let tags = tags.collect();
+                let contents = files
+                    .into_iter()
+                    .map(|(_, contents)| Self::mk(hir::ExprKind::Bytes(contents.into()), bytes, span))
+                    .collect();
+                let fields = vec![
+                    (0, Self::mk(hir::ExprKind::Array(names), strings, span)),
+                    (1, Self::mk(hir::ExprKind::Array(contents), arrays, span)),
+                    (2, Self::mk(hir::ExprKind::Array(tags), strings, span)),
+                ];
+                Self::mk(hir::ExprKind::Record(fields), result, span)
+            }
+        }
     }
 
     /// The layout of an `extern type` from `@packed` and `@align(n)`.
@@ -13701,6 +13768,15 @@ impl<'a> Checker<'a> {
         if signature.name == "reflect.annotationsOf" {
             let result = self.types.subst(signature.result, &inference.map);
             return self.annotations_of(type_args[0], args, result, span);
+        }
+        if let Callee::Fn(id) = callee
+            && signature.receiver.is_none()
+            && let Some(kind) = signature.name.rsplit('.').next().and_then(crate::embed::Kind::of)
+            && let Some(scope) = self.fn_scopes.get(id.0 as usize)
+            && self.module_paths.get(scope.module as usize).is_some_and(|p| p == &["std", "embed"])
+        {
+            let result = self.types.subst(signature.result, &inference.map);
+            return self.embedded(kind, args, result, span);
         }
         let result = self.types.subst(signature.result, &inference.map);
         let mut ordered: Vec<(Option<usize>, hir::Expr)> = Vec::new();

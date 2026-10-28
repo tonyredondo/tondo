@@ -556,6 +556,7 @@ impl Checker<'_> {
             | ExprKind::Char(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
+            | ExprKind::Bytes(_)
             | ExprKind::Unit
             | ExprKind::FnValue(..)
             | ExprKind::ExternFn(_)
