@@ -23,6 +23,7 @@ use crate::mir::{
     Body, Const, Local, Operand, Origin, Overlap, Piece, Place, Proj, Rvalue, SelectCase, Statement, Terminator,
     project,
 };
+use crate::numbers::NumOp;
 use crate::source::{SourceMap, Span};
 use crate::types::{AdtKind, ERR, FloatTy, Handle, IntTy, Mode, OK, SOME, Shown, Ty, TyKind, Types};
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
@@ -104,6 +105,15 @@ enum Rt {
     SbI64,
     SbU64,
     SbInt128,
+    IntPow,
+    IntParse,
+    IntRadix,
+    IntToBytes,
+    IntFromBytes,
+    FloatParse,
+    MathPow,
+    MathRoundAway,
+    TextFixed,
     Int128Multiply,
     Int128Divide,
     Int128ToFloat,
@@ -370,6 +380,15 @@ impl Rt {
             Rt::SbI64 => ("tondo_rt_sb_i64", &[I64, I64], &[]),
             Rt::SbU64 => ("tondo_rt_sb_u64", &[I64, I64], &[]),
             Rt::SbInt128 => ("tondo_rt_sb_int128", &[I64, I64, I64, I8], &[]),
+            Rt::IntPow => ("tondo_rt_int_pow", &[I8, I8, I32, I64, I64], &[I8]),
+            Rt::IntParse => ("tondo_rt_int_parse", &[I64, I64, I32, I8, I64], &[I8]),
+            Rt::IntRadix => ("tondo_rt_int_radix", &[I64, I64, I8, I64], &[I64]),
+            Rt::IntToBytes => ("tondo_rt_int_to_bytes", &[I64, I64, I64, I8], &[I64]),
+            Rt::IntFromBytes => ("tondo_rt_int_from_bytes", &[I64, I64, I64, I8, I64, I64], &[]),
+            Rt::FloatParse => ("tondo_rt_float_parse", &[I64, I8, I64], &[I8]),
+            Rt::MathPow => ("tondo_rt_math_pow", &[types::F64, types::F64], &[types::F64]),
+            Rt::MathRoundAway => ("tondo_rt_math_round_away", &[types::F64], &[types::F64]),
+            Rt::TextFixed => ("tondo_rt_text_fixed", &[types::F64, I64], &[I64]),
             Rt::Int128Multiply => ("tondo_rt_int128_multiply", &[I8, I64, I64], &[I8]),
             Rt::Int128Divide => ("tondo_rt_int128_divide", &[I8, I8, I64, I64], &[]),
             Rt::Int128ToFloat => ("tondo_rt_int128_to_float", &[I64, I64, I8, I8], &[types::F64]),
@@ -5370,6 +5389,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             return;
         }
         let value = match rvalue {
+            Rvalue::Call(Callee::Std(StdFn::Number(op)), args) => match self.number(*op, args, place, ty, span) {
+                Some(value) => value,
+                None => return,
+            },
             Rvalue::Call(Callee::Std(StdFn::Fs(FsFn::Exists)), args) => {
                 let values: Vec<ir::Value> = args.iter().map(|a| self.scalar(a)).collect();
                 Val::Scalar(self.e.call_rt(Rt::Fs(FsFn::Exists), &values).unwrap())
@@ -7278,6 +7301,442 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.fb.ins().fcmp(FloatCC::Equal, magnitude, infinity)
     }
 
+    /// Writes `some(value)` into `place` when `present`, or `none`.
+    fn write_option(&mut self, place: &Place, ty: Ty, present: ir::Value, value: ir::Value) {
+        let base = self.pointer_to(place, true);
+        self.e.fb.ins().store(flags(), present, base, 0);
+        let payload = self.e.cg.slot(ty, Proj::Variant(SOME, 0));
+        self.e.fb.ins().store(flags(), value, base, payload.offset as i32);
+    }
+
+    /// An integer as one of `ty`, from 128 bits or to them.
+    fn fit_width(&mut self, value: ir::Value, ty: ir::Type) -> ir::Value {
+        match (self.e.fb.func.dfg.value_type(value).bits(), ty.bits()) {
+            (from, to) if from == to => value,
+            (from, to) if from > to => self.e.fb.ins().ireduce(ty, value),
+            _ => self.e.fb.ins().uextend(ty, value),
+        }
+    }
+
+    /// The zeros above the highest 1 of an integer of `bits` bits, as an
+    /// `Int`; Cranelift counts 32 bits and more.
+    fn leading_zeros(&mut self, value: ir::Value, bits: u32) -> ir::Value {
+        if bits >= 32 {
+            let zeros = self.e.fb.ins().clz(value);
+            return self.fit_width(zeros, types::I64);
+        }
+        let wide = self.e.fb.ins().uextend(types::I32, value);
+        let zeros = self.e.fb.ins().clz(wide);
+        let zeros = self.e.fb.ins().iadd_imm_s(zeros, -(32 - i64::from(bits)));
+        self.e.fb.ins().uextend(types::I64, zeros)
+    }
+
+    /// A named operation of a number (18.9) for `place`, of type `ty`, or
+    /// `None` when it wrote the place itself.
+    fn number(&mut self, op: NumOp, args: &[Operand], place: &Place, ty: Ty, span: Span) -> Option<Val> {
+        use NumOp::*;
+        let types = self.e.cg.types();
+        // The number the operation is of: its receiver's, or what it makes.
+        let own = match op {
+            Parse | FromBytes | Wrapping | Saturating | FromBits => match *types.kind(types.repr(ty)) {
+                TyKind::Result(ok, _) => ok,
+                _ => ty,
+            },
+            _ => self.operand_ty(&args[0]),
+        };
+        let own = types.repr(own);
+        let clif = self.e.cg.scalar_type(own);
+        // A `Byte` has the bits of a `UInt8`.
+        let int = match *types.kind(own) {
+            TyKind::Int(int) => Some(int),
+            TyKind::Byte => Some(IntTy::U8),
+            _ => None,
+        };
+        let bits = clif.bits();
+        let signed = int.is_some_and(IntTy::signed);
+        let values: Vec<ir::Value> = args.iter().map(|a| self.scalar(a)).collect();
+        let less = |this: &mut Self, a: ir::Value, b: ir::Value| match clif.is_float() {
+            true => this.e.fb.ins().fcmp(FloatCC::LessThan, a, b),
+            false => this.e.fb.ins().icmp(if signed { IntCC::SignedLessThan } else { IntCC::UnsignedLessThan }, a, b),
+        };
+        let wide128 = clif == types::I128;
+        // The detail of a panic of the operation: its code, signedness and width.
+        let detail = |code: u32| code << 16 | 1 << 9 | (signed as u32) << 8 | bits;
+        let value = match op {
+            Compare => {
+                let (a, b) = (values[0], values[1]);
+                let (lt, gt) = (less(self, a, b), less(self, b, a));
+                let (lt, gt) = (self.e.fb.ins().uextend(types::I64, lt), self.e.fb.ins().uextend(types::I64, gt));
+                let order = self.e.fb.ins().isub(gt, lt);
+                if !clif.is_float() {
+                    return Some(Val::Scalar(order));
+                }
+                // NaN after every other value, and equal to itself.
+                let a_nan = self.e.fb.ins().fcmp(FloatCC::Unordered, a, a);
+                let b_nan = self.e.fb.ins().fcmp(FloatCC::Unordered, b, b);
+                let (a_nan, b_nan) =
+                    (self.e.fb.ins().uextend(types::I64, a_nan), self.e.fb.ins().uextend(types::I64, b_nan));
+                let order = self.e.fb.ins().iadd(order, a_nan);
+                self.e.fb.ins().isub(order, b_nan)
+            }
+            Min => {
+                let smaller = less(self, values[1], values[0]);
+                self.e.fb.ins().select(smaller, values[1], values[0])
+            }
+            Max => {
+                let larger = less(self, values[0], values[1]);
+                self.e.fb.ins().select(larger, values[1], values[0])
+            }
+            Clamp => {
+                let (a, low, high) = (values[0], values[1], values[2]);
+                let below = less(self, a, low);
+                let raised = self.e.fb.ins().select(below, low, a);
+                let above = less(self, high, raised);
+                self.e.fb.ins().select(above, high, raised)
+            }
+            Pow | WrappingPow | CheckedPow | SaturatingPow if int.is_some() => {
+                let base = self.widest(values[0], signed);
+                let exponent = self.e.fb.ins().sextend(types::I128, values[1]);
+                let saturate = self.e.fb.ins().iconst(types::I8, (op == SaturatingPow) as i64);
+                let signed_flag = self.e.fb.ins().iconst(types::I8, signed as i64);
+                let width = self.e.fb.ins().iconst(types::I32, i64::from(bits));
+                let (result, status) = self.int128_call(Rt::IntPow, &[saturate, signed_flag, width], base, exponent);
+                let status = status.unwrap();
+                let negative = self.e.fb.ins().icmp_imm_s(IntCC::Equal, status, 2);
+                self.panic_values_if(negative, 18, span, |_| (detail(8), values[0], values[1], own));
+                let result = self.fit_width(result, clif);
+                match op {
+                    Pow => {
+                        let overflow = self.e.fb.ins().icmp_imm_s(IntCC::Equal, status, 1);
+                        self.panic_values_if(overflow, 5, span, |_| (detail(8), values[0], values[1], own));
+                        result
+                    }
+                    CheckedPow => {
+                        let fits = self.e.fb.ins().icmp_imm_s(IntCC::Equal, status, 0);
+                        self.write_option(place, ty, fits, result);
+                        return None;
+                    }
+                    _ => result,
+                }
+            }
+            Pow => {
+                let float = |this: &mut Self, v: ir::Value| match clif == types::F32 {
+                    true => this.e.fb.ins().fpromote(types::F64, v),
+                    false => v,
+                };
+                let (a, b) = (float(self, values[0]), float(self, values[1]));
+                let power = self.e.call_rt(Rt::MathPow, &[a, b]).unwrap();
+                if clif == types::F32 { self.e.fb.ins().fdemote(types::F32, power) } else { power }
+            }
+            WrappingPow | CheckedPow | SaturatingPow => unreachable!("of integers only"),
+            Abs if clif.is_float() => self.e.fb.ins().fabs(values[0]),
+            Abs => {
+                let min = self.e.int_const(clif, int.unwrap().min());
+                let least = self.e.fb.ins().icmp(IntCC::Equal, values[0], min);
+                self.panic_values_if(least, 5, span, |_| (5 << 16 | 0x100 | bits, values[0], values[0], own));
+                self.e.fb.ins().iabs(values[0])
+            }
+            WrappingAdd => self.e.fb.ins().iadd(values[0], values[1]),
+            WrappingSub => self.e.fb.ins().isub(values[0], values[1]),
+            WrappingMul => self.e.fb.ins().imul(values[0], values[1]),
+            WrappingNeg => self.e.fb.ins().ineg(values[0]),
+            CheckedAdd | CheckedSub | CheckedMul | SaturatingAdd | SaturatingSub | SaturatingMul | OverflowingAdd
+            | OverflowingSub | OverflowingMul => {
+                let (a, b) = (values[0], values[1]);
+                let (result, overflow) = match (op, signed) {
+                    (CheckedMul | SaturatingMul | OverflowingMul, _) if wide128 => {
+                        let signed_flag = self.e.fb.ins().iconst(types::I8, signed as i64);
+                        let (product, overflow) = self.int128_call(Rt::Int128Multiply, &[signed_flag], a, b);
+                        (product, overflow.unwrap())
+                    }
+                    (CheckedAdd | SaturatingAdd | OverflowingAdd, true) => self.e.fb.ins().sadd_overflow(a, b),
+                    (CheckedAdd | SaturatingAdd | OverflowingAdd, false) => self.e.fb.ins().uadd_overflow(a, b),
+                    (CheckedSub | SaturatingSub | OverflowingSub, true) => self.e.fb.ins().ssub_overflow(a, b),
+                    (CheckedSub | SaturatingSub | OverflowingSub, false) => self.e.fb.ins().usub_overflow(a, b),
+                    (_, true) => self.e.fb.ins().smul_overflow(a, b),
+                    (_, false) => self.e.fb.ins().umul_overflow(a, b),
+                };
+                match op {
+                    CheckedAdd | CheckedSub | CheckedMul => {
+                        let fits = self.e.fb.ins().bxor_imm_u(overflow, 1);
+                        self.write_option(place, ty, fits, result);
+                        return None;
+                    }
+                    OverflowingAdd | OverflowingSub | OverflowingMul => {
+                        let base = self.pointer_to(place, true);
+                        let (first, second) = (self.e.cg.slot(ty, Proj::Field(0)), self.e.cg.slot(ty, Proj::Field(1)));
+                        self.e.fb.ins().store(flags(), result, base, first.offset as i32);
+                        self.e.fb.ins().store(flags(), overflow, base, second.offset as i32);
+                        return None;
+                    }
+                    _ => {}
+                }
+                // The bound the exact result went past.
+                let int = int.unwrap();
+                let (min, max) = (self.e.int_const(clif, int.min()), self.e.int_const(clif, int.max() as i128));
+                let bound = match (op, signed) {
+                    (SaturatingSub, false) => min,
+                    (_, false) => max,
+                    (SaturatingMul, true) => {
+                        let sign = self.e.fb.ins().bxor(a, b);
+                        let negative = self.e.fb.ins().icmp_imm_s(IntCC::SignedLessThan, sign, 0);
+                        self.e.fb.ins().select(negative, min, max)
+                    }
+                    _ => {
+                        let negative = self.e.fb.ins().icmp_imm_s(IntCC::SignedLessThan, b, 0);
+                        let (low, high) = if op == SaturatingAdd { (min, max) } else { (max, min) };
+                        self.e.fb.ins().select(negative, low, high)
+                    }
+                };
+                self.e.fb.ins().select(overflow, bound, result)
+            }
+            CheckedDiv | CheckedRem => {
+                let (a, b) = (values[0], values[1]);
+                let zero = self.e.fb.ins().icmp_imm_s(IntCC::Equal, b, 0);
+                let failed = match signed {
+                    true => {
+                        let int = int.unwrap();
+                        let (min, minus_one) = (self.e.int_const(clif, int.min()), self.e.int_const(clif, -1));
+                        let is_min = self.e.fb.ins().icmp(IntCC::Equal, a, min);
+                        let is_minus_one = self.e.fb.ins().icmp(IntCC::Equal, b, minus_one);
+                        let both = self.e.fb.ins().band(is_min, is_minus_one);
+                        self.e.fb.ins().bor(zero, both)
+                    }
+                    false => zero,
+                };
+                // A divisor that cannot fail; `MIN % -1` is 0, as `MIN % 1`.
+                let one = self.e.int_const(clif, 1);
+                let divisor = self.e.fb.ins().select(failed, one, b);
+                let result = match (wide128, op, signed) {
+                    (true, _, _) => {
+                        let remainder = self.e.fb.ins().iconst(types::I8, (op == CheckedRem) as i64);
+                        let signed_flag = self.e.fb.ins().iconst(types::I8, signed as i64);
+                        self.int128_call(Rt::Int128Divide, &[remainder, signed_flag], a, divisor).0
+                    }
+                    (_, CheckedDiv, true) => self.e.fb.ins().sdiv(a, divisor),
+                    (_, CheckedDiv, false) => self.e.fb.ins().udiv(a, divisor),
+                    (_, _, true) => self.e.fb.ins().srem(a, divisor),
+                    (_, _, false) => self.e.fb.ins().urem(a, divisor),
+                };
+                let present = if op == CheckedRem {
+                    self.e.fb.ins().bxor_imm_u(zero, 1)
+                } else {
+                    self.e.fb.ins().bxor_imm_u(failed, 1)
+                };
+                self.write_option(place, ty, present, result);
+                return None;
+            }
+            CheckedNeg => {
+                let zero = self.e.int_const(clif, 0);
+                let (result, present) = match signed {
+                    true => {
+                        let (result, overflow) = self.e.fb.ins().ssub_overflow(zero, values[0]);
+                        (result, self.e.fb.ins().bxor_imm_u(overflow, 1))
+                    }
+                    false => (self.e.fb.ins().ineg(values[0]), self.e.fb.ins().icmp(IntCC::Equal, values[0], zero)),
+                };
+                self.write_option(place, ty, present, result);
+                return None;
+            }
+            CountOnes => {
+                let count = self.e.fb.ins().popcnt(values[0]);
+                self.fit_width(count, types::I64)
+            }
+            LeadingZeros => self.leading_zeros(values[0], bits),
+            TrailingZeros if bits < 32 => {
+                // A 1 just above the value stops the count at its width.
+                let wide = self.e.fb.ins().uextend(types::I32, values[0]);
+                let wide = self.e.fb.ins().bor_imm_u(wide, 1 << bits);
+                let zeros = self.e.fb.ins().ctz(wide);
+                self.e.fb.ins().uextend(types::I64, zeros)
+            }
+            TrailingZeros => {
+                let zeros = self.e.fb.ins().ctz(values[0]);
+                self.fit_width(zeros, types::I64)
+            }
+            RotateLeft | RotateRight => {
+                let count = self.e.fb.ins().band_imm_s(values[1], i64::from(bits) - 1);
+                match op {
+                    RotateLeft => self.e.fb.ins().rotl(values[0], count),
+                    _ => self.e.fb.ins().rotr(values[0], count),
+                }
+            }
+            ReverseBytes if bits == 8 => values[0],
+            ReverseBytes => self.e.fb.ins().bswap(values[0]),
+            ReverseBits => self.e.fb.ins().bitrev(values[0]),
+            IsPowerOfTwo => {
+                let ones = self.e.fb.ins().popcnt(values[0]);
+                self.e.fb.ins().icmp_imm_s(IntCC::Equal, ones, 1)
+            }
+            NextPowerOfTwo => {
+                // 1 for 0 and 1; otherwise the bit above the highest of `x - 1`.
+                let at_most_one = self.e.fb.ins().icmp_imm_s(IntCC::UnsignedLessThanOrEqual, values[0], 1);
+                let two = self.e.int_const(clif, 2);
+                let safe = self.e.fb.ins().select(at_most_one, two, values[0]);
+                let below = self.e.fb.ins().iadd_imm_s(safe, -1);
+                let zeros = self.leading_zeros(below, bits);
+                let overflow = self.e.fb.ins().icmp_imm_s(IntCC::Equal, zeros, 0);
+                self.panic_values_if(overflow, 5, span, |_| (detail(9), values[0], values[0], own));
+                let width = self.e.fb.ins().iconst(types::I64, i64::from(bits));
+                let shift = self.e.fb.ins().isub(width, zeros);
+                let one = self.e.int_const(clif, 1);
+                let power = self.e.fb.ins().ishl(one, shift);
+                self.e.fb.ins().select(at_most_one, one, power)
+            }
+            ToBytes => {
+                let value = self.widest(values[0], signed);
+                let (low, high) = self.e.fb.ins().isplit(value);
+                let count = self.e.fb.ins().iconst(types::I64, i64::from(bits / 8));
+                let big = self.e.fb.ins().icmp_imm_s(IntCC::Equal, values[1], 0);
+                self.e.call_rt(Rt::IntToBytes, &[low, high, count, big]).unwrap()
+            }
+            FromBytes => {
+                let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 3);
+                let slot = self.e.fb.create_sized_stack_slot(data);
+                let slot = self.e.fb.ins().stack_addr(POINTER, slot, 0);
+                let count = self.e.fb.ins().iconst(types::I64, i64::from(bits / 8));
+                let big = self.e.fb.ins().icmp_imm_s(IntCC::Equal, values[2], 0);
+                let location = self.location(span);
+                self.e.call_rt(Rt::IntFromBytes, &[values[0], values[1], count, big, location, slot]);
+                let read = self.e.fb.ins().load(types::I128, flags(), slot, 0);
+                self.fit_width(read, clif)
+            }
+            Wrapping => {
+                let from = self.operand_ty(&args[0]);
+                self.resize(values[0], from, clif)
+            }
+            Saturating => {
+                let from = self.e.cg.types().repr(self.operand_ty(&args[0]));
+                let int = int.unwrap();
+                let source = self.e.cg.scalar_type(from);
+                if source.is_float() {
+                    let value =
+                        if source == types::F32 { self.e.fb.ins().fpromote(types::F64, values[0]) } else { values[0] };
+                    if wide128 {
+                        // Rust's conversion saturates, and gives 0 for NaN.
+                        let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 3);
+                        let slot = self.e.fb.create_sized_stack_slot(data);
+                        let out = self.e.fb.ins().stack_addr(POINTER, slot, 0);
+                        let signed_flag = self.e.fb.ins().iconst(types::I8, signed as i64);
+                        self.e.call_rt(Rt::FloatToInt128, &[value, signed_flag, out]);
+                        return Some(Val::Scalar(self.e.fb.ins().load(types::I128, flags(), out, 0)));
+                    }
+                    let wide = if bits < 32 { types::I64 } else { clif };
+                    let converted = match signed {
+                        true => self.e.fb.ins().fcvt_to_sint_sat(wide, value),
+                        false => self.e.fb.ins().fcvt_to_uint_sat(wide, value),
+                    };
+                    if wide == clif {
+                        return Some(Val::Scalar(converted));
+                    }
+                    let (min, max) = (
+                        self.e.fb.ins().iconst(wide, int.min() as i64),
+                        self.e.fb.ins().iconst(wide, int.max() as i64),
+                    );
+                    let below = self.e.fb.ins().icmp(IntCC::SignedLessThan, converted, min);
+                    let raised = self.e.fb.ins().select(below, min, converted);
+                    let above = self.e.fb.ins().icmp(IntCC::SignedGreaterThan, raised, max);
+                    let clamped = self.e.fb.ins().select(above, max, raised);
+                    return Some(Val::Scalar(self.e.fb.ins().ireduce(clif, clamped)));
+                }
+                // Compare in the source's domain, as a checked conversion does.
+                let from_int = match *self.e.cg.types().kind(from) {
+                    TyKind::Int(from) => from,
+                    _ => IntTy::U8,
+                };
+                let domain = if source.bits() == 128 || bits == 128 { types::I128 } else { types::I64 };
+                let wide = self.resize(values[0], from, domain);
+                let mut result = self.resize(values[0], from, clif);
+                if int.min() > from_int.min() {
+                    let bound = self.e.int_const(domain, int.min());
+                    let below = self.e.fb.ins().icmp(IntCC::SignedLessThan, wide, bound);
+                    let min = self.e.int_const(clif, int.min());
+                    result = self.e.fb.ins().select(below, min, result);
+                }
+                if int.max() < from_int.max() {
+                    let bound = self.e.int_const(domain, int.max() as i128);
+                    let cc = if from_int.signed() { IntCC::SignedGreaterThan } else { IntCC::UnsignedGreaterThan };
+                    let above = self.e.fb.ins().icmp(cc, wide, bound);
+                    let max = self.e.int_const(clif, int.max() as i128);
+                    result = self.e.fb.ins().select(above, max, result);
+                }
+                result
+            }
+            Parse if clif.is_float() => {
+                let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3);
+                let slot = self.e.fb.create_sized_stack_slot(data);
+                let out = self.e.fb.ins().stack_addr(POINTER, slot, 0);
+                let single = self.e.fb.ins().iconst(types::I8, (clif == types::F32) as i64);
+                let ok = self.e.call_rt(Rt::FloatParse, &[values[0], single, out]).unwrap();
+                let read = self.e.fb.ins().load(types::F64, flags(), out, 0);
+                let read = if clif == types::F32 { self.e.fb.ins().fdemote(types::F32, read) } else { read };
+                let (fine, invalid) = (self.e.fb.ins().iconst(types::I8, -1), self.e.fb.ins().iconst(types::I8, 3));
+                let error = self.e.fb.ins().select(ok, fine, invalid);
+                self.write_checked(place, ty, read, error);
+                return None;
+            }
+            Parse => {
+                let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 3);
+                let slot = self.e.fb.create_sized_stack_slot(data);
+                let out = self.e.fb.ins().stack_addr(POINTER, slot, 0);
+                let width = self.e.fb.ins().iconst(types::I32, i64::from(bits));
+                let signed_flag = self.e.fb.ins().iconst(types::I8, signed as i64);
+                let ok = self.e.call_rt(Rt::IntParse, &[values[0], values[1], width, signed_flag, out]).unwrap();
+                let read = self.e.fb.ins().load(types::I128, flags(), out, 0);
+                let read = self.fit_width(read, clif);
+                // `TextError.InvalidData`, the fourth variant.
+                let (fine, invalid) = (self.e.fb.ins().iconst(types::I8, -1), self.e.fb.ins().iconst(types::I8, 3));
+                let error = self.e.fb.ins().select(ok, fine, invalid);
+                self.write_checked(place, ty, read, error);
+                return None;
+            }
+            ToString => {
+                let value = self.widest(values[0], signed);
+                let (low, high) = self.e.fb.ins().isplit(value);
+                let signed_flag = self.e.fb.ins().iconst(types::I8, signed as i64);
+                self.e.call_rt(Rt::IntRadix, &[low, high, signed_flag, values[1]]).unwrap()
+            }
+            Floor => self.e.fb.ins().floor(values[0]),
+            Ceil => self.e.fb.ins().ceil(values[0]),
+            Round => self.e.fb.ins().nearest(values[0]),
+            Truncate => self.e.fb.ins().trunc(values[0]),
+            RoundTiesAway => {
+                let value =
+                    if clif == types::F32 { self.e.fb.ins().fpromote(types::F64, values[0]) } else { values[0] };
+                let rounded = self.e.call_rt(Rt::MathRoundAway, &[value]).unwrap();
+                if clif == types::F32 { self.e.fb.ins().fdemote(types::F32, rounded) } else { rounded }
+            }
+            Sqrt => {
+                let zero = self.float_const(clif, 0.0);
+                let negative = self.e.fb.ins().fcmp(FloatCC::LessThan, values[0], zero);
+                let root = self.e.fb.ins().sqrt(values[0]);
+                // `MathError.Domain`, its only variant.
+                let (fine, domain) = (self.e.fb.ins().iconst(types::I8, -1), self.e.fb.ins().iconst(types::I8, 0));
+                let error = self.e.fb.ins().select(negative, domain, fine);
+                self.write_checked(place, ty, root, error);
+                return None;
+            }
+            IsNaN => self.e.fb.ins().fcmp(FloatCC::Unordered, values[0], values[0]),
+            IsInfinite => self.is_infinite(values[0], clif),
+            IsFinite => {
+                let magnitude = self.e.fb.ins().fabs(values[0]);
+                let infinity = self.float_const(clif, f64::INFINITY);
+                self.e.fb.ins().fcmp(FloatCC::LessThan, magnitude, infinity)
+            }
+            ToFixed => {
+                let value =
+                    if clif == types::F32 { self.e.fb.ins().fpromote(types::F64, values[0]) } else { values[0] };
+                self.e.call_rt(Rt::TextFixed, &[value, values[1]]).unwrap()
+            }
+            Bits => {
+                let pattern = if clif == types::F32 { types::I32 } else { types::I64 };
+                self.e.fb.ins().bitcast(pattern, MemFlagsData::new(), values[0])
+            }
+            FromBits => self.e.fb.ins().bitcast(clif, MemFlagsData::new(), values[0]),
+        };
+        Some(Val::Scalar(value))
+    }
+
     /// Writes `ok(value)` or `err(NumericConversionError)` into `place`.
     fn write_checked(&mut self, place: &Place, ty: Ty, value: ir::Value, error: ir::Value) {
         let base = self.pointer_to(place, true);
@@ -7357,6 +7816,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let index = self.e.fb.ins().iconst(types::I64, index as i64);
                 self.e.call_rt(Rt::ConsoleSet, &[index, values[0]])
             }
+            Callee::Std(StdFn::Number(_)) => unreachable!("assigned by `number`"),
             Callee::Std(StdFn::Native(index)) => {
                 // Arithmetic the processor does in one instruction.
                 let ins = self.e.fb.ins();

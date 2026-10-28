@@ -1,0 +1,6 @@
+fn main() {
+    _ = 200u8.nextPowerOfTwo()
+}
+
+// expect-panic: P0005
+// expect-stderr: panic[P0005]: checked-overflow: 200.nextPowerOfTwo() does not fit in UInt8 (0 to 255)

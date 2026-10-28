@@ -1,0 +1,6 @@
+fn main() {
+    _ = 2.pow(-1)
+}
+
+// expect-panic: P0018
+// expect-stderr: panic[P0018]: negative-exponent: 2.pow(-1): the exponent must be 0 or more

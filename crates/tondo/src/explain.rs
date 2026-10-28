@@ -197,6 +197,7 @@ pub const CODES: &[(&str, &str, &str)] = &[
     ),
     ("P0016", "nul-in-c-string", "A text with a zero byte inside goes to C as an `ffi.CString`."),
     ("P0017", "invalid-panic-code", "The computed `code` of `panic` is not a code of the program's own."),
+    ("P0018", "negative-exponent", "`pow` of an integer, or one of its variants, gets a negative exponent."),
     ("P2001", "test-skip-during-cleanup", "`testing.skip` while a cleanup, an unwind or a teardown runs."),
     ("P2002", "test-tag-conflict", "`testing.tags` changes the value a key already has in the same test."),
     (

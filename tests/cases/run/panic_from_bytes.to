@@ -1,0 +1,6 @@
+fn main() {
+    _ = UInt32.fromBytes(5u64.toBytes(), at: 6)
+}
+
+// expect-panic: P0001
+// expect-stderr: panic[P0001]: bounds: 4 bytes from 6 are not in an array of 8: `at` must be from 0 to 4

@@ -122,8 +122,9 @@ fn check_with<'a>(
 }
 
 /// Prelude type names (26.3); they cannot be redeclared unqualified.
-pub(crate) const PRELUDE_TYPES: [&str; 46] = [
+pub(crate) const PRELUDE_TYPES: [&str; 47] = [
     "NumericConversionError",
+    "ByteOrder",
     "Bool",
     "Int",
     "Float",
@@ -1819,12 +1820,132 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// A constant of an intrinsic numeric type: `max` and `min` of the
-    /// integers, and `pi`, `e`, `infinity`, `nan` and `epsilon` of the floats.
+    /// The number with named operations a type is (18.9).
+    fn number_kind(&self, ty: Ty) -> Option<crate::numbers::Kind> {
+        use crate::numbers::Kind;
+        match self.types.kind(ty) {
+            TyKind::Int(int) => Some(Kind::Int(*int)),
+            TyKind::Float(float) => Some(Kind::Float(*float)),
+            TyKind::Byte => Some(Kind::Byte),
+            _ => None,
+        }
+    }
+
+    /// The type a parameter or result of a named operation of `own` has.
+    fn number_shape(&mut self, shape: crate::numbers::Shape, own: Ty) -> Ty {
+        use crate::numbers::Shape;
+        match shape {
+            Shape::Same | Shape::Integral | Shape::Numeric => own,
+            Shape::Int => Ty::INT,
+            Shape::Bool => Ty::BOOL,
+            Shape::String => Ty::STRING,
+            Shape::Bytes => self.types.intern(TyKind::Array(Ty::BYTE)),
+            Shape::Order => match self.type_names.get("prelude.ByteOrder") {
+                Some(&TypeName::Nominal(ty)) => ty,
+                _ => Ty::ERROR,
+            },
+            Shape::Pattern if own == Ty::F32 => Ty::int(IntTy::U32),
+            Shape::Pattern => Ty::int(IntTy::U64),
+            Shape::Optional => self.types.intern(TyKind::Option(own)),
+            Shape::Overflowing => self.types.intern(TyKind::Tuple(vec![own, Ty::BOOL])),
+            Shape::Parsed => self.types.intern(TyKind::Result(own, self.text_error)),
+            Shape::Rooted => {
+                let error = match self.type_names.get("math.MathError") {
+                    Some(&TypeName::Nominal(ty)) => ty,
+                    _ => Ty::ERROR,
+                };
+                self.types.intern(TyKind::Result(own, error))
+            }
+        }
+    }
+
+    /// The signature of a named operation of `own`, its receiver first when
+    /// it has one, with the values of the parameters a call may omit.
+    fn number_signature(&mut self, own: Ty, entry: &crate::numbers::Entry) -> Signature {
+        let (mut params, mut names, mut defaults) = (Vec::new(), Vec::new(), Vec::new());
+        if entry.receiver {
+            params.push(own);
+            names.push("self".to_string());
+            defaults.push(None);
+        }
+        for &(name, shape, default) in entry.params {
+            let ty = self.number_shape(shape, own);
+            params.push(ty);
+            names.push(name.to_string());
+            defaults.push(default.map(|text| {
+                let kind = match text.parse::<i128>() {
+                    Ok(number) => hir::ExprKind::Int(number),
+                    // `ByteOrder.Big`, its first variant.
+                    Err(_) => hir::ExprKind::Variant(0, Vec::new()),
+                };
+                Self::mk(kind, ty, Span::default())
+            }));
+        }
+        let result = self.number_shape(entry.result, own);
+        Signature {
+            modes: vec![ast::Mode::Value; params.len()],
+            params,
+            names,
+            receiver: entry.receiver.then_some(ast::Mode::Value),
+            variadic: false,
+            result,
+            generics: Vec::new(),
+            name: format!("{}.{}", self.display(own), entry.name),
+            defaults,
+            is_unsafe: false,
+            foreign: false,
+        }
+    }
+
+    /// A named operation of the number `own` without a receiver:
+    /// `UInt8.parse(text)`, `Float.fromBits(bits)`, `Int8.wrapping(value)`.
+    fn number_function(
+        &mut self,
+        cx: &mut FnCx,
+        own: Ty,
+        entry: &crate::numbers::Entry,
+        args: &[ast::Arg],
+        expected: Option<Ty>,
+        span: Span,
+    ) -> hir::Expr {
+        use crate::numbers::{Kind, NumOp};
+        let callee = Callee::Std(StdFn::Number(entry.op));
+        if !matches!(entry.op, NumOp::Wrapping | NumOp::Saturating) {
+            let signature = self.number_signature(own, entry);
+            let target = CallTarget::new(callee, signature, expected);
+            return self.call_signature(cx, target, None, args, span);
+        }
+        // Any integer or `Byte`, and for `saturating` any float too.
+        let [arg] = args else { return self.arity_error(span, 1, args.len()) };
+        let value = self.expr(cx, &arg.value, None);
+        let accepted = match self.number_kind(value.ty) {
+            Some(Kind::Float(_)) => entry.op == NumOp::Saturating,
+            Some(_) => true,
+            None => value.ty == Ty::ERROR,
+        };
+        if !accepted {
+            let what = if entry.op == NumOp::Saturating { "a number or a `Byte`" } else { "an integer or a `Byte`" };
+            let message =
+                format!("`{}.{}` takes {what}, and this is {}", self.display(own), entry.name, self.display(value.ty));
+            self.diags.error("E1102", value.span, message);
+            return Self::error_expr(span);
+        }
+        Self::mk(hir::ExprKind::Call(callee, Vec::new(), vec![value]), own, span)
+    }
+
+    /// A constant of an intrinsic numeric type: `max`, `min` and `bits` of
+    /// the integers, and `pi`, `e`, `infinity`, `nan`, `epsilon`, `min` and
+    /// `max` of the floats.
     fn intrinsic_constant(&self, ty: Ty, name: &str) -> Option<hir::ExprKind> {
+        use crate::types::FloatTy;
         match (self.types.kind(ty), name) {
             (TyKind::Int(int), "max") => Some(hir::ExprKind::Int(int.max() as i128)),
             (TyKind::Int(int), "min") => Some(hir::ExprKind::Int(int.min())),
+            (TyKind::Int(int), "bits") => Some(hir::ExprKind::Int(int.bits() as i128)),
+            (TyKind::Float(FloatTy::F64), "max") => Some(hir::ExprKind::Float(f64::MAX)),
+            (TyKind::Float(FloatTy::F64), "min") => Some(hir::ExprKind::Float(f64::MIN)),
+            (TyKind::Float(_), "max") => Some(hir::ExprKind::Float(f32::MAX as f64)),
+            (TyKind::Float(_), "min") => Some(hir::ExprKind::Float(f32::MIN as f64)),
             (TyKind::Float(_), "pi") => Some(hir::ExprKind::Float(std::f64::consts::PI)),
             (TyKind::Float(_), "e") => Some(hir::ExprKind::Float(std::f64::consts::E)),
             (TyKind::Float(_), "infinity") => Some(hir::ExprKind::Float(f64::INFINITY)),
@@ -2954,7 +3075,9 @@ impl<'a> Checker<'a> {
                 _ => unreachable!(),
             };
             let renamed = |path: &Vec<String>| path == &["std", "panics"] || path == &["std", "datetime"];
-            let shown = match self.module_paths.get(module as usize).is_some_and(renamed) {
+            // A type the prelude declares for every program, as `ByteOrder`.
+            let everywhere = name.name.strip_prefix("prelude.").filter(|bare| PRELUDE_TYPES.contains(bare));
+            let shown = match self.module_paths.get(module as usize).is_some_and(renamed) || everywhere.is_some() {
                 true => self.shown_type_name(&name.name, module),
                 false => name.name.clone(),
             };
@@ -2973,6 +3096,9 @@ impl<'a> Checker<'a> {
                 self.c_decls.insert(id, decl);
             }
             self.declare_type_name(name, TypeName::Nominal(ty));
+            if let Some(bare) = everywhere {
+                self.type_names.insert(bare.to_string(), TypeName::Nominal(ty));
+            }
             if let ast::Item::Type(ast::TypeDecl { body: ast::TypeBody::Newtype(_), .. }) = item {
                 self.declare_module_name(name, ModuleName::Newtype(ty));
             }
@@ -10640,6 +10766,14 @@ impl<'a> Checker<'a> {
         if self.is_http_route(ty, method, args) {
             return self.http_route(cx, value, method, args, expected, span);
         }
+        // The named operations of a number (18.9).
+        if let Some(kind) = self.number_kind(ty)
+            && let Some(entry) = crate::numbers::find(kind, &method.name, true)
+        {
+            let signature = self.number_signature(ty, entry);
+            let callee = Callee::Std(StdFn::Number(entry.op));
+            return self.dot_call(cx, callee, signature, HashMap::new(), value, method, args, expected, span);
+        }
         let key = self.owner_key(ty);
         if let Some(&id) = self.methods.get(&(key, method.name.clone())) {
             self.index_refer(method, crate::index::Key::Fn(id.0));
@@ -11742,6 +11876,7 @@ impl<'a> Checker<'a> {
             && let Some(ty) = self.intrinsic_owner(&type_name.name)
             && let Some(kind) = self.intrinsic_constant(ty, &constant.name)
         {
+            let ty = if matches!(kind, hir::ExprKind::Int(_)) && constant.name == "bits" { Ty::INT } else { ty };
             return Self::mk(kind, ty, span);
         }
         // `Context.field`: its value where the code runs (11.16).
@@ -12143,6 +12278,22 @@ impl<'a> Checker<'a> {
             && !self.names.contains_key(*type_name)
             && let Some(owner) = self.type_named(type_name)
         {
+            if let Some(kind) = self.number_kind(owner) {
+                if let Some(entry) = crate::numbers::find(kind, operation, false) {
+                    return self.number_function(cx, owner, entry, args, expected, span);
+                }
+                // A method with its receiver written first: `Int.abs(x)` (11.5).
+                if let Some(entry) = crate::numbers::find(kind, operation, true)
+                    && let Some((first, rest)) = args.split_first()
+                {
+                    let receiver = self.expr(cx, &first.value, Some(owner));
+                    let receiver = self.coerce(receiver, owner);
+                    let signature = self.number_signature(owner, entry);
+                    let callee = Callee::Std(StdFn::Number(entry.op));
+                    let target = CallTarget::new(callee, signature, expected);
+                    return self.call_signature(cx, target, Some(receiver), rest, span);
+                }
+            }
             if let Some(id) = self.methods.get(&(owner, operation.to_string())).copied() {
                 self.index_refer(&segments[0], crate::index::Key::Type(segments[0].name.clone()));
                 self.index_refer(&segments[1], crate::index::Key::Fn(id.0));

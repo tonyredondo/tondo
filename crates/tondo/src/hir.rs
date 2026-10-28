@@ -831,6 +831,8 @@ pub enum StdFn {
     Process(ProcessFn),
     /// A function of an internal standard module, by its index in `NATIVES`.
     Native(u16),
+    /// A named operation of a number (18.9).
+    Number(crate::numbers::NumOp),
     /// `time.sleep(delay)`: waits without blocking the thread (14.3.3).
     TimeSleep,
     /// `time.now()`, `unixTime()`, `utcNow()` and `utc(sinceEpoch)` (14.3).

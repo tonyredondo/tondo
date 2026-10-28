@@ -36,6 +36,7 @@ mod meta;
 mod msgpack;
 mod native;
 mod net;
+mod numbers;
 mod panics;
 mod poll;
 mod pprof;
@@ -692,7 +693,7 @@ pub(crate) unsafe fn visit_array(visitor: &mut cycles::Visitor, a: *mut u8, size
 }
 
 /// Allocates an array of `len` uninitialized elements and room for `cap`.
-fn array_alloc(size: usize, len: usize, cap: usize) -> *mut ArrayHeader {
+pub(crate) fn array_alloc(size: usize, len: usize, cap: usize) -> *mut ArrayHeader {
     let cap = cap.max(len);
     let layout = array_layout(size, cap);
     unsafe {
@@ -2141,18 +2142,19 @@ pub unsafe extern "C" fn tondo_rt_sb_int128(b: *mut Builder, low: u64, high: u64
     unsafe { (*b).extend(text.as_bytes()) }
 }
 
-/// `a * b` of 128 bits, in halves, into `out`; whether it does not fit.
+/// `a * b` of 128 bits, in halves: its low bits into `out`, and whether
+/// it does not fit.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_int128_multiply(signed: u8, values: *const [u64; 4], out: *mut [u64; 2]) -> u8 {
     let [a_low, a_high, b_low, b_high] = unsafe { *values };
     let (a, b) = ((a_high as u128) << 64 | a_low as u128, (b_high as u128) << 64 | b_low as u128);
-    let product = match signed != 0 {
-        true => (a as i128).checked_mul(b as i128).map(|p| p as u128),
-        false => a.checked_mul(b),
+    let overflow = match signed != 0 {
+        true => (a as i128).checked_mul(b as i128).is_none(),
+        false => a.checked_mul(b).is_none(),
     };
-    let result = product.unwrap_or(0);
+    let result = a.wrapping_mul(b);
     unsafe { *out = [result as u64, (result >> 64) as u64] };
-    product.is_none() as u8
+    overflow as u8
 }
 
 /// `a / b`, or `a % b` when `remainder`, of 128 bits, in halves, into
@@ -2371,6 +2373,7 @@ pub(crate) fn panic_name(code: u32) -> &'static str {
         15 => "invalid-environment-name",
         16 => "nul-in-c-string",
         17 => "invalid-panic-code",
+        18 => "negative-exponent",
         2001 => "test-skip-during-cleanup",
         2002 => "test-tag-conflict",
         2003 => "test-virtual-time-deadlock",
@@ -2587,7 +2590,8 @@ unsafe fn values_message(code: u32, detail: u32, values: *const [u64; 4], ty: *c
     let (left, right) = (show(a, detail & 0x100 != 0), show(b, detail & 0x200 != 0));
     let (a, b) = (a as i64, b as i64);
     let ty = String::from_utf8_lossy(unsafe { str_bytes(ty) });
-    let operator = ["+", "-", "*", "/", "%", "-", "<<", ">>"].get(op as usize).copied().unwrap_or("?");
+    let operator =
+        ["+", "-", "*", "/", "%", "-", "<<", ">>", "pow", "nextPowerOfTwo"].get(op as usize).copied().unwrap_or("?");
     let range = || {
         let unused = 128 - bits.clamp(1, 128);
         match detail & 0x100 != 0 {
@@ -2607,6 +2611,7 @@ unsafe fn values_message(code: u32, detail: u32, values: *const [u64; 4], ty: *c
         ],
         6 => vec![("left", panics::Datum::Int(a)), ("right", panics::Datum::Int(b))],
         10 => vec![("count", int(&right)), ("width", panics::Datum::Int(i64::from(bits)))],
+        18 => vec![("exponent", int(&right))],
         _ => Vec::new(),
     };
     panics::language_data(data);
@@ -2618,6 +2623,9 @@ unsafe fn values_message(code: u32, detail: u32, values: *const [u64; 4], ty: *c
         1 => out_of_bounds(a, b as usize, "array"),
         3 => format!("{left} {operator} 0"),
         5 if op == 5 => format!("-({left}) does not fit in {ty} ({})", range()),
+        5 if op == 8 => format!("{left}.pow({right}) does not fit in {ty} ({})", range()),
+        5 if op == 9 => format!("{left}.nextPowerOfTwo() does not fit in {ty} ({})", range()),
+        18 => format!("{left}.pow({right}): the exponent must be 0 or more"),
         5 => format!("{left} {operator} {right} does not fit in {ty} ({})", range()),
         6 => format!("an array of length {a} cannot become the C array {ty}: it needs exactly {b} elements"),
         10 => format!("{left} {operator} {right}: a shift of {ty} must be from 0 to {}", bits - 1),

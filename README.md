@@ -178,13 +178,13 @@ What the specifications define and Tondo does not do yet, found by
 compiling every example they contain and reading the rest against the
 code (2026-10-24):
 
-- **Numbers (being built):** the named operations of every number
-  (language 18.9), the traits `Additive`, `Number` and `Integer` with the
-  operators they give a program's types and a trait that requires others
-  (18.10, 12.3), and what they change in the standard library: `Encode` and
-  `Decode` for every number, `Random.int` of any integer, `math.gcd` and
-  `math.lcm` of any integer, and `Duration` as `Additive`. `Int128`,
-  `UInt128` and `UInt` work.
+- **Numbers (being built):** the traits `Additive`, `Number` and `Integer`
+  with the operators they give a program's types and a trait that requires
+  others (language 18.10, 12.3), and what they change in the standard
+  library: `Encode` and `Decode` for every number, `Random.int` of any
+  integer, `math.gcd` and `math.lcm` of any integer, and `Duration` as
+  `Additive`. `Int128`, `UInt128`, `UInt` and the named operations of
+  every number (18.9) work.
 - **Tools:** the register `testing/doc-test-runtime-links.json`, which ties
   each fragment and script of a normative document to a test that runs it
   (21.6); `tondo doc-test` gives no `formatted_sha256` for an example the

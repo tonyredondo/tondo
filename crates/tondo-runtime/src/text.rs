@@ -140,7 +140,7 @@ pub unsafe extern "C" fn tondo_rt_text_parse_int(s: *const Str, radix: i64) -> i
 }
 
 /// A decimal float, `inf`, `-inf` or `NaN`, as Tondo writes them.
-fn parse_float(s: &str) -> Option<f64> {
+pub(crate) fn parse_float(s: &str) -> Option<f64> {
     match s {
         "inf" | "+inf" => return Some(f64::INFINITY),
         "-inf" => return Some(f64::NEG_INFINITY),

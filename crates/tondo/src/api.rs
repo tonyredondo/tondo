@@ -31,10 +31,12 @@ const BUILTINS: &str = include_str!("../std/api/builtins.to");
 /// the ones only the toolchain uses.
 const HIDDEN: &[&str] = &["datetime", "fuzz", "panics"];
 
-/// The methods `std/api/builtins.to` gives `owner`, such as `String`.
+/// The methods `std/api/builtins.to` gives `owner`, such as `String`, and
+/// the operations of the numbers (language 18.9).
 pub fn builtin_methods(owner: &str) -> Vec<&'static str> {
     BUILTINS
         .lines()
+        .chain(crate::numbers::declarations().lines())
         .filter_map(|line| {
             let rest = line.strip_prefix("pub fn ")?.strip_prefix(owner)?;
             let rest = match rest.strip_prefix('[') {
@@ -74,13 +76,14 @@ pub fn parameters(declaration: &str) -> Option<&str> {
 /// The declaration and documentation of a method the runtime implements,
 /// as `tondo api` shows them: `pub fn Array.length(self): Int`.
 pub fn builtin_doc(owner: &str, name: &str) -> Option<(String, String)> {
-    declaration(BUILTINS, |line| {
+    let wanted = |line: &str| {
         line.strip_prefix("pub fn ").and_then(|rest| rest.strip_prefix(owner)).is_some_and(|rest| {
             let rest = rest.strip_prefix('[').map_or(rest, |g| g.find(']').map_or(g, |end| &g[end + 1..]));
             rest.strip_prefix('.')
                 .is_some_and(|rest| rest.starts_with(name) && rest[name.len()..].starts_with(['(', '[']))
         })
-    })
+    };
+    declaration(BUILTINS, wanted).or_else(|| declaration(crate::numbers::declarations(), wanted))
 }
 
 /// The function `name` of a standard module, as `tondo api` shows it:
@@ -165,7 +168,8 @@ pub fn standard(name: &str) -> Option<String> {
                 false => part.to_string(),
             })
             .collect();
-        return Some(format!("{}\n\n{BUILTINS}", prelude.join("\n\n")));
+        let numbers = crate::numbers::declarations();
+        return Some(format!("{}\n\n{BUILTINS}\n{numbers}", prelude.join("\n\n")));
     }
     let name = name.strip_prefix("std.")?;
     if let Some((_, text)) = INTRINSIC.iter().find(|(n, _)| *n == name) {

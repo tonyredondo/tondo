@@ -299,6 +299,20 @@ fn hover_tells_where_a_context_got_its_value() {
     editor.stop();
 }
 
+const NUMBERS: &str = "import std.console\n\nfn main() {\n    let word: UInt16 = 0x1234\n    console.println(\"{word.reverseBytes()}\")\n}\n";
+
+#[test]
+fn hover_shows_the_operations_of_numbers() {
+    let dir = project("lsp-numbers", &[("main.to", NUMBERS)]);
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("main.to"));
+    let hover = editor.at("textDocument/hover", &uri, NUMBERS, "word.reverseBytes()", "reverseBytes", json!({}));
+    let value = hover["contents"]["value"].as_str().unwrap_or_default();
+    assert!(value.starts_with("```tondo\npub fn UInt16.reverseBytes(self): UInt16\n```"), "{hover}");
+    assert!(value.contains("big-endian"), "{value}");
+    editor.stop();
+}
+
 #[test]
 fn diagnostics_follow_the_edits() {
     let dir = project("lsp-diagnostics", &[("main.to", "fn main() {\n    let x: Int = \"text\"\n    _ = x\n}\n")]);

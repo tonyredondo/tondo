@@ -1,0 +1,93 @@
+// The named operations of the numbers (18.9), the same in every width:
+// overflow variants, bits, bytes, text in any base, named conversions
+// and the floats' own, for narrow types, 128 bits and Byte.
+
+import std.console
+
+fn wide() {
+    let a = UInt128.max - 1
+    let b: Int128 = -5
+    console.println(
+        "{a.countOnes()} {a.leadingZeros()} {a.trailingZeros()} {a.rotateLeft(1)} {b.abs()} {b.wrappingMul(Int128.max)}",
+    )
+    console.println(
+        "{a.checkedAdd(2)} {a.saturatingAdd(5)} {a.overflowingMul(2)} {b.checkedDiv(0)} {Int128.min.checkedDiv(-1)} {Int128.min.checkedRem(-1)}",
+    )
+    console.println(
+        "{2u128.pow(127)} {2u128.checkedPow(128)} {(-3i128).saturatingPow(81)} {10i128.pow(38)}",
+    )
+    console.println(
+        "{UInt128.parse("ff", radix: 16)} {b.toString(radix: 2)} {1u128.reverseBytes()} {UInt128.fromBytes(1u128.reverseBytes().toBytes(), order: ByteOrder.Little)}",
+    )
+    console.println(
+        "{UInt128.wrapping(-1) == UInt128.max} {Int128.saturating(UInt128.max)} {UInt128.saturating(1.0e40)} {Int8.saturating(b)}",
+    )
+    console.println(
+        "{(1u128 << 100).nextPowerOfTwo()} {((1u128 << 100) + 1).nextPowerOfTwo()} {a.compare(UInt128.max)}",
+    )
+}
+
+fn main(): !NumericConversionError {
+    let a: UInt8 = 200
+    let b: Int8 = -100
+    console.println(
+        "{a.countOnes()} {a.leadingZeros()} {a.trailingZeros()} {a.rotateLeft(3)} {a.reverseBits()} {b.abs()}",
+    )
+    console.println(
+        "{a.wrappingAdd(100)} {a.checkedAdd(100)} {a.checkedAdd(10)} {a.saturatingAdd(100)} {a.overflowingAdd(100)}",
+    )
+    console.println(
+        "{b.saturatingSub(100)} {b.checkedNeg()} {Int8.min.checkedNeg()} {b.wrappingNeg()} {b.saturatingMul(2)}",
+    )
+    console.println(
+        "{2.pow(10)} {3u8.checkedPow(6)} {2u8.saturatingPow(9)} {2u8.wrappingPow(9)} {(-2i8).pow(7)}",
+    )
+    console.println(
+        "{UInt8.parse("ff", radix: 16)} {Int8.parse("-129")} {Int.parse("42")} {UInt128.parse("340282366920938463463374607431768211455")}",
+    )
+    console.println(
+        "{255u8.toString(radix: 2)} {(-255).toString(16)} {UInt.max.toString(radix: 36)}",
+    )
+    console.println(
+        "{0x1234u16.reverseBytes() == 0x3412} {0x12345678u32.toBytes()} {UInt32.fromBytes(0x01020304u32.toBytes(), order: ByteOrder.Little)}",
+    )
+    console.println(
+        "{UInt8.wrapping(300)} {UInt.wrapping(-1)} {Int8.saturating(1000)} {UInt8.saturating(-5)} {Int.saturating(1.0e30)} {Int8.saturating(Float.nan)}",
+    )
+    console.println(
+        "{17u32.nextPowerOfTwo()} {16u32.isPowerOfTwo()} {0u8.nextPowerOfTwo()} {Int.bits} {UInt128.bits}",
+    )
+    console.println(
+        "{2.5.floor()} {2.5.round()} {2.5.roundTiesAway()} {-1.7.truncate()} {9.0.sqrt()} {(-1.0).sqrt()} {Float.nan.isNaN()}",
+    )
+    console.println(
+        "{1.5f32.bits()} {Float32.fromBits(1069547520)} {Float.parse("2.5")} {Float32.parse("0.1")} {3.14159.toFixed(2)}",
+    )
+    console.println(
+        "{1.0.compare(Float.nan)} {Float.nan.compare(Float.nan)} {3.compare(5)} {Float32.max} {Float.min}",
+    )
+    console.println(
+        "{5.clamp(0, 3)} {2.0.clamp(0.0, 1.0)} {Int.abs(-4)} {Byte(255u8).countOnes()} {Byte(3u8).toString(radix: 2)}",
+    )
+    wide()
+}
+
+// expect-stdout: 3 0 3 70 19 100
+// expect-stdout: 44 none some(210) 255 (44, true)
+// expect-stdout: -128 some(100) none 100 -128
+// expect-stdout: 1024 none 255 0 -128
+// expect-stdout: ok(255) err(invalid data) ok(42) ok(340282366920938463463374607431768211455)
+// expect-stdout: 11111111 -ff 3w5e11264sgsf
+// expect-stdout: true [18, 52, 86, 120] 67305985
+// expect-stdout: 44 18446744073709551615 127 0 9223372036854775807 0
+// expect-stdout: 32 true 1 64 128
+// expect-stdout: 2.0 2.0 3.0 -1.0 ok(3.0) err(the value is outside the operation's domain) true
+// expect-stdout: 1069547520 1.5 ok(2.5) ok(0.1) 3.14
+// expect-stdout: -1 0 -1 3.4028235e38 -1.7976931348623157e308
+// expect-stdout: 3 1.0 4 8 11
+// expect-stdout: 127 0 1 340282366920938463463374607431768211453 5 -170141183460469231731687303715884105723
+// expect-stdout: none 340282366920938463463374607431768211455 (340282366920938463463374607431768211452, true) none none some(0)
+// expect-stdout: 170141183460469231731687303715884105728 none -170141183460469231731687303715884105728 100000000000000000000000000000000000000
+// expect-stdout: ok(255) -101 1329227995784915872903807060280344576 1
+// expect-stdout: true 170141183460469231731687303715884105727 340282366920938463463374607431768211455 -5
+// expect-stdout: 1267650600228229401496703205376 2535301200456458802993406410752 -1

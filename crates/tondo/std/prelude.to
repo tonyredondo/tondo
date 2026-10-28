@@ -34,17 +34,6 @@ fn order[T: Ordered](a: T, b: T): Int {
     a.compare(b)
 }
 
-/// Negative, zero or positive as `self` goes before, with or after `other`.
-pub fn Int.compare(self, other: Int): Int {
-    Ordered.compare(self, other)
-}
-
-/// Negative, zero or positive as `self` goes before, with or after `other`;
-/// `NaN` goes after every other value.
-pub fn Float.compare(self, other: Float): Int {
-    Ordered.compare(self, other)
-}
-
 /// Negative, zero or positive as `self` goes before, with or after `other`,
 /// by Unicode scalar values.
 pub fn String.compare(self, other: String): Int {
@@ -279,23 +268,6 @@ pub fn String.toUpper(self): String {
     textNative.upper(self)
 }
 
-/// The integer the text writes in `radix` (2 to 36), with an optional sign
-/// and `_` between digits.
-pub fn Int.parse(input: String, radix: Int = 10): Int ! __text.TextError {
-    if not textNative.isInt(input, radix) {
-        fail __text.TextError.InvalidData
-    }
-    textNative.parseInt(input, radix)
-}
-
-/// The float the text writes, such as `1.5`, `-2e3`, `inf` or `NaN`.
-pub fn Float.parse(input: String): Float ! __text.TextError {
-    if not textNative.isFloat(input) {
-        fail __text.TextError.InvalidData
-    }
-    textNative.parseFloat(input)
-}
-
 // ---------------------------------------------------------------------------
 // Char
 // ---------------------------------------------------------------------------
@@ -351,120 +323,14 @@ pub fn Char.from(code: Int): Char? {
 }
 
 // ---------------------------------------------------------------------------
-// Int and Float
+// Numbers: their operations are intrinsics (language 18.9)
 // ---------------------------------------------------------------------------
 
-/// The value without its sign; `Int.min` has none in `Int`, and panics.
-pub fn Int.abs(self): Int {
-    if self < 0 { -self } else { self }
-}
-
-/// The smaller of the two.
-pub fn Int.min(self, other: Int): Int {
-    if other < self { other } else { self }
-}
-
-/// The larger of the two.
-pub fn Int.max(self, other: Int): Int {
-    if other > self { other } else { self }
-}
-
-/// The value inside `low` to `high`.
-pub fn Int.clamp(self, low: Int, high: Int): Int {
-    self.max(low).min(high)
-}
-
-/// The value raised to a power of zero or more; overflow panics like any
-/// arithmetic.
-pub fn Int.pow(self, exponent: Int): Int {
-    var result = 1
-    var base = self
-    var rest = exponent
-    for rest > 0 {
-        if rest % 2 == 1 {
-            result *= base
-        }
-        rest /= 2
-        if rest > 0 {
-            base *= base
-        }
-    }
-    result
-}
-
-/// The value in `radix` (2 to 36), with lowercase digits.
-pub fn Int.toString(self, radix: Int = 10): String {
-    textNative.int(self, radix)
-}
-
-/// The value without its sign.
-pub fn Float.abs(self): Float {
-    if self < 0.0 { -self } else { self }
-}
-
-/// The smaller of the two; the value itself when either is NaN.
-pub fn Float.min(self, other: Float): Float {
-    if other < self { other } else { self }
-}
-
-/// The larger of the two; the value itself when either is NaN.
-pub fn Float.max(self, other: Float): Float {
-    if other > self { other } else { self }
-}
-
-/// The value inside `low` to `high`.
-pub fn Float.clamp(self, low: Float, high: Float): Float {
-    self.max(low).min(high)
-}
-
-/// The largest integer not above the value: `-1.0` for `-0.5`.
-pub fn Float.floor(self): Float {
-    mathNative.floor(self)
-}
-
-/// The smallest integer not below the value: `1.0` for `0.5`.
-pub fn Float.ceil(self): Float {
-    mathNative.ceil(self)
-}
-
-/// The nearest integer; a value halfway between goes to the even one.
-pub fn Float.round(self): Float {
-    mathNative.round(self)
-}
-
-/// The integer part of the value, toward zero: `-1.0` for `-1.7`.
-pub fn Float.truncate(self): Float {
-    mathNative.trunc(self)
-}
-
-/// The square root; an error for a negative value.
-pub fn Float.sqrt(self): Float ! __math.MathError {
-    __math.sqrt(self)
-}
-
-/// The value raised to `exponent`.
-pub fn Float.pow(self, exponent: Float): Float {
-    mathNative.pow(self, exponent)
-}
-
-/// Whether the value is not a number, as `0.0 / 0.0`.
-pub fn Float.isNaN(self): Bool {
-    mathNative.classify(self) == 2
-}
-
-/// Whether the value is infinite, of either sign.
-pub fn Float.isInfinite(self): Bool {
-    mathNative.classify(self) == 1
-}
-
-/// Whether the value is neither infinite nor NaN.
-pub fn Float.isFinite(self): Bool {
-    mathNative.classify(self) == 0
-}
-
-/// The value with exactly `decimals` digits after the point: `2.50`.
-pub fn Float.toFixed(self, decimals: Int): String {
-    textNative.fixed(self, decimals)
+/// Which byte of a number comes first: the highest, as networks send it,
+/// or the lowest, as most processors keep it.
+pub enum ByteOrder {
+    Big
+    Little
 }
 
 // ---------------------------------------------------------------------------

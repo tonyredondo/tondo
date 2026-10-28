@@ -9,6 +9,15 @@
 fail; `Int(x)`, `Byte(n)` and other narrowing ones return
 `T ! NumericConversionError`. A `Byte` literal is `Byte(255u8)`.
 
+Every number has the same operations in every width (`tondo api prelude`
+lists them): arithmetic that wraps, checks or saturates instead of
+panicking (`h.wrappingMul(prime)`, `a.checkedAdd(b)`, `n.saturatingSub(1)`),
+bits (`countOnes`, `rotateLeft`, `reverseBytes`), bytes
+(`id.toBytes()`, `UInt.fromBytes(bytes, at: 8)`), text in any base
+(`UInt8.parse("ff", radix: 16)`, `n.toString(radix: 2)`) and conversions
+that keep the low bits or the nearest value (`UInt.wrapping(-1)`,
+`UInt8.saturating(300)`).
+
 ## Records, newtypes and aliases
 
 ```tondo
