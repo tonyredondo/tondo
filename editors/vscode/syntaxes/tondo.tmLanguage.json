@@ -167,6 +167,17 @@
           }
         },
         {
+          "match": "\\b(context)\\s+([A-Z][A-Za-z0-9_]*)(?=\\s*=)",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.type.tondo"
+            },
+            "2": {
+              "name": "entity.name.type.tondo"
+            }
+          }
+        },
+        {
           "match": "\\b(test|suite)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": {
@@ -198,6 +209,10 @@
         },
         {
           "match": "\\brecover\\b(?=\\s*\\{)",
+          "name": "keyword.control.tondo"
+        },
+        {
+          "match": "\\bwithin\\b(?=\\s+[^\\s(=,.:)])",
           "name": "keyword.control.tondo"
         },
         {

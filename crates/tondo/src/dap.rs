@@ -11,6 +11,9 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
+/// The path of the handle of a frame's contexts, before a context's name.
+const CONTEXT: &str = "@context ";
+
 /// The editor's side: messages framed with `Content-Length`, numbered.
 #[derive(Clone)]
 struct Editor {
@@ -597,7 +600,12 @@ fn handle(
         "scopes" => {
             let (task, index) = frame_of(arguments["frameId"].as_u64().unwrap_or(10_000));
             let locals = program.handle(task, index, String::new());
-            Ok(json!({ "scopes": [{ "name": "Locals", "variablesReference": locals, "expensive": false }] }))
+            // The task's contexts (language 11.16).
+            let context = program.handle(task, index, CONTEXT.to_string());
+            Ok(json!({ "scopes": [
+                { "name": "Locals", "variablesReference": locals, "expensive": false },
+                { "name": "Context", "variablesReference": context, "expensive": false },
+            ] }))
         }
         // A frame's bindings, or the parts of one or of a part, each with a
         // reference to its own parts when it has some.
@@ -609,7 +617,26 @@ fn handle(
             };
             program.ask(&format!("select {task} {index}"))?;
             let mut variables = Vec::new();
-            if path.is_empty() {
+            if let Some(name) = path.strip_prefix(CONTEXT) {
+                // The contexts, and the fields of one, with the `with` that
+                // set each.
+                let contexts = program.ask("context")?;
+                for context in contexts["contexts"].as_array().into_iter().flatten() {
+                    let named = context["name"].as_str().unwrap_or_default();
+                    if name.is_empty() {
+                        let reference = program.handle(task, index, format!("{CONTEXT}{named}"));
+                        variables.push(json!({ "name": named, "value": "", "variablesReference": reference }));
+                    } else if name == named {
+                        for field in context["fields"].as_array().into_iter().flatten() {
+                            let value = match field["set"].as_str() {
+                                Some(at) => format!("{}  (with at {at})", field["value"].as_str().unwrap_or_default()),
+                                None => field["value"].as_str().unwrap_or_default().to_string(),
+                            };
+                            variables.push(json!({ "name": field["name"], "value": value, "variablesReference": 0 }));
+                        }
+                    }
+                }
+            } else if path.is_empty() {
                 let locals = program.ask("locals")?;
                 for local in locals["locals"].as_array().into_iter().flatten() {
                     let name = local["name"].as_str().unwrap_or_default().to_string();

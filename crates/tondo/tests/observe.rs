@@ -282,6 +282,10 @@ fn profiles_carry_labels() {
 
 const DUMPED: &str = r#"import std.console
 
+context Request = {
+    id: String = ""
+}
+
 fn sleeper(woken: Receiver[Int]) {
     let _ = woken.receive()
 }
@@ -292,6 +296,7 @@ fn main() {
         kept.push("entry {i} ".repeat(10))
     }
     let (wake, woken) = channel[Int]()
+    with Request { id: "r9" }
     let job = spawn sleeper(woken)
     console.println("ready {kept.length()}")
     let _ = console.flush()
@@ -347,15 +352,19 @@ fn dumps_of_a_running_program_and_at_a_panic() {
         found.unwrap_or_else(|| panic!("no task runs {runs} in {tasks}")).clone()
     };
     assert_eq!(task("main")["state"], "waits");
-    assert_eq!(task("main")["at"], "dumped.to:16 in main");
-    assert_eq!(task("sleeper")["at"], "dumped.to:4 in sleeper");
-    assert_eq!(task("sleeper")["spawned"][0], "dumped.to:13 in main");
+    assert_eq!(task("main")["at"], "dumped.to:21 in main");
+    assert_eq!(task("sleeper")["at"], "dumped.to:8 in sleeper");
+    assert_eq!(task("sleeper")["spawned"][0], "dumped.to:18 in main");
+    // The task it starts has its contexts.
+    let contexts = json!([{ "name": "Request", "fields": { "id": "\"r9\"" } }]);
+    assert_eq!(task("main")["contexts"], contexts);
+    assert_eq!(task("sleeper")["contexts"], contexts);
     // About 8 MiB of strings, from where the program made them: with a
     // sample every 512 KiB, a run without one is as good as impossible.
     let heap = read(&["heap"])["heap"].clone();
     let strings = heap["sites"].as_array().unwrap().iter().find(|s| s["kind"] == "String");
     let strings = strings.unwrap_or_else(|| panic!("no strings in {heap}"));
-    assert_eq!(strings["site"], "dumped.to:10 in main");
+    assert_eq!(strings["site"], "dumped.to:14 in main");
     assert!(heap["bytes"].as_f64().unwrap() > 500_000.0, "{heap}");
 
     // At a panic, with TONDO_DUMP.
@@ -385,10 +394,16 @@ fn older(user: User): User {
 }
 
 fn main() {
+    with Trace { depth: 2 }
     let ada = User { name: "Ada", age: 36 }
     let names = ["a", "b"]
     let aged = older(ada)
     console.println("{aged.age} {names.length()}")
+}
+
+context Trace = {
+    depth: Int = 0
+    path: String = "/"
 }
 "#;
 
@@ -404,7 +419,7 @@ fn debugger_session() {
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
-    let script = "break debugged.to:13\ncontinue\nlocals\nstep\nstack\nprint user\nframe 1\nprint ada.name\nchildren names\nframe 0\nfinish\ndelete 1\ncontinue\n";
+    let script = "break debugged.to:14\ncontinue\nlocals\nstep\nstack\nprint user\ncontext\nframe 1\nprint ada.name\nchildren names\nframe 0\nfinish\ndelete 1\ncontinue\n";
     std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
     drop(child.stdin.take());
     let output = child.wait_with_output().unwrap();
@@ -413,16 +428,26 @@ fn debugger_session() {
         String::from_utf8_lossy(&output.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
     let stops: Vec<&Value> = lines.iter().filter_map(|l| l.get("stopped")).collect();
     assert_eq!(stops[0]["why"], "start");
-    assert_eq!(stops[1]["at"], "debugged.to:13 in main");
+    assert_eq!(stops[1]["at"], "debugged.to:14 in main");
     assert_eq!(stops[2]["at"], "debugged.to:6 in older");
     let locals = lines.iter().find_map(|l| l["locals"].as_array()).unwrap();
     let shown: Vec<String> = locals.iter().map(|l| format!("{} = {}", l["name"], l["value"])).collect();
     assert_eq!(shown, [r#""ada" = "User { name: \"Ada\", age: 36 }""#, r#""names" = "[\"a\", \"b\"]""#]);
     let stack = lines.iter().find_map(|l| l["stack"].as_array()).unwrap();
-    assert_eq!(stack[..2], [json!("debugged.to:6 in older"), json!("debugged.to:13 in main")]);
+    assert_eq!(stack[..2], [json!("debugged.to:6 in older"), json!("debugged.to:14 in main")]);
     let user = lines.iter().find(|l| l["name"] == "user").unwrap();
     assert_eq!(user["value"], "User { name: \"Ada\", age: 36 }");
     assert_eq!(user["children"], 2);
+    // The task's contexts: what a `with` set, and where.
+    let contexts = lines.iter().find_map(|l| l["contexts"].as_array()).unwrap();
+    assert_eq!(contexts[0]["name"], "Trace");
+    let fields: Vec<(&str, &str, &Value)> = contexts[0]["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| (f["name"].as_str().unwrap(), f["value"].as_str().unwrap(), &f["set"]))
+        .collect();
+    assert_eq!(fields, [("depth", "2", &json!("debugged.to:11:5 in main")), ("path", "\"/\"", &Value::Null)]);
     // The caller's frame, and parts of its bindings by their paths.
     assert!(lines.iter().any(|l| l["selected"] == json!({ "task": 1, "frame": 1 })), "{lines:?}");
     let name = lines.iter().find(|l| l["name"] == "ada.name").unwrap();
@@ -569,7 +594,7 @@ fn debug_adapter() {
     response(&mut output, "launch", &mut events);
     until(&mut output, "initialized", &mut events);
     let path = dir.join("debugged.to");
-    send("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [{ "line": 13 }] }));
+    send("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [{ "line": 14 }] }));
     let set = response(&mut output, "setBreakpoints", &mut events);
     assert_eq!(set["body"]["breakpoints"][0]["verified"], true);
     send("configurationDone", json!({}));
@@ -579,7 +604,7 @@ fn debug_adapter() {
     let thread = stopped["body"]["threadId"].clone();
     send("stackTrace", json!({ "threadId": thread }));
     let trace = response(&mut output, "stackTrace", &mut events);
-    assert_eq!(trace["body"]["stackFrames"][0]["line"], 13);
+    assert_eq!(trace["body"]["stackFrames"][0]["line"], 14);
     // The frame's bindings, and the parts of one, opened.
     let variables =
         |send: &mut dyn FnMut(&str, Value), frame: &Value, output: &mut BufReader<_>, events: &mut Vec<Value>| {
@@ -611,6 +636,18 @@ fn debug_adapter() {
     assert_eq!((frames[0]["name"].as_str(), frames[1]["name"].as_str()), (Some("older"), Some("main")));
     let outer = variables(&mut send, &frames[1]["id"], &mut output, &mut events);
     assert_eq!(outer[0]["name"], "ada");
+    // The task's contexts, a scope of every frame.
+    send("scopes", json!({ "frameId": frames[0]["id"] }));
+    let scopes = response(&mut output, "scopes", &mut events)["body"]["scopes"].clone();
+    let context = scopes.as_array().unwrap().iter().find(|s| s["name"] == "Context").expect("a Context scope");
+    send("variables", json!({ "variablesReference": context["variablesReference"] }));
+    let contexts = response(&mut output, "variables", &mut events)["body"]["variables"].clone();
+    assert_eq!(contexts[0]["name"], "Trace");
+    send("variables", json!({ "variablesReference": contexts[0]["variablesReference"] }));
+    let fields = response(&mut output, "variables", &mut events)["body"]["variables"].clone();
+    let depth = fields[0]["value"].as_str().unwrap();
+    assert!(depth.starts_with("2  (with at ") && depth.ends_with("debugged.to:11:5 in main)"), "{fields}");
+    assert_eq!((&fields[1]["name"], &fields[1]["value"]), (&json!("path"), &json!("\"/\"")));
     send("continue", json!({ "threadId": 1 }));
     response(&mut output, "continue", &mut events);
     until(&mut output, "terminated", &mut events);

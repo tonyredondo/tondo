@@ -628,6 +628,17 @@ impl Server {
             value.push_str("\n\n");
             value.push_str(&docs);
         }
+        // A context's field read here: where its value comes from (11.16).
+        if let Some(&(_, set)) = index.contexts.iter().find(|(read, _)| *read == span) {
+            let note = match set {
+                Some(with) => {
+                    let (line, _) = sources.file_of(with.start).line_col(with.start);
+                    format!("Here its value is the one `with` gave it at line {line}.")
+                }
+                None => "Here its value is the one it has where this function is called, or in the task that started this one.".to_string(),
+            };
+            value.push_str(&format!("\n\n{note}"));
+        }
         let file = sources.file_of(span.start);
         let range = {
             let start = (span.start - file.base) as usize;
@@ -1371,13 +1382,8 @@ impl Server {
             let (start, end) = (token.span.start - base, token.span.end - base);
             match &token.tok {
                 crate::lexer::Tok::Kw(_) => add(start, end, 11),
-                // `recover` is a word of the language before `{`.
-                crate::lexer::Tok::Ident(name)
-                    if name == "recover"
-                        && lexed.get(index + 1).is_some_and(|next| next.tok == crate::lexer::Tok::LBrace) =>
-                {
-                    add(start, end, 11)
-                }
+                // `recover`, `context` and `within`, where they are words of the language.
+                crate::lexer::Tok::Ident(_) if crate::parser::keyword_at(&lexed, index) => add(start, end, 11),
                 crate::lexer::Tok::Str(_) | crate::lexer::Tok::Char(_) => add(start, end, 13),
                 crate::lexer::Tok::Int { .. } | crate::lexer::Tok::Float { .. } => add(start, end, 14),
                 // A type the program does not declare, as `Int` or `Array`.
@@ -1534,9 +1540,10 @@ const TOKEN_TYPES: [&str; 16] = [
 ];
 
 /// The keywords completion offers.
-const KEYWORDS: [&str; 25] = [
+const KEYWORDS: [&str; 28] = [
     "let", "var", "fn", "pub", "type", "enum", "trait", "impl", "const", "import", "if", "else", "for", "in", "match",
-    "return", "break", "continue", "fail", "spawn", "defer", "select", "recover", "none", "some",
+    "return", "break", "continue", "fail", "spawn", "defer", "select", "recover", "context", "with", "within", "none",
+    "some",
 ];
 
 /// The root a file is analyzed under: the project around it, or the file

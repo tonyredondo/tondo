@@ -510,9 +510,9 @@ impl Rt {
             Rt::UnwindHold => ("tondo_rt_unwind_hold", &[], &[]),
             Rt::UnwindResume => ("tondo_rt_unwind_resume", &[], &[]),
             Rt::UnwindReturn => ("tondo_rt_unwind_return", &[], &[]),
-            Rt::ContextRegister => ("tondo_rt_context_register", &[I64, I64, I64, I64, I64], &[]),
+            Rt::ContextRegister => ("tondo_rt_context_register", &[I64, I64, I64, I64, I64, I64, I64], &[]),
             Rt::ContextGet => ("tondo_rt_context_get", &[I64], &[I64]),
-            Rt::ContextSet => ("tondo_rt_context_set", &[I64, I64], &[I64]),
+            Rt::ContextSet => ("tondo_rt_context_set", &[I64, I64, I64, I64], &[I64]),
             Rt::ContextRestore => ("tondo_rt_context_restore", &[I64], &[]),
             Rt::JoinWaitTimeout => ("tondo_rt_join_wait_timeout", &[I64, I64, I64], &[I8]),
             Rt::JoinCancel => ("tondo_rt_join_cancel", &[I64], &[]),
@@ -2910,8 +2910,11 @@ impl Emit<'_, Codegen<'_>> {
             let maker = address(self, Some(fns.maker));
             let (log, label) = (address(self, fns.log), address(self, fns.label));
             let release = self.glue_or_null(Glue::Release, record);
+            let show = self.glue_address(Glue::Show, record);
+            let name = self.cg.types().display(record);
+            let name = self.string_ptr(&name);
             let index = self.fb.ins().iconst(types::I64, index as i64);
-            self.call_rt(Rt::ContextRegister, &[index, maker, release, log, label]);
+            self.call_rt(Rt::ContextRegister, &[index, maker, release, log, label, name, show]);
         }
     }
 }
@@ -7289,9 +7292,14 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let index = self.e.fb.ins().iconst(types::I64, i64::from(index));
                 self.e.call_rt(Rt::ContextGet, &[index])
             }
-            Callee::Std(StdFn::ContextSet(index)) => {
+            Callee::Std(StdFn::ContextSet(index, fields)) => {
                 let index = self.e.fb.ins().iconst(types::I64, i64::from(index));
-                self.e.call_rt(Rt::ContextSet, &[index, values[0]])
+                let fields = self.e.fb.ins().iconst(types::I64, fields as i64);
+                // Where it is, for the tools that show which `with` set a
+                // field (toolchain 7.6).
+                let at = format!("{} in {}", self.e.cg.sources().location(self.span), self.body.name);
+                let at = self.e.string_ptr(&at);
+                self.e.call_rt(Rt::ContextSet, &[index, values[0], fields, at])
             }
             Callee::Std(StdFn::ContextRestore) => self.e.call_rt(Rt::ContextRestore, &values),
             Callee::Std(StdFn::RecoverEnter) => self.e.call_rt(Rt::RecoverEnter, &[]),

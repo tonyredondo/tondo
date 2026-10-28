@@ -785,6 +785,9 @@ struct ConstEntry<'a> {
 /// Per-function checking state.
 struct FnCx {
     locals: Vec<hir::Local>,
+    /// The `with`s that hold where the code is checked (11.16): the
+    /// context, its fields changed, a bit each, and where it is.
+    withs: Vec<(u32, u64, Span)>,
     /// For an editor: the declaration of each named local.
     local_defs: HashMap<u32, usize>,
     /// Where the function's result type is written, which a repair may
@@ -4718,6 +4721,7 @@ impl<'a> Checker<'a> {
             _ => (result, None),
         };
         FnCx {
+            withs: Vec::new(),
             locals: Vec::new(),
             local_defs: HashMap::new(),
             result_span: None,
@@ -7002,6 +7006,7 @@ impl<'a> Checker<'a> {
     fn block(&mut self, cx: &mut FnCx, b: &ast::Block, expected: Option<Ty>) -> hir::Block {
         let body = std::mem::take(&mut cx.body);
         cx.scopes.push(Vec::new());
+        let withs = cx.withs.len();
         let outer = std::mem::replace(&mut cx.diverged, false);
         let stmts = self.statements(cx, &b.stmts);
         let tail = b.tail.as_ref().map(|t| {
@@ -7048,6 +7053,7 @@ impl<'a> Checker<'a> {
         };
         cx.diverged = outer;
         cx.scopes.pop();
+        cx.withs.truncate(withs);
         hir::Block { stmts, tail, ty }
     }
 
@@ -7084,7 +7090,11 @@ impl<'a> Checker<'a> {
                 let base = Self::mk(hir::ExprKind::ContextRead(context, reference), ty, stmt.span);
                 let value = self.update(cx, base, fields, true, stmt.span);
                 let value = Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::RefNew, vec![value]), reference, stmt.span);
-                Some(hir::Stmt::ContextSet { context, value, span: stmt.span })
+                let names = self.record_fields(ty, stmt.span).unwrap_or_default();
+                let changed = fields.iter().filter_map(|f| names.iter().position(|(name, _)| *name == f.name.name));
+                let fields = changed.fold(0u64, |set, index| set | 1 << index.min(63));
+                cx.withs.push((context, fields, stmt.span));
+                Some(hir::Stmt::ContextSet { context, value, fields, span: stmt.span })
             }
             ast::StmtKind::Let { mutable, pattern, ty, value } => {
                 let declared = ty.as_ref().map(|t| self.resolve_type(t));
@@ -11723,6 +11733,16 @@ impl<'a> Checker<'a> {
             && let Some((ty, context)) = self.context_named(std::slice::from_ref(name))
         {
             let reference = self.types.handle(Handle::Ref, ty);
+            // For an editor: the `with` that gave the field its value here.
+            if let Some(at) =
+                self.record_fields(ty, field.span).and_then(|f| f.iter().position(|(n, _)| *n == field.name))
+            {
+                let bit = 1u64 << at.min(63);
+                let set = cx.withs.iter().rev().find(|&&(c, fields, _)| c == context && fields & bit != 0).map(|w| w.2);
+                if let Some(index) = self.index.as_mut() {
+                    index.contexts.push((field.span, set));
+                }
+            }
             let mut value = Self::mk(hir::ExprKind::ContextRead(context, reference), ty, name.span);
             for segment in std::iter::once(field).chain(rest) {
                 let span = value.span.to(segment.span);

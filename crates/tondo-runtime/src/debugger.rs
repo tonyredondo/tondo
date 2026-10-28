@@ -907,6 +907,37 @@ pub(crate) fn command(line: &str) -> Option<String> {
                 .collect();
             format!("{{\"children\":[{}]}}", items.join(","))
         }
+        // The contexts of the task looked at, and which `with` set each
+        // field (language 11.16).
+        "context" => {
+            let state = state();
+            let task = state.selected.map(|(task, _)| task).or(state.stopped.as_ref().map(|s| s.task));
+            drop(state);
+            let Some(task) = task.and_then(super::tasks::by_id) else { return Some(not_stopped()) };
+            let contexts: Vec<String> = unsafe { super::contexts::described(task) }
+                .into_iter()
+                .map(|context| {
+                    let fields: Vec<String> = context
+                        .fields
+                        .iter()
+                        .map(|field| {
+                            let (at, inherited) = match &field.set {
+                                Some((at, inherited)) => (quoted(at), *inherited),
+                                None => ("null".to_string(), false),
+                            };
+                            format!(
+                                "{{\"name\":{},\"value\":{},\"children\":{},\"set\":{at},\"inherited\":{inherited}}}",
+                                quoted(&field.name),
+                                quoted(&clipped(&field.value)),
+                                field.parts
+                            )
+                        })
+                        .collect();
+                    format!("{{\"name\":{},\"fields\":[{}]}}", quoted(&context.name), fields.join(","))
+                })
+                .collect();
+            format!("{{\"contexts\":[{}]}}", contexts.join(","))
+        }
         "stack" => {
             let state = state();
             let task = match rest.parse::<u64>() {

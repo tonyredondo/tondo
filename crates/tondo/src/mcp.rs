@@ -1578,7 +1578,7 @@ impl Session {
 
 /// A line the debugger wrote, rather than the program.
 fn debugger(value: &Value) -> bool {
-    const KEYS: [&str; 12] = [
+    const KEYS: [&str; 18] = [
         "debugging",
         "running",
         "pausing",
@@ -1586,10 +1586,16 @@ fn debugger(value: &Value) -> bool {
         "exited",
         "breakpoint",
         "locals",
+        "contexts",
         "value",
+        "children",
         "stack",
+        "selected",
         "tasks",
+        "catch",
+        "logged",
         "deleted",
+        "reloaded",
         "error",
     ];
     value.as_object().is_some_and(|object| KEYS.iter().any(|key| object.contains_key(*key)))
@@ -2002,7 +2008,8 @@ debug build's process ID or name. A program it starts waits before main for brea
     Tool {
         name: "debug",
         description: "A command of a debugging session: break <file>:<line> [if <name> <op> <value>], delete <id>, \
-continue, step, next, finish, pause, locals, print <name>, stack, tasks, reload (a program started with `live`: \
+continue, step, next, finish, pause, locals, context (the task's contexts, and the `with` that set each field), \
+print <name>, stack, tasks, reload (a program started with `live`: \
 its code as its files are now, even while it is stopped), restart (live: the stopped function returns and is \
 called again with the same arguments, from its start, as its code is now); and wait, which waits for a running \
 program to stop. Gives the debugger's answers and events, and what the program printed.",

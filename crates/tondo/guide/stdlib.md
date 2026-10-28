@@ -215,7 +215,8 @@ lines with their code, `--html flame.html` a flame graph, `--json` data:
 ```
 
 `tondo dump app` writes `app-<pid>.dump.json`: every task, where it waits or
-runs, where it was spawned and the locks it holds, the counters, and the
+runs, where it was spawned, the locks it holds and the fields of its
+contexts a `with` set, the counters, and the
 live memory by where it was allocated. `tondo dump read <file>` shows it
 (`tasks`, `task <id>`, `heap`, `--json`). With `TONDO_DUMP=<dir>`, a
 program that panics, crashes or deadlocks leaves its dump there. The dump
@@ -235,6 +236,7 @@ break app.to:12 log at {i}      write it there, and go on
 continue | step | next | finish run, into calls, over them, out
 locals | print user.name        the bindings, or a part of one: items[2], map["k"]
 children user | stack | frame 1 a value's parts, the calls, a caller's bindings
+context                         the task's contexts, and the `with` that set each field
 set count 3 | catch none        change a binding; do not stop at panics
 tasks | task 2 | pause | delete 1 | quit
 ```

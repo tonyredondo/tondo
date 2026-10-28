@@ -39,6 +39,7 @@ pause                                           stop every task, as Ctrl-C does
 catch panic|none                                stop where a task panics and no recover stops it (the default), or not
 set <name> <value>                              change a binding of the frame where the task stopped: a number, Bool, Char, String
 locals                                          the bindings that hold a value (l)
+context                                         the task's contexts, and the `with` that set each field
 print <path>                                    a binding or a part of it: user.name, items[2], map[\"key\"] (p)
 children <path>                                 the parts of a binding or of a part
 stack [<task>]                                  where the stopped task is, or another (bt)
@@ -195,7 +196,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 }
             }
             "break" | "delete" | "continue" | "step" | "next" | "finish" | "pause" | "locals" | "print" | "stack"
-            | "tasks" | "restart" | "select" | "children" | "task" | "catch" | "set" => {
+            | "tasks" | "restart" | "select" | "children" | "task" | "catch" | "set" | "context" => {
                 // `task <id>` looks at that task's innermost frame.
                 let request = match word {
                     "task" => format!("select {rest} 0"),
@@ -327,6 +328,19 @@ impl Session {
             }
         } else if value.get("value").is_some() {
             println!("{}", binding(value));
+        } else if let Some(contexts) = value["contexts"].as_array() {
+            for context in contexts {
+                println!("{}", context["name"].as_str().unwrap_or_default());
+                for field in context["fields"].as_array().into_iter().flatten() {
+                    let set = match (field["set"].as_str(), field["inherited"].as_bool()) {
+                        (Some(at), Some(true)) => format!("  (with at {at}, in the task that started this one)"),
+                        (Some(at), _) => format!("  (with at {at})"),
+                        (None, _) => String::new(),
+                    };
+                    let name = field["name"].as_str().unwrap_or_default();
+                    println!("  {name} = {}{set}", field["value"].as_str().unwrap_or_default());
+                }
+            }
         } else if let Some(frames) = value["stack"].as_array() {
             for (index, frame) in frames.iter().enumerate() {
                 println!("#{index} {}", frame.as_str().unwrap_or_default());

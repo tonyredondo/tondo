@@ -123,7 +123,7 @@ fn may_panic(statement: &Statement) -> bool {
                             | hir::StdFn::WithinLeave
                             | hir::StdFn::WithinCatch
                             | hir::StdFn::ContextGet(_)
-                            | hir::StdFn::ContextSet(_)
+                            | hir::StdFn::ContextSet(..)
                             | hir::StdFn::ContextRestore
                             | hir::StdFn::RecoverEnd
                             | hir::StdFn::RecoverLeave
@@ -1583,10 +1583,10 @@ impl Builder<'_> {
             }
             // The context has a new value until the block ends, which
             // restores what the call saved (11.16).
-            hir::Stmt::ContextSet { context, value, span } => {
+            hir::Stmt::ContextSet { context, value, fields, span } => {
                 let made = self.expr(value);
                 let saved = self.new_local(Ty::int(crate::types::IntTy::U64));
-                let set = Rvalue::Call(hir::Callee::Std(hir::StdFn::ContextSet(*context)), vec![made]);
+                let set = Rvalue::Call(hir::Callee::Std(hir::StdFn::ContextSet(*context, *fields)), vec![made]);
                 self.assign(Place::local(saved), set, *span);
                 self.scopes.last_mut().unwrap().push(Exit::Restore(saved));
             }

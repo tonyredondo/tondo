@@ -244,6 +244,61 @@ fn hover_definitions_references_and_rename() {
     editor.stop();
 }
 
+const CONTEXTS: &str = r#"import std.console
+
+context Request = {
+    /// How deep the call is.
+    depth: Int = 0
+}
+
+fn show() {
+    console.println("{Request.depth}")
+}
+
+fn main() {
+    for depth in 1..3 {
+        with Request { depth }
+        show()
+        console.println("{Request.depth}")
+    }
+}
+"#;
+
+#[test]
+fn hover_tells_where_a_context_got_its_value() {
+    let dir = project("lsp-contexts", &[("main.to", CONTEXTS)]);
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("main.to"));
+    let mut hover = |line: &str| {
+        let result = editor.at("textDocument/hover", &uri, CONTEXTS, line, "depth", json!({}));
+        result["contents"]["value"].as_str().unwrap_or_default().to_string()
+    };
+    // The first line that has it is in `show`; the second, after the `with`.
+    let read = "    console.println(\"{Request.depth}\")";
+    assert_eq!(
+        hover(read),
+        "```tondo\ndepth: Int\n```\n\nHow deep the call is.\n\nHere its value is the one it has where this \
+         function is called, or in the task that started this one."
+    );
+    assert_eq!(
+        hover(&format!("    {read}")),
+        "```tondo\ndepth: Int\n```\n\nHow deep the call is.\n\nHere its value is the one `with` gave it at line 14."
+    );
+    // `context` is a word of the language before `Request =`.
+    let tokens = editor.request("textDocument/semanticTokens/full", json!({ "textDocument": { "uri": uri } }));
+    let data: Vec<u64> = tokens["data"].as_array().unwrap().iter().map(|n| n.as_u64().unwrap()).collect();
+    let mut line = 0;
+    let found: Vec<(u64, u64)> = data
+        .chunks(5)
+        .filter_map(|t| {
+            line += t[0];
+            (line == 2).then_some((t[1], t[3]))
+        })
+        .collect();
+    assert_eq!(found[0], (0, 11), "{tokens}");
+    editor.stop();
+}
+
 #[test]
 fn diagnostics_follow_the_edits() {
     let dir = project("lsp-diagnostics", &[("main.to", "fn main() {\n    let x: Int = \"text\"\n    _ = x\n}\n")]);

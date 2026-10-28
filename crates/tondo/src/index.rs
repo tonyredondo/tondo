@@ -75,6 +75,9 @@ pub struct Index {
     /// Fields written by the name of a binding, `User { name }`: renaming
     /// either one writes both.
     pub shorthands: Vec<Span>,
+    /// Each read of a context's field (11.16), by the field's name, and the
+    /// `with` of its function that gave it its value there, if one did.
+    pub contexts: Vec<(Span, Option<Span>)>,
     /// The type of each expression of the program's own files.
     pub types: Vec<(Span, usize)>,
     pub shapes: Vec<Shape>,

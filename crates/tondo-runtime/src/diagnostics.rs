@@ -911,18 +911,46 @@ fn counter_list() -> String {
 // Dumps
 // ---------------------------------------------------------------------------
 
+/// The contexts of a dump's task with a field a `with` set, with those
+/// fields.
+fn contexts_json(described: Vec<super::contexts::Described>) -> String {
+    let contexts: Vec<String> = described
+        .into_iter()
+        .filter_map(|context| {
+            let fields: Vec<String> = context
+                .fields
+                .iter()
+                .filter(|field| field.set.is_some())
+                .map(|field| format!("{}:{}", quoted(&field.name), quoted(&field.value)))
+                .collect();
+            (!fields.is_empty())
+                .then(|| format!("{{\"name\":{},\"fields\":{{{}}}}}", quoted(&context.name), fields.join(",")))
+        })
+        .collect();
+    format!("[{}]", contexts.join(","))
+}
+
 /// A dump of the program, as JSON: its counters, every task and where it
 /// is, and the samples of its live memory. The workers stop for it a while
 /// when `wait` says, so that the running tasks show where they are; `here`
 /// is the stack of this thread's own task.
 fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: Option<std::time::Duration>) -> String {
-    let (stopped, tasks) = super::cycles::without_collections(|| {
+    let (stopped, tasks, contexts) = super::cycles::without_collections(|| {
         let stopped = wait.is_some_and(super::tasks::stop_world);
         let tasks = super::tasks::snapshot(here);
+        // Each task's contexts (language 11.16), the fields a `with` set:
+        // not at a fault, where showing them could not allocate.
+        let contexts: Vec<String> = tasks
+            .iter()
+            .map(|task| match super::tasks::by_id(task.id).filter(|_| reason != "fault") {
+                Some(pointer) => contexts_json(unsafe { super::contexts::described(pointer) }),
+                None => "[]".to_string(),
+            })
+            .collect();
         if stopped {
             super::tasks::resume_world();
         }
-        (stopped, tasks)
+        (stopped, tasks, contexts)
     });
     let (samples, dropped) = super::heap::alive();
     let mut frames = Frames::default();
@@ -939,14 +967,15 @@ fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: Option<std:
         let locks: Vec<String> = task.locks.iter().map(|l| quoted(l)).collect();
         let _ = write!(
             out,
-            "{comma}{{\"id\":{},\"main\":{},\"state\":\"{}\",\"cancelled\":{},\"stack\":{},\"spawned\":{},\"locks\":[{}]}}",
+            "{comma}{{\"id\":{},\"main\":{},\"state\":\"{}\",\"cancelled\":{},\"stack\":{},\"spawned\":{},\"locks\":[{}],\"contexts\":{}}}",
             task.id,
             task.main,
             task.state,
             task.cancelled,
             frames.list(&task.stack),
             frames.list(&task.spawned),
-            locks.join(",")
+            locks.join(","),
+            contexts[index]
         );
     }
     let _ = write!(out, "],\"heap\":{{\"rate\":{},\"dropped\":{dropped},\"samples\":[", super::heap::RATE);

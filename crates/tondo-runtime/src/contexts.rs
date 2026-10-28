@@ -6,7 +6,7 @@
 
 use super::{Glue, RefHeader, Str};
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering, fence};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 /// What gives a context's initial value: a function of the program. In a
@@ -17,12 +17,27 @@ type Maker = unsafe extern "C" fn(*const u8) -> *mut RefHeader;
 /// and texts, each followed by a zero character.
 type Shown = unsafe extern "C" fn(*const u8) -> *mut Str;
 
-#[derive(Clone, Copy)]
+/// What writes a value as the debugger shows it.
+type Show = unsafe extern "C" fn(*mut super::Builder, *const u8);
+
+#[derive(Clone)]
 struct Entry {
     maker: Maker,
     release: Option<Glue>,
     log: Option<Shown>,
     label: Option<Shown>,
+    name: String,
+    show: Option<Show>,
+}
+
+/// A `with` that changed fields of a context, for the tools (toolchain
+/// 7.5, 7.6): where it is, which fields, by a bit each, the task that ran
+/// it, and the one before.
+pub(crate) struct Origin {
+    at: String,
+    fields: u64,
+    task: u64,
+    previous: Option<Arc<Origin>>,
 }
 
 /// The contexts the program registers as it starts, by index.
@@ -37,6 +52,8 @@ pub(crate) struct Table {
     slots: Vec<*mut RefHeader>,
     /// The fields marked `@label` its values give, for the task's labels.
     labels: Vec<(String, String)>,
+    /// The last `with` that changed each context, none for an initial value.
+    origins: Vec<Option<Arc<Origin>>>,
 }
 
 /// A task's table; none until a `with` changes it, which is the initial
@@ -56,25 +73,78 @@ impl Drop for Held {
 fn entries() -> &'static [Entry] {
     ENTRIES.get_or_init(|| {
         let registered = REGISTERED.lock().unwrap_or_else(|e| e.into_inner());
-        registered.iter().map(|entry| entry.expect("every context is registered")).collect()
+        registered.iter().map(|entry| entry.clone().expect("every context is registered")).collect()
     })
 }
 
 /// Each context's maker and the release of its record, as the program
 /// starts.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_context_register(
+pub unsafe extern "C" fn tondo_rt_context_register(
     index: usize,
     maker: Maker,
     release: Option<Glue>,
     log: Option<Shown>,
     label: Option<Shown>,
+    name: *const Str,
+    show: Option<Show>,
 ) {
+    let name = String::from_utf8_lossy(unsafe { super::str_bytes(name) }).into_owned();
     let mut registered = REGISTERED.lock().unwrap_or_else(|e| e.into_inner());
     if registered.len() <= index {
         registered.resize(index + 1, None);
     }
-    registered[index] = Some(Entry { maker, release, log, label });
+    registered[index] = Some(Entry { maker, release, log, label, name, show });
+}
+
+/// A context of a task, as the tools show it.
+pub(crate) struct Described {
+    pub name: String,
+    pub fields: Vec<Field>,
+}
+
+/// A field of a context: its text, how many parts it has, and the `with`
+/// that gave it its value, with whether another task ran it, none for its
+/// initial value.
+pub(crate) struct Field {
+    pub name: String,
+    pub value: String,
+    pub parts: usize,
+    pub set: Option<(String, bool)>,
+}
+
+/// The contexts of `task`, which runs no Tondo code meanwhile.
+pub(crate) unsafe fn described(task: *mut crate::tasks::Task) -> Vec<Described> {
+    let Some(task) = (unsafe { task.as_ref() }) else { return Vec::new() };
+    let table = table(Some(&task.context));
+    let mut out = Vec::new();
+    for (index, entry) in entries().iter().enumerate() {
+        let Some(show) = entry.show else { continue };
+        let slot = unsafe { (&(*table).slots)[index] };
+        let mut builder = super::Builder::new(0);
+        unsafe { show(&mut builder, super::ref_payload(slot as *mut u8)) };
+        let text = builder.finish();
+        let whole = String::from_utf8_lossy(unsafe { super::str_bytes(text) }).into_owned();
+        unsafe { super::tondo_rt_str_release(text) };
+        let parsed = super::shown::parse(&whole);
+        let origin = unsafe { (&(*table).origins)[index].clone() };
+        let fields = parsed
+            .parts
+            .iter()
+            .enumerate()
+            .map(|(at, (name, part))| {
+                let mut node = origin.as_deref();
+                while let Some(found) = node.filter(|o| o.fields & 1 << at.min(63) == 0) {
+                    node = found.previous.as_deref();
+                }
+                let set = node.map(|o| (o.at.clone(), o.task != task.id));
+                let name = name.trim_start_matches('.').to_string();
+                Field { name, value: part.text.to_string(), parts: part.parts.len(), set }
+            })
+            .collect();
+        out.push(Described { name: entry.name.clone(), fields });
+    }
+    out
 }
 
 /// The names and texts of the fields of the running task's contexts marked
@@ -136,7 +206,8 @@ fn root() -> *mut Table {
         return root;
     }
     let slots = entries().iter().map(|entry| unsafe { (entry.maker)(std::ptr::null()) }).collect();
-    let made = Box::into_raw(Box::new(Table { count: AtomicUsize::new(1), slots, labels: Vec::new() }));
+    let origins = vec![None; entries().len()];
+    let made = Box::into_raw(Box::new(Table { count: AtomicUsize::new(1), slots, labels: Vec::new(), origins }));
     match ROOT.compare_exchange(std::ptr::null_mut(), made, Ordering::AcqRel, Ordering::Acquire) {
         Ok(_) => made,
         Err(other) => {
@@ -175,10 +246,16 @@ pub extern "C" fn tondo_rt_context_get(index: usize) -> *mut RefHeader {
     unsafe { (&(*table).slots)[index] }
 }
 
-/// A `with`: the task's table becomes a new one with `value` for the
-/// context; the old one, which the block restores, is given back.
+/// A `with` at `at`, which changes `fields`, a bit each: the task's table
+/// becomes a new one with `value` for the context; the old one, which the
+/// block restores, is given back.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_context_set(index: usize, value: *mut RefHeader) -> *mut Table {
+pub unsafe extern "C" fn tondo_rt_context_set(
+    index: usize,
+    value: *mut RefHeader,
+    fields: u64,
+    at: *const Str,
+) -> *mut Table {
     let Some(held) = current() else { return std::ptr::null_mut() };
     let base = table(Some(held));
     let mut slots = unsafe { (*base).slots.clone() };
@@ -186,7 +263,11 @@ pub unsafe extern "C" fn tondo_rt_context_set(index: usize, value: *mut RefHeade
     for &slot in &slots {
         unsafe { (*slot).rc.fetch_add(1, Ordering::Relaxed) };
     }
-    let made = Box::into_raw(Box::new(Table { count: AtomicUsize::new(1), slots, labels: Vec::new() }));
+    let mut origins = unsafe { (*base).origins.clone() };
+    let at = String::from_utf8_lossy(unsafe { super::str_bytes(at) }).into_owned();
+    let previous = origins[index].take();
+    origins[index] = Some(Arc::new(Origin { at, fields, task: super::tasks::current_id(), previous }));
+    let made = Box::into_raw(Box::new(Table { count: AtomicUsize::new(1), slots, labels: Vec::new(), origins }));
     let saved = std::mem::replace(&mut held.0, made);
     // Its labels, which the new values give.
     if labelled() {

@@ -854,6 +854,7 @@ fn tasks(dump: &Value) -> Vec<Value> {
         out.push(json!({
             "id": task["id"], "runs": runs, "state": task["state"], "at": at, "cancelled": task["cancelled"],
             "stack": words(&task["stack"]), "spawned": words(&task["spawned"]), "locks": task["locks"],
+            "contexts": task.get("contexts").cloned().unwrap_or_else(|| json!([])),
         }));
     }
     out
@@ -880,6 +881,16 @@ fn task_text(task: &Value, whole: bool) -> String {
     }
     for lock in task["locks"].as_array().into_iter().flatten().filter_map(Value::as_str) {
         out.push_str(&format!("  holds a lock it took at {lock}\n"));
+    }
+    // The fields of its contexts that do not have their initial values.
+    for context in task["contexts"].as_array().into_iter().flatten() {
+        let fields: Vec<String> = context["fields"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(name, value)| format!("{name} = {}", value.as_str().unwrap_or_default()))
+            .collect();
+        out.push_str(&format!("  {}: {}\n", context["name"].as_str().unwrap_or_default(), fields.join(", ")));
     }
     out
 }

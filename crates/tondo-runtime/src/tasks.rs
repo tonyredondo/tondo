@@ -251,7 +251,7 @@ pub(crate) struct Task {
     /// The stack pointer saved when the task is not running.
     sp: *mut u8,
     /// Its number in a trace, from 1 for the main task.
-    id: u64,
+    pub(crate) id: u64,
     /// Where the set of tasks alive keeps it.
     slot: usize,
     /// None before a spawned task first runs: one started and not run yet
@@ -2411,6 +2411,11 @@ impl Wait {
             }
         }
     }
+}
+
+/// The task of an id, while it lives.
+pub(crate) fn by_id(id: u64) -> Option<*mut Task> {
+    tasks().iter().find(|&&t| unsafe { (*(t as *mut Task)).id } == id).map(|&t| t as *mut Task)
 }
 
 /// Ends the wait of the task `id` so that the statement it waits in starts

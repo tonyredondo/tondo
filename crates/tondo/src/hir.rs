@@ -237,6 +237,8 @@ pub enum Stmt {
     ContextSet {
         context: u32,
         value: Expr,
+        /// The fields it changes, a bit each, which the tools show it set.
+        fields: u64,
         span: Span,
     },
     /// Takes the lock of a `std.sync` value for the rest of the block:
@@ -858,7 +860,7 @@ pub enum StdFn {
     /// The `Ref` of a context's value where the code runs; a new value of
     /// it, which gives what to restore; and that restored (11.16).
     ContextGet(u32),
-    ContextSet(u32),
+    ContextSet(u32, u64),
     ContextRestore,
     /// A `recover` block starts, ends as code does (true when a task of it
     /// ended with a panic), ends another way, and stops the panic that

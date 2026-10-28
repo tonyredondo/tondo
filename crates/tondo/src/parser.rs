@@ -116,6 +116,32 @@ pub const CONTEXTUAL_CONSTRUCTORS: [&str; 3] = ["ok", "err", "some"];
 /// literal: `sync.Queue[a, b]` (5.11).
 const SYNC_COLLECTIONS: [&str; 5] = ["Array", "Map", "Set", "Stack", "Queue"];
 
+/// Whether the word at `at` is one of the language there, as `recover {`,
+/// `context Name =` (11.16) and `within limit {` (11.17) are, with the
+/// limit and `{` on one line; elsewhere they are names, as in `within(...)`.
+pub(crate) fn keyword_at(tokens: &[Token], at: usize) -> bool {
+    let nth = |offset: usize| &tokens[(at + offset).min(tokens.len() - 1)].tok;
+    match nth(0) {
+        Tok::Ident(word) if word == "recover" => nth(1) == &Tok::LBrace,
+        Tok::Ident(word) if word == "context" => matches!(nth(1), Tok::Ident(_)) && nth(2) == &Tok::Eq,
+        Tok::Ident(word) if word == "within" => {
+            let mut depth = 0usize;
+            for offset in 1.. {
+                match nth(offset) {
+                    Tok::LParen | Tok::LBracket => depth += 1,
+                    Tok::RParen | Tok::RBracket if depth > 0 => depth -= 1,
+                    Tok::LBrace if depth == 0 => return offset > 1,
+                    Tok::Eof => return false,
+                    Tok::Newline | Tok::RBrace | Tok::Eq | Tok::Comma | Tok::FatArrow if depth == 0 => return false,
+                    _ => {}
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
 impl Parser<'_> {
     // ---- token helpers ----------------------------------------------------
 
@@ -373,30 +399,9 @@ impl Parser<'_> {
         ) || (matches!(tok, Tok::Kw(Kw::Unsafe)) && matches!(self.nth(offset + 1), Tok::Kw(Kw::Fn)))
     }
 
-    /// Whether `within` starts a deadline here: an expression, then `{` on
-    /// the same line, follows it (11.17); a call `within(...)` has none.
-    fn at_within(&self) -> bool {
-        let mut depth = 0usize;
-        for offset in 1.. {
-            match self.nth(offset) {
-                Tok::LParen | Tok::LBracket => depth += 1,
-                Tok::RParen | Tok::RBracket if depth > 0 => depth -= 1,
-                Tok::LBrace if depth == 0 => return offset > 1,
-                Tok::Newline | Tok::Eof | Tok::RBrace | Tok::Eq | Tok::Comma | Tok::FatArrow if depth == 0 => {
-                    return false;
-                }
-                Tok::Eof => return false,
-                _ => {}
-            }
-        }
-        false
-    }
-
     /// Whether `context Name =` starts at `offset`: a context (11.16).
     fn at_context(&self, offset: usize) -> bool {
-        matches!(self.nth(offset), Tok::Ident(word) if word == "context")
-            && matches!(self.nth(offset + 1), Tok::Ident(_))
-            && self.nth(offset + 2) == &Tok::Eq
+        matches!(self.nth(offset), Tok::Ident(word) if word == "context") && keyword_at(&self.tokens, self.pos + offset)
     }
 
     fn declaration(&mut self) -> PResult<Option<Item>> {
@@ -2101,7 +2106,7 @@ impl Parser<'_> {
                 ExprKind::Recover(self.block()?)
             }
             // `within`, only before an expression and a block (11.17).
-            Tok::Ident(name) if name == "within" && self.at_within() => {
+            Tok::Ident(name) if name == "within" && keyword_at(&self.tokens, self.pos) => {
                 self.bump();
                 let no_brace = std::mem::replace(&mut self.no_brace, true);
                 let limit = self.expression();

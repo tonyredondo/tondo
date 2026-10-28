@@ -59,6 +59,26 @@
     ],
     "description": "Stop a panic: ok with the value, err with the Panic"
   },
+  "context": {
+    "prefix": "context",
+    "body": ["context ${1:Name} = {", "\t${2:field}: ${3:Int} = ${4:0}$0", "}"],
+    "description": "A context: values a task carries, changed by with"
+  },
+  "with": {
+    "prefix": "with",
+    "body": ["with ${1:Name} { ${2:field}: ${3:value} }$0"],
+    "description": "Change a context until the end of the block"
+  },
+  "within": {
+    "prefix": "within",
+    "body": [
+      "match within ${1:time.seconds(2)} { ${2:work()} } {",
+      "\tok(${3:value}) => $0",
+      "\terr(timedOut) => ${4:fail timedOut}",
+      "}"
+    ],
+    "description": "A block with a deadline: TimedOut once it passes"
+  },
   "spawn": {
     "prefix": "spawn",
     "body": ["let ${1:job} = spawn ${2:work}()", "let ${3:result} = $1.wait()$0"],

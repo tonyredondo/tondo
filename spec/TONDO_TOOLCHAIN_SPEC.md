@@ -573,9 +573,9 @@ Mientras nada traza el programa, grabar no cuesta más que comprobarlo.
 `counters`, en `<output>` o en `<programa>-<pid>.dump.json`: un JSON con sus
 contadores, cada tarea con su estado (`waits`, `ready`, `runs` o `in C`), la
 pila de donde está, dónde se lanzó y dónde tomó los locks que tiene, sus
-contextos con los campos que no tienen su valor inicial, y su memoria viva. Para ver dónde están las tareas que corren, los workers se
-paran un momento, y el que no llega a un punto donde pararse da su pila por
-una señal. Con `TONDO_DUMP=<dir>`, un programa que acaba en un pánico, en una
+contextos con los campos que no tienen su valor inicial, y su memoria viva.
+Para ver dónde están las tareas que corren, los workers se paran un momento,
+y el que no llega a un punto donde pararse da su pila por una señal. Con `TONDO_DUMP=<dir>`, un programa que acaba en un pánico, en una
 señal fatal o en un deadlock deja su volcado allí antes de terminar. `dump`
 nombra cada marco, así que su volcado se lee en otra máquina; uno al fallar
 se nombra al leerlo, con el ejecutable del programa.
