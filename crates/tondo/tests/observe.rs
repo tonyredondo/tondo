@@ -237,9 +237,19 @@ fn fib(n: Int): Int {
     fib(n - 1) + fib(n - 2)
 }
 
+// A context's field marked `@label` is a label too (language 11.16).
+context Route = {
+    @label("endpoint") path: String = ""
+}
+
+fn users(): Int {
+    with Route { path: "/users" }
+    fib(25)
+}
+
 fn main() {
     for _ in 0..480 {
-        profile.withLabels(["endpoint": "/users"], () { fib(25) })
+        users()
         profile.withLabels(["endpoint": "/orders"], () { fib(23) })
     }
 }

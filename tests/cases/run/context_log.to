@@ -1,0 +1,37 @@
+// A context's fields marked `@log` go in every event of `std.log` and in
+// the report of a panic; `log.Context` holds the logger the module's
+// functions write with.
+
+import std.console
+import std.log
+
+context Request = {
+    @log("request_id") id: String = ""
+    @log user: String? = none
+    locale: String = "en"
+}
+
+fn find(id: Int): Int {
+    log.info("looking up", ["id": "{id}"])
+    id * 2
+}
+
+fn handle(id: String, user: String?) {
+    with Request { id, user }
+    with log.Context { logger: some(log.current().withFields(["path": "/users/7"])) }
+    console.println("{find(7)}")
+    let empty: Array[Int] = []
+    console.println("{empty[3]}")
+}
+
+fn main() {
+    with log.Context { logger: some(log.Logger.new(timestamps: false)) }
+    log.info("starting")
+    handle("r-42", some("ada"))
+}
+
+// expect-stdout: 14
+// expect-stderr: INFO starting
+// expect-stderr: INFO looking up path=/users/7 request_id=r-42 user=ada id=7
+// expect-panic: P0001
+// expect-stderr: context: request_id=r-42 user=ada

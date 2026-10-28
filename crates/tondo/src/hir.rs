@@ -30,9 +30,19 @@ pub struct Program {
     /// In a test build, the tree of suites and tests, the root first;
     /// `main` then runs the root's members.
     pub tests: Vec<TestNodeInfo>,
-    /// Each context's maker (11.16): its initial value in a `Ref`, by the
-    /// context's index.
-    pub contexts: Vec<FnId>,
+    /// The functions of each context (11.16), by the context's index.
+    pub contexts: Vec<ContextFns>,
+}
+
+/// What the runtime calls of a context (11.16): the maker of its initial
+/// value in a `Ref`, and those that show its fields marked `@log` and
+/// `@label` that do not have their initial values, as names and texts
+/// after each a zero character.
+#[derive(Clone, Copy)]
+pub struct ContextFns {
+    pub maker: FnId,
+    pub log: Option<FnId>,
+    pub label: Option<FnId>,
 }
 
 /// The code of the panic that `testing.skip` ends a test or suite with,
@@ -1492,6 +1502,16 @@ pub const NATIVES: &[Native] = {
             params: &[],
             result: Int,
             symbol: "tondo_rt_deadline_remaining",
+        },
+        // `std.internal.context`: the fields of the task's contexts marked
+        // `@log` (11.16), each name and text followed by a zero character.
+        Native {
+            module: "context",
+            name: "logged",
+            receiver: None,
+            params: &[],
+            result: String,
+            symbol: "tondo_rt_context_logged",
         },
     ]
 };

@@ -158,6 +158,11 @@ fn main(): !(csv.CsvError | time.TimeError) {
 }
 ```
 
+A logger put in `log.Context` is the one `log.info(...)` and the other
+functions of `std.log` write with, everywhere below: `with log.Context {
+logger: some(log.Logger.new(format: log.Format.Json)) }` at the start of
+`main`.
+
 ## Watching a running program
 
 A program started with `TONDO_DIAGNOSTICS=1` can be watched; without it,

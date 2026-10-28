@@ -2425,7 +2425,7 @@ unsafe fn end_in_panic(mut code: u32, message: *const Str, location: *const Str)
     }
     let frames = resumed.as_deref().map(panics::frames_of);
     let stack = resumed.unwrap_or_else(trace::report);
-    let report = format!("{prefix}{text}\n --> {location}{stack}");
+    let report = format!("{prefix}{text}{}{stack}", panic.place());
     // A test build reports it to `tondo test` instead, with its data.
     testing::panic_data(&panic);
     if !testing::terminal(code, &report) {

@@ -130,6 +130,8 @@ pub(crate) struct Panic {
     /// Whether the program gave the data, which the text then shows.
     pub given: bool,
     pub location: String,
+    /// The fields of the task's contexts marked `@log` (11.16).
+    pub context: Vec<(String, String)>,
 }
 
 impl Panic {
@@ -142,7 +144,8 @@ impl Panic {
         if let Some((code, location, _)) = staged.resumed {
             let number = code.strip_prefix('P').and_then(|c| c.parse::<u32>().ok());
             let given = number.is_none_or(|n| n == 8 || n == 17);
-            return Panic { code, name: number.map(crate::panic_name), message, data: staged.data, given, location };
+            let (name, data, context) = (number.map(crate::panic_name), staged.data, crate::contexts::shown(false));
+            return Panic { code, name, message, data, given, location, context };
         }
         let mut given = !staged.data.is_empty() && !staged.language;
         let mut data = staged.data;
@@ -156,7 +159,18 @@ impl Panic {
             }
             None => (format!("P{code:04}"), Some(name)),
         };
-        Panic { code, name, message, data, given, location }
+        Panic { code, name, message, data, given, location, context: crate::contexts::shown(false) }
+    }
+
+    /// The report's lines after the first: the location, and the fields of
+    /// the contexts marked `@log`.
+    pub(crate) fn place(&self) -> String {
+        let mut text = format!("\n --> {}", self.location);
+        if !self.context.is_empty() {
+            let fields: Vec<String> = self.context.iter().map(|(name, value)| format!("{name}={value}")).collect();
+            let _ = write!(text, "\ncontext: {}", fields.join(" "));
+        }
+        text
     }
 
     /// The report's first lines: `panic[code]: name: message`, and the
@@ -199,8 +213,22 @@ impl Panic {
     pub(crate) fn json(&self, stack: &str, recovered: bool, suppressed: bool) -> String {
         let data = self.data_json();
         let name = self.name.map_or("null".to_string(), crate::diagnostics::quoted);
+        let context = match self.context.is_empty() {
+            true => "null".to_string(),
+            false => {
+                let mut fields: Vec<&(String, String)> = self.context.iter().collect();
+                fields.sort();
+                let members: Vec<String> = fields
+                    .iter()
+                    .map(|(name, value)| {
+                        format!("{}:{}", crate::diagnostics::quoted(name), crate::diagnostics::quoted(value))
+                    })
+                    .collect();
+                format!("{{{}}}", members.join(","))
+            }
+        };
         let mut out = format!(
-            "{{\"code\":{},\"data\":{data},\"error_type\":null,\"format\":\"tondo-panic-0.1/1\",\"kind\":\"panic\",\"message\":{},\"name\":{name},\"recovered\":{recovered},\"source\":{},\"stack\":{stack}",
+            "{{\"code\":{},\"context\":{context},\"data\":{data},\"error_type\":null,\"format\":\"tondo-panic-0.1/1\",\"kind\":\"panic\",\"message\":{},\"name\":{name},\"recovered\":{recovered},\"source\":{},\"stack\":{stack}",
             crate::diagnostics::quoted(&self.code),
             crate::diagnostics::quoted(&self.message),
             source(&self.location),
@@ -253,7 +281,7 @@ pub(crate) struct Record {
 
 impl Record {
     fn report(&self) -> String {
-        format!("{}\n --> {}{}", self.panic.headline(), self.panic.location, self.stack)
+        format!("{}{}{}", self.panic.headline(), self.panic.place(), self.stack)
     }
 
     /// Writes the report to standard error, as text or as JSON.
@@ -433,7 +461,8 @@ pub extern "C" fn tondo_rt_unwinding() -> u8 {
             && let Some(&(_, owner)) = task.withins.last()
         {
             let (code, message, location) = (String::new(), String::new(), String::new());
-            let panic = Panic { code, name: None, message, data: Vec::new(), given: false, location };
+            let context = Vec::new();
+            let panic = Panic { code, name: None, message, data: Vec::new(), given: false, location, context };
             let (stack, frames) = (String::new(), String::from("[]"));
             task.unwinding = Some(Box::new(Record { panic, stack, frames, deadline: Some(owner) }));
             crate::tasks::attend(true);
@@ -704,7 +733,8 @@ pub unsafe extern "C" fn tondo_rt_panic_report(
     let stack = format!("\n{}", text(stack).trim_start_matches('\n'));
     let number = code.strip_prefix('P').and_then(|c| c.parse::<u32>().ok());
     // Its data shows, with what the report adds, as which request it was.
-    let panic = Panic { code, name: number.map(crate::panic_name), message, data: staged.data, given: true, location };
+    let (name, context) = (number.map(crate::panic_name), crate::contexts::shown(false));
+    let panic = Panic { code, name, message, data: staged.data, given: true, location, context };
     let frames = frames_of(&stack);
     Record { panic, stack, frames, deadline: None }.print(true, false);
 }

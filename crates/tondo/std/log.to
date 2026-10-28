@@ -1,7 +1,8 @@
-// std.log (standard library 14.18): structured logging through an explicit
-// logger, a line per event, as text or JSON.
+// std.log (standard library 14.18): structured logging, a line per event,
+// as text or JSON, through a logger or the one of the context.
 
 import std.console as __console
+import std.internal.context as contextNative
 import std.io as __io
 import std.json as __json
 import std.time as __time
@@ -34,8 +35,8 @@ pub enum Format {
     Json
 }
 
-/// Writes events of its level or above, with its context fields. There is
-/// no global logger: a program makes its own and passes it on.
+/// Writes events of its level or above, with its fields: a program makes
+/// one and passes it on, or puts it in `Context`.
 pub type Logger = {
     priv output: __io.Writer
     priv minimum: Level
@@ -87,6 +88,13 @@ pub fn Logger.log(self, level: Level, message: String, fields: Map[String, Strin
         return
     }
     var all = self.context
+    // The fields of the contexts marked `@log` (11.16 of the language).
+    let shown = contextNative.logged().split("\u{0}")
+    var at = 0
+    for at + 1 < shown.length() {
+        all[shown[at]] = shown[at + 1]
+        at += 2
+    }
     for (key, value) in fields {
         all[key] = value
     }
@@ -125,6 +133,46 @@ pub fn Logger.warn(self, message: String, fields: Map[String, String] = [:]) {
 /// Writes the event at level `Error`, with its fields.
 pub fn Logger.error(self, message: String, fields: Map[String, String] = [:]) {
     self.log(Level.Error, message, fields)
+}
+
+/// The logger of the work that runs, which the functions of the module
+/// write with: `main` puts one there, and code below adds its fields.
+pub context Context = {
+    logger: Logger? = none
+}
+
+/// The logger of `Context`, or without one a logger as `Logger.new()`,
+/// which writes to standard error from `Info` on.
+pub fn current(): Logger {
+    match Context.logger {
+        some(logger) => logger
+        none => Logger.new()
+    }
+}
+
+/// Writes the event at level `Trace` with the logger of `Context`.
+pub fn trace(message: String, fields: Map[String, String] = [:]) {
+    current().log(Level.Trace, message, fields)
+}
+
+/// Writes the event at level `Debug` with the logger of `Context`.
+pub fn debug(message: String, fields: Map[String, String] = [:]) {
+    current().log(Level.Debug, message, fields)
+}
+
+/// Writes the event at level `Info` with the logger of `Context`.
+pub fn info(message: String, fields: Map[String, String] = [:]) {
+    current().log(Level.Info, message, fields)
+}
+
+/// Writes the event at level `Warn` with the logger of `Context`.
+pub fn warn(message: String, fields: Map[String, String] = [:]) {
+    current().log(Level.Warn, message, fields)
+}
+
+/// Writes the event at level `Error` with the logger of `Context`.
+pub fn error(message: String, fields: Map[String, String] = [:]) {
+    current().log(Level.Error, message, fields)
 }
 
 /// Hands what was written to the stream's host.

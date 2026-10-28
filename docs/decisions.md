@@ -2888,3 +2888,16 @@ task that runs the block keeps the deadline; the tasks it starts read it
 and are cancelled with the block. `spawn detached` now tells the runtime
 before the task starts, so that a detached task never belongs to a
 `recover` or a deadline, even for the moment before its `detach`.
+
+## 2026-10-28 — What a context shows, the compiler writes
+
+A field marked `@log` goes in every log event and panic report, and one
+marked `@label` in profiles, while it differs from its initial value. The
+runtime cannot show a value by itself, and an option should show what it
+holds rather than `some(...)`. So for each context with marked fields, the
+compiler writes a function in Tondo, checked as any other, that gives each
+field's name and `Display` text when it differs from its initial value, or
+when an option is `some`; the runtime calls it where it needs them. The
+labels of a task are those of its contexts with those of `withLabels` over
+them, made again whenever a `with` changes the contexts, so that a sample
+reads them as it read the labels before.

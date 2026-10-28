@@ -289,6 +289,8 @@ pub(crate) struct Task {
     /// The set of labels of `profile.withLabels` it carries, `0` for none,
     /// which its samples record and the tasks it starts inherit.
     labels: std::sync::atomic::AtomicU32,
+    /// Those of them `profile.withLabels` gives, without its contexts'.
+    own_labels: std::sync::atomic::AtomicU32,
     /// Its contexts (language 11.16), shared with the task that spawned it
     /// until a `with` changes them.
     pub(crate) context: super::contexts::Held,
@@ -436,6 +438,18 @@ pub(crate) fn labels() -> u32 {
 /// Gives the running task the labels `set`; the ones it had.
 pub(crate) fn set_labels(set: u32) -> u32 {
     unsafe { current().as_ref() }.map_or(0, |task| task.labels.swap(set, Ordering::Relaxed))
+}
+
+/// The labels `profile.withLabels` gives the running task, without those of
+/// its contexts.
+pub(crate) fn own_labels() -> u32 {
+    unsafe { current().as_ref() }.map_or(0, |task| task.own_labels.load(Ordering::Relaxed))
+}
+
+pub(crate) fn set_own_labels(set: u32) {
+    if let Some(task) = unsafe { current().as_ref() } {
+        task.own_labels.store(set, Ordering::Relaxed);
+    }
 }
 
 /// The bounds of the running task's stack, above its guard.
@@ -2177,6 +2191,7 @@ fn new_task(
         in_domain: !current().is_null() && unsafe { (*current()).in_domain },
         origin: None,
         labels: std::sync::atomic::AtomicU32::new(labels()),
+        own_labels: std::sync::atomic::AtomicU32::new(own_labels()),
         context: super::contexts::inherited(),
         withins: Vec::new(),
         expired: false,

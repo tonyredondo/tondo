@@ -65,21 +65,40 @@ pub(crate) fn get(number: u32) -> Option<Set> {
 /// give it back as it ends.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_labels_push(keys: *mut crate::ArrayHeader, values: *mut crate::ArrayHeader) -> i64 {
-    let previous = super::tasks::labels();
+    let previous = super::tasks::own_labels();
     let mut set = get(previous).unwrap_or_default();
     for (key, value) in crate::testing::strings(keys).into_iter().zip(crate::testing::strings(values)) {
         set.retain(|(name, _)| *name != key);
         set.push((key, value));
     }
     set.sort();
-    super::tasks::set_labels(intern(set));
+    super::tasks::set_own_labels(intern(set));
+    refresh();
     previous as i64
 }
 
 /// `profile.withLabels`, as it ends: the labels the task had.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_labels_restore(previous: i64) {
-    super::tasks::set_labels(previous as u32);
+    super::tasks::set_own_labels(previous as u32);
+    refresh();
+}
+
+/// The task's labels: those of its contexts' fields marked `@label`
+/// (language 11.16), and over them those `withLabels` gives.
+pub(crate) fn refresh() {
+    let own = super::tasks::own_labels();
+    let mut set = super::contexts::labels();
+    if set.is_empty() {
+        super::tasks::set_labels(own);
+        return;
+    }
+    for (key, value) in get(own).unwrap_or_default() {
+        set.retain(|(name, _)| *name != key);
+        set.push((key, value));
+    }
+    set.sort();
+    super::tasks::set_labels(intern(set));
 }
 
 #[cfg(test)]

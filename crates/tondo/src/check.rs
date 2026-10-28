@@ -230,6 +230,7 @@ enum StdModule {
     /// `std.internal.panic`: what a panic carries beyond its message.
     InternalPanic,
     InternalTime,
+    InternalContext,
 }
 
 /// The types `std.process` declares when imported.
@@ -1108,9 +1109,14 @@ impl<'a> Checker<'a> {
         let makers = self.context_makers();
         functions.extend(std::mem::take(&mut self.closure_functions).into_iter().map(|f| f.expect("checked closure")));
         let mut contexts = Vec::new();
-        for maker in makers {
-            contexts.push(FnId(functions.len() as u32));
-            functions.push(maker);
+        for (maker, log, label) in makers {
+            let mut add = |function: hir::Function| {
+                functions.push(function);
+                FnId(functions.len() as u32 - 1)
+            };
+            let maker = add(maker);
+            let (log, label) = (log.map(&mut add), label.map(&mut add));
+            contexts.push(hir::ContextFns { maker, log, label });
         }
 
         if module.c_library && self.c_functions.is_empty() {
@@ -2509,6 +2515,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "fuzz"] => StdModule::InternalFuzz,
             ["std", "internal", "panic"] => StdModule::InternalPanic,
             ["std", "internal", "time"] => StdModule::InternalTime,
+            ["std", "internal", "context"] => StdModule::InternalContext,
             ["std", "internal", "channel"] => StdModule::InternalChannel,
             ["std", rest @ ..] => {
                 let name = rest.join(".");
@@ -9201,7 +9208,7 @@ impl<'a> Checker<'a> {
     /// context. The initial values are constants; the fields are `Send` and
     /// `Copy`, since tasks share them and reading one copies it, and those
     /// shown as text have `Display`.
-    fn context_makers(&mut self) -> Vec<hir::Function> {
+    fn context_makers(&mut self) -> Vec<(hir::Function, Option<hir::Function>, Option<hir::Function>)> {
         let mut makers = Vec::new();
         for (ty, decl) in self.contexts.clone() {
             let module = std::mem::replace(&mut self.module, decl.module);
@@ -9248,7 +9255,6 @@ impl<'a> Checker<'a> {
                 }
                 values.push((index as u32, value));
             }
-            self.module = module;
             let record = Self::mk(hir::ExprKind::Record(values), ty, decl.span);
             let made = Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::RefNew, vec![record]), reference, decl.span);
             let body = hir::Block { stmts: Vec::new(), tail: Some(Box::new(made)), ty: reference };
@@ -9266,9 +9272,97 @@ impl<'a> Checker<'a> {
                 span: Span::default(),
             };
             self.ownership(&mut maker, &cx.params);
-            makers.push(maker);
+            let log = self.context_shown(decl, "log");
+            let label = self.context_shown(decl, "label");
+            self.module = module;
+            makers.push((maker, log, label));
         }
         makers
+    }
+
+    /// The function that shows a context's fields marked `@log` or
+    /// `@label` (11.16): for each that does not have its initial value, its
+    /// name and its text, each followed by a zero character. A `T?` counts
+    /// when it is `some`, with the text of what it holds.
+    fn context_shown(&mut self, decl: &'a ast::TypeDecl, kind: &str) -> Option<hir::Function> {
+        let ast::TypeBody::Record(fields) = &decl.body else { return None };
+        let span = decl.span;
+        let ident = |name: &str| ast::Ident { name: name.to_string(), span };
+        let expr = |kind: ast::ExprKind| ast::Expr { kind, span };
+        let mut parts = Vec::new();
+        for field in fields {
+            let Some(annotation) = field.annotations.iter().find(|a| a.name.name == kind) else { continue };
+            let key = match &annotation.argument {
+                Some(ast::AnnotationArg::Text(text)) => text.clone(),
+                _ => field.name.name.clone(),
+            };
+            let read = expr(ast::ExprKind::Path(vec![decl.name.clone(), field.name.clone()]));
+            let shown = |value: ast::Expr| {
+                let segments = vec![
+                    ast::StrSegment::Text(format!("{key}\u{0}")),
+                    ast::StrSegment::Expr(value),
+                    ast::StrSegment::Text("\u{0}".into()),
+                ];
+                expr(ast::ExprKind::Str(segments))
+            };
+            let empty = || expr(ast::ExprKind::Str(Vec::new()));
+            let ty = self.resolve_type(&field.ty);
+            let part = if matches!(self.types.kind(ty), TyKind::Option(_)) {
+                // `match field { some(value) => "name\0{value}\0", none => "" }`
+                let value = ident("value");
+                let pattern = |kind: ast::PatternKind| ast::Pattern { kind, span };
+                let arm = |pattern: ast::Pattern, body: ast::Expr| ast::MatchArm {
+                    pattern,
+                    guard: None,
+                    body: ast::ArmBody::Expr(body),
+                    span,
+                };
+                let some = pattern(ast::PatternKind::Constructor {
+                    path: vec![ident("some")],
+                    args: vec![pattern(ast::PatternKind::Binding(value.clone()))],
+                });
+                let arms = vec![
+                    arm(some, shown(expr(ast::ExprKind::Path(vec![value])))),
+                    arm(pattern(ast::PatternKind::None), empty()),
+                ];
+                expr(ast::ExprKind::Match { scrutinee: Box::new(read), arms })
+            } else if let (true, Some(initial)) = (self.types.is_equatable(ty), &field.default) {
+                // `if field != initial { "name\0{field}\0" } else { "" }`
+                let differs =
+                    expr(ast::ExprKind::Binary(ast::BinOp::Ne, Box::new(read.clone()), Box::new(initial.clone())));
+                let then = ast::Block { stmts: Vec::new(), tail: Some(Box::new(shown(read))), span };
+                let otherwise = ast::Block { stmts: Vec::new(), tail: Some(Box::new(empty())), span };
+                expr(ast::ExprKind::If {
+                    condition: Box::new(differs),
+                    then,
+                    otherwise: Some(Box::new(expr(ast::ExprKind::Block(otherwise)))),
+                })
+            } else {
+                shown(read)
+            };
+            parts.push(ast::StrSegment::Expr(part));
+        }
+        if parts.is_empty() {
+            return None;
+        }
+        let mut cx = self.new_cx(Ty::STRING);
+        let value = self.expr(&mut cx, &expr(ast::ExprKind::Str(parts)), Some(Ty::STRING));
+        let body = hir::Block { stmts: Vec::new(), tail: Some(Box::new(value)), ty: Ty::STRING };
+        let mut function = hir::Function {
+            name: format!("context {} {kind}", decl.name.name),
+            generics: Vec::new(),
+            params: Vec::new(),
+            loans: Vec::new(),
+            fallible: false,
+            locals: cx.locals,
+            result: Ty::STRING,
+            body,
+            moves: HashSet::new(),
+            test: false,
+            span: Span::default(),
+        };
+        self.ownership(&mut function, &cx.params);
+        Some(function)
     }
 
     fn path_text(path: &[ast::Ident]) -> String {
@@ -12235,7 +12329,8 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalNet
                     | StdModule::InternalFuzz
                     | StdModule::InternalPanic
-                    | StdModule::InternalTime),
+                    | StdModule::InternalTime
+                    | StdModule::InternalContext),
                 )),
             ) => {
                 // `joined(values, separator)`: the elements' `Display`, with
@@ -12287,6 +12382,7 @@ impl<'a> Checker<'a> {
                     StdModule::InternalFuzz => "fuzz",
                     StdModule::InternalPanic => "panic",
                     StdModule::InternalTime => "time",
+                    StdModule::InternalContext => "context",
                     _ => "reflect",
                 };
                 let found =

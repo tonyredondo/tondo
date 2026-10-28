@@ -4,18 +4,25 @@
 //! shares the table of the one that spawns it. Tables never change once
 //! made, so tasks share them without locks.
 
-use super::{Glue, RefHeader};
+use super::{Glue, RefHeader, Str};
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering, fence};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-/// What gives a context's initial value: a function of the program.
-type Maker = unsafe extern "C" fn() -> *mut RefHeader;
+/// What gives a context's initial value: a function of the program. In a
+/// live build, a function takes the state of a frame that moves to new
+/// code, null in an ordinary call; another ignores it.
+type Maker = unsafe extern "C" fn(*const u8) -> *mut RefHeader;
+/// What shows the fields of a context marked `@log` or `@label`: names
+/// and texts, each followed by a zero character.
+type Shown = unsafe extern "C" fn(*const u8) -> *mut Str;
 
 #[derive(Clone, Copy)]
 struct Entry {
     maker: Maker,
     release: Option<Glue>,
+    log: Option<Shown>,
+    label: Option<Shown>,
 }
 
 /// The contexts the program registers as it starts, by index.
@@ -28,6 +35,8 @@ static ROOT: AtomicPtr<Table> = AtomicPtr::new(std::ptr::null_mut());
 pub(crate) struct Table {
     count: AtomicUsize,
     slots: Vec<*mut RefHeader>,
+    /// The fields marked `@label` its values give, for the task's labels.
+    labels: Vec<(String, String)>,
 }
 
 /// A task's table; none until a `with` changes it, which is the initial
@@ -54,12 +63,71 @@ fn entries() -> &'static [Entry] {
 /// Each context's maker and the release of its record, as the program
 /// starts.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_context_register(index: usize, maker: Maker, release: Option<Glue>) {
+pub extern "C" fn tondo_rt_context_register(
+    index: usize,
+    maker: Maker,
+    release: Option<Glue>,
+    log: Option<Shown>,
+    label: Option<Shown>,
+) {
     let mut registered = REGISTERED.lock().unwrap_or_else(|e| e.into_inner());
     if registered.len() <= index {
         registered.resize(index + 1, None);
     }
-    registered[index] = Some(Entry { maker, release });
+    registered[index] = Some(Entry { maker, release, log, label });
+}
+
+/// The names and texts of the fields of the running task's contexts marked
+/// `@log`, or `@label`, that do not have their initial values. A `Display`
+/// that panics while they are shown shows none.
+pub(crate) fn shown(label: bool) -> Vec<(String, String)> {
+    thread_local! {
+        static SHOWING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    if SHOWING.with(|showing| showing.replace(true)) {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for entry in entries() {
+        let Some(show) = (if label { entry.label } else { entry.log }) else { continue };
+        let text = unsafe { show(std::ptr::null()) };
+        let mut parts = unsafe { super::str_bytes(text) }.split(|&b| b == 0);
+        while let (Some(name), Some(value)) = (parts.next(), parts.next()) {
+            out.push((String::from_utf8_lossy(name).into_owned(), String::from_utf8_lossy(value).into_owned()));
+        }
+        unsafe { super::tondo_rt_str_release(text) };
+    }
+    SHOWING.with(|showing| showing.set(false));
+    out
+}
+
+/// `std.log`'s fields of the contexts: those marked `@log`, each name and
+/// text followed by a zero character.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_context_logged() -> *mut Str {
+    let mut text = Vec::new();
+    for (name, value) in shown(false) {
+        text.extend_from_slice(name.as_bytes());
+        text.push(0);
+        text.extend_from_slice(value.as_bytes());
+        text.push(0);
+    }
+    super::str_new(&text)
+}
+
+/// Whether a context has fields marked `@label`.
+fn labelled() -> bool {
+    static LABELLED: OnceLock<bool> = OnceLock::new();
+    *LABELLED.get_or_init(|| entries().iter().any(|entry| entry.label.is_some()))
+}
+
+/// The labels the running task's contexts give (`std.profile`).
+pub(crate) fn labels() -> Vec<(String, String)> {
+    let Some(held) = current() else { return Vec::new() };
+    match held.0.is_null() {
+        true => Vec::new(),
+        false => unsafe { (*held.0).labels.clone() },
+    }
 }
 
 fn root() -> *mut Table {
@@ -67,8 +135,8 @@ fn root() -> *mut Table {
     if !root.is_null() {
         return root;
     }
-    let slots = entries().iter().map(|entry| unsafe { (entry.maker)() }).collect();
-    let made = Box::into_raw(Box::new(Table { count: AtomicUsize::new(1), slots }));
+    let slots = entries().iter().map(|entry| unsafe { (entry.maker)(std::ptr::null()) }).collect();
+    let made = Box::into_raw(Box::new(Table { count: AtomicUsize::new(1), slots, labels: Vec::new() }));
     match ROOT.compare_exchange(std::ptr::null_mut(), made, Ordering::AcqRel, Ordering::Acquire) {
         Ok(_) => made,
         Err(other) => {
@@ -118,8 +186,15 @@ pub unsafe extern "C" fn tondo_rt_context_set(index: usize, value: *mut RefHeade
     for &slot in &slots {
         unsafe { (*slot).rc.fetch_add(1, Ordering::Relaxed) };
     }
-    let made = Box::into_raw(Box::new(Table { count: AtomicUsize::new(1), slots }));
-    std::mem::replace(&mut held.0, made)
+    let made = Box::into_raw(Box::new(Table { count: AtomicUsize::new(1), slots, labels: Vec::new() }));
+    let saved = std::mem::replace(&mut held.0, made);
+    // Its labels, which the new values give.
+    if labelled() {
+        let labels = shown(true);
+        unsafe { (*made).labels = labels };
+        super::labels::refresh();
+    }
+    saved
 }
 
 /// The end of a `with`'s block: the table before it comes back.
@@ -128,6 +203,9 @@ pub unsafe extern "C" fn tondo_rt_context_restore(saved: *mut Table) {
     let Some(held) = current() else { return };
     let ended = std::mem::replace(&mut held.0, saved);
     unsafe { release(ended) };
+    if labelled() {
+        super::labels::refresh();
+    }
 }
 
 /// The instant deadlines count from, which a task's inherited one is kept

@@ -51,7 +51,14 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
         mono.instance(root, Vec::new());
     }
     // The runtime makes a context's initial value when a task first reads it.
-    let contexts: Vec<FnId> = contexts.into_iter().map(|maker| mono.instance(maker, Vec::new())).collect();
+    let contexts: Vec<crate::hir::ContextFns> = contexts
+        .into_iter()
+        .map(|fns| crate::hir::ContextFns {
+            maker: mono.instance(fns.maker, Vec::new()),
+            log: fns.log.map(|f| mono.instance(f, Vec::new())),
+            label: fns.label.map(|f| mono.instance(f, Vec::new())),
+        })
+        .collect();
     while let Some((id, args, instance)) = mono.queue.pop_front() {
         let generic = &functions[id.0 as usize];
         let map: HashMap<Ty, Ty> = generic.generics.iter().copied().zip(args).collect();

@@ -510,7 +510,7 @@ impl Rt {
             Rt::UnwindHold => ("tondo_rt_unwind_hold", &[], &[]),
             Rt::UnwindResume => ("tondo_rt_unwind_resume", &[], &[]),
             Rt::UnwindReturn => ("tondo_rt_unwind_return", &[], &[]),
-            Rt::ContextRegister => ("tondo_rt_context_register", &[I64, I64, I64], &[]),
+            Rt::ContextRegister => ("tondo_rt_context_register", &[I64, I64, I64, I64, I64], &[]),
             Rt::ContextGet => ("tondo_rt_context_get", &[I64], &[I64]),
             Rt::ContextSet => ("tondo_rt_context_set", &[I64, I64], &[I64]),
             Rt::ContextRestore => ("tondo_rt_context_restore", &[I64], &[]),
@@ -832,7 +832,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         contexts: program
             .contexts
             .iter()
-            .map(|&maker| (maker, program.types.handle_result(bodies[maker.0 as usize].result)))
+            .map(|&fns| (fns, program.types.handle_result(bodies[fns.maker.0 as usize].result)))
             .collect(),
     };
     if coverage.is_some() {
@@ -998,8 +998,8 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
 struct Codegen<'a> {
     module: ObjectModule,
     types: &'a Types,
-    /// Each context's maker and the type of its record (11.16).
-    contexts: Vec<(FnId, Ty)>,
+    /// Each context's functions and the type of its record (11.16).
+    contexts: Vec<(crate::hir::ContextFns, Ty)>,
     sources: &'a SourceMap,
     /// Counts steps, for the `meta` profile.
     meta: bool,
@@ -2894,16 +2894,24 @@ enum Called {
 }
 
 impl Emit<'_, Codegen<'_>> {
-    /// Hands the runtime each context's maker, which gives its initial
-    /// value, and the release of its record (11.16).
+    /// Hands the runtime each context's functions, the maker of its
+    /// initial value and those that show its fields, and the release of its
+    /// record (11.16).
     fn register_contexts(&mut self) {
-        for (index, (maker, record)) in self.cg.contexts.clone().into_iter().enumerate() {
-            let function = self.cg.function(maker);
-            let callee = self.cg.declare_func_in_func(function, self.fb.func);
-            let maker = self.fb.ins().func_addr(POINTER, callee);
+        for (index, (fns, record)) in self.cg.contexts.clone().into_iter().enumerate() {
+            let address = |e: &mut Self, id: Option<FnId>| match id {
+                Some(id) => {
+                    let function = e.cg.function(id);
+                    let callee = e.cg.declare_func_in_func(function, e.fb.func);
+                    e.fb.ins().func_addr(POINTER, callee)
+                }
+                None => e.fb.ins().iconst(POINTER, 0),
+            };
+            let maker = address(self, Some(fns.maker));
+            let (log, label) = (address(self, fns.log), address(self, fns.label));
             let release = self.glue_or_null(Glue::Release, record);
             let index = self.fb.ins().iconst(types::I64, index as i64);
-            self.call_rt(Rt::ContextRegister, &[index, maker, release]);
+            self.call_rt(Rt::ContextRegister, &[index, maker, release, log, label]);
         }
     }
 }

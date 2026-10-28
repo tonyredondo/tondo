@@ -180,6 +180,10 @@ fn main() {
   configuration: there are no mutable globals.
 - Initial values are constants; a value made as the program runs is a
   `T? = none`, set with `with`. Fields are `Send` and `Copy`.
+- A field marked `@log("request_id")` goes in every event of `std.log` and
+  in a panic's report while it is set; one marked `@label` is a label of
+  profiles. `log.Context` holds the logger that `log.info(...)` and the other
+  functions of `std.log` write with.
 
 `within limit { ... }` gives a block a deadline: when it passes, the
 block's next wait ends, its `defer`s run and its tasks are cancelled, and
