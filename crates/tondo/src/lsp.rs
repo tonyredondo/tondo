@@ -1038,6 +1038,13 @@ impl Server {
             return Some(json!({ "isIncomplete": false, "items": importable(latest, &source.module, written) }));
         }
         let start = text[..cursor].rfind(|c: char| !(c.is_alphanumeric() || c == '_')).map_or(0, |i| i + 1);
+        // After `@`, the program's annotations; in their arguments, their fields.
+        if text[..start].ends_with('@') {
+            return Some(json!({ "isIncomplete": false, "items": self.annotation_names(latest, offset) }));
+        }
+        if let Some(items) = self.annotation_fields(latest, offset, &text[line..cursor]) {
+            return Some(json!({ "isIncomplete": false, "items": items }));
+        }
         if !text[..start].ends_with('.') {
             return Some(json!({ "isIncomplete": false, "items": self.names(latest, offset) }));
         }
@@ -1052,7 +1059,12 @@ impl Server {
         let call = text[cursor..].starts_with('(');
         let analyses: Vec<&Analyzed> =
             std::iter::once(latest).chain(self.earlier.get(&root).into_iter().flatten()).collect();
+        let annotation = text[..chain_start].ends_with('@');
         let found = match parts[..] {
+            [alias] if annotation => {
+                let module = imports.get(alias)?;
+                Some(analyses.iter().find_map(|analyzed| self.annotations_of(analyzed, module)).unwrap_or_default())
+            }
             [alias] if let Some(module) = imports.get(alias) => {
                 analyses.iter().find_map(|analyzed| self.module_members(analyzed, module, call))
             }
@@ -1081,6 +1093,82 @@ impl Server {
         let base = analyzed.analysis.sources.file(file).base;
         let items = self.members(&analyzed, base + end as u32, &here, call).unwrap_or_default();
         Some(json!({ "isIncomplete": false, "items": items }))
+    }
+
+    /// The annotations a file writes after `@` (27.13): its module's, and
+    /// the modules it imports that declare some, whose follow a dot.
+    fn annotation_names(&self, analyzed: &Analyzed, offset: u32) -> Vec<Value> {
+        let sources = &analyzed.analysis.sources;
+        let here = sources.file_of(offset);
+        let mut items = self.annotations_of(analyzed, &here.module).unwrap_or_default();
+        for (alias, module) in imports(&here.text) {
+            if self.annotations_of(analyzed, &module).is_some_and(|found| !found.is_empty()) {
+                items.push(json!({ "label": alias, "kind": 9, "detail": format!("import {module}") }));
+            }
+        }
+        items
+    }
+
+    /// The annotations `module` declares.
+    fn annotations_of(&self, analyzed: &Analyzed, module: &str) -> Option<Vec<Value>> {
+        let index = analyzed.analysis.index.as_ref()?;
+        let sources = &analyzed.analysis.sources;
+        let items = index
+            .defs
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| {
+                let text = sources.slice(d.decl_span);
+                d.kind == DefKind::Type
+                    && sources.file_of(d.decl_span.start).module == module
+                    && text.strip_prefix("pub ").unwrap_or(text).starts_with("annotation ")
+            })
+            .map(|(id, d)| self.item(analyzed, &d.name, d.kind, Some(id), false))
+            .collect();
+        Some(items)
+    }
+
+    /// In the arguments of an annotation, where a field's name goes, as in
+    /// `@Check(mi`: its fields not written yet.
+    fn annotation_fields(&self, analyzed: &Analyzed, offset: u32, line: &str) -> Option<Vec<Value>> {
+        let open = line.rfind('(')?;
+        let args = &line[open + 1..];
+        let written = args.rsplit(',').next().unwrap_or(args).trim_start();
+        if args.contains(')') || !written.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            return None;
+        }
+        let path = &line[line[..open].rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.'))? + 1..open];
+        if !line[..open - path.len()].ends_with('@') {
+            return None;
+        }
+        let index = analyzed.analysis.index.as_ref()?;
+        let sources = &analyzed.analysis.sources;
+        let here = sources.file_of(offset);
+        let (module, name) = match path.split_once('.') {
+            Some((alias, name)) => (imports(&here.text).get(alias)?.clone(), name),
+            None => (here.module.clone(), path),
+        };
+        let of_module = |d: &crate::index::Def| sources.file_of(d.decl_span.start).module == module;
+        let annotation = index.defs.iter().find(|d| d.kind == DefKind::Type && d.name == name && of_module(d))?;
+        let given: Vec<&str> = args.split(',').filter_map(|a| Some(a.split_once(':')?.0.trim())).collect();
+        let items = index
+            .defs
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| {
+                d.kind == DefKind::Field
+                    && of_module(d)
+                    && annotation.decl_span.start <= d.decl_span.start
+                    && d.decl_span.end <= annotation.decl_span.end
+                    && !given.contains(&d.name.as_str())
+            })
+            .map(|(id, d)| {
+                let mut item = self.item(analyzed, &d.name, d.kind, Some(id), false);
+                item["insertText"] = json!(format!("{}: ", d.name));
+                item
+            })
+            .collect();
+        Some(items)
     }
 
     /// The public declarations of `module`: a standard one's, as `tondo
@@ -1540,9 +1628,35 @@ const TOKEN_TYPES: [&str; 16] = [
 ];
 
 /// The keywords completion offers.
-const KEYWORDS: [&str; 28] = [
-    "let", "var", "fn", "pub", "type", "enum", "trait", "impl", "const", "import", "if", "else", "for", "in", "match",
-    "return", "break", "continue", "fail", "spawn", "defer", "select", "recover", "context", "with", "within", "none",
+const KEYWORDS: [&str; 29] = [
+    "let",
+    "var",
+    "fn",
+    "pub",
+    "type",
+    "enum",
+    "trait",
+    "impl",
+    "const",
+    "import",
+    "if",
+    "else",
+    "for",
+    "in",
+    "match",
+    "return",
+    "break",
+    "continue",
+    "fail",
+    "spawn",
+    "defer",
+    "select",
+    "recover",
+    "context",
+    "annotation",
+    "with",
+    "within",
+    "none",
     "some",
 ];
 

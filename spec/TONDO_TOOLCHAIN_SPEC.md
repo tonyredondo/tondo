@@ -434,9 +434,10 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
 - Hover: el tipo de una variable o un parámetro, la cabecera de una función o
   un campo, la declaración de un tipo, y la documentación `///`; de la lectura
   de un contexto (`Trace.span`, 11.16 del lenguaje), además, los `with` de la
-  función que le dan valor antes de ese punto, o que vale lo que hereda; de lo que
-  implementa el runtime, como `text.length()` o `console.println`, lo que
-  muestra `tondo api`.
+  función que le dan valor antes de ese punto, o que vale lo que hereda; de una
+  anotación del programa (`@binding.Check(...)`, 27.13 del lenguaje), su
+  declaración y su documentación; de lo que implementa el runtime, como
+  `text.length()` o `console.println`, lo que muestra `tondo api`.
 - Las apariciones en el archivo de lo que está bajo el cursor, y los símbolos
   del proyecto cuyo nombre contiene lo que se busca.
 - La firma de la llamada que se escribe, con su documentación y el argumento
@@ -444,8 +445,9 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
 - El tipo de cada variable declarada sin escribirlo, y el parámetro al que va
   cada argumento que no lo nombra ni es ya su nombre, como pistas en línea.
 - Definición y referencias de variables, parámetros (también en argumentos con
-  nombre), funciones, métodos, tipos, campos, variantes, constantes, traits y
-  módulos; las de la librería estándar se abren desde una copia en la caché.
+  nombre), funciones, métodos, tipos, campos, variantes, constantes, traits,
+  anotaciones (también sus campos en los argumentos de un uso) y módulos; las
+  de la librería estándar se abren desde una copia en la caché.
 - La definición del tipo de un binding, un campo o un parámetro; las
   implementaciones de un trait o de un tipo (sus `impl`) y de un método de un
   trait; quién llama a una función y a quién llama (call hierarchy); y los
@@ -463,6 +465,8 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   variantes de un enum; y si no, las variables y parámetros de la función
   hasta el cursor, las declaraciones del módulo, los módulos que usa, los que
   no importa todavía, con el `import` que los trae, y las palabras clave.
+  Tras `@`, las anotaciones visibles, y dentro de sus paréntesis los campos
+  que faltan, como los parámetros de una llamada.
   En un `import`, el siguiente segmento de los módulos que puede nombrar:
   `std`, el paquete y sus dependencias, y tras `std.` los módulos estándar,
   cada uno con lo que ofrece según el comentario que lo abre.
@@ -768,7 +772,9 @@ lenguaje, cada una con un texto para el modelo y su resultado como datos
   id, a los archivos del programa, y comprueba de nuevo. `format`, `compact`,
   `expand`, `api`, `graph`, `guide` y `explain`.
 - Navegación: `definition`, `references`, `implementations`, `calls`,
-  `hover`, `complete`, `symbols`, y `rename`, que reescribe los archivos.
+  `hover`, `complete`, `symbols`, y `rename`, que reescribe los archivos, con
+  lo mismo que el servidor de lenguaje da de cada declaración, las anotaciones
+  incluidas.
 - Proyectos: `new_project`, `add_dependency` y `remove_dependency`.
 - Builds: `build`; `run`, con su entrada y un tiempo tras el que el programa
   termina, 60 s si no se dice, y el fallo con que termine como `panic`, el

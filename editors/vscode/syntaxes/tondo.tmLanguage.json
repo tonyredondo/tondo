@@ -136,7 +136,7 @@
       ]
     },
     "annotations": {
-      "match": "@[A-Za-z_][A-Za-z0-9_]*",
+      "match": "@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*",
       "name": "storage.type.annotation.tondo"
     },
     "declarations": {
@@ -167,7 +167,7 @@
           }
         },
         {
-          "match": "\\b(context)\\s+([A-Z][A-Za-z0-9_]*)(?=\\s*=)",
+          "match": "\\b(context|annotation)\\s+([A-Z][A-Za-z0-9_]*)(?=\\s*=)",
           "captures": {
             "1": {
               "name": "keyword.declaration.type.tondo"

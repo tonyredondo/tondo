@@ -85,6 +85,9 @@ fn check_with<'a>(
         method_visibility: HashMap::new(),
         prelude: None,
         contexts: Vec::new(),
+        annotation_decls: HashMap::new(),
+        annotation_defaults: HashMap::new(),
+        annotation_values: Vec::new(),
         context_of: HashMap::new(),
         module_paths: Vec::new(),
         datetime_module: None,
@@ -348,6 +351,20 @@ impl Inference {
     }
 }
 
+/// What an annotation of the program annotates (27.13).
+#[derive(Copy, Clone, PartialEq)]
+enum Annotated {
+    Type(Ty),
+    /// A record's field, by its index.
+    Field(Ty, u32),
+    Variant(Ty, u32),
+    /// A field of a record variant: the variant's index, then the field's.
+    VariantField(Ty, u32, u32),
+    Function(FnId),
+    /// A function's parameter, by its index.
+    Parameter(FnId, u32),
+}
+
 /// What a call invokes: the callee, its signature, explicit type arguments
 /// (empty when inferred), arguments already known and the type the call is
 /// expected to have.
@@ -377,6 +394,13 @@ fn wire(field: &ast::FieldDecl) -> Option<String> {
         }
     }
     wire
+}
+
+/// That the language's annotation `@name` does not go on `what` (27.13).
+fn misplaced_annotation(name: &str, what: &str) -> String {
+    format!(
+        "the language's annotation `@{name}` does not go on {what}; an annotation of the program has the capital of its type, as `@module.Name(...)`"
+    )
 }
 
 /// The prelude trait used by interpolation (19.6).
@@ -752,6 +776,12 @@ struct Checker<'a> {
     /// record type and declaration; and the index of each such type.
     contexts: Vec<(Ty, &'a ast::TypeDecl)>,
     context_of: HashMap<Ty, u32>,
+    /// The annotations the program declares (27.13), by their types, and
+    /// the values of their fields a use may leave out.
+    annotation_decls: HashMap<Ty, &'a ast::TypeDecl>,
+    annotation_defaults: HashMap<Ty, Vec<Option<hir::Expr>>>,
+    /// The program's annotations of each thing they annotate.
+    annotation_values: Vec<(Annotated, Vec<hir::Expr>)>,
     /// The path of each module of the program, which an unknown name may
     /// be the last part of.
     module_paths: Vec<Vec<String>>,
@@ -1075,6 +1105,8 @@ impl<'a> Checker<'a> {
             let span = self.consts[id].decl.span;
             self.const_value(id, span);
         }
+        self.annotation_declarations();
+        self.annotation_uses(&module.items, &bodies);
 
         for item in &module.items {
             if let ast::Item::Test(node) = item
@@ -3114,6 +3146,11 @@ impl<'a> Checker<'a> {
                 self.contexts.push((ty, decl));
             }
             if let ast::Item::Type(decl) = item
+                && decl.annotation
+            {
+                self.annotation_decls.insert(ty, decl);
+            }
+            if let ast::Item::Type(decl) = item
                 && decl.foreign
             {
                 let layout = self.c_layout(decl);
@@ -3303,11 +3340,17 @@ impl<'a> Checker<'a> {
     fn c_type_declaration(&mut self, decl: &ast::TypeDecl) -> bool {
         if !decl.foreign {
             if let Some(annotation) = decl.annotations.first() {
-                let message = format!(
-                    "`@{}` lays out a C struct: declare it as `extern type {} = {{ ... }}`",
-                    annotation.name.name, decl.name.name
-                );
-                self.diags.error("E1704", annotation.span, message);
+                let (code, message) = match annotation.name.name.as_str() {
+                    "packed" | "align" | "union" => (
+                        "E1704",
+                        format!(
+                            "`@{}` lays out a C struct: declare it as `extern type {} = {{ ... }}`",
+                            annotation.name.name, decl.name.name
+                        ),
+                    ),
+                    name => ("E1619", misplaced_annotation(name, "a type")),
+                };
+                self.diags.error(code, annotation.span, message);
             }
             return true;
         }
@@ -3321,6 +3364,246 @@ impl<'a> Checker<'a> {
             return false;
         }
         true
+    }
+
+    /// Each annotation the program declares (27.13): its fields of types
+    /// that have constants, without `priv`, and the constant values of
+    /// those a use may leave out.
+    fn annotation_declarations(&mut self) {
+        let declared: Vec<(Ty, &'a ast::TypeDecl)> = self.annotation_decls.iter().map(|(&t, &d)| (t, d)).collect();
+        for (ty, decl) in declared {
+            let module = std::mem::replace(&mut self.module, decl.module);
+            let ast::TypeBody::Record(declared) = &decl.body else { unreachable!("an annotation is a record") };
+            let fields = self.record_fields(ty, decl.span).unwrap_or_default();
+            let mut cx = self.new_cx(Ty::UNIT);
+            let mut defaults = Vec::new();
+            for (field, (name, field_ty)) in declared.iter().zip(fields) {
+                if field.private {
+                    let message = format!(
+                        "the field `{name}` of the annotation `{}` is `priv`, but an annotation is data its readers see: remove `priv`",
+                        decl.name.name
+                    );
+                    self.diags.error("E1618", field.name.span, message);
+                }
+                if !self.annotation_type(field_ty) {
+                    let message = format!(
+                        "the field `{name}` of the annotation `{}` is {}, which has no constants: an annotation holds numbers, `Bool`, `Char`, `Byte`, `String`, enums without payloads, and options and arrays of them",
+                        decl.name.name,
+                        self.display(field_ty)
+                    );
+                    self.diags.error("E1618", field.ty.span, message);
+                }
+                let default = field.default.as_ref().map(|default| {
+                    let value = self.expr(&mut cx, default, Some(field_ty));
+                    let mut value = self.coerce(value, field_ty);
+                    if !self.types.has_error(value.ty) && !constant(&mut value) {
+                        let message = format!(
+                            "the value of the field `{name}` of the annotation `{}` is not a constant: write a literal, a `const`, a variant or an array of them",
+                            decl.name.name
+                        );
+                        self.diags.error("E1618", default.span, message);
+                    }
+                    value
+                });
+                defaults.push(default);
+            }
+            self.annotation_defaults.insert(ty, defaults);
+            self.module = module;
+        }
+    }
+
+    /// Whether an annotation's field may be of `ty` (27.13): a type that has
+    /// constants.
+    fn annotation_type(&self, ty: Ty) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::Byte | TyKind::String => true,
+            TyKind::Error => true,
+            TyKind::Option(inner) | TyKind::Array(inner) => self.annotation_type(*inner),
+            TyKind::Adt(_) => {
+                self.types.variants(ty).is_some_and(|variants| variants.iter().all(|parts| parts.is_empty()))
+            }
+            _ => false,
+        }
+    }
+
+    /// The program's annotations of every type, enum, variant, field,
+    /// function and parameter (27.13), checked and kept as constants.
+    fn annotation_uses(&mut self, items: &'a [ast::Item], bodies: &[&'a ast::FnDecl]) {
+        // A type by its name, a generic one with its own parameters.
+        let declared = |checker: &mut Self, name: &str| match checker.type_names.get(name) {
+            Some(&TypeName::Nominal(ty)) => Some(ty),
+            Some(&TypeName::Template(template)) => {
+                let params = checker.types.template(template).params.clone();
+                Some(checker.types.instantiate(template, params))
+            }
+            _ => None,
+        };
+        for item in items {
+            match item {
+                ast::Item::Type(decl) => {
+                    let Some(ty) = declared(self, &decl.name.name) else { continue };
+                    self.annotate(Annotated::Type(ty), &decl.uses, decl.module);
+                    if let ast::TypeBody::Record(fields) = &decl.body {
+                        for (index, field) in fields.iter().enumerate() {
+                            self.annotate(Annotated::Field(ty, index as u32), &field.uses, decl.module);
+                        }
+                    }
+                }
+                ast::Item::Enum(decl) => {
+                    let Some(ty) = declared(self, &decl.name.name) else { continue };
+                    self.annotate(Annotated::Type(ty), &decl.uses, decl.module);
+                    for (index, variant) in decl.variants.iter().enumerate() {
+                        let index = index as u32;
+                        self.annotate(Annotated::Variant(ty, index), &variant.uses, decl.module);
+                        if let ast::VariantPayload::Record(fields) = &variant.payload {
+                            for (at, field) in fields.iter().enumerate() {
+                                let annotated = Annotated::VariantField(ty, index, at as u32);
+                                self.annotate(annotated, &field.uses, decl.module);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        for (index, f) in bodies.iter().enumerate() {
+            let id = FnId(index as u32);
+            if f.foreign.is_none() {
+                for annotation in &f.annotations {
+                    self.diags.error(
+                        "E1619",
+                        annotation.span,
+                        misplaced_annotation(&annotation.name.name, "a function"),
+                    );
+                }
+            }
+            self.annotate(Annotated::Function(id), &f.uses, f.module);
+            for (at, param) in f.params.iter().enumerate() {
+                self.annotate(Annotated::Parameter(id, at as u32), &param.uses, f.module);
+            }
+        }
+    }
+
+    /// The annotations of one thing: each an annotation the program
+    /// declares, once, with constant arguments, checked as a literal of its
+    /// record with its fields in order or by name.
+    fn annotate(&mut self, annotated: Annotated, uses: &[ast::AnnotationUse], module: u32) {
+        if uses.is_empty() {
+            return;
+        }
+        let outer = std::mem::replace(&mut self.module, module);
+        let mut cx = self.new_cx(Ty::UNIT);
+        let mut values: Vec<hir::Expr> = Vec::new();
+        for annotation in uses {
+            let shown = annotation.path.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".");
+            let declared = match annotation.path.as_slice() {
+                [name] => match self.type_names.get(&name.name) {
+                    Some(&TypeName::Nominal(ty)) => Some(ty),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let Some((ty, decl)) = declared.and_then(|ty| self.annotation_decls.get(&ty).map(|&d| (ty, d))) else {
+                // The modules that declare an annotation of that name.
+                let mut modules: Vec<&str> = self
+                    .annotation_decls
+                    .values()
+                    .filter_map(|d| d.name.name.rsplit_once('.').filter(|(_, name)| *name == shown).map(|(m, _)| m))
+                    .collect();
+                modules.sort();
+                let message = match (declared, modules.first()) {
+                    (Some(_), _) => format!(
+                        "`{shown}` is a type, not an annotation: an annotation is declared with `annotation {shown} = {{ ... }}`"
+                    ),
+                    (None, Some(module)) => format!(
+                        "there is no annotation `{shown}` here, but the module `{module}` declares one: write `@{}.{shown}`, and import that module if this file does not",
+                        module.rsplit('.').next().unwrap_or(module)
+                    ),
+                    (None, None) => format!(
+                        "there is no annotation `{shown}`: declare it with `annotation {shown} = {{ ... }}`, or import the module that does and write `@module.{shown}`"
+                    ),
+                };
+                self.diags.error("E1619", annotation.span, message);
+                continue;
+            };
+            if values.iter().any(|v| v.ty == ty) {
+                let message = format!(
+                    "`@{shown}` is written twice here: an annotation goes once on each thing, with a list in it for what repeats"
+                );
+                self.diags.error("E1619", annotation.span, message);
+                continue;
+            }
+            // Its arguments, as the fields of a literal of its record.
+            let ast::TypeBody::Record(fields) = &decl.body else { continue };
+            let mut inits = Vec::new();
+            let mut positional = 0;
+            for arg in &annotation.args {
+                if arg.mode != ast::Mode::Value || arg.spread {
+                    let message = "an annotation's argument is a constant, without `ref`, `mut`, `var` or `...`";
+                    self.diags.error("E1619", arg.span, message);
+                    continue;
+                }
+                let name = match &arg.name {
+                    Some(name) => name.clone(),
+                    None => {
+                        let Some(field) = fields.get(positional) else {
+                            let message = format!("`@{shown}` takes {} fields, and this is one more", fields.len());
+                            self.diags.error("E1102", arg.span, message);
+                            continue;
+                        };
+                        positional += 1;
+                        ast::Ident { name: field.name.name.clone(), span: arg.span }
+                    }
+                };
+                inits.push(ast::FieldInit { name, value: Some(arg.value.clone()) });
+            }
+            let mut value = self.record_literal(&mut cx, &annotation.path, &[], &inits, Some(ty), annotation.span);
+            if !self.types.has_error(value.ty) && !constant(&mut value) {
+                let message = format!(
+                    "the arguments of `@{shown}` are constants: write literals, `const`s, variants or arrays of them"
+                );
+                self.diags.error("E1619", annotation.span, message);
+            }
+            values.push(value);
+        }
+        self.module = outer;
+        self.annotation_values.push((annotated, values));
+    }
+
+    /// `reflect.annotationsOf[T](place, index, part, method)`, which the
+    /// reflection `derive` writes for an annotated thing of `T`: the values
+    /// of its annotations (27.13). `place` is the type (0), a field (1), a
+    /// variant (2), a field of a variant (3), a method (4) or one of its
+    /// parameters (5), counting the receiver.
+    fn annotations_of(&mut self, ty: Ty, args: &[ast::Arg], result: Ty, span: Span) -> hir::Expr {
+        let number = |at: usize| match args.get(at).map(|a| &a.value.kind) {
+            Some(ast::ExprKind::Int { value, .. }) => *value as u32,
+            _ => 0,
+        };
+        let method = match args.get(3).map(|a| &a.value.kind) {
+            Some(ast::ExprKind::Str(segments)) => match segments.as_slice() {
+                [ast::StrSegment::Text(text)] => text.clone(),
+                _ => String::new(),
+            },
+            _ => String::new(),
+        };
+        let ty = self.owner_key(ty);
+        let function = self.methods.get(&(ty, method)).copied();
+        let (index, part) = (number(1), number(2));
+        let annotated = match number(0) {
+            0 => Some(Annotated::Type(ty)),
+            1 => Some(Annotated::Field(ty, index)),
+            2 => Some(Annotated::Variant(ty, index)),
+            3 => Some(Annotated::VariantField(ty, index, part)),
+            4 => function.map(Annotated::Function),
+            _ => function.map(|id| Annotated::Parameter(id, index)),
+        };
+        let values = annotated
+            .and_then(|annotated| self.annotation_values.iter().find(|(at, _)| *at == annotated))
+            .map(|(_, values)| values.clone())
+            .unwrap_or_default();
+        let items = values.into_iter().map(|value| self.reflect_value(value)).collect();
+        Self::mk(hir::ExprKind::Array(items), result, span)
     }
 
     /// The layout of an `extern type` from `@packed` and `@align(n)`.
@@ -9430,9 +9713,18 @@ impl<'a> Checker<'a> {
             self.diags.error("E1502", name.span, message);
         }
         self.index_fields(Some(name.name.clone()), inits.iter().map(|i| (&i.name, i.value.is_none())));
-        let (ty, values, seen) = self.generic_fields(cx, ty, &fields, inits, expected, span);
+        let (ty, mut values, mut seen) = self.generic_fields(cx, ty, &fields, inits, expected, span);
         if self.types.c_layout(ty).is_some_and(|l| l.union) {
             return self.union_literal(cx, ty, values, span);
+        }
+        // An annotation's field a literal leaves out has its value (27.13).
+        if let Some(defaults) = self.annotation_defaults.get(&ty) {
+            for (index, default) in defaults.iter().enumerate() {
+                if let (false, Some(default)) = (seen[index], default) {
+                    values.push((index as u32, default.clone()));
+                    seen[index] = true;
+                }
+            }
         }
         self.report_missing(&fields, &seen, span);
         Self::mk(hir::ExprKind::Record(values), ty, span)
@@ -10662,6 +10954,55 @@ impl<'a> Checker<'a> {
         Self::mk(hir::ExprKind::Array(values), ty, span)
     }
 
+    /// `value.method[T](...)`: a method's own type parameters, given; its
+    /// type's come from the value.
+    #[allow(clippy::too_many_arguments)]
+    fn generic_method_call(
+        &mut self,
+        cx: &mut FnCx,
+        receiver: &ast::Expr,
+        method: &ast::Ident,
+        type_args: &[ast::TypeExpr],
+        args: &[ast::Arg],
+        expected: Option<Ty>,
+        span: Span,
+    ) -> hir::Expr {
+        let value = self.expr(cx, receiver, None);
+        let types: Vec<Ty> = type_args.iter().map(|t| self.resolve_type(t)).collect();
+        if value.ty == Ty::ERROR {
+            return Self::error_expr(span);
+        }
+        let key = self.owner_key(value.ty);
+        let Some(&id) = self.methods.get(&(key, method.name.clone())) else {
+            let message = format!(
+                "{} has no method `{}` with type parameters of its own: call it as `value.{}(...)`",
+                self.display(value.ty),
+                method.name,
+                method.name
+            );
+            self.diags.error("E1104", span, message);
+            return Self::error_expr(span);
+        };
+        self.index_refer(method, crate::index::Key::Fn(id.0));
+        self.check_method_visible(id, method.span);
+        let signature = self.signatures[id.0 as usize].clone();
+        let owner = match self.types.instance_of(key) {
+            Some((template, _)) => self.types.template(template).params.len(),
+            None => 0,
+        };
+        let own = &signature.generics[owner.min(signature.generics.len())..];
+        if own.len() != types.len() {
+            let message = match own.len() {
+                0 => format!("`{0}` takes no type arguments: call it as `value.{0}(...)`", method.name),
+                n => format!("`{}` takes {n} type argument(s), and {} are given", method.name, types.len()),
+            };
+            self.diags.error("E1104", span, message);
+            return Self::error_expr(span);
+        }
+        let prebound = own.iter().copied().zip(types).collect();
+        self.dot_call(cx, Callee::Fn(id), signature, prebound, value, method, args, expected, span)
+    }
+
     /// Type arguments given to what takes none: a path of an unknown name,
     /// as a module not imported, says so; any other, that it takes none.
     fn not_generic(&mut self, cx: &FnCx, segments: &[ast::Ident], span: Span) -> hir::Expr {
@@ -10698,6 +11039,9 @@ impl<'a> Checker<'a> {
             let receiver = self.expr(cx, receiver, None);
             let types: Vec<Ty> = type_args.iter().map(|t| self.resolve_type(t)).collect();
             return self.raw(cx, receiver, method, types, args, span);
+        }
+        if let ast::ExprKind::Field(receiver, method) = &base.kind {
+            return self.generic_method_call(cx, receiver, method, type_args, args, expected, span);
         }
         let ast::ExprKind::Path(segments) = &base.kind else {
             return self.unsupported_expr(span, "generic calls");
@@ -10739,6 +11083,17 @@ impl<'a> Checker<'a> {
                     self.raw(cx, receiver, &method, types, rest, span)
                 }
             };
+        }
+        // `value.method[T](...)` of a local value, as `value.field.method[T](...)`.
+        if names.len() >= 2
+            && (self.lookup(cx, names[0]).is_some()
+                || self.visible_capture(cx, names[0])
+                || matches!(self.names.get(names[0]), Some(ModuleName::Const(_))))
+        {
+            let (method, prefix) = segments.split_last().unwrap();
+            let receiver_span = prefix[0].span.to(prefix.last().unwrap().span);
+            let receiver = ast::Expr { kind: ast::ExprKind::Path(prefix.to_vec()), span: receiver_span };
+            return self.generic_method_call(cx, &receiver, method, type_args, args, expected, span);
         }
         if let [trait_name, _] = names.as_slice()
             && let Some(&trait_id) = self.trait_names.get(*trait_name)
@@ -13342,6 +13697,10 @@ impl<'a> Checker<'a> {
         }
         if matches!(signature.name.as_str(), "reflect.get" | "reflect.set" | "reflect.call" | "reflect.callMut") {
             self.check_reflection(&signature.name, &type_args, args);
+        }
+        if signature.name == "reflect.annotationsOf" {
+            let result = self.types.subst(signature.result, &inference.map);
+            return self.annotations_of(type_args[0], args, result, span);
         }
         let result = self.types.subst(signature.result, &inference.map);
         let mut ordered: Vec<(Option<usize>, hir::Expr)> = Vec::new();

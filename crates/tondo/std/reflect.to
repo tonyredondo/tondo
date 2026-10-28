@@ -1040,6 +1040,10 @@ pub type TypeDescription = {
     methods: Array[MethodInfo]
     elements: Array[TypeInfo]
     underlying: TypeInfo?
+    annotations: Array[
+        /// The program's annotations of the type (language 27.13).
+        Value,
+    ]
 }
 
 /// A description of a kind with nothing in it yet.
@@ -1052,7 +1056,25 @@ pub fn TypeDescription.of(kind: TypeKind): TypeDescription {
         methods: []
         elements: []
         underlying: none
+        annotations: []
     }
+}
+
+/// The program's annotations of a thing, which the code the compiler writes
+/// for a type asks for; its values come from the annotations themselves
+/// (language 27.13).
+pub fn annotationsOf[T](place: Int, index: Int, part: Int, method: String): Array[Value] {
+    []
+}
+
+/// The annotation of type `A` among some.
+fn annotationOf[A: Reflect](annotations: Array[Value]): A? {
+    for value in annotations {
+        if reflectNative.is[A](value.box) {
+            return some(reflectNative.unbox[A](value.box))
+        }
+    }
+    none
 }
 
 /// A type: its identity, name and capabilities, and what it is made of,
@@ -1145,6 +1167,16 @@ pub fn TypeInfo.underlying(self): TypeInfo? {
     self.describe().underlying
 }
 
+/// The type's annotation of type `A` (language 27.13), if it has it.
+pub fn TypeInfo.annotation[A: Reflect](self): A? {
+    annotationOf[A](self.describe().annotations)
+}
+
+/// The type's annotations, in the order they are written.
+pub fn TypeInfo.annotations(self): Array[Value] {
+    self.describe().annotations
+}
+
 impl Display for TypeInfo {
     fn display(self): String {
         self.name
@@ -1158,12 +1190,29 @@ pub type FieldInfo = {
     priv position: Int
     priv text: String?
     priv info: TypeInfo
+    priv notes: Array[Value]
 }
 
 /// A field's description, as the code the compiler writes for a type
 /// makes it.
 pub fn FieldInfo.of(name: String, ordinal: Int, docs: String?, info: TypeInfo): FieldInfo {
-    FieldInfo { fieldName: name, position: ordinal, text: docs, info }
+    FieldInfo { fieldName: name, position: ordinal, text: docs, info, notes: [] }
+}
+
+/// The description with the field's annotations, as the code the compiler
+/// writes for a type gives them.
+pub fn FieldInfo.annotated(self, annotations: Array[Value]): FieldInfo {
+    self with { notes: annotations }
+}
+
+/// The field's annotation of type `A` (language 27.13), if it has it.
+pub fn FieldInfo.annotation[A: Reflect](self): A? {
+    annotationOf[A](self.notes)
+}
+
+/// The field's annotations, in the order they are written.
+pub fn FieldInfo.annotations(self): Array[Value] {
+    self.notes
 }
 
 /// The field's name.
@@ -1193,6 +1242,7 @@ pub type VariantInfo = {
     priv payload: VariantPayloadKind
     priv parts: Array[TypeInfo]
     priv named: Array[FieldInfo]
+    priv notes: Array[Value]
 }
 
 /// A variant's description, as the code the compiler writes for a type
@@ -1210,7 +1260,24 @@ pub fn VariantInfo.of(
         payload: payloadKind
         parts: tupleElements
         named: fields
+        notes: []
     }
+}
+
+/// The description with the variant's annotations, as the code the
+/// compiler writes for a type gives them.
+pub fn VariantInfo.annotated(self, annotations: Array[Value]): VariantInfo {
+    self with { notes: annotations }
+}
+
+/// The variant's annotation of type `A` (language 27.13), if it has it.
+pub fn VariantInfo.annotation[A: Reflect](self): A? {
+    annotationOf[A](self.notes)
+}
+
+/// The variant's annotations, in the order they are written.
+pub fn VariantInfo.annotations(self): Array[Value] {
+    self.notes
 }
 
 /// The variant's name.
@@ -1243,12 +1310,29 @@ pub type MethodInfo = {
     priv methodName: String
     priv mode: ParameterMode
     priv signature: FunctionInfo
+    priv notes: Array[Value]
 }
 
 /// A method's description, as the code the compiler writes for a type
 /// makes it.
 pub fn MethodInfo.of(name: String, receiver: ParameterMode, function: FunctionInfo): MethodInfo {
-    MethodInfo { methodName: name, mode: receiver, signature: function }
+    MethodInfo { methodName: name, mode: receiver, signature: function, notes: [] }
+}
+
+/// The description with the method's annotations, as the code the
+/// compiler writes for a type gives them.
+pub fn MethodInfo.annotated(self, annotations: Array[Value]): MethodInfo {
+    self with { notes: annotations }
+}
+
+/// The method's annotation of type `A` (language 27.13), if it has it.
+pub fn MethodInfo.annotation[A: Reflect](self): A? {
+    annotationOf[A](self.notes)
+}
+
+/// The method's annotations, in the order they are written.
+pub fn MethodInfo.annotations(self): Array[Value] {
+    self.notes
 }
 
 /// The method's name.
@@ -1271,12 +1355,35 @@ pub type ParameterInfo = {
     priv index: Int
     priv info: TypeInfo
     priv passing: ParameterMode
+    priv parameterName: String
+    priv notes: Array[Value]
 }
 
 /// A parameter's description, as the code the compiler writes for a type
 /// makes it.
-pub fn ParameterInfo.of(index: Int, info: TypeInfo, mode: ParameterMode): ParameterInfo {
-    ParameterInfo { index, info, passing: mode }
+pub fn ParameterInfo.of(index: Int, info: TypeInfo, mode: ParameterMode, name: String = ""): ParameterInfo {
+    ParameterInfo { index, info, passing: mode, parameterName: name, notes: [] }
+}
+
+/// The description with the parameter's annotations, as the code the
+/// compiler writes for a type gives them.
+pub fn ParameterInfo.annotated(self, annotations: Array[Value]): ParameterInfo {
+    self with { notes: annotations }
+}
+
+/// The parameter's name.
+pub fn ParameterInfo.name(self): String {
+    self.parameterName
+}
+
+/// The parameter's annotation of type `A` (language 27.13), if it has it.
+pub fn ParameterInfo.annotation[A: Reflect](self): A? {
+    annotationOf[A](self.notes)
+}
+
+/// The parameter's annotations, in the order they are written.
+pub fn ParameterInfo.annotations(self): Array[Value] {
+    self.notes
 }
 
 /// The parameter's position, from zero.

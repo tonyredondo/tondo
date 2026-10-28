@@ -1,0 +1,18 @@
+// An annotation's fields are public, of types that have constants, and
+// their defaults are constants.
+
+fn now(): Int {
+    3
+}
+
+annotation Bad = {
+    priv hidden: Int = 0
+    handler: fn(): Int
+    started: Int = now()
+}
+
+fn main() {}
+
+// expect-error: E1618 the field `hidden` of the annotation `Bad` is `priv`
+// expect-error: E1618 the field `handler` of the annotation `Bad` is `fn(): Int`, which has no constants
+// expect-error: E1618 the value of the field `started` of the annotation `Bad` is not a constant

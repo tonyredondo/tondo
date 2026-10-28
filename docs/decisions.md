@@ -2938,3 +2938,26 @@ rounding. The impls of every width are one line each over two functions
 generic on `Integer`, which is why `Integer` also requires `Ordered` and
 `Display`. A `Float32` writes its shortest digits, so that JSON says
 `0.1` and not the `Float` it widens to.
+
+## 2026-10-28 — Annotations are records the program declares
+
+Gin binds and validates a request through tags on fields, and a router reads
+the routes of its handlers; Tondo had only its own closed annotations. A
+program now declares an annotation as a record with defaults, the form of a
+context, and writes it with its type's capital, `@binding.Check(min: 3)`, so
+that it resolves, imports and completes like any type, and its arguments
+are checked as a literal of the record: a misspelled field is an error that
+names the fields, not a tag that silently does nothing. The language's own
+stay lowercase. Annotations change nothing about what they annotate.
+
+Reflection reads them with their types: the description the compiler writes
+for a type asks for the values of its annotations, and the checker puts them
+there, so a program pays for them only where it reflects. `meta` reads them
+before the program is checked, so the compiler evaluates their constants
+itself, and a `const` whose value needs the checker is an error that asks for
+the value. A provider cannot import the program's modules, so it decodes an
+annotation into a record of its own with the fields it reads. A generator's
+root can be a public function, which is how a library writes a router; and
+a method takes its own type arguments, `info.annotation[Check]()`, which the
+grammar always allowed and the checker now does.
+

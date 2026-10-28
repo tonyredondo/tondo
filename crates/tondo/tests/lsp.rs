@@ -313,6 +313,51 @@ fn hover_shows_the_operations_of_numbers() {
     editor.stop();
 }
 
+const BINDING: &str = "/// What a value must be.\npub annotation Check = { required: Bool = false, min: Int? = none }\n\npub type Plain = { x: Int }\n";
+
+const ANNOTATED: &str =
+    "import app.binding\n\npub type User = {\n    @binding.Check(min: 3)\n    name: String\n}\n\nfn main() {}\n";
+
+#[test]
+fn completes_and_explains_annotations() {
+    let dir = project(
+        "lsp-annotations",
+        &[
+            ("tondo.toml", "[package]\nname = \"app\"\n"),
+            ("src/binding/binding.to", BINDING),
+            ("src/main.to", ANNOTATED),
+        ],
+    );
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("src/main.to"));
+    let hover = editor.at("textDocument/hover", &uri, ANNOTATED, "@binding.Check", "Check", json!({}));
+    let value = hover["contents"]["value"].as_str().unwrap_or_default();
+    assert_eq!(
+        value,
+        "```tondo\npub annotation Check = { required: Bool = false, min: Int? = none }\n```\n\nWhat a value must be."
+    );
+    let definition = editor.at("textDocument/definition", &uri, ANNOTATED, "@binding.Check", "Check", json!({}));
+    assert!(definition["uri"].as_str().unwrap().ends_with("src/binding/binding.to"), "{definition}");
+    // After `@`, the annotations, not other types; in the arguments, the
+    // fields not written yet.
+    let complete = |editor: &mut Editor, typed: &str| -> Vec<String> {
+        let text = ANNOTATED.replace("    name: String\n", &format!("    name: String\n    {typed}\n    age: Int\n"));
+        editor.notify(
+            "textDocument/didChange",
+            json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": text }] }),
+        );
+        let line = text.lines().position(|l| l == format!("    {typed}")).unwrap();
+        let position = json!({ "line": line, "character": 4 + typed.len() });
+        let result =
+            editor.request("textDocument/completion", json!({ "textDocument": { "uri": uri }, "position": position }));
+        result["items"].as_array().unwrap().iter().map(|i| i["label"].as_str().unwrap().to_string()).collect()
+    };
+    assert_eq!(complete(&mut editor, "@"), ["binding"]);
+    assert_eq!(complete(&mut editor, "@binding."), ["Check"]);
+    assert_eq!(complete(&mut editor, "@binding.Check(min: 1, "), ["required"]);
+    editor.stop();
+}
+
 #[test]
 fn diagnostics_follow_the_edits() {
     let dir = project("lsp-diagnostics", &[("main.to", "fn main() {\n    let x: Int = \"text\"\n    _ = x\n}\n")]);

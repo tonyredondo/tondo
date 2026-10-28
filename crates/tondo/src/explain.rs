@@ -79,6 +79,16 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "A field of a context has no constant initial value, is not `Send` or `Copy`, or has an annotation other than `@log` and `@label`, or one whose type has no `Display`.",
     ),
     ("E1617", "invalid-context-change", "`with Name { ... }` names something that is not a context."),
+    (
+        "E1618",
+        "invalid-annotation-declaration",
+        "An annotation declares a `priv` field, one of a type without constants, or a default that is not a constant.",
+    ),
+    (
+        "E1619",
+        "invalid-annotation",
+        "An annotation that is not declared or visible, written twice on a thing, with an argument that is not a constant or that `meta` cannot read, or one of the language's out of its place.",
+    ),
     ("E1701", "unsafe-operation-outside-region", "A raw operation outside an `unsafe` region."),
     ("E1702", "invalid-unsafe-contract", "A signature or capture does not show the `unsafe` contract it needs."),
     ("E1703", "invalid-c-type", "A type that does not cross to C in a C declaration, or an opaque type built or read."),

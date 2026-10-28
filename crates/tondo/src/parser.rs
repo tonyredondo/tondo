@@ -108,6 +108,15 @@ struct Parser<'a> {
 
 type PResult<T> = Result<T, ()>;
 
+/// Which fields of a record body have a value after `=`: none, a context's
+/// all (11.16), an annotation's those a use may leave out (27.13).
+#[derive(Copy, Clone, PartialEq)]
+enum Defaults {
+    Never,
+    Always,
+    Optional,
+}
+
 /// `ok`, `err` and `some` construct `Result`/`Option` only when followed by
 /// `(`; elsewhere they are ordinary names (spec 5.5).
 pub const CONTEXTUAL_CONSTRUCTORS: [&str; 3] = ["ok", "err", "some"];
@@ -117,13 +126,16 @@ pub const CONTEXTUAL_CONSTRUCTORS: [&str; 3] = ["ok", "err", "some"];
 const SYNC_COLLECTIONS: [&str; 5] = ["Array", "Map", "Set", "Stack", "Queue"];
 
 /// Whether the word at `at` is one of the language there, as `recover {`,
-/// `context Name =` (11.16) and `within limit {` (11.17) are, with the
+/// `context Name =` (11.16), `annotation Name =` (27.13) and
+/// `within limit {` (11.17) are, with the
 /// limit and `{` on one line; elsewhere they are names, as in `within(...)`.
 pub(crate) fn keyword_at(tokens: &[Token], at: usize) -> bool {
     let nth = |offset: usize| &tokens[(at + offset).min(tokens.len() - 1)].tok;
     match nth(0) {
         Tok::Ident(word) if word == "recover" => nth(1) == &Tok::LBrace,
-        Tok::Ident(word) if word == "context" => matches!(nth(1), Tok::Ident(_)) && nth(2) == &Tok::Eq,
+        Tok::Ident(word) if word == "context" || word == "annotation" => {
+            matches!(nth(1), Tok::Ident(_)) && nth(2) == &Tok::Eq
+        }
         Tok::Ident(word) if word == "within" => {
             let mut depth = 0usize;
             for offset in 1.. {
@@ -379,7 +391,7 @@ impl Parser<'_> {
     fn at_declaration(&self) -> bool {
         let offset = usize::from(self.at_kw(Kw::Pub));
         let tok = self.nth(offset);
-        if matches!(tok, Tok::At | Tok::Kw(Kw::Extern)) || self.at_context(offset) {
+        if matches!(tok, Tok::At | Tok::Kw(Kw::Extern)) || self.at_context(offset) || self.at_annotation(offset) {
             return true;
         }
         matches!(
@@ -399,15 +411,25 @@ impl Parser<'_> {
         ) || (matches!(tok, Tok::Kw(Kw::Unsafe)) && matches!(self.nth(offset + 1), Tok::Kw(Kw::Fn)))
     }
 
+    /// Whether `annotation Name =` starts at `offset`: an annotation the
+    /// program declares (27.13).
+    fn at_annotation(&self, offset: usize) -> bool {
+        matches!(self.nth(offset), Tok::Ident(word) if word == "annotation")
+            && keyword_at(&self.tokens, self.pos + offset)
+    }
+
     /// Whether `context Name =` starts at `offset`: a context (11.16).
     fn at_context(&self, offset: usize) -> bool {
         matches!(self.nth(offset), Tok::Ident(word) if word == "context") && keyword_at(&self.tokens, self.pos + offset)
     }
 
     fn declaration(&mut self) -> PResult<Option<Item>> {
+        let (annotations, uses) = self.annotations()?;
+        // The declaration starts after its annotations, as tools show it.
         let start = self.span();
-        let annotations = self.annotations()?;
-        if !annotations.is_empty() && !matches!(self.tok(), Tok::Kw(Kw::Pub | Kw::Extern | Kw::Fn | Kw::Type)) {
+        let annotated = !annotations.is_empty() || !uses.is_empty();
+        if annotated && !matches!(self.tok(), Tok::Kw(Kw::Pub | Kw::Extern | Kw::Fn | Kw::Type | Kw::Enum | Kw::Unsafe))
+        {
             return self.expected("a declaration after the annotation");
         }
         let public = self.eat_kw(Kw::Pub);
@@ -423,19 +445,19 @@ impl Parser<'_> {
                 Item::Type(t)
             }
             Tok::Kw(Kw::Extern) => return self.expected("`fn` or `type` after `extern`"),
-            _ if !annotations.is_empty() => {
+            _ if annotated => {
                 return self
                     .declaration_after(public, start)
-                    .map(|item| item.map(|item| Self::annotate(item, annotations)));
+                    .map(|item| item.map(|item| self.annotate(item, annotations, uses)));
             }
             _ => return self.declaration_after(public, start),
         };
-        Ok(Some(Self::annotate(item, annotations)))
+        Ok(Some(self.annotate(item, annotations, uses)))
     }
 
     /// Gives a declaration the annotations written before it; `@symbol`
     /// names the C function an `extern fn` calls.
-    fn annotate(mut item: Item, annotations: Vec<Annotation>) -> Item {
+    fn annotate(&mut self, mut item: Item, annotations: Vec<Annotation>, uses: Vec<AnnotationUse>) -> Item {
         match &mut item {
             Item::Fn(f) => {
                 if let Some(foreign) = &mut f.foreign
@@ -445,20 +467,52 @@ impl Parser<'_> {
                     foreign.symbol = symbol;
                 }
                 f.annotations = annotations;
+                f.uses = uses;
             }
-            Item::Type(t) => t.annotations = annotations,
+            Item::Type(t) => {
+                t.annotations = annotations;
+                t.uses = uses;
+            }
+            Item::Enum(e) => {
+                self.misplaced(&annotations, "an enum");
+                e.uses = uses;
+            }
             _ => {}
         }
         item
     }
 
-    /// `@name`, `@name("text")` or `@name(16)`, each on its own line or
-    /// before the declaration or field it annotates.
-    fn annotations(&mut self) -> PResult<Vec<Annotation>> {
-        let mut annotations = Vec::new();
+    /// The language's annotations where none goes: on an enum, a variant or
+    /// a parameter (27.13).
+    fn misplaced(&mut self, annotations: &[Annotation], what: &str) {
+        for annotation in annotations {
+            let message = format!(
+                "the language's annotation `@{}` does not go on {what}; an annotation of the program has the capital of its type, as `@module.Name(...)`",
+                annotation.name.name
+            );
+            self.diags.error("E1619", annotation.span, message);
+        }
+    }
+
+    /// `@name`, `@name("text")` or `@name(16)`, the language's, and
+    /// `@Name(...)` or `@module.Name(...)`, the program's (27.13), each on its
+    /// own line or before what it annotates.
+    fn annotations(&mut self) -> PResult<(Vec<Annotation>, Vec<AnnotationUse>)> {
+        let (mut annotations, mut uses) = (Vec::new(), Vec::new());
         while self.at(&Tok::At) {
             let start = self.bump();
             let name = self.ident()?;
+            // A capital, or a module before the name: the program's.
+            if name.name.starts_with(char::is_uppercase) || self.at(&Tok::Dot) {
+                let mut path = vec![name];
+                while self.eat(&Tok::Dot) {
+                    path.push(self.ident()?);
+                }
+                let args = if self.eat(&Tok::LParen) { self.call_arguments()? } else { Vec::new() };
+                uses.push(AnnotationUse { path, args, span: start.to(self.prev_span()) });
+                self.skip_newlines();
+                continue;
+            }
             let argument = if self.eat(&Tok::LParen) {
                 let argument = match self.tok().clone() {
                     // A plain string, without interpolation.
@@ -485,7 +539,7 @@ impl Parser<'_> {
             annotations.push(Annotation { name, argument, span: start.to(self.prev_span()) });
             self.skip_newlines();
         }
-        Ok(annotations)
+        Ok((annotations, uses))
     }
 
     fn declaration_after(&mut self, public: bool, start: Span) -> PResult<Option<Item>> {
@@ -498,20 +552,25 @@ impl Parser<'_> {
                 Ok(Some(Item::Fn(f)))
             }
             Tok::Kw(Kw::Type) => Ok(Some(Item::Type(self.type_declaration(public, start)?))),
-            // `context` is a word of the language only here (11.16).
-            Tok::Ident(_) if self.at_context(0) => {
+            // `context` and `annotation` are words of the language only here
+            // (11.16, 27.13).
+            Tok::Ident(_) if self.at_context(0) || self.at_annotation(0) => {
+                let context = self.at_context(0);
                 self.bump();
                 let name = self.ident()?;
                 self.expect(Tok::Eq)?;
-                let body = TypeBody::Record(self.record_body(true)?);
+                let defaults = if context { Defaults::Always } else { Defaults::Optional };
+                let body = TypeBody::Record(self.record_body(defaults)?);
                 let span = start.to(self.prev_span());
                 self.end_of_statement()?;
                 let (annotations, generics) = (Vec::new(), Vec::new());
                 Ok(Some(Item::Type(TypeDecl {
                     public,
                     foreign: false,
-                    context: true,
+                    context,
+                    annotation: !context,
                     annotations,
+                    uses: Vec::new(),
                     name,
                     generics,
                     body,
@@ -674,15 +733,27 @@ impl Parser<'_> {
         } else {
             self.expect(Tok::Eq)?;
             if self.at(&Tok::LBrace) {
-                TypeBody::Record(self.record_body(false)?)
+                TypeBody::Record(self.record_body(Defaults::Never)?)
             } else {
                 TypeBody::Newtype(self.type_expr()?)
             }
         };
         let span = start.to(self.prev_span());
         self.end_of_statement()?;
-        let annotations = Vec::new();
-        Ok(TypeDecl { public, foreign: false, context: false, annotations, name, generics, body, span, module: 0 })
+        let (annotations, uses) = (Vec::new(), Vec::new());
+        Ok(TypeDecl {
+            public,
+            foreign: false,
+            context: false,
+            annotation: false,
+            annotations,
+            uses,
+            name,
+            generics,
+            body,
+            span,
+            module: 0,
+        })
     }
 
     /// Whether the token before the current one is `extern`.
@@ -701,6 +772,8 @@ impl Parser<'_> {
             if self.eat(&Tok::RBrace) {
                 break;
             }
+            let (annotations, uses) = self.annotations()?;
+            self.misplaced(&annotations, "a variant");
             let name = self.ident()?;
             let payload = match self.tok() {
                 Tok::LParen => {
@@ -715,20 +788,20 @@ impl Parser<'_> {
                     self.expect(Tok::RParen)?;
                     VariantPayload::Tuple(items)
                 }
-                Tok::LBrace => VariantPayload::Record(self.record_body(false)?),
+                Tok::LBrace => VariantPayload::Record(self.record_body(Defaults::Never)?),
                 _ => VariantPayload::Unit,
             };
-            variants.push(VariantDecl { name, payload });
+            variants.push(VariantDecl { uses, name, payload });
             self.field_separator()?;
         }
         let span = start.to(self.prev_span());
         self.end_of_statement()?;
-        Ok(EnumDecl { public, name, generics, variants, span, module: 0 })
+        Ok(EnumDecl { public, uses: Vec::new(), name, generics, variants, span, module: 0 })
     }
 
     /// `{ [priv] name: Type, ... }` separated by commas or newlines; with
     /// `defaults`, a context's, each `= value` (11.16).
-    fn record_body(&mut self, defaults: bool) -> PResult<Vec<FieldDecl>> {
+    fn record_body(&mut self, defaults: Defaults) -> PResult<Vec<FieldDecl>> {
         self.expect(Tok::LBrace)?;
         let mut fields = Vec::new();
         loop {
@@ -736,7 +809,7 @@ impl Parser<'_> {
             if self.eat(&Tok::RBrace) {
                 return Ok(fields);
             }
-            let annotations = self.annotations()?;
+            let (annotations, uses) = self.annotations()?;
             // `priv` is a modifier only when another field name follows (23.10).
             let private = self.at_kw(Kw::Priv) && self.nth(1) != &Tok::Colon;
             if private {
@@ -746,13 +819,14 @@ impl Parser<'_> {
             self.expect(Tok::Colon)?;
             let ty = self.type_expr()?;
             let default = match defaults {
-                true => {
+                Defaults::Always => {
                     self.expect(Tok::Eq)?;
                     Some(self.expression()?)
                 }
-                false => None,
+                Defaults::Optional if self.eat(&Tok::Eq) => Some(self.expression()?),
+                _ => None,
             };
-            fields.push(FieldDecl { private, name, ty, annotations, default });
+            fields.push(FieldDecl { private, name, ty, annotations, uses, default });
             self.field_separator()?;
         }
     }
@@ -852,6 +926,7 @@ impl Parser<'_> {
             is_unsafe: false,
             foreign: foreign.then(|| Foreign { symbol: name.name.clone(), variadic }),
             annotations: Vec::new(),
+            uses: Vec::new(),
             owner,
             owner_generics,
             name,
@@ -1996,6 +2071,7 @@ impl Parser<'_> {
                 return self.error("the receiver `self` must be the first parameter");
             }
             return Ok(Param {
+                uses: Vec::new(),
                 name: Ident { name: "self".into(), span },
                 ty: None,
                 mode,
@@ -2008,8 +2084,11 @@ impl Parser<'_> {
         if self.at(&Tok::Ellipsis) {
             let span = self.bump();
             let name = Ident { name: "...".into(), span };
-            return Ok(Param { name, ty: None, mode: Mode::Value, variadic: true, default: None, span });
+            let uses = Vec::new();
+            return Ok(Param { uses, name, ty: None, mode: Mode::Value, variadic: true, default: None, span });
         }
+        let (annotations, uses) = self.annotations()?;
+        self.misplaced(&annotations, "a parameter");
         let name = self.ident()?;
         self.expect(Tok::Colon)?;
         let mode = self.mode();
@@ -2017,7 +2096,7 @@ impl Parser<'_> {
         let ty = self.type_expr()?;
         let default = if self.eat(&Tok::Eq) { Some(self.expression()?) } else { None };
         let span = name.span.to(self.prev_span());
-        Ok(Param { span, name, ty: Some(ty), mode, variadic, default })
+        Ok(Param { uses, span, name, ty: Some(ty), mode, variadic, default })
     }
 
     fn mode(&mut self) -> Mode {

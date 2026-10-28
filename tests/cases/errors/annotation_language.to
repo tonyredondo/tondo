@@ -1,0 +1,16 @@
+// The language's annotations go only where they belong; the program's
+// have the capital of their type.
+
+@name("shape")
+enum Shape {
+    @ignore
+    Circle
+}
+
+fn show(@ignore value: Int) {}
+
+fn main() {}
+
+// expect-error: E1619 the language's annotation `@name` does not go on an enum
+// expect-error: E1619 the language's annotation `@ignore` does not go on a variant
+// expect-error: E1619 the language's annotation `@ignore` does not go on a parameter

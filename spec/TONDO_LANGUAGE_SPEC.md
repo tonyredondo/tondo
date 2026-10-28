@@ -641,7 +641,8 @@ binding de un patrón ocultaría la ausencia.
 `recover` tampoco es palabra reservada: seguido de `{` en posición de
 expresión es siempre la expresión `recover` (15.9); en cualquier otra posición
 es un nombre ordinario. Lo mismo ocurre con `context` al principio de una
-declaración seguido de un nombre, que declara un contexto (11.16), y con
+declaración seguido de un nombre, que declara un contexto (11.16), con
+`annotation` en esa misma posición, que declara una anotación (27.13), y con
 `within` al principio de una expresión seguido de una expresión y un bloque,
 que pone un plazo (11.17).
 
@@ -1950,8 +1951,9 @@ type Account = {
 
 `@name("text")` da el nombre del campo fuera del programa e `@ignore` lo omite;
 un campo ignorado es opcional, porque al decodificarse queda `none`. Otra
-anotación es error; los campos de un contexto admiten en su lugar `@log` y
-`@label` (11.16).
+anotación en minúscula es error; los campos de un contexto admiten en su lugar
+`@log` y `@label` (11.16). Un campo también lleva las anotaciones que declara
+el programa, que se escriben con la mayúscula de su tipo (27.13).
 
 ### 9.3 Actualización de records
 
@@ -4090,6 +4092,9 @@ Los argumentos genéricos utilizan corchetes:
 Pair[String, Int]
 parse[User](text)
 ~~~
+
+Un método recibe así sus propios parámetros de tipo, y los de su tipo vienen
+del receptor: `info.annotation[Check]()`.
 
 El compilador infiere argumentos genéricos cuando existe una única solución:
 
@@ -8434,6 +8439,8 @@ oculten un diagnóstico independiente.
 | `E1615` | `conflicting-select-ownership` | Dos brazos reservan el mismo dueño afín de formas incompatibles. |
 | `E1616` | `invalid-context-declaration` | Un campo de un contexto no tiene valor inicial constante, no cumple `Send` o `Copy`, o tiene una anotación que no es `@log` ni `@label`, o cuyo tipo no tiene `Display`. |
 | `E1617` | `invalid-context-change` | `with Nombre { ... }` nombra algo que no es un contexto. |
+| `E1618` | `invalid-annotation-declaration` | Una anotación declara un campo `priv`, de un tipo sin constantes o con un valor por defecto que no es constante (27.13). |
+| `E1619` | `invalid-annotation` | Una anotación que no existe o no es visible, repetida en un elemento, con un argumento que no es constante o que `meta` no puede leer, o una del lenguaje fuera de su sitio (27.13). |
 
 #### Unsafe, programas y constantes
 
@@ -9098,6 +9105,7 @@ script_statement
 
 top_decl        = const_decl
                 | context_decl
+                | annotation_decl
                 | type_decl
                 | alias_decl
                 | enum_decl
@@ -9250,7 +9258,7 @@ Restricciones contextuales:
 ### 23.10 Tipos y aliases
 
 ~~~ebnf
-type_decl       = [ visibility ], "type", identifier,
+type_decl       = { annotation, { NL } }, [ visibility ], "type", identifier,
                   [ generic_params ], "=",
                   ( record_body | type_expr ), declaration_end ;
 
@@ -9265,8 +9273,22 @@ record_body     = "{", { NL },
 
 record_field    = { annotation, { NL } }, [ "priv" ], field_name, ":", type_expr ;
 
+(* En minúscula, una del lenguaje, cuyo argumento es un literal; con la
+   mayúscula de un tipo, una del programa, cuyos argumentos son los de 27.13. *)
 annotation      = "@", identifier,
-                  [ "(", ( string_literal | integer_literal ), ")" ] ;
+                  [ "(", ( string_literal | integer_literal ), ")" ]
+                | "@", type_path, [ call_suffix ] ;
+
+(* `annotation` es contextual (5.5, 27.13). *)
+annotation_decl = [ visibility ], "annotation", identifier, "=",
+                  annotation_body, declaration_end ;
+annotation_body = "{", { NL },
+                  [ annotation_field,
+                    { field_separator, annotation_field },
+                    [ field_separator ] ],
+                  { NL }, "}" ;
+annotation_field
+                = field_name, ":", type_expr, [ "=", expression ] ;
 
 extern_type_decl
                 = { annotation, { NL } }, [ visibility ], "extern", "type",
@@ -9288,7 +9310,7 @@ privado con ese mismo nombre se escribe `priv priv: Bool`.
 ### 23.11 Enums
 
 ~~~ebnf
-enum_decl       = [ visibility ], "enum", identifier,
+enum_decl       = { annotation, { NL } }, [ visibility ], "enum", identifier,
                   [ generic_params ], "{",
                   { NL },
                   enum_variant,
@@ -9296,7 +9318,7 @@ enum_decl       = [ visibility ], "enum", identifier,
                   [ field_separator ],
                   { NL }, "}", declaration_end ;
 
-enum_variant    = identifier,
+enum_variant    = { annotation, { NL } }, identifier,
                   [ tuple_payload | record_body ] ;
 
 tuple_payload   = "(", type_list, ")" ;
@@ -9348,7 +9370,7 @@ de traits normalizados, no una secuencia de expansiones observable. Un
 ### 23.13 Funciones y métodos
 
 ~~~ebnf
-function_decl   = [ visibility ], [ function_modifiers ],
+function_decl   = { annotation, { NL } }, [ visibility ], [ function_modifiers ],
                   "fn", function_head, parameter_list,
                   [ decl_outcome_annotation ],
                   block, declaration_end ;
@@ -9362,9 +9384,9 @@ method_owner    = identifier, [ generic_params ] ;
 parameter_list  = "(", [ parameter,
                   { ",", parameter }, [ "," ] ], ")" ;
 
-parameter       = identifier, ":", [ parameter_modifier ], type_expr,
+parameter       = { annotation }, identifier, ":", [ parameter_modifier ], type_expr,
                   [ "=", expression ]
-                | identifier, ":", "...", type_expr
+                | { annotation }, identifier, ":", "...", type_expr
                 | "self"
                 | receiver_modifier, "self" ;
 
@@ -10581,9 +10603,11 @@ No se puede redeclarar un nombre mientras otro binding con el mismo nombre siga 
 
 Tondo 0.1 no tiene decorators, macros de atributos, pragmas semánticos,
 `#if` dentro de fuente ni un mecanismo abierto para que una herramienta cambie
-la compilación de una declaración. La documentación y el metadato de tooling
-pueden acompañar símbolos, pero no modificar resolución, tipos, layout,
-ownership, efectos ni generación de código.
+la compilación de una declaración. La documentación, el metadato de tooling y
+las anotaciones del programa (27.13) pueden acompañar símbolos, pero no
+modificar resolución, tipos, layout, ownership, efectos ni generación de
+código: una anotación del programa es un dato que leen la reflexión, los
+providers y los generadores.
 
 `derive` es una declaración cerrada, no un atributo general: solo puede producir
 los `impl` autorizados por 27.3 y no acepta configuración sintáctica abierta.
@@ -10974,7 +10998,9 @@ a un generador general. El provider no puede enumerar otros tipos privados del
 módulo.
 
 La personalización que no pueda expresarse por el contrato normal del trait
-requiere un `impl` manual. Tondo 0.1 admite únicamente annotations de campo y
+requiere un `impl` manual, o las anotaciones que declara el programa (27.13),
+que el provider lee con sus valores en el modelo: su forma es su tipo, no una
+bolsa de opciones. Además, Tondo 0.1 admite annotations del lenguaje de campo y
 variante con significado cerrado para los providers de serialization:
 `@name("wire_name")`, `@ignore`, `@json(base64)`,
 `@messagepack(...)` y `@proto(number)`. Se escriben dentro del cuerpo del
@@ -11005,7 +11031,7 @@ limits = { steps = "1000000" }
 Las salidas y los roots se escriben dentro del paquete, sin su nombre. Cada
 salida es un módulo: `palette` es `app.palette` y `proto.user` es
 `app.proto.user`. Cada root es el path de un módulo y el nombre de un record,
-enum o newtype público: `models.User` es `User` de `app.models`.
+enum, newtype o función pública: `models.User` es `User` de `app.models`.
 
 El programa exporta `generate`. No existe sintaxis `.to` para registrar o
 ejecutar un generador.
@@ -11036,8 +11062,8 @@ comprobar el paquete, lo ejecuta en un proceso aparte con la petición:
   generador no abre archivos: lo que necesita de un schema, un descriptor o un
   archivo de datos llega como input.
 - `declarations()`: cada root, y los records, enums y newtypes públicos que
-  nombran sus campos públicos, sus variantes y el tipo que envuelven, en el
-  orden en que se alcanzan. No incluye campos privados ni bodies. Cada tipo
+  nombran sus campos públicos, sus variantes, el tipo que envuelven y los
+  parámetros y el resultado de una función, en el orden en que se alcanzan. No incluye campos privados ni bodies. Cada tipo
   está escrito como en el módulo de su declaración, que da `module()`. Sin
   roots, la lista está vacía: es la forma normal de un generador a partir de un
   schema.
@@ -11051,7 +11077,7 @@ resolver y el typechecker ordinarios. `tondo expand` las muestra.
 
 Un pánico, un error devuelto, un `out.error(...)`, una salida ausente, ajena a
 `outputs` o que reemplazaría un módulo escrito a mano, un root que no es un
-record, enum o newtype público y un input que no se puede leer producen
+record, enum, newtype o función pública y un input que no se puede leer producen
 `E2106`. Una salida que no es fuente Tondo válida o que contiene `derive`
 produce `E2105`. Cualquiera de ellos descarta la generación completa: no se
 añade ninguna de sus salidas.
@@ -11077,6 +11103,9 @@ de datos inmutable, sin métodos que modifiquen el compilador, y contiene:
 - módulos e identidades nominales;
 - clases de declaración, visibilidad, parámetros genéricos y bounds;
 - tipos canónicos de firmas, campos públicos, variantes y payloads;
+- funciones públicas, con sus parámetros y su resultado;
+- las anotaciones del programa (27.13) de cada tipo, variante, campo, función
+  y parámetro, con sus valores constantes;
 - traits, operaciones requeridas e implementaciones visibles; y
 - spans lógicos y documentación pública.
 
@@ -11235,6 +11264,9 @@ Reglas:
   llama.
 - `set` y `callMut` reciben el valor como préstamo `mut`, así que respetan los
   préstamos, la semántica de valor y copy-on-write.
+- Las anotaciones del programa (27.13) de un tipo, sus campos, sus variantes,
+  sus métodos `pub` y sus parámetros se leen con su tipo:
+  `field.annotation[binding.Check]()` es un `binding.Check?`.
 - Cuando el tipo es conocido al compilar y la ruta o el método es un literal, un
   nombre que no existe o no es visible es `E2110`. En otro caso es un
   `ReflectError` cuyo mensaje dice la corrección, por ejemplo
@@ -11301,6 +11333,87 @@ El modelo anterior garantiza:
 La comodidad nunca autoriza ejecución ambiental oculta. Si una necesidad no cabe
 en `derive`, un generador cerrado o código Tondo ordinario, queda fuera de la
 primera versión en lugar de ampliar implícitamente el compilador.
+
+
+### 27.13 Anotaciones del programa
+
+Un módulo declara una anotación como un record cuyos campos pueden tener un
+valor por defecto, con la forma de un contexto (11.16):
+
+~~~tondo
+/// De dónde sale un valor en una petición.
+pub annotation Source = { form: String? = none, query: String? = none, header: String? = none }
+
+/// Qué debe cumplir un valor.
+pub annotation Check = { required: Bool = false, min: Int? = none, max: Int? = none, oneOf: Array[String] = [] }
+
+/// Una ruta que atiende una función.
+pub annotation Get = { path: String }
+~~~
+
+Se escribe delante de un tipo, una variante, un campo, una función, un método
+o un parámetro, con el nombre de su tipo, cualificado con su módulo desde otro,
+y sus campos como los parámetros de una llamada:
+
+~~~tondo
+import binding
+
+type Login = {
+    @binding.Source(form: "user") @binding.Check(required: true, min: 3)
+    user: String
+    @binding.Check(required: true, min: 8)
+    password: String
+}
+
+@binding.Get("/users/:id")
+pub fn showUser(id: Int, @binding.Source(query: "verbose") verbose: Bool = false): String {
+    "user {id}"
+}
+~~~
+
+- **Un tipo.** Una anotación es también un record ordinario:
+  `binding.Check { min: some(3) }` construye su valor, y tiene `Reflect`,
+  `Encode`, `Decode` y `Equatable` como cualquier record. Sus campos son de los
+  tipos que tienen constantes (6.5): números, `Bool`, `Char`, `Byte`,
+  `String`, enums del programa sin payload, y `T?` y `Array[T]` de ellos; sus
+  valores por defecto son constantes. Otro tipo, un campo `priv`, parámetros
+  genéricos o un valor por defecto que no es constante son `E1618`.
+- **Sus argumentos.** Se escriben como los de una función cuyos parámetros son
+  sus campos, por orden y por nombre: `@Get("/users")`, `@Check(min: 3)`; uno
+  opcional toma su valor por defecto, y una opción recibe el valor sin
+  `some(...)`. Sin argumentos se escribe sin paréntesis, `@Required`. Cada
+  argumento es una constante (6.5): un literal, una `const`, una variante, un
+  array de constantes o `none`. Un campo que no existe, uno obligatorio que
+  falta o uno de otro tipo son errores de una llamada (`E1102`), que dicen qué
+  escribir; un argumento que no es constante es `E1619`.
+- **Dónde.** Delante de la declaración de un tipo o de un enum, de una
+  variante, de un campo, de una función o de un método, en sus líneas o en la
+  misma, y delante del nombre de un parámetro. Una anotación aparece una vez por
+  elemento: lo que se repite es una lista dentro de ella. Repetirla, o una que
+  no existe o no es visible, es `E1619`, con las anotaciones visibles de ese
+  nombre.
+- **Sin efecto.** No cambian tipos, layout, ownership, resolución ni el código
+  de lo que anotan (25.28): son datos que leen otros.
+- **Las del lenguaje.** Se escriben en minúscula y su conjunto es cerrado:
+  `@name` e `@ignore` (9.2), `@log` y `@label` (11.16) y las de la FFI
+  (16.16). Las del programa llevan la mayúscula de su tipo, así que a simple
+  vista se distinguen.
+- **Leerlas en ejecución.** `std.reflect` (27.10) da las de un tipo, sus
+  campos, sus variantes, sus métodos `pub` y sus parámetros, con su tipo:
+  `info.fields()[0].annotation[binding.Check]()` es
+  `some(binding.Check { required: true, min: some(3), ... })`, y
+  `annotations()` las da todas como `reflect.Value`. La reflexión no enumera
+  las funciones que no son métodos: sus anotaciones se leen al compilar.
+- **Leerlas al compilar.** El modelo de `meta` (27.6) lleva las de cada
+  declaración, variante, campo, función y parámetro con sus valores, que un
+  provider de `derive` o un generador lee con su tipo (14.9 de la librería
+  estándar): así una librería genera un binder, un validador o un router sin
+  reflexión. Los lee antes de que se compruebe el programa, así que una `const`
+  que nombran vale un literal, una variante, `none` o un array de ellos; otra
+  es `E1619`, que pide escribir su valor.
+- **Coste.** Ninguno en un programa que no las lee: sus valores forman parte del
+  código que el compilador genera para la reflexión de un tipo, que solo existe
+  para los tipos que llegan a ella.
 
 ---
 

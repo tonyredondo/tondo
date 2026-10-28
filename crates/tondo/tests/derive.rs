@@ -26,11 +26,45 @@ fn project(name: &str, main: &str) -> PathBuf {
     let show = dir.join("libs/show");
     write(
         show.join("tondo.toml"),
-        "[package]\nname = \"show\"\n\n[derive]\nShow = \"derive/show.to\"\nLoop = \"derive/loop.to\"\nFiles = \"derive/files.to\"\nExtra = \"derive/extra.to\"\n",
+        "[package]\nname = \"show\"\n\n[derive]\nShow = \"derive/show.to\"\nLoop = \"derive/loop.to\"\nFiles = \"derive/files.to\"\nExtra = \"derive/extra.to\"\nLimits = \"derive/limits.to\"\n",
     );
     write(
         show.join("src/show.to"),
-        "pub trait Show {\n    fn show(self): String\n}\n\npub trait Plain {\n    fn plain(self): String\n}\n\npub trait Loop {\n    fn spin(self): Int\n}\n\npub trait Files {\n    fn read(self): String\n}\n\npub trait Extra {\n    fn extra(self): Int\n}\n",
+        "pub trait Show {\n    fn show(self): String\n}\n\npub trait Plain {\n    fn plain(self): String\n}\n\npub trait Loop {\n    fn spin(self): Int\n}\n\npub trait Files {\n    fn read(self): String\n}\n\npub trait Extra {\n    fn extra(self): Int\n}\n\npub trait Limits {\n    fn problems(self): Array[String]\n}\n\npub enum Severity {\n    Low\n    High\n}\n\npub annotation Min = { length: Int, severity: Severity = Severity.Low }\n",
+    );
+    write(
+        show.join("derive/limits.to"),
+        r#"import std.meta
+
+/// The fields of `show.Min` the provider reads.
+type Min = { length: Int, severity: String }
+
+/// Writes `impl Limits`: a problem for each field shorter than its `@show.Min`.
+pub fn provide(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {
+    let target = request.target()
+    var checks: Array[String] = []
+    for field in target.fields() {
+        for annotation in field.annotations {
+            if annotation.name() == "show.Min" {
+                let min: Min = annotation.to()?
+                let values = ["name": field.name, "length": "{min.length}", "severity": min.severity]
+                checks.push(meta.code(r"""if self.$name.length() < $length { found.push("$name $severity") }""", values))
+            }
+        }
+    }
+    var out = request.sourceBuilder()
+    out.add(meta.code(r"""
+        impl $trait for $type {
+            fn problems(self): Array[String] {
+                var found: Array[String] = []
+                $checks
+                found
+            }
+        }
+        """, ["trait": request.traitName(), "type": target.typeName(), "checks": checks.join("\n")]))?
+    out.finishDerive()
+}
+"#,
     );
     write(
         show.join("derive/show.to"),
@@ -114,6 +148,41 @@ fn main() {
         "{stdout}"
     );
     assert!(stdout.contains("impl[T: Display] show.Show for Page[T] {"), "{stdout}");
+}
+
+#[test]
+fn providers_read_the_annotations() {
+    let main = "\
+import std.console
+import show
+
+const Shortest: Int = 3
+
+pub type Login = {
+    @show.Min(Shortest, severity: show.Severity.High)
+    user: String
+    @show.Min(8)
+    password: String
+}
+derive show.Limits for Login
+
+fn main() {
+    let problems = show.Limits.problems(Login { user: \"al\", password: \"secret\" })
+    console.println(\"{problems}\")
+}
+";
+    let dir = project("derive-annotations", main);
+    let (stdout, stderr, status) = tondo(&dir, &["run"]);
+    assert_eq!((stdout.as_str(), status), ("[user High, password Low]\n", 0), "{stderr}");
+    // What a provider cannot read before the program is checked.
+    let main = main.replace("const Shortest: Int = 3", "const Shortest: Int = 1 + 2");
+    write(dir.join("src/main.to"), &main);
+    let (_, stderr, status) = tondo(&dir, &["check"]);
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("error[E1619]: providers and generators read `@show.Min(Shortest, severity: show.Severity.High)` before the program is checked, so its values are literals, variants, `none`, arrays of them or `const`s that are one: write the value of `Shortest` there"),
+        "{stderr}"
+    );
 }
 
 #[test]

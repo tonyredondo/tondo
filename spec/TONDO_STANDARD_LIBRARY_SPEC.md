@@ -2625,11 +2625,23 @@ Los descriptores secundarios exponen consultas, sin campos públicos:
 - `MethodInfo`: `name(): String`, `receiver(): ParameterMode` y
   `function(): FunctionInfo`, para los métodos que `call` y `callMut` pueden
   llamar.
-- `ParameterInfo`: `position(): Int`, `typeInfo(): TypeInfo` y
+- `ParameterInfo`: `position(): Int`, `name(): String`, `typeInfo(): TypeInfo` y
   `mode(): ParameterMode` (`Value | Ref | Mut | Var`).
 - `FunctionInfo`: `parameters(): Array[ParameterInfo]`, `outcome(): TypeInfo`,
   `variadic(): Bool` y `isUnsafe(): Bool`. El resultado incluye el `Result` o
   `Option` completo.
+
+`TypeInfo`, `FieldInfo`, `VariantInfo`, `MethodInfo` y `ParameterInfo` dan las
+anotaciones del programa de lo que describen (27.13 del lenguaje):
+
+~~~tondo pseudocode
+pub fn TypeInfo.annotation[A: Reflect](self): A?
+pub fn TypeInfo.annotations(self): Array[Value]
+// y las mismas en FieldInfo, VariantInfo, MethodInfo y ParameterInfo
+~~~
+
+`annotation[A]()` es el valor de la anotación de tipo `A`, `none` sin ella;
+`annotations()`, todas, en el orden en que están escritas.
 
 Consultar una vista que no corresponde al kind devuelve la colección vacía o
 `none`. Las colecciones están en orden canónico y no dependen de direcciones ni
@@ -2650,9 +2662,16 @@ builder con el que escriben fuente y sus respuestas.
 pub type DeriveRequest
 pub type GenerateRequest
 pub type Declaration
-pub enum DeclarationKind { Record, Enum, Newtype }
-pub type FieldView = { name: String, typeRef: TypeRef, private: Bool }
-pub type VariantView = { name: String, fields: Array[FieldView], elements: Array[TypeRef] }
+pub enum DeclarationKind { Record, Enum, Newtype, Function }
+pub type FieldView = { name: String, typeRef: TypeRef, private: Bool, annotations: Array[AnnotationView] }
+pub type VariantView = {
+    name: String
+    fields: Array[FieldView]
+    elements: Array[TypeRef]
+    annotations: Array[AnnotationView]
+}
+pub type ParameterView = { name: String, typeRef: TypeRef, annotations: Array[AnnotationView] }
+pub type AnnotationView
 pub type GenericView = { name: String, bounds: Array[String] }
 pub type TypeRef
 pub type Input = { name: String, bytes: Array[Byte], sha256: String }
@@ -2688,6 +2707,12 @@ pub fn Declaration.generics(self): Array[GenericView]
 pub fn Declaration.fields(self): Array[FieldView]
 pub fn Declaration.variants(self): Array[VariantView]
 pub fn Declaration.underlying(self): TypeRef?
+pub fn Declaration.parameters(self): Array[ParameterView]
+pub fn Declaration.result(self): TypeRef?
+pub fn Declaration.annotations(self): Array[AnnotationView]
+
+pub fn AnnotationView.name(self): String
+pub fn AnnotationView.to[T: serialization.Decode](self): T ! Error
 
 pub fn TypeRef.identity(self): String
 
@@ -2709,6 +2734,18 @@ pub fn SourceBuilder.error(mut self, message: String)
   lo son.
 - `Declaration.typeName()` es el tipo con sus parámetros, como lo nombra la
   cabecera de un `impl`: `Page[T]`.
+- Una función pública es una declaración `Function`: `parameters()` da sus
+  parámetros y `result()` su resultado, con el `Result` o la `Option`
+  completos; las de un tipo dan `[]` y `none`.
+- Las anotaciones del programa (27.13 del lenguaje) de una declaración, un
+  campo, una variante o un parámetro están en el orden en que se escriben, con
+  todos sus campos, también los que toman su valor por defecto.
+  `AnnotationView.name()` es su tipo como lo escribe el módulo de la
+  declaración, `binding.Check`, y `to[T]()` su valor como `T`, un record del
+  provider con los campos que lee, porque un provider no importa los módulos
+  del programa: con `type Check = { required: Bool, min: Int? }`,
+  `let check: Check = annotation.to()?`. Un `T` de otra forma falla con
+  `Error.Provider`.
 - Un `TypeRef` es el tipo como lo escribe el módulo de la declaración; su
   `identity()` es ese texto, y `renderType` lo escribe tal cual.
 - `code` sustituye cada `$nombre` de la plantilla por su valor y `$$` por `$`;

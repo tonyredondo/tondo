@@ -1,0 +1,31 @@
+// The annotations of one module, written in another as `@binding.Check`
+// and read by both with `std.reflect`.
+
+import std.console
+import std.reflect
+import annotations.binding
+
+pub type Signup = {
+    @binding.Check(required: true, min: 3)
+    name: String
+    @binding.Check(min: 18)
+    age: Int
+}
+
+pub type Users = {}
+
+@binding.Get("/users/:id")
+pub fn Users.show(self, id: Int): String {
+    "user {id}"
+}
+
+fn main() {
+    let missing = binding.missing[Signup](["age": "20"])
+    console.println("missing: {missing}")
+    for method in reflect.typeInfo[Users]().methods() {
+        console.println("{method.name()} {method.annotation[binding.Get]().map((g) { g.path })}")
+    }
+}
+
+// expect-stdout: missing: [name]
+// expect-stdout: show some(/users/:id)

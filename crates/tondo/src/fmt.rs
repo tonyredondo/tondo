@@ -307,15 +307,20 @@ impl Formatter<'_> {
 
     fn item(&mut self, item: &Item) -> Doc {
         match item {
-            Item::Fn(f) => concat(vec![annotations(&f.annotations), self.function(f)]),
+            Item::Fn(f) => concat(vec![annotations(&f.annotations), self.uses(&f.uses, false), self.function(f)]),
             Item::Type(t) => {
+                let keyword = match (t.context, t.annotation) {
+                    (true, _) => "context",
+                    (_, true) => "annotation",
+                    _ => "type",
+                };
                 let head = concat(vec![
                     annotations(&t.annotations),
+                    self.uses(&t.uses, false),
                     text(format!(
-                        "{}{}{} {}",
+                        "{}{}{keyword} {}",
                         if t.public { "pub " } else { "" },
                         if t.foreign { "extern " } else { "" },
-                        if t.context { "context" } else { "type" },
                         t.name.name
                     )),
                     self.generics(&t.generics),
@@ -346,6 +351,7 @@ impl Formatter<'_> {
             ]),
             Item::Enum(e) => {
                 let head = concat(vec![
+                    self.uses(&e.uses, false),
                     text(format!("{}enum {}", if e.public { "pub " } else { "" }, e.name.name)),
                     self.generics(&e.generics),
                     text(" "),
@@ -495,8 +501,12 @@ impl Formatter<'_> {
 
     fn field_decl(&mut self, field: &FieldDecl) -> Doc {
         let private = if field.private { "priv " } else { "" };
-        let mut parts =
-            vec![annotations(&field.annotations), text(format!("{private}{}: ", field.name.name)), self.ty(&field.ty)];
+        let mut parts = vec![
+            annotations(&field.annotations),
+            self.uses(&field.uses, false),
+            text(format!("{private}{}: ", field.name.name)),
+            self.ty(&field.ty),
+        ];
         if let Some(default) = &field.default {
             parts.push(text(" = "));
             parts.push(self.expr(default));
@@ -505,7 +515,7 @@ impl Formatter<'_> {
     }
 
     fn variant(&mut self, variant: &VariantDecl) -> Doc {
-        let name = text(variant.name.name.clone());
+        let name = concat(vec![self.uses(&variant.uses, false), text(variant.name.name.clone())]);
         match &variant.payload {
             VariantPayload::Unit => name,
             VariantPayload::Tuple(types) => {
@@ -593,7 +603,8 @@ impl Formatter<'_> {
             mode => format!("{} ", mode.keyword()),
         };
         let variadic = if param.variadic { "..." } else { "" };
-        let mut parts = vec![text(format!("{}: {mode}{variadic}", param.name.name)), self.ty(ty)];
+        let mut parts =
+            vec![self.uses(&param.uses, true), text(format!("{}: {mode}{variadic}", param.name.name)), self.ty(ty)];
         if let Some(default) = &param.default {
             parts.push(text(" = "));
             parts.push(self.expr(default));
@@ -1198,6 +1209,22 @@ impl Formatter<'_> {
             return concat(std::iter::once(head_doc).chain(tail).collect());
         }
         group(concat(vec![head_doc, indent(concat(tail))]))
+    }
+
+    /// The program's annotations (27.13): each on its own line before a
+    /// declaration, or `inline` before a parameter's name.
+    fn uses(&mut self, uses: &[AnnotationUse], inline: bool) -> Doc {
+        let mut parts = Vec::new();
+        for annotation in uses {
+            let path: Vec<&str> = annotation.path.iter().map(|segment| segment.name.as_str()).collect();
+            parts.push(text(format!("@{}", path.join("."))));
+            if !annotation.args.is_empty() {
+                let items = annotation.args.iter().map(|a| (a.span, self.argument(a))).collect();
+                parts.push(self.list("(", items, ")"));
+            }
+            parts.push(if inline { text(" ") } else { Doc::Hardline });
+        }
+        concat(parts)
     }
 
     fn argument(&mut self, arg: &Arg) -> Doc {

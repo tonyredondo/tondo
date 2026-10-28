@@ -1,0 +1,36 @@
+// An annotation of the program is declared, and written once on each
+// thing with constant arguments for its fields.
+
+annotation Check = {
+    required: Bool = false
+    min: Int? = none
+}
+
+type Plain = {
+    x: Int
+}
+
+fn limit(): Int {
+    3
+}
+
+type User = {
+    @Missing
+    @Plain
+    name: String
+    @Check
+    @Check(required: true)
+    age: Int
+    @Check(min: limit())
+    height: Int
+    @Check(maximum: 3)
+    width: Int
+}
+
+fn main() {}
+
+// expect-error: E1619 there is no annotation `Missing`
+// expect-error: E1619 `Plain` is a type, not an annotation
+// expect-error: E1619 `@Check` is written twice here
+// expect-error: E1619 the arguments of `@Check` are constants
+// expect-error: E1102 `Check` has no field `maximum`; its fields are `required` and `min`

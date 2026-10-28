@@ -1,0 +1,104 @@
+// The program's annotations (27.13): declared as records with defaults,
+// written on types, fields, variants, methods and parameters, and read
+// with their types through `std.reflect`.
+
+import std.console
+import std.reflect
+
+/// Where a handler answers.
+pub annotation Route = {
+    method: String = "GET"
+    path: String
+}
+
+pub annotation Check = {
+    required: Bool = false
+    min: Int? = none
+    tags: Array[String] = []
+}
+
+pub enum Level {
+    Low
+    High
+}
+
+pub annotation Audit = {
+    level: Level = Level.Low
+}
+
+const Shortest: Int = 3
+
+@Route(path: "/users")
+pub type User = {
+    @Check(required: true, min: Shortest)
+    name: String
+    @Check(tags: ["a", "b"])
+    age: Int
+    email: String
+}
+
+pub enum Shape {
+    @Audit(level: Level.High)
+    Circle(Float)
+    Square {
+        @Check(min: 1)
+        side: Float
+    }
+}
+
+@Audit
+pub fn User.rename(mut self, @Check(min: 1) name: String, _times: Int) {
+    self.name = name
+}
+
+pub type Box[T] = {
+    @Check(required: true)
+    item: T
+}
+
+fn main() {
+    let info = reflect.typeInfo[User]()
+    let route = info.annotation[Route]().expect("a route")
+    console.println("{route.method} {route.path} {info.annotations().length()}")
+    for field in info.fields() {
+        match field.annotation[Check]() {
+            some(check) => console.println(
+                "{field.name()}: {check.required} {check.min} {check.tags}",
+            )
+            none => console.println("{field.name()}: -")
+        }
+    }
+    for variant in reflect.typeInfo[Shape]().variants() {
+        console.println("{variant.name()}: {variant.annotations()}")
+        for field in variant.fields() {
+            console.println("  {field.name()}: {field.annotation[Check]().map((c) { c.min })}")
+        }
+    }
+    for method in info.methods() {
+        console.println(
+            "{method.name()}: {method.annotation[Audit]().map((a) { a.level == Level.Low })}",
+        )
+        for p in method.function().parameters() {
+            console.println("  {p.name()}: {p.annotation[Check]().map((c) { c.min })}")
+        }
+    }
+    for field in reflect.typeInfo[Box[Int]]().fields() {
+        console.println("Box.{field.name()}: {field.annotation[Check]().map((c) { c.required })}")
+    }
+    // An annotation is also an ordinary record.
+    let same = Check { min: some(2) } == Check { required: false, min: some(2), tags: [] }
+    console.println("{same}")
+}
+
+// expect-stdout: GET /users 1
+// expect-stdout: name: true some(3) []
+// expect-stdout: age: false none [a, b]
+// expect-stdout: email: -
+// expect-stdout: Circle: [Audit { level: High }]
+// expect-stdout: Square: []
+// expect-stdout:   side: some(some(1))
+// expect-stdout: rename: some(true)
+// expect-stdout:   name: some(some(1))
+// expect-stdout:   _times: none
+// expect-stdout: Box.item: some(true)
+// expect-stdout: true

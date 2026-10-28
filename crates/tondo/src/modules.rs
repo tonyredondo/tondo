@@ -523,6 +523,15 @@ impl Linker<'_> {
         }
     }
 
+    /// The program's annotations (27.13): their types' paths and their
+    /// arguments.
+    fn uses(&mut self, uses: &mut [AnnotationUse]) {
+        for annotation in uses {
+            self.path(&mut annotation.path, Position::Any);
+            annotation.args.iter_mut().for_each(|arg| self.expr(&mut arg.value));
+        }
+    }
+
     /// Renames a declaration of this module.
     fn declared(&self, name: &mut Ident) {
         name.name = self.renamed(self.module, &name.name);
@@ -589,8 +598,10 @@ impl Linker<'_> {
                 }
                 self.declared(&mut t.name);
                 self.generics(&mut t.generics);
+                self.uses(&mut t.uses);
                 match &mut t.body {
                     TypeBody::Record(fields) => fields.iter_mut().for_each(|f| {
+                        self.uses(&mut f.uses);
                         self.ty(&mut f.ty);
                         if let Some(default) = &mut f.default {
                             self.expr(default);
@@ -620,15 +631,20 @@ impl Linker<'_> {
                 confusables(&e.variants.iter().map(|v| &v.name).collect::<Vec<_>>(), self.diags);
                 self.declared(&mut e.name);
                 self.generics(&mut e.generics);
+                self.uses(&mut e.uses);
                 for variant in &mut e.variants {
                     self.convention(&variant.name, Case::Pascal);
+                    self.uses(&mut variant.uses);
                     if let VariantPayload::Record(fields) = &variant.payload {
                         fields.iter().for_each(|f| self.convention(&f.name, Case::Camel));
                     }
                     match &mut variant.payload {
                         VariantPayload::Unit => {}
                         VariantPayload::Tuple(types) => types.iter_mut().for_each(|t| self.ty(t)),
-                        VariantPayload::Record(fields) => fields.iter_mut().for_each(|f| self.ty(&mut f.ty)),
+                        VariantPayload::Record(fields) => fields.iter_mut().for_each(|f| {
+                            self.uses(&mut f.uses);
+                            self.ty(&mut f.ty);
+                        }),
                     }
                 }
             }
@@ -690,7 +706,9 @@ impl Linker<'_> {
         }
         self.generics(&mut f.owner_generics);
         self.generics(&mut f.generics);
+        self.uses(&mut f.uses);
         for param in &mut f.params {
+            self.uses(&mut param.uses);
             if let Some(ty) = &mut param.ty {
                 self.ty(ty);
                 self.binding(&param.name);

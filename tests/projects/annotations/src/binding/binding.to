@@ -1,0 +1,19 @@
+import std.reflect
+
+/// How a request's value binds to a field.
+pub annotation Check = { required: Bool = false, min: Int? = none }
+
+/// A handler of `GET` requests on a path.
+pub annotation Get = { path: String }
+
+/// The fields of `T` a request misses.
+pub fn missing[T: reflect.Reflect](values: Map[String, String]): Array[String] {
+    var found: Array[String] = []
+    for field in reflect.typeInfo[T]().fields() {
+        let required = field.annotation[Check]().map((check) { check.required }).unwrapOr(false)
+        if required and not values.contains(field.name()) {
+            found.push(field.name())
+        }
+    }
+    found
+}

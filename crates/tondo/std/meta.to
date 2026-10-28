@@ -4,6 +4,7 @@
 
 import std.internal.meta as metaNative
 import std.json as __json
+import std.serialization
 
 /// Why a provider cannot give its response.
 pub enum Error {
@@ -46,11 +47,36 @@ impl Display for TypeRef {
     }
 }
 
+/// An annotation the program writes on a declaration, a variant, a field or
+/// a parameter (language 27.13), with every field's value.
+pub type AnnotationView = {
+    priv annotationName: String
+    priv value: __json.Value
+}
+
+/// Its type as the module of the declaration writes it: `binding.Check`.
+pub fn AnnotationView.name(self): String {
+    self.annotationName
+}
+
+/// Its value as `T`, a record of the provider with the fields it reads:
+/// with `type Check = { required: Bool, min: Int? }`,
+/// `let check: Check = annotation.to()?`.
+pub fn AnnotationView.to[T: serialization.Decode](self): T ! Error {
+    match __json.fromValue[T](self.value) {
+        ok(value) => value
+        err(error) => fail Error.Provider(
+            "the annotation `{self.annotationName}` is not of that form: {error}",
+        )
+    }
+}
+
 /// A field of the declaration, private ones included.
 pub type FieldView = {
     name: String
     typeRef: TypeRef
     private: Bool
+    annotations: Array[AnnotationView]
 }
 
 /// A variant: its name and the fields or elements of its payload.
@@ -58,6 +84,14 @@ pub type VariantView = {
     name: String
     fields: Array[FieldView]
     elements: Array[TypeRef]
+    annotations: Array[AnnotationView]
+}
+
+/// A parameter of a function.
+pub type ParameterView = {
+    name: String
+    typeRef: TypeRef
+    annotations: Array[AnnotationView]
 }
 
 /// A type parameter and the bounds written on it.
@@ -66,14 +100,16 @@ pub type GenericView = {
     bounds: Array[String]
 }
 
-/// What a declaration is: a record, an enum or a newtype.
+/// What a declaration is: a record, an enum, a newtype or a function.
 pub enum DeclarationKind {
     Record
     Enum
     Newtype
+    Function
 }
 
-/// The record, enum or newtype a `derive` names.
+/// The record, enum or newtype a `derive` names, or a declaration a
+/// generator sees.
 pub type Declaration = {
     priv declared: String
     priv path: String
@@ -82,6 +118,9 @@ pub type Declaration = {
     priv members: Array[FieldView]
     priv cases: Array[VariantView]
     priv wrapped: TypeRef?
+    priv params: Array[ParameterView]
+    priv outcome: TypeRef?
+    priv notes: Array[AnnotationView]
 }
 
 /// The declaration's name, without its type parameters.
@@ -129,6 +168,22 @@ pub fn Declaration.variants(self): Array[VariantView] {
 /// The type a newtype wraps.
 pub fn Declaration.underlying(self): TypeRef? {
     self.wrapped
+}
+
+/// A function's parameters; none for a type.
+pub fn Declaration.parameters(self): Array[ParameterView] {
+    self.params
+}
+
+/// A function's result, with its `Result` or `Option`; `none` for a type.
+pub fn Declaration.result(self): TypeRef? {
+    self.outcome
+}
+
+/// The program's annotations of the declaration, in the order they are
+/// written.
+pub fn Declaration.annotations(self): Array[AnnotationView] {
+    self.notes
 }
 
 /// What `derive` asks of a provider: an `impl` of the trait, as the program
@@ -367,10 +422,21 @@ fn fieldViews(value: __json.Value): Array[FieldView] {
                 name: text(field["name"])
                 typeRef: typeRef(field["type"])
                 private: field["private"].asBool().unwrapOr(false)
+                annotations: annotationViews(field["annotations"])
             },
         )
     }
     fields
+}
+
+fn annotationViews(value: __json.Value): Array[AnnotationView] {
+    var annotations: Array[AnnotationView] = []
+    for annotation in value.asArray().unwrapOr([]) {
+        annotations.push(
+            AnnotationView { annotationName: text(annotation["name"]), value: annotation["value"] },
+        )
+    }
+    annotations
 }
 
 /// The request of a provider.
@@ -403,18 +469,35 @@ fn declarationOf(target: __json.Value): Declaration {
                 name: text(variant["name"])
                 fields: fieldViews(variant["fields"])
                 elements
+                annotations: annotationViews(variant["annotations"])
+            },
+        )
+    }
+    var params: Array[ParameterView] = []
+    for param in fieldViews(target["parameters"]) {
+        params.push(
+            ParameterView {
+                name: param.name
+                typeRef: param.typeRef
+                annotations: param.annotations
             },
         )
     }
     let form = match text(target["kind"]) {
         "enum" => DeclarationKind.Enum
         "newtype" => DeclarationKind.Newtype
+        "function" => DeclarationKind.Function
         _ => DeclarationKind.Record
     }
     let wrapped: TypeRef? = if target["underlying"].isNull() {
         none
     } else {
         some(typeRef(target["underlying"]))
+    }
+    let outcome: TypeRef? = if target["result"].isNull() {
+        none
+    } else {
+        some(typeRef(target["result"]))
     }
     Declaration {
         declared: text(target["name"])
@@ -424,6 +507,9 @@ fn declarationOf(target: __json.Value): Declaration {
         members: fieldViews(target["fields"])
         cases: variants
         wrapped
+        params
+        outcome
+        notes: annotationViews(target["annotations"])
     }
 }
 

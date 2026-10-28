@@ -11,7 +11,7 @@
 use crate::ast;
 use crate::diag::Diagnostics;
 use crate::modules::{ModuleSource, PackageInfo};
-use crate::source::SourceMap;
+use crate::source::{SourceMap, Span};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -70,7 +70,7 @@ pub fn expand(
             };
             let mut seen: Vec<(String, String)> = Vec::new();
             for derive in derives {
-                let Some(target) = target(modules, module, &derive, sources, diags) else { continue };
+                let Some(target) = target(modules, packages, module, &derive, sources, diags) else { continue };
                 for trait_ref in &derive.traits {
                     let trait_text = sources.slice(trait_ref.span).to_string();
                     let pair = (trait_text.clone(), target.written.clone());
@@ -269,8 +269,8 @@ pub fn generate(
 
 /// The declarations a generator sees (27.5), as a request describes them:
 /// each root, and the public records, enums and newtypes that their public
-/// fields, variants and wrapped types name, with the module of each. One
-/// that only an output of this build declares is `E2109`.
+/// fields, variants, wrapped types and signatures name, with the module of
+/// each. One that only an output of this build declares is `E2109`.
 #[allow(clippy::too_many_arguments)]
 fn declarations(
     modules: &[ModuleSource],
@@ -293,14 +293,20 @@ fn declarations(
         let path: Vec<String> = std::iter::once(packages[package].name.clone())
             .chain(module.split('.').filter(|s| !s.is_empty()).map(String::from))
             .collect();
+        let place = |module: usize, file: usize| Place { modules, packages, module, file, sources };
         match modules.iter().position(|m| m.package == package && m.path == path) {
-            Some(m) if declared(&modules[m], name).is_some_and(|(_, item)| view(item, sources, true).is_some()) => {
+            Some(m)
+                if declared(&modules[m], name)
+                    .is_some_and(|(file, item)| view(item, &place(m, file), true).is_some()) =>
+            {
                 reached.push((m, name.to_string()));
             }
             None if generated.contains(&path) => {
                 cycle(problems, format!("its root `{root}` is in `{}`", path.join(".")));
             }
-            _ => problems.push(("E2106", format!("its root `{root}` is not a public record, enum or newtype"))),
+            _ => {
+                problems.push(("E2106", format!("its root `{root}` is not a public record, enum, newtype or function")))
+            }
         }
     }
     let mut out = Vec::new();
@@ -308,7 +314,9 @@ fn declarations(
     while let Some((module, name)) = reached.get(next).cloned() {
         next += 1;
         let Some((file, item)) = declared(&modules[module], &name) else { continue };
-        let Some(view) = view(item, sources, true) else { continue };
+        let place = Place { modules, packages, module, file, sources };
+        let Some(view) = view(item, &place, true) else { continue };
+        problems.extend(view.problems.iter().map(|(_, why)| ("E1619", why.clone())));
         out.push(view_json(&view, &modules[module].path.join(".")));
         let mut named = Vec::new();
         for ty in public_types(item) {
@@ -344,18 +352,21 @@ fn declarations(
     out
 }
 
-/// The record, enum or newtype a module declares under `name`, and its file.
+/// The record, enum, newtype or function a module declares under `name`,
+/// and its file.
 fn declared<'a>(module: &'a ModuleSource, name: &str) -> Option<(usize, &'a ast::Item)> {
     module.files.iter().enumerate().find_map(|(file, (source, _))| {
         source.items.iter().find_map(|item| match item {
             ast::Item::Type(t) if t.name.name == name => Some((file, item)),
             ast::Item::Enum(e) if e.name.name == name => Some((file, item)),
+            ast::Item::Fn(f) if f.owner.is_none() && f.name.name == name => Some((file, item)),
             _ => None,
         })
     })
 }
 
-/// The types of a declaration's public fields, variants and wrapped type.
+/// The types of a declaration's public fields, variants and wrapped type,
+/// and of a function's parameters and result.
 fn public_types(item: &ast::Item) -> Vec<&ast::TypeExpr> {
     fn fields(declared: &[ast::FieldDecl]) -> Vec<&ast::TypeExpr> {
         declared.iter().filter(|f| !f.private).map(|f| &f.ty).collect()
@@ -375,6 +386,7 @@ fn public_types(item: &ast::Item) -> Vec<&ast::TypeExpr> {
                 ast::VariantPayload::Record(declared) => fields(declared),
             })
             .collect(),
+        ast::Item::Fn(f) => f.params.iter().filter_map(|p| p.ty.as_ref()).chain(&f.result).collect(),
         _ => Vec::new(),
     }
 }
@@ -403,31 +415,62 @@ fn paths<'a>(ty: &'a ast::TypeExpr, out: &mut Vec<&'a [ast::Ident]>) {
 }
 
 /// A declaration as a request describes it: its kind, parameters, fields,
-/// variants and the type a newtype wraps, each type as written.
+/// variants, the type a newtype wraps, a function's parameters and result,
+/// each type as written, and the program's annotations of each part (27.13).
 struct View {
     name: String,
     kind: &'static str,
     generics: Vec<(String, Vec<String>)>,
     fields: Vec<Field>,
-    variants: Vec<(String, Vec<Field>, Vec<String>)>,
+    variants: Vec<Variant>,
     underlying: Option<String>,
+    parameters: Vec<Field>,
+    result: Option<String>,
+    annotations: Vec<String>,
+    /// The annotations whose values a request cannot give.
+    problems: Vec<(Span, String)>,
 }
 
+/// A field, or a function's parameter.
 struct Field {
     name: String,
     ty: String,
     private: bool,
+    annotations: Vec<String>,
 }
 
-/// The view of a record, enum or newtype; with `public`, only a `pub` one
-/// and its public fields.
-fn view(item: &ast::Item, sources: &SourceMap, public: bool) -> Option<View> {
-    let text = |ty: &ast::TypeExpr| sources.slice(ty.span).to_string();
-    let fields = |declared: &[ast::FieldDecl]| -> Vec<Field> {
+struct Variant {
+    name: String,
+    fields: Vec<Field>,
+    elements: Vec<String>,
+    annotations: Vec<String>,
+}
+
+/// Where a declaration is, to find what its annotations name.
+#[derive(Clone, Copy)]
+struct Place<'a> {
+    modules: &'a [ModuleSource],
+    packages: &'a [PackageInfo],
+    module: usize,
+    file: usize,
+    sources: &'a SourceMap,
+}
+
+/// The view of a record, enum, newtype or function; with `public`, only a
+/// `pub` one and its public fields.
+fn view(item: &ast::Item, at: &Place, public: bool) -> Option<View> {
+    let text = |ty: &ast::TypeExpr| at.sources.slice(ty.span).to_string();
+    let mut problems = Vec::new();
+    let fields = |declared: &[ast::FieldDecl], problems: &mut Vec<(Span, String)>| -> Vec<Field> {
         declared
             .iter()
             .filter(|f| !(public && f.private))
-            .map(|f| Field { name: f.name.name.clone(), ty: text(&f.ty), private: f.private })
+            .map(|f| Field {
+                name: f.name.name.clone(),
+                ty: text(&f.ty),
+                private: f.private,
+                annotations: annotations(&f.uses, at, problems),
+            })
             .collect()
     };
     let generics = |declared: &[ast::GenericParam]| -> Vec<(String, Vec<String>)> {
@@ -440,39 +483,186 @@ fn view(item: &ast::Item, sources: &SourceMap, public: bool) -> Option<View> {
         fields: Vec::new(),
         variants: Vec::new(),
         underlying: None,
+        parameters: Vec::new(),
+        result: None,
+        annotations: Vec::new(),
+        problems: Vec::new(),
     };
     match item {
         ast::Item::Type(t) if !t.foreign && (t.public || !public) => {
             view.name = t.name.name.rsplit('.').next().unwrap_or_default().to_string();
             view.generics = generics(&t.generics);
             match &t.body {
-                ast::TypeBody::Record(declared) => view.fields = fields(declared),
+                ast::TypeBody::Record(declared) => view.fields = fields(declared, &mut problems),
                 ast::TypeBody::Newtype(inner) => {
                     view.kind = "newtype";
                     view.underlying = Some(text(inner));
                 }
                 ast::TypeBody::Opaque => return None,
             }
+            view.annotations = annotations(&t.uses, at, &mut problems);
         }
         ast::Item::Enum(e) if e.public || !public => {
             view.name = e.name.name.rsplit('.').next().unwrap_or_default().to_string();
             view.kind = "enum";
             view.generics = generics(&e.generics);
-            view.variants = e
-                .variants
-                .iter()
-                .map(|v| match &v.payload {
-                    ast::VariantPayload::Unit => (v.name.name.clone(), Vec::new(), Vec::new()),
-                    ast::VariantPayload::Tuple(types) => {
-                        (v.name.name.clone(), Vec::new(), types.iter().map(text).collect())
-                    }
-                    ast::VariantPayload::Record(declared) => (v.name.name.clone(), fields(declared), Vec::new()),
-                })
-                .collect();
+            for v in &e.variants {
+                let (fields, elements) = match &v.payload {
+                    ast::VariantPayload::Unit => (Vec::new(), Vec::new()),
+                    ast::VariantPayload::Tuple(types) => (Vec::new(), types.iter().map(text).collect()),
+                    ast::VariantPayload::Record(declared) => (fields(declared, &mut problems), Vec::new()),
+                };
+                let annotations = annotations(&v.uses, at, &mut problems);
+                view.variants.push(Variant { name: v.name.name.clone(), fields, elements, annotations });
+            }
+            view.annotations = annotations(&e.uses, at, &mut problems);
+        }
+        ast::Item::Fn(f) if f.owner.is_none() && f.foreign.is_none() && (f.public || !public) => {
+            view.name = f.name.name.rsplit('.').next().unwrap_or_default().to_string();
+            view.kind = "function";
+            view.generics = generics(&f.generics);
+            for p in &f.params {
+                view.parameters.push(Field {
+                    name: p.name.name.clone(),
+                    ty: p.ty.as_ref().map(text).unwrap_or_default(),
+                    private: false,
+                    annotations: annotations(&p.uses, at, &mut problems),
+                });
+            }
+            view.result = Some(f.result.as_ref().map_or_else(|| "Unit".to_string(), text));
+            view.annotations = annotations(&f.uses, at, &mut problems);
         }
         _ => return None,
     }
+    view.problems = problems;
     Some(view)
+}
+
+/// The program's annotations of a thing (27.13), as a request gives them:
+/// each its type as written there and its value, with every field. One that
+/// names no annotation is left to the checker's `E1619`.
+fn annotations(uses: &[ast::AnnotationUse], at: &Place, problems: &mut Vec<(Span, String)>) -> Vec<String> {
+    let mut out = Vec::new();
+    for used in uses {
+        let names: Vec<&str> = used.path.iter().map(|s| s.name.as_str()).collect();
+        let Some((home, fields)) = annotation_fields(&names, at) else { continue };
+        // Each field's value: its argument, by position or name, or its default.
+        let mut values: Vec<Option<(&ast::Expr, Place)>> =
+            fields.iter().map(|f| f.default.as_ref().map(|d| (d, home))).collect();
+        let mut positional = 0;
+        for arg in &used.args {
+            let index = match &arg.name {
+                Some(name) => fields.iter().position(|f| f.name.name == name.name),
+                None => {
+                    positional += 1;
+                    Some(positional - 1)
+                }
+            };
+            if let Some(slot) = index.and_then(|i| values.get_mut(i)) {
+                *slot = Some((&arg.value, *at));
+            }
+        }
+        let mut members = Vec::new();
+        for (field, value) in fields.iter().zip(values) {
+            let Some((expr, place)) = value else { continue };
+            match constant(expr, &place, 0) {
+                Some(value) => members.push(format!("{}:{value}", json(&field.name.name))),
+                None => {
+                    let why = format!(
+                        "providers and generators read `{}` before the program is checked, so its values are literals, variants, `none`, arrays of them or `const`s that are one: write the value of `{}` there",
+                        at.sources.slice(used.span),
+                        place.sources.slice(expr.span)
+                    );
+                    problems.push((expr.span, why));
+                }
+            }
+        }
+        out.push(format!("{{\"name\":{},\"value\":{{{}}}}}", json(&names.join(".")), members.join(",")));
+    }
+    out
+}
+
+/// The fields of the annotation a path names, and where it is declared:
+/// in this module, or in the one the file imports under its qualifier.
+fn annotation_fields<'a>(names: &[&str], at: &Place<'a>) -> Option<(Place<'a>, &'a [ast::FieldDecl])> {
+    let module = match names {
+        [_] => at.module,
+        [qualifier, _] => imported(at.modules, at.packages, at.module, at.file, qualifier)
+            .and_then(|(package, path)| at.modules.iter().position(|m| m.package == package && m.path == path))?,
+        _ => return None,
+    };
+    let name = names[names.len() - 1];
+    at.modules[module].files.iter().enumerate().find_map(|(file, (source, _))| {
+        source.items.iter().find_map(|item| match item {
+            ast::Item::Type(t) if t.annotation && t.name.name.rsplit('.').next() == Some(name) => match &t.body {
+                ast::TypeBody::Record(fields) => Some((Place { module, file, ..*at }, fields.as_slice())),
+                _ => None,
+            },
+            _ => None,
+        })
+    })
+}
+
+/// A constant as JSON, as a provider reads it before the program is
+/// checked: a literal, `none`, a variant, an array of them, or a `const`
+/// that is one.
+fn constant(expr: &ast::Expr, at: &Place, depth: u32) -> Option<String> {
+    match &expr.kind {
+        ast::ExprKind::Int { value, .. } => Some(value.to_string()),
+        ast::ExprKind::Float { text, .. } => Some(text.replace('_', "")),
+        ast::ExprKind::Bool(value) => Some(value.to_string()),
+        ast::ExprKind::Char(c) => Some(json(&c.to_string())),
+        ast::ExprKind::Str(segments) => segments
+            .iter()
+            .map(|s| match s {
+                ast::StrSegment::Text(text) => Some(text.as_str()),
+                ast::StrSegment::Expr(_) => None,
+            })
+            .collect::<Option<String>>()
+            .map(|text| json(&text)),
+        ast::ExprKind::Unary(ast::UnaryOp::Neg, inner)
+            if matches!(inner.kind, ast::ExprKind::Int { .. } | ast::ExprKind::Float { .. }) =>
+        {
+            Some(format!("-{}", constant(inner, at, depth)?))
+        }
+        ast::ExprKind::Array(items) => {
+            let items: Option<Vec<String>> = items.iter().map(|item| constant(item, at, depth)).collect();
+            Some(format!("[{}]", items?.join(",")))
+        }
+        ast::ExprKind::Call { callee, args } => match (&callee.kind, args.as_slice()) {
+            (ast::ExprKind::Path(path), [arg]) if path.len() == 1 && path[0].name == "some" => {
+                constant(&arg.value, at, depth)
+            }
+            _ => None,
+        },
+        ast::ExprKind::Path(path) => {
+            let names: Vec<&str> = path.iter().map(|s| s.name.as_str()).collect();
+            match names.as_slice() {
+                ["none"] => Some("null".to_string()),
+                // A variant, as `Level.High` or `levels.Level.High`.
+                [.., owner, variant] if owner.starts_with(char::is_uppercase) => Some(json(variant)),
+                // A `const` of this module, or of one the file imports.
+                [name] | [_, name] if depth < 16 => {
+                    let module = match names.as_slice() {
+                        [qualifier, _] => imported(at.modules, at.packages, at.module, at.file, qualifier).and_then(
+                            |(package, path)| at.modules.iter().position(|m| m.package == package && m.path == path),
+                        )?,
+                        _ => at.module,
+                    };
+                    at.modules[module].files.iter().enumerate().find_map(|(file, (source, _))| {
+                        source.items.iter().find_map(|item| match item {
+                            ast::Item::Const(c) if c.name.name.rsplit('.').next() == Some(*name) => {
+                                constant(&c.value, &Place { module, file, ..*at }, depth + 1)
+                            }
+                            _ => None,
+                        })
+                    })
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 /// The declaration a `derive` names: the type as written, and its view with
@@ -486,6 +676,7 @@ struct Target {
 /// exactly its binders (`E2101`).
 fn target(
     modules: &[ModuleSource],
+    packages: &[PackageInfo],
     module: usize,
     derive: &ast::DeriveDecl,
     sources: &SourceMap,
@@ -510,15 +701,24 @@ fn target(
         wrong(diags, "must be written with exactly the binders of `derive`, in order: `derive[T] Trait for Type[T]`");
         return None;
     }
-    let found = modules[module].files.iter().flat_map(|(f, _)| &f.items).find_map(|item| match item {
-        ast::Item::Type(t) if t.name.name == name.name => view(item, sources, false),
-        ast::Item::Enum(e) if e.name.name == name.name => view(item, sources, false),
-        _ => None,
+    let found = modules[module].files.iter().enumerate().find_map(|(file, (source, _))| {
+        let place = Place { modules, packages, module, file, sources };
+        source.items.iter().find_map(|item| match item {
+            ast::Item::Type(t) if t.name.name == name.name => view(item, &place, false),
+            ast::Item::Enum(e) if e.name.name == name.name => view(item, &place, false),
+            _ => None,
+        })
     });
     let Some(mut view) = found else {
         wrong(diags, "is not a record, enum or newtype of this module");
         return None;
     };
+    if !view.problems.is_empty() {
+        for (span, why) in &view.problems {
+            diags.error("E1619", *span, why.clone());
+        }
+        return None;
+    }
     if view.generics.len() != binders.len() {
         wrong(diags, &format!("has {} type parameter(s)", view.generics.len()));
         return None;
@@ -627,7 +827,15 @@ fn json(text: &str) -> String {
 fn fields_json(fields: &[Field]) -> String {
     let fields: Vec<String> = fields
         .iter()
-        .map(|f| format!("{{\"name\":{},\"type\":{},\"private\":{}}}", json(&f.name), json(&f.ty), f.private))
+        .map(|f| {
+            format!(
+                "{{\"name\":{},\"type\":{},\"private\":{},\"annotations\":[{}]}}",
+                json(&f.name),
+                json(&f.ty),
+                f.private,
+                f.annotations.join(",")
+            )
+        })
         .collect();
     format!("[{}]", fields.join(","))
 }
@@ -645,26 +853,31 @@ fn view_json(view: &View, module: &str) -> String {
     let variants: Vec<String> = view
         .variants
         .iter()
-        .map(|(name, fields, elements)| {
-            let elements: Vec<String> = elements.iter().map(|e| json(e)).collect();
+        .map(|v| {
+            let elements: Vec<String> = v.elements.iter().map(|e| json(e)).collect();
             format!(
-                "{{\"name\":{},\"fields\":{},\"elements\":[{}]}}",
-                json(name),
-                fields_json(fields),
-                elements.join(",")
+                "{{\"name\":{},\"fields\":{},\"elements\":[{}],\"annotations\":[{}]}}",
+                json(&v.name),
+                fields_json(&v.fields),
+                elements.join(","),
+                v.annotations.join(",")
             )
         })
         .collect();
     let underlying = view.underlying.as_deref().map_or("null".to_string(), json);
+    let result = view.result.as_deref().map_or("null".to_string(), json);
     format!(
-        "{{\"name\":{},\"module\":{},\"kind\":{},\"generics\":[{}],\"fields\":{},\"variants\":[{}],\"underlying\":{}}}",
+        "{{\"name\":{},\"module\":{},\"kind\":{},\"generics\":[{}],\"fields\":{},\"variants\":[{}],\"underlying\":{},\"parameters\":{},\"result\":{},\"annotations\":[{}]}}",
         json(&view.name),
         json(module),
         json(view.kind),
         generics.join(","),
         fields_json(&view.fields),
         variants.join(","),
-        underlying
+        underlying,
+        fields_json(&view.parameters),
+        result,
+        view.annotations.join(",")
     )
 }
 

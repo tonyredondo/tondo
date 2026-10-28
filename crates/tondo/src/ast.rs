@@ -158,6 +158,8 @@ pub struct GenericParam {
 #[derive(Clone, Debug)]
 pub struct EnumDecl {
     pub public: bool,
+    /// The program's annotations before it (27.13).
+    pub uses: Vec<AnnotationUse>,
     pub name: Ident,
     pub generics: Vec<GenericParam>,
     pub variants: Vec<VariantDecl>,
@@ -169,6 +171,8 @@ pub struct EnumDecl {
 
 #[derive(Clone, Debug)]
 pub struct VariantDecl {
+    /// The program's annotations before it (27.13).
+    pub uses: Vec<AnnotationUse>,
     pub name: Ident,
     pub payload: VariantPayload,
 }
@@ -269,8 +273,13 @@ pub struct TypeDecl {
     /// `context Name = { ... }`: the record of a context (11.16), whose
     /// fields have their initial values.
     pub context: bool,
+    /// `annotation Name = { ... }`: an annotation of the program (27.13),
+    /// whose fields may have values a use leaves out.
+    pub annotation: bool,
     /// `@packed` and `@align(n)` before the declaration.
     pub annotations: Vec<Annotation>,
+    /// The program's annotations before it (27.13).
+    pub uses: Vec<AnnotationUse>,
     pub name: Ident,
     pub generics: Vec<GenericParam>,
     pub body: TypeBody,
@@ -296,7 +305,10 @@ pub struct FieldDecl {
     /// `@name("wire")` and `@ignore`, which serialization reads (8.6),
     /// or `@count(n)` in an `extern type`.
     pub annotations: Vec<Annotation>,
-    /// The initial value of a context's field (11.16).
+    /// The program's annotations before it (27.13).
+    pub uses: Vec<AnnotationUse>,
+    /// The initial value of a context's field (11.16), or the value of an
+    /// annotation's field that a use leaves out (27.13).
     pub default: Option<Expr>,
 }
 
@@ -306,6 +318,15 @@ pub struct FieldDecl {
 pub struct Annotation {
     pub name: Ident,
     pub argument: Option<AnnotationArg>,
+    pub span: Span,
+}
+
+/// An annotation the program declares, before what it annotates:
+/// `@binding.Check(min: 3)` (27.13), its fields as a call's arguments.
+#[derive(Debug, Clone)]
+pub struct AnnotationUse {
+    pub path: Vec<Ident>,
+    pub args: Vec<Arg>,
     pub span: Span,
 }
 
@@ -347,6 +368,8 @@ pub struct FnDecl {
     pub foreign: Option<Foreign>,
     /// `@symbol("name")` before the declaration.
     pub annotations: Vec<Annotation>,
+    /// The program's annotations before it (27.13).
+    pub uses: Vec<AnnotationUse>,
     pub owner: Option<Ident>,
     /// The binders of a generic owner: `fn Pair[A, B].swapped(self)`.
     pub owner_generics: Vec<GenericParam>,
@@ -372,6 +395,8 @@ pub struct Foreign {
 
 #[derive(Clone, Debug)]
 pub struct Param {
+    /// The program's annotations before its name (27.13).
+    pub uses: Vec<AnnotationUse>,
     pub name: Ident,
     /// `None` for a receiver: `self`, `mut self` or `var self`.
     pub ty: Option<TypeExpr>,

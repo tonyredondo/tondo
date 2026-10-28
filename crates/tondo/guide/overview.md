@@ -141,7 +141,7 @@ projects     tondo.toml, modules, imports, dependencies, native libraries
 testing      test, suite, std.testing, snapshots, tondo test
 stdlib       the standard modules and what each is for
 http         HTTP client and server, typed handlers, OpenAPI, WebSockets
-meta         derive, reflection, generators
+meta         derive, reflection, generators, annotations
 ffi          calling C: extern fn, unsafe
 pitfalls     mistakes models make in Tondo, with the error each gives
 ```

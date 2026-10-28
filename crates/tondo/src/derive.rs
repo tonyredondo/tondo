@@ -94,6 +94,12 @@ struct Method {
     /// as written.
     params: Vec<String>,
     result: String,
+    /// The names of its parameters after the receiver.
+    names: Vec<String>,
+    /// Whether the program annotates it, and each of its parameters after
+    /// the receiver (27.13).
+    annotated: bool,
+    annotated_params: Vec<bool>,
 }
 
 /// A variant as the generator matches it: the pattern that binds its
@@ -280,6 +286,9 @@ fn callable(
                     mutating,
                     params: params.iter().filter_map(|p| p.ty.as_ref()).map(text).collect(),
                     result: f.result.as_ref().map_or_else(|| "Unit".to_string(), text),
+                    names: params.iter().map(|p| p.name.name.clone()).collect(),
+                    annotated: !f.uses.is_empty(),
+                    annotated_params: params.iter().map(|p| !p.uses.is_empty()).collect(),
                 });
             }
         }
@@ -741,7 +750,14 @@ impl Generator<'_> {
     fn reflect_description(&self, item: &ast::Item, methods: &[Method]) -> String {
         let r = self.alias;
         let info = |ty: &str| format!("{r}.typeInfo[{ty}]()");
-        let fields = |fields: &[ast::FieldDecl]| -> String {
+        // The program's annotations of a thing (27.13), which the checker
+        // gives as their values: where it is, and a method by its name.
+        let target = self.target();
+        let notes = |place: u32, index: usize, part: usize, method: &str| {
+            format!(".annotated({r}.annotationsOf[{target}]({place}, {index}, {part}, {method:?}))")
+        };
+        // A record's fields, or a record variant's (`variant`).
+        let fields = |fields: &[ast::FieldDecl], variant: Option<usize>| -> String {
             let described: Vec<String> = fields
                 .iter()
                 .enumerate()
@@ -749,7 +765,16 @@ impl Generator<'_> {
                 .map(|(ordinal, f)| {
                     let docs = docs(self.sources, f.name.span)
                         .map_or("none".to_string(), |d| format!("some({})", literal(&d)));
-                    format!("{r}.FieldInfo.of({:?}, {ordinal}, {docs}, {})", f.name.name, info(&self.text(&f.ty)))
+                    let annotated = match (f.uses.is_empty(), variant) {
+                        (true, _) => String::new(),
+                        (false, None) => notes(1, ordinal, 0, ""),
+                        (false, Some(variant)) => notes(3, variant, ordinal, ""),
+                    };
+                    format!(
+                        "{r}.FieldInfo.of({:?}, {ordinal}, {docs}, {}){annotated}",
+                        f.name.name,
+                        info(&self.text(&f.ty))
+                    )
                 })
                 .collect();
             format!("[{}]", described.join(", "))
@@ -758,7 +783,7 @@ impl Generator<'_> {
         let kind = match item {
             ast::Item::Type(t) => match &t.body {
                 ast::TypeBody::Record(declared) => {
-                    parts.push(format!("fields: {}", fields(declared)));
+                    parts.push(format!("fields: {}", fields(declared, None)));
                     "Record"
                 }
                 ast::TypeBody::Newtype(inner) => {
@@ -780,9 +805,14 @@ impl Generator<'_> {
                                 let elements: Vec<String> = types.iter().map(|t| info(&self.text(t))).collect();
                                 ("Tuple", format!("[{}]", elements.join(", ")), "[]".to_string())
                             }
-                            ast::VariantPayload::Record(declared) => ("Record", "[]".to_string(), fields(declared)),
+                            ast::VariantPayload::Record(declared) => {
+                                ("Record", "[]".to_string(), fields(declared, Some(ordinal)))
+                            }
                         };
-                        format!("{r}.VariantInfo.of({name:?}, {ordinal}, {r}.VariantPayloadKind.{kind}, {elements}, {named})")
+                        let annotated = if v.uses.is_empty() { String::new() } else { notes(2, ordinal, 0, "") };
+                        format!(
+                            "{r}.VariantInfo.of({name:?}, {ordinal}, {r}.VariantPayloadKind.{kind}, {elements}, {named}){annotated}"
+                        )
                     })
                     .collect();
                 parts.push(format!("variants: [{}]", variants.join(", ")));
@@ -790,6 +820,14 @@ impl Generator<'_> {
             }
             _ => "Opaque",
         };
+        let annotated = match item {
+            ast::Item::Type(t) => !t.uses.is_empty(),
+            ast::Item::Enum(e) => !e.uses.is_empty(),
+            _ => false,
+        };
+        if annotated {
+            parts.push(format!("annotations: {r}.annotationsOf[{target}](0, 0, 0, \"\")"));
+        }
         let generics: Vec<String> = self.declared.generics.iter().map(|g| info(g)).collect();
         if !generics.is_empty() {
             parts.push(format!("generics: [{}]", generics.join(", ")));
@@ -802,10 +840,19 @@ impl Generator<'_> {
                     .params
                     .iter()
                     .enumerate()
-                    .map(|(i, ty)| format!("{r}.ParameterInfo.of({i}, {}, {r}.ParameterMode.Value)", info(ty)))
+                    .map(|(i, ty)| {
+                        // Its index among all the parameters counts the receiver.
+                        let annotated = if m.annotated_params[i] { notes(5, i + 1, 0, &m.name) } else { String::new() };
+                        format!(
+                            "{r}.ParameterInfo.of({i}, {}, {r}.ParameterMode.Value, {:?}){annotated}",
+                            info(ty),
+                            m.names[i]
+                        )
+                    })
                     .collect();
+                let annotated = if m.annotated { notes(4, 0, 0, &m.name) } else { String::new() };
                 format!(
-                    "{r}.MethodInfo.of({:?}, {r}.ParameterMode.{receiver}, {r}.FunctionInfo.of([{}], {}, false, false))",
+                    "{r}.MethodInfo.of({:?}, {r}.ParameterMode.{receiver}, {r}.FunctionInfo.of([{}], {}, false, false)){annotated}",
                     m.name,
                     params.join(", "),
                     info(&m.result)

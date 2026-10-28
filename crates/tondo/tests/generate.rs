@@ -102,6 +102,64 @@ pub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Err
 }
 
 #[test]
+fn generators_read_functions_and_their_annotations() {
+    let dir = project(
+        "generate-functions",
+        &[
+            (
+                "tondo.toml",
+                "[package]\nname = \"app\"\n\n[generators.routes]\nprogram = \"gen/routes.to\"\noutputs = [\"routes\"]\nroots = [\"handlers.showUser\"]\n",
+            ),
+            (
+                "src/binding/binding.to",
+                "pub annotation Get = { path: String }\n\npub annotation Query = { name: String }\n",
+            ),
+            (
+                "src/handlers/handlers.to",
+                "import app.binding\n\npub type User = { name: String }\n\n@binding.Get(\"/users/:id\")\npub fn showUser(id: Int, @binding.Query(\"v\") verbose: Bool): User {\n    User { name: \"user {id} {verbose}\" }\n}\n",
+            ),
+            (
+                "src/main.to",
+                "import std.console\nimport app.routes\n\nfn main() {\n    console.println(\"{routes.Routes}\")\n}\n",
+            ),
+            (
+                "gen/routes.to",
+                r#"import std.meta
+
+type Get = { path: String }
+
+/// A line for each function the generator sees, and the types it reaches.
+pub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Error {
+    var routes: Array[String] = []
+    for declaration in request.declarations() {
+        if declaration.kind() != meta.DeclarationKind.Function {
+            routes.push("\"{declaration.name()} {declaration.result()}\"")
+            continue
+        }
+        let get: Get = declaration.annotations()[0].to()?
+        var params: Array[String] = []
+        for param in declaration.parameters() {
+            params.push("{param.name}: {param.typeRef} {param.annotations.length()}")
+        }
+        routes.push("\"{get.path} {declaration.name()}({params.join(", ")}): {declaration.result().map((r) { r.identity() }).unwrapOr("")}\"")
+    }
+    var out = request.sourceBuilder()
+    out.write("routes", "pub const Routes: Array[String] = [{routes.join(", ")}]")?
+    out.finish()
+}
+"#,
+            ),
+        ],
+    );
+    let (stdout, stderr, status) = tondo(&dir, &["run"]);
+    assert_eq!(
+        (stdout.as_str(), status),
+        ("[/users/:id showUser(id: Int 0, verbose: Bool 1): User, User none]\n", 0),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn reports_what_a_generator_cannot_do() {
     let generator = |body: &str| {
         format!(
@@ -192,7 +250,7 @@ outputs = [\"reads\"]
         "error[E2105]: the generator `[generators.broken]` of the package `app`: its output `broken` is not valid Tondo source; `tondo expand` shows it",
         "error[E2105]: the generator `[generators.derives]` of the package `app`: its output `derives` has a `derive`",
         "error[E2106]: the generator `[generators.hand]` of the package `app`: its output `models` would replace a module written by hand",
-        "error[E2106]: the generator `[generators.roots]` of the package `app`: its root `models.Missing` is not a public record, enum or newtype",
+        "error[E2106]: the generator `[generators.roots]` of the package `app`: its root `models.Missing` is not a public record, enum, newtype or function",
         "error[E2109]: the generator `[generators.roots]` of the package `app`: `app.models.User` names `one.Thing`, which a generator of this build writes",
         "error[E2109]: the generator `[generators.roots]` of the package `app`: its root `one.Thing` is in `app.one`, which a generator of this build writes",
         "error[E2106]: the generator `[generators.reads]` of the package `app`: cannot read its input `missing.txt`",
