@@ -3229,6 +3229,14 @@
 
 ;;;; Rules for `smul_overflow` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+;; A product by a constant 1 is the other factor, and cannot overflow: no
+;; multiply. Besides being cheaper, it keeps clear of qemu's emulation, which
+;; gets `smulh` wrong when its result reuses the register of the 1.
+(rule 7 (lower (smul_overflow $I64 a (u64_from_iconst 1)))
+      (output_pair (value_reg (put_in_reg a)) (value_reg (imm $I8 (ImmExtend.Zero) 0))))
+(rule 6 (lower (smul_overflow $I64 (u64_from_iconst 1) b))
+      (output_pair (value_reg (put_in_reg b)) (value_reg (imm $I8 (ImmExtend.Zero) 0))))
+
 ;; As for `umul_overflow` above: when the flags output is only consumed
 ;; folded (e.g., by a `brif`), emit just the multiply.
 (rule 5 (lower i @ (smul_overflow (fits_in_16 ty) a b))

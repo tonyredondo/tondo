@@ -5120,6 +5120,15 @@
                                            (ExtendOp.SXTW)))))
         (CondResult.Cond producer (Cond.Ne))))
 
+;; A product by a constant 1 never overflows: no `smulh`, which qemu's
+;; emulation gets wrong when its result reuses the register of the 1.
+(rule 12
+      (is_nonzero (is_second_result (smul_overflow $I64 _ (u64_from_iconst 1))))
+      (CondResult.NotZero (zero_reg) (OperandSize.Size64)))
+(rule 11
+      (is_nonzero (is_second_result (smul_overflow $I64 (u64_from_iconst 1) _)))
+      (CondResult.NotZero (zero_reg) (OperandSize.Size64)))
+
 ;; smulh tmp, a, b
 ;; cmp tmp, out, asr #63
 (rule 10
