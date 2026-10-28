@@ -122,7 +122,7 @@ fn check_with<'a>(
 }
 
 /// Prelude type names (26.3); they cannot be redeclared unqualified.
-pub(crate) const PRELUDE_TYPES: [&str; 43] = [
+pub(crate) const PRELUDE_TYPES: [&str; 46] = [
     "NumericConversionError",
     "Bool",
     "Int",
@@ -136,10 +136,13 @@ pub(crate) const PRELUDE_TYPES: [&str; 43] = [
     "Int16",
     "Int32",
     "Int64",
+    "Int128",
+    "UInt",
     "UInt8",
     "UInt16",
     "UInt32",
     "UInt64",
+    "UInt128",
     "Float32",
     "Float64",
     "Option",
@@ -550,38 +553,48 @@ fn fold_float(types: &Types, value: &hir::Expr) -> Option<f64> {
 /// running it would panic, or `None` for anything else.
 fn fold(types: &Types, value: &hir::Expr) -> Option<Result<i128, &'static str>> {
     let int = types.as_int(types.repr(value.ty))?;
-    let fits =
-        |n: i128| if n < int.min() || n > int.max() { Err("the result does not fit in its type") } else { Ok(n) };
+    // A `UInt128` computes with its bits as `u128`, every other type exactly.
+    let wide = int == IntTy::U128;
+    let fits = |n: Option<i128>| match n {
+        Some(n) if int.holds(n) => Ok(n),
+        _ => Err("the result does not fit in its type"),
+    };
+    let unsigned = |n: Option<u128>| fits(n.map(|n| n as i128));
     let result = match &value.kind {
         hir::ExprKind::Int(n) => Ok(*n),
         hir::ExprKind::Convert(inner) | hir::ExprKind::Retype(inner) => fold(types, inner)?,
-        hir::ExprKind::Unary(UnaryOp::Neg, inner) => fold(types, inner)?.and_then(|n| fits(-n)),
-        hir::ExprKind::Unary(UnaryOp::BitNot, inner) => fold(types, inner)?.map(|n| {
-            let bits = int.bits();
-            let mask = if bits == 128 { -1 } else { (1i128 << bits) - 1 };
-            let flipped = !n & mask;
-            if int.signed() && flipped > int.max() { flipped - (1i128 << bits) } else { flipped }
+        hir::ExprKind::Unary(UnaryOp::Neg, inner) => fold(types, inner)?.and_then(|n| match wide {
+            true => unsigned((n as u128).checked_neg()),
+            false => fits(n.checked_neg()),
         }),
+        hir::ExprKind::Unary(UnaryOp::BitNot, inner) => fold(types, inner)?.map(|n| int.wrap(!n)),
         hir::ExprKind::Binary(op, left, right) => {
             let (a, b) = (fold(types, left)?, fold(types, right)?);
             let (a, b) = match (a, b) {
                 (Ok(a), Ok(b)) => (a, b),
                 (Err(e), _) | (_, Err(e)) => return Some(Err(e)),
             };
+            let (x, y) = (a as u128, b as u128);
+            // The count of a shift is in its own type, which may be another.
+            let count =
+                types.as_int(types.repr(right.ty)).map_or(b, |of| if of == IntTy::U128 && b < 0 { -1 } else { b });
             match op {
-                BinOp::Add => fits(a + b),
-                BinOp::Sub => fits(a - b),
-                BinOp::Mul => a.checked_mul(b).map_or(Err("the result does not fit in its type"), fits),
+                BinOp::Add if wide => unsigned(x.checked_add(y)),
+                BinOp::Sub if wide => unsigned(x.checked_sub(y)),
+                BinOp::Mul if wide => unsigned(x.checked_mul(y)),
+                BinOp::Add => fits(a.checked_add(b)),
+                BinOp::Sub => fits(a.checked_sub(b)),
+                BinOp::Mul => fits(a.checked_mul(b)),
                 BinOp::Div | BinOp::Rem if b == 0 => Err("it divides by zero"),
-                BinOp::Div => fits(a / b),
-                BinOp::Rem => fits(a % b),
-                BinOp::Shl | BinOp::Shr if b < 0 || b >= int.bits() as i128 => Err("the shift count is out of range"),
-                BinOp::Shl => {
-                    let bits = int.bits();
-                    let shifted = (a << b) & ((1i128 << bits) - 1);
-                    Ok(if int.signed() && shifted > int.max() { shifted - (1i128 << bits) } else { shifted })
+                BinOp::Div if wide => unsigned(Some(x / y)),
+                BinOp::Rem if wide => unsigned(Some(x % y)),
+                BinOp::Div => fits(a.checked_div(b)),
+                BinOp::Rem => Ok(a.checked_rem(b).unwrap_or(0)),
+                BinOp::Shl | BinOp::Shr if count < 0 || count >= int.bits() as i128 => {
+                    Err("the shift count is out of range")
                 }
-                BinOp::Shr => Ok(if int.signed() { a >> b } else { (a as u128 >> b) as i128 }),
+                BinOp::Shl => Ok(int.wrap(a << count)),
+                BinOp::Shr => Ok(if int.signed() { a >> count } else { (x >> count) as i128 }),
                 BinOp::BitAnd => Ok(a & b),
                 BinOp::BitOr => Ok(a | b),
                 BinOp::BitXor => Ok(a ^ b),
@@ -1810,7 +1823,7 @@ impl<'a> Checker<'a> {
     /// integers, and `pi`, `e`, `infinity`, `nan` and `epsilon` of the floats.
     fn intrinsic_constant(&self, ty: Ty, name: &str) -> Option<hir::ExprKind> {
         match (self.types.kind(ty), name) {
-            (TyKind::Int(int), "max") => Some(hir::ExprKind::Int(int.max())),
+            (TyKind::Int(int), "max") => Some(hir::ExprKind::Int(int.max() as i128)),
             (TyKind::Int(int), "min") => Some(hir::ExprKind::Int(int.min())),
             (TyKind::Float(_), "pi") => Some(hir::ExprKind::Float(std::f64::consts::PI)),
             (TyKind::Float(_), "e") => Some(hir::ExprKind::Float(std::f64::consts::E)),
@@ -2141,6 +2154,8 @@ impl<'a> Checker<'a> {
         }
         match kind {
             TyKind::Int(int) => CType::Named(match int {
+                IntTy::I128 => "__int128",
+                IntTy::U128 => "unsigned __int128",
                 IntTy::I8 => "int8_t",
                 IntTy::I16 => "int16_t",
                 IntTy::I32 => "int32_t",
@@ -2465,15 +2480,10 @@ impl<'a> Checker<'a> {
 
     /// The type a numeric constructor such as `Int8(value)` names (18.6).
     fn numeric_type(name: &str) -> Option<Ty> {
+        if let Some(int) = IntTy::from_name(name) {
+            return Some(Ty::int(int));
+        }
         Some(match name {
-            "Int" | "Int64" => Ty::INT,
-            "Int8" => Ty::int(IntTy::I8),
-            "Int16" => Ty::int(IntTy::I16),
-            "Int32" => Ty::int(IntTy::I32),
-            "UInt8" => Ty::int(IntTy::U8),
-            "UInt16" => Ty::int(IntTy::U16),
-            "UInt32" => Ty::int(IntTy::U32),
-            "UInt64" => Ty::int(IntTy::U64),
             "Float" | "Float64" => Ty::F64,
             "Float32" => Ty::F32,
             "Byte" => Ty::BYTE,
@@ -4326,14 +4336,7 @@ impl<'a> Checker<'a> {
             "Char" => Ty::CHAR,
             "Bool" => Ty::BOOL,
             "Byte" => Ty::BYTE,
-            "Int" | "Int64" => Ty::INT,
-            "Int8" => Ty::int(IntTy::I8),
-            "Int16" => Ty::int(IntTy::I16),
-            "Int32" => Ty::int(IntTy::I32),
-            "UInt8" => Ty::int(IntTy::U8),
-            "UInt16" => Ty::int(IntTy::U16),
-            "UInt32" => Ty::int(IntTy::U32),
-            "UInt64" => Ty::int(IntTy::U64),
+            name if IntTy::from_name(name).is_some() => Ty::int(IntTy::from_name(name).unwrap()),
             "Float" | "Float64" => self.types.intern(TyKind::Float(crate::types::FloatTy::F64)),
             "Float32" => self.types.intern(TyKind::Float(crate::types::FloatTy::F32)),
             _ => return None,
@@ -4574,14 +4577,7 @@ impl<'a> Checker<'a> {
                     return Ty::ERROR;
                 }
                 match names.as_slice() {
-                    ["Int" | "Int64"] => Ty::INT,
-                    ["Int8"] => Ty::int(IntTy::I8),
-                    ["Int16"] => Ty::int(IntTy::I16),
-                    ["Int32"] => Ty::int(IntTy::I32),
-                    ["UInt8"] => Ty::int(IntTy::U8),
-                    ["UInt16"] => Ty::int(IntTy::U16),
-                    ["UInt32"] => Ty::int(IntTy::U32),
-                    ["UInt64"] => Ty::int(IntTy::U64),
+                    [name] if IntTy::from_name(name).is_some() => Ty::int(IntTy::from_name(name).unwrap()),
                     ["Bool"] => Ty::BOOL,
                     ["String"] => Ty::STRING,
                     ["Unit"] => Ty::UNIT,
@@ -8419,9 +8415,11 @@ impl<'a> Checker<'a> {
             && self.const_uses.contains(&value.span)
             && let Some(int) = self.types.as_int(expected)
         {
-            if number >= int.min() && number <= int.max() {
+            let from = self.types.as_int(self.types.repr(value.ty)).unwrap_or(IntTy::I64);
+            if int.holds_from(from, number) {
                 return Self::mk(hir::ExprKind::Int(number), expected, value.span);
             }
+            let number = from.show(number);
             let message = format!("the constant's value {number} does not fit in {}", self.display(expected));
             self.diags.error("E1102", value.span, message);
             return value;
@@ -8653,7 +8651,7 @@ impl<'a> Checker<'a> {
     fn expr_kind(&mut self, cx: &mut FnCx, e: &ast::Expr, expected: Option<Ty>) -> hir::Expr {
         let span = e.span;
         match &e.kind {
-            ast::ExprKind::Int { value, suffix } => self.int_literal(*value as i128, *suffix, expected, span),
+            ast::ExprKind::Int { value, suffix } => self.int_literal(false, *value, *suffix, expected, span),
             ast::ExprKind::Bool(b) => Self::mk(hir::ExprKind::Bool(*b), Ty::BOOL, span),
             ast::ExprKind::Unit => Self::mk(hir::ExprKind::Unit, Ty::UNIT, span),
             ast::ExprKind::Str(segments) => self.string(cx, segments, span),
@@ -9979,10 +9977,13 @@ impl<'a> Checker<'a> {
                 | "Int16"
                 | "Int32"
                 | "Int64"
+                | "Int128"
+                | "UInt"
                 | "UInt8"
                 | "UInt16"
                 | "UInt32"
                 | "UInt64"
+                | "UInt128"
                 | "Bool"
                 | "String"
                 | "Float"
@@ -10410,7 +10411,7 @@ impl<'a> Checker<'a> {
         }
         if let [first, method @ ("cast" | "toPointer" | "toFunction")] = names.as_slice() {
             let raw = match *first {
-                "Pointer" | "UInt64" if self.lookup(cx, first).is_none() => None,
+                "Pointer" | "UInt" | "UInt64" if self.lookup(cx, first).is_none() => None,
                 _ if self.lookup(cx, first).is_some() || self.visible_capture(cx, first) => {
                     let receiver =
                         ast::Expr { kind: ast::ExprKind::Path(vec![segments[0].clone()]), span: segments[0].span };
@@ -11533,15 +11534,30 @@ impl<'a> Checker<'a> {
         Self::error_expr(span)
     }
 
-    fn int_literal(&mut self, value: i128, suffix: Option<&str>, expected: Option<Ty>, span: Span) -> hir::Expr {
+    /// A literal, `-` before it when `negative`: the least value of a
+    /// signed type is written so (18.8).
+    fn int_literal(
+        &mut self,
+        negative: bool,
+        magnitude: u128,
+        suffix: Option<&str>,
+        expected: Option<Ty>,
+        span: Span,
+    ) -> hir::Expr {
         let int = match suffix {
             Some(suffix) => IntTy::from_suffix(suffix),
             None => self.expected_number(expected, false).and_then(|t| self.types.as_int(t)).unwrap_or(IntTy::I64),
         };
-        if value < int.min() || value > int.max() {
-            let message = format!("literal `{value}` does not fit in `{}`", int.name());
+        let fits = match negative {
+            true => magnitude == 0 || (int.signed() && magnitude <= int.min().unsigned_abs()),
+            false => magnitude <= int.max(),
+        };
+        if !fits {
+            let sign = if negative { "-" } else { "" };
+            let message = format!("literal `{sign}{magnitude}` does not fit in `{}`", int.name());
             self.diags.error("E1102", span, message);
         }
+        let value = if negative { (magnitude as i128).wrapping_neg() } else { magnitude as i128 };
         Self::mk(hir::ExprKind::Int(value), Ty::int(int), span)
     }
 
@@ -13216,7 +13232,7 @@ impl<'a> Checker<'a> {
         match op {
             UnaryOp::Neg => {
                 if let ast::ExprKind::Int { value, suffix } = operand.kind {
-                    let literal = self.int_literal(-(value as i128), suffix, expected, span);
+                    let literal = self.int_literal(true, value, suffix, expected, span);
                     if self.types.as_int(literal.ty).is_some_and(|i| !i.signed()) {
                         let message = format!("negation is not defined for {}", self.display(literal.ty));
                         self.diags.error("E1102", span, message);
@@ -13651,14 +13667,14 @@ impl<'a> Checker<'a> {
     }
 }
 
-/// Whether a `for` pattern borrows: `Some(true)` with any `mut` or `var`
-/// binding, `Some(false)` with only `ref` ones (13.3).
 /// Whether a `sync.Atomic` of `ty` uses atomic instructions rather than a
-/// lock: integers, `Bool`, `Char` and `Byte`.
+/// lock: integers of up to 64 bits, `Bool`, `Char` and `Byte`.
 fn atomic_scalar(types: &Types, ty: Ty) -> bool {
-    types.as_int(ty).is_some() || [Ty::BOOL, Ty::CHAR, Ty::BYTE].contains(&ty)
+    types.as_int(ty).is_some_and(|int| int.bits() <= 64) || [Ty::BOOL, Ty::CHAR, Ty::BYTE].contains(&ty)
 }
 
+/// Whether a `for` pattern borrows: `Some(true)` with any `mut` or `var`
+/// binding, `Some(false)` with only `ref` ones (13.3).
 fn loan_kind(pattern: &ast::Pattern) -> Option<bool> {
     let mut found = None;
     let mut note = |mode: ast::Mode| {
@@ -13716,8 +13732,10 @@ fn unknown_type(name: &str) -> String {
         "i32" => "Tondo writes `Int32`",
         "u8" | "byte" => "Tondo writes `Byte`, or `UInt8` for arithmetic",
         "u16" => "Tondo writes `UInt16`",
-        "u32" | "uint" => "Tondo writes `UInt32`",
-        "u64" | "usize" | "ulong" => "Tondo writes `UInt64`",
+        "u32" => "Tondo writes `UInt32`",
+        "u64" | "usize" | "ulong" | "uint" => "Tondo writes `UInt`",
+        "i128" => "Tondo writes `Int128`",
+        "u128" => "Tondo writes `UInt128`",
         "float" | "double" | "Double" | "f64" => "Tondo writes `Float`",
         "f32" => "Tondo writes `Float32`",
         "string" | "str" | "&str" => "Tondo writes `String`",

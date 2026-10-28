@@ -2,11 +2,12 @@
 
 ## Scalars
 
-`Int` (64-bit, overflow panics), `Int8`…`UInt64`, `Float` (64-bit),
-`Float32`, `Bool`, `Char` (a Unicode scalar), `Byte`, `String`, `Unit`
-(`()`), `Never`. Conversions are explicit: `Float(n)` cannot fail; `Int(x)`,
-`Byte(n)` and other narrowing ones return `T ! NumericConversionError`.
-A `Byte` literal is `Byte(255u8)`.
+`Int` (64-bit, overflow panics) and `UInt`, its unsigned twin; `Int8` to
+`Int128` and `UInt8` to `UInt128` (`42u128`), every one as complete as `Int`;
+`Float` (64-bit), `Float32`, `Bool`, `Char` (a Unicode scalar), `Byte`,
+`String`, `Unit` (`()`), `Never`. Conversions are explicit: `Float(n)` cannot
+fail; `Int(x)`, `Byte(n)` and other narrowing ones return
+`T ! NumericConversionError`. A `Byte` literal is `Byte(255u8)`.
 
 ## Records, newtypes and aliases
 

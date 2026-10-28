@@ -607,7 +607,7 @@ pub fn literals(analysis: &Analysis) -> (Vec<String>, Vec<i64>) {
                         texts.insert(text.clone());
                     }
                 }
-                crate::lexer::Tok::Int { value, .. } if value > 1 => {
+                crate::lexer::Tok::Int { value, .. } if value > 1 && value <= i64::MAX as u128 => {
                     ints.insert(value as i64);
                 }
                 _ => {}

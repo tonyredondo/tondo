@@ -52,8 +52,8 @@ impl Kind {
             (Kind::Serialization, "Map", [key, _]) => string(key),
             (
                 Kind::Reflect,
-                "Int" | "Int8" | "Int16" | "Int32" | "UInt8" | "UInt16" | "UInt32" | "UInt64" | "Float" | "Float32"
-                | "Bool" | "Char" | "Byte" | "String" | "Unit",
+                "Int" | "Int8" | "Int16" | "Int32" | "Int64" | "Int128" | "UInt" | "UInt8" | "UInt16" | "UInt32"
+                | "UInt64" | "UInt128" | "Float" | "Float32" | "Float64" | "Bool" | "Char" | "Byte" | "String" | "Unit",
                 [],
             ) => true,
             (Kind::Reflect, "Array" | "Option" | "Deque" | "Set", [_]) => true,

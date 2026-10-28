@@ -98,8 +98,20 @@ impl Ordered for UInt32 {
     }
 }
 
-impl Ordered for UInt64 {
-    fn compare(self, other: UInt64): Int {
+impl Ordered for UInt {
+    fn compare(self, other: UInt): Int {
+        if self < other { -1 } else if self > other { 1 } else { 0 }
+    }
+}
+
+impl Ordered for Int128 {
+    fn compare(self, other: Int128): Int {
+        if self < other { -1 } else if self > other { 1 } else { 0 }
+    }
+}
+
+impl Ordered for UInt128 {
+    fn compare(self, other: UInt128): Int {
         if self < other { -1 } else if self > other { 1 } else { 0 }
     }
 }
@@ -1422,8 +1434,20 @@ impl Discrete for UInt32 {
     }
 }
 
-impl Discrete for UInt64 {
-    fn successor(self): UInt64 {
+impl Discrete for UInt {
+    fn successor(self): UInt {
+        self + 1
+    }
+}
+
+impl Discrete for Int128 {
+    fn successor(self): Int128 {
+        self + 1
+    }
+}
+
+impl Discrete for UInt128 {
+    fn successor(self): UInt128 {
         self + 1
     }
 }

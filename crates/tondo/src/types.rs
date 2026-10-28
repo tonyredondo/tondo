@@ -17,11 +17,23 @@ pub enum IntTy {
     U16,
     U32,
     U64,
+    I128,
+    U128,
 }
 
 impl IntTy {
-    pub const ALL: [IntTy; 8] =
-        [IntTy::I8, IntTy::I16, IntTy::I32, IntTy::I64, IntTy::U8, IntTy::U16, IntTy::U32, IntTy::U64];
+    pub const ALL: [IntTy; 10] = [
+        IntTy::I8,
+        IntTy::I16,
+        IntTy::I32,
+        IntTy::I64,
+        IntTy::U8,
+        IntTy::U16,
+        IntTy::U32,
+        IntTy::U64,
+        IntTy::I128,
+        IntTy::U128,
+    ];
 
     pub fn bits(self) -> u32 {
         match self {
@@ -29,19 +41,49 @@ impl IntTy {
             IntTy::I16 | IntTy::U16 => 16,
             IntTy::I32 | IntTy::U32 => 32,
             IntTy::I64 | IntTy::U64 => 64,
+            IntTy::I128 | IntTy::U128 => 128,
         }
     }
 
     pub fn signed(self) -> bool {
-        matches!(self, IntTy::I8 | IntTy::I16 | IntTy::I32 | IntTy::I64)
+        matches!(self, IntTy::I8 | IntTy::I16 | IntTy::I32 | IntTy::I64 | IntTy::I128)
     }
 
     pub fn min(self) -> i128 {
-        if self.signed() { -(1i128 << (self.bits() - 1)) } else { 0 }
+        if self.signed() { i128::MIN >> (128 - self.bits()) } else { 0 }
     }
 
-    pub fn max(self) -> i128 {
-        if self.signed() { (1i128 << (self.bits() - 1)) - 1 } else { (1i128 << self.bits()) - 1 }
+    pub fn max(self) -> u128 {
+        if self.signed() { (i128::MAX >> (128 - self.bits())) as u128 } else { u128::MAX >> (128 - self.bits()) }
+    }
+
+    /// Whether `value`, a constant of this type as the compiler keeps it,
+    /// is one of its values: a `UInt128` keeps its bits, which `as u128`
+    /// gives back, and every other type its value.
+    pub fn holds(self, value: i128) -> bool {
+        self == IntTy::U128 || (value >= self.min() && (value < 0 || value as u128 <= self.max()))
+    }
+
+    /// Whether a constant of type `from` is one of this type's values.
+    pub fn holds_from(self, from: IntTy, value: i128) -> bool {
+        if from == IntTy::U128 && value < 0 { self == IntTy::U128 } else { self.holds(value) }
+    }
+
+    /// The constant of this type with the low bits of `bits`, in two's
+    /// complement, as the compiler keeps it.
+    pub fn wrap(self, bits: i128) -> i128 {
+        let unused = 128 - self.bits();
+        if self.signed() { bits << unused >> unused } else { ((bits as u128) << unused >> unused) as i128 }
+    }
+
+    /// A constant of this type, written in decimal.
+    pub fn show(self, value: i128) -> String {
+        if self == IntTy::U128 { (value as u128).to_string() } else { value.to_string() }
+    }
+
+    /// Whether every value of `self` is one of `other`.
+    pub fn within(self, other: IntTy) -> bool {
+        other.min() <= self.min() && self.max() <= other.max()
     }
 
     pub fn name(self) -> &'static str {
@@ -53,8 +95,27 @@ impl IntTy {
             IntTy::U8 => "UInt8",
             IntTy::U16 => "UInt16",
             IntTy::U32 => "UInt32",
-            IntTy::U64 => "UInt64",
+            IntTy::U64 => "UInt",
+            IntTy::I128 => "Int128",
+            IntTy::U128 => "UInt128",
         }
+    }
+
+    /// The type a name of the language gives, `Int` and `Int64` alike.
+    pub fn from_name(name: &str) -> Option<IntTy> {
+        Some(match name {
+            "Int" | "Int64" => IntTy::I64,
+            "Int8" => IntTy::I8,
+            "Int16" => IntTy::I16,
+            "Int32" => IntTy::I32,
+            "Int128" => IntTy::I128,
+            "UInt" | "UInt64" => IntTy::U64,
+            "UInt8" => IntTy::U8,
+            "UInt16" => IntTy::U16,
+            "UInt32" => IntTy::U32,
+            "UInt128" => IntTy::U128,
+            _ => return None,
+        })
     }
 
     pub fn from_suffix(suffix: &str) -> IntTy {
@@ -63,9 +124,11 @@ impl IntTy {
             "i16" => IntTy::I16,
             "i32" => IntTy::I32,
             "i64" => IntTy::I64,
+            "i128" => IntTy::I128,
             "u8" => IntTy::U8,
             "u16" => IntTy::U16,
             "u32" => IntTy::U32,
+            "u128" => IntTy::U128,
             _ => IntTy::U64,
         }
     }
@@ -498,8 +561,14 @@ impl Ty {
     pub const F32: Ty = Ty(15);
     pub const F64: Ty = Ty(16);
 
+    /// Interned first: the integers of 8 to 64 bits after `String`, and
+    /// those of 128 after `Float`.
     pub fn int(int: IntTy) -> Ty {
-        Ty(5 + IntTy::ALL.iter().position(|&i| i == int).unwrap() as u32)
+        match int {
+            IntTy::I128 => Ty(17),
+            IntTy::U128 => Ty(18),
+            _ => Ty(5 + IntTy::ALL.iter().position(|&i| i == int).unwrap() as u32),
+        }
     }
 }
 
@@ -526,11 +595,14 @@ impl Default for Types {
         for kind in [TyKind::Error, TyKind::Unit, TyKind::Never, TyKind::Bool, TyKind::String] {
             types.intern(kind);
         }
-        for int in IntTy::ALL {
-            types.intern(TyKind::Int(int));
+        for int in &IntTy::ALL[..8] {
+            types.intern(TyKind::Int(*int));
         }
         for kind in [TyKind::Char, TyKind::Byte, TyKind::Float(FloatTy::F32), TyKind::Float(FloatTy::F64)] {
             types.intern(kind);
+        }
+        for int in [IntTy::I128, IntTy::U128] {
+            types.intern(TyKind::Int(int));
         }
         types
     }
@@ -597,7 +669,8 @@ impl Types {
         let float = |ty: Ty| matches!(self.kind(ty), TyKind::Float(_));
         match (range(from), range(to)) {
             (Some((from_min, from_max)), Some((to_min, to_max))) => Some(from_min < to_min || from_max > to_max),
-            (Some(_), None) if float(to) => Some(false),
+            // The highest `UInt128`s are beyond `Float32` (18.6).
+            (Some((_, from_max)), None) if float(to) => Some(to == Ty::F32 && from_max > f32::MAX as u128),
             (None, Some(_)) if float(from) => Some(true),
             (None, None) if float(from) && float(to) => Some(from == Ty::F64 && to == Ty::F32),
             _ => None,

@@ -516,7 +516,7 @@ pub enum ExprKind {
     /// `within limit { ... }` (11.17).
     Within(Box<Expr>, Block),
     Int {
-        value: u64,
+        value: u128,
         suffix: Option<&'static str>,
     },
     Float {

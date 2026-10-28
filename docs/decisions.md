@@ -2901,3 +2901,26 @@ when an option is `some`; the runtime calls it where it needs them. The
 labels of a task are those of its contexts with those of `withLabels` over
 them, made again whenever a `with` changes the contexts, so that a sample
 reads them as it read the labels before.
+
+## 2026-10-28 — Every number has every width and every operation
+
+Porting dd-trace-go showed that only `Int` and `Float` were complete: a
+`UInt64` could not be encoded, parsed in a base, multiplied modulo 2^64 or
+rotated, and a trace's 128-bit id had no type. Every integer of 8 to 128 bits,
+signed and unsigned, and both floats now get the same operations (language
+18.9): the overflow variants 18.2 promised, the bits, the bytes, text in any
+base and the named conversions. `UInt` is the unsigned `Int`, shown as such
+as `Int` is shown for `Int64`. The operations are intrinsics rather than
+some three hundred functions of the prelude: each is the machine
+instruction Cranelift has for it, as Go's `math/bits` are, and what
+Cranelift does not do for 128 bits, dividing, telling the overflow of a
+product and converting with floats, the runtime does. An integer of 128 bits
+is aligned to 8 bytes in Tondo's own memory and to 16 in C's.
+
+`Additive` (`+`, `-`, `sum()`) and `Number`, which requires it and adds `*`,
+`/` and literals, let generic code compute and let a program's types take
+the arithmetic operators, with their arithmetic meaning only: a money amount
+or a duration adds without inventing a product, a decimal does all four. A
+trait may now require others, which is what `Number` needs; it receives
+none of their methods. `Integer` is closed over the ten integers and gives
+generic code everything a concrete integer has.

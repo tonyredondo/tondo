@@ -103,6 +103,11 @@ enum Rt {
     SbStr,
     SbI64,
     SbU64,
+    SbInt128,
+    Int128Multiply,
+    Int128Divide,
+    Int128ToFloat,
+    FloatToInt128,
     SbBool,
     SbF64,
     SbF32,
@@ -364,6 +369,11 @@ impl Rt {
             Rt::SbStr => ("tondo_rt_sb_str", &[I64, I64], &[]),
             Rt::SbI64 => ("tondo_rt_sb_i64", &[I64, I64], &[]),
             Rt::SbU64 => ("tondo_rt_sb_u64", &[I64, I64], &[]),
+            Rt::SbInt128 => ("tondo_rt_sb_int128", &[I64, I64, I64, I8], &[]),
+            Rt::Int128Multiply => ("tondo_rt_int128_multiply", &[I8, I64, I64], &[I8]),
+            Rt::Int128Divide => ("tondo_rt_int128_divide", &[I8, I8, I64, I64], &[]),
+            Rt::Int128ToFloat => ("tondo_rt_int128_to_float", &[I64, I64, I8, I8], &[types::F64]),
+            Rt::FloatToInt128 => ("tondo_rt_float_to_int128", &[types::F64, I8, I64], &[]),
             Rt::SbBool => ("tondo_rt_sb_bool", &[I64, I8], &[]),
             Rt::SbF64 => ("tondo_rt_sb_f64", &[I64, types::F64], &[]),
             Rt::SbF32 => ("tondo_rt_sb_f32", &[I64, types::F32], &[]),
@@ -737,7 +747,8 @@ fn int_type(int: IntTy) -> ir::Type {
         8 => types::I8,
         16 => types::I16,
         32 => types::I32,
-        _ => types::I64,
+        64 => types::I64,
+        _ => types::I128,
     }
 }
 
@@ -786,6 +797,8 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     // A debug build keeps the code as written, statement after statement.
     flags.set("opt_level", if debug { "none" } else { "speed" }).map_err(|e| e.to_string())?;
     flags.set("is_pic", "true").map_err(|e| e.to_string())?;
+    // Integers of 128 bits pass as C passes them, in two registers.
+    flags.set("enable_llvm_abi_extensions", "true").map_err(|e| e.to_string())?;
     // Code for the machine, with what its processor has, or for a target.
     let builder = match target {
         Some(triple) => cranelift_codegen::isa::lookup_by_name(triple).map_err(|e| format!("{triple}: {e}"))?,
@@ -1444,7 +1457,9 @@ impl<'t> Shapes<'t> {
             let (mut size, mut align, mut fields) = (0u32, 1u32, Fields::default());
             for component in self.types.components(ty).expect("a record") {
                 let layout = self.layout(component);
-                let component_align = if c.packed { 1 } else { layout.align };
+                // C aligns an `__int128` to 16 bytes.
+                let natural = if self.class(component) == Class::Scalar(types::I128) { 16 } else { layout.align };
+                let component_align = if c.packed { 1 } else { natural };
                 // A union's fields share its memory.
                 let offset = if c.union { 0 } else { size.next_multiple_of(component_align) };
                 fields.offsets.push(offset);
@@ -1475,7 +1490,8 @@ impl<'t> Shapes<'t> {
                 Class::Scalar(t) => t.bytes(),
                 _ => 0,
             };
-            Layout { size, align: size.max(1), shape: Shape::Scalar }
+            // An integer of 128 bits is two words, aligned as one.
+            Layout { size, align: size.clamp(1, 8), shape: Shape::Scalar }
         };
         self.layouts.insert(ty, layout.clone());
         layout
@@ -2662,7 +2678,7 @@ impl Codegen<'_> {
         for element in elements {
             let at = bytes.len();
             match element {
-                Const::Int(value, _) => bytes.extend_from_slice(&(*value as i64).to_le_bytes()[..size]),
+                Const::Int(value, _) => bytes.extend_from_slice(&value.to_le_bytes()[..size]),
                 Const::Float(bits, _) if size == 4 => {
                     bytes.extend_from_slice(&(f64::from_bits(*bits) as f32).to_bits().to_le_bytes())
                 }
@@ -2963,6 +2979,21 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
         self.fb.ins().symbol_value(POINTER, global)
     }
 
+    /// An integer constant of type `ty`, from its bits.
+    fn int_const(&mut self, ty: ir::Type, value: i128) -> ir::Value {
+        // Narrow immediates are zero-extended bit patterns; one of 128 bits
+        // is made of its two halves.
+        match ty.bits() {
+            128 => {
+                let low = self.fb.ins().iconst(types::I64, value as i64);
+                let high = self.fb.ins().iconst(types::I64, (value >> 64) as i64);
+                self.fb.ins().iconcat(low, high)
+            }
+            64 => self.fb.ins().iconst(ty, value as i64),
+            bits => self.fb.ins().iconst(ty, (value as i64) & ((1i64 << bits) - 1)),
+        }
+    }
+
     /// Mixes `value` into a running hash.
     fn mix(&mut self, hash: ir::Value, value: ir::Value) -> ir::Value {
         let combined = self.fb.ins().bxor(hash, value);
@@ -2977,6 +3008,11 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
             Val::Scalar(value) => {
                 let word = match *self.cg.types().kind(self.cg.types().repr(ty)) {
                     TyKind::String => self.call_rt(Rt::StrHash, &[value]).unwrap(),
+                    TyKind::Int(int) if int.bits() == 128 => {
+                        let (low, high) = self.fb.ins().isplit(value);
+                        let hash = self.mix(seed, low);
+                        return self.mix(hash, high);
+                    }
                     TyKind::Int(int) if int.signed() && int.bits() < 64 => self.fb.ins().sextend(types::I64, value),
                     _ => match self.cg.scalar_type(ty).bits() {
                         64 => value,
@@ -3195,6 +3231,11 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
             TyKind::Byte => {
                 let wide = self.fb.ins().uextend(types::I64, value);
                 self.call_rt(Rt::SbU64, &[builder, wide]);
+            }
+            TyKind::Int(int) if int.bits() == 128 => {
+                let (low, high) = self.fb.ins().isplit(value);
+                let signed = self.fb.ins().iconst(types::I8, int.signed() as i64);
+                self.call_rt(Rt::SbInt128, &[builder, low, high, signed]);
             }
             TyKind::Int(int) => {
                 let wide = match (int.bits(), int.signed()) {
@@ -4211,8 +4252,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let (Some(name), local) = (name, Local(index as u32)) else { continue };
                 let copy = match storage[index] {
                     Storage::Zero => continue,
+                    // A copy of a register's value: a word, or two.
                     Storage::Var(_) => {
-                        Some(fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3)))
+                        let size = cg.layout(body.locals[index]).size.max(8);
+                        Some(fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size, 3)))
                     }
                     Storage::Slot(_) | Storage::Pointer(_) => None,
                 };
@@ -4643,7 +4686,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             BinOp::Div => 3,
             _ => 4,
         };
+        // The runtime's codes: the integers of 8 to 64 bits, `Float32`,
+        // `Float`, `Int128` and `UInt128`.
         let code = match *self.e.cg.types().kind(self.e.cg.types().repr(number)) {
+            TyKind::Int(IntTy::I128) => 10,
+            TyKind::Int(IntTy::U128) => 11,
             TyKind::Int(int) => IntTy::ALL.iter().position(|&i| i == int).unwrap() as i64,
             TyKind::Float(FloatTy::F32) => 8,
             _ => 9,
@@ -4797,10 +4844,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Operand::Copy(place) => self.read(place),
             Operand::Const(Const::Int(value, ty)) => {
                 let clif = self.e.cg.scalar_type(*ty);
-                // Narrow immediates are zero-extended bit patterns.
-                let bits = clif.bits();
-                let pattern = if bits == 64 { *value as i64 } else { (*value as i64) & ((1i64 << bits) - 1) };
-                Val::Scalar(self.e.fb.ins().iconst(clif, pattern))
+                Val::Scalar(self.e.int_const(clif, *value))
             }
             Operand::Const(Const::Float(bits, ty)) => {
                 let value = f64::from_bits(*bits);
@@ -5259,7 +5303,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.write(place, Val::Scalar(zero));
             }
             Class::Scalar(clif) => {
-                let zero = self.e.fb.ins().iconst(clif, 0);
+                let zero = self.e.int_const(clif, 0);
                 self.write(place, Val::Scalar(zero));
             }
             Class::Memory => {
@@ -6554,7 +6598,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let zero = self.e.fb.ins().f64const(0.0);
                 Val::Scalar(if t == types::F32 { self.e.fb.ins().fdemote(types::F32, zero) } else { zero })
             }
-            Class::Scalar(t) => Val::Scalar(self.e.fb.ins().iconst(t, 0)),
+            Class::Scalar(t) => Val::Scalar(self.e.int_const(t, 0)),
             Class::Memory => {
                 let address = self.scratch(ty);
                 let layout = self.e.cg.layout(ty);
@@ -7052,12 +7096,44 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         match (types.kind(from), types.kind(to)) {
             (TyKind::Float(_), TyKind::Float(_)) if from_clif == to_clif => value,
             (TyKind::Float(_), TyKind::Float(_)) => self.e.fb.ins().fpromote(to_clif, value),
+            (TyKind::Int(int), TyKind::Float(_)) if int.bits() == 128 => self.int128_to_float(value, *int, to_clif),
             (_, TyKind::Float(_)) if types.as_int(from).is_some_and(IntTy::signed) => {
                 self.e.fb.ins().fcvt_from_sint(to_clif, value)
             }
             (_, TyKind::Float(_)) => self.e.fb.ins().fcvt_from_uint(to_clif, value),
             _ => self.resize(value, from, to_clif),
         }
+    }
+
+    /// An integer of 128 bits as a float of type `to`, by the runtime.
+    fn int128_to_float(&mut self, value: ir::Value, int: IntTy, to: ir::Type) -> ir::Value {
+        let (low, high) = self.e.fb.ins().isplit(value);
+        let signed = self.e.fb.ins().iconst(types::I8, int.signed() as i64);
+        let single = self.e.fb.ins().iconst(types::I8, (to == types::F32) as i64);
+        let float = self.e.call_rt(Rt::Int128ToFloat, &[low, high, signed, single]).unwrap();
+        if to == types::F32 { self.e.fb.ins().fdemote(types::F32, float) } else { float }
+    }
+
+    /// Calls the runtime with two integers of 128 bits in memory after
+    /// `first`, and gives the integer of 128 bits it writes and what it
+    /// returns.
+    fn int128_call(
+        &mut self,
+        rt: Rt,
+        first: &[ir::Value],
+        a: ir::Value,
+        b: ir::Value,
+    ) -> (ir::Value, Option<ir::Value>) {
+        let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 48, 3);
+        let slot = self.e.fb.create_sized_stack_slot(data);
+        self.e.fb.ins().stack_store(POINTER, a, slot, 0);
+        self.e.fb.ins().stack_store(POINTER, b, slot, 16);
+        let values = self.e.fb.ins().stack_addr(POINTER, slot, 0);
+        let out = self.e.fb.ins().stack_addr(POINTER, slot, 32);
+        let mut args = first.to_vec();
+        args.extend([values, out]);
+        let returned = self.e.call_rt(rt, &args);
+        (self.e.fb.ins().stack_load(POINTER, types::I128, slot, 32), returned)
     }
 
     /// Resizes an integer bit pattern, extending by the source's signedness.
@@ -7083,10 +7159,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         const NOT_INTEGRAL: i64 = 2;
         let types = self.e.cg.types();
         let to_clif = self.e.cg.scalar_type(to);
-        let range = |ty: Ty| match types.kind(ty) {
-            TyKind::Int(int) => (int.min(), int.max()),
-            _ => (0, 255),
+        let int = |ty: Ty| match types.kind(ty) {
+            TyKind::Int(int) => Some(*int),
+            _ => None,
         };
+        // A `Byte` has the range of a `UInt8`.
+        let range = |ty: Ty| int(ty).map_or((0, 255), |int| (int.min(), int.max()));
         let ok = self.e.fb.ins().iconst(types::I8, -1);
         let pick = |e: &mut Emit<_>, failed: ir::Value, code: i64, current: ir::Value| {
             let code = e.fb.ins().iconst(types::I8, code);
@@ -7103,19 +7181,29 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let error = pick(&mut self.e, overflowed, OUT_OF_RANGE, ok);
                 (narrowed, error)
             }
+            TyKind::Int(source) if matches!(types.kind(to), TyKind::Float(_)) => {
+                // The highest `UInt128`s round to infinity in a `Float32`.
+                let source = *source;
+                let converted = self.int128_to_float(value, source, to_clif);
+                let infinite = self.is_infinite(converted, to_clif);
+                (converted, pick(&mut self.e, infinite, OUT_OF_RANGE, ok))
+            }
             TyKind::Float(_) => {
                 // Classified in order: NotFinite, NotIntegral, OutOfRange (18.6).
                 let from_clif = self.e.cg.scalar_type(from);
-                let (min, max) = range(to);
+                let (min, _) = range(to);
+                let signed = min < 0;
                 let not_nan = self.e.fb.ins().fcmp(FloatCC::Equal, value, value);
                 let infinite = self.is_infinite(value, from_clif);
                 let finite = self.e.fb.ins().bxor_imm_u(infinite, 1);
                 let finite = self.e.fb.ins().band(finite, not_nan);
                 let truncated = self.e.fb.ins().trunc(value);
                 let integral = self.e.fb.ins().fcmp(FloatCC::Equal, truncated, value);
-                // `max + 1` and `min` are powers of two, exact in both formats.
+                // `min` and `max + 1` are powers of two, exact in both
+                // formats, or beyond a `Float32` as an infinity.
+                let bits = to_clif.bits() as i32 - signed as i32;
                 let low = self.float_const(from_clif, min as f64);
-                let high = self.float_const(from_clif, (max + 1) as f64);
+                let high = self.float_const(from_clif, 2f64.powi(bits));
                 let below = self.e.fb.ins().fcmp(FloatCC::LessThan, value, low);
                 let above = self.e.fb.ins().fcmp(FloatCC::GreaterThanOrEqual, value, high);
                 let outside = self.e.fb.ins().bor(below, above);
@@ -7128,9 +7216,18 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let invalid = self.e.fb.ins().icmp_imm_s(IntCC::NotEqual, error, -1);
                 let zero = self.float_const(from_clif, 0.0);
                 let safe = self.e.fb.ins().select(invalid, zero, value);
+                if to_clif == types::I128 {
+                    let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 3);
+                    let slot = self.e.fb.create_sized_stack_slot(data);
+                    let out = self.e.fb.ins().stack_addr(POINTER, slot, 0);
+                    let safe = if from_clif == types::F32 { self.e.fb.ins().fpromote(types::F64, safe) } else { safe };
+                    let signed = self.e.fb.ins().iconst(types::I8, signed as i64);
+                    self.e.call_rt(Rt::FloatToInt128, &[safe, signed, out]);
+                    return (self.e.fb.ins().stack_load(POINTER, types::I128, slot, 0), error);
+                }
                 // x86 converts to 32 or 64 bits only; the range is already checked.
                 let wide = if to_clif.bits() < 32 { types::I32 } else { to_clif };
-                let converted = if min < 0 {
+                let converted = if signed {
                     self.e.fb.ins().fcvt_to_sint(wide, safe)
                 } else {
                     self.e.fb.ins().fcvt_to_uint(wide, safe)
@@ -7140,26 +7237,29 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             _ => {
                 let (min, max) = range(to);
-                let wide = self.resize(value, from, types::I64);
-                let signed = types.as_int(from).is_some_and(IntTy::signed);
-                // Compare in the source's domain, widened to 64 bits.
-                let (below, above) = if signed {
-                    let below =
-                        self.e.fb.ins().icmp_imm_s(IntCC::SignedLessThan, wide, min.max(i64::MIN as i128) as i64);
-                    let above = if max >= i64::MAX as i128 {
-                        self.e.fb.ins().iconst(types::I8, 0)
-                    } else {
-                        self.e.fb.ins().icmp_imm_s(IntCC::SignedGreaterThan, wide, max as i64)
-                    };
-                    (below, above)
+                let (from_min, from_max) = range(from);
+                let signed = from_min < 0;
+                // Compare in the source's domain, widened to 64 bits, or to
+                // 128 when either side has them.
+                let domain = if self.e.cg.scalar_type(from).bits() == 128 || to_clif.bits() == 128 {
+                    types::I128
                 } else {
-                    let below = self.e.fb.ins().iconst(types::I8, 0);
-                    let above = if max >= u64::MAX as i128 {
-                        self.e.fb.ins().iconst(types::I8, 0)
-                    } else {
-                        self.e.fb.ins().icmp_imm_s(IntCC::UnsignedGreaterThan, wide, max as i64)
-                    };
-                    (below, above)
+                    types::I64
+                };
+                let wide = self.resize(value, from, domain);
+                let below = if min > from_min {
+                    let min = self.e.int_const(domain, min);
+                    self.e.fb.ins().icmp(IntCC::SignedLessThan, wide, min)
+                } else {
+                    self.e.fb.ins().iconst(types::I8, 0)
+                };
+                // `max` is below the source's, so it fits in its domain.
+                let above = if max < from_max {
+                    let bound = self.e.int_const(domain, max as i128);
+                    let cc = if signed { IntCC::SignedGreaterThan } else { IntCC::UnsignedGreaterThan };
+                    self.e.fb.ins().icmp(cc, wide, bound)
+                } else {
+                    self.e.fb.ins().iconst(types::I8, 0)
                 };
                 let outside = self.e.fb.ins().bor(below, above);
                 let error = pick(&mut self.e, outside, OUT_OF_RANGE, ok);
@@ -7661,8 +7761,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         };
         self.e.fb.switch_to_block(failed);
         let (detail, a, b, ty) = values(self);
-        let a = self.wide(a, detail & 0x100 != 0);
-        let b = self.wide(b, detail & 0x200 != 0);
+        let a = self.widest(a, detail & 0x100 != 0);
+        let b = self.widest(b, detail & 0x200 != 0);
         let name = self.e.cg.types().display(ty);
         let name = self.e.string_ptr(&name);
         let code = self.e.fb.ins().iconst(types::I32, code as i64);
@@ -7671,10 +7771,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let outer = self.e.fb.srcloc();
         let site = self.site(span.start, None);
         self.e.fb.set_srcloc(site);
-        let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 3);
+        let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 32, 3);
         let slot = self.e.fb.create_sized_stack_slot(data);
-        self.e.fb.ins().stack_store(types::I64, a, slot, 0);
-        self.e.fb.ins().stack_store(types::I64, b, slot, 8);
+        self.e.fb.ins().stack_store(POINTER, a, slot, 0);
+        self.e.fb.ins().stack_store(POINTER, b, slot, 16);
         let values = self.e.fb.ins().stack_addr(POINTER, slot, 0);
         match self.unwind_to {
             // A panic a `recover` may stop returns, and unwinds (15.9).
@@ -7718,6 +7818,15 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         }
     }
 
+    /// An integer as 128 bits.
+    fn widest(&mut self, value: ir::Value, signed: bool) -> ir::Value {
+        match self.e.fb.func.dfg.value_type(value) {
+            types::I128 => value,
+            _ if signed => self.e.fb.ins().sextend(types::I128, value),
+            _ => self.e.fb.ins().uextend(types::I128, value),
+        }
+    }
+
     /// An integer as 64 bits.
     fn wide(&mut self, value: ir::Value, signed: bool) -> ir::Value {
         match self.e.fb.func.dfg.value_type(value) {
@@ -7738,7 +7847,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             UnaryOp::Neg if matches!(self.e.cg.types().kind(ty), TyKind::Float(_)) => self.e.fb.ins().fneg(value),
             UnaryOp::Neg => {
                 let clif = self.e.cg.scalar_type(ty);
-                let zero = self.e.fb.ins().iconst(clif, 0);
+                let zero = self.e.int_const(clif, 0);
                 let (result, overflow) = self.e.fb.ins().ssub_overflow(zero, value);
                 let ty = self.e.cg.types().repr(ty);
                 self.panic_values_if(overflow, 5, span, |_| (5 << 16 | 0x100 | clif.bits(), value, value, ty));
@@ -7821,7 +7930,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         {
             let appended = match kind {
                 TyKind::String => Some((Rt::StrAppend, false)),
-                TyKind::Int(int) if int.signed() || int.bits() < 64 => Some((Rt::StrAppendInt, int.signed())),
+                TyKind::Int(int) if int.bits() < 128 && (int.signed() || int.bits() < 64) => {
+                    Some((Rt::StrAppendInt, int.signed()))
+                }
                 _ => None,
             };
             if let Some((rt, signed)) = appended {
@@ -7834,6 +7945,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         // An integer alone, `"{i}"`, in one call.
         if let [Piece::Value(operand, ty)] = pieces
             && let Some(TyKind::Int(int)) = plain(self, *ty)
+            && int.bits() < 128
             && (int.signed() || int.bits() < 64)
         {
             let value = self.scalar(operand);
@@ -7867,6 +7979,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                             let length = self.e.fb.ins().load(types::I64, flags(), text, STRING_LENGTH);
                             room = Some(room.map_or(length, |room| self.e.fb.ins().iadd(room, length)));
                         }
+                        (TyKind::Int(int), _) if int.bits() == 128 => known += 40,
                         // At most one digit more than it has, and its sign.
                         (TyKind::Int(_), Val::Scalar(value)) => {
                             let value = self.wide(value, true);
@@ -8005,7 +8118,15 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         if op == BinOp::Mul && (one(&self.e.fb, a) || one(&self.e.fb, b)) {
             return if one(&self.e.fb, b) { a } else { b };
         }
+        let wide = self.e.fb.func.dfg.value_type(a) == types::I128;
         match op {
+            // Cranelift multiplies 128 bits, but does not tell an overflow.
+            BinOp::Mul if wide => {
+                let signed_flag = self.e.fb.ins().iconst(types::I8, signed as i64);
+                let (result, overflow) = self.int128_call(Rt::Int128Multiply, &[signed_flag], a, b);
+                self.panic_values_if(overflow.unwrap(), 5, span, |_| (detail, a, b, ty));
+                result
+            }
             BinOp::Add | BinOp::Sub | BinOp::Mul => {
                 let ins = self.e.fb.ins();
                 let (result, overflow) = match (op, signed) {
@@ -8032,19 +8153,41 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             BinOp::Div | BinOp::Rem => {
                 let zero = self.e.fb.ins().icmp_imm_s(IntCC::Equal, b, 0);
                 self.panic_values_if(zero, 3, span, |_| (detail, a, b, ty));
+                let int = types.as_int(ty).unwrap();
+                let clif = int_type(int);
+                // Cranelift does not divide 128 bits: the runtime does.
+                let divide = |this: &mut Self, divisor: ir::Value| {
+                    let remainder = this.e.fb.ins().iconst(types::I8, (op == BinOp::Rem) as i64);
+                    let signed = this.e.fb.ins().iconst(types::I8, signed as i64);
+                    this.int128_call(Rt::Int128Divide, &[remainder, signed], a, divisor).0
+                };
                 if !signed {
-                    return if op == BinOp::Div { self.e.fb.ins().udiv(a, b) } else { self.e.fb.ins().urem(a, b) };
+                    return match (wide, op) {
+                        (true, _) => divide(self, b),
+                        (_, BinOp::Div) => self.e.fb.ins().udiv(a, b),
+                        _ => self.e.fb.ins().urem(a, b),
+                    };
                 }
                 // MIN / -1 overflows; MIN % -1 is 0 (spec 18.3).
-                let int = types.as_int(ty).unwrap();
-                let is_min = self.e.fb.ins().icmp_imm_s(IntCC::Equal, a, int.min() as i64);
-                let is_minus_one = self.e.fb.ins().icmp_imm_s(IntCC::Equal, b, -1);
+                let min = self.e.int_const(clif, int.min());
+                let minus_one = self.e.int_const(clif, -1);
+                let is_min = self.e.fb.ins().icmp(IntCC::Equal, a, min);
+                let is_minus_one = self.e.fb.ins().icmp(IntCC::Equal, b, minus_one);
                 let both = self.e.fb.ins().band(is_min, is_minus_one);
+                if wide {
+                    if op == BinOp::Div {
+                        self.panic_values_if(both, 5, span, |_| (detail, a, b, ty));
+                        return divide(self, b);
+                    }
+                    let one = self.e.int_const(clif, 1);
+                    let divisor = self.e.fb.ins().select(both, one, b);
+                    return divide(self, divisor);
+                }
                 if op == BinOp::Div {
                     self.panic_values_if(both, 5, span, |_| (detail, a, b, ty));
                     self.e.fb.ins().sdiv(a, b)
                 } else {
-                    let one = self.e.fb.ins().iconst(int_type(int), 1);
+                    let one = self.e.int_const(int_type(int), 1);
                     let divisor = self.e.fb.ins().select(both, one, b);
                     self.e.fb.ins().srem(a, divisor)
                 }
@@ -8060,6 +8203,13 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
                 let too_wide = self.e.fb.ins().icmp_imm_s(IntCC::UnsignedGreaterThanOrEqual, b, width);
                 self.panic_values_if(too_wide, 10, span, |_| (detail, a, b, ty));
+                // The count is below the width: a count of 128 bits fits in
+                // 64, and one of 128 bits shifts by a count of 64.
+                let b = match self.e.fb.func.dfg.value_type(b) {
+                    types::I128 => self.e.fb.ins().ireduce(types::I64, b),
+                    count if wide && count != types::I64 => self.e.fb.ins().uextend(types::I64, b),
+                    _ => b,
+                };
                 match (op, signed) {
                     (BinOp::Shl, _) => self.e.fb.ins().ishl(a, b),
                     (_, true) => self.e.fb.ins().sshr(a, b),

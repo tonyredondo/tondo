@@ -1203,7 +1203,10 @@ macro_rules! integer_numbers {
     )*};
 }
 
-integer_numbers!(i8: "Int8", i16: "Int16", i32: "Int32", i64: "Int", u8: "UInt8", u16: "UInt16", u32: "UInt32", u64: "UInt64");
+integer_numbers!(
+    i8: "Int8", i16: "Int16", i32: "Int32", i64: "Int", u8: "UInt8", u16: "UInt16", u32: "UInt32", u64: "UInt",
+    i128: "Int128", u128: "UInt128"
+);
 
 macro_rules! float_numbers {
     ($($t:ty),*) => {$(
@@ -1230,12 +1233,13 @@ unsafe fn apply_number<T: Number>(op: u32, a: *const u8, b: *const u8, out: *mut
 }
 
 /// Number types are coded as Int8, Int16, Int32, Int64, UInt8, UInt16,
-/// UInt32, UInt64, Float32 and Float64, from 0.
+/// UInt32, UInt64, Float32, Float64, Int128 and UInt128, from 0.
 fn number_size(number: u32) -> usize {
     match number {
         0 | 4 => 1,
         1 | 5 => 2,
         2 | 6 | 8 => 4,
+        10 | 11 => 16,
         _ => 8,
     }
 }
@@ -1300,6 +1304,8 @@ unsafe fn lifted(
                 6 => apply_number::<u32>,
                 7 => apply_number::<u64>,
                 8 => apply_number::<f32>,
+                10 => apply_number::<i128>,
+                11 => apply_number::<u128>,
                 _ => apply_number::<f64>,
             };
             return apply(op, a, b, out, location);
@@ -2127,6 +2133,69 @@ pub unsafe extern "C" fn tondo_rt_sb_u64(b: *mut Builder, value: u64) {
     unsafe { (*b).extend(decimal(value, &mut digits)) }
 }
 
+/// An integer of 128 bits, in two halves, as `"{value}"` writes it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_sb_int128(b: *mut Builder, low: u64, high: u64, signed: u8) {
+    let value = (high as u128) << 64 | low as u128;
+    let text = if signed != 0 { (value as i128).to_string() } else { value.to_string() };
+    unsafe { (*b).extend(text.as_bytes()) }
+}
+
+/// `a * b` of 128 bits, in halves, into `out`; whether it does not fit.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_int128_multiply(signed: u8, values: *const [u64; 4], out: *mut [u64; 2]) -> u8 {
+    let [a_low, a_high, b_low, b_high] = unsafe { *values };
+    let (a, b) = ((a_high as u128) << 64 | a_low as u128, (b_high as u128) << 64 | b_low as u128);
+    let product = match signed != 0 {
+        true => (a as i128).checked_mul(b as i128).map(|p| p as u128),
+        false => a.checked_mul(b),
+    };
+    let result = product.unwrap_or(0);
+    unsafe { *out = [result as u64, (result >> 64) as u64] };
+    product.is_none() as u8
+}
+
+/// `a / b`, or `a % b` when `remainder`, of 128 bits, in halves, into
+/// `out`; the compiled code has ruled out a zero divisor and `MIN / -1`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_int128_divide(
+    remainder: u8,
+    signed: u8,
+    values: *const [u64; 4],
+    out: *mut [u64; 2],
+) {
+    let [a_low, a_high, b_low, b_high] = unsafe { *values };
+    let (a, b) = ((a_high as u128) << 64 | a_low as u128, (b_high as u128) << 64 | b_low as u128);
+    let result = match (signed != 0, remainder != 0) {
+        (true, false) => (a as i128).wrapping_div(b as i128) as u128,
+        (true, true) => (a as i128).wrapping_rem(b as i128) as u128,
+        (false, false) => a / b,
+        (false, true) => a % b,
+    };
+    unsafe { *out = [result as u64, (result >> 64) as u64] };
+}
+
+/// An integer of 128 bits, in halves, as the nearest `Float`, or the
+/// nearest `Float32` when `single`, which a `Float` holds exactly.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_int128_to_float(low: u64, high: u64, signed: u8, single: u8) -> f64 {
+    let value = (high as u128) << 64 | low as u128;
+    match (signed != 0, single != 0) {
+        (true, false) => value as i128 as f64,
+        (true, true) => value as i128 as f32 as f64,
+        (false, false) => value as f64,
+        (false, true) => value as f32 as f64,
+    }
+}
+
+/// A float that the compiled code has found integral and in range, as an
+/// integer of 128 bits, in halves, into `out`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_float_to_int128(value: f64, signed: u8, out: *mut [u64; 2]) {
+    let result = if signed != 0 { value as i128 as u128 } else { value as u128 };
+    unsafe { *out = [result as u64, (result >> 64) as u64] };
+}
+
 /// The decimal digits of `value`, two at a time, at the end of `digits`.
 fn decimal(mut value: u64, digits: &mut [u8; 20]) -> &[u8] {
     const PAIRS: &[u8; 200] = b"0001020304050607080910111213141516171819\
@@ -2485,7 +2554,7 @@ fn valid_indices(last: usize, len: usize) -> String {
 pub unsafe extern "C" fn tondo_rt_panic_values(
     code: u32,
     detail: u32,
-    values: *const [i64; 2],
+    values: *const [u64; 4],
     ty: *const Str,
     location: *const Str,
 ) -> ! {
@@ -2499,7 +2568,7 @@ pub unsafe extern "C" fn tondo_rt_panic_values(
 pub unsafe extern "C" fn tondo_rt_panic_values_unwind(
     code: u32,
     detail: u32,
-    values: *const [i64; 2],
+    values: *const [u64; 4],
     ty: *const Str,
     location: *const Str,
 ) {
@@ -2509,24 +2578,22 @@ pub unsafe extern "C" fn tondo_rt_panic_values_unwind(
 
 /// The message of a panic of compiled code, from its values, whose data it
 /// stages.
-unsafe fn values_message(code: u32, detail: u32, values: *const [i64; 2], ty: *const Str) -> String {
-    let [a, b] = unsafe { *values };
+unsafe fn values_message(code: u32, detail: u32, values: *const [u64; 4], ty: *const Str) -> String {
+    // Two values of 128 bits, each extended by its signedness.
+    let [a_low, a_high, b_low, b_high] = unsafe { *values };
+    let (a, b) = ((a_high as i128) << 64 | a_low as i128, (b_high as i128) << 64 | b_low as i128);
     let (bits, op) = (detail & 0xff, detail >> 16);
-    let show = |value: i64, signed: bool| {
-        let unsigned = value as u64 & (u64::MAX >> (64 - bits.clamp(1, 64)));
-        if signed { value.to_string() } else { unsigned.to_string() }
-    };
-    let (left, right) = (show(a, detail & 0x100 != 0), b.to_string());
-    let right = if detail & 0x200 != 0 || b >= 0 { right } else { (b as u64).to_string() };
+    let show = |value: i128, signed: bool| if signed { value.to_string() } else { (value as u128).to_string() };
+    let (left, right) = (show(a, detail & 0x100 != 0), show(b, detail & 0x200 != 0));
+    let (a, b) = (a as i64, b as i64);
     let ty = String::from_utf8_lossy(unsafe { str_bytes(ty) });
     let operator = ["+", "-", "*", "/", "%", "-", "<<", ">>"].get(op as usize).copied().unwrap_or("?");
     let range = || {
-        let (low, high) = if detail & 0x100 != 0 {
-            (-(1i128 << (bits - 1)), (1i128 << (bits - 1)) - 1)
-        } else {
-            (0, (1i128 << bits) - 1)
-        };
-        format!("{low} to {high}")
+        let unused = 128 - bits.clamp(1, 128);
+        match detail & 0x100 != 0 {
+            true => format!("{} to {}", i128::MIN >> unused, i128::MAX >> unused),
+            false => format!("0 to {}", u128::MAX >> unused),
+        }
     };
     let int = |value: &str| value.parse::<i64>().map_or(panics::Datum::Text(value.to_string()), panics::Datum::Int);
     let data = match code {

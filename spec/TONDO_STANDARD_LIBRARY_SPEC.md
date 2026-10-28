@@ -1606,8 +1606,7 @@ pub fn Duration.milliseconds(self): Int
 pub fn Duration.seconds(self): Int
 pub fn Duration.minutes(self): Int
 pub fn Duration.hours(self): Int
-pub fn Duration.add(self, other: Duration): Duration
-pub fn Duration.subtract(self, other: Duration): Duration
+impl Additive for Duration                 // a + b, a - b, durations.sum()
 pub fn Duration.multiply(self, factor: Int): Duration
 pub fn Duration.isZero(self): Bool
 pub fn Duration.isNegative(self): Bool
@@ -1867,8 +1866,9 @@ let id = requests.add(1)
 - `Barrier(n).wait()` espera a que lleguen `n` tareas y devuelve `true` en
   exactamente una de ellas por ronda; después la barrera se reutiliza.
 - `Atomic` no expone un orden de memoria: todas sus operaciones son
-  secuencialmente consistentes. Con enteros, `Bool`, `Char` y `Byte` usa
-  instrucciones atómicas; con otros tipos, un lock. `compareExchange` nunca falla de forma espuria:
+  secuencialmente consistentes. Con enteros de hasta 64 bits, `Bool`, `Char` y
+  `Byte` usa instrucciones atómicas; con otros tipos, los enteros de 128 bits
+  incluidos, un lock. `compareExchange` nunca falla de forma espuria:
   `Exchanged(previous)` si el valor coincidía y se reemplazó, y
   `Mismatch(observed)` si no. `add` devuelve el valor nuevo y produce `P0005`
   si no cabe.
@@ -2140,21 +2140,23 @@ pub fn Socket.close(self)
 ### 14.5 El prelude y `std.math`
 
 Todo programa tiene, sin importar nada, los métodos que el prelude da a los tipos
-intrínsecos y los traits `Ordered` y `Numeric`. El prelude está escrito en Tondo
-sobre operaciones del runtime; un programa solo compila los métodos que usa. Las
+intrínsecos y el trait `Ordered`. El prelude está escrito en Tondo sobre
+operaciones del runtime; un programa solo compila los métodos que usa. Las
 posiciones de un `String` son índices de escalares, como en el lenguaje.
 
 ~~~tondo pseudocode
 pub trait Ordered { fn compare(self, other: Self): Int }
-pub trait Numeric { fn zero(): Self; fn plus(self, other: Self): Self }
 ~~~
 
-`Ordered` está implementado para los enteros, `Byte`, `Char`, `String`, `Bool`
-y `Float`, cuyo `compare` pone `NaN` después de cualquier otro valor y lo iguala
-a sí mismo; `Numeric`, para `Int` y `Float`. Un programa puede implementar
-`Ordered` para sus tipos. `Int`, `Float`, `String` y `Char` tienen además
-`compare` como método propio. Los enteros tienen las constantes `max` y `min`
-(`Int.max`), y los floats `pi`, `e`, `infinity`, `nan` y `epsilon`.
+`Ordered` está implementado para todos los números, `Byte`, `Char`, `String` y
+`Bool`; el `compare` de los floats pone `NaN` después de cualquier otro valor y
+lo iguala a sí mismo. Un programa puede implementar `Ordered` para sus tipos.
+
+Los números no tienen métodos del prelude: sus operaciones (`parse`,
+`toString`, `abs`, `pow`, las variantes de desbordamiento, los bits, los bytes,
+las conversiones nombradas, `floor`, `sqrt`...) y sus constantes son intrinsics
+del lenguaje, iguales en todos los anchos (18.9 del lenguaje), y los traits
+`Additive`, `Number` e `Integer` también son del lenguaje (18.10).
 
 `String`:
 
@@ -2175,25 +2177,12 @@ fn toLower(self): String                            // reglas de Unicode
 fn toUpper(self): String
 fn compare(self, other: String): Int
 fn chars(self): CharIterator                        // Iterator[Char], perezoso
-fn Int.parse(input: String, radix: Int = 10): Int ! text.TextError
-fn Float.parse(input: String): Float ! text.TextError
 ~~~
-
-`Int.parse` acepta un signo y `_` entre dígitos en bases de 2 a 36; `Float.parse`
-lee la forma decimal, `inf`, `-inf` y `NaN`. Un texto que no es un número que
-cabe da `TextError.InvalidData`.
 
 `Char`: `isDigit`, `isLetter`, `isWhitespace`, `isUpper`, `isLower` e
 `isAlphanumeric` (`Bool`); `toUpper` y `toLower`, que cambian el escalar cuando
 su otra forma es uno solo; `code(): Int`, `Char.from(code: Int): Char?` y
 `compare`.
-
-`Int`: `abs`, `min(other)`, `max(other)`, `clamp(low, high)`, `pow(exponent)`,
-cuyo desbordamiento es un pánico como en toda aritmética, `toString(radix: Int =
-10)` y `compare`. `Float`: `abs`, `min`, `max`, `clamp`, `floor`, `ceil`,
-`round` (la mitad va al par), `truncate`, `sqrt(): Float ! math.MathError`,
-`pow(exponent: Float)`, `isNaN`, `isInfinite`, `isFinite`, `toFixed(decimals:
-Int): String` y `compare`.
 
 `Option[T]`: `isSome`, `isNone`, `map(fn(T): U): U?`, `andThen(fn(T): U?): U?`,
 `unwrapOr(fallback: T): T`, `orElse(other: T?): T?`, `filter(fn(T): Bool): T?`,
@@ -2218,7 +2207,7 @@ fn all(self, predicate: fn(T): Bool): Bool
 fn find(self, predicate: fn(T): Bool): T?
 fn findIndex(self, predicate: fn(T): Bool): Int?
 fn count(self, predicate: fn(T): Bool): Int
-fn sum(self): T                                     // T: Numeric
+fn sum(self): T                                     // T: Additive
 fn min(self): T?                                    // T: Ordered
 fn max(self): T?                                    // T: Ordered
 fn sorted(self): Array[T]                           // T: Ordered, estable
@@ -2297,8 +2286,8 @@ pub fn round(value: Float): Float                   // la mitad va al par
 pub fn roundTiesAway(value: Float): Float           // la mitad se aleja de cero
 pub fn truncate(value: Float): Float
 pub fn fma(a: Float, b: Float, c: Float): Float     // redondea una vez
-pub fn gcd(a: Int, b: Int): Int
-pub fn lcm(a: Int, b: Int): Int
+pub fn gcd[T: Integer](a: T, b: T): T
+pub fn lcm[T: Integer](a: T, b: T): T
 ~~~
 
 ### 14.6 Arquitectura común de serialización
@@ -2388,8 +2377,8 @@ pub trait Decode {
 }
 ~~~
 
-- `Encode` y `Decode` están implementados para `Int`, `Byte` (un entero de 0
-  a 255), `Float`, `Bool`, `String`, `T?`, `Array[T]`, `Map[String, V]` y `time.DateTime` (texto RFC 3339
+- `Encode` y `Decode` están implementados para todos los números, `Byte` (un
+  entero de 0 a 255), `Bool`, `String`, `T?`, `Array[T]`, `Map[String, V]` y `time.DateTime` (texto RFC 3339
   en UTC, o el `DateTime` del formato), y el compilador los implementa
   para cada record, enum y newtype del programa cuyas partes los implementan,
   cuando el programa trae `std.serialization` directamente o por un formato. Una
@@ -2411,8 +2400,11 @@ pub trait Decode {
 - Un newtype es su valor. Una variante sin payload es su nombre como texto; una
   con payload es un mapa de una sola clave, el nombre, cuyo valor es el payload,
   una lista si tiene varios componentes o un mapa si tiene campos.
+- Un entero que cabe en `Int` se escribe con `int`, y otro, como un `UInt`
+  grande o uno de 128 bits, con `number` y sus dígitos: ningún entero pasa por
+  un float. Un `Float32` se escribe con `float`.
 - `Decode` acepta para un número cualquiera de `Int`, `Float` y `Number`, y para
-  un entero da `Range` cuando no cabe.
+  un entero da `Range` cuando no cabe en su tipo.
 - Un `Error` lleva dónde ocurrió como camino (`$.users[2].age`), línea y
   columna, y se muestra como `mensaje at camino (line l, column c)`, sin la
   posición cuando no la hay, como al escribir. `ErrorKind` se muestra con su
@@ -2545,10 +2537,12 @@ pub enum PrimitiveKind {
     Int8
     Int16
     Int32
+    Int128
+    UInt
     UInt8
     UInt16
     UInt32
-    UInt64
+    UInt128
     Float
     Float32
     Byte
@@ -2919,8 +2913,10 @@ impl Display for Value                     // como JSON
   (-1) es un `DateTime`, que `time.DateTime` lee y escribe. Otra extensión es un
   error.
 - Las claves de un mapa son texto, o enteros leídos como sus dígitos. Un entero
-  sin signo que no cabe en `Int` es un `Number`: un error para un campo `Int`, un
-  `Float` en `Value`.
+  sin signo que no cabe en `Int` es un `Number`: un `UInt` en un campo `UInt`,
+  un error para un campo `Int`, un `Float` en `Value`. Un entero escrito con
+  `number` es el entero del formato si cabe en 64 bits, con o sin signo; uno
+  mayor no tiene forma en MessagePack y da `Unsupported`.
 - Un `Encode` escrito a mano que declara otro número de elementos de los que
   escribe es un error de programa: `encode` hace pánico con lo ocurrido.
 - Los errores de lectura llevan el camino y el byte donde ocurrieron.
@@ -3138,6 +3134,9 @@ impl Display for Value                             // una tabla como documento
 - Un documento es una tabla, así que `encode` solo escribe records y mapas. TOML
   no tiene null: un campo `none` se omite, y un `none` en otro lugar es un error
   `Unsupported`.
+- Los enteros de TOML son de 64 bits con signo: uno que no cabe en `Int` es un
+  error `Unsupported` al escribirlo, y un `Range` al leerlo en un tipo más
+  estrecho.
 - Los errores de lectura llevan el camino, la línea y la columna del valor; los de
   escritura, el camino.
 
@@ -3181,12 +3180,14 @@ pub fn parse(input: Array[Byte]): Value ! CborError
 
 - Se leen los major types 0 a 7 con longitudes definidas e indefinidas; el texto
   debe ser UTF-8. Los tags 0 (texto RFC 3339) y 1 (segundos desde la época) son
-  un `DateTime`; 2 y 3 son enteros cuando caben en 64 bits; cualquier otro tag se
+  un `DateTime`; 2 y 3 son enteros, un `Number` cuando no caben en `Int`; cualquier otro tag se
   lee como el item que contiene. Los floats de 16, 32 y 64 bits se leen; un
   simple no asignado es un error. Un contenedor no puede anidarse más de 512
   niveles.
 - Las claves de un mapa son texto, o enteros leídos como sus dígitos. Un entero
-  que no cabe en `Int` es un `Number`.
+  que no cabe en `Int` es un `Number`. Un entero escrito con `number` es un
+  entero del formato si cabe en 64 bits, con o sin signo, y uno mayor lleva el
+  tag 2 o 3.
 - `encode` escribe la serialización preferida: cabeceras y floats en su forma
   más corta que conserva el valor, NaN como `f97e00`, longitudes definidas y un
   `DateTime` como tag 0. Con `deterministic`, además, las claves de cada mapa
@@ -3502,7 +3503,7 @@ estado global:
 pub type Random
 pub fn Random.seeded(seed: Int): Random
 pub fn Random.new(): Random
-pub fn Random.int(mut self, range: Range[Int]): Int
+pub fn Random.int[T: Integer](mut self, range: Range[T]): T
 pub fn Random.float(mut self): Float
 pub fn Random.bool(mut self): Bool
 pub fn Random.bytes(mut self, count: Int): Array[Byte]
@@ -3513,9 +3514,9 @@ pub fn entropy(count: Int): Array[Byte]
 
 - El generador es SplitMix64: la misma semilla da los mismos valores en
   cualquier máquina. `Random.new()` toma la semilla de la entropía del sistema.
-- `int` da cada valor del rango con la misma probabilidad, sin sesgo:
-  `dice.int(1..=6)`. Un rango vacío, o con más valores que `Int.max`, es un
-  pánico. `float` da un valor de `[0, 1)` con 53 bits; `shuffled` es
+- `int` da cada valor del rango con la misma probabilidad, sin sesgo, en
+  cualquier entero: `dice.int(1..=6)`, o `ids.int(1u64..=UInt64.max)` para
+  un id de 64 bits. Un rango vacío es un pánico. `float` da un valor de `[0, 1)` con 53 bits; `shuffled` es
   Fisher-Yates sobre una copia; `choice` da `none` sin elementos.
 - El generador no sirve para secretos: claves, tokens y nonces usan
   `random.entropy(count)`, que lee la entropía del sistema.

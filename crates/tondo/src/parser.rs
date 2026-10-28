@@ -470,7 +470,7 @@ impl Parser<'_> {
                         })
                         .collect::<Option<String>>()
                         .map(AnnotationArg::Text),
-                    Tok::Int { value, suffix: None } => Some(AnnotationArg::Int(value)),
+                    Tok::Int { value, suffix: None } => u64::try_from(value).ok().map(AnnotationArg::Int),
                     _ => None,
                 };
                 let Some(argument) = argument else {

@@ -153,7 +153,9 @@ Tondo 0.1 no pretende:
 - Tener macros textuales, reescritura arbitraria del AST, evaluación dinámica o
   metaprogramación con efectos ambientales implícitos.
 - Tener excepciones recuperables mediante `throw`/`catch`.
-- Tener sobrecarga de operadores definida por el usuario.
+- Dar a los operadores significados definidos por el usuario: un tipo solo
+  toma `+`, `-`, `*` y `/`, con su sentido aritmético, implementando
+  `Additive` o `Number` (18.10).
 - Inferir firmas públicas ni tipos a través de módulos.
 - Incluir un tipo dinámico universal `Any` u `Object`.
 - Incorporar broadcasting multidimensional completo en el núcleo.
@@ -212,7 +214,8 @@ No se adoptan:
 - Borrow checker general con anotaciones de vida.
 - Macros como parte necesaria del uso cotidiano.
 - Múltiples formas de conversión implícita mediante traits.
-- Sobrecarga de operadores por traits.
+- Un trait por operador (`Add`, `Shl`, `Index`...): solo la aritmética se
+  abre a los tipos del programa, con dos traits algebraicos (18.10).
 
 ### 3.3 Kotlin
 
@@ -697,15 +700,17 @@ Sufijos opcionales:
 42i16
 42i32
 42i64
+42i128
 42u8
 42u16
 42u32
 42u64
+42u128
 ~~~
 
 Sin contexto ni sufijo, un literal entero tiene tipo `Int`.
 
-Con tipo esperado, un literal sin sufijo puede adoptar exactamente uno de los enteros intrínsecos `Int8`…`Int64` o `UInt8`…`UInt64`, incluidos `Int` y aliases transparentes de esos tipos. El valor matemático debe caber; en otro caso es error de compilación. Un literal entero no adopta implícitamente `Float`, `Byte` ni un newtype. Por tanto:
+Con tipo esperado, un literal sin sufijo puede adoptar exactamente uno de los enteros intrínsecos `Int8`…`Int128` o `UInt8`…`UInt128`, incluidos `Int`, `UInt` y aliases transparentes de esos tipos. El valor matemático debe caber; en otro caso es error de compilación. Un literal entero no adopta implícitamente `Float`, `Byte` ni un newtype, salvo un tipo del programa que implementa `Number`, al que llega como `Number.fromInt[T](literal)` (18.10). Por tanto:
 
 ~~~tondo
 let small: UInt8 = 42
@@ -1451,14 +1456,23 @@ Tipos de uso general:
 Tipos de ancho fijo:
 
 ~~~text
-Int8 Int16 Int32 Int64
-UInt8 UInt16 UInt32 UInt64
+Int8 Int16 Int32 Int64 Int128
+UInt8 UInt16 UInt32 UInt64 UInt128
 Float32 Float64
 ~~~
 
-`Int` tiene siempre 64 bits, incluso en plataformas de 32 bits. `Float` equivale semánticamente a `Float64`. Los nombres cortos no dependen de la arquitectura.
+`Int` tiene siempre 64 bits, incluso en plataformas de 32 bits, y `UInt` es su
+versión sin signo. `Float` equivale semánticamente a `Float64`. Los nombres
+cortos no dependen de la arquitectura.
 
-`Int` e `Int64` son el mismo tipo bajo dos grafías; `Float` y `Float64` también. `Int` y `Float` son las formas canónicas en código general. Los nombres con ancho se prefieren cuando el ancho forma parte explícita de un protocolo binario o frontera FFI.
+`Int` e `Int64` son el mismo tipo bajo dos grafías; `UInt` y `UInt64`, y
+`Float` y `Float64`, también. `Int`, `UInt` y `Float` son las formas canónicas en
+código general, y las que muestran los diagnósticos. Los nombres con ancho se
+prefieren cuando el ancho forma parte explícita de un protocolo binario o
+frontera FFI.
+
+Todos los números tienen las mismas operaciones nombradas en todos los anchos
+(18.9) y los traits numéricos (18.10).
 
 ### 8.4 `Unit`
 
@@ -1541,7 +1555,7 @@ Reglas:
 - Una conversión definida para todos los valores de origen sin posibilidad de fallo devuelve directamente el tipo destino.
 - Una conversión que puede perder rango o no representar el valor devuelve `Destino ! NumericConversionError` y requiere `?` o `match`.
 - La conversión explícita de entero a float es total y utiliza el redondeo IEEE documentado, aunque pueda perder precisión.
-- Una conversión deliberadamente wrapping, saturating o truncating no tiene sintaxis especial; será una operación nombrada de la librería numérica.
+- Una conversión deliberadamente wrapping o saturating no tiene sintaxis especial: es una operación nombrada del tipo destino, `UInt8.wrapping(value)` o `UInt8.saturating(value)` (18.9).
 - Convertir `Float` a entero exige que sea finito, integral y representable.
 - No existe conversión automática de `Bool` a número ni viceversa.
 
@@ -4134,6 +4148,24 @@ fn decodeUser(bytes: Array[Byte]): User ! DecodeError {
 }
 ~~~
 
+Un trait puede exigir otros, escritos como los bounds de un parámetro
+genérico:
+
+~~~tondo pseudocode
+trait Shape: Display {
+    fn area(self): Float
+
+    fn describe(self): String {
+        "{self}, of area {self.area()}"
+    }
+}
+~~~
+
+Implementarlo para un tipo exige que el tipo implemente también los que exige:
+`E1105` dice el `impl` que falta. Un bound `T: Shape` da también lo de
+`Display`, y los métodos por defecto de `Shape` pueden usarlo. Un trait no puede
+exigirse a sí mismo, ni directamente ni a través de otros (`E1112`).
+
 ### 12.4 Implementación explícita
 
 ~~~tondo
@@ -4437,12 +4469,15 @@ función no tiene un único testigo.
 Tondo 0.1 no tiene:
 
 - Tipos asociados.
-- Constantes asociadas.
+- Constantes asociadas, salvo las intrínsecas de los enteros sobre `T: Integer`
+  (18.10).
 - Genéricos de valores o const generics.
 - Higher-kinded types.
-- Herencia entre traits.
+- Herencia de implementaciones: un trait que exige otro (12.3) no recibe sus
+  métodos ni los sustituye, y cada `impl` escribe los de su trait.
 - Trait aliases.
-- Sobrecarga de operadores mediante traits.
+- Operadores definidos por traits, salvo la aritmética de `Additive` y `Number`
+  (18.10).
 - Conversión automática `From`/`Into`.
 
 Estas ausencias mantienen local la resolución. Si una conversión es necesaria, se llama a una función o constructor explícito.
@@ -6494,7 +6529,7 @@ Cruzan a C, como C los pasa (`E1703` para cualquier otro):
 
 | Tondo | C |
 |---|---|
-| `Int8` … `Int64`, `UInt8` … `UInt64`, `Byte`, `Bool` | enteros del mismo tamaño y signo, `_Bool` |
+| `Int8` … `Int128`, `UInt8` … `UInt128`, `Byte`, `Bool` | enteros del mismo tamaño y signo (`__int128` y `unsigned __int128` los de 128 bits), `_Bool` |
 | `Float32`, `Float` | `float`, `double` |
 | `Pointer[T]` | `T*` no nulo |
 | `Pointer[T]?`, `extern fn(...)?` | puntero que puede ser `NULL`, `none` |
@@ -6622,11 +6657,11 @@ la pila.
 
 ### 17.1 Principio
 
-Los operadores de Tondo tienen significados cerrados definidos por el lenguaje. Un trait o tipo de usuario no puede redefinirlos.
+Los operadores de Tondo tienen significados cerrados definidos por el lenguaje. Un trait o tipo de usuario no puede redefinirlos ni darles otro sentido. La única apertura es la aritmética: un tipo del programa toma `+` y `-` implementando `Additive`, y además `*` y `/` implementando `Number` (18.10), con el sentido que esos traits fijan. Ningún otro operador se abre.
 
 Esto garantiza que:
 
-- `a + b` no ejecuta código encontrado por una búsqueda abierta.
+- `a + b` ejecuta, como mucho, el `plus` del tipo de sus operandos, que fijan los tipos estáticos y la coherencia (12.6), nunca código encontrado por una búsqueda abierta.
 - El significado puede conocerse por los tipos estáticos.
 - Los diagnósticos enumeran exactamente las combinaciones permitidas.
 - Dos módulos no pueden dar significados distintos al mismo operador.
@@ -6709,6 +6744,8 @@ Se aplican a combinaciones numéricas explícitamente compatibles. Los operandos
 
 Los enteros con y sin signo admiten `+`, `-`, `*`, `/` y `%`. Los floats admiten `+`, `-`, `*` y `/`; un resto o módulo flotante utiliza una operación nombrada porque existen varias convenciones útiles. `Byte` no participa en aritmética ordinaria: se convierte explícitamente a `UInt8` cuando el programa desea tratarlo como número.
 
+Un parámetro `T: Integer` admite los operadores de los enteros; uno `T: Number` o un tipo que implementa `Number`, `+`, `-`, `*` y `/`; uno `T: Additive` o un tipo que implementa `Additive`, `+` y `-` (18.10).
+
 También se elevan sobre arrays como se define en 10.6.
 
 `+` no concatena strings, arrays ni maps.
@@ -6783,7 +6820,7 @@ in
 
 Las comparaciones relacionales se definen para:
 
-- Enteros del mismo tipo.
+- Enteros del mismo tipo, también `T: Integer` (18.10).
 - `Byte` con `Byte`.
 - Floats del mismo tipo.
 - `Char`.
@@ -6899,7 +6936,7 @@ Se llaman mediante nombres que expresan intención.
  9_223_372_036_854_775_807
 ~~~
 
-Los enteros de ancho fijo utilizan complemento a dos para representación, pero las operaciones normales son comprobadas.
+Los enteros de ancho fijo utilizan complemento a dos para representación, pero las operaciones normales son comprobadas. Hay de 8, 16, 32, 64 y 128 bits, con y sin signo; `Int128` y `UInt128` son tan completos como los demás, aunque una máquina de 64 bits haga sus operaciones en dos partes.
 
 ### 18.2 Overflow
 
@@ -6914,14 +6951,8 @@ let maximum: Int8 = 127i8
 let invalid = maximum + 1i8 // pánico siempre
 ~~~
 
-Las variantes:
-
-- wrapping,
-- saturating,
-- overflowing,
-- checked,
-
-serán operaciones nombradas de tipos numéricos.
+Las variantes wrapping, checked, saturating y overflowing son operaciones
+nombradas de cada entero (18.9): `a.wrappingAdd(b)`, `a.checkedMul(b)`.
 
 ### 18.3 División y resto enteros
 
@@ -6942,7 +6973,7 @@ Ejemplos:
 
 ### 18.4 Enteros sin signo
 
-`UIntN` representa `0` hasta `2^N - 1`. Una resta por debajo de cero produce pánico. La negación unaria no está definida para enteros sin signo ni para `Byte`.
+`UIntN` representa `0` hasta `2^N - 1`. Una resta por debajo de cero produce pánico. La negación unaria no está definida para enteros sin signo ni para `Byte`; `x.wrappingNeg()` da el complemento a dos.
 
 `Byte` tiene la representación de `UInt8`, pero es un tipo intrínseco nominal destinado a unidades binarias. La conversión entre `Byte` y `UInt8` es explícita para impedir mezclar accidentalmente contenido binario con aritmética ordinaria.
 
@@ -6986,7 +7017,10 @@ sobrecarga definida por el usuario. Para cada valor origen:
   aunque la conversión siga escrita.
 - Entero o `Byte` a `Float32`/`Float64`: es total, siempre finita y redondea a
   nearest, ties to even. Todos los enteros intrínsecos tienen magnitud
-  representable finitamente por ambos formatos, aunque no siempre con exactitud.
+  representable finitamente por ambos formatos, aunque no siempre con exactitud,
+  salvo los `UInt128` más altos en `Float32`: esa conversión devuelve
+  `Float32 ! NumericConversionError` y falla con `OutOfRange` para los que
+  redondearían a infinito.
 - `Float32` a `Float64`: es total y conserva exactamente todo valor numérico,
   infinidades, signo de cero y la condición NaN.
 - `Float64` a `Float32`: devuelve `Float32 ! NumericConversionError`. Infinidades
@@ -7001,8 +7035,8 @@ Estas reglas no cambian durante evaluación constante. Una conversión comprobad
 produce el mismo `Result` que en ejecución; `err(...)` es un valor constante
 válido y no un `E1903`.
 
-Convertir entre dos grafías del mismo tipo, como `Int`/`Int64` o
-`Float`/`Float64`, es una identidad explícita que el linter puede señalar como
+Convertir entre dos grafías del mismo tipo, como `Int`/`Int64`, `UInt`/`UInt64`
+o `Float`/`Float64`, es una identidad explícita que el linter puede señalar como
 redundante. El payload concreto de un NaN no forma parte de la semántica y no se
 promete preservarlo al cambiar de formato.
 
@@ -7050,6 +7084,188 @@ let minimum: Int8 = -128
 sin exigir que `128` exista primero como `Int8`. La misma excepción contextual
 se aplica cuando el sufijo fija el tipo, por ejemplo `-128i8`; no permite ninguna
 otra magnitud fuera de rango.
+
+### 18.9 Operaciones nombradas
+
+Cada número tiene las mismas operaciones, con la misma forma en todos los
+anchos. Son intrinsics del lenguaje, no funciones de librería: el compilador
+emite para cada una las instrucciones de la máquina que la hacen, como contar
+bits, rotar, invertir bytes o detectar el desbordamiento. `tondo api prelude`
+las muestra por tipo.
+
+Los enteros, `Int8` … `Int128` y `UInt8` … `UInt128`:
+
+~~~tondo pseudocode
+T.min: T
+T.max: T
+T.bits: Int
+T.parse(text: String, radix: Int = 10): T ! text.TextError
+x.toString(radix: Int = 10): String
+x.compare(other: T): Int
+x.min(other: T): T
+x.max(other: T): T
+x.clamp(low: T, high: T): T
+x.pow(exponent: Int): T
+x.abs(): T                               // los que tienen signo
+~~~
+
+- `parse` acepta un signo, `_` entre dígitos y bases de 2 a 36, y da
+  `TextError.InvalidData` para un texto que no es un número que cabe en `T`.
+  `toString` escribe las letras en minúscula y `-` delante de un negativo.
+- `pow` y `abs` son comprobadas como los operadores: `Int8.min.abs()` es un
+  pánico `P0005`. Un exponente negativo es un pánico `P0018`, en `pow` y en
+  sus variantes.
+
+El desbordamiento a elección (18.2):
+
+| Familia | Operaciones | Da |
+|---|---|---|
+| wrapping | `wrappingAdd`, `wrappingSub`, `wrappingMul`, `wrappingNeg`, `wrappingPow` | los `T.bits` bits bajos del resultado exacto, en complemento a dos |
+| checked | `checkedAdd`, `checkedSub`, `checkedMul`, `checkedDiv`, `checkedRem`, `checkedNeg`, `checkedPow` | `T?`: `none` si no cabe o si divide por cero |
+| saturating | `saturatingAdd`, `saturatingSub`, `saturatingMul`, `saturatingPow` | el resultado, o `T.min` o `T.max` si no cabe |
+| overflowing | `overflowingAdd`, `overflowingSub`, `overflowingMul` | `(T, Bool)`: el de wrapping, y si no cabía |
+
+Los bits:
+
+~~~tondo pseudocode
+x.countOnes(): Int
+x.leadingZeros(): Int                    // desde el bit alto; T.bits para 0
+x.trailingZeros(): Int                   // desde el bit bajo; T.bits para 0
+x.rotateLeft(count: Int): T              // count módulo T.bits
+x.rotateRight(count: Int): T
+x.reverseBytes(): T
+x.reverseBits(): T
+x.isPowerOfTwo(): Bool                   // los que no tienen signo
+x.nextPowerOfTwo(): T                    // los que no tienen signo; 1 para 0
+~~~
+
+`nextPowerOfTwo` es comprobada: si la potencia no cabe en `T`, `P0005`.
+
+Los bytes, con `ByteOrder.Big` (el orden de red) por defecto:
+
+~~~tondo pseudocode
+pub enum ByteOrder { Big, Little }
+
+x.toBytes(order: ByteOrder = ByteOrder.Big): Array[Byte]
+T.fromBytes(bytes: Array[Byte], at: Int = 0, order: ByteOrder = ByteOrder.Big): T
+~~~
+
+`toBytes` da `T.bits / 8` bytes. `fromBytes` lee los `T.bits / 8` bytes que
+empiezan en `at`; si no están, es un pánico `P0001`.
+
+Las conversiones nombradas, que completan las de 18.6:
+
+~~~tondo pseudocode
+T.wrapping(value): T       // value: un entero o Byte
+T.saturating(value): T     // value: un entero, Byte o float
+~~~
+
+- `wrapping` se queda con los `T.bits` bits bajos del valor en complemento a
+  dos: `UInt8.wrapping(300)` es `44`, `UInt64.wrapping(-1)` es `UInt64.max` e
+  `Int32.wrapping(UInt32.max)` es `-1`.
+- `saturating` da el valor de `T` más cercano: `UInt8.saturating(-5)` es `0` e
+  `Int8.saturating(1000)` es `127`. Un float se trunca hacia cero; `NaN` da
+  `0`, y los infinitos, `T.min` y `T.max`.
+
+Los floats, `Float` y `Float32`:
+
+~~~tondo pseudocode
+T.pi  T.e  T.infinity  T.nan  T.epsilon
+T.min  T.max                             // los finitos extremos
+T.parse(text: String): T ! text.TextError
+x.compare(other: T): Int                 // NaN después de todo, igual a sí mismo
+x.abs()  x.min(other)  x.max(other)  x.clamp(low, high)
+x.floor()  x.ceil()  x.round()  x.roundTiesAway()  x.truncate()
+x.sqrt(): T ! math.MathError
+x.pow(exponent: T): T
+x.isNaN()  x.isInfinite()  x.isFinite(): Bool
+x.toFixed(decimals: Int): String
+x.bits(): UInt64                         // UInt32 para Float32
+T.fromBits(bits: UInt64): T              // UInt32 para Float32
+~~~
+
+`parse` lee la forma decimal, `inf`, `-inf` y `NaN`. `round` lleva la mitad al
+par y `roundTiesAway` la aleja de cero. `bits` y `fromBits` dan y toman el
+patrón IEEE 754 tal cual, `NaN` incluido.
+
+`Byte`, que no hace aritmética (17.4), tiene `parse` y `toString` con `radix`,
+`compare`, `min`, `max` y las operaciones de bits salvo `reverseBytes`,
+`isPowerOfTwo` y `nextPowerOfTwo`.
+
+### 18.10 Traits numéricos
+
+~~~tondo pseudocode
+pub trait Additive {
+    fn zero(): Self
+    fn plus(self, other: Self): Self
+    fn minus(self, other: Self): Self
+}
+
+pub trait Number: Additive {
+    fn one(): Self
+    fn fromInt(value: Int): Self
+    fn times(self, other: Self): Self
+    fn dividedBy(self, other: Self): Self
+}
+
+pub trait Integer: Number
+~~~
+
+- **Operadores.** Sobre un tipo que implementa `Additive`, `a + b` es
+  `a.plus(b)` y `a - b` es `a.minus(b)`; sobre uno que implementa `Number`,
+  `a * b` es `a.times(b)` y `a / b` es `a.dividedBy(b)`. Los dos operandos son
+  del mismo tipo, y las asignaciones compuestas `+=`, `-=`, `*=` y `/=` siguen.
+  Así no se obtiene ningún otro operador: ni `%`, ni los de bits, ni el `-`
+  unario, que se escribe `0 - x`, ni las comparaciones.
+- **Literales.** Donde se espera un tipo que implementa `Number`, un literal
+  entero es `Number.fromInt[T](literal)`; en un número del lenguaje, el literal mismo
+  (5.7). En código genérico, `x * 2` con `x: T` y `T: Number` funciona para
+  cualquier `T`, y el literal es un `Int`. Un literal float no llega así a un
+  `T`.
+- **Los números del lenguaje.** Todos los enteros y floats implementan
+  `Additive` y `Number`, con los operadores comprobados de 18.2: `fromInt` es
+  la conversión comprobada, un pánico `P0005` si el valor no cabe. Los enteros
+  implementan además `Integer`, que un programa no puede implementar
+  (`E1114`): sobre `T: Integer` vale todo lo de un entero concreto, sus
+  operadores, sus comparaciones, sus constantes (`T.max`), `T.parse(...)` y las
+  operaciones de 18.9. `Byte` no implementa ninguno.
+- **Los tipos del programa.** Un tipo que suma, como un importe, una duración o
+  un vector, implementa `Additive`; uno que además multiplica y divide, como un
+  decimal, un racional o un complejo, `Number`, que exige `Additive` (12.3).
+  Como cualquier `impl`, solo en el módulo del tipo o del trait (12.6). Se
+  espera que `plus` sea asociativa y conmutativa, con `zero` como neutro, y
+  `minus` su inversa; que `times` sea asociativa, con `one` como neutro; y que
+  cada operación, como las de los números, haga un pánico en vez de dar un
+  valor sin sentido.
+
+~~~tondo pseudocode
+type Money = { cents: Int }
+
+impl Additive for Money {
+    fn zero(): Money {
+        Money { cents: 0 }
+    }
+
+    fn plus(self, other: Money): Money {
+        Money { cents: self.cents + other.cents }
+    }
+
+    fn minus(self, other: Money): Money {
+        Money { cents: self.cents - other.cents }
+    }
+}
+
+fn mean[T: Number](values: Array[T]): T {
+    values.sum() / Number.fromInt[T](values.length())
+}
+
+/// Cualquier entero en hexadecimal, con todos sus dígitos: `00ff` para `255u16`.
+fn hex[T: Integer](value: T): String {
+    value.toString(radix: 16).padStart(T.bits / 4, fill: "0")
+}
+~~~
+
+`Array.sum()` exige `T: Additive`: `[price, tax].sum()` es un `Money`.
 
 ---
 
@@ -8303,6 +8519,7 @@ oculten un diagnóstico independiente.
 | `P0015` | `invalid-environment-name` | `env.set`, `setAll` o `remove` recibe un nombre vacío o con `=` o `NUL`, o un valor con `NUL`. | `name` |
 | `P0016` | `nul-in-c-string` | Un texto con un byte cero dentro pasa a C como `ffi.CString`. | — |
 | `P0017` | `invalid-panic-code` | El `code` calculado de `panic` no es un código propio (15.7). | `code` |
+| `P0018` | `negative-exponent` | `pow` de un entero, o una de sus variantes, recibe un exponente negativo (18.9). | `exponent` |
 | `P2001` | `test-skip-during-cleanup` | `testing.skip` intenta omitir un nodo durante cleanup, unwind o teardown. | — |
 | `P2002` | `test-tag-conflict` | `testing.tags` intenta cambiar el valor ya asociado a una key en el mismo envelope. | — |
 | `P2003` | `test-virtual-time-deadlock` | Un dominio temporal virtual queda quiescente sin timer ni evento interno capaz de progresar. | — |
@@ -8789,8 +9006,8 @@ binary_digits   = binary_digit, { [ "_" ], binary_digit } ;
 octal_digits    = octal_digit, { [ "_" ], octal_digit } ;
 hex_digits      = hex_digit, { [ "_" ], hex_digit } ;
 
-integer_suffix  = "i8" | "i16" | "i32" | "i64"
-                | "u8" | "u16" | "u32" | "u64" ;
+integer_suffix  = "i8" | "i16" | "i32" | "i64" | "i128"
+                | "u8" | "u16" | "u32" | "u64" | "u128" ;
 
 integer_literal = decimal_numeral, [ integer_suffix ]
                 | "0b", binary_digits, [ integer_suffix ]
@@ -9095,7 +9312,7 @@ formas alternativas de unit variant.
 
 ~~~ebnf
 trait_decl      = [ visibility ], "trait", identifier,
-                  [ generic_params ], "{",
+                  [ generic_params ], [ ":", generic_bound ], "{",
                   { NL | trait_method }, "}", declaration_end ;
 
 trait_method    = [ function_modifiers ], "fn", identifier,
@@ -10207,8 +10424,10 @@ Esto evita resolución dependiente de conversiones y tipos incompletos.
 ### 25.5 Sobrecarga de operadores
 
 Los operadores son cerrados. Las cuatro composiciones intrínsecas entre `Command`
-y `Pipeline` están enumeradas por el lenguaje. Un tipo de dominio utiliza métodos
-como `add`, `merge`, `compose` o `combine`.
+y `Pipeline` están enumeradas por el lenguaje. Un tipo de dominio toma `+` y `-`
+implementando `Additive`, y `*` y `/` implementando `Number`, con su sentido
+aritmético (18.10); para cualquier otra operación utiliza métodos como `merge`,
+`compose` o `combine`.
 
 ### 25.6 Conversiones implícitas
 
@@ -10467,9 +10686,9 @@ frontera no incorpora a STD-0.1 priority queues, `Decimal`, `BigInt`,
 El prelude mínimo, importado implícitamente, contiene solo nombres necesarios para escribir el lenguaje:
 
 ~~~text
-Bool Int Float Byte Char String Unit Never
-Int8 Int16 Int32 Int64
-UInt8 UInt16 UInt32 UInt64
+Bool Int UInt Float Byte Char String Unit Never
+Int8 Int16 Int32 Int64 Int128
+UInt8 UInt16 UInt32 UInt64 UInt128
 Float32 Float64
 Option Result
 Array Deque Map Set Range Iterator
@@ -10478,7 +10697,8 @@ Command Pipeline
 Copy Equatable Key Send Share
 Call CallMut CallOnce
 Display
-NumericConversionError
+Additive Number Integer
+ByteOrder NumericConversionError
 Panic
 ~~~
 

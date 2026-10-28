@@ -13,7 +13,7 @@ pub enum Tok {
     Ident(String),
     Kw(Kw),
     Int {
-        value: u64,
+        value: u128,
         suffix: Option<&'static str>,
     },
     Float {
@@ -245,7 +245,7 @@ fn suppresses_following_newline(tok: &Tok) -> bool {
         )
 }
 
-const INT_SUFFIXES: [&str; 8] = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"];
+const INT_SUFFIXES: [&str; 10] = ["i8", "i16", "i32", "i64", "i128", "u8", "u16", "u32", "u64", "u128"];
 const FLOAT_SUFFIXES: [&str; 2] = ["f32", "f64"];
 
 /// Lexes a whole file, or the source range of an interpolated expression.
@@ -621,10 +621,10 @@ impl Lexer<'_> {
             self.push(Tok::Float { text: cleaned, suffix }, start);
             return;
         }
-        match u64::from_str_radix(&cleaned, radix) {
+        match u128::from_str_radix(&cleaned, radix) {
             Ok(value) => self.push(Tok::Int { value, suffix }, start),
             Err(_) => {
-                let message = "integer literal is too large: an `Int` holds up to 9223372036854775807, and a `UInt64` (`u64` suffix) up to 18446744073709551615";
+                let message = "integer literal is too large: a `UInt128` (`u128` suffix), the widest integer, holds up to 340282366920938463463374607431768211455";
                 self.error("E0003", start, self.pos, message);
                 self.push(Tok::Int { value: 0, suffix }, start);
             }

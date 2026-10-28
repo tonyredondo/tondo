@@ -543,9 +543,29 @@ impl Reflect for UInt32 {
     }
 }
 
-impl Reflect for UInt64 {
+impl Reflect for UInt {
     fn reflectDescription(): TypeDescription {
-        primitive(PrimitiveKind.UInt64)
+        primitive(PrimitiveKind.UInt)
+    }
+
+    fn reflectShow(self, nested: Bool): String {
+        "{self}"
+    }
+}
+
+impl Reflect for Int128 {
+    fn reflectDescription(): TypeDescription {
+        primitive(PrimitiveKind.Int128)
+    }
+
+    fn reflectShow(self, nested: Bool): String {
+        "{self}"
+    }
+}
+
+impl Reflect for UInt128 {
+    fn reflectDescription(): TypeDescription {
+        primitive(PrimitiveKind.UInt128)
     }
 
     fn reflectShow(self, nested: Bool): String {
@@ -938,10 +958,12 @@ pub enum PrimitiveKind {
     Int8
     Int16
     Int32
+    Int128
+    UInt
     UInt8
     UInt16
     UInt32
-    UInt64
+    UInt128
     Float
     Float32
     Byte
@@ -1340,10 +1362,12 @@ impl Display for PrimitiveKind {
             PrimitiveKind.Int8 => "Int8"
             PrimitiveKind.Int16 => "Int16"
             PrimitiveKind.Int32 => "Int32"
+            PrimitiveKind.Int128 => "Int128"
+            PrimitiveKind.UInt => "UInt"
             PrimitiveKind.UInt8 => "UInt8"
             PrimitiveKind.UInt16 => "UInt16"
             PrimitiveKind.UInt32 => "UInt32"
-            PrimitiveKind.UInt64 => "UInt64"
+            PrimitiveKind.UInt128 => "UInt128"
             PrimitiveKind.Float => "Float"
             PrimitiveKind.Float32 => "Float32"
             PrimitiveKind.Byte => "Byte"

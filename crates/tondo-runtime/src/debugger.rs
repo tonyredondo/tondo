@@ -985,7 +985,7 @@ unsafe fn write(ty: &str, address: usize, text: &str) -> Result<(), String> {
     macro_rules! number {
         ($t:ty) => {{
             let value: $t = text.parse().map_err(|_| wrong())?;
-            unsafe { *(address as *mut $t) = value };
+            unsafe { (address as *mut $t).write_unaligned(value) };
         }};
     }
     match ty {
@@ -993,7 +993,9 @@ unsafe fn write(ty: &str, address: usize, text: &str) -> Result<(), String> {
         "Int32" => number!(i32),
         "Int16" => number!(i16),
         "Int8" => number!(i8),
-        "UInt64" => number!(u64),
+        "Int128" => number!(i128),
+        "UInt" => number!(u64),
+        "UInt128" => number!(u128),
         "UInt32" => number!(u32),
         "UInt16" => number!(u16),
         "UInt8" | "Byte" => number!(u8),

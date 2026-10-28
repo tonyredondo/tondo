@@ -1,0 +1,59 @@
+// The integers of 128 bits, and `UInt`, the unsigned `Int`: literals,
+// checked arithmetic, shifts, conversions, keys, sorting, reflection and
+// atomics, as complete as the narrower integers.
+
+import std.console
+import std.reflect
+import std.sync
+
+type Ids = { trace: UInt128, span: UInt, delta: Int128 }
+
+fn main(): Unit ! NumericConversionError {
+    let top: UInt128 = 340282366920938463463374607431768211455
+    let bottom = -170141183460469231731687303715884105728i128
+    let word: UInt = 18446744073709551615
+    console.println("{top} {bottom} {word} {0xffu128} {UInt.max == word}")
+    console.println("{Int128.min} {Int128.max} {UInt128.max == top}")
+
+    let a: Int128 = 10000000000000000000000
+    let b: Int128 = -3
+    console.println("{a + b} {a - b} {a * b} {a / b} {a % b} {-a}")
+    let c = UInt128(word) * 4
+    console.println("{c} {c / 3} {c % 7} {c >> 3} {c << 2} {c & 255} {c | 1} {c ^ c} {~0u128 == top}")
+    console.println("{a > b} {c < top} {a == a}")
+
+    console.println("{Float(a)} {Int128(1.0e22)?} {Int(b)?} {UInt8(c >> 62)?} {UInt128(Int128.max)?}")
+    console.println("{Int128(UInt128.max).ok()} {UInt128(-1).ok()} {Float32(top).ok()} {Float32(Int128.max)}")
+    console.println("{Int128(2.5).ok()} {UInt128(-1.0).ok()} {Int128(1.0e39).ok()}")
+    let small: Int32 = -7
+    let widened: Int128 = small
+    console.println("{widened * widened}")
+
+    let names: Map[UInt128, String] = [top: "top", 1: "one"]
+    console.println("{names[top]} {names[1]} {[c, 1, top].sorted()} {[a, b].max()}")
+    var total: UInt128 = 0
+    for i in 1u128..=4 {
+        total += i << 100
+    }
+    console.println("{total} {[a, b] * 2}")
+
+    let ids = Ids { trace: top, span: 7, delta: b }
+    console.println("{reflect.valueOf(ids).fields().map((f) { "{f.name}: {f.value.typeName()}" })}")
+    let counter = sync.Atomic(top - 5)
+    counter.add(2)
+    console.println("{counter.load()} {counter.swap(0)} {counter.load()}")
+}
+
+// expect-stdout: 340282366920938463463374607431768211455 -170141183460469231731687303715884105728 18446744073709551615 255 true
+// expect-stdout: -170141183460469231731687303715884105728 170141183460469231731687303715884105727 true
+// expect-stdout: 9999999999999999999997 10000000000000000000003 -30000000000000000000000 -3333333333333333333333 1 -10000000000000000000000
+// expect-stdout: 73786976294838206460 24595658764946068820 4 9223372036854775807 295147905179352825840 252 73786976294838206461 0 true
+// expect-stdout: true true true
+// expect-stdout: 1e22 10000000000000000000000 -3 15 170141183460469231731687303715884105727
+// expect-stdout: none none none 1.7014118e38
+// expect-stdout: none none none
+// expect-stdout: 49
+// expect-stdout: some(top) some(one) [1, 73786976294838206460, 340282366920938463463374607431768211455] some(10000000000000000000000)
+// expect-stdout: 12676506002282294014967032053760 [20000000000000000000000, -6]
+// expect-stdout: [trace: UInt128, span: UInt, delta: Int128]
+// expect-stdout: 340282366920938463463374607431768211452 340282366920938463463374607431768211452 0

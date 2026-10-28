@@ -1,0 +1,7 @@
+fn main() {
+    let big = UInt128.max / 2
+    _ = big * 3
+}
+
+// expect-panic: P0005
+// expect-stderr: panic[P0005]: checked-overflow: 170141183460469231731687303715884105727 * 3 does not fit in UInt128 (0 to 340282366920938463463374607431768211455)
