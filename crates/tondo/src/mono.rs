@@ -3,6 +3,7 @@
 //! Generic code is checked once (12.1); lowering and code generation only
 //! see concrete types.
 
+use crate::ast::BinOp;
 use crate::diag::Diagnostics;
 use crate::hir::{
     Block, Callee, Expr, ExprKind, FnId, Function, ImplInfo, PatKind, Pattern, Place, PlaceStep, Program, Segment,
@@ -103,6 +104,9 @@ enum Resolved {
     Display,
     /// `next` of an intrinsic cursor.
     Cursor(CursorKind),
+    /// A method of the arithmetic of a number or a duration, which the
+    /// compiler computes (18.10).
+    Arithmetic,
 }
 
 struct Mono<'a> {
@@ -381,6 +385,10 @@ impl Mono<'_> {
                             };
                             e.kind = ExprKind::CursorNext(place, kind);
                         }
+                        Resolved::Arithmetic => {
+                            let name = self.traits[trait_id.0 as usize].methods[method as usize].clone();
+                            e.kind = self.arithmetic(&name, std::mem::take(args), e.ty);
+                        }
                     },
                     Callee::Std(_) | Callee::Extern(_) => {}
                 }
@@ -465,6 +473,11 @@ impl Mono<'_> {
         if trait_id == DISPLAY && !matches!(self.types.kind(self_ty), TyKind::Adt(_)) {
             return Resolved::Display;
         }
+        let intrinsic = matches!(self.types.kind(self_ty), TyKind::Int(_) | TyKind::Float(_))
+            || self.types.shown.get(&self_ty) == Some(&crate::types::Shown::Duration);
+        if self.traits[trait_id.0 as usize].arithmetic && intrinsic {
+            return Resolved::Arithmetic;
+        }
         for implementation in self.impls.iter().filter(|i| i.trait_id == trait_id) {
             let mut map = HashMap::new();
             let matched = self.types.matches(implementation.target, self_ty, &implementation.generics, &mut map)
@@ -495,6 +508,42 @@ impl Mono<'_> {
             return Resolved::Display;
         }
         panic!("no implementation of trait {} for {}", trait_id.0, self.types.display(self_ty));
+    }
+
+    /// A method of `Additive` or `Number` of a number or a duration, as the
+    /// expression the compiler computes it with (18.10).
+    fn arithmetic(&mut self, name: &str, mut args: Vec<Expr>, ty: Ty) -> ExprKind {
+        let float = matches!(self.types.kind(ty), TyKind::Float(_));
+        let mut operator = |op: BinOp| {
+            let right = args.pop().expect("two operands");
+            let left = args.pop().expect("two operands");
+            ExprKind::Binary(op, Box::new(left), Box::new(right))
+        };
+        match name {
+            "zero" | "one" if float => ExprKind::Float(if name == "zero" { 0.0 } else { 1.0 }),
+            "zero" => ExprKind::Int(0),
+            "one" => ExprKind::Int(1),
+            "plus" => operator(BinOp::Add),
+            "minus" => operator(BinOp::Sub),
+            "times" => operator(BinOp::Mul),
+            "dividedBy" => operator(BinOp::Div),
+            "fromInt" => {
+                let value = args.pop().expect("a value");
+                match (float, &value.kind) {
+                    (true, _) => ExprKind::Convert(Box::new(value)),
+                    // A literal that fits is the number itself.
+                    (false, ExprKind::Int(n)) if self.types.as_int(ty).is_some_and(|int| int.holds(*n)) => {
+                        ExprKind::Int(*n)
+                    }
+                    (false, _) => ExprKind::Call(
+                        Callee::Std(crate::hir::StdFn::Number(crate::numbers::NumOp::FromInt)),
+                        Vec::new(),
+                        vec![value],
+                    ),
+                }
+            }
+            _ => unreachable!("`{name}` is not of the arithmetic"),
+        }
     }
 
     /// Records the user `Display` of the types a displayed collection holds,

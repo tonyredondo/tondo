@@ -905,10 +905,20 @@ impl Parser<'_> {
         self.bump();
         let name = self.ident()?;
         let generics = self.generic_params()?;
+        let mut requires = Vec::new();
+        if self.eat(&Tok::Colon) {
+            let no_brace = std::mem::replace(&mut self.no_brace, true);
+            requires.push(self.type_expr());
+            while self.eat(&Tok::Plus) {
+                requires.push(self.type_expr());
+            }
+            self.no_brace = no_brace;
+        }
+        let requires = requires.into_iter().collect::<PResult<Vec<_>>>()?;
         let methods = self.method_block()?;
         let span = start.to(self.prev_span());
         self.end_of_statement()?;
-        Ok(TraitDecl { public, name, generics, methods, span, module: 0 })
+        Ok(TraitDecl { public, name, generics, requires, methods, span, module: 0 })
     }
 
     fn impl_declaration(&mut self, start: Span) -> PResult<ImplDecl> {

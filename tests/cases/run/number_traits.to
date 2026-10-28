@@ -1,0 +1,108 @@
+// The traits of the arithmetic (18.10): a program's types take `+` and `-`
+// with `Additive`, and `*`, `/` and literals with `Number`, which requires
+// it; generic code computes with `T: Number`, and with everything an
+// integer has on `T: Integer`; durations add with operators.
+
+import std.console
+import std.time
+
+type Money = { cents: Int }
+
+impl Additive for Money {
+    fn zero(): Money {
+        Money { cents: 0 }
+    }
+
+    fn plus(self, other: Money): Money {
+        Money { cents: self.cents + other.cents }
+    }
+
+    fn minus(self, other: Money): Money {
+        Money { cents: self.cents - other.cents }
+    }
+}
+
+type Fraction = { top: Int, bottom: Int }
+
+impl Additive for Fraction {
+    fn zero(): Fraction {
+        Fraction { top: 0, bottom: 1 }
+    }
+
+    fn plus(self, other: Fraction): Fraction {
+        Fraction { top: self.top * other.bottom + other.top * self.bottom, bottom: self.bottom * other.bottom }
+    }
+
+    fn minus(self, other: Fraction): Fraction {
+        Fraction { top: self.top * other.bottom - other.top * self.bottom, bottom: self.bottom * other.bottom }
+    }
+}
+
+impl Number for Fraction {
+    fn one(): Fraction {
+        Fraction { top: 1, bottom: 1 }
+    }
+
+    fn fromInt(value: Int): Fraction {
+        Fraction { top: value, bottom: 1 }
+    }
+
+    fn times(self, other: Fraction): Fraction {
+        Fraction { top: self.top * other.top, bottom: self.bottom * other.bottom }
+    }
+
+    fn dividedBy(self, other: Fraction): Fraction {
+        Fraction { top: self.top * other.bottom, bottom: self.bottom * other.top }
+    }
+}
+
+impl Display for Fraction {
+    fn display(self): String {
+        "{self.top}/{self.bottom}"
+    }
+}
+
+/// A trait that requires another: its default uses what `Display` gives.
+trait Labeled: Display {
+    fn label(self): String {
+        "<{self}>"
+    }
+}
+
+impl Labeled for Fraction {}
+
+fn mean[T: Number](values: Array[T]): T {
+    values.sum() / Number.fromInt[T](values.length())
+}
+
+fn twice[T: Number](value: T): T {
+    value * 2 - Number.one[T]() + 1
+}
+
+fn hex[T: Integer](value: T): String {
+    value.toString(radix: 16).padStart(T.bits / 4, fill: "0")
+}
+
+fn mix[T: Integer](a: T, b: T): T {
+    var hash = (a ^ b).rotateLeft(3) % T.max
+    hash += a & b
+    if hash > T.min { hash.wrappingMul(3) } else { hash }
+}
+
+fn main() {
+    var total = Money { cents: 150 } + Money { cents: 250 }
+    total -= Money { cents: 100 }
+    console.println("{total.cents} {[Money { cents: 1 }, Money { cents: 2 }].sum().cents}")
+    let half = Fraction { top: 1, bottom: 2 }
+    console.println("{half * 3 + half} {twice(half)} {mean([half, half])} {Labeled.label(half)}")
+    console.println("{mean([1.0, 2.0, 4.0])} {mean([2, 4, 9])} {twice(21u8)} {mean([1i128, 2i128])}")
+    console.println("{hex(255u16)} {hex(UInt128.max)} {mix(7u8, 12u8)} {mix(1000, 3)}")
+    let d = time.seconds(2) + time.milliseconds(500) - time.seconds(1)
+    console.println("{d} {[time.seconds(1), time.seconds(2)].sum()}")
+}
+
+// expect-stdout: 300 3
+// expect-stdout: 8/4 2/2 4/8 <1/2>
+// expect-stdout: 2.3333333333333335 5 42 1
+// expect-stdout: 00ff ffffffffffffffffffffffffffffffff 20 24072
+// expect-stdout: 1.5s 3s

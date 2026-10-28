@@ -4151,7 +4151,7 @@ fn decodeUser(bytes: Array[Byte]): User ! DecodeError {
 Un trait puede exigir otros, escritos como los bounds de un parámetro
 genérico:
 
-~~~tondo pseudocode
+~~~tondo
 trait Shape: Display {
     fn area(self): Float
 
@@ -7238,7 +7238,7 @@ pub trait Integer: Number
   cada operación, como las de los números, haga un pánico en vez de dar un
   valor sin sentido.
 
-~~~tondo pseudocode
+~~~tondo
 type Money = { cents: Int }
 
 impl Additive for Money {

@@ -637,6 +637,7 @@ impl Linker<'_> {
                 self.convention(&t.name, Case::Pascal);
                 self.declared(&mut t.name);
                 self.generics(&mut t.generics);
+                t.requires.iter_mut().for_each(|r| self.ty(r));
                 t.methods.iter_mut().for_each(|m| self.function(m, false));
             }
             Item::Impl(i) => {

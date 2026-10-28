@@ -59,11 +59,9 @@ pub fn Duration.minutes(self): Int
 /// The whole hours, truncated toward zero.
 pub fn Duration.hours(self): Int
 
-/// The sum of the two durations; one that does not fit panics.
-pub fn Duration.add(self, other: Duration): Duration
-
-/// This duration less `other`; one that does not fit panics.
-pub fn Duration.subtract(self, other: Duration): Duration
+/// Durations add and subtract with `+` and `-`, and `durations.sum()`
+/// totals them; a result that does not fit panics.
+impl Additive for Duration
 
 /// The duration `factor` times; one that does not fit panics.
 pub fn Duration.multiply(self, factor: Int): Duration

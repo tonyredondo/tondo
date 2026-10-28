@@ -2625,6 +2625,7 @@ unsafe fn values_message(code: u32, detail: u32, values: *const [u64; 4], ty: *c
         5 if op == 5 => format!("-({left}) does not fit in {ty} ({})", range()),
         5 if op == 8 => format!("{left}.pow({right}) does not fit in {ty} ({})", range()),
         5 if op == 9 => format!("{left}.nextPowerOfTwo() does not fit in {ty} ({})", range()),
+        5 if op == 10 => format!("{left} does not fit in {ty}"),
         18 => format!("{left}.pow({right}): the exponent must be 0 or more"),
         5 => format!("{left} {operator} {right} does not fit in {ty} ({})", range()),
         6 => format!("an array of length {a} cannot become the C array {ty}: it needs exactly {b} elements"),

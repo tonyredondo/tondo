@@ -72,6 +72,9 @@ fn check_with<'a>(
         test_nodes: Vec::new(),
         fn_scopes: Vec::new(),
         duration: None,
+        additive: None,
+        number: None,
+        integer: None,
         instant: None,
         datetime: None,
         time_error: None,
@@ -390,6 +393,8 @@ struct TraitDef {
     self_param: Ty,
     params: Vec<Ty>,
     methods: Vec<TraitMethod>,
+    /// The traits it requires (12.3), with their arguments.
+    requires: Vec<(TraitId, Vec<Ty>)>,
 }
 
 struct TraitMethod {
@@ -719,6 +724,10 @@ struct Checker<'a> {
     fn_scopes: Vec<FnScope>,
     /// `time.Duration`, once `std.time` is imported: nanoseconds.
     duration: Option<Ty>,
+    /// The prelude's `Additive`, `Number` and `Integer` (18.10).
+    additive: Option<TraitId>,
+    number: Option<TraitId>,
+    integer: Option<TraitId>,
     /// `time.Instant`: nanoseconds of the monotonic clock.
     instant: Option<Ty>,
     /// `time.DateTime`: seven `Int` fields, from the year down.
@@ -1059,6 +1068,7 @@ impl<'a> Checker<'a> {
         for (index, f) in fns.iter().enumerate() {
             self.defaults(f, FnId(index as u32));
         }
+        self.check_required();
         self.check_termination();
         // Every constant is checked, used or not.
         for id in 0..self.consts.len() {
@@ -1146,10 +1156,13 @@ impl<'a> Checker<'a> {
         let traits = self
             .traits
             .iter()
-            .map(|t| hir::TraitInfo {
+            .enumerate()
+            .map(|(id, t)| hir::TraitInfo {
                 name: t.name.clone(),
                 defaults: t.methods.iter().map(|m| m.default).collect(),
                 param_count: t.params.len(),
+                methods: t.methods.iter().map(|m| m.name.clone()).collect(),
+                arithmetic: [self.additive, self.number, self.integer].contains(&Some(TraitId(id as u32))),
             })
             .collect();
         let impls = self
@@ -2483,7 +2496,13 @@ impl<'a> Checker<'a> {
             foreign: false,
         };
         let display = TraitMethod { name: "display".into(), signature, default: None };
-        self.traits.push(TraitDef { name: "Display".into(), self_param, params: Vec::new(), methods: vec![display] });
+        self.traits.push(TraitDef {
+            name: "Display".into(),
+            self_param,
+            params: Vec::new(),
+            methods: vec![display],
+            requires: Vec::new(),
+        });
         self.trait_names.insert("Display".into(), DISPLAY);
         self.bounds.insert(self_param, vec![(DISPLAY, Vec::new())]);
         // `trait Iterator[T] { fn next(mut self): T? }` (10.17).
@@ -2503,7 +2522,13 @@ impl<'a> Checker<'a> {
             foreign: false,
         };
         let next = TraitMethod { name: "next".into(), signature, default: None };
-        self.traits.push(TraitDef { name: "Iterator".into(), self_param, params: vec![element], methods: vec![next] });
+        self.traits.push(TraitDef {
+            name: "Iterator".into(),
+            self_param,
+            params: vec![element],
+            methods: vec![next],
+            requires: Vec::new(),
+        });
         self.trait_names.insert("Iterator".into(), ITERATOR);
         self.bounds.insert(self_param, vec![(ITERATOR, vec![element])]);
         // The cursors of maps and sets: a collection and a position.
@@ -3203,6 +3228,11 @@ impl<'a> Checker<'a> {
             }
             _ => {
                 if let Some((trait_id, args)) = self.trait_ref(bound) {
+                    // An integer compares, keys a map and goes between tasks.
+                    if Some(trait_id) == self.integer {
+                        let def = self.types.param_mut(param);
+                        (def.equatable, def.key, def.send, def.share) = (true, true, true, true);
+                    }
                     let bounds = self.bounds.entry(param).or_default();
                     if bounds.contains(&(trait_id, args.clone())) {
                         self.diags.error("E1115", bound.span, "this bound is repeated");
@@ -3633,9 +3663,13 @@ impl<'a> Checker<'a> {
                 }
                 _ => name.name.clone(),
             };
-            self.traits.push(TraitDef { name: shown, self_param, params, methods: Vec::new() });
+            self.traits.push(TraitDef { name: shown, self_param, params, methods: Vec::new(), requires: Vec::new() });
             self.trait_names.insert(name.name.clone(), id);
         }
+        // The prelude's arithmetic (18.10).
+        self.additive = self.trait_names.get("Additive").copied();
+        self.number = self.trait_names.get("Number").copied();
+        self.integer = self.trait_names.get("Integer").copied();
         for (index, decl) in traits.iter().enumerate() {
             let id = TraitId(index as u32 + PRELUDE_TRAITS);
             self.index_trait(id.0, decl);
@@ -3647,10 +3681,91 @@ impl<'a> Checker<'a> {
                     self.apply_bound(param, bound);
                 }
             }
+            let requires: Vec<(TraitId, Vec<Ty>)> = decl.requires.iter().filter_map(|r| self.trait_ref(r)).collect();
+            self.traits[id.0 as usize].requires = requires;
             self.leave_generics(&decl.generics);
             // Inside the trait, `Self` implements it.
             self.bounds.entry(self_param).or_default().push((id, params));
         }
+        // A trait cannot require itself, even through others (12.3).
+        for (index, decl) in traits.iter().enumerate() {
+            let id = TraitId(index as u32 + PRELUDE_TRAITS);
+            let required = self.with_required(self.traits[id.0 as usize].requires.clone());
+            if required.iter().any(|(t, _)| *t == id) {
+                let message = format!("`{}` requires itself, through the traits it requires", decl.name.name);
+                self.diags.error("E1112", decl.name.span, message);
+                self.traits[id.0 as usize].requires.clear();
+            }
+        }
+    }
+
+    /// Bounds with the traits they require, and those they require (12.3).
+    fn with_required(&mut self, mut bounds: Vec<(TraitId, Vec<Ty>)>) -> Vec<(TraitId, Vec<Ty>)> {
+        let mut at = 0;
+        while at < bounds.len() && bounds.len() < 64 {
+            let (trait_id, args) = bounds[at].clone();
+            let def = &self.traits[trait_id.0 as usize];
+            let map: HashMap<Ty, Ty> = def.params.iter().copied().zip(args).collect();
+            for (required, required_args) in def.requires.clone() {
+                let required_args: Vec<Ty> = required_args.iter().map(|&a| self.types.subst(a, &map)).collect();
+                if !bounds.contains(&(required, required_args.clone())) {
+                    bounds.push((required, required_args));
+                }
+            }
+            at += 1;
+        }
+        bounds
+    }
+
+    /// Whether a language type implements a trait of the prelude's
+    /// arithmetic, which the compiler gives it (18.10): every number is
+    /// `Additive` and `Number`, every integer `Integer`, and a duration
+    /// `Additive`. `None` for other traits and types.
+    fn arithmetic_impl(&self, ty: Ty, trait_id: TraitId) -> Option<bool> {
+        let number = matches!(self.types.kind(ty), TyKind::Int(_) | TyKind::Float(_));
+        if Some(trait_id) == self.integer {
+            return Some(matches!(self.types.kind(ty), TyKind::Int(_)));
+        }
+        if Some(trait_id) == self.number && number {
+            return Some(true);
+        }
+        if Some(trait_id) == self.additive && (number || Some(ty) == self.duration) {
+            return Some(true);
+        }
+        None
+    }
+
+    /// The trait method by which a type takes an arithmetic operator
+    /// (18.10): `plus` of `Additive` for `+` on an amount or a `T: Number`.
+    /// `None` for the language's numbers, a duration and a `T: Integer`,
+    /// which compute in place.
+    fn operator_trait(&mut self, op: BinOp, ty: Ty) -> Option<(TraitId, u32)> {
+        let (trait_id, name) = match op {
+            BinOp::Add => (self.additive?, "plus"),
+            BinOp::Sub => (self.additive?, "minus"),
+            BinOp::Mul => (self.number?, "times"),
+            BinOp::Div => (self.number?, "dividedBy"),
+            _ => return None,
+        };
+        let intrinsic = matches!(
+            self.types.kind(ty),
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Error | TyKind::Never | TyKind::Array(_)
+        );
+        if intrinsic || Some(ty) == self.duration || self.bound_by(ty, self.integer) {
+            return None;
+        }
+        if !self.satisfies(ty, trait_id, &[]) {
+            return None;
+        }
+        let index = self.traits[trait_id.0 as usize].methods.iter().position(|m| m.name == name)?;
+        Some((trait_id, index as u32))
+    }
+
+    /// Whether a type parameter or opaque result is bound by `trait_id`,
+    /// itself or through what its bounds require.
+    fn bound_by(&mut self, ty: Ty, trait_id: Option<TraitId>) -> bool {
+        let Some(trait_id) = trait_id else { return false };
+        self.is_abstract(ty) && self.bounds_of(ty).iter().any(|(t, _)| *t == trait_id)
     }
 
     /// The signatures of each trait's methods, and the bodies of defaults.
@@ -3752,6 +3867,14 @@ impl<'a> Checker<'a> {
         }
         let trait_name = self.traits[trait_id.0 as usize].name.clone();
         let target_name = self.types.display(target);
+        // `Integer` is the language's own integers (18.10).
+        if Some(trait_id) == self.integer && Some(decl.module) != self.prelude {
+            let message = format!(
+                "`Integer` is the language's own integers, and a program does not implement it: implement `Number` for `{target_name}`, which gives it `+`, `-`, `*`, `/` and literals"
+            );
+            self.diags.error("E1114", decl.trait_ref.span, message);
+            return;
+        }
         // Coherence (12.6): the module owns the trait or the target's nominal type.
         let local_trait = self.trait_modules.get(&trait_id) == Some(&decl.module);
         let local_target = self.owner(target).is_some_and(|o| o.module == decl.module)
@@ -3872,6 +3995,35 @@ impl<'a> Checker<'a> {
             generics: binders,
             methods,
         });
+    }
+
+    /// Each implementation's target implements the traits its trait
+    /// requires (12.3).
+    fn check_required(&mut self) {
+        for index in 0..self.impls.len() {
+            let (trait_id, trait_args, target, span) = {
+                let i = &self.impls[index];
+                (i.trait_id, i.trait_args.clone(), i.target, i.span)
+            };
+            if self.impls[index].intrinsic {
+                continue;
+            }
+            let def = &self.traits[trait_id.0 as usize];
+            let map: HashMap<Ty, Ty> = def.params.iter().copied().zip(trait_args).collect();
+            for (required, args) in def.requires.clone() {
+                let args: Vec<Ty> = args.iter().map(|&a| self.types.subst(a, &map)).collect();
+                if self.satisfies(target, required, &args) {
+                    continue;
+                }
+                let (name, required_name) =
+                    (self.traits[trait_id.0 as usize].name.clone(), self.traits[required.0 as usize].name.clone());
+                let target = self.types.display(target);
+                let message = format!(
+                    "`impl {name} for {target}` needs `impl {required_name} for {target}` too: `{name}` requires `{required_name}`"
+                );
+                self.diags.error("E1105", span, message);
+            }
+        }
     }
 
     /// The size-change termination check of trait resolution (12.6). Each
@@ -4051,6 +4203,9 @@ impl<'a> Checker<'a> {
         }
         if self.is_abstract(ty) {
             return self.bounds_of(ty).iter().any(|(t, a)| *t == trait_id && a == args);
+        }
+        if let Some(holds) = self.arithmetic_impl(ty, trait_id) {
+            return holds;
         }
         if trait_id == DISPLAY {
             let parts: Option<Vec<Ty>> = match self.types.kind(ty) {
@@ -4345,7 +4500,8 @@ impl<'a> Checker<'a> {
                 .map(|(t, a)| (t, a.into_iter().map(|x| self.types.subst(x, &map)).collect()))
                 .collect();
         }
-        self.bounds.get(&ty).cloned().unwrap_or_default()
+        let direct = self.bounds.get(&ty).cloned().unwrap_or_default();
+        self.with_required(direct)
     }
 
     /// The call bound of a type parameter or an opaque result.
@@ -4693,8 +4849,11 @@ impl<'a> Checker<'a> {
                         Ty::ERROR
                     });
                 }
+                // A type of the module goes before a trait of the prelude, as
+                // a C union named `Number`.
                 if let [name] = names.as_slice()
                     && self.trait_names.contains_key(*name)
+                    && !self.type_names.contains_key(*name)
                 {
                     let message = format!(
                         "a trait is not a type; take a type parameter bound by it: `fn name[T: {name}](value: T)`"
@@ -5929,7 +6088,7 @@ impl<'a> Checker<'a> {
         let retype = |value: hir::Expr, ty: Ty| Self::mk(hir::ExprKind::Retype(Box::new(value)), ty, span);
         let name = method.name.as_str();
         let param = match (ty == duration, name) {
-            (true, "add" | "subtract" | "isLessThan") | (false, "add") => Some(duration),
+            (true, "isLessThan") | (false, "add") => Some(duration),
             (true, "multiply") => Some(Ty::INT),
             (false, "since") => Some(instant),
             _ => None,
@@ -5937,6 +6096,12 @@ impl<'a> Checker<'a> {
         let known = param.is_some()
             || (ty == duration && (Self::time_unit(name).is_some() || matches!(name, "isZero" | "isNegative")))
             || (ty == instant && name == "elapsed");
+        if !known && ty == duration && matches!(name, "add" | "subtract") {
+            let operator = if name == "add" { "+" } else { "-" };
+            let message = format!("durations add and subtract with operators: write `a {operator} b`");
+            self.diags.error("E1001", method.span, message);
+            return Self::error_expr(span);
+        }
         if !known {
             return self.no_method(ty, method, span);
         }
@@ -5950,8 +6115,6 @@ impl<'a> Checker<'a> {
         });
         let own = nanos(receiver);
         match (ty == duration, name, argument) {
-            (true, "add", Some(other)) => retype(binary(BinOp::Add, own, nanos(other), Ty::INT), duration),
-            (true, "subtract", Some(other)) => retype(binary(BinOp::Sub, own, nanos(other), Ty::INT), duration),
             (true, "multiply", Some(factor)) => retype(binary(BinOp::Mul, own, factor, Ty::INT), duration),
             (true, "isLessThan", Some(other)) => binary(BinOp::Lt, own, nanos(other), Ty::BOOL),
             (true, "isZero", None) => binary(BinOp::Eq, own, int(0), Ty::BOOL),
@@ -7588,7 +7751,7 @@ impl<'a> Checker<'a> {
         }
         let value = match op {
             Some(BinOp::Shl | BinOp::Shr) => {
-                if self.types.as_int(ty).is_none() && ty != Ty::ERROR {
+                if self.types.as_int(ty).is_none() && ty != Ty::ERROR && !self.bound_by(ty, self.integer) {
                     let message =
                         format!("`{}=` requires an integer target, found {}", op.unwrap().as_str(), self.display(ty));
                     self.diags.error("E1102", span, message);
@@ -7597,11 +7760,25 @@ impl<'a> Checker<'a> {
                 self.require_int(&value);
                 value
             }
+            // `place = Trait.method(place, value)` on a type that takes the
+            // operator by a trait (18.10).
+            Some(op @ (BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div))
+                if let Some((trait_id, index)) = self.operator_trait(op, ty) =>
+            {
+                let value = self.expr(cx, value, Some(ty));
+                let value = self.coerce(value, ty);
+                let read = self.place_read(cx, &hir::Place { local, path: path.clone() }, span);
+                let call = hir::ExprKind::Call(Callee::Trait(trait_id, index), vec![ty], vec![read, value]);
+                let value = Self::mk(call, ty, span);
+                cx.diverged |= value.ty == Ty::NEVER;
+                return Some(hir::Stmt::Assign { local, path, op: None, value, span });
+            }
             Some(op @ (BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem)) => {
                 self.compound_value(cx, op, ty, value, span)
             }
             Some(op) => {
-                let bitwise = matches!(self.types.kind(ty), TyKind::Int(_) | TyKind::Byte | TyKind::Error);
+                let bitwise = matches!(self.types.kind(ty), TyKind::Int(_) | TyKind::Byte | TyKind::Error)
+                    || self.bound_by(ty, self.integer);
                 if !bitwise {
                     let message = format!("`{}=` cannot be applied to {}", op.as_str(), self.display(ty));
                     self.diags.error("E1102", span, message);
@@ -8755,7 +8932,10 @@ impl<'a> Checker<'a> {
     }
 
     fn require_int(&mut self, value: &hir::Expr) {
-        if self.types.as_int(value.ty).is_none() && ![Ty::NEVER, Ty::ERROR].contains(&value.ty) {
+        if self.types.as_int(value.ty).is_none()
+            && ![Ty::NEVER, Ty::ERROR].contains(&value.ty)
+            && !self.bound_by(value.ty, self.integer)
+        {
             let message = format!("expected an integer, found {}", self.display(value.ty));
             self.diags.error("E1102", value.span, message);
         }
@@ -10084,6 +10264,10 @@ impl<'a> Checker<'a> {
 
     /// The type a single name denotes, without reporting unknown names.
     fn type_named(&mut self, name: &str) -> Option<Ty> {
+        // A type parameter in scope, as `T` in `T.max`.
+        if let Some(&(_, param)) = self.type_params.iter().rev().find(|(n, _)| n == name) {
+            return Some(param);
+        }
         // A generic type stands for its instance with its own parameters.
         if let Some(&TypeName::Template(template)) = self.type_names.get(name) {
             let params = self.types.template(template).params.clone();
@@ -10766,10 +10950,14 @@ impl<'a> Checker<'a> {
         if self.is_http_route(ty, method, args) {
             return self.http_route(cx, value, method, args, expected, span);
         }
-        // The named operations of a number (18.9).
-        if let Some(kind) = self.number_kind(ty)
-            && let Some(entry) = crate::numbers::find(kind, &method.name, true)
-        {
+        // The named operations of a number (18.9), and of any integer on a
+        // `T: Integer` (18.10).
+        let entry = match self.number_kind(ty) {
+            Some(kind) => crate::numbers::find(kind, &method.name, true),
+            None if self.bound_by(ty, self.integer) => crate::numbers::find_integer(&method.name, true),
+            None => None,
+        };
+        if let Some(entry) = entry {
             let signature = self.number_signature(ty, entry);
             let callee = Callee::Std(StdFn::Number(entry.op));
             return self.dot_call(cx, callee, signature, HashMap::new(), value, method, args, expected, span);
@@ -11678,6 +11866,20 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> hir::Expr {
+        // A literal where a program's `Number` or a `T: Number` is expected is
+        // `Number.fromInt[T](literal)` (18.10).
+        if suffix.is_none()
+            && let Some(target) = expected
+            && let Some(number) = self.number
+            && self.number_kind(target).is_none()
+            && !matches!(self.types.kind(target), TyKind::Error | TyKind::Never)
+            && self.satisfies(target, number, &[])
+            && let Some(index) = self.traits[number.0 as usize].methods.iter().position(|m| m.name == "fromInt")
+        {
+            let literal = self.int_literal(negative, magnitude, None, Some(Ty::INT), span);
+            let call = hir::ExprKind::Call(Callee::Trait(number, index as u32), vec![target], vec![literal]);
+            return Self::mk(call, target, span);
+        }
         let int = match suffix {
             Some(suffix) => IntTy::from_suffix(suffix),
             None => self.expected_number(expected, false).and_then(|t| self.types.as_int(t)).unwrap_or(IntTy::I64),
@@ -11878,6 +12080,22 @@ impl<'a> Checker<'a> {
         {
             let ty = if matches!(kind, hir::ExprKind::Int(_)) && constant.name == "bits" { Ty::INT } else { ty };
             return Self::mk(kind, ty, span);
+        }
+        // `T.min`, `T.max` and `T.bits` of a `T: Integer` (18.10).
+        if let [type_name, constant] = segments
+            && matches!(constant.name.as_str(), "min" | "max" | "bits")
+            && self.lookup(cx, &type_name.name).is_none()
+            && let Some(ty) = self.type_named(&type_name.name)
+            && self.bound_by(ty, self.integer)
+        {
+            use crate::numbers::NumOp;
+            let constant_of = |op: NumOp| Callee::Std(StdFn::Number(op));
+            let least = Self::mk(hir::ExprKind::Call(constant_of(NumOp::Least), Vec::new(), Vec::new()), ty, span);
+            return match constant.name.as_str() {
+                "min" => least,
+                "max" => Self::mk(hir::ExprKind::Call(constant_of(NumOp::Greatest), Vec::new(), Vec::new()), ty, span),
+                _ => Self::mk(hir::ExprKind::Call(constant_of(NumOp::Width), Vec::new(), vec![least]), Ty::INT, span),
+            };
         }
         // `Context.field`: its value where the code runs (11.16).
         if let [name, field, rest @ ..] = segments
@@ -12278,12 +12496,17 @@ impl<'a> Checker<'a> {
             && !self.names.contains_key(*type_name)
             && let Some(owner) = self.type_named(type_name)
         {
-            if let Some(kind) = self.number_kind(owner) {
-                if let Some(entry) = crate::numbers::find(kind, operation, false) {
+            let integer = self.bound_by(owner, self.integer);
+            if let Some(kind) = self.number_kind(owner).or(integer.then_some(crate::numbers::Kind::Int(IntTy::I64))) {
+                let find = |receiver: bool| match integer {
+                    true => crate::numbers::find_integer(operation, receiver),
+                    false => crate::numbers::find(kind, operation, receiver),
+                };
+                if let Some(entry) = find(false) {
                     return self.number_function(cx, owner, entry, args, expected, span);
                 }
                 // A method with its receiver written first: `Int.abs(x)` (11.5).
-                if let Some(entry) = crate::numbers::find(kind, operation, true)
+                if let Some(entry) = find(true)
                     && let Some((first, rest)) = args.split_first()
                 {
                     let receiver = self.expr(cx, &first.value, Some(owner));
@@ -13400,7 +13623,13 @@ impl<'a> Checker<'a> {
                     _ => false,
                 };
                 if !negatable {
-                    let message = format!("negation is not defined for {}", self.display(value.ty));
+                    let shown = self.types.display(value.ty);
+                    let mut message = format!("negation is not defined for {}", self.display(value.ty));
+                    if self.number.is_some_and(|n| self.satisfies(value.ty, n, &[])) {
+                        message.push_str(": write `0 - value`");
+                    } else if self.additive.is_some_and(|a| self.satisfies(value.ty, a, &[])) {
+                        message.push_str(&format!(": write `Additive.zero[{shown}]() - value`"));
+                    }
                     self.diags.error("E1102", span, message);
                 }
                 let ty = value.ty;
@@ -13413,7 +13642,7 @@ impl<'a> Checker<'a> {
             }
             UnaryOp::BitNot => {
                 let value = self.expr(cx, operand, expected);
-                if value.ty != Ty::BYTE {
+                if value.ty != Ty::BYTE && !self.bound_by(value.ty, self.integer) {
                     self.require_int(&value);
                 }
                 let ty = value.ty;
@@ -13498,8 +13727,12 @@ impl<'a> Checker<'a> {
             return (left, right);
         }
         // A left operand that is not a number: the operator's error says
-        // so, without another for the right operand.
-        if !matches!(self.types.kind(left.ty), TyKind::Int(_) | TyKind::Float(_) | TyKind::Error) {
+        // so, without another for the right operand. A duration and a
+        // `T: Integer` compute as numbers do (18.10).
+        let computes = matches!(self.types.kind(left.ty), TyKind::Int(_) | TyKind::Float(_) | TyKind::Error)
+            || Some(left.ty) == self.duration
+            || self.bound_by(left.ty, self.integer);
+        if !computes {
             return (left, right);
         }
         self.common(left, right)
@@ -13525,13 +13758,34 @@ impl<'a> Checker<'a> {
             return if left_depth >= right_depth { left } else { right };
         }
         // Floats have no `%` operator; their remainder is a named operation (17.4).
+        // A duration adds and subtracts, and a `T: Integer` computes as an
+        // integer does (18.10).
         let numeric = match self.types.kind(number) {
             TyKind::Int(_) => true,
             TyKind::Float(_) => op != BinOp::Rem,
-            _ => false,
+            _ if Some(number) == self.duration => {
+                matches!(op, BinOp::Add | BinOp::Sub) && left_depth + right_depth == 0
+            }
+            _ => self.bound_by(number, self.integer),
         };
         if !numeric {
             let mut message = format!("operator `{}` cannot be applied to {}", op.as_str(), self.display(left));
+            let takes = match op {
+                BinOp::Add | BinOp::Sub => Some("Additive"),
+                BinOp::Mul | BinOp::Div => Some("Number"),
+                _ => None,
+            };
+            if let Some(takes) = takes
+                && left_depth == 0
+            {
+                if self.is_abstract(left) {
+                    let shown = self.types.display(left);
+                    message.push_str(&format!(": add the bound `{shown}: {takes}`, which gives it `{}`", op.as_str()));
+                } else if matches!(self.types.kind(left), TyKind::Adt(_)) {
+                    message
+                        .push_str(&format!(": implement `{takes}` for it, which gives it `{}` (18.10)", op.as_str()));
+                }
+            }
             match (op, left_depth, right_depth) {
                 (BinOp::Add, _, _) if left == Ty::STRING => {
                     message.push_str(": use interpolation, `\"{a}{b}\"`, or `a.concat(b)`")
@@ -13645,7 +13899,7 @@ impl<'a> Checker<'a> {
             }
             BinOp::Shl | BinOp::Shr => {
                 let left = self.expr(cx, left, expected);
-                if left.ty != Ty::BYTE {
+                if left.ty != Ty::BYTE && !self.bound_by(left.ty, self.integer) {
                     self.require_int(&left);
                 }
                 let right = self.expr(cx, right, None);
@@ -13655,6 +13909,13 @@ impl<'a> Checker<'a> {
             }
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
                 let (left, right) = self.arithmetic_operands(cx, left, right, expected);
+                // The trait's method, on a type that takes the operator by one (18.10).
+                if let Some((trait_id, index)) = self.operator_trait(op, left.ty) {
+                    let ty = left.ty;
+                    let right = self.coerce(right, ty);
+                    let call = hir::ExprKind::Call(Callee::Trait(trait_id, index), vec![ty], vec![left, right]);
+                    return Self::mk(call, ty, span);
+                }
                 let ty = self.arithmetic(op, left.ty, right.ty, span);
                 (left, right, ty)
             }
@@ -13681,7 +13942,8 @@ impl<'a> Checker<'a> {
                 let right = self.expr(cx, right, Some(left.ty));
                 let (left, right) = if left.ty == Ty::NEVER { (left, right) } else { self.common(left, right) };
                 let allowed =
-                    matches!(self.types.kind(left.ty), TyKind::Int(_) | TyKind::Byte | TyKind::Error | TyKind::Never);
+                    matches!(self.types.kind(left.ty), TyKind::Int(_) | TyKind::Byte | TyKind::Error | TyKind::Never)
+                        || self.bound_by(left.ty, self.integer);
                 if !allowed {
                     operator_error(self, left.ty);
                 }
@@ -13691,7 +13953,8 @@ impl<'a> Checker<'a> {
             BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => {
                 let (left, right) = self.operands(cx, left, right, expected, false);
                 let allowed =
-                    matches!(self.types.kind(left.ty), TyKind::Int(_) | TyKind::Byte | TyKind::Error | TyKind::Never);
+                    matches!(self.types.kind(left.ty), TyKind::Int(_) | TyKind::Byte | TyKind::Error | TyKind::Never)
+                        || self.bound_by(left.ty, self.integer);
                 if !allowed {
                     operator_error(self, left.ty);
                 }
@@ -13721,7 +13984,7 @@ impl<'a> Checker<'a> {
                         | TyKind::String
                         | TyKind::Error
                         | TyKind::Never
-                );
+                ) || self.bound_by(left.ty, self.integer);
                 if !ordered {
                     operator_error(self, left.ty);
                 }

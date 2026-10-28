@@ -140,7 +140,7 @@ Every milestone ends with programs that compile to native executables and run.
 | **Targets** | Linux x86-64 and arm64 (glibc and musl), macOS on Apple silicon and Intel, each with its C calling convention; CI on all of them | Done |
 | **Bindings** | `tondo bind` writes a module of `extern` declarations and constants from C headers, a `pkg-config` package, or a library's debug information; unions, `va_list`, macros, bit fields; static and shared native libraries; `const` | Done |
 | **H8** | Testing: `test` and `suite`, unit test companions and integration test roots, `std.testing` (`log`, `tags`, `failNow`, `skip`), `tondo test` running tests in worker processes with timeouts, selection by filter, glob or identity, shards, random order with a seed, retries and flaky passes, repeats, CODEOWNERS, JSON and JUnit reports, attachments, snapshots of any value in a file each, virtual time | Done |
-| **Stdlib 1** | The prelude: the everyday methods of `String` (`split`, `lines`, `repeat`, padding, trimming, Unicode case, parsing numbers), `Char`, `Int`, `Float`, `Option`, `Result`, `Array` (`map`, `filter`, `reduce`, `sorted`, `join`, `groupBy`, ...), `Map`, `Set` and lazy `Iterator` adapters; `Ordered` and `Numeric`; `std.math` | Done |
+| **Stdlib 1** | The prelude: the everyday methods of `String` (`split`, `lines`, `repeat`, padding, trimming, Unicode case, parsing numbers), `Char`, `Int`, `Float`, `Option`, `Result`, `Array` (`map`, `filter`, `reduce`, `sorted`, `join`, `groupBy`, ...), `Map`, `Set` and lazy `Iterator` adapters; `Ordered`; `std.math` | Done |
 | **H9** | Runtime reflection (`std.reflect`: get, set, call, conversion by shape and type descriptions), `derive` with providers and generators declared in `tondo.toml`, both built for the `meta` profile, with `tondo expand` | Done |
 | **Stdlib 2** | Ranges as values and lazy `String.chars()` and `Array.iter()`, so that `(0..10).map(...)` and `text.chars().filter(...)` work; `std.format` (a text builder), `std.encoding` (Base64, hex, URLs), `std.hash` (SHA-1, SHA-256, SHA-512, HMAC), `std.random` (seeded generators, shuffle, choice, entropy), `std.uuid` (v4, v5, v7), ISO 8601 dates in `std.time`, and a failing `main` that shows its error's `Display` | Done |
 | **Stdlib 3** | `std.csv` (streaming and whole), `std.log` (levels, fields, text or JSON lines), and `std.http`: a client for HTTP/1.1 and HTTP/2 over TLS with streaming bodies, multipart, Server-Sent Events and WebSockets; a server with routes, middleware, typed handlers, OpenAPI, files with resumable downloads, resumable uploads, Server-Sent Events, WebSockets and TLS | Done |
@@ -178,13 +178,12 @@ What the specifications define and Tondo does not do yet, found by
 compiling every example they contain and reading the rest against the
 code (2026-10-24):
 
-- **Numbers (being built):** the traits `Additive`, `Number` and `Integer`
-  with the operators they give a program's types and a trait that requires
-  others (language 18.10, 12.3), and what they change in the standard
+- **Numbers (being built):** what the numbers change in the standard
   library: `Encode` and `Decode` for every number, `Random.int` of any
-  integer, `math.gcd` and `math.lcm` of any integer, and `Duration` as
-  `Additive`. `Int128`, `UInt128`, `UInt` and the named operations of
-  every number (18.9) work.
+  integer, and `math.gcd` and `math.lcm` of any integer. `Int128`,
+  `UInt128`, `UInt`, the named operations of every number (language 18.9),
+  the traits `Additive`, `Number` and `Integer`, traits that require others
+  (18.10, 12.3) and `Duration` as `Additive` work.
 - **Tools:** the register `testing/doc-test-runtime-links.json`, which ties
   each fragment and script of a normative document to a test that runs it
   (21.6); `tondo doc-test` gives no `formatted_sha256` for an example the

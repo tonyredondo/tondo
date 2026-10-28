@@ -23,12 +23,33 @@ pub trait Ordered {
     fn compare(self, other: Self): Int
 }
 
-/// A type whose values add up, from a zero.
-pub trait Numeric {
+/// A type whose values add and subtract, from a zero: `a + b`, `a - b`
+/// and `values.sum()` (language 18.10). Every number is one, and so is a
+/// duration; a program's type, as an amount of money, may be one too.
+pub trait Additive {
     fn zero(): Self
 
     fn plus(self, other: Self): Self
+
+    fn minus(self, other: Self): Self
 }
+
+/// A type whose values also multiply and divide, and that integer literals
+/// write: `a * b`, `a / b` and `x * 2`. Every number is one; a program's
+/// type, as a decimal or a fraction, may be one too.
+pub trait Number: Additive {
+    fn one(): Self
+
+    fn fromInt(value: Int): Self
+
+    fn times(self, other: Self): Self
+
+    fn dividedBy(self, other: Self): Self
+}
+
+/// The language's integers, of every width: on a `T: Integer`, generic code
+/// has everything a concrete integer has. A program does not implement it.
+pub trait Integer: Number {}
 
 fn order[T: Ordered](a: T, b: T): Int {
     a.compare(b)
@@ -145,26 +166,6 @@ impl Ordered for Float {
         } else {
             -1
         }
-    }
-}
-
-impl Numeric for Int {
-    fn zero(): Int {
-        0
-    }
-
-    fn plus(self, other: Int): Int {
-        self + other
-    }
-}
-
-impl Numeric for Float {
-    fn zero(): Float {
-        0.0
-    }
-
-    fn plus(self, other: Float): Float {
-        self + other
     }
 }
 
@@ -582,10 +583,10 @@ pub fn Array[T].count(self, predicate: fn(T): Bool): Int {
 }
 
 /// The sum of the elements; zero for an empty array.
-pub fn Array[T: Numeric].sum(self): T {
-    var total = Numeric.zero[T]()
+pub fn Array[T: Additive].sum(self): T {
+    var total = Additive.zero[T]()
     for item in self {
-        total = total.plus(item)
+        total = total + item
     }
     total
 }

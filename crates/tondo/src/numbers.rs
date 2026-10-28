@@ -94,6 +94,13 @@ pub enum NumOp {
     ToFixed,
     Bits,
     FromBits,
+    /// What the language's numbers do for `Number.fromInt`: an `Int` as the
+    /// number, a panic when it does not fit (18.10).
+    FromInt,
+    /// `T.min`, `T.max` and `T.bits` of a `T: Integer`.
+    Least,
+    Greatest,
+    Width,
 }
 
 impl NumOp {
@@ -109,9 +116,7 @@ impl NumOp {
                 | NumOp::SaturatingPow
                 | NumOp::NextPowerOfTwo
                 | NumOp::FromBytes
-                | NumOp::Parse
-                | NumOp::ToString
-                | NumOp::ToFixed
+                | NumOp::FromInt
         )
     }
 }
@@ -589,6 +594,14 @@ pub fn find(kind: Kind, name: &str, receiver: bool) -> Option<&'static Entry> {
     ENTRIES.iter().find(|e| e.name == name && e.receiver == receiver && e.owners.have(kind))
 }
 
+/// The operation `name` every integer has, which a `T: Integer` has too
+/// (18.10).
+pub fn find_integer(name: &str, receiver: bool) -> Option<&'static Entry> {
+    ENTRIES
+        .iter()
+        .find(|e| e.name == name && e.receiver == receiver && matches!(e.owners, Integers | Whole | Numbers | All))
+}
+
 /// The names of the operations of `kind`, as methods or as functions of
 /// the type.
 pub fn names(kind: Kind) -> impl Iterator<Item = &'static str> {
@@ -659,6 +672,17 @@ pub fn declarations() -> &'static str {
                     params.join(", "),
                     written(entry.result, kind)
                 ));
+            }
+        }
+        // The arithmetic the compiler gives them (18.10).
+        text.push_str("\n// Every number is `Additive` and `Number`, and every integer `Integer` (language 18.10).\n");
+        for kind in Kind::ALL.iter().filter(|k| !matches!(k, Kind::Byte)) {
+            let traits: &[&str] = match kind {
+                Kind::Int(_) => &["Additive", "Number", "Integer"],
+                _ => &["Additive", "Number"],
+            };
+            for name in traits {
+                text.push_str(&format!("impl {name} for {}\n", kind.name()));
             }
         }
         text

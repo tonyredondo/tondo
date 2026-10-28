@@ -126,6 +126,8 @@ pub struct TraitDecl {
     pub public: bool,
     pub name: Ident,
     pub generics: Vec<GenericParam>,
+    /// The traits it requires, after `:` (12.3).
+    pub requires: Vec<TypeExpr>,
     pub methods: Vec<FnDecl>,
     pub span: Span,
     /// The module that declares it, numbered when modules are linked; the

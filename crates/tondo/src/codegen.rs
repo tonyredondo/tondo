@@ -7338,10 +7338,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let types = self.e.cg.types();
         // The number the operation is of: its receiver's, or what it makes.
         let own = match op {
-            Parse | FromBytes | Wrapping | Saturating | FromBits => match *types.kind(types.repr(ty)) {
-                TyKind::Result(ok, _) => ok,
-                _ => ty,
-            },
+            Parse | FromBytes | Wrapping | Saturating | FromBits | FromInt | Least | Greatest => {
+                match *types.kind(types.repr(ty)) {
+                    TyKind::Result(ok, _) => ok,
+                    _ => ty,
+                }
+            }
             _ => self.operand_ty(&args[0]),
         };
         let own = types.repr(own);
@@ -7733,6 +7735,16 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.fb.ins().bitcast(pattern, MemFlagsData::new(), values[0])
             }
             FromBits => self.e.fb.ins().bitcast(clif, MemFlagsData::new(), values[0]),
+            FromInt => {
+                let (converted, error) = self.convert_checked(values[0], Ty::INT, own);
+                let failed = self.e.fb.ins().icmp_imm_s(IntCC::NotEqual, error, -1);
+                let detail = 10 << 16 | 0x100 | bits;
+                self.panic_values_if(failed, 5, span, |_| (detail, values[0], values[0], own));
+                converted
+            }
+            Least => self.e.int_const(clif, int.unwrap().min()),
+            Greatest => self.e.int_const(clif, int.unwrap().max() as i128),
+            Width => self.e.fb.ins().iconst(types::I64, i64::from(bits)),
         };
         Some(Val::Scalar(value))
     }

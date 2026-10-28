@@ -199,7 +199,32 @@ fn main() {
 }
 ```
 
-The prelude's traits: `Display`, `Ordered` (`compare`), `Numeric` (`zero`,
-`plus`), `Iterator[T]` (`next`). `Copy`, `Equatable`, `Key`, `Send` and
-`Share` are capabilities the compiler works out: a type has them when its
-parts do.
+A trait may require others, `trait Shape: Display { ... }`: implementing it
+needs an `impl Display` too, and a bound `S: Shape` gives `Display`'s methods
+as well.
+
+The prelude's traits: `Display`, `Ordered` (`compare`), `Iterator[T]`
+(`next`), and the arithmetic. `Copy`, `Equatable`, `Key`, `Send` and `Share`
+are capabilities the compiler works out: a type has them when its parts do.
+
+## Arithmetic on your types and generic numbers
+
+A type that adds, as an amount or a vector, implements `Additive` (`zero`,
+`plus`, `minus`) and gets `+`, `-`, `+=` and `values.sum()`. One that also
+multiplies and divides, as a fraction or a decimal, implements `Number`
+(`one`, `fromInt`, `times`, `dividedBy`), which requires `Additive`, and gets
+`*`, `/` and integer literals: `price * 2`. No other operator is opened to
+your types. Every number is both; a duration is `Additive`.
+
+```tondo
+fn mean[T: Number](values: Array[T]): T {
+    values.sum() / Number.fromInt[T](values.length())
+}
+
+/// Every integer of every width, with all an integer has: `%`, bits, `T.max`.
+fn hex[T: Integer](value: T): String {
+    value.toString(radix: 16).padStart(T.bits / 4, fill: "0")
+}
+```
+
+There is no generic unary minus: write `0 - x`.

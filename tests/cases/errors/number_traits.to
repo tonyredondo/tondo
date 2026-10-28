@@ -1,0 +1,63 @@
+// What the arithmetic traits ask for (18.10, 12.3).
+
+type Money = { cents: Int }
+
+impl Additive for Money {
+    fn zero(): Money {
+        Money { cents: 0 }
+    }
+
+    fn plus(self, other: Money): Money {
+        Money { cents: self.cents + other.cents }
+    }
+
+    fn minus(self, other: Money): Money {
+        Money { cents: self.cents - other.cents }
+    }
+}
+
+type Ratio = { value: Float }
+
+impl Number for Ratio {
+    fn one(): Ratio {
+        Ratio { value: 1.0 }
+    }
+
+    fn fromInt(value: Int): Ratio {
+        Ratio { value: Float(value) }
+    }
+
+    fn times(self, other: Ratio): Ratio {
+        Ratio { value: self.value * other.value }
+    }
+
+    fn dividedBy(self, other: Ratio): Ratio {
+        Ratio { value: self.value / other.value }
+    }
+}
+
+type Id = { value: Int }
+
+impl Integer for Id {}
+
+trait Loop: Other {}
+
+trait Other: Loop {}
+
+fn add[T](a: T, b: T): T {
+    a + b
+}
+
+fn main() {
+    let money = Money { cents: 5 }
+    _ = money * 2
+    _ = -money
+    _ = add(1, 2)
+}
+
+// expect-error: E1105 `impl Number for Ratio` needs `impl Additive for Ratio` too: `Number` requires `Additive`
+// expect-error: E1114 `Integer` is the language's own integers, and a program does not implement it: implement `Number` for `Id`, which gives it `+`, `-`, `*`, `/` and literals
+// expect-error: E1112 `Loop` requires itself, through the traits it requires
+// expect-error: E1102 operator `+` cannot be applied to `T`: add the bound `T: Additive`, which gives it `+`
+// expect-error: E1102 operator `*` cannot be applied to `Money`: implement `Number` for it, which gives it `*` (18.10)
+// expect-error: E1102 negation is not defined for `Money`: write `Additive.zero[Money]() - value`

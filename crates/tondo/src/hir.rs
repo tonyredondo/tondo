@@ -138,6 +138,11 @@ pub struct TraitInfo {
     /// parameters and the method's own.
     pub defaults: Vec<Option<FnId>>,
     pub param_count: usize,
+    /// Each method's name.
+    pub methods: Vec<String>,
+    /// `Additive`, `Number` or `Integer`, which the language's numbers and a
+    /// duration implement as the compiler computes them (18.10).
+    pub arithmetic: bool,
 }
 
 /// An implementation of a trait for a target (12.4). Its methods are

@@ -368,11 +368,16 @@ impl Formatter<'_> {
                 concat(vec![head, self.braced_lines(variants, e.span.end)])
             }
             Item::Trait(t) => {
-                let head = concat(vec![
+                let mut head = vec![
                     text(format!("{}trait {}", if t.public { "pub " } else { "" }, t.name.name)),
                     self.generics(&t.generics),
-                    text(" "),
-                ]);
+                ];
+                for (index, required) in t.requires.iter().enumerate() {
+                    head.push(text(if index == 0 { ": " } else { " + " }));
+                    head.push(self.ty(required));
+                }
+                head.push(text(" "));
+                let head = concat(head);
                 concat(vec![head, self.members(&t.methods, t.span.end)])
             }
             Item::Impl(i) => {
