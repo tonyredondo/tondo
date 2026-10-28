@@ -1,0 +1,13 @@
+// A context's initial values are constants.
+
+fn now(): Int {
+    3
+}
+
+context Clock = {
+    started: Int = now()
+}
+
+fn main() {}
+
+// expect-error: E1616

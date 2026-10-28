@@ -312,9 +312,10 @@ impl Formatter<'_> {
                 let head = concat(vec![
                     annotations(&t.annotations),
                     text(format!(
-                        "{}{}type {}",
+                        "{}{}{} {}",
                         if t.public { "pub " } else { "" },
                         if t.foreign { "extern " } else { "" },
+                        if t.context { "context" } else { "type" },
                         t.name.name
                     )),
                     self.generics(&t.generics),
@@ -323,8 +324,8 @@ impl Formatter<'_> {
                     TypeBody::Opaque => head,
                     TypeBody::Newtype(inner) => concat(vec![head, text(" = "), self.ty(inner)]),
                     TypeBody::Record(fields) => {
-                        let fields =
-                            fields.iter().map(|f| (f.name.span.start, f.ty.span.end, self.field_decl(f))).collect();
+                        let end = |f: &FieldDecl| f.default.as_ref().map_or(f.ty.span.end, |d| d.span.end);
+                        let fields = fields.iter().map(|f| (f.name.span.start, end(f), self.field_decl(f))).collect();
                         concat(vec![head, text(" = "), self.braced_lines(fields, t.span.end)])
                     }
                 }
@@ -489,8 +490,12 @@ impl Formatter<'_> {
 
     fn field_decl(&mut self, field: &FieldDecl) -> Doc {
         let private = if field.private { "priv " } else { "" };
-        let parts =
+        let mut parts =
             vec![annotations(&field.annotations), text(format!("{private}{}: ", field.name.name)), self.ty(&field.ty)];
+        if let Some(default) = &field.default {
+            parts.push(text(" = "));
+            parts.push(self.expr(default));
+        }
         concat(parts)
     }
 
@@ -822,6 +827,10 @@ impl Formatter<'_> {
                 self.assignment(target, &operator, value)
             }
             StmtKind::Discard(value) => self.assignment(text("_"), "=", value),
+            StmtKind::With { path, fields } => {
+                let fields = fields.iter().map(|f| self.field_init(f)).collect();
+                concat(vec![text(format!("with {} ", path_text(path))), self.record_body(fields)])
+            }
             StmtKind::Return(None) => text("return"),
             StmtKind::Return(Some(value)) => concat(vec![text("return "), self.expr(value)]),
             StmtKind::Fail(value) => concat(vec![text("fail "), self.expr(value)]),

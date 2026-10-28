@@ -242,6 +242,10 @@ enum Rt {
     UnwindHold,
     UnwindResume,
     UnwindReturn,
+    ContextRegister,
+    ContextGet,
+    ContextSet,
+    ContextRestore,
     JoinWaitTimeout,
     JoinCancel,
     JoinDetach,
@@ -498,6 +502,10 @@ impl Rt {
             Rt::UnwindHold => ("tondo_rt_unwind_hold", &[], &[]),
             Rt::UnwindResume => ("tondo_rt_unwind_resume", &[], &[]),
             Rt::UnwindReturn => ("tondo_rt_unwind_return", &[], &[]),
+            Rt::ContextRegister => ("tondo_rt_context_register", &[I64, I64, I64], &[]),
+            Rt::ContextGet => ("tondo_rt_context_get", &[I64], &[I64]),
+            Rt::ContextSet => ("tondo_rt_context_set", &[I64, I64], &[I64]),
+            Rt::ContextRestore => ("tondo_rt_context_restore", &[I64], &[]),
             Rt::JoinWaitTimeout => ("tondo_rt_join_wait_timeout", &[I64, I64, I64], &[I8]),
             Rt::JoinCancel => ("tondo_rt_join_cancel", &[I64], &[]),
             Rt::JoinDetach => ("tondo_rt_join_detach", &[I64], &[]),
@@ -813,6 +821,11 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         pending_forwarders: Vec::new(),
         coverage: None,
         fuzz,
+        contexts: program
+            .contexts
+            .iter()
+            .map(|&maker| (maker, program.types.handle_result(bodies[maker.0 as usize].result)))
+            .collect(),
     };
     if coverage.is_some() {
         let counters =
@@ -977,6 +990,8 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
 struct Codegen<'a> {
     module: ObjectModule,
     types: &'a Types,
+    /// Each context's maker and the type of its record (11.16).
+    contexts: Vec<(FnId, Ty)>,
     sources: &'a SourceMap,
     /// Counts steps, for the `meta` profile.
     meta: bool,
@@ -2712,6 +2727,7 @@ impl Codegen<'_> {
         let trace = e.cg.module.declare_data_in_func(trace, e.fb.func);
         let trace = e.fb.ins().symbol_value(POINTER, trace);
         e.call_rt(Rt::Trace, &[trace]);
+        e.register_contexts();
         if let Some(debug) = e.cg.debug {
             let debug = e.cg.module.declare_data_in_func(debug, e.fb.func);
             let debug = e.fb.ins().symbol_value(POINTER, debug);
@@ -2788,6 +2804,7 @@ impl Codegen<'_> {
             let trace = e.cg.module.declare_data_in_func(trace, e.fb.func);
             let trace = e.fb.ins().symbol_value(POINTER, trace);
             e.call_rt(Rt::Trace, &[trace]);
+            e.register_contexts();
             // A test build hands the runner its tree before `main` runs it.
             if let Some(table) = table {
                 let table = e.cg.module.declare_data_in_func(table, e.fb.func);
@@ -2866,6 +2883,21 @@ impl Codegen<'_> {
 enum Called {
     Direct(ir::FuncRef),
     Indirect(ir::SigRef, ir::Value),
+}
+
+impl Emit<'_, Codegen<'_>> {
+    /// Hands the runtime each context's maker, which gives its initial
+    /// value, and the release of its record (11.16).
+    fn register_contexts(&mut self) {
+        for (index, (maker, record)) in self.cg.contexts.clone().into_iter().enumerate() {
+            let function = self.cg.function(maker);
+            let callee = self.cg.declare_func_in_func(function, self.fb.func);
+            let maker = self.fb.ins().func_addr(POINTER, callee);
+            let release = self.glue_or_null(Glue::Release, record);
+            let index = self.fb.ins().iconst(types::I64, index as i64);
+            self.call_rt(Rt::ContextRegister, &[index, maker, release]);
+        }
+    }
 }
 
 /// Code emission shared by function bodies and glue functions.
@@ -7237,6 +7269,15 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 values.push(location);
                 self.e.call_rt(Rt::PanicUnwind, &values)
             }
+            Callee::Std(StdFn::ContextGet(index)) => {
+                let index = self.e.fb.ins().iconst(types::I64, i64::from(index));
+                self.e.call_rt(Rt::ContextGet, &[index])
+            }
+            Callee::Std(StdFn::ContextSet(index)) => {
+                let index = self.e.fb.ins().iconst(types::I64, i64::from(index));
+                self.e.call_rt(Rt::ContextSet, &[index, values[0]])
+            }
+            Callee::Std(StdFn::ContextRestore) => self.e.call_rt(Rt::ContextRestore, &values),
             Callee::Std(StdFn::RecoverEnter) => self.e.call_rt(Rt::RecoverEnter, &[]),
             Callee::Std(StdFn::RecoverEnd) => self.e.call_rt(Rt::RecoverEnd, &[]),
             Callee::Std(StdFn::RecoverLeave) => self.e.call_rt(Rt::RecoverLeave, &[]),

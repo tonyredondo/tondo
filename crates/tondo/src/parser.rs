@@ -353,7 +353,7 @@ impl Parser<'_> {
     fn at_declaration(&self) -> bool {
         let offset = usize::from(self.at_kw(Kw::Pub));
         let tok = self.nth(offset);
-        if matches!(tok, Tok::At | Tok::Kw(Kw::Extern)) {
+        if matches!(tok, Tok::At | Tok::Kw(Kw::Extern)) || self.at_context(offset) {
             return true;
         }
         matches!(
@@ -371,6 +371,13 @@ impl Parser<'_> {
                     | Kw::Suite
             )
         ) || (matches!(tok, Tok::Kw(Kw::Unsafe)) && matches!(self.nth(offset + 1), Tok::Kw(Kw::Fn)))
+    }
+
+    /// Whether `context Name =` starts at `offset`: a context (11.16).
+    fn at_context(&self, offset: usize) -> bool {
+        matches!(self.nth(offset), Tok::Ident(word) if word == "context")
+            && matches!(self.nth(offset + 1), Tok::Ident(_))
+            && self.nth(offset + 2) == &Tok::Eq
     }
 
     fn declaration(&mut self) -> PResult<Option<Item>> {
@@ -467,6 +474,27 @@ impl Parser<'_> {
                 Ok(Some(Item::Fn(f)))
             }
             Tok::Kw(Kw::Type) => Ok(Some(Item::Type(self.type_declaration(public, start)?))),
+            // `context` is a word of the language only here (11.16).
+            Tok::Ident(_) if self.at_context(0) => {
+                self.bump();
+                let name = self.ident()?;
+                self.expect(Tok::Eq)?;
+                let body = TypeBody::Record(self.record_body(true)?);
+                let span = start.to(self.prev_span());
+                self.end_of_statement()?;
+                let (annotations, generics) = (Vec::new(), Vec::new());
+                Ok(Some(Item::Type(TypeDecl {
+                    public,
+                    foreign: false,
+                    context: true,
+                    annotations,
+                    name,
+                    generics,
+                    body,
+                    span,
+                    module: 0,
+                })))
+            }
             Tok::Kw(Kw::Const) => {
                 self.bump();
                 let name = self.ident()?;
@@ -622,14 +650,15 @@ impl Parser<'_> {
         } else {
             self.expect(Tok::Eq)?;
             if self.at(&Tok::LBrace) {
-                TypeBody::Record(self.record_body()?)
+                TypeBody::Record(self.record_body(false)?)
             } else {
                 TypeBody::Newtype(self.type_expr()?)
             }
         };
         let span = start.to(self.prev_span());
         self.end_of_statement()?;
-        Ok(TypeDecl { public, foreign: false, annotations: Vec::new(), name, generics, body, span, module: 0 })
+        let annotations = Vec::new();
+        Ok(TypeDecl { public, foreign: false, context: false, annotations, name, generics, body, span, module: 0 })
     }
 
     /// Whether the token before the current one is `extern`.
@@ -662,7 +691,7 @@ impl Parser<'_> {
                     self.expect(Tok::RParen)?;
                     VariantPayload::Tuple(items)
                 }
-                Tok::LBrace => VariantPayload::Record(self.record_body()?),
+                Tok::LBrace => VariantPayload::Record(self.record_body(false)?),
                 _ => VariantPayload::Unit,
             };
             variants.push(VariantDecl { name, payload });
@@ -673,8 +702,9 @@ impl Parser<'_> {
         Ok(EnumDecl { public, name, generics, variants, span, module: 0 })
     }
 
-    /// `{ [priv] name: Type, ... }` separated by commas or newlines.
-    fn record_body(&mut self) -> PResult<Vec<FieldDecl>> {
+    /// `{ [priv] name: Type, ... }` separated by commas or newlines; with
+    /// `defaults`, a context's, each `= value` (11.16).
+    fn record_body(&mut self, defaults: bool) -> PResult<Vec<FieldDecl>> {
         self.expect(Tok::LBrace)?;
         let mut fields = Vec::new();
         loop {
@@ -691,7 +721,14 @@ impl Parser<'_> {
             let name = self.field_name()?;
             self.expect(Tok::Colon)?;
             let ty = self.type_expr()?;
-            fields.push(FieldDecl { private, name, ty, annotations });
+            let default = match defaults {
+                true => {
+                    self.expect(Tok::Eq)?;
+                    Some(self.expression()?)
+                }
+                false => None,
+            };
+            fields.push(FieldDecl { private, name, ty, annotations, default });
             self.field_separator()?;
         }
     }
@@ -1089,6 +1126,7 @@ impl Parser<'_> {
             self.tok(),
             Tok::Kw(Kw::Let | Kw::Var | Kw::Return | Kw::Fail | Kw::Break | Kw::Continue | Kw::For | Kw::Defer)
         ) || matches!(self.tok(), Tok::Ident(name) if name == "_")
+            || self.at_kw(Kw::With) && matches!(self.nth(1), Tok::Ident(_))
             || self.foreign_block().is_some()
     }
 
@@ -1124,6 +1162,17 @@ impl Parser<'_> {
             }
             Tok::Kw(Kw::Return | Kw::Fail | Kw::Break | Kw::Continue) => self.transfer()?,
             Tok::Kw(Kw::For) => self.for_statement()?,
+            // `with Context { ... }` changes a context; `value with { ... }`
+            // is an expression that starts with the value (11.16).
+            Tok::Kw(Kw::With) if matches!(self.nth(1), Tok::Ident(_)) => {
+                self.bump();
+                let mut path = vec![self.ident()?];
+                while self.eat(&Tok::Dot) {
+                    path.push(self.ident()?);
+                }
+                let fields = self.field_inits()?;
+                StmtKind::With { path, fields }
+            }
             Tok::Kw(Kw::Defer) => {
                 self.bump();
                 if self.at(&Tok::LBrace) {

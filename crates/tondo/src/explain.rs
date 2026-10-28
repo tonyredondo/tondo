@@ -73,6 +73,12 @@ pub const CODES: &[(&str, &str, &str)] = &[
     ("E1612", "invalid-select-operand", "An arm of `select` is not `receive`, `send`, `wait`, `next` or `sleep`."),
     ("E1613", "invalid-select-shape", "`select` is empty, repeats `else`, puts it before an arm, or binds refutably."),
     ("E1615", "conflicting-select-ownership", "Two arms of `select` take the same owner in incompatible ways."),
+    (
+        "E1616",
+        "invalid-context-declaration",
+        "A field of a context has no constant initial value, is not `Send` or `Copy`, or has an annotation other than `@log` and `@label`, or one whose type has no `Display`.",
+    ),
+    ("E1617", "invalid-context-change", "`with Name { ... }` names something that is not a context."),
     ("E1701", "unsafe-operation-outside-region", "A raw operation outside an `unsafe` region."),
     ("E1702", "invalid-unsafe-contract", "A signature or capture does not show the `unsafe` contract it needs."),
     ("E1703", "invalid-c-type", "A type that does not cross to C in a C declaration, or an opaque type built or read."),

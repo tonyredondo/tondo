@@ -81,6 +81,8 @@ fn check_with<'a>(
         owners: HashMap::new(),
         method_visibility: HashMap::new(),
         prelude: None,
+        contexts: Vec::new(),
+        context_of: HashMap::new(),
         module_paths: Vec::new(),
         datetime_module: None,
         unrepeatable: HashMap::new(),
@@ -721,6 +723,10 @@ struct Checker<'a> {
     /// The module `std.prelude`, which declares the methods of the intrinsic
     /// types, and their keys by name.
     prelude: Option<u32>,
+    /// The contexts the program declares (11.16), by index: each one's
+    /// record type and declaration; and the index of each such type.
+    contexts: Vec<(Ty, &'a ast::TypeDecl)>,
+    context_of: HashMap<Ty, u32>,
     /// The path of each module of the program, which an unknown name may
     /// be the last part of.
     module_paths: Vec<Vec<String>>,
@@ -1098,7 +1104,13 @@ impl<'a> Checker<'a> {
             }
             None => main,
         };
+        let makers = self.context_makers();
         functions.extend(std::mem::take(&mut self.closure_functions).into_iter().map(|f| f.expect("checked closure")));
+        let mut contexts = Vec::new();
+        for maker in makers {
+            contexts.push(FnId(functions.len() as u32));
+            functions.push(maker);
+        }
 
         if module.c_library && self.c_functions.is_empty() {
             let message = "the library publishes no function: C calls a `pub extern fn name(...) { ... }` of the package by its name";
@@ -1142,6 +1154,7 @@ impl<'a> Checker<'a> {
             exports: std::mem::take(&mut self.exports),
             c_api,
             tests: std::mem::take(&mut self.test_nodes),
+            contexts,
         })
     }
 
@@ -2880,6 +2893,12 @@ impl<'a> Checker<'a> {
             };
             let (id, ty) = self.types.declare_adt(shown);
             if let ast::Item::Type(decl) = item
+                && decl.context
+            {
+                self.context_of.insert(ty, self.contexts.len() as u32);
+                self.contexts.push((ty, decl));
+            }
+            if let ast::Item::Type(decl) = item
                 && decl.foreign
             {
                 let layout = self.c_layout(decl);
@@ -3022,9 +3041,9 @@ impl<'a> Checker<'a> {
                 ast::Item::Type(ast::TypeDecl { body: ast::TypeBody::Record(fields), foreign: true, .. }) => {
                     AdtKind::Record(self.c_fields(fields))
                 }
-                ast::Item::Type(ast::TypeDecl { name, body: ast::TypeBody::Record(fields), .. }) => {
+                ast::Item::Type(ast::TypeDecl { name, body: ast::TypeBody::Record(fields), context, .. }) => {
                     self.wires.insert(name.name.clone(), fields.iter().map(wire).collect());
-                    AdtKind::Record(self.field_decls(fields))
+                    AdtKind::Record(self.field_decls(fields, *context))
                 }
                 ast::Item::Type(ast::TypeDecl { body: ast::TypeBody::Opaque, .. }) => AdtKind::Record(Vec::new()),
                 ast::Item::Enum(decl) => {
@@ -3043,7 +3062,7 @@ impl<'a> Checker<'a> {
                             ast::VariantPayload::Record(fields) => {
                                 let key = format!("{}.{}", decl.name.name, variant.name.name);
                                 self.wires.insert(key, fields.iter().map(wire).collect());
-                                Payload::Record(self.field_decls(fields))
+                                Payload::Record(self.field_decls(fields, false))
                             }
                         };
                         variants.push(Variant { name: variant.name.name.clone(), payload });
@@ -3147,7 +3166,9 @@ impl<'a> Checker<'a> {
         resolved
     }
 
-    fn field_decls(&mut self, fields: &[ast::FieldDecl]) -> Vec<Field> {
+    /// The fields of a record or a variant; of a context's record with
+    /// `context`, whose fields take `@log` and `@label` (11.16).
+    fn field_decls(&mut self, fields: &[ast::FieldDecl], context: bool) -> Vec<Field> {
         let mut seen = HashSet::new();
         let mut resolved = Vec::new();
         for field in fields {
@@ -3158,6 +3179,13 @@ impl<'a> Checker<'a> {
             let ty = self.resolve_type(&field.ty);
             for annotation in &field.annotations {
                 match (annotation.name.name.as_str(), &annotation.argument) {
+                    ("log" | "label", None | Some(ast::AnnotationArg::Text(_))) if context => {}
+                    (name, _) if context => {
+                        let message = format!(
+                            "unknown annotation `@{name}`; a field of a context takes `@log`, which puts it in every log event and panic report, or `@label`, which makes it a label of profiles, each with an optional name: `@log(\"request_id\")`"
+                        );
+                        self.diags.error("E1616", annotation.span, message);
+                    }
                     ("name", Some(_)) => {}
                     ("ignore", None) if matches!(self.types.kind(ty), TyKind::Option(_) | TyKind::Error) => {}
                     ("ignore", None) => {
@@ -6989,6 +7017,21 @@ impl<'a> Checker<'a> {
 
     fn statement(&mut self, cx: &mut FnCx, stmt: &ast::Stmt) -> Option<hir::Stmt> {
         match &stmt.kind {
+            ast::StmtKind::With { path, fields } => {
+                let name = Self::path_text(path);
+                let Some((ty, context)) = self.context_named(path) else {
+                    let message = format!(
+                        "`with {name} {{ ... }}` changes a context, but `{name}` is not one: a context is declared `context {name} = {{ field: Type = value }}`, and a record is updated with `value with {{ field: value }}`"
+                    );
+                    self.diags.error("E1617", stmt.span, message);
+                    return None;
+                };
+                let reference = self.types.handle(Handle::Ref, ty);
+                let base = Self::mk(hir::ExprKind::ContextRead(context, reference), ty, stmt.span);
+                let value = self.update(cx, base, fields, true, stmt.span);
+                let value = Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::RefNew, vec![value]), reference, stmt.span);
+                Some(hir::Stmt::ContextSet { context, value, span: stmt.span })
+            }
             ast::StmtKind::Let { mutable, pattern, ty, value } => {
                 let declared = ty.as_ref().map(|t| self.resolve_type(t));
                 let Some(value) = value else {
@@ -9091,6 +9134,95 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Whether a name is a context's (11.16).
+    fn is_context(&self, name: &str) -> bool {
+        matches!(self.type_names.get(name), Some(TypeName::Nominal(ty)) if self.context_of.contains_key(ty))
+    }
+
+    /// The context a path names, and its index (11.16).
+    fn context_named(&mut self, path: &[ast::Ident]) -> Option<(Ty, u32)> {
+        let [name] = path else { return None };
+        let Some(&TypeName::Nominal(ty)) = self.type_names.get(&name.name) else { return None };
+        let context = *self.context_of.get(&ty)?;
+        self.index_refer(name, crate::index::Key::Type(name.name.clone()));
+        Some((ty, context))
+    }
+
+    /// Each context's maker (11.16): the function that gives its initial
+    /// value in a `Ref`, which the runtime calls when a task first reads the
+    /// context. The initial values are constants; the fields are `Send` and
+    /// `Copy`, since tasks share them and reading one copies it, and those
+    /// shown as text have `Display`.
+    fn context_makers(&mut self) -> Vec<hir::Function> {
+        let mut makers = Vec::new();
+        for (ty, decl) in self.contexts.clone() {
+            let module = std::mem::replace(&mut self.module, decl.module);
+            let ast::TypeBody::Record(declared) = &decl.body else { unreachable!("a context is a record") };
+            let fields = self.record_fields(ty, decl.span).unwrap_or_default();
+            let reference = self.types.handle(Handle::Ref, ty);
+            let mut cx = self.new_cx(reference);
+            let mut values = Vec::new();
+            for (index, (field, (name, field_ty))) in declared.iter().zip(fields).enumerate() {
+                let what = format!("the field `{name}` of the context `{}`", decl.name.name);
+                if let Some(part) = self.not_send(field_ty) {
+                    let message = format!("tasks share {what}, but {} is not `Send`", self.display(part));
+                    self.diags.error("E1616", field.ty.span, message);
+                }
+                if !self.types.is_copy(field_ty) {
+                    let message = format!(
+                        "reading {what} copies it, but {} is not `Copy`: hold it in a `Ref`, or keep a handle to it",
+                        self.display(field_ty)
+                    );
+                    self.diags.error("E1616", field.ty.span, message);
+                }
+                let shown = match *self.types.kind(field_ty) {
+                    TyKind::Option(inner) => inner,
+                    _ => field_ty,
+                };
+                for annotation in &field.annotations {
+                    if !self.types.has_error(shown) && !self.satisfies(shown, DISPLAY, &[]) {
+                        let message = format!(
+                            "`@{}` shows {what} as text, but {} has no `Display`",
+                            annotation.name.name,
+                            self.display(shown)
+                        );
+                        self.diags.error("E1616", annotation.span, message);
+                    }
+                }
+                let Some(default) = &field.default else { continue };
+                let value = self.expr(&mut cx, default, Some(field_ty));
+                let mut value = self.coerce(value, field_ty);
+                if !self.types.has_error(value.ty) && !constant(&mut value) {
+                    let message = format!(
+                        "the initial value of {what} is a constant: build it from literals, constants, their operators and constructors; a value made as the program runs is a `{name}: T? = none`, set with `with` in `main`"
+                    );
+                    self.diags.error("E1616", default.span, message);
+                }
+                values.push((index as u32, value));
+            }
+            self.module = module;
+            let record = Self::mk(hir::ExprKind::Record(values), ty, decl.span);
+            let made = Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::RefNew, vec![record]), reference, decl.span);
+            let body = hir::Block { stmts: Vec::new(), tail: Some(Box::new(made)), ty: reference };
+            let mut maker = hir::Function {
+                name: format!("context {}", decl.name.name),
+                generics: Vec::new(),
+                params: Vec::new(),
+                loans: Vec::new(),
+                fallible: false,
+                locals: cx.locals,
+                result: reference,
+                body,
+                moves: HashSet::new(),
+                test: false,
+                span: Span::default(),
+            };
+            self.ownership(&mut maker, &cx.params);
+            makers.push(maker);
+        }
+        makers
+    }
+
     fn path_text(path: &[ast::Ident]) -> String {
         path.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".")
     }
@@ -9766,6 +9898,19 @@ impl<'a> Checker<'a> {
 
     fn with_expr(&mut self, cx: &mut FnCx, base: &ast::Expr, updates: &[ast::FieldInit], span: Span) -> hir::Expr {
         let base = self.expr(cx, base, None);
+        self.update(cx, base, updates, false, span)
+    }
+
+    /// `base` with the fields of `updates` changed; with `shorthand`, a
+    /// field may be named alone, as the binding of its name.
+    fn update(
+        &mut self,
+        cx: &mut FnCx,
+        base: hir::Expr,
+        updates: &[ast::FieldInit],
+        shorthand: bool,
+        span: Span,
+    ) -> hir::Expr {
         let ty = base.ty;
         let Some(fields) = self.record_fields(ty, base.span) else {
             return Self::error_expr(span);
@@ -9786,7 +9931,7 @@ impl<'a> Checker<'a> {
         }
         let owner = self.index_type_name(ty);
         self.index_fields(owner, updates.iter().map(|u| (&u.name, false)));
-        let (values, _) = self.field_values(cx, ty, &fields, updates, false, None);
+        let (values, _) = self.field_values(cx, ty, &fields, updates, shorthand, None);
         if self.types.c_layout(ty).is_some_and(|l| l.union) {
             // The fields of a union overlap: a copy, then the fields written.
             let local = self.hidden_local(cx, ty);
@@ -11431,6 +11576,18 @@ impl<'a> Checker<'a> {
         {
             return Self::mk(kind, ty, span);
         }
+        // `Context.field`: its value where the code runs (11.16).
+        if let [name, field, rest @ ..] = segments
+            && let Some((ty, context)) = self.context_named(std::slice::from_ref(name))
+        {
+            let reference = self.types.handle(Handle::Ref, ty);
+            let mut value = Self::mk(hir::ExprKind::ContextRead(context, reference), ty, name.span);
+            for segment in std::iter::once(field).chain(rest) {
+                let span = value.span.to(segment.span);
+                value = self.field_access(value, FieldRef::Name(&segment.name), segment.span, span);
+            }
+            return value;
+        }
         // `Type.operation` as a value: an associated operation (11.7).
         if let [type_name, operation] = segments
             && !self.names.contains_key(&type_name.name)
@@ -11657,6 +11814,13 @@ impl<'a> Checker<'a> {
                         || self.visible_capture(cx, &segments[0].name)
                         || matches!(self.names.get(&segments[0].name), Some(ModuleName::Const(_)))) =>
             {
+                let (method, prefix) = segments.split_last().unwrap();
+                let receiver_span = prefix[0].span.to(prefix.last().unwrap().span);
+                let receiver = ast::Expr { kind: ast::ExprKind::Path(prefix.to_vec()), span: receiver_span };
+                return self.method_call(cx, &receiver, method, args, expected, span);
+            }
+            // `Request.user.unwrapOr("")`: a method of a context's field.
+            ast::ExprKind::Path(segments) if segments.len() > 2 && self.is_context(&segments[0].name) => {
                 let (method, prefix) = segments.split_last().unwrap();
                 let receiver_span = prefix[0].span.to(prefix.last().unwrap().span);
                 let receiver = ast::Expr { kind: ast::ExprKind::Path(prefix.to_vec()), span: receiver_span };

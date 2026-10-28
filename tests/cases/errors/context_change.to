@@ -1,0 +1,10 @@
+// `with Name { ... }` changes a context; a record is updated with
+// `value with { ... }`.
+
+type Point = { x: Int, y: Int }
+
+fn main() {
+    with Point { x: 1 }
+}
+
+// expect-error: E1617

@@ -30,6 +30,9 @@ pub struct Program {
     /// In a test build, the tree of suites and tests, the root first;
     /// `main` then runs the root's members.
     pub tests: Vec<TestNodeInfo>,
+    /// Each context's maker (11.16): its initial value in a `Ref`, by the
+    /// context's index.
+    pub contexts: Vec<FnId>,
 }
 
 /// The code of the panic that `testing.skip` ends a test or suite with,
@@ -219,6 +222,13 @@ pub enum Stmt {
         local: LocalId,
         place: Place,
     },
+    /// `with Context { ... }`: the context `context` has `value`, a `Ref`
+    /// of its record, for the rest of the block (11.16).
+    ContextSet {
+        context: u32,
+        value: Expr,
+        span: Span,
+    },
     /// Takes the lock of a `std.sync` value for the rest of the block:
     /// `guard` holds it and is released when the block ends, and `inner`
     /// is a loan of the state it protects (14.4.4).
@@ -360,6 +370,9 @@ pub enum ExprKind {
     /// An operation of a `Join` or a `Group`; the receiver comes first,
     /// as the loan of its place for `add` and `next`.
     TaskOp(TaskOp, Vec<Expr>),
+    /// The value of the context of this index where the code runs (11.16),
+    /// which the task holds in a `Ref` of the type given.
+    ContextRead(u32, Ty),
     /// `select` (11.14): the arms' operations, all evaluated in order
     /// before waiting, and the `else` arm.
     Select(Vec<SelectArm>, Option<Box<Expr>>),
@@ -821,6 +834,11 @@ pub enum StdFn {
     /// A panic with the code, whose message is the argument, where the
     /// code unwinds when the call returns (15.9).
     PanicUnwind(u32),
+    /// The `Ref` of a context's value where the code runs; a new value of
+    /// it, which gives what to restore; and that restored (11.16).
+    ContextGet(u32),
+    ContextSet(u32),
+    ContextRestore,
     /// A `recover` block starts, ends as code does (true when a task of it
     /// ended with a panic), ends another way, and stops the panic that
     /// unwinds to it (15.9).
@@ -1483,6 +1501,7 @@ pub fn written(e: &Expr, out: &mut Vec<LocalId>) {
         | ExprKind::FnValue(..)
         | ExprKind::ExternFn(_)
         | ExprKind::Layout(..)
+        | ExprKind::ContextRead(..)
         | ExprKind::Error => {}
         ExprKind::Aggregate(items)
         | ExprKind::Array(items)
@@ -1584,6 +1603,7 @@ fn written_block(block: &Block, out: &mut Vec<LocalId>) {
             Stmt::Defer { closure, .. } => written(closure, out),
             Stmt::Lend { place, .. } => out.push(place.local),
             Stmt::LockSync { handle, .. } => written(handle, out),
+            Stmt::ContextSet { value, .. } => written(value, out),
             Stmt::Return(value) => value.iter().for_each(|value| written(value, out)),
             Stmt::AwaitChange(..) | Stmt::Break | Stmt::Continue => {}
             Stmt::Loop { condition, body } => {

@@ -22,7 +22,8 @@ pub fn monomorphize(program: Program, diags: &mut Diagnostics) -> Option<Program
 /// The same, with more functions that are not generic built as if called:
 /// a test build's own, which coverage counts even when nothing calls them.
 pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnostics) -> Option<Program> {
-    let Program { mut types, functions, main, traits, impls, externs, mut exports, c_api, tests, .. } = program;
+    let Program { mut types, functions, main, traits, impls, externs, mut exports, c_api, tests, contexts, .. } =
+        program;
     let mut mono = Mono {
         types: &mut types,
         functions: &functions,
@@ -49,6 +50,8 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
     for &root in roots {
         mono.instance(root, Vec::new());
     }
+    // The runtime makes a context's initial value when a task first reads it.
+    let contexts: Vec<FnId> = contexts.into_iter().map(|maker| mono.instance(maker, Vec::new())).collect();
     while let Some((id, args, instance)) = mono.queue.pop_front() {
         let generic = &functions[id.0 as usize];
         let map: HashMap<Ty, Ty> = generic.generics.iter().copied().zip(args).collect();
@@ -80,7 +83,7 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
     }
     let display = std::mem::take(&mut mono.display);
     let functions = mono.out.into_iter().map(|f| f.expect("every instance is generated")).collect();
-    Some(Program { types, functions, main, traits, impls, display, externs, exports, c_api, tests })
+    Some(Program { types, functions, main, traits, impls, display, externs, exports, c_api, tests, contexts })
 }
 
 /// The trait whose method interpolation uses (see the checker).
@@ -185,6 +188,7 @@ impl Mono<'_> {
             }
             Stmt::Lend { place, .. } => self.place(place, map),
             Stmt::LockSync { handle, .. } => self.expr(handle, map),
+            Stmt::ContextSet { value, .. } => self.expr(value, map),
             Stmt::AwaitChange(..) => {}
             Stmt::Destructure(pattern, value) => {
                 self.pattern(pattern, map);
@@ -250,6 +254,7 @@ impl Mono<'_> {
             | ExprKind::Unit
             | ExprKind::Local(_)
             | ExprKind::ExternFn(_)
+            | ExprKind::ContextRead(..)
             | ExprKind::Error => {}
             ExprKind::Layout(ty, _) => *ty = self.ty(*ty, map),
             ExprKind::Reflect(op, ty, values) => {

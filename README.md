@@ -177,9 +177,9 @@ What the specifications define and Tondo does not do yet, found by
 compiling every example they contain and reading the rest against the
 code (2026-10-24):
 
-- **Contexts (being built):** `context` declarations, the `with` statement
-  and `within` deadlines (language 11.16, 11.17), with `@log` and `@label`
-  fields, the context logger of `std.log` and the tools that show them.
+- **Contexts (being built):** `within` deadlines (language 11.17), the
+  fields marked `@log` and `@label`, the context logger of `std.log`, and
+  the tools that show contexts; `context` and `with` work.
 - **Tools:** the register `testing/doc-test-runtime-links.json`, which ties
   each fragment and script of a normative document to a test that runs it
   (21.6); `tondo doc-test` gives no `formatted_sha256` for an example the

@@ -264,6 +264,9 @@ pub struct TypeDecl {
     pub public: bool,
     /// `extern type`: laid out as C lays out the struct.
     pub foreign: bool,
+    /// `context Name = { ... }`: the record of a context (11.16), whose
+    /// fields have their initial values.
+    pub context: bool,
     /// `@packed` and `@align(n)` before the declaration.
     pub annotations: Vec<Annotation>,
     pub name: Ident,
@@ -291,6 +294,8 @@ pub struct FieldDecl {
     /// `@name("wire")` and `@ignore`, which serialization reads (8.6),
     /// or `@count(n)` in an `extern type`.
     pub annotations: Vec<Annotation>,
+    /// The initial value of a context's field (11.16).
+    pub default: Option<Expr>,
 }
 
 /// `@name`, `@name("text")` or `@name(16)` before a declaration or a
@@ -474,6 +479,12 @@ pub enum StmtKind {
     },
     /// `defer call(args)` or `defer { block }` (13.7).
     Defer(Defer),
+    /// `with Context { field: value }`: a context changed until the end of
+    /// the block (11.16).
+    With {
+        path: Vec<Ident>,
+        fields: Vec<FieldInit>,
+    },
     Expr(Expr),
 }
 

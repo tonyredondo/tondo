@@ -117,6 +117,9 @@ fn may_panic(statement: &Statement) -> bool {
                     Rvalue::Call(hir::Callee::Std(function), _) => !matches!(
                         function,
                         hir::StdFn::RecoverEnter
+                            | hir::StdFn::ContextGet(_)
+                            | hir::StdFn::ContextSet(_)
+                            | hir::StdFn::ContextRestore
                             | hir::StdFn::RecoverEnd
                             | hir::StdFn::RecoverLeave
                             | hir::StdFn::RecoverCatch
@@ -227,6 +230,8 @@ enum Exit {
     Defer(Rc<hir::Expr>),
     /// The end of a `recover` block (15.9).
     Recover,
+    /// The end of a `with`: the contexts its local saved come back (11.16).
+    Restore(Local),
 }
 
 /// Where a statement starts again: its first block, how many scopes and
@@ -517,6 +522,7 @@ impl Builder<'_> {
                     Exit::Release(local) => u64::from(local.0),
                     Exit::Defer(call) => Rc::as_ptr(call) as u64 | 1 << 63,
                     Exit::Recover => u64::MAX - 1,
+                    Exit::Restore(local) => u64::from(local.0) | 1 << 61,
                 });
             }
             key.push(u64::MAX);
@@ -938,6 +944,11 @@ impl Builder<'_> {
         match exit {
             Exit::Release(local) => self.push(Statement::Release(Place::local(local))),
             Exit::Recover => self.std_call(hir::StdFn::RecoverLeave, Span::default()),
+            Exit::Restore(saved) => {
+                let unit = self.new_local(Ty::UNIT);
+                let call = Rvalue::Call(hir::Callee::Std(hir::StdFn::ContextRestore), vec![Operand::local(saved)]);
+                self.push(Statement::Assign(Place::local(unit), Box::new(call), Span::default()));
+            }
             Exit::Defer(call) => {
                 // Unregister it first, so a panic in the cleanup cannot run it again.
                 self.push(Statement::DeferPop);
@@ -1462,6 +1473,15 @@ impl Builder<'_> {
                 let local = self.bind(*local);
                 self.push(Statement::Lend(local, place));
             }
+            // The context has a new value until the block ends, which
+            // restores what the call saved (11.16).
+            hir::Stmt::ContextSet { context, value, span } => {
+                let made = self.expr(value);
+                let saved = self.new_local(Ty::int(crate::types::IntTy::U64));
+                let set = Rvalue::Call(hir::Callee::Std(hir::StdFn::ContextSet(*context)), vec![made]);
+                self.assign(Place::local(saved), set, *span);
+                self.scopes.last_mut().unwrap().push(Exit::Restore(saved));
+            }
             hir::Stmt::LockSync { guard, inner, handle, mode, span } => {
                 let handle = self.expr(handle);
                 let guard = self.bind(*guard);
@@ -1930,6 +1950,14 @@ impl Builder<'_> {
             },
             // Newtypes share their value's representation.
             hir::ExprKind::Retype(inner) => self.expr(inner),
+            // The task's value of the context, read in place: the task's
+            // contexts hold its `Ref` while the code runs (11.16).
+            hir::ExprKind::ContextRead(context, reference) => {
+                let held = self.new_local(*reference);
+                let get = Rvalue::Call(hir::Callee::Std(hir::StdFn::ContextGet(*context)), Vec::new());
+                self.push(Statement::Assign(Place::local(held), Box::new(get), e.span));
+                Operand::Copy(Place::local(held).deref())
+            }
             hir::ExprKind::RefValue(reference) => {
                 let value = self.expr(reference);
                 Operand::Copy(self.place_of(value, reference.ty).deref())
@@ -2402,6 +2430,7 @@ fn stmt_span(stmt: &hir::Stmt) -> Span {
         hir::Stmt::Assign { span, .. }
         | hir::Stmt::AssignSlice { span, .. }
         | hir::Stmt::LockSync { span, .. }
+        | hir::Stmt::ContextSet { span, .. }
         | hir::Stmt::AwaitChange(_, span) => *span,
         hir::Stmt::Defer { closure, .. } => closure.span,
         hir::Stmt::Loop { condition: Some(condition), .. } => condition.span,
@@ -2420,6 +2449,7 @@ fn stmt_kind(stmt: &hir::Stmt) -> &'static str {
         hir::Stmt::Defer { .. } => "defer",
         hir::Stmt::Lend { .. } => "lend",
         hir::Stmt::LockSync { .. } | hir::Stmt::AwaitChange(..) => "lock",
+        hir::Stmt::ContextSet { .. } => "with",
         hir::Stmt::Expr(_) => "expr",
         hir::Stmt::Return(_) => "return",
         hir::Stmt::Fail(_) => "fail",

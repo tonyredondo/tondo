@@ -294,9 +294,12 @@ fn significant_newlines(mut raw: Vec<Token>, bracketed: Vec<usize>, end: u32) ->
             if previous.is_none_or(|t| *t == Tok::Newline || suppresses_following_newline(t)) {
                 continue;
             }
-            // A run of newlines is followed by a token, or by the end.
+            // A run of newlines is followed by a token, or by the end. A
+            // `with` continues the line only as a record's update, before
+            // `{`; before a name it changes a context (11.16).
             let next = raw.get(i + 1).map(|t| &t.tok);
-            if next.is_some_and(|t| *t == Tok::Dot || is_binary_continuation(t)) {
+            let context = next == Some(&Tok::Kw(Kw::With)) && raw.get(i + 2).is_some_and(|t| t.tok != Tok::LBrace);
+            if next.is_some_and(|t| *t == Tok::Dot || is_binary_continuation(t)) && !context {
                 continue;
             }
         }

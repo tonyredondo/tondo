@@ -66,6 +66,10 @@ with statements cannot be imported.
   `some(x)` and `none`; results are `ok(x)` and `err(e)`. A bug panics;
   `recover { ... }` stops a panic, as a `T ! Panic`, at the edge of a
   request or a job.
+- What belongs to the work that runs, as the request or the trace, goes in
+  a `context Request = { id: String = "" }`: any function reads
+  `Request.id`, and `with Request { id: x }` changes it until the block
+  ends. Nothing passes it as a parameter.
 - Strings interpolate with `{expr}`; `{{` is a literal brace. `+` does not
   join strings.
 - Methods are declared outside the type: `fn User.greet(self): String`.
@@ -73,7 +77,7 @@ with statements cannot be imported.
 - A trait method on a concrete value is called through the trait:
   `Display.display(user)`; inside generic code, `value.display()`.
 - `match`, `test`, `derive`, `with`, `as` and `select` are keywords, and
-  `recover` before `{`. There is no `if let`, no `|` in patterns and no
+  `recover` before `{` and `context` before a declaration's name. There is no `if let`, no `|` in patterns and no
   `null`.
 - Collections are values: assigning copies (cheaply). `push` needs `var`.
 - `tondo fmt` decides the layout: write compactly and let it format.
@@ -137,7 +141,7 @@ types        records, enums, newtypes, unions, generics, traits
 errors       T ! E, ?, fail, Option, panics, recover, main's errors
 collections  Array, Map, Set, Deque, ranges, iterators
 text         strings, characters, bytes, formatting
-tasks        spawn, Group, channels, select, cancellation, std.sync
+tasks        spawn, Group, channels, select, cancellation, std.sync, contexts
 projects     tondo.toml, modules, imports, dependencies, native libraries
 testing      test, suite, std.testing, snapshots, tondo test
 stdlib       the standard modules and what each is for

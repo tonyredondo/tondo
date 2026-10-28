@@ -289,6 +289,9 @@ pub(crate) struct Task {
     /// The set of labels of `profile.withLabels` it carries, `0` for none,
     /// which its samples record and the tasks it starts inherit.
     labels: std::sync::atomic::AtomicU32,
+    /// Its contexts (language 11.16), shared with the task that spawned it
+    /// until a `with` changes them.
+    pub(crate) context: super::contexts::Held,
     /// The `recover` blocks it is running, innermost last (language 15.9),
     /// with the tasks of each once it starts one.
     pub(crate) recovers: Vec<Option<Arc<super::panics::Owner>>>,
@@ -2161,6 +2164,7 @@ fn new_task(
         in_domain: !current().is_null() && unsafe { (*current()).in_domain },
         origin: None,
         labels: std::sync::atomic::AtomicU32::new(labels()),
+        context: super::contexts::inherited(),
         recovers: Vec::new(),
         // A task started inside a `recover` belongs to it, until detached.
         owner: super::panics::owner_of_new(),

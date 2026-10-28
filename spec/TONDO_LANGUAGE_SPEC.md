@@ -447,7 +447,7 @@ Una nueva línea no produce `NL`:
   - `+`, `-`, `*`, `/`, `%`, `<<`, `>>`, `&`, `^`, `|`, `..`, `..=`.
   - `<`, `<=`, `>`, `>=`, `==`, `!=`, `in`, `and`, `or` o `with`.
   - Los prefijos incompletos `not`, `~`, `spawn`, `fail` o `defer`.
-- Cuando el siguiente token significativo es `.`, o uno de los operadores binarios de la lista anterior, desde `+` hasta `with`.
+- Cuando el siguiente token significativo es `.`, o uno de los operadores binarios de la lista anterior, desde `+` hasta `with`. Un `with` solo continúa la línea anterior cuando le sigue `{`, la actualización de un record (9.3); seguido de un nombre empieza la sentencia que cambia un contexto (11.16).
 
 En cualquier otro caso produce exactamente un `NL` aunque existan varias nuevas líneas físicas consecutivas; el parser conserva aparte cuántas líneas y comentarios había para documentación y formato. Cuando se anidan delimitadores, manda el delimitador abierto más interior: entrar en `{}` restaura las nuevas líneas significativas aunque ese body esté dentro de `()` o `[]`, y entrar después en unos `()` o `[]` interiores vuelve a suprimirlas hasta su cierre. Una llave `{` nunca suprime por sí sola el `NL`, porque dentro de un body las nuevas líneas separan elementos. `return` tampoco lo suprime: `return` al final de una línea devuelve `Unit`, y para devolver una expresión esta comienza en esa misma línea.
 
@@ -3883,7 +3883,8 @@ pub context Trace = {
 contexto. Cada campo lleva un valor inicial constante (6.5), el que se lee
 antes de cualquier `with`; un valor que solo existe al ejecutar, como un tracer,
 se declara opcional y se pone en `main`. Los campos deben cumplir `Send`
-(16.13), porque los contextos viajan con las tareas. Un campo `priv` solo se lee
+(16.13), porque los contextos viajan con las tareas, y ser `Copy`, porque
+leerlos los copia. Un campo `priv` solo se lee
 y se cambia en el módulo que declara el contexto, como en un record (7.6). Un
 contexto no es genérico.
 
@@ -3988,9 +3989,10 @@ tarea y de dónde viene cada valor (7.4, 7.5 y 7.6 del toolchain).
 
 `context` solo es una palabra del lenguaje al principio de una declaración,
 seguido del nombre (5.5). Un campo sin valor inicial constante, que no cumple
-`Send`, o con una anotación que no es `@log` ni `@label` o cuyo tipo no tiene
-`Display`, produce `E1616`. Un `with` sobre algo que no es un contexto, con un
-campo que no existe o repetido, o fuera de un cuerpo, produce `E1617`.
+`Send` o `Copy`, o con una anotación que no es `@log` ni `@label` o cuyo tipo
+no tiene `Display`, produce `E1616`. Un `with` sobre algo que no es un contexto
+produce `E1617`; sus campos se comprueban como los de la actualización de un
+record (9.3).
 
 ### 11.17 Plazos: `within`
 
@@ -8214,8 +8216,8 @@ oculten un diagnóstico independiente.
 | `E1612` | `invalid-select-operand` | Un brazo de `select` no es `receive`, `send`, `wait`, `next` ni `sleep`. |
 | `E1613` | `invalid-select-shape` | `select` está vacío, repite `else`, lo sitúa antes de otro brazo o usa un binding refutable. |
 | `E1615` | `conflicting-select-ownership` | Dos brazos reservan el mismo dueño afín de formas incompatibles. |
-| `E1616` | `invalid-context-declaration` | Un campo de un contexto no tiene valor inicial constante, no cumple `Send` o tiene una anotación que no es `@log` ni `@label`, o cuyo tipo no tiene `Display`. |
-| `E1617` | `invalid-context-change` | `with` cambia algo que no es un contexto, un campo que no existe o repetido, o aparece fuera de un cuerpo. |
+| `E1616` | `invalid-context-declaration` | Un campo de un contexto no tiene valor inicial constante, no cumple `Send` o `Copy`, o tiene una anotación que no es `@log` ni `@label`, o cuyo tipo no tiene `Display`. |
+| `E1617` | `invalid-context-change` | `with Nombre { ... }` nombra algo que no es un contexto. |
 
 #### Unsafe, programas y constantes
 

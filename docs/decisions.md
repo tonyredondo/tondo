@@ -2852,3 +2852,24 @@ functions keep going without frame pointers. Arithmetic of floats and the
 operations that only add or take an element need no check, nor do those
 the optimizations proved cannot panic. The benchmarks of `bench/` run
 within their noise of the same programs without a `recover`.
+
+## 2026-10-28 — A context goes with the work that runs
+
+A server needs values that belong to the work it does, such as the
+request, the user or the trace, in every function below the one that knows
+them. Go passes a `context.Context` to each, which is ceremony. Odin passes
+a hidden context to each call, with fixed fields. .NET's `AsyncLocal` needs
+global state to declare. A Tondo context is declared as a record with
+constant initial values and read by its name: `Trace.span`. A `with`
+statement changes it until its block ends, restored whichever way the block
+ends, so three contexts are three lines and never three levels of nesting.
+A change never flows back to a caller, and a task takes the context of the
+point where it is spawned, as .NET does. A value set at the start of `main`
+is the program's, which covers what a mutable global would hold.
+
+Each task points to a table of `Ref`s, one per context the program
+declares, which nothing changes once it is made. A `with` makes a new table
+and keeps the old one to restore it, and a spawned task shares its
+parent's. Reading a field loads it from its `Ref` in place, and the table
+of initial values is made when a task first reads one, from a function the
+compiler writes for each context.

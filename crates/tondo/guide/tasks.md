@@ -141,3 +141,42 @@ fn main(): !(executor.ExecutorError | executor.SubmitError | executor.SendError)
     counter.stop()?
 }
 ```
+
+## Contexts
+
+A value that belongs to the work that runs, as the request, the user or the
+trace, is a `context`: any function reads it without a parameter.
+
+```tondo
+import std.console
+
+context Request = {
+    id: String = ""
+    user: String? = none
+}
+
+fn greet(): String {
+    let user = Request.user.unwrapOr("guest")
+    "hello {user} ({Request.id})"
+}
+
+fn handle(id: String, user: String) {
+    with Request { id, user: some(user) }
+    console.println(greet())
+}
+
+fn main() {
+    handle("r1", "ada")
+    console.println(greet())
+}
+```
+
+- `with Request { field: value }` changes it from there to the end of the
+  block, whichever way the block ends; several fields go in one `with`, and
+  several contexts in lines one after another. A change never reaches the
+  caller.
+- A task takes the context of the point where it is spawned. A value set
+  at the start of `main` is the whole program's, as a tracer or a
+  configuration: there are no mutable globals.
+- Initial values are constants; a value made as the program runs is a
+  `T? = none`, set with `with`. Fields are `Send` and `Copy`.

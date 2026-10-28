@@ -590,7 +590,12 @@ impl Linker<'_> {
                 self.declared(&mut t.name);
                 self.generics(&mut t.generics);
                 match &mut t.body {
-                    TypeBody::Record(fields) => fields.iter_mut().for_each(|f| self.ty(&mut f.ty)),
+                    TypeBody::Record(fields) => fields.iter_mut().for_each(|f| {
+                        self.ty(&mut f.ty);
+                        if let Some(default) = &mut f.default {
+                            self.expr(default);
+                        }
+                    }),
                     TypeBody::Newtype(inner) => self.ty(inner),
                     TypeBody::Opaque => {}
                 }
@@ -787,6 +792,10 @@ impl Linker<'_> {
             }),
             StmtKind::Defer(Defer::Call(call)) => self.expr(call),
             StmtKind::Defer(Defer::Block(block)) => self.block(block),
+            StmtKind::With { path, fields } => {
+                self.path(path, Position::Any);
+                fields.iter_mut().filter_map(|f| f.value.as_mut()).for_each(|v| self.expr(v));
+            }
         }
     }
 

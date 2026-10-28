@@ -1,0 +1,86 @@
+// A context goes with the work that runs: any function reads it, `with`
+// changes it until its block ends, whichever way it ends, and a task takes
+// the one of where it was spawned.
+
+import std.console
+import std.time
+
+context Ctx = {
+    name: String = "base"
+    hits: Int = 0
+}
+
+fn failing(): Int {
+    with Ctx { name: "inside the panic" }
+    let empty: Array[Int] = []
+    empty[3]
+}
+
+fn early(leave: Bool): Int {
+    with Ctx { name: "early" }
+    if leave {
+        return 1
+    }
+    2
+}
+
+fn deferredBefore() {
+    defer console.println("defer before the with sees {Ctx.name}")
+    with Ctx { name: "late" }
+}
+
+fn deferredAfter() {
+    with Ctx { name: "set" }
+    defer console.println("defer after the with sees {Ctx.name}")
+}
+
+fn sleeper() {
+    with Ctx { name: "sleeping" }
+    time.sleep(time.seconds(30))
+}
+
+fn report(out: Sender[String]) {
+    out.send("detached sees {Ctx.name}")
+}
+
+fn main() {
+    let caught = recover { failing() }
+    console.println("after recover: {caught.isErr()} {Ctx.name}")
+    let _ = early(true) + early(false)
+    console.println("after early: {Ctx.name}")
+    deferredBefore()
+    deferredAfter()
+    let job = spawn sleeper()
+    job.cancel()
+    console.println("after cancel: {Ctx.name}")
+    with Ctx { name: "outer", hits: Ctx.hits + 1 }
+    let show = () { "closure sees {Ctx.name}" }
+    let (out, seen) = channel[String](1)
+    spawn detached report(out)
+    console.println(seen.receive().unwrapOr("nothing"))
+    {
+        with Ctx { name: "block" }
+        console.println(show())
+    }
+    console.println(show())
+    for i in 0..3 {
+        with Ctx { hits: Ctx.hits + i }
+        if i == 1 {
+            continue
+        }
+        console.println("loop {i}: {Ctx.hits}")
+    }
+    console.println("end: {Ctx.name} {Ctx.hits}")
+}
+
+// expect-stdout: after recover: true base
+// expect-stdout: after early: base
+// expect-stdout: defer before the with sees base
+// expect-stdout: defer after the with sees set
+// expect-stdout: after cancel: base
+// expect-stdout: detached sees outer
+// expect-stdout: closure sees block
+// expect-stdout: closure sees outer
+// expect-stdout: loop 0: 1
+// expect-stdout: loop 2: 3
+// expect-stdout: end: outer 1

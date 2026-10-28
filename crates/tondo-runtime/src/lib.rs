@@ -17,6 +17,7 @@ mod cbor;
 mod civil;
 mod clock;
 mod codec;
+mod contexts;
 mod cycles;
 mod debugger;
 mod diagnostics;
@@ -2590,6 +2591,8 @@ pub const LEAK_EXIT_CODE: i32 = 99;
 pub fn check_leaks() -> Option<usize> {
     std::env::var_os("TONDO_RT_CHECK_LEAKS")?;
     tasks::wait_foreign_calls();
+    // The contexts' initial values live as long as the program.
+    contexts::end();
     // Garbage cycles are not leaks: the collector frees them.
     cycles::collect_all();
     let live = LIVE_OBJECTS.live();
