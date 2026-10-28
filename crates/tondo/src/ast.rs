@@ -513,6 +513,8 @@ pub enum ExprKind {
     Unsafe(Block),
     /// `recover { ... }` (15.9).
     Recover(Block),
+    /// `within limit { ... }` (11.17).
+    Within(Box<Expr>, Block),
     Int {
         value: u64,
         suffix: Option<&'static str>,

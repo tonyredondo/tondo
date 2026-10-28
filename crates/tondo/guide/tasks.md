@@ -180,3 +180,31 @@ fn main() {
   configuration: there are no mutable globals.
 - Initial values are constants; a value made as the program runs is a
   `T? = none`, set with `with`. Fields are `Send` and `Copy`.
+
+`within limit { ... }` gives a block a deadline: when it passes, the
+block's next wait ends, its `defer`s run and its tasks are cancelled, and
+the result is `err(time.TimedOut)`.
+
+```tondo
+import std.console
+import std.time
+
+fn fetch(): String {
+    time.sleep(time.seconds(10))
+    "page"
+}
+
+fn main() {
+    match within time.milliseconds(100) { fetch() } {
+        ok(page) => console.println(page)
+        err(timedOut) => console.println("{timedOut}")
+    }
+}
+```
+
+- A block of type `T` gives `T ! time.TimedOut`; one of `T ! E`, `T ! (E |
+  time.TimedOut)`, which `?` passes on. A computation that does not wait is
+  not stopped.
+- Tasks the block starts see the deadline (`time.deadline()`,
+  `time.remaining()`), and a detached task does not. A `recover` lets a
+  deadline go through, and a `within` lets a panic go through.

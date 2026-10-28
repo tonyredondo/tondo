@@ -229,6 +229,7 @@ enum StdModule {
     InternalFuzz,
     /// `std.internal.panic`: what a panic carries beyond its message.
     InternalPanic,
+    InternalTime,
 }
 
 /// The types `std.process` declares when imported.
@@ -1521,6 +1522,45 @@ impl<'a> Checker<'a> {
         Self::mk(hir::ExprKind::Recover(block, Box::new(caught)), ty, span)
     }
 
+    /// `within limit { ... }` (11.17): the block's value, as a result whose
+    /// error also takes `time.TimedOut`, which it is when the deadline
+    /// passes first. The limit is evaluated first, into a binding that the
+    /// error reads.
+    fn within(&mut self, cx: &mut FnCx, limit: &ast::Expr, block: &ast::Block, span: Span) -> hir::Expr {
+        let (Some(duration), Some(timed_out)) = (self.duration, self.timed_out()) else {
+            let message =
+                "`within` takes a `time.Duration`: `import std.time`, and write `within time.seconds(2) { ... }`";
+            self.diags.error("E1001", limit.span, message);
+            self.block(cx, block, None);
+            return Self::error_expr(span);
+        };
+        let limit = self.expr(cx, limit, Some(duration));
+        let limit = self.coerce(limit, duration);
+        let held = self.hidden_local(cx, duration);
+        let block = self.block(cx, block, None);
+        let (ty, error) = match *self.types.kind(block.ty) {
+            TyKind::Result(ok, error) => {
+                let error = self.types.union(&[error, timed_out]);
+                (self.types.intern(TyKind::Result(ok, error)), error)
+            }
+            _ => (self.types.intern(TyKind::Result(block.ty, timed_out)), timed_out),
+        };
+        let read = Self::mk(hir::ExprKind::Local(held), duration, span);
+        let failure = Self::mk(hir::ExprKind::Record(vec![(0, read.clone())]), timed_out, span);
+        let failure = self.coerce(failure, error);
+        let within = Self::mk(hir::ExprKind::Within(Box::new(read), block, Box::new(failure)), ty, span);
+        let stmts = vec![hir::Stmt::Let(held, limit)];
+        Self::mk(hir::ExprKind::Block(hir::Block { stmts, tail: Some(Box::new(within)), ty }), ty, span)
+    }
+
+    /// `time.TimedOut`, which `std.time` writes in Tondo (11.17).
+    fn timed_out(&self) -> Option<Ty> {
+        match self.type_names.get("datetime.TimedOut") {
+            Some(&TypeName::Nominal(ty)) => Some(ty),
+            _ => None,
+        }
+    }
+
     /// A call of a function of the standard library's `std.panics`.
     fn panics_call(&mut self, name: &str, value: hir::Expr, span: Span) -> hir::Expr {
         let Some(&ModuleName::Fn(id)) = self.names.get(name) else { unreachable!("the prelude brings `std.panics`") };
@@ -2468,6 +2508,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "net"] => StdModule::InternalNet,
             ["std", "internal", "fuzz"] => StdModule::InternalFuzz,
             ["std", "internal", "panic"] => StdModule::InternalPanic,
+            ["std", "internal", "time"] => StdModule::InternalTime,
             ["std", "internal", "channel"] => StdModule::InternalChannel,
             ["std", rest @ ..] => {
                 let name = rest.join(".");
@@ -2737,6 +2778,7 @@ impl<'a> Checker<'a> {
             (Some(ModuleName::Module(StdModule::Time)), "TimeError") => self.time_error,
             (Some(ModuleName::Module(StdModule::Time)), "Instant") => self.instant,
             (Some(ModuleName::Module(StdModule::Time)), "DateTime") => self.datetime,
+            (Some(ModuleName::Module(StdModule::Time)), "TimedOut") => self.timed_out(),
             (Some(ModuleName::Module(StdModule::Sync)), "CompareExchange") => self.compare_exchange.map(|(_, g)| g),
             (Some(ModuleName::Module(StdModule::Fs)), name) => {
                 let fs = self.fs?;
@@ -2795,9 +2837,13 @@ impl<'a> Checker<'a> {
     fn shown_type_name(&self, name: &str, module: u32) -> String {
         match name.strip_prefix("prelude.") {
             Some(bare) if PRELUDE_TYPES.contains(&bare) && Some(module) == self.prelude => bare.to_string(),
-            // `Panic`, which the prelude names from `std.panics`.
+            // `Panic`, which the prelude names from `std.panics`, and
+            // `time.TimedOut`, which `std.time` writes in Tondo.
             _ if self.module_paths.get(module as usize).is_some_and(|path| path == &["std", "panics"]) => {
                 name.strip_prefix("panics.").unwrap_or(name).to_string()
+            }
+            _ if self.module_paths.get(module as usize).is_some_and(|path| path == &["std", "datetime"]) => {
+                format!("time.{}", name.strip_prefix("datetime.").unwrap_or(name))
             }
             _ => name.to_string(),
         }
@@ -2887,7 +2933,8 @@ impl<'a> Checker<'a> {
                 ast::Item::Enum(decl) => decl.module,
                 _ => unreachable!(),
             };
-            let shown = match self.module_paths.get(module as usize).is_some_and(|path| path == &["std", "panics"]) {
+            let renamed = |path: &Vec<String>| path == &["std", "panics"] || path == &["std", "datetime"];
+            let shown = match self.module_paths.get(module as usize).is_some_and(renamed) {
                 true => self.shown_type_name(&name.name, module),
                 false => name.name.clone(),
             };
@@ -8714,6 +8761,7 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Try(inner) => self.try_expr(cx, inner, expected, span),
             ast::ExprKind::Closure(closure) => self.closure(cx, closure, expected, span),
             ast::ExprKind::Recover(block) => self.recover(cx, block, expected, span),
+            ast::ExprKind::Within(limit, block) => self.within(cx, limit, block, span),
             ast::ExprKind::Unsafe(block) => {
                 self.meta_denied(span, "`unsafe`");
                 let outer = std::mem::replace(&mut cx.unsafe_region, true);
@@ -12186,7 +12234,8 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalCbor
                     | StdModule::InternalNet
                     | StdModule::InternalFuzz
-                    | StdModule::InternalPanic),
+                    | StdModule::InternalPanic
+                    | StdModule::InternalTime),
                 )),
             ) => {
                 // `joined(values, separator)`: the elements' `Display`, with
@@ -12237,6 +12286,7 @@ impl<'a> Checker<'a> {
                     StdModule::InternalNet => "net",
                     StdModule::InternalFuzz => "fuzz",
                     StdModule::InternalPanic => "panic",
+                    StdModule::InternalTime => "time",
                     _ => "reflect",
                 };
                 let found =
@@ -12397,6 +12447,16 @@ impl<'a> Checker<'a> {
                     "utcNow" => (StdFn::TimeUtcNow, vec![], datetime),
                     "utc" => (StdFn::TimeUtc, vec![duration], datetime),
                     // ISO 8601, written in Tondo (14.3.4).
+                    // The deadline of the task (11.17), written in Tondo.
+                    "deadline" | "remaining"
+                        if let Some(&ModuleName::Fn(id)) = self.names.get(&format!("datetime.{member}")) =>
+                    {
+                        let result = if *member == "deadline" { instant } else { duration };
+                        let result = self.types.intern(TyKind::Option(result));
+                        let signature = Signature::simple(Vec::new(), result);
+                        let target = CallTarget::new(Callee::Fn(id), signature, expected);
+                        return self.call_signature(cx, target, None, args, span);
+                    }
                     "parseDateTime" if let Some(&ModuleName::Fn(id)) = self.names.get("datetime.parse") => {
                         let result = self.types.intern(TyKind::Result(datetime, self.time_error.unwrap()));
                         let signature = Signature::simple(vec![Ty::STRING], result);

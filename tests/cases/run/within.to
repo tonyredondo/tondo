@@ -1,0 +1,92 @@
+// `within` gives a block a deadline: its waits end when it passes, the
+// block unwinds, and the result is `err(time.TimedOut)`. A panic goes
+// through a `within`, and a deadline through a `recover`; tasks the block
+// starts see the deadline, and a detached one does not.
+
+import std.console
+import std.time
+
+fn slow(): Int {
+    time.sleep(time.seconds(2))
+    1
+}
+
+fn fast(): Int {
+    time.sleep(time.milliseconds(1))
+    2
+}
+
+fn fallible(broken: Bool): Int ! String {
+    if broken {
+        fail "broken"
+    }
+    time.sleep(time.seconds(2))
+    3
+}
+
+fn looks(): Bool {
+    time.remaining().isSome()
+}
+
+fn report(out: Sender[Bool]) {
+    out.send(looks())
+}
+
+fn waits(): Int {
+    defer console.println("child cleaned up")
+    time.sleep(time.seconds(30))
+    1
+}
+
+fn main() {
+    console.println("{within time.milliseconds(50) { slow() }}")
+    console.println("{within time.seconds(10) { fast() }}")
+    match within time.milliseconds(50) { fallible(false) } {
+        ok(value) => console.println("ok {value}")
+        err(problem) => console.println("err {problem}")
+    }
+    match within time.milliseconds(50) { fallible(true) } {
+        ok(value) => console.println("ok {value}")
+        err(problem) => console.println("err {problem}")
+    }
+    // The nearer deadline is the outer block's, which the inner one lets go.
+    let outer = within time.milliseconds(30) {
+        let inner = within time.seconds(5) { slow() }
+        console.println("never {inner}")
+        0
+    }
+    console.println("outer {outer}")
+    console.println("outside: {time.deadline().isSome()} {time.remaining().isSome()}")
+    let caught = recover { within time.seconds(1) { panic("boom") } }
+    console.println("a recover stops the panic: {caught.isErr()}")
+    let timed = within time.milliseconds(20) {
+        let stopped = recover { slow() }
+        console.println("never {stopped.isErr()}")
+        0
+    }
+    console.println("the within stops its deadline: {timed}")
+    let (out, seen) = channel[Bool](1)
+    let looked = within time.seconds(5) {
+        let job = spawn looks()
+        spawn detached report(out)
+        (job.wait(), seen.receive().unwrapOr(true))
+    }
+    console.println("the task sees it, a detached one does not: {looked}")
+    let stuck = within time.milliseconds(30) {
+        let job = spawn waits()
+        job.wait()
+    }
+    console.println("stuck: {stuck}")
+}
+
+// expect-stdout: err(timed out after 50ms)
+// expect-stdout: ok(2)
+// expect-stdout: err timed out after 50ms
+// expect-stdout: err broken
+// expect-stdout: outer err(timed out after 30ms)
+// expect-stdout: outside: false false
+// expect-stdout: a recover stops the panic: true
+// expect-stdout: the within stops its deadline: err(timed out after 20ms)
+// expect-stdout: the task sees it, a detached one does not: ok((true, false))
+// expect-stdout: child cleaned up
+// expect-stdout: stuck: err(timed out after 30ms)

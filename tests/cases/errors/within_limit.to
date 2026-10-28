@@ -1,0 +1,7 @@
+// `within` takes a `time.Duration`, from `std.time`.
+
+fn main() {
+    let _ = within 5 { 1 }
+}
+
+// expect-error: E1001 `within` takes a `time.Duration`

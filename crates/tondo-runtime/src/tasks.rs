@@ -292,6 +292,15 @@ pub(crate) struct Task {
     /// Its contexts (language 11.16), shared with the task that spawned it
     /// until a `with` changes them.
     pub(crate) context: super::contexts::Held,
+    /// The deadlines of the `within` blocks it runs (language 11.17),
+    /// innermost last: the one that holds, the nearest, and the index of the
+    /// block that set it.
+    pub(crate) withins: Vec<(Instant, usize)>,
+    /// Its deadline passed in a wait: it unwinds to the block of it.
+    pub(crate) expired: bool,
+    /// The deadline of the block that spawned it, which it reads and does
+    /// not keep (`contexts::deadline_nanos`).
+    pub(crate) inherited: AtomicU64,
     /// The `recover` blocks it is running, innermost last (language 15.9),
     /// with the tasks of each once it starts one.
     pub(crate) recovers: Vec<Option<Arc<super::panics::Owner>>>,
@@ -300,6 +309,8 @@ pub(crate) struct Task {
     pub(crate) owner: Option<Arc<super::panics::Owner>>,
     /// Detached since: it belongs to no `recover` but its own.
     pub(crate) free: AtomicBool,
+    /// The next task it spawns starts detached (11.11).
+    detaching: bool,
     /// A task of one of its `recover`s ended with a panic, which stops it
     /// as a cancellation would, without cancelling it.
     pub(crate) alarm: AtomicBool,
@@ -2141,6 +2152,8 @@ fn new_task(
     super::diagnostics::TASKS_SPAWNED.add(1);
     static IDS: AtomicU64 = AtomicU64::new(1);
     let sp = stack.as_ref().map_or(std::ptr::null_mut(), |stack| unsafe { initial_stack(stack.top()) });
+    // `spawn detached` said so just before (11.11).
+    let detached = unsafe { current().as_mut() }.is_some_and(|parent| std::mem::take(&mut parent.detaching));
     let task = Task {
         sp,
         id: IDS.fetch_add(1, Ordering::Relaxed),
@@ -2165,10 +2178,14 @@ fn new_task(
         origin: None,
         labels: std::sync::atomic::AtomicU32::new(labels()),
         context: super::contexts::inherited(),
+        withins: Vec::new(),
+        expired: false,
+        inherited: AtomicU64::new(if detached { u64::MAX } else { super::contexts::deadline_nanos() }),
         recovers: Vec::new(),
         // A task started inside a `recover` belongs to it, until detached.
-        owner: super::panics::owner_of_new(),
-        free: AtomicBool::new(false),
+        owner: if detached { None } else { super::panics::owner_of_new() },
+        free: AtomicBool::new(detached),
+        detaching: false,
         alarm: AtomicBool::new(false),
         unwinding: None,
         paused: Vec::new(),
@@ -2294,6 +2311,17 @@ pub fn run_cleanups() {
 const NONE: usize = usize::MAX;
 /// The index a cancellation claims a wait with.
 pub(crate) const CANCELLED: usize = usize::MAX - 1;
+/// What a wait gives when its task's deadline passed (11.17).
+const DEADLINE: usize = usize::MAX - 2;
+
+/// The deadline of the task passed: it unwinds to its `within` at its next
+/// check (11.17).
+fn expire(task: &mut Task) {
+    if !task.expired {
+        task.expired = true;
+        attend(true);
+    }
+}
 
 /// A task's wait for the first of one or more operations. The objects it
 /// waits on point to it until the task removes itself, and timers hold it,
@@ -2322,8 +2350,24 @@ impl Wait {
     /// returns its index, or `CANCELLED` if the task is cancelled first.
     pub(crate) fn block(&self) -> usize {
         let task = unsafe { &mut *self.task };
+        // The deadline of a `within` ends the wait when it passes, as a
+        // cancellation would, and the task unwinds to it (11.17).
+        if let Some(&(at, _)) = task.withins.last() {
+            let now = Instant::now();
+            match at.checked_duration_since(now).filter(|left| !left.is_zero()) {
+                Some(left) => {
+                    // Every wait is made in an `Arc` by `Wait::new`.
+                    let wait = unsafe {
+                        Arc::increment_strong_count(self as *const Wait);
+                        Arc::from_raw(self as *const Wait)
+                    };
+                    add_timer(left, wait, DEADLINE);
+                }
+                None => expire(task),
+            }
+        }
         lock(&task.waiting_lock);
-        let stopped = task.cancelled.load(Ordering::Acquire) || task.alarm.load(Ordering::Acquire);
+        let stopped = task.cancelled.load(Ordering::Acquire) || task.alarm.load(Ordering::Acquire) || task.expired;
         if stopped && self.claim(CANCELLED) {
             unlock(&task.waiting_lock);
             return CANCELLED;
@@ -2334,6 +2378,10 @@ impl Wait {
         lock(&task.waiting_lock);
         task.waiting = std::ptr::null();
         unlock(&task.waiting_lock);
+        if fired == DEADLINE {
+            expire(task);
+            return CANCELLED;
+        }
         fired
     }
 
@@ -2483,7 +2531,10 @@ pub(crate) unsafe fn channel_commit(
 /// Whether the current task is cancelled.
 pub(crate) fn cancelled() -> bool {
     let task = current();
-    !task.is_null() && unsafe { (*task).cancelled.load(Ordering::Acquire) || (*task).alarm.load(Ordering::Acquire) }
+    !task.is_null()
+        && unsafe {
+            (*task).cancelled.load(Ordering::Acquire) || (*task).alarm.load(Ordering::Acquire) || (*task).expired
+        }
 }
 
 /// Checked by compiled code after every call that may wait: a cancelled
@@ -2780,6 +2831,15 @@ unsafe fn complete(join: *mut JoinObject) -> bool {
 /// The joins of detached tasks that are still running.
 static DETACHED: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 
+/// `spawn detached`: the task the next spawn starts is detached from its
+/// start (11.11).
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_spawn_detached() {
+    if let Some(task) = unsafe { current().as_mut() } {
+        task.detaching = true;
+    }
+}
+
 /// `job.detach()`: the task runs on without anyone waiting for it, and
 /// holds its join until it ends.
 #[unsafe(no_mangle)]
@@ -2792,9 +2852,11 @@ pub unsafe extern "C" fn tondo_rt_join_detach(join: *mut JoinObject) {
             j.detached = true;
             j.rc.fetch_add(1, Ordering::Relaxed);
             detached.push(join as usize);
-            // A detached task belongs to no `recover` but its own.
+            // A detached task belongs to no `recover` but its own, and to
+            // no deadline.
             if !j.task.is_null() {
                 (*j.task).free.store(true, Ordering::Release);
+                (*j.task).inherited.store(u64::MAX, Ordering::Release);
             }
         }
         unlock(&j.lock);

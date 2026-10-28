@@ -391,6 +391,10 @@ pub enum ExprKind {
     /// `recover { ... }` (15.9): the block's value as `ok`, or the panic
     /// that stopped it as `err`, which the expression reads.
     Recover(Block, Box<Expr>),
+    /// `within limit { ... }` (11.17): the limit, a binding's value; the
+    /// block, whose value the result holds; and the result's error when the
+    /// deadline passes first.
+    Within(Box<Expr>, Block, Box<Expr>),
     /// The members of the suite (or of the root of the test tree) whose
     /// setup is done: each node with the closure, erased to a `fn()`, that
     /// runs it (testing 7.3).
@@ -834,6 +838,13 @@ pub enum StdFn {
     /// A panic with the code, whose message is the argument, where the
     /// code unwinds when the call returns (15.9).
     PanicUnwind(u32),
+    /// The task the next `spawn` starts is detached (11.11).
+    SpawnDetached,
+    /// A `within` block starts with its limit, ends, and asks whether what
+    /// unwinds to it is its deadline (11.17).
+    WithinEnter,
+    WithinLeave,
+    WithinCatch,
     /// The `Ref` of a context's value where the code runs; a new value of
     /// it, which gives what to restore; and that restored (11.16).
     ContextGet(u32),
@@ -1472,6 +1483,16 @@ pub const NATIVES: &[Native] = {
         panics("name", &[String], String, "tondo_rt_panic_name"),
         panics("restage", &[String, String, String], Unit, "tondo_rt_panic_restage"),
         panics("report", &[String, String, String, String], Unit, "tondo_rt_panic_report"),
+        // `std.internal.time`: how long the task has until its deadline
+        // (11.17), in nanoseconds, or -1 without one.
+        Native {
+            module: "time",
+            name: "remaining",
+            receiver: None,
+            params: &[],
+            result: Int,
+            symbol: "tondo_rt_deadline_remaining",
+        },
     ]
 };
 
@@ -1571,6 +1592,11 @@ pub fn written(e: &Expr, out: &mut Vec<LocalId>) {
         ExprKind::Recover(block, caught) => {
             written_block(block, out);
             written(caught, out);
+        }
+        ExprKind::Within(limit, block, failure) => {
+            written(limit, out);
+            written_block(block, out);
+            written(failure, out);
         }
         ExprKind::Interpolate(segments) => segments.iter().for_each(|segment| {
             if let Segment::Value(value) = segment {

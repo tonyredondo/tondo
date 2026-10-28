@@ -615,6 +615,10 @@ impl Checker<'_> {
                 merge(then, otherwise)
             }
             ExprKind::Block(block) | ExprKind::Recover(block, _) => self.block(block, flow),
+            ExprKind::Within(limit, block, _) => {
+                let flow = self.consume(limit, flow)?;
+                self.block(block, flow)
+            }
             ExprKind::Call(callee, _, args) => {
                 let modes = (self.modes)(*callee);
                 let taken =

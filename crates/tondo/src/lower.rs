@@ -48,7 +48,8 @@ pub fn lower(program: &hir::Program, live: bool) -> Vec<Body> {
     let waits = waiting(&plain);
     // A program with a `recover` unwinds to it from any panic (15.9).
     let recovering = plain.iter().flat_map(|b| &b.blocks).flat_map(|b| &b.stmts).any(|s| {
-        matches!(s, Statement::Assign(_, r, _) if matches!(**r, Rvalue::Call(hir::Callee::Std(hir::StdFn::RecoverEnter), _)))
+        matches!(s, Statement::Assign(_, r, _)
+            if matches!(**r, Rvalue::Call(hir::Callee::Std(hir::StdFn::RecoverEnter | hir::StdFn::WithinEnter), _)))
     });
     if !waits.contains(&true) && !recovering {
         return plain;
@@ -117,6 +118,10 @@ fn may_panic(statement: &Statement) -> bool {
                     Rvalue::Call(hir::Callee::Std(function), _) => !matches!(
                         function,
                         hir::StdFn::RecoverEnter
+                            | hir::StdFn::SpawnDetached
+                            | hir::StdFn::WithinEnter
+                            | hir::StdFn::WithinLeave
+                            | hir::StdFn::WithinCatch
                             | hir::StdFn::ContextGet(_)
                             | hir::StdFn::ContextSet(_)
                             | hir::StdFn::ContextRestore
@@ -223,6 +228,14 @@ struct LoopCx {
 }
 
 /// One action of leaving a scope.
+/// What a `recover` or a `within` stops (15.9, 11.17), and how it reads
+/// what stopped it.
+#[derive(Clone, Copy)]
+enum Catch<'h> {
+    Recover(&'h hir::Expr),
+    Within(&'h hir::Expr, &'h hir::Expr),
+}
+
 #[derive(Clone)]
 enum Exit {
     Release(Local),
@@ -230,6 +243,8 @@ enum Exit {
     Defer(Rc<hir::Expr>),
     /// The end of a `recover` block (15.9).
     Recover,
+    /// The end of a `within` block (11.17).
+    Within,
     /// The end of a `with`: the contexts its local saved come back (11.16).
     Restore(Local),
 }
@@ -522,6 +537,7 @@ impl Builder<'_> {
                     Exit::Release(local) => u64::from(local.0),
                     Exit::Defer(call) => Rc::as_ptr(call) as u64 | 1 << 63,
                     Exit::Recover => u64::MAX - 1,
+                    Exit::Within => u64::MAX - 2,
                     Exit::Restore(local) => u64::from(local.0) | 1 << 61,
                 });
             }
@@ -568,42 +584,98 @@ impl Builder<'_> {
         self.push(Statement::Assign(Place::local(unit), Box::new(call), span));
     }
 
+    fn spawn(&mut self, e: &hir::Expr, body: &hir::Expr, detached: bool) -> Operand {
+        let ty = body.ty;
+        let value = self.expr(body);
+        let retain = self.move_flags(std::slice::from_ref(&value), &[true], &[ty])[0];
+        if detached {
+            self.std_call(hir::StdFn::SpawnDetached, e.span);
+        }
+        self.temp(e.ty, Rvalue::Spawn(value, retain), e.span)
+    }
+
     /// `recover { ... }` (15.9): `ok` with the block's value, or `err` with
-    /// the panic that stopped it, which `caught` reads, once the cleanups of
-    /// what the panic abandoned ran on its way here.
-    fn recover(&mut self, e: &hir::Expr, block: &hir::Block, caught: &hir::Expr) -> Operand {
+    /// the panic that stopped it, which `caught` reads; and `within limit {
+    /// ... }` (11.17): the block's value, already the result's, or `err` with
+    /// `failure` when its deadline passed first. What unwinds to one of them
+    /// and is not its own, a deadline to a `recover` or a panic to a
+    /// `within`, goes on unwinding, after the cleanups of what it abandoned.
+    fn catcher(&mut self, e: &hir::Expr, block: &hir::Block, catch_kind: Catch) -> Operand {
         let result = self.new_local(e.ty);
-        self.std_call(hir::StdFn::RecoverEnter, e.span);
+        let exit = match catch_kind {
+            Catch::Recover(_) => {
+                self.std_call(hir::StdFn::RecoverEnter, e.span);
+                Exit::Recover
+            }
+            Catch::Within(limit, _) => {
+                let limit = self.expr(limit);
+                let unit = self.new_local(Ty::UNIT);
+                let enter = Rvalue::Call(hir::Callee::Std(hir::StdFn::WithinEnter), vec![limit]);
+                self.push(Statement::Assign(Place::local(unit), Box::new(enter), e.span));
+                Exit::Within
+            }
+        };
         let (catch, join) = (self.new_block(), self.new_block());
         // Leaving the block another way, by `return`, `break`, `?`, `fail`
         // or a cancellation, ends it too.
-        self.scopes.push(vec![Exit::Recover]);
+        self.scopes.push(vec![exit]);
         self.recovers.push((self.scopes.len(), self.frames.len(), catch));
         self.in_frame(|b| {
             let value = b.block(block);
             if block.ty != Ty::NEVER {
-                let ok = b.variant(e.ty, OK, vec![value], e.span);
-                b.store(Place::local(result), ok, e.span);
+                // A `within`'s block that fails as `R ! E` gives `R ! (E |
+                // time.TimedOut)`.
+                let value = match *b.types.kind(block.ty) {
+                    TyKind::Result(..) if matches!(catch_kind, Catch::Within(..)) && block.ty != e.ty => {
+                        b.widen_result(value, block.ty, e.ty, e.span)
+                    }
+                    TyKind::Result(..) if matches!(catch_kind, Catch::Within(..)) => value,
+                    _ => b.variant(e.ty, OK, vec![value], e.span),
+                };
+                b.store(Place::local(result), value, e.span);
             }
         });
         self.recovers.pop();
         self.scopes.pop();
-        // Its tasks are done: if one ended with a panic, the block's value
-        // goes and the `recover` stops the panic.
-        let call = Rvalue::Call(hir::Callee::Std(hir::StdFn::RecoverEnd), Vec::new());
-        let failed = self.temp(Ty::BOOL, call, e.span);
-        let given = self.new_block();
-        self.terminate(Terminator::Branch(failed, given, join));
-        self.switch_to(given);
-        if block.ty != Ty::NEVER {
-            self.push(Statement::Release(Place::local(result)));
+        // The way out for what is not its own.
+        let outer = self.unwind_target();
+        match catch_kind {
+            // Its tasks are done: if one ended with a panic, the block's
+            // value goes and the `recover` stops the panic.
+            Catch::Recover(_) => {
+                let call = Rvalue::Call(hir::Callee::Std(hir::StdFn::RecoverEnd), Vec::new());
+                let failed = self.temp(Ty::BOOL, call, e.span);
+                let given = self.new_block();
+                self.terminate(Terminator::Branch(failed, given, join));
+                self.switch_to(given);
+                if block.ty != Ty::NEVER {
+                    self.push(Statement::Release(Place::local(result)));
+                }
+                self.goto(catch);
+            }
+            Catch::Within(..) => {
+                self.std_call(hir::StdFn::WithinLeave, e.span);
+                self.goto(join);
+            }
         }
-        self.goto(catch);
         self.switch_to(catch);
-        self.std_call(hir::StdFn::RecoverCatch, e.span);
+        let asked = match catch_kind {
+            Catch::Recover(_) => hir::StdFn::RecoverCatch,
+            Catch::Within(..) => hir::StdFn::WithinCatch,
+        };
+        let mine = self.temp(Ty::BOOL, Rvalue::Call(hir::Callee::Std(asked), Vec::new()), e.span);
+        let (stop, pass) = (self.new_block(), self.new_block());
+        self.terminate(Terminator::Branch(mine, stop, pass));
+        self.switch_to(pass);
+        self.std_call(hir::StdFn::UnwindResume, Span::default());
+        self.goto(outer);
+        self.switch_to(stop);
         self.in_frame(|b| {
-            let panic = b.expr(caught);
-            let err = b.variant(e.ty, ERR, vec![panic], e.span);
+            let error = match catch_kind {
+                Catch::Recover(caught) => b.expr(caught),
+                Catch::Within(_, failure) => b.expr(failure),
+            };
+            let err = b.variant(e.ty, ERR, vec![error], e.span);
             b.store(Place::local(result), err, e.span);
         });
         self.goto(join);
@@ -944,6 +1016,7 @@ impl Builder<'_> {
         match exit {
             Exit::Release(local) => self.push(Statement::Release(Place::local(local))),
             Exit::Recover => self.std_call(hir::StdFn::RecoverLeave, Span::default()),
+            Exit::Within => self.std_call(hir::StdFn::WithinLeave, Span::default()),
             Exit::Restore(saved) => {
                 let unit = self.new_local(Ty::UNIT);
                 let call = Rvalue::Call(hir::Callee::Std(hir::StdFn::ContextRestore), vec![Operand::local(saved)]);
@@ -1164,6 +1237,41 @@ impl Builder<'_> {
     /// function fails with when it is a member or a smaller union (15.3).
     fn widen(&mut self, error: Operand, from: Ty, span: Span) -> Operand {
         let TyKind::Result(_, to) = *self.types.kind(self.function.result) else { unreachable!() };
+        self.widen_into(error, from, to, span)
+    }
+
+    /// A result `R ! E` as one of type `to`, `R ! U`, whose error union
+    /// holds `E`: what a `within` gives when its block fails (11.17).
+    fn widen_result(&mut self, value: Operand, from: Ty, to: Ty, span: Span) -> Operand {
+        let (&TyKind::Result(_, error), &TyKind::Result(_, union)) = (self.types.kind(from), self.types.kind(to))
+        else {
+            unreachable!("results")
+        };
+        let place = self.place_of(value, from);
+        let tag_ty = self.types.tag_ty(from);
+        let tag = self.temp(tag_ty, Rvalue::Discriminant(place.clone()), span);
+        let failed = Rvalue::Binary(BinOp::Eq, tag, Operand::Const(Const::Int(ERR as i128, tag_ty)));
+        let failed = self.temp(Ty::BOOL, failed, span);
+        let result = self.new_local(to);
+        let (bad, good, done) = (self.new_block(), self.new_block(), self.new_block());
+        self.terminate(Terminator::Branch(failed, bad, good));
+        self.switch_to(bad);
+        let widened = self.widen_into(Operand::Copy(place.variant_field(ERR, 0)), error, union, span);
+        let value = self.variant(to, ERR, vec![widened], span);
+        self.store(Place::local(result), value, span);
+        self.goto(done);
+        self.switch_to(good);
+        let value = self.variant(to, OK, vec![Operand::Copy(place.variant_field(OK, 0))], span);
+        self.store(Place::local(result), value, span);
+        self.goto(done);
+        self.switch_to(done);
+        self.own(result);
+        Operand::local(result)
+    }
+
+    /// An error of type `from` as one of the error union `to`, which holds
+    /// it as a member or as a smaller union (15.3).
+    fn widen_into(&mut self, error: Operand, from: Ty, to: Ty, span: Span) -> Operand {
         if from == to {
             return error;
         }
@@ -2130,11 +2238,14 @@ impl Builder<'_> {
                 }
                 self.temp(Ty::UNIT, Rvalue::TestMembers(values), e.span)
             }
-            hir::ExprKind::Spawn(body) => {
-                let ty = body.ty;
-                let value = self.expr(body);
-                let retain = self.move_flags(std::slice::from_ref(&value), &[true], &[ty])[0];
-                self.temp(e.ty, Rvalue::Spawn(value, retain), e.span)
+            hir::ExprKind::Spawn(body) => self.spawn(e, body, false),
+            // `spawn detached`: the task starts detached, so that it never
+            // belongs to a `recover` nor holds a deadline (11.11, 11.17).
+            hir::ExprKind::TaskOp(hir::TaskOp::Detach, operands)
+                if let hir::ExprKind::Spawn(body) = &operands[0].kind =>
+            {
+                let join = self.spawn(&operands[0], body, true);
+                self.temp(e.ty, Rvalue::TaskOp(hir::TaskOp::Detach, vec![join], vec![false], e.span), e.span)
             }
             hir::ExprKind::TaskOp(hir::TaskOp::GroupWait, operands) => self.group_wait(e, &operands[0]),
             hir::ExprKind::Select(arms, otherwise) => self.select(e, arms, otherwise.as_deref()),
@@ -2203,7 +2314,8 @@ impl Builder<'_> {
                 let pieces = self.pieces(segments);
                 self.temp(Ty::STRING, Rvalue::Concat(pieces), e.span)
             }
-            hir::ExprKind::Recover(block, caught) => self.recover(e, block, caught),
+            hir::ExprKind::Recover(block, caught) => self.catcher(e, block, Catch::Recover(caught)),
+            hir::ExprKind::Within(limit, block, failure) => self.catcher(e, block, Catch::Within(limit, failure)),
             hir::ExprKind::Panic(message, code) => {
                 let message = self.expr(message);
                 self.panic_with(*code, message, e.span);

@@ -2,8 +2,40 @@
 // a program that imports std.time links with: ISO 8601 text and dates as
 // times since the Unix epoch.
 
+import std.internal.time as deadlineNative
 import std.serialization
 import std.time as __time
+
+/// The error of a `within` whose deadline passed first (11.17): the limit
+/// it had.
+pub type TimedOut = {
+    limit: __time.Duration
+}
+
+impl Display for TimedOut {
+    fn display(self): String {
+        "timed out after {self.limit}"
+    }
+}
+
+/// `time.deadline`: when the deadline of the running task passes, the
+/// nearest of the `within`s that hold it, or `none` without one.
+fn deadline(): __time.Instant? {
+    let left = deadlineNative.remaining()
+    if left < 0 {
+        return none
+    }
+    some(__time.now().add(__time.nanoseconds(left)))
+}
+
+/// `time.remaining`: what is left until that deadline, zero once it passed.
+fn remaining(): __time.Duration? {
+    let left = deadlineNative.remaining()
+    if left < 0 {
+        return none
+    }
+    some(__time.nanoseconds(left))
+}
 
 /// `time.parseDateTime`: `2026-10-22`, `2026-10-22T06:38:28Z`,
 /// `2026-10-22 08:38:28.5+02:00` and the like, in UTC.

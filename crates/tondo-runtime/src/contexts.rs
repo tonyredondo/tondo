@@ -7,6 +7,7 @@
 use super::{Glue, RefHeader};
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering, fence};
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 /// What gives a context's initial value: a function of the program.
 type Maker = unsafe extern "C" fn() -> *mut RefHeader;
@@ -127,6 +128,67 @@ pub unsafe extern "C" fn tondo_rt_context_restore(saved: *mut Table) {
     let Some(held) = current() else { return };
     let ended = std::mem::replace(&mut held.0, saved);
     unsafe { release(ended) };
+}
+
+/// The instant deadlines count from, which a task's inherited one is kept
+/// as nanoseconds since, `u64::MAX` for none.
+fn base() -> Instant {
+    static BASE: OnceLock<Instant> = OnceLock::new();
+    *BASE.get_or_init(Instant::now)
+}
+
+/// The deadline of the running task: its innermost `within`'s, or the one
+/// of the block that spawned it (11.17).
+fn deadline() -> Option<Instant> {
+    let task = unsafe { crate::tasks::current().as_ref() }?;
+    if let Some(&(at, _)) = task.withins.last() {
+        return Some(at);
+    }
+    match task.inherited.load(Ordering::Acquire) {
+        u64::MAX => None,
+        nanos => Some(base() + Duration::from_nanos(nanos)),
+    }
+}
+
+/// The running task's deadline for a task it spawns, which reads it.
+pub(crate) fn deadline_nanos() -> u64 {
+    deadline().map_or(u64::MAX, |at| at.saturating_duration_since(base()).as_nanos() as u64)
+}
+
+/// `within limit { ... }` starts: its deadline is the nearer of `limit`
+/// from now and the one that holds.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_within_enter(limit: i64) {
+    let Some(task) = (unsafe { crate::tasks::current().as_mut() }) else { return };
+    let at = Instant::now() + Duration::from_nanos(limit.max(0) as u64);
+    let level = task.withins.len();
+    let held = match task.withins.last() {
+        Some(&(outer, owner)) if outer <= at => (outer, owner),
+        _ => (at, level),
+    };
+    task.withins.push(held);
+}
+
+/// The block of a `within` ends: a deadline of its that passed with no
+/// check after it is gone with it.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_within_leave() {
+    let Some(task) = (unsafe { crate::tasks::current().as_mut() }) else { return };
+    let level = task.withins.len().saturating_sub(1);
+    if task.withins.pop().is_some_and(|(_, owner)| owner == level) && task.expired {
+        task.expired = false;
+        crate::tasks::attend(false);
+    }
+}
+
+/// How long until the running task's deadline, in nanoseconds: zero once it
+/// passed, -1 without one.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_deadline_remaining() -> i64 {
+    match deadline() {
+        Some(at) => at.saturating_duration_since(Instant::now()).as_nanos().min(i64::MAX as u128) as i64,
+        None => -1,
+    }
 }
 
 /// The program ends: the initial values go, for the check of leaks.

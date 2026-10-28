@@ -373,6 +373,25 @@ impl Parser<'_> {
         ) || (matches!(tok, Tok::Kw(Kw::Unsafe)) && matches!(self.nth(offset + 1), Tok::Kw(Kw::Fn)))
     }
 
+    /// Whether `within` starts a deadline here: an expression, then `{` on
+    /// the same line, follows it (11.17); a call `within(...)` has none.
+    fn at_within(&self) -> bool {
+        let mut depth = 0usize;
+        for offset in 1.. {
+            match self.nth(offset) {
+                Tok::LParen | Tok::LBracket => depth += 1,
+                Tok::RParen | Tok::RBracket if depth > 0 => depth -= 1,
+                Tok::LBrace if depth == 0 => return offset > 1,
+                Tok::Newline | Tok::Eof | Tok::RBrace | Tok::Eq | Tok::Comma | Tok::FatArrow if depth == 0 => {
+                    return false;
+                }
+                Tok::Eof => return false,
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// Whether `context Name =` starts at `offset`: a context (11.16).
     fn at_context(&self, offset: usize) -> bool {
         matches!(self.nth(offset), Tok::Ident(word) if word == "context")
@@ -2080,6 +2099,15 @@ impl Parser<'_> {
             Tok::Ident(name) if name == "recover" && self.nth(1) == &Tok::LBrace => {
                 self.bump();
                 ExprKind::Recover(self.block()?)
+            }
+            // `within`, only before an expression and a block (11.17).
+            Tok::Ident(name) if name == "within" && self.at_within() => {
+                self.bump();
+                let no_brace = std::mem::replace(&mut self.no_brace, true);
+                let limit = self.expression();
+                self.no_brace = no_brace;
+                let limit = Box::new(limit?);
+                ExprKind::Within(limit, self.block()?)
             }
             Tok::Ident(name) => {
                 self.bump();

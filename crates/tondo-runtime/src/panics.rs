@@ -246,6 +246,9 @@ pub(crate) struct Record {
     /// The lines after the location: `stack:` and the frames.
     pub(crate) stack: String,
     pub(crate) frames: String,
+    /// Not a panic: the deadline of the task's `within` of this index
+    /// passed, and the task unwinds to it (11.17).
+    pub(crate) deadline: Option<usize>,
 }
 
 impl Record {
@@ -378,8 +381,8 @@ pub(crate) unsafe fn record(code: u32, message: *const Str, location: *const Str
     let resumed = resumed_stack();
     let panic = Panic::new(code, crate::panic_name(code), message, location);
     let record = match resumed {
-        Some(stack) => Record { panic, frames: frames_of(&stack), stack },
-        None => Record { panic, stack: crate::trace::report(), frames: crate::trace::report_json() },
+        Some(stack) => Record { panic, frames: frames_of(&stack), stack, deadline: None },
+        None => Record { panic, stack: crate::trace::report(), frames: crate::trace::report_json(), deadline: None },
     };
     if !task.paused.is_empty() {
         record.print(false, true);
@@ -422,6 +425,20 @@ pub(crate) fn cleaning() -> bool {
 pub extern "C" fn tondo_rt_unwinding() -> u8 {
     let Some(task) = task() else { return 0 };
     take_alarm(task);
+    // A deadline that passed unwinds to the `within` that set it (11.17).
+    if task.expired {
+        task.expired = false;
+        crate::tasks::attend(false);
+        if task.unwinding.is_none()
+            && let Some(&(_, owner)) = task.withins.last()
+        {
+            let (code, message, location) = (String::new(), String::new(), String::new());
+            let panic = Panic { code, name: None, message, data: Vec::new(), given: false, location };
+            let (stack, frames) = (String::new(), String::from("[]"));
+            task.unwinding = Some(Box::new(Record { panic, stack, frames, deadline: Some(owner) }));
+            crate::tasks::attend(true);
+        }
+    }
     u8::from(task.unwinding.is_some())
 }
 
@@ -535,17 +552,39 @@ pub extern "C" fn tondo_rt_recover_leave() {
 }
 
 /// Where a `recover` stops a panic, after the cleanups of what it
-/// abandoned: the panic is the one the standard library reads. Another
-/// that a task of it delivered meanwhile is reported as suppressed.
+/// abandoned: 1 and the panic is the one the standard library reads; 0 for
+/// a deadline, which goes on to its `within` (11.17). Another panic that a
+/// task of it delivered meanwhile is reported as suppressed.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_recover_catch() {
-    let Some(task) = task() else { return };
+pub extern "C" fn tondo_rt_recover_catch() -> u8 {
+    let Some(task) = task() else { return 0 };
     settle(task);
-    task.caught = task.paused.pop().flatten();
+    let deadline = matches!(task.paused.last(), Some(Some(record)) if record.deadline.is_some());
+    if !deadline {
+        task.caught = task.paused.pop().flatten();
+    }
     if let Some(other) = task.recovers.pop().flatten().and_then(|owner| owner.close()) {
         other.print(false, true);
     }
     calm(task);
+    u8::from(!deadline)
+}
+
+/// Where a `within` stops what unwinds to it: 1 for its own deadline; 0
+/// for a panic or the deadline of a `within` around it, which go on.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_within_catch() -> u8 {
+    let Some(task) = task() else { return 0 };
+    settle(task);
+    let level = task.withins.len().saturating_sub(1);
+    task.withins.pop();
+    match task.paused.last() {
+        Some(Some(record)) if record.deadline == Some(level) => {
+            task.paused.pop();
+            1
+        }
+        _ => 0,
+    }
 }
 
 fn caught<T>(read: impl FnOnce(&Record) -> T, otherwise: T) -> T {
@@ -667,7 +706,7 @@ pub unsafe extern "C" fn tondo_rt_panic_report(
     // Its data shows, with what the report adds, as which request it was.
     let panic = Panic { code, name: number.map(crate::panic_name), message, data: staged.data, given: true, location };
     let frames = frames_of(&stack);
-    Record { panic, stack, frames }.print(true, false);
+    Record { panic, stack, frames, deadline: None }.print(true, false);
 }
 
 /// The frames of a stack as the report writes it, as JSON (toolchain 7.5).

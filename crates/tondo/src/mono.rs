@@ -425,6 +425,11 @@ impl Mono<'_> {
                 self.block(block, map);
                 self.expr(caught, map);
             }
+            ExprKind::Within(limit, block, failure) => {
+                self.expr(limit, map);
+                self.block(block, map);
+                self.expr(failure, map);
+            }
             ExprKind::Interpolate(segments) => {
                 for segment in segments {
                     if let Segment::Value(value) = segment {

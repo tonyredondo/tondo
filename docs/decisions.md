@@ -2873,3 +2873,18 @@ and keeps the old one to restore it, and a spawned task shares its
 parent's. Reading a field loads it from its `Ref` in place, and the table
 of initial values is made when a task first reads one, from a function the
 compiler writes for each context.
+
+## 2026-10-28 — A deadline unwinds its block, as a panic would
+
+`within limit { ... }` needs to stop a block in the middle of a wait and
+leave it the way a cancellation leaves a task, with its `defer`s run and
+its tasks cancelled, but only the block. It uses the unwinding of
+`recover`: a wait arms a timer at the task's deadline, which ends the wait
+as a cancellation does and marks the task, and the task then unwinds to the
+`within` that set the deadline. A `recover` and a `within` each ask, where
+they catch, whether what unwinds is theirs; what is not, a deadline at a
+`recover` or a panic at a `within`, goes on to the next one out. Only the
+task that runs the block keeps the deadline; the tasks it starts read it
+and are cancelled with the block. `spawn detached` now tells the runtime
+before the task starts, so that a detached task never belongs to a
+`recover` or a deadline, even for the moment before its `detach`.
