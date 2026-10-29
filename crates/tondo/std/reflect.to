@@ -1040,10 +1040,8 @@ pub type TypeDescription = {
     methods: Array[MethodInfo]
     elements: Array[TypeInfo]
     underlying: TypeInfo?
-    annotations: Array[
-        /// The program's annotations of the type (language 27.13).
-        Value,
-    ]
+    /// The program's annotations of the type (language 27.13).
+    annotations: Array[Value]
 }
 
 /// A description of a kind with nothing in it yet.

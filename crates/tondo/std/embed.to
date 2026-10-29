@@ -6,10 +6,8 @@
 pub type Files = {
     priv names: Array[String]
     priv contents: Array[Array[Byte]]
-    priv tags: Array[
-        /// A digest of each file's contents, for the `ETag` of `std.http`.
-        String,
-    ]
+    /// A digest of each file's contents, for the `ETag` of `std.http`.
+    priv tags: Array[String]
 }
 
 /// The text of a UTF-8 file of the package, read when the program compiles,

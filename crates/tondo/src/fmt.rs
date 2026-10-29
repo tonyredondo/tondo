@@ -19,7 +19,8 @@ pub fn format(file: &SourceFile, diags: &mut Diagnostics) -> Option<String> {
         return None;
     }
     let (_, comments) = lexer::lex_with_comments(file, None, &mut Diagnostics::default());
-    let mut formatter = Formatter { file, comments, next: 0, parens };
+    let taken = vec![false; comments.len()];
+    let mut formatter = Formatter { file, comments, taken, next: 0, floor: 0, ceiling: u32::MAX, parens };
     let doc = formatter.module(&module);
     let mut text = render(&doc);
     while text.ends_with("\n\n") {
@@ -141,8 +142,15 @@ fn fits(doc: &Doc, column: usize) -> bool {
 struct Formatter<'a> {
     file: &'a SourceFile,
     comments: Vec<Span>,
-    /// The next comment not emitted yet.
+    /// The comments emitted, and the first one not emitted yet.
+    taken: Vec<bool>,
     next: usize,
+    /// Where the list or braces being written open: a comment before it is
+    /// of what holds them, which may be written after, as a list inside an
+    /// item is written before the item's own comments are.
+    floor: u32,
+    /// Where they close: a comment after it is of what follows.
+    ceiling: u32,
     /// Expressions written in parentheses.
     parens: Vec<Span>,
 }
@@ -171,11 +179,16 @@ impl Formatter<'_> {
     /// line where the source had any.
     fn leading(&mut self, pos: u32) -> Doc {
         let mut docs = Vec::new();
-        while let Some(&comment) = self.comments.get(self.next) {
+        let mut index = self.next;
+        while let Some(&comment) = self.comments.get(index) {
             if comment.end > pos {
                 break;
             }
-            self.next += 1;
+            index += 1;
+            if self.taken[index - 1] || comment.start < self.floor {
+                continue;
+            }
+            self.take(index - 1);
             let body = self.source(comment).to_string();
             let inline_block = body.starts_with("/*") && !body.contains('\n') && !self.ends_line(comment.end);
             if inline_block {
@@ -192,6 +205,56 @@ impl Formatter<'_> {
         concat(docs)
     }
 
+    /// Notes a comment as emitted.
+    fn take(&mut self, index: usize) {
+        self.taken[index] = true;
+        while self.taken.get(self.next) == Some(&true) {
+            self.next += 1;
+        }
+    }
+
+    /// Where the `open` delimiter before `first` is, past whitespace and
+    /// comments; when it is not there, the bound there is.
+    fn opening(&self, first: u32, open: char) -> u32 {
+        let base = self.file.base;
+        let mut at = first;
+        loop {
+            let before = &self.file.text[..(at - base) as usize];
+            let trimmed = before.trim_end();
+            let end = base + trimmed.len() as u32;
+            if let Some(comment) = self.comments.iter().find(|c| c.end == end && c.start < end) {
+                at = comment.start;
+                continue;
+            }
+            return if trimmed.ends_with(open) { end - open.len_utf8() as u32 } else { self.floor };
+        }
+    }
+
+    /// Where the `close` delimiter after `last` is, past whitespace, a comma
+    /// and comments; when it is not there, the bound there is.
+    fn closing(&self, last: u32, close: char) -> u32 {
+        let base = self.file.base;
+        let mut at = last;
+        loop {
+            let rest = &self.file.text[(at - base) as usize..];
+            let skipped = rest.len() - rest.trim_start_matches(|c: char| c.is_whitespace() || c == ',').len();
+            at += skipped as u32;
+            if let Some(comment) = self.comments.iter().find(|c| c.start == at) {
+                at = comment.end;
+                continue;
+            }
+            return if self.file.text[(at - base) as usize..].starts_with(close) { at } else { self.ceiling };
+        }
+    }
+
+    /// Bounds the comments a list or braces take to those between where
+    /// they open and close; gives the bounds they replace.
+    fn bound(&mut self, first: u32, open: char, last: u32, close: char) -> (u32, u32) {
+        let floor = self.opening(first, open);
+        let ceiling = self.closing(last, close);
+        (std::mem::replace(&mut self.floor, floor), std::mem::replace(&mut self.ceiling, ceiling))
+    }
+
     /// Whether only whitespace follows `offset` on its line.
     fn ends_line(&self, offset: u32) -> bool {
         let rest = &self.file.text[(offset - self.file.base) as usize..];
@@ -200,11 +263,13 @@ impl Formatter<'_> {
 
     /// A comment on the same line after `end`, emitted after the unit.
     fn trailing(&mut self, end: u32) -> Doc {
-        let Some(&comment) = self.comments.get(self.next) else { return concat(Vec::new()) };
-        if comment.start < end || self.source(Span::new(end, comment.start)).contains('\n') {
+        let pending = (self.next..self.comments.len()).find(|&i| !self.taken[i] && self.comments[i].start >= end);
+        let Some(index) = pending else { return concat(Vec::new()) };
+        let comment = self.comments[index];
+        if comment.start >= self.ceiling || self.source(Span::new(end, comment.start)).contains('\n') {
             return concat(Vec::new());
         }
-        self.next += 1;
+        self.take(index);
         let body = self.source(comment).to_string();
         if body.starts_with("//") {
             concat(vec![text(format!("  {body}")), Doc::Break])
@@ -460,6 +525,8 @@ impl Formatter<'_> {
         if units.is_empty() {
             return text("{}");
         }
+        let last = units[units.len() - 1].1;
+        let outer = self.bound(units[0].0, '{', last, '}');
         let mut body = Vec::new();
         for (start, unit_end, doc) in units {
             body.push(Doc::Hardline);
@@ -468,6 +535,7 @@ impl Formatter<'_> {
             body.push(self.trailing(unit_end));
         }
         body.push(self.leading_in_block(end));
+        (self.floor, self.ceiling) = outer;
         concat(vec![text("{"), indent(concat(body)), Doc::Hardline, text("}")])
     }
 
@@ -1341,6 +1409,9 @@ impl Formatter<'_> {
             return text(format!("{open}{close}"));
         }
         let count = items.len();
+        let (first, last) = (items[0].0.start, items[count - 1].0.end);
+        let delimiters = (open.chars().last().unwrap_or('('), close.chars().next().unwrap_or(')'));
+        let outer = self.bound(first, delimiters.0, last, delimiters.1);
         let mut body = vec![Doc::Softzero];
         for (index, (span, doc)) in items.into_iter().enumerate() {
             body.push(self.leading(span.start));
@@ -1354,6 +1425,7 @@ impl Formatter<'_> {
                 body.push(self.trailing(span.end));
             }
         }
+        (self.floor, self.ceiling) = outer;
         group(concat(vec![text(open), indent(concat(body)), Doc::Softzero, text(close)]))
     }
 
@@ -1363,6 +1435,7 @@ impl Formatter<'_> {
             return text("{}");
         }
         let count = items.len();
+        let outer = self.bound(items[0].0.start, '{', items[count - 1].0.end, '}');
         let mut body = vec![Doc::Softline];
         for (index, (span, doc)) in items.into_iter().enumerate() {
             body.push(self.leading(span.start));
@@ -1375,6 +1448,7 @@ impl Formatter<'_> {
                 body.push(self.trailing(span.end));
             }
         }
+        (self.floor, self.ceiling) = outer;
         group(concat(vec![text("{"), indent(concat(body)), Doc::Softline, text("}")]))
     }
 }
@@ -1466,6 +1540,15 @@ mod tests {
             ("let values=[\n1,\n2\n]\n", "let values = [1, 2]\n"),
             ("import zeta\nimport alpha as a\nfn main(){}\n", "import alpha as a\nimport zeta\n\nfn main() {}\n"),
             ("let values=[1, // first\n2]\n", "let values = [\n    1,  // first\n    2,\n]\n"),
+            // A list inside an item leaves the item's comments where they are.
+            (
+                "type T={a:Int\n/// The b.\nb:Array[String]}\n",
+                "type T = {\n    a: Int\n    /// The b.\n    b: Array[String]\n}\n",
+            ),
+            (
+                "f([1], // after one\n// before two\n[2])\n",
+                "f(\n    [1],  // after one\n    // before two\n    [2],\n)\n",
+            ),
             ("type Loader=fn():Result[Option[Int],IoError]\n", "type Loader = fn(): Int? ! IoError\n"),
             (
                 "fn make():impl Iterator[Int]+Send{build()}\n",
