@@ -9,6 +9,7 @@ on:
 # artifact: dist/tondo-<target>.tar.gz.
 jobs:
   test:
+    name: test (${{ matrix.os }}, ${{ matrix.target }})
     strategy:
       fail-fast: false
       matrix:
