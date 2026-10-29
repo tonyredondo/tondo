@@ -38,6 +38,12 @@ fn main() {
     time.sleep(time.milliseconds(100))
     fs.writeText(path.join(dir, "sub/inner.txt"), "inner")?
     show(changes, dir)
+    // A file watched alone.
+    let notes = path.join(dir, "notes.txt")
+    fs.writeText(notes, "first")?
+    let edits = fs.watch([notes], settle: time.milliseconds(300))?
+    fs.appendText(notes, " and second")?
+    show(edits, dir)
     fs.remove(dir, recursive: true)?
 }
 
@@ -46,3 +52,4 @@ fn main() {
 // expect-stdout: /old.txt modified
 // expect-stdout: /sub created
 // expect-stdout: /sub/inner.txt created
+// expect-stdout: /notes.txt modified

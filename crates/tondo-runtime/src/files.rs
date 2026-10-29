@@ -6,7 +6,7 @@
 use super::native::{self, NativeObject};
 use super::{ArrayHeader, Str, str_bytes};
 use crate::http::{string_array, strings};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::ErrorKind;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -252,16 +252,49 @@ pub unsafe extern "C" fn tondo_rt_files_real_path(path: *const Str) -> *mut Nati
 // Watching
 // ---------------------------------------------------------------------------
 
-/// A watch: the system's watcher, the changes it reports, the paths it
-/// watches, as given and as the system names them, and the paths that
-/// exist under them, which tell a file replaced from one made.
+/// A watch: the system's watcher, the paths it says changed, the paths it
+/// watches, as given and as the system names them, and the entries under
+/// them with their stamps. A batch decides what became of each path from
+/// the stamps, not from the system's events, which kqueue gives for a
+/// directory rather than what it holds, and sometimes twice.
 struct Watch {
     watcher: Option<notify::RecommendedWatcher>,
     /// Out while a task waits for the next batch, and after the watch ends.
     changes: Option<tokio::sync::mpsc::UnboundedReceiver<PathBuf>>,
     roots: Vec<(String, PathBuf)>,
     settle: std::time::Duration,
-    existing: HashSet<PathBuf>,
+    existing: HashMap<PathBuf, Stamp>,
+}
+
+/// What tells that an entry changed: its kind, last change, size and file.
+#[derive(Copy, Clone, PartialEq)]
+struct Stamp {
+    directory: bool,
+    modified: i64,
+    size: u64,
+    file: u64,
+}
+
+/// An entry's stamp, without following a link; `None` when it is gone.
+fn stamp(path: &Path) -> Option<Stamp> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    let modified = metadata.mtime().saturating_mul(1_000_000_000).saturating_add(metadata.mtime_nsec());
+    Some(Stamp { directory: metadata.is_dir(), modified, size: metadata.len(), file: metadata.ino() })
+}
+
+/// The entries under a directory, `depth` levels deep or all of them, with
+/// their stamps, into `out`.
+fn stamps(directory: &Path, depth: Option<usize>, out: &mut HashMap<PathBuf, Stamp>) {
+    let mut entries = Vec::new();
+    if walk(&directory.to_string_lossy(), depth, &mut entries).is_ok() {
+        for (entry, _) in entries {
+            let path = directory.join(entry);
+            if let Some(found) = stamp(&path) {
+                out.insert(path, found);
+            }
+        }
+    }
 }
 
 /// `fs.watch`: watches each path, with what its directories hold.
@@ -283,15 +316,15 @@ pub unsafe extern "C" fn tondo_rt_files_watch(paths: *mut ArrayHeader, settle: i
             }
         })
         .map_err(|_| 8)?;
-        let (mut roots, mut existing) = (Vec::new(), HashSet::new());
+        let (mut roots, mut existing) = (Vec::new(), HashMap::new());
         for path in paths {
             let real = io(std::fs::canonicalize(&path))?;
-            let mut entries = Vec::new();
-            if std::fs::metadata(&real).is_ok_and(|m| m.is_dir()) {
-                walk(&real.to_string_lossy(), None, &mut entries)?;
+            if let Some(found) = stamp(&real) {
+                if found.directory {
+                    stamps(&real, None, &mut existing);
+                }
+                existing.insert(real.clone(), found);
             }
-            existing.extend(entries.into_iter().map(|(entry, _)| real.join(entry)));
-            existing.insert(real.clone());
             watcher.watch(&real, notify::RecursiveMode::Recursive).map_err(|e| match e.kind {
                 notify::ErrorKind::Io(e) => failure(&e),
                 notify::ErrorKind::PathNotFound => 1,
@@ -341,39 +374,64 @@ pub extern "C" fn tondo_rt_files_watch_next(done: *mut NativeObject) -> *mut Arr
         if changes.is_empty() {
             return string_array(&[String::new()]);
         }
-        // Whether each path existed before the batch and after it; a
-        // watched directory itself changes with what it holds.
-        let mut states: BTreeMap<String, (bool, bool)> = BTreeMap::new();
-        for path in changes.into_iter().collect::<HashSet<_>>() {
-            let after = std::fs::symlink_metadata(&path);
-            if after.as_ref().is_ok_and(|m| m.is_dir()) && roots.iter().any(|(_, real)| *real == path) {
-                continue;
-            }
-            let before = watch.existing.contains(&path);
-            if after.is_ok() {
-                watch.existing.insert(path.clone());
-            } else {
-                watch.existing.remove(&path);
-            }
-            let Some(shown) = shown(&roots, &path) else { continue };
-            states.insert(shown, (before, after.is_ok()));
-        }
+        let out = settled(&mut watch, &roots, changes);
         drop(watch);
-        let mut out = Vec::new();
-        for (path, state) in states {
-            let letter = match state {
-                (false, true) => "C",
-                (true, true) => "M",
-                (true, false) => "R",
-                (false, false) => continue,
-            };
-            out.push(letter.to_string());
-            out.push(path);
-        }
         if !out.is_empty() {
             return string_array(&out);
         }
     }
+}
+
+/// What became of the paths the system says changed, from their stamps:
+/// each with the letter of its change. A directory that changed is read
+/// again for the entries it holds, one made is read whole, and one removed
+/// takes what it held with it; a directory itself is only made or removed,
+/// as what it holds changes on its own.
+fn settled(watch: &mut Watch, roots: &[(String, PathBuf)], changes: Vec<PathBuf>) -> Vec<String> {
+    let mut pending: Vec<PathBuf> = changes.into_iter().collect::<HashSet<_>>().into_iter().collect();
+    for path in pending.clone() {
+        let held = |watch: &Watch, deep: bool| -> Vec<PathBuf> {
+            let known = watch.existing.keys();
+            known.filter(|k| if deep { k.starts_with(&path) } else { k.parent() == Some(&path) }).cloned().collect()
+        };
+        match stamp(&path) {
+            Some(found) if found.directory && watch.existing.contains_key(&path) => {
+                let mut now = HashMap::new();
+                stamps(&path, Some(1), &mut now);
+                pending.extend(now.into_keys().chain(held(watch, false)));
+            }
+            None if watch.existing.get(&path).is_some_and(|s| s.directory) => pending.extend(held(watch, true)),
+            _ => {}
+        }
+    }
+    let mut states: BTreeMap<String, &str> = BTreeMap::new();
+    while let Some(path) = pending.pop() {
+        let after = stamp(&path);
+        let before = match after {
+            Some(found) => watch.existing.insert(path.clone(), found),
+            None => watch.existing.remove(&path),
+        };
+        let letter = match (before, after) {
+            (None, Some(made)) => {
+                if made.directory {
+                    let mut inner = HashMap::new();
+                    stamps(&path, None, &mut inner);
+                    pending.extend(inner.into_keys());
+                }
+                "C"
+            }
+            (Some(_), None) => "R",
+            (Some(old), Some(new)) if old != new && !new.directory => "M",
+            _ => continue,
+        };
+        let root = roots.iter().any(|(_, real)| *real == path);
+        if let Some(shown) = shown(roots, &path)
+            && !(root && after.is_some_and(|s| s.directory))
+        {
+            states.insert(shown, letter);
+        }
+    }
+    states.into_iter().flat_map(|(path, letter)| [letter.to_string(), path]).collect()
 }
 
 /// A path the system reports, as its watched path names it.
