@@ -109,7 +109,8 @@ pub unsafe extern "C" fn tondo_rt_process_signals(
             mask |= 1 << signal;
         }
     }
-    let channel = unsafe { tondo_rt_channel_new(16, 1, size as usize, align as usize, None, None, std::ptr::null()) };
+    let channel =
+        unsafe { tondo_rt_channel_new(16, 1, size as usize, align as usize, None, None, std::ptr::null(), 0) };
     let sender = unsafe { tondo_rt_sender_new(channel) };
     lock().push(Subscriber { sender, size: size as usize, wanted: mask });
     LISTENING.store(true, Ordering::SeqCst);

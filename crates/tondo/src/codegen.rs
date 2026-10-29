@@ -505,7 +505,7 @@ impl Rt {
             Rt::GroupSettle => ("tondo_rt_group_settle", &[I64], &[I64]),
             Rt::GroupTake => ("tondo_rt_group_take", &[I64, I64, I64], &[I8]),
             Rt::GroupRelease => ("tondo_rt_group_release", &[I64], &[]),
-            Rt::ChannelNew => ("tondo_rt_channel_new", &[I64, I8, I64, I64, I64, I64, I64], &[I64]),
+            Rt::ChannelNew => ("tondo_rt_channel_new", &[I64, I8, I64, I64, I64, I64, I64, I8], &[I64]),
             Rt::SenderNew => ("tondo_rt_sender_new", &[I64], &[I64]),
             Rt::SenderCopy => ("tondo_rt_sender_copy", &[I64], &[I64]),
             Rt::ChannelSend => ("tondo_rt_channel_send", &[I64, I64, I64], &[]),
@@ -6419,7 +6419,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             TaskOp::Channel => {
                 let sender_ty = self.e.cg.types().components(ty).expect("a pair of ends")[0];
                 let value = self.e.cg.types().handle_result(sender_ty);
-                let (capacity, bounded) = match values.first() {
+                let discard = values[0];
+                let (capacity, bounded) = match values.get(1) {
                     Some(&capacity) => (capacity, 1),
                     None => (self.e.fb.ins().iconst(types::I64, 0), 0),
                 };
@@ -6432,7 +6433,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let location = self.location(span);
                 let channel = self
                     .e
-                    .call_rt(Rt::ChannelNew, &[capacity, bounded, size, align, release, visit, location])
+                    .call_rt(Rt::ChannelNew, &[capacity, bounded, size, align, release, visit, location, discard])
                     .unwrap();
                 self.live_object(channel, value, 2);
                 let sender = self.e.call_rt(Rt::SenderNew, &[channel]).unwrap();

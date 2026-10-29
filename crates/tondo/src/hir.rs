@@ -534,8 +534,7 @@ pub enum TaskOp {
     CopySender,
     /// `isClosed()` of a sender or a receiver.
     IsClosed,
-    /// `std.internal.channel.abandoned(sender)`: whether no receiver of its
-    /// channel is left.
+    /// `sender.isAbandoned()`: whether no receiver of its channel is left.
     Abandoned,
     /// `receiver.receive(timeout: delay)`: `T?`
     ReceiveTimeout,

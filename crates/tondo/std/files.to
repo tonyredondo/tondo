@@ -4,7 +4,6 @@
 // filesystem.
 
 import std.fs as __fs
-import std.internal.channel as __channel
 import std.internal.fs as fsNative
 import std.path as __path
 import std.time as __time
@@ -170,7 +169,7 @@ pub fn watch(paths: Array[String], settle: __time.Duration? = none): Receiver[Ar
     __fs.FsError {
     let quiet = settle.unwrapOr(__time.milliseconds(100))
     let watching = done(fsNative.watch(paths, quiet.nanoseconds()))?
-    let (sender, receiver) = channel[Array[Change]]()
+    let (sender, receiver) = channel[Array[Change]](discardWhenAbandoned: true)
     spawn detached forward(watching, sender)
     receiver
 }
@@ -179,7 +178,7 @@ pub fn watch(paths: Array[String], settle: __time.Duration? = none): Receiver[Ar
 fn forward(watching: fsNative.Native, sender: Sender[Array[Change]]) {
     for {
         let found = fsNative.watchNext(watching)
-        if found.isEmpty() or __channel.abandoned(sender) {
+        if found.isEmpty() or sender.isAbandoned() {
             break
         }
         if found.length() == 1 {

@@ -1,0 +1,40 @@
+// A producer sees that no receiver is left with `isAbandoned`, and a
+// channel made with `discardWhenAbandoned` drops what is sent then, even a
+// send waiting for room, instead of waiting forever.
+
+import std.console
+
+fn produce(numbers: Sender[Int]): Int {
+    var sent = 0
+    for value in 0..1000 {
+        if numbers.isAbandoned() {
+            break
+        }
+        numbers.send(value)
+        sent += 1
+    }
+    sent
+}
+
+/// Takes three values, then lets its receiver go.
+fn start(discard: Bool): Join[Int] {
+    let (sender, receiver) = channel[Int](1, discardWhenAbandoned: discard)
+    let watcher = sender.copy()
+    let job = spawn produce(sender)
+    for _ in 0..3 {
+        _ = receiver.receive()
+    }
+    console.println("listening {not watcher.isAbandoned()}")
+    job
+}
+
+fn main() {
+    let sent = start(true).wait()
+    console.println("stopped {sent >= 3 and sent < 10}")
+    let (sender, receiver) = channel[String](discardWhenAbandoned: true)
+    console.println("abandoned {sender.isAbandoned()} {receiver.isClosed()}")
+}
+
+// expect-stdout: listening true
+// expect-stdout: stopped true
+// expect-stdout: abandoned false false

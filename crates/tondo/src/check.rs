@@ -7535,8 +7535,10 @@ impl<'a> Checker<'a> {
         Self::mk(hir::ExprKind::Block(hir::Block { stmts, tail: Some(Box::new(decide)), ty: outcome }), outcome, span)
     }
 
-    /// `channel[T]()` or `channel[T](capacity)` (11.13): the two ends of a
-    /// new channel, unbounded without a capacity.
+    /// `channel[T]()`, `channel[T](capacity)` and
+    /// `discardWhenAbandoned: true` (11.13): the two ends of a new channel,
+    /// unbounded without a capacity. Its operands are whether it discards,
+    /// then its capacity if it has one.
     fn channel(&mut self, cx: &mut FnCx, type_args: &[ast::TypeExpr], args: &[ast::Arg], span: Span) -> hir::Expr {
         let [value] = type_args else {
             self.diags.error("E1104", span, "`channel` takes one type argument, the type of its values");
@@ -7551,23 +7553,32 @@ impl<'a> Checker<'a> {
             let message = format!("a channel carries its values between tasks, but {what}");
             self.diags.error("E1605", span, message);
         }
-        let capacity = match args {
-            [] => None,
-            [arg] if arg.name.as_ref().is_none_or(|n| n.name == "capacity") => {
-                let capacity = self.expr(cx, &arg.value, Some(Ty::INT));
-                Some(self.coerce(capacity, Ty::INT))
+        let (mut capacity, mut discard) = (None, None);
+        for (index, arg) in args.iter().enumerate() {
+            let name = arg.name.as_ref().map(|n| n.name.as_str());
+            let slot = match name {
+                None if index == 0 => &mut capacity,
+                Some("capacity") => &mut capacity,
+                Some("discardWhenAbandoned") => &mut discard,
+                _ => {
+                    let message = "`channel` takes its capacity and `discardWhenAbandoned`, as in `channel[T](16)` or `channel[T](16, discardWhenAbandoned: true)`";
+                    self.diags.error("E1102", arg.span, message);
+                    return Self::error_expr(span);
+                }
+            };
+            if slot.is_some() {
+                return self.arity_error(span, 2, args.len());
             }
-            [arg] => {
-                let message = "`channel` takes its capacity, as in `channel[T](16)` or `channel[T](capacity: 16)`";
-                self.diags.error("E1102", arg.span, message);
-                return Self::error_expr(span);
-            }
-            _ => return self.arity_error(span, 1, args.len()),
-        };
+            let ty = if name == Some("discardWhenAbandoned") { Ty::BOOL } else { Ty::INT };
+            let value = self.expr(cx, &arg.value, Some(ty));
+            *slot = Some(self.coerce(value, ty));
+        }
         let sender = self.types.handle(Handle::Sender, value);
         let receiver = self.types.handle(Handle::Receiver, value);
         let ty = self.types.intern(TyKind::Tuple(vec![sender, receiver]));
-        Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::Channel, capacity.into_iter().collect()), ty, span)
+        let discard = discard.unwrap_or_else(|| Self::mk(hir::ExprKind::Bool(false), Ty::BOOL, span));
+        let operands = std::iter::once(discard).chain(capacity).collect();
+        Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::Channel, operands), ty, span)
     }
 
     /// The methods of `Join`, `Group`, `Sender` and `Receiver` (11.11 to
@@ -7598,6 +7609,7 @@ impl<'a> Checker<'a> {
             (Handle::Sender, "close") => T::Close,
             (Handle::Sender, "copy") => T::CopySender,
             (Handle::Sender | Handle::Receiver, "isClosed") => T::IsClosed,
+            (Handle::Sender, "isAbandoned") => T::Abandoned,
             (Handle::Receiver, "receive") => T::Receive,
             (Handle::Weak, "get") => T::WeakGet,
             _ => return self.no_method(ty, method, span),
@@ -7646,7 +7658,7 @@ impl<'a> Checker<'a> {
             T::GroupAdd | T::Send | T::Close | T::Cancel | T::Detach | T::GroupCancel => Ty::UNIT,
             T::GroupNext | T::Receive | T::ReceiveTimeout | T::WaitTimeout => self.types.intern(TyKind::Option(result)),
             T::CopySender => ty,
-            T::IsClosed => Ty::BOOL,
+            T::IsClosed | T::Abandoned => Ty::BOOL,
             T::WeakGet => {
                 let reference = self.types.handle(Handle::Ref, result);
                 self.types.intern(TyKind::Option(reference))
@@ -13245,16 +13257,6 @@ impl<'a> Checker<'a> {
                 let signature = Signature::simple(param, Ty::UNIT);
                 let target = CallTarget::new(Callee::Std(function), signature, expected);
                 self.call_signature(cx, target, None, args, span)
-            }
-            ([_, "abandoned"], Some(ModuleName::Module(StdModule::InternalChannel))) => {
-                let [sender] = args else { return self.arity_error(span, 1, args.len()) };
-                let sender = self.expr(cx, &sender.value, None);
-                if !matches!(self.types.kind(sender.ty), TyKind::Handle(Handle::Sender, _)) {
-                    let message = format!("`abandoned` asks of a `Sender`, found {}", self.display(sender.ty));
-                    self.diags.error("E1102", sender.span, message);
-                    return Self::error_expr(span);
-                }
-                Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::Abandoned, vec![sender]), Ty::BOOL, span)
             }
             ([_, member @ ("offer" | "tryOffer")], Some(ModuleName::Module(StdModule::InternalChannel))) => {
                 let [sender, value] = args else { return self.arity_error(span, 2, args.len()) };

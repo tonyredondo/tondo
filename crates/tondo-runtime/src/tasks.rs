@@ -3327,6 +3327,14 @@ struct Waiter {
 
 const MOVED: u8 = 1;
 const CLOSED: u8 = 2;
+/// A send ended because no receiver was left to take its value.
+const DISCARDED: u8 = 3;
+
+/// Whether a channel that discards drops what is sent now: no `Receiver`
+/// is left, only the senders' holds. With the channel locked.
+fn discarding(c: &ChannelObject) -> bool {
+    c.discard && c.rc.load(Ordering::Acquire) <= c.senders
+}
 
 /// A channel (11.13). `rc` counts the `Receiver` handles and the sender
 /// objects; `senders` counts the latter, and the channel closes when it
@@ -3338,6 +3346,9 @@ pub struct ChannelObject {
     lock: AtomicBool,
     closed: bool,
     senders: usize,
+    /// `discardWhenAbandoned`: once no `Receiver` is left, sends drop their
+    /// values at once.
+    discard: bool,
     /// `usize::MAX` when unbounded; 0 for a rendezvous.
     capacity: usize,
     size: usize,
@@ -3372,6 +3383,7 @@ pub unsafe extern "C" fn tondo_rt_channel_new(
     release: Option<Glue>,
     visit: Option<Visit>,
     location: *const Str,
+    discard: u8,
 ) -> *mut ChannelObject {
     if bounded != 0 && capacity < 0 {
         super::panic_with(
@@ -3386,6 +3398,7 @@ pub unsafe extern "C" fn tondo_rt_channel_new(
         lock: AtomicBool::new(false),
         closed: false,
         senders: 0,
+        discard: discard != 0,
         capacity: if bounded != 0 { capacity as usize } else { usize::MAX },
         size,
         align: align.max(1),
@@ -3559,6 +3572,11 @@ pub unsafe extern "C" fn tondo_rt_channel_send(sender: *mut SenderObject, value:
             super::raise(12, CLOSED_MESSAGE, location);
             return;
         }
+        if discarding(c) {
+            unlock(&c.lock);
+            drop_unsent(c, value);
+            return;
+        }
         if let Some(woken) = try_send(c, value) {
             unlock(&c.lock);
             woken.into_iter().for_each(notify);
@@ -3575,9 +3593,13 @@ pub unsafe extern "C" fn tondo_rt_channel_send(sender: *mut SenderObject, value:
             drop_unsent(c, value);
             return;
         }
-        if std::ptr::read_volatile(&waiter.state) == CLOSED {
-            drop_unsent(c, value);
-            super::raise(12, CLOSED_MESSAGE, location);
+        match std::ptr::read_volatile(&waiter.state) {
+            CLOSED => {
+                drop_unsent(c, value);
+                super::raise(12, CLOSED_MESSAGE, location);
+            }
+            DISCARDED => drop_unsent(c, value),
+            _ => {}
         }
     }
 }
@@ -3603,6 +3625,11 @@ pub unsafe extern "C" fn tondo_rt_channel_offer(sender: *mut SenderObject, value
             drop_unsent(c, value);
             return SHUT;
         }
+        if discarding(c) {
+            unlock(&c.lock);
+            drop_unsent(c, value);
+            return SENT;
+        }
         if let Some(woken) = try_send(c, value) {
             unlock(&c.lock);
             woken.into_iter().for_each(notify);
@@ -3624,11 +3651,17 @@ pub unsafe extern "C" fn tondo_rt_channel_offer(sender: *mut SenderObject, value
             drop_unsent(c, value);
             return SHUT;
         }
-        if std::ptr::read_volatile(&waiter.state) == CLOSED {
-            drop_unsent(c, value);
-            return SHUT;
+        match std::ptr::read_volatile(&waiter.state) {
+            CLOSED => {
+                drop_unsent(c, value);
+                SHUT
+            }
+            DISCARDED => {
+                drop_unsent(c, value);
+                SENT
+            }
+            _ => SENT,
         }
-        SENT
     }
 }
 
@@ -3711,8 +3744,8 @@ pub unsafe extern "C" fn tondo_rt_channel_close(sender: *mut SenderObject) {
 }
 
 /// `isClosed()` of a `Sender` (`sender` is 1) or a `Receiver`; with
-/// `sender` 2, whether no `Receiver` of a sender's channel is left, which
-/// `std.internal.channel.abandoned` asks.
+/// `sender` 2, `isAbandoned()`: whether no `Receiver` of a sender's channel
+/// is left.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_channel_closed(handle: *mut u8, sender: u8) -> u8 {
     unsafe {
@@ -3756,6 +3789,21 @@ pub unsafe extern "C" fn tondo_rt_receiver_release(channel: *mut ChannelObject) 
     }
     unsafe {
         if (*channel).rc.fetch_sub(1, Ordering::Release) != 1 {
+            // The last `Receiver` of a channel that discards: the senders
+            // waiting for room drop their values, and so do later ones.
+            let c = &mut *channel;
+            if c.discard {
+                lock(&c.lock);
+                let mut woken = Vec::new();
+                if discarding(c) {
+                    while let Some(waiter) = claim_first(&mut c.sending) {
+                        (*waiter).state = DISCARDED;
+                        woken.push((*(*waiter).wait).task);
+                    }
+                }
+                unlock(&c.lock);
+                woken.into_iter().for_each(notify);
+            }
             return;
         }
         std::sync::atomic::fence(Ordering::Acquire);
@@ -3930,6 +3978,9 @@ unsafe fn select(cases: &mut [Case], blocking: bool, location: *const Str) -> i6
                 super::raise(12, CLOSED_MESSAGE, location);
                 return -2;
             }
+            SEND if waiters[won].state == DISCARDED => {
+                drop_unsent(&*(*(case.handle as *mut SenderObject)).channel, case.value)
+            }
             WAIT => take(case.handle as *mut JoinObject, case.value),
             NEXT => {
                 let group = &mut *(case.handle as *mut GroupObject);
@@ -3956,7 +4007,14 @@ unsafe fn try_case(case: &mut Case) -> Option<Option<*mut Task>> {
                 case.found = found as u8;
                 Some(woken)
             }
-            SEND => try_send(&mut *(*(case.handle as *mut SenderObject)).channel, case.value),
+            SEND => {
+                let c = &mut *(*(case.handle as *mut SenderObject)).channel;
+                if discarding(c) {
+                    drop_unsent(c, case.value);
+                    return Some(None);
+                }
+                try_send(c, case.value)
+            }
             WAIT => {
                 let join = case.handle as *mut JoinObject;
                 if !(*join).done {

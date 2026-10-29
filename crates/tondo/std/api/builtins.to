@@ -162,8 +162,10 @@ pub fn panic(message: String, code: String? = none, data: Map[String, Int | Floa
 pub fn assert(condition: Bool, message: String = "")
 
 /// `channel[T](capacity)`: a channel's two ends; without capacity it has no
-/// limit (language 11.13).
-pub fn channel[T](capacity: Int = -1): (Sender[T], Receiver[T])
+/// limit (language 11.13). With `discardWhenAbandoned: true`, once no copy
+/// of the receiver is left, `send` drops its value at once instead of
+/// keeping it or waiting.
+pub fn channel[T](capacity: Int = -1, discardWhenAbandoned: Bool = false): (Sender[T], Receiver[T])
 
 /// Waits while the channel is full; sending to a closed channel panics.
 pub fn Sender.send(self, value: T)
@@ -174,6 +176,10 @@ pub fn Sender.close(self)
 
 /// Whether the channel is closed.
 pub fn Sender.isClosed(self): Bool
+
+/// Whether no copy of the channel's receiver is left, so what is sent can
+/// never be received: a producer stops.
+pub fn Sender.isAbandoned(self): Bool
 
 /// Another sender of the same channel.
 pub fn Sender.copy(self): Sender[T]

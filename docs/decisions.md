@@ -3070,3 +3070,15 @@ as gzip's, closes itself with `close()` and lets go of the other, which
 closes with its last copy, as the writers of JSON, CSV and logs already
 did: closing it outright would close the console under
 `gzip.writer(console.stdout())`.
+
+## 2026-10-29 — A producer learns that nobody listens
+
+Only senders close a channel: closing says no more values come, which only
+a producer knows, and a consumer that closed would make the producers'
+`send` panic. So a producer could not tell that every receiver had gone,
+and a task a library starts with nobody holding its `Join`, as `fs.watch`'s,
+went on sending to nobody. `sender.isAbandoned()` now says that no copy of
+the receiver is left. What a send does then is chosen when the channel is
+made, since a program may want either: by default it keeps the value or
+waits, as before, and `discardWhenAbandoned: true` drops it at once, a send
+that was waiting for room included.

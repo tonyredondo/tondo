@@ -76,7 +76,10 @@ fn produce2(): Int {
 ```
 
 A `Sender` moves (the channel closes when its last sender goes); a
-`Receiver` can be shared. `receive(timeout: d)` gives `none` on time out.
+`Receiver` can be shared, and only senders close. `receive(timeout: d)`
+gives `none` on time out. `sender.isAbandoned()` says no receiver is left,
+for a producer to stop, and `channel[T](n, discardWhenAbandoned: true)`
+makes `send` drop values nobody can receive instead of keeping or waiting.
 `select` waits for the first ready arm; `else =>` makes it not wait.
 
 ## Shared state

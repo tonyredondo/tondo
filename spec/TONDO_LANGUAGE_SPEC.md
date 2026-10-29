@@ -3830,7 +3830,15 @@ fn sum(count: Int): Int {
 - `for value in receiver` recibe hasta que el canal se cierra y se vacía.
 - `sender.isClosed()` y `receiver.isClosed()` indican si el canal está cerrado.
 - El canal se cierra al desaparecer su último `Sender`, o antes con
-  `sender.close()`.
+  `sender.close()`. Un `Receiver` no lo cierra: cerrar dice que no llegarán
+  más valores, lo que solo sabe quien envía, y el `send` de los productores
+  daría `P0012`.
+- `sender.isAbandoned()` indica que no queda ninguna copia del `Receiver`: lo
+  que se envíe ya no lo recibirá nadie, y un productor puede parar. Por
+  defecto un canal abandonado sigue guardando lo enviado, o `send` espera si
+  está lleno; con `channel[T](capacity, discardWhenAbandoned: true)`, `send`
+  vuelve enseguida y descarta el valor, también el de un `send` que esperaba
+  sitio cuando desapareció el último `Receiver`.
 
 Un `Sender` no es `Copy`: pasarlo lo mueve, como en el ejemplo, de modo que
 cuando el productor termina el canal se cierra solo. `sender.copy()` crea otro
