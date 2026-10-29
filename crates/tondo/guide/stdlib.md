@@ -292,9 +292,16 @@ shows where the time goes.
 A program profiles itself with `std.profile`, as a continuous profiler
 does: `let cpu = profile.startCpu()`, then `cpu.stop().pprof()`, the bytes
 of a pprof file; `profile.startMemory()` and `profile.memory()`;
-`profile.tasks()`. `profile.withLabels(["endpoint": path], () { handle(request) })`
-labels the samples of its work, and of the tasks it starts, so a profile
-divides the time by them.
+`profile.tasks()`; `profile.startBlocking()` and `profile.blocking()`, where
+tasks wait for others; `profile.startContention()` and
+`profile.contention()`, where locks others waited for are let go.
+`profile.withLabels(["endpoint": path], () { handle(request) })` labels the
+samples of its work, and of the tasks it starts, so a profile divides the
+time by them; `let previous = profile.setLabels(...)` and
+`defer previous.restore()` do it when start and end are different calls.
+`diagnostics.metrics()` gives the counters `tondo counters` shows, to send
+where the program wants, and `diagnostics.stack()` the frames of the task
+that asks.
 
 `tondo profile -- app.to` (or `tondo profile app --duration 10`) writes
 `app-<pid>.cpu.pprof`, a profile with the function and line of every frame

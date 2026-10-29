@@ -28,8 +28,8 @@ pub struct SyncObject {
     state: AtomicUsize,
     /// Guards `waiting` and `changes`.
     queue: AtomicBool,
-    /// Tasks waiting to take it, and whether to change it.
-    waiting: VecDeque<(*const Wait, bool)>,
+    /// Tasks waiting to take it, whether to change it, and since when.
+    waiting: VecDeque<(*const Wait, bool, std::time::Instant)>,
     /// Tasks in `updateWhen` waiting for the value to change.
     changes: Vec<*const Wait>,
     value: *mut u8,
@@ -238,18 +238,18 @@ pub unsafe extern "C" fn tondo_rt_sync_lock(object: *mut SyncObject, mode: u8, l
         // has lost for too long.
         let since = *since.get_or_insert_with(std::time::Instant::now);
         if woken {
-            o.waiting.push_front((Arc::as_ptr(&wait), exclusive));
+            o.waiting.push_front((Arc::as_ptr(&wait), exclusive, since));
             if since.elapsed() > STARVATION {
                 o.state.fetch_or(STARVING, Ordering::AcqRel);
             }
         } else {
-            o.waiting.push_back((Arc::as_ptr(&wait), exclusive));
+            o.waiting.push_back((Arc::as_ptr(&wait), exclusive, since));
         }
         unlock(&o.queue);
-        match wait.block() {
+        match wait.block_on_task() {
             CANCELLED => {
                 lock(&o.queue);
-                o.waiting.retain(|&(w, _)| w != Arc::as_ptr(&wait));
+                o.waiting.retain(|&(w, ..)| w != Arc::as_ptr(&wait));
                 unlock(&o.queue);
                 return 0;
             }
@@ -302,18 +302,21 @@ unsafe fn wake_changes(o: &mut SyncObject) -> Vec<*mut Task> {
 
 /// With the queue locked, after a release: wakes one task waiting for the
 /// lock or, when it starves, hands the lock to the first writer or to every
-/// reader in a row at the head of the queue. Returns the tasks.
-unsafe fn wake_lockers(o: &mut SyncObject) -> Vec<*mut Task> {
+/// reader in a row at the head of the queue. Returns the tasks, and how long
+/// they waited, for `profile.startContention`.
+unsafe fn wake_lockers(o: &mut SyncObject) -> (Vec<*mut Task>, std::time::Duration) {
     let mut woken = Vec::new();
+    let mut delay = std::time::Duration::ZERO;
     unsafe {
         if o.state.load(Ordering::Acquire) & STARVING != 0 {
-            while let Some(&(wait, exclusive)) = o.waiting.front() {
+            while let Some(&(wait, exclusive, since)) = o.waiting.front() {
                 if !grant(o, exclusive) {
                     break;
                 }
                 o.waiting.pop_front();
                 if (*wait).claim(HANDED) {
                     woken.push((*wait).task);
+                    delay += since.elapsed();
                     if exclusive {
                         break;
                     }
@@ -325,9 +328,10 @@ unsafe fn wake_lockers(o: &mut SyncObject) -> Vec<*mut Task> {
                 o.state.fetch_and(!STARVING, Ordering::AcqRel);
             }
         } else {
-            while let Some((wait, _)) = o.waiting.pop_front() {
+            while let Some((wait, _, since)) = o.waiting.pop_front() {
                 if (*wait).claim(0) {
                     woken.push((*wait).task);
+                    delay += since.elapsed();
                     break;
                 }
             }
@@ -336,7 +340,7 @@ unsafe fn wake_lockers(o: &mut SyncObject) -> Vec<*mut Task> {
     if o.waiting.is_empty() && o.changes.is_empty() {
         o.state.fetch_and(!PARKED, Ordering::AcqRel);
     }
-    woken
+    (woken, delay)
 }
 
 /// Releases the lock a guard holds; nothing for 0.
@@ -361,9 +365,14 @@ pub unsafe extern "C" fn tondo_rt_sync_unlock(guard: usize) {
         if before & PARKED != 0 {
             lock(&o.queue);
             let mut woken = if exclusive { wake_changes(o) } else { Vec::new() };
-            woken.extend(wake_lockers(o));
+            let (lockers, delay) = wake_lockers(o);
+            woken.extend(lockers);
             unlock(&o.queue);
             woken.into_iter().for_each(notify);
+            // Where the lock others waited for is let go.
+            if !delay.is_zero() {
+                super::profiling::contended(delay);
+            }
         }
     }
 }
@@ -384,15 +393,19 @@ pub unsafe extern "C" fn tondo_rt_sync_await(guard: usize) -> usize {
         o.changes.push(Arc::as_ptr(&wait));
         o.state.fetch_or(PARKED, Ordering::AcqRel);
         o.state.fetch_and(!WRITER, Ordering::Release);
-        woken.extend(wake_lockers(o));
+        let (lockers, delay) = wake_lockers(o);
+        woken.extend(lockers);
         unlock(&o.queue);
+        if !delay.is_zero() {
+            super::profiling::contended(delay);
+        }
         let holds = held();
         let mut location = std::ptr::null();
         if let Some(index) = holds.iter().position(|&(h, _, _)| h == object as usize) {
             location = holds.swap_remove(index).2;
         }
         woken.into_iter().for_each(notify);
-        if wait.block() == CANCELLED {
+        if wait.block_on_task() == CANCELLED {
             lock(&o.queue);
             o.changes.retain(|&w| w != Arc::as_ptr(&wait));
             unlock(&o.queue);
@@ -493,7 +506,7 @@ pub unsafe extern "C" fn tondo_rt_semaphore_acquire(
         let wait = Wait::new();
         s.waiting.push_back(Arc::as_ptr(&wait));
         unlock(&s.lock);
-        if wait.block() == CANCELLED {
+        if wait.block_on_task() == CANCELLED {
             lock(&s.lock);
             s.waiting.retain(|&w| w != Arc::as_ptr(&wait));
             unlock(&s.lock);
@@ -599,7 +612,7 @@ pub unsafe extern "C" fn tondo_rt_barrier_wait(barrier: *mut BarrierObject) -> u
         let wait = Wait::new();
         b.arrived.push(Arc::as_ptr(&wait));
         unlock(&b.lock);
-        if wait.block() == CANCELLED {
+        if wait.block_on_task() == CANCELLED {
             lock(&b.lock);
             b.arrived.retain(|&w| w != Arc::as_ptr(&wait));
             unlock(&b.lock);

@@ -335,6 +335,36 @@ pub extern "C" fn tondo_rt_metric_value(id: i64) -> i64 {
     metric(id).value.load(Ordering::Relaxed)
 }
 
+/// `diagnostics.metrics()`: each counter `tondo counters` shows, as
+/// `name\tunit\tgauge\tvalue`, `gauge` 1 for a level.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_metrics() -> *mut crate::ArrayHeader {
+    let lines: Vec<String> =
+        sample().iter().map(|s| format!("{}\t{}\t{}\t{}", s.name, s.unit, s.gauge as u8, s.value)).collect();
+    super::http::string_array(&lines)
+}
+
+/// Counts for the tools from the start: the `main` of a program that reads
+/// its metrics calls it before the program starts.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_metrics_watch() {
+    super::heap::prepare();
+    hook(WATCHED);
+}
+
+/// `diagnostics.stack()`: the frames of compiled code of the running task,
+/// innermost first, as `function\tfile\tline\tcolumn`, without those of
+/// `std.diagnostics` itself.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_diagnostics_stack() -> *mut crate::ArrayHeader {
+    let frames: Vec<String> = super::trace::here_compiled()
+        .into_iter()
+        .skip_while(|(_, file, ..)| *file == "<std>/diagnostics.to")
+        .map(|(function, file, line, column)| format!("{function}\t{file}\t{line}\t{column}"))
+        .collect();
+    super::http::string_array(&frames)
+}
+
 // ---------------------------------------------------------------------------
 // Sampling
 // ---------------------------------------------------------------------------

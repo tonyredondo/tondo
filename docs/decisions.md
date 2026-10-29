@@ -3095,3 +3095,18 @@ written. A request's host and scheme believe `X-Forwarded-Host` and
 `X-Forwarded-Proto` only from the proxies an app trusts, as `clientIp` does.
 A client's hooks have the shape of a server's middleware, one function
 around `next`, so a tracer times a call and sees its error where it is.
+
+## 2026-10-29 — What a tracer reads of the runtime
+
+The fifth lot, for dd-trace. The program reads the counters `tondo counters`
+shows as a list, so a counter the runtime gains reaches it without a new
+field, and each goes to a metrics service as it is. The runtime counts only
+when something watches it, so that a program nobody watches pays nothing;
+a program that reads its metrics counts from its start, since the compiler
+sees the call, rather than from the first, which would miss what came
+before. The profile of contention attributes a lock's waits to where it was
+let go, as Go's mutex profile does, which points at the code that holds it
+too long; the profile of blocking has the waiters. Both sample a wait for
+each 100 µs waited on average and every longer one, so many short waits do
+not each pay for a stack. `setLabels` gives back the labels it replaced, for
+a span that starts and ends in different calls.

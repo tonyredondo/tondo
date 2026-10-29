@@ -136,6 +136,7 @@ enum Rt {
     Trace,
     /// A debug build's table of probes, and each probe (toolchain 7.6).
     DebugTable,
+    MetricsWatch,
     DebugLine,
     SbQuoted,
     BoxNew,
@@ -410,6 +411,7 @@ impl Rt {
             Rt::PanicValues => ("tondo_rt_panic_values", &[I32, I32, I64, I64, I64], &[]),
             Rt::Trace => ("tondo_rt_trace", &[I64], &[]),
             Rt::DebugTable => ("tondo_rt_debug_table", &[I64], &[]),
+            Rt::MetricsWatch => ("tondo_rt_metrics_watch", &[], &[]),
             Rt::DebugLine => ("tondo_rt_debug_line", &[I64, I64, I64], &[I8]),
             Rt::SbQuoted => ("tondo_rt_sb_quoted", &[I64, I64], &[]),
             Rt::BoxNew => ("tondo_rt_box_new", &[I64], &[I64]),
@@ -2852,6 +2854,11 @@ impl Codegen<'_> {
             let debug = e.cg.module.declare_data_in_func(debug, e.fb.func);
             let debug = e.fb.ins().symbol_value(POINTER, debug);
             e.call_rt(Rt::DebugTable, &[debug]);
+        }
+        // A program that reads its metrics counts them from the start
+        // (standard library 14.25).
+        if e.cg.module.get_name("tondo_rt_metrics").is_some() {
+            e.call_rt(Rt::MetricsWatch, &[]);
         }
         let entry = e.cg.module.declare_func_in_func(entry, e.fb.func);
         let entry = e.fb.ins().func_addr(POINTER, entry);

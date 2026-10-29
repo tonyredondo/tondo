@@ -2363,6 +2363,15 @@ impl Wait {
         self.fired.compare_exchange(NONE, index, Ordering::AcqRel, Ordering::Acquire).is_ok()
     }
 
+    /// `block`, for a wait on another task, as for a channel, a join or a
+    /// lock, which `profile.startBlocking` samples.
+    pub(crate) fn block_on_task(&self) -> usize {
+        let since = super::profiling::blocking_since();
+        let fired = self.block();
+        super::profiling::blocked(since);
+        fired
+    }
+
     /// Parks until the operation that claimed the wait notifies the task;
     /// returns its index, or `CANCELLED` if the task is cancelled first.
     pub(crate) fn block(&self) -> usize {
@@ -2925,7 +2934,7 @@ unsafe fn finish(join: *mut JoinObject, fully: bool) -> bool {
             wait.block_fully();
             return true;
         }
-        if wait.block() != CANCELLED {
+        if wait.block_on_task() != CANCELLED {
             return true;
         }
         lock(&j.lock);
@@ -3170,7 +3179,7 @@ unsafe fn group_block(g: &mut GroupObject) -> bool {
     let wait = Wait::new();
     g.waiter = Some((Arc::as_ptr(&wait), 0));
     unlock(&g.lock);
-    let fired = wait.block();
+    let fired = wait.block_on_task();
     lock(&g.lock);
     if g.waiter.is_some_and(|(w, _)| w == Arc::as_ptr(&wait)) {
         g.waiter = None;
@@ -3586,7 +3595,7 @@ pub unsafe extern "C" fn tondo_rt_channel_send(sender: *mut SenderObject, value:
         let mut waiter = Waiter { wait: Arc::as_ptr(&wait), index: 0, value, state: 0 };
         c.sending.push_back(&mut waiter);
         unlock(&c.lock);
-        if wait.block() == CANCELLED {
+        if wait.block_on_task() == CANCELLED {
             lock(&c.lock);
             c.sending.retain(|w| *w != &raw mut waiter);
             unlock(&c.lock);
@@ -3644,7 +3653,7 @@ pub unsafe extern "C" fn tondo_rt_channel_offer(sender: *mut SenderObject, value
         let mut waiter = Waiter { wait: Arc::as_ptr(&blocked), index: 0, value, state: 0 };
         c.sending.push_back(&mut waiter);
         unlock(&c.lock);
-        if blocked.block() == CANCELLED {
+        if blocked.block_on_task() == CANCELLED {
             lock(&c.lock);
             c.sending.retain(|w| *w != &raw mut waiter);
             unlock(&c.lock);
@@ -3708,7 +3717,7 @@ pub unsafe extern "C" fn tondo_rt_channel_receive(channel: *mut ChannelObject, o
         let mut waiter = Waiter { wait: Arc::as_ptr(&wait), index: 0, value: out, state: 0 };
         c.receiving.push_back(&mut waiter);
         unlock(&c.lock);
-        if wait.block() == CANCELLED {
+        if wait.block_on_task() == CANCELLED {
             lock(&c.lock);
             c.receiving.retain(|w| *w != &raw mut waiter);
             unlock(&c.lock);
@@ -3944,7 +3953,7 @@ unsafe fn select(cases: &mut [Case], blocking: bool, location: *const Str) -> i6
             }
         }
         unlock_all(&locks);
-        let won = wait.block();
+        let won = wait.block_on_task();
         // Leave every queue the wait is still in.
         lock_all(&locks);
         for (index, case) in cases.iter().enumerate() {

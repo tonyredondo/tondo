@@ -54,6 +54,40 @@ pub fn tasks(): Profile {
     Profile { native: native.profileTasks() }
 }
 
+/// Begins sampling where tasks wait for others: channels, `select`, joins
+/// and groups, and the locks, semaphores and barriers of `std.sync`; one
+/// wait for each 100 µs waited on average, and every longer one.
+pub fn startBlocking() {
+    native.waitsStart(0)
+}
+
+/// How many waits for other tasks and how long, by the stack that waited,
+/// from the samples since `startBlocking`: Go's block profile.
+pub fn blocking(): Profile {
+    if not native.waitsSampled(0) {
+        panic("profile.blocking() reports the samples of waits: call profile.startBlocking() first")
+    }
+    Profile { native: native.waits(0) }
+}
+
+/// Begins sampling the locks of `std.sync` that tasks waited for, as
+/// `startBlocking` samples waits.
+pub fn startContention() {
+    native.waitsStart(1)
+}
+
+/// Where locks others waited for were let go, and how long they waited,
+/// from the samples since `startContention`: Go's mutex profile, the code
+/// that holds a lock too long.
+pub fn contention(): Profile {
+    if not native.waitsSampled(1) {
+        panic(
+            "profile.contention() reports the samples of locks waited for: call profile.startContention() first",
+        )
+    }
+    Profile { native: native.waits(1) }
+}
+
 /// The profile in pprof's format, gzipped, as `go tool pprof`, Datadog and
 /// `tondo profile show` read it.
 pub fn Profile.pprof(self): Array[Byte] {
@@ -81,4 +115,29 @@ pub fn withLabels[T: ~Copy](labels: Map[String, String], body: fn(): T): T {
     let previous = native.labelsPush(names, values)
     defer native.labelsRestore(previous)
     body()
+}
+
+/// The labels a task had before `setLabels`, which `restore` puts back.
+pub type Labels = {
+    priv mark: Int
+}
+
+/// Adds `labels` to those of the task, as `withLabels` does but without a
+/// block: until the `Labels` it gives, the ones the task had, are restored.
+/// For a start and an end in different calls, as a span's:
+/// `let previous = profile.setLabels(["span": id])` and
+/// `defer previous.restore()`.
+pub fn setLabels(labels: Map[String, String]): Labels {
+    var names: Array[String] = []
+    var values: Array[String] = []
+    for (name, value) in labels {
+        names.push(name)
+        values.push(value)
+    }
+    Labels { mark: native.labelsPush(names, values) }
+}
+
+/// Puts back the labels the task had when `setLabels` gave these.
+pub fn Labels.restore(self) {
+    native.labelsRestore(self.mark)
 }

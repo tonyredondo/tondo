@@ -1,5 +1,6 @@
 // std.diagnostics (standard library 14.25): the program's own counters,
-// which `tondo counters` shows next to the runtime's.
+// which `tondo counters` shows next to the runtime's; both, for the program
+// to send where it wants; and the stack of the task that asks.
 
 import std.internal.codec as native
 
@@ -69,4 +70,66 @@ pub fn Gauge.add(self, amount: Int) {
 /// The level now.
 pub fn Gauge.value(self): Int {
     native.metricValue(self.id)
+}
+
+/// A counter as `tondo counters` shows it: its name, value and unit,
+/// `bytes`, `us` or empty, and whether it is a level or a total that only
+/// grows.
+pub type Metric = {
+    name: String
+    value: Int
+    unit: String
+    gauge: Bool
+}
+
+/// Each counter of the runtime and of the program, as `tondo counters` shows
+/// them now: `memory.held`, `tasks.live`, `program.` and a name of the
+/// program's. A program that calls it counts from its start.
+pub fn metrics(): Array[Metric] {
+    var all: Array[Metric] = []
+    for line in native.metrics() {
+        let parts = line.split("\t")
+        all.push(
+            Metric {
+                name: parts[0]
+                unit: parts[1]
+                gauge: parts[2] == "1"
+                value: Int.parse(parts[3]).unwrapOr(0)
+            },
+        )
+    }
+    all
+}
+
+/// A frame of a stack: the function and where in it.
+pub type Frame = {
+    function: String
+    file: String
+    line: Int
+    column: Int
+}
+
+/// `function (file:line:column)`.
+impl Display for Frame {
+    fn display(self): String {
+        "{self.function} ({self.file}:{self.line}:{self.column})"
+    }
+}
+
+/// The frames of the task that calls it, from the function that calls
+/// `stack` outwards, with those inlined, as a panic's report shows them.
+pub fn stack(): Array[Frame] {
+    var frames: Array[Frame] = []
+    for line in native.stack() {
+        let parts = line.split("\t")
+        frames.push(
+            Frame {
+                function: parts[0]
+                file: parts[1]
+                line: Int.parse(parts[2]).unwrapOr(0)
+                column: Int.parse(parts[3]).unwrapOr(0)
+            },
+        )
+    }
+    frames
 }

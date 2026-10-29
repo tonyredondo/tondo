@@ -1,0 +1,75 @@
+// The runtime's counters for the program, counted from its start because
+// it reads them; the stack of the task that asks; where tasks wait for
+// others and where a lock others waited for is let go; and labels set
+// without a block.
+
+import std.console
+import std.diagnostics
+import std.profile
+import std.sync
+import std.time
+
+fn hold(lock: sync.Mutex[Int]) {
+    lock.update(
+        (value) {
+            time.sleep(time.milliseconds(20))
+            value += 1
+        },
+    )
+}
+
+fn later(sender: Sender[Int]) {
+    time.sleep(time.milliseconds(5))
+    sender.send(1)
+}
+
+fn here(): Array[diagnostics.Frame] {
+    diagnostics.stack()
+}
+
+fn main() {
+    let served = diagnostics.counter("served")
+    served.add(3)
+    let metrics = diagnostics.metrics()
+    let named = (name: String) { metrics.find((m) { m.name == name }) }
+    console.println("{named("memory.held").map((m) { m.gauge and m.unit == "bytes" })}")
+    console.println("{named("memory.allocated").map((m) { m.value > 0 and not m.gauge })}")
+    console.println(
+        "{named("tasks.live").map((m) { m.value >= 1 })} {named("program.served").map((m) { m.value })}",
+    )
+    let frames = here()
+    console.println(
+        "{frames[0].function} {frames[1].function} {frames[0].file.endsWith("diagnostics_runtime.to")}",
+    )
+
+    profile.startBlocking()
+    profile.startContention()
+    let lock = sync.Mutex(0)
+    var group = Group.new[Unit]()
+    for _ in 0..4 {
+        group.add(spawn hold(lock))
+    }
+    group.wait()
+    let (sender, receiver) = channel[Int]()
+    let job = spawn later(sender)
+    _ = receiver.receive()
+    job.wait()
+    let blocking = profile.blocking().folded()
+    console.println("blocking in main {blocking.lines().any((line) { line.contains(";main ") })}")
+    let contention = profile.contention().folded()
+    console.println(
+        "contention at hold {contention.lines().all((line) { line.contains(";hold ") })}",
+    )
+
+    let previous = profile.setLabels(["span": "42"])
+    previous.restore()
+    console.println("labels restored")
+}
+
+// expect-stdout: some(true)
+// expect-stdout: some(true)
+// expect-stdout: some(true) some(3)
+// expect-stdout: here main true
+// expect-stdout: blocking in main true
+// expect-stdout: contention at hold true
+// expect-stdout: labels restored

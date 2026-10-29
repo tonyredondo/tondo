@@ -428,6 +428,16 @@ pub(crate) fn here_frames() -> Vec<usize> {
     here().collect()
 }
 
+/// The frames of compiled code of the running task from here, innermost
+/// first, with their inlined calls: function, file, line and column.
+pub(crate) fn here_compiled() -> Vec<(&'static str, &'static str, u32, u32)> {
+    here()
+        .flat_map(frames)
+        .filter(|f| !spawn_body(f.function))
+        .map(|f| (f.function, f.file, f.line, f.column))
+        .collect()
+}
+
 /// The running task's stack from here.
 fn here() -> Walk {
     let fp = frame_pointer();

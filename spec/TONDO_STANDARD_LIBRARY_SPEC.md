@@ -4418,7 +4418,8 @@ app.openApi(title: "Users", version: "1.0")                        // GET /opena
 ### 14.25 `std.diagnostics`
 
 `std.diagnostics` da al programa contadores propios, que `tondo counters`
-muestra junto a los del runtime (7.5 del toolchain):
+muestra junto a los del runtime (7.5 del toolchain); los de los dos, para
+enviarlos a donde quiera; y la pila de la tarea que lo pide:
 
 ~~~tondo
 import std.diagnostics
@@ -4426,6 +4427,10 @@ import std.diagnostics
 let served = diagnostics.counter("requests served")
 served.add()
 diagnostics.gauge("queue length").set(12)
+for metric in diagnostics.metrics() {
+    statsd.gauge("runtime.{metric.name}", metric.value)   // memory.held, tasks.live…
+}
+let frames = diagnostics.stack()                 // la función que llama, primero
 ~~~
 
 La superficie es:
@@ -4441,6 +4446,13 @@ pub fn Counter.value(self): Int
 pub fn Gauge.set(self, value: Int)
 pub fn Gauge.add(self, amount: Int)
 pub fn Gauge.value(self): Int
+
+pub type Metric = { name: String, value: Int, unit: String, gauge: Bool }
+pub fn metrics(): Array[Metric]
+
+pub type Frame = { function: String, file: String, line: Int, column: Int }
+pub fn stack(): Array[Frame]
+impl Display for Frame
 ~~~
 
 - Un nombre da siempre el mismo contador, desde cualquier tarea, así que el
@@ -4450,6 +4462,17 @@ pub fn Gauge.value(self): Int
   su total; `add` con un número negativo es un pánico, porque lo que baja es
   un `Gauge`. Un `Gauge` es un nivel que sube y baja.
 - Cambiar o leer un contador es una operación atómica, sin locks.
+- `metrics` da cada contador que `tondo counters` muestra en ese momento: los
+  del runtime, con sus nombres de grupo (`memory.held`, `tasks.live`,
+  `collector.paused`…, 7.5 del toolchain), y los del programa, con
+  `program.` delante. `unit` es `bytes`, `us` o vacía, y `gauge` dice si es un
+  nivel o un total que solo crece. El runtime cuenta para las herramientas solo
+  cuando alguna lo observa, para no costar nada a un programa que nadie mira;
+  un programa que llama a `metrics` cuenta desde que empieza, porque el
+  compilador lo ve.
+- `stack` da los marcos de la tarea que lo llama, desde la función que llama a
+  `stack` hacia fuera, sin los del runtime: con las funciones inlined, como el
+  informe de un pánico. `Display` de un `Frame` es `función (archivo:línea:columna)`.
 
 ### 14.26 `std.profile`
 
@@ -4481,9 +4504,17 @@ pub fn CpuProfile.stop(self): Profile
 pub fn startMemory()
 pub fn memory(): Profile
 pub fn tasks(): Profile
+pub fn startBlocking()
+pub fn blocking(): Profile
+pub fn startContention()
+pub fn contention(): Profile
 pub fn Profile.pprof(self): Array[Byte]
 pub fn Profile.folded(self): String
 pub fn withLabels[T: ~Copy](labels: Map[String, String], body: fn(): T): T
+
+pub type Labels
+pub fn setLabels(labels: Map[String, String]): Labels
+pub fn Labels.restore(self)
 ~~~
 
 - `startCpu` muestrea dónde están los hilos del programa cada milisegundo de
@@ -4495,6 +4526,17 @@ pub fn withLabels[T: ~Copy](labels: Map[String, String], body: fn(): T): T
   da la memoria viva y lo que asignó cada pila, como `tondo profile
   --memory`. Sin muestreo, `memory` es un pánico que dice cómo encenderlo.
 - `tasks` da dónde está cada tarea, con la etiqueta `state`.
+- `startBlocking` muestrea desde entonces dónde esperan las tareas a otras:
+  un canal, un `select`, un `join` o un grupo, y los locks, semáforos y
+  barreras de `std.sync`; no las esperas de un `sleep` ni las de E/S. Toma
+  una espera por cada 100 µs esperados de media, y toda espera más larga.
+  `blocking` da cuántas esperas y cuánto tiempo desde cada pila, como el
+  block profile de Go.
+- `startContention` muestrea los locks de `std.sync` que otras tareas
+  esperaron, del mismo modo; `contention` da dónde los soltó quien los tenía y
+  cuánto le esperaron, como el mutex profile de Go: el código que retiene un
+  lock más de la cuenta. Sin muestreo, `blocking` y `contention` son pánicos
+  que dicen cómo encenderlo.
 - `pprof` da el perfil en el formato de pprof, comprimido con gzip, con la
   función, el archivo y la línea de cada marco, los del runtime y los de C
   por su nombre; `folded`, una línea por pila, sus marcos desde el más externo
@@ -4510,6 +4552,13 @@ pub fn withLabels[T: ~Copy](labels: Map[String, String], body: fn(): T): T
   guarda un número limitado de conjuntos de labels distintos, así que los que
   cambian en cada petición, como el de un span, no crecen sin fin: la muestra
   de un conjunto que ya se reemplazó no lleva labels.
+- `setLabels` añade los labels a los de la tarea como `withLabels`, pero sin
+  bloque: hasta que se restaura el `Labels` que devuelve, que son los que la
+  tarea tenía. Sirve cuando empezar y terminar son llamadas distintas, como
+  las de un span: `let previous = profile.setLabels(["span": id])` y
+  `defer previous.restore()`. `restore` deja los labels como estaban al
+  llamar a `setLabels`, y una tarea que termina sin restaurarlos no los pasa a
+  ninguna otra que no haya lanzado antes.
 
 ### 14.27 `std.embed`
 

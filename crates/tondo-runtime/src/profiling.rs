@@ -420,6 +420,100 @@ pub extern "C" fn tondo_rt_profile_tasks() -> *mut super::native::NativeObject {
     super::native::new(made(&[("tasks", "count")], ("tasks", "count", 1), None, &weighed, 0))
 }
 
+// ---------------------------------------------------------------------------
+// Waits
+// ---------------------------------------------------------------------------
+
+/// Whether `profile.startBlocking` and `profile.startContention` asked for
+/// their samples.
+static BLOCKING: AtomicBool = AtomicBool::new(false);
+static CONTENTION: AtomicBool = AtomicBool::new(false);
+/// The waits sampled, by stack: how many they stand for, and their time in
+/// nanoseconds.
+type Waits = HashMap<Vec<usize>, (f64, f64)>;
+/// Those of blocking, then those of contention; none until started.
+static WAITED: [Mutex<Option<Waits>>; 2] = [Mutex::new(None), Mutex::new(None)];
+/// The time waited that one sample stands for, on average.
+const WAIT_RATE: f64 = 100_000.0;
+
+/// When a wait for another task starts, if waits are sampled.
+pub(crate) fn blocking_since() -> Option<std::time::Instant> {
+    BLOCKING.load(Ordering::Relaxed).then(std::time::Instant::now)
+}
+
+/// A wait for another task that ended, sampled from where it waited.
+pub(crate) fn blocked(since: Option<std::time::Instant>) {
+    if let Some(since) = since {
+        waited(0, since.elapsed());
+    }
+}
+
+/// A lock let go that others waited for `delay`, sampled from where it was
+/// let go.
+pub(crate) fn contended(delay: std::time::Duration) {
+    if CONTENTION.load(Ordering::Relaxed) {
+        waited(1, delay);
+    }
+}
+
+/// Takes a wait of `delay` as a sample with the chance `delay / WAIT_RATE`,
+/// and a longer one always, as the waits a sample stands for: its stack
+/// from the compiled code that waited.
+fn waited(kind: usize, delay: std::time::Duration) {
+    let nanos = delay.as_nanos() as f64;
+    let chance = (nanos / WAIT_RATE).min(1.0);
+    if chance < 1.0 && chance_roll() >= chance {
+        return;
+    }
+    let mut stack = super::trace::here_frames();
+    let compiled = stack.iter().position(|&a| super::trace::compiled(a)).unwrap_or(0);
+    stack.drain(..compiled);
+    let mut table = WAITED[kind].lock().unwrap_or_else(|e| e.into_inner());
+    let entry = table.get_or_insert_with(HashMap::new).entry(stack).or_insert((0.0, 0.0));
+    entry.0 += 1.0 / chance;
+    entry.1 += nanos / chance;
+}
+
+/// A number from 0 to 1, from a generator of the thread.
+fn chance_roll() -> f64 {
+    thread_local!(static STATE: std::cell::Cell<u64> = const { std::cell::Cell::new(0x9e37_79b9_7f4a_7c15) });
+    STATE.with(|state| {
+        let mut x = state.get();
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        state.set(x);
+        (x >> 11) as f64 / (1u64 << 53) as f64
+    })
+}
+
+/// `profile.startBlocking()` (0) and `profile.startContention()` (1).
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_profile_waits_start(kind: i64) {
+    let flag = if kind == 0 { &BLOCKING } else { &CONTENTION };
+    WAITED[kind.clamp(0, 1) as usize].lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new);
+    flag.store(true, Ordering::Relaxed);
+}
+
+/// Whether the waits of `kind` are sampled.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_profile_waits_sampled(kind: i64) -> u8 {
+    WAITED[kind.clamp(0, 1) as usize].lock().unwrap_or_else(|e| e.into_inner()).is_some() as u8
+}
+
+/// `profile.blocking()` (0) and `profile.contention()` (1): how many waits
+/// and how long, from each stack.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_profile_waits(kind: i64) -> *mut super::native::NativeObject {
+    let table = WAITED[kind.clamp(0, 1) as usize].lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default();
+    let weighed: Vec<Weighed> = table
+        .into_iter()
+        .map(|(stack, (count, nanos))| (stack, vec![count.round() as i64, nanos.round() as i64], Vec::new()))
+        .collect();
+    let kinds = [("contentions", "count"), ("delay", "nanoseconds")];
+    super::native::new(made(&kinds, ("contentions", "count", 1), Some("delay"), &weighed, 0))
+}
+
 /// `Profile.pprof()`.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_profile_pprof(profile: *mut super::native::NativeObject) -> *mut crate::ArrayHeader {
