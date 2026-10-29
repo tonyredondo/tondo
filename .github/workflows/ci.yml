@@ -19,8 +19,11 @@ jobs:
             target: aarch64-linux-gnu
           - os: macos-latest
             target: aarch64-macos
+          # The slowest runner: its clippy and the cases' other builds run
+          # each night (nightly.yml).
           - os: macos-15-intel
             target: x86_64-macos
+            light: true
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -28,10 +31,12 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - if: ${{ !matrix.light }}
+        run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       # Linking with the system's C compiler, as `TONDO_CC` asks.
-      - run: cargo test -p tondo --test cases cases
+      - if: ${{ !matrix.light }}
+        run: cargo test -p tondo --test cases cases
         env:
           TONDO_CC: cc
       # Static executables, with musl (`--static`).
@@ -40,11 +45,13 @@ jobs:
         env:
           TONDO_CASES_STATIC: 1
       # Debug builds (`--debug`).
-      - run: cargo test -p tondo --test cases
+      - if: ${{ !matrix.light }}
+        run: cargo test -p tondo --test cases
         env:
           TONDO_CASES_DEBUG: 1
       # Live builds (`--live`), whose calls go through slots.
-      - run: cargo test -p tondo --test cases cases
+      - if: ${{ !matrix.light }}
+        run: cargo test -p tondo --test cases cases
         env:
           TONDO_CASES_LIVE: 1
       # The cases and projects where there is no C compiler, dynamic and
@@ -73,10 +80,12 @@ jobs:
           path: dist/tondo-${{ matrix.target }}.tar.gz
           if-no-files-found: error
 
-  # The compiler for the other architecture, built across with zig as the C
-  # compiler and linker, and tested under qemu's emulation, as
-  # `docker run --platform` runs it.
-  qemu:
+  # `--target` for the other architecture: its `tondo`, built across with
+  # zig as the C compiler and linker, writes its pack under qemu's
+  # emulation, as `docker run --platform` runs it, and this machine's
+  # `tondo` builds for it with that pack. The tests run under emulation
+  # each night (nightly.yml).
+  targets:
     strategy:
       fail-fast: false
       matrix:
@@ -89,43 +98,28 @@ jobs:
             platform: linux/amd64
     runs-on: ${{ matrix.os }}
     # A hang under emulation fails the job instead of holding it for hours.
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
-        run: |
-          rustup show active-toolchain || rustup toolchain install
-          rustup target add ${{ matrix.arch }}-unknown-linux-gnu ${{ matrix.arch }}-unknown-linux-musl
+        run: rustup show active-toolchain || rustup toolchain install
       - uses: mlugg/setup-zig@v2
       - uses: docker/setup-qemu-action@v3
       - uses: Swatinem/rust-cache@v2
-      - name: Build the tests for ${{ matrix.arch }}
+      - name: Build tondo for ${{ matrix.arch }}
         run: |
-          set -o pipefail
-          arch=${{ matrix.arch }}
-          for target in $arch-linux-gnu.2.28 $arch-linux-musl; do ln -s "$PWD/dist/zig-cc" "$RUNNER_TEMP/$target-cc"; done
-          export CC_${arch}_unknown_linux_gnu=$RUNNER_TEMP/$arch-linux-gnu.2.28-cc
-          export CC_${arch}_unknown_linux_musl=$RUNNER_TEMP/$arch-linux-musl-cc
-          export AR_${arch}_unknown_linux_gnu="zig ar" AR_${arch}_unknown_linux_musl="zig ar"
-          export CARGO_TARGET_$(echo $arch | tr a-z A-Z)_UNKNOWN_LINUX_GNU_LINKER=$RUNNER_TEMP/$arch-linux-gnu.2.28-cc
-          mkdir -p target
-          cargo test --workspace --target $arch-unknown-linux-gnu --no-run --message-format=json |
-            jq -r 'select(.profile.test == true and .executable != null)
-              | (.manifest_path | rtrimstr("Cargo.toml")) + " " + .executable' > target/emulated
-      - name: Test under emulation
-        run: >
-          docker run --rm --platform ${{ matrix.platform }} -v "$PWD:$PWD" -w "$PWD"
-          -e OWNER="$(id -u):$(id -g)" debian:stable-slim .github/scripts/emulated.sh
-      # This machine's `tondo` builds for ${{ matrix.arch }} with the pack
-      # the emulated one writes, and runs the program under emulation.
+          . .github/scripts/across.sh ${{ matrix.arch }}
+          cargo build -p tondo --target ${{ matrix.arch }}-unknown-linux-gnu
       - name: Build for ${{ matrix.arch }} with its pack
         run: |
           docker run --rm --platform ${{ matrix.platform }} -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:$PWD" -w "$PWD" \
             debian:stable-slim target/${{ matrix.arch }}-unknown-linux-gnu/debug/tondo target pack target/packs
           TONDO_TARGETS=$PWD/target/packs cargo test -p tondo --test targets
 
-  # Linux with musl, as Alpine has it. The checkout runs on the host, since
-  # its Node cannot run on Alpine for arm64.
+  # Linux with musl, as Alpine has it. The checkout and the cache run on the
+  # host, since their Node cannot run on Alpine for arm64: the container's
+  # cargo builds in the checkout's target and downloads to the host's
+  # ~/.cargo.
   musl:
     strategy:
       fail-fast: false
@@ -138,8 +132,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
       - run: >
-          docker run --rm -v "$PWD:/work" -w /work rust:alpine sh -c
+          mkdir -p ~/.cargo/registry ~/.cargo/git &&
+          docker run --rm -v "$PWD:/work" -w /work -e CARGO_INCREMENTAL=0
+          -v "$HOME/.cargo/registry:/usr/local/cargo/registry" -v "$HOME/.cargo/git:/usr/local/cargo/git"
+          rust:alpine sh -c
           "apk add --no-cache musl-dev zlib-dev zlib-static git curl tar &&
           (rustup show active-toolchain || rustup toolchain install) &&
           cargo test --workspace &&
@@ -152,6 +152,8 @@ jobs:
           run="docker run --rm -v $PWD:/work -w /work"
           $run alpine sh -c "! command -v cc && $(cat target/cases) cases projects"
           $run -e TONDO_CASES_STATIC=1 alpine sh -c "! command -v cc && $(cat target/cases) cases"
+      # What the containers wrote as root, for the cache to clean and keep.
+      - run: sudo chown -R "$(id -u):$(id -g)" target ~/.cargo
       - uses: actions/upload-artifact@v4
         with:
           name: tondo-${{ matrix.target }}

@@ -3023,3 +3023,17 @@ replaces by a function, which 0.1 had refused: Hugo passes its users'
 patterns, written for Go, and the function cannot fail, so the cost the
 refusal guarded stays visible.
 
+
+## 2026-10-29 — Under emulation each night
+
+CI took about 50 minutes a push again, bound by the tests under qemu's
+emulation of x86-64 and by macOS on Intel, the slowest runner. In 120 runs
+the tests under emulation failed alone ten times: three were races of the
+runtime that hardware has too and emulation's slowness brought out, seven
+were tests whose time limits were too tight for it. A race that shows once
+in hundreds of runs is found as well by a run each night as by one each
+push, so they run each night now, with clippy and the cases' other builds
+on Intel, which arm64 and Linux already run on each push. Each push still
+builds `tondo` across for the other architecture and builds for it with
+the pack the emulated `tondo` writes, which nothing else tests, and the
+musl jobs keep their builds between runs as the others do.
