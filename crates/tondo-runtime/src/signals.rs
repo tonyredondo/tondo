@@ -7,7 +7,7 @@
 use super::tasks::{ChannelObject, SenderObject, tondo_rt_channel_new, tondo_rt_sender_new, tondo_rt_sender_release};
 use super::{ArrayHeader, element};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 
 /// The signals of `process.Signal`, in the order of its variants.
 pub(crate) const SIGNALS: [i32; 5] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP, libc::SIGUSR1, libc::SIGUSR2];
@@ -18,6 +18,8 @@ static PIPE: AtomicI32 = AtomicI32::new(-1);
 static ROUTED: AtomicU32 = AtomicU32::new(0);
 /// The channels `process.signals` gave.
 static SUBSCRIBERS: Mutex<Vec<Subscriber>> = Mutex::new(Vec::new());
+/// Whether there is one, which a signal may wake a task waiting on.
+static LISTENING: AtomicBool = AtomicBool::new(false);
 
 /// A channel's sender, the size of its values and the signals it takes.
 struct Subscriber {
@@ -110,6 +112,7 @@ pub unsafe extern "C" fn tondo_rt_process_signals(
     let channel = unsafe { tondo_rt_channel_new(16, 1, size as usize, align as usize, None, None, std::ptr::null()) };
     let sender = unsafe { tondo_rt_sender_new(channel) };
     lock().push(Subscriber { sender, size: size as usize, wanted: mask });
+    LISTENING.store(true, Ordering::SeqCst);
     let before = ROUTED.fetch_or(mask, Ordering::SeqCst);
     for signal in SIGNALS {
         if mask & !before & (1 << signal) != 0 {
@@ -117,6 +120,12 @@ pub unsafe extern "C" fn tondo_rt_process_signals(
         }
     }
     channel
+}
+
+/// Whether a channel of signals exists: then every task waiting is not a
+/// deadlock, as a signal may come.
+pub(crate) fn listening() -> bool {
+    LISTENING.load(Ordering::SeqCst)
 }
 
 /// Lets go of the channels, when the program ends.

@@ -1061,6 +1061,8 @@ fn stalled(queue: &Queue) -> Stalled {
         || MAIN_DONE.load(Ordering::SeqCst)
         // A reload's barrier, which the tool that holds it lets go.
         || crate::live::barrier()
+        // A signal the program waits for.
+        || crate::signals::listening()
         || nexts().any(|next| !next.task.load(Ordering::Acquire).is_null() || !next.tasks().0.is_empty())
     {
         return Stalled::No;
