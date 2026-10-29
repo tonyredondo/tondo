@@ -1,0 +1,16 @@
+// encoding.htmlEscape and htmlUnescape: text safe in HTML, and the named and
+// numeric references of HTML5 read back.
+
+import std.console
+import std.encoding
+
+fn main() {
+    let escaped = encoding.htmlEscape("<a href=\"x\">Tom & Jerry's</a>")
+    console.println(escaped)
+    console.println(encoding.htmlUnescape(escaped))
+    console.println(encoding.htmlUnescape("caf&eacute; &#233; &#x41; &copy &amp;lt; &nope; &"))
+}
+
+// expect-stdout: &lt;a href=&#34;x&#34;&gt;Tom &amp; Jerry&#39;s&lt;/a&gt;
+// expect-stdout: <a href="x">Tom & Jerry's</a>
+// expect-stdout: café é A &copy &lt; &nope; &

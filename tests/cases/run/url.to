@@ -1,0 +1,110 @@
+// std.url: the parts of a URL or a relative reference, resolving one from
+// another as RFC 3986 does, with all its examples, and the query of a form.
+
+import std.console
+import std.url
+
+fn main(): !url.UrlError {
+    let page = url.parse("https://ada@example.com:8443/docs/a%20b?q=tondo&tag=x&tag=y#intro")?
+    console.println(
+        "{page.scheme} {page.user} {page.host} {page.port} {page.path} {page.query} {page.fragment}",
+    )
+    console.println("{page.param("q")} {page.params("tag")} {page.param("none")}")
+    console.println("{page}")
+    console.println("{page.resolve("../img/logo.png?v=2")?}")
+    console.println(
+        "{page.resolve("//cdn.example.com/x.js")?} {page.resolve("?page=2")?} {page.resolve("#top")?}",
+    )
+    console.println("{page.resolve("/a/./b/../c")?.path} {page.resolve("http://other.org")?}")
+    let moved = page with {
+        path: "/v2{page.path}"
+        query: url.encodeQuery(["q": "a b", "lang": "es"])
+    }
+    console.println("{moved}")
+    let six = url.parse("http://[::1]:8080/x")?
+    console.println("{six.host} {six.port} {six}")
+    let relative = url.parse("../a.png")?
+    console.println(
+        "{relative.isAbsolute()} {relative.path} {url.parse("mailto:ada@example.com")?.path} {url.parse("file:///etc/hosts")?}",
+    )
+    match url.parse("http://example.com:99999/") {
+        ok(_) => console.println("unexpected")
+        err(error) => console.println("{error}")
+    }
+    match url.parse("1http://x") {
+        ok(_) => console.println("unexpected")
+        err(error) => console.println("{error}")
+    }
+    match url.parse("/a%zz") {
+        ok(_) => console.println("unexpected")
+        err(error) => console.println("{error}")
+    }
+    rfcExamples()?
+}
+
+/// The examples of RFC 3986, 5.4.1 and 5.4.2.
+fn rfcExamples(): !url.UrlError {
+    let base = url.parse("http://a/b/c/d;p?q")?
+    let cases = [
+        ("g:h", "g:h"),
+        ("g", "http://a/b/c/g"),
+        ("./g", "http://a/b/c/g"),
+        ("g/", "http://a/b/c/g/"),
+        ("/g", "http://a/g"),
+        ("//g", "http://g"),
+        ("?y", "http://a/b/c/d;p?y"),
+        ("g?y", "http://a/b/c/g?y"),
+        ("#s", "http://a/b/c/d;p?q#s"),
+        ("g#s", "http://a/b/c/g#s"),
+        ("g?y#s", "http://a/b/c/g?y#s"),
+        (";x", "http://a/b/c/;x"),
+        ("g;x", "http://a/b/c/g;x"),
+        ("g;x?y#s", "http://a/b/c/g;x?y#s"),
+        ("", "http://a/b/c/d;p?q"),
+        (".", "http://a/b/c/"),
+        ("./", "http://a/b/c/"),
+        ("..", "http://a/b/"),
+        ("../", "http://a/b/"),
+        ("../g", "http://a/b/g"),
+        ("../..", "http://a/"),
+        ("../../", "http://a/"),
+        ("../../g", "http://a/g"),
+        ("../../../g", "http://a/g"),
+        ("../../../../g", "http://a/g"),
+        ("/./g", "http://a/g"),
+        ("/../g", "http://a/g"),
+        ("g.", "http://a/b/c/g."),
+        (".g", "http://a/b/c/.g"),
+        ("g..", "http://a/b/c/g.."),
+        ("..g", "http://a/b/c/..g"),
+        ("./../g", "http://a/b/g"),
+        ("./g/.", "http://a/b/c/g/"),
+        ("g/./h", "http://a/b/c/g/h"),
+        ("g/../h", "http://a/b/c/h"),
+        ("g;x=1/./y", "http://a/b/c/g;x=1/y"),
+        ("g;x=1/../y", "http://a/b/c/y"),
+    ]
+    var wrong = 0
+    for (reference, expected) in cases {
+        let got = "{base.resolve(reference)?}"
+        if got != expected {
+            console.println("{reference}: {got} != {expected}")
+            wrong += 1
+        }
+    }
+    console.println("{cases.length()} cases, {wrong} wrong")
+}
+
+// expect-stdout: https ada example.com some(8443) /docs/a b q=tondo&tag=x&tag=y intro
+// expect-stdout: some(tondo) [x, y] none
+// expect-stdout: https://ada@example.com:8443/docs/a%20b?q=tondo&tag=x&tag=y#intro
+// expect-stdout: https://ada@example.com:8443/img/logo.png?v=2
+// expect-stdout: https://cdn.example.com/x.js https://ada@example.com:8443/docs/a%20b?page=2 https://ada@example.com:8443/docs/a%20b?q=tondo&tag=x&tag=y#top
+// expect-stdout: /a/c http://other.org
+// expect-stdout: https://ada@example.com:8443/v2/docs/a%20b?q=a+b&lang=es#intro
+// expect-stdout: ::1 some(8080) http://[::1]:8080/x
+// expect-stdout: false ../a.png ada@example.com file:///etc/hosts
+// expect-stdout: `99999` is not a port, which is a number from 0 to 65535 (at 19)
+// expect-stdout: `1http` is not a scheme, which is a letter then letters, digits, `+`, `-` or `.`; a relative path with a `:` starts with `./` (at 0)
+// expect-stdout: a `%` is followed by two hexadecimal digits: write `%25` for a `%` itself (at 2)
+// expect-stdout: 37 cases, 0 wrong

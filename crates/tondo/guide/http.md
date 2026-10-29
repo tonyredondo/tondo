@@ -108,6 +108,14 @@ fn find(id: Int): User? {
 - `app.embedded("/", Site)` serves the files of `const Site: embed.Files =
   embed.files("public")`, kept in the executable, as `files` serves a
   directory; a folder answers with its `index.html` (`tondo guide stdlib`).
+- `request.cookie("session")` reads a cookie and
+  `reply.cookie("session", token, maxAge: time.hours(1))` sets one, `HttpOnly`
+  and `SameSite=Lax` unless told otherwise; `http.Client.new(cookies: true)`
+  keeps the cookies it gets, as a browser does.
+- `request.clientIp()` is the client's address. Behind a load balancer,
+  `app.trustProxies(net.network("10.0.0.0/8")?)` names its network, so the
+  address it writes in `X-Forwarded-For` is believed; without it, no header
+  is, since any client can write one.
 - `request.route()` is the template of the route that answers, as
   `/hello/:name`, which middleware sees before `next`: name metrics and
   traces by it, not by the path, which grows with every parameter.

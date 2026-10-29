@@ -2,7 +2,8 @@
 //! which runs in time linear in its input and has no backreferences or
 //! look-around. The dialect is checked first with `regex-syntax`, so a
 //! pattern outside it is an error with its kind and offset, and embedded
-//! flags and `(?P<name>...)` are refused as the spec does.
+//! flags but `i`, `m`, `s` and `U`, and `(?P<name>...)`, are refused as the
+//! spec does.
 //!
 //! Operations never wait, so each leaves its error, if any, for the calling
 //! thread to read right after it.
@@ -94,17 +95,35 @@ fn builder(pattern: &str, flags: i64, size: usize, depth: u32) -> regex::RegexBu
     builder
 }
 
+/// Whether embedded flags are those the dialect has: `i`, `m`, `s` and `U`,
+/// each of them set or cleared.
+fn allowed(flags: &ast::Flags) -> bool {
+    flags.items.iter().all(|item| {
+        matches!(
+            item.kind,
+            ast::FlagsItemKind::Negation
+                | ast::FlagsItemKind::Flag(
+                    ast::Flag::CaseInsensitive
+                        | ast::Flag::MultiLine
+                        | ast::Flag::DotMatchesNewLine
+                        | ast::Flag::SwapGreed
+                )
+        )
+    })
+}
+
 /// Where a parsed pattern leaves the dialect, first in the pattern: an
-/// embedded flag, the `(?P<name>...)` form, or a capture past the limit.
+/// embedded flag it does not have, the `(?P<name>...)` form, or a capture
+/// past the limit.
 fn outside(ast: &Ast, max_captures: i64) -> Option<(Kind, usize)> {
     let mut stack = vec![ast];
     while let Some(node) = stack.pop() {
         let offset = node.span().start.offset;
         match node {
-            Ast::Flags(_) => return Some((Kind::UnsupportedFeature, offset)),
+            Ast::Flags(flags) if !allowed(&flags.flags) => return Some((Kind::UnsupportedFeature, offset)),
             Ast::Group(group) => {
                 let index = match &group.kind {
-                    ast::GroupKind::NonCapturing(flags) if !flags.items.is_empty() => {
+                    ast::GroupKind::NonCapturing(flags) if !allowed(flags) => {
                         return Some((Kind::UnsupportedFeature, offset));
                     }
                     ast::GroupKind::CaptureName { starts_with_p: true, .. } => {
@@ -195,6 +214,13 @@ fn compile(
 /// use; an error reads as `std.regex` shows it.
 pub(crate) fn pattern(pattern: &str) -> Result<regex::Regex, String> {
     compile(pattern, 0, 256, 256, 16_000_000).map_err(|(kind, offset)| format!("regex.{kind:?} at byte {offset}"))
+}
+
+/// `Regex.escape(text)`: a pattern that matches the text as it is.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_regex_escape(text: *const Str) -> *mut Str {
+    let text = String::from_utf8_lossy(unsafe { str_bytes(text) }).into_owned();
+    str_new(regex::escape(&text).as_bytes())
 }
 
 /// `Regex.compile`: the pattern with its options as bits (case-insensitive,

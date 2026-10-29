@@ -221,6 +221,40 @@ pub fn Response.headers(self): Map[String, String] {
     out
 }
 
+/// The value of a cookie the response sets, decoded as `Request.cookie`
+/// does, or `none`.
+pub fn Response.cookie(self, name: String): String? {
+    self.cookies().get(name)
+}
+
+/// The cookies the response sets, by name, their values decoded.
+pub fn Response.cookies(self): Map[String, String] {
+    var found: Map[String, String] = [:]
+    for header in self.headerValues("set-cookie") {
+        match nameAndValue(header.split(";")[0]) {
+            some((name, value)) => found[name] = value
+            none => {}
+        }
+    }
+    found
+}
+
+/// A cookie's `name=value`, its value without quotes and decoded with
+/// `encoding.urlDecode`, as `Reply.cookie` writes it.
+fn nameAndValue(pair: String): (String, String)? {
+    let text = pair.trim()
+    let at = text.find("=")?
+    let name = text.slice(0, at).unwrapOr("").trim()
+    var value = text.slice(at + 1, text.length()).unwrapOr("").trim()
+    if value.length() >= 2 and value.startsWith("\"") and value.endsWith("\"") {
+        value = value.slice(1, value.length() - 1).unwrapOr(value)
+    }
+    if name.isEmpty() {
+        return none
+    }
+    some((name, __encoding.urlDecode(value).unwrapOr(value)))
+}
+
 /// The whole body, read as it arrives.
 pub fn Response.bytes(self): Array[Byte] ! HttpError {
     let bytes = httpNative.readAll(self.native)
@@ -447,7 +481,9 @@ pub type Client = {
 /// `connectTimeout` its connection; it follows up to `redirects` redirects,
 /// and trusts the certificates of the PEM file `trust` too. With `socket`,
 /// each request goes through that Unix socket instead of the network, and
-/// the URL gives only its path and `Host`.
+/// the URL gives only its path and `Host`. With `cookies`, it keeps the
+/// cookies responses set and sends them with the next requests, as a
+/// browser does.
 pub fn Client.new(
     baseUrl: String = "",
     headers: Map[String, String] = [:],
@@ -456,12 +492,19 @@ pub fn Client.new(
     redirects: Int = 10,
     trust: String? = none,
     socket: String? = none,
+    cookies: Bool = false,
 ): Client {
     let connect = match connectTimeout {
         some(limit) => limit.milliseconds()
         none => 0
     }
-    let connection = httpNative.client(connect, redirects, trust.unwrapOr(""), socket.unwrapOr(""))
+    let connection = httpNative.client(
+        connect,
+        redirects,
+        trust.unwrapOr(""),
+        socket.unwrapOr(""),
+        cookies,
+    )
     Client { native: connection, base: baseUrl, defaults: headers, limit: timeout }
 }
 
@@ -911,12 +954,12 @@ pub type Request = {
     priv peer: String
     priv headerList: Array[String]
     priv params: Map[String, String]
+    /// The route that answers it, chosen before the middleware runs, and
+    /// without one the methods of the routes of its path, for `405`.
     priv chosen: Route?
-    priv allowed: Array[
-        /// The route that answers it, chosen before the middleware runs, and
-        /// without one the methods of the routes of its path, for `405`.
-        String,
-    ]
+    priv allowed: Array[String]
+    /// The networks of the proxies the app trusts (`App.trustProxies`).
+    priv trusted: Array[__net.Network]
 }
 
 /// The method: `GET`, `POST`.
@@ -946,6 +989,91 @@ pub fn Request.version(self): String {
 /// The client's address and port.
 pub fn Request.remoteAddress(self): String {
     self.peer
+}
+
+/// The client's IP address, without its port. A connection from a proxy of
+/// a network the app trusts (`App.trustProxies`) gives the address the
+/// proxies wrote: the last of `X-Forwarded-For` that is not of those
+/// networks, or `X-Real-Ip`, as Gin's `ClientIP`. Without trusted proxies
+/// no header is believed, since any client can write one.
+pub fn Request.clientIp(self): String {
+    let remote = hostOf(self.peer)
+    if not trusts(self.trusted, remote) {
+        return remote
+    }
+    match self.header("x-forwarded-for") {
+        some(forwarded) => {
+            // Each proxy adds the address it was connected from, so the
+            // nearest come last.
+            var last = remote
+            for hop in forwarded.split(",").reversed() {
+                match __net.ip(hop.trim()) {
+                    ok(address) => {
+                        last = "{address}"
+                        if not trusts(self.trusted, last) {
+                            return last
+                        }
+                    }
+                    err(_) => return remote
+                }
+            }
+            last
+        }
+        none => match self.header("x-real-ip") {
+            some(real) => __net.ip(real.trim()).map((address) { "{address}" }).unwrapOr(remote)
+            none => remote
+        }
+    }
+}
+
+/// The address of `1.2.3.4:5678` or `[::1]:5678`, without its port.
+fn hostOf(peer: String): String {
+    if peer.startsWith("[") {
+        return peer.slice(1, peer.find("]").unwrapOr(1)).unwrapOr(peer)
+    }
+    match peer.findLast(":") {
+        some(at) => peer.slice(0, at).unwrapOr(peer)
+        none => peer
+    }
+}
+
+/// Whether the address is of one of the networks.
+fn trusts(networks: Array[__net.Network], address: String): Bool {
+    match __net.ip(address) {
+        ok(ip) => {
+            for network in networks {
+                if network.contains(ip) {
+                    return true
+                }
+            }
+            false
+        }
+        err(_) => false
+    }
+}
+
+/// The value of the cookie the client sent under `name`, decoded with
+/// `encoding.urlDecode`, or `none`.
+pub fn Request.cookie(self, name: String): String? {
+    self.cookies().get(name)
+}
+
+/// The cookies the client sent, by name, their values decoded.
+pub fn Request.cookies(self): Map[String, String] {
+    var found: Map[String, String] = [:]
+    var index = 0
+    for index + 1 < self.headerList.length() {
+        if self.headerList[index] == "cookie" {
+            for pair in self.headerList[index + 1].split(";") {
+                match nameAndValue(pair) {
+                    some((name, value)) => found[name] = value
+                    none => {}
+                }
+            }
+        }
+        index += 2
+    }
+    found
 }
 
 /// A parameter of the route, decoded: `id` in `/users/:id`.
@@ -1300,6 +1428,53 @@ pub fn Reply.header(self, name: String, value: String): Reply {
     Reply { code: self.code, headerList: headers, payload: self.payload }
 }
 
+/// When a browser sends a cookie from another site's page: `Lax` with the
+/// links that lead to this one, `Strict` never, `None` always, which takes
+/// `Secure`.
+pub enum SameSite {
+    Lax
+    Strict
+    None
+}
+
+/// The reply with a cookie, its value written with `encoding.urlEncode` so
+/// any text fits. A `maxAge` of zero removes it, and without one it lasts
+/// the browser's session; `httpOnly` hides it from the page's JavaScript and
+/// `secure` sends it over HTTPS only.
+pub fn Reply.cookie(
+    self,
+    name: String,
+    value: String,
+    maxAge: __time.Duration? = none,
+    path: String = "/",
+    domain: String = "",
+    secure: Bool = false,
+    httpOnly: Bool = true,
+    sameSite: SameSite = SameSite.Lax,
+): Reply {
+    var parts = ["{name}={__encoding.urlEncode(value)}", "Path={path}"]
+    if not domain.isEmpty() {
+        parts.push("Domain={domain}")
+    }
+    match maxAge {
+        some(age) => parts.push("Max-Age={age.seconds().max(0)}")
+        none => {}
+    }
+    if secure or sameSite == SameSite.None {
+        parts.push("Secure")
+    }
+    if httpOnly {
+        parts.push("HttpOnly")
+    }
+    let site = match sameSite {
+        SameSite.Lax => "Lax"
+        SameSite.Strict => "Strict"
+        SameSite.None => "None"
+    }
+    parts.push("SameSite={site}")
+    self.header("set-cookie", parts.join("; "))
+}
+
 /// The reply's status code.
 pub fn Reply.status(self): Int {
     self.code
@@ -1341,11 +1516,12 @@ pub type App = {
     priv operations: Array[(String, String, String)]
     priv schemas: Map[String, String]
     priv docs: (String, String, String)?
+    priv proxies: Array[__net.Network]
 }
 
 /// An app without routes.
 pub fn App.new(): App {
-    App { routes: [], layers: [], operations: [], schemas: [:], docs: none }
+    App { routes: [], layers: [], operations: [], schemas: [:], docs: none, proxies: [] }
 }
 
 /// Routes `GET` and `HEAD` requests of `path`, whose `:name` segments are
@@ -1744,6 +1920,7 @@ fn answer(incoming: httpNative.Native, handler: fn(Request): Reply ! Problem) {
         params: [:]
         chosen: none
         allowed: []
+        trusted: []
     }
     // A handler that panics answers `500`, and the server goes on
     // (14.24.1); the report says which request it was.
@@ -1843,8 +2020,18 @@ fn App.pipeline(self): fn(Request): Reply ! Problem {
         handler = wrapped(layer, handler)
     }
     // The route is chosen first, so that the middleware sees it.
-    let layered = handler
-    (request) { layered(choose(routes, request))? }
+    let (layered, proxies) = (handler, self.proxies)
+    (request) {
+        var routed = choose(routes, request)
+        routed.trusted = proxies
+        layered(routed)?
+    }
+}
+
+/// Trusts the proxies of these networks, such as the app's load balancer,
+/// for the client's address they write: see `Request.clientIp`.
+pub fn App.trustProxies(mut self, networks: ...__net.Network) {
+    self.proxies.extend(networks)
 }
 
 fn wrapped(

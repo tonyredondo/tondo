@@ -1346,6 +1346,53 @@ pub unsafe extern "C" fn tondo_rt_net_ip(text: *const Str) -> *mut Str {
     str_new(ip.unwrap_or_default().as_bytes())
 }
 
+/// `net.ip`: an IP address in its canonical form, an IPv4 in an IPv6 as
+/// that IPv4, or "" when `text` is not one.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_net_canonical_ip(text: *const Str) -> *mut Str {
+    let ip = super::http::text(text).parse::<std::net::IpAddr>().map(|ip| ip.to_canonical().to_string());
+    str_new(ip.unwrap_or_default().as_bytes())
+}
+
+/// What an IP address in its canonical form is, as bits: IPv4 1, IPv6 2,
+/// loopback 4, private (RFC 1918 and RFC 4193) 8, unspecified 16.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_net_ip_kind(text: *const Str) -> i64 {
+    let Ok(ip) = super::http::text(text).parse::<std::net::IpAddr>() else { return 0 };
+    let private = match ip {
+        std::net::IpAddr::V4(v4) => v4.is_private(),
+        std::net::IpAddr::V6(v6) => v6.segments()[0] & 0xfe00 == 0xfc00,
+    };
+    [ip.is_ipv4(), ip.is_ipv6(), ip.is_loopback(), private, ip.is_unspecified()]
+        .iter()
+        .enumerate()
+        .map(|(bit, &on)| (on as i64) << bit)
+        .sum()
+}
+
+/// `net.network`: a network in CIDR notation, `10.0.0.0/8`, its address
+/// cut to its prefix; an address alone is its own network; "" when `text`
+/// is not one.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_net_network(text: *const Str) -> *mut Str {
+    let text = super::http::text(text);
+    let network = match text.parse::<ipnet::IpNet>() {
+        Ok(network) => Some(network.trunc()),
+        Err(_) => text.parse::<std::net::IpAddr>().ok().map(|ip| ipnet::IpNet::from(ip.to_canonical())),
+    };
+    str_new(network.map(|n| n.to_string()).unwrap_or_default().as_bytes())
+}
+
+/// Whether the network, as `network` gives it, holds the address.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_net_contains(network: *const Str, ip: *const Str) -> u8 {
+    let (network, ip) = (super::http::text(network), super::http::text(ip));
+    match (network.parse::<ipnet::IpNet>(), ip.parse::<std::net::IpAddr>()) {
+        (Ok(network), Ok(ip)) => network.contains(&ip.to_canonical()) as u8,
+        _ => 0,
+    }
+}
+
 /// The local (`which` 0) or remote (1) address of a connection, the local
 /// one of a listener or a socket, and who sent a datagram.
 fn address_of(object: *mut NativeObject, which: i64) -> Option<Endpoint> {

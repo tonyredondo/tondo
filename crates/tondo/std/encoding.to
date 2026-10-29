@@ -1,5 +1,5 @@
 // std.encoding (standard library 14.20): binary data as text and back, in
-// Base64, hexadecimal and the percent-encoding of URLs.
+// Base64, hexadecimal and the percent-encoding of URLs, and text in HTML.
 
 import std.internal.codec as codecNative
 
@@ -64,6 +64,18 @@ pub fn urlEncode(input: String): String {
 pub fn urlDecode(input: String): String ! EncodingError {
     checked(input, codecNative.urlCheck(input))?
     codecNative.urlDecode(input)
+}
+
+/// The text with `&`, `<`, `>`, `"` and `'` written as references, safe in
+/// HTML's content and in a quoted attribute.
+pub fn htmlEscape(input: String): String {
+    codecNative.htmlEscape(input)
+}
+
+/// The text with HTML5's named references, as `&eacute;`, and numeric ones,
+/// as `&#233;`, read; what is not one stays as it is.
+pub fn htmlUnescape(input: String): String {
+    codecNative.htmlUnescape(input)
 }
 
 fn isUrl(alphabet: Base64Alphabet): Bool {

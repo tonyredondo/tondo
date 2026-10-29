@@ -1,0 +1,35 @@
+// net.Ip and net.Network: addresses in their canonical form, what they are,
+// and networks in CIDR notation.
+
+import std.console
+import std.net
+
+fn main(): !net.NetError {
+    let a = net.ip("::ffff:10.0.0.1")?
+    let b = net.ip("2001:0DB8:0000::0001")?
+    console.println("{a} {a.isV4()} {a.isPrivate()} {b} {b.isV6()} {net.ip("::1")?.isLoopback()} {net.ip("0.0.0.0")?.isUnspecified()}")
+    console.println("{a == net.ip("10.0.0.1")?} {net.ip("fd12::3")?.isPrivate()} {net.ip("8.8.8.8")?.isPrivate()}")
+    let lan = net.network("10.1.2.3/8")?
+    console.println("{lan} {lan.contains(a)} {lan.contains(b)} {lan.prefix()} {net.network("192.168.1.7")?}")
+    let six = net.network("fd00::/8")?
+    console.println("{six.contains(net.ip("fd12::3")?)} {six}")
+    match net.ip("10.0.0.300") {
+        ok(_) => console.println("unexpected")
+        err(error) => console.println("{error}")
+    }
+    match net.network("10.0.0.0/33") {
+        ok(_) => console.println("unexpected")
+        err(error) => console.println("{error}")
+    }
+    var seen: Map[net.Ip, Int] = [:]
+    seen[a] = 1
+    console.println("{seen.get(net.ip("10.0.0.1")?)}")
+}
+
+// expect-stdout: 10.0.0.1 true true 2001:db8::1 true true true
+// expect-stdout: true true false
+// expect-stdout: 10.0.0.0/8 true false 8 192.168.1.7/32
+// expect-stdout: true fd00::/8
+// expect-stdout: invalid address: `10.0.0.300` is not an IP address: write it as `10.0.0.1` or `2001:db8::1`
+// expect-stdout: invalid address: `10.0.0.0/33` is not a network: write it as `10.0.0.0/8` or `fd00::/8`
+// expect-stdout: some(1)

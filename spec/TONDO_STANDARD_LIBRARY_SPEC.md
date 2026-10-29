@@ -1495,6 +1495,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.diagnostics` | Core | — | 0.1 | Contadores y gauges del programa, que `tondo counters` muestra |
 | `std.profile` | Core | — | 0.1 | Perfiles que el programa hace de sí mismo, en el formato de pprof, y labels que los dividen |
 | `std.embed` | Core | — | 0.1 | Archivos del paquete leídos al compilar y guardados en el ejecutable |
+| `std.url` | Core | — | 0.1 | URLs y referencias relativas de RFC 3986: sus partes, su resolución y su query |
 | `std.console` | Capability-gated | `console` | 0.1 | stdin, stdout, stderr, texto, bytes y flushing |
 | `std.env` | Hosted | — | 0.1 | Argumentos, entorno y directorio de trabajo |
 | `std.fs` | Hosted | — | 0.1 | Filesystem, metadata y archivos |
@@ -2073,7 +2074,7 @@ pub enum NetError {
 }
 
 pub type Address = { ip: String, port: Int, path: String }
-pub fn address(ip: String, port: Int): Address ! NetError
+pub fn address(text: String, port: Int): Address ! NetError
 pub fn unixAddress(path: String): Address
 pub fn resolve(host: String, timeout: time.Duration? = none): Array[String] ! NetError
 
@@ -2113,6 +2114,19 @@ pub fn Socket.close(self)
 pub fn connectUnix(path: String, timeout: time.Duration? = none): Stream ! NetError
 pub fn listenUnix(path: String): Listener ! NetError
 pub fn bindUnix(path: String? = none): Socket ! NetError
+
+pub type Ip
+pub fn ip(text: String): Ip ! NetError
+pub fn Ip.isV4(self): Bool
+pub fn Ip.isV6(self): Bool
+pub fn Ip.isLoopback(self): Bool
+pub fn Ip.isPrivate(self): Bool
+pub fn Ip.isUnspecified(self): Bool
+pub type Network
+pub fn network(text: String): Network ! NetError
+pub fn Network.contains(self, member: Ip): Bool
+pub fn Network.ip(self): Ip
+pub fn Network.prefix(self): Int
 ~~~
 
 - `connect`, `listen` y `bind` aceptan un nombre o una dirección IP;
@@ -2161,6 +2175,15 @@ pub fn bindUnix(path: String? = none): Socket ! NetError
   es un socket sin nadie que escuche, el que dejó un programa que terminó, lo
   reemplazan; otro archivo es `AddressInUse`. `bindUnix` sin path da un socket
   sin nombre, que solo envía.
+- `ip` lee una dirección IPv4 o IPv6 en sus formas habituales, y `Display` la
+  escribe en su forma canónica, la de RFC 5952 para IPv6, así que dos escrituras
+  de la misma dirección son iguales y pueden ser claves. Una IPv6 que contiene
+  una IPv4 (`::ffff:10.0.0.1`) es esa IPv4. `isPrivate` es verdadero para las
+  redes de uso privado de RFC 1918 y RFC 4193.
+- `network` lee una red en notación CIDR, `10.0.0.0/8` o `fd00::/8`, y una
+  dirección sola, que es la red de esa dirección; `contains` dice si una
+  dirección es suya. Una dirección o red que no se lee es `InvalidAddress`, con
+  qué escribir.
 - Un provider o generador no puede importar `std.net` (`E2108`).
 
 ### 14.5 El prelude y `std.math`
@@ -3295,10 +3318,13 @@ trata grapheme clusters como una unidad de matching.
 La sintaxis es un subconjunto cerrado y regular: literales, clases/rangos,
 propiedades `\p`/`\P`, escapes, anchors, alternation, grupos capturantes y no
 capturantes, captures con nombre y quantifiers greedy/lazy acotados. `\d`,
-`\s`, `\w` y `\b` tienen definiciones Unicode explícitas. Backreferences,
-look-around, recursion, conditionals, código embebido, includes, clases
-dependientes de locale, flags embebidos y matching de bytes inválidos se
-rechazan con un error de compilación; no se reinterpretan silenciosamente.
+`\s`, `\w` y `\b` tienen definiciones Unicode explícitas. Los flags `i`, `m`,
+`s` y `U` pueden escribirse en el patrón, para todo lo que sigue (`(?i)abc`) o
+para un grupo (`(?i:abc)`), con el significado de las opciones del mismo
+nombre; con `-` se quitan (`(?-i)`). Backreferences, look-around, recursion,
+conditionals, código embebido, includes, clases dependientes de locale, otros
+flags y matching de bytes inválidos se rechazan con un error de compilación; no
+se reinterpretan silenciosamente.
 
 `Regex.compile` produce un valor inmutable y reutilizable, que se copia sin
 coste y puede compartirse entre tareas. `isMatch`, `isFullMatch`, `find`,
@@ -3317,8 +3343,9 @@ participó es `none`; la capture cero es la coincidencia completa.
 El replacement solo admite `$0`, `$N`, `${name}` y `$$`; cualquier otro `$`, o
 una capture que el patrón no tiene, es `InvalidReplacement` en su offset.
 `replace` modifica la primera coincidencia y `replaceAll` todas las no
-solapadas. No existen callbacks de replacement en 0.1: evitar código ejecutable
-por match mantiene visibles coste, ownership y errores.
+solapadas. `replaceWith` y `replaceAllWith` reemplazan con lo que una función
+da para cada coincidencia, sin interpretar `$`, como `ReplaceAllStringFunc` de
+Go. `Regex.escape(text)` da un patrón que encaja con ese texto literal.
 
 ```tondo
 pub fn RegexOptions.defaults(): RegexOptions
@@ -3333,6 +3360,9 @@ pub fn Regex.find(self, input: String): RegexMatch? ! RegexError
 pub fn Regex.findAll(self, input: String): RegexFindIterator ! RegexError
 pub fn Regex.replace(self, input: String, replacement: String): String ! RegexError
 pub fn Regex.replaceAll(self, input: String, replacement: String): String ! RegexError
+pub fn Regex.replaceWith(self, input: String, replacement: fn(RegexMatch): String): String ! RegexError
+pub fn Regex.replaceAllWith(self, input: String, replacement: fn(RegexMatch): String): String ! RegexError
+pub fn Regex.escape(text: String): String
 pub fn RegexMatch.capture(self, index: Int): RegexCapture?
 pub fn RegexMatch.captureName(self, name: String): RegexCapture?
 pub fn RegexSpan.slice(self, input: String): String ! RegexError
@@ -3549,6 +3579,8 @@ pub fn hexEncode(bytes: Array[Byte]): String
 pub fn hexDecode(text: String): Array[Byte] ! EncodingError
 pub fn urlEncode(text: String): String
 pub fn urlDecode(text: String): String ! EncodingError
+pub fn htmlEscape(text: String): String
+pub fn htmlUnescape(text: String): String
 ~~~
 
 - Base64 sigue RFC 4648: `Standard` usa `+` y `/` y rellena con `=`; `Url` usa
@@ -3561,6 +3593,10 @@ pub fn urlDecode(text: String): String ! EncodingError
 - Un carácter que la codificación no usa es `InvalidCharacter` con su offset en
   bytes; un texto que acaba a mitad de un valor, `Truncated`; lo que `urlDecode`
   lee y no es UTF-8, `NotUtf8`.
+- `htmlEscape` escribe `&`, `<`, `>`, `"` y `'` como `&amp;`, `&lt;`, `&gt;`,
+  `&#34;` y `&#39;`, así que el texto va seguro en el contenido o en un atributo
+  entre comillas de HTML. `htmlUnescape` lee las referencias con nombre de HTML5
+  y las numéricas, y deja como está lo que no es una.
 
 ### 14.21 `std.hash`
 
@@ -3735,7 +3771,7 @@ pub enum HttpError {
 pub type Client
 pub fn Client.new(baseUrl: String = "", headers: Map[String, String] = [:],
     timeout: time.Duration? = none, connectTimeout: time.Duration? = none,
-    redirects: Int = 10, socket: String? = none): Client
+    redirects: Int = 10, socket: String? = none, cookies: Bool = false): Client
 pub fn Client.get(self, url: String, query: Map[String, String] = [:],
     headers: Map[String, String] = [:], timeout: time.Duration? = none): Response ! HttpError
 pub fn Client.head(...)                       // como get
@@ -3771,6 +3807,8 @@ pub fn Response.version(self): String
 pub fn Response.header(self, name: String): String?
 pub fn Response.headerValues(self, name: String): Array[String]
 pub fn Response.headers(self): Map[String, String]
+pub fn Response.cookie(self, name: String): String?
+pub fn Response.cookies(self): Map[String, String]
 pub fn Response.text(self): String ! HttpError
 pub fn Response.bytes(self): Array[Byte] ! HttpError
 pub fn Response.json[T: serialization.Decode](self): T ! HttpError
@@ -3798,6 +3836,11 @@ pub fn WebSocket.close(self): Unit ! HttpError
   `socket`, cada petición va por ese socket Unix (14.4.6) en vez de por la red,
   y la URL solo da el path y la cabecera `Host`:
   `http.Client.new(baseUrl: "http://agent", socket: "/var/run/datadog/apm.socket")`.
+- Con `cookies`, el cliente guarda las cookies que le dan las respuestas y las
+  envía con las peticiones siguientes, como un navegador: a su dominio y su
+  path, mientras no caducan, y las `Secure` solo por HTTPS. `Response.cookie` y
+  `cookies` leen las que da una respuesta, decodificadas como las de
+  `Request.cookie`.
 - Una petición devuelve la respuesta cuando llega su cabecera. Un estado de
   400 o más es `HttpError.Status`, que lleva la respuesta para leer su cuerpo;
   así `http.get(url)?.json()?` es correcto sin comprobar el estado.
@@ -3892,6 +3935,9 @@ pub fn Request.path(self): String
 pub fn Request.route(self): String?
 pub fn Request.version(self): String
 pub fn Request.remoteAddress(self): String
+pub fn Request.clientIp(self): String
+pub fn Request.cookie(self, name: String): String?
+pub fn Request.cookies(self): Map[String, String]
 pub fn Request.param(self, name: String): String
 pub fn Request.intParam(self, name: String): Int ! Problem
 pub fn Request.query(self, name: String): String?
@@ -3923,6 +3969,10 @@ pub fn Reply.redirect(url: String, status: Int = 302): Reply
 pub fn Reply.empty(status: Int = 204): Reply
 pub fn Reply.notFound(): Reply
 pub fn Reply.header(self, name: String, value: String): Reply
+pub fn Reply.cookie(self, name: String, value: String, maxAge: time.Duration? = none,
+    path: String = "/", domain: String = "", secure: Bool = false, httpOnly: Bool = true,
+    sameSite: SameSite = SameSite.Lax): Reply
+pub enum SameSite { Lax, Strict, None }
 pub fn Reply.status(self): Int
 
 pub type App
@@ -3930,6 +3980,7 @@ pub fn App.new(): App
 pub fn App.get(mut self, path: String, handler: fn(Request): Reply ! Problem)   // y post, put, patch, delete
 pub fn App.route(mut self, method: String, path: String, handler: fn(Request): Reply ! Problem, operation: String = "")
 pub fn App.use(mut self, middleware: fn(Request, fn(Request): Reply ! Problem): Reply ! Problem)
+pub fn App.trustProxies(mut self, networks: ...net.Network)
 pub fn App.mount(mut self, prefix: String, other: App)
 pub fn App.files(mut self, prefix: String, directory: String, listing: Bool = false)
 pub fn App.embedded(mut self, prefix: String, files: embed.Files)
@@ -3961,6 +4012,20 @@ pub alias Tls = net.Tls
   parámetro como el path.
 - Con `socket`, `listen` y `start` atienden en ese socket Unix (14.4.6) en vez
   de en un puerto, y `Server.address()` es su path.
+- `Request.clientIp()` es la dirección IP del cliente, sin puerto. Tras un
+  proxy o un balanceador, la conexión llega de él, y la dirección del cliente
+  viene en `X-Forwarded-For`, que cualquier cliente puede escribir. Por eso
+  `App.trustProxies` nombra las redes de los proxies propios: cuando la
+  conexión viene de una de ellas, la dirección es la última de
+  `X-Forwarded-For` que no es de esas redes, o `X-Real-Ip`, como `ClientIP` de
+  Gin. Sin `trustProxies` no se cree a ninguna cabecera, y es la dirección de
+  la conexión.
+- `Request.cookie(name)` y `cookies()` leen las cookies que envía el cliente, y
+  `Reply.cookie` añade una a la respuesta, con `Set-Cookie`: `maxAge` cero la
+  borra, y sin `maxAge` dura lo que la sesión del navegador; `httpOnly` la
+  oculta al JavaScript de la página y `secure` la envía solo por HTTPS. El
+  valor se escribe con `encoding.urlEncode` y se lee con `urlDecode`, como hace
+  Gin, así que cualquier texto cabe en una cookie.
 - Un handler devuelve una `Reply` o falla con un `Problem`, que el servidor
   envía como `application/problem+json` (RFC 9457). Con un estado de 500 o más
   el cliente solo ve `internal server error` y el mensaje va a la salida de
@@ -4194,6 +4259,57 @@ pub fn Files.tag(self, path: String): String?
   `--watch` compilan de nuevo cuando cambian (6 y 7.10 del toolchain).
 - Un provider o un generador no embebe: lo que lee le llega como input (27.5
   del lenguaje), y `std.embed` es `E2108`.
+
+### 14.28 `std.url`
+
+`std.url` lee y escribe URLs y referencias relativas como las define RFC 3986:
+las de un enlace, una redirección o una petición.
+
+~~~tondo
+import std.url
+
+let page = url.parse("https://ada@example.com:8443/docs/a%20b?q=tondo&tag=x#intro")?
+// page.scheme "https", page.host "example.com", page.port some(8443),
+// page.path "/docs/a b", page.param("q") some("tondo")
+let next = page.resolve("../img/logo.png?v=2")?   // https://ada@example.com:8443/img/logo.png?v=2
+let moved = page with { path: "/v2{page.path}", query: url.encodeQuery(["q": "a b"]) }
+~~~
+
+La superficie es:
+
+~~~tondo pseudocode
+pub type Url = {
+    scheme: String           // "https"; vacío en una referencia relativa
+    user: String
+    password: String?
+    host: String             // sin corchetes en IPv6
+    port: Int?
+    path: String             // decodificado
+    query: String            // como se escribe, sin `?`
+    fragment: String         // decodificado, sin `#`
+}
+pub type UrlError = { message: String, offset: Int }
+
+pub fn parse(text: String): Url ! UrlError
+pub fn Url.isAbsolute(self): Bool
+pub fn Url.resolve(self, reference: String): Url ! UrlError
+pub fn Url.param(self, name: String): String?
+pub fn Url.params(self, name: String): Array[String]
+pub fn encodeQuery(values: Map[String, String]): String
+impl Display for Url
+~~~
+
+- `parse` acepta una URL absoluta o una referencia relativa (`/docs`,
+  `../a.png`, `?page=2`, `#top`). Decodifica `path` y `fragment`; `Display` los
+  vuelve a codificar donde hace falta, así que un `Url` cambiado con `with`
+  escribe una URL válida. Una URL que no se lee, como un puerto que no es un
+  número o un esquema con un carácter que no admite, es `UrlError` con el
+  offset de lo que falla.
+- `resolve` da la URL de una referencia vista desde esta, como un navegador
+  resuelve un enlace (RFC 3986, 5.2), con sus `.` y `..` quitados.
+- `param` y `params` leen la query como un formulario, con `+` como espacio:
+  el primer valor de un nombre, o todos. `encodeQuery` escribe una query así,
+  en el orden del mapa.
 
 ---
 

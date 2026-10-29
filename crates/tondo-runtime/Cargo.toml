@@ -16,6 +16,8 @@ path = "src/lib.rs"
 bytes = "1.12.1"
 futures-util = { version = "0.3.34", features = ["sink"] }
 hmac = "0.13.0"
+html-escape = "0.2"
+ipnet = "2.12"
 http-body-util = "0.1.5"
 httpdate = "1.0.3"
 hyper = { version = "1.12.0", features = ["server", "http1", "http2"] }
@@ -29,7 +31,7 @@ mio = { version = "1.2.4", features = ["os-poll", "net"] }
 multer = "3.1.0"
 regex = "1"
 regex-syntax = "0.8"
-reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "http2", "stream", "multipart", "gzip", "brotli", "deflate", "system-proxy"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "http2", "stream", "multipart", "gzip", "brotli", "deflate", "system-proxy", "cookies"] }
 rmp = "0.8"
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-native-certs = "0.8.5"

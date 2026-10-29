@@ -107,11 +107,11 @@ pub fn unixAddress(path: String): Address {
 }
 
 /// The address of an IP address, in its usual form, and a port.
-pub fn address(ip: String, port: Int): Address ! NetError {
-    let usual = netNative.ip(ip)
+pub fn address(text: String, port: Int): Address ! NetError {
+    let usual = netNative.ip(text)
     if usual.isEmpty() {
         fail NetError.InvalidAddress(
-            "`{ip}` is not an IP address; `net.resolve` gives the addresses of a name",
+            "`{text}` is not an IP address; `net.resolve` gives the addresses of a name",
         )
     }
     if port < 0 or port > 65535 {
@@ -125,6 +125,98 @@ fn addressOf(object: netNative.Native, which: Int): Address {
         ip: netNative.addressIp(object, which)
         port: netNative.addressPort(object, which)
         path: netNative.addressPath(object, which)
+    }
+}
+
+/// An IP address, v4 or v6, in its canonical form: two ways of writing the
+/// same address are equal, and it can be a key.
+pub type Ip = {
+    priv text: String
+}
+
+/// The address `text` writes, in its usual forms; an IPv4 in an IPv6, as
+/// `::ffff:10.0.0.1`, is that IPv4.
+pub fn ip(text: String): Ip ! NetError {
+    let canonical = netNative.canonicalIp(text.trim())
+    if canonical.isEmpty() {
+        fail NetError.InvalidAddress(
+            "`{text}` is not an IP address: write it as `10.0.0.1` or `2001:db8::1`",
+        )
+    }
+    Ip { text: canonical }
+}
+
+/// Whether it is an IPv4 address.
+pub fn Ip.isV4(self): Bool {
+    netNative.ipKind(self.text) & 1 != 0
+}
+
+/// Whether it is an IPv6 address.
+pub fn Ip.isV6(self): Bool {
+    netNative.ipKind(self.text) & 2 != 0
+}
+
+/// Whether it is this machine's: `127.0.0.0/8` or `::1`.
+pub fn Ip.isLoopback(self): Bool {
+    netNative.ipKind(self.text) & 4 != 0
+}
+
+/// Whether it is of a network for private use: `10.0.0.0/8`, `172.16.0.0/12`,
+/// `192.168.0.0/16` (RFC 1918) or `fc00::/7` (RFC 4193).
+pub fn Ip.isPrivate(self): Bool {
+    netNative.ipKind(self.text) & 8 != 0
+}
+
+/// Whether it is the address of no machine: `0.0.0.0` or `::`.
+pub fn Ip.isUnspecified(self): Bool {
+    netNative.ipKind(self.text) & 16 != 0
+}
+
+/// `10.0.0.1`, or IPv6 as RFC 5952 writes it: `2001:db8::1`.
+impl Display for Ip {
+    fn display(self): String {
+        self.text
+    }
+}
+
+/// A network of IP addresses: an address and how many of its first bits its
+/// addresses share, as `10.0.0.0/8` writes it.
+pub type Network = {
+    priv address: Ip
+    priv bits: Int
+}
+
+/// The network `text` writes in CIDR notation, as `10.0.0.0/8` or
+/// `fd00::/8`; an address alone is the network of that address.
+pub fn network(text: String): Network ! NetError {
+    let written = netNative.network(text.trim())
+    match written.split("/") {
+        [first, bits] => Network { address: Ip { text: first }, bits: Int.parse(bits).unwrapOr(0) }
+        _ => fail NetError.InvalidAddress(
+            "`{text}` is not a network: write it as `10.0.0.0/8` or `fd00::/8`",
+        )
+    }
+}
+
+/// Whether the address is of the network.
+pub fn Network.contains(self, member: Ip): Bool {
+    netNative.contains("{self}", member.text)
+}
+
+/// Its first address.
+pub fn Network.ip(self): Ip {
+    self.address
+}
+
+/// How many of the first bits its addresses share.
+pub fn Network.prefix(self): Int {
+    self.bits
+}
+
+/// `10.0.0.0/8`.
+impl Display for Network {
+    fn display(self): String {
+        "{self.address}/{self.bits}"
     }
 }
 

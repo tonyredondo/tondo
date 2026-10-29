@@ -1,0 +1,330 @@
+// std.url (standard library 14.28): URLs and relative references as RFC
+// 3986 defines them: their parts, resolving one from another, and the
+// query of a form.
+
+import std.encoding as __encoding
+
+/// A URL, `https://ada@example.com:8443/docs/a?q=1#intro`, or a relative
+/// reference, `../a.png`. `Display` writes it back, encoding what the path
+/// and the fragment need, so one changed with `with` is a valid URL.
+pub type Url = {
+    /// `https`; empty in a relative reference.
+    scheme: String
+    user: String
+    password: String?
+    /// A name or an address, without brackets for IPv6; empty without one.
+    host: String
+    port: Int?
+    /// Decoded: `/docs/a b` for `/docs/a%20b`.
+    path: String
+    /// As it is written, without `?`.
+    query: String
+    /// Decoded, without `#`.
+    fragment: String
+}
+
+/// Why a text is not a URL: what to fix, and where, in characters.
+pub type UrlError = {
+    message: String
+    offset: Int
+}
+
+impl Display for UrlError {
+    fn display(self): String {
+        "{self.message} (at {self.offset})"
+    }
+}
+
+/// The URL or relative reference `text` writes: `https://example.com/a`,
+/// `/docs`, `../a.png`, `?page=2` or `#top`.
+pub fn parse(text: String): Url ! UrlError {
+    var rest = text
+    var at = 0
+    var parsed = Url {
+        scheme: ""
+        user: ""
+        password: none
+        host: ""
+        port: none
+        path: ""
+        query: ""
+        fragment: ""
+    }
+    // The fragment, then the query.
+    match rest.find("#") {
+        some(hash) => {
+            parsed.fragment = decoded(rest.slice(hash + 1, rest.length()).unwrapOr(""), hash + 1)?
+            rest = rest.slice(0, hash).unwrapOr(rest)
+        }
+        none => {}
+    }
+    match rest.find("?") {
+        some(question) => {
+            parsed.query = rest.slice(question + 1, rest.length()).unwrapOr("")
+            rest = rest.slice(0, question).unwrapOr(rest)
+        }
+        none => {}
+    }
+    // The scheme: what comes before the first `:`, if no `/` does.
+    match rest.find(":") {
+        some(colon) if not rest.slice(0, colon).unwrapOr("").contains("/") => {
+            let scheme = rest.slice(0, colon).unwrapOr("")
+            if not isScheme(scheme) {
+                fail UrlError {
+                    message: "`{scheme}` is not a scheme, which is a letter then letters, digits, `+`, `-` or `.`; a relative path with a `:` starts with `./`"
+                    offset: 0
+                }
+            }
+            parsed.scheme = scheme.toLower()
+            rest = rest.slice(colon + 1, rest.length()).unwrapOr("")
+            at = colon + 1
+        }
+        _ => {}
+    }
+    // The authority: `//user:password@host:port`.
+    if rest.startsWith("//") {
+        let after = rest.slice(2, rest.length()).unwrapOr("")
+        let end = after.find("/").unwrapOr(after.length())
+        let authority = after.slice(0, end).unwrapOr("")
+        rest = after.slice(end, after.length()).unwrapOr("")
+        // Where the authority starts, and the path after it.
+        let start = at + 2
+        at = start + end
+        var hostStart = start
+        var hostPort = authority
+        match authority.findLast("@") {
+            some(sign) => {
+                let info = authority.slice(0, sign).unwrapOr("")
+                match info.find(":") {
+                    some(colon) => {
+                        parsed.user = decoded(info.slice(0, colon).unwrapOr(""), start)?
+                        let password = info.slice(colon + 1, info.length()).unwrapOr("")
+                        parsed.password = some(decoded(password, start + colon + 1)?)
+                    }
+                    none => parsed.user = decoded(info, start)?
+                }
+                hostPort = authority.slice(sign + 1, authority.length()).unwrapOr("")
+                hostStart = start + sign + 1
+            }
+            none => {}
+        }
+        // The port: what follows the last `:`, but inside the brackets of
+        // an IPv6 address.
+        let closing = hostPort.findLast("]").unwrapOr(-1)
+        match hostPort.findLast(":") {
+            some(colon) if colon > closing => {
+                let digits = hostPort.slice(colon + 1, hostPort.length()).unwrapOr("")
+                if not digits.isEmpty() {
+                    match Int.parse(digits) {
+                        ok(port) if port >= 0 and port <= 65535 => parsed.port = some(port)
+                        _ => fail UrlError {
+                            message: "`{digits}` is not a port, which is a number from 0 to 65535"
+                            offset: hostStart + colon + 1
+                        }
+                    }
+                }
+                hostPort = hostPort.slice(0, colon).unwrapOr("")
+            }
+            _ => {}
+        }
+        parsed.host = hostPort.removePrefix("[").removeSuffix("]")
+    }
+    parsed.path = decoded(rest, at)?
+    parsed
+}
+
+/// Whether `text` is a scheme: a letter, then letters, digits, `+`, `-`
+/// and `.`.
+fn isScheme(text: String): Bool {
+    for (index, character) in text.chars().enumerate() {
+        if not (asciiLetter(character) or
+            (index > 0 and (character.isDigit() or "+-.".contains("{character}")))) {
+            return false
+        }
+    }
+    not text.isEmpty()
+}
+
+fn asciiLetter(character: Char): Bool {
+    (character >= 'a' and character <= 'z') or (character >= 'A' and character <= 'Z')
+}
+
+/// A part with its `%XX` read, which must be UTF-8; `at` is where it
+/// starts.
+fn decoded(part: String, at: Int): String ! UrlError {
+    let escape = "a `%` is followed by two hexadecimal digits: write `%25` for a `%` itself"
+    match __encoding.urlDecode(part) {
+        ok(text) => text
+        err(__encoding.EncodingError.InvalidCharacter(position)) => fail UrlError {
+            message: escape
+            offset: at + position
+        }
+        err(__encoding.EncodingError.Truncated) => fail UrlError {
+            message: escape
+            offset: at + part.length()
+        }
+        err(__encoding.EncodingError.NotUtf8) => fail UrlError {
+            message: "the `%XX` bytes are not UTF-8"
+            offset: at
+        }
+    }
+}
+
+/// Whether it has a scheme.
+pub fn Url.isAbsolute(self): Bool {
+    not self.scheme.isEmpty()
+}
+
+/// The URL a reference points to, seen from this one, as a browser resolves
+/// a link (RFC 3986, 5.2): with its `.` and `..` removed.
+pub fn Url.resolve(self, reference: String): Url ! UrlError {
+    let target = parse(reference)?
+    if target.isAbsolute() {
+        return target with { path: withoutDots(target.path) }
+    }
+    if hasAuthority(target) {
+        return target with { scheme: self.scheme, path: withoutDots(target.path) }
+    }
+    let (path, query) = if target.path.isEmpty() {
+        (self.path, if target.query.isEmpty() { self.query } else { target.query })
+    } else if target.path.startsWith("/") {
+        (withoutDots(target.path), target.query)
+    } else {
+        // The reference's path after the base's last `/`.
+        let directory = match self.path.findLast("/") {
+            some(slash) => self.path.slice(0, slash + 1).unwrapOr("")
+            none if hasAuthority(self) => "/"
+            none => ""
+        }
+        (withoutDots("{directory}{target.path}"), target.query)
+    }
+    self with { path: path, query: query, fragment: target.fragment }
+}
+
+fn hasAuthority(url: Url): Bool {
+    not url.host.isEmpty() or not url.user.isEmpty() or url.port.isSome()
+}
+
+/// The path with its `.` and `..` segments removed (RFC 3986, 5.2.4).
+fn withoutDots(path: String): String {
+    let parts = path.split("/")
+    var kept: Array[String] = []
+    for (index, part) in parts.enumerate() {
+        let last = index + 1 == parts.length()
+        if part == "." {
+            if last {
+                kept.push("")
+            }
+        } else if part == ".." {
+            // The root stays.
+            if kept.length() > 1 or (kept.length() == 1 and kept[0] != "") {
+                _ = kept.pop()
+            }
+            if last {
+                kept.push("")
+            }
+        } else {
+            kept.push(part)
+        }
+    }
+    kept.join("/")
+}
+
+/// The first value of `name` in the query, read as a form's: `+` is a
+/// space.
+pub fn Url.param(self, name: String): String? {
+    self.params(name).get(0)
+}
+
+/// Every value of `name` in the query, in order.
+pub fn Url.params(self, name: String): Array[String] {
+    var found: Array[String] = []
+    for pair in self.query.split("&") {
+        if pair.isEmpty() {
+            continue
+        }
+        let (key, value) = match pair.find("=") {
+            some(equals) => (
+                pair.slice(0, equals).unwrapOr(""),
+                pair.slice(equals + 1, pair.length()).unwrapOr(""),
+            )
+            none => (pair, "")
+        }
+        if formDecoded(key) == name {
+            found.push(formDecoded(value))
+        }
+    }
+    found
+}
+
+fn formDecoded(text: String): String {
+    let spaced = text.replace("+", " ")
+    __encoding.urlDecode(spaced).unwrapOr(spaced)
+}
+
+/// A query of the names and values, in the map's order, as a form writes
+/// them: `q=a+b&page=2`.
+pub fn encodeQuery(values: Map[String, String]): String {
+    var pairs: Array[String] = []
+    for (name, value) in values {
+        pairs.push("{formEncoded(name)}={formEncoded(value)}")
+    }
+    pairs.join("&")
+}
+
+fn formEncoded(text: String): String {
+    __encoding.urlEncode(text).replace("%20", "+")
+}
+
+/// `scheme://user:password@host:port/path?query#fragment`, with the path,
+/// the fragment and the user encoded where they need it.
+impl Display for Url {
+    fn display(self): String {
+        var out: Array[String] = []
+        if not self.scheme.isEmpty() {
+            out.push("{self.scheme}:")
+        }
+        if hasAuthority(self) or (not self.scheme.isEmpty() and self.path.startsWith("/")) {
+            out.push("//")
+            if not self.user.isEmpty() or self.password.isSome() {
+                out.push(encoded(self.user, ""))
+                match self.password {
+                    some(password) => out.push(":{encoded(password, "")}")
+                    none => {}
+                }
+                out.push("@")
+            }
+            out.push(if self.host.contains(":") { "[{self.host}]" } else { self.host })
+            match self.port {
+                some(port) => out.push(":{port}")
+                none => {}
+            }
+        }
+        out.push(encoded(self.path, ":@/"))
+        if not self.query.isEmpty() {
+            out.push("?{self.query}")
+        }
+        if not self.fragment.isEmpty() {
+            out.push("#{encoded(self.fragment, ":@/?")}")
+        }
+        out.join("")
+    }
+}
+
+/// The text with each byte but the unreserved characters, the
+/// sub-delimiters and `kept` written as `%XX`.
+fn encoded(text: String, kept: String): String {
+    var out: Array[String] = []
+    for character in text.chars() {
+        let plain =
+            asciiLetter(character) or
+                character.isDigit() or
+                "-._~!$&'()*+,;=".contains("{character}")
+        if plain or kept.contains("{character}") {
+            out.push("{character}")
+        } else {
+            out.push(__encoding.urlEncode("{character}"))
+        }
+    }
+    out.join("")
+}

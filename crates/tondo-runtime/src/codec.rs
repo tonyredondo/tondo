@@ -113,6 +113,32 @@ pub unsafe extern "C" fn tondo_rt_hex_decode(input: *const Str) -> *mut ArrayHea
 }
 
 /// Percent-encodes the UTF-8 of a text, except the unreserved characters of
+/// `encoding.htmlEscape`: `&`, `<`, `>`, `"` and `'` as references, which
+/// HTML's content and quoted attributes take.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_html_escape(input: *const Str) -> *mut Str {
+    let mut out = Vec::new();
+    for &b in text(input) {
+        match b {
+            b'&' => out.extend_from_slice(b"&amp;"),
+            b'<' => out.extend_from_slice(b"&lt;"),
+            b'>' => out.extend_from_slice(b"&gt;"),
+            b'"' => out.extend_from_slice(b"&#34;"),
+            b'\'' => out.extend_from_slice(b"&#39;"),
+            b => out.push(b),
+        }
+    }
+    str_new(&out)
+}
+
+/// `encoding.htmlUnescape`: HTML5's named and numeric references read; what
+/// is not one stays as it is.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_html_unescape(input: *const Str) -> *mut Str {
+    let input = String::from_utf8_lossy(text(input));
+    str_new(html_escape::decode_html_entities(&input).as_bytes())
+}
+
 /// RFC 3986: letters, digits, `-`, `.`, `_` and `~`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_url_encode(input: *const Str) -> *mut Str {

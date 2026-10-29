@@ -77,7 +77,7 @@ fn main(): Unit ! regex.RegexError {
     compileError(r"\q")
     compileError("(?<1x>a)")
     compileError("(?<n>a)(?<n>b)")
-    compileError("(?i)a")
+    compileError("(?x)a")
     compileError("(?P<n>a)")
     compileError(r"(a)\1")
     compileError(r"\p{Nope}")

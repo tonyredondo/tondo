@@ -352,6 +352,43 @@ pub fn Regex.replaceAll(self, input: String, replacement: String): String ! Rege
     text
 }
 
+/// The input with the first match replaced by what `replacement` gives for
+/// it, as it is: a `$` in it is a `$`.
+pub fn Regex.replaceWith(self, input: String, replacement: fn(RegexMatch): String): String !
+    RegexError {
+    self.replacing(input, replacement, false)?
+}
+
+/// The input with every match replaced by what `replacement` gives for it,
+/// as `replaceWith` does.
+pub fn Regex.replaceAllWith(self, input: String, replacement: fn(RegexMatch): String): String !
+    RegexError {
+    self.replacing(input, replacement, true)?
+}
+
+fn Regex.replacing(self, input: String, replacement: fn(RegexMatch): String, every: Bool): String !
+    RegexError {
+    var parts: Array[String] = []
+    var last = 0
+    for result in self.findAll(input)? {
+        let found = result?
+        parts.push(RegexSpan { start: last, end: found.span.start }.slice(input)?)
+        parts.push(replacement(found))
+        last = found.span.end
+        if not every {
+            break
+        }
+    }
+    parts.push(RegexSpan { start: last, end: input.byteLength() }.slice(input)?)
+    parts.join("")
+}
+
+/// A pattern that matches `text` as it is, with each character the syntax
+/// gives a meaning escaped.
+pub fn Regex.escape(text: String): String {
+    regexNative.escape(text)
+}
+
 /// The matches of `findAll`, found as they are asked for.
 pub type RegexFindIterator = {
     priv regex: Regex

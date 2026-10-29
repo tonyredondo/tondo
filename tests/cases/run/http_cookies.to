@@ -1,0 +1,65 @@
+// Cookies, from the server and kept by a client as a browser does, and the
+// client's address behind proxies the app trusts.
+
+import std.console
+import std.http
+import std.net
+import std.time
+
+fn main(): !(http.HttpError | net.NetError) {
+    var app = http.App.new()
+    app.get(
+        "/login",
+        (_) {
+            http.Reply
+                .text("in")
+                .cookie("session", "a b;c", maxAge: time.hours(1))
+                .cookie("theme", "dark", httpOnly: false, sameSite: http.SameSite.None)
+        },
+    )
+    app.get(
+        "/me",
+        (request) {
+            http.Reply.text(
+                "{request.cookie("session")} {request.cookies().length()} {request.clientIp()}",
+            )
+        },
+    )
+    let server = app.start()?
+    let browser = http.Client.new(baseUrl: server.url(), cookies: true)
+    let login = browser.get("/login")?
+    console.println("{login.cookie("session")} {login.cookies()}")
+    for header in login.headerValues("set-cookie") {
+        console.println(header)
+    }
+    console.println(browser.get("/me")?.text()?)
+    let plain = http.Client.new(baseUrl: server.url())
+    console.println(plain.get("/me", headers: ["X-Forwarded-For": "1.2.3.4"])?.text()?)
+    server.stop()
+
+    // Behind a trusted proxy.
+    var proxied = http.App.new()
+    proxied.trustProxies(net.network("127.0.0.0/8")?)
+    proxied.get("/ip", (request) { http.Reply.text(request.clientIp()) })
+    let behind = proxied.start()?
+    let client = http.Client.new(baseUrl: behind.url())
+    console.println(
+        client.get("/ip", headers: ["X-Forwarded-For": "203.0.113.9, 10.0.0.2"])?.text()?,
+    )
+    console.println(
+        client.get("/ip", headers: ["X-Forwarded-For": "203.0.113.9, 127.0.0.5"])?.text()?,
+    )
+    console.println(client.get("/ip", headers: ["X-Real-Ip": "198.51.100.7"])?.text()?)
+    console.println(client.get("/ip", headers: ["X-Forwarded-For": "nonsense"])?.text()?)
+    behind.stop()
+}
+
+// expect-stdout: some(a b;c) [session: a b;c, theme: dark]
+// expect-stdout: session=a%20b%3Bc; Path=/; Max-Age=3600; HttpOnly; SameSite=Lax
+// expect-stdout: theme=dark; Path=/; Secure; SameSite=None
+// expect-stdout: some(a b;c) 2 127.0.0.1
+// expect-stdout: none 0 127.0.0.1
+// expect-stdout: 10.0.0.2
+// expect-stdout: 203.0.113.9
+// expect-stdout: 198.51.100.7
+// expect-stdout: 127.0.0.1

@@ -3003,3 +3003,23 @@ with a path, so the operations of TCP and UDP take it unchanged; the hashes
 that are not for security are written in Tondo over the numbers' named
 operations, and give integers, which is what they are used as.
 
+## 2026-10-29 — The web's pieces, as Go's and as a browser's
+
+The second lot for porting Gin and Hugo. URLs follow RFC 3986, as Go's
+`net/url` does, rather than the WHATWG standard browsers follow: a link in
+a page is a relative reference, which WHATWG cannot hold without a base. The
+`Url` is a record of decoded parts that `with` changes and `Display` encodes
+back, and resolving is written in Tondo after the RFC's own algorithm, which
+its examples test. Cookies are encoded with `urlEncode` as Gin does, so any
+text fits, and a client keeps them only when asked to, since a program that
+calls several services rarely wants one's cookies sent to another.
+
+`request.clientIp()` believes `X-Forwarded-For` only from the networks an
+app declares as its proxies, once for the app as Gin's `SetTrustedProxies`
+does, but trusting none by default where Gin trusts all: a client can write
+the header, and a rate limit or an audit log keyed by a forged address is a
+hole. `std.regex` now takes the flags `i`, `m`, `s` and `U` in a pattern and
+replaces by a function, which 0.1 had refused: Hugo passes its users'
+patterns, written for Go, and the function cannot fail, so the cost the
+refusal guarded stays visible.
+

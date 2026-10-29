@@ -165,6 +165,7 @@ pub unsafe extern "C" fn tondo_rt_http_client(
     redirects: i64,
     trust: *const Str,
     socket: *const Str,
+    cookies: u8,
 ) -> *mut NativeObject {
     let config = match tls(&text(trust)) {
         Ok(config) => config,
@@ -183,6 +184,9 @@ pub unsafe extern "C" fn tondo_rt_http_client(
     let socket = text(socket);
     if !socket.is_empty() {
         builder = builder.unix_socket(std::path::PathBuf::from(socket));
+    }
+    if cookies != 0 {
+        builder = builder.cookie_store(true);
     }
     native::new(builder.build().map_err(|error| error.to_string()))
 }

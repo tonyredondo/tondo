@@ -1,0 +1,28 @@
+// std.regex: the flags a pattern may set (`i`, `m`, `s` and `U`), replacing
+// with what a function gives, and escaping a literal text.
+
+import std.console
+import std.regex
+
+fn main(): !regex.RegexError {
+    let tags = regex.Regex.compile("(?i)<(script|/script)")?
+    console.println(tags.replaceAll("<SCRIPT>x</Script>", "[$1]")?)
+    let words = regex.Regex.compile("[a-z]+")?
+    console.println(words.replaceAllWith("hello big world", (m) { m.text.toUpper() })?)
+    console.println(words.replaceWith("hello big world", (m) { "{m.text.length()}$" })?)
+    let dots = regex.Regex.compile("(?s)a.b")?
+    console.println("{dots.isMatch("a\nb")?} {regex.Regex.escape("1+1=2?")}")
+    match regex.Regex.compile("(?x)a b") {
+        ok(_) => console.println("compiled")
+        err(error) => console.println("{error}")
+    }
+    let literal = regex.Regex.compile(regex.Regex.escape("a.b*"))?
+    console.println("{literal.isMatch("a.b*")?} {literal.isMatch("axb")?}")
+}
+
+// expect-stdout: [SCRIPT]>x[/Script]>
+// expect-stdout: HELLO BIG WORLD
+// expect-stdout: 5$ big world
+// expect-stdout: true 1\+1=2\?
+// expect-stdout: regex.UnsupportedFeature at byte 0 (Compile)
+// expect-stdout: true false
