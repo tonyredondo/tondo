@@ -47,6 +47,8 @@ const SOURCES: &[(&str, &str)] = &[
     ("gzip", include_str!("../std/gzip.to")),
     ("zstd", include_str!("../std/zstd.to")),
     ("xml", include_str!("../std/xml.to")),
+    ("template", include_str!("../std/template.to")),
+    ("formats", include_str!("../std/formats.to")),
     ("fuzz", include_str!("../std/fuzz.to")),
 ];
 

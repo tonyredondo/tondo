@@ -30,6 +30,10 @@ pub struct Module {
     pub library: bool,
     /// Built as a library for C (toolchain 7), which publishes functions.
     pub c_library: bool,
+    /// The code of each template compiled with the program, by where its
+    /// text starts, which the linker puts in its place (standard library
+    /// 14.31).
+    pub templates: Vec<(u32, Expr)>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -542,6 +546,23 @@ pub enum ExprKind {
     Recover(Block),
     /// `within limit { ... }` (11.17).
     Within(Box<Expr>, Block),
+    /// The code of a template compiled with the program (standard library
+    /// 14.31), which `template.html` and `template.text` take as their
+    /// source: the statements that write it, with its data as `self`.
+    Template(Box<Block>),
+    /// A value a compiled template writes, with its format, escaped for its
+    /// place of HTML, or not at all in a text template.
+    TemplateWrite {
+        value: Box<Expr>,
+        format: Option<Format>,
+        place: Option<u8>,
+    },
+    /// Another template that a compiled one writes, with its data, or with
+    /// the same `self` without it.
+    TemplateInclude {
+        data: Option<Box<Expr>>,
+        body: Box<Block>,
+    },
     Int {
         value: u128,
         suffix: Option<&'static str>,
@@ -660,75 +681,17 @@ pub enum StrSegment {
     Expr(Expr, Option<Format>),
 }
 
-/// The format of an interpolation, `[[fill]align][sign][#][0][width]
-/// [.precision][type]` (language 19.6).
+/// The format of an interpolation (language 19.6), and where it is
+/// written.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Format {
-    pub fill: char,
-    /// `<`, `>` or `^`.
-    pub align: Option<char>,
-    pub plus: bool,
-    pub alternate: bool,
-    pub zero: bool,
-    pub width: Option<u32>,
-    pub precision: Option<u32>,
-    /// `x`, `X`, `o`, `b`, `e` or `E`.
-    pub kind: Option<char>,
+    pub spec: crate::template_syntax::Spec,
     pub span: Span,
 }
 
 /// The format a text after `:` writes, or why it is none.
 pub fn parse_format(text: &str, span: Span) -> Result<Format, String> {
-    let chars: Vec<char> = text.chars().collect();
-    let aligned = |c: Option<&char>| matches!(c, Some('<' | '>' | '^'));
-    let mut format = Format {
-        fill: ' ',
-        align: None,
-        plus: false,
-        alternate: false,
-        zero: false,
-        width: None,
-        precision: None,
-        kind: None,
-        span,
-    };
-    let mut at = 0;
-    if aligned(chars.get(1)) {
-        (format.fill, format.align, at) = (chars[0], Some(chars[1]), 2);
-    } else if aligned(chars.first()) {
-        (format.align, at) = (Some(chars[0]), 1);
-    }
-    let flag = |c: char, at: &mut usize| {
-        let found = chars.get(*at) == Some(&c);
-        *at += found as usize;
-        found
-    };
-    format.plus = flag('+', &mut at);
-    format.alternate = flag('#', &mut at);
-    format.zero = flag('0', &mut at);
-    let number = |at: &mut usize| -> Option<u32> {
-        let digits: String = chars[*at..].iter().take_while(|c| c.is_ascii_digit()).collect();
-        *at += digits.len();
-        digits.parse().ok()
-    };
-    format.width = number(&mut at);
-    if chars.get(at) == Some(&'.') {
-        at += 1;
-        format.precision = number(&mut at);
-        if format.precision.is_none() {
-            at = chars.len() + 1;
-        }
-    }
-    if let Some(&kind @ ('x' | 'X' | 'o' | 'b' | 'e' | 'E')) = chars.get(at) {
-        format.kind = Some(kind);
-        at += 1;
-    }
-    if at != chars.len() || text.is_empty() {
-        return Err(format!(
-            "`{text}` is not a format: write `[[fill]align][sign][#][0][width][.precision][type]`, as `>8`, `08`, `.2` or `#x`"
-        ));
-    }
-    Ok(format)
+    crate::template_syntax::spec(text).map(|spec| Format { spec, span })
 }
 
 #[derive(Clone, Debug)]

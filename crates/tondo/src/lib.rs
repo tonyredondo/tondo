@@ -53,6 +53,9 @@ pub mod setup;
 pub mod source;
 pub mod stdlib;
 pub mod target;
+#[path = "../../tondo-runtime/src/template_syntax.rs"]
+pub mod template_syntax;
+pub mod templates;
 pub mod thread;
 /// The patterns of `std.time`, which the checker checks in a literal
 /// (standard library 14.3.5).

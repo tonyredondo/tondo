@@ -1643,6 +1643,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.embed` | Core | — | 0.1 | Archivos del paquete leídos al compilar y guardados en el ejecutable |
 | `std.url` | Core | — | 0.1 | URLs y referencias relativas de RFC 3986: sus partes, su resolución y su query |
 | `std.xml` | Core | — | 0.1 | XML tipado sobre `std.serialization`, con atributos y texto por anotaciones, y un árbol dinámico |
+| `std.template` | Core | — | 0.1 | Plantillas de texto y HTML con expresiones de Tondo: compiladas y tipadas, o cargadas en ejecución, con escape por contexto |
 | `std.gzip` | Core | — | 0.1 | gzip (RFC 1952): bytes y streams comprimidos y descomprimidos |
 | `std.zstd` | Core | — | 0.1 | Zstandard (RFC 8878): bytes y streams comprimidos y descomprimidos |
 | `std.console` | Capability-gated | `console` | 0.1 | stdin, stdout, stderr, texto, bytes y flushing |
@@ -4861,6 +4862,156 @@ impl Display for Element
   como XML.
 - `encode` escribe UTF-8 sin la declaración `<?xml ...?>`; `pretty` sangra los
   hijos con dos espacios.
+
+### 14.31 `std.template`
+
+`std.template` escribe texto y HTML desde plantillas: texto con acciones entre
+`{{` y `}}` cuyas expresiones son de Tondo. Una plantilla cuyo texto se conoce al
+compilar se compila con el programa, tipada como cualquier código; un `Set`
+carga plantillas mientras el programa corre, como los temas de un generador de
+sitios.
+
+~~~text
+{{ extends "base.html" }}
+
+{{ block "content" }}
+  <h1>{{ name }}</h1>
+  {{ for post in posts }}
+    {{ if not post.draft }}
+      <h2><a href="/posts/{{ post.slug }}">{{ post.title }}</a></h2>
+      <p>{{ post.views:>6 }} views · {{ post.tags.join(", ") }}</p>
+      {{ with author = post.author }}<p>by {{ author.name }}</p>{{ end }}
+      {{ include "card.html" post }}
+    {{ end }}
+  {{ else }}
+    <p>No posts yet.</p>
+  {{ end }}
+{{ end }}
+~~~
+
+~~~tondo pseudocode
+let page = template.html[Blog](embed.text("templates/blog.html"))
+let html = page.render(blog)
+
+var site = template.Set.html()
+site.addGlob("themes/simple/**/*.html")?
+site.functions(Helpers {})
+let out = site.render("post.html", post)?
+~~~
+
+~~~tondo pseudocode
+pub type Template[T]
+pub fn html[T](source: String): Template[T]
+pub fn text[T](source: String): Template[T]
+pub fn Template[T].render(self, data: T): String
+pub fn Template[T].write(self, data: T, out: io.Writer): !io.IoError
+
+pub type Set
+pub fn Set.html(): Set
+pub fn Set.text(): Set
+pub fn Set.add(mut self, name: String, source: String): !TemplateError
+pub fn Set.addFile(mut self, path: String): !TemplateError
+pub fn Set.addGlob(mut self, pattern: String): !TemplateError
+pub fn Set.addEmbedded(mut self, files: embed.Files): !TemplateError
+pub fn Set.functions[H: reflect.Reflect](mut self, helpers: H)
+pub fn Set.render[T: reflect.Reflect](self, name: String, data: T): String ! TemplateError
+pub fn Set.write[T: reflect.Reflect](self, name: String, data: T, out: io.Writer): !TemplateError
+
+pub type Html = { value: String }
+pub type TemplateError = { message: String, template: String, line: Int, column: Int }
+~~~
+
+**Acciones**
+
+- `{{ expresión }}` escribe el valor con su `Display`; `{{ expresión:formato }}`,
+  con un formato de la interpolación (lenguaje 19.6).
+- `{{ if c }}`, `{{ else if c }}`, `{{ else }}`, `{{ end }}`: la condición es un
+  `Bool`; no hay truthiness, como en el lenguaje.
+- `{{ for x in xs }} … {{ else }} … {{ end }}` recorre un array, un `Set`, un
+  `Deque`, un rango o un mapa, este con `(clave, valor)` en su orden; el `else`
+  se escribe cuando no da ninguna vuelta. `{{ break }}` y `{{ continue }}`.
+- `{{ with x = opcional }} … {{ else }} … {{ end }}` liga el valor de un `T?`
+  que lo tiene.
+- `{{ let x = expresión }}`: un nombre hasta el final del bloque en que está.
+- `{{ block "nombre" }} … {{ end }}`: una parte con nombre y su contenido por
+  defecto. `{{ extends "base.html" }}`, como primera acción, hace de la
+  plantilla la de `base.html` con los bloques que ella define; fuera de ellos
+  solo puede haber espacio.
+- `{{ include "card.html" expresión }}` escribe otra plantilla con ese dato;
+  sin él, con `self`.
+- `{{// comentario }}` no escribe nada.
+- `{{-` quita el espacio en blanco de antes, y `-}}` el de después. Una línea
+  que solo tiene acciones que no escriben (`if`, `else`, `end`, `for`, `with`,
+  `let`, `block`, `extends`, comentarios) desaparece entera, con su salto de
+  línea, así que los bloques no dejan líneas vacías. El último salto de línea
+  de una plantilla no se escribe.
+
+**Expresiones**
+
+- Son de Tondo: literales sin interpolación, nombres, campos (`post.title`),
+  índices (`tags[0]`, `counts["a"]`), llamadas, métodos, `not`, aritmética,
+  comparaciones, `in`, `and`, `or` y rangos.
+- Un nombre es una variable de `let`, `for` o `with`; si no, un campo del dato
+  de la plantilla, y `self` es el dato entero; si no, una función.
+
+**Compiladas**
+
+- `template.html` y `template.text` piden un texto que se conoce al compilar:
+  un string crudo, `r"..."`, o `embed.text(...)`; otro es `E1906`, que dice que
+  use un `Set`. La plantilla se traduce a código Tondo del programa: se
+  comprueba entera al compilar, con los tipos de `T`, y `render` no falla. Los
+  errores de sintaxis y de estructura son `E1906`; los de sus expresiones, los
+  de cualquier expresión de Tondo; todos en la línea y la columna de la
+  plantilla.
+- Sus expresiones ven lo que ve el archivo que la compila: sus funciones, los
+  módulos que importa y cualquier método, con la visibilidad de ese módulo.
+- `extends` e `include` leen, al compilar, otras plantillas junto a la suya:
+  en la carpeta del archivo de `embed.text`, o en la del archivo de Tondo para
+  un literal. Una plantilla incluida se compila para el tipo del dato que
+  recibe.
+
+**Cargadas**
+
+- Un `Set` guarda plantillas por nombre: `add` con el que se le da, `addFile`
+  con su ruta, `addGlob` con la ruta desde la carpeta donde empieza el patrón,
+  y `addEmbedded` con su ruta dentro de los archivos embebidos. Cada una se lee
+  al añadirla, y una sintaxis mal escrita es un `TemplateError`; o `E1906` al
+  compilar, si su texto se conoce entonces. `extends` e `include` nombran otras
+  del mismo `Set`.
+- Ve los datos por reflexión (14.8), con los mismos nombres que el código: sus
+  campos y métodos `pub`; y, de `String`, `Array`, `Map` y los opcionales,
+  estos métodos del prelude:
+  - `String`: `length`, `isEmpty`, `contains`, `startsWith`, `endsWith`,
+    `find`, `replace`, `split`, `lines`, `words`, `trim`, `trimStart`,
+    `trimEnd`, `toUpper`, `toLower`, `padStart`, `padEnd`, `repeat`,
+    `removePrefix`, `removeSuffix`.
+  - `Array`: `length`, `isEmpty`, `first`, `last`, `get`, `take`, `drop`,
+    `reversed`, `enumerate`, `join`, `concat`.
+  - `Map`: `length`, `isEmpty`, `contains`, `get`, `keys`, `values`,
+    `entries`.
+  - Opcionales: `isSome`, `isNone`, `unwrapOr`.
+- Los métodos `pub` de los valores que se dan con `functions` son funciones:
+  `{{ slug(title) }}` llama a `helpers.slug(title)`.
+- Un campo, un método o una función que no existe, una condición que no es un
+  `Bool`, un índice fuera de rango o el fallo de una función es un
+  `TemplateError` al escribir, con la plantilla, la línea y la columna; `write`
+  también lo da cuando falla el stream.
+
+**HTML**
+
+- `html` y `Set.html()` escapan cada valor según dónde lo escriben, como
+  `html/template` de Go: en el texto y en los atributos, `&`, `<`, `>`, `"` y
+  `'`; en un atributo de URL (`href`, `src`, `action`…), además, una URL de otro
+  esquema que `http`, `https`, `mailto`, `tel` o relativa se escribe
+  `about:invalid`; en `<script>` y en los atributos `on…`, el valor como JSON;
+  en `<style>` y `style`, solo palabras, números, colores y medidas, y si no
+  `invalid`.
+- Un `template.Html` se escribe tal cual en el texto: es HTML en que el programa
+  confía.
+- Una acción no puede escribir el nombre de un elemento o de un atributo, ni ir
+  dentro de un comentario de HTML: `E1906` al compilar, `TemplateError` al
+  cargar. Los comentarios de HTML de la plantilla no se escriben.
+- `text` y `Set.text()` no escapan nada.
 
 ## 15. Contrato exigido a cada módulo
 

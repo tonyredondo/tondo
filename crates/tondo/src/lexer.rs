@@ -78,7 +78,7 @@ pub enum Tok {
 fn format_like(text: &str) -> bool {
     let mut chars = text.chars();
     let (first, second) = (chars.next(), chars.next());
-    crate::ast::parse_format(text, Span::default()).is_ok()
+    crate::template_syntax::spec(text).is_ok()
         || !text.contains(char::is_whitespace)
             && (first.is_some_and(|c| c.is_ascii_digit() || "<>^+-#.,_".contains(c))
                 || matches!(second, Some('<' | '>' | '^'))

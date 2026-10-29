@@ -132,6 +132,11 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "invalid-time-pattern",
         "A literal pattern of `std.time`'s `format` or parsing has a directive that does not exist, or one to parse reads no whole date; or a literal locale has no names.",
     ),
+    (
+        "E1906",
+        "invalid-template",
+        "A template of `std.template` does not read, has no text when the program compiles, or writes a value where HTML takes none.",
+    ),
     ("E2001", "test-node-outside-test-source", "A `suite` or `test` in a source that is not a test source."),
     ("E2002", "duplicate-test-node", "Two suites or tests have the same identity among their siblings."),
     (

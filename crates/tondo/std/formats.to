@@ -1,0 +1,104 @@
+// The formats of interpolations, `"{price:>10.2}"` (19.6 of the language),
+// which the compiler calls with each option of a format, and the templates
+// of `std.template` that a program loads while it runs.
+
+import std.internal.text as textNative
+
+/// An integer in `radix` 10, 16, 8 or 2, its digits in uppercase when
+/// `upper`, with `0x`, `0o` or `0b` before them when `prefixed`.
+pub fn formatInteger[T: Integer](
+    value: T,
+    radix: Int,
+    upper: Bool,
+    prefixed: Bool,
+    plus: Bool,
+    zero: Bool,
+    width: Int,
+    fill: Char,
+    align: Char,
+): String {
+    let written = value.toString(radix: radix)
+    var digits = written.removePrefix("-")
+    if upper {
+        digits = digits.toUpper()
+    }
+    let prefix = match radix {
+        16 if prefixed => "0x"
+        8 if prefixed => "0o"
+        2 if prefixed => "0b"
+        _ => ""
+    }
+    formatNumber(written.startsWith("-"), prefix, digits, plus, zero, width, fill, align)
+}
+
+/// A float with `precision` digits after the point, or as few as read back
+/// as the same value when it is negative, in scientific notation when
+/// `exponent`, with `E` when `upper`.
+pub fn formatFloat(
+    value: Float,
+    single: Bool,
+    precision: Int,
+    exponent: Bool,
+    upper: Bool,
+    plus: Bool,
+    zero: Bool,
+    width: Int,
+    fill: Char,
+    align: Char,
+): String {
+    var written = textNative.float(value, precision, exponent, single)
+    if upper {
+        written = written.replace("e", "E")
+    }
+    let digits = written.removePrefix("-")
+    formatNumber(
+        written.startsWith("-"),
+        "",
+        digits,
+        plus,
+        zero and value.isFinite(),
+        width,
+        fill,
+        align,
+    )
+}
+
+/// A number's sign, prefix and digits, with zeros between them up to
+/// `width` when `zero`, or else filled as `formatText` does.
+fn formatNumber(
+    negative: Bool,
+    prefix: String,
+    digits: String,
+    plus: Bool,
+    zero: Bool,
+    width: Int,
+    fill: Char,
+    align: Char,
+): String {
+    let sign = if negative { "-" } else if plus { "+" } else { "" }
+    if zero {
+        let zeros = "0".repeat(width - sign.length() - prefix.length() - digits.length())
+        return "{sign}{prefix}{zeros}{digits}"
+    }
+    formatText("{sign}{prefix}{digits}", -1, width, fill, align)
+}
+
+/// A value's text, cut to `precision` characters when it is not negative,
+/// and filled with `fill` up to `width` characters, the text to the left
+/// when `align` is `<`, to the right when `>`, and centered when `^`.
+pub fn formatText(text: String, precision: Int, width: Int, fill: Char, align: Char): String {
+    var cut = text
+    if precision >= 0 and text.length() > precision {
+        cut = text.slice(0, precision).unwrapOr(text)
+    }
+    let missing = width - cut.length()
+    if missing <= 0 {
+        return cut
+    }
+    let filling = "{fill}"
+    match align {
+        '>' => "{filling.repeat(missing)}{cut}"
+        '^' => "{filling.repeat(missing / 2)}{cut}{filling.repeat(missing - missing / 2)}"
+        _ => "{cut}{filling.repeat(missing)}"
+    }
+}

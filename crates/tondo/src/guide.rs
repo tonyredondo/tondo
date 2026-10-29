@@ -15,6 +15,7 @@ pub const TOPICS: &[(&str, &str)] = &[
     ("testing", include_str!("../guide/testing.md")),
     ("stdlib", include_str!("../guide/stdlib.md")),
     ("http", include_str!("../guide/http.md")),
+    ("templates", include_str!("../guide/templates.md")),
     ("meta", include_str!("../guide/meta.md")),
     ("ffi", include_str!("../guide/ffi.md")),
     ("pitfalls", include_str!("../guide/pitfalls.md")),

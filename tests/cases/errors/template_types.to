@@ -1,0 +1,31 @@
+// The code of a compiled template is checked with the types of its data:
+// its names, its operations and what it writes; and the text of a
+// template a `Set` adds is read when it is known.
+
+import std.template
+
+pub type Post = {
+    title: String
+    views: Int
+}
+
+pub type Page = {
+    title: String
+    posts: Array[Post]
+}
+
+fn main() {
+    let source = r"{{ title }}"
+    _ = template.html[Page](source)
+    _ = template.html[Page](r"{{ titel }}")
+    _ = template.html[Page](r"{{ for post in posts }}{{ post.views + 'x' }}{{ end }}")
+    _ = template.html[Page](r"{{ self }}")
+    var set = template.Set.text()
+    _ = set.add("sum", r"{{ a + }}")
+}
+
+// expect-error: E1906 a template compiled with the program has its text when the program compiles: write it as a raw string, `r"..."`, or read it with `embed.text("...")`; a `template.Set` reads templates while the program runs
+// expect-error: E1001 unknown name `titel`; did you mean `title`? it is no binding, nor a field of the template's data, `Page`, whose fields are `title`, `posts`
+// expect-error: E1102 expected `Int`, found `Char`
+// expect-error: E1105 `Page` does not implement `Display`, so a template cannot write it: write one of its fields, as `{{ post.title }}`
+// expect-error: E1906 line 1, column 7 of the template: expected a value

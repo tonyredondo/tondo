@@ -71,6 +71,7 @@ impl Kind {
             (Kind::Serialization, "serialization") => name == "Bytes",
             (Kind::Serialization, "time") => name == "DateTime",
             (Kind::Reflect, "reflect") => name == "Value",
+            (Kind::Reflect | Kind::Serialization, "template") => name == "Html",
             _ => false,
         }
     }

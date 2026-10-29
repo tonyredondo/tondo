@@ -1181,6 +1181,10 @@ impl Formatter<'_> {
                 concat(vec![text("within "), self.expr(limit), text(" "), self.value_block(block)])
             }
             ExprKind::SyncLiteral(path, literal) => concat(vec![text(path_text(path)), self.expr(literal)]),
+            // Code the compiler writes for a template, never in a file.
+            ExprKind::Template(_) | ExprKind::TemplateWrite { .. } | ExprKind::TemplateInclude { .. } => {
+                text(self.source(expr.span).to_string())
+            }
         }
     }
 

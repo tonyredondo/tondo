@@ -18,6 +18,34 @@ pub fn parse_with_parens(file: &SourceFile, diags: &mut Diagnostics) -> (Module,
     (module, parser.parens)
 }
 
+/// The expression written in `span` of a file, as an action of a template
+/// holds one (standard library 14.31); `None` once it has said why it does
+/// not read.
+pub fn parse_expression(file: &SourceFile, span: Span, diags: &mut Diagnostics) -> Option<Expr> {
+    let tokens = lexer::lex(file, Some(span), diags);
+    let mut parser = Parser { file, tokens, pos: 0, diags, recovering: false, no_brace: false, parens: Vec::new() };
+    parser.skip_newlines();
+    let expr = parser.expression().ok()?;
+    parser.skip_newlines();
+    match parser.at(&Tok::Eof) {
+        true => Some(expr),
+        false => parser.expected("the end of the expression").ok(),
+    }
+}
+
+/// The pattern written in `span` of a file, as a template's `for` binds.
+pub fn parse_pattern(file: &SourceFile, span: Span, diags: &mut Diagnostics) -> Option<Pattern> {
+    let tokens = lexer::lex(file, Some(span), diags);
+    let mut parser = Parser { file, tokens, pos: 0, diags, recovering: false, no_brace: false, parens: Vec::new() };
+    parser.skip_newlines();
+    let pattern = parser.pattern().ok()?;
+    parser.skip_newlines();
+    match parser.at(&Tok::Eof) {
+        true => Some(pattern),
+        false => parser.expected("the end of the pattern").ok(),
+    }
+}
+
 /// The productions an example of syntax is made of (21.6): a whole
 /// module, a sequence of declarations, signatures, statements, types and
 /// patterns after the imports they use, or a lone block; `None` when it is

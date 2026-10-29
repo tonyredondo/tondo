@@ -1,0 +1,128 @@
+// A `template.Set` loads templates while the program runs and writes them
+// with the data it sees by reflection: its fields, its `pub` methods and
+// those of the values given to `functions`, the methods of the prelude
+// that the guide lists, and loops, blocks and formats as a compiled
+// template has them; its errors say where.
+
+import std.console
+import std.template
+
+pub type Item = {
+    name: String
+    price: Float
+    stock: Int
+    tags: Array[String]
+    note: String?
+}
+
+pub type Shop = {
+    title: String
+    items: Array[Item]
+    counts: Map[String, Int]
+    banner: template.Html
+}
+
+pub fn Item.label(self): String {
+    "{self.name} ({self.stock})"
+}
+
+pub type Helpers = {
+    currency: String
+}
+
+pub fn Helpers.money(self, amount: Float): String {
+    "{self.currency}{amount:.2}"
+}
+
+fn run(set: template.Set, name: String, shop: Shop) {
+    match set.render(name, shop) {
+        ok(written) => console.println(written)
+        err(error) => console.println("{error}")
+    }
+}
+
+fn main(): !template.TemplateError {
+    let shop = Shop {
+        title: "Tea & Co"
+        items: [
+            Item { name: "Green", price: 3.5, stock: 0, tags: ["leaf"], note: some("fresh") },
+            Item { name: "Black", price: 4.25, stock: 12, tags: [], note: none },
+            Item { name: "White", price: 9.0, stock: 3, tags: ["rare", "light"], note: none },
+        ]
+        counts: ["a": 1, "b": 2]
+        banner: template.Html { value: "<i>sale</i>" }
+    }
+    var text = template.Set.text()
+    text.functions(Helpers { currency: "$" })
+    text.add(
+        "list",
+        r"""
+        {{ title.toUpper() }} has {{ items.length() }} teas:
+        {{ for (i, item) in items.enumerate() }}
+          {{ if item.stock == 0 }}
+            {{ continue }}
+          {{ end }}
+          {{ i + 1 }}. {{ item.label() }} at {{ money(item.price) }}{{ with note = item.note }} — {{ note }}{{ end }}
+          {{ if i >= 1 and item.tags.isEmpty() }}
+            {{ break }}
+          {{ end }}
+        {{ end }}
+        {{ for (key, count) in counts }}{{ key }}={{ count:03 }} {{ end }}
+        {{ let total = items.length() * 2 }}
+        {{ total }} {{ 7 / 2 }} {{ 1.5 * 2.0 }} {{ "b" in counts }} {{ 0..3 }} {{ items[2].name:>8 }}|
+        """,
+    )?
+    run(text, "list", shop)
+    text.add("base", r"""[{{ block "body" }}default{{ end }}]""")?
+    text.add(
+        "page",
+        r"""{{ extends "base" }}{{ block "body" }}{{ include "row" items[0] }}{{ end }}""",
+    )?
+    text.add("row", r"""<{{ name }}:{{ tags.join("+") }}>""")?
+    run(text, "page", shop)
+    run(text, "base", shop)
+
+    var html = template.Set.html()
+    html.add(
+        "page",
+        r"""<h1 title="{{ title }}">{{ title }} {{ banner }}</h1><a href="{{ title }}?q={{ title }}">x</a>""",
+    )?
+    run(html, "page", shop)
+
+    for source in [
+        r"{{ titel }}",
+        r"{{ if title }}x{{ end }}",
+        r"{{ items[9] }}",
+        r"{{ nope(1) }}",
+        r"{{ items[0].note }}",
+        r"{{ title % 2 }}",
+    ] {
+        var broken = template.Set.text()
+        broken.add("broken", source)?
+        run(broken, "broken", shop)
+    }
+    var missing = template.Set.text()
+    missing.add("a", r"""{{ include "b" }}""")?
+    run(missing, "a", shop)
+    let unread = r"{{ for }}"
+    match missing.add("bad", unread) {
+        ok(_) => console.println("added")
+        err(error) => console.println("{error}")
+    }
+}
+
+// expect-stdout: TEA & CO has 3 teas:
+// expect-stdout:   2. Black (12) at $4.25
+// expect-stdout: a=001 b=002 
+// expect-stdout: 6 3 3.0 true [0, 1, 2]    White|
+// expect-stdout: [<Green:leaf>]
+// expect-stdout: [default]
+// expect-stdout: <h1 title="Tea &amp; Co">Tea &amp; Co <i>sale</i></h1><a href="Tea%20&amp;%20Co?q=Tea%20%26%20Co">x</a>
+// expect-stdout: broken:1:4: unknown name `titel`: it is no binding, nor a field of the data, `Shop`, whose fields are `title`, `items`, `counts`, `banner`
+// expect-stdout: broken:1:7: `if` takes a `Bool`, and this is `String`: ask `not value.isEmpty()`
+// expect-stdout: broken:1:9: 9 is out of the 3 values of `Array[Item]`
+// expect-stdout: broken:1:4: there is no function `nope`: a set's functions are the `pub` methods of the values given to `Set.functions`, and it has none
+// expect-stdout: broken:1:4: a template writes no optional: open it with `{{ with name = value }}`
+// expect-stdout: broken:1:10: `%` takes numbers, and these are `String` and `Int`
+// expect-stdout: a:1:1: there is no template `b`: the set has `a`
+// expect-stdout: bad:1:1: `for` needs more: write `{{ for item in items }}`

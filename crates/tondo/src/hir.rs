@@ -1292,6 +1292,7 @@ pub const NATIVES: &[Native] = {
         text("scalarAt", &[String, Int], Char, "tondo_rt_text_scalar_at"),
         text("between", &[String, Int, Int], String, "tondo_rt_text_between"),
         text("findIn", &[String, String, Int, Int], Int, "tondo_rt_text_find_in"),
+        text("template", &[String, Bool], String, "tondo_rt_template_parse"),
         codec("base64Encode", &[Bytes, Bool], String, "tondo_rt_base64_encode"),
         codec("base64Check", &[String, Bool], Int, "tondo_rt_base64_check"),
         codec("base64Decode", &[String, Bool], Bytes, "tondo_rt_base64_decode"),

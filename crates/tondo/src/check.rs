@@ -100,6 +100,7 @@ fn check_with<'a>(
         comparing: None,
         panic_datum: None,
         closure_name: None,
+        templating: false,
         measuring: None,
         wires: HashMap::new(),
         intrinsic_owners: HashMap::new(),
@@ -708,6 +709,8 @@ struct Checker<'a> {
     /// mismatch says to write a text instead.
     panic_datum: Option<Ty>,
     closure_name: Option<String>,
+    /// Whether the next closure is a compiled template's.
+    templating: bool,
     /// The test whose body is checked, which `testing.bench` makes a
     /// benchmark.
     measuring: Option<u32>,
@@ -913,6 +916,10 @@ struct FnCx {
     /// The bindings the program names, and those it reads (22.8).
     named: Vec<LocalId>,
     reads: HashSet<LocalId>,
+    /// The closure of a compiled template (standard library 14.31): it
+    /// captures nothing, and a name that is no binding is a field of its
+    /// data, `self`.
+    template: bool,
 }
 
 /// What a closure is: a `defer` block, `unsafe`, or the closure of a test
@@ -1897,6 +1904,57 @@ impl<'a> Checker<'a> {
             };
             if let Some(problem) = problem {
                 self.diags.error("E1905", arg.value.span, problem);
+            }
+        }
+    }
+
+    /// The templates a `template.Set` adds whose text is known when the
+    /// program compiles, a string or the files of `embed.files("...")`: one
+    /// that does not read is `E1906` (standard library 14.31).
+    fn check_template_literals(&mut self, id: FnId, args: &[ast::Arg]) {
+        let is = |this: &Self, name: &str| match this.type_names.get("template.Set") {
+            Some(&TypeName::Nominal(ty)) => this.methods.get(&(ty, name.to_string())).is_some_and(|&m| m == id),
+            _ => false,
+        };
+        let literal = |expr: &ast::Expr| match &expr.kind {
+            ast::ExprKind::Str(segments) => segments
+                .iter()
+                .map(|s| match s {
+                    ast::StrSegment::Text(text) => Some(text.as_str()),
+                    ast::StrSegment::Expr(..) => None,
+                })
+                .collect::<Option<String>>(),
+            _ => None,
+        };
+        if is(self, "add")
+            && let Some(arg) = args.get(1)
+            && let Some(text) = literal(&arg.value)
+            && let Err(error) = crate::template_syntax::load(&text, false)
+        {
+            let (line, column) = crate::template_syntax::line_column(&text, error.at);
+            let message = format!("line {line}, column {column} of the template: {}", error.message);
+            self.diags.error("E1906", arg.value.span, message);
+        }
+        if is(self, "addEmbedded")
+            && let Some(arg) = args.first()
+            && let ast::ExprKind::Call { callee, args: inner } = &arg.value.kind
+            && let ast::ExprKind::Path(path) = &callee.kind
+            && path.last().is_some_and(|p| p.name.ends_with("files"))
+            && let [written] = inner.as_slice()
+            && let Some(written) = literal(&written.value)
+            && let Ok(crate::embed::Read::Files(files)) = crate::embed::read(
+                &self.sources.file_of(arg.value.span.start).path.clone(),
+                &written,
+                crate::embed::Kind::Files,
+            )
+        {
+            for (name, bytes) in files {
+                let Ok(text) = String::from_utf8(bytes) else { continue };
+                if let Err(error) = crate::template_syntax::load(&text, false) {
+                    let (line, column) = crate::template_syntax::line_column(&text, error.at);
+                    let message = format!("`{written}/{name}`, line {line}, column {column}: {}", error.message);
+                    self.diags.error("E1906", arg.value.span, message);
+                }
             }
         }
     }
@@ -5491,6 +5549,7 @@ impl<'a> Checker<'a> {
             setup: false,
             named: Vec::new(),
             reads: HashSet::new(),
+            template: false,
         }
     }
 
@@ -5789,14 +5848,19 @@ impl<'a> Checker<'a> {
     /// Whether `name` is a binding of an enclosing function, which a
     /// closure can capture.
     fn visible_capture(&self, cx: &FnCx, name: &str) -> bool {
-        cx.parent
-            .as_deref()
-            .is_some_and(|parent| self.lookup(parent, name).is_some() || self.visible_capture(parent, name))
+        !cx.template
+            && cx
+                .parent
+                .as_deref()
+                .is_some_and(|parent| self.lookup(parent, name).is_some() || self.visible_capture(parent, name))
     }
 
     /// Reads the binding `name` of an enclosing function from inside a
     /// closure, capturing it on first use (11.8).
     fn capture(&mut self, cx: &mut FnCx, name: &str, span: Span) -> Option<hir::Expr> {
+        if cx.template {
+            return None;
+        }
         let env = cx.env?;
         let test_member = cx.test_member;
         let index = match cx.captures.iter().position(|c| c.name == name) {
@@ -5998,6 +6062,7 @@ impl<'a> Checker<'a> {
         }
         inner.test_member = test;
         inner.deferred = deferred;
+        inner.template = std::mem::take(&mut self.templating);
         inner.unsafe_region = is_unsafe;
         inner.unsafe_body = is_unsafe;
         let outer = std::mem::replace(cx, inner);
@@ -9557,6 +9622,13 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Closure(closure) => self.closure(cx, closure, expected, span),
             ast::ExprKind::Recover(block) => self.recover(cx, block, expected, span),
             ast::ExprKind::Within(limit, block) => self.within(cx, limit, block, span),
+            // The text of `template.html` or `template.text`, which the call
+            // compiles (standard library 14.31).
+            ast::ExprKind::Template(_) => Self::mk(hir::ExprKind::Str(String::new()), Ty::STRING, span),
+            ast::ExprKind::TemplateWrite { value, format, place } => {
+                self.template_write(cx, value, format.as_ref(), *place, span)
+            }
+            ast::ExprKind::TemplateInclude { data, body } => self.template_include(cx, data.as_deref(), body, span),
             ast::ExprKind::Unsafe(block) => {
                 self.meta_denied(span, "`unsafe`");
                 let outer = std::mem::replace(&mut cx.unsafe_region, true);
@@ -12532,6 +12604,174 @@ impl<'a> Checker<'a> {
         (sides, condition, Some(Box::new(detail)))
     }
 
+    /// The field of a template's data that a name which is no binding
+    /// reads, if it has one: the closure of a compiled template, or one in
+    /// it, sees the fields of its `self` (standard library 14.31).
+    fn template_field(&self, cx: &FnCx, name: &str) -> Option<String> {
+        // The linker names another module's functions after it.
+        let bare = name.rsplit('.').next().unwrap_or(name);
+        let (_, fields) = self.template_data(cx)?;
+        fields.contains(&bare).then(|| bare.to_string())
+    }
+
+    /// The type of the data of the template whose code is checked, and
+    /// the names of its fields.
+    fn template_data(&self, cx: &FnCx) -> Option<(Ty, Vec<&str>)> {
+        let mut at = Some(cx);
+        let data = loop {
+            let here = at?;
+            if here.template {
+                let local = self.lookup(here, "self")?;
+                break here.locals[local.0 as usize].ty;
+            }
+            at = here.parent.as_deref();
+        };
+        let fields = match self.types.kind(data) {
+            TyKind::Adt(id) => match &self.types.adt(*id).kind {
+                AdtKind::Record(fields) => fields.iter().map(|f| f.name.as_str()).collect(),
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        };
+        Some((data, fields))
+    }
+
+    /// `template.html[T](...)` or `template.text[T](...)` with the code of
+    /// its template, which the compiler wrote from its text (standard
+    /// library 14.31): a `Template[T]` that holds the closure that writes
+    /// it.
+    fn compiled_template(&mut self, cx: &mut FnCx, args: &[ast::Arg], result: Ty, span: Span) -> hir::Expr {
+        let Some(ast::ExprKind::Template(body)) = args.first().map(|a| &a.value.kind) else {
+            let message = "a template compiled with the program has its text when the program compiles: write it as a raw string, `r\"...\"`, or read it with `embed.text(\"...\")`; a `template.Set` reads templates while the program runs";
+            self.diags.error("E1906", args.first().map_or(span, |a| a.value.span), message);
+            return Self::error_expr(span);
+        };
+        let data = match self.types.kind(result) {
+            TyKind::Adt(id) => {
+                self.types.adt(*id).instance.as_ref().and_then(|(_, args)| args.first().copied()).unwrap_or(Ty::ERROR)
+            }
+            _ => Ty::ERROR,
+        };
+        let render = self.template_closure(cx, body, data, span);
+        let ty = self.types.intern(TyKind::Fn(vec![data], Ty::STRING, false, vec![ast::Mode::Value], false));
+        let render = self.coerce(render, ty);
+        Self::mk(hir::ExprKind::Record(vec![(0, render)]), result, span)
+    }
+
+    /// The closure that writes a compiled template for its data, `self`:
+    /// checked in a context of its own, which captures nothing.
+    fn template_closure(&mut self, cx: &mut FnCx, body: &ast::Block, data: Ty, span: Span) -> hir::Expr {
+        let param = ast::ClosureParam {
+            name: ast::Ident { name: "self".into(), span },
+            ty: None,
+            mode: ast::Mode::Value,
+            variadic: false,
+        };
+        let expected = self.types.intern(TyKind::Fn(vec![data], Ty::STRING, false, vec![ast::Mode::Value], false));
+        let kind = ClosureKind { deferred: false, is_unsafe: false, test: false, infer_error: false };
+        self.templating = true;
+        self.closure_with(cx, (&[param], None), Some(expected), kind, span, |this, inner, _| {
+            let name = ast::Ident { name: crate::templates::OUT.into(), span };
+            let out = this.declare(inner, &name, Ty::STRING, true);
+            let empty = Self::mk(hir::ExprKind::Str(String::new()), Ty::STRING, span);
+            let written = this.block(inner, body, Some(Ty::UNIT));
+            let written = Self::mk(hir::ExprKind::Block(written), Ty::UNIT, span);
+            let tail = Self::mk(hir::ExprKind::Local(out), Ty::STRING, span);
+            hir::Block {
+                stmts: vec![hir::Stmt::Let(out, empty), hir::Stmt::Expr(written)],
+                tail: Some(Box::new(tail)),
+                ty: Ty::STRING,
+            }
+        })
+    }
+
+    /// Another template a compiled one writes, with its data or the same
+    /// `self`: a closure of its own, called here.
+    fn template_include(
+        &mut self,
+        cx: &mut FnCx,
+        data: Option<&ast::Expr>,
+        body: &ast::Block,
+        span: Span,
+    ) -> hir::Expr {
+        let data = match data {
+            Some(data) => self.expr(cx, data, None),
+            None => self.path(cx, &[ast::Ident { name: "self".into(), span }], None, span),
+        };
+        let closure = self.template_closure(cx, body, data.ty, span);
+        let local = self.hidden_local(cx, closure.ty);
+        let read = Self::mk(hir::ExprKind::Local(local), closure.ty, span);
+        let call = Self::mk(hir::ExprKind::CallValue(Box::new(read), vec![data]), Ty::STRING, span);
+        let block =
+            hir::Block { stmts: vec![hir::Stmt::Let(local, closure)], tail: Some(Box::new(call)), ty: Ty::STRING };
+        Self::mk(hir::ExprKind::Block(block), Ty::STRING, span)
+    }
+
+    /// A value a compiled template writes, with its format, and escaped for
+    /// its place of HTML: in a script as its JSON, which `Encode` gives; in
+    /// any other place, its text, but a `template.Html` in the text of HTML.
+    fn template_write(
+        &mut self,
+        cx: &mut FnCx,
+        value: &ast::Expr,
+        format: Option<&ast::Format>,
+        place: Option<u8>,
+        span: Span,
+    ) -> hir::Expr {
+        let value = self.expr(cx, value, None);
+        if value.ty == Ty::ERROR {
+            return Self::error_expr(span);
+        }
+        let place_code = |place: u8| Self::mk(hir::ExprKind::Int(place.into()), Ty::INT, span);
+        let function = |this: &Self, name: &str| match this.names.get(name) {
+            Some(&ModuleName::Fn(id)) => Some(id),
+            _ => None,
+        };
+        // Code of a script: the value as JSON.
+        if let Some(place @ (6 | 7)) = place {
+            let encodes = match self.trait_names.get("serialization.Encode") {
+                Some(&encode) => self.satisfies(value.ty, encode, &[]),
+                None => false,
+            };
+            if !encodes {
+                let message = format!(
+                    "{} does not implement `serialization.Encode`, which a value in a script needs, as its JSON: write one of its fields, or a value of a record, enum or newtype",
+                    self.display(value.ty)
+                );
+                self.diags.error("E1105", value.span, message);
+                return Self::error_expr(span);
+            }
+            let Some(id) = function(self, "template.scriptValue") else { return Self::error_expr(span) };
+            let ty = value.ty;
+            let call = hir::ExprKind::Call(Callee::Fn(id), vec![ty], vec![value, place_code(place)]);
+            return Self::mk(call, Ty::STRING, span);
+        }
+        if !self.satisfies(value.ty, DISPLAY, &[]) {
+            let message = format!(
+                "{} does not implement `Display`, so a template cannot write it: write one of its fields, as `{{{{ post.title }}}}`",
+                self.display(value.ty)
+            );
+            self.diags.error("E1105", value.span, message);
+            return Self::error_expr(span);
+        }
+        let trusted =
+            matches!(self.type_names.get("template.Html"), Some(&TypeName::Nominal(html)) if html == value.ty);
+        let shown = match format {
+            Some(format) => self.formatted(value, format),
+            None => self.displayed(value),
+        };
+        let text = Self::mk(hir::ExprKind::Interpolate(vec![hir::Segment::Value(shown)]), Ty::STRING, span);
+        match place {
+            None => text,
+            Some(0) if trusted => text,
+            Some(place) => {
+                let Some(id) = function(self, "template.escape") else { return Self::error_expr(span) };
+                let call = hir::ExprKind::Call(Callee::Fn(id), Vec::new(), vec![text, place_code(place)]);
+                Self::mk(call, Ty::STRING, span)
+            }
+        }
+    }
+
     /// A value to interpolate: a user type or a type parameter through
     /// `Display.display`, any other as it is.
     fn displayed(&mut self, value: hir::Expr) -> hir::Expr {
@@ -12551,14 +12791,17 @@ impl<'a> Checker<'a> {
         let (ty, span) = (value.ty, value.span);
         let integer = matches!(self.types.kind(ty), TyKind::Int(_) | TyKind::Byte) || self.bound_by(ty, self.integer);
         let float = matches!(self.types.kind(ty), TyKind::Float(_));
-        let base = format.kind.filter(|k| "xXob".contains(*k));
-        let scientific = format.kind.filter(|k| "eE".contains(*k));
+        let base = format.spec.kind.filter(|k| "xXob".contains(*k));
+        let scientific = format.spec.kind.filter(|k| "eE".contains(*k));
         let refused = [
-            (format.plus && !integer && !float, "a sign".to_string()),
-            (format.zero && !integer && !float, "`0`".into()),
-            (format.alternate && base.is_none() && integer, "`#` without `x`, `X`, `o` or `b`".into()),
-            (format.alternate && !integer, "`#`".into()),
-            (format.precision.is_some() && integer, format!("a precision, `.{}`", format.precision.unwrap_or(0))),
+            (format.spec.plus && !integer && !float, "a sign".to_string()),
+            (format.spec.zero && !integer && !float, "`0`".into()),
+            (format.spec.alternate && base.is_none() && integer, "`#` without `x`, `X`, `o` or `b`".into()),
+            (format.spec.alternate && !integer, "`#`".into()),
+            (
+                format.spec.precision.is_some() && integer,
+                format!("a precision, `.{}`", format.spec.precision.unwrap_or(0)),
+            ),
             (base.is_some() && !integer, format!("the base `{}`", base.unwrap_or('x'))),
             (scientific.is_some() && !float, format!("scientific notation, `{}`", scientific.unwrap_or('e'))),
         ];
@@ -12576,11 +12819,11 @@ impl<'a> Checker<'a> {
         }
         let int = |n: i128| Self::mk(hir::ExprKind::Int(n), Ty::INT, span);
         let flag = |b: bool| Self::mk(hir::ExprKind::Bool(b), Ty::BOOL, span);
-        let fill = Self::mk(hir::ExprKind::Char(format.fill), Ty::CHAR, span);
-        let align = |default: char| Self::mk(hir::ExprKind::Char(format.align.unwrap_or(default)), Ty::CHAR, span);
-        let width = int(format.width.unwrap_or(0).into());
-        let precision = int(format.precision.map_or(-1, i128::from));
-        let upper = format.kind.is_some_and(|k| k.is_ascii_uppercase());
+        let fill = Self::mk(hir::ExprKind::Char(format.spec.fill), Ty::CHAR, span);
+        let align = |default: char| Self::mk(hir::ExprKind::Char(format.spec.align.unwrap_or(default)), Ty::CHAR, span);
+        let width = int(format.spec.width.unwrap_or(0).into());
+        let precision = int(format.spec.precision.map_or(-1, i128::from));
+        let upper = format.spec.kind.is_some_and(|k| k.is_ascii_uppercase());
         let (name, generics, args) = if integer {
             let (value, ty) = match self.types.kind(ty) {
                 TyKind::Byte => (Self::mk(hir::ExprKind::Convert(Box::new(value)), Ty::INT, span), Ty::INT),
@@ -12592,18 +12835,18 @@ impl<'a> Checker<'a> {
                 Some('b') => 2,
                 _ => 10,
             };
-            let (plus, zero, prefixed) = (flag(format.plus), flag(format.zero), flag(format.alternate));
+            let (plus, zero, prefixed) = (flag(format.spec.plus), flag(format.spec.zero), flag(format.spec.alternate));
             let args = vec![value, int(radix), flag(upper), prefixed, plus, zero, width, fill, align('>')];
-            ("prelude.formatInteger", vec![ty], args)
+            ("formats.formatInteger", vec![ty], args)
         } else if float {
             let single = flag(ty == Ty::F32);
             let value = match ty == Ty::F32 {
                 true => Self::mk(hir::ExprKind::Convert(Box::new(value)), Ty::F64, span),
                 false => value,
             };
-            let (exponent, plus, zero) = (flag(scientific.is_some()), flag(format.plus), flag(format.zero));
+            let (exponent, plus, zero) = (flag(scientific.is_some()), flag(format.spec.plus), flag(format.spec.zero));
             let args = vec![value, single, precision, exponent, flag(upper), plus, zero, width, fill, align('>')];
-            ("prelude.formatFloat", Vec::new(), args)
+            ("formats.formatFloat", Vec::new(), args)
         } else {
             let text = match ty == Ty::STRING {
                 true => value,
@@ -12612,7 +12855,7 @@ impl<'a> Checker<'a> {
                     Self::mk(shown, Ty::STRING, span)
                 }
             };
-            ("prelude.formatText", Vec::new(), vec![text, precision, width, fill, align('<')])
+            ("formats.formatText", Vec::new(), vec![text, precision, width, fill, align('<')])
         };
         let Some(&ModuleName::Fn(function)) = self.names.get(name) else { return Self::error_expr(span) };
         Self::mk(hir::ExprKind::Call(Callee::Fn(function), generics, args), Ty::STRING, span)
@@ -12698,6 +12941,16 @@ impl<'a> Checker<'a> {
                 self.lent_error(&lent, true, value.span);
             }
             return value;
+        }
+        // In a template, a name that is no binding is a field of its data,
+        // before a function or a constant (standard library 14.31).
+        if let Some(field) = self.template_field(cx, &first.name) {
+            let mut written = vec![
+                ast::Ident { name: "self".into(), span: first.span },
+                ast::Ident { name: field, span: first.span },
+            ];
+            written.extend(segments[1..].iter().cloned());
+            return self.path(cx, &written, expected, span);
         }
         // The constants of the intrinsic numeric types: `Int.max`, `Float.pi`.
         if let [type_name, constant] = segments
@@ -12914,6 +13167,19 @@ impl<'a> Checker<'a> {
             _ if self.interpolating => format!(
                 "inside a string, `{{{name}}}` interpolates it: write `{{{{{name}}}}}` for the braces themselves"
             ),
+            _ if let Some((data, fields)) = self.template_data(cx) => {
+                let near =
+                    closest(name, fields.iter().copied()).map(|n| format!("did you mean `{n}`? ")).unwrap_or_default();
+                let fields: Vec<String> = fields.iter().map(|f| format!("`{f}`")).collect();
+                match fields.is_empty() {
+                    true => format!("it is no binding, and the template's data, {}, has no fields", self.display(data)),
+                    false => format!(
+                        "{near}it is no binding, nor a field of the template's data, {}, whose fields are {}",
+                        self.display(data),
+                        fields.join(", ")
+                    ),
+                }
+            }
             _ => {
                 // The bindings in sight and the module's names.
                 let mut names: Vec<&str> = self.names.keys().map(String::as_str).collect();
@@ -12970,6 +13236,7 @@ impl<'a> Checker<'a> {
                 if segments.len() > 1
                     && (self.lookup(cx, &segments[0].name).is_some()
                         || self.visible_capture(cx, &segments[0].name)
+                        || self.template_field(cx, &segments[0].name).is_some()
                         || matches!(self.names.get(&segments[0].name), Some(ModuleName::Const(_)))) =>
             {
                 let (method, prefix) = segments.split_last().unwrap();
@@ -13690,6 +13957,7 @@ impl<'a> Checker<'a> {
         if let Callee::Fn(id) = callee {
             self.repeatable(id, span);
             self.check_time_literals(id, &signature, receiver.is_some() as usize, args);
+            self.check_template_literals(id, args);
         }
         let signature = &signature;
         if signature.is_unsafe && !cx.unsafe_region {
@@ -13985,6 +14253,15 @@ impl<'a> Checker<'a> {
         {
             let result = self.types.subst(signature.result, &inference.map);
             return self.embedded(kind, args, result, span);
+        }
+        if let Callee::Fn(id) = callee
+            && signature.receiver.is_none()
+            && matches!(signature.name.as_str(), "template.html" | "template.text")
+            && let Some(scope) = self.fn_scopes.get(id.0 as usize)
+            && self.module_paths.get(scope.module as usize).is_some_and(|p| p == &["std", "template"])
+        {
+            let result = self.types.subst(signature.result, &inference.map);
+            return self.compiled_template(cx, args, result, span);
         }
         let result = self.types.subst(signature.result, &inference.map);
         let mut ordered: Vec<(Option<usize>, hir::Expr)> = Vec::new();

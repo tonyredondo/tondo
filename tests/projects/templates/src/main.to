@@ -1,0 +1,104 @@
+// Templates: compiled with the program from files it embeds, extending a
+// layout and including another, checked against their data; and loaded
+// into a `Set` while it runs, which sees the data by reflection.
+
+import std.console
+import std.embed
+import std.template
+
+pub type Post = {
+    title: String
+    slug: String
+    views: Int
+    tags: Array[String]
+    draft: Bool
+    author: String?
+}
+
+pub fn Post.summary(self): String {
+    "{self.title} ({self.views})"
+}
+
+pub type Blog = {
+    name: String
+    posts: Array[Post]
+    home: String
+    color: String
+    trusted: template.Html
+}
+
+fn slug(title: String): String {
+    title.toLower().replace(" ", "-")
+}
+
+pub type Helpers = {}
+
+pub fn Helpers.shout(self, word: String): String {
+    "{word.toUpper()}!"
+}
+
+fn main(): !template.TemplateError {
+    let page = template.html[Blog](embed.text("templates/blog.html"))
+    let posts = [
+        Post {
+            title: "Tea & \"Cake\""
+            slug: "tea cake"
+            views: 42
+            tags: ["a", "b"]
+            draft: false
+            author: some("Ada")
+        },
+        Post { title: "Hidden", slug: "hidden", views: 1, tags: [], draft: true, author: none },
+    ]
+    let blog = Blog {
+        name: "<Notes>"
+        posts
+        home: "javascript:alert(1)"
+        color: "red; background: url(x)"
+        trusted: template.Html { value: "<b>bold</b>" }
+    }
+    console.println(page.render(blog))
+    let empty = blog with { posts: [], home: "/home", color: "#fff" }
+    console.println(page.render(empty))
+    let line = template.text[Post](
+        r"{{ title }}: {{ views:05 }}{{ for tag in tags }} #{{ tag }}{{ end }}",
+    )
+    console.println(line.render(posts[0]))
+
+    var site = template.Set.html()
+    site.addEmbedded(embed.files("theme"))?
+    site.functions(Helpers {})
+    console.println(site.render("post.html", posts[0])?)
+    console.println(site.render("post.html", posts[1])?)
+}
+
+// expect-stdout: <html>
+// expect-stdout:   <head><title>&lt;Notes&gt; · Blog</title></head>
+// expect-stdout:   <body>
+// expect-stdout:     <h1>&lt;Notes&gt;</h1>
+// expect-stdout:       <h2><a href="/posts/tea%20cake?from=%3CNotes%3E">Tea &amp; &#34;Cake&#34;</a></h2>
+// expect-stdout:       <p>   42 views · a, b · tea-&amp;-&#34;cake&#34;</p>
+// expect-stdout:       <p>by Ada</p>
+// expect-stdout:       <div title="Tea &amp; &#34;Cake&#34;" data-id=tea&#32;cake onclick="open(42)">Tea &amp; &#34;Cake&#34; (42)</div>
+// expect-stdout:     <script>let count = 2; let first = {"title":"Tea \u0026 \"Cake\"","slug":"tea cake","views":42,"tags":["a","b"],"draft":false,"author":"Ada"}; let name = "\u003cNotes\u003e"</script>
+// expect-stdout:     <a href="about:invalid" style="color: invalid"><b>bold</b></a>
+// expect-stdout:   </body>
+// expect-stdout: </html>
+// expect-stdout: <html>
+// expect-stdout:   <head><title>&lt;Notes&gt; · Blog</title></head>
+// expect-stdout:   <body>
+// expect-stdout:     <h1>&lt;Notes&gt;</h1>
+// expect-stdout:     <p>No posts yet.</p>
+// expect-stdout:     <script>let count = 0; let first = null; let name = "\u003cNotes\u003e"</script>
+// expect-stdout:     <a href="/home" style="color: #fff"><b>bold</b></a>
+// expect-stdout:   </body>
+// expect-stdout: </html>
+// expect-stdout: Tea & "Cake": 00042 #a #b
+// expect-stdout: <main>  <h2>Tea &amp; &#34;Cake&#34;</h2>
+// expect-stdout:   <span>1: A!</span>
+// expect-stdout:   <span>2: B!</span>
+// expect-stdout:   <em>0042 views</em>
+// expect-stdout: </main>
+// expect-stdout: <main>  <h2>Hidden</h2>
+// expect-stdout:   <em>0001 views, a draft</em>
+// expect-stdout: </main>

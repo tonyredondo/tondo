@@ -294,6 +294,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
         expansions = crate::meta::generate(&mut modules, &packages, &generators, &mut sources, &mut diags);
         expansions.extend(crate::meta::expand(&mut modules, &packages, &providers, &mut sources, &mut diags));
         crate::derive::derive(&mut modules, &mut sources, &mut diags);
+        crate::templates::compile(&mut modules, &mut sources, &mut diags);
         stdlib::add(&mut modules, &mut packages, &mut sources, &mut diags);
         let mut module = modules::link(modules, root, &packages, &mut diags);
         module.test_package = tests.then_some(tested);
@@ -318,6 +319,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
             }];
             expansions = crate::meta::expand(&mut modules, &packages, &[], &mut sources, &mut diags);
             crate::derive::derive(&mut modules, &mut sources, &mut diags);
+            crate::templates::compile(&mut modules, &mut sources, &mut diags);
             stdlib::add(&mut modules, &mut packages, &mut sources, &mut diags);
             modules::link(modules, 0, &packages, &mut diags)
         } else {
@@ -404,6 +406,7 @@ pub fn analyze_fence(
     }];
     crate::meta::expand(&mut modules, &packages, &[], &mut sources, &mut diags);
     crate::derive::derive(&mut modules, &mut sources, &mut diags);
+    crate::templates::compile(&mut modules, &mut sources, &mut diags);
     let replaced: Vec<&str> = universe.iter().map(|(name, _)| name.as_str()).collect();
     stdlib::add_except(&mut modules, &mut packages, &mut sources, &mut diags, &replaced);
     for ((name, _), stub) in universe.iter().zip(stubs) {
@@ -508,7 +511,9 @@ fn embedded(inputs: &mut Vec<PathBuf>) {
     let mut found = Vec::new();
     for input in inputs.iter().filter(|p| p.extension().is_some_and(|e| e == "to")) {
         if let Ok(text) = std::fs::read_to_string(input) {
-            found.extend(crate::embed::inputs(input, &text));
+            let embedded = crate::embed::inputs(input, &text);
+            found.extend(crate::templates::inputs(input, &embedded));
+            found.extend(embedded);
         }
     }
     inputs.extend(found);

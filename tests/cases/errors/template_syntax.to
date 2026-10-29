@@ -1,0 +1,20 @@
+// A template compiled with the program is read when it compiles: its
+// actions, the places of HTML of its values, and how its text is written.
+
+import std.template
+
+pub type Page = { title: String }
+
+fn main() {
+    _ = template.html[Page](r"{{ if title }}")
+    _ = template.html[Page]("<p>{{ title }}</p>")
+    _ = template.html[Page](r"<a {{ title }}>")
+    _ = template.text[Page](r"{{ title:.2f }}")
+    _ = template.text[Page](r"{{ for x in }}{{ end }}")
+}
+
+// expect-error: E1906 this `{{ if }}` does not end: close it with `{{ end }}`
+// expect-error: E1906 write the template as a raw string, `r"..."`: in a string, `{{` writes one brace
+// expect-error: E1906 a value cannot write the name of an element or an attribute: write the name, and the value in quotes, as `title="{{ title }}"`
+// expect-error: E1906 `.2f` is not a format: write `[[fill]align][sign][#][0][width][.precision][type]`, as `>8`, `08`, `.2` or `#x`
+// expect-error: E1906 write `{{ for item in items }}`

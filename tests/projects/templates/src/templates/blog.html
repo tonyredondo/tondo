@@ -1,0 +1,19 @@
+{{ extends "base.html" }}
+
+{{ block "title" }}{{ name }} · Blog{{ end }}
+
+{{ block "content" }}
+    <h1>{{ name }}</h1>
+    {{ for post in posts }}
+      {{ if not post.draft }}
+      <h2><a href="/posts/{{ post.slug }}?from={{ name }}">{{ post.title }}</a></h2>
+      <p>{{ post.views:>5 }} views · {{ post.tags.join(", ") }} · {{ slug(post.title) }}</p>
+      {{ with author = post.author }}<p>by {{ author }}</p>{{ end }}
+      {{ include "card.html" post }}
+      {{ end }}
+    {{ else }}
+    <p>No posts yet.</p>
+    {{ end }}
+    <script>let count = {{ posts.length() }}; let first = {{ posts.first() }}; let name = "{{ name }}"</script>
+    <a href="{{ home }}" style="color: {{ color }}">{{ trusted }}</a>
+{{ end }}

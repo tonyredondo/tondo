@@ -216,6 +216,7 @@ pub fn link(mut modules: Vec<ModuleSource>, root: usize, packages: &[PackageInfo
                 used: HashSet::new(),
                 outer: &outer,
                 visible: Vec::new(),
+                templates: file.templates.iter().cloned().collect(),
                 diags,
             };
             if let Some(shebang) = file.shebang.filter(|_| !is_root || file.statements.is_empty()) {
@@ -343,7 +344,7 @@ fn report_cycles(modules: &[ModuleSource], edges: &[Vec<(usize, Span)>], diags: 
 }
 
 impl Import {
-    fn alias_name(&self) -> &str {
+    pub(crate) fn alias_name(&self) -> &str {
         &self.alias.as_ref().unwrap_or(self.path.last().unwrap()).name
     }
 
@@ -475,6 +476,8 @@ struct Linker<'a> {
     /// The names of the module, by their skeleton.
     outer: &'a HashMap<String, Vec<(String, String)>>,
     visible: Vec<(String, String)>,
+    /// The code of the file's compiled templates, by where their text is.
+    templates: HashMap<u32, Expr>,
     diags: &'a mut Diagnostics,
 }
 
@@ -819,6 +822,17 @@ impl Linker<'_> {
     }
 
     fn expr(&mut self, expr: &mut Expr) {
+        if matches!(expr.kind, ExprKind::Str(_) | ExprKind::Call { .. })
+            && let Some(code) = self.templates.remove(&expr.span.start)
+        {
+            // `embed.text(...)` read the template's text.
+            if let ExprKind::Call { callee, .. } = &expr.kind
+                && let ExprKind::Path(segments) = &callee.kind
+            {
+                self.used.insert(segments[0].name.clone());
+            }
+            *expr = code;
+        }
         match &mut expr.kind {
             ExprKind::Path(segments) => {
                 let position = if segments.len() == 1 { Position::Value } else { Position::Any };
@@ -921,6 +935,14 @@ impl Linker<'_> {
             ExprKind::Within(limit, block) => {
                 self.expr(limit);
                 self.block(block);
+            }
+            ExprKind::Template(block) => self.block(block),
+            ExprKind::TemplateWrite { value, .. } => self.expr(value),
+            ExprKind::TemplateInclude { data, body } => {
+                if let Some(data) = data {
+                    self.expr(data);
+                }
+                self.block(body);
             }
             ExprKind::Closure(closure) => self.scoped(|linker| {
                 for param in &mut closure.params {

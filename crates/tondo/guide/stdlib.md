@@ -25,6 +25,7 @@ std.csv        CSV rows and records, streaming and whole
 std.log        a logger with levels and fields, text or JSON lines
 std.diagnostics  the program's own counters, which `tondo counters` shows
 std.http       HTTP client and server, WebSockets (`tondo guide http`)
+std.template   text and HTML templates, compiled or loaded (`tondo guide templates`)
 std.net        TCP, UDP and Unix sockets, TLS, names, IP addresses and networks
 std.url        URLs and relative links: parts, resolving, the query
 std.regex      regular expressions, with `(?i)` flags and replacing by a function

@@ -1,0 +1,1411 @@
+// std.template (standard library 14.31): text and HTML written from
+// templates, text with actions between `{{` and `}}` whose expressions are
+// Tondo's. A template whose text is known when the program compiles is
+// compiled with it into code; a `Set` loads templates while the program
+// runs, and writes them with the values its data has by reflection.
+
+import std.embed as __embed
+import std.formats as __formats
+import std.fs as __fs
+import std.internal.codec as codecNative
+import std.internal.text as textNative
+import std.io as __io
+import std.json as __json
+import std.reflect as __reflect
+import std.serialization as __serialization
+
+// ---------------------------------------------------------------------------
+// Compiled templates
+// ---------------------------------------------------------------------------
+
+/// A template compiled with the program, which writes a `T`.
+pub type Template[T] = {
+    priv code: fn(T): String
+}
+
+/// The template of HTML `source`, compiled with the program: a raw string,
+/// `r"..."`, or `embed.text("...")`. It escapes each value for the place of
+/// HTML where it goes.
+pub fn html[T](source: String): Template[T] {
+    panic(
+        "`template.html` compiles its template where it is called, and this call has none: {source}",
+    )
+}
+
+/// The text template `source`, compiled with the program, which escapes
+/// nothing.
+pub fn text[T](source: String): Template[T] {
+    panic(
+        "`template.text` compiles its template where it is called, and this call has none: {source}",
+    )
+}
+
+/// What the template writes for `data`.
+pub fn Template[T].render(self, data: T): String {
+    let code = self.code
+    code(data)
+}
+
+/// Writes what the template writes for `data` to `out`.
+pub fn Template[T].write(self, data: T, out: __io.Writer): !__io.IoError {
+    out.write(self.render(data))?
+}
+
+/// HTML that the program trusts, which a template writes as it is in the
+/// text of HTML, and escapes anywhere else.
+pub type Html = {
+    value: String
+}
+
+impl Display for Html {
+    fn display(self): String {
+        self.value
+    }
+}
+
+/// By reflection, a `Set` sees its text, which it writes as it is.
+impl __reflect.Reflect for Html {
+    fn reflectGet(self, name: String): __reflect.Value ! __reflect.ReflectError {
+        if name != "value" {
+            fail __reflect.ReflectError.noField("template.Html", name, ["value"])
+        }
+        __reflect.valueOf(self.value)
+    }
+
+    fn reflectFields(self): Array[__reflect.Field]? {
+        some([__reflect.Field { name: "value", value: __reflect.valueOf(self.value) }])
+    }
+
+    fn reflectShow(self, nested: Bool): String {
+        self.value
+    }
+}
+
+/// Its text, in every format.
+impl __serialization.Encode for Html {
+    fn encode[S: __serialization.Sink](self, out: S) {
+        out.text(self.value)
+    }
+}
+
+impl __serialization.Decode for Html {
+    fn decode[S: __serialization.Source](input: S, first: __serialization.Event): Html !
+        __serialization.Error {
+        Html { value: __serialization.Decode.decode[String](input, first)? }
+    }
+}
+
+/// Why a template does not read, or could not be written: what, in which
+/// template, and where.
+pub type TemplateError = {
+    message: String
+    template: String
+    line: Int
+    column: Int
+}
+
+/// `template:line:column: message`.
+impl Display for TemplateError {
+    fn display(self): String {
+        "{self.template}:{self.line}:{self.column}: {self.message}"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Escaping
+// ---------------------------------------------------------------------------
+
+/// A value's text, escaped for its place: the text of HTML or an
+/// attribute (0, 1), an attribute without quotes (2), the start of a URL,
+/// its path or its query (3 to 5), a string of a script (8, 9) or a style
+/// (10, 11); the odd ones of 7 to 11 in an attribute too.
+fn escape(value: String, place: Int): String {
+    let escaped = match place {
+        2 => unquoted(value)
+        3 => urlStart(value)
+        4 => codecNative.urlEncode(value).replace("%2F", "/")
+        5 => codecNative.urlEncode(value)
+        p if p == 8 or p == 9 => scriptString(value)
+        p if p == 10 or p == 11 => style(value)
+        _ => value
+    }
+    // Without quotes, every character that could end the value is a
+    // reference already.
+    if place == 2 or place == 8 or place == 10 {
+        return escaped
+    }
+    codecNative.htmlEscape(escaped)
+}
+
+/// A value in the code of a script: its JSON, which cannot end the script.
+fn scriptValue[T: __serialization.Encode](value: T, place: Int): String {
+    let written = scriptSafe(__json.encode(value))
+    if place == 7 {
+        return codecNative.htmlEscape(written)
+    }
+    written
+}
+
+/// JSON that a script holds as it is: no `<`, `>` or `&` of a tag, and no
+/// line separator, which older engines end a line with.
+fn scriptSafe(json: String): String {
+    json
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace("\u{2028}", "\\u2028")
+        .replace("\u{2029}", "\\u2029")
+}
+
+/// A text inside a string of a script, of any quotes.
+fn scriptString(value: String): String {
+    let escaped = scriptSafe(__json.encode(value)).replace("'", "\\u0027").replace("`", "\\u0060")
+    escaped.slice(1, escaped.length() - 1).unwrapOr("")
+}
+
+/// A value of an attribute without quotes: every character but letters,
+/// digits, `-`, `_`, `.` and `:` as a reference.
+fn unquoted(value: String): String {
+    var written = ""
+    for c in value.chars() {
+        written = if c.isAlphanumeric() or c == '-' or c == '_' or c == '.' or c == ':' {
+            "{written}{c}"
+        } else {
+            "{written}&#{c.code()};"
+        }
+    }
+    written
+}
+
+/// A URL that a value starts: `about:invalid` when its scheme is not
+/// `http`, `https`, `mailto` or `tel`, so that a link runs no script;
+/// with what a URL does not hold encoded.
+fn urlStart(value: String): String {
+    let trimmed = value.trim()
+    let colon = trimmed.find(":").unwrapOr(-1)
+    let before = trimmed.slice(0, colon.max(0)).unwrapOr("")
+    let plain = colon < 0 or before.contains("/") or before.contains("?") or before.contains("#")
+    let scheme = before.toLowerAscii()
+    if not plain and not (scheme in ["http", "https", "mailto", "tel"]) {
+        return "about:invalid"
+    }
+    var written = ""
+    for c in trimmed.chars() {
+        written = if c.code() > 0x20 and c.code() < 0x7F and not (c in "\"'<>\\^`{{|}}") {
+            "{written}{c}"
+        } else {
+            "{written}{codecNative.urlEncode("{c}")}"
+        }
+    }
+    written
+}
+
+/// A value of a style: words, numbers, colors and sizes, or `invalid`.
+fn style(value: String): String {
+    for c in value.chars() {
+        if not (c.isAlphanumeric() or c in "#%., -_") {
+            return "invalid"
+        }
+    }
+    value
+}
+
+// ---------------------------------------------------------------------------
+// Loaded templates
+// ---------------------------------------------------------------------------
+
+/// Templates loaded while the program runs, by name, as the themes of a
+/// site generator. They see their data by reflection, with the names the
+/// code uses, and call the `pub` methods of the values given with
+/// `functions` as functions.
+pub type Set = {
+    priv html: Bool
+    priv templates: Map[String, Loaded]
+    priv helpers: Array[__reflect.Value]
+}
+
+/// An empty set of HTML templates, which escape each value for the place of
+/// HTML where it goes.
+pub fn Set.html(): Set {
+    Set { html: true, templates: [:], helpers: [] }
+}
+
+/// An empty set of text templates, which escape nothing.
+pub fn Set.text(): Set {
+    Set { html: false, templates: [:], helpers: [] }
+}
+
+/// Adds the template `source` as `name`, replacing one of that name.
+pub fn Set.add(mut self, name: String, source: String): !TemplateError {
+    let parsed = match __json.parse(textNative.template(source, self.html)) {
+        ok(read) => parsedOf(read)
+        err(problem) => fail TemplateError {
+            message: "{problem}"
+            template: name
+            line: 0
+            column: 0
+        }
+    }
+    match parsed.error {
+        some(message) => fail located(name, source, parsed.at, message)
+        none => {}
+    }
+    self.templates[name] = Loaded { name, source, extends: parsed.extends, nodes: parsed.nodes }
+}
+
+/// Adds the template in the file at `path`, named by its path.
+pub fn Set.addFile(mut self, path: String): !TemplateError {
+    let source = match __fs.readText(path) {
+        ok(source) => source
+        err(error) => fail TemplateError { message: "{error}", template: path, line: 0, column: 0 }
+    }
+    self.add(path, source)?
+}
+
+/// Adds the templates in the files a glob pattern matches, each named by
+/// its path from the directory where the pattern's wildcards start:
+/// `post.html` of `themes/simple/**/*.html`.
+pub fn Set.addGlob(mut self, pattern: String): !TemplateError {
+    let paths = match __fs.glob(pattern) {
+        ok(paths) => paths
+        err(error) => fail TemplateError {
+            message: "{error}"
+            template: pattern
+            line: 0
+            column: 0
+        }
+    }
+    var fixed: Array[String] = []
+    for part in pattern.split("/") {
+        if part.contains("*") or part.contains("?") or part.contains("[") or part.contains("{{") {
+            break
+        }
+        fixed.push(part)
+    }
+    let root = if fixed.isEmpty() { "" } else { "{fixed.join("/")}/" }
+    for path in paths {
+        let source = match __fs.readText(path) {
+            ok(source) => source
+            err(error) => fail TemplateError {
+                message: "{error}"
+                template: path
+                line: 0
+                column: 0
+            }
+        }
+        self.add(path.removePrefix(root), source)?
+    }
+}
+
+/// Adds each text file of `files`, named by its path among them.
+pub fn Set.addEmbedded(mut self, files: __embed.Files): !TemplateError {
+    for path in files.paths() {
+        match files.text(path) {
+            some(source) => self.add(path, source)?
+            none => {}
+        }
+    }
+}
+
+/// Makes the `pub` methods of `helpers` functions of the templates:
+/// `{{ slug(title) }}` calls `helpers.slug(title)`.
+pub fn Set.functions[H: __reflect.Reflect](mut self, helpers: H) {
+    self.helpers.push(__reflect.valueOf(helpers))
+}
+
+/// What the template `name` writes for `data`.
+pub fn Set.render[T: __reflect.Reflect](self, name: String, data: T): String ! TemplateError {
+    var run = Run { set: self, pieces: [] }
+    run.template(name, __reflect.valueOf(data), 0, none)?
+    run.pieces.join("")
+}
+
+/// Writes what the template `name` writes for `data` to `out`.
+pub fn Set.write[T: __reflect.Reflect](self, name: String, data: T, out: __io.Writer): !TemplateError {
+    let written = self.render(name, data)?
+    match out.write(written) {
+        ok(_) => {}
+        err(error) => fail TemplateError { message: "{error}", template: name, line: 0, column: 0 }
+    }
+}
+
+/// A template read: its name, its source, the one it extends and its parts.
+type Loaded = {
+    name: String
+    source: String
+    extends: String?
+    nodes: Array[Node]
+}
+
+/// What the runtime reads of a template's source.
+type Parsed = {
+    extends: String?
+    nodes: Array[Node]
+    error: String?
+    at: Int
+}
+
+/// A part of a template.
+enum Node {
+    Text(String)
+    Write { value: Code, format: Format?, place: Int }
+    If { branches: Array[Branch], otherwise: Array[Node]? }
+    For { names: Array[String], items: Code, body: Array[Node], otherwise: Array[Node]? }
+    With { name: String, value: Code, body: Array[Node], otherwise: Array[Node]? }
+    Let { name: String, value: Code }
+    Block { name: String, body: Array[Node] }
+    Include { name: String, data: Code?, at: Int }
+    Break
+    Continue
+}
+
+type Branch = {
+    condition: Code
+    body: Array[Node]
+}
+
+/// The code of an expression, which a stack of values evaluates, and the
+/// offset of each operation in the template.
+type Code = {
+    ops: Array[Op]
+    at: Array[Int]
+}
+
+enum Op {
+    Int(Int)
+    Float(Float)
+    Text(String)
+    Bool(Bool)
+    Name(String)
+    Field(String)
+    Index
+    Call(String, Int)
+    Method(String, Int)
+    Not
+    Negate
+    Binary(String)
+    Range(Bool)
+    And(Int)
+    Or(Int)
+}
+
+/// The format of a value written (language 19.6).
+type Format = {
+    fill: String
+    align: String?
+    plus: Bool
+    alternate: Bool
+    zero: Bool
+    width: Int?
+    precision: Int?
+    kind: String?
+}
+
+/// An error at an offset of a template's source.
+fn located(name: String, source: String, at: Int, message: String): TemplateError {
+    var line = 1
+    var start = 0
+    for {
+        let newline = textNative.findIn(source, "\n", start, at)
+        if newline < 0 {
+            break
+        }
+        line += 1
+        start = newline + 1
+    }
+    TemplateError {
+        message
+        template: name
+        line
+        column: textNative.between(source, start, at).length() + 1
+    }
+}
+
+/// What the parts of a template leave to the loop around them.
+enum Flow {
+    Next
+    Break
+    Continue
+}
+
+/// What a set writes, in pieces.
+type Run = {
+    set: Set
+    pieces: Array[String]
+}
+
+/// Where code runs: its template, the data, the bindings in sight, the
+/// blocks that the templates extending it redefine, and how many includes
+/// deep.
+type Scope = {
+    template: Loaded
+    data: __reflect.Value
+    bindings: Array[Map[String, __reflect.Value]]
+    blocks: Map[String, Defined]
+    depth: Int
+}
+
+/// A block a template redefines, and the template.
+type Defined = {
+    template: Loaded
+    body: Array[Node]
+}
+
+fn Run.find(self, name: String, from: Scope?, at: Int): Loaded ! TemplateError {
+    match self.set.templates.get(name) {
+        some(found) => found
+        none => {
+            let known: Array[String] = self.set.templates.keys().collect()
+            let message = "there is no template `{name}`: the set has {quoted(known)}"
+            match from {
+                some(scope) => fail located(scope.template.name, scope.template.source, at, message)
+                none => fail TemplateError { message, template: name, line: 0, column: 0 }
+            }
+        }
+    }
+}
+
+/// "`a`, `b`", or "none".
+fn quoted(names: Array[String]): String {
+    if names.isEmpty() {
+        return "none"
+    }
+    names.map((name) { "`{name}`" }).join(", ")
+}
+
+fn Run.template(mut self, name: String, data: __reflect.Value, depth: Int, from: Scope?): !TemplateError {
+    let at = 0
+    if depth > 64 {
+        fail TemplateError {
+            message: "the templates include each other more than 64 deep"
+            template: name
+            line: 0
+            column: 0
+        }
+    }
+    var current = self.find(name, from, at)?
+    var blocks: Map[String, Defined] = [:]
+    var steps = 0
+    for {
+        let base = match current.extends {
+            some(base) => base
+            none => break
+        }
+        for node in current.nodes {
+            match node {
+                Node.Block { name: block, body } if not (block in blocks) => {
+                    blocks[block] = Defined { template: current, body }
+                }
+                _ => {}
+            }
+        }
+        steps += 1
+        if steps > 32 {
+            fail TemplateError {
+                message: "the templates extend each other in a circle"
+                template: name
+                line: 0
+                column: 0
+            }
+        }
+        current = self.find(base, none, 0)?
+    }
+    var scope = Scope { template: current, data, bindings: [[:]], blocks, depth }
+    _ = self.nodes(mut scope, current.nodes)?
+}
+
+fn Run.nodes(mut self, scope: mut Scope, nodes: Array[Node]): Flow ! TemplateError {
+    for node in nodes {
+        match self.node(mut scope, node)? {
+            Flow.Next => {}
+            Flow.Break => return Flow.Break
+            Flow.Continue => return Flow.Continue
+        }
+    }
+    Flow.Next
+}
+
+fn Run.block(mut self, scope: mut Scope, nodes: Array[Node]): Flow ! TemplateError {
+    scope.bindings.push([:])
+    let flow = self.nodes(mut scope, nodes)
+    _ = scope.bindings.pop()
+    flow?
+}
+
+fn Run.node(mut self, scope: mut Scope, node: Node): Flow ! TemplateError {
+    match node {
+        Node.Text(piece) => self.pieces.push(piece)
+        Node.Write { value, format, place } => {
+            let found = self.evaluate(scope, value)?
+            let piece = self.written(scope, found, format, place, value.at.first().unwrapOr(0))?
+            self.pieces.push(piece)
+        }
+        Node.If { branches, otherwise } => {
+            for branch in branches {
+                if self.condition(scope, branch.condition)? {
+                    return self.block(mut scope, branch.body)?
+                }
+            }
+            match otherwise {
+                some(nodes) => return self.block(mut scope, nodes)?
+                none => {}
+            }
+        }
+        Node.For { names, items, body, otherwise } => {
+            let rounds = self.rounds(scope, names, items)?
+            if rounds.isEmpty() {
+                match otherwise {
+                    some(nodes) => return self.block(mut scope, nodes)?
+                    none => {}
+                }
+            }
+            for bound in rounds {
+                var binding: Map[String, __reflect.Value] = [:]
+                for index in 0..names.length() {
+                    binding[names[index]] = bound[index]
+                }
+                scope.bindings.push(binding)
+                let flow = self.nodes(mut scope, body)
+                _ = scope.bindings.pop()
+                match flow? {
+                    Flow.Break => break
+                    _ => {}
+                }
+            }
+        }
+        Node.With { name, value, body, otherwise } => {
+            let found = self.evaluate(scope, value)?
+            match self.opened(scope, found, value.at.first().unwrapOr(0))? {
+                some(inner) => {
+                    scope.bindings.push([name: inner])
+                    let flow = self.nodes(mut scope, body)
+                    _ = scope.bindings.pop()
+                    return flow?
+                }
+                none => {
+                    match otherwise {
+                        some(nodes) => return self.block(mut scope, nodes)?
+                        none => {}
+                    }
+                }
+            }
+        }
+        Node.Let { name, value } => {
+            let found = self.evaluate(scope, value)?
+            let last = scope.bindings.length() - 1
+            scope.bindings[last][name] = found
+        }
+        Node.Block { name, body } => {
+            match scope.blocks.get(name) {
+                some(defined) => {
+                    // A redefined block's offsets are of its own template.
+                    let outer = scope.template
+                    scope.template = defined.template
+                    let flow = self.block(mut scope, defined.body)
+                    scope.template = outer
+                    return flow?
+                }
+                none => return self.block(mut scope, body)?
+            }
+        }
+        Node.Include { name, data, at } => {
+            let found = match data {
+                some(code) => self.evaluate(scope, code)?
+                none => scope.data
+            }
+            self.template(name, found, scope.depth + 1, some(scope))?
+        }
+        Node.Break => return Flow.Break
+        Node.Continue => return Flow.Continue
+    }
+    Flow.Next
+}
+
+fn Run.error(self, scope: Scope, at: Int, message: String): TemplateError {
+    located(scope.template.name, scope.template.source, at, message)
+}
+
+/// The value of an expression.
+fn Run.evaluate(self, scope: Scope, code: Code): __reflect.Value ! TemplateError {
+    var stack: Array[__reflect.Value] = []
+    var index = 0
+    for index < code.ops.length() {
+        let at = code.at[index]
+        match code.ops[index] {
+            Op.Int(value) => stack.push(__reflect.valueOf(value))
+            Op.Float(value) => stack.push(__reflect.valueOf(value))
+            Op.Text(value) => stack.push(__reflect.valueOf(value))
+            Op.Bool(value) => stack.push(__reflect.valueOf(value))
+            Op.Name(name) => stack.push(self.named(scope, name, at)?)
+            Op.Field(name) => {
+                let target = popped(var stack)
+                stack.push(self.field(scope, target, name, at)?)
+            }
+            Op.Index => {
+                let key = popped(var stack)
+                let target = popped(var stack)
+                stack.push(self.index(scope, target, key, at)?)
+            }
+            Op.Call(name, count) => {
+                let args = taken(var stack, count)
+                stack.push(self.call(scope, name, args, at)?)
+            }
+            Op.Method(name, count) => {
+                let args = taken(var stack, count)
+                let target = popped(var stack)
+                stack.push(self.method(scope, target, name, args, at)?)
+            }
+            Op.Not => {
+                let value = popped(var stack)
+                stack.push(__reflect.valueOf(not self.truth(scope, value, at, "`not`")?))
+            }
+            Op.Negate => {
+                let value = popped(var stack)
+                let zero = __reflect.valueOf(0)
+                stack.push(self.binary(scope, "-", zero, value, at)?)
+            }
+            Op.Binary(operator) => {
+                let right = popped(var stack)
+                let left = popped(var stack)
+                stack.push(self.binary(scope, operator, left, right, at)?)
+            }
+            Op.Range(inclusive) => {
+                let end = self.integer(scope, popped(var stack), at)?
+                let start = self.integer(scope, popped(var stack), at)?
+                var values: Array[Int] = []
+                for value in start..(if inclusive { end + 1 } else { end }) {
+                    values.push(value)
+                }
+                stack.push(__reflect.valueOf(values))
+            }
+            Op.And(skip) => {
+                let decided = not self.truth(scope, stack[stack.length() - 1], at, "`and`")?
+                if decided {
+                    index += skip
+                } else {
+                    _ = stack.pop()
+                }
+            }
+            Op.Or(skip) => {
+                let decided = self.truth(scope, stack[stack.length() - 1], at, "`or`")?
+                if decided {
+                    index += skip
+                } else {
+                    _ = stack.pop()
+                }
+            }
+        }
+        index += 1
+    }
+    popped(var stack)
+}
+
+fn popped(stack: var Array[__reflect.Value]): __reflect.Value {
+    stack.pop().unwrapOr(__reflect.valueOf(false))
+}
+
+/// The last `count` values of the stack, in order.
+fn taken(stack: var Array[__reflect.Value], count: Int): Array[__reflect.Value] {
+    var values: Array[__reflect.Value] = []
+    for _ in 0..count {
+        values.insert(0, popped(var stack))
+    }
+    values
+}
+
+/// A binding, the data as `self`, or a field of the data.
+fn Run.named(self, scope: Scope, name: String, at: Int): __reflect.Value ! TemplateError {
+    var level = scope.bindings.length() - 1
+    for level >= 0 {
+        match scope.bindings[level].get(name) {
+            some(value) => return value
+            none => {}
+        }
+        level -= 1
+    }
+    if name == "self" {
+        return scope.data
+    }
+    match scope.data.optional(name) {
+        ok(some(value)) => value
+        _ => {
+            let fields = scope.data.fields().map((field) { field.name })
+            let message = match fields.isEmpty() {
+                true =>
+                    "unknown name `{name}`: it is no binding, and the data, `{scope.data.typeName()}`, has no fields"
+                false =>
+                    "unknown name `{name}`: it is no binding, nor a field of the data, `{scope.data.typeName()}`, whose fields are {quoted(fields)}"
+            }
+            fail self.error(scope, at, message)
+        }
+    }
+}
+
+fn Run.field(self, scope: Scope, target: __reflect.Value, name: String, at: Int): __reflect.Value !
+    TemplateError {
+    match target.get(name) {
+        ok(value) => value
+        err(error) => fail self.error(scope, at, "{error}")
+    }
+}
+
+fn Run.index(self, scope: Scope, target: __reflect.Value, key: __reflect.Value, at: Int): __reflect.Value !
+    TemplateError {
+    let kind = target.typeName()
+    if kind.startsWith("Map[") {
+        for (found, value) in target.entries() {
+            if same(found, key) {
+                return value
+            }
+        }
+        fail self.error(scope, at, "the map has no key {key}")
+    }
+    let position = self.integer(scope, key, at)?
+    let items = if kind == "String" {
+        textNative.split(target.to[String]().unwrapOr(""), "").map((c) { __reflect.valueOf(c) })
+    } else {
+        target.elements()
+    }
+    match items.get(position) {
+        some(item) => item
+        none => fail self.error(
+            scope,
+            at,
+            "{position} is out of the {items.length()} values of `{kind}`",
+        )
+    }
+}
+
+/// Whether two values are equal: numbers by their value, others by their
+/// type and their text.
+fn same(left: __reflect.Value, right: __reflect.Value): Bool {
+    match (number(left), number(right)) {
+        (some(a), some(b)) => a == b
+        _ => left.typeName() == right.typeName() and "{left}" == "{right}"
+    }
+}
+
+/// A number as a `Float`, if the value is one.
+fn number(value: __reflect.Value): Float? {
+    let kind = value.typeName()
+    if kind == "Float" or kind == "Float32" {
+        return Float.parse("{value}").ok()
+    }
+    if isInteger(kind) {
+        return Float.parse("{value}").ok()
+    }
+    none
+}
+
+fn isInteger(kind: String): Bool {
+    kind in
+        [
+            "Int",
+            "Int8",
+            "Int16",
+            "Int32",
+            "Int64",
+            "Int128",
+            "UInt",
+            "UInt8",
+            "UInt16",
+            "UInt32",
+            "UInt64",
+            "UInt128",
+            "Byte",
+        ]
+}
+
+fn Run.integer(self, scope: Scope, value: __reflect.Value, at: Int): Int ! TemplateError {
+    match (isInteger(value.typeName()), Int.parse("{value}")) {
+        (true, ok(found)) => found
+        _ => fail self.error(scope, at, "expected an integer, found `{value.typeName()}`")
+    }
+}
+
+/// A condition, which is a `Bool`.
+fn Run.truth(self, scope: Scope, value: __reflect.Value, at: Int, what: String): Bool !
+    TemplateError {
+    let kind = value.typeName()
+    if kind == "Bool" {
+        return value.to[Bool]().unwrapOr(false)
+    }
+    let hint = if kind.startsWith("Array[") or kind.startsWith("Map[") or kind == "String" {
+        ": ask `not value.isEmpty()`"
+    } else if kind.endsWith("?") {
+        ": open it with `{{{{ with name = value }}}}`, or ask `value.isSome()`"
+    } else {
+        ""
+    }
+    fail self.error(scope, at, "{what} takes a `Bool`, and this is `{kind}`{hint}")
+}
+
+fn Run.condition(self, scope: Scope, code: Code): Bool ! TemplateError {
+    let value = self.evaluate(scope, code)?
+    self.truth(scope, value, code.at.first().unwrapOr(0), "`if`")?
+}
+
+/// The value an optional holds, if any.
+fn Run.opened(self, scope: Scope, value: __reflect.Value, at: Int): __reflect.Value? ! TemplateError {
+    if not value.typeName().endsWith("?") {
+        fail self.error(
+            scope,
+            at,
+            "`with` opens an optional, and this is `{value.typeName()}`: write `{{{{ let name = value }}}}`",
+        )
+    }
+    value.elements().first()
+}
+
+/// What each round of a `for` binds.
+fn Run.rounds(self, scope: Scope, names: Array[String], items: Code): Array[Array[__reflect.Value]] !
+    TemplateError {
+    let source = self.evaluate(scope, items)?
+    let at = items.at.first().unwrapOr(0)
+    let kind = source.typeName()
+    var rounds: Array[Array[__reflect.Value]] = []
+    if kind.startsWith("Map[") {
+        if names.length() != 2 {
+            fail self.error(
+                scope,
+                at,
+                "a map gives its keys and values: write `{{{{ for (key, value) in map }}}}`",
+            )
+        }
+        for (key, value) in source.entries() {
+            rounds.push([key, value])
+        }
+        return rounds
+    }
+    if not (kind.startsWith("Array[") or kind.startsWith("Set[") or kind.startsWith("Deque[")) {
+        fail self.error(
+            scope,
+            at,
+            "a `for` goes over an array, a set, a deque, a map or a range, and this is `{kind}`",
+        )
+    }
+    for item in source.elements() {
+        if names.length() == 1 {
+            rounds.push([item])
+        } else {
+            let parts = item.elements()
+            if parts.length() != names.length() {
+                fail self.error(
+                    scope,
+                    at,
+                    "each value has {parts.length()} parts, and the `for` binds {names.length()}",
+                )
+            }
+            rounds.push(parts)
+        }
+    }
+    rounds
+}
+
+fn Run.binary(
+    self,
+    scope: Scope,
+    operator: String,
+    left: __reflect.Value,
+    right: __reflect.Value,
+    at: Int,
+): __reflect.Value ! TemplateError {
+    if operator == "==" {
+        return __reflect.valueOf(same(left, right))
+    }
+    if operator == "!=" {
+        return __reflect.valueOf(not same(left, right))
+    }
+    if operator == "in" {
+        let kind = right.typeName()
+        if kind == "String" {
+            return __reflect.valueOf(right.to[String]().unwrapOr("").contains("{left}"))
+        }
+        if kind.startsWith("Map[") {
+            return __reflect.valueOf(right.entries().any((entry) { same(entry.0, left) }))
+        }
+        return __reflect.valueOf(right.elements().any((item) { same(item, left) }))
+    }
+    let both = left.typeName() == "String" and right.typeName() == "String"
+    if both and operator in ["<", "<=", ">", ">="] {
+        let order = left.to[String]().unwrapOr("").compare(right.to[String]().unwrapOr(""))
+        return __reflect.valueOf(ordered(operator, order))
+    }
+    let (a, b) = match (number(left), number(right)) {
+        (some(a), some(b)) => (a, b)
+        _ => {
+            let joined = if operator == "+" and left.typeName() == "String" {
+                ": a template writes texts one after the other, with no `+`"
+            } else {
+                ""
+            }
+            fail self.error(
+                scope,
+                at,
+                "`{operator}` takes numbers, and these are `{left.typeName()}` and `{right.typeName()}`{joined}",
+            )
+        }
+    }
+    if operator in ["<", "<=", ">", ">="] {
+        return __reflect.valueOf(ordered(operator, a.compare(b)))
+    }
+    let integers = isInteger(left.typeName()) and isInteger(right.typeName())
+    if integers {
+        let x = Int.parse("{left}").unwrapOr(0)
+        let y = Int.parse("{right}").unwrapOr(0)
+        if (operator == "/" or operator == "%") and y == 0 {
+            fail self.error(scope, at, "division by zero")
+        }
+        return __reflect.valueOf(
+            match operator {
+                "+" => x + y
+                "-" => x - y
+                "*" => x * y
+                "/" => x / y
+                _ => x % y
+            },
+        )
+    }
+    if operator == "%" {
+        fail self.error(scope, at, "`%` takes integers: floats have no remainder")
+    }
+    __reflect.valueOf(
+        match operator {
+            "+" => a + b
+            "-" => a - b
+            "*" => a * b
+            _ => a / b
+        },
+    )
+}
+
+fn ordered(operator: String, order: Int): Bool {
+    match operator {
+        "<" => order < 0
+        "<=" => order <= 0
+        ">" => order > 0
+        _ => order >= 0
+    }
+}
+
+/// A function: a `pub` method of a value given with `functions`.
+fn Run.call(self, scope: Scope, name: String, args: Array[__reflect.Value], at: Int): __reflect.Value !
+    TemplateError {
+    var known: Array[String] = []
+    for helper in self.set.helpers {
+        let methods = helper.typeInfo().methods().map((method) { method.name() })
+        if name in methods {
+            return match helper.call(name, ...args) {
+                ok(value) => value
+                err(error) => fail self.error(scope, at, "{error}")
+            }
+        }
+        known.extend(methods)
+    }
+    let functions = match known.isEmpty() {
+        true => "it has none"
+        false => "they are {quoted(known)}"
+    }
+    fail self.error(
+        scope,
+        at,
+        "there is no function `{name}`: a set's functions are the `pub` methods of the values given to `Set.functions`, and {functions}",
+    )
+}
+
+/// A method: of the prelude for a text, an array, a map or an optional,
+/// and a `pub` one of any other value.
+fn Run.method(
+    self,
+    scope: Scope,
+    target: __reflect.Value,
+    name: String,
+    args: Array[__reflect.Value],
+    at: Int,
+): __reflect.Value ! TemplateError {
+    let kind = target.typeName()
+    let some = if kind == "String" {
+        textMethod(target.to[String]().unwrapOr(""), name, args)
+    } else if kind.startsWith("Array[") {
+        arrayMethod(target.elements(), name, args)
+    } else if kind.startsWith("Map[") {
+        mapMethod(target.entries(), name, args)
+    } else if kind.endsWith("?") {
+        optionMethod(target.elements().first(), name, args)
+    } else {
+        return match target.call(name, ...args) {
+            ok(value) => value
+            err(error) => fail self.error(scope, at, "{error}")
+        }
+    }
+    match some {
+        some(value) => value
+        none => fail self.error(
+            scope,
+            at,
+            "a loaded template has no method `{name}` of `{kind}` with {args.length()} arguments; the guide lists those it has",
+        )
+    }
+}
+
+fn argument(args: Array[__reflect.Value], index: Int): String {
+    args.get(index).map((value) { "{value}" }).unwrapOr("")
+}
+
+fn textMethod(value: String, name: String, args: Array[__reflect.Value]): __reflect.Value? {
+    let first = argument(args, 0)
+    let count = Int.parse(first).unwrapOr(0)
+    let result = match (name, args.length()) {
+        ("length", 0) => __reflect.valueOf(value.length())
+        ("isEmpty", 0) => __reflect.valueOf(value.isEmpty())
+        ("contains", 1) => __reflect.valueOf(value.contains(first))
+        ("startsWith", 1) => __reflect.valueOf(value.startsWith(first))
+        ("endsWith", 1) => __reflect.valueOf(value.endsWith(first))
+        ("find", 1) => __reflect.valueOf(value.find(first))
+        ("replace", 2) => __reflect.valueOf(value.replace(first, argument(args, 1)))
+        ("split", 1) => __reflect.valueOf(value.split(first))
+        ("lines", 0) => __reflect.valueOf(value.lines())
+        ("words", 0) => __reflect.valueOf(value.words())
+        ("trim", 0) => __reflect.valueOf(value.trim())
+        ("trimStart", 0) => __reflect.valueOf(value.trimStart())
+        ("trimEnd", 0) => __reflect.valueOf(value.trimEnd())
+        ("toUpper", 0) => __reflect.valueOf(value.toUpper())
+        ("toLower", 0) => __reflect.valueOf(value.toLower())
+        ("padStart", 1) => __reflect.valueOf(value.padStart(count))
+        ("padStart", 2) => __reflect.valueOf(value.padStart(count, fill: argument(args, 1)))
+        ("padEnd", 1) => __reflect.valueOf(value.padEnd(count))
+        ("padEnd", 2) => __reflect.valueOf(value.padEnd(count, fill: argument(args, 1)))
+        ("repeat", 1) => __reflect.valueOf(value.repeat(count))
+        ("removePrefix", 1) => __reflect.valueOf(value.removePrefix(first))
+        ("removeSuffix", 1) => __reflect.valueOf(value.removeSuffix(first))
+        _ => return none
+    }
+    some(result)
+}
+
+fn arrayMethod(items: Array[__reflect.Value], name: String, args: Array[__reflect.Value]): __reflect.Value? {
+    let count = Int.parse(argument(args, 0)).unwrapOr(0)
+    let result = match (name, args.length()) {
+        ("length", 0) => __reflect.valueOf(items.length())
+        ("isEmpty", 0) => __reflect.valueOf(items.isEmpty())
+        ("first", 0) => __reflect.valueOf(items.first())
+        ("last", 0) => __reflect.valueOf(items.last())
+        ("get", 1) => __reflect.valueOf(items.get(count))
+        ("take", 1) => __reflect.valueOf(items.take(count))
+        ("drop", 1) => __reflect.valueOf(items.drop(count))
+        ("reversed", 0) => __reflect.valueOf(items.reversed())
+        ("join", 1) => __reflect.valueOf(items.map((item) { "{item}" }).join(argument(args, 0)))
+        ("concat", 1) => __reflect.valueOf(items.concat(args[0].elements()))
+        ("enumerate", 0) => {
+            var pairs: Array[Array[__reflect.Value]] = []
+            for index in 0..items.length() {
+                pairs.push([__reflect.valueOf(index), items[index]])
+            }
+            __reflect.valueOf(pairs)
+        }
+        _ => return none
+    }
+    some(result)
+}
+
+fn mapMethod(
+    entries: Array[(__reflect.Value, __reflect.Value)],
+    name: String,
+    args: Array[__reflect.Value],
+): __reflect.Value? {
+    let result = match (name, args.length()) {
+        ("length", 0) => __reflect.valueOf(entries.length())
+        ("isEmpty", 0) => __reflect.valueOf(entries.isEmpty())
+        ("contains", 1) => __reflect.valueOf(entries.any((entry) { same(entry.0, args[0]) }))
+        ("get", 1) => {
+            var found: __reflect.Value? = none
+            for (key, value) in entries {
+                if same(key, args[0]) {
+                    found = some(value)
+                }
+            }
+            __reflect.valueOf(found)
+        }
+        ("keys", 0) => __reflect.valueOf(entries.map((entry) { entry.0 }))
+        ("values", 0) => __reflect.valueOf(entries.map((entry) { entry.1 }))
+        ("entries", 0) => __reflect.valueOf(entries.map((entry) { [entry.0, entry.1] }))
+        _ => return none
+    }
+    some(result)
+}
+
+fn optionMethod(inner: __reflect.Value?, name: String, args: Array[__reflect.Value]): __reflect.Value? {
+    let result = match (name, args.length()) {
+        ("isSome", 0) => __reflect.valueOf(inner.isSome())
+        ("isNone", 0) => __reflect.valueOf(inner.isNone())
+        ("unwrapOr", 1) => inner.unwrapOr(args[0])
+        _ => return none
+    }
+    some(result)
+}
+
+/// What a value writes, with its format, at its place.
+fn Run.written(self, scope: Scope, value: __reflect.Value, format: Format?, place: Int, at: Int): String !
+    TemplateError {
+    let kind = value.typeName()
+    if not self.set.html {
+        return self.shown(scope, value, format, at)?
+    }
+    if place == 6 or place == 7 {
+        let written = scriptSafe(jsonOf(value))
+        return if place == 7 { codecNative.htmlEscape(written) } else { written }
+    }
+    if place == 0 and kind.endsWith("template.Html") {
+        return match value.get("value") {
+            ok(trusted) => "{trusted}"
+            err(_) => ""
+        }
+    }
+    escape(self.shown(scope, value, format, at)?, place)
+}
+
+/// A value's text, with its format.
+fn Run.shown(self, scope: Scope, value: __reflect.Value, format: Format?, at: Int): String !
+    TemplateError {
+    let kind = value.typeName()
+    if kind.endsWith("?") {
+        fail self.error(
+            scope,
+            at,
+            "a template writes no optional: open it with `{{{{ with name = value }}}}`",
+        )
+    }
+    let spec = match format {
+        some(spec) => spec
+        none => return "{value}"
+    }
+    let fill = spec.fill.get(0).unwrapOr(' ')
+    let width = spec.width.unwrapOr(0)
+    let precision = spec.precision.unwrapOr(-1)
+    let typed = spec.kind.unwrapOr("")
+    let integer = isInteger(kind)
+    let float = kind == "Float" or kind == "Float32"
+    let wrong = if integer {
+        spec.precision.isSome() or
+            typed in ["e", "E"] or
+            (spec.alternate and not (typed in ["x", "X", "o", "b"]))
+    } else if float {
+        spec.alternate or typed in ["x", "X", "o", "b"]
+    } else {
+        spec.plus or spec.zero or spec.alternate or not typed.isEmpty()
+    }
+    if wrong {
+        fail self.error(scope, at, "the format does not go with a `{kind}`")
+    }
+    if integer {
+        let radix = match typed {
+            t if t == "x" or t == "X" => 16
+            "o" => 8
+            "b" => 2
+            _ => 10
+        }
+        let digits = Int128.parse("{value}").unwrapOr(0)
+        let align = firstChar(spec.align, '>')
+        return __formats.formatInteger(
+            digits,
+            radix,
+            typed == "X",
+            spec.alternate,
+            spec.plus,
+            spec.zero,
+            width,
+            fill,
+            align,
+        )
+    }
+    if float {
+        let real = Float.parse("{value}").unwrapOr(0.0)
+        let exponent = typed == "e" or typed == "E"
+        let align = firstChar(spec.align, '>')
+        return __formats.formatFloat(
+            real,
+            kind == "Float32",
+            precision,
+            exponent,
+            typed == "E",
+            spec.plus,
+            spec.zero,
+            width,
+            fill,
+            align,
+        )
+    }
+    __formats.formatText("{value}", precision, width, fill, firstChar(spec.align, '<'))
+}
+
+/// The first character of a text, if any.
+fn firstChar(written: String?, otherwise: Char): Char {
+    match written {
+        some(c) => c.get(0).unwrapOr(otherwise)
+        none => otherwise
+    }
+}
+
+/// A value as JSON, for a script.
+fn jsonOf(value: __reflect.Value): String {
+    let kind = value.typeName()
+    if kind == "String" {
+        return __json.encode(value.to[String]().unwrapOr(""))
+    }
+    if kind == "Bool" or number(value).isSome() {
+        return "{value}"
+    }
+    if kind.endsWith("?") {
+        return match value.elements().first() {
+            some(inner) => jsonOf(inner)
+            none => "null"
+        }
+    }
+    if kind.startsWith("Map[") {
+        let members = value
+            .entries()
+            .map((entry) { "{__json.encode("{entry.0}")}:{jsonOf(entry.1)}" })
+        return "{{{members.join(",")}}}"
+    }
+    if kind.startsWith("Array[") or kind.startsWith("Set[") or kind.startsWith("Deque[") {
+        return "[{value.elements().map(jsonOf).join(",")}]"
+    }
+    let fields = value.fields()
+    if not fields.isEmpty() {
+        let members = fields.map((field) { "{__json.encode(field.name)}:{jsonOf(field.value)}" })
+        return "{{{members.join(",")}}}"
+    }
+    __json.encode("{value}")
+}
+
+// ---------------------------------------------------------------------------
+// The runtime's reading
+// ---------------------------------------------------------------------------
+
+// The runtime gives the parts of a template as JSON, which these read.
+
+fn parsedOf(value: __json.Value): Parsed {
+    Parsed {
+        extends: value.field("extends").asText()
+        nodes: nodesOf(value.field("nodes"))
+        error: value.field("error").asText()
+        at: value.field("at").asInt().unwrapOr(0)
+    }
+}
+
+fn nodesOf(value: __json.Value): Array[Node] {
+    value.asArray().unwrapOr([]).map(nodeOf)
+}
+
+fn optionalNodes(value: __json.Value): Array[Node]? {
+    match value.isNull() {
+        true => none
+        false => some(nodesOf(value))
+    }
+}
+
+/// The only member of an object: `{"Write": {...}}`.
+fn variantOf(value: __json.Value): (String, __json.Value) {
+    for (name, payload) in value.asObject().unwrapOr([:]) {
+        return (name, payload)
+    }
+    (value.asText().unwrapOr(""), __json.Value.Null)
+}
+
+fn nodeOf(value: __json.Value): Node {
+    let (name, payload) = variantOf(value)
+    let field = (key: String) { payload.field(key) }
+    let named = (key: String) { payload.field(key).asText().unwrapOr("") }
+    match name {
+        "Text" => Node.Text(payload.asText().unwrapOr(""))
+        "Write" => Node.Write {
+            value: codeOf(field("value"))
+            format: formatOf(field("format"))
+            place: field("place").asInt().unwrapOr(0)
+        }
+        "If" => Node.If {
+            branches: field("branches")
+                .asArray()
+                .unwrapOr([])
+                .map(
+                    (branch) {
+                        Branch {
+                            condition: codeOf(branch.field("condition"))
+                            body: nodesOf(branch.field("body"))
+                        }
+                    },
+                )
+            otherwise: optionalNodes(field("otherwise"))
+        }
+        "For" => Node.For {
+            names: field("names").asArray().unwrapOr([]).map((n) { n.asText().unwrapOr("") })
+            items: codeOf(field("items"))
+            body: nodesOf(field("body"))
+            otherwise: optionalNodes(field("otherwise"))
+        }
+        "With" => Node.With {
+            name: named("name")
+            value: codeOf(field("value"))
+            body: nodesOf(field("body"))
+            otherwise: optionalNodes(field("otherwise"))
+        }
+        "Let" => Node.Let { name: named("name"), value: codeOf(field("value")) }
+        "Block" => Node.Block { name: named("name"), body: nodesOf(field("body")) }
+        "Include" => Node.Include {
+            name: named("name")
+            data: match field("data").isNull() {
+                true => none
+                false => some(codeOf(field("data")))
+            }
+            at: field("at").asInt().unwrapOr(0)
+        }
+        "Break" => Node.Break
+        _ => Node.Continue
+    }
+}
+
+fn codeOf(value: __json.Value): Code {
+    Code {
+        ops: value.field("ops").asArray().unwrapOr([]).map(opOf)
+        at: value.field("at").asArray().unwrapOr([]).map((n) { n.asInt().unwrapOr(0) })
+    }
+}
+
+fn opOf(value: __json.Value): Op {
+    let (name, payload) = variantOf(value)
+    let first = payload.item(0)
+    let count = payload.item(1).asInt().unwrapOr(0)
+    match name {
+        "Int" => Op.Int(payload.asInt().unwrapOr(0))
+        "Float" => Op.Float(payload.asFloat().unwrapOr(0.0))
+        "Text" => Op.Text(payload.asText().unwrapOr(""))
+        "Bool" => Op.Bool(payload.asBool().unwrapOr(false))
+        "Name" => Op.Name(payload.asText().unwrapOr(""))
+        "Field" => Op.Field(payload.asText().unwrapOr(""))
+        "Index" => Op.Index
+        "Call" => Op.Call(first.asText().unwrapOr(""), count)
+        "Method" => Op.Method(first.asText().unwrapOr(""), count)
+        "Not" => Op.Not
+        "Negate" => Op.Negate
+        "Binary" => Op.Binary(payload.asText().unwrapOr(""))
+        "Range" => Op.Range(payload.asBool().unwrapOr(false))
+        "And" => Op.And(payload.asInt().unwrapOr(0))
+        _ => Op.Or(payload.asInt().unwrapOr(0))
+    }
+}
+
+fn formatOf(value: __json.Value): Format? {
+    if value.isNull() {
+        return none
+    }
+    some(Format {
+        fill: value.field("fill").asText().unwrapOr(" ")
+        align: value.field("align").asText()
+        plus: value.field("plus").asBool().unwrapOr(false)
+        alternate: value.field("alternate").asBool().unwrapOr(false)
+        zero: value.field("zero").asBool().unwrapOr(false)
+        width: value.field("width").asInt()
+        precision: value.field("precision").asInt()
+        kind: value.field("kind").asText()
+    })
+}

@@ -3141,3 +3141,30 @@ the tree first and walks it, which lets elements of one name after another
 become a list only when the type asks for one, and text alone become a
 record when the type is one. No DTD is read, so no document reaches a file
 or a URL, or grows by expanding entities.
+
+## 2026-10-30 — Templates written in Tondo
+
+The second half of the sixth lot, for Hugo and for the sites a program
+serves. A template's actions are Tondo's expressions, not Go's language of
+dots, pipes and `printf`: an author writes what they already write in code,
+`{{ post.title.toUpper() }}` and `{{ price:.2 }}`, and a condition is a
+`Bool`, as everywhere else. Go is where porting starts, so the delimiters,
+`{{-`, the blocks and the escaping by context are Go's, and the guide gives
+the equivalent of each of its forms. A line that holds only blocks is left
+out, which spares templates the `{{-` that Go's need everywhere.
+
+A template whose text the compiler sees is compiled into the program, and
+not interpreted: its expressions are linked and checked as code, with the
+type of its data, so a misspelt field is a compile error that lists the
+fields, and its `render` cannot fail. It runs as fast as the code it is.
+Before the program is linked, its templates become statements whose leaves
+are two nodes, a value written in its place and another template written,
+so that `if`, `for` and the bindings are the language's own. A template's
+names are its data's fields, so its closure captures nothing of the
+function that makes it. A `Set`, for templates that arrive while the
+program runs, sees its data by reflection, with the names the code uses,
+and not through `Encode`, whose `@name` serves formats. One parser, in
+Rust, reads both kinds, for the compiler and for the runtime, which gives
+`std/template.to` the parts of a template to interpret; their escaping,
+their formats and the code of a `Set` are Tondo.
+
