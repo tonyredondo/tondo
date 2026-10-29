@@ -3710,13 +3710,15 @@ pub unsafe extern "C" fn tondo_rt_channel_close(sender: *mut SenderObject) {
     }
 }
 
-/// `isClosed()` of a `Sender` (`sender` is 1) or a `Receiver`.
+/// `isClosed()` of a `Sender` (`sender` is 1) or a `Receiver`; with
+/// `sender` 2, whether no `Receiver` of a sender's channel is left, which
+/// `std.internal.channel.abandoned` asks.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_channel_closed(handle: *mut u8, sender: u8) -> u8 {
     unsafe {
         let c = if sender != 0 { &*(*(handle as *mut SenderObject)).channel } else { &*(handle as *mut ChannelObject) };
         lock(&c.lock);
-        let closed = c.closed;
+        let closed = if sender == 2 { c.rc.load(Ordering::Acquire) <= c.senders } else { c.closed };
         unlock(&c.lock);
         closed as u8
     }

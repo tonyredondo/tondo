@@ -21,13 +21,6 @@ pub enum FileKind {
     Other
 }
 
-/// An entry itself, without following links.
-pub type Metadata = {
-    kind: FileKind
-    size: Int
-    readOnly: Bool
-}
-
 /// `Read` an existing file; `Write` creates or empties it; `Append` creates it
 /// if missing and writes at the end; `CreateNew` fails if it exists;
 /// `ReadWrite` reads and writes an existing one.
@@ -50,11 +43,11 @@ pub fn readText(path: String): String ! FsError
 pub fn readBytes(path: String): Array[Byte] ! FsError
 
 /// Writes through a temporary file and a rename: readers see the old or the
-/// new content, never half of it.
+/// new content, never half of it. It keeps the permissions of the file it
+/// replaces, and writes the file a link names.
 pub fn writeText(path: String, text: String): Unit ! FsError
 
-/// Writes through a temporary file and a rename: readers see the old or the
-/// new content, never half of it.
+/// Writes through a temporary file and a rename, as `writeText`.
 pub fn writeBytes(path: String, data: Array[Byte]): Unit ! FsError
 
 /// Adds the text at the end of the file, which it creates if missing.
@@ -62,10 +55,6 @@ pub fn appendText(path: String, text: String): Unit ! FsError
 
 /// Whether the path names an entry; a link to nothing does not count.
 pub fn exists(path: String): Bool
-
-/// What the entry at the path is, without following a link: its kind, its
-/// size in bytes and whether it is read-only.
-pub fn metadata(path: String): Metadata ! FsError
 
 /// The names of the entries, sorted by bytes.
 pub fn list(path: String): Array[String] ! FsError

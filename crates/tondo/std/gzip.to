@@ -1,0 +1,34 @@
+// std.gzip (standard library 14.29): data compressed in the gzip format of
+// RFC 1952, whole or as streams of std.io.
+
+import std.internal.codec as codecNative
+import std.io as __io
+
+/// The data compressed at `level`, from 0, which does not compress, to 9,
+/// the smallest and slowest; 6 is the one of the `gzip` tool and of Go.
+pub fn compress(data: Array[Byte], level: Int = 6): Array[Byte] {
+    codecNative.gzip(data, level)
+}
+
+/// The data of one gzip member or several after one another;
+/// `IoError.InvalidData` when it is not gzip, is cut short or its checksum
+/// does not match.
+pub fn decompress(data: Array[Byte]): Array[Byte] ! __io.IoError {
+    let unpacked = codecNative.unpack(data, false)
+    if codecNative.unpackFailed(unpacked) {
+        fail __io.IoError.InvalidData
+    }
+    codecNative.unpacked(unpacked)
+}
+
+/// A stream that compresses what it is given into `to`: `flush()` writes
+/// what is compressed so far, and `close()` the end of the format.
+pub fn writer(to: __io.Writer, level: Int = 6): __io.Writer {
+    codecNative.packWriter(to, false, level)
+}
+
+/// A stream of what `from` holds, decompressed as it is read; data that is
+/// not gzip fails as `IoError.InvalidData` in the read that reaches it.
+pub fn reader(from: __io.Reader): __io.Reader {
+    codecNative.unpackReader(from, false)
+}

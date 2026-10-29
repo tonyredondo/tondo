@@ -247,13 +247,18 @@ pub unsafe extern "C" fn tondo_rt_hasher_finish(object: *mut NativeObject) -> *m
 /// `count` bytes from the system's source of entropy.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_entropy(count: i64) -> *mut ArrayHeader {
+    byte_array(&entropy(count.max(0) as usize))
+}
+
+/// `count` bytes from the system's source of entropy.
+pub(crate) fn entropy(count: usize) -> Vec<u8> {
     use std::io::Read;
-    let mut out = vec![0u8; count.max(0) as usize];
+    let mut out = vec![0u8; count];
     let read = std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut out));
     if read.is_err() {
         super::runtime_fault("the system has no source of entropy at /dev/urandom");
     }
-    byte_array(&out)
+    out
 }
 
 /// Milliseconds since the Unix epoch, for UUIDv7.

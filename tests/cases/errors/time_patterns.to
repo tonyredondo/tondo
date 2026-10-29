@@ -1,0 +1,24 @@
+// A literal pattern of std.time is checked when the program compiles: its
+// directives, and for parsing that it reads a whole date; and so is a
+// literal locale.
+
+import std.time
+
+fn main() {
+    let now = time.utcNow()
+    _ = now.format("%Y-%m-%d %f")
+    _ = now.format("%Q")
+    _ = now.format("%Y", locale: "xx")
+    _ = now.inZone(time.utcZone()).format("100%")
+    _ = time.parseDateTime("29/10", pattern: "%d/%m")
+    _ = time.parseZoned("2026 10", time.utcZone(), pattern: "%Y %m")
+    let computed = "%Q"
+    _ = now.format(computed)
+}
+
+// expect-error: E1905 `%f` is not a directive: write `%3f`, `%6f` or `%9f` for the fraction of the second in milliseconds, microseconds or nanoseconds
+// expect-error: E1905 `%Q` is not a directive; they are %Y %y %m %B %b %OB %d %e %j %A %a %H %I %p %M %S %3f %6f %9f %z %:z %Z %s %F %T %%
+// expect-error: E1905 `xx` is not a language with names of months and days: write a BCP 47 tag of CLDR, such as `es`, `de` or `pt-BR`
+// expect-error: E1905 the pattern ends in `%`: write `%%` for a `%` itself
+// expect-error: E1905 the pattern does not read the year: add `%Y`, or `%s` for seconds since 1970
+// expect-error: E1905 the pattern does not read the day: add `%d`, or `%s` for seconds since 1970

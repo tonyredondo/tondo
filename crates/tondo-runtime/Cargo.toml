@@ -14,12 +14,14 @@ path = "src/lib.rs"
 
 [dependencies]
 bytes = "1.12.1"
+flate2 = "1"
 futures-util = { version = "0.3.34", features = ["sink"] }
 hmac = "0.13.0"
 html-escape = "0.2"
 ipnet = "2.12"
 http-body-util = "0.1.5"
 httpdate = "1.0.3"
+jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo", "tzdb-bundle-always"] }
 hyper = { version = "1.12.0", features = ["server", "http1", "http2"] }
 hyper-util = { version = "0.1.21", features = ["server", "server-auto", "tokio", "http1", "http2"] }
 libc = "0.2.191"
@@ -28,11 +30,13 @@ memchr = "2.8.3"
 mimalloc = { version = "0.1", default-features = false }
 mime_guess = "2.0.5"
 mio = { version = "1.2.4", features = ["os-poll", "net"] }
+notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 multer = "3.1.0"
 regex = "1"
 regex-syntax = "0.8"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "http2", "stream", "multipart", "gzip", "brotli", "deflate", "system-proxy", "cookies"] }
 rmp = "0.8"
+ruzstd = "0.9"
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-native-certs = "0.8.5"
 rustls-pki-types = { version = "1.15.1", features = ["std"] }
@@ -46,6 +50,9 @@ tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
 toml_edit = { version = "0.25", default-features = false, features = ["parse", "display"] }
 webpki-roots = "1.0.10"
+
+[build-dependencies]
+flate2 = "1"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tondo_staticlib)"] }

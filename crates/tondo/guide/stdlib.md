@@ -8,12 +8,12 @@ prelude`).
 ```text
 std.console    print, println, eprintln, readLine, the streams
 std.io         Writer, Reader, Buffer: streams for files, processes, memory
-std.fs         read and write files, list, open, metadata
+std.fs         read and write files, walk, glob, watch, metadata, links, temporaries
 std.embed      files of the package kept in the executable, read when it compiles
-std.path       join, parent, fileName, extension
+std.path       join, parent, fileName, extension, clean, relative, glob patterns
 std.env        args, environment, current directory, hostname, process id
 std.process    run programs and pipelines, capture output, signals
-std.time       Duration, sleep, now, UTC dates, ISO 8601
+std.time       Duration, sleep, now, dates, time zones, strftime formats
 std.json       encode and decode any type, navigate dynamic JSON
 std.toml       the same for TOML documents, with dates
 std.yaml       the same for YAML (a safe subset), one or many documents
@@ -28,6 +28,7 @@ std.net        TCP, UDP and Unix sockets, TLS, names, IP addresses and networks
 std.url        URLs and relative links: parts, resolving, the query
 std.regex      regular expressions, with `(?i)` flags and replacing by a function
 std.encoding   Base64, hexadecimal, URL text, HTML escaping
+std.gzip       gzip, whole or as streams; std.zstd the same for Zstandard
 std.hash       MD5, SHA-1, SHA-2, HMAC, in parts; FNV, xxHash, MurmurHash3
 std.random     seeded and entropy generators
 std.uuid       UUID v4, v5, v7
@@ -169,6 +170,64 @@ fn main(): !net.NetError {
   tls: net.Tls.files("cert.pem", "key.pem"))` serves TLS.
 - Every call that waits takes its own `timeout:`; there is none otherwise.
   `reader()` and `writer()` give the connection as `std.io` streams.
+
+## Trees of files
+
+```tondo
+import std.console
+import std.fs
+import std.gzip
+import std.path
+
+fn main(): !fs.FsError {
+    for entry in fs.walk("content")? {             // each directory before what it holds
+        console.println("{entry.path}")
+    }
+    for page in fs.glob("content/**/*.{{md,markdown}}")? {
+        let packed = gzip.compress(fs.readBytes(page)?)
+        let name = path.relative("content", page).unwrapOr(page)
+        fs.writeBytes(path.join("public", "{name}.gz"), packed)?
+    }
+    let work = fs.createTemporaryDirectory()?      // the program removes it
+    console.println(work)
+    for changes in fs.watch(["content"])? {        // a batch once they settle
+        console.println("{changes.length()} changed")
+    }
+}
+```
+
+`path.matches(pattern, path)` is the glob of `fs.glob`: `*`, `?`, `[a-z]`,
+`{a,b}` and `**`. `fs.metadata` gives `modified` and `permissions`;
+`fs.setPermissions(path, 0o755)`, `fs.createSymlink`, `fs.readSymlink` and
+`fs.realPath` do the rest. `gzip.writer(out)` and `gzip.reader(input)`
+compress a stream of `std.io`, and `std.zstd` has the same functions.
+
+## Dates in time zones
+
+`time.DateTime` is always UTC; a `time.ZonedDateTime` is what the clocks of
+a zone show, with their offset:
+
+```tondo
+import std.console
+import std.time
+
+fn main(): !time.TimeError {
+    let madrid = time.zone("Europe/Madrid")?
+    let now = time.utcNow().inZone(madrid)
+    console.println("{now}")                                        // 2026-10-29T13:05:00+01:00
+    console.println(now.format("%-d de %B de %Y, %H:%M", locale: "es"))
+    let meeting = madrid.at(year: 2026, month: 11, day: 2, hour: 9)?
+    console.println("{meeting.utc()}")                              // 2026-11-02T08:00:00Z
+    let read = time.parseZoned("02/11/2026 09:00", madrid, pattern: "%d/%m/%Y %H:%M")?
+    console.println("{read == meeting} {time.parseDuration("1h30m")?}")       // true 1h30m0s
+}
+```
+
+Patterns are `strftime`'s, `%Y-%m-%d %H:%M:%S`, and a literal one with a
+directive that does not exist is a compile error. Names come from CLDR in
+the language `locale` gives, never the system's. Zones come from the
+system's tz database, and those it lacks from the copy in `tondo`;
+`TONDO_ZONES=builtin` uses that copy always.
 
 ## Time, logging and CSV
 

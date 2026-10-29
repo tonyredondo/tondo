@@ -1,0 +1,57 @@
+// path.clean, relative and matches: lexical operations, as Go's, and glob
+// patterns with `**` and braces.
+
+import std.console
+import std.path
+
+fn main() {
+    for raw in ["docs//./api/../guide.md", "", "/../a/", "a/../..", "./", "/"] {
+        console.println("clean '{raw}' = '{path.clean(raw)}'")
+    }
+    let pairs = [("a/b", "a/c/d"), ("a", "a"), ("/a", "/a/b"), ("a", "/b"), ("../a", "b"), ("a/b", "a")]
+    for (from, to) in pairs {
+        console.println("relative {from} {to} = {path.relative(from, to)}")
+    }
+    let checks = [
+        ("content/**/*.md", "content/posts/a.md"),
+        ("content/**/*.md", "content/a.md"),
+        ("content/*.md", "content/posts/a.md"),
+        ("*.{{md,txt}}", "notes.txt"),
+        ("a?c", "abc"),
+        ("a?c", "a/c"),
+        ("[a-c]x", "bx"),
+        ("[!a-c]x", "bx"),
+        ("*", ".git"),
+        ("\\*", "*"),
+        ("[oops", "[oops"),
+        ("{{a,b", "{{a,b"),
+    ]
+    for (pattern, name) in checks {
+        console.println("matches {pattern} {name} = {path.matches(pattern, name)}")
+    }
+}
+
+// expect-stdout: clean 'docs//./api/../guide.md' = 'docs/guide.md'
+// expect-stdout: clean '' = '.'
+// expect-stdout: clean '/../a/' = '/a'
+// expect-stdout: clean 'a/../..' = '..'
+// expect-stdout: clean './' = '.'
+// expect-stdout: clean '/' = '/'
+// expect-stdout: relative a/b a/c/d = some(../c/d)
+// expect-stdout: relative a a = some(.)
+// expect-stdout: relative /a /a/b = some(b)
+// expect-stdout: relative a /b = none
+// expect-stdout: relative ../a b = none
+// expect-stdout: relative a/b a = some(..)
+// expect-stdout: matches content/**/*.md content/posts/a.md = true
+// expect-stdout: matches content/**/*.md content/a.md = true
+// expect-stdout: matches content/*.md content/posts/a.md = false
+// expect-stdout: matches *.{md,txt} notes.txt = true
+// expect-stdout: matches a?c abc = true
+// expect-stdout: matches a?c a/c = false
+// expect-stdout: matches [a-c]x bx = true
+// expect-stdout: matches [!a-c]x bx = false
+// expect-stdout: matches * .git = true
+// expect-stdout: matches \* * = true
+// expect-stdout: matches [oops [oops = true
+// expect-stdout: matches {a,b {a,b = true

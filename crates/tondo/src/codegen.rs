@@ -601,7 +601,6 @@ impl Rt {
                 FsFn::WriteBytes => ("tondo_rt_fs_write_bytes", &[I64, I64], &[I64]),
                 FsFn::AppendText => ("tondo_rt_fs_append_text", &[I64, I64], &[I64]),
                 FsFn::Exists => ("tondo_rt_fs_exists", &[I64], &[I8]),
-                FsFn::Metadata => ("tondo_rt_fs_metadata", &[I64, I64], &[I64]),
                 FsFn::List => ("tondo_rt_fs_list", &[I64, I64], &[I64]),
                 FsFn::CreateDirectory => ("tondo_rt_fs_create_directory", &[I64], &[I64]),
                 FsFn::Rename => ("tondo_rt_fs_rename", &[I64, I64], &[I64]),
@@ -6563,6 +6562,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 None
             }
             TaskOp::CopySender => Some(Val::Scalar(self.e.call_rt(Rt::SenderCopy, &[values[0]]).unwrap())),
+            TaskOp::Abandoned => {
+                let mode = self.e.fb.ins().iconst(types::I8, 2);
+                Some(Val::Scalar(self.e.call_rt(Rt::ChannelClosed, &[values[0], mode]).unwrap()))
+            }
             TaskOp::IsClosed => {
                 let sender = matches!(self.e.cg.types().kind(handle_ty.unwrap()), TyKind::Handle(Handle::Sender, _));
                 let sender = self.e.fb.ins().iconst(types::I8, sender as i64);
@@ -6950,8 +6953,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             values.push(value);
         }
         let TyKind::Result(success, _) = *self.e.cg.types().kind(ty) else { unreachable!("a result") };
-        // Metadata comes as three words; other values as one pointer.
-        let out = self.e.fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 24, 3));
+        // The value comes as one word.
+        let out = self.e.fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
         let out = self.e.fb.ins().stack_addr(POINTER, out, 0);
         let returns_value = success != Ty::UNIT;
         if returns_value {
@@ -7147,20 +7150,6 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let payload = self.e.cg.slot(ty, Proj::Variant(SOME, 0));
                 let _ = element;
                 self.e.fb.ins().store(flags(), pointer, address, payload.offset as i32);
-                Val::Memory(address)
-            }
-            // `Metadata`: its kind, size and read-only flag.
-            TyKind::Adt(_) => {
-                let address = self.scratch(ty);
-                let kind = word(self, 0);
-                let kind = self.e.fb.ins().ireduce(types::I8, kind);
-                let size = word(self, 1);
-                let read_only = word(self, 2);
-                let read_only = self.e.fb.ins().ireduce(types::I8, read_only);
-                for (index, value) in [kind, size, read_only].into_iter().enumerate() {
-                    let slot = self.e.cg.slot(ty, Proj::Field(index as u32));
-                    self.e.fb.ins().store(flags(), value, address, slot.offset as i32);
-                }
                 Val::Memory(address)
             }
             _ => Val::Scalar(word(self, 0)),

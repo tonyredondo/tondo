@@ -1,0 +1,63 @@
+// std.gzip and std.zstd: whole data and streams, several members or frames
+// one after another, levels, and data that is not of the format.
+
+import std.console
+import std.gzip
+import std.io
+import std.zstd
+
+fn main() {
+    let data = "the same words, ".repeat(20).bytes()
+    let fast = gzip.compress(data, level: 1)
+    let small = gzip.compress(data, level: 9)
+    console.println("gzip {gzip.decompress(fast)? == data} {gzip.decompress(small)? == data} {small.length() < data.length()}")
+    var twice = gzip.compress("one ".bytes())
+    twice.extend(gzip.compress("two".bytes()))
+    console.println("members {String.fromBytes(gzip.decompress(twice)?)?}")
+    let packed = zstd.compress(data)
+    console.println("zstd {zstd.decompress(packed)? == data} {packed.length() < data.length()}")
+    var frames = zstd.compress("one ".bytes())
+    frames.extend(zstd.compress("two".bytes()))
+    console.println("frames {String.fromBytes(zstd.decompress(frames)?)?}")
+    console.println("empty {gzip.decompress(gzip.compress([]))?.length()} {zstd.decompress(zstd.compress([]))?.length()}")
+    for bad in [data, [], gzip.compress(data).take(10)] {
+        match gzip.decompress(bad) {
+            ok(_) => console.println("unexpected"),
+            err(error) => console.println("gzip: {error}"),
+        }
+    }
+    match zstd.decompress(data) {
+        ok(_) => console.println("unexpected"),
+        err(error) => console.println("zstd: {error}"),
+    }
+
+    let buffer = io.Buffer()
+    let out = gzip.writer(buffer.writer(), level: 9)
+    out.writeLine("first")?
+    out.flush()?
+    out.write("second")?
+    out.close()?
+    console.println("gzip stream {gzip.reader(buffer.reader()).readText()?.split("\n")}")
+    let zbuffer = io.Buffer()
+    let zout = zstd.writer(zbuffer.writer())
+    zout.write("zstd stream")?
+    zout.close()?
+    console.println("zstd stream {zstd.reader(zbuffer.reader()).readText()?}")
+    match gzip.reader(io.reader("not gzip")).readText() {
+        ok(_) => console.println("unexpected"),
+        err(error) => console.println("gzip stream: {error}"),
+    }
+}
+
+// expect-stdout: gzip true true true
+// expect-stdout: members one two
+// expect-stdout: zstd true true
+// expect-stdout: frames one two
+// expect-stdout: empty 0 0
+// expect-stdout: gzip: invalid data
+// expect-stdout: gzip: invalid data
+// expect-stdout: gzip: invalid data
+// expect-stdout: zstd: invalid data
+// expect-stdout: gzip stream [first, second]
+// expect-stdout: zstd stream zstd stream
+// expect-stdout: gzip stream: invalid data

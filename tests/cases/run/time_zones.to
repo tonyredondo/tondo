@@ -1,0 +1,47 @@
+// Time zones of the tz database: a moment on a zone's clocks, the times
+// they skip or show twice, offsets kept from a text, and fixed zones.
+
+import std.console
+import std.time
+
+fn main() {
+    let madrid = time.zone("Europe/Madrid")?
+    let moment = time.parseDateTime("2026-10-29T12:05:00Z")?
+    let there = moment.inZone(madrid)
+    console.println("{there} {there.zone} {there.offset} {there.utc() == moment}")
+    console.println("summer {time.parseDateTime("2026-07-01T12:00:00Z")?.inZone(madrid)}")
+    // The clocks skip from 2:00 to 3:00 on 29 March, and show 2:30 twice
+    // on 25 October.
+    console.println("skipped {madrid.at(year: 2026, month: 3, day: 29, hour: 2, minute: 30)?}")
+    console.println("twice {madrid.at(year: 2026, month: 10, day: 25, hour: 2, minute: 30)?}")
+    match madrid.at(year: 2026, month: 2, day: 30) {
+        ok(_) => console.println("unexpected"),
+        err(error) => console.println("February 30: {error}"),
+    }
+    console.println("posted {time.parseZoned("2026-10-22 08:30", madrid)?}")
+    console.println("kept {time.parseZoned("2026-10-22T08:30:00+02:00", madrid)?.zone}")
+    console.println("other {time.parseZoned("2026-10-22T08:30:00+05:00", madrid)?}")
+    let newYork = time.zone("America/New_York")?
+    console.println("new york {moment.inZone(newYork)} {time.zone("US/Eastern")?.name()}")
+    console.println("fixed {time.fixedZone(time.minutes(330))} {moment.inZone(time.fixedZone(time.minutes(-210)))}")
+    console.println("utc {moment.inZone(time.utcZone())}")
+    console.println("local {time.localZone().name().isEmpty()} {time.localNow().utc().year > 2025}")
+    match time.zone("Mars/Base") {
+        ok(_) => console.println("unexpected"),
+        err(error) => console.println("Mars/Base: {error}"),
+    }
+}
+
+// expect-stdout: 2026-10-29T13:05:00+01:00 Europe/Madrid 1h0m0s true
+// expect-stdout: summer 2026-07-01T14:00:00+02:00
+// expect-stdout: skipped 2026-03-29T03:30:00+02:00
+// expect-stdout: twice 2026-10-25T02:30:00+02:00
+// expect-stdout: February 30: invalid date time
+// expect-stdout: posted 2026-10-22T08:30:00+02:00
+// expect-stdout: kept Europe/Madrid
+// expect-stdout: other 2026-10-22T08:30:00+05:00
+// expect-stdout: new york 2026-10-29T08:05:00-04:00 US/Eastern
+// expect-stdout: fixed +05:30 2026-10-29T08:35:00-03:30
+// expect-stdout: utc 2026-10-29T12:05:00Z
+// expect-stdout: local false true
+// expect-stdout: Mars/Base: unknown zone

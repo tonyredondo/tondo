@@ -29,7 +29,7 @@ const BUILTINS: &str = include_str!("../std/api/builtins.to");
 
 /// The standard modules written in Tondo that a program imports, without
 /// the ones only the toolchain uses.
-const HIDDEN: &[&str] = &["datetime", "fuzz", "panics"];
+const HIDDEN: &[&str] = &["datetime", "zoned", "files", "paths", "fuzz", "panics"];
 
 /// The methods `std/api/builtins.to` gives `owner`, such as `String`, and
 /// the operations of the numbers (language 18.9).
@@ -173,7 +173,23 @@ pub fn standard(name: &str) -> Option<String> {
     }
     let name = name.strip_prefix("std.")?;
     if let Some((_, text)) = INTRINSIC.iter().find(|(n, _)| *n == name) {
-        return Some(text.to_string());
+        // With the declarations of its parts written in Tondo.
+        let mut text = text.to_string();
+        for companion in crate::stdlib::companions(name) {
+            let source = crate::stdlib::text(companion)?.replace(&format!("__{name}."), "");
+            let rendered = render(&source, false);
+            // Without the comment at its top, which says what the part is.
+            let lines: Vec<&str> = rendered
+                .lines()
+                .skip_while(|line| line.is_empty() || (line.starts_with("//") && !line.starts_with("///")))
+                .collect();
+            let declarations = lines.join("\n");
+            let declarations = declarations.trim_end();
+            if !declarations.is_empty() {
+                text = format!("{}\n\n{declarations}\n", text.trim_end());
+            }
+        }
+        return Some(text);
     }
     crate::stdlib::text(name).filter(|_| !HIDDEN.contains(&name)).map(|source| render(source, false))
 }

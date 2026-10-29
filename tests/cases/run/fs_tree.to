@@ -1,0 +1,81 @@
+// fs.walk, fs.glob, temporary entries, metadata with its modification
+// time and permissions, symbolic links, and writeText keeping the mode of
+// the file it replaces and writing through a link.
+
+import std.console
+import std.fs
+import std.path
+import std.time
+
+fn kind(entry: fs.FileKind): String {
+    match entry {
+        fs.FileKind.File => "file",
+        fs.FileKind.Directory => "dir",
+        fs.FileKind.Symlink => "link",
+        fs.FileKind.Other => "other",
+    }
+}
+
+fn main() {
+    let dir = fs.createTemporaryDirectory()?
+    console.println("temporary {fs.metadata(dir)?.permissions == 0o700}")
+    let file = fs.createTemporaryFile()?
+    console.println("file {fs.readText(file)?.isEmpty()} {fs.metadata(file)?.permissions == 0o600}")
+    fs.remove(file)?
+    let at = (name: String) { path.join(dir, name) }
+    fs.createDirectory(at("content/posts"))?
+    fs.writeText(at("content/posts/b.md"), "b")?
+    fs.writeText(at("content/a.md"), "a")?
+    fs.writeText(at("content/c.txt"), "c")?
+    fs.createSymlink("a.md", at("content/link.md"))?
+    for entry in fs.walk(at("content"))? {
+        console.println("walk {entry.path.removePrefix(dir)} {kind(entry.kind)}")
+    }
+    for found in fs.glob(at("content/**/*.md"))? {
+        console.println("glob {found.removePrefix(dir)}")
+    }
+    console.println("glob none {fs.glob(at("missing/*.md"))?.length()}")
+    console.println("glob literal {fs.glob(at("content/a.md"))?.length()}")
+
+    let info = fs.metadata(at("content/a.md"))?
+    let age = time.utcNow().sinceEpoch() - info.modified.sinceEpoch()
+    console.println("size {info.size}, recent {age.isLessThan(time.minutes(5))}")
+    fs.setPermissions(at("content/a.md"), 0o755)?
+    fs.writeText(at("content/a.md"), "aa")?
+    console.println("mode kept {fs.metadata(at("content/a.md"))?.permissions == 0o755}")
+
+    console.println("link {fs.readSymlink(at("content/link.md"))?}")
+    fs.writeText(at("content/link.md"), "through")?
+    console.println("through {fs.readText(at("content/a.md"))?} {kind(fs.metadata(at("content/link.md"))?.kind)}")
+    let real = fs.realPath(at("content/link.md"))?
+    console.println("real {real.endsWith("/content/a.md")} {path.isAbsolute(real)}")
+    match fs.readSymlink(at("content/a.md")) {
+        ok(_) => console.println("unexpected"),
+        err(error) => console.println("not a link: {error}"),
+    }
+    match fs.realPath(at("missing")) {
+        ok(_) => console.println("unexpected"),
+        err(error) => console.println("missing: {error}"),
+    }
+    fs.remove(dir, recursive: true)?
+}
+
+// expect-stdout: temporary true
+// expect-stdout: file true true
+// expect-stdout: walk /content/a.md file
+// expect-stdout: walk /content/c.txt file
+// expect-stdout: walk /content/link.md link
+// expect-stdout: walk /content/posts dir
+// expect-stdout: walk /content/posts/b.md file
+// expect-stdout: glob /content/a.md
+// expect-stdout: glob /content/link.md
+// expect-stdout: glob /content/posts/b.md
+// expect-stdout: glob none 0
+// expect-stdout: glob literal 1
+// expect-stdout: size 1, recent true
+// expect-stdout: mode kept true
+// expect-stdout: link a.md
+// expect-stdout: through through link
+// expect-stdout: real true true
+// expect-stdout: not a link: invalid name
+// expect-stdout: missing: not found

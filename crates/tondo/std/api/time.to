@@ -1,5 +1,5 @@
-// std.time: durations, the monotonic clock, waits and UTC dates (standard
-// library 14.3).
+// std.time: durations, the monotonic clock, waits, dates and time zones
+// (standard library 14.3).
 
 /// A signed interval in nanoseconds; it displays as Go writes it: `1h2m3.5s`.
 pub type Duration
@@ -18,9 +18,13 @@ pub type DateTime = {
     nanosecond: Int
 }
 
-/// Why a date or time could not be made: it does not exist, as February 30.
+/// Why a date, a duration or a zone could not be made: a date that does
+/// not exist, as February 30, or a text that is not one; a text that is not
+/// a duration; a name the tz database does not have.
 pub enum TimeError {
     InvalidDateTime
+    InvalidDuration
+    UnknownZone
 }
 
 /// A duration of `count` nanoseconds.
@@ -99,9 +103,13 @@ pub fn unixTime(): Duration
 /// A time since the epoch as a date.
 pub fn utc(sinceEpoch: Duration): DateTime
 
-/// RFC 3339 / ISO 8601 text in UTC: `2026-10-22`, `2026-10-22T06:38:28Z`,
-/// `2026-10-22 08:38:28.5+02:00`.
-pub fn parseDateTime(text: String): DateTime ! TimeError
-
 /// The inverse of `utc`.
 pub fn DateTime.sinceEpoch(self): Duration
+
+/// The date and time the clocks of `place` show at this moment, with their
+/// offset then.
+pub fn DateTime.inZone(self, place: Zone): ZonedDateTime
+
+/// As a pattern of `strftime` writes it, in UTC: `%Y-%m-%d %H:%M`, with
+/// the names of months and days of `locale`.
+pub fn DateTime.format(self, pattern: String, locale: String = "en"): String

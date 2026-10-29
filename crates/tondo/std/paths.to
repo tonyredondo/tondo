@@ -1,0 +1,26 @@
+// The parts of std.path (standard library 10.4) written in Tondo, which a
+// program that imports std.path links with: clean and relative paths and
+// glob patterns, on the runtime's lexical operations.
+
+import std.internal.fs as fsNative
+
+/// The shortest path that names the same, lexically, as Go's `path.Clean`:
+/// `docs/guide.md` for `docs//./api/../guide.md`, and `.` for an empty path.
+pub fn clean(path: String): String {
+    fsNative.clean(path)
+}
+
+/// The path from `from` to `to`, with `..` where it goes up: `../c/d` from
+/// `a/b` to `a/c/d`; `none` when one is absolute and the other is not, or
+/// `from` goes up past what is known of `to`.
+pub fn relative(from: String, to: String): String? {
+    let path = fsNative.relative(from, to)
+    if path.isEmpty() { none } else { some(path) }
+}
+
+/// Whether the whole path matches a glob pattern: `*` and `?` within a
+/// component, `[a-z]` and `[!a-z]`, `{md,markdown}`, `**` for any number of
+/// components and `\` before a character to take it as itself.
+pub fn matches(pattern: String, path: String): Bool {
+    fsNative.matches(pattern, path)
+}

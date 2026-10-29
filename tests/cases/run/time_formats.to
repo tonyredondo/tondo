@@ -1,0 +1,72 @@
+// format and parsing with strftime patterns, names of months and days in
+// other languages from CLDR, and durations as Go writes them.
+
+import std.console
+import std.time
+
+fn main() {
+    let moment = time.parseDateTime("2026-10-05T14:07:09.25Z")?
+    console.println(moment.format("%Y-%m-%d %H:%M:%S.%3f %z %Z"))
+    console.println(moment.format("%F %T %6f %9f %:z"))
+    console.println(moment.format("%a %A %b %B %d %e %-d %-m %y %j %I %p %-I %s %%"))
+    let madrid = moment.inZone(time.zone("Europe/Madrid")?)
+    console.println(madrid.format("%A %-d de %B de %Y, %H:%M %Z", locale: "es"))
+    console.println(madrid.format("%A, %-d. %B %Y", locale: "de-AT"))
+    console.println(madrid.format("%-d %B · %OB", locale: "ru"))
+    console.println(madrid.format("%-d %B", locale: "es-MX"))
+
+    let http = time.parseDateTime("Mon, 05 Oct 2026 14:07:09 GMT", pattern: "%a, %d %b %Y %T %Z")?
+    console.println("http {http} {http == (moment with { nanosecond: 0 })}")
+    console.println("feed {time.parseDateTime("Mon, 05 Oct 2026 16:07:09 +0200", pattern: "%a, %d %b %Y %T %z")?}")
+    console.println("short {time.parseDateTime("5/3/26 9:05 pm", pattern: "%d/%m/%y %I:%M %p")?}")
+    console.println("spanish {time.parseDateTime("5 de OCTUBRE de 2026", pattern: "%d de %B de %Y", locale: "es")?}")
+    console.println("ordinal {time.parseDateTime("2026-278", pattern: "%Y-%j")?}")
+    console.println("seconds {time.parseDateTime("1791194400", pattern: "%s")?}")
+    console.println("zoned {time.parseZoned("05/10/2026 08:00", time.zone("Europe/Madrid")?, pattern: "%d/%m/%Y %H:%M")?}")
+    for bad in ["2026-02-30", "5 Oct", "2026-10-05 extra"] {
+        match time.parseDateTime(bad, pattern: "%Y-%m-%d") {
+            ok(_) => console.println("unexpected"),
+            err(error) => console.println("{bad}: {error}"),
+        }
+    }
+
+    for text in ["1h30m", "1.5s", "-250ms", "2h45m10.5s", "1µs", "0", "300us"] {
+        console.println("duration {text} = {time.parseDuration(text)?}")
+    }
+    for text in ["", "1", "1x", "h", "9999999h"] {
+        match time.parseDuration(text) {
+            ok(_) => console.println("unexpected"),
+            err(error) => console.println("duration '{text}': {error}"),
+        }
+    }
+}
+
+// expect-stdout: 2026-10-05 14:07:09.250 +0000 UTC
+// expect-stdout: 2026-10-05 14:07:09 250000 250000000 +00:00
+// expect-stdout: Mon Monday Oct October 05  5 5 10 26 278 02 PM 2 1791209229 %
+// expect-stdout: lunes 5 de octubre de 2026, 16:07 CEST
+// expect-stdout: Montag, 5. Oktober 2026
+// expect-stdout: 5 октября · октябрь
+// expect-stdout: 5 octubre
+// expect-stdout: http 2026-10-05T14:07:09Z true
+// expect-stdout: feed 2026-10-05T14:07:09Z
+// expect-stdout: short 2026-03-05T21:05:00Z
+// expect-stdout: spanish 2026-10-05T00:00:00Z
+// expect-stdout: ordinal 2026-10-05T00:00:00Z
+// expect-stdout: seconds 2026-10-05T10:00:00Z
+// expect-stdout: zoned 2026-10-05T08:00:00+02:00
+// expect-stdout: 2026-02-30: invalid date time
+// expect-stdout: 5 Oct: invalid date time
+// expect-stdout: 2026-10-05 extra: invalid date time
+// expect-stdout: duration 1h30m = 1h30m0s
+// expect-stdout: duration 1.5s = 1.5s
+// expect-stdout: duration -250ms = -250ms
+// expect-stdout: duration 2h45m10.5s = 2h45m10.5s
+// expect-stdout: duration 1µs = 1µs
+// expect-stdout: duration 0 = 0s
+// expect-stdout: duration 300us = 300µs
+// expect-stdout: duration '': invalid duration
+// expect-stdout: duration '1': invalid duration
+// expect-stdout: duration '1x': invalid duration
+// expect-stdout: duration 'h': invalid duration
+// expect-stdout: duration '9999999h': invalid duration

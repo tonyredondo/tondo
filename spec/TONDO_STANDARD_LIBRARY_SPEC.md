@@ -967,7 +967,8 @@ pub fn discard(): Writer
 - `readLine` devuelve la siguiente línea sin su `\n` ni `\r\n`, o `none` al
   final; `read(max)` devuelve hasta `max` bytes, o `none` al final; `readText`
   lee el resto. Las operaciones de texto validan UTF-8 y devuelven
-  `InvalidData`.
+  `InvalidData`, como un stream comprimido (14.29) cuyos datos no son de su
+  formato.
 - Un `Writer` de archivo acumula lo escrito y lo entrega al host al llenarse,
   con `flush()`, con `close()` y al desaparecer su última copia; los errores de
   ese cierre implícito se pierden.
@@ -978,7 +979,8 @@ pub fn discard(): Writer
   `length()` y `clear()` lo observan o vacían. `io.reader(text)` lee un texto
   fijo y `io.discard()` acepta todo sin guardarlo.
 - Los archivos (10.5), la consola (19.1) y los procesos (19.2) ofrecen sus
-  streams como `Writer` y `Reader`.
+  streams como `Writer` y `Reader`, y `std.gzip` y `std.zstd` (14.29) los
+  comprimen.
 
 ### 10.4 Paths
 
@@ -993,6 +995,9 @@ path.parent("docs/guide.md")        // some("docs")
 path.fileName("docs/guide.md")      // some("guide.md")
 path.extension("docs/guide.md")     // some("md")
 path.isAbsolute("/etc/hosts")       // true
+path.clean("docs//./api/../guide.md")                 // "docs/guide.md"
+path.relative("content", "content/posts/a.md")        // some("posts/a.md")
+path.matches("content/**/*.md", "content/posts/a.md") // true
 ```
 
 `join` añade un componente, o devuelve el segundo cuando es absoluto. `parent`,
@@ -1000,6 +1005,33 @@ path.isAbsolute("/etc/hosts")       // true
 `extension` no incluye el punto. Un nombre de archivo que no es UTF-8 no puede
 representarse: las operaciones de `std.fs` que lo encuentran devuelven
 `FsError.InvalidName`.
+
+```tondo pseudocode
+pub fn clean(path: String): String
+pub fn relative(from: String, to: String): String?
+pub fn matches(pattern: String, path: String): Bool
+```
+
+- `clean` da el path más corto que nombra lo mismo léxicamente, como
+  `path.Clean` de Go: une las `/` repetidas, quita cada `.`, cada `..` con el
+  componente que lo precede, los `..` al principio de un path absoluto y la `/`
+  final; un path vacío es `"."`. No resuelve enlaces, así que en el disco
+  `a/enlace/..` puede no ser `a`.
+- `relative` da el path que lleva de `from` a `to`, con `..` donde hace falta:
+  `relative("a/b", "a/c/d")` es `some("../c/d")` y `relative("a", "a")` es
+  `some(".")`. Es `none` cuando uno es absoluto y el otro no, o cuando `from`
+  sube con `..` por encima de lo que se sabe de `to`.
+- `matches` dice si el path entero casa con un patrón glob:
+  - `*` casa con cualquier texto dentro de un componente, sin `/`, y `?` con
+    un carácter que no es `/`;
+  - `[abc]`, `[a-z]` y `[!abc]` con un carácter del conjunto, o de fuera de él;
+  - `{md,markdown}` con una de las alternativas;
+  - `**`, como componente entero, con cero o más componentes:
+    `docs/**/*.md` casa con `docs/a.md` y con `docs/x/y/a.md`;
+  - `\` hace literal el carácter que le sigue.
+
+  Todo texto es un patrón: un `[` o un `{` sin cerrar casa consigo mismo. Un
+  `.` al principio de un nombre no es especial: `*` casa con `.git`.
 
 ### 10.5 Filesystem
 
@@ -1019,6 +1051,18 @@ if fs.exists("cache") {
 }
 for name in fs.list("docs")? {
     console.println(name)
+}
+
+for entry in fs.walk("content")? {
+    console.println("{entry.path}")         // content/posts, content/posts/a.md…
+}
+for page in fs.glob("content/**/*.md")? {
+    publish(page)
+}
+let work = fs.createTemporaryDirectory()?    // /tmp/tondo-3f9c1a…
+fs.setPermissions("deploy.sh", 0o755)?
+for changes in fs.watch(["content", "layouts"])? {
+    rebuild(changes)                         // [{ path: "content/a.md", kind: Modified }]
 }
 
 var file = fs.open("big.log", fs.OpenMode.Read)?
@@ -1044,7 +1088,16 @@ pub enum FsError {
     Host
 }
 pub enum FileKind { File, Directory, Symlink, Other }
-pub type Metadata = { kind: FileKind, size: Int, readOnly: Bool }
+pub type Metadata = {
+    kind: FileKind
+    size: Int
+    readOnly: Bool
+    modified: time.DateTime
+    permissions: Int
+}
+pub type Entry = { path: String, kind: FileKind }
+pub enum ChangeKind { Created, Modified, Removed }
+pub type Change = { path: String, kind: ChangeKind }
 pub enum OpenMode { Read, Write, Append, CreateNew, ReadWrite }
 pub type File
 
@@ -1056,7 +1109,16 @@ pub fn appendText(path: String, text: String): Unit ! FsError
 pub fn exists(path: String): Bool
 pub fn metadata(path: String): Metadata ! FsError
 pub fn list(path: String): Array[String] ! FsError
+pub fn walk(root: String): Array[Entry] ! FsError
+pub fn glob(pattern: String): Array[String] ! FsError
 pub fn createDirectory(path: String): Unit ! FsError
+pub fn createTemporaryDirectory(): String ! FsError
+pub fn createTemporaryFile(): String ! FsError
+pub fn setPermissions(path: String, permissions: Int): Unit ! FsError
+pub fn createSymlink(target: String, link: String): Unit ! FsError
+pub fn readSymlink(path: String): String ! FsError
+pub fn realPath(path: String): String ! FsError
+pub fn watch(paths: Array[String], settle: time.Duration? = none): Receiver[Array[Change]] ! FsError
 pub fn rename(from: String, to: String): Unit ! FsError
 pub fn copy(from: String, to: String): Unit ! FsError
 pub fn remove(path: String, recursive: Bool = false): Unit ! FsError
@@ -1078,12 +1140,44 @@ pub fn File.reader(self): io.Reader
 - `writeText` y `writeBytes` escriben en un archivo temporal del mismo
   directorio y lo renombran: otro lector ve el contenido anterior o el nuevo,
   nunca uno a medias. El rename no promete durabilidad ante un corte de
-  energía.
+  energía. El archivo nuevo conserva los permisos del que reemplaza, y un path
+  que es un enlace escribe en el archivo que nombra, no en lugar del enlace.
 - `exists` no sigue un enlace roto como existente; `metadata` describe la
   entrada misma, sin seguir enlaces. `size` es la longitud en bytes que da el
   host, y `readOnly` el atributo del host, no una predicción de permisos.
+  `modified` es la última modificación del contenido según el host.
+  `permissions` son los bits de modo de Unix, como `0o644`: leer, escribir y
+  ejecutar para el dueño, su grupo y los demás; `setPermissions` los cambia.
 - `list` devuelve los nombres de las entradas, sin `.` ni `..`, ordenados por
   bytes.
+- `walk` da el árbol bajo `root`, sin `root`: cada directorio antes de su
+  contenido, y los hermanos ordenados por bytes, como en `list`. Cada `path` es
+  `root` unido al camino de la entrada y limpio (`path.clean`), así que
+  `walk(".")` da `posts/a.md`. Un enlace es una entrada `Symlink`, y lo que
+  nombra no se recorre. Un directorio que no se puede leer hace fallar el
+  recorrido con su error.
+- `glob` da los paths que casan con el patrón (`path.matches`, 10.4), archivos y
+  directorios, ordenados por bytes; un array vacío si no casa ninguno. Recorre,
+  como `walk`, desde la parte del patrón sin comodines: `content/**/*.md`
+  recorre `content`. Un patrón relativo parte del directorio actual y da paths
+  relativos.
+- `createTemporaryDirectory` crea, en el directorio temporal del sistema
+  (`TMPDIR`, o `/tmp`), un directorio vacío con un nombre que no tiene ningún
+  otro, y devuelve su path; `createTemporaryFile` crea así un archivo vacío.
+  Solo el usuario que los crea puede leerlos. No se borran solos: el programa
+  los borra con `remove`.
+- `createSymlink` crea en `link` un enlace a `target`, que se guarda tal cual y
+  puede no existir; uno relativo se lee desde el directorio del enlace.
+  `readSymlink` da el `target` de un enlace. `realPath` da el path absoluto y
+  limpio de la misma entrada, con cada enlace resuelto, o `NotFound`.
+- `watch` vigila los paths, con todo lo que contienen los directorios, y envía
+  sus cambios por lotes: cuando pasa `settle` sin otro cambio (100 ms sin
+  `settle`), un lote con cada path cambiado una vez, ordenados por bytes, y lo
+  que le pasó en total: un archivo creado y después modificado es `Created`, y
+  uno creado y borrado no aparece. Un rename es un `Removed` y un `Created`.
+  Cada `path` es el vigilado unido al camino de la entrada, como en `walk`, y
+  un directorio vigilado no cambia por lo que contiene. Vigilar termina cuando
+  no queda ninguna copia del `Receiver`; un path que no existe es `NotFound`.
 - `createDirectory` crea también los directorios padre que falten y no falla si
   el directorio ya existe. `remove` borra un archivo, un enlace o un directorio
   vacío; un directorio con contenido da `IsADirectory`, salvo con
@@ -1482,7 +1576,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.toml` | Core | — | 0.1 | TOML tipado y árbol dinámico explícito, preservando errores con spans |
 | `std.cbor` | Core | — | 0.1 | CBOR tipado, streaming y modo determinista explícito |
 | `std.time` | Core + gated | `clock` monotónico; `civil-clock` para reloj de pared y anclas | 0.1 | Time-base monotónico, calendario civil y zonas horarias versionadas |
-| `std.path` | Core | — | 0.1 | Operaciones léxicas sobre paths `String` |
+| `std.path` | Core | — | 0.1 | Operaciones léxicas sobre paths `String` y patrones glob |
 | `std.regex` | Core | — | 0.1 | Expresiones regulares Unicode con complejidad y límites declarados |
 | `std.csv` | Core | — | 0.1 | CSV RFC 4180 materializado y en streaming |
 | `std.hash` | Core | — | 0.1 | Digests MD5, SHA-1 y SHA-2, HMAC, por partes, y hashes no criptográficos |
@@ -1496,9 +1590,11 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.profile` | Core | — | 0.1 | Perfiles que el programa hace de sí mismo, en el formato de pprof, y labels que los dividen |
 | `std.embed` | Core | — | 0.1 | Archivos del paquete leídos al compilar y guardados en el ejecutable |
 | `std.url` | Core | — | 0.1 | URLs y referencias relativas de RFC 3986: sus partes, su resolución y su query |
+| `std.gzip` | Core | — | 0.1 | gzip (RFC 1952): bytes y streams comprimidos y descomprimidos |
+| `std.zstd` | Core | — | 0.1 | Zstandard (RFC 8878): bytes y streams comprimidos y descomprimidos |
 | `std.console` | Capability-gated | `console` | 0.1 | stdin, stdout, stderr, texto, bytes y flushing |
 | `std.env` | Hosted | — | 0.1 | Argumentos, entorno y directorio de trabajo |
-| `std.fs` | Hosted | — | 0.1 | Filesystem, metadata y archivos |
+| `std.fs` | Hosted | — | 0.1 | Filesystem, metadata, permisos, enlaces, archivos, recorridos, glob, temporales y cambios vigilados |
 | `std.process` | Capability-gated | `process` | 0.1 | Planes, procesos, pipes, status, output y cancelación |
 | `std.net` | Capability-gated | `network` | 0.1 | Direcciones, DNS, sockets, streams, datagrams y frontera TLS |
 | `std.testing` | Test-only | ninguna implícita | 0.1 | Control sellado y helpers portables del runner |
@@ -1578,7 +1674,8 @@ política de compatibilidad; Gate S1 fija sus hashes finales.
 
 ### 14.3 `std.time`
 
-`std.time` mide intervalos, espera y lee la fecha y hora UTC:
+`std.time` mide intervalos, espera, lee la fecha y hora UTC y la muestra en las
+zonas horarias:
 
 ~~~tondo
 import std.time
@@ -1615,6 +1712,7 @@ pub fn Duration.multiply(self, factor: Int): Duration
 pub fn Duration.isZero(self): Bool
 pub fn Duration.isNegative(self): Bool
 pub fn Duration.isLessThan(self, other: Duration): Bool
+pub fn parseDuration(text: String): Duration ! TimeError
 ~~~
 
 - Los constructores multiplican por un factor exacto; las lecturas dividen y
@@ -1622,6 +1720,10 @@ pub fn Duration.isLessThan(self, other: Duration): Bool
   la aritmética de `Int`.
 - `Display` usa la forma de Go: `1h2m3.5s`, `1.5s`, `250ms`, `1.5µs`, `42ns`,
   `0s`, con `-` delante de una duración negativa.
+- `parseDuration` lee esa forma, como `ParseDuration` de Go: un signo opcional y
+  números, con fracción o sin ella, cada uno con su unidad, `ns`, `us`, `µs`,
+  `ms`, `s`, `m` o `h`: `1h30m`, `1.5s`, `-250ms`; `0` va sin unidad. Otro
+  texto, o una duración que no cabe, es `TimeError.InvalidDuration`.
 
 #### 14.3.2 Instantes
 
@@ -1683,12 +1785,12 @@ pub type DateTime = {
     nanosecond: Int
 }
 
-pub enum TimeError { InvalidDateTime }
+pub enum TimeError { InvalidDateTime, InvalidDuration, UnknownZone }
 
 pub fn utcNow(): DateTime
 pub fn unixTime(): Duration
 pub fn utc(sinceEpoch: Duration): DateTime
-pub fn parseDateTime(text: String): DateTime ! TimeError
+pub fn parseDateTime(text: String, pattern: String? = none, locale: String = "en"): DateTime ! TimeError
 pub fn DateTime.sinceEpoch(self): Duration
 ~~~
 
@@ -1715,10 +1817,139 @@ console.println("{date}")                         // 2026-10-22T06:38:28.5Z
 let later = time.utc(date.sinceEpoch().add(time.hours(1)))
 ~~~
 
-Las zonas horarias, la hora local y el formato de fechas en otros calendarios
-quedan para una versión posterior.
+Con `pattern`, `parseDateTime` lee otras formas (14.3.5).
 
-#### 14.3.5 `std.env`: argumentos y entorno
+#### 14.3.5 Zonas horarias y formato
+
+Una `Zone` es una zona horaria: los offsets respecto a UTC que han tenido sus
+relojes a lo largo de los años. Un `ZonedDateTime` es la fecha y hora que
+marcan en un momento:
+
+~~~tondo
+let madrid = time.zone("Europe/Madrid")?
+let now = time.utcNow().inZone(madrid)
+console.println("{now}")                                  // 2026-10-29T13:05:00+01:00
+console.println(now.format("%d/%m/%Y %H:%M %Z"))          // 29/10/2026 13:05 CET
+let opening = madrid.at(year: 2026, month: 3, day: 29, hour: 2, minute: 30)?
+console.println("{opening}")                              // 2026-03-29T03:30:00+02:00
+let posted = time.parseZoned("2026-10-22 08:30", madrid)?
+console.println("{posted.utc()}")                         // 2026-10-22T06:30:00Z
+console.println(now.format("%-d de %B de %Y", locale: "es"))  // 29 de octubre de 2026
+let modified = time.parseDateTime("Thu, 29 Oct 2026 12:05:00 GMT", pattern: "%a, %d %b %Y %T %Z")?
+let written = time.parseZoned("29/10/2026", madrid, pattern: "%d/%m/%Y")?
+~~~
+
+La superficie es:
+
+~~~tondo pseudocode
+pub type Zone
+pub type ZonedDateTime = {
+    year: Int
+    month: Int
+    day: Int
+    hour: Int
+    minute: Int
+    second: Int
+    nanosecond: Int
+    offset: Duration
+    zone: Zone
+}
+
+pub fn zone(name: String): Zone ! TimeError
+pub fn localZone(): Zone
+pub fn utcZone(): Zone
+pub fn fixedZone(offset: Duration): Zone
+pub fn Zone.name(self): String
+pub fn Zone.at(self, year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0,
+    second: Int = 0, nanosecond: Int = 0): ZonedDateTime ! TimeError
+pub fn DateTime.inZone(self, place: Zone): ZonedDateTime
+pub fn ZonedDateTime.utc(self): DateTime
+pub fn localNow(): ZonedDateTime
+pub fn parseZoned(text: String, zone: Zone, pattern: String? = none, locale: String = "en"):
+    ZonedDateTime ! TimeError
+pub fn DateTime.format(self, pattern: String, locale: String = "en"): String
+pub fn ZonedDateTime.format(self, pattern: String, locale: String = "en"): String
+~~~
+
+- Las zonas son las de la base de datos tz de IANA: `Europe/Madrid`,
+  `America/New_York`, `UTC` y los nombres antiguos que la base mantiene, como
+  `US/Eastern`. Se leen de la base del sistema (`TZDIR`, o
+  `/usr/share/zoneinfo`), que se actualiza con él, y la que no está, o todas
+  donde no hay base, como en un contenedor vacío, de la versión que trae
+  `tondo`, que solo lleva el ejecutable que usa zonas. Con
+  `TONDO_ZONES=builtin` se leen siempre de la de `tondo`, y el programa da la
+  misma hora en cualquier máquina. Un nombre que no está en ninguna es
+  `TimeError.UnknownZone`.
+- `localZone` es la zona que nombra `TZ` o, sin ella, la de `/etc/localtime`, y
+  `UTC` si ninguna se encuentra. `fixedZone` es una zona que tiene siempre ese
+  offset, y su nombre es el offset: `+05:30`. Una `Zone` es `Equatable` y
+  `Key` por su nombre, y `Display` lo escribe.
+- `inZone` da la fecha y hora que marcan los relojes de la zona en ese
+  momento, con el `offset` que tenían. `utc` es la inversa: resta el `offset`
+  del registro. `localNow` es `utcNow().inZone(localZone())`.
+- `at` da el momento en que los relojes de la zona marcan esa fecha y hora.
+  Una hora que no llega a marcarse, porque los relojes se adelantan, se mueve
+  lo que se adelantaron: las 2:30 del día del cambio al horario de verano en
+  Madrid son las 3:30. Una hora que se marca dos veces, porque se atrasan, es la
+  primera. Una fecha u hora que no existe, como el 30 de febrero, es
+  `TimeError.InvalidDateTime`.
+- `parseZoned` lee lo que lee `parseDateTime`. Un texto sin offset es la hora
+  de los relojes de `zone`, como en `at`. Uno con offset lo conserva: su zona es
+  `zone` si en ese momento tenía ese offset, o `fixedZone` del offset si no,
+  como `ParseInLocation` de Go.
+- `Display` de `ZonedDateTime` es RFC 3339 con su offset,
+  `2026-10-29T13:05:00+01:00`, o con `Z` si el offset es cero. Se serializa
+  así, y al leerse conserva el offset con `fixedZone`.
+- `format` escribe la fecha con un patrón de `strftime`, el de C, Python y
+  Rust. `-` tras `%` quita el relleno de un número: `%-d` es `5`. Los nombres
+  van en el idioma de `locale` (más abajo).
+
+  | Directiva | Escribe |
+  |---|---|
+  | `%Y`, `%y` | el año, `2026`, y sus dos últimas cifras, `26` |
+  | `%m`, `%B`, `%b` | el mes, `03`, `March` y `Mar` |
+  | `%OB` | el nombre del mes suelto, sin día: en ruso `октябрь`, donde `%B` da `октября` |
+  | `%d`, `%e` | el día, `05`, y con espacio, ` 5` |
+  | `%j` | el día del año, `064` |
+  | `%A`, `%a` | el día de la semana, `Thursday` y `Thu` |
+  | `%H`, `%I`, `%p` | la hora, `14`, en doce horas, `02`, y `AM` o `PM` |
+  | `%M`, `%S` | el minuto y el segundo |
+  | `%3f`, `%6f`, `%9f` | la fracción del segundo en milisegundos, microsegundos o nanosegundos |
+  | `%z`, `%:z` | el offset, `+0100` y `+01:00` |
+  | `%Z` | la abreviatura de la zona, `CET`, o su offset si no tiene; `UTC` en un `DateTime` |
+  | `%s` | los segundos desde 1970 |
+  | `%F`, `%T` | `%Y-%m-%d` y `%H:%M:%S` |
+  | `%%` | `%` |
+
+  Un patrón literal con otra directiva es un error de compilación que dice las
+  que hay; uno que se calcula la escribe tal cual.
+- `locale` es una etiqueta BCP 47, como `es`, `pt-BR` o `de-AT`, y da en ese
+  idioma los nombres de `%B`, `%OB`, `%b`, `%A`, `%a` y `%p`: los de CLDR, que
+  trae `tondo` y solo lleva el ejecutable que los usa. Una etiqueta sin datos
+  propios usa los de su idioma, `es-MX` los de `es`, y una cuyo idioma no está,
+  los de inglés; si es literal, eso es un error de compilación. El idioma es
+  siempre el que se pasa, nunca el del sistema: un programa que quiere ese pasa
+  el de `LANG`. El orden de las partes lo da el patrón, no el idioma.
+- Con `pattern`, `parseDateTime` y `parseZoned` leen un texto que es entero de
+  esa forma, con las directivas de `format`:
+  - un número puede tener menos cifras que las que escribe `format`, como
+    `5/3/2026` con `%d/%m/%Y`, y `%y` es un año de 1969 a 2068;
+  - un nombre se lee en el idioma de `locale`, sin distinguir mayúsculas, largo
+    o abreviado con cualquiera de sus directivas; el día de la semana se lee y
+    no se comprueba;
+  - `%z` y `%:z` leen `+0100`, `+01:00` y `Z`, y `%Z` solo `UTC` y `GMT`: las
+    demás abreviaturas se repiten, y `CST` es de Estados Unidos, de China y de
+    Cuba;
+  - el patrón lee el año, el mes y el día, o `%s`; la hora que no lee es cero.
+
+  Sin offset en el texto, `parseDateTime` lo lee en UTC y `parseZoned` en
+  `zone`. Un texto de otra forma, o una fecha que no existe, es
+  `TimeError.InvalidDateTime`. Un patrón literal con una directiva que no
+  existe, o que no lee una fecha entera, es un error de compilación.
+
+Los calendarios distintos del gregoriano quedan para una versión posterior.
+
+#### 14.3.6 `std.env`: argumentos y entorno
 
 `std.env` da los argumentos del programa y su entorno, que el programa puede
 cambiar:
@@ -4311,6 +4542,58 @@ impl Display for Url
   el primer valor de un nombre, o todos. `encodeQuery` escribe una query así,
   en el orden del mapa.
 
+### 14.29 Compresión: `std.gzip` y `std.zstd`
+
+`std.gzip` y `std.zstd` comprimen en los formatos gzip (RFC 1952) y Zstandard
+(RFC 8878), bytes enteros o streams de `std.io`:
+
+~~~tondo
+import std.gzip
+import std.zstd
+
+let packed = gzip.compress(fs.readBytes("site.json")?)
+let same = gzip.decompress(packed)?
+let small = zstd.compress(same)
+
+let log = gzip.writer(fs.open("app.log.gz", fs.OpenMode.Write)?.writer())
+log.writeLine("started")?
+log.close()?
+let dump = zstd.reader(fs.open("dump.zst", fs.OpenMode.Read)?.reader())
+let text = dump.readText()?
+~~~
+
+Los dos módulos tienen la misma superficie; `std.gzip` añade el nivel:
+
+~~~tondo pseudocode
+// std.gzip
+pub fn compress(data: Array[Byte], level: Int = 6): Array[Byte]
+pub fn decompress(data: Array[Byte]): Array[Byte] ! io.IoError
+pub fn writer(to: io.Writer, level: Int = 6): io.Writer
+pub fn reader(from: io.Reader): io.Reader
+
+// std.zstd
+pub fn compress(data: Array[Byte]): Array[Byte]
+pub fn decompress(data: Array[Byte]): Array[Byte] ! io.IoError
+pub fn writer(to: io.Writer): io.Writer
+pub fn reader(from: io.Reader): io.Reader
+~~~
+
+- El nivel de gzip va de 0, que no comprime, a 9, el más pequeño y lento; 6 es
+  el de la herramienta `gzip` y el de Go, y uno fuera de ese rango se toma como
+  el extremo más cercano. Zstandard comprime como `zstd -1`, el más rápido de
+  sus niveles.
+- `decompress` y `reader` leen varios miembros o frames seguidos, como
+  `gunzip` y `zstd -d`. Unos datos que no son del formato, que se cortan o cuyo
+  checksum no cuadra dan `IoError.InvalidData`; el `reader`, en la lectura que
+  llega a ellos.
+- Un `writer` comprime lo que recibe y lo escribe en `to` por bloques. `flush()`
+  escribe lo comprimido hasta entonces, para quien lo lee mientras llega;
+  `close()` escribe el final del formato y suelta `to`, que se cierra con su
+  última copia. Abandonado, se cierra solo y pierde el error de ese cierre,
+  como cualquier stream.
+- Un `reader` descomprime lo que lee de `from` según se le pide; cerrarlo
+  suelta `from`.
+
 ---
 
 ## 15. Contrato exigido a cada módulo
@@ -4793,7 +5076,7 @@ Planes:
   backpressure. `mergeStderr()` envía además el stderr al mismo sitio que el
   stdout (`|&`, `2>&1`); en un `Pipeline`, el de todas sus etapas.
 - `directory`, `env`, `removeEnv` y `clearEnv` fijan el directorio y el
-  entorno del hijo, que por lo demás hereda los del programa (14.3.5).
+  entorno del hijo, que por lo demás hereda los del programa (14.3.6).
 - `stdin`, `stdout` y `stderr` redirigen los streams: `Inherit` usa los del
   programa, `Null` ninguno, `Text` y `Bytes` dan una entrada fija, `File` lee o
   escribe un archivo (`<`, `>`), `Append` añade al final (`>>`), `Reader` y

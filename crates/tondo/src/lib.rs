@@ -54,6 +54,10 @@ pub mod source;
 pub mod stdlib;
 pub mod target;
 pub mod thread;
+/// The patterns of `std.time`, which the runtime follows and the checker
+/// checks in a literal (standard library 14.3.5).
+#[path = "../../tondo-runtime/src/pattern.rs"]
+mod time_pattern;
 pub mod toml;
 pub mod types;
 pub mod unroll;

@@ -1,0 +1,33 @@
+// std.zstd (standard library 14.29): data compressed in the Zstandard
+// format of RFC 8878, whole or as streams of std.io, as `zstd -1` does.
+
+import std.internal.codec as codecNative
+import std.io as __io
+
+/// The data compressed as `zstd -1`, the fastest of its levels.
+pub fn compress(data: Array[Byte]): Array[Byte] {
+    codecNative.zstd(data)
+}
+
+/// The data of one Zstandard frame or several after one another;
+/// `IoError.InvalidData` when it is not Zstandard, is cut short or its
+/// checksum does not match.
+pub fn decompress(data: Array[Byte]): Array[Byte] ! __io.IoError {
+    let unpacked = codecNative.unpack(data, true)
+    if codecNative.unpackFailed(unpacked) {
+        fail __io.IoError.InvalidData
+    }
+    codecNative.unpacked(unpacked)
+}
+
+/// A stream that compresses what it is given into `to`: `flush()` writes
+/// what is compressed so far, and `close()` the end of the format.
+pub fn writer(to: __io.Writer): __io.Writer {
+    codecNative.packWriter(to, true, 0)
+}
+
+/// A stream of what `from` holds, decompressed as it is read; data that is
+/// not Zstandard fails as `IoError.InvalidData` in the read that reaches it.
+pub fn reader(from: __io.Reader): __io.Reader {
+    codecNative.unpackReader(from, true)
+}

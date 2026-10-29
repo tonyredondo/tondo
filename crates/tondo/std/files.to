@@ -1,0 +1,165 @@
+// The parts of std.fs (standard library 10.5) written in Tondo, which a
+// program that imports std.fs links with: metadata, walks, globs,
+// temporary entries, permissions, links and watching, on the runtime's
+// filesystem.
+
+import std.fs as __fs
+import std.internal.channel as __channel
+import std.internal.fs as fsNative
+import std.time as __time
+
+/// An entry itself, without following links: its kind, size in bytes,
+/// read-only flag, last change of its content and Unix permissions, as
+/// `0o644`.
+pub type Metadata = {
+    kind: __fs.FileKind
+    size: Int
+    readOnly: Bool
+    modified: __time.DateTime
+    permissions: Int
+}
+
+/// An entry under the root of `walk`: its path, from the root, and kind.
+pub type Entry = {
+    path: String
+    kind: __fs.FileKind
+}
+
+/// What happened to a path while it was watched.
+pub enum ChangeKind {
+    Created
+    Modified
+    Removed
+}
+
+/// A path that changed while it was watched, and what happened to it.
+pub type Change = {
+    path: String
+    kind: ChangeKind
+}
+
+/// What the entry at the path is, without following a link.
+pub fn metadata(path: String): Metadata ! __fs.FsError {
+    let found = done(fsNative.stat(path))?
+    let numbers = fsNative.numbers(found)
+    let since = __time.seconds(numbers[3]) + __time.nanoseconds(numbers[4])
+    Metadata {
+        kind: kind(numbers[0])
+        size: numbers[1]
+        readOnly: numbers[2] != 0
+        modified: __time.utc(since)
+        permissions: numbers[5]
+    }
+}
+
+/// The tree under `root`, without `root`: each directory before what it
+/// holds and siblings sorted by bytes, without following links.
+pub fn walk(root: String): Array[Entry] ! __fs.FsError {
+    let found = done(fsNative.walk(root))?
+    let kinds = fsNative.numbers(found)
+    var entries: Array[Entry] = []
+    for (index, path) in fsNative.texts(found).enumerate() {
+        entries.push(Entry { path: path, kind: kind(kinds[index]) })
+    }
+    entries
+}
+
+/// The paths that match a pattern of `path.matches`, sorted by bytes:
+/// `content/**/*.md`.
+pub fn glob(pattern: String): Array[String] ! __fs.FsError {
+    fsNative.texts(done(fsNative.glob(pattern))?)
+}
+
+/// A new empty directory in the system's temporary one, which only its user
+/// can read; the program removes it.
+pub fn createTemporaryDirectory(): String ! __fs.FsError {
+    fsNative.texts(done(fsNative.temporary(true))?)[0]
+}
+
+/// A new empty file in the system's temporary directory, which only its
+/// user can read; the program removes it.
+pub fn createTemporaryFile(): String ! __fs.FsError {
+    fsNative.texts(done(fsNative.temporary(false))?)[0]
+}
+
+/// Sets the Unix permissions of the entry: `0o755` to run a script.
+pub fn setPermissions(path: String, permissions: Int): !__fs.FsError {
+    _ = done(fsNative.setPermissions(path, permissions))?
+}
+
+/// Makes `link` a symbolic link to `target`, which is kept as written and
+/// may not exist; a relative one is read from the link's directory.
+pub fn createSymlink(target: String, link: String): !__fs.FsError {
+    _ = done(fsNative.symlink(target, link))?
+}
+
+/// The target of a symbolic link, as it was written.
+pub fn readSymlink(path: String): String ! __fs.FsError {
+    fsNative.texts(done(fsNative.readSymlink(path))?)[0]
+}
+
+/// The absolute, clean path of the same entry, with every link resolved.
+pub fn realPath(path: String): String ! __fs.FsError {
+    fsNative.texts(done(fsNative.realPath(path))?)[0]
+}
+
+/// Watches the paths, with all that their directories hold, and sends their
+/// changes in batches: once `settle` (100 ms without it) passes with no
+/// other change, each path that changed once, sorted. Watching ends when no
+/// copy of the receiver is left.
+pub fn watch(paths: Array[String], settle: __time.Duration? = none): Receiver[Array[Change]] !
+    __fs.FsError {
+    let quiet = settle.unwrapOr(__time.milliseconds(100))
+    let watching = done(fsNative.watch(paths, quiet.nanoseconds()))?
+    let (sender, receiver) = channel[Array[Change]]()
+    spawn detached forward(watching, sender)
+    receiver
+}
+
+/// Sends each batch of a watch until no receiver is left.
+fn forward(watching: fsNative.Native, sender: Sender[Array[Change]]) {
+    for {
+        let found = fsNative.watchNext(watching)
+        if found.isEmpty() or __channel.abandoned(sender) {
+            break
+        }
+        if found.length() == 1 {
+            continue
+        }
+        var changes: Array[Change] = []
+        for index in 0..found.length() / 2 {
+            let what = match found[2 * index] {
+                "C" => ChangeKind.Created
+                "R" => ChangeKind.Removed
+                _ => ChangeKind.Modified
+            }
+            changes.push(Change { path: found[2 * index + 1], kind: what })
+        }
+        sender.send(changes)
+    }
+    fsNative.watchStop(watching)
+}
+
+/// The runtime's outcome, or its `FsError`.
+fn done(outcome: fsNative.Native): fsNative.Native ! __fs.FsError {
+    match fsNative.failure(outcome) {
+        0 => outcome
+        1 => fail __fs.FsError.NotFound
+        2 => fail __fs.FsError.PermissionDenied
+        3 => fail __fs.FsError.AlreadyExists
+        4 => fail __fs.FsError.NotADirectory
+        5 => fail __fs.FsError.IsADirectory
+        6 => fail __fs.FsError.InvalidData
+        7 => fail __fs.FsError.InvalidName
+        _ => fail __fs.FsError.Host
+    }
+}
+
+fn kind(index: Int): __fs.FileKind {
+    match index {
+        0 => __fs.FileKind.File
+        1 => __fs.FileKind.Directory
+        2 => __fs.FileKind.Symlink
+        _ => __fs.FileKind.Other
+    }
+}

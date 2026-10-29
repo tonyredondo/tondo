@@ -3037,3 +3037,24 @@ on Intel, which arm64 and Linux already run on each push. Each push still
 builds `tondo` across for the other architecture and builds for it with
 the pack the emulated `tondo` writes, which nothing else tests, and the
 musl jobs keep their builds between runs as the others do.
+
+## 2026-10-29 — Zones from the system, names from CLDR
+
+The third lot for porting Hugo: walks, globs, watching, compression and
+time zones. A zone comes from the system's tz database, which the system
+keeps current, and one it lacks from the copy jiff bundles, which a
+container with no database still has; `TONDO_ZONES=builtin` takes every
+zone from that copy, for the same answer on every machine. A
+`ZonedDateTime` is a type apart from `DateTime`, which stays UTC: records
+are equal by their fields, so a `DateTime` that could hold any zone would
+make two names of one moment unequal, as Go's `==` on `time.Time` does.
+Patterns are `strftime`'s rather than Go's reference date, as C, Python,
+Rust and Ruby write them; the names of months and days come from CLDR in
+the language a call names, never from the system's locale, which musl and
+most containers do not have. Globs take `**` and braces, as people write
+them, and every text is a pattern, so `path.matches` cannot fail.
+`fs.watch` sends a batch once changes settle, each path once, telling a
+file replaced through a rename from a new one by the paths it saw exist;
+it ends when no copy of its receiver is left. Zstandard is ruzstd's, pure
+Rust at its fastest level, so the runtime builds for every target without
+C.

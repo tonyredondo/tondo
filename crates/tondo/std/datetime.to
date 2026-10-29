@@ -2,7 +2,7 @@
 // a program that imports std.time links with: ISO 8601 text and dates as
 // times since the Unix epoch.
 
-import std.internal.time as deadlineNative
+import std.internal.time as timeNative
 import std.serialization
 import std.time as __time
 
@@ -18,129 +18,64 @@ impl Display for TimedOut {
     }
 }
 
-/// `time.deadline`: when the deadline of the running task passes, the
-/// nearest of the `within`s that hold it, or `none` without one.
-fn deadline(): __time.Instant? {
-    let left = deadlineNative.remaining()
+/// When the deadline of the running task passes, the nearest of the
+/// `within`s that hold it, or `none` without one.
+pub fn deadline(): __time.Instant? {
+    let left = timeNative.remaining()
     if left < 0 {
         return none
     }
     some(__time.now().add(__time.nanoseconds(left)))
 }
 
-/// `time.remaining`: what is left until that deadline, zero once it passed.
-fn remaining(): __time.Duration? {
-    let left = deadlineNative.remaining()
+/// What is left until that deadline, zero once it passed.
+pub fn remaining(): __time.Duration? {
+    let left = timeNative.remaining()
     if left < 0 {
         return none
     }
     some(__time.nanoseconds(left))
 }
 
-/// `time.parseDateTime`: `2026-10-22`, `2026-10-22T06:38:28Z`,
-/// `2026-10-22 08:38:28.5+02:00` and the like, in UTC.
-fn parse(input: String): __time.DateTime ! __time.TimeError {
-    let chars = input.chars().collect()
-    var at = 0
-    // The number `count` digits write from `at` on.
-    let number = (from: Int, count: Int) {
-        var value = 0
-        for index in from..from + count {
-            match chars.get(index) {
-                some(c) if c.isDigit() => value = value * 10 + c.code() - '0'.code()
-                _ => return -1
-            }
-        }
-        value
+/// ISO 8601 in RFC 3339's form, `2026-10-22`, `2026-10-22T06:38:28Z` or
+/// `2026-10-22 08:38:28.5+02:00`, or the form of a `strftime` pattern, as
+/// a date and time in UTC; without an offset, the text is in UTC.
+pub fn parseDateTime(text: String, pattern: String? = none, locale: String = "en"): __time.DateTime !
+    __time.TimeError {
+    let fields = read(text, pattern, locale)?
+    __time.utc(moment(fields) - __time.seconds(fields[9]))
+}
+
+/// The fields of a date's text: `[1, year, month, day, hour, minute,
+/// second, nanosecond, has offset, offset]`.
+fn read(text: String, pattern: String?, locale: String): Array[Int] ! __time.TimeError {
+    let fields = match pattern {
+        some(form) => timeNative.parse(text, form, locale)
+        none => timeNative.iso(text)
     }
-    let year = number(0, 4)
-    let month = number(5, 2)
-    let day = number(8, 2)
-    if chars.get(4) != some('-') or chars.get(7) != some('-') {
+    if fields[0] == 0 {
         fail __time.TimeError.InvalidDateTime
     }
-    at = 10
-    var (hour, minute, second, nanosecond, offset) = (0, 0, 0, 0, 0)
-    if at < chars.length() {
-        if not (chars[at] in "Tt ") {
-            fail __time.TimeError.InvalidDateTime
-        }
-        hour = number(at + 1, 2)
-        minute = number(at + 4, 2)
-        if chars.get(at + 3) != some(':') {
-            fail __time.TimeError.InvalidDateTime
-        }
-        at += 6
-        if chars.get(at) == some(':') {
-            second = number(at + 1, 2)
-            at += 3
-            if chars.get(at) == some('.') {
-                at += 1
-                var digits = 0
-                for at < chars.length() and chars[at].isDigit() {
-                    if digits < 9 {
-                        nanosecond = nanosecond * 10 + chars[at].code() - '0'.code()
-                        digits += 1
-                    }
-                    at += 1
-                }
-                if digits == 0 {
-                    fail __time.TimeError.InvalidDateTime
-                }
-                for _ in digits..9 {
-                    nanosecond *= 10
-                }
-            }
-        }
-        match chars.get(at) {
-            some(c) if c == 'Z' or c == 'z' => at += 1
-            some(sign) if sign == '+' or sign == '-' => {
-                let hours = number(at + 1, 2)
-                let minutes = match chars.get(at + 3) {
-                    some(':') => {
-                        at += 6
-                        number(at - 2, 2)
-                    }
-                    some(_) => {
-                        at += 5
-                        number(at - 2, 2)
-                    }
-                    none => {
-                        at += 3
-                        0
-                    }
-                }
-                if hours < 0 or hours > 23 or minutes < 0 or minutes > 59 {
-                    fail __time.TimeError.InvalidDateTime
-                }
-                offset = (hours * 60 + minutes) * 60
-                if sign == '-' {
-                    offset = -offset
-                }
-            }
-            _ => {}
-        }
+    fields
+}
+
+/// The time since 1970 of fields that `read` gives, as if in UTC.
+fn moment(fields: Array[Int]): __time.Duration {
+    let seconds =
+        days(fields[1], fields[2], fields[3]) * 86400 +
+            fields[4] * 3600 +
+            fields[5] * 60 +
+            fields[6]
+    __time.nanoseconds(seconds * 1000000000 + fields[7])
+}
+
+/// A duration as Go writes it: `1h30m`, `1.5s`, `-250ms`.
+pub fn parseDuration(text: String): __time.Duration ! __time.TimeError {
+    let parsed = timeNative.parseDuration(text)
+    if parsed[0] == 0 {
+        fail __time.TimeError.InvalidDuration
     }
-    // The years whose times since the epoch fit in a `Duration`.
-    let valid =
-        at == chars.length() and
-            year >= 1678 and
-            year <= 2261 and
-            month >= 1 and
-            month <= 12 and
-            day >= 1 and
-            day <= daysIn(year, month) and
-            hour >= 0 and
-            hour <= 23 and
-            minute >= 0 and
-            minute <= 59 and
-            second >= 0 and
-            second <= 59
-    if not valid {
-        fail __time.TimeError.InvalidDateTime
-    }
-    let seconds = days(year, month, day) * 86400 + hour * 3600 + minute * 60 + second - offset
-    __time.utc(__time.nanoseconds(seconds * 1000000000 + nanosecond))
+    __time.nanoseconds(parsed[1])
 }
 
 /// `DateTime.sinceEpoch()`: the inverse of `time.utc`.
@@ -182,6 +117,7 @@ impl serialization.Encode for __time.DateTime {
     }
 }
 
+/// Read from RFC 3339.
 impl serialization.Decode for __time.DateTime {
     fn decode[S: serialization.Source](input: S, first: serialization.Event): __time.DateTime !
         serialization.Error {
@@ -190,8 +126,236 @@ impl serialization.Decode for __time.DateTime {
             serialization.Event.Text(text) => text
             _ => fail input.mismatch(first, "a date and time")
         }
-        match parse(text) {
+        match parseDateTime(text) {
             ok(value) => value
+            err(_) => fail input.failure(
+                serialization.ErrorKind.Type,
+                "`{text}` is not a date and time",
+            )
+        }
+    }
+}
+
+/// A time zone: the offsets from UTC its clocks have had through the
+/// years. Equal and a key by its name, which `Display` writes.
+pub type Zone = {
+    priv id: String
+}
+
+impl Display for Zone {
+    fn display(self): String {
+        self.id
+    }
+}
+
+/// A date and time as the clocks of a zone show it, with their offset from
+/// UTC then.
+pub type ZonedDateTime = {
+    year: Int
+    month: Int
+    day: Int
+    hour: Int
+    minute: Int
+    second: Int
+    nanosecond: Int
+    offset: __time.Duration
+    zone: Zone
+}
+
+/// The zone of the tz database `name` names: `Europe/Madrid`, `UTC`.
+pub fn zone(name: String): Zone ! __time.TimeError {
+    if not timeNative.zoneKnown(name) {
+        fail __time.TimeError.UnknownZone
+    }
+    Zone { id: name }
+}
+
+/// The zone `TZ` names, or `/etc/localtime` is, or `UTC`.
+pub fn localZone(): Zone {
+    Zone { id: timeNative.zoneLocal() }
+}
+
+/// UTC, which has no offset.
+pub fn utcZone(): Zone {
+    Zone { id: "UTC" }
+}
+
+/// A zone that always has `offset`, named by it: `+05:30`.
+pub fn fixedZone(offset: __time.Duration): Zone {
+    let seconds = offset.seconds()
+    let sign = if seconds < 0 { "-" } else { "+" }
+    let size = seconds.abs()
+    let pair = (value: Int) { if value < 10 { "0{value}" } else { "{value}" } }
+    let rest = if size % 60 == 0 { "" } else { ":{pair(size % 60)}" }
+    Zone { id: "{sign}{pair(size / 3600)}:{pair(size / 60 % 60)}{rest}" }
+}
+
+/// Its name, as `time.zone` takes it.
+pub fn Zone.name(self): String {
+    self.id
+}
+
+/// The moment the zone's clocks show this date and time. One they skip
+/// moves on by what they skip; one they show twice is the first.
+pub fn Zone.at(
+    self,
+    year: Int,
+    month: Int,
+    day: Int,
+    hour: Int = 0,
+    minute: Int = 0,
+    second: Int = 0,
+    nanosecond: Int = 0,
+): ZonedDateTime ! __time.TimeError {
+    let valid =
+        year >= 1678 and
+            year <= 2261 and
+            month >= 1 and
+            month <= 12 and
+            day >= 1 and
+            day <= daysIn(year, month) and
+            hour >= 0 and
+            hour <= 23 and
+            minute >= 0 and
+            minute <= 59 and
+            second >= 0 and
+            second <= 59 and
+            nanosecond >= 0 and
+            nanosecond <= 999999999
+    if not valid {
+        fail __time.TimeError.InvalidDateTime
+    }
+    let seconds = timeNative.zoneResolve(self.id, [year, month, day, hour, minute, second, 0])
+    if seconds == Int.min {
+        fail __time.TimeError.InvalidDateTime
+    }
+    inZone(__time.utc(__time.seconds(seconds) + __time.nanoseconds(nanosecond)), self)
+}
+
+/// `DateTime.inZone`: the date and time the clocks of `place` show at that
+/// moment, with their offset then.
+fn inZone(date: __time.DateTime, place: Zone): ZonedDateTime {
+    let since = sinceEpoch(date)
+    let offset = __time.seconds(timeNative.zoneOffset(place.id, floorSeconds(since)))
+    let local = __time.utc(since + offset)
+    ZonedDateTime {
+        year: local.year
+        month: local.month
+        day: local.day
+        hour: local.hour
+        minute: local.minute
+        second: local.second
+        nanosecond: local.nanosecond
+        offset: offset
+        zone: place
+    }
+}
+
+/// The whole seconds of a time since 1970, rounded down.
+fn floorSeconds(since: __time.Duration): Int {
+    let nanos = since.nanoseconds()
+    let seconds = nanos / 1000000000
+    if nanos < 0 and nanos % 1000000000 != 0 { seconds - 1 } else { seconds }
+}
+
+/// The moment, in UTC: the date and time less the offset.
+pub fn ZonedDateTime.utc(self): __time.DateTime {
+    let fields = [
+        1,
+        self.year,
+        self.month,
+        self.day,
+        self.hour,
+        self.minute,
+        self.second,
+        self.nanosecond,
+    ]
+    __time.utc(moment(fields) - self.offset)
+}
+
+/// The date and time as the local zone's clocks show them now.
+pub fn localNow(): ZonedDateTime {
+    inZone(__time.utcNow(), localZone())
+}
+
+/// `DateTime.format`: as a pattern of `strftime` writes it, in UTC.
+fn format(date: __time.DateTime, pattern: String, locale: String = "en"): String {
+    let fields = [
+        date.year,
+        date.month,
+        date.day,
+        date.hour,
+        date.minute,
+        date.second,
+        date.nanosecond,
+        0,
+    ]
+    timeNative.format(pattern, locale, fields, "UTC")
+}
+
+/// As a pattern of `strftime` writes it, with the names of `locale`:
+/// `%d/%m/%Y %H:%M %Z`.
+pub fn ZonedDateTime.format(self, pattern: String, locale: String = "en"): String {
+    let fields = [
+        self.year,
+        self.month,
+        self.day,
+        self.hour,
+        self.minute,
+        self.second,
+        self.nanosecond,
+        self.offset.seconds(),
+    ]
+    timeNative.format(pattern, locale, fields, self.zone.id)
+}
+
+/// RFC 3339 with its offset: `2026-10-29T13:05:00+01:00`, or `Z` when the
+/// offset is zero; the fraction only when it is not zero.
+impl Display for ZonedDateTime {
+    fn display(self): String {
+        var fraction = ""
+        if self.nanosecond != 0 {
+            fraction = ".{self.format("%9f")}"
+            for fraction.endsWith("0") {
+                fraction = fraction.removeSuffix("0")
+            }
+        }
+        let offset = if self.offset.isZero() { "Z" } else { self.format("%:z") }
+        "{self.format("%Y-%m-%dT%H:%M:%S")}{fraction}{offset}"
+    }
+}
+
+/// A date and time in a zone, as RFC 3339 writes it with its offset.
+impl serialization.Encode for ZonedDateTime {
+    fn encode[S: serialization.Sink](self, out: S) {
+        out.dateTime("{self}")
+    }
+}
+
+/// Read from RFC 3339, keeping its offset in a fixed zone.
+impl serialization.Decode for ZonedDateTime {
+    fn decode[S: serialization.Source](input: S, first: serialization.Event): ZonedDateTime !
+        serialization.Error {
+        let text = match first {
+            serialization.Event.DateTime(text) => text
+            serialization.Event.Text(text) => text
+            _ => fail input.mismatch(first, "a date and time")
+        }
+        match read(text, none, "en") {
+            ok(fields) => {
+                let offset = __time.seconds(fields[9])
+                ZonedDateTime {
+                    year: fields[1]
+                    month: fields[2]
+                    day: fields[3]
+                    hour: fields[4]
+                    minute: fields[5]
+                    second: fields[6]
+                    nanosecond: fields[7]
+                    offset: offset
+                    zone: fixedZone(offset)
+                }
+            }
             err(_) => fail input.failure(
                 serialization.ErrorKind.Type,
                 "`{text}` is not a date and time",

@@ -1,0 +1,48 @@
+// fs.watch sends the changes under a directory in batches, once they
+// settle: each path once, created, modified or removed, sorted.
+
+import std.console
+import std.fs
+import std.path
+import std.time
+
+fn show(changes: Receiver[Array[fs.Change]], dir: String) {
+    match changes.receive(timeout: time.seconds(10)) {
+        some(batch) => {
+            for change in batch {
+                let what = match change.kind {
+                    fs.ChangeKind.Created => "created",
+                    fs.ChangeKind.Modified => "modified",
+                    fs.ChangeKind.Removed => "removed",
+                }
+                console.println("{change.path.removePrefix(dir)} {what}")
+            }
+        }
+        none => console.println("no changes"),
+    }
+}
+
+fn main() {
+    let dir = fs.realPath(fs.createTemporaryDirectory()?)?
+    fs.writeText(path.join(dir, "old.txt"), "old")?
+    fs.writeText(path.join(dir, "gone.txt"), "gone")?
+    let changes = fs.watch([dir], settle: time.milliseconds(300))?
+    fs.writeText(path.join(dir, "new.txt"), "new")?
+    fs.writeText(path.join(dir, "new.txt"), "newer")?
+    fs.writeText(path.join(dir, "old.txt"), "changed")?
+    fs.remove(path.join(dir, "gone.txt"))?
+    fs.writeText(path.join(dir, "brief.txt"), "brief")?
+    fs.remove(path.join(dir, "brief.txt"))?
+    show(changes, dir)
+    fs.createDirectory(path.join(dir, "sub"))?
+    time.sleep(time.milliseconds(100))
+    fs.writeText(path.join(dir, "sub/inner.txt"), "inner")?
+    show(changes, dir)
+    fs.remove(dir, recursive: true)?
+}
+
+// expect-stdout: /gone.txt removed
+// expect-stdout: /new.txt created
+// expect-stdout: /old.txt modified
+// expect-stdout: /sub created
+// expect-stdout: /sub/inner.txt created

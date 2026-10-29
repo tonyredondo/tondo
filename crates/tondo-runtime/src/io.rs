@@ -193,6 +193,10 @@ pub(crate) trait Host: Send {
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }
+    /// Writes what ends its data, when the stream closes, after a flush.
+    fn finish(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
     /// Moves the host position back over bytes read ahead, before a write.
     fn back(&mut self, _count: usize) -> std::io::Result<()> {
         Ok(())
@@ -534,8 +538,9 @@ impl StreamState {
         if flushed.as_ref().is_err_and(|error| error.kind() == ErrorKind::WouldBlock) {
             return flushed;
         }
+        let finished = self.host.as_mut().map_or(Ok(()), |host| host.finish());
         self.host = None;
-        flushed
+        flushed.and(finished)
     }
 }
 

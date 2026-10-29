@@ -38,8 +38,29 @@ const SOURCES: &[(&str, &str)] = &[
     ("profile", include_str!("../std/profile.to")),
     ("embed", include_str!("../std/embed.to")),
     ("url", include_str!("../std/url.to")),
+    ("zoned", include_str!("../std/zoned.to")),
+    ("files", include_str!("../std/files.to")),
+    ("paths", include_str!("../std/paths.to")),
+    ("gzip", include_str!("../std/gzip.to")),
+    ("zstd", include_str!("../std/zstd.to")),
     ("fuzz", include_str!("../std/fuzz.to")),
 ];
+
+/// The modules the compiler implements whose rest is written in Tondo,
+/// and the modules that have it: their `pub` functions and types are the
+/// module's own. An import of the module brings them all.
+pub(crate) const COMPANIONS: &[(&str, &[&str])] =
+    &[("time", &["datetime", "zoned"]), ("fs", &["files"]), ("path", &["paths"])];
+
+/// The module a companion completes: `time` for `datetime`.
+pub(crate) fn completed(companion: &str) -> Option<&'static str> {
+    COMPANIONS.iter().find(|(_, c)| c.contains(&companion)).map(|(module, _)| *module)
+}
+
+/// The companions of a module the compiler implements.
+pub(crate) fn companions(module: &str) -> &'static [&'static str] {
+    COMPANIONS.iter().find(|(m, _)| *m == module).map_or(&[], |(_, c)| c)
+}
 
 /// Each standard module's name and source.
 pub fn sources() -> &'static [(&'static str, &'static str)] {
@@ -62,11 +83,10 @@ pub(crate) fn source(path: &[ast::Ident]) -> Option<(&'static str, &'static str)
         [std, name] if std.name == "std" => {
             // `std.testing` brings the loop of `testing.fuzz`, and with
             // it `std.json`, which `testing.snapshot` encodes values with;
-            // and `std.time` its parts in Tondo.
+            // and a module the compiler implements, its parts in Tondo.
             let name = match name.name.as_str() {
                 "testing" => "fuzz",
-                "time" => "datetime",
-                name => name,
+                name => companions(name).first().copied().unwrap_or(name),
             };
             SOURCES.iter().find(|(n, _)| *n == name).copied()
         }
@@ -126,11 +146,16 @@ pub fn add_except(
     let mut pending: Vec<&str> = vec!["prelude"];
     let wanted = |module: &ast::Module, pending: &mut Vec<&str>| {
         for import in &module.imports {
-            if let Some((name, _)) = source(&import.path)
-                && !pending.contains(&name)
-                && !replaced.contains(&name)
-            {
-                pending.push(name);
+            let Some((name, _)) = source(&import.path) else { continue };
+            // A module replaced comes without its parts in Tondo.
+            if completed(name).is_some_and(|module| replaced.contains(&module)) {
+                continue;
+            }
+            let others = completed(name).map_or(&[][..], companions);
+            for name in std::iter::once(name).chain(others.iter().copied()) {
+                if !pending.contains(&name) && !replaced.contains(&name) {
+                    pending.push(name);
+                }
             }
         }
     };

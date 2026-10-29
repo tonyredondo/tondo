@@ -83,6 +83,7 @@ fn check_with<'a>(
         module: 0,
         owners: HashMap::new(),
         method_visibility: HashMap::new(),
+        public_fns: HashSet::new(),
         prelude: None,
         contexts: Vec::new(),
         annotation_decls: HashMap::new(),
@@ -241,6 +242,9 @@ enum StdModule {
     InternalPanic,
     InternalTime,
     InternalContext,
+    /// `std.internal.fs`: the runtime's side of `std.path` and `std.fs`
+    /// written in Tondo.
+    InternalFs,
 }
 
 /// The types `std.process` declares when imported.
@@ -260,7 +264,6 @@ struct ProcessTypes {
 struct FsTypes {
     error: Ty,
     kind: Ty,
-    metadata: Ty,
     mode: Ty,
     file: Ty,
 }
@@ -773,6 +776,8 @@ struct Checker<'a> {
     owners: HashMap<String, Owner>,
     /// The module of each inherent operation, and whether it is `pub`.
     method_visibility: HashMap<FnId, (u32, bool)>,
+    /// The module functions declared `pub`.
+    public_fns: HashSet<FnId>,
     /// The module `std.prelude`, which declares the methods of the intrinsic
     /// types, and their keys by name.
     prelude: Option<u32>,
@@ -1086,7 +1091,12 @@ impl<'a> Checker<'a> {
             bodies.push(f);
             match owner {
                 Some(owner) => self.declare_method(f, owner, receiver.is_some(), id),
-                None => self.declare_module_name(&f.name, ModuleName::Fn(id)),
+                None => {
+                    if f.public {
+                        self.public_fns.insert(id);
+                    }
+                    self.declare_module_name(&f.name, ModuleName::Fn(id))
+                }
             }
         }
         self.trait_methods(&traits, &mut bodies);
@@ -1626,6 +1636,26 @@ impl<'a> Checker<'a> {
     }
 
     /// `time.TimedOut`, which `std.time` writes in Tondo (11.17).
+    /// The modules written in Tondo with the rest of a module the compiler
+    /// implements (`crate::stdlib::COMPANIONS`).
+    fn companions(module: StdModule) -> &'static [&'static str] {
+        crate::stdlib::companions(match module {
+            StdModule::Time => "time",
+            StdModule::Fs => "fs",
+            StdModule::Path => "path",
+            _ => return &[],
+        })
+    }
+
+    /// A `pub` function of a module's companion, which is the module's own:
+    /// `time.parseDateTime` for `datetime.parseDateTime`.
+    fn companion_fn(&self, module: StdModule, member: &str) -> Option<FnId> {
+        Self::companions(module).iter().find_map(|companion| match self.names.get(&format!("{companion}.{member}")) {
+            Some(&ModuleName::Fn(id)) if self.public_fns.contains(&id) => Some(id),
+            _ => None,
+        })
+    }
+
     fn timed_out(&self) -> Option<Ty> {
         match self.type_names.get("datetime.TimedOut") {
             Some(&TypeName::Nominal(ty)) => Some(ty),
@@ -1814,6 +1844,59 @@ impl<'a> Checker<'a> {
         }
         values.insert(2, Self::mk(hir::ExprKind::Bool(json), Ty::BOOL, span));
         call
+    }
+
+    /// The literal pattern and locale of a call of `format` or of the
+    /// parsing of `std.time`: a pattern with a directive that does not exist,
+    /// one to parse that reads no whole date, or a locale without names, is
+    /// `E1905` (standard library 14.3.5).
+    fn check_time_literals(&mut self, id: FnId, signature: &Signature, first: usize, args: &[ast::Arg]) {
+        let named = |name: &str| matches!(self.names.get(name), Some(&ModuleName::Fn(f)) if f == id);
+        let zoned_format = self
+            .type_names
+            .get("datetime.ZonedDateTime")
+            .and_then(|t| match t {
+                TypeName::Nominal(ty) => self.methods.get(&(*ty, "format".to_string())),
+                _ => None,
+            })
+            .is_some_and(|&method| method == id);
+        let parsing = match () {
+            _ if named("datetime.format") || zoned_format => false,
+            _ if named("datetime.parseDateTime") || named("zoned.parseZoned") => true,
+            _ => return,
+        };
+        for param in ["pattern", "locale"] {
+            let Some(position) = signature.names.iter().position(|n| n == param) else { continue };
+            let arg = args
+                .iter()
+                .find(|a| a.name.as_ref().is_some_and(|n| n.name == param))
+                .or_else(|| args.get(position - first).filter(|a| a.name.is_none()));
+            let Some(arg) = arg else { continue };
+            let ast::ExprKind::Str(segments) = &arg.value.kind else { continue };
+            let text = match segments.as_slice() {
+                [] => "",
+                [ast::StrSegment::Text(text)] => text.as_str(),
+                _ => continue,
+            };
+            let problem = if param == "pattern" {
+                crate::time_pattern::pieces(text)
+                    .and_then(|pieces| if parsing { crate::time_pattern::parsing(&pieces) } else { Ok(()) })
+                    .err()
+            } else {
+                let tag = text.replace('_', "-").to_ascii_lowercase();
+                let language = tag.split('-').next().unwrap_or_default().to_string();
+                let known = include_str!("../../tondo-runtime/data/names.txt")
+                    .lines()
+                    .filter_map(|line| line.split('\t').next())
+                    .any(|known| known.eq_ignore_ascii_case(&tag) || known.eq_ignore_ascii_case(&language));
+                (!known).then(|| {
+                    format!("`{text}` is not a language with names of months and days: write a BCP 47 tag of CLDR, such as `es`, `de` or `pt-BR`")
+                })
+            };
+            if let Some(problem) = problem {
+                self.diags.error("E1905", arg.value.span, problem);
+            }
+        }
     }
 
     /// A path or method of `std.reflect` written as a literal, on a value of
@@ -2710,6 +2793,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "fuzz"] => StdModule::InternalFuzz,
             ["std", "internal", "panic"] => StdModule::InternalPanic,
             ["std", "internal", "time"] => StdModule::InternalTime,
+            ["std", "internal", "fs"] => StdModule::InternalFs,
             ["std", "internal", "context"] => StdModule::InternalContext,
             ["std", "internal", "channel"] => StdModule::InternalChannel,
             ["std", rest @ ..] => {
@@ -2788,18 +2872,11 @@ impl<'a> Checker<'a> {
             self.types.shown.insert(error, Shown::Words);
             let kind = declare_enum(self, "FileKind", &["File", "Directory", "Symlink", "Other"]);
             let mode = declare_enum(self, "OpenMode", &["Read", "Write", "Append", "CreateNew", "ReadWrite"]);
-            let (id, metadata) = self.types.declare_adt(format!("{}.Metadata", name.name));
-            let fields = vec![
-                Field { name: "kind".into(), ty: kind, private: false },
-                Field { name: "size".into(), ty: Ty::INT, private: false },
-                Field { name: "readOnly".into(), ty: Ty::BOOL, private: false },
-            ];
-            self.types.define_adt(id, AdtKind::Record(fields));
             let file = self.types.handle(Handle::File, Ty::UNIT);
             for ty in [Ty::STRING, self.types.intern(TyKind::Array(Ty::BYTE))] {
                 self.types.intern(TyKind::Option(ty));
             }
-            self.fs = Some(FsTypes { error, kind, metadata, mode, file });
+            self.fs = Some(FsTypes { error, kind, mode, file });
         }
         if module == StdModule::InternalJson {
             self.types.handle(Handle::JsonReader, Ty::UNIT);
@@ -2824,8 +2901,13 @@ impl<'a> Checker<'a> {
                 | StdModule::InternalMsgpack
                 | StdModule::InternalCbor
                 | StdModule::InternalNet
+                | StdModule::InternalFs
         ) {
             self.types.handle(Handle::Native, Ty::UNIT);
+        }
+        if matches!(module, StdModule::InternalFs | StdModule::InternalTime) {
+            self.types.intern(TyKind::Array(Ty::INT));
+            self.types.intern(TyKind::Array(Ty::STRING));
         }
         if module == StdModule::Process && self.process.is_none() {
             let prefix = &name.name;
@@ -2921,7 +3003,9 @@ impl<'a> Checker<'a> {
             self.types.shown.insert(ty, Shown::DateTime);
             self.datetime = Some(ty);
             let (id, ty) = self.types.declare_adt(format!("{}.TimeError", name.name));
-            let variants = vec![Variant { name: "InvalidDateTime".into(), payload: Payload::Unit }];
+            let variants = ["InvalidDateTime", "InvalidDuration", "UnknownZone"]
+                .map(|name| Variant { name: name.into(), payload: Payload::Unit })
+                .to_vec();
             self.types.define_adt(id, AdtKind::Enum(variants));
             self.types.shown.insert(ty, Shown::Words);
             self.time_error = Some(ty);
@@ -2930,6 +3014,16 @@ impl<'a> Checker<'a> {
 
     /// A type of an imported standard module, such as `text.TextError`.
     fn module_type(&self, module: &str, name: &str) -> Option<Ty> {
+        if let Some(&ModuleName::Module(hosted)) = self.names.get(module)
+            && let Some(ty) = Self::companions(hosted).iter().find_map(|companion| {
+                match self.type_names.get(&format!("{companion}.{name}")) {
+                    Some(&TypeName::Nominal(ty)) if self.owner(ty).is_some_and(|owner| owner.public) => Some(ty),
+                    _ => None,
+                }
+            })
+        {
+            return Some(ty);
+        }
         match (self.names.get(module), name) {
             (Some(ModuleName::Module(StdModule::Env)), "EnvError") => self.env_error,
             (Some(ModuleName::Module(StdModule::InternalJson)), "NativeReader") => {
@@ -2949,7 +3043,8 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalYaml
                     | StdModule::InternalMsgpack
                     | StdModule::InternalCbor
-                    | StdModule::InternalNet,
+                    | StdModule::InternalNet
+                    | StdModule::InternalFs,
                 )),
                 "Native",
             ) => self.types.lookup(&TyKind::Handle(Handle::Native, Ty::UNIT)),
@@ -2984,14 +3079,12 @@ impl<'a> Checker<'a> {
             (Some(ModuleName::Module(StdModule::Time)), "TimeError") => self.time_error,
             (Some(ModuleName::Module(StdModule::Time)), "Instant") => self.instant,
             (Some(ModuleName::Module(StdModule::Time)), "DateTime") => self.datetime,
-            (Some(ModuleName::Module(StdModule::Time)), "TimedOut") => self.timed_out(),
             (Some(ModuleName::Module(StdModule::Sync)), "CompareExchange") => self.compare_exchange.map(|(_, g)| g),
             (Some(ModuleName::Module(StdModule::Fs)), name) => {
                 let fs = self.fs?;
                 match name {
                     "FsError" => Some(fs.error),
                     "FileKind" => Some(fs.kind),
-                    "Metadata" => Some(fs.metadata),
                     "OpenMode" => Some(fs.mode),
                     "File" => Some(fs.file),
                     _ => None,
@@ -3048,8 +3141,12 @@ impl<'a> Checker<'a> {
             _ if self.module_paths.get(module as usize).is_some_and(|path| path == &["std", "panics"]) => {
                 name.strip_prefix("panics.").unwrap_or(name).to_string()
             }
-            _ if self.module_paths.get(module as usize).is_some_and(|path| path == &["std", "datetime"]) => {
-                format!("time.{}", name.strip_prefix("datetime.").unwrap_or(name))
+            _ if let Some(path) = self.module_paths.get(module as usize)
+                && let [std, companion] = path.as_slice()
+                && std == "std"
+                && let Some(completed) = crate::stdlib::completed(companion) =>
+            {
+                format!("{completed}.{}", name.strip_prefix(&format!("{companion}.")).unwrap_or(name))
             }
             _ => name.to_string(),
         }
@@ -3139,7 +3236,10 @@ impl<'a> Checker<'a> {
                 ast::Item::Enum(decl) => decl.module,
                 _ => unreachable!(),
             };
-            let renamed = |path: &Vec<String>| path == &["std", "panics"] || path == &["std", "datetime"];
+            let renamed = |path: &Vec<String>| {
+                path == &["std", "panics"]
+                    || matches!(path.as_slice(), [std, c] if std == "std" && crate::stdlib::completed(c).is_some())
+            };
             // A type the prelude declares for every program, as `ByteOrder`.
             let everywhere = name.name.strip_prefix("prelude.").filter(|bare| PRELUDE_TYPES.contains(bare));
             let shown = match self.module_paths.get(module as usize).is_some_and(renamed) || everywhere.is_some() {
@@ -11441,16 +11541,19 @@ impl<'a> Checker<'a> {
         {
             return self.trait_dot_call(cx, ITERATOR, vec![element], index, value, method, args, expected, span);
         }
-        // `DateTime.sinceEpoch()`, written in Tondo (14.3.4).
+        // `DateTime`'s methods, written in Tondo (14.3.4): the functions of
+        // `std.time`'s companions that take a `DateTime` first.
         if Some(ty) == self.datetime
-            && method.name == "sinceEpoch"
-            && let Some(&ModuleName::Fn(id)) = self.names.get("datetime.sinceEpoch")
+            && let Some(id) = Self::companions(StdModule::Time).iter().find_map(|companion| {
+                match self.names.get(&format!("{companion}.{}", method.name)) {
+                    Some(&ModuleName::Fn(id)) if self.signatures[id.0 as usize].params.first() == Some(&ty) => Some(id),
+                    _ => None,
+                }
+            })
         {
-            if !args.is_empty() {
-                return self.arity_error(span, 0, args.len());
-            }
-            let call = hir::ExprKind::Call(Callee::Fn(id), Vec::new(), vec![value]);
-            return Self::mk(call, self.duration.unwrap(), span);
+            let signature = self.signatures[id.0 as usize].clone();
+            let target = CallTarget::new(Callee::Fn(id), signature, expected);
+            return self.call_signature(cx, target, Some(value), args, span);
         }
         if Some(ty) == self.duration || Some(ty) == self.instant {
             return self.time_method(cx, value, method, args, span);
@@ -13017,6 +13120,11 @@ impl<'a> Checker<'a> {
             return Self::mk(hir::ExprKind::Variant(variant, values), ty, span);
         }
         match (names.as_slice(), self.names.get(names[0]).copied()) {
+            ([_, member], Some(ModuleName::Module(module))) if let Some(id) = self.companion_fn(module, member) => {
+                let signature = self.signatures[id.0 as usize].clone();
+                let target = CallTarget::new(Callee::Fn(id), signature, expected);
+                self.call_signature(cx, target, None, args, span)
+            }
             (["panic"], _) => self.panic_call(cx, args, span),
             (["assert"], _) => {
                 let Some((condition, parts)) = args.split_first() else {
@@ -13138,6 +13246,16 @@ impl<'a> Checker<'a> {
                 let target = CallTarget::new(Callee::Std(function), signature, expected);
                 self.call_signature(cx, target, None, args, span)
             }
+            ([_, "abandoned"], Some(ModuleName::Module(StdModule::InternalChannel))) => {
+                let [sender] = args else { return self.arity_error(span, 1, args.len()) };
+                let sender = self.expr(cx, &sender.value, None);
+                if !matches!(self.types.kind(sender.ty), TyKind::Handle(Handle::Sender, _)) {
+                    let message = format!("`abandoned` asks of a `Sender`, found {}", self.display(sender.ty));
+                    self.diags.error("E1102", sender.span, message);
+                    return Self::error_expr(span);
+                }
+                Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::Abandoned, vec![sender]), Ty::BOOL, span)
+            }
             ([_, member @ ("offer" | "tryOffer")], Some(ModuleName::Module(StdModule::InternalChannel))) => {
                 let [sender, value] = args else { return self.arity_error(span, 2, args.len()) };
                 let sender = self.expr(cx, &sender.value, None);
@@ -13171,7 +13289,8 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalFuzz
                     | StdModule::InternalPanic
                     | StdModule::InternalTime
-                    | StdModule::InternalContext),
+                    | StdModule::InternalContext
+                    | StdModule::InternalFs),
                 )),
             ) => {
                 // `joined(values, separator)`: the elements' `Display`, with
@@ -13224,6 +13343,7 @@ impl<'a> Checker<'a> {
                     StdModule::InternalPanic => "panic",
                     StdModule::InternalTime => "time",
                     StdModule::InternalContext => "context",
+                    StdModule::InternalFs => "fs",
                     _ => "reflect",
                 };
                 let found =
@@ -13345,7 +13465,6 @@ impl<'a> Checker<'a> {
                     "writeBytes" => (F::WriteBytes, vec![("path", s), ("data", bytes)], failing(self, Ty::UNIT)),
                     "appendText" => (F::AppendText, vec![("path", s), ("text", s)], failing(self, Ty::UNIT)),
                     "exists" => (F::Exists, vec![("path", s)], Ty::BOOL),
-                    "metadata" => (F::Metadata, vec![("path", s)], failing(self, fs.metadata)),
                     "list" => (F::List, vec![("path", s)], failing(self, names)),
                     "createDirectory" => (F::CreateDirectory, vec![("path", s)], failing(self, Ty::UNIT)),
                     "rename" => (F::Rename, vec![("from", s), ("to", s)], failing(self, Ty::UNIT)),
@@ -13396,23 +13515,6 @@ impl<'a> Checker<'a> {
                     "unixTime" => (StdFn::TimeUnix, vec![], duration),
                     "utcNow" => (StdFn::TimeUtcNow, vec![], datetime),
                     "utc" => (StdFn::TimeUtc, vec![duration], datetime),
-                    // ISO 8601, written in Tondo (14.3.4).
-                    // The deadline of the task (11.17), written in Tondo.
-                    "deadline" | "remaining"
-                        if let Some(&ModuleName::Fn(id)) = self.names.get(&format!("datetime.{member}")) =>
-                    {
-                        let result = if *member == "deadline" { instant } else { duration };
-                        let result = self.types.intern(TyKind::Option(result));
-                        let signature = Signature::simple(Vec::new(), result);
-                        let target = CallTarget::new(Callee::Fn(id), signature, expected);
-                        return self.call_signature(cx, target, None, args, span);
-                    }
-                    "parseDateTime" if let Some(&ModuleName::Fn(id)) = self.names.get("datetime.parse") => {
-                        let result = self.types.intern(TyKind::Result(datetime, self.time_error.unwrap()));
-                        let signature = Signature::simple(vec![Ty::STRING], result);
-                        let target = CallTarget::new(Callee::Fn(id), signature, expected);
-                        return self.call_signature(cx, target, None, args, span);
-                    }
                     _ => {
                         let Some(factor) = Self::time_unit(member) else {
                             let message =
@@ -13504,6 +13606,7 @@ impl<'a> Checker<'a> {
         let CallTarget { callee, signature, explicit, prebound, expected } = target;
         if let Callee::Fn(id) = callee {
             self.repeatable(id, span);
+            self.check_time_literals(id, &signature, receiver.is_some() as usize, args);
         }
         let signature = &signature;
         if signature.is_unsafe && !cx.unsafe_region {

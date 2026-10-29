@@ -80,15 +80,21 @@ fn finish<T>(outcome: Outcome<T>, store: impl FnOnce(T)) -> i64 {
 // Whole files and directories
 // ---------------------------------------------------------------------------
 
-/// Writes through a temporary file in the same directory and a rename.
+/// Writes through a temporary file in the same directory and a rename: the
+/// file a link names, keeping the permissions of the one it replaces.
 fn write_atomically(path: &str, data: &[u8]) -> Outcome<()> {
-    let target = std::path::Path::new(path);
+    let real = std::fs::canonicalize(path).ok();
+    let target = real.as_deref().unwrap_or(std::path::Path::new(path));
+    let permissions = std::fs::metadata(target).ok().map(|m| m.permissions());
     let name = target.file_name().ok_or(FsError::InvalidName)?.to_string_lossy();
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
     let unique = format!(".{name}.tondo-{}-{}", std::process::id(), COUNTER.fetch_add(1, Ordering::Relaxed));
     let temporary = target.with_file_name(unique);
     let written = (|| {
         let mut file = std::fs::File::create(&temporary)?;
+        if let Some(permissions) = permissions {
+            file.set_permissions(permissions)?;
+        }
         file.write_all(data)?;
         file.flush()?;
         std::fs::rename(&temporary, target)
@@ -139,28 +145,6 @@ pub unsafe extern "C" fn tondo_rt_fs_append_text(path_text: *const Str, contents
 pub unsafe extern "C" fn tondo_rt_fs_exists(path_text: *const Str) -> u8 {
     let path = unsafe { path(path_text) };
     host(move || path.is_ok_and(|p| std::path::Path::new(&p).exists())) as u8
-}
-
-/// `metadata`: the kind (the `FileKind` index), size and read-only flag.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_fs_metadata(path_text: *const Str, out: *mut [i64; 3]) -> i64 {
-    let path = unsafe { path(path_text) };
-    let found = host(move || {
-        let metadata = io(std::fs::symlink_metadata(path?))?;
-        let kind = metadata.file_type();
-        let kind = if kind.is_file() {
-            0
-        } else if kind.is_dir() {
-            1
-        } else if kind.is_symlink() {
-            2
-        } else {
-            3
-        };
-        let size = i64::try_from(metadata.len()).map_err(|_| FsError::Host)?;
-        Ok([kind, size, metadata.permissions().readonly() as i64])
-    });
-    finish(found, |fields| unsafe { *out = fields })
 }
 
 /// `list`: the names of the entries, sorted by bytes.

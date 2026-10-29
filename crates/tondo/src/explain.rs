@@ -122,6 +122,11 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "invalid-embed",
         "`std.embed` gets a path that is not a literal, leaves the package or does not exist, a directory for a file or the other way round, or a file that is not UTF-8 for `text`.",
     ),
+    (
+        "E1905",
+        "invalid-time-pattern",
+        "A literal pattern of `std.time`'s `format` or parsing has a directive that does not exist, or one to parse reads no whole date; or a literal locale has no names.",
+    ),
     ("E2001", "test-node-outside-test-source", "A `suite` or `test` in a source that is not a test source."),
     ("E2002", "duplicate-test-node", "Two suites or tests have the same identity among their siblings."),
     (

@@ -534,6 +534,9 @@ pub enum TaskOp {
     CopySender,
     /// `isClosed()` of a sender or a receiver.
     IsClosed,
+    /// `std.internal.channel.abandoned(sender)`: whether no receiver of its
+    /// channel is left.
+    Abandoned,
     /// `receiver.receive(timeout: delay)`: `T?`
     ReceiveTimeout,
     /// `job.wait(timeout: delay)`: `T?`, cancelling the task when it is late.
@@ -833,7 +836,7 @@ pub enum StdFn {
     ConsoleSet(u8),
     /// An operation of `std.io` (standard library 10.3).
     Io(IoFn),
-    /// An operation of `std.env` (14.3.5).
+    /// An operation of `std.env` (14.3.6).
     Env(EnvFn),
     /// An operation of `std.process` (19.2).
     Process(ProcessFn),
@@ -1032,7 +1035,6 @@ pub enum FsFn {
     WriteBytes,
     AppendText,
     Exists,
-    Metadata,
     List,
     CreateDirectory,
     Rename,
@@ -1183,6 +1185,12 @@ pub const NATIVES: &[Native] = {
     const fn cbor(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "cbor", name, receiver: None, params, result, symbol }
     }
+    const fn time(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
+        Native { module: "time", name, receiver: None, params, result, symbol }
+    }
+    const fn fs(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
+        Native { module: "fs", name, receiver: None, params, result, symbol }
+    }
     const fn net(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "net", name, receiver: None, params, result, symbol }
     }
@@ -1289,6 +1297,30 @@ pub const NATIVES: &[Native] = {
         codec("urlDecode", &[String], String, "tondo_rt_url_decode"),
         codec("htmlEscape", &[String], String, "tondo_rt_html_escape"),
         codec("htmlUnescape", &[String], String, "tondo_rt_html_unescape"),
+        codec("gzip", &[Bytes, Int], Bytes, "tondo_rt_gzip"),
+        codec("zstd", &[Bytes], Bytes, "tondo_rt_zstd"),
+        codec("unpack", &[Bytes, Bool], Object, "tondo_rt_unpack"),
+        codec("unpacked", &[Object], Bytes, "tondo_rt_unpacked"),
+        codec("unpackFailed", &[Object], Bool, "tondo_rt_unpack_failed"),
+        codec("packWriter", &[IoWriter, Bool, Int], IoWriter, "tondo_rt_pack_writer"),
+        codec("unpackReader", &[IoReader, Bool], IoReader, "tondo_rt_unpack_reader"),
+        fs("clean", &[String], String, "tondo_rt_path_clean"),
+        fs("relative", &[String, String], String, "tondo_rt_path_relative"),
+        fs("matches", &[String, String], Bool, "tondo_rt_path_matches"),
+        fs("failure", &[Object], Int, "tondo_rt_files_failure"),
+        fs("texts", &[Object], Strings, "tondo_rt_files_texts"),
+        fs("numbers", &[Object], Ints, "tondo_rt_files_numbers"),
+        fs("stat", &[String], Object, "tondo_rt_files_stat"),
+        fs("walk", &[String], Object, "tondo_rt_files_walk"),
+        fs("glob", &[String], Object, "tondo_rt_files_glob"),
+        fs("temporary", &[Bool], Object, "tondo_rt_files_temporary"),
+        fs("setPermissions", &[String, Int], Object, "tondo_rt_files_set_permissions"),
+        fs("symlink", &[String, String], Object, "tondo_rt_files_symlink"),
+        fs("readSymlink", &[String], Object, "tondo_rt_files_read_symlink"),
+        fs("realPath", &[String], Object, "tondo_rt_files_real_path"),
+        fs("watch", &[Strings, Int], Object, "tondo_rt_files_watch"),
+        fs("watchNext", &[Object], Strings, "tondo_rt_files_watch_next"),
+        fs("watchStop", &[Object], Unit, "tondo_rt_files_watch_stop"),
         codec("digest", &[Int, Bytes, Bytes, Bool], Bytes, "tondo_rt_hash_digest"),
         codec("hasher", &[Int, Bytes, Bool], Object, "tondo_rt_hasher"),
         codec("hasherUpdate", &[Object, Bytes], Unit, "tondo_rt_hasher_update"),
@@ -1536,6 +1568,14 @@ pub const NATIVES: &[Native] = {
         panics("name", &[String], String, "tondo_rt_panic_name"),
         panics("restage", &[String, String, String], Unit, "tondo_rt_panic_restage"),
         panics("report", &[String, String, String, String], Unit, "tondo_rt_panic_report"),
+        time("zoneKnown", &[String], Bool, "tondo_rt_zone_known"),
+        time("zoneLocal", &[], String, "tondo_rt_zone_local"),
+        time("zoneOffset", &[String, Int], Int, "tondo_rt_zone_offset"),
+        time("zoneResolve", &[String, Ints], Int, "tondo_rt_zone_resolve"),
+        time("format", &[String, String, Ints, String], String, "tondo_rt_time_format"),
+        time("iso", &[String], Ints, "tondo_rt_time_iso"),
+        time("parse", &[String, String, String], Ints, "tondo_rt_time_parse"),
+        time("parseDuration", &[String], Ints, "tondo_rt_duration_parse"),
         // `std.internal.time`: how long the task has until its deadline
         // (11.17), in nanoseconds, or -1 without one.
         Native {

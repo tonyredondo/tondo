@@ -17,11 +17,13 @@ mod cbor;
 mod civil;
 mod clock;
 mod codec;
+mod compress;
 mod contexts;
 mod cycles;
 mod debugger;
 mod diagnostics;
 mod env;
+mod files;
 mod fs;
 mod fuzz;
 mod heap;
@@ -38,6 +40,7 @@ mod native;
 mod net;
 mod numbers;
 mod panics;
+mod pattern;
 mod poll;
 mod pprof;
 mod process;
@@ -61,6 +64,7 @@ mod time;
 mod toml;
 mod trace;
 mod yaml;
+mod zones;
 
 // ---------------------------------------------------------------------------
 // Strings
