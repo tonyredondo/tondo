@@ -780,6 +780,13 @@ pub unsafe extern "C" fn tondo_rt_io_read_text(stream: *mut StreamObject, out: *
     status(read, |text| unsafe { *out = str_new(text.as_bytes()) })
 }
 
+/// `Reader.readBytes()`: the rest, as bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_io_read_bytes(stream: *mut StreamObject, out: *mut *mut ArrayHeader) -> i64 {
+    let read = run(stream, |s| s.read_rest());
+    status(read, |bytes| unsafe { *out = byte_array(&bytes) })
+}
+
 /// `io.reader(text)`
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_io_reader(text: *const Str) -> *mut StreamObject {

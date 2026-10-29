@@ -74,6 +74,10 @@ struct Request {
     query: String,
     version: String,
     remote: String,
+    /// The host the request was for: `:authority`, or `Host`.
+    authority: String,
+    /// Whether it came over TLS.
+    secure: bool,
     headers: Vec<String>,
     body: Mutex<Option<Incoming>>,
     reply: Mutex<Option<oneshot::Sender<hyper::Response<Body>>>>,
@@ -90,6 +94,8 @@ impl Request {
             query: String::new(),
             version: String::new(),
             remote: String::new(),
+            authority: String::new(),
+            secure: false,
             headers: Vec::new(),
             body: Mutex::new(None),
             reply: Mutex::new(None),
@@ -255,8 +261,10 @@ async fn accept(
             _ = stopped.changed() => return,
         };
         let (sender, tls) = (sender.clone(), tls.clone());
+        let secure = tls.is_some();
         tokio::spawn(async move {
-            let service = hyper::service::service_fn(move |request| handle(request, sender.clone(), remote.clone()));
+            let service =
+                hyper::service::service_fn(move |request| handle(request, sender.clone(), remote.clone(), secure));
             let builder = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
             match tls {
                 Some(acceptor) => {
@@ -276,6 +284,7 @@ async fn handle(
     mut request: hyper::Request<Incoming>,
     sender: mpsc::Sender<Request>,
     remote: String,
+    secure: bool,
 ) -> Result<hyper::Response<Body>, Infallible> {
     super::diagnostics::HTTP_SERVER_REQUESTS.add(1);
     let _active = super::diagnostics::Open::new(&super::diagnostics::HTTP_SERVER_ACTIVE);
@@ -285,6 +294,13 @@ async fn handle(
         .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"websocket"));
     let upgrade = websocket.then(|| hyper::upgrade::on(&mut request));
     let (parts, body) = request.into_parts();
+    let authority = match parts.uri.authority() {
+        Some(authority) => authority.to_string(),
+        None => parts
+            .headers
+            .get(hyper::header::HOST)
+            .map_or(String::new(), |h| String::from_utf8_lossy(h.as_bytes()).into_owned()),
+    };
     let headers = parts
         .headers
         .iter()
@@ -299,6 +315,8 @@ async fn handle(
         query: parts.uri.query().unwrap_or_default().to_string(),
         version: format!("{:?}", parts.version),
         remote,
+        authority,
+        secure,
         headers,
         body: Mutex::new(Some(body)),
         reply: Mutex::new(Some(reply)),
@@ -356,7 +374,9 @@ pub extern "C" fn tondo_rt_http_request_open(object: *mut NativeObject) -> u8 {
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_request_head(object: *mut NativeObject) -> *mut Str {
     let r = request(object);
-    str_new(format!("{}\t{}\t{}\t{}\t{}", r.method, r.path, r.query, r.version, r.remote).as_bytes())
+    let secure = r.secure as u8;
+    let head = format!("{}\t{}\t{}\t{}\t{}\t{}\t{secure}", r.method, r.path, r.query, r.version, r.remote, r.authority);
+    str_new(head.as_bytes())
 }
 
 #[unsafe(no_mangle)]

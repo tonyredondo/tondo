@@ -14,6 +14,7 @@ import std.net as __net
 import std.panics as __panics
 import std.serialization as __serialization
 import std.time as __time
+import std.url as __url
 
 /// Why a request has no response a program can use.
 pub enum HttpError {
@@ -473,6 +474,19 @@ pub type Client = {
     priv base: String
     priv defaults: Map[String, String]
     priv limit: __time.Duration?
+    priv hooks: Array[
+        fn(ClientRequest, fn(ClientRequest): Response ! HttpError): Response ! HttpError,
+    ]
+}
+
+/// A request a client sends, as its hooks see it (`Client.use`): its
+/// method, its final URL, with the client's base and the query, its
+/// headers, the client's and its own, and its body.
+pub type ClientRequest = {
+    method: String
+    url: String
+    headers: Map[String, String]
+    body: Body?
 }
 
 /// A client that keeps its connections for later requests: `baseUrl` goes
@@ -505,7 +519,7 @@ pub fn Client.new(
         socket.unwrapOr(""),
         cookies,
     )
-    Client { native: connection, base: baseUrl, defaults: headers, limit: timeout }
+    Client { native: connection, base: baseUrl, defaults: headers, limit: timeout, hooks: [] }
 }
 
 /// Sends a `GET`; a status of 400 or more is `HttpError.Status`, with the
@@ -593,22 +607,66 @@ pub fn Client.request(
     for (name, value) in headers {
         all[name] = value
     }
-    var pairs: Array[String] = []
-    for (name, value) in all {
-        pairs.push(name)
-        pairs.push(value)
-    }
     let limit = match timeout.orElse(self.limit) {
         some(limit) => limit.milliseconds()
         none => 0
     }
-    let target = withQuery(joined(self.base, url), query)
-    let sent = httpNative.send(self.native, method, target, pairs, native(body)?, limit)
+    let connection = self.native
+    var outgoing: fn(ClientRequest): Response ! HttpError = (request) {
+        deliver(connection, request, limit)?
+    }
+    for hook in self.hooks.reversed() {
+        outgoing = hooked(hook, outgoing)
+    }
+    outgoing(
+        ClientRequest {
+            method: method
+            url: withQuery(joined(self.base, url), query)
+            headers: all
+            body: body
+        },
+    )?
+}
+
+/// Adds a hook around each request of the client, as middleware is around
+/// a server's routes: it gets the request and `next`, which sends it, and
+/// may change it, time it, see its response or error, or answer without
+/// sending it. The first added is the outermost; redirects happen inside
+/// `next`.
+pub fn Client.use(
+    mut self,
+    hook: fn(ClientRequest, fn(ClientRequest): Response ! HttpError): Response ! HttpError,
+) {
+    self.hooks.push(hook)
+}
+
+fn hooked(
+    hook: fn(ClientRequest, fn(ClientRequest): Response ! HttpError): Response ! HttpError,
+    next: fn(ClientRequest): Response ! HttpError,
+): fn(ClientRequest): Response ! HttpError {
+    (request) { hook(request, next)? }
+}
+
+/// Sends a request, with a limit in milliseconds, or 0 for none.
+fn deliver(connection: httpNative.Native, request: ClientRequest, limit: Int): Response ! HttpError {
+    var pairs: Array[String] = []
+    for (name, value) in request.headers {
+        pairs.push(name)
+        pairs.push(value)
+    }
+    let sent = httpNative.send(
+        connection,
+        request.method,
+        request.url,
+        pairs,
+        native(request.body)?,
+        limit,
+    )
     failed(sent)?
     let parts = httpNative.head(sent).split("\t")
     let response = Response {
         native: sent
-        verb: method
+        verb: request.method
         code: httpNative.status(sent)
         phrase: parts[0]
         finalUrl: parts[1]
@@ -949,9 +1007,13 @@ pub type Request = {
     priv native: httpNative.Native
     priv verb: String
     priv target: String
-    priv rawQuery: String
+    priv queryText: String
     priv protocol: String
     priv peer: String
+    /// The host it was for, from `:authority` or `Host`, and whether it came
+    /// over TLS.
+    priv authority: String
+    priv secure: Bool
     priv headerList: Array[String]
     priv params: Map[String, String]
     /// The route that answers it, chosen before the middleware runs, and
@@ -979,6 +1041,57 @@ pub fn Request.route(self): String? {
 /// The path, without the query.
 pub fn Request.path(self): String {
     self.target
+}
+
+/// The query as it arrived, without `?` and not decoded.
+pub fn Request.rawQuery(self): String {
+    self.queryText
+}
+
+/// The host the request was for, with its port if it gave one: `Host`, or
+/// `:authority` in HTTP/2. Behind a proxy of a network the app trusts
+/// (`App.trustProxies`), the one `X-Forwarded-Host` gives.
+pub fn Request.host(self): String {
+    match self.forwarded("x-forwarded-host") {
+        some(host) => host
+        none => self.authority
+    }
+}
+
+/// `https` when the server listens with TLS, and `http` if not. Behind a
+/// proxy of a network the app trusts, the one `X-Forwarded-Proto` gives.
+pub fn Request.scheme(self): String {
+    match self.forwarded("x-forwarded-proto") {
+        some(scheme) => scheme.toLower()
+        none => if self.secure { "https" } else { "http" }
+    }
+}
+
+/// The URL the request was for: its scheme, host, path and query.
+pub fn Request.url(self): __url.Url {
+    let query = if self.queryText.isEmpty() { "" } else { "?{self.queryText}" }
+    match __url.parse("{self.scheme()}://{self.host()}{self.target}{query}") {
+        ok(whole) => whole
+        // A host no URL can hold: the path and the query alone.
+        err(_) => match __url.parse("{self.target}{query}") {
+            ok(part) => part
+            err(_) => match __url.parse("/") {
+                ok(root) => root
+                err(_) => panic("`/` is a URL")
+            }
+        }
+    }
+}
+
+/// The first value of a header a trusted proxy wrote, or `none`.
+fn Request.forwarded(self, name: String): String? {
+    if not trusts(self.trusted, hostOf(self.peer)) {
+        return none
+    }
+    self
+        .header(name)
+        .map((value) { value.split(",")[0].trim() })
+        .filter((value) { not value.isEmpty() })
 }
 
 /// The protocol: `HTTP/1.1` or `HTTP/2`.
@@ -1098,7 +1211,7 @@ pub fn Request.query(self, name: String): String? {
 /// Every value of a query parameter, decoded.
 pub fn Request.queryValues(self, name: String): Array[String] {
     var values: Array[String] = []
-    for pair in self.rawQuery.split("&") {
+    for pair in self.queryText.split("&") {
         let equals = pair.find("=").unwrapOr(pair.length())
         let key = formDecoded(pair.slice(0, equals).unwrapOr(""))
         if key == name {
@@ -1913,9 +2026,11 @@ fn answer(incoming: httpNative.Native, handler: fn(Request): Reply ! Problem) {
         native: incoming
         verb: fields[0]
         target: fields[1]
-        rawQuery: fields[2]
+        queryText: fields[2]
         protocol: fields[3]
         peer: fields[4]
+        authority: fields[5]
+        secure: fields[6] == "1"
         headerList: httpNative.requestHeaders(incoming)
         params: [:]
         chosen: none

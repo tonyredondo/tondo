@@ -624,6 +624,7 @@ impl Rt {
                 IoFn::ReadLine => ("tondo_rt_io_read_line", &[I64, I64], &[I64]),
                 IoFn::Read => ("tondo_rt_io_read", &[I64, I64, I64], &[I64]),
                 IoFn::ReadText => ("tondo_rt_io_read_text", &[I64, I64], &[I64]),
+                IoFn::ReadBytes => ("tondo_rt_io_read_bytes", &[I64, I64], &[I64]),
                 IoFn::Reader => ("tondo_rt_io_reader", &[I64], &[I64]),
                 IoFn::Discard => ("tondo_rt_io_discard", &[], &[I64]),
                 IoFn::BufferNew => ("tondo_rt_io_buffer_new", &[], &[I64]),

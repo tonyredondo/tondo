@@ -302,7 +302,8 @@ pub unsafe extern "C" fn tondo_rt_pack_writer(to: *mut StreamObject, zstd: u8, c
         0 => Packer::Gzip(GzEncoder::new(Vec::new(), level(compression))),
         _ => Packer::Zstd { pending: Vec::new(), frames: false },
     };
-    stream(Box::new(Packing { inner: Inner(retain(to)), packer: Some(packer) }), Mode::Inline, false)
+    // It may wait on `to` for as long as it takes, as on a pipe.
+    stream(Box::new(Packing { inner: Inner(retain(to)), packer: Some(packer) }), Mode::Long, false)
 }
 
 /// `gzip.reader` (`zstd` 0) or `zstd.reader` (1).
@@ -313,5 +314,5 @@ pub unsafe extern "C" fn tondo_rt_unpack_reader(from: *mut StreamObject, zstd: u
         0 => Unpacking::Gzip(MultiGzDecoder::new(source)),
         _ => Unpacking::Zstd(Some(ZstdFrames::Between(Ahead { source, peeked: None })), false),
     };
-    stream(Box::new(host), Mode::Inline, false)
+    stream(Box::new(host), Mode::Long, false)
 }

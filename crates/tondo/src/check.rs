@@ -1643,6 +1643,7 @@ impl<'a> Checker<'a> {
             StdModule::Time => "time",
             StdModule::Fs => "fs",
             StdModule::Path => "path",
+            StdModule::Io => "io",
             _ => return &[],
         })
     }
@@ -6687,6 +6688,7 @@ impl<'a> Checker<'a> {
                 (I::Read, vec![Ty::INT], failing(self, chunk))
             }
             (Handle::Reader, "readText") => (I::ReadText, vec![], failing(self, Ty::STRING)),
+            (Handle::Reader, "readBytes") => (I::ReadBytes, vec![], failing(self, bytes)),
             (Handle::Buffer, "writer") => (I::BufferWriter, vec![], self.types.handle(Handle::Writer, Ty::UNIT)),
             (Handle::Buffer, "reader") => (I::BufferReader, vec![], self.types.handle(Handle::Reader, Ty::UNIT)),
             (Handle::Buffer, "text") => (I::BufferText, vec![], failing(self, Ty::STRING)),

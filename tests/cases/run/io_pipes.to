@@ -1,0 +1,41 @@
+// io.pipe joins a writer and a reader across tasks, with a capacity; io.copy
+// and io.multiWriter move what a stream holds; readBytes reads the rest.
+
+import std.console
+import std.io
+
+fn produce(out: io.Writer) {
+    for index in 0..5 {
+        _ = out.writeLine("line {index}")
+    }
+    _ = out.close()
+}
+
+fn main(): !io.IoError {
+    let (out, input) = io.pipe(capacity: 8)
+    spawn detached produce(out)
+    let (first, second) = (io.Buffer(), io.Buffer())
+    let copied = io.copy(input, io.multiWriter(first.writer(), second.writer()))?
+    console.println("copied {copied}, same {first.bytes() == second.bytes()}")
+    console.print(first.text()?)
+    console.println("{io.reader("bytes").readBytes()?}")
+    let (sink, source) = io.pipe()
+    _ = source.close()
+    match sink.write("nobody") {
+        ok(_) => console.println("unexpected")
+        err(error) => console.println("closed reader: {error}")
+    }
+    let empty = io.multiWriter()
+    empty.write("nothing")?
+    console.println("empty ok")
+}
+
+// expect-stdout: copied 35, same true
+// expect-stdout: line 0
+// expect-stdout: line 1
+// expect-stdout: line 2
+// expect-stdout: line 3
+// expect-stdout: line 4
+// expect-stdout: [98, 121, 116, 101, 115]
+// expect-stdout: closed reader: closed
+// expect-stdout: empty ok

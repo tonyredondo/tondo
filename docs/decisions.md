@@ -3082,3 +3082,16 @@ the receiver is left. What a send does then is chosen when the channel is
 made, since a program may want either: by default it keeps the value or
 waits, as before, and `discardWhenAbandoned: true` drops it at once, a send
 that was waiting for room included.
+
+## 2026-10-29 — Streams across tasks, hooks around requests
+
+The fourth lot, for Gin and dd-trace. A stream the program writes is a task
+that reads a pipe: the runtime calls the program's code only when a task
+starts or a `defer` runs, never in the middle of a write, and a writer made
+of functions run by a task behind it would report a function's error in a
+later write, which would mislead. `io.pipe` writes at once, with no buffer
+but its capacity, so a reply streamed through it reaches the client as it is
+written. A request's host and scheme believe `X-Forwarded-Host` and
+`X-Forwarded-Proto` only from the proxies an app trusts, as `clientIp` does.
+A client's hooks have the shape of a server's middleware, one function
+around `next`, so a tracer times a call and sees its error where it is.

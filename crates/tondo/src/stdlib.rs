@@ -41,6 +41,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("zoned", include_str!("../std/zoned.to")),
     ("timetext", include_str!("../std/timetext.to")),
     ("files", include_str!("../std/files.to")),
+    ("streams", include_str!("../std/streams.to")),
     ("paths", include_str!("../std/paths.to")),
     ("gzip", include_str!("../std/gzip.to")),
     ("zstd", include_str!("../std/zstd.to")),
@@ -51,7 +52,7 @@ const SOURCES: &[(&str, &str)] = &[
 /// and the modules that have it: their `pub` functions and types are the
 /// module's own. An import of the module brings them all.
 pub(crate) const COMPANIONS: &[(&str, &[&str])] =
-    &[("time", &["datetime", "zoned"]), ("fs", &["files"]), ("path", &["paths"])];
+    &[("time", &["datetime", "zoned"]), ("fs", &["files"]), ("path", &["paths"]), ("io", &["streams"])];
 
 /// The module a companion completes: `time` for `datetime`.
 pub(crate) fn completed(companion: &str) -> Option<&'static str> {

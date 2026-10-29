@@ -1,0 +1,41 @@
+// The parts of std.io (standard library 10.3) written in Tondo, which a
+// program that imports std.io links with: pipes, copies and writers to
+// several streams.
+
+import std.internal.codec as codecNative
+import std.io as __io
+
+/// A writer and a reader joined: what a task writes to one, another reads
+/// from the other, in order and as soon as it is written. A write waits
+/// while `capacity` bytes are unread; a read waits for bytes, and ends once
+/// the writer is closed. Once the reader is closed, writes fail as `Closed`.
+pub fn pipe(capacity: Int = 65536): (__io.Writer, __io.Reader) {
+    let ends = codecNative.pipe(capacity)
+    (codecNative.pipeWriter(ends), codecNative.pipeReader(ends))
+}
+
+/// Writes to `to` what `from` holds, to its end, and gives how many bytes
+/// it copied; it closes neither.
+pub fn copy(from: __io.Reader, to: __io.Writer): Int ! __io.IoError {
+    var total = 0
+    for {
+        match from.read(65536)? {
+            some(chunk) => {
+                to.writeBytes(chunk)?
+                total += chunk.length()
+            }
+            none => return total
+        }
+    }
+}
+
+/// A writer that writes to every one of `writers`, in their order: a write
+/// fails with the first of their errors. `flush` flushes them all, and
+/// `close` lets go of them, which close with their last copies.
+pub fn multiWriter(writers: ...__io.Writer): __io.Writer {
+    var joined = __io.discard()
+    for writer in writers.reversed() {
+        joined = codecNative.tee(writer, joined)
+    }
+    joined
+}

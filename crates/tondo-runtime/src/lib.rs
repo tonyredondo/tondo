@@ -40,6 +40,7 @@ mod native;
 mod net;
 mod numbers;
 mod panics;
+mod pipes;
 mod poll;
 mod pprof;
 mod process;

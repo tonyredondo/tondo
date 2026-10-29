@@ -7,7 +7,7 @@ prelude`).
 
 ```text
 std.console    print, println, eprintln, readLine, the streams
-std.io         Writer, Reader, Buffer: streams for files, processes, memory
+std.io         Writer, Reader, Buffer, pipe, copy, multiWriter: streams of all kinds
 std.fs         read and write files, walk, glob, watch, metadata, links, temporaries
 std.embed      files of the package kept in the executable, read when it compiles
 std.path       join, parent, fileName, extension, clean, relative, glob patterns

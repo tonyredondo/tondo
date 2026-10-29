@@ -992,6 +992,7 @@ pub enum IoFn {
     ReadLine,
     Read,
     ReadText,
+    ReadBytes,
     /// `io.reader(text)`
     Reader,
     /// `io.discard()`
@@ -1020,6 +1021,7 @@ impl IoFn {
                 | IoFn::ReadLine
                 | IoFn::Read
                 | IoFn::ReadText
+                | IoFn::ReadBytes
                 | IoFn::BufferText
         )
     }
@@ -1068,7 +1070,7 @@ impl StdFn {
                 | StdFn::ClockSettle
                 | StdFn::ClockAdvance
                 | StdFn::ConsoleReadLine
-                | StdFn::Io(IoFn::ReadLine | IoFn::Read | IoFn::ReadText)
+                | StdFn::Io(IoFn::ReadLine | IoFn::Read | IoFn::ReadText | IoFn::ReadBytes)
         )
     }
 
@@ -1296,6 +1298,10 @@ pub const NATIVES: &[Native] = {
         codec("urlDecode", &[String], String, "tondo_rt_url_decode"),
         codec("htmlEscape", &[String], String, "tondo_rt_html_escape"),
         codec("htmlUnescape", &[String], String, "tondo_rt_html_unescape"),
+        codec("pipe", &[Int], Object, "tondo_rt_pipe"),
+        codec("pipeWriter", &[Object], IoWriter, "tondo_rt_pipe_writer"),
+        codec("pipeReader", &[Object], IoReader, "tondo_rt_pipe_reader"),
+        codec("tee", &[IoWriter, IoWriter], IoWriter, "tondo_rt_tee"),
         codec("gzip", &[Bytes, Int], Bytes, "tondo_rt_gzip"),
         codec("zstd", &[Bytes], Bytes, "tondo_rt_zstd"),
         codec("unpack", &[Bytes, Bool], Object, "tondo_rt_unpack"),

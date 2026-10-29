@@ -1,0 +1,112 @@
+// Lot 4: the URL a request was for, behind a trusted proxy too; a reply
+// written while it is sent, through a pipe; and hooks around a client's
+// requests.
+
+import std.console
+import std.http
+import std.io
+import std.net
+
+fn count(out: io.Writer) {
+    for index in 1..4 {
+        _ = out.writeLine("part {index}")
+    }
+    _ = out.close()
+}
+
+fn main(): !(http.HttpError | net.NetError | io.IoError) {
+    var app = http.App.new()
+    app.get(
+        "/where",
+        (request) {
+            let url = request.url()
+            http.Reply.text(
+                "{request.scheme()} {request.host().startsWith("127.0.0.1:")} {request.rawQuery()} {url.path} {url.param("q")}",
+            )
+        },
+    )
+    app.get(
+        "/parts",
+        (_) {
+            let (out, body) = io.pipe()
+            spawn detached count(out)
+            http.Reply.stream(body, contentType: "text/plain")
+        },
+    )
+    app.get(
+        "/missing",
+        (_) {
+            fail http.Problem.notFound()
+        },
+    )
+    let server = app.start()?
+    let plain = http.Client.new(baseUrl: server.url())
+    console.println(plain.get("/where?q=a%20b&x=1")?.text()?)
+    console.println(plain.get("/where", headers: ["X-Forwarded-Proto": "https"])?.text()?)
+    console.println(plain.get("/parts")?.text()?.trimEnd())
+
+    // Hooks: the first added is the outermost, so the one added after it
+    // sees the header it adds.
+    var hooked = http.Client.new(baseUrl: server.url())
+    hooked.use(
+        (request, next) {
+            var headers = request.headers
+            headers["x-trace"] = "abc"
+            next(request with { headers: headers })?
+        },
+    )
+    hooked.use(
+        (request, next) {
+            let outcome = next(request)
+            let status = match outcome {
+                ok(response) => "{response.status()}"
+                err(http.HttpError.Status(response)) => "{response.status()}"
+                err(_) => "failed"
+            }
+            console.println(
+                "{request.method} {request.url.removePrefix(server.url())} {request.headers.get("x-trace")} -> {status}",
+            )
+            outcome?
+        },
+    )
+    // A hook that answers without sending.
+    var offline = http.Client.new(baseUrl: server.url())
+    offline.use(
+        (request, _) {
+            fail http.HttpError.Connect("offline: {request.method}")
+        },
+    )
+    match offline.get("/where") {
+        ok(_) => console.println("unexpected")
+        err(error) => console.println("{error}")
+    }
+    console.println(hooked.get("/where", query: ["q": "hooked"])?.text()?)
+    match hooked.get("/missing") {
+        ok(_) => console.println("unexpected")
+        err(http.HttpError.Status(response)) => console.println("missing: {response}")
+        err(_) => console.println("unexpected")
+    }
+    server.stop()
+
+    // Behind a trusted proxy, its headers name the host and the scheme.
+    var proxied = http.App.new()
+    proxied.trustProxies(net.network("127.0.0.0/8")?)
+    proxied.get("/where", (request) { http.Reply.text("{request.url()}") })
+    let behind = proxied.start()?
+    let client = http.Client.new(baseUrl: behind.url())
+    let forwarded = ["X-Forwarded-Proto": "https", "X-Forwarded-Host": "example.com, proxy.local"]
+    console.println(client.get("/where?page=2", headers: forwarded)?.text()?)
+    behind.stop()
+}
+
+// expect-stdout: http true q=a%20b&x=1 /where some(a b)
+// expect-stdout: http true  /where none
+// expect-stdout: part 1
+// expect-stdout: part 2
+// expect-stdout: part 3
+// expect-stdout: cannot connect: offline: GET
+// expect-stdout: GET /where?q=hooked some(abc) -> 200
+// expect-stdout: http true q=hooked /where some(hooked)
+// expect-stdout: GET /missing some(abc) -> 404
+// expect-stdout: missing: 404 Not Found
+// expect-stdout: https://example.com/where?page=2

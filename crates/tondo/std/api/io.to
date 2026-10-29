@@ -47,6 +47,9 @@ pub fn Reader.read(self, max: Int): Array[Byte]? ! IoError
 /// The rest, as UTF-8 text.
 pub fn Reader.readText(self): String ! IoError
 
+/// The rest, as bytes.
+pub fn Reader.readBytes(self): Array[Byte] ! IoError
+
 /// Closes the stream now; it also closes when its last copy goes. A stream
 /// that reads another, as `gzip.reader(from)`, lets go of `from`, which
 /// closes with its last copy.

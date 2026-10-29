@@ -931,6 +931,10 @@ for {
         none => break,
     }
 }
+
+let (sink, source) = io.pipe()                  // lo que una tarea escribe, otra lo lee
+spawn detached report(sink)
+let copied = io.copy(source, io.multiWriter(file.writer(), console.stdout()))?
 ~~~
 
 La superficie es:
@@ -950,6 +954,7 @@ pub fn Writer.close(self): Unit ! IoError
 pub fn Reader.readLine(self): String? ! IoError
 pub fn Reader.read(self, max: Int): Array[Byte]? ! IoError
 pub fn Reader.readText(self): String ! IoError
+pub fn Reader.readBytes(self): Array[Byte] ! IoError
 pub fn Reader.close(self): Unit ! IoError
 
 pub fn Buffer(): Buffer
@@ -962,11 +967,14 @@ pub fn Buffer.clear(self)
 
 pub fn reader(text: String): Reader
 pub fn discard(): Writer
+pub fn pipe(capacity: Int = 65536): (Writer, Reader)
+pub fn copy(from: Reader, to: Writer): Int ! IoError
+pub fn multiWriter(writers: ...Writer): Writer
 ~~~
 
 - `readLine` devuelve la siguiente línea sin su `\n` ni `\r\n`, o `none` al
   final; `read(max)` devuelve hasta `max` bytes, o `none` al final; `readText`
-  lee el resto. Las operaciones de texto validan UTF-8 y devuelven
+  lee el resto como texto y `readBytes` como bytes. Las operaciones de texto validan UTF-8 y devuelven
   `InvalidData`, como un stream comprimido (14.29) cuyos datos no son de su
   formato.
 - Un `Writer` de archivo acumula lo escrito y lo entrega al host al llenarse,
@@ -978,6 +986,21 @@ pub fn discard(): Writer
   `reader()` lee lo que contiene en ese momento, y `text()`, `bytes()`,
   `length()` y `clear()` lo observan o vacían. `io.reader(text)` lee un texto
   fijo y `io.discard()` acepta todo sin guardarlo.
+- `io.pipe()` une un `Writer` y un `Reader`: lo que una tarea escribe en uno,
+  otra lo lee del otro, en orden y en cuanto se escribe, sin `flush`. Una
+  escritura espera mientras hay `capacity` bytes sin leer; una lectura espera
+  a que lleguen, y llega al final cuando el writer se cierra o desaparece su
+  última copia. Si es el reader el que se cierra antes, las escrituras dan
+  `Closed`. Así una tarea produce lo que otra consume, como el cuerpo de una
+  respuesta que se envía mientras se genera (14.24.1).
+- `io.copy(from, to)` escribe en `to` lo que lee de `from` hasta su final y
+  devuelve cuántos bytes copió, sin cerrar ninguno de los dos.
+- `io.multiWriter(writers)` es un writer que escribe en todos, en su orden:
+  una escritura falla con el primer error de uno de ellos. `flush` los vacía a
+  todos y `close` los suelta, como cualquier stream que escribe en otro.
+- Un stream escrito con funciones del programa es una tarea que lee de un
+  `pipe` y hace lo que quiera con lo que lee: el runtime no llama a código del
+  programa en medio de una escritura.
 - Los archivos (10.5), la consola (19.1) y los procesos (19.2) ofrecen sus
   streams como `Writer` y `Reader`, y `std.gzip` y `std.zstd` (14.29) los
   comprimen.
@@ -4021,6 +4044,13 @@ pub fn Client.post(self, url: String, body: Body? = none, query: Map[String, Str
 pub fn Client.put(...)                        // como post
 pub fn Client.patch(...)                      // como post
 pub fn Client.request(self, method: String, url: String, body: Body? = none, ...): Response ! HttpError
+pub fn Client.use(mut self, hook: fn(ClientRequest, fn(ClientRequest): Response ! HttpError): Response ! HttpError)
+pub type ClientRequest = {
+    method: String
+    url: String
+    headers: Map[String, String]
+    body: Body?
+}
 pub fn get(url: String, ...): Response ! HttpError   // y head, delete, post, put, patch
 
 pub type Body
@@ -4076,6 +4106,27 @@ pub fn WebSocket.close(self): Unit ! HttpError
   `socket`, cada petición va por ese socket Unix (14.4.6) en vez de por la red,
   y la URL solo da el path y la cabecera `Host`:
   `http.Client.new(baseUrl: "http://agent", socket: "/var/run/datadog/apm.socket")`.
+- `Client.use` añade un hook que rodea cada petición del cliente, como el
+  middleware de un servidor rodea sus rutas: recibe la petición, con su
+  método, su URL final, con la base y la query, sus cabeceras, las del cliente
+  y las suyas, y su cuerpo, y `next`, que la envía. Puede cambiarla
+  (`next(request with { headers: ... })`), medir lo que tarda, ver su
+  respuesta o su error, o responder sin enviarla. El primero añadido es el
+  exterior. Las redirecciones ocurren dentro de `next`, y un estado de 400 o
+  más llega como `HttpError.Status`. Es lo que necesita un tracer para
+  propagar su contexto y anotar cada llamada:
+
+  ```tondo
+  var client = http.Client.new(baseUrl: "https://api.example.com")
+  client.use((request, next) {
+      let started = time.now()
+      var headers = request.headers
+      headers["traceparent"] = span.header()
+      let outcome = next(request with { headers: headers })
+      span.finish(request.method, started.elapsed())
+      outcome?
+  })
+  ```
 - Con `cookies`, el cliente guarda las cookies que le dan las respuestas y las
   envía con las peticiones siguientes, como un navegador: a su dominio y su
   path, mientras no caducan, y las `Secure` solo por HTTPS. `Response.cookie` y
@@ -4172,6 +4223,10 @@ pub fn Problem.from[E: Display](error: E): Problem          // 500
 pub type Request
 pub fn Request.method(self): String
 pub fn Request.path(self): String
+pub fn Request.rawQuery(self): String
+pub fn Request.host(self): String
+pub fn Request.scheme(self): String
+pub fn Request.url(self): url.Url
 pub fn Request.route(self): String?
 pub fn Request.version(self): String
 pub fn Request.remoteAddress(self): String
@@ -4252,6 +4307,25 @@ pub alias Tls = net.Tls
   parámetro como el path.
 - Con `socket`, `listen` y `start` atienden en ese socket Unix (14.4.6) en vez
   de en un puerto, y `Server.address()` es su path.
+- `Request.rawQuery()` es la query como llegó, sin `?` ni decodificar.
+  `host()` es el host al que se dirigió la petición, con su puerto si lo
+  escribió: la cabecera `Host`, o `:authority` en HTTP/2. `scheme()` es
+  `https` si el servidor escucha con TLS y `http` si no. Tras un proxy de una
+  red de confianza (`App.trustProxies`), `X-Forwarded-Host` y
+  `X-Forwarded-Proto` dan el host y el esquema que vio el cliente; sin
+  `trustProxies` no se cree a esas cabeceras. `url()` reúne las cuatro partes
+  en un `url.Url` (14.28), con el path decodificado.
+- `Reply.stream` envía lo que lee de un `io.Reader` mientras lo lee, por
+  chunks. Con un `io.pipe` (10.3), el handler devuelve el reader y una tarea
+  escribe la respuesta mientras se envía:
+
+  ```tondo
+  app.get("/progress", (request) {
+      let (out, body) = io.pipe()
+      spawn detached work(out)                  // escribe y cierra al terminar
+      http.Reply.stream(body, contentType: "text/plain")
+  })
+  ```
 - `Request.clientIp()` es la dirección IP del cliente, sin puerto. Tras un
   proxy o un balanceador, la conexión llega de él, y la dirección del cliente
   viene en `X-Forwarded-For`, que cualquier cliente puede escribir. Por eso

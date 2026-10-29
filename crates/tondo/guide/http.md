@@ -45,6 +45,10 @@ fn main(): !http.HttpError {
 
 - A response's body is read once: keep what `text()` gives to read it
   again, as `text.lines()`.
+- `client.use((request, next) { ... next(request)? })` wraps each request
+  of the client, as middleware wraps routes: change its `headers` with
+  `request with { headers: ... }`, time it, see the response or error of
+  `next`, or answer without sending. The first added is the outermost.
 - `text()` and `lines()` read the `charset` of the content type: UTF-8, or
   Windows-1252 for it and for Latin-1 and ASCII, as browsers do. Another
   charset is an error that says to read the bytes with `bytes()`.
@@ -116,6 +120,11 @@ fn find(id: Int): User? {
   `app.trustProxies(net.network("10.0.0.0/8")?)` names its network, so the
   address it writes in `X-Forwarded-For` is believed; without it, no header
   is, since any client can write one.
+- `request.url()` is the URL the request was for, from `scheme()`,
+  `host()`, the path and `rawQuery()`; behind a trusted proxy,
+  `X-Forwarded-Proto` and `X-Forwarded-Host` give them.
+- A reply written while it is sent: `let (out, body) = io.pipe()`, a task
+  that writes to `out` and closes it, and `http.Reply.stream(body)`.
 - `request.route()` is the template of the route that answers, as
   `/hello/:name`, which middleware sees before `next`: name metrics and
   traces by it, not by the path, which grows with every parameter.
