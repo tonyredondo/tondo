@@ -1,12 +1,10 @@
-//! The rest of `std.path` and `std.fs`, which `std/paths.to` and
-//! `std/files.to` are written on (standard library 10.4, 10.5): paths made
-//! clean or relative, glob patterns, walks, temporary entries, permissions,
-//! links and watching. Each operation of the filesystem runs on a thread of
-//! its own while the task waits, and gives a `Done`: its texts and numbers,
-//! or the code of its `FsError`.
+//! The rest of `std.fs`, which `std/files.to` is written on (standard
+//! library 10.5): walks, temporary entries, permissions, links and watching.
+//! Each operation runs on a thread of its own while the task waits, and
+//! gives a `Done`: its texts and numbers, or the code of its `FsError`.
 
 use super::native::{self, NativeObject};
-use super::{ArrayHeader, Str, str_bytes, str_new};
+use super::{ArrayHeader, Str, str_bytes};
 use crate::http::{string_array, strings};
 use std::collections::{BTreeMap, HashSet};
 use std::io::ErrorKind;
@@ -26,12 +24,8 @@ fn ints(values: &[i64]) -> *mut ArrayHeader {
     array
 }
 
-// ---------------------------------------------------------------------------
-// Paths
-// ---------------------------------------------------------------------------
-
-/// The shortest path that names the same lexically, as Go's `path.Clean`.
-pub(crate) fn clean(path: &str) -> String {
+/// The shortest path that names the same lexically, as `path.clean`.
+fn clean(path: &str) -> String {
     let rooted = path.starts_with('/');
     let mut parts: Vec<&str> = Vec::new();
     for part in path.split('/') {
@@ -53,211 +47,6 @@ pub(crate) fn clean(path: &str) -> String {
         (false, true) => ".".into(),
         (false, false) => joined,
     }
-}
-
-/// The path from `from` to `to`, as Go's `filepath.Rel`.
-fn relative(from: &str, to: &str) -> Option<String> {
-    let (from, to) = (clean(from), clean(to));
-    if from == to {
-        return Some(".".into());
-    }
-    if from.starts_with('/') != to.starts_with('/') {
-        return None;
-    }
-    let parts = |path: &str| -> Vec<String> {
-        path.split('/').filter(|p| !p.is_empty() && *p != ".").map(String::from).collect()
-    };
-    let (from, to) = (parts(&from), parts(&to));
-    let common = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
-    if from[common..].iter().any(|p| p == "..") {
-        return None;
-    }
-    let mut out: Vec<&str> = vec![".."; from.len() - common];
-    out.extend(to[common..].iter().map(String::as_str));
-    Some(if out.is_empty() { ".".into() } else { out.join("/") })
-}
-
-/// `path.clean`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_path_clean(path: *const Str) -> *mut Str {
-    str_new(clean(text(path)).as_bytes())
-}
-
-/// `path.relative`, or an empty text for `none`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_path_relative(from: *const Str, to: *const Str) -> *mut Str {
-    str_new(relative(text(from), text(to)).unwrap_or_default().as_bytes())
-}
-
-/// `path.matches`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_path_matches(pattern: *const Str, path: *const Str) -> u8 {
-    Glob::new(text(pattern)).matches(text(path)) as u8
-}
-
-// ---------------------------------------------------------------------------
-// Glob patterns
-// ---------------------------------------------------------------------------
-
-/// A glob pattern: each alternative of its braces, by components.
-struct Glob {
-    alternatives: Vec<Vec<String>>,
-}
-
-impl Glob {
-    fn new(pattern: &str) -> Self {
-        let alternatives = expand(pattern).iter().map(|p| p.split('/').map(String::from).collect()).collect();
-        Glob { alternatives }
-    }
-
-    fn matches(&self, path: &str) -> bool {
-        let path: Vec<&str> = path.split('/').collect();
-        self.alternatives.iter().any(|pattern| components(pattern, &path))
-    }
-
-    /// The directory to walk for each alternative, from its components
-    /// before the first with a wildcard, and the components after them.
-    fn bases(&self) -> Vec<(String, &[String])> {
-        self.alternatives
-            .iter()
-            .map(|pattern| {
-                let literal = pattern.iter().take_while(|p| !wild(p)).count();
-                (unescape(&pattern[..literal].join("/")), &pattern[literal..])
-            })
-            .collect()
-    }
-}
-
-fn wild(component: &str) -> bool {
-    component.contains(['*', '?', '[', '{', '\\'])
-}
-
-fn unescape(text: &str) -> String {
-    let mut out = String::new();
-    let mut chars = text.chars();
-    while let Some(c) = chars.next() {
-        out.push(if c == '\\' { chars.next().unwrap_or('\\') } else { c });
-    }
-    out
-}
-
-/// The patterns a pattern's braces stand for: `a{b,c}` is `ab` and `ac`. A
-/// brace without its closing is itself.
-fn expand(pattern: &str) -> Vec<String> {
-    let chars: Vec<char> = pattern.chars().collect();
-    let mut index = 0;
-    while index < chars.len() {
-        match chars[index] {
-            '\\' => index += 2,
-            '{' => {
-                let (mut depth, mut end, mut commas) = (0, None, Vec::new());
-                let mut at = index;
-                while at < chars.len() {
-                    match chars[at] {
-                        '\\' => at += 1,
-                        '{' => depth += 1,
-                        '}' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                end = Some(at);
-                                break;
-                            }
-                        }
-                        ',' if depth == 1 => commas.push(at),
-                        _ => {}
-                    }
-                    at += 1;
-                }
-                let Some(end) = end else {
-                    index += 1;
-                    continue;
-                };
-                let head: String = chars[..index].iter().collect();
-                let tail: String = chars[end + 1..].iter().collect();
-                let mut bounds = vec![index];
-                bounds.extend(&commas);
-                bounds.push(end);
-                let mut out = Vec::new();
-                for pair in bounds.windows(2) {
-                    let choice: String = chars[pair[0] + 1..pair[1]].iter().collect();
-                    out.extend(expand(&format!("{head}{choice}{tail}")));
-                }
-                return out;
-            }
-            _ => index += 1,
-        }
-    }
-    vec![pattern.to_string()]
-}
-
-/// Whether the components of a path match those of a pattern, where `**`
-/// matches any number of them.
-fn components(pattern: &[String], path: &[&str]) -> bool {
-    match pattern.split_first() {
-        None => path.is_empty(),
-        Some((first, rest)) if first == "**" => (0..=path.len()).any(|skip| components(rest, &path[skip..])),
-        Some((first, rest)) => {
-            path.split_first().is_some_and(|(name, others)| component(first, name) && components(rest, others))
-        }
-    }
-}
-
-/// Whether a name matches one component of a pattern.
-fn component(pattern: &str, name: &str) -> bool {
-    let (pattern, name): (Vec<char>, Vec<char>) = (pattern.chars().collect(), name.chars().collect());
-    fn at(pattern: &[char], name: &[char]) -> bool {
-        match pattern.first() {
-            None => name.is_empty(),
-            Some('*') => (0..=name.len()).any(|skip| at(&pattern[1..], &name[skip..])),
-            Some('?') => !name.is_empty() && at(&pattern[1..], &name[1..]),
-            Some('[') => match class(pattern) {
-                Some((set, negated, used)) => {
-                    name.first().is_some_and(|&c| set(c) != negated) && at(&pattern[used..], &name[1..])
-                }
-                None => name.first() == Some(&'[') && at(&pattern[1..], &name[1..]),
-            },
-            Some('\\') if pattern.len() > 1 => name.first() == Some(&pattern[1]) && at(&pattern[2..], &name[1..]),
-            Some(&c) => name.first() == Some(&c) && at(&pattern[1..], &name[1..]),
-        }
-    }
-    at(&pattern, &name)
-}
-
-type Set = Box<dyn Fn(char) -> bool>;
-
-/// A `[...]` at the start of `pattern`: what it matches, whether it is
-/// negated and how many characters it takes; `None` without its `]`.
-fn class(pattern: &[char]) -> Option<(Set, bool, usize)> {
-    let mut at = 1;
-    let negated = matches!(pattern.get(at), Some('!' | '^'));
-    at += negated as usize;
-    let mut ranges: Vec<(char, char)> = Vec::new();
-    let mut first = true;
-    loop {
-        let mut c = *pattern.get(at)?;
-        if c == ']' && !first {
-            break;
-        }
-        if c == '\\' {
-            at += 1;
-            c = *pattern.get(at)?;
-        }
-        first = false;
-        at += 1;
-        if pattern.get(at) == Some(&'-') && pattern.get(at + 1).is_some_and(|&n| n != ']') {
-            let mut high = pattern[at + 1];
-            at += 2;
-            if high == '\\' {
-                high = *pattern.get(at)?;
-                at += 1;
-            }
-            ranges.push((c, high));
-        } else {
-            ranges.push((c, c));
-        }
-    }
-    let set: Set = Box::new(move |c| c != '/' && ranges.iter().any(|&(low, high)| low <= c && c <= high));
-    Some((set, negated, at + 1))
 }
 
 // ---------------------------------------------------------------------------
@@ -390,56 +179,16 @@ fn walk(root: &str, depth: Option<usize>, out: &mut Vec<(String, i64)>) -> Resul
     visit(root, "", depth, out)
 }
 
-/// `fs.walk`: the paths and the kinds.
+/// `fs.walk`: the paths and the kinds, `depth` levels deep, or all of them
+/// when it is negative.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_files_walk(root: *const Str) -> *mut NativeObject {
+pub unsafe extern "C" fn tondo_rt_files_walk(root: *const Str, depth: i64) -> *mut NativeObject {
     let root = text(root).to_string();
     done(move || {
         let mut entries = Vec::new();
-        walk(&root, None, &mut entries)?;
+        walk(&root, usize::try_from(depth).ok(), &mut entries)?;
         let (texts, numbers) = entries.into_iter().map(|(path, kind)| (below(&root, &path), kind)).unzip();
         Ok(Done { texts, numbers, ..Done::default() })
-    })
-}
-
-/// `fs.glob`: the paths that match, sorted.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_files_glob(pattern: *const Str) -> *mut NativeObject {
-    let pattern = text(pattern).to_string();
-    done(move || {
-        let glob = Glob::new(&pattern);
-        let mut found = Vec::new();
-        for (base, rest) in glob.bases() {
-            if rest.is_empty() {
-                if !base.is_empty() && std::fs::symlink_metadata(&base).is_ok() {
-                    found.push(base);
-                }
-                continue;
-            }
-            // `/*` walks the root; only as deep as the pattern goes, unless
-            // it has `**`.
-            let directory = if base.is_empty() && glob.alternatives.iter().any(|a| a.len() > rest.len()) {
-                "/".to_string()
-            } else {
-                base
-            };
-            let depth = (!rest.iter().any(|p| p == "**")).then_some(rest.len());
-            let mut entries = Vec::new();
-            match walk(&directory, depth, &mut entries) {
-                Ok(()) => {}
-                // No directory there: nothing matches.
-                Err(1 | 4) => continue,
-                Err(code) => return Err(code),
-            }
-            for (path, _) in entries {
-                if components(rest, &path.split('/').collect::<Vec<_>>()) {
-                    found.push(if directory.is_empty() { path } else { below(&directory, &path) });
-                }
-            }
-        }
-        found.sort();
-        found.dedup();
-        Ok(texts(found))
     })
 }
 

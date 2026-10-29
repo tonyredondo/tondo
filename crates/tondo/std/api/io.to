@@ -32,7 +32,10 @@ pub fn Writer.writeBytes(self, data: Array[Byte]): Unit ! IoError
 pub fn Writer.flush(self): Unit ! IoError
 
 /// Closes the stream now, with the error of its last writes if they fail;
-/// it also closes when its last copy goes, losing that error.
+/// it also closes when its last copy goes, losing that error. A stream that
+/// writes into another, as `gzip.writer(to)`, lets go of `to`, which closes
+/// with its last copy: at once if the writer had the only one, and not while
+/// another is kept, as `console.stdout()`.
 pub fn Writer.close(self): Unit ! IoError
 
 /// The next line without its `\n` or `\r\n`, or `none` at the end.
@@ -44,7 +47,9 @@ pub fn Reader.read(self, max: Int): Array[Byte]? ! IoError
 /// The rest, as UTF-8 text.
 pub fn Reader.readText(self): String ! IoError
 
-/// Closes the stream now; it also closes when its last copy goes.
+/// Closes the stream now; it also closes when its last copy goes. A stream
+/// that reads another, as `gzip.reader(from)`, lets go of `from`, which
+/// closes with its last copy.
 pub fn Reader.close(self): Unit ! IoError
 
 /// An empty buffer in memory.

@@ -39,6 +39,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("embed", include_str!("../std/embed.to")),
     ("url", include_str!("../std/url.to")),
     ("zoned", include_str!("../std/zoned.to")),
+    ("timetext", include_str!("../std/timetext.to")),
     ("files", include_str!("../std/files.to")),
     ("paths", include_str!("../std/paths.to")),
     ("gzip", include_str!("../std/gzip.to")),

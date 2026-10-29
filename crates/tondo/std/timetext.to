@@ -1,0 +1,528 @@
+// The text of dates and durations of std.time (standard library 14.3.1,
+// 14.3.4, 14.3.5), which datetime.to and zoned.to are written on: ISO
+// 8601, strftime patterns, Go's durations and the Gregorian calendar.
+
+import std.internal.time as timeNative
+
+/// A piece of a pattern: a directive, as `Y` for `%Y`, and whether it is
+/// padded; or text written as it is.
+type Piece = {
+    text: String
+    directive: Bool
+    padded: Bool
+}
+
+/// Days from 1970-01-01 to a date of the proleptic Gregorian calendar
+/// (Howard Hinnant's algorithm).
+pub fn days(year: Int, month: Int, day: Int): Int {
+    let y = if month <= 2 { year - 1 } else { year }
+    let era = (if y >= 0 { y } else { y - 399 }) / 400
+    let yoe = y - era * 400
+    let doy = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    era * 146097 + doe - 719468
+}
+
+pub fn daysIn(year: Int, month: Int): Int {
+    let leap = year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+    if month == 2 {
+        if leap { 29 } else { 28 }
+    } else if month == 4 or month == 6 or month == 9 or month == 11 {
+        30
+    } else {
+        31
+    }
+}
+
+/// Whether the fields name a date and time that exists, in the years whose
+/// times since 1970 fit in a `Duration`.
+pub fn exists(year: Int, month: Int, day: Int, hour: Int, minute: Int, second: Int, nanosecond: Int): Bool {
+    year >= 1678 and
+        year <= 2261 and
+        month >= 1 and
+        month <= 12 and
+        day >= 1 and
+        day <= daysIn(year, month) and
+        hour >= 0 and
+        hour <= 23 and
+        minute >= 0 and
+        minute <= 59 and
+        second >= 0 and
+        second <= 59 and
+        nanosecond >= 0 and
+        nanosecond <= 999999999
+}
+
+/// The fields of a date's text, `[year, month, day, hour, minute, second,
+/// nanosecond, has offset, offset]`: ISO 8601 without a pattern, or the
+/// form of a `strftime` pattern; `none` when it is not of the form.
+pub fn read(text: String, pattern: String?, locale: String): Array[Int]? {
+    let fields = match pattern {
+        some(form) => strptime(text, form, locale)?
+        none => iso(text)?
+    }
+    if exists(fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], fields[6]) {
+        some(fields)
+    } else {
+        none
+    }
+}
+
+/// `2026-10-22`, `2026-10-22T06:38:28Z`, `2026-10-22 08:38:28.5+02:00`:
+/// ISO 8601 in RFC 3339's form.
+fn iso(input: String): Array[Int]? {
+    let chars = input.chars().collect()
+    // The number `count` digits write from `from` on.
+    let number = (from: Int, count: Int) {
+        var value = 0
+        for index in from..from + count {
+            match chars.get(index) {
+                some(c) if c.isDigit() => value = value * 10 + c.code() - '0'.code()
+                _ => return -1
+            }
+        }
+        value
+    }
+    if chars.get(4) != some('-') or chars.get(7) != some('-') {
+        return none
+    }
+    let (year, month, day) = (number(0, 4), number(5, 2), number(8, 2))
+    var at = 10
+    var (hour, minute, second, nanosecond, zoned, offset) = (0, 0, 0, 0, 0, 0)
+    if at < chars.length() {
+        if not (chars[at] in "Tt ") or chars.get(at + 3) != some(':') {
+            return none
+        }
+        hour = number(at + 1, 2)
+        minute = number(at + 4, 2)
+        at += 6
+        if chars.get(at) == some(':') {
+            second = number(at + 1, 2)
+            at += 3
+            if chars.get(at) == some('.') {
+                at += 1
+                var places = 0
+                for at < chars.length() and chars[at].isDigit() {
+                    if places < 9 {
+                        nanosecond = nanosecond * 10 + chars[at].code() - '0'.code()
+                        places += 1
+                    }
+                    at += 1
+                }
+                if places == 0 {
+                    return none
+                }
+                for _ in places..9 {
+                    nanosecond *= 10
+                }
+            }
+        }
+        match chars.get(at) {
+            some(c) if c == 'Z' or c == 'z' => {
+                at += 1
+                zoned = 1
+            }
+            some(sign) if sign == '+' or sign == '-' => {
+                let hours = number(at + 1, 2)
+                let minutes = match chars.get(at + 3) {
+                    some(':') => {
+                        at += 6
+                        number(at - 2, 2)
+                    }
+                    some(_) => {
+                        at += 5
+                        number(at - 2, 2)
+                    }
+                    none => {
+                        at += 3
+                        0
+                    }
+                }
+                if hours < 0 or hours > 23 or minutes < 0 or minutes > 59 {
+                    return none
+                }
+                zoned = 1
+                offset = if sign == '-' {
+                    -(hours * 3600 + minutes * 60)
+                } else {
+                    hours * 3600 + minutes * 60
+                }
+            }
+            _ => {}
+        }
+    }
+    if at != chars.length() {
+        return none
+    }
+    some([year, month, day, hour, minute, second, nanosecond, zoned, offset])
+}
+
+/// The pieces of a pattern; `%F` and `%T` are what they stand for, and a
+/// directive that does not exist is text.
+fn pieces(pattern: String): Array[Piece] {
+    let chars = pattern.chars().collect()
+    var out: Array[Piece] = []
+    var at = 0
+    for at < chars.length() {
+        let c = chars[at]
+        at += 1
+        if c != '%' {
+            out.push(Piece { text: "{c}", directive: false, padded: true })
+            continue
+        }
+        let padded = chars.get(at) != some('-')
+        if not padded {
+            at += 1
+        }
+        var name = ""
+        for name.length() < 2 and at < chars.length() {
+            name = "{name}{chars[at]}"
+            at += 1
+            if not (name in ["O", ":", "3", "6", "9"]) {
+                break
+            }
+        }
+        if name == "%" {
+            out.push(Piece { text: "%", directive: false, padded: true })
+        } else if name == "F" {
+            out.extend(pieces("%Y-%m-%d"))
+        } else if name == "T" {
+            out.extend(pieces("%H:%M:%S"))
+        } else if name in
+            [
+                "Y",
+                "y",
+                "m",
+                "B",
+                "b",
+                "OB",
+                "d",
+                "e",
+                "j",
+                "A",
+                "a",
+                "H",
+                "I",
+                "p",
+                "M",
+                "S",
+                "3f",
+                "6f",
+                "9f",
+                "z",
+                ":z",
+                "Z",
+                "s",
+            ] {
+            out.push(Piece { text: name, directive: true, padded: padded })
+        } else {
+            let dash = if padded { "" } else { "-" }
+            out.push(Piece { text: "%{dash}{name}", directive: false, padded: true })
+        }
+    }
+    out
+}
+
+/// The fields `[year, month, day, hour, minute, second, nanosecond,
+/// offset]` as a pattern writes them, with the names of `locale`; `zone`
+/// names the zone of `%Z`.
+pub fn write(pattern: String, locale: String, fields: Array[Int], zone: String): String {
+    let names = timeNative.names(locale)
+    let (year, month, day, hour) = (fields[0], fields[1], fields[2], fields[3])
+    let date = days(year, month, day)
+    let since = date * 86400 + hour * 3600 + fields[4] * 60 + fields[5] - fields[7]
+    var out: Array[String] = []
+    for piece in pieces(pattern) {
+        if not piece.directive {
+            out.push(piece.text)
+            continue
+        }
+        let number = (value: Int, width: Int, fill: String) {
+            if piece.padded { "{value}".padStart(width, fill) } else { "{value}" }
+        }
+        let name = (index: Int) { names[index] }
+        let weekday = (date % 7 + 11) % 7
+        out.push(
+            match piece.text {
+                "Y" => number(year, 4, "0")
+                "y" => number(year % 100, 2, "0")
+                "m" => number(month, 2, "0")
+                "B" => name(month - 1)
+                "b" => name(11 + month)
+                "OB" => name(23 + month)
+                "d" => number(day, 2, "0")
+                "e" => number(day, 2, " ")
+                "j" => number(date - days(year, 1, 1) + 1, 3, "0")
+                "A" => name(36 + weekday)
+                "a" => name(43 + weekday)
+                "H" => number(hour, 2, "0")
+                "I" => number((hour + 11) % 12 + 1, 2, "0")
+                "p" => name(if hour >= 12 { 51 } else { 50 })
+                "M" => number(fields[4], 2, "0")
+                "S" => number(fields[5], 2, "0")
+                key if key in ["3f", "6f", "9f"] => {
+                    let all = "{fields[6]}".padStart(9, "0")
+                    all.slice(0, Int.parse(piece.text.removeSuffix("f")).unwrapOr(9)).unwrapOr(all)
+                }
+                "z" => offsetText(fields[7], "")
+                ":z" => offsetText(fields[7], ":")
+                "Z" => if zone == "UTC" { "UTC" } else { timeNative.zoneAbbreviation(zone, since) }
+                _ => "{since}"
+            },
+        )
+    }
+    out.join("")
+}
+
+/// `+0100` or, with `:` between, `+01:00`; with the seconds when it has them.
+fn offsetText(offset: Int, colon: String): String {
+    let sign = if offset < 0 { "-" } else { "+" }
+    let size = offset.abs()
+    let pair = (value: Int) { "{value}".padStart(2, "0") }
+    let seconds = if size % 60 == 0 { "" } else { "{colon}{pair(size % 60)}" }
+    "{sign}{pair(size / 3600)}{colon}{pair(size / 60 % 60)}{seconds}"
+}
+
+/// The fields of a text of a pattern's form, with the names of `locale`.
+fn strptime(input: String, pattern: String, locale: String): Array[Int]? {
+    let names = timeNative.names(locale)
+    let chars = input.chars().collect()
+    var at = 0
+    var (year, month, day, ordinal) = (-1, -1, -1, -1)
+    var (hour, minute, second, nanosecond, meridiem) = (0, 0, 0, 0, -1)
+    var (zoned, offset) = (0, 0)
+    var seconds: Int? = none
+    for piece in pieces(pattern) {
+        if not piece.directive {
+            for c in piece.text.chars() {
+                if chars.get(at) != some(c) {
+                    return none
+                }
+                at += 1
+            }
+            continue
+        }
+        match piece.text {
+            "Y" => year = digits(ref chars, mut at, 1, 4)?.0
+            "y" => {
+                let short = digits(ref chars, mut at, 1, 2)?.0
+                year = if short < 69 { 2000 + short } else { 1900 + short }
+            }
+            "m" => month = digits(ref chars, mut at, 1, 2)?.0
+            key if key in ["B", "b", "OB"] => month =
+                longest(input, ref names, mut at, 0, 36)? % 12 + 1
+            "d" => day = digits(ref chars, mut at, 1, 2)?.0
+            "e" => {
+                for chars.get(at) == some(' ') {
+                    at += 1
+                }
+                day = digits(ref chars, mut at, 1, 2)?.0
+            }
+            "j" => ordinal = digits(ref chars, mut at, 1, 3)?.0
+            key if key in ["A", "a"] => _ = longest(input, ref names, mut at, 36, 50)?
+            key if key in ["H", "I"] => hour = digits(ref chars, mut at, 1, 2)?.0
+            "p" => meridiem = longest(input, ref names, mut at, 50, 52)? - 50
+            "M" => minute = digits(ref chars, mut at, 1, 2)?.0
+            "S" => second = digits(ref chars, mut at, 1, 2)?.0
+            key if key in ["3f", "6f", "9f"] => {
+                let most = Int.parse(piece.text.removeSuffix("f")).unwrapOr(9)
+                let (value, count) = digits(ref chars, mut at, 1, most)?
+                nanosecond = value
+                for _ in count..9 {
+                    nanosecond *= 10
+                }
+            }
+            key if key in ["z", ":z"] => {
+                zoned = 1
+                match chars.get(at) {
+                    some('Z') => at += 1
+                    some(sign) if sign == '+' or sign == '-' => {
+                        at += 1
+                        let hours = digits(ref chars, mut at, 2, 2)?.0
+                        if chars.get(at) == some(':') {
+                            at += 1
+                        }
+                        let minutes = digits(ref chars, mut at, 2, 2)?.0
+                        offset = hours * 3600 + minutes * 60
+                        if sign == '-' {
+                            offset = -offset
+                        }
+                    }
+                    _ => return none
+                }
+            }
+            "Z" => {
+                let name = input.slice(at, at + 3).unwrapOr("")
+                if name != "UTC" and name != "GMT" {
+                    return none
+                }
+                at += 3
+                zoned = 1
+            }
+            _ => {
+                let negative = chars.get(at) == some('-')
+                if negative {
+                    at += 1
+                }
+                let value = digits(ref chars, mut at, 1, 18)?.0
+                seconds = some(if negative { -value } else { value })
+            }
+        }
+    }
+    if at != chars.length() {
+        return none
+    }
+    match seconds {
+        some(since) => {
+            let fields = civil(since)
+            return some([
+                fields[0],
+                fields[1],
+                fields[2],
+                fields[3],
+                fields[4],
+                fields[5],
+                nanosecond,
+                1,
+                0,
+            ])
+        }
+        none => {}
+    }
+    if meridiem >= 0 {
+        if hour < 1 or hour > 12 {
+            return none
+        }
+        hour = hour % 12 + 12 * meridiem
+    }
+    if ordinal >= 0 {
+        if year < 0 or ordinal < 1 {
+            return none
+        }
+        month = 1
+        day = ordinal
+        for month <= 12 and day > daysIn(year, month) {
+            day -= daysIn(year, month)
+            month += 1
+        }
+    }
+    if year < 0 or month < 0 or day < 0 {
+        return none
+    }
+    some([year, month, day, hour, minute, second, nanosecond, zoned, offset])
+}
+
+/// From `least` to `most` digits at `at`, and how many, which `at` moves
+/// past.
+fn digits(chars: ref Array[Char], at: mut Int, least: Int, most: Int): (Int, Int)? {
+    var (value, count) = (0, 0)
+    for count < most and at + count < chars.length() and chars[at + count].isDigit() {
+        value = value * 10 + chars[at + count].code() - '0'.code()
+        count += 1
+    }
+    if count < least {
+        return none
+    }
+    at += count
+    some((value, count))
+}
+
+/// The index of the longest of the names from `from` to `to` at `at`,
+/// whatever their case, which `at` moves past.
+fn longest(input: String, names: ref Array[String], at: mut Int, from: Int, to: Int): Int? {
+    var (found, size) = (-1, 0)
+    for index in from..to {
+        let length = names[index].length()
+        if length > size and
+            input.slice(at, at + length).unwrapOr("").toLower() == names[index].toLower() {
+            found = index
+            size = length
+        }
+    }
+    if found < 0 {
+        return none
+    }
+    at += size
+    some(found)
+}
+
+/// The date and time in UTC of a time in seconds since 1970: `[year, month,
+/// day, hour, minute, second]` (Howard Hinnant's algorithm).
+fn civil(since: Int): Array[Int] {
+    let within = (since % 86400 + 86400) % 86400
+    let z = (since - within) / 86400 + 719468
+    let era = (if z >= 0 { z } else { z - 146096 }) / 146097
+    let doe = z - era * 146097
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    let mp = (5 * doy + 2) / 153
+    let day = doy - (153 * mp + 2) / 5 + 1
+    let month = if mp < 10 { mp + 3 } else { mp - 9 }
+    let year = yoe + era * 400 + (if month <= 2 { 1 } else { 0 })
+    [year, month, day, within / 3600, within / 60 % 60, within % 60]
+}
+
+/// The nanoseconds of a duration as Go writes it, `1h30m`, `1.5s` or
+/// `-250ms`, or `none` when the text is not one or it does not fit.
+pub fn duration(text: String): Int? {
+    let negative = text.startsWith("-")
+    let rest = text.removePrefix("-").removePrefix("+")
+    if rest == "0" {
+        return some(0)
+    }
+    let chars = rest.chars().collect()
+    if chars.isEmpty() {
+        return none
+    }
+    let units = [
+        ("ns", 1),
+        ("us", 1000),
+        ("µs", 1000),
+        ("ms", 1000000),
+        ("s", 1000000000),
+        ("m", 60000000000),
+        ("h", 3600000000000),
+    ]
+    var (total, at) = (0, 0)
+    for at < chars.length() {
+        var (whole, fraction, scale, seen) = (0, 0, 1, 0)
+        for at < chars.length() and chars[at].isDigit() {
+            whole = whole.checkedMul(10)?.checkedAdd(chars[at].code() - '0'.code())?
+            seen += 1
+            at += 1
+        }
+        if chars.get(at) == some('.') {
+            at += 1
+            for at < chars.length() and chars[at].isDigit() {
+                if scale < 1000000000000000000 {
+                    fraction = fraction * 10 + chars[at].code() - '0'.code()
+                    scale *= 10
+                }
+                seen += 1
+                at += 1
+            }
+        }
+        if seen == 0 {
+            return none
+        }
+        // The longest unit that follows.
+        var (unit, size) = (0, 0)
+        for (name, nanos) in units {
+            let length = name.length()
+            if length > size and rest.slice(at, at + length).unwrapOr("") == name {
+                unit = nanos
+                size = length
+            }
+        }
+        if size == 0 {
+            return none
+        }
+        at += size
+        let part = match Int(Int128(fraction) * Int128(unit) / Int128(scale)) {
+            ok(fractional) => whole.checkedMul(unit)?.checkedAdd(fractional)?
+            err(_) => return none
+        }
+        total = total.checkedAdd(part)?
+    }
+    some(if negative { -total } else { total })
+}

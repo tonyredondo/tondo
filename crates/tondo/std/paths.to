@@ -1,26 +1,204 @@
 // The parts of std.path (standard library 10.4) written in Tondo, which a
 // program that imports std.path links with: clean and relative paths and
-// glob patterns, on the runtime's lexical operations.
-
-import std.internal.fs as fsNative
+// glob patterns.
 
 /// The shortest path that names the same, lexically, as Go's `path.Clean`:
 /// `docs/guide.md` for `docs//./api/../guide.md`, and `.` for an empty path.
 pub fn clean(path: String): String {
-    fsNative.clean(path)
+    let rooted = path.startsWith("/")
+    var parts: Array[String] = []
+    for part in path.split("/") {
+        if part.isEmpty() or part == "." {
+            continue
+        }
+        if part != ".." {
+            parts.push(part)
+        } else if not parts.isEmpty() and parts[parts.length() - 1] != ".." {
+            _ = parts.pop()
+        } else if not rooted {
+            parts.push("..")
+        }
+    }
+    let joined = parts.join("/")
+    if rooted { "/{joined}" } else if joined.isEmpty() { "." } else { joined }
 }
 
 /// The path from `from` to `to`, with `..` where it goes up: `../c/d` from
 /// `a/b` to `a/c/d`; `none` when one is absolute and the other is not, or
 /// `from` goes up past what is known of `to`.
 pub fn relative(from: String, to: String): String? {
-    let path = fsNative.relative(from, to)
-    if path.isEmpty() { none } else { some(path) }
+    let (base, target) = (clean(from), clean(to))
+    if base == target {
+        return some(".")
+    }
+    if base.startsWith("/") != target.startsWith("/") {
+        return none
+    }
+    let parts = (path: String) { path.split("/").filter((p) { not p.isEmpty() and p != "." }) }
+    let (up, down) = (parts(base), parts(target))
+    var common = 0
+    for common < up.length() and common < down.length() and up[common] == down[common] {
+        common += 1
+    }
+    var out: Array[String] = []
+    for index in common..up.length() {
+        if up[index] == ".." {
+            return none
+        }
+        out.push("..")
+    }
+    for index in common..down.length() {
+        out.push(down[index])
+    }
+    some(if out.isEmpty() { "." } else { out.join("/") })
 }
 
 /// Whether the whole path matches a glob pattern: `*` and `?` within a
 /// component, `[a-z]` and `[!a-z]`, `{md,markdown}`, `**` for any number of
-/// components and `\` before a character to take it as itself.
+/// components and `\` before a character to take it as itself. Every text
+/// is a pattern: a `[` or `{` without its closing is itself.
 pub fn matches(pattern: String, path: String): Bool {
-    fsNative.matches(pattern, path)
+    let names = path.split("/")
+    expand(pattern).any((alternative) { components(alternative.split("/"), 0, names, 0) })
+}
+
+/// The patterns a pattern's braces stand for: `a{b,c}` is `ab` and `ac`.
+fn expand(pattern: String): Array[String] {
+    let chars = pattern.chars().collect()
+    var at = 0
+    for at < chars.length() {
+        if chars[at] == '\\' {
+            at += 2
+            continue
+        }
+        if chars[at] != '{' {
+            at += 1
+            continue
+        }
+        // The closing brace, and the commas between its alternatives.
+        var (depth, end, cuts) = (0, -1, [at])
+        var scan = at
+        for scan < chars.length() and end < 0 {
+            let c = chars[scan]
+            if c == '\\' {
+                scan += 1
+            } else if c == '{' {
+                depth += 1
+            } else if c == '}' {
+                depth -= 1
+                if depth == 0 {
+                    end = scan
+                }
+            } else if c == ',' and depth == 1 {
+                cuts.push(scan)
+            }
+            scan += 1
+        }
+        if end < 0 {
+            at += 1
+            continue
+        }
+        cuts.push(end)
+        let text = (from: Int, to: Int) {
+            chars.slice(from, to).unwrapOr([]).map((c) { "{c}" }).join("")
+        }
+        var out: Array[String] = []
+        for index in 0..cuts.length() - 1 {
+            let choice = text(cuts[index] + 1, cuts[index + 1])
+            out.extend(expand("{text(0, at)}{choice}{text(end + 1, chars.length())}"))
+        }
+        return out
+    }
+    [pattern]
+}
+
+/// Whether the names from `name` on match the components of a pattern from
+/// `part` on, where `**` matches any number of names.
+fn components(pattern: Array[String], part: Int, names: Array[String], name: Int): Bool {
+    if part == pattern.length() {
+        return name == names.length()
+    }
+    if pattern[part] == "**" {
+        for skip in name..names.length() + 1 {
+            if components(pattern, part + 1, names, skip) {
+                return true
+            }
+        }
+        return false
+    }
+    name < names.length() and
+        component(pattern[part].chars().collect(), 0, names[name].chars().collect(), 0) and
+        components(pattern, part + 1, names, name + 1)
+}
+
+/// Whether a name from `at` on matches a component of a pattern from `from`
+/// on.
+fn component(pattern: Array[Char], from: Int, name: Array[Char], at: Int): Bool {
+    if from == pattern.length() {
+        return at == name.length()
+    }
+    let c = pattern[from]
+    if c == '*' {
+        for skip in at..name.length() + 1 {
+            if component(pattern, from + 1, name, skip) {
+                return true
+            }
+        }
+        return false
+    }
+    if at == name.length() {
+        return false
+    }
+    if c == '?' {
+        return component(pattern, from + 1, name, at + 1)
+    }
+    if c == '[' {
+        match set(pattern, from, name[at]) {
+            some((found, next)) => return found and component(pattern, next, name, at + 1)
+            none => {}
+        }
+    }
+    if c == '\\' and from + 1 < pattern.length() {
+        return name[at] == pattern[from + 1] and component(pattern, from + 2, name, at + 1)
+    }
+    name[at] == c and component(pattern, from + 1, name, at + 1)
+}
+
+/// Whether a `[...]` at `from` matches `c`, and where the pattern goes on;
+/// `none` without its `]`.
+fn set(pattern: Array[Char], from: Int, c: Char): (Bool, Int)? {
+    var at = from + 1
+    let negated = pattern.get(at) == some('!') or pattern.get(at) == some('^')
+    if negated {
+        at += 1
+    }
+    var found = false
+    var first = true
+    for {
+        var low = pattern.get(at)?
+        if low == ']' and not first {
+            break
+        }
+        if low == '\\' {
+            at += 1
+            low = pattern.get(at)?
+        }
+        first = false
+        at += 1
+        var high = low
+        if pattern.get(at) == some('-') and
+            pattern.get(at + 1).isSome() and
+            pattern.get(at + 1) != some(']') {
+            high = pattern[at + 1]
+            at += 2
+            if high == '\\' {
+                high = pattern.get(at)?
+                at += 1
+            }
+        }
+        if c >= low and c <= high {
+            found = true
+        }
+    }
+    some((c != '/' and found != negated, at + 1))
 }

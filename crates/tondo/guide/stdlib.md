@@ -200,7 +200,10 @@ fn main(): !fs.FsError {
 `{a,b}` and `**`. `fs.metadata` gives `modified` and `permissions`;
 `fs.setPermissions(path, 0o755)`, `fs.createSymlink`, `fs.readSymlink` and
 `fs.realPath` do the rest. `gzip.writer(out)` and `gzip.reader(input)`
-compress a stream of `std.io`, and `std.zstd` has the same functions.
+compress a stream of `std.io`, and `std.zstd` has the same functions. Their
+`close()` closes them and lets go of the stream under them, which closes with
+its last copy: a file the writer alone holds closes with it, and
+`console.stdout()` stays open.
 
 ## Dates in time zones
 

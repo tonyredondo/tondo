@@ -981,6 +981,15 @@ pub fn discard(): Writer
 - Los archivos (10.5), la consola (19.1) y los procesos (19.2) ofrecen sus
   streams como `Writer` y `Reader`, y `std.gzip` y `std.zstd` (14.29) los
   comprimen.
+- Un stream que escribe en otro o lee de otro, como los de `std.gzip` y
+  `std.zstd`, guarda una copia de ese otro. Su `close()` lo cierra a él: un
+  writer escribe lo que le queda, y después ninguno de los dos admite más
+  operaciones. Al otro solo lo suelta, y ese se cierra con su última copia: en
+  ese momento si no queda otra, como en `gzip.writer(file.writer())`, y no
+  mientras alguien más lo tenga, como `console.stdout()` o la respuesta de un
+  servidor que sigue escribiendo. Así lo hacen también los `Writer` de
+  `std.json`, `std.csv` y `std.log`, que escriben en un stream y nunca lo
+  cierran.
 
 ### 10.4 Paths
 
@@ -4587,12 +4596,15 @@ pub fn reader(from: io.Reader): io.Reader
   checksum no cuadra dan `IoError.InvalidData`; el `reader`, en la lectura que
   llega a ellos.
 - Un `writer` comprime lo que recibe y lo escribe en `to` por bloques. `flush()`
-  escribe lo comprimido hasta entonces, para quien lo lee mientras llega;
-  `close()` escribe el final del formato y suelta `to`, que se cierra con su
-  última copia. Abandonado, se cierra solo y pierde el error de ese cierre,
-  como cualquier stream.
+  escribe lo comprimido hasta entonces, para quien lo lee mientras llega.
+  `close()` cierra el writer: escribe el final del formato y suelta `to`, que
+  se cierra con su última copia (10.3). Así,
+  `gzip.writer(fs.open(path, fs.OpenMode.Write)?.writer())` cierra el archivo
+  al cerrarse, y `gzip.writer(console.stdout())` deja la salida abierta.
+  Abandonado, el writer se cierra solo y pierde el error de ese cierre, como
+  cualquier stream.
 - Un `reader` descomprime lo que lee de `from` según se le pide; cerrarlo
-  suelta `from`.
+  suelta `from`, con la misma regla.
 
 ---
 

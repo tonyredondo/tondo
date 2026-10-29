@@ -1,7 +1,6 @@
 //! The patterns of `format` and of the parsing of `std.time` (standard
-//! library 14.3.5), as `strftime` writes them: their pieces, which the
-//! runtime follows and the compiler checks in a literal pattern. This file
-//! is the compiler's too.
+//! library 14.3.5), as `strftime` writes them, which the checker checks in a
+//! literal: `std/timetext.to` follows the same directives.
 
 /// A piece of a pattern: a character as it is, or a directive and whether
 /// `-` takes its padding away.

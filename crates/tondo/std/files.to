@@ -6,6 +6,7 @@
 import std.fs as __fs
 import std.internal.channel as __channel
 import std.internal.fs as fsNative
+import std.path as __path
 import std.time as __time
 
 /// An entry itself, without following links: its kind, size in bytes,
@@ -55,7 +56,7 @@ pub fn metadata(path: String): Metadata ! __fs.FsError {
 /// The tree under `root`, without `root`: each directory before what it
 /// holds and siblings sorted by bytes, without following links.
 pub fn walk(root: String): Array[Entry] ! __fs.FsError {
-    let found = done(fsNative.walk(root))?
+    let found = done(fsNative.walk(root, -1))?
     let kinds = fsNative.numbers(found)
     var entries: Array[Entry] = []
     for (index, path) in fsNative.texts(found).enumerate() {
@@ -67,7 +68,65 @@ pub fn walk(root: String): Array[Entry] ! __fs.FsError {
 /// The paths that match a pattern of `path.matches`, sorted by bytes:
 /// `content/**/*.md`.
 pub fn glob(pattern: String): Array[String] ! __fs.FsError {
-    fsNative.texts(done(fsNative.glob(pattern))?)
+    // The directory to walk: the components before the first with a
+    // wildcard, which the pattern's are matched below.
+    let parts = pattern.split("/")
+    var literal = 0
+    for literal < parts.length() and not wild(parts[literal]) {
+        literal += 1
+    }
+    let base = parts.slice(0, literal).unwrapOr([]).join("/")
+    if literal == parts.length() {
+        return match fsNative.failure(fsNative.stat(base)) {
+            0 if not base.isEmpty() => [base]
+            _ => []
+        }
+    }
+    let rest = parts.slice(literal, parts.length()).unwrapOr([]).join("/")
+    let directory = if base.isEmpty() and pattern.startsWith("/") { "/" } else { base }
+    let walked = fsNative.walk(if directory.isEmpty() { "." } else { directory }, depth(rest))
+    // No directory there: nothing matches.
+    match fsNative.failure(walked) {
+        code if code == 1 or code == 4 => return []
+        _ => {}
+    }
+    var found: Array[String] = []
+    for path in fsNative.texts(done(walked)?) {
+        // The path as the pattern writes its directory.
+        let candidate = if directory.isEmpty() {
+            path
+        } else {
+            "{base}/{__path.relative(directory, path).unwrapOr(path)}"
+        }
+        if __path.matches(pattern, candidate) {
+            found.push(__path.clean(candidate))
+        }
+    }
+    found.sort()
+    found
+}
+
+/// Whether a component of a pattern has a wildcard.
+fn wild(part: String): Bool {
+    part.chars().any((c) { c == '*' or c == '?' or c == '[' or c == '{' or c == '\\' })
+}
+
+/// How deep a walk the rest of a pattern needs: its components, or every
+/// level for `**` or a brace that holds a `/`.
+fn depth(rest: String): Int {
+    var (levels, braces) = (1, 0)
+    for c in rest.chars() {
+        if c == '{' {
+            braces += 1
+        } else if c == '}' {
+            braces -= 1
+        } else if c == '/' and braces > 0 {
+            return -1
+        } else if c == '/' {
+            levels += 1
+        }
+    }
+    if rest.contains("**") { -1 } else { levels }
 }
 
 /// A new empty directory in the system's temporary one, which only its user

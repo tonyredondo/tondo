@@ -3058,3 +3058,15 @@ file replaced through a rename from a new one by the paths it saw exist;
 it ends when no copy of its receiver is left. Zstandard is ruzstd's, pure
 Rust at its fastest level, so the runtime builds for every target without
 C.
+
+What can be Tondo is Tondo, so that what makes compiled code faster makes
+the library faster too: paths, globs, ISO 8601, `strftime` patterns and
+durations are written in it. The runtime keeps what Tondo cannot do or a
+crate does better: the system's calls, zone rules, CLDR's names and
+compression. The checker keeps its own list of the directives, to reject a
+wrong literal pattern while compiling; a case uses every directive, so the
+two lists cannot drift apart unnoticed. A stream that writes into another,
+as gzip's, closes itself with `close()` and lets go of the other, which
+closes with its last copy, as the writers of JSON, CSV and logs already
+did: closing it outright would close the console under
+`gzip.writer(console.stdout())`.

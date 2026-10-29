@@ -40,7 +40,6 @@ mod native;
 mod net;
 mod numbers;
 mod panics;
-mod pattern;
 mod poll;
 mod pprof;
 mod process;

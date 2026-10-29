@@ -2,33 +2,30 @@
 // takes a zone named `zone`, apart from datetime.to, whose `time.zone` the
 // parameter would shadow.
 
-import std.internal.time as timeNative
 import std.time as __time
+import std.timetext as __text
 
 /// What `parseDateTime` reads, kept in the zone it names: a text without an
 /// offset is the time on `zone`'s clocks; one with an offset keeps it, in
 /// `zone` if it had that offset then, or else in `fixedZone` of it.
 pub fn parseZoned(text: String, zone: __time.Zone, pattern: String? = none, locale: String = "en"): __time.ZonedDateTime !
     __time.TimeError {
-    let fields = match pattern {
-        some(form) => timeNative.parse(text, form, locale)
-        none => timeNative.iso(text)
+    let fields = match __text.read(text, pattern, locale) {
+        some(fields) => fields
+        none => fail __time.TimeError.InvalidDateTime
     }
-    if fields[0] == 0 {
-        fail __time.TimeError.InvalidDateTime
-    }
-    if fields[8] == 0 {
+    if fields[7] == 0 {
         return zone.at(
-            year: fields[1],
-            month: fields[2],
-            day: fields[3],
-            hour: fields[4],
-            minute: fields[5],
-            second: fields[6],
-            nanosecond: fields[7],
+            year: fields[0],
+            month: fields[1],
+            day: fields[2],
+            hour: fields[3],
+            minute: fields[4],
+            second: fields[5],
+            nanosecond: fields[6],
         )?
     }
-    let offset = __time.seconds(fields[9])
+    let offset = __time.seconds(fields[8])
     let moment = __time.parseDateTime(text, pattern: pattern, locale: locale)?
     let kept = moment.inZone(zone)
     if kept.offset == offset {

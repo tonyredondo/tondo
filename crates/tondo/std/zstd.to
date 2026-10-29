@@ -21,13 +21,17 @@ pub fn decompress(data: Array[Byte]): Array[Byte] ! __io.IoError {
 }
 
 /// A stream that compresses what it is given into `to`: `flush()` writes
-/// what is compressed so far, and `close()` the end of the format.
+/// what is compressed so far, and `close()` writes the end of the format and
+/// lets go of `to`, which closes with its last copy. So a writer over
+/// `file.writer()` closes the file when it closes, and one over
+/// `console.stdout()` leaves the console open.
 pub fn writer(to: __io.Writer): __io.Writer {
     codecNative.packWriter(to, true, 0)
 }
 
-/// A stream of what `from` holds, decompressed as it is read; data that is
-/// not Zstandard fails as `IoError.InvalidData` in the read that reaches it.
+/// A stream of what `from` holds, decompressed as it is read; closing it
+/// lets go of `from`, which closes with its last copy. Data that is not
+/// Zstandard fails as `IoError.InvalidData` in the read that reaches it.
 pub fn reader(from: __io.Reader): __io.Reader {
     codecNative.unpackReader(from, true)
 }
