@@ -143,9 +143,6 @@ pub unsafe extern "C" fn tondo_rt_test_start(table: *const Node, count: usize) {
     *RUNNER.lock().unwrap_or_else(|e| e.into_inner()) = Some(runner);
     ACTIVE.store(true, Ordering::Relaxed);
     crate::profiling::start();
-    if std::env::var_os("TONDO_TEST_PLAN").is_some() {
-        stop_on_request();
-    }
 }
 
 /// A test build's counters, with coverage (testing 10.3).
@@ -187,34 +184,6 @@ pub(crate) fn counters() -> &'static mut [u64] {
     }
     unsafe { std::slice::from_raw_parts_mut(counters, count) }
 }
-
-/// Under `tondo test`, `SIGTERM` is its request to stop (testing 7.10):
-/// every task is cancelled, the one that runs a test too, so their
-/// `defer`s run, and the worker ends without starting another test.
-#[cfg(unix)]
-fn stop_on_request() {
-    static PIPE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
-    extern "C" fn requested(_: i32) {
-        let byte = 1u8;
-        unsafe { libc::write(PIPE.load(Ordering::Relaxed), (&raw const byte).cast(), 1) };
-    }
-    let mut fds = [0; 2];
-    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
-        return;
-    }
-    PIPE.store(fds[1], Ordering::Relaxed);
-    let listener = std::thread::Builder::new().stack_size(64 * 1024).spawn(move || {
-        let mut byte = 0u8;
-        while unsafe { libc::read(fds[0], (&raw mut byte).cast(), 1) } != 1 {}
-        crate::tasks::abandon(128 + libc::SIGTERM);
-    });
-    if listener.is_ok() {
-        unsafe { libc::signal(libc::SIGTERM, requested as *const () as libc::sighandler_t) };
-    }
-}
-
-#[cfg(not(unix))]
-fn stop_on_request() {}
 
 /// Runs the members of a suite, or of the root, that the plan holds
 /// next, until the next test of the plan is not inside them.

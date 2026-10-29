@@ -28,6 +28,40 @@ struct Server {
     address: String,
     requests: Option<Arc<tokio::sync::Mutex<mpsc::Receiver<Request>>>>,
     stop: Option<watch::Sender<bool>>,
+    /// The file of a server on a Unix socket, which goes when it stops.
+    socket: Option<String>,
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        if let Some(path) = &self.socket {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+/// What a server accepts connections on: a TCP port or a Unix socket.
+enum Listening {
+    Tcp(tokio::net::TcpListener),
+    Unix(tokio::net::UnixListener),
+}
+
+/// A connection a server accepted, of either kind.
+trait Connected: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static {}
+
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> Connected for T {}
+
+impl Listening {
+    /// The next connection, and who it is from.
+    async fn accept(&self) -> std::io::Result<(Box<dyn Connected>, String)> {
+        match self {
+            Listening::Tcp(listener) => {
+                let (stream, remote) = listener.accept().await?;
+                Ok((Box::new(stream), remote.to_string()))
+            }
+            Listening::Unix(listener) => Ok((Box::new(listener.accept().await?.0), String::new())),
+        }
+    }
 }
 
 /// A request waiting for its response; `open` is false for the mark that
@@ -140,14 +174,6 @@ pub unsafe extern "C" fn tondo_rt_http_listen(
     cert: *const Str,
     key: *const Str,
 ) -> *mut NativeObject {
-    let failed = |message: String| {
-        native::new(Server {
-            failure: Mutex::new(Some(("connect", message))),
-            address: String::new(),
-            requests: None,
-            stop: None,
-        })
-    };
     let (cert, key) = (text(cert), text(key));
     let tls = match cert.is_empty() {
         true => None,
@@ -163,19 +189,58 @@ pub unsafe extern "C" fn tondo_rt_http_listen(
         None => return failed("the task was cancelled".into()),
     };
     let address = listener.local_addr().map(|a| a.to_string()).unwrap_or_default();
+    started(Listening::Tcp(listener), tls, address, None)
+}
+
+/// Starts a server on the Unix socket at `path`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_http_listen_unix(path: *const Str) -> *mut NativeObject {
+    let path = text(path);
+    if let Err(problem) = super::net::make_room(&path, false) {
+        return failed(problem.to_string());
+    }
+    let listener = {
+        let _context = runtime().enter();
+        tokio::net::UnixListener::bind(&path)
+    };
+    match listener {
+        Ok(listener) => started(Listening::Unix(listener), None, path.clone(), Some(path)),
+        Err(error) => failed(error.to_string()),
+    }
+}
+
+/// A server that could not start, and why.
+fn failed(message: String) -> *mut NativeObject {
+    native::new(Server {
+        failure: Mutex::new(Some(("connect", message))),
+        address: String::new(),
+        requests: None,
+        stop: None,
+        socket: None,
+    })
+}
+
+/// A server accepting on `listening` in a task of its own.
+fn started(
+    listening: Listening,
+    tls: Option<tokio_rustls::TlsAcceptor>,
+    address: String,
+    socket: Option<String>,
+) -> *mut NativeObject {
     let (sender, receiver) = mpsc::channel(1024);
     let (stop, stopped) = watch::channel(false);
-    runtime().spawn(accept(listener, tls, sender, stopped));
+    runtime().spawn(accept(listening, tls, sender, stopped));
     native::new(Server {
         failure: Mutex::new(None),
         address,
         requests: Some(Arc::new(tokio::sync::Mutex::new(receiver))),
         stop: Some(stop),
+        socket,
     })
 }
 
 async fn accept(
-    listener: tokio::net::TcpListener,
+    listener: Listening,
     tls: Option<tokio_rustls::TlsAcceptor>,
     sender: mpsc::Sender<Request>,
     mut stopped: watch::Receiver<bool>,
@@ -191,7 +256,6 @@ async fn accept(
         };
         let (sender, tls) = (sender.clone(), tls.clone());
         tokio::spawn(async move {
-            let remote = remote.to_string();
             let service = hyper::service::service_fn(move |request| handle(request, sender.clone(), remote.clone()));
             let builder = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
             match tls {
@@ -277,6 +341,9 @@ pub extern "C" fn tondo_rt_http_next(server: *mut NativeObject) -> *mut NativeOb
 pub extern "C" fn tondo_rt_http_server_stop(server: *mut NativeObject) {
     if let Some(stop) = native::get::<Server>(server).and_then(|s| s.stop.as_ref()) {
         let _ = stop.send(true);
+    }
+    if let Some(path) = native::get::<Server>(server).and_then(|s| s.socket.as_ref()) {
+        let _ = std::fs::remove_file(path);
     }
 }
 

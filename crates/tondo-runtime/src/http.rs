@@ -160,7 +160,12 @@ pub(crate) fn tls(trust: &str) -> Result<rustls::ClientConfig, String> {
 /// `redirects` is how many it follows; a connection waits `connect_ms`, or
 /// forever with 0; `trust` names a PEM file of more certificates to trust.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_http_client(connect_ms: i64, redirects: i64, trust: *const Str) -> *mut NativeObject {
+pub unsafe extern "C" fn tondo_rt_http_client(
+    connect_ms: i64,
+    redirects: i64,
+    trust: *const Str,
+    socket: *const Str,
+) -> *mut NativeObject {
     let config = match tls(&text(trust)) {
         Ok(config) => config,
         Err(problem) => return native::new(Err::<reqwest::Client, String>(problem)),
@@ -174,6 +179,10 @@ pub unsafe extern "C" fn tondo_rt_http_client(connect_ms: i64, redirects: i64, t
         });
     if connect_ms > 0 {
         builder = builder.connect_timeout(Duration::from_millis(connect_ms as u64));
+    }
+    let socket = text(socket);
+    if !socket.is_empty() {
+        builder = builder.unix_socket(std::path::PathBuf::from(socket));
     }
     native::new(builder.build().map_err(|error| error.to_string()))
 }

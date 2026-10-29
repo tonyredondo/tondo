@@ -1,4 +1,5 @@
-// std.hash (standard library 14.21): SHA digests and HMAC.
+// std.hash (standard library 14.21): digests, HMAC, both whole or in parts,
+// and hashes that are not for security.
 
 import std.internal.codec as codecNative
 
@@ -23,6 +24,12 @@ impl Display for Digest {
     }
 }
 
+/// MD5, for formats and protocols that name it, such as `Content-MD5`. It is
+/// broken for security: use SHA-256 there.
+pub fn md5(data: Array[Byte]): Digest {
+    Digest { value: codecNative.digest(5, [], data, false) }
+}
+
 /// SHA-1, for formats that name it, such as UUIDv5 and Git. It is broken
 /// for security: use SHA-256 there.
 pub fn sha1(data: Array[Byte]): Digest {
@@ -32,6 +39,11 @@ pub fn sha1(data: Array[Byte]): Digest {
 /// The SHA-256 digest of the data.
 pub fn sha256(data: Array[Byte]): Digest {
     Digest { value: codecNative.digest(256, [], data, false) }
+}
+
+/// The SHA-384 digest of the data.
+pub fn sha384(data: Array[Byte]): Digest {
+    Digest { value: codecNative.digest(384, [], data, false) }
 }
 
 /// The SHA-512 digest of the data.
@@ -47,4 +59,224 @@ pub fn hmacSha256(key: Array[Byte], data: Array[Byte]): Digest {
 /// The HMAC of the data with the key (RFC 2104), on SHA-512.
 pub fn hmacSha512(key: Array[Byte], data: Array[Byte]): Digest {
     Digest { value: codecNative.digest(512, key, data, true) }
+}
+
+/// The digests a `Hasher` computes.
+pub enum Algorithm {
+    Md5
+    Sha1
+    Sha256
+    Sha384
+    Sha512
+}
+
+fn kind(algorithm: Algorithm): Int {
+    match algorithm {
+        Algorithm.Md5 => 5
+        Algorithm.Sha1 => 1
+        Algorithm.Sha256 => 256
+        Algorithm.Sha384 => 384
+        Algorithm.Sha512 => 512
+    }
+}
+
+/// A digest or an HMAC computed in parts, without the data together: each
+/// part to `update`, then `finish`. Its copies share the computation.
+pub type Hasher = {
+    priv native: codecNative.Native
+}
+
+/// A hasher of the digest of `algorithm`.
+pub fn hasher(algorithm: Algorithm): Hasher {
+    Hasher { native: codecNative.hasher(kind(algorithm), [], false) }
+}
+
+/// A hasher of the HMAC with the key (RFC 2104), on `algorithm`.
+pub fn hmac(algorithm: Algorithm, key: Array[Byte]): Hasher {
+    Hasher { native: codecNative.hasher(kind(algorithm), key, true) }
+}
+
+/// Gives the hasher the next part of the data.
+pub fn Hasher.update(self, data: Array[Byte]) {
+    codecNative.hasherUpdate(self.native, data)
+}
+
+/// The digest of the parts so far: the same as the function that takes
+/// them together gives. The hasher can take more after.
+pub fn Hasher.finish(self): Digest {
+    Digest { value: codecNative.hasherFinish(self.native) }
+}
+
+/// FNV-1 of 32 bits.
+pub fn fnv32(data: Array[Byte]): UInt32 {
+    var hash: UInt32 = 2166136261
+    for byte in data {
+        hash = hash.wrappingMul(16777619) ^ UInt32.wrapping(byte)
+    }
+    hash
+}
+
+/// FNV-1a of 32 bits.
+pub fn fnv32a(data: Array[Byte]): UInt32 {
+    var hash: UInt32 = 2166136261
+    for byte in data {
+        hash = (hash ^ UInt32.wrapping(byte)).wrappingMul(16777619)
+    }
+    hash
+}
+
+/// FNV-1 of 64 bits.
+pub fn fnv64(data: Array[Byte]): UInt {
+    var hash: UInt = 14695981039346656037
+    for byte in data {
+        hash = hash.wrappingMul(1099511628211) ^ UInt.wrapping(byte)
+    }
+    hash
+}
+
+/// FNV-1a of 64 bits.
+pub fn fnv64a(data: Array[Byte]): UInt {
+    var hash: UInt = 14695981039346656037
+    for byte in data {
+        hash = (hash ^ UInt.wrapping(byte)).wrappingMul(1099511628211)
+    }
+    hash
+}
+
+const Prime1: UInt = 0x9E3779B185EBCA87
+
+const Prime2: UInt = 0xC2B2AE3D27D4EB4F
+
+const Prime3: UInt = 0x165667B19E3779F9
+
+const Prime4: UInt = 0x85EBCA77C2B2AE63
+
+const Prime5: UInt = 0x27D4EB2F165667C5
+
+/// XXH64, the 64-bit xxHash, with a seed.
+pub fn xxhash64(data: Array[Byte], seed: UInt = 0): UInt {
+    let length = data.length()
+    var at = 0
+    var hash: UInt = 0
+    if length >= 32 {
+        var v1 = seed.wrappingAdd(Prime1).wrappingAdd(Prime2)
+        var v2 = seed.wrappingAdd(Prime2)
+        var v3 = seed
+        var v4 = seed.wrappingSub(Prime1)
+        for at + 32 <= length {
+            v1 = xxRound(v1, word(data, at))
+            v2 = xxRound(v2, word(data, at + 8))
+            v3 = xxRound(v3, word(data, at + 16))
+            v4 = xxRound(v4, word(data, at + 24))
+            at += 32
+        }
+        hash = v1
+            .rotateLeft(1)
+            .wrappingAdd(v2.rotateLeft(7))
+            .wrappingAdd(v3.rotateLeft(12))
+            .wrappingAdd(v4.rotateLeft(18))
+        hash = xxMerge(xxMerge(xxMerge(xxMerge(hash, v1), v2), v3), v4)
+    } else {
+        hash = seed.wrappingAdd(Prime5)
+    }
+    hash = hash.wrappingAdd(UInt.wrapping(length))
+    for at + 8 <= length {
+        hash = (hash ^ xxRound(0, word(data, at)))
+            .rotateLeft(27)
+            .wrappingMul(Prime1)
+            .wrappingAdd(Prime4)
+        at += 8
+    }
+    if at + 4 <= length {
+        let half = UInt.wrapping(UInt32.fromBytes(data, at: at, order: ByteOrder.Little))
+        hash = (hash ^ half.wrappingMul(Prime1))
+            .rotateLeft(23)
+            .wrappingMul(Prime2)
+            .wrappingAdd(Prime3)
+        at += 4
+    }
+    for at < length {
+        hash = (hash ^ UInt.wrapping(data[at]).wrappingMul(Prime5))
+            .rotateLeft(11)
+            .wrappingMul(Prime1)
+        at += 1
+    }
+    hash = (hash ^ (hash >> 33)).wrappingMul(Prime2)
+    hash = (hash ^ (hash >> 29)).wrappingMul(Prime3)
+    hash ^ (hash >> 32)
+}
+
+fn xxRound(accumulator: UInt, input: UInt): UInt {
+    accumulator.wrappingAdd(input.wrappingMul(Prime2)).rotateLeft(31).wrappingMul(Prime1)
+}
+
+fn xxMerge(hash: UInt, value: UInt): UInt {
+    (hash ^ xxRound(0, value)).wrappingMul(Prime1).wrappingAdd(Prime4)
+}
+
+/// The 8 bytes from `at`, the lowest first.
+fn word(data: Array[Byte], at: Int): UInt {
+    UInt.fromBytes(data, at: at, order: ByteOrder.Little)
+}
+
+const C1: UInt = 0x87C37B91114253D5
+
+const C2: UInt = 0x4CF5AD432745937F
+
+/// MurmurHash3 x64 of 128 bits, with a seed: its first half in the high 64
+/// bits.
+pub fn murmur3(data: Array[Byte], seed: UInt32 = 0): UInt128 {
+    let length = data.length()
+    var h1 = UInt.wrapping(seed)
+    var h2 = UInt.wrapping(seed)
+    var at = 0
+    for at + 16 <= length {
+        h1 = (h1 ^ murmurFirst(word(data, at))).rotateLeft(27).wrappingAdd(h2)
+        h1 = h1.wrappingMul(5).wrappingAdd(0x52DCE729)
+        h2 = (h2 ^ murmurSecond(word(data, at + 8))).rotateLeft(31).wrappingAdd(h1)
+        h2 = h2.wrappingMul(5).wrappingAdd(0x38495AB5)
+        at += 16
+    }
+    // The last bytes, up to 15: the first 8 to one half, the rest to the
+    // other.
+    var k1: UInt = 0
+    var k2: UInt = 0
+    for (index, byte) in data.drop(at).enumerate() {
+        let shifted = UInt.wrapping(byte) << UInt.wrapping(index % 8 * 8)
+        if index < 8 {
+            k1 = k1 | shifted
+        } else {
+            k2 = k2 | shifted
+        }
+    }
+    if length - at > 8 {
+        h2 = h2 ^ murmurSecond(k2)
+    }
+    if length > at {
+        h1 = h1 ^ murmurFirst(k1)
+    }
+    h1 = h1 ^ UInt.wrapping(length)
+    h2 = h2 ^ UInt.wrapping(length)
+    h1 = h1.wrappingAdd(h2)
+    h2 = h2.wrappingAdd(h1)
+    h1 = mix(h1)
+    h2 = mix(h2)
+    h1 = h1.wrappingAdd(h2)
+    h2 = h2.wrappingAdd(h1)
+    (UInt128.wrapping(h1) << 64) | UInt128.wrapping(h2)
+}
+
+fn murmurFirst(k: UInt): UInt {
+    k.wrappingMul(C1).rotateLeft(31).wrappingMul(C2)
+}
+
+fn murmurSecond(k: UInt): UInt {
+    k.wrappingMul(C2).rotateLeft(33).wrappingMul(C1)
+}
+
+fn mix(value: UInt): UInt {
+    var k = value
+    k = (k ^ (k >> 33)).wrappingMul(0xFF51AFD7ED558CCD)
+    k = (k ^ (k >> 33)).wrappingMul(0xC4CEB9FE1A85EC53)
+    k ^ (k >> 33)
 }

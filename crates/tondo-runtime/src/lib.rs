@@ -48,6 +48,7 @@ mod regex;
 mod server;
 mod shared;
 mod shown;
+mod signals;
 mod snapshot;
 #[cfg(all(tondo_staticlib, target_os = "linux"))]
 mod start;
@@ -2667,8 +2668,10 @@ pub const LEAK_EXIT_CODE: i32 = 99;
 pub fn check_leaks() -> Option<usize> {
     std::env::var_os("TONDO_RT_CHECK_LEAKS")?;
     tasks::wait_foreign_calls();
-    // The contexts' initial values live as long as the program.
+    // The contexts' initial values live as long as the program, and so do
+    // the channels of signals.
     contexts::end();
+    signals::end();
     // Garbage cycles are not leaks: the collector frees them.
     cycles::collect_all();
     let live = LIVE_OBJECTS.live();
@@ -2728,6 +2731,7 @@ pub(crate) fn start_library(start: unsafe extern "C" fn()) {
 pub extern "C" fn tondo_rt_main(tondo_main: unsafe extern "C" fn() -> i32) -> i32 {
     meta::start();
     diagnostics::start();
+    signals::start();
     debugger::start_stopped();
     let mut status = tasks::run_main(tondo_main);
     if let Some(status) = tasks::ending() {

@@ -11,23 +11,23 @@ std.io         Writer, Reader, Buffer: streams for files, processes, memory
 std.fs         read and write files, list, open, metadata
 std.embed      files of the package kept in the executable, read when it compiles
 std.path       join, parent, fileName, extension
-std.env        args, environment, current directory
-std.process    run programs and pipelines, capture output
+std.env        args, environment, current directory, hostname, process id
+std.process    run programs and pipelines, capture output, signals
 std.time       Duration, sleep, now, UTC dates, ISO 8601
 std.json       encode and decode any type, navigate dynamic JSON
 std.toml       the same for TOML documents, with dates
 std.yaml       the same for YAML (a safe subset), one or many documents
-std.messagepack  the same for MessagePack bytes
+std.messagepack  the same for MessagePack bytes, and a writer in parts
 std.cbor       the same for CBOR (RFC 8949), deterministic if asked
 std.serialization  the protocol every format shares, for custom encodings
 std.csv        CSV rows and records, streaming and whole
 std.log        a logger with levels and fields, text or JSON lines
 std.diagnostics  the program's own counters, which `tondo counters` shows
 std.http       HTTP client and server, WebSockets (`tondo guide http`)
-std.net        TCP and UDP sockets, TLS, names
+std.net        TCP, UDP and Unix sockets, TLS, names
 std.regex      regular expressions
 std.encoding   Base64, hexadecimal, URL text
-std.hash       SHA-1, SHA-256, SHA-512, HMAC
+std.hash       MD5, SHA-1, SHA-2, HMAC, in parts; FNV, xxHash, MurmurHash3
 std.random     seeded and entropy generators
 std.uuid       UUID v4, v5, v7
 std.format     a text builder
@@ -62,6 +62,12 @@ fn main(): !(fs.FsError | json.JsonError | process.ProcessError) {
     console.println(output.text()?)
 }
 ```
+
+Ctrl-C, `kill` or `docker stop` cancel the program, with nothing to write:
+every wait ends, the tasks run their `defer`s, and it ends with 130 or 143;
+a second one ends it at once. `process.signals(process.Signal.Hangup)` gives
+a channel of the signals named instead, which no longer end the program, and
+`child.signal(process.Signal.Terminate)` sends one to a process it started.
 
 Any record or enum encodes as JSON when its fields do; `json.Value` handles
 JSON of unknown shape. The same types read and write every format:

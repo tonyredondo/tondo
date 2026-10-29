@@ -1485,7 +1485,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.path` | Core | — | 0.1 | Operaciones léxicas sobre paths `String` |
 | `std.regex` | Core | — | 0.1 | Expresiones regulares Unicode con complejidad y límites declarados |
 | `std.csv` | Core | — | 0.1 | CSV RFC 4180 materializado y en streaming |
-| `std.hash` | Core | — | 0.1 | Digests SHA-1, SHA-256 y SHA-512 y HMAC |
+| `std.hash` | Core | — | 0.1 | Digests MD5, SHA-1 y SHA-2, HMAC, por partes, y hashes no criptográficos |
 | `std.http` | Capability-gated | `network` | 0.1 | Cliente y servidor HTTP/1.1 y HTTP/2 con TLS, cuerpos en streaming, multipart, archivos con rangos, Server-Sent Events y WebSockets |
 | `std.random` | Core + gated | `entropy` para sembrar desde el sistema | 0.1 | Generadores pseudoaleatorios sembrados, mezcla, elección y bytes de entropía |
 | `std.uuid` | Core + gated | `entropy` y/o `civil-clock` para generación | 0.1 | UUID, parsing, formatting y generadores explícitos por versión |
@@ -1749,7 +1749,14 @@ pub fn remove(name: String)
 pub fn currentDirectory(): String
 pub fn setCurrentDirectory(path: String): Unit ! EnvError
 pub fn syncNative()
+pub fn hostname(): String
+pub fn processId(): Int
+pub fn executable(): String
 ~~~
+
+- `hostname` es el nombre de la máquina, como lo da el sistema; `processId`, el
+  identificador del proceso del programa; y `executable`, el path absoluto de
+  su ejecutable, con los enlaces simbólicos resueltos.
 
 - `args` devuelve los argumentos sin el nombre del programa, en orden. Los
   bytes que no son UTF-8 se sustituyen por `U+FFFD`, también en `get` y `vars`.
@@ -2065,8 +2072,9 @@ pub enum NetError {
     Io(String)
 }
 
-pub type Address = { ip: String, port: Int }
+pub type Address = { ip: String, port: Int, path: String }
 pub fn address(ip: String, port: Int): Address ! NetError
+pub fn unixAddress(path: String): Address
 pub fn resolve(host: String, timeout: time.Duration? = none): Array[String] ! NetError
 
 pub type Stream
@@ -2101,6 +2109,10 @@ pub fn Socket.address(self): Address
 pub fn Socket.sendTo(self, data: Array[Byte], to: Address): Unit ! NetError
 pub fn Socket.receive(self, timeout: time.Duration? = none): (Array[Byte], Address) ! NetError
 pub fn Socket.close(self)
+
+pub fn connectUnix(path: String, timeout: time.Duration? = none): Stream ! NetError
+pub fn listenUnix(path: String): Listener ! NetError
+pub fn bindUnix(path: String? = none): Socket ! NetError
 ~~~
 
 - `connect`, `listen` y `bind` aceptan un nombre o una dirección IP;
@@ -2138,6 +2150,17 @@ pub fn Socket.close(self)
 - Un datagrama llega entero o no llega, en cualquier orden y como mucho una
   vez; `sendTo` rechaza uno de más de 65 535 bytes. `Display` de una
   dirección es `127.0.0.1:80` o `[::1]:80`.
+- Un socket Unix es un archivo del sistema por el que se conectan programas de
+  la misma máquina, como el agente de Datadog en
+  `/var/run/datadog/apm.socket`. `connectUnix`, `listenUnix` y `bindUnix` son
+  `connect`, `listen` y `bind` sobre uno: streams y datagramas, con las mismas
+  operaciones. Su dirección tiene `path` y no `ip` ni `port`, y `Display` la
+  escribe como su path; la de una conexión TCP o UDP tiene `path` vacío.
+  `unixAddress` es la dirección a la que `sendTo` envía un datagrama.
+- `listenUnix` y `bindUnix` crean el archivo, y `close` lo borra. Si el path ya
+  es un socket sin nadie que escuche, el que dejó un programa que terminó, lo
+  reemplazan; otro archivo es `AddressInUse`. `bindUnix` sin path da un socket
+  sin nombre, que solo envía.
 - Un provider o generador no puede importar `std.net` (`E2108`).
 
 ### 14.5 El prelude y `std.math`
@@ -2933,6 +2956,21 @@ pub fn decode[T: serialization.Decode](input: Array[Byte], unknownFields: Unknow
 pub fn encode[T: serialization.Encode](value: T): Array[Byte]
 pub fn parse(input: Array[Byte]): Value ! MessagePackError
 
+pub type Writer                                   // un serialization.Sink
+pub fn writer(): Writer
+pub fn writerTo(stream: io.Writer): Writer
+pub fn Writer.nil(self)
+pub fn Writer.bool(self, value: Bool)
+pub fn Writer.int(self, value: Int)
+pub fn Writer.float(self, value: Float)
+pub fn Writer.string(self, value: String)
+pub fn Writer.bytes(self, value: Array[Byte])
+pub fn Writer.beginArray(self, count: Int)
+pub fn Writer.beginMap(self, count: Int)
+pub fn Writer.value[T: serialization.Encode](self, value: T)
+pub fn Writer.finish(self): Array[Byte]
+pub fn Writer.flush(self): Unit ! MessagePackError
+
 pub fn Value.isNil(self): Bool
 pub fn Value.get(self, key: String): Value?
 pub fn Value.at(self, index: Int): Value?
@@ -2962,6 +3000,14 @@ impl Display for Value                     // como JSON
 - Un `Encode` escrito a mano que declara otro número de elementos de los que
   escribe es un error de programa: `encode` hace pánico con lo ocurrido.
 - Los errores de lectura llevan el camino y el byte donde ocurrieron.
+- Un `Writer` escribe por partes: valores sueltos, la cabecera de un array o
+  de un mapa con su número de elementos, que siguen, y con `value` cualquier
+  valor con `Encode`. `finish` da los bytes escritos, y `writerTo` los entrega
+  a un stream de `std.io` a medida que crecen, con `flush` al final. No
+  comprueba que lleguen tantos elementos como dice una cabecera, así que un
+  array puede escribirse por trozos: un envío que acumula sus elementos con
+  `value` y solo al final sabe cuántos son escribe su cabecera en otro
+  `Writer` y la pone delante.
 
 ### 14.12 `std.protobuf`
 
@@ -3518,23 +3564,49 @@ pub fn urlDecode(text: String): String ! EncodingError
 
 ### 14.21 `std.hash`
 
-`std.hash` calcula digests y HMAC (RFC 2104):
+`std.hash` calcula digests, HMAC (RFC 2104) y hashes no criptográficos:
 
 ~~~tondo pseudocode
 pub type Digest
 pub fn Digest.bytes(self): Array[Byte]
 pub fn Digest.hex(self): String
 
+pub fn md5(data: Array[Byte]): Digest
 pub fn sha1(data: Array[Byte]): Digest
 pub fn sha256(data: Array[Byte]): Digest
+pub fn sha384(data: Array[Byte]): Digest
 pub fn sha512(data: Array[Byte]): Digest
 pub fn hmacSha256(key: Array[Byte], data: Array[Byte]): Digest
 pub fn hmacSha512(key: Array[Byte], data: Array[Byte]): Digest
+
+pub enum Algorithm { Md5, Sha1, Sha256, Sha384, Sha512 }
+pub type Hasher
+pub fn hasher(algorithm: Algorithm): Hasher
+pub fn hmac(algorithm: Algorithm, key: Array[Byte]): Hasher
+pub fn Hasher.update(self, data: Array[Byte])
+pub fn Hasher.finish(self): Digest
+
+pub fn fnv32(data: Array[Byte]): UInt32
+pub fn fnv32a(data: Array[Byte]): UInt32
+pub fn fnv64(data: Array[Byte]): UInt
+pub fn fnv64a(data: Array[Byte]): UInt
+pub fn xxhash64(data: Array[Byte], seed: UInt = 0): UInt
+pub fn murmur3(data: Array[Byte], seed: UInt32 = 0): UInt128
 ~~~
 
-`Display` de un `Digest` es su hexadecimal minúsculo:
-`hash.sha256(text.bytes())` se interpola directamente. SHA-1 existe para los
-formatos que lo nombran, como UUIDv5 y Git; para seguridad se usa SHA-256.
+- `Display` de un `Digest` es su hexadecimal minúsculo:
+  `hash.sha256(text.bytes())` se interpola directamente. MD5 y SHA-1 existen
+  para los formatos y protocolos que los nombran, como UUIDv5, Git o un
+  `Content-MD5`; para seguridad se usa SHA-256 o más.
+- Un `Hasher` calcula un digest o un HMAC por partes, sin tener los datos
+  juntos: `update` con cada parte y `finish` dan lo mismo que la función de
+  una vez sobre su concatenación, y después puede seguir recibiendo partes. Es
+  un handle, como un `Writer`: sus copias comparten el cálculo.
+- `fnv32`, `fnv32a`, `fnv64` y `fnv64a` son FNV-1 y FNV-1a; `xxhash64` es
+  XXH64; y `murmur3` es MurmurHash3 x64 de 128 bits, con su primera mitad en
+  los 64 bits altos. Dan los valores de sus implementaciones de referencia,
+  así que coinciden con los de otros lenguajes. Son para repartir, muestrear o
+  identificar, nunca para seguridad.
 
 ### 14.22 `std.random`
 
@@ -3663,7 +3735,7 @@ pub enum HttpError {
 pub type Client
 pub fn Client.new(baseUrl: String = "", headers: Map[String, String] = [:],
     timeout: time.Duration? = none, connectTimeout: time.Duration? = none,
-    redirects: Int = 10): Client
+    redirects: Int = 10, socket: String? = none): Client
 pub fn Client.get(self, url: String, query: Map[String, String] = [:],
     headers: Map[String, String] = [:], timeout: time.Duration? = none): Response ! HttpError
 pub fn Client.head(...)                       // como get
@@ -3722,7 +3794,10 @@ pub fn WebSocket.close(self): Unit ! HttpError
 - No hay cliente global. Las funciones del módulo abren una conexión por
   petición; un `Client` guarda sus conexiones para las siguientes, y su
   `baseUrl` y sus cabeceras van con cada petición, cuyas cabeceras ganan.
-  `query` se añade a la URL codificado como en `encoding.urlEncode`.
+  `query` se añade a la URL codificado como en `encoding.urlEncode`. Con
+  `socket`, cada petición va por ese socket Unix (14.4.6) en vez de por la red,
+  y la URL solo da el path y la cabecera `Host`:
+  `http.Client.new(baseUrl: "http://agent", socket: "/var/run/datadog/apm.socket")`.
 - Una petición devuelve la respuesta cuando llega su cabecera. Un estado de
   400 o más es `HttpError.Status`, que lleva la respuesta para leer su cuerpo;
   así `http.get(url)?.json()?` es correcto sin comprobar el estado.
@@ -3814,6 +3889,7 @@ pub fn Problem.from[E: Display](error: E): Problem          // 500
 pub type Request
 pub fn Request.method(self): String
 pub fn Request.path(self): String
+pub fn Request.route(self): String?
 pub fn Request.version(self): String
 pub fn Request.remoteAddress(self): String
 pub fn Request.param(self, name: String): String
@@ -3860,8 +3936,10 @@ pub fn App.embedded(mut self, prefix: String, files: embed.Files)
 pub fn App.uploads(mut self, prefix: String, directory: String)
 pub fn App.websocket(mut self, path: String, handler: fn(WebSocket): Unit ! HttpError)
 pub fn App.openApi(mut self, path: String = "/openapi.json", title: String = "API", version: String = "1.0")
-pub fn App.listen(self, port: Int = 8080, host: String = "0.0.0.0", tls: Tls? = none): Unit ! HttpError
-pub fn App.start(self, port: Int = 0, host: String = "127.0.0.1", tls: Tls? = none): Server ! HttpError
+pub fn App.listen(self, port: Int = 8080, host: String = "0.0.0.0", tls: Tls? = none,
+    socket: String? = none): Unit ! HttpError
+pub fn App.start(self, port: Int = 0, host: String = "127.0.0.1", tls: Tls? = none,
+    socket: String? = none): Server ! HttpError
 pub type Server
 pub fn Server.address(self): String
 pub fn Server.url(self): String
@@ -3875,6 +3953,14 @@ pub alias Tls = net.Tls
   `/users/:id`; `HEAD` usa la ruta `GET`. Un path sin ruta es `404`, y uno con
   rutas de otros métodos, `405` con `Allow`. Los parámetros llegan
   decodificados.
+- `Request.route()` es la plantilla de la ruta que atiende la petición, como se
+  registró y con el prefijo de `mount`: `/users/:id` para `GET /users/42`;
+  `none` si ninguna la atiende. El servidor elige la ruta antes de llamar al
+  middleware, así que este ya la ve antes de `next`. Es el nombre de la
+  petición para un tracer o una métrica, que no crece con cada valor de un
+  parámetro como el path.
+- Con `socket`, `listen` y `start` atienden en ese socket Unix (14.4.6) en vez
+  de en un puerto, y `Server.address()` es su path.
 - Un handler devuelve una `Reply` o falla con un `Problem`, que el servidor
   envía como `application/problem+json` (RFC 9457). Con un estado de 500 o más
   el cliente solo ve `internal server error` y el mensaje va a la salida de
@@ -4575,6 +4661,10 @@ pub fn Process.output(self): ProcessOutput ! ProcessError
 pub fn Process.check(self): ProcessOutput ! ProcessError
 pub fn Process.cancel(self): ExitStatus ! ProcessError
 pub fn Process.detach(self)
+pub fn Process.signal(self, signal: Signal)
+
+pub enum Signal { Interrupt, Terminate, Hangup, User1, User2 }
+pub fn signals(wanted: ...Signal): Receiver[Signal]
 ~~~
 
 Planes:
@@ -4631,6 +4721,19 @@ Vida de un `Process` (20.9 del lenguaje):
   acaben y no deja zombies.
 - `exit(code)` entrega la salida pendiente de la consola y termina el programa
   con ese código, sin ejecutar los `defer` ni esperar a otras tareas.
+
+Señales:
+
+- `Interrupt` (Ctrl-C) y `Terminate` (`kill`, `docker stop`, Kubernetes)
+  cancelan el programa sin que escriba nada (20.10 del lenguaje): un servidor
+  deja de aceptar, sus tareas ejecutan sus `defer` y termina con `130` o
+  `143`.
+- `signals(...)` entrega en un canal las señales pedidas que llegan, en vez de
+  su efecto: ya no cancelan ni terminan el programa, que decide qué hacer,
+  como recargar su configuración con `Hangup`. Las que el canal no ha leído
+  se juntan: dos iguales seguidas son una.
+- `Process.signal` envía una señal a los procesos de un hijo; `cancel` sigue
+  siendo la forma de terminarlo y esperarlo.
 
 ### 19.3 `std.ffi`
 

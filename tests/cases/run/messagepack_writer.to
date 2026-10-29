@@ -1,0 +1,40 @@
+// messagepack.Writer: MessagePack in parts, as a tracer sends its spans:
+// gathered one by one, with the header of their array written at the end.
+
+import std.console
+import std.io
+import std.messagepack
+
+pub type Span = {
+    name: String
+    id: UInt
+}
+
+fn main(): !messagepack.MessagePackError {
+    // Spans gathered one by one, and their header written at the end.
+    let spans = messagepack.writer()
+    var count = 0
+    for name in ["a", "b", "c"] {
+        spans.value(Span { name, id: 18446744073709551615 })
+        count += 1
+    }
+    let head = messagepack.writer()
+    head.beginArray(count)
+    var payload = head.finish()
+    payload.extend(spans.finish())
+    let back: Array[Span] = messagepack.decode(payload)?
+    console.println("{back.length()} {back[2].name} {back[0].id}")
+    // Single values, and a stream.
+    let buffer = io.Buffer()
+    let out = messagepack.writerTo(buffer.writer())
+    out.beginMap(2)
+    out.string("x")
+    out.int(1)
+    out.string("y")
+    out.nil()
+    out.flush()?
+    console.println("{messagepack.parse(buffer.bytes())?}")
+}
+
+// expect-stdout: 3 c 18446744073709551615
+// expect-stdout: {"x":1,"y":null}

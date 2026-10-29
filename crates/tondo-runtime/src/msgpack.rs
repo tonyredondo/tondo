@@ -408,7 +408,25 @@ struct Writer {
     out: Vec<u8>,
     open: Vec<Open>,
     error: Option<String>,
+    /// The stream a writer to a stream passes its bytes to as they grow,
+    /// and its first failure.
+    sink: Option<Sink>,
+    failed: Option<String>,
 }
+
+/// A stream of `std.io` a writer holds a reference to.
+struct Sink(*mut crate::io::StreamObject);
+
+unsafe impl Send for Sink {}
+
+impl Drop for Sink {
+    fn drop(&mut self) {
+        unsafe { crate::io::tondo_rt_stream_release(self.0) }
+    }
+}
+
+/// How many bytes a writer to a stream gathers before it passes them on.
+const CHUNK: usize = 64 * 1024;
 
 fn writer(object: *mut NativeObject) -> Option<std::sync::MutexGuard<'static, Writer>> {
     native::get::<Mutex<Writer>>(object).map(|w| w.lock().unwrap_or_else(|e| e.into_inner()))
@@ -417,6 +435,20 @@ fn writer(object: *mut NativeObject) -> Option<std::sync::MutexGuard<'static, Wr
 impl Writer {
     fn fail(&mut self, message: String) {
         self.error.get_or_insert(message);
+    }
+
+    /// Passes the bytes to the stream, once there are enough or with `all`.
+    fn deliver(&mut self, all: bool) {
+        let Some(sink) = &self.sink else { return };
+        if self.out.is_empty() || (!all && self.out.len() < CHUNK) {
+            return;
+        }
+        let data = std::mem::take(&mut self.out);
+        if self.failed.is_none()
+            && let Err(error) = crate::io::run(sink.0, move |s| s.write(&data))
+        {
+            self.failed = Some(format!("cannot write the stream: {error}"));
+        }
     }
 
     /// A value was written in the innermost list or map.
@@ -434,7 +466,38 @@ fn write(object: *mut NativeObject, value: impl FnOnce(&mut Vec<u8>)) {
     if let Some(mut writer) = writer(object) {
         value(&mut writer.out);
         writer.wrote();
+        writer.deliver(false);
     }
+}
+
+/// `messagepack.writerTo(stream)`: passes the bytes to the stream as they
+/// grow.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_msgpack_stream_writer(stream: *mut crate::io::StreamObject) -> *mut NativeObject {
+    let sink = Some(Sink(crate::io::retain(stream)));
+    native::new(Mutex::new(Writer { sink, ..Writer::default() }))
+}
+
+/// The header of an array or map of `count` items, which the writer does
+/// not count: its items may come from elsewhere.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_msgpack_write_header(object: *mut NativeObject, map: u8, count: i64) {
+    let Some(mut writer) = writer(object) else { return };
+    let count = count.max(0) as u32;
+    let _ = if map != 0 {
+        rmp::encode::write_map_len(&mut writer.out, count)
+    } else {
+        rmp::encode::write_array_len(&mut writer.out, count)
+    };
+    writer.deliver(false);
+}
+
+/// Passes what is pending to the stream: its first failure, or empty.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_msgpack_flush(object: *mut NativeObject) -> *mut Str {
+    let Some(mut writer) = writer(object) else { return str_new(b"") };
+    writer.deliver(true);
+    str_new(writer.failed.clone().unwrap_or_default().as_bytes())
 }
 
 #[unsafe(no_mangle)]

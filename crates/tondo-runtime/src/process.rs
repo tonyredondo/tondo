@@ -670,6 +670,16 @@ pub unsafe extern "C" fn tondo_rt_process_id(process: *mut ProcessObject) -> i64
     Process(process).running().pids.last().map_or(0, |&pid| pid as i64)
 }
 
+/// `Process.signal`: sends the signal of `process.Signal`'s variant `tag`
+/// to each stage of the process.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_process_signal(process: *mut ProcessObject, tag: i64) {
+    let Some(&signal) = super::signals::SIGNALS.get(tag as usize) else { return };
+    for &pid in &Process(process).running().pids {
+        unsafe { libc::kill(pid as i32, signal) };
+    }
+}
+
 /// Waits for the process, with `cancel` killing it first; a cancelled task
 /// kills it too.
 fn settle<R: Send + 'static>(

@@ -132,6 +132,31 @@ pub extern "C" fn tondo_rt_env_current_directory() -> *mut Str {
     std::env::current_dir().map_or_else(|_| str_new(b""), |path| text(path.as_os_str().as_bytes()))
 }
 
+/// `env.hostname()`: the machine's name, as the system gives it.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_env_hostname() -> *mut Str {
+    let mut name = [0u8; 256];
+    let length = match unsafe { libc::gethostname(name.as_mut_ptr().cast(), name.len()) } {
+        0 => name.iter().position(|&b| b == 0).unwrap_or(name.len()),
+        _ => 0,
+    };
+    text(&name[..length])
+}
+
+/// `env.processId()`.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_env_process_id() -> i64 {
+    std::process::id() as i64
+}
+
+/// `env.executable()`: the absolute path of the program's executable, its
+/// links resolved.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_env_executable() -> *mut Str {
+    let path = std::env::current_exe().and_then(|path| path.canonicalize());
+    path.map_or_else(|_| str_new(b""), |path| text(path.as_os_str().as_bytes()))
+}
+
 /// `env.setCurrentDirectory(path)`: 0, or 1 plus the `EnvError` variant.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_env_set_current_directory(path: *const Str) -> i64 {

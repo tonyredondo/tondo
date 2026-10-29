@@ -3,10 +3,12 @@
 //! SHA digests and HMAC, the system's entropy and the mixing function of
 //! seeded generators.
 
+use super::native::{self, NativeObject};
 use super::{ArrayHeader, Str, element, str_bytes, str_new};
 use crate::io::byte_array;
-use hmac::{Hmac, KeyInit, Mac};
-use sha2::Digest;
+use hmac::{HmacReset, KeyInit};
+use sha2::digest::DynDigest;
+use std::sync::Mutex;
 
 fn bytes(array: *mut ArrayHeader) -> Vec<u8> {
     if array.is_null() {
@@ -158,8 +160,28 @@ pub unsafe extern "C" fn tondo_rt_url_decode(input: *const Str) -> *mut Str {
     str_new(&url_decode(text(input)).unwrap_or_default())
 }
 
-/// The digest of `data`: SHA-1, SHA-256 or SHA-512 as `kind` is 1, 256 or
-/// 512; with a `key`, its HMAC.
+/// A hasher of `kind`: MD5, SHA-1, SHA-256, SHA-384 or SHA-512 as it is 5,
+/// 1, 256, 384 or 512; with a `key`, its HMAC.
+fn hasher(kind: i64, key: Option<&[u8]>) -> Box<dyn DynDigest + Send> {
+    fn mac<M: DynDigest + KeyInit + Send + 'static>(key: &[u8]) -> Box<dyn DynDigest + Send> {
+        Box::new(<M as KeyInit>::new_from_slice(key).expect("HMAC takes a key of any length"))
+    }
+    match (kind, key) {
+        (5, None) => Box::new(md5::Md5::default()),
+        (1, None) => Box::new(sha1::Sha1::default()),
+        (256, None) => Box::new(sha2::Sha256::default()),
+        (384, None) => Box::new(sha2::Sha384::default()),
+        (512, None) => Box::new(sha2::Sha512::default()),
+        (5, Some(key)) => mac::<HmacReset<md5::Md5>>(key),
+        (1, Some(key)) => mac::<HmacReset<sha1::Sha1>>(key),
+        (256, Some(key)) => mac::<HmacReset<sha2::Sha256>>(key),
+        (384, Some(key)) => mac::<HmacReset<sha2::Sha384>>(key),
+        (_, None) => Box::new(sha2::Sha512::default()),
+        (_, Some(key)) => mac::<HmacReset<sha2::Sha512>>(key),
+    }
+}
+
+/// The digest of `data` (`hasher`), or with `keyed` its HMAC with `key`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_hash_digest(
     kind: i64,
@@ -167,20 +189,32 @@ pub unsafe extern "C" fn tondo_rt_hash_digest(
     data: *mut ArrayHeader,
     keyed: u8,
 ) -> *mut ArrayHeader {
-    fn mac<M: Mac + KeyInit>(key: &[u8], data: &[u8]) -> Vec<u8> {
-        let mut mac = <M as KeyInit>::new_from_slice(key).expect("HMAC takes a key of any length");
-        mac.update(data);
-        mac.finalize().into_bytes().to_vec()
+    let key = bytes(key);
+    let mut hasher = hasher(kind, (keyed != 0).then_some(&key[..]));
+    hasher.update(&bytes(data));
+    byte_array(&hasher.finalize_reset())
+}
+
+/// A hasher that takes its data in parts (`hasher`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_hasher(kind: i64, key: *mut ArrayHeader, keyed: u8) -> *mut NativeObject {
+    let key = bytes(key);
+    native::new(Mutex::new(hasher(kind, (keyed != 0).then_some(&key[..]))))
+}
+
+/// Gives a hasher the next part of its data.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_hasher_update(object: *mut NativeObject, data: *mut ArrayHeader) {
+    if let Some(hasher) = native::get::<Mutex<Box<dyn DynDigest + Send>>>(object) {
+        hasher.lock().unwrap_or_else(|e| e.into_inner()).update(&bytes(data));
     }
-    let (key, data) = (bytes(key), bytes(data));
-    let digest = match (kind, keyed != 0) {
-        (1, false) => sha1::Sha1::digest(&data).to_vec(),
-        (256, false) => sha2::Sha256::digest(&data).to_vec(),
-        (512, false) => sha2::Sha512::digest(&data).to_vec(),
-        (1, true) => mac::<Hmac<sha1::Sha1>>(&key, &data),
-        (256, true) => mac::<Hmac<sha2::Sha256>>(&key, &data),
-        _ => mac::<Hmac<sha2::Sha512>>(&key, &data),
-    };
+}
+
+/// The digest of the data a hasher has had so far; it can take more.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_hasher_finish(object: *mut NativeObject) -> *mut ArrayHeader {
+    let Some(hasher) = native::get::<Mutex<Box<dyn DynDigest + Send>>>(object) else { return byte_array(&[]) };
+    let digest = hasher.lock().unwrap_or_else(|e| e.into_inner()).box_clone().finalize_reset();
     byte_array(&digest)
 }
 

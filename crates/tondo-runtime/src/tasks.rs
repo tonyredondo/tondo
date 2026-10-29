@@ -3630,6 +3630,22 @@ pub unsafe extern "C" fn tondo_rt_channel_offer(sender: *mut SenderObject, value
     }
 }
 
+/// Sends a value without waiting, from outside any task, as a signal is
+/// (`signals`): not when the channel is closed or full, or when the last
+/// value it holds is the same, which this one joins.
+pub(crate) unsafe fn offer_new(sender: *mut SenderObject, value: *mut u8) {
+    unsafe {
+        let c = &mut *(*sender).channel;
+        lock(&c.lock);
+        let size = c.size;
+        let fresh = std::slice::from_raw_parts(value, size);
+        let same = c.count > 0 && c.buffer.range(c.buffer.len() - size..).eq(fresh.iter());
+        let woken = if c.closed || same { None } else { try_send(c, value) };
+        unlock(&c.lock);
+        woken.flatten().into_iter().for_each(notify);
+    }
+}
+
 /// A value a cancelled task did not send: it was the channel's to release.
 unsafe fn drop_unsent(c: &ChannelObject, value: *mut u8) {
     if let Some(release) = c.release {

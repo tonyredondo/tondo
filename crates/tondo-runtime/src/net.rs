@@ -1,5 +1,6 @@
 //! What `std.net` does in the runtime (standard library 14.4.6): TCP
-//! connections and listeners, with TLS, UDP sockets and names. A connection
+//! connections and listeners, with TLS, UDP sockets, Unix sockets of both
+//! kinds and names. A connection
 //! is two streams of `std.io` in `Mode::Ready`, so a task waiting on the
 //! network holds neither a worker nor a thread. Sockets without TLS are the
 //! workers' own (`poll`): a task reads and writes them itself, and what a
@@ -40,7 +41,7 @@ const IO: i64 = 11;
 
 /// Why an operation failed: a code and the text some variants carry.
 #[derive(Clone, Debug, Default)]
-struct Failure {
+pub(crate) struct Failure {
     code: i64,
     detail: String,
 }
@@ -236,28 +237,64 @@ async fn send(mut to: tokio::io::WriteHalf<Tls>, pipe: Arc<Pipe>) {
     let _ = to.shutdown().await;
 }
 
-/// A TCP socket of the workers' poll, and what its writing direction holds.
-struct Tcp {
-    socket: Registered<mio::net::TcpStream>,
-    unsent: Mutex<Unsent>,
+/// A connected socket of the workers' poll: TCP or Unix.
+trait Wire: mio::event::Source + Send + Sync + 'static {
+    fn take(&self, buffer: &mut [u8]) -> std::io::Result<usize>;
+    fn give(&self, data: &[u8]) -> std::io::Result<usize>;
+    fn end(&self) -> std::io::Result<()>;
 }
 
-#[derive(Default)]
-struct Unsent {
+impl Wire for mio::net::TcpStream {
+    fn take(&self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        (&*self).read(buffer)
+    }
+    fn give(&self, data: &[u8]) -> std::io::Result<usize> {
+        (&*self).write(data)
+    }
+    fn end(&self) -> std::io::Result<()> {
+        self.shutdown(Shutdown::Write)
+    }
+}
+
+impl Wire for mio::net::UnixStream {
+    fn take(&self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        (&*self).read(buffer)
+    }
+    fn give(&self, data: &[u8]) -> std::io::Result<usize> {
+        (&*self).write(data)
+    }
+    fn end(&self) -> std::io::Result<()> {
+        self.shutdown(Shutdown::Write)
+    }
+}
+
+/// A socket of the workers' poll, and what its writing direction holds.
+struct Tcp<S: Wire> {
+    socket: Registered<S>,
+    unsent: Mutex<Unsent<S>>,
+}
+
+struct Unsent<S: Wire> {
     /// Written and not sent yet.
     bytes: Vec<u8>,
     failure: Option<Failure>,
     /// The writing stream let go of the socket with bytes to send: it ends
     /// its direction after them, and holds it until then.
-    keep: Option<Arc<Tcp>>,
+    keep: Option<Arc<Tcp<S>>>,
 }
 
-impl Tcp {
+impl<S: Wire> Default for Unsent<S> {
+    fn default() -> Self {
+        Unsent { bytes: Vec::new(), failure: None, keep: None }
+    }
+}
+
+impl<S: Wire> Tcp<S> {
     /// How much of `data` the socket takes now.
     fn send(&self, data: &[u8]) -> std::io::Result<usize> {
         let mut sent = 0;
         while sent < data.len() {
-            match self.socket.attempt(Direction::Write, |mut socket| socket.write(&data[sent..])) {
+            match self.socket.attempt(Direction::Write, |socket| socket.give(&data[sent..])) {
                 Ok(count) => {
                     sent += count;
                     super::diagnostics::NET_WRITTEN.add(count as i64);
@@ -270,7 +307,7 @@ impl Tcp {
     }
 
     /// Sends what waits while the socket takes it.
-    fn push(&self, unsent: &mut Unsent) -> std::io::Result<()> {
+    fn push(&self, unsent: &mut Unsent<S>) -> std::io::Result<()> {
         failed(&unsent.failure)?;
         match self.send(&unsent.bytes) {
             Ok(sent) => {
@@ -287,7 +324,7 @@ impl Tcp {
         let mut unsent = lock(&self.unsent);
         let _ = self.push(&mut unsent);
         if unsent.keep.is_some() && (unsent.bytes.is_empty() || unsent.failure.is_some()) {
-            let _ = self.socket.io().shutdown(Shutdown::Write);
+            let _ = self.socket.io().end();
             let keep = unsent.keep.take();
             drop(unsent);
             drop(keep);
@@ -296,7 +333,7 @@ impl Tcp {
 }
 
 /// Notes that sending failed, which every write after says.
-fn fail(unsent: &mut Unsent, error: std::io::Error) -> std::io::Error {
+fn fail<S: Wire>(unsent: &mut Unsent<S>, error: std::io::Error) -> std::io::Error {
     let failure = Failure::from(error);
     unsent.bytes.clear();
     unsent.failure = Some(failure.clone());
@@ -305,8 +342,8 @@ fn fail(unsent: &mut Unsent, error: std::io::Error) -> std::io::Error {
 
 /// The reading half of a TCP connection as the host of a stream, which
 /// reads the socket itself.
-struct TcpIn {
-    tcp: Arc<Tcp>,
+struct TcpIn<S: Wire> {
+    tcp: Arc<Tcp<S>>,
     waiting: bool,
     gave_up: Option<ErrorKind>,
 }
@@ -314,8 +351,8 @@ struct TcpIn {
 /// The writing half of a TCP connection as the host of a stream, which
 /// writes the socket itself and leaves what it could not take to send when
 /// it can.
-struct TcpOut {
-    tcp: Arc<Tcp>,
+struct TcpOut<S: Wire> {
+    tcp: Arc<Tcp<S>>,
     waiting: bool,
     gave_up: Option<ErrorKind>,
 }
@@ -349,9 +386,9 @@ fn failed(failure: &Option<Failure>) -> std::io::Result<()> {
     failure.as_ref().map_or(Ok(()), |failure| Err(std::io::Error::other(failure.clone())))
 }
 
-impl Host for TcpIn {
+impl<S: Wire> Host for TcpIn<S> {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        match self.tcp.socket.attempt(Direction::Read, |mut socket| socket.read(buffer)) {
+        match self.tcp.socket.attempt(Direction::Read, |socket| socket.take(buffer)) {
             Err(error) if error.kind() == ErrorKind::WouldBlock => Err(would_block(&mut self.waiting, self.gave_up)),
             read => {
                 super::diagnostics::NET_READ.add(*read.as_ref().unwrap_or(&0) as i64);
@@ -408,7 +445,7 @@ impl Drop for Inbox {
     }
 }
 
-impl Host for TcpOut {
+impl<S: Wire> Host for TcpOut<S> {
     fn write(&mut self, data: &[u8]) -> std::io::Result<()> {
         let mut unsent = lock(&self.tcp.unsent);
         self.tcp.push(&mut unsent)?;
@@ -448,11 +485,11 @@ impl Host for TcpOut {
     }
 }
 
-impl Drop for TcpOut {
+impl<S: Wire> Drop for TcpOut<S> {
     fn drop(&mut self) {
         let mut unsent = lock(&self.tcp.unsent);
         if unsent.bytes.is_empty() || unsent.failure.is_some() {
-            let _ = self.tcp.socket.io().shutdown(Shutdown::Write);
+            let _ = self.tcp.socket.io().end();
         } else {
             unsent.keep = Some(self.tcp.clone());
         }
@@ -516,18 +553,38 @@ impl Drop for Held {
     }
 }
 
-/// A TCP connection: its streams, its addresses, and the last failure of
-/// each direction.
+/// Where a socket is: an IP address and port, or the path of a Unix socket,
+/// empty for one without a name.
+#[derive(Clone)]
+enum Endpoint {
+    Ip(SocketAddr),
+    Path(String),
+}
+
+impl From<SocketAddr> for Endpoint {
+    fn from(address: SocketAddr) -> Endpoint {
+        Endpoint::Ip(address)
+    }
+}
+
+impl From<std::os::unix::net::SocketAddr> for Endpoint {
+    fn from(address: std::os::unix::net::SocketAddr) -> Endpoint {
+        Endpoint::Path(address.as_pathname().map(|p| p.display().to_string()).unwrap_or_default())
+    }
+}
+
+/// A connection: its streams, its addresses, and the last failure of each
+/// direction.
 struct Connection {
     reader: Held,
     writer: Held,
-    local: SocketAddr,
-    remote: SocketAddr,
+    local: Endpoint,
+    remote: Endpoint,
     failures: [Mutex<Failure>; 2],
 }
 
 impl Connection {
-    fn new(reader: Box<dyn Host>, writer: Box<dyn Host>, local: SocketAddr, remote: SocketAddr) -> Connection {
+    fn new(reader: Box<dyn Host>, writer: Box<dyn Host>, local: Endpoint, remote: Endpoint) -> Connection {
         super::diagnostics::NET_CONNECTIONS.add(1);
         Connection {
             reader: Held(crate::io::stream(reader, Mode::Ready, false)),
@@ -543,7 +600,18 @@ impl Connection {
 fn tcp(socket: Registered<mio::net::TcpStream>) -> Result<Connection, Failure> {
     let _ = socket.io().set_nodelay(true);
     let (local, remote) = (socket.io().local_addr()?, socket.io().peer_addr()?);
-    let tcp = Arc::new(Tcp { socket, unsent: Mutex::default() });
+    Ok(link(socket, local.into(), remote.into()))
+}
+
+/// A connection over a Unix socket.
+fn unix(socket: Registered<mio::net::UnixStream>) -> Result<Connection, Failure> {
+    let (local, remote) = (socket.io().local_addr()?, socket.io().peer_addr()?);
+    Ok(link(socket, local.into(), remote.into()))
+}
+
+/// A connection over a socket the task reads and writes itself.
+fn link<S: Wire>(socket: Registered<S>, local: Endpoint, remote: Endpoint) -> Connection {
+    let tcp = Arc::new(Tcp { socket, unsent: Mutex::new(Unsent::default()) });
     let weak = Arc::downgrade(&tcp);
     tcp.socket.on_writable(Arc::new(move || {
         if let Some(tcp) = weak.upgrade() {
@@ -552,7 +620,7 @@ fn tcp(socket: Registered<mio::net::TcpStream>) -> Result<Connection, Failure> {
     }));
     let reader = TcpIn { tcp: tcp.clone(), waiting: false, gave_up: None };
     let writer = TcpOut { tcp, waiting: false, gave_up: None };
-    Ok(Connection::new(Box::new(reader), Box::new(writer), local, remote))
+    Connection::new(Box::new(reader), Box::new(writer), local, remote)
 }
 
 /// A connection over TLS, and the pipes `secure` moves its bytes through
@@ -563,7 +631,7 @@ fn tls(stream: &tokio::net::TcpStream) -> Result<(Connection, Arc<Pipe>, Arc<Pip
     let (inbox, outbox) = (Arc::new(Pipe::default()), Arc::new(Pipe::default()));
     let reader = Inbox { pipe: inbox.clone(), waiting: false, gave_up: None };
     let writer = Outbox { pipe: outbox.clone(), waiting: false, gave_up: None };
-    Ok((Connection::new(Box::new(reader), Box::new(writer), local, remote), inbox, outbox))
+    Ok((Connection::new(Box::new(reader), Box::new(writer), local.into(), remote.into()), inbox, outbox))
 }
 
 /// Starts the tasks that move the bytes of a TLS stream.
@@ -655,6 +723,67 @@ pub unsafe extern "C" fn tondo_rt_net_connect(
         }))
     });
     native::new(Net::from(connected.map(Net::Connection)))
+}
+
+/// `connectUnix`: a connection to the Unix socket at `path`, or why there
+/// is none.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_net_connect_unix(path: *const Str, timeout_ms: i64) -> *mut NativeObject {
+    let path = text(path);
+    let connected = waited(within(deadline(timeout_ms), async move {
+        let socket = match mio::net::UnixStream::connect(&path) {
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                let why = format!("there is no Unix socket at `{path}`: does the program that listens on it run?");
+                return Err(failure(IO, why));
+            }
+            socket => Registered::new(socket?)?,
+        };
+        loop {
+            socket.ready(Direction::Write).await;
+            if let Some(error) = socket.io().take_error()? {
+                return Err(error.into());
+            }
+            // Connected once it has a peer.
+            let connected = socket.attempt(Direction::Write, |socket| match socket.peer_addr() {
+                Err(error) if error.kind() == ErrorKind::NotConnected => Err(ErrorKind::WouldBlock.into()),
+                connected => connected,
+            });
+            match connected {
+                Ok(_) => return unix(socket),
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }));
+    native::new(Net::from(connected.map(Net::Connection)))
+}
+
+/// Makes room for a Unix socket at `path`: a socket nobody answers on any
+/// more, which a program that ended left, goes; another file is in use.
+pub(crate) fn make_room(path: &str, datagram: bool) -> Result<(), Failure> {
+    use std::os::unix::fs::FileTypeExt;
+    let Ok(metadata) = std::fs::symlink_metadata(path) else { return Ok(()) };
+    if !metadata.file_type().is_socket() {
+        return Err(failure(IN_USE, format!("`{path}` is a file that is not a socket")));
+    }
+    let answers = match datagram {
+        true => std::os::unix::net::UnixDatagram::unbound().and_then(|socket| socket.connect(path)).is_ok(),
+        false => std::os::unix::net::UnixStream::connect(path).is_ok(),
+    };
+    if answers {
+        return Err(failure(IN_USE, path));
+    }
+    std::fs::remove_file(path)?;
+    Ok(())
+}
+
+/// Removes the file of a Unix socket with a name.
+fn unlink(endpoint: &Endpoint) {
+    if let Endpoint::Path(path) = endpoint
+        && !path.is_empty()
+    {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// The direction of a connection's operations: reading or writing.
@@ -781,10 +910,45 @@ pub unsafe extern "C" fn tondo_rt_net_writer(object: *mut NativeObject) -> *mut 
 
 /// A listener, until it is closed, and a TLS acceptor when it has one.
 struct Listener {
-    listener: Mutex<Option<Arc<Registered<mio::net::TcpListener>>>>,
+    listener: Mutex<Option<Acceptor>>,
     tls: Option<tokio_rustls::TlsAcceptor>,
-    local: SocketAddr,
+    local: Endpoint,
     closed: Arc<tokio::sync::watch::Sender<bool>>,
+}
+
+impl Drop for Listener {
+    fn drop(&mut self) {
+        unlink(&self.local);
+    }
+}
+
+/// The socket a listener accepts on: TCP or Unix.
+#[derive(Clone)]
+enum Acceptor {
+    Tcp(Arc<Registered<mio::net::TcpListener>>),
+    Unix(Arc<Registered<mio::net::UnixListener>>),
+}
+
+/// A connection accepted, before it is a `Connection`.
+enum Accepted {
+    Tcp(mio::net::TcpStream),
+    Unix(mio::net::UnixStream),
+}
+
+impl Acceptor {
+    fn accept(&self) -> std::io::Result<Accepted> {
+        match self {
+            Acceptor::Tcp(socket) => socket.attempt(Direction::Read, |l| l.accept()).map(|(s, _)| Accepted::Tcp(s)),
+            Acceptor::Unix(socket) => socket.attempt(Direction::Read, |l| l.accept()).map(|(s, _)| Accepted::Unix(s)),
+        }
+    }
+
+    async fn ready(&self) {
+        match self {
+            Acceptor::Tcp(socket) => socket.ready(Direction::Read).await,
+            Acceptor::Unix(socket) => socket.ready(Direction::Read).await,
+        }
+    }
 }
 
 /// A listener whose queue of connections not accepted yet is as long as
@@ -823,9 +987,24 @@ pub unsafe extern "C" fn tondo_rt_net_listen(
             }
             Err(last)
         })?;
-        let local = listener.io().local_addr()?;
+        let local = listener.io().local_addr()?.into();
         let closed = Arc::new(tokio::sync::watch::channel(false).0);
-        Ok(Net::Listener(Listener { listener: Mutex::new(Some(Arc::new(listener))), tls, local, closed }))
+        let listener = Mutex::new(Some(Acceptor::Tcp(Arc::new(listener))));
+        Ok(Net::Listener(Listener { listener, tls, local, closed }))
+    });
+    native::new(Net::from(listening))
+}
+
+/// `listenUnix`: a listener on a Unix socket at `path`, or why there is
+/// none.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_net_listen_unix(path: *const Str) -> *mut NativeObject {
+    let path = text(path);
+    let listening = make_room(&path, false).and_then(|()| {
+        let listener = Registered::new(mio::net::UnixListener::bind(&path)?)?;
+        let closed = Arc::new(tokio::sync::watch::channel(false).0);
+        let listener = Mutex::new(Some(Acceptor::Unix(Arc::new(listener))));
+        Ok(Net::Listener(Listener { listener, tls: None, local: Endpoint::Path(path), closed }))
     });
     native::new(Net::from(listening))
 }
@@ -851,10 +1030,10 @@ pub unsafe extern "C" fn tondo_rt_net_accept(
             if *closing.borrow() {
                 return Err(failure(CLOSED, "closed"));
             }
-            match socket.attempt(Direction::Read, |listener| listener.accept()) {
-                Ok((stream, _)) => return Ok(stream),
+            match socket.accept() {
+                Ok(accepted) => return Ok(accepted),
                 Err(error) if error.kind() == ErrorKind::WouldBlock => tokio::select! {
-                    _ = socket.ready(Direction::Read) => {}
+                    _ = socket.ready() => {}
                     _ = closing.changed() => {}
                 },
                 Err(error) if keep == 0 => return Err(error.into()),
@@ -864,7 +1043,11 @@ pub unsafe extern "C" fn tondo_rt_net_accept(
             }
         }
     }));
-    let opened = accepted.and_then(|stream| {
+    let opened = accepted.and_then(|accepted| {
+        let stream = match accepted {
+            Accepted::Unix(stream) => return unix(Registered::new(stream)?).map(Net::Connection),
+            Accepted::Tcp(stream) => stream,
+        };
         let Some(acceptor) = acceptor else { return tcp(Registered::new(stream)?).map(Net::Connection) };
         let stream = tokio_stream(stream)?;
         let (connection, inbox, outbox) = tls(&stream)?;
@@ -893,10 +1076,12 @@ pub unsafe extern "C" fn tondo_rt_net_stop(object: *mut NativeObject) {
         Some(Net::Listener(listener)) => {
             lock(&listener.listener).take();
             listener.closed.send_replace(true);
+            unlink(&listener.local);
         }
         Some(Net::Socket(socket)) => {
             lock(&socket.socket).take();
             socket.closed.send_replace(true);
+            unlink(&socket.local);
         }
         _ => {}
     }
@@ -906,12 +1091,33 @@ pub unsafe extern "C" fn tondo_rt_net_stop(object: *mut NativeObject) {
 // UDP
 // ---------------------------------------------------------------------------
 
-/// A UDP socket, until it is closed.
+/// A socket of datagrams, until it is closed.
 struct Socket {
-    socket: Mutex<Option<Arc<Registered<mio::net::UdpSocket>>>>,
-    local: SocketAddr,
+    socket: Mutex<Option<Datagrams>>,
+    local: Endpoint,
     closed: Arc<tokio::sync::watch::Sender<bool>>,
     failure: Mutex<Failure>,
+}
+
+impl Drop for Socket {
+    fn drop(&mut self) {
+        unlink(&self.local);
+    }
+}
+
+/// A socket of datagrams: UDP or Unix.
+#[derive(Clone)]
+enum Datagrams {
+    Udp(Arc<Registered<mio::net::UdpSocket>>),
+    Unix(Arc<Registered<mio::net::UnixDatagram>>),
+}
+
+/// Lets a socket send datagrams as large as one can be: macOS sends none
+/// larger than the send buffer, 9 216 bytes unless raised.
+fn room(socket: socket2::SockRef) {
+    if socket.send_buffer_size().is_ok_and(|size| size < 2 * DATAGRAM) {
+        let _ = socket.set_send_buffer_size(2 * DATAGRAM);
+    }
 }
 
 /// `bind`: a UDP socket on `host:port`, or why there is none.
@@ -924,12 +1130,7 @@ pub unsafe extern "C" fn tondo_rt_net_bind(host: *const Str, port_number: i64) -
             for address in lookup(&host, port).await? {
                 match mio::net::UdpSocket::bind(address) {
                     Ok(socket) => {
-                        // macOS sends no datagram larger than the send
-                        // buffer, 9 216 bytes unless raised.
-                        let options = socket2::SockRef::from(&socket);
-                        if options.send_buffer_size().is_ok_and(|size| size < 2 * DATAGRAM) {
-                            let _ = options.set_send_buffer_size(2 * DATAGRAM);
-                        }
+                        room(socket2::SockRef::from(&socket));
                         return Ok(Registered::new(socket)?);
                     }
                     Err(error) => last = error.into(),
@@ -937,11 +1138,31 @@ pub unsafe extern "C" fn tondo_rt_net_bind(host: *const Str, port_number: i64) -
             }
             Err(last)
         })?;
-        let local = socket.io().local_addr()?;
+        let local = socket.io().local_addr()?.into();
         let closed = Arc::new(tokio::sync::watch::channel(false).0);
-        let socket = Mutex::new(Some(Arc::new(socket)));
+        let socket = Mutex::new(Some(Datagrams::Udp(Arc::new(socket))));
         Ok(Net::Socket(Socket { socket, local, closed, failure: Default::default() }))
     });
+    native::new(Net::from(bound))
+}
+
+/// `bindUnix`: a socket of datagrams at the Unix socket `path`, or without
+/// `named` one without a name, which only sends; or why there is none.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_net_bind_unix(path: *const Str, named: u8) -> *mut NativeObject {
+    let path = if named != 0 { text(path) } else { String::new() };
+    let bound = (|| {
+        let socket = if path.is_empty() {
+            mio::net::UnixDatagram::unbound()?
+        } else {
+            make_room(&path, true)?;
+            mio::net::UnixDatagram::bind(&path)?
+        };
+        room(socket2::SockRef::from(&socket));
+        let closed = Arc::new(tokio::sync::watch::channel(false).0);
+        let socket = Mutex::new(Some(Datagrams::Unix(Arc::new(Registered::new(socket)?))));
+        Ok(Net::Socket(Socket { socket, local: Endpoint::Path(path), closed, failure: Default::default() }))
+    })();
     native::new(Net::from(bound))
 }
 
@@ -960,34 +1181,88 @@ pub unsafe extern "C" fn tondo_rt_net_send_to(
         let address = ip
             .parse::<std::net::IpAddr>()
             .map_err(|_| failure(INVALID_ADDRESS, format!("`{ip}` is not an IP address")))?;
-        let sending = sending.ok_or_else(|| failure(CLOSED, "closed"))?;
-        if data.len() > DATAGRAM {
-            let why = format!("a datagram of {} bytes; one holds at most {DATAGRAM}", data.len());
-            return Err(failure(IO, why));
-        }
         let to = SocketAddr::new(address, port);
-        waited(async move {
-            loop {
-                match sending.attempt(Direction::Write, |socket| socket.send_to(&data, to)) {
-                    Err(error) if error.kind() == ErrorKind::WouldBlock => sending.ready(Direction::Write).await,
-                    sent => {
-                        super::diagnostics::NET_WRITTEN.add(*sent.as_ref().unwrap_or(&0) as i64);
-                        return Ok(sent.map(|_| ())?);
-                    }
+        match sending.ok_or_else(|| failure(CLOSED, "closed"))? {
+            Datagrams::Udp(sending) => send_datagram(sending, data, move |socket, data| socket.send_to(data, to)),
+            Datagrams::Unix(_) => {
+                Err(failure(INVALID_ADDRESS, "a Unix socket sends to a path: `net.unixAddress(path)`"))
+            }
+        }
+    });
+    noted(socket, sent)
+}
+
+/// `sendTo` the Unix socket at `path`: 0, or the code of a failure.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_net_send_to_path(
+    object: *mut NativeObject,
+    data: *mut ArrayHeader,
+    path: *const Str,
+) -> i64 {
+    let Some(Net::Socket(socket)) = native::get::<Net>(object) else { return CLOSED };
+    let (data, path) = (unsafe { crate::io::array_bytes(data) }, text(path));
+    let sent = match lock(&socket.socket).clone() {
+        None => Err(failure(CLOSED, "closed")),
+        Some(Datagrams::Unix(sending)) => send_datagram(sending, data, move |socket, data| socket.send_to(data, &path)),
+        Some(Datagrams::Udp(_)) => Err(failure(
+            INVALID_ADDRESS,
+            "a UDP socket sends to an IP address; a Unix socket comes from `net.bindUnix`",
+        )),
+    };
+    noted(socket, sent)
+}
+
+/// Sends a datagram, whole, waiting while the socket cannot take it.
+fn send_datagram<S: mio::event::Source + Send + Sync + 'static>(
+    socket: Arc<Registered<S>>,
+    data: Vec<u8>,
+    send: impl Fn(&S, &[u8]) -> std::io::Result<usize> + Send + 'static,
+) -> Result<(), Failure> {
+    if data.len() > DATAGRAM {
+        let why = format!("a datagram of {} bytes; one holds at most {DATAGRAM}", data.len());
+        return Err(failure(IO, why));
+    }
+    waited(async move {
+        loop {
+            match socket.attempt(Direction::Write, |s| send(s, &data)) {
+                Err(error) if error.kind() == ErrorKind::WouldBlock => socket.ready(Direction::Write).await,
+                sent => {
+                    super::diagnostics::NET_WRITTEN.add(*sent.as_ref().unwrap_or(&0) as i64);
+                    return Ok(sent.map(|_| ())?);
                 }
             }
-        })
-    });
+        }
+    })
+}
+
+/// Notes how a socket's last `sendTo` ended, and gives its code.
+fn noted(socket: &Socket, sent: Result<(), Failure>) -> i64 {
     let noted = sent.err().unwrap_or_default();
     let code = noted.code;
     *lock(&socket.failure) = noted;
     code
 }
 
+impl Datagrams {
+    fn receive(&self, buffer: &mut [u8]) -> std::io::Result<(usize, Endpoint)> {
+        match self {
+            Datagrams::Udp(s) => s.attempt(Direction::Read, |s| s.recv_from(buffer)).map(|(n, from)| (n, from.into())),
+            Datagrams::Unix(s) => s.attempt(Direction::Read, |s| s.recv_from(buffer)).map(|(n, from)| (n, from.into())),
+        }
+    }
+
+    async fn ready(&self) {
+        match self {
+            Datagrams::Udp(socket) => socket.ready(Direction::Read).await,
+            Datagrams::Unix(socket) => socket.ready(Direction::Read).await,
+        }
+    }
+}
+
 /// A datagram received, and who sent it.
 struct Datagram {
     bytes: Vec<u8>,
-    from: SocketAddr,
+    from: Endpoint,
 }
 
 /// `receive`: the next datagram, whole, or why there is none.
@@ -1007,14 +1282,14 @@ pub unsafe extern "C" fn tondo_rt_net_receive(object: *mut NativeObject, timeout
             if *closing.borrow() {
                 return Err(failure(CLOSED, "closed"));
             }
-            match receiving.attempt(Direction::Read, |socket| socket.recv_from(&mut buffer)) {
+            match receiving.receive(&mut buffer) {
                 Ok((count, from)) => {
                     super::diagnostics::NET_READ.add(count as i64);
                     buffer.truncate(count);
                     return Ok(Net::Datagram(Datagram { bytes: buffer, from }));
                 }
                 Err(error) if error.kind() == ErrorKind::WouldBlock => tokio::select! {
-                    _ = receiving.ready(Direction::Read) => {}
+                    _ = receiving.ready() => {}
                     _ = closing.changed() => {}
                 },
                 Err(error) => return Err(error.into()),
@@ -1073,24 +1348,40 @@ pub unsafe extern "C" fn tondo_rt_net_ip(text: *const Str) -> *mut Str {
 
 /// The local (`which` 0) or remote (1) address of a connection, the local
 /// one of a listener or a socket, and who sent a datagram.
-fn address_of(object: *mut NativeObject, which: i64) -> Option<SocketAddr> {
+fn address_of(object: *mut NativeObject, which: i64) -> Option<Endpoint> {
     match native::get::<Net>(object)? {
-        Net::Connection(connection) => Some(if which == 0 { connection.local } else { connection.remote }),
-        Net::Listener(listener) => Some(listener.local),
-        Net::Socket(socket) => Some(socket.local),
-        Net::Datagram(datagram) => Some(datagram.from),
+        Net::Connection(connection) => Some(if which == 0 { &connection.local } else { &connection.remote }.clone()),
+        Net::Listener(listener) => Some(listener.local.clone()),
+        Net::Socket(socket) => Some(socket.local.clone()),
+        Net::Datagram(datagram) => Some(datagram.from.clone()),
         _ => None,
     }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_net_address_ip(object: *mut NativeObject, which: i64) -> *mut Str {
-    str_new(address_of(object, which).map(|a| a.ip().to_string()).unwrap_or_default().as_bytes())
+    let ip = match address_of(object, which) {
+        Some(Endpoint::Ip(address)) => address.ip().to_string(),
+        _ => String::new(),
+    };
+    str_new(ip.as_bytes())
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_net_address_port(object: *mut NativeObject, which: i64) -> i64 {
-    address_of(object, which).map_or(0, |a| a.port() as i64)
+    match address_of(object, which) {
+        Some(Endpoint::Ip(address)) => address.port() as i64,
+        _ => 0,
+    }
+}
+
+/// The path of a Unix socket's address, or "".
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_net_address_path(object: *mut NativeObject, which: i64) -> *mut Str {
+    match address_of(object, which) {
+        Some(Endpoint::Path(path)) => str_new(path.as_bytes()),
+        _ => str_new(b""),
+    }
 }
 
 // ---------------------------------------------------------------------------

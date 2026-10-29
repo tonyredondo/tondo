@@ -445,7 +445,9 @@ pub type Client = {
 /// before each relative URL and `headers` with each request, whose own
 /// headers win; `timeout` limits a request, its body included,
 /// `connectTimeout` its connection; it follows up to `redirects` redirects,
-/// and trusts the certificates of the PEM file `trust` too.
+/// and trusts the certificates of the PEM file `trust` too. With `socket`,
+/// each request goes through that Unix socket instead of the network, and
+/// the URL gives only its path and `Host`.
 pub fn Client.new(
     baseUrl: String = "",
     headers: Map[String, String] = [:],
@@ -453,12 +455,13 @@ pub fn Client.new(
     connectTimeout: __time.Duration? = none,
     redirects: Int = 10,
     trust: String? = none,
+    socket: String? = none,
 ): Client {
     let connect = match connectTimeout {
         some(limit) => limit.milliseconds()
         none => 0
     }
-    let connection = httpNative.client(connect, redirects, trust.unwrapOr(""))
+    let connection = httpNative.client(connect, redirects, trust.unwrapOr(""), socket.unwrapOr(""))
     Client { native: connection, base: baseUrl, defaults: headers, limit: timeout }
 }
 
@@ -908,11 +911,26 @@ pub type Request = {
     priv peer: String
     priv headerList: Array[String]
     priv params: Map[String, String]
+    priv chosen: Route?
+    priv allowed: Array[
+        /// The route that answers it, chosen before the middleware runs, and
+        /// without one the methods of the routes of its path, for `405`.
+        String,
+    ]
 }
 
 /// The method: `GET`, `POST`.
 pub fn Request.method(self): String {
     self.verb
+}
+
+/// The template of the route that answers the request, as it was added and
+/// with the prefix of `mount`: `/users/:id` for `GET /users/42`; `none` when
+/// no route does. The middleware sees it before `next`: it names the request
+/// for a tracer or a metric without growing with each value of a parameter,
+/// as the path does.
+pub fn Request.route(self): String? {
+    self.chosen.map((route) { "/{route.pattern.join("/")}" })
 }
 
 /// The path, without the query.
@@ -1620,17 +1638,29 @@ pub fn App.openApi(
 }
 
 /// Serves until the task is cancelled or the server stops; `port` 0 takes
-/// any free port.
-pub fn App.listen(self, port: Int = 8080, host: String = "0.0.0.0", tls: Tls? = none): !HttpError {
-    let listening = bound(host, port, tls)?
+/// any free port. With `socket`, it serves on that Unix socket instead,
+/// which it makes and removes when it stops.
+pub fn App.listen(
+    self,
+    port: Int = 8080,
+    host: String = "0.0.0.0",
+    tls: Tls? = none,
+    socket: String? = none,
+): !HttpError {
+    let listening = bound(host, port, tls, socket)?
     serve(listening, self.pipeline())
 }
 
 /// Starts serving in a task of its own, for a program that goes on, such
 /// as a test; `Server.stop()` ends it.
-pub fn App.start(self, port: Int = 0, host: String = "127.0.0.1", tls: Tls? = none): Server !
-    HttpError {
-    let listening = bound(host, port, tls)?
+pub fn App.start(
+    self,
+    port: Int = 0,
+    host: String = "127.0.0.1",
+    tls: Tls? = none,
+    socket: String? = none,
+): Server ! HttpError {
+    let listening = bound(host, port, tls, socket)?
     let (finished, ended) = channel[Unit](1)
     spawn detached serveThenSignal(listening, self.pipeline(), finished)
     Server { native: listening, secure: tls.isSome(), ended }
@@ -1648,8 +1678,13 @@ pub fn Server.address(self): String {
     httpNative.serverAddress(self.native)
 }
 
-/// Its URL for a client on the same machine: `http://127.0.0.1:43017`.
+/// Its URL for a client on the same machine: `http://127.0.0.1:43017`; for
+/// one on a Unix socket, `http://localhost`, with the socket given to the
+/// client.
 pub fn Server.url(self): String {
+    if self.address().startsWith("/") {
+        return "http://localhost"
+    }
     let address = self.address().replace("0.0.0.0", "127.0.0.1")
     if self.secure { "https://{address}" } else { "http://{address}" }
 }
@@ -1664,12 +1699,15 @@ pub fn Server.stop(self) {
 /// A server's certificate chain and private key: `net.Tls`.
 pub alias Tls = __net.Tls
 
-fn bound(host: String, port: Int, tls: Tls?): httpNative.Native ! HttpError {
+fn bound(host: String, port: Int, tls: Tls?, socket: String?): httpNative.Native ! HttpError {
     let (certificate, key) = match tls {
         some(given) => (given.certificate, given.privateKey)
         none => ("", "")
     }
-    let listening = httpNative.listen(host, port, certificate, key)
+    let listening = match socket {
+        some(path) => httpNative.listenUnix(path)
+        none => httpNative.listen(host, port, certificate, key)
+    }
     failed(listening)?
     listening
 }
@@ -1704,6 +1742,8 @@ fn answer(incoming: httpNative.Native, handler: fn(Request): Reply ! Problem) {
         peer: fields[4]
         headerList: httpNative.requestHeaders(incoming)
         params: [:]
+        chosen: none
+        allowed: []
     }
     // A handler that panics answers `500`, and the server goes on
     // (14.24.1); the report says which request it was.
@@ -1798,11 +1838,13 @@ fn App.pipeline(self): fn(Request): Reply ! Problem {
         none => {}
     }
     let routes = app.routes
-    var handler: fn(Request): Reply ! Problem = (request) { dispatch(routes, request)? }
+    var handler: fn(Request): Reply ! Problem = (request) { dispatch(request)? }
     for layer in self.layers.reversed() {
         handler = wrapped(layer, handler)
     }
-    handler
+    // The route is chosen first, so that the middleware sees it.
+    let layered = handler
+    (request) { layered(choose(routes, request))? }
 }
 
 fn wrapped(
@@ -1812,10 +1854,10 @@ fn wrapped(
     (request) { layer(request, next)? }
 }
 
-/// The route that answers a request: of its method, or `GET` for `HEAD`,
-/// the one with the most fixed segments; `405` when only other methods
-/// match, `404` when none does.
-fn dispatch(routes: Array[Route], request: Request): Reply ! Problem {
+/// The request with the route that answers it: of its method, or `GET` for
+/// `HEAD`, the one with the most fixed segments, and its parameters; or
+/// without one, the methods of the routes its path has.
+fn choose(routes: Array[Route], request: Request): Request {
     let path = segments(request.target)
     var best: Route? = none
     var bestScore = -1
@@ -1838,12 +1880,19 @@ fn dispatch(routes: Array[Route], request: Request): Reply ! Problem {
             none => {}
         }
     }
-    match best {
-        some(route) => {
-            var routed = request
-            routed.params = bestParams
-            route.handler(routed)?
-        }
+    var routed = request
+    routed.chosen = best
+    routed.params = bestParams
+    routed.allowed = allowed
+    routed
+}
+
+/// The answer of the route a request goes to; `405` when only other methods
+/// match its path, `404` when none does.
+fn dispatch(request: Request): Reply ! Problem {
+    let allowed = request.allowed
+    match request.chosen {
+        some(route) => route.handler(request)?
         none if allowed.length() > 0 => {
             Reply
                 .text("the method {request.verb} is not allowed here", status: 405)

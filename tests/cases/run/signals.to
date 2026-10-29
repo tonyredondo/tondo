@@ -1,0 +1,22 @@
+// Signals (standard library 19.2): a channel of those the program asks
+// for, which no longer end it, and a signal sent to a child.
+
+import std.console
+import std.env
+import std.process
+
+fn main(): !process.ProcessError {
+    let signals = process.signals(process.Signal.Hangup, process.Signal.User1)
+    let me = env.processId()
+    _ = process.shell("kill -HUP {me}").run()?
+    _ = process.shell("kill -USR1 {me}").run()?
+    console.println("{signals.receive() == some(process.Signal.Hangup)}")
+    console.println("{signals.receive() == some(process.Signal.User1)}")
+    let child = process.command("sleep", "30").start()?
+    child.signal(process.Signal.Terminate)
+    console.println("{child.wait()?.code}")
+}
+
+// expect-stdout: true
+// expect-stdout: true
+// expect-stdout: 143

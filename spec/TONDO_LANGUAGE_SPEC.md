@@ -7649,6 +7649,11 @@ en 20.11.
   para un `String` o `Tipo.Variante` para un enum.
 - Un pánico utiliza un código de fallo distinto cuando la plataforma lo permita y termina solo después del unwind estructurado.
 - Antes de terminar, el scope raíz cancela y espera cualquier hijo estructurado pendiente.
+- En un host con señales, `SIGINT` y `SIGTERM` cancelan `main` como
+  `job.cancel()` (11.15): las esperas terminan, los `defer` se ejecutan y el
+  programa termina con `128 + señal`, `130` o `143`. Una segunda señal lo
+  termina al instante. El programa que quiere atenderlas de otra forma las
+  recibe con `process.signals` (19.2 de la librería estándar).
 
 La representación sin `Display` incluye al menos el nombre del tipo y su variante, pero no constituye una interfaz de usuario estable. No obtiene por reflection acceso a campos privados ni revela contenido opaco. Una aplicación da su mensaje implementando `Display` para su error; para un código de salida concreto, maneja el error dentro de `main` y utiliza la API de proceso.
 

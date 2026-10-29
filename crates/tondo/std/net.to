@@ -83,17 +83,27 @@ fn millis(timeout: __time.Duration?): Int {
 // Addresses and names
 // ---------------------------------------------------------------------------
 
-/// An IP address and a port.
+/// An IP address and a port, or the path of a Unix socket, with `ip` and
+/// `port` empty; a TCP or UDP address has `path` empty.
 pub type Address = {
     ip: String
     port: Int
+    path: String
 }
 
-/// `127.0.0.1:80`, or `[::1]:80`.
+/// `127.0.0.1:80`, `[::1]:80`, or the path of a Unix socket.
 impl Display for Address {
     fn display(self): String {
+        if self.ip.isEmpty() {
+            return self.path
+        }
         if self.ip.contains(":") { "[{self.ip}]:{self.port}" } else { "{self.ip}:{self.port}" }
     }
+}
+
+/// The address of the Unix socket at `path`, for `sendTo`.
+pub fn unixAddress(path: String): Address {
+    Address { ip: "", port: 0, path }
 }
 
 /// The address of an IP address, in its usual form, and a port.
@@ -107,11 +117,15 @@ pub fn address(ip: String, port: Int): Address ! NetError {
     if port < 0 or port > 65535 {
         fail NetError.InvalidAddress("port {port} is not between 0 and 65535")
     }
-    Address { ip: usual, port }
+    Address { ip: usual, port, path: "" }
 }
 
 fn addressOf(object: netNative.Native, which: Int): Address {
-    Address { ip: netNative.addressIp(object, which), port: netNative.addressPort(object, which) }
+    Address {
+        ip: netNative.addressIp(object, which)
+        port: netNative.addressPort(object, which)
+        path: netNative.addressPath(object, which)
+    }
 }
 
 /// The IP addresses of a name, in the order the system prefers them.
@@ -135,6 +149,11 @@ pub type Stream = {
 /// addresses until one answers.
 pub fn connect(host: String, port: Int, timeout: __time.Duration? = none): Stream ! NetError {
     Stream { native: made(netNative.connect(host, port, millis(timeout), false, ""))? }
+}
+
+/// A connection to the Unix socket at `path`.
+pub fn connectUnix(path: String, timeout: __time.Duration? = none): Stream ! NetError {
+    Stream { native: made(netNative.connectUnix(path, millis(timeout)))? }
 }
 
 /// A connection over TLS, which verifies that the server's certificate is
@@ -270,6 +289,12 @@ pub fn listen(host: String, port: Int, tls: Tls? = none): Listener ! NetError {
     Listener { native: made(netNative.listen(host, port, certificate, key))? }
 }
 
+/// A listener on the Unix socket at `path`, which it makes, replacing one
+/// nobody answers on any more, and `close` removes.
+pub fn listenUnix(path: String): Listener ! NetError {
+    Listener { native: made(netNative.listenUnix(path))? }
+}
+
 /// The address and port it accepts connections at.
 pub fn Listener.address(self): Address {
     addressOf(self.native, 0)
@@ -313,6 +338,14 @@ pub fn bind(host: String, port: Int): Socket ! NetError {
     Socket { native: made(netNative.bind(host, port))? }
 }
 
+/// A socket of datagrams on the Unix socket at `path`, which it makes,
+/// replacing one nobody answers on any more, and `close` removes; without
+/// `path`, one without a name, which only sends.
+pub fn bindUnix(path: String? = none): Socket ! NetError {
+    let named = path.isSome()
+    Socket { native: made(netNative.bindUnix(path.unwrapOr(""), named))? }
+}
+
 /// The address and port the socket is bound to.
 pub fn Socket.address(self): Address {
     addressOf(self.native, 0)
@@ -320,7 +353,11 @@ pub fn Socket.address(self): Address {
 
 /// Sends one datagram of at most 65 535 bytes.
 pub fn Socket.sendTo(self, data: Array[Byte], to: Address): !NetError {
-    let code = netNative.sendTo(self.native, data, to.ip, to.port)
+    let code = if to.path.isEmpty() {
+        netNative.sendTo(self.native, data, to.ip, to.port)
+    } else {
+        netNative.sendToPath(self.native, data, to.path)
+    }
     if code != 0 {
         fail problem(code, netNative.detail(self.native, 1))
     }

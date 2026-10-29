@@ -1,0 +1,80 @@
+// Unix sockets (standard library 14.4.6): streams, datagrams, a listener
+// that makes and removes its file, and HTTP over one, as a tracer talks to
+// its agent.
+
+import std.console
+import std.env
+import std.fs
+import std.http
+import std.net
+
+fn serve(listener: net.Listener) {
+    for connection in listener {
+        spawn detached echo(connection)
+    }
+}
+
+fn echo(connection: net.Stream): !net.NetError {
+    match connection.readLine()? {
+        some(line) => connection.write("echo {line}\n")?
+        none => {}
+    }
+    connection.close()?
+}
+
+fn main(): !(net.NetError | fs.FsError | http.HttpError) {
+    let base = "/tmp/tondo-case-{env.processId()}"
+    let path = "{base}.sock"
+    let listener = net.listenUnix(path)?
+    console.println("{listener.address() == net.unixAddress(path)}")
+    spawn detached serve(listener)
+    let stream = net.connectUnix(path)?
+    stream.write("hello\n")?
+    console.println("{stream.readLine()?} {stream.remoteAddress().path == path}")
+    stream.close()?
+    listener.close()
+    console.println("removed {not fs.exists(path)}")
+    match net.connectUnix(path) {
+        ok(_) => console.println("unexpected")
+        err(error) => console.println("{error}".replace(path, "PATH"))
+    }
+
+    // Datagrams: a socket with a name receives; one without, only sends.
+    let inbox = net.bindUnix(some("{base}.dgram"))?
+    let sender = net.bindUnix()?
+    sender.sendTo("ping".bytes(), net.unixAddress("{base}.dgram"))?
+    let (data, from) = inbox.receive()?
+    console.println("{String.fromBytes(data)} from [{from}]")
+    match sender.sendTo("x".bytes(), net.address("127.0.0.1", 9)?) {
+        ok(_) => console.println("unexpected")
+        err(error) => console.println("{error}")
+    }
+    inbox.close()
+
+    // A file that is not a socket is in use.
+    fs.writeText("{base}.file", "x")?
+    match net.listenUnix("{base}.file") {
+        ok(_) => console.println("unexpected")
+        err(error) => console.println("{error}")
+    }
+    fs.remove("{base}.file")?
+
+    // HTTP over a Unix socket.
+    var app = http.App.new()
+    app.get("/v0.4/traces", (request) { http.Reply.text("traces at {request.route()}") })
+    let server = app.start(socket: "{base}.http")?
+    let agent = http.Client.new(baseUrl: server.url(), socket: "{base}.http")
+    console.println(agent.get("/v0.4/traces")?.text()?)
+    server.stop()
+    console.println("removed {not fs.exists("{base}.http")}")
+}
+
+// expect-stdout: true
+// expect-stdout: some(echo hello) true
+// expect-stdout: removed true
+// expect-stdout: there is no Unix socket at `PATH`: does the program that listens on it run?
+// expect-stdout: ok(ping) from []
+// expect-stdout: invalid address: a Unix socket sends to a path: `net.unixAddress(path)`
+// expect-stdout: the address is in use by another socket
+// expect-stdout: traces at some(/v0.4/traces)
+// expect-stdout: removed true

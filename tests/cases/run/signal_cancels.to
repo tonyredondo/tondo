@@ -1,0 +1,25 @@
+// `SIGTERM` cancels the program (language 20.10): every wait ends, the
+// tasks run their `defer`s, and it ends with 128 + 15.
+
+import std.console
+import std.env
+import std.process
+import std.time
+
+fn work() {
+    defer { console.println("the worker cleans up") }
+    time.sleep(time.seconds(60))
+}
+
+fn main() {
+    defer { console.println("main cleans up") }
+    let job = spawn work()
+    _ = process.shell("kill -TERM {env.processId()}").run()
+    time.sleep(time.seconds(60))
+    console.println("not reached")
+    job.wait()
+}
+
+// expect-stdout: the worker cleans up
+// expect-stdout: main cleans up
+// expect-exit: 143

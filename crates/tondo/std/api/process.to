@@ -11,6 +11,22 @@ pub fn shell(text: String): Command
 /// Delivers pending console output and ends the program, without `defer`s.
 pub fn exit(code: Int): Never
 
+/// The signals a program receives. Without `signals`, `Interrupt` (Ctrl-C)
+/// and `Terminate` cancel the program: its tasks run their `defer`s and it
+/// ends with 130 or 143; a second one ends it at once.
+pub enum Signal {
+    Interrupt
+    Terminate
+    Hangup
+    User1
+    User2
+}
+
+/// A channel of the signals named, which no longer cancel or end the
+/// program: it decides, as reloading its settings on `Hangup`. Two equal
+/// ones the channel has not given yet are one.
+pub fn signals(wanted: ...Signal): Receiver[Signal]
+
 /// Where a process reads its standard input from: the program's (`Inherit`),
 /// nothing (`Null`), a fixed text or bytes, a file (`<`), a stream of
 /// `std.io`, or the program through the `Process` (`Pipe`).
@@ -150,3 +166,6 @@ pub fn Process.cancel(self): ExitStatus ! ProcessError
 
 /// Lets it go on without waiting, also after the program ends.
 pub fn Process.detach(self)
+
+/// Sends the signal to every stage; `cancel` ends them and waits.
+pub fn Process.signal(self, signal: Signal)

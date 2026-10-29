@@ -2981,3 +2981,25 @@ toolchain finds the calls in the sources' tokens, as `tondo graph` finds
 imports, instead of asking the checker. A provider or generator does not
 embed: what it reads comes as an input.
 
+## 2026-10-29 — A program stops in order when it is asked to
+
+Ctrl-C, `kill` and `docker stop` ended a Tondo program at once, without its
+`defer`s, as they end a Go program that does not catch them; a server in
+Kubernetes needs to stop accepting, finish what it does and close what it
+holds, and in Go every program writes that. `SIGINT` and `SIGTERM` now
+cancel the program as `job.cancel()` does, which the runtime already did for
+a panic: every wait ends, the tasks run their `defer`s, and it ends with
+`128 + signal`; a second one ends it at once, for a program that computes
+without waiting. A handler only writes the signal to a pipe, which a thread
+reads, so the program's code never runs in a handler. `process.signals`
+gives a channel of the signals a program wants instead, which then no longer
+end it; two equal ones not read yet are one, as the system's are.
+
+The rest of the first lot of what porting dd-trace-go needs follows the
+same rule of doing what the system would otherwise make every program write:
+the route that answers a request is chosen before the middleware runs, so
+that it sees the route's template; a Unix socket's address is an `Address`
+with a path, so the operations of TCP and UDP take it unchanged; the hashes
+that are not for security are written in Tondo over the numbers' named
+operations, and give integers, which is what they are used as.
+

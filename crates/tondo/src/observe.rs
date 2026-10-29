@@ -353,10 +353,12 @@ pub(crate) fn record(
     unsafe { libc::signal(libc::SIGINT, libc::SIG_DFL) };
     let mut end = None;
     if let Some(child) = child.as_mut() {
-        // A trace stopped early ends the program it started; otherwise how
-        // the program ended is told, unless it ended well.
+        // A trace stopped early ends the program it started at once, even
+        // one that computes without waiting, which `SIGINT` would cancel
+        // only at its next wait; otherwise how the program ended is told,
+        // unless it ended well.
         if stopping {
-            unsafe { libc::kill(child.id() as i32, libc::SIGINT) };
+            let _ = child.kill();
         }
         if let Ok(status) = child.wait()
             && !status.success()

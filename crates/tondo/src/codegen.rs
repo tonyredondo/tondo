@@ -645,6 +645,9 @@ impl Rt {
                 EnvFn::CurrentDirectory => ("tondo_rt_env_current_directory", &[], &[I64]),
                 EnvFn::SetCurrentDirectory => ("tondo_rt_env_set_current_directory", &[I64], &[I64]),
                 EnvFn::SyncNative => ("tondo_rt_env_sync_native", &[], &[]),
+                EnvFn::Hostname => ("tondo_rt_env_hostname", &[], &[I64]),
+                EnvFn::ProcessId => ("tondo_rt_env_process_id", &[], &[I64]),
+                EnvFn::Executable => ("tondo_rt_env_executable", &[], &[I64]),
             },
             Rt::Process(function) => match function {
                 ProcessFn::Command => ("tondo_rt_process_command", &[I64, I64], &[I64]),
@@ -661,6 +664,8 @@ impl Rt {
                 ProcessFn::Wait | ProcessFn::Cancel => ("tondo_rt_process_wait", &[I64, I8, I64], &[I64]),
                 ProcessFn::Collect(_) => ("tondo_rt_process_collect", &[I64, I8, I64, I64, I64], &[I64]),
                 ProcessFn::Detach => ("tondo_rt_process_detach", &[I64], &[]),
+                ProcessFn::Signals => ("tondo_rt_process_signals", &[I64, I64, I64, I64], &[I64]),
+                ProcessFn::Signal => ("tondo_rt_process_signal", &[I64, I64], &[]),
             },
             Rt::Native(_) => unreachable!("declared from `NATIVES`"),
             Rt::ForeignEnter => ("tondo_rt_foreign_enter", &[], &[]),
@@ -7013,6 +7018,16 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             ProcessFn::Command | ProcessFn::Shell | ProcessFn::Pipe | ProcessFn::Id => {
                 return Some(Val::Scalar(self.e.call_rt(rt, &values).unwrap()));
             }
+            ProcessFn::Signals => {
+                // The array of signals, the stride of its elements, and the
+                // size and alignment of the channel's values.
+                let TyKind::Handle(_, signal) = *self.e.cg.types().kind(ty) else { unreachable!("a receiver") };
+                let stride = self.e.element_size(signal);
+                let layout = self.e.cg.layout(signal);
+                let [size, align] =
+                    [layout.size as i64, layout.align as i64].map(|value| self.e.fb.ins().iconst(types::I64, value));
+                return Some(Val::Scalar(self.e.call_rt(rt, &[values[0], stride, size, align]).unwrap()));
+            }
             ProcessFn::Stream(which) => {
                 let which = self.e.fb.ins().iconst(types::I64, which as i64);
                 return Some(Val::Scalar(self.e.call_rt(rt, &[values[0], which]).unwrap()));
@@ -7038,7 +7053,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 values.extend([size, success]);
             }
             ProcessFn::Start => {}
-            ProcessFn::Exit | ProcessFn::Detach => unreachable!("they return nothing"),
+            ProcessFn::Exit | ProcessFn::Detach | ProcessFn::Signal => unreachable!("they return nothing"),
         }
         self.process_result(rt, values, place);
         None
@@ -7884,6 +7899,14 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             Callee::Std(StdFn::Process(ProcessFn::Exit)) => self.e.call_rt(Rt::Process(ProcessFn::Exit), &values),
             Callee::Std(StdFn::Process(ProcessFn::Detach)) => self.e.call_rt(Rt::Process(ProcessFn::Detach), &values),
+            Callee::Std(StdFn::Process(ProcessFn::Signal)) => {
+                // The variant of `process.Signal`.
+                let signal = self.operand_ty(&args[1]);
+                let value = self.operand(&args[1]);
+                let tag = self.e.tag(signal, value);
+                let tag = self.e.fb.ins().uextend(types::I64, tag);
+                self.e.call_rt(Rt::Process(ProcessFn::Signal), &[values[0], tag])
+            }
             Callee::Std(StdFn::ConsoleEprint) => self.e.call_rt(Rt::ConsoleEprint, &values),
             Callee::Std(StdFn::ConsoleEprintln) => self.e.call_rt(Rt::ConsoleEprintln, &values),
             Callee::Std(StdFn::Io(IoFn::BufferClear)) => self.e.call_rt(Rt::Io(IoFn::BufferClear), &values),

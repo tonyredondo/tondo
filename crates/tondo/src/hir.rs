@@ -957,6 +957,9 @@ pub enum ProcessFn {
     /// `Process.output()` and `check()`.
     Collect(bool),
     Detach,
+    /// `process.signals(...)` and `Process.signal(signal)` (19.2).
+    Signals,
+    Signal,
 }
 
 /// The operations of `std.env`.
@@ -971,6 +974,9 @@ pub enum EnvFn {
     CurrentDirectory,
     SetCurrentDirectory,
     SyncNative,
+    Hostname,
+    ProcessId,
+    Executable,
 }
 
 /// The operations of `std.io`; those of a stream or buffer take it first.
@@ -1075,6 +1081,7 @@ impl StdFn {
             ) => vec![Mode::Var, Mode::Value],
             // They observe the process; the others take it.
             StdFn::Process(ProcessFn::Stream(_) | ProcessFn::Id) => vec![Mode::Ref],
+            StdFn::Process(ProcessFn::Signal) => vec![Mode::Ref, Mode::Value],
             _ => Vec::new(),
         }
     }
@@ -1280,6 +1287,9 @@ pub const NATIVES: &[Native] = {
         codec("urlCheck", &[String], Int, "tondo_rt_url_check"),
         codec("urlDecode", &[String], String, "tondo_rt_url_decode"),
         codec("digest", &[Int, Bytes, Bytes, Bool], Bytes, "tondo_rt_hash_digest"),
+        codec("hasher", &[Int, Bytes, Bool], Object, "tondo_rt_hasher"),
+        codec("hasherUpdate", &[Object, Bytes], Unit, "tondo_rt_hasher_update"),
+        codec("hasherFinish", &[Object], Bytes, "tondo_rt_hasher_finish"),
         codec("entropy", &[Int], Bytes, "tondo_rt_entropy"),
         codec("unixMillis", &[], Int, "tondo_rt_unix_millis"),
         codec("csvCheck", &[String, Char], Int, "tondo_rt_csv_check"),
@@ -1300,7 +1310,8 @@ pub const NATIVES: &[Native] = {
         codec("profileFolded", &[Object], String, "tondo_rt_profile_folded"),
         codec("labelsPush", &[Strings, Strings], Int, "tondo_rt_labels_push"),
         codec("labelsRestore", &[Int], Unit, "tondo_rt_labels_restore"),
-        http("client", &[Int, Int, String], Object, "tondo_rt_http_client"),
+        http("client", &[Int, Int, String, String], Object, "tondo_rt_http_client"),
+        http("listenUnix", &[String], Object, "tondo_rt_http_listen_unix"),
         http("bodyEmpty", &[], Object, "tondo_rt_http_body_empty"),
         http("bodyBytes", &[Bytes, String], Object, "tondo_rt_http_body_bytes"),
         http("bodyStream", &[IoReader, Int, String], Object, "tondo_rt_http_body_stream"),
@@ -1413,6 +1424,9 @@ pub const NATIVES: &[Native] = {
         msgpack("writeClose", &[Object], Unit, "tondo_rt_msgpack_write_close"),
         msgpack("finish", &[Object], Bytes, "tondo_rt_msgpack_finish"),
         msgpack("failure", &[Object], String, "tondo_rt_msgpack_failure"),
+        msgpack("streamWriter", &[IoWriter], Object, "tondo_rt_msgpack_stream_writer"),
+        msgpack("writeHeader", &[Object, Bool, Int], Unit, "tondo_rt_msgpack_write_header"),
+        msgpack("flush", &[Object], String, "tondo_rt_msgpack_flush"),
         cbor("parse", &[Bytes], Object, "tondo_rt_cbor_parse"),
         cbor("next", &[Object], Int, "tondo_rt_cbor_next"),
         cbor("text", &[Object], String, "tondo_rt_cbor_text"),
@@ -1457,6 +1471,11 @@ pub const NATIVES: &[Native] = {
         net("ip", &[String], String, "tondo_rt_net_ip"),
         net("addressIp", &[Object, Int], String, "tondo_rt_net_address_ip"),
         net("addressPort", &[Object, Int], Int, "tondo_rt_net_address_port"),
+        net("addressPath", &[Object, Int], String, "tondo_rt_net_address_path"),
+        net("connectUnix", &[String, Int], Object, "tondo_rt_net_connect_unix"),
+        net("listenUnix", &[String], Object, "tondo_rt_net_listen_unix"),
+        net("bindUnix", &[String, Bool], Object, "tondo_rt_net_bind_unix"),
+        net("sendToPath", &[Object, Bytes, String], Int, "tondo_rt_net_send_to_path"),
         net("failure", &[Object, Int], Int, "tondo_rt_net_failure"),
         net("detail", &[Object, Int], String, "tondo_rt_net_detail"),
         math("sin", &[Float], Float, "tondo_rt_math_sin"),

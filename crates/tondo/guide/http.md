@@ -75,7 +75,7 @@ fn main(): !http.HttpError {
     // Middleware wraps every route.
     app.use((request, next) {
         let reply = next(request)?
-        console.println("{request.method()} {request.path()} {reply.status()}")
+        console.println("{request.method()} {request.route()} {reply.status()}")
         reply
     })
 
@@ -108,4 +108,11 @@ fn find(id: Int): User? {
 - `app.embedded("/", Site)` serves the files of `const Site: embed.Files =
   embed.files("public")`, kept in the executable, as `files` serves a
   directory; a folder answers with its `index.html` (`tondo guide stdlib`).
+- `request.route()` is the template of the route that answers, as
+  `/hello/:name`, which middleware sees before `next`: name metrics and
+  traces by it, not by the path, which grows with every parameter.
+- `app.listen(socket: path)` serves on a Unix socket, and
+  `http.Client.new(baseUrl: "http://agent", socket: path)` sends through one.
+- Ctrl-C or `docker stop` cancel the program: `listen` stops accepting, the
+  requests in flight run their `defer`s, and it ends with 130 or 143.
 - TLS: `app.listen(port: 443, tls: http.Tls.files("cert.pem", "key.pem"))`.

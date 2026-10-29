@@ -4,6 +4,7 @@
 // encoder.
 
 import std.internal.msgpack as packnative
+import std.io as packio
 import std.json as packjson
 import std.serialization
 
@@ -247,8 +248,100 @@ fn Reader.error(self, kind: serialization.ErrorKind): MessagePackError {
 }
 
 /// MessagePack written event by event.
-type Writer = {
-    native: packnative.Native
+/// MessagePack written in parts: single values, the header of an array or
+/// a map with how many items follow, and any value with `Encode`. It does not
+/// count the items of a header it writes, so an array can come in pieces: a
+/// payload that gathers its items with `value` and only learns how many at
+/// the end writes their header in another writer and puts it first.
+pub type Writer = {
+    priv native: packnative.Native
+}
+
+/// A writer whose bytes `finish` gives.
+pub fn writer(): Writer {
+    Writer { native: packnative.writer() }
+}
+
+/// A writer that passes its bytes to the stream as they grow; `flush` passes
+/// the rest.
+pub fn writerTo(stream: packio.Writer): Writer {
+    Writer { native: packnative.streamWriter(stream) }
+}
+
+/// Nil.
+pub fn Writer.nil(self) {
+    packnative.writeNull(self.native)
+}
+
+/// A boolean.
+pub fn Writer.bool(self, value: Bool) {
+    packnative.writeBool(self.native, value)
+}
+
+/// An integer, in its shortest form.
+pub fn Writer.int(self, value: Int) {
+    packnative.writeInt(self.native, value)
+}
+
+/// A float of 64 bits.
+pub fn Writer.float(self, value: Float) {
+    packnative.writeFloat(self.native, value)
+}
+
+/// Text, as a `str`.
+pub fn Writer.string(self, value: String) {
+    packnative.writeText(self.native, value)
+}
+
+/// Bytes, as a `bin`.
+pub fn Writer.bytes(self, value: Array[Byte]) {
+    packnative.writeBytes(self.native, value)
+}
+
+/// The header of an array of `count` items, which follow.
+pub fn Writer.beginArray(self, count: Int) {
+    packnative.writeHeader(self.native, false, count)
+}
+
+/// The header of a map of `count` members, which follow, each a key and a
+/// value.
+pub fn Writer.beginMap(self, count: Int) {
+    packnative.writeHeader(self.native, true, count)
+}
+
+/// Any value with `Encode`, as `encode` writes it.
+pub fn Writer.value[T: serialization.Encode](self, value: T) {
+    value.encode(self)
+}
+
+/// The bytes written; for a writer to a stream, those not passed to it yet.
+/// An `Encode` written by hand that declares another count of items than it
+/// writes panics, as in `encode`.
+pub fn Writer.finish(self): Array[Byte] {
+    let failure = packnative.failure(self.native)
+    if failure.length() > 0 {
+        panic("MessagePack cannot be written: {failure}")
+    }
+    packnative.finish(self.native)
+}
+
+/// Passes what is pending to the stream of `writerTo`, and reports a failure
+/// to write it.
+pub fn Writer.flush(self): !MessagePackError {
+    let failure = packnative.failure(self.native)
+    if failure.length() > 0 {
+        panic("MessagePack cannot be written: {failure}")
+    }
+    let problem = packnative.flush(self.native)
+    if problem.length() > 0 {
+        fail MessagePackError {
+            kind: serialization.ErrorKind.Io
+            message: problem
+            path: "$"
+            line: 0
+            column: 0
+        }
+    }
 }
 
 impl serialization.Sink for Writer {

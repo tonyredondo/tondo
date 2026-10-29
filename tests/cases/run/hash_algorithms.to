@@ -1,0 +1,44 @@
+// std.hash: MD5 and SHA-384, digests and HMACs in parts, and hashes that
+// are not for security, with the values of their reference implementations.
+
+import std.console
+import std.hash
+
+fn main() {
+    let a = "a".bytes()
+    let foobar = "foobar".bytes()
+    console.println("{hash.md5(a)} {hash.sha384("abc".bytes()).hex().slice(0, 16).unwrapOr("")}")
+    // In parts, the same as at once; and it takes more after.
+    let digest = hash.hasher(hash.Algorithm.Sha256)
+    digest.update("hello ".bytes())
+    console.println("{digest.finish() == hash.sha256("hello ".bytes())}")
+    digest.update("world".bytes())
+    console.println("{digest.finish() == hash.sha256("hello world".bytes())}")
+    let mac = hash.hmac(hash.Algorithm.Sha512, "key".bytes())
+    mac.update("da".bytes())
+    mac.update("ta".bytes())
+    console.println("{mac.finish() == hash.hmacSha512("key".bytes(), "data".bytes())}")
+    console.println(
+        "{hash.fnv32(a).toString(radix: 16)} {hash.fnv32a(a).toString(radix: 16)} {hash.fnv64(foobar).toString(radix: 16)} {hash.fnv64a(foobar).toString(radix: 16)}",
+    )
+    for text in ["", "abc", "Nobody inspects the spammish repetition"] {
+        console.println("{hash.xxhash64(text.bytes()).toString(radix: 16)}")
+    }
+    console.println("{hash.xxhash64(a, seed: 1).toString(radix: 16)}")
+    for text in ["", "hello", "The quick brown fox jumps over the lazy dog"] {
+        console.println("{hash.murmur3(text.bytes()).toString(radix: 16)}")
+    }
+}
+
+// expect-stdout: 0cc175b9c0f1b6a831c399e269772661 cb00753f45a35e8b
+// expect-stdout: true
+// expect-stdout: true
+// expect-stdout: true
+// expect-stdout: 50c5d7e e40c292c 340d8765a4dda9c2 85944171f73967e8
+// expect-stdout: ef46db3751d8e999
+// expect-stdout: 44bc2cf5ad770999
+// expect-stdout: fbcea83c8a378bf1
+// expect-stdout: dec2bc81c3cd46c6
+// expect-stdout: 0
+// expect-stdout: cbd8a7b341bd9b025b1e906a48ae1d19
+// expect-stdout: e34bbc7bbc071b6c7a433ca9c49a9347
