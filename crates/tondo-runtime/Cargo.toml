@@ -49,6 +49,7 @@ tokio = { version = "1.54.1", features = ["rt-multi-thread", "net", "time", "io-
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
 toml_edit = { version = "0.25", default-features = false, features = ["parse", "display"] }
+unicode-normalization = "0.1"
 webpki-roots = "1.0.10"
 
 [build-dependencies]

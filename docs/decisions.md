@@ -3110,3 +3110,34 @@ too long; the profile of blocking has the waiters. Both sample a wait for
 each 100 µs waited on average and every longer one, so many short waits do
 not each pay for a stack. `setLabels` gives back the labels it replaced, for
 a span that starts and ends in different calls.
+
+## 2026-10-29 — Formats in interpolation, normalization and XML
+
+The first half of the sixth lot, for Hugo. An interpolation takes a format
+after `:`, Python's and Rust's, since every author knows it: a program
+pads, aligns and rounds where it writes the text, instead of calling
+`padStart` and `toFixed`. The format is literal, so the compiler checks it
+against the value's type and says what that type takes; braces that only
+look like one, as `{color: red}`, stay text, but those that mean one and do
+not read, as Python's `{price:.2f}`, are an error that shows how to write
+it. The formats are functions of the prelude in Tondo; only the digits of a
+float in scientific notation come from the runtime, which rounds them
+exactly.
+
+Unicode's normalization is in `std.text`, written in Tondo over the
+`unicode-normalization` crate, whose tables are data the runtime keeps, as
+it keeps the zones'.
+
+XML goes through `std.serialization`, as every format does, so a type that
+reads JSON reads XML. What XML needs and no other format has, attributes,
+text and element names, comes from annotations of `std.xml`, which the
+code the compiler writes passes to the format as notes, before a record's
+map and a field's key: a format reads its own notes and ignores the rest,
+so an XML annotation leaves the type's JSON alone, and Protobuf's field
+numbers can come the same way. XML has no types, so its scalars are a new
+event, `Untyped`, that every scalar reads from its text; the formats that
+have types never emit it, and stay as strict as they were. Reading builds
+the tree first and walks it, which lets elements of one name after another
+become a list only when the type asks for one, and text alone become a
+record when the type is one. No DTD is read, so no document reaches a file
+or a URL, or grows by expanding entities.

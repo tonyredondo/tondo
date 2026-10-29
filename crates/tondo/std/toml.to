@@ -337,6 +337,7 @@ impl serialization.Decode for Value {
     fn decode[S: serialization.Source](input: S, first: serialization.Event): Value ! TomlError {
         match first {
             serialization.Event.Text(text) => Value.Text(text)
+            serialization.Event.Untyped(text) => Value.Text(text)
             serialization.Event.Int(value) => Value.Int(value)
             serialization.Event.Float(value) => Value.Float(value)
             serialization.Event.Number(digits) => match Int.parse(digits) {

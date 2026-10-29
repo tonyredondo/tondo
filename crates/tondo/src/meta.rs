@@ -616,7 +616,7 @@ fn constant(expr: &ast::Expr, at: &Place, depth: u32) -> Option<String> {
             .iter()
             .map(|s| match s {
                 ast::StrSegment::Text(text) => Some(text.as_str()),
-                ast::StrSegment::Expr(_) => None,
+                ast::StrSegment::Expr(..) => None,
             })
             .collect::<Option<String>>()
             .map(|text| json(&text)),

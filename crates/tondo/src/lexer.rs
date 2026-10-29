@@ -71,12 +71,27 @@ pub enum Tok {
     Eof,
 }
 
+/// Whether the text after the `:` of braces in a string is a format
+/// (language 19.6), or one that means to be and does not read, as `.2f`,
+/// rather than text, as `{color: red}`: it starts as a format does, or is
+/// one letter.
+fn format_like(text: &str) -> bool {
+    let mut chars = text.chars();
+    let (first, second) = (chars.next(), chars.next());
+    crate::ast::parse_format(text, Span::default()).is_ok()
+        || !text.contains(char::is_whitespace)
+            && (first.is_some_and(|c| c.is_ascii_digit() || "<>^+-#.,_".contains(c))
+                || matches!(second, Some('<' | '>' | '^'))
+                || first.is_some_and(|c| c.is_ascii_alphabetic()) && second.is_none())
+}
+
 /// A piece of a string literal: decoded text or the source span of an
-/// interpolated expression, which the parser lexes and parses on its own.
+/// interpolated expression, which the parser lexes and parses on its own,
+/// and that of its format after `:`, if it has one.
 #[derive(Clone, Debug, PartialEq)]
 pub enum StrPart {
     Text(String),
-    Expr(Span),
+    Expr(Span, Option<Span>),
 }
 
 macro_rules! keywords {
@@ -742,15 +757,56 @@ impl Lexer<'_> {
         None
     }
 
+    /// The `:` that starts the format of an interpolation from `from` to
+    /// `to`: the first outside parentheses, brackets, braces, strings and
+    /// characters (language 19.6).
+    fn format_colon(&mut self, from: usize, to: usize) -> Option<usize> {
+        let saved = self.pos;
+        self.pos = from;
+        let mut nest = 0usize;
+        let found = loop {
+            if self.pos >= to {
+                break None;
+            }
+            let Some(c) = self.peek() else { break None };
+            match c {
+                '"' => {
+                    self.skip_nested_string();
+                    continue;
+                }
+                '\'' => {
+                    self.pos += 1;
+                    while let Some(c) = self.peek() {
+                        self.pos += c.len_utf8();
+                        match c {
+                            '\\' => self.pos += self.peek().map_or(0, char::len_utf8),
+                            '\'' | '\n' => break,
+                            _ => {}
+                        }
+                    }
+                    continue;
+                }
+                '(' | '[' | '{' => nest += 1,
+                ')' | ']' | '}' => nest = nest.saturating_sub(1),
+                ':' if nest == 0 => break Some(self.pos),
+                _ => {}
+            }
+            self.pos += c.len_utf8();
+        };
+        self.pos = saved;
+        found
+    }
+
     /// At a `{` of a string: where its `}` is, when what is between reads as
     /// text rather than an expression, as JSON: it has `\"`, which no
-    /// expression has, or a `:` outside brackets, braces and quotes, which
-    /// no expression has either, and no string of its own, whose quotes
-    /// would end the string it is in.
+    /// expression has, or a `:` outside brackets, braces and quotes that
+    /// does not start a format, as `{price:.2}` does, and no string of its
+    /// own, whose quotes would end the string it is in.
     fn braced_text(&mut self) -> Option<usize> {
         let saved = self.pos;
         self.pos += 1;
         let (mut depth, mut nest, mut text, mut strings) = (0usize, 0usize, false, false);
+        let mut colon = None;
         let found = loop {
             let Some(c) = self.peek() else { break None };
             match c {
@@ -780,9 +836,16 @@ impl Lexer<'_> {
                 '(' | '[' => nest += 1,
                 ')' | ']' => nest = nest.saturating_sub(1),
                 '{' => depth += 1,
-                '}' if depth == 0 => break (text && !strings).then_some(self.pos),
+                '}' if depth == 0 => {
+                    // A value and a format after the `:` is an interpolation.
+                    let formatted = colon.is_some_and(|colon: usize| {
+                        let (value, format) = (&self.text[saved + 1..colon], &self.text[colon + 1..self.pos]);
+                        !value.trim().is_empty() && format_like(format)
+                    });
+                    break ((text || colon.is_some() && !formatted) && !strings).then_some(self.pos);
+                }
                 '}' => depth -= 1,
-                ':' if nest == 0 && depth == 0 => text = true,
+                ':' if nest == 0 && depth == 0 && colon.is_none() => colon = Some(self.pos),
                 _ => {}
             }
             self.pos += c.len_utf8();
@@ -953,7 +1016,13 @@ impl Lexer<'_> {
                             if !text.is_empty() {
                                 parts.push(StrPart::Text(std::mem::take(&mut text)));
                             }
-                            parts.push(StrPart::Expr(self.span(open_at + 1, close)));
+                            let part = match self.format_colon(open_at + 1, close) {
+                                Some(colon) => {
+                                    StrPart::Expr(self.span(open_at + 1, colon), Some(self.span(colon + 1, close)))
+                                }
+                                None => StrPart::Expr(self.span(open_at + 1, close), None),
+                            };
+                            parts.push(part);
                             self.pos = close + 1;
                         }
                         None => {
@@ -1027,7 +1096,7 @@ let c = "{"{get("http://127.0.0.1:1/")}".startsWith("err(no")}""#;
             unreachable!()
         };
         assert_eq!(parts[0], StrPart::Text(r#"{ "id": 1, "user": { "name": ""#.into()));
-        assert!(matches!(parts[1], StrPart::Expr(_)));
+        assert!(matches!(parts[1], StrPart::Expr(..)));
     }
     use crate::source::SourceMap;
     use std::path::Path;

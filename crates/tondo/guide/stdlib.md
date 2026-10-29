@@ -19,6 +19,7 @@ std.toml       the same for TOML documents, with dates
 std.yaml       the same for YAML (a safe subset), one or many documents
 std.messagepack  the same for MessagePack bytes, and a writer in parts
 std.cbor       the same for CBOR (RFC 8949), deterministic if asked
+std.xml        the same for XML, with attributes and text by annotation; trees
 std.serialization  the protocol every format shares, for custom encodings
 std.csv        CSV rows and records, streaming and whole
 std.log        a logger with levels and fields, text or JSON lines
@@ -27,6 +28,7 @@ std.http       HTTP client and server, WebSockets (`tondo guide http`)
 std.net        TCP, UDP and Unix sockets, TLS, names, IP addresses and networks
 std.url        URLs and relative links: parts, resolving, the query
 std.regex      regular expressions, with `(?i)` flags and replacing by a function
+std.text       Unicode normalization: NFC, NFD, NFKC, NFKD
 std.encoding   Base64, hexadecimal, URL text, HTML escaping
 std.gzip       gzip, whole or as streams; std.zstd the same for Zstandard
 std.hash       MD5, SHA-1, SHA-2, HMAC, in parts; FNV, xxHash, MurmurHash3
@@ -98,6 +100,42 @@ fn main(): !toml.TomlError {
 ```
 
 TOML has no null: a `none` field is left out when written.
+
+XML writes a record as an element and each field as a child, unless
+`@xml.Attribute` or `@xml.Text` make it an attribute or the element's text;
+`@xml.Name` names an element. An `Array` is elements of one name, with no
+wrapper. Reading skips what the type lacks; `xml.parse` gives a tree when
+the shape is unknown. No DTD or entity but the predefined ones is read.
+
+```tondo
+import std.console
+import std.xml
+
+@xml.Name("rss")
+pub type Feed = {
+    @xml.Attribute
+    version: String
+    @xml.Name("item")
+    items: Array[Item]
+}
+
+pub type Item = {
+    @xml.Attribute
+    id: Int
+    @xml.Text
+    title: String
+}
+
+fn main(): !xml.XmlError {
+    let text = xml.encode(Feed { version: "2.0", items: [Item { id: 1, title: "Tea & cake" }] })
+    console.println(text)
+    let feed = xml.decode[Feed](text)?
+    let root = xml.parse(text)?
+    for item in root.children("item") {
+        console.println("{feed.items[0].title} {item.attribute("id")} {item.text()}")
+    }
+}
+```
 
 ## Files in the executable
 

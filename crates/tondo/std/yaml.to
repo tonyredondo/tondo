@@ -360,6 +360,7 @@ impl serialization.Decode for Value {
                 err(_) => Value.Float(serialization.Decode.decode[Float](input, first)?)
             }
             serialization.Event.Text(text) => Value.Text(text)
+            serialization.Event.Untyped(text) => Value.Text(text)
             serialization.Event.DateTime(text) => Value.Text(text)
             serialization.Event.Bytes(bytes) => Value.Text(yamlcodec.base64Encode(bytes, false))
             serialization.Event.BeginList => {

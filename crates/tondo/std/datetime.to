@@ -98,6 +98,7 @@ impl serialization.Decode for __time.DateTime {
         let text = match first {
             serialization.Event.DateTime(text) => text
             serialization.Event.Text(text) => text
+            serialization.Event.Untyped(text) => text.trim()
             _ => fail input.mismatch(first, "a date and time")
         }
         match parseDateTime(text) {
@@ -298,6 +299,7 @@ impl serialization.Decode for ZonedDateTime {
         let text = match first {
             serialization.Event.DateTime(text) => text
             serialization.Event.Text(text) => text
+            serialization.Event.Untyped(text) => text.trim()
             _ => fail input.mismatch(first, "a date and time")
         }
         match read(text, none, "en") {

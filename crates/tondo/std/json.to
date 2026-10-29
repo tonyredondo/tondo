@@ -773,6 +773,7 @@ impl serialization.Decode for Value {
                 Value.Object(members)
             }
             serialization.Event.Text(text) => Value.Text(text)
+            serialization.Event.Untyped(text) => Value.Text(text)
             serialization.Event.DateTime(text) => Value.Text(text)
             serialization.Event.Bytes(bytes) => Value.Text(jsoncodec.base64Encode(bytes, false))
             _ => match numeral(first) {

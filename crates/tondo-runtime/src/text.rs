@@ -56,6 +56,21 @@ pub unsafe extern "C" fn tondo_rt_text_scalar_at(s: *const Str, offset: i64) -> 
     rest.chars().next().map_or(0xFFFD, |c| c as u32)
 }
 
+/// The text between two byte offsets that start characters; empty when
+/// they do not.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_text_between(s: *const Str, start: i64, end: i64) -> *mut Str {
+    str_new(text(s).get(start.max(0) as usize..end.max(0) as usize).unwrap_or_default().as_bytes())
+}
+
+/// The byte offset of the first `needle` between two byte offsets, or -1.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_text_find_in(s: *const Str, needle: *const Str, from: i64, to: i64) -> i64 {
+    let from = from.max(0) as usize;
+    let found = text(s).get(from..to.max(0) as usize).and_then(|part| part.find(text(needle)));
+    found.map_or(-1, |at| (from + at) as i64)
+}
+
 /// The lines, without their `\n` or `\r\n`; no last empty line.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_lines(s: *const Str) -> *mut ArrayHeader {
@@ -194,6 +209,53 @@ pub extern "C" fn tondo_rt_text_fixed(value: f64, decimals: i64) -> *mut Str {
         return str_new(format!("{value:?}").as_bytes());
     }
     str_new(format!("{value:.*}", decimals.clamp(0, 64) as usize).as_bytes())
+}
+
+/// A float as the format of an interpolation writes it (language 19.6):
+/// with exactly `precision` digits after the point, or as few as read back
+/// as the same value, of a `Float32` when `single`, when `precision` is
+/// negative; in scientific notation, `1.5e3`, when `exponent`.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_text_float(value: f64, precision: i64, exponent: u8, single: u8) -> *mut Str {
+    let text = match (precision, exponent != 0, single != 0) {
+        (..0, true, true) => format!("{:e}", value as f32),
+        (..0, true, false) => format!("{value:e}"),
+        (..0, false, true) => format!("{:?}", value as f32),
+        (..0, false, false) => format!("{value:?}"),
+        (_, true, _) => format!("{value:.*e}", precision.min(64) as usize),
+        (_, false, _) if !value.is_finite() => format!("{value:?}"),
+        (_, false, _) => format!("{value:.*}", precision.min(64) as usize),
+    };
+    str_new(text.as_bytes())
+}
+
+/// The text in a normalization form of Unicode: 0 NFC, 1 NFD, 2 NFKC,
+/// 3 NFKD.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_text_normalize(s: *const Str, form: i64) -> *mut Str {
+    use unicode_normalization::UnicodeNormalization;
+    let text = text(s);
+    let normal: String = match form {
+        1 => text.nfd().collect(),
+        2 => text.nfkc().collect(),
+        3 => text.nfkd().collect(),
+        _ => text.nfc().collect(),
+    };
+    str_new(normal.as_bytes())
+}
+
+/// Whether the text is in a normalization form, as `tondo_rt_text_normalize`
+/// numbers them.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_text_is_normalized(s: *const Str, form: i64) -> u8 {
+    use unicode_normalization::{is_nfc, is_nfd, is_nfkc, is_nfkd};
+    let text = text(s);
+    (match form {
+        1 => is_nfd(text),
+        2 => is_nfkc(text),
+        3 => is_nfkd(text),
+        _ => is_nfc(text),
+    }) as u8
 }
 
 fn scalar(c: u32) -> char {

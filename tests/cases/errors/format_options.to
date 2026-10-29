@@ -1,0 +1,23 @@
+// A format with an option the value's type does not take is an error that
+// says what that type takes.
+
+fn main() {
+    let price = 3.5
+    let count = 3
+    let name = "tea"
+    _ = "{count:.2}"
+    _ = "{price:x}"
+    _ = "{name:+}"
+    _ = "{count:#}"
+    _ = "{name:08}"
+    _ = "{count:e}"
+    _ = "{price:#e}"
+}
+
+// expect-error: E1118 a format of `Int` cannot have a precision, `.2`: write `[[fill]align][+][#][0][width][x|X|o|b]`
+// expect-error: E1118 a format of `Float` cannot have the base `x`: write `[[fill]align][+][0][width][.precision][e|E]`
+// expect-error: E1118 a format of `String` cannot have a sign: write `[[fill]align][width][.precision]`
+// expect-error: E1118 a format of `Int` cannot have `#` without `x`, `X`, `o` or `b`: write `[[fill]align][+][#][0][width][x|X|o|b]`
+// expect-error: E1118 a format of `String` cannot have `0`: write `[[fill]align][width][.precision]`
+// expect-error: E1118 a format of `Int` cannot have scientific notation, `e`: write `[[fill]align][+][#][0][width][x|X|o|b]`
+// expect-error: E1118 a format of `Float` cannot have `#`: write `[[fill]align][+][0][width][.precision][e|E]`

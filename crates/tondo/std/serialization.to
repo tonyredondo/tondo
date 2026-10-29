@@ -22,6 +22,10 @@ pub enum Event {
     /// until a type takes it.
     Number(String)
     Text(String)
+    /// A scalar written as text with no type, as XML writes them: each
+    /// scalar type reads it from its text, a number or a `Bool` without
+    /// the whitespace around it.
+    Untyped(String)
     /// A date, a time or both, as RFC 3339 writes them, in a format that
     /// has them: `1979-05-27T07:32:00Z`, `1979-05-27`, `07:32:00`.
     DateTime(String)
@@ -69,6 +73,17 @@ impl Display for ErrorKind {
             ErrorKind.Unsupported => "Unsupported"
         }
     }
+}
+
+/// What an annotation of a format says of a type or a field, which the
+/// code the compiler writes for `Encode` and `Decode` gives the format:
+/// `@xml.Name("item")` is `Note { format: "xml", name: "Name", value:
+/// "item" }`. A format reads its own notes and no other.
+pub type Note = {
+    format: String
+    name: String
+    /// The annotation's argument as text; empty without one.
+    value: String
 }
 
 /// What reading does with a member of a map that the type has no field
@@ -133,6 +148,10 @@ pub trait Source {
     fn listName(self): String {
         "a list"
     }
+
+    /// Before the fields of a record are read, when some have notes: the
+    /// notes of each, in the order of the names `nextField` takes.
+    fn fields(self, notes: Array[Array[Note]]) {}
 
     /// The next event, which must exist.
     fn value(self): Event ! Error {
@@ -220,6 +239,7 @@ pub trait Source {
             Event.Float(_) => "a number"
             Event.Number(_) => "a number"
             Event.Text(_) => "a string"
+            Event.Untyped(text) => "`{text}`"
             Event.DateTime(_) => "a date-time"
             Event.Bytes(_) => "bytes"
             Event.BeginList => self.listName()
@@ -259,6 +279,14 @@ pub trait Sink {
     fn dateTime(self, text: String) {
         self.text(text)
     }
+
+    /// Before the map of a record: the name of its type, or of its
+    /// variant, and the notes of the type, for a format that names its
+    /// values, as XML its elements.
+    fn record(self, name: String, notes: Array[Note]) {}
+
+    /// Before the key of a field with notes: the notes.
+    fn field(self, notes: Array[Note]) {}
 
     /// A list of `count` values follows, then its end.
     fn beginList(self, count: Int)
@@ -334,6 +362,10 @@ fn decodeInteger[T: Integer, S: Source](input: S, first: Event, name: String): T
             ErrorKind.Range,
             "{value} is not an integer that fits `{name}`",
         )
+        Event.Untyped(text) => match T.parse(text.trim()) {
+            ok(value) => value
+            err(_) => fail input.mismatch(first, "an integer that fits `{name}`")
+        }
         _ => fail input.mismatch(first, "an integer")
     }
 }
@@ -488,6 +520,10 @@ impl Decode for Float {
             Event.Int(value) => Float(value)
             // A number a format read is valid; its text needs no checking.
             Event.Number(digits) => serialtext.parseFloat(digits)
+            Event.Untyped(text) => match Float.parse(text.trim()) {
+                ok(value) => value
+                err(_) => fail input.mismatch(first, "a number")
+            }
             _ => fail input.mismatch(first, "a number")
         }
     }
@@ -506,6 +542,10 @@ impl Decode for Float32 {
         // A number's digits round once, to 32 bits.
         match first {
             Event.Number(digits) => match Float32.parse(digits) {
+                ok(value) => return value
+                err(_) => {}
+            }
+            Event.Untyped(text) => match Float32.parse(text.trim()) {
                 ok(value) => return value
                 err(_) => {}
             }
@@ -529,6 +569,13 @@ impl Decode for Bool {
     fn decode[S: Source](input: S, first: Event): Bool ! Error {
         match first {
             Event.Bool(value) => value
+            Event.Untyped(text) => match text.trim() {
+                "true" => true
+                "1" => true
+                "false" => false
+                "0" => false
+                _ => fail input.mismatch(first, "a boolean")
+            }
             _ => fail input.mismatch(first, "a boolean")
         }
     }
@@ -544,6 +591,7 @@ impl Decode for String {
     fn decode[S: Source](input: S, first: Event): String ! Error {
         match first {
             Event.Text(text) => text
+            Event.Untyped(text) => text
             Event.DateTime(text) => text
             _ => fail input.mismatch(first, "a string")
         }
@@ -635,6 +683,7 @@ impl Decode for Bytes {
     fn decode[S: Source](input: S, first: Event): Bytes ! Error {
         match first {
             Event.Bytes(bytes) => Bytes(bytes)
+            Event.Untyped(text) => Decode.decode[Bytes](input, Event.Text(text))?
             Event.Text(text) => {
                 if serialcodec.base64Check(text, false) != -1 {
                     fail input.failure(

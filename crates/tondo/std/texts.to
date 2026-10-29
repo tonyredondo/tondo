@@ -1,0 +1,35 @@
+// std.text (standard library 10.1): the normalization of Unicode text.
+// `TextError` is the compiler's, and the methods of `String` and `Char`
+// are in the prelude: `tondo api prelude`.
+
+import std.internal.text as textNative
+
+/// A normalization form of Unicode (UAX #15): NFC and NFD compose and
+/// decompose characters; NFKC and NFKD also replace those of compatibility
+/// with what they stand for, as `ﬁ` with `fi`.
+pub enum Normalization {
+    Nfc
+    Nfd
+    Nfkc
+    Nfkd
+}
+
+/// The text in the normalization form `form`, which gives texts that look
+/// the same the same scalars: `"cafe\u{301}"` is `"café"` in NFC.
+pub fn normalize(text: String, form: Normalization = Normalization.Nfc): String {
+    textNative.normalize(text, code(form))
+}
+
+/// Whether the text is already in the normalization form `form`.
+pub fn isNormalized(text: String, form: Normalization = Normalization.Nfc): Bool {
+    textNative.isNormalized(text, code(form))
+}
+
+fn code(form: Normalization): Int {
+    match form {
+        Normalization.Nfc => 0
+        Normalization.Nfd => 1
+        Normalization.Nfkc => 2
+        Normalization.Nfkd => 3
+    }
+}

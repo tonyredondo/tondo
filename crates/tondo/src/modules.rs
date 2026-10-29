@@ -912,7 +912,7 @@ impl Linker<'_> {
             }
             ExprKind::Str(segments) => {
                 for segment in segments {
-                    if let StrSegment::Expr(value) = segment {
+                    if let StrSegment::Expr(value, _) = segment {
                         self.expr(value);
                     }
                 }

@@ -35,6 +35,11 @@ pub const CODES: &[(&str, &str, &str)] = &[
     ("E1115", "invalid-declaration", "A declaration is malformed in a way no more specific code names."),
     ("E1116", "duplicate-map-key", "A map literal repeats a constant key."),
     ("E1117", "invalid-opaque-result", "An opaque result has no single concrete type, or breaks its bounds."),
+    (
+        "E1118",
+        "invalid-format",
+        "The format of an interpolation does not read, or has an option its value's type does not take.",
+    ),
     ("E1201", "refutable-binding-pattern", "A pattern that can fail is used where one that cannot is required."),
     ("E1202", "invalid-pattern", "A pattern's form does not fit the value matched or its place."),
     ("E1203", "unreachable-match-arm", "An arm of `match` is covered by the arms before it."),

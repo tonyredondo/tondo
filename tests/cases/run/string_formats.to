@@ -1,0 +1,52 @@
+// The format of an interpolation, after `:`: fill, alignment and width for
+// any value; a sign, zeros and a base for integers, of any width and in
+// generic code; a sign, zeros, a precision and scientific notation for
+// floats; and a precision that cuts the text of anything else.
+
+import std.console
+
+type Point = {
+    x: Int
+    y: Int
+}
+
+impl Display for Point {
+    fn display(self): String {
+        "({self.x}, {self.y})"
+    }
+}
+
+fn boxed[T: Integer](value: T): String {
+    "[{value:>5}|{value:#x}]"
+}
+
+fn tenfold(x: Int): Int {
+    x * 10
+}
+
+fn main() {
+    let name = "tea"
+    let price = 3.5
+    console.println("{name:<6}{price:>8.2}|")
+    let order = 4217
+    console.println("{order:08} {-5:04} {order:+} {order:*^10} {order:<6}|")
+    let flags = 42
+    console.println("{flags:#x} {flags:b} {flags:#X} {flags:#010b} {flags:o} {-255:#x}")
+    console.println("{price:+.1} {1500.0:e} {0.00012345:.2E} {price:08.3} {-0.5:+} {2.5:.0}")
+    let single: Float32 = 1.1
+    console.println("{single} {single:e} {single:.3} {single:>6}|")
+    console.println("{Point { x: 1, y: 2 }:>8}|{"abcdef":.3}|{true:^7}|{'z':_>3}")
+    console.println("{boxed(7)} {boxed(200u8)} {boxed(-3i128)}")
+    console.println("{Byte(42u8):#x} {1.0 / 0.0:06}|{tenfold(x: 1):>4}|{[1, 2]:>8}")
+    console.println("{{order:08}}")
+}
+
+// expect-stdout: tea       3.50|
+// expect-stdout: 00004217 -005 +4217 ***4217*** 4217  |
+// expect-stdout: 0x2a 101010 0x2A 0b00101010 52 -0xff
+// expect-stdout: +3.5 1.5e3 1.23E-4 0003.500 -0.5 2
+// expect-stdout: 1.1 1.1e0 1.100    1.1|
+// expect-stdout:   (1, 2)|abc| true  |__z
+// expect-stdout: [    7|0x7] [  200|0xc8] [   -3|-0x3]
+// expect-stdout: 0x2a    inf|  10|  [1, 2]
+// expect-stdout: {order:08}

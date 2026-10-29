@@ -1,0 +1,25 @@
+// std.text normalizes text to the forms of Unicode: NFC by default, which
+// composes, NFD, which decomposes, and NFKC and NFKD, which also replace
+// the characters of compatibility.
+
+import std.console
+import std.text
+
+fn main() {
+    let composed = text.normalize("cafe\u{301}")
+    console.println("{composed == "café"} {composed.length()} {"cafe\u{301}".length()}")
+    console.println(
+        "{text.normalize("é", text.Normalization.Nfd).length()} {text.normalize("ﬁ", text.Normalization.Nfkc)}",
+    )
+    console.println("{text.normalize("Ａ１²", text.Normalization.Nfkd)} {text.normalize("ﬁ")}")
+    console.println("{text.isNormalized("café")} {text.isNormalized("cafe\u{301}")}")
+    console.println(
+        "{text.isNormalized("ﬁ", text.Normalization.Nfc)} {text.isNormalized("ﬁ", text.Normalization.Nfkc)}",
+    )
+}
+
+// expect-stdout: true 4 5
+// expect-stdout: 2 fi
+// expect-stdout: A12 ﬁ
+// expect-stdout: true false
+// expect-stdout: true false

@@ -23,11 +23,19 @@ fn main() {
     let joined = ["a", "b"].join("-")
     let padded = "7".padStart(3, "0")
     console.println("{joined} {padded} {"héllo".chars().count()} {"hé".bytes()}")
+    let price = 3.5
+    console.println("{name:<6}|{price:>8.2}|{42:08}|{255:#x}|{1500.0:e}|{price:+.1}")
 }
 ```
 
 - Interpolation `{expr}` takes any value with `Display`; `{{` and `}}` write
   braces. `+` does not join strings: interpolate, or `a.concat(b)`.
+- A format after `:` writes it as Python's and Rust's do:
+  `[[fill]align][+][#][0][width][.precision][type]`. `<`, `>` and `^` align,
+  `.2` is two decimals of a float, `08` fills a number with zeros, `x`, `o`
+  and `b` write an integer in hexadecimal, octal or binary (`#x` with
+  `0x`), and `e` a float in scientific notation. There is no `f` or `d`:
+  `{price:.2}`, not `{price:.2f}`. The format is literal.
 - `text[i]` is the character at `i` and panics out of range; `text.get(i)`
   gives a `Char?`, and `slice(start, end)` a `String ! TextError`.
 - `String.fromBytes(bytes)` checks UTF-8; `text.bytes()` gives them.

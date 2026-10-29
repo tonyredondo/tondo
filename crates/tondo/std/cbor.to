@@ -347,6 +347,7 @@ impl serialization.Decode for Value {
                 err(_) => Value.Float(serialization.Decode.decode[Float](input, first)?)
             }
             serialization.Event.Text(text) => Value.Text(text)
+            serialization.Event.Untyped(text) => Value.Text(text)
             serialization.Event.Bytes(bytes) => Value.Bytes(bytes)
             serialization.Event.DateTime(text) => Value.DateTime(text)
             serialization.Event.BeginList => {

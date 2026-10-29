@@ -1,0 +1,1040 @@
+// std.xml (standard library 14.30): XML 1.0 written from the program's
+// types and read into them through std.serialization, as Go's encoding/xml
+// does, and read as a tree when its shape is unknown. No DTD is read and no
+// entity but the five predefined and the numeric ones, so that a document
+// can neither ask for files nor grow without end.
+
+import std.internal.codec as codecNative
+import std.internal.text as textNative
+import std.serialization
+import std.sync as __sync
+
+// ---------------------------------------------------------------------------
+// Annotations
+// ---------------------------------------------------------------------------
+
+/// The name of the element of a type or a field, instead of its own:
+/// `@xml.Name("item")`.
+pub annotation Name = {
+    value: String
+}
+
+/// Makes a field an attribute of the element of its record.
+pub annotation Attribute = {}
+
+/// Makes a field the text of the element of its record.
+pub annotation Text = {}
+
+// ---------------------------------------------------------------------------
+// Trees
+// ---------------------------------------------------------------------------
+
+/// Why a text is not XML, or not of the type it is read as: what is wrong,
+/// and where.
+pub type XmlError = {
+    message: String
+    line: Int
+    column: Int
+}
+
+impl Display for XmlError {
+    fn display(self): String {
+        "{self.message} (line {self.line}, column {self.column})"
+    }
+}
+
+/// An element: its name, with its prefix, as `atom:link`, its attributes
+/// in their order, and its nodes.
+pub type Element = {
+    name: String
+    attributes: Map[String, String]
+    nodes: Array[Node]
+}
+
+/// What an element holds: elements and text, without comments or
+/// processing instructions.
+pub enum Node {
+    Element(Element)
+    Text(String)
+}
+
+/// The first element among its nodes named `name`.
+pub fn Element.child(self, name: String): Element? {
+    for node in self.nodes {
+        match node {
+            Node.Element(found) if found.name == name => return some(found)
+            _ => {}
+        }
+    }
+    none
+}
+
+/// The elements among its nodes named `name`, in their order.
+pub fn Element.children(self, name: String): Array[Element] {
+    var found: Array[Element] = []
+    for node in self.nodes {
+        match node {
+            Node.Element(child) if child.name == name => found.push(child)
+            _ => {}
+        }
+    }
+    found
+}
+
+/// The value of its attribute `name`.
+pub fn Element.attribute(self, name: String): String? {
+    self.attributes.get(name)
+}
+
+/// The text of its nodes, joined: `"a b"` for `<p>a <i>c</i>b</p>`.
+pub fn Element.text(self): String {
+    var joined = ""
+    for node in self.nodes {
+        match node {
+            Node.Text(piece) => joined = "{joined}{piece}"
+            _ => {}
+        }
+    }
+    joined
+}
+
+/// The element as XML, its text and its attributes escaped.
+impl Display for Element {
+    fn display(self): String {
+        var written = "<{self.name}"
+        for (name, value) in self.attributes {
+            written = "{written} {name}=\"{codecNative.htmlEscape(value)}\""
+        }
+        if self.nodes.isEmpty() {
+            return "{written}/>"
+        }
+        written = "{written}>"
+        for node in self.nodes {
+            written = match node {
+                Node.Element(child) => "{written}{child}"
+                Node.Text(piece) => "{written}{codecNative.htmlEscape(piece)}"
+            }
+        }
+        "{written}</{self.name}>"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Reading
+// ---------------------------------------------------------------------------
+
+/// How deep elements nest at most, as arrays and objects in JSON.
+const Deepest: Int = 128
+
+/// The tree of an XML document of unknown shape: its root element.
+pub fn parse(text: String): Element ! XmlError {
+    treeOf(readDocument(text)?)
+}
+
+/// A value of `T` from XML: the root element, whatever its name, read as
+/// `T`. Elements and attributes that `T` does not have are skipped.
+pub fn decode[T: serialization.Decode](text: String): T ! XmlError {
+    let root = readDocument(text)?
+    let reading = Reading {
+        source: text
+        root
+        frames: []
+        started: false
+        again: none
+        last: none
+        ended: none
+    }
+    let input = Reader { state: __sync.Mutex(reading) }
+    let decoded = match serialization.Source.value(input) {
+        ok(first) => serialization.Decode.decode[T](input, first)
+        err(error) => err(error)
+    }
+    match decoded {
+        ok(value) => value
+        err(error) => fail XmlError {
+            message: "{error.message} at {error.path}"
+            line: error.line
+            column: error.column
+        }
+    }
+}
+
+/// An element as read, with the byte offset where it starts, for errors.
+type Item = {
+    name: String
+    attributes: Map[String, String]
+    nodes: Array[Piece]
+    at: Int
+}
+
+enum Piece {
+    Child(Item)
+    Characters(String)
+}
+
+fn treeOf(item: Item): Element {
+    var nodes: Array[Node] = []
+    for piece in item.nodes {
+        nodes.push(
+            match piece {
+                Piece.Child(child) => Node.Element(treeOf(child))
+                Piece.Characters(characters) => Node.Text(characters)
+            },
+        )
+    }
+    Element { name: item.name, attributes: item.attributes, nodes }
+}
+
+/// A document being read, at a byte offset of its source.
+type Scanner = {
+    source: String
+    at: Int
+    end: Int
+}
+
+fn readDocument(source: String): Item ! XmlError {
+    var scanner = Scanner { source, at: 0, end: source.byteLength() }
+    if scanner.sees("\u{FEFF}") {
+        scanner.at = 3
+    }
+    scanner.misc(true)?
+    if not scanner.sees("<") {
+        fail scanner.error("expected the root element, as `<root>`")
+    }
+    let root = scanner.item(0)?
+    scanner.misc(false)?
+    if scanner.at < scanner.end {
+        fail scanner.error("expected nothing after the root element")
+    }
+    root
+}
+
+fn Scanner.sees(self, expected: String): Bool {
+    textNative.between(self.source, self.at, self.at + expected.byteLength()) == expected
+}
+
+fn Scanner.peek(self): Char {
+    textNative.scalarAt(self.source, self.at)
+}
+
+fn Scanner.advance(mut self) {
+    let code = self.peek().code()
+    self.at += if code < 0x80 {
+        1
+    } else if code < 0x800 {
+        2
+    } else if code < 0x10000 {
+        3
+    } else {
+        4
+    }
+}
+
+/// Skips whitespace, and says whether there was any.
+fn Scanner.space(mut self): Bool {
+    let start = self.at
+    for self.at < self.end and self.peek().isWhitespace() {
+        self.advance()
+    }
+    self.at > start
+}
+
+/// Skips whitespace, comments and processing instructions; before the
+/// root, also the declaration `<?xml ...?>` and a document type.
+fn Scanner.misc(mut self, prolog: Bool): !XmlError {
+    for {
+        _ = self.space()
+        if self.sees("<!--") {
+            self.comment()?
+        } else if self.sees("<?") {
+            self.instruction()?
+        } else if prolog and self.sees("<!DOCTYPE") {
+            self.doctype()?
+        } else {
+            return
+        }
+    }
+}
+
+/// The element that starts here, at `<`, inside `depth` others.
+fn Scanner.item(mut self, depth: Int): Item ! XmlError {
+    let start = self.at
+    if depth == Deepest {
+        fail self.error("the elements nest deeper than {Deepest} levels")
+    }
+    self.at += 1
+    let name = self.name()?
+    var attributes: Map[String, String] = [:]
+    for {
+        let spaced = self.space()
+        if self.sees("/>") {
+            self.at += 2
+            return Item { name, attributes, nodes: [], at: start }
+        }
+        if self.sees(">") {
+            self.at += 1
+            break
+        }
+        if not spaced {
+            fail self.error("expected `>`, `/>` or a space before an attribute in `<{name}`")
+        }
+        let named = self.at
+        let attribute = self.name()?
+        _ = self.space()
+        if not self.sees("=") {
+            fail self.error("expected `=` after the attribute `{attribute}`")
+        }
+        self.at += 1
+        _ = self.space()
+        let value = self.quoted()?
+        if attribute in attributes {
+            fail located(self.source, named, "the attribute `{attribute}` is twice in `<{name}>`")
+        }
+        attributes[attribute] = value
+    }
+    var nodes: Array[Piece] = []
+    var characters = ""
+    for {
+        if self.at >= self.end {
+            fail located(self.source, start, "`<{name}>` does not end: close it with `</{name}>`")
+        }
+        if self.peek() != '<' {
+            let until = textNative.findIn(self.source, "<", self.at, self.end)
+            let decoded = self.decoded(if until < 0 { self.end } else { until })?
+            characters = "{characters}{decoded}"
+        } else if self.sees("</") {
+            self.at += 2
+            let closing = self.name()?
+            _ = self.space()
+            if not self.sees(">") {
+                fail self.error("expected `>` after `</{closing}`")
+            }
+            if closing != name {
+                fail self.error("`</{closing}>` closes `<{name}>`: write `</{name}>`")
+            }
+            self.at += 1
+            if not characters.isEmpty() {
+                nodes.push(Piece.Characters(characters))
+            }
+            return Item { name, attributes, nodes, at: start }
+        } else if self.sees("<!--") {
+            self.comment()?
+        } else if self.sees("<![CDATA[") {
+            let close = self.find("]]>", "a CDATA section does not end: close it with `]]>`")?
+            characters = "{characters}{textNative.between(self.source, self.at + 9, close)}"
+            self.at = close + 3
+        } else if self.sees("<?") {
+            self.instruction()?
+        } else {
+            if not characters.isEmpty() {
+                nodes.push(Piece.Characters(characters))
+                characters = ""
+            }
+            nodes.push(Piece.Child(self.item(depth + 1)?))
+        }
+    }
+}
+
+/// A name, as `item` or `atom:link`.
+fn Scanner.name(mut self): String ! XmlError {
+    let start = self.at
+    for self.at < self.end and nameCharacter(self.peek(), self.at == start) {
+        self.advance()
+    }
+    if self.at == start {
+        fail self.error("expected a name")
+    }
+    textNative.between(self.source, start, self.at)
+}
+
+/// Whether a character goes in a name, or starts one when `first`.
+fn nameCharacter(c: Char, first: Bool): Bool {
+    let code = c.code()
+    if (code >= 0x61 and code <= 0x7A) or
+        (code >= 0x41 and code <= 0x5A) or
+        c == '_' or
+        c == ':' or
+        code >= 0x80 {
+        return true
+    }
+    not first and ((code >= 0x30 and code <= 0x39) or c == '-' or c == '.')
+}
+
+/// The value of an attribute, in quotes.
+fn Scanner.quoted(mut self): String ! XmlError {
+    let quote = self.peek()
+    if self.at >= self.end or not (quote == '"' or quote == '\'') {
+        fail self.error("expected the value of the attribute in quotes")
+    }
+    self.at += 1
+    let close =
+        self.find("{quote}", "the value of the attribute does not end: close it with {quote}")?
+    let value = self.decoded(close)?
+    self.at = close + 1
+    value
+}
+
+/// The text from here to `until`, its references read.
+fn Scanner.decoded(mut self, until: Int): String ! XmlError {
+    var read = ""
+    for {
+        let reference = textNative.findIn(self.source, "&", self.at, until)
+        if reference < 0 {
+            read = "{read}{textNative.between(self.source, self.at, until)}"
+            self.at = until
+            return read
+        }
+        read = "{read}{textNative.between(self.source, self.at, reference)}"
+        self.at = reference
+        let character = self.reference(until)?
+        read = "{read}{character}"
+    }
+}
+
+/// The character the reference here stands for: `&lt;`, `&#60;` or
+/// `&#x3C;`.
+fn Scanner.reference(mut self, until: Int): String ! XmlError {
+    let semicolon = textNative.findIn(self.source, ";", self.at, until)
+    if semicolon < 0 {
+        fail self.error("`&` starts no reference: write `&amp;` for `&` itself")
+    }
+    let entity = textNative.between(self.source, self.at + 1, semicolon)
+    let character = match entity {
+        "lt" => "<"
+        "gt" => ">"
+        "amp" => "&"
+        "quot" => "\""
+        "apos" => "'"
+        _ if entity.startsWith("#x") => self.numbered(entity.removePrefix("#x"), 16)?
+        _ if entity.startsWith("#") => self.numbered(entity.removePrefix("#"), 10)?
+        _ => fail self.error(
+            "`&{entity};` is not an entity XML defines: only `&lt;`, `&gt;`, `&amp;`, `&quot;`, `&apos;` and numbers, as `&#233;`, are read",
+        )
+    }
+    self.at = semicolon + 1
+    character
+}
+
+fn Scanner.numbered(self, digits: String, radix: Int): String ! XmlError {
+    let code = Int.parse(digits, radix: radix).unwrapOr(-1)
+    match Char.from(code) {
+        some(c) if code > 0 => "{c}"
+        _ => fail self.error("`{digits}` is not the number of a character")
+    }
+}
+
+fn Scanner.comment(mut self): !XmlError {
+    self.at = self.find("-->", "a comment does not end: close it with `-->`")? + 3
+}
+
+fn Scanner.instruction(mut self): !XmlError {
+    self.at = self.find("?>", "a processing instruction does not end: close it with `?>`")? + 2
+}
+
+/// Skips a document type without reading its declarations, so that none
+/// of its entities is the document's.
+fn Scanner.doctype(mut self): !XmlError {
+    var depth = 0
+    var quote: Char? = none
+    for self.at < self.end {
+        let c = self.peek()
+        self.advance()
+        match quote {
+            some(open) => {
+                if c == open {
+                    quote = none
+                }
+            }
+            none => {
+                if c == '"' or c == '\'' {
+                    quote = some(c)
+                } else if c == '[' {
+                    depth += 1
+                } else if c == ']' {
+                    depth -= 1
+                } else if c == '>' and depth == 0 {
+                    return
+                }
+            }
+        }
+    }
+    fail self.error("the document type does not end: close it with `>`")
+}
+
+/// The byte offset of the next `expected`, or the error `missing`.
+fn Scanner.find(self, expected: String, missing: String): Int ! XmlError {
+    let found = textNative.findIn(self.source, expected, self.at, self.end)
+    if found < 0 {
+        fail self.error(missing)
+    }
+    found
+}
+
+fn Scanner.error(self, message: String): XmlError {
+    located(self.source, self.at, message)
+}
+
+/// An error at a byte offset of the source, with its line and column.
+fn located(source: String, at: Int, message: String): XmlError {
+    var line = 1
+    var start = 0
+    for {
+        let newline = textNative.findIn(source, "\n", start, at)
+        if newline < 0 {
+            break
+        }
+        line += 1
+        start = newline + 1
+    }
+    XmlError { message, line, column: textNative.between(source, start, at).length() + 1 }
+}
+
+// ---------------------------------------------------------------------------
+// Decoding
+// ---------------------------------------------------------------------------
+
+/// A document read event by event, element by element: an element with
+/// attributes or elements is a map of them, the text of its record's
+/// `@xml.Text` field among them; one with only text is that text, which a
+/// record can read as a map too. Elements of the same name one after
+/// another are a list, when the type wants one.
+type Reader = {
+    state: __sync.Mutex[Reading]
+}
+
+type Reading = {
+    source: String
+    root: Item
+    frames: Array[Frame]
+    started: Bool
+    /// The event to give again: the first of a list's first element.
+    again: serialization.Event?
+    /// The element whose text the last event was.
+    last: Item?
+    /// The element the last event ended, where a field it lacks is missing.
+    ended: Item?
+}
+
+/// An element read as a map, or the list of its children of one name.
+type Frame = {
+    item: Item
+    /// Its attributes, its elements and its text, made once the notes of
+    /// the record's fields are known.
+    members: Array[(String, Piece)]
+    ready: Bool
+    /// The next member, and whether its key was given and its value not.
+    next: Int
+    keyed: Bool
+    notes: Array[Array[serialization.Note]]
+    /// The names of the record's fields as the elements write them.
+    written: Array[String]
+    /// For a list, the name of its elements.
+    list: String?
+}
+
+/// The key of the text of an element, which no name of XML can be.
+const TextKey: String = "#text"
+
+impl serialization.Source for Reader {
+    fn next(self): serialization.Event? ! serialization.Error {
+        self.state.update((reading) { reading.next() })
+    }
+
+    fn skip(self, first: serialization.Event): !serialization.Error {
+        match first {
+            serialization.Event.BeginMap => self.state.update(
+                (reading) {
+                    _ = reading.frames.pop()
+                },
+            )
+            _ => {}
+        }
+    }
+
+    fn failure(self, kind: serialization.ErrorKind, message: String): serialization.Error {
+        self.state.update((reading) { reading.failure(kind, message) })
+    }
+
+    fn fields(self, notes: Array[Array[serialization.Note]]) {
+        self.state.update(
+            (reading) {
+                let top = reading.frames.length() - 1
+                reading.frames[top].notes = notes
+            },
+        )
+    }
+
+    fn beginMap(self, first: serialization.Event, name: String): !serialization.Error {
+        let opened = match first {
+            serialization.Event.BeginMap => true
+            serialization.Event.Untyped(_) => self.state.update((reading) { reading.reopen() })
+            _ => false
+        }
+        if not opened {
+            fail serialization.Source.mismatch(self, first, "an element for `{name}`")
+        }
+    }
+
+    fn beginList(self, first: serialization.Event, name: String): !serialization.Error {
+        if not self.state.update((reading) { reading.list(first) }) {
+            fail serialization.Source.mismatch(self, first, "elements for `{name}`")
+        }
+    }
+
+    fn nextField(self, names: Array[String]): Int? ! serialization.Error {
+        let key = match serialization.Source.nextKey(self)? {
+            some(key) => key
+            none => return none
+        }
+        let written = self.state.update((reading) { reading.written(names) })
+        for index in 0..written.length() {
+            if written[index] == key {
+                return some(index)
+            }
+        }
+        serialization.Source.unknownField(self, key, serialization.Source.value(self)?)?
+        some(names.length())
+    }
+}
+
+fn Reading.next(mut self): serialization.Event? {
+    match self.again {
+        some(event) => {
+            self.again = none
+            return some(event)
+        }
+        none => {}
+    }
+    self.last = none
+    self.ended = none
+    if self.frames.isEmpty() {
+        if self.started {
+            return none
+        }
+        self.started = true
+        return some(self.open(self.root))
+    }
+    let top = self.frames.length() - 1
+    match self.frames[top].list {
+        some(name) => {
+            // The parent's next member, when it is an element of the name.
+            let parent = self.frames[top - 1]
+            match parent.members.get(parent.next) {
+                some((key, Piece.Child(item))) if key == name => {
+                    self.frames[top - 1].next += 1
+                    return some(self.open(item))
+                }
+                _ => {}
+            }
+            _ = self.frames.pop()
+            return some(serialization.Event.EndList)
+        }
+        none => {}
+    }
+    if not self.frames[top].ready {
+        self.frames[top].members = membersOf(self.frames[top].item, self.frames[top].notes)
+        self.frames[top].ready = true
+    }
+    let frame = self.frames[top]
+    if frame.keyed {
+        self.frames[top].keyed = false
+        return match frame.members[frame.next - 1] {
+            (_, Piece.Child(item)) => some(self.open(item))
+            (_, Piece.Characters(text)) => some(serialization.Event.Untyped(text))
+        }
+    }
+    if frame.next < frame.members.length() {
+        self.frames[top].next += 1
+        self.frames[top].keyed = true
+        let (key, _) = frame.members[frame.next]
+        return some(serialization.Event.Key(key))
+    }
+    self.ended = some(frame.item)
+    _ = self.frames.pop()
+    some(serialization.Event.EndMap)
+}
+
+/// The first event of an element: its text when it has no attributes and
+/// no elements, or the start of the map of them.
+fn Reading.open(mut self, item: Item): serialization.Event {
+    if item.attributes.isEmpty() and not item.nodes.any(isChild) {
+        self.last = some(item)
+        return serialization.Event.Untyped(treeOf(item).text())
+    }
+    self.push(item)
+    serialization.Event.BeginMap
+}
+
+fn isChild(piece: Piece): Bool {
+    match piece {
+        Piece.Child(_) => true
+        Piece.Characters(_) => false
+    }
+}
+
+fn Reading.push(mut self, item: Item) {
+    self.frames.push(
+        Frame {
+            item
+            members: []
+            ready: false
+            next: 0
+            keyed: false
+            notes: []
+            written: []
+            list: none
+        },
+    )
+}
+
+/// Reads the element whose text the last event was as a map.
+fn Reading.reopen(mut self): Bool {
+    match self.last {
+        some(item) => {
+            self.push(item)
+            self.last = none
+            true
+        }
+        none => false
+    }
+}
+
+/// Reads the element the last event started, and those of its name after
+/// it, as a list.
+fn Reading.list(mut self, first: serialization.Event): Bool {
+    let opened = match first {
+        serialization.Event.BeginMap => true
+        _ => false
+    }
+    let parent = self.frames.length() - if opened { 2 } else { 1 }
+    if parent < 0 or self.frames[parent].next == 0 {
+        return false
+    }
+    let (name, _) = self.frames[parent].members[self.frames[parent].next - 1]
+    let list = Frame {
+        item: self.frames[parent].item
+        members: []
+        ready: true
+        next: 0
+        keyed: false
+        notes: []
+        written: []
+        list: some(name)
+    }
+    self.frames.insert(parent + 1, list)
+    self.again = some(first)
+    true
+}
+
+/// The names of a record's fields as its element writes them: the text's
+/// as `TextKey`, and each other's as its `@xml.Name` says.
+fn Reading.written(mut self, names: Array[String]): Array[String] {
+    let top = self.frames.length() - 1
+    if self.frames[top].written.length() != names.length() {
+        let notes = self.frames[top].notes
+        var written: Array[String] = []
+        for index in 0..names.length() {
+            let noted = notes.get(index).unwrapOr([])
+            written.push(if marked(noted, "Text") { TextKey } else { renamed(noted, names[index]) })
+        }
+        self.frames[top].written = written
+    }
+    self.frames[top].written
+}
+
+/// The members of an element read as a map: its attributes, its elements,
+/// and its text when a field is `@xml.Text`.
+fn membersOf(item: Item, notes: Array[Array[serialization.Note]]): Array[(String, Piece)] {
+    var members: Array[(String, Piece)] = []
+    for (name, value) in item.attributes {
+        members.push((name, Piece.Characters(value)))
+    }
+    for piece in item.nodes {
+        match piece {
+            Piece.Child(child) => members.push((child.name, piece))
+            _ => {}
+        }
+    }
+    if notes.any((noted) { marked(noted, "Text") }) {
+        members.push((TextKey, Piece.Characters(treeOf(item).text())))
+    }
+    members
+}
+
+fn Reading.failure(self, kind: serialization.ErrorKind, message: String): serialization.Error {
+    var path = ""
+    var at = self.root.at
+    for frame in self.frames {
+        if frame.list == none {
+            path = "{path}/{frame.item.name}"
+            at = frame.item.at
+        }
+    }
+    match self.ended {
+        some(item) => {
+            path = "{path}/{item.name}"
+            at = item.at
+        }
+        none => {}
+    }
+    let place = located(self.source, at, message)
+    serialization.Error {
+        kind
+        message
+        path: if path.isEmpty() { "/{self.root.name}" } else { path }
+        line: place.line
+        column: place.column
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Encoding
+// ---------------------------------------------------------------------------
+
+/// The XML of a value: an element named as its type, or as its
+/// `@xml.Name`, in UTF-8 and without the declaration `<?xml ...?>`. With
+/// `pretty`, each element in another goes on a line of its own, two spaces
+/// deeper.
+pub fn encode[T: serialization.Encode](value: T, pretty: Bool = false): String {
+    let writing = Writing {
+        pretty
+        open: []
+        name: "value"
+        role: Role.Child
+        notes: []
+        pieces: []
+    }
+    let out = Writer { state: __sync.Mutex(writing) }
+    value.encode(out)
+    out.state.get().pieces.join("")
+}
+
+/// XML written event by event: a map is an element, each member an
+/// element of its key's name, or an attribute or the text as the notes of
+/// its field say; a list is elements of its key's name, one after another.
+type Writer = {
+    state: __sync.Mutex[Writing]
+}
+
+type Writing = {
+    pretty: Bool
+    open: Array[Open]
+    /// The name and the role of the value that comes next.
+    name: String
+    role: Role
+    /// The notes of the field whose key comes next.
+    notes: Array[serialization.Note]
+    /// The document, in pieces joined at its end: the start tag of an open
+    /// element still takes attributes.
+    pieces: Array[String]
+}
+
+/// An element being written, or a list of elements of its name.
+type Open = {
+    name: String
+    /// The piece of its start tag, without its `>`.
+    start: Int
+    /// Whether it holds elements, which `pretty` puts on lines of their own.
+    nested: Bool
+    list: Bool
+}
+
+enum Role {
+    Child
+    Attribute
+    Content
+}
+
+impl serialization.Sink for Writer {
+    fn null(self) {
+        self.state.update(
+            (writing) {
+                writing.role = Role.Child
+            },
+        )
+    }
+
+    fn bool(self, value: Bool) {
+        self.scalar("{value}")
+    }
+
+    fn int(self, value: Int) {
+        self.scalar("{value}")
+    }
+
+    fn float(self, value: Float) {
+        self.scalar("{value}")
+    }
+
+    fn number(self, digits: String) {
+        self.scalar(digits)
+    }
+
+    fn text(self, value: String) {
+        self.scalar(value)
+    }
+
+    fn bytes(self, value: Array[Byte]) {
+        self.scalar(codecNative.base64Encode(value, false))
+    }
+
+    fn record(self, name: String, notes: Array[serialization.Note]) {
+        self.state.update(
+            (writing) {
+                if writing.open.isEmpty() {
+                    writing.name = renamed(notes, name)
+                }
+            },
+        )
+    }
+
+    fn field(self, notes: Array[serialization.Note]) {
+        self.state.update(
+            (writing) {
+                writing.notes = notes
+            },
+        )
+    }
+
+    fn beginList(self, count: Int) {
+        self.state.update((writing) { writing.begin(true) })
+    }
+
+    fn endList(self) {
+        self.state.update(
+            (writing) {
+                _ = writing.open.pop()
+            },
+        )
+    }
+
+    fn beginMap(self, count: Int) {
+        self.state.update((writing) { writing.begin(false) })
+    }
+
+    fn key(self, name: String) {
+        self.state.update(
+            (writing) {
+                writing.name = renamed(writing.notes, name)
+                writing.role = if marked(writing.notes, "Attribute") {
+                    Role.Attribute
+                } else if marked(writing.notes, "Text") {
+                    Role.Content
+                } else {
+                    Role.Child
+                }
+                writing.notes = []
+            },
+        )
+    }
+
+    fn endMap(self) {
+        self.state.update((writing) { writing.end() })
+    }
+
+    fn omitsNone(self): Bool {
+        true
+    }
+}
+
+fn Writer.scalar(self, value: String) {
+    self.state.update((writing) { writing.scalar(value) })
+}
+
+/// The name of the next element: its list's, in a list.
+fn Writing.named(self): String {
+    match self.open.get(self.open.length() - 1) {
+        some(top) if top.list => top.name
+        _ => self.name
+    }
+}
+
+fn Writing.scalar(mut self, value: String) {
+    let escaped = codecNative.htmlEscape(value)
+    let role = self.role
+    self.role = Role.Child
+    if self.open.isEmpty() or role == Role.Child {
+        let name = self.named()
+        self.line()
+        self.pieces.push(if escaped.isEmpty() { "<{name}/>" } else { "<{name}>{escaped}</{name}>" })
+        return
+    }
+    let top = self.open.length() - 1
+    if role == Role.Attribute {
+        let start = self.open[top].start
+        self.pieces[start] = "{self.pieces[start]} {self.name}=\"{escaped}\""
+    } else {
+        self.pieces.push(escaped)
+    }
+}
+
+fn Writing.begin(mut self, list: Bool) {
+    let name = self.named()
+    self.role = Role.Child
+    if not list {
+        self.line()
+        self.pieces.push("<{name}")
+    }
+    self.open.push(Open { name, start: self.pieces.length() - 1, nested: false, list })
+}
+
+fn Writing.end(mut self) {
+    let element = match self.open.pop() {
+        some(element) => element
+        none => return
+    }
+    if element.start == self.pieces.length() - 1 {
+        self.pieces[element.start] = "{self.pieces[element.start]}/>"
+        return
+    }
+    self.pieces[element.start] = "{self.pieces[element.start]}>"
+    if self.pretty and element.nested {
+        self.pieces.push(lineAt(self.depth()))
+    }
+    self.pieces.push("</{element.name}>")
+}
+
+/// Starts an element on a line of its own, with `pretty`, in the element
+/// it is in.
+fn Writing.line(mut self) {
+    var at = self.open.length() - 1
+    for at >= 0 and self.open[at].list {
+        at -= 1
+    }
+    if at >= 0 {
+        self.open[at].nested = true
+        if self.pretty {
+            self.pieces.push(lineAt(self.depth()))
+        }
+    }
+}
+
+/// How many elements, not lists, are open.
+fn Writing.depth(self): Int {
+    var depth = 0
+    for open in self.open {
+        if not open.list {
+            depth += 1
+        }
+    }
+    depth
+}
+
+fn lineAt(depth: Int): String {
+    "\n{"  ".repeat(depth)}"
+}
+
+/// Whether the notes have std.xml's annotation `name`.
+fn marked(notes: Array[serialization.Note], name: String): Bool {
+    notes.any((note) { note.format == "xml" and note.name == name })
+}
+
+/// The name the notes' `@xml.Name` gives, or `name`.
+fn renamed(notes: Array[serialization.Note], name: String): String {
+    for note in notes {
+        if note.format == "xml" and note.name == "Name" {
+            return note.value
+        }
+    }
+    name
+}

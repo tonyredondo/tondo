@@ -7389,7 +7389,43 @@ let message = "{prefix}{name}{suffix}"
 let combined = first.concat(second)
 ~~~
 
-La interpolación es preferida cuando se mezclan texto y valores. El contrato de formato de valores pertenecerá a la librería estándar.
+La interpolación es preferida cuando se mezclan texto y valores.
+
+Una interpolación puede llevar un formato tras `:`, como en Python y Rust:
+
+~~~tondo
+let line = "{name:<12}{price:>10.2}"              // "tea         →      3.50"
+let id = "{order:08}"                            // "00004217"
+let mask = "{flags:#x} {flags:b}"                // "0x2a 101010"
+let ratio = "{share:+.1}%"                       // "+12.5%"
+~~~
+
+El `:` del formato es el primero que la expresión deja fuera de paréntesis,
+corchetes, llaves y strings, así que `{f(x: 1):>4}` formatea `f(x: 1)`. El
+formato es literal:
+
+~~~text
+[[relleno]alineación][signo][#][0][ancho][.precisión][tipo]
+~~~
+
+- `alineación` es `<`, a la izquierda, `>`, a la derecha, o `^`, al centro,
+  y `relleno` el carácter que completa el ancho, un espacio si no se da. Sin
+  alineación, un número va a la derecha y lo demás a la izquierda.
+- `ancho` es cuántos caracteres ocupa como poco; un valor más largo no se
+  corta.
+- `signo` `+` escribe `+` delante de un número que no es negativo.
+- `0` completa un número con ceros tras su signo: `{-5:04}` es `-005`.
+- `precisión` es, en un float, cuántos dígitos van tras el punto, como
+  `toFixed`, y en lo que no es un número, cuántos caracteres se toman como
+  mucho.
+- `tipo` es `x` o `X`, hexadecimal en minúsculas o mayúsculas, `o`, octal, o
+  `b`, binario, en un entero, con `0x`, `0o` o `0b` delante si lleva `#`; o
+  `e` o `E`, notación científica, en un float.
+
+Un valor que no es un número se escribe con su `Display`, y solo admite
+relleno, alineación, ancho y precisión. Un formato que no se lee, o con una
+opción que el tipo del valor no admite, como `x` en un float o `.2` en un
+entero, es el error `E1118`, que dice lo que ese tipo admite.
 
 ### 19.7 Binario
 
@@ -8398,6 +8434,7 @@ oculten un diagnóstico independiente.
 | `E1115` | `invalid-declaration` | Declaración semánticamente mal formada sin código más específico. |
 | `E1116` | `duplicate-map-key` | Un literal de map repite una clave constante. |
 | `E1117` | `invalid-opaque-result` | Un resultado opaco carece de testigo normal o viola unicidad concreta o bounds publicados. |
+| `E1118` | `invalid-format` | El formato de una interpolación no se lee, o tiene una opción que el tipo del valor no admite (19.6). |
 
 #### Patrones y control de flujo
 

@@ -43,16 +43,23 @@ const SOURCES: &[(&str, &str)] = &[
     ("files", include_str!("../std/files.to")),
     ("streams", include_str!("../std/streams.to")),
     ("paths", include_str!("../std/paths.to")),
+    ("texts", include_str!("../std/texts.to")),
     ("gzip", include_str!("../std/gzip.to")),
     ("zstd", include_str!("../std/zstd.to")),
+    ("xml", include_str!("../std/xml.to")),
     ("fuzz", include_str!("../std/fuzz.to")),
 ];
 
 /// The modules the compiler implements whose rest is written in Tondo,
 /// and the modules that have it: their `pub` functions and types are the
 /// module's own. An import of the module brings them all.
-pub(crate) const COMPANIONS: &[(&str, &[&str])] =
-    &[("time", &["datetime", "zoned"]), ("fs", &["files"]), ("path", &["paths"]), ("io", &["streams"])];
+pub(crate) const COMPANIONS: &[(&str, &[&str])] = &[
+    ("time", &["datetime", "zoned"]),
+    ("fs", &["files"]),
+    ("path", &["paths"]),
+    ("io", &["streams"]),
+    ("text", &["texts"]),
+];
 
 /// The module a companion completes: `time` for `datetime`.
 pub(crate) fn completed(companion: &str) -> Option<&'static str> {

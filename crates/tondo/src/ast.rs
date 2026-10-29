@@ -656,7 +656,79 @@ pub struct FieldInit {
 #[derive(Clone, Debug)]
 pub enum StrSegment {
     Text(String),
-    Expr(Expr),
+    /// An interpolation, and its format after `:` (language 19.6).
+    Expr(Expr, Option<Format>),
+}
+
+/// The format of an interpolation, `[[fill]align][sign][#][0][width]
+/// [.precision][type]` (language 19.6).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Format {
+    pub fill: char,
+    /// `<`, `>` or `^`.
+    pub align: Option<char>,
+    pub plus: bool,
+    pub alternate: bool,
+    pub zero: bool,
+    pub width: Option<u32>,
+    pub precision: Option<u32>,
+    /// `x`, `X`, `o`, `b`, `e` or `E`.
+    pub kind: Option<char>,
+    pub span: Span,
+}
+
+/// The format a text after `:` writes, or why it is none.
+pub fn parse_format(text: &str, span: Span) -> Result<Format, String> {
+    let chars: Vec<char> = text.chars().collect();
+    let aligned = |c: Option<&char>| matches!(c, Some('<' | '>' | '^'));
+    let mut format = Format {
+        fill: ' ',
+        align: None,
+        plus: false,
+        alternate: false,
+        zero: false,
+        width: None,
+        precision: None,
+        kind: None,
+        span,
+    };
+    let mut at = 0;
+    if aligned(chars.get(1)) {
+        (format.fill, format.align, at) = (chars[0], Some(chars[1]), 2);
+    } else if aligned(chars.first()) {
+        (format.align, at) = (Some(chars[0]), 1);
+    }
+    let flag = |c: char, at: &mut usize| {
+        let found = chars.get(*at) == Some(&c);
+        *at += found as usize;
+        found
+    };
+    format.plus = flag('+', &mut at);
+    format.alternate = flag('#', &mut at);
+    format.zero = flag('0', &mut at);
+    let number = |at: &mut usize| -> Option<u32> {
+        let digits: String = chars[*at..].iter().take_while(|c| c.is_ascii_digit()).collect();
+        *at += digits.len();
+        digits.parse().ok()
+    };
+    format.width = number(&mut at);
+    if chars.get(at) == Some(&'.') {
+        at += 1;
+        format.precision = number(&mut at);
+        if format.precision.is_none() {
+            at = chars.len() + 1;
+        }
+    }
+    if let Some(&kind @ ('x' | 'X' | 'o' | 'b' | 'e' | 'E')) = chars.get(at) {
+        format.kind = Some(kind);
+        at += 1;
+    }
+    if at != chars.len() || text.is_empty() {
+        return Err(format!(
+            "`{text}` is not a format: write `[[fill]align][sign][#][0][width][.precision][type]`, as `>8`, `08`, `.2` or `#x`"
+        ));
+    }
+    Ok(format)
 }
 
 #[derive(Clone, Debug)]

@@ -520,7 +520,7 @@ impl Parser<'_> {
                         .iter()
                         .map(|p| match p {
                             crate::lexer::StrPart::Text(text) => Some(text.as_str()),
-                            crate::lexer::StrPart::Expr(_) => None,
+                            crate::lexer::StrPart::Expr(..) => None,
                         })
                         .collect::<Option<String>>()
                         .map(AnnotationArg::Text),
@@ -1597,7 +1597,7 @@ impl Parser<'_> {
                 PatternKind::Literal(self.primary()?)
             }
             Tok::Str(parts) => {
-                if parts.iter().any(|p| matches!(p, StrPart::Expr(_))) {
+                if parts.iter().any(|p| matches!(p, StrPart::Expr(..))) {
                     return self.error("an interpolated string is not a pattern");
                 }
                 PatternKind::Literal(self.primary()?)
@@ -2324,7 +2324,7 @@ impl Parser<'_> {
         for part in parts {
             match part {
                 StrPart::Text(text) => segments.push(StrSegment::Text(text)),
-                StrPart::Expr(span) => {
+                StrPart::Expr(span, format) => {
                     let tokens = lexer::lex(self.file, Some(span), self.diags);
                     let mut inner = Parser {
                         file: self.file,
@@ -2341,7 +2341,13 @@ impl Parser<'_> {
                     if !inner.at(&Tok::Eof) {
                         return inner.expected("end of interpolation");
                     }
-                    segments.push(StrSegment::Expr(expr));
+                    let format = format.and_then(|span| {
+                        let text = self.file.slice(span);
+                        crate::ast::parse_format(text, span)
+                            .map_err(|message| self.diags.error("E1118", span, message))
+                            .ok()
+                    });
+                    segments.push(StrSegment::Expr(expr, format));
                 }
             }
         }

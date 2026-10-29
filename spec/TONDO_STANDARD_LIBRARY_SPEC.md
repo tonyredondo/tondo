@@ -883,6 +883,26 @@ Una API que opera por bytes, scalar, grapheme, palabra o locale lo expresa en
 su nombre y contrato. STD-0.1 no promete segmentación por grapheme salvo API
 específica.
 
+`std.text` normaliza un texto a una de las formas de Unicode (UAX #15), que
+dan la misma secuencia de escalares a textos que se ven igual:
+
+~~~tondo
+import std.text
+
+text.normalize("cafe\u{301}") == "café"                    // NFC, la de por defecto
+text.normalize("ﬁ", text.Normalization.Nfkc) == "fi"
+~~~
+
+~~~tondo pseudocode
+pub enum Normalization { Nfc, Nfd, Nfkc, Nfkd }
+pub fn normalize(text: String, form: Normalization = Normalization.Nfc): String
+pub fn isNormalized(text: String, form: Normalization = Normalization.Nfc): Bool
+~~~
+
+NFC y NFD componen y descomponen los caracteres; NFKC y NFKD, además,
+cambian los de compatibilidad por los que representan, como `ﬁ` por `fi`,
+para comparar o hacer slugs. La versión de Unicode es la de la edición.
+
 ### 10.2 `String` y bytes
 
 Texto y datos binarios no se convierten implícitamente:
@@ -1622,6 +1642,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.profile` | Core | — | 0.1 | Perfiles que el programa hace de sí mismo, en el formato de pprof, y labels que los dividen |
 | `std.embed` | Core | — | 0.1 | Archivos del paquete leídos al compilar y guardados en el ejecutable |
 | `std.url` | Core | — | 0.1 | URLs y referencias relativas de RFC 3986: sus partes, su resolución y su query |
+| `std.xml` | Core | — | 0.1 | XML tipado sobre `std.serialization`, con atributos y texto por anotaciones, y un árbol dinámico |
 | `std.gzip` | Core | — | 0.1 | gzip (RFC 1952): bytes y streams comprimidos y descomprimidos |
 | `std.zstd` | Core | — | 0.1 | Zstandard (RFC 8878): bytes y streams comprimidos y descomprimidos |
 | `std.console` | Capability-gated | `console` | 0.1 | stdin, stdout, stderr, texto, bytes y flushing |
@@ -2634,6 +2655,7 @@ pub enum Event {
     Float(Float)
     Number(String)          // un número tal como lo escribe un formato de texto
     Text(String)
+    Untyped(String)         // un escalar escrito como texto sin tipo, como en XML
     DateTime(String)        // fecha, hora o ambas en RFC 3339, en un formato que las tiene
     Bytes(Array[Byte])
     BeginList
@@ -2645,6 +2667,7 @@ pub enum Event {
 pub enum ErrorKind { Syntax, Type, Missing, Unknown, Range, Io, Unsupported }
 pub enum UnknownFields { Ignore, Reject }
 pub type Error = { kind: ErrorKind, message: String, path: String, line: Int, column: Int }
+pub type Note = { format: String, name: String, value: String }
 
 pub trait Source {
     fn next(self): Event? ! Error
@@ -2652,6 +2675,7 @@ pub trait Source {
     fn failure(self, kind: ErrorKind, message: String): Error
     // con implementación por defecto:
     fn rejectsUnknown(self): Bool
+    fn fields(self, notes: Array[Array[Note]])
     fn value(self): Event ! Error
     fn nextKey(self): String? ! Error
     fn nextField(self, names: Array[String]): Int? ! Error
@@ -2679,6 +2703,8 @@ pub trait Sink {
     fn endMap(self)
     // con implementación por defecto:
     fn omitsNone(self): Bool
+    fn record(self, name: String, notes: Array[Note])
+    fn field(self, notes: Array[Note])
 }
 
 pub trait Encode {
@@ -2718,6 +2744,20 @@ pub trait Decode {
   cortos, `0.1`, y otro con `float`.
 - `Decode` acepta para un número cualquiera de `Int`, `Float` y `Number`, y para
   un entero da `Range` cuando no cabe en su tipo.
+- `Untyped` es el escalar de un formato que no tiene tipos, como XML: cada
+  escalar lo lee de su texto. Un número, sin el espacio de alrededor; un
+  `Bool`, de `true`, `false`, `1` o `0`; un texto, tal cual; una fecha, de
+  RFC 3339; una variante sin payload, de su nombre. Ningún otro formato lo
+  emite.
+- Las anotaciones de un formato, como `@xml.Attribute`, llegan a él como
+  notas: `@xml.Name("item")` es `Note { format: "xml", name: "Name", value:
+  "item" }`. Antes del mapa de cada record, el código del compilador llama a
+  `Sink.record` con el nombre del tipo, o de la variante, y sus notas; antes
+  de la clave de un campo con notas, a `Sink.field`; y antes de leer los
+  campos de un record, si alguno tiene notas, a `Source.fields` con las de
+  cada uno, en el orden de `names`. Por defecto no hacen nada, y cada
+  formato lee solo las suyas, así que una anotación de XML no cambia el
+  JSON del tipo.
 - Un `Error` lleva dónde ocurrió como camino (`$.users[2].age`), línea y
   columna, y se muestra como `mensaje at camino (line l, column c)`, sin la
   posición cuando no la hay, como al escribir. `ErrorKind` se muestra con su
@@ -4730,6 +4770,97 @@ pub fn reader(from: io.Reader): io.Reader
   suelta `from`, con la misma regla.
 
 ---
+
+### 14.30 `std.xml`
+
+`std.xml` escribe y lee XML 1.0 como `encoding/xml` de Go: un record es un
+elemento y sus campos, sus hijos, salvo los que unas anotaciones hacen
+atributos o texto. Y lee XML de forma desconocida como un árbol:
+
+~~~tondo
+import std.xml
+
+@xml.Name("rss")
+pub type Feed = {
+    @xml.Attribute
+    version: String
+    channel: Channel
+}
+
+pub type Channel = {
+    title: String
+    @xml.Name("item")
+    items: Array[Item]
+}
+
+pub type Item = {
+    title: String
+    link: String
+    @xml.Attribute
+    guid: String?
+}
+
+let feed = xml.decode[Feed](text)?
+let written = xml.encode(feed, pretty: true)
+let root = xml.parse(text)?
+for channel in root.children("channel") {
+    for item in channel.children("item") {
+        console.println("{item.attribute("guid")}: {item.text()}")
+    }
+}
+~~~
+
+La superficie es:
+
+~~~tondo pseudocode
+pub annotation Name = { value: String }
+pub annotation Attribute = {}
+pub annotation Text = {}
+
+pub type XmlError = { message: String, line: Int, column: Int }
+
+pub fn encode[T: serialization.Encode](value: T, pretty: Bool = false): String
+pub fn decode[T: serialization.Decode](text: String): T ! XmlError
+
+pub type Element = { name: String, attributes: Map[String, String], nodes: Array[Node] }
+pub enum Node { Element(Element), Text(String) }
+pub fn parse(text: String): Element ! XmlError
+pub fn Element.child(self, name: String): Element?
+pub fn Element.children(self, name: String): Array[Element]
+pub fn Element.attribute(self, name: String): String?
+pub fn Element.text(self): String
+impl Display for Element
+~~~
+
+- Un valor es un elemento con el nombre de su tipo, o el de su `@xml.Name`;
+  cada campo, un hijo con el nombre del campo, o el de su `@xml.Name`, en su
+  orden. Un `Array` da un hijo por elemento, todos con ese nombre, sin
+  envoltorio; un opcional sin valor no da ninguno.
+- `@xml.Attribute` hace de un campo un atributo, y `@xml.Text` el texto del
+  elemento; los dos son para escalares: textos, números, `Bool`,
+  `time.DateTime` y enums sin datos. Un escalar se escribe como texto, como en
+  `std.json`, y se lee de su texto, como `serialization.Event.Untyped` (14.7).
+  Las notas de estas anotaciones solo las lee `std.xml`: el JSON del mismo
+  tipo no cambia.
+- `decode` lee el elemento raíz, sea cual sea su nombre. Un elemento con
+  atributos o hijos es un mapa de ellos; uno solo con texto es ese texto, que
+  un record también lee como mapa, con su texto en el campo `@xml.Text`. Los
+  hijos seguidos del mismo nombre son la lista de un campo `Array`. Ignora
+  los elementos y atributos que el tipo no tiene, y falla con `XmlError`, con
+  el camino del elemento (`/rss/channel/item`), su línea y su columna, ante un
+  XML mal formado, un campo obligatorio que falta o un texto que no es del
+  tipo. Los prefijos de los nombres, como `atom:link`, son parte del nombre;
+  no se resuelven los namespaces.
+- No se leen DTDs ni entidades externas: solo las cinco predefinidas y las
+  numéricas, así que un documento no puede pedir archivos ni crecer sin fin.
+  Los elementos anidan hasta 128 niveles, como los valores de `std.json`.
+- `parse` da el árbol de un XML de forma desconocida: el elemento raíz, con
+  sus atributos y sus nodos, elementos y texto, sin comentarios ni
+  instrucciones de proceso. `child` da el primer hijo de ese nombre,
+  `children` todos, y `text` el texto de sus nodos, unido. `Display` lo escribe
+  como XML.
+- `encode` escribe UTF-8 sin la declaración `<?xml ...?>`; `pretty` sangra los
+  hijos con dos espacios.
 
 ## 15. Contrato exigido a cada módulo
 

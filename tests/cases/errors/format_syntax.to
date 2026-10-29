@@ -1,0 +1,14 @@
+// A format after `:` that does not read is an error that says how to write
+// one, even when it looks like another language's, as Python's `.2f`.
+
+fn main() {
+    let price = 3.5
+    let count = 3
+    _ = "{price:.2f}"
+    _ = "{count:,}"
+    _ = "{price:.}"
+}
+
+// expect-error: E1118 `.2f` is not a format: write `[[fill]align][sign][#][0][width][.precision][type]`, as `>8`, `08`, `.2` or `#x`
+// expect-error: E1118 `,` is not a format: write `[[fill]align][sign][#][0][width][.precision][type]`, as `>8`, `08`, `.2` or `#x`
+// expect-error: E1118 `.` is not a format: write `[[fill]align][sign][#][0][width][.precision][type]`, as `>8`, `08`, `.2` or `#x`

@@ -1,0 +1,146 @@
+// std.xml writes a value as elements, each field a child unless
+// `@xml.Attribute` or `@xml.Text` say otherwise, and an array as elements
+// of one name; it reads them back, scalars from their text, whatever the
+// root's name and skipping what the type lacks; and it reads XML of
+// unknown shape as a tree, without DTDs or entities but the predefined.
+
+import std.console
+import std.json
+import std.xml
+
+@xml.Name("rss")
+pub type Feed = {
+    @xml.Attribute
+    version: String
+    channel: Channel
+}
+
+pub type Channel = {
+    title: String
+    @xml.Name("item")
+    items: Array[Item]
+}
+
+pub enum Kind {
+    News
+    Opinion
+}
+
+pub type Item = {
+    title: String
+    @xml.Attribute
+    guid: String?
+    views: Int
+    kind: Kind
+    featured: Bool
+}
+
+pub type Link = {
+    @xml.Attribute
+    rel: String?
+    @xml.Text
+    href: String
+}
+
+pub type Page = {
+    links: Array[Link]
+    score: Float
+}
+
+fn main() {
+    let feed = Feed {
+        version: "2.0"
+        channel: Channel {
+            title: "News & more"
+            items: [
+                Item { title: "One", guid: some("a1"), views: 3, kind: Kind.News, featured: true },
+                Item { title: "Two <b>", guid: none, views: 4, kind: Kind.Opinion, featured: false },
+            ]
+        }
+    }
+    let written = xml.encode(feed)
+    console.println(written)
+    console.println(xml.encode(feed.channel.items[0], pretty: true))
+    // Notes of std.xml are for it alone.
+    console.println(json.encode(feed.channel.items[1]))
+
+    let back = xml.decode[Feed](written).expect("a feed")
+    let second = back.channel.items[1]
+    console.println(
+        "{back.version} {back.channel.items.length()} {second.title} {second.guid} {second.views} {second.kind == Kind.Opinion}",
+    )
+
+    let page = xml.decode[Page](
+        "<page lang=\"en\"><links rel=\"next\">/2</links><links>/3</links><extra><x/></extra><score> 2.5 </score></page>",
+    ).expect("a page")
+    console.println(
+        "{page.links.length()} {page.links[0].rel} {page.links[0].href} {page.links[1].href} {page.score}",
+    )
+    console.println(xml.encode(page))
+
+    match xml.decode[Feed](
+        "<rss version=\"2\"><channel><title>x</title><item><title>t</title></item></channel></rss>",
+    ) {
+        ok(_) => console.println("decoded")
+        err(error) => console.println("{error}")
+    }
+    match xml.decode[Item](
+        "<item><title>t</title><views>many</views><kind>News</kind><featured>1</featured></item>",
+    ) {
+        ok(_) => console.println("decoded")
+        err(error) => console.println("{error}")
+    }
+
+    let source = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE note [<!ENTITY secret SYSTEM "file:///etc/passwd">]>
+        <!-- a note -->
+        <note to='Ada' xmlns:x="urn:x">
+          <x:body>Caf&#233; &amp; &#x74;ea<![CDATA[ <raw> ]]></x:body>
+          <?render fast?>
+          <empty/>
+        </note>
+        """
+    let tree = xml.parse(source).expect("a note")
+    let body = tree.child("x:body").expect("a body")
+    console.println(
+        "{tree.name} {tree.attribute("to")} {tree.attribute("from")} {body.text()} {tree.children("empty").length()}",
+    )
+    console.println("{body}")
+
+    for broken in [
+        "<a><b></a>",
+        "<a x='1' x='2'/>",
+        "<a>&secret;</a>",
+        "<a>",
+        "<a/><b/>",
+        "<a 1='x'/>",
+    ] {
+        match xml.parse(broken) {
+            ok(_) => console.println("parsed")
+            err(error) => console.println("{error}")
+        }
+    }
+}
+
+// expect-stdout: <rss version="2.0"><channel><title>News &amp; more</title><item guid="a1"><title>One</title><views>3</views><kind>News</kind><featured>true</featured></item><item><title>Two &lt;b&gt;</title><views>4</views><kind>Opinion</kind><featured>false</featured></item></channel></rss>
+// expect-stdout: <Item guid="a1">
+// expect-stdout:   <title>One</title>
+// expect-stdout:   <views>3</views>
+// expect-stdout:   <kind>News</kind>
+// expect-stdout:   <featured>true</featured>
+// expect-stdout: </Item>
+// expect-stdout: {"title":"Two <b>","guid":null,"views":4,"kind":"Opinion","featured":false}
+// expect-stdout: 2.0 2 Two <b> none 4 true
+// expect-stdout: 2 some(next) /2 /3 2.5
+// expect-stdout: <Page><links rel="next">/2</links><links>/3</links><score>2.5</score></Page>
+// expect-stdout: missing field `views` at /rss/channel/item (line 1, column 43)
+// expect-stdout: expected an integer that fits `Int`, found `many` at /item (line 1, column 1)
+// expect-stdout: note some(Ada) none Café & tea <raw>  1
+// expect-stdout: <x:body>Café &amp; tea &lt;raw&gt; </x:body>
+// expect-stdout: `</a>` closes `<b>`: write `</b>` (line 1, column 10)
+// expect-stdout: the attribute `x` is twice in `<a>` (line 1, column 10)
+// expect-stdout: `&secret;` is not an entity XML defines: only `&lt;`, `&gt;`, `&amp;`, `&quot;`, `&apos;` and numbers, as `&#233;`, are read (line 1, column 4)
+// expect-stdout: `<a>` does not end: close it with `</a>` (line 1, column 1)
+// expect-stdout: expected nothing after the root element (line 1, column 5)
+// expect-stdout: expected a name (line 1, column 4)

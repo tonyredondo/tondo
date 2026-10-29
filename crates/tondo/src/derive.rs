@@ -217,7 +217,8 @@ fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap
                     _ => false,
                 });
                 let Some(item) = item else { continue };
-                let generator = Generator { alias: &alias, sources, declared: d };
+                let noted = NOTED.iter().filter_map(|&format| Some((format, alias_of(file, format)?))).collect();
+                let generator = Generator { alias: &alias, noted, sources, declared: d };
                 for &name in kind.traits() {
                     if implemented(name) {
                         continue;
@@ -450,10 +451,16 @@ fn ignored(field: &ast::FieldDecl) -> bool {
     field.annotations.iter().any(|a| a.name.name == "ignore")
 }
 
+/// The formats whose annotations the implementations give them as notes
+/// (standard library 14.7).
+const NOTED: &[&str] = &["xml"];
+
 /// Writes the source of the implementations for one declaration.
 struct Generator<'a> {
     /// The alias of the standard module in the type's file.
     alias: &'a str,
+    /// The formats of `NOTED` the type's file imports, and their aliases.
+    noted: Vec<(&'static str, String)>,
     sources: &'a SourceMap,
     declared: &'a Declared,
 }
@@ -461,6 +468,29 @@ struct Generator<'a> {
 impl Generator<'_> {
     fn text(&self, ty: &ast::TypeExpr) -> String {
         self.sources.slice(ty.span).to_string()
+    }
+
+    /// The notes of the annotations of formats among some, as an array:
+    /// `serialization.Note { format: "xml", name: "Name", value: "item" }`
+    /// for `@xml.Name("item")`.
+    fn notes(&self, uses: &[ast::AnnotationUse]) -> String {
+        let s = self.alias;
+        let notes: Vec<String> = uses
+            .iter()
+            .filter_map(|annotation| {
+                let [module, name] = &annotation.path[..] else { return None };
+                let (format, _) = self.noted.iter().find(|(_, alias)| *alias == module.name)?;
+                let value = annotation.args.first().map_or(String::new(), |arg| match &arg.value.kind {
+                    ast::ExprKind::Str(segments) => match &segments[..] {
+                        [ast::StrSegment::Text(text)] => text.clone(),
+                        _ => String::new(),
+                    },
+                    _ => self.sources.slice(arg.value.span).to_string(),
+                });
+                Some(format!("{s}.Note {{ format: {format:?}, name: {:?}, value: {} }}", name.name, literal(&value)))
+            })
+            .collect();
+        format!("[{}]", notes.join(", "))
     }
 
     /// `impl[T: module.Trait] module.Trait for Name[T]`
@@ -485,7 +515,9 @@ impl Generator<'_> {
         out.push_str(&format!("    fn encode[__S: {s}.Sink](self, out: __S) {{\n"));
         match item {
             ast::Item::Type(t) => match &t.body {
-                ast::TypeBody::Record(fields) => out.push_str(&self.write_fields(fields, "self.", "        ")),
+                ast::TypeBody::Record(fields) => {
+                    out.push_str(&self.write_fields((&t.name.name, &t.uses), fields, "self.", "        "))
+                }
                 ast::TypeBody::Newtype(_) => out.push_str(&format!("        {s}.Encode.encode(self.value, out)\n")),
                 ast::TypeBody::Opaque => unreachable!("extern types are not derived"),
             },
@@ -516,7 +548,8 @@ impl Generator<'_> {
                                 fields.iter().map(|f| format!("{}: __field_{}", f.name.name, f.name.name)).collect();
                             out.push_str(&format!("            {path} {{ {} }} => {{\n", names.join(", ")));
                             out.push_str(&format!("                out.beginMap(1)\n                out.key({key})\n"));
-                            out.push_str(&self.write_fields(fields, "__field_", "                "));
+                            let record = (variant.name.name.as_str(), variant.uses.as_slice());
+                            out.push_str(&self.write_fields(record, fields, "__field_", "                "));
                             out.push_str("                out.endMap()\n            }\n");
                         }
                     }
@@ -530,13 +563,19 @@ impl Generator<'_> {
     }
 
     /// The statements that write the fields of a record as a map, each
-    /// value read as `{prefix}name`. A format without null leaves out the
-    /// optional ones that are `none`.
-    fn write_fields(&self, fields: &[ast::FieldDecl], prefix: &str, indent: &str) -> String {
+    /// value read as `{prefix}name`, after the record's name and notes. A
+    /// format without null leaves out the optional ones that are `none`.
+    fn write_fields(
+        &self,
+        (name, uses): (&str, &[ast::AnnotationUse]),
+        fields: &[ast::FieldDecl],
+        prefix: &str,
+        indent: &str,
+    ) -> String {
         let s = self.alias;
         let written: Vec<&ast::FieldDecl> = fields.iter().filter(|f| !ignored(f)).collect();
         let optional = |f: &ast::FieldDecl| self.text(&f.ty).ends_with('?');
-        let mut out = String::new();
+        let mut out = format!("{indent}out.record({name:?}, {})\n", self.notes(uses));
         // A `none` asks the format whether it leaves the member out; a
         // value asks nothing.
         let count = if written.iter().any(|f| optional(f)) {
@@ -554,7 +593,11 @@ impl Generator<'_> {
         out.push_str(&format!("{indent}out.beginMap({count})\n"));
         for field in written {
             let value = format!("{prefix}{}", field.name.name);
-            let write = format!("out.key({:?})\n{indent}{s}.Encode.encode({value}, out)", wire(field));
+            let mut write = format!("out.key({:?})\n{indent}{s}.Encode.encode({value}, out)", wire(field));
+            let notes = self.notes(&field.uses);
+            if notes != "[]" {
+                write = format!("out.field({notes})\n{indent}{write}");
+            }
             if optional(field) {
                 out.push_str(&format!(
                     "{indent}if not __skip_{} {{\n{indent}    {}\n{indent}}}\n",
@@ -584,6 +627,10 @@ impl Generator<'_> {
         }
         let names: Vec<String> = read.iter().map(|field| format!("{:?}", wire(field))).collect();
         out.push_str(&format!("{indent}let __fieldNames: Array[String] = [{}]\n", names.join(", ")));
+        let notes: Vec<String> = read.iter().map(|field| self.notes(&field.uses)).collect();
+        if notes.iter().any(|notes| notes != "[]") {
+            out.push_str(&format!("{indent}input.fields([{}])\n", notes.join(", ")));
+        }
         out.push_str(&format!("{indent}for {{\n{indent}    match input.nextField(__fieldNames)? {{\n"));
         for (index, field) in read.iter().enumerate() {
             out.push_str(&format!(
@@ -641,6 +688,9 @@ impl Generator<'_> {
                 let unknown =
                     format!("fail input.failure({s}.ErrorKind.Type, \"unknown variant `{{__variant}}` of `{name}`\")");
                 out.push_str("        match first {\n");
+                out.push_str(&format!(
+                    "            {s}.Event.Untyped(__untyped) => {s}.Decode.decode[{target}](input, {s}.Event.Text(__untyped))?\n"
+                ));
                 out.push_str(&format!("            {s}.Event.Text(__variant) => match __variant {{\n"));
                 for variant in &e.variants {
                     if let ast::VariantPayload::Unit = variant.payload {

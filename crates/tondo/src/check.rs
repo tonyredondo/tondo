@@ -1644,6 +1644,7 @@ impl<'a> Checker<'a> {
             StdModule::Fs => "fs",
             StdModule::Path => "path",
             StdModule::Io => "io",
+            StdModule::Text => "text",
             _ => return &[],
         })
     }
@@ -3734,7 +3735,7 @@ impl<'a> Checker<'a> {
                     .iter()
                     .map(|s| match s {
                         ast::StrSegment::Text(text) => Some(text.as_str()),
-                        ast::StrSegment::Expr(_) => None,
+                        ast::StrSegment::Expr(..) => None,
                     })
                     .collect::<Option<String>>(),
                 _ => None,
@@ -10096,7 +10097,7 @@ impl<'a> Checker<'a> {
             let shown = |value: ast::Expr| {
                 let segments = vec![
                     ast::StrSegment::Text(format!("{key}\u{0}")),
-                    ast::StrSegment::Expr(value),
+                    ast::StrSegment::Expr(value, None),
                     ast::StrSegment::Text("\u{0}".into()),
                 ];
                 expr(ast::ExprKind::Str(segments))
@@ -10136,7 +10137,7 @@ impl<'a> Checker<'a> {
             } else {
                 shown(read)
             };
-            parts.push(ast::StrSegment::Expr(part));
+            parts.push(ast::StrSegment::Expr(part, None));
         }
         if parts.is_empty() {
             return None;
@@ -12543,6 +12544,80 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// A value written with the format of its interpolation (language
+    /// 19.6), by the prelude's function for an integer, a float or the
+    /// text of any other value.
+    fn formatted(&mut self, value: hir::Expr, format: &ast::Format) -> hir::Expr {
+        let (ty, span) = (value.ty, value.span);
+        let integer = matches!(self.types.kind(ty), TyKind::Int(_) | TyKind::Byte) || self.bound_by(ty, self.integer);
+        let float = matches!(self.types.kind(ty), TyKind::Float(_));
+        let base = format.kind.filter(|k| "xXob".contains(*k));
+        let scientific = format.kind.filter(|k| "eE".contains(*k));
+        let refused = [
+            (format.plus && !integer && !float, "a sign".to_string()),
+            (format.zero && !integer && !float, "`0`".into()),
+            (format.alternate && base.is_none() && integer, "`#` without `x`, `X`, `o` or `b`".into()),
+            (format.alternate && !integer, "`#`".into()),
+            (format.precision.is_some() && integer, format!("a precision, `.{}`", format.precision.unwrap_or(0))),
+            (base.is_some() && !integer, format!("the base `{}`", base.unwrap_or('x'))),
+            (scientific.is_some() && !float, format!("scientific notation, `{}`", scientific.unwrap_or('e'))),
+        ];
+        if let Some((_, option)) = refused.iter().find(|(refused, _)| *refused) {
+            let takes = if integer {
+                "`[[fill]align][+][#][0][width][x|X|o|b]`"
+            } else if float {
+                "`[[fill]align][+][0][width][.precision][e|E]`"
+            } else {
+                "`[[fill]align][width][.precision]`"
+            };
+            let message = format!("a format of {} cannot have {option}: write {takes}", self.display(ty));
+            self.diags.error("E1118", format.span, message);
+            return self.displayed(value);
+        }
+        let int = |n: i128| Self::mk(hir::ExprKind::Int(n), Ty::INT, span);
+        let flag = |b: bool| Self::mk(hir::ExprKind::Bool(b), Ty::BOOL, span);
+        let fill = Self::mk(hir::ExprKind::Char(format.fill), Ty::CHAR, span);
+        let align = |default: char| Self::mk(hir::ExprKind::Char(format.align.unwrap_or(default)), Ty::CHAR, span);
+        let width = int(format.width.unwrap_or(0).into());
+        let precision = int(format.precision.map_or(-1, i128::from));
+        let upper = format.kind.is_some_and(|k| k.is_ascii_uppercase());
+        let (name, generics, args) = if integer {
+            let (value, ty) = match self.types.kind(ty) {
+                TyKind::Byte => (Self::mk(hir::ExprKind::Convert(Box::new(value)), Ty::INT, span), Ty::INT),
+                _ => (value, ty),
+            };
+            let radix = match base {
+                Some('x' | 'X') => 16,
+                Some('o') => 8,
+                Some('b') => 2,
+                _ => 10,
+            };
+            let (plus, zero, prefixed) = (flag(format.plus), flag(format.zero), flag(format.alternate));
+            let args = vec![value, int(radix), flag(upper), prefixed, plus, zero, width, fill, align('>')];
+            ("prelude.formatInteger", vec![ty], args)
+        } else if float {
+            let single = flag(ty == Ty::F32);
+            let value = match ty == Ty::F32 {
+                true => Self::mk(hir::ExprKind::Convert(Box::new(value)), Ty::F64, span),
+                false => value,
+            };
+            let (exponent, plus, zero) = (flag(scientific.is_some()), flag(format.plus), flag(format.zero));
+            let args = vec![value, single, precision, exponent, flag(upper), plus, zero, width, fill, align('>')];
+            ("prelude.formatFloat", Vec::new(), args)
+        } else {
+            let text = match ty == Ty::STRING {
+                true => value,
+                false => {
+                    let shown = hir::ExprKind::Interpolate(vec![hir::Segment::Value(self.displayed(value))]);
+                    Self::mk(shown, Ty::STRING, span)
+                }
+            };
+            ("prelude.formatText", Vec::new(), vec![text, precision, width, fill, align('<')])
+        };
+        let Some(&ModuleName::Fn(function)) = self.names.get(name) else { return Self::error_expr(span) };
+        Self::mk(hir::ExprKind::Call(Callee::Fn(function), generics, args), Ty::STRING, span)
+    }
+
     fn string(&mut self, cx: &mut FnCx, segments: &[ast::StrSegment], span: Span) -> hir::Expr {
         if let [ast::StrSegment::Text(text)] = segments {
             return Self::mk(hir::ExprKind::Str(text.clone()), Ty::STRING, span);
@@ -12551,7 +12626,7 @@ impl<'a> Checker<'a> {
         for segment in segments {
             match segment {
                 ast::StrSegment::Text(text) => out.push(hir::Segment::Text(text.clone())),
-                ast::StrSegment::Expr(e) => {
+                ast::StrSegment::Expr(e, format) => {
                     // Only a lone name in braces may have meant the braces.
                     let lone = matches!(&e.kind, ast::ExprKind::Path(segments) if segments.len() == 1);
                     let outer = std::mem::replace(&mut self.interpolating, lone);
@@ -12580,7 +12655,11 @@ impl<'a> Checker<'a> {
                         out.push(hir::Segment::Value(value));
                         continue;
                     }
-                    out.push(hir::Segment::Value(self.displayed(value)));
+                    let value = match format {
+                        Some(format) => self.formatted(value, format),
+                        None => self.displayed(value),
+                    };
+                    out.push(hir::Segment::Value(value));
                 }
             }
         }

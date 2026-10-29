@@ -70,8 +70,8 @@ with statements cannot be imported.
   a `context Request = { id: String = "" }`: any function reads
   `Request.id`, and `with Request { id: x }` changes it until the block
   ends. Nothing passes it as a parameter.
-- Strings interpolate with `{expr}`; `{{` is a literal brace. `+` does not
-  join strings.
+- Strings interpolate with `{expr}`, formatted as `{price:.2}`, `{id:08}`
+  or `{name:<12}`; `{{` is a literal brace. `+` does not join strings.
 - Methods are declared outside the type: `fn User.greet(self): String`.
   `mut self` changes fields, `var self` can replace the value.
 - A trait method on a concrete value is called through the trait:
