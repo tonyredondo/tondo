@@ -4,7 +4,8 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::Duration;
 
 /// A request as the server read it: method, target, headers (lowercase
 /// names) and body, without chunked framing.
@@ -409,7 +410,7 @@ fn main(): !(http.HttpError | fs.FsError) {
         spawn detached produce(sender)
         http.Reply.events(receiver)
     })
-    app.websocket("/chat", (socket) {
+    app.websocket("/chat", (_, socket) {
         for message in socket {
             socket.sendText("echo: {message?}")?
         }
@@ -534,6 +535,77 @@ fn produce(events: Sender[http.Event]) {
     assert!(stderr.contains("http: 500 the database is down"), "{stderr}");
     assert!(stderr.contains("panic[P0001]: bounds: index 0 is out of bounds: the array is empty\n"), "{stderr}");
     assert!(stderr.contains("  method: GET\n  path: /crash\n"), "{stderr}");
+}
+
+#[test]
+fn server_limits_heads_and_cancels_handlers_whose_client_left() {
+    let program = r#"import std.console
+import std.http
+import std.time
+
+fn main(): !http.HttpError {
+    var app = http.App.new()
+    app.get("/slow", (_) {
+        defer {
+            console.eprintln("cancelled")
+        }
+        console.eprintln("started")
+        time.sleep(time.hours(1))
+        http.Reply.text("late")
+    })
+    let limits = http.Limits.standard() with { head: 8192, headTimeout: time.milliseconds(100) }
+    let server = app.start(limits: limits)?
+    console.eprintln(server.address())
+    _ = console.readLine()
+    server.stop()
+}
+"#;
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("http_limits");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("main.to"), program).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", "main.to"])
+        .current_dir(&dir)
+        .env("TONDO_RT_CHECK_LEAKS", "1")
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Standard error is not buffered: each line arrives when it is written.
+    // The timeouts only turn what never comes into a failure instead of a
+    // hang.
+    let (lines, received) = std::sync::mpsc::channel();
+    let stderr = child.stderr.take().unwrap();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            let _ = lines.send(line);
+        }
+    });
+    let line = || received.recv_timeout(Duration::from_secs(30)).unwrap();
+    let address = line();
+    // Everything the server sends until it closes.
+    let answer = |head: &[u8]| {
+        let mut stream = TcpStream::connect(&address).unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+        stream.write_all(head).unwrap();
+        let mut answer = Vec::new();
+        stream.read_to_end(&mut answer).unwrap();
+        String::from_utf8_lossy(&answer).into_owned()
+    };
+    let large = format!("GET /slow HTTP/1.1\r\nhost: here\r\nx-large: {}\r\n\r\n", "a".repeat(20_000));
+    let refused = answer(large.as_bytes());
+    assert!(refused.starts_with("HTTP/1.1 431 "), "{refused}");
+    // A head that never ends: the server closes after `headTimeout`.
+    assert_eq!(answer(b"GET /slow HTTP/1.1\r\nhost: here\r\n"), "");
+    let gone = TcpStream::connect(&address).unwrap();
+    (&gone).write_all(b"GET /slow HTTP/1.1\r\nhost: here\r\n\r\n").unwrap();
+    assert_eq!(line(), "started");
+    drop(gone);
+    assert_eq!(line(), "cancelled");
+    drop(child.stdin.take());
+    let rest: Vec<String> = received.iter().collect();
+    assert!(child.wait().unwrap().success(), "{}", rest.join("\n"));
 }
 
 #[test]

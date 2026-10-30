@@ -2650,6 +2650,20 @@ fn give_way() {
     }
 }
 
+/// Cancels the task numbered `id` if it is still alive, as a client that
+/// went away cancels the task that answers it. Its number is never reused,
+/// and while the set of tasks is locked none of them is freed.
+pub(crate) fn cancel_by_id(id: u64) {
+    let alive = tasks();
+    for &task in alive.iter() {
+        let task = task as *mut Task;
+        if unsafe { (*task).id == id && !(*task).finished } {
+            unsafe { cancel_task(task) };
+            return;
+        }
+    }
+}
+
 /// Cancels a running task: marks it and ends the wait it is blocked in.
 unsafe fn cancel_task(task: *mut Task) {
     unsafe {

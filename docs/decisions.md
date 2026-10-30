@@ -3387,3 +3387,32 @@ and batching of fields come when a program needs them.
 A root holds its state, as a database or a `std.sync` value, which
 reflection now carries without looking inside, so such a record can be a
 root of `std.graphql` or `std.mcp`; the schema leaves those fields out.
+
+## 2026-10-30 — Servers that hold up in production
+
+The sixteenth lot, from the second review of Gin, Hugo, dd-trace-go and
+ddtest: what a server open to the internet needs and the first one lacked.
+
+The limits are on by default, since a server that has to be told to
+protect itself usually is not: 10 MiB of body, 64 KiB of head and 30
+seconds to send it, which also closes a kept-alive connection that sends
+nothing and a TLS handshake that never ends. `Limits` changes them for a
+server and `Request.limitBody` for a route, as one of uploads needs. The
+body is limited where it is read, so the handler's `?` answers `413` with
+the way to raise it.
+
+A client that goes away cancels the task that answers it, with the
+cancellation tasks already have: the server drops the response nobody
+waits for, and a guard in it cancels the task, which stops at its next
+wait and runs its `defer`s. In Go a handler has to watch its context to
+stop; here every wait is a place to stop.
+
+`queryAs` and `formAs` read with the `Decode` the compiler writes for
+JSON, through a `Source` that matches names as clients write them,
+`page_size` or `page-size` for `pageSize`, and makes a list of a single
+value when the field is one. No field needs a tag, as Gin's binding does.
+
+`compress` is a middleware, so it compresses what the ones after it
+return; zstd wins a tie because it is faster for the same size. A
+WebSocket's handler gets its request and runs inside its route, so the
+contexts the middleware sets, as the user or the trace, reach it.

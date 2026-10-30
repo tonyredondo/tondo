@@ -1,0 +1,111 @@
+// What a server needs in production: a body larger than its limit is
+// `413`, which a route raises with `limitBody`; the query and a form read
+// into a type, with `422` for a value that breaks its rules; a middleware
+// reads a reply's headers; `compress` writes zstd or gzip as the client
+// takes it; a WebSocket's handler gets its request inside the middleware's
+// contexts.
+
+import std.console
+import std.http
+import std.validate
+import std.zstd
+
+context Who = {
+    name: String = "nobody"
+}
+
+pub type Search = {
+    text: String
+    @validate.Min(1)
+    page: Int
+    pageSize: Int?
+    tags: Array[String]?
+}
+
+fn main(): !http.HttpError {
+    var app = http.App.new()
+    app.compress()
+    app.use(
+        (request, next) {
+            with Who { name: request.header("x-user").unwrapOr("anon") }
+            let reply = next(request)?
+            reply.header("x-type", reply.headers().get("content-type").unwrapOr("none"))
+        },
+    )
+    app.post("/small", (request) { http.Reply.text("got {request.bytes()?.length()}") })
+    app.post(
+        "/large",
+        (request) { http.Reply.text("got {request.limitBody(5000).bytes()?.length()}") },
+    )
+    app.get(
+        "/search",
+        (request) {
+            let search = request.queryAs[Search]()?
+            http.Reply.text(
+                "{search.text} {search.page} {search.pageSize} {search.tags} {request.headerValues("x-tag")}",
+            )
+        },
+    )
+    app.post("/search", (request) { http.Reply.text("{request.formAs[Search]()?.text}") })
+    app.get("/page", (_) { http.Reply.text("words ".repeat(500)) })
+    app.websocket(
+        "/chat",
+        (request, socket) {
+            let first = match socket.receive()? {
+                some(http.Message.Text(text)) => text
+                _ => ""
+            }
+            socket.sendText("{Who.name} on {request.path()}: {first}")?
+        },
+    )
+    let limits = http.Limits.standard() with { body: 1000 }
+    let server = app.start(limits: limits)?
+    let client = http.Client.new(baseUrl: server.url())
+    let shown = (outcome: http.Response ! http.HttpError) {
+        match outcome {
+            ok(reply) => "{reply.status()} {reply.text().unwrapOr("")}"
+            err(http.HttpError.Status(reply)) => "{reply.status()}"
+            err(error) => "{error}"
+        }
+    }
+    for (path, size) in [("/small", 500), ("/small", 2000), ("/large", 2000), ("/large", 6000)] {
+        console.println(
+            "{path} {size}: {shown(client.post(path, body: some(http.Body.text("x".repeat(size)))))}",
+        )
+    }
+    console.println(
+        shown(
+            client.get(
+                "/search?text=tea+cake&page=2&page_size=10&tags=a&tags=b",
+                headers: ["x-tag": "z"],
+            ),
+        ),
+    )
+    console.println(shown(client.get("/search?text=tea&page=0")))
+    console.println(shown(client.get("/search?text=tea&page=two")))
+    console.println(
+        shown(client.post("/search", body: some(http.Body.form(["text": "form", "page": "1"])))),
+    )
+    let page = client.get("/page", headers: ["accept-encoding": "zstd"])?
+    let plain = zstd.decompress(page.bytes()?).unwrapOr([])
+    console.println("{page.header("content-encoding")} {plain.length()} {page.header("x-type")}")
+    let socket =
+        http.WebSocket.connect(
+            "{server.url().replace("http://", "ws://")}/chat",
+            headers: ["x-user": "ada"],
+        )?
+    socket.sendText("hi")?
+    console.println("{socket.receive()?}")
+    server.stop()
+}
+
+// expect-stdout: /small 500: 200 got 500
+// expect-stdout: /small 2000: 413
+// expect-stdout: /large 2000: 200 got 2000
+// expect-stdout: /large 6000: 413
+// expect-stdout: 200 tea cake 2 some(10) some([a, b]) [z]
+// expect-stdout: 422
+// expect-stdout: 400
+// expect-stdout: 200 form
+// expect-stdout: some(zstd) 3000 some(text/plain; charset=utf-8)
+// expect-stdout: some(ada on /chat: hi)

@@ -65,6 +65,69 @@ impl Listening {
     }
 }
 
+/// What a server allows each client (`http.Limits`): the bytes of a
+/// request's body and of its head, and the time to send a head, which also
+/// ends a connection kept open without a request.
+#[derive(Clone, Copy)]
+struct Limits {
+    body: usize,
+    head: usize,
+    head_timeout: std::time::Duration,
+}
+
+impl Limits {
+    fn of(body: i64, head: i64, head_timeout_ms: i64) -> Limits {
+        Limits {
+            body: body.max(0) as usize,
+            // hyper reads a head in a buffer of at least 8 KiB.
+            head: head.max(8192) as usize,
+            head_timeout: std::time::Duration::from_millis(head_timeout_ms.max(1) as u64),
+        }
+    }
+}
+
+/// Who answers a request: the task, which goes on only while its client
+/// waits, whether the response went out, and whether the client is gone.
+#[derive(Default)]
+struct Answering {
+    task: std::sync::atomic::AtomicU64,
+    answered: std::sync::atomic::AtomicBool,
+    gone: std::sync::atomic::AtomicBool,
+}
+
+impl Answering {
+    /// Cancels the task when its client went away before the response.
+    /// Both the task, when it starts, and the request's future, when it
+    /// ends, call it, so the second does it even if the client left while
+    /// the request waited for a task.
+    fn cancel_if_gone(&self) {
+        use std::sync::atomic::Ordering::SeqCst;
+        let task = self.task.load(SeqCst);
+        if task != 0 && self.gone.load(SeqCst) && !self.answered.load(SeqCst) {
+            super::tasks::cancel_by_id(task);
+        }
+    }
+}
+
+/// Marks the client of a request gone when hyper drops the request's
+/// future: after the response, or when the client went away first.
+struct Abandoned(Arc<Answering>);
+
+impl Drop for Abandoned {
+    fn drop(&mut self) {
+        self.0.gone.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.0.cancel_if_gone();
+    }
+}
+
+/// Marks `exceeded` when a body failed to read because it went past its
+/// limit.
+fn note_exceeded(error: &(dyn std::error::Error + 'static), exceeded: &std::sync::atomic::AtomicBool) {
+    if error.is::<http_body_util::LengthLimitError>() {
+        exceeded.store(true, std::sync::atomic::Ordering::Release);
+    }
+}
+
 /// A request waiting for its response; `open` is false for the mark that
 /// the server stopped.
 struct Request {
@@ -83,8 +146,13 @@ struct Request {
     client: Arc<Vec<u8>>,
     headers: Vec<String>,
     body: Mutex<Option<Incoming>>,
+    /// The bytes its body may have, which the program may change before
+    /// it reads it, and whether a reading went past them.
+    limit: std::sync::atomic::AtomicUsize,
+    exceeded: Arc<std::sync::atomic::AtomicBool>,
     reply: Mutex<Option<oneshot::Sender<hyper::Response<Body>>>>,
     upgrade: Mutex<Option<hyper::upgrade::OnUpgrade>>,
+    answering: Arc<Answering>,
 }
 
 impl Request {
@@ -102,9 +170,24 @@ impl Request {
             client: Arc::default(),
             headers: Vec::new(),
             body: Mutex::new(None),
+            limit: Default::default(),
+            exceeded: Arc::default(),
             reply: Mutex::new(None),
             upgrade: Mutex::new(None),
+            answering: Arc::default(),
         }
+    }
+
+    /// The body, once, held to its limit.
+    fn take_body(&self) -> Option<http_body_util::Limited<Incoming>> {
+        let limit = self.limit.load(std::sync::atomic::Ordering::Acquire);
+        lock(&self.body).take().map(|body| http_body_util::Limited::new(body, limit))
+    }
+
+    /// Records a failure to read the body: past its limit, or another.
+    fn body_failed(&self, error: &(dyn std::error::Error + 'static)) -> String {
+        note_exceeded(error, &self.exceeded);
+        error.to_string()
     }
 
     /// The first value of a header, by its lowercase name.
@@ -113,6 +196,7 @@ impl Request {
     }
 
     fn send(&self, response: hyper::Response<Body>) {
+        self.answering.answered.store(true, std::sync::atomic::Ordering::SeqCst);
         if let Some(reply) = lock(&self.reply).take() {
             let _ = reply.send(response);
         }
@@ -373,6 +457,7 @@ pub unsafe extern "C" fn tondo_rt_tls_certificates_serving(named: *const Str) ->
 /// Starts a server on `host:port`, `0` for any free port, over TLS when it
 /// has a certificate and a key, as `acceptor` takes them.
 #[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn tondo_rt_http_listen(
     host: *const Str,
     port: i64,
@@ -380,7 +465,11 @@ pub unsafe extern "C" fn tondo_rt_http_listen(
     key: *const Str,
     clients: *const Str,
     minimum: i64,
+    body: i64,
+    head: i64,
+    head_timeout_ms: i64,
 ) -> *mut NativeObject {
+    let limits = Limits::of(body, head, head_timeout_ms);
     let (cert, key, clients) = (text(cert), text(key), text(clients));
     let tls = match cert.is_empty() {
         true => None,
@@ -396,7 +485,7 @@ pub unsafe extern "C" fn tondo_rt_http_listen(
         None => return failed("the task was cancelled".into()),
     };
     let address = listener.local_addr().map(|a| a.to_string()).unwrap_or_default();
-    started(Listening::Tcp(listener), tls, address, None)
+    started(Listening::Tcp(listener), tls, address, None, limits)
 }
 
 /// The media type a file's name says, or `application/octet-stream`.
@@ -407,8 +496,13 @@ pub unsafe extern "C" fn tondo_rt_http_media_type(path: *const Str) -> *mut Str 
 
 /// Starts a server on the Unix socket at `path`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_http_listen_unix(path: *const Str) -> *mut NativeObject {
-    let path = text(path);
+pub unsafe extern "C" fn tondo_rt_http_listen_unix(
+    path: *const Str,
+    body: i64,
+    head: i64,
+    head_timeout_ms: i64,
+) -> *mut NativeObject {
+    let (path, limits) = (text(path), Limits::of(body, head, head_timeout_ms));
     if let Err(problem) = super::net::make_room(&path, false) {
         return failed(problem.to_string());
     }
@@ -417,7 +511,7 @@ pub unsafe extern "C" fn tondo_rt_http_listen_unix(path: *const Str) -> *mut Nat
         tokio::net::UnixListener::bind(&path)
     };
     match listener {
-        Ok(listener) => started(Listening::Unix(listener), None, path.clone(), Some(path)),
+        Ok(listener) => started(Listening::Unix(listener), None, path.clone(), Some(path), limits),
         Err(error) => failed(error.to_string()),
     }
 }
@@ -439,10 +533,11 @@ fn started(
     tls: Option<tokio_rustls::TlsAcceptor>,
     address: String,
     socket: Option<String>,
+    limits: Limits,
 ) -> *mut NativeObject {
     let (sender, receiver) = mpsc::channel(1024);
     let (stop, stopped) = watch::channel(false);
-    runtime().spawn(accept(listening, tls, sender, stopped));
+    runtime().spawn(accept(listening, tls, sender, stopped, limits));
     native::new(Server {
         failure: Mutex::new(None),
         address,
@@ -457,8 +552,9 @@ async fn accept(
     tls: Option<tokio_rustls::TlsAcceptor>,
     sender: mpsc::Sender<Request>,
     mut stopped: watch::Receiver<bool>,
+    limits: Limits,
 ) {
-    use hyper_util::rt::{TokioExecutor, TokioIo};
+    use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
     loop {
         let (stream, remote) = tokio::select! {
             accepted = listener.accept() => match accepted {
@@ -472,13 +568,17 @@ async fn accept(
             let serve = |client: Option<Vec<u8>>| {
                 let (secure, client) = (tls.is_some(), Arc::new(client.unwrap_or_default()));
                 hyper::service::service_fn(move |request| {
-                    handle(request, sender.clone(), remote.clone(), secure, client.clone())
+                    handle(request, sender.clone(), remote.clone(), secure, client.clone(), limits)
                 })
             };
-            let builder = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
+            let mut builder = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
+            builder.http1().timer(TokioTimer::new()).header_read_timeout(limits.head_timeout).max_buf_size(limits.head);
+            builder.http2().max_header_list_size(limits.head.min(u32::MAX as usize) as u32);
             match tls.clone() {
                 Some(acceptor) => {
-                    if let Ok(stream) = acceptor.accept(stream).await {
+                    // A client that does not finish its handshake in time is let go.
+                    let shaken = tokio::time::timeout(limits.head_timeout, acceptor.accept(stream)).await;
+                    if let Ok(Ok(stream)) = shaken {
                         let shown = stream.get_ref().1.peer_certificates().and_then(|c| c.first()).map(|c| c.to_vec());
                         let _ = builder.serve_connection_with_upgrades(TokioIo::new(stream), serve(shown)).await;
                     }
@@ -497,6 +597,7 @@ async fn handle(
     remote: String,
     secure: bool,
     client: Arc<Vec<u8>>,
+    limits: Limits,
 ) -> Result<hyper::Response<Body>, Infallible> {
     super::diagnostics::HTTP_SERVER_REQUESTS.add(1);
     let _active = super::diagnostics::Open::new(&super::diagnostics::HTTP_SERVER_ACTIVE);
@@ -532,9 +633,14 @@ async fn handle(
         client,
         headers,
         body: Mutex::new(Some(body)),
+        limit: std::sync::atomic::AtomicUsize::new(limits.body),
+        exceeded: Arc::default(),
         reply: Mutex::new(Some(reply)),
         upgrade: Mutex::new(upgrade),
+        answering: Arc::default(),
     };
+    // Dropped with this future when the client goes away first.
+    let _abandoned = Abandoned(incoming.answering.clone());
     if sender.send(incoming).await.is_err() {
         return Ok(plain(503, "the server is stopping"));
     }
@@ -605,8 +711,9 @@ pub extern "C" fn tondo_rt_http_request_headers(object: *mut NativeObject) -> *m
 
 /// A request's body as the host of a stream.
 struct RequestBody {
-    body: Option<Incoming>,
+    body: Option<http_body_util::Limited<Incoming>>,
     chunk: Bytes,
+    exceeded: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Host for RequestBody {
@@ -619,7 +726,10 @@ impl Host for RequestBody {
                         self.chunk = data;
                     }
                 }
-                Some(Err(error)) => return Err(std::io::Error::other(error)),
+                Some(Err(error)) => {
+                    note_exceeded(error.as_ref(), &self.exceeded);
+                    return Err(std::io::Error::other(error));
+                }
                 None => self.body = None,
             }
         }
@@ -630,23 +740,45 @@ impl Host for RequestBody {
     }
 }
 
+/// The task that answers the request, which a client that goes away before
+/// the response cancels.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_request_answering(object: *mut NativeObject) {
+    let answering = &request(object).answering;
+    answering.task.store(super::tasks::current_id(), std::sync::atomic::Ordering::SeqCst);
+    answering.cancel_if_gone();
+}
+
+/// The bytes the body may have, until it is read.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_request_limit(object: *mut NativeObject, bytes: i64) {
+    request(object).limit.store(bytes.max(0) as usize, std::sync::atomic::Ordering::Release);
+}
+
+/// Whether a reading of the body went past its limit.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_request_exceeded(object: *mut NativeObject) -> u8 {
+    request(object).exceeded.load(std::sync::atomic::Ordering::Acquire) as u8
+}
+
 /// The body as a stream of `std.io`; an empty one once taken.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_request_body(object: *mut NativeObject) -> *mut StreamObject {
-    let body = lock(&request(object).body).take();
-    crate::io::stream(Box::new(RequestBody { body, chunk: Bytes::new() }), Mode::Long, false)
+    let r = request(object);
+    let body = RequestBody { body: r.take_body(), chunk: Bytes::new(), exceeded: r.exceeded.clone() };
+    crate::io::stream(Box::new(body), Mode::Long, false)
 }
 
 /// The whole body; on a failure, what was read and the failure recorded.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_request_read(object: *mut NativeObject) -> *mut ArrayHeader {
     let r = request(object);
-    let Some(body) = lock(&r.body).take() else { return byte_array(&[]) };
+    let Some(body) = r.take_body() else { return byte_array(&[]) };
     match wait(async move { body.collect().await }) {
         Some(Ok(collected)) => byte_array(&collected.to_bytes()),
         outcome => {
             let message = match outcome {
-                Some(Err(error)) => error.to_string(),
+                Some(Err(error)) => r.body_failed(error.as_ref()),
                 _ => "the task was cancelled".into(),
             };
             *lock(&r.failure) = Some(("body", message));
@@ -865,7 +997,7 @@ fn respond_entity(r: &Request, mut extra: Vec<String>, entity: Entity, body: imp
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_http_save_body(object: *mut NativeObject, path: *const Str, offset: i64) -> i64 {
     let r = request(object);
-    let (path, body) = (text(path), lock(&r.body).take());
+    let (path, body, exceeded) = (text(path), r.take_body(), r.exceeded.clone());
     let saved = wait(async move {
         if let Some(parent) = std::path::Path::new(&path).parent() {
             tokio::fs::create_dir_all(parent).await?;
@@ -880,7 +1012,11 @@ pub unsafe extern "C" fn tondo_rt_http_save_body(object: *mut NativeObject, path
         file.seek(std::io::SeekFrom::Start(offset)).await?;
         if let Some(mut body) = body {
             while let Some(frame) = body.frame().await {
-                if let Ok(data) = frame.map_err(std::io::Error::other)?.into_data() {
+                let frame = frame.map_err(|error| {
+                    note_exceeded(error.as_ref(), &exceeded);
+                    std::io::Error::other(error)
+                })?;
+                if let Ok(data) = frame.into_data() {
                     file.write_all(&data).await?;
                 }
             }
@@ -926,9 +1062,14 @@ struct Upload {
 pub extern "C" fn tondo_rt_http_request_form(object: *mut NativeObject) -> *mut NativeObject {
     let r = request(object);
     let boundary = r.header("content-type").map(multer::parse_boundary);
-    let body = lock(&r.body).take();
+    let body = r.take_body();
     match (boundary, body) {
         (Some(Ok(boundary)), Some(body)) => {
+            let exceeded = r.exceeded.clone();
+            let body = body.map_err(move |error| {
+                note_exceeded(error.as_ref(), &exceeded);
+                error
+            });
             let stream = http_body_util::BodyDataStream::new(body);
             let reader = multer::Multipart::new(stream, boundary);
             native::new(Form { failure: Mutex::new(None), reader: Some(Arc::new(tokio::sync::Mutex::new(reader))) })

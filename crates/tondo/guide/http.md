@@ -87,7 +87,7 @@ fn main(): !http.HttpError {
     app.files("/downloads", fs.disk("public"))    // GET with ranges: downloads resume
     app.files("/browse", fs.disk("public"), listing: true)   // and a page of each folder
     app.uploads("/downloads", "public")       // PUT (resumable) and multipart POST
-    app.websocket("/chat", (socket) {
+    app.websocket("/chat", (_, socket) {
         for message in socket {
             socket.sendText("echo: {message?}")?
         }
@@ -105,6 +105,21 @@ fn find(id: Int): User? {
   the same process, with no port: `app.client().get("/users/1")?`.
 - `request.json[T]()` answers `422` when the body breaks the rules of `T`
   (`@validate.Min(18)`, `tondo api std.validate`), with each in `errors`.
+- `request.queryAs[Search]()` reads the query into a type, and
+  `request.formAs[T]()` a form: `page_size` fills `pageSize`, and a name
+  that repeats fills a list. A field that may be missing is optional, as
+  `tags: Array[String]?`; a missing or unreadable one is a 400 that names
+  the parameter.
+- Each client is limited: by default a body over 10 MiB is 413, a head over
+  64 KiB is 431, and a head has 30 seconds to arrive.
+  `app.listen(limits: http.Limits.standard() with { body: 100_000_000 })`
+  changes them, and `request.limitBody(bytes)` the body's for one route,
+  before it is read.
+- A client that goes away cancels its handler: it stops at its next wait
+  and runs its `defer`s.
+- `app.compress()` compresses text and JSON replies with zstd or gzip, as
+  the client's `Accept-Encoding` prefers; it compresses what the middleware
+  added after it returns.
 - `app.route("GET", "/api/*rest", http.proxy("http://backend:8080", strip:
   "/api"))` passes requests on to another server and its responses back.
 - Routes use `:name` and `*rest` segments (`{name}` would interpolate).

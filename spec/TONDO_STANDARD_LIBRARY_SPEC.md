@@ -4539,12 +4539,16 @@ pub fn Request.intParam(self, name: String): Int ! Problem
 pub fn Request.query(self, name: String): String?
 pub fn Request.queryValues(self, name: String): Array[String]
 pub fn Request.intQuery(self, name: String): Int? ! Problem
+pub fn Request.queryAs[T: serialization.Decode](self): T ! Problem
 pub fn Request.header(self, name: String): String?
+pub fn Request.headerValues(self, name: String): Array[String]
 pub fn Request.headers(self): Map[String, String]
+pub fn Request.limitBody(self, bytes: Int): Request
 pub fn Request.text(self): String ! Problem
 pub fn Request.bytes(self): Array[Byte] ! Problem
 pub fn Request.json[T: serialization.Decode](self): T ! Problem
 pub fn Request.form(self): Map[String, String] ! Problem
+pub fn Request.formAs[T: serialization.Decode](self): T ! Problem
 pub fn Request.uploads(self): Uploads                       // Iterator[Upload ! Problem]
 pub fn Request.body(self): io.Reader
 pub fn Request.saveTo(self, path: String): Int ! Problem
@@ -4570,6 +4574,7 @@ pub fn Reply.cookie(self, name: String, value: String, maxAge: time.Duration? = 
     sameSite: SameSite = SameSite.Lax): Reply
 pub enum SameSite { Lax, Strict, None }
 pub fn Reply.status(self): Int
+pub fn Reply.headers(self): Map[String, String]
 
 pub type App
 pub fn App.new(): App
@@ -4580,12 +4585,15 @@ pub fn App.trustProxies(mut self, networks: ...net.Network)
 pub fn App.mount(mut self, prefix: String, other: App)
 pub fn App.files(mut self, prefix: String, files: fs.FileSystem, listing: Bool = false)
 pub fn App.uploads(mut self, prefix: String, directory: String)
-pub fn App.websocket(mut self, path: String, handler: fn(WebSocket): Unit ! HttpError)
+pub fn App.websocket(mut self, path: String, handler: fn(Request, WebSocket): Unit ! HttpError)
+pub fn App.compress(mut self, minimum: Int = 1024)
 pub fn App.openApi(mut self, path: String = "/openapi.json", title: String = "API", version: String = "1.0")
 pub fn App.listen(self, port: Int = 8080, host: String = "0.0.0.0", tls: Tls? = none,
-    socket: String? = none): Unit ! HttpError
+    socket: String? = none, limits: Limits? = none): Unit ! HttpError
 pub fn App.start(self, port: Int = 0, host: String = "127.0.0.1", tls: Tls? = none,
-    socket: String? = none): Server ! HttpError
+    socket: String? = none, limits: Limits? = none): Server ! HttpError
+pub type Limits = { body: Int, head: Int, headTimeout: time.Duration }
+pub fn Limits.standard(): Limits                            // 10 MiB, 64 KiB, 30 s
 pub fn App.client(self): Client
 pub fn mediaType(path: String): String
 pub fn proxy(target: String, strip: String = "", client: Client? = none): fn(Request): Reply ! Problem
@@ -4614,6 +4622,14 @@ pub alias TlsVersion = net.TlsVersion
 - `Request.json[T]()` responde `422` a un cuerpo cuyo valor rompe las reglas
   de su tipo (14.35), con cada violación en `errors`, una extensión de RFC
   9457: `{"path": "age", "message": "must be at least 18"}`.
+- `Request.queryAs[T]()` lee la query en un `T`, y `formAs[T]()` los campos de
+  un formulario URL-encoded: cada campo, del parámetro de su nombre sin
+  distinguir mayúsculas, `_` ni `-`, así que `page_size` llena `pageSize`; una
+  lista, de un nombre que se repite o de un solo valor; cada valor, como texto
+  que cualquier escalar lee. Un campo que falta y no es opcional, o un valor
+  que no se lee, es `400` con el nombre del parámetro; un valor que rompe las
+  reglas de su tipo, `422` como en `json`. `headerValues` da cada valor de una
+  cabecera repetida, en orden.
 - Una ruta es un método y un path cuyos segmentos `:nombre` son parámetros y
   cuyo último puede ser `*nombre`, el resto del path. Entre las rutas que
   encajan gana la de más segmentos fijos, así que `/users/me` gana a
@@ -4701,10 +4717,32 @@ pub alias TlsVersion = net.TlsVersion
   para un archivo nuevo.
 - `Reply.events` envía cada `Event` del canal como Server-Sent Events hasta que
   el canal se cierra o el cliente se va. `App.websocket` acepta WebSockets en
-  un path y el handler habla con cada uno hasta que termina.
+  un path y el handler habla con cada uno hasta que termina, con la petición
+  que lo abrió y dentro de los contextos que puso el middleware, como el
+  handler de una ruta.
+- `Reply.headers()` son las cabeceras puestas hasta ahí, en minúsculas y con
+  los valores de una repetida unidos por `, `, para que un middleware las lea.
+- `App.compress` comprime las respuestas que el cliente acepta comprimidas, con
+  zstd o gzip según prefiera su `Accept-Encoding` (zstd si empatan): texto,
+  JSON, JavaScript, XML y SVG de `minimum` bytes o más, y los streams de esos
+  tipos mientras se envían, con `Content-Encoding` y `Vary: Accept-Encoding`.
+  Una respuesta ya codificada, un archivo, los eventos y los WebSockets van
+  como están. Es un middleware: comprime lo que devuelven los que se añaden
+  después.
 - `listen` y `start` sirven HTTP/1.1 y HTTP/2; con `tls`, sobre TLS con ALPN.
   `Server.stop` deja de aceptar conexiones y espera a que el servidor pare;
   las peticiones en curso terminan.
+- `limits` acota lo que envía cada cliente, para que uno grande o lento no
+  agote el servidor; sin él, `Limits.standard()`. Un cuerpo de más de `body`
+  bytes es `413`, con un `Problem` que dice cómo subir el límite; una cabecera
+  (la línea de la petición y sus cabeceras) de más de `head` bytes, `431`; y
+  una conexión que tarda más de `headTimeout` en enviar una cabecera o en
+  terminar el handshake de TLS se cierra, también la que sigue abierta sin
+  pedir nada. `Request.limitBody(bytes)` cambia el límite del cuerpo para una
+  petición, antes de leerlo, como hace una ruta de subidas.
+- Un cliente que se va antes de su respuesta cancela la tarea que la atiende
+  (11.15 del lenguaje): el handler se detiene en su siguiente espera y ejecuta
+  sus `defer`, así que el trabajo de una petición abandonada no sigue.
 
 #### 14.24.2 Handlers tipados y OpenAPI
 

@@ -7,6 +7,7 @@ import std.console as __console
 import std.crypto as __crypto
 import std.encoding as __encoding
 import std.fs as __fs
+import std.gzip as __gzip
 import std.hash as __hash
 import std.internal.http as httpNative
 import std.io as __io
@@ -14,8 +15,10 @@ import std.json as __json
 import std.net as __net
 import std.panics as __panics
 import std.serialization as __serialization
+import std.sync as __sync
 import std.time as __time
 import std.url as __url
+import std.zstd as __zstd
 
 /// Why a request has no response a program can use.
 pub enum HttpError {
@@ -1238,15 +1241,161 @@ pub fn Request.query(self, name: String): String? {
 
 /// Every value of a query parameter, decoded.
 pub fn Request.queryValues(self, name: String): Array[String] {
-    var values: Array[String] = []
-    for pair in self.queryText.split("&") {
+    pairsOf(self.queryText).filter((pair) { pair.0 == name }).map((pair) { pair.1 })
+}
+
+/// The query string read into a `T`: each field from the parameter of its
+/// name, without case, `_` or `-`, so `page_size` fills `pageSize`; a list
+/// from a name that repeats or one value; each value as text, which any
+/// scalar reads. A parameter that does not read is a `400` problem, and a
+/// value that breaks the rules of its type a `422`.
+pub fn Request.queryAs[T: __serialization.Decode](self): T ! Problem {
+    readInto[T](pairsOf(self.queryText), "the query")?
+}
+
+/// The fields of a URL-encoded form body read into a `T`, as `queryAs`
+/// reads the query.
+pub fn Request.formAs[T: __serialization.Decode](self): T ! Problem {
+    readInto[T](pairsOf(self.text()?), "the form")?
+}
+
+/// The names and values of a query string or a URL-encoded form, decoded,
+/// in order.
+fn pairsOf(text: String): Array[(String, String)] {
+    var pairs: Array[(String, String)] = []
+    for pair in text.split("&") {
+        if pair.isEmpty() {
+            continue
+        }
         let equals = pair.find("=").unwrapOr(pair.length())
-        let key = formDecoded(pair.slice(0, equals).unwrapOr(""))
-        if key == name {
-            values.push(formDecoded(pair.slice(equals + 1, pair.length()).unwrapOr("")))
+        let name = formDecoded(pair.slice(0, equals).unwrapOr(""))
+        pairs.push((name, formDecoded(pair.slice(equals + 1, pair.length()).unwrapOr(""))))
+    }
+    pairs
+}
+
+fn readInto[T: __serialization.Decode](pairs: Array[(String, String)], what: String): T ! Problem {
+    match __serialization.Decode.decode[T](Fields.of(pairs), __serialization.Event.BeginMap) {
+        ok(value) => value
+        err(error) if error.kind == __serialization.ErrorKind.Invalid => fail Problem.invalid(
+            error.violations,
+        )
+        err(error) => fail Problem.badRequest("{what}: {error}")
+    }
+}
+
+/// The events of names and values as a record reads them: each name a key,
+/// its values one untyped text or a list of them; served from the end.
+type Fields = {
+    events: __sync.Mutex[Array[__serialization.Event]]
+    /// The parameter being read, which an error names.
+    current: __sync.Mutex[String]
+}
+
+fn Fields.of(pairs: Array[(String, String)]): Fields {
+    var names: Array[String] = []
+    var values: Map[String, Array[String]] = [:]
+    for (name, value) in pairs {
+        match values.get(name) {
+            some(found) => values[name] = found.concat([value])
+            none => {
+                names.push(name)
+                values[name] = [value]
+            }
         }
     }
-    values
+    var events: Array[__serialization.Event] = []
+    for name in names {
+        events.push(__serialization.Event.Key(name))
+        let given = values.get(name).unwrapOr([])
+        if given.length() == 1 {
+            events.push(__serialization.Event.Untyped(given[0]))
+        } else {
+            events.push(__serialization.Event.BeginList)
+            for value in given {
+                events.push(__serialization.Event.Untyped(value))
+            }
+            events.push(__serialization.Event.EndList)
+        }
+    }
+    events.push(__serialization.Event.EndMap)
+    events.reverse()
+    Fields { events: __sync.Mutex(events), current: __sync.Mutex("") }
+}
+
+/// A name as a parameter and a field compare: without case, `_` or `-`.
+fn foldedName(name: String): String {
+    name.replace("_", "").replace("-", "").toLowerAscii()
+}
+
+impl __serialization.Source for Fields {
+    fn next(self): __serialization.Event? ! __serialization.Error {
+        self.events.update((events) { events.pop() })
+    }
+
+    fn skip(self, first: __serialization.Event): !__serialization.Error {
+        if first == __serialization.Event.BeginList {
+            for {
+                match self.next()? {
+                    some(__serialization.Event.EndList) => return
+                    none => return
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    fn failure(self, kind: __serialization.ErrorKind, message: String): __serialization.Error {
+        let at = self.current.get()
+        __serialization.Error {
+            kind
+            message
+            path: if at.isEmpty() { "$" } else { at }
+            line: 0
+            column: 0
+            violations: []
+        }
+    }
+
+    /// The field a parameter is, by its name without case, `_` or `-`.
+    fn nextField(self, names: Array[String]): Int? ! __serialization.Error {
+        let wanted = names.map((name) { foldedName(name) })
+        for {
+            match self.next()? {
+                some(__serialization.Event.Key(key)) => {
+                    let given = foldedName(key)
+                    match wanted.findIndex((name) { name == given }) {
+                        some(index) => {
+                            self.current.set(key)
+                            return some(index)
+                        }
+                        none => {
+                            let first = self.value()?
+                            self.skip(first)?
+                        }
+                    }
+                }
+                _ => {
+                    self.current.set("")
+                    return none
+                }
+            }
+        }
+    }
+
+    /// A list: the values of a name that repeats, or its one value.
+    fn beginList(self, first: __serialization.Event, name: String): !__serialization.Error {
+        match first {
+            __serialization.Event.BeginList => {}
+            __serialization.Event.Untyped(_) => self.events.update(
+                (events) {
+                    events.push(__serialization.Event.EndList)
+                    events.push(first)
+                },
+            )
+            _ => fail self.mismatch(first, name)
+        }
+    }
 }
 
 /// A query parameter that must be there.
@@ -1291,6 +1440,20 @@ pub fn Request.header(self, name: String): String? {
     none
 }
 
+/// Every value of a header, by its name in any case, in order.
+pub fn Request.headerValues(self, name: String): Array[String] {
+    let wanted = name.toLower()
+    var values: Array[String] = []
+    var index = 0
+    for index + 1 < self.headerList.length() {
+        if self.headerList[index] == wanted {
+            values.push(self.headerList[index + 1])
+        }
+        index += 2
+    }
+    values
+}
+
 /// The headers, lowercase, with the values of a repeated one joined by
 /// `, `.
 pub fn Request.headers(self): Map[String, String] {
@@ -1307,12 +1470,33 @@ pub fn Request.headers(self): Map[String, String] {
     out
 }
 
-/// The whole body; one that cannot be read is a `400` problem.
+/// The request with a body of up to `bytes`, more or fewer than the
+/// server's `Limits.body`, as a route of uploads needs: before the body is
+/// read, by the handler or a middleware.
+pub fn Request.limitBody(self, bytes: Int): Request {
+    httpNative.requestLimit(self.native, bytes)
+    self
+}
+
+/// The problem of a body, or a part of one, that could not be read: `413`
+/// past its limit, else `400`.
+fn bodyProblem(request: httpNative.Native, what: String, failure: String): Problem {
+    if httpNative.requestExceeded(request) {
+        return Problem.new(
+            413,
+            "{what} is larger than this server takes: raise the limit of the route with `request.limitBody(bytes)`, or the server's with `Limits.body`",
+        )
+    }
+    Problem.badRequest("{what}: {failure.removePrefix("body\t")}")
+}
+
+/// The whole body; one that cannot be read is a `400` problem, and one
+/// larger than its limit `413`.
 pub fn Request.bytes(self): Array[Byte] ! Problem {
     let bytes = httpNative.requestRead(self.native)
     let failure = httpNative.failure(self.native)
     if not failure.isEmpty() {
-        fail Problem.badRequest("the body: {failure.removePrefix("body\t")}")
+        fail bodyProblem(self.native, "the body", failure)
     }
     bytes
 }
@@ -1342,6 +1526,11 @@ pub fn Request.json[T: __serialization.Decode](self): T ! Problem {
         err(error) if error.kind == __serialization.ErrorKind.Invalid => {
             fail Problem.invalid(error.violations)
         }
+        err(error) if httpNative.requestExceeded(self.native) => fail bodyProblem(
+            self.native,
+            "the body",
+            "{error}",
+        )
         err(error) => fail Problem.badRequest("the body is not the JSON expected: {error}")
     }
 }
@@ -1349,21 +1538,15 @@ pub fn Request.json[T: __serialization.Decode](self): T ! Problem {
 /// The fields of a URL-encoded form body.
 pub fn Request.form(self): Map[String, String] ! Problem {
     var fields: Map[String, String] = [:]
-    for pair in self.text()?.split("&") {
-        if pair.isEmpty() {
-            continue
-        }
-        let equals = pair.find("=").unwrapOr(pair.length())
-        fields[formDecoded(pair.slice(0, equals).unwrapOr(""))] = formDecoded(
-            pair.slice(equals + 1, pair.length()).unwrapOr(""),
-        )
+    for (name, value) in pairsOf(self.text()?) {
+        fields[name] = value
     }
     fields
 }
 
 /// The parts of a `multipart/form-data` body, in order, as they arrive.
 pub fn Request.uploads(self): Uploads {
-    Uploads { form: httpNative.requestForm(self.native), done: false }
+    Uploads { form: httpNative.requestForm(self.native), request: self.native, done: false }
 }
 
 /// The body as a stream, read as the program asks for it.
@@ -1375,7 +1558,11 @@ pub fn Request.body(self): __io.Reader {
 pub fn Request.saveTo(self, path: String): Int ! Problem {
     let size = httpNative.saveBody(self.native, path, 0)
     if size < 0 {
-        fail Problem.from(httpNative.failure(self.native).removePrefix("body\t"))
+        let failure = httpNative.failure(self.native)
+        if httpNative.requestExceeded(self.native) {
+            fail bodyProblem(self.native, "the body", failure)
+        }
+        fail Problem.from(failure.removePrefix("body\t"))
     }
     size
 }
@@ -1389,6 +1576,7 @@ fn formDecoded(text: String): String {
 /// what the ones before left unread.
 pub type Upload = {
     priv native: httpNative.Native
+    priv request: httpNative.Native
     priv field: String
     priv file: String
     priv kind: String
@@ -1414,7 +1602,7 @@ pub fn Upload.bytes(self): Array[Byte] ! Problem {
     let bytes = httpNative.uploadRead(self.native)
     let failure = httpNative.failure(self.native)
     if not failure.isEmpty() {
-        fail Problem.badRequest("the part `{self.field}`: {failure.removePrefix("body\t")}")
+        fail bodyProblem(self.request, "the part `{self.field}`", failure)
     }
     bytes
 }
@@ -1431,7 +1619,11 @@ pub fn Upload.text(self): String ! Problem {
 pub fn Upload.saveTo(self, path: String): Int ! Problem {
     let size = httpNative.uploadSave(self.native, path)
     if size < 0 {
-        fail Problem.from(httpNative.failure(self.native).removePrefix("body\t"))
+        let failure = httpNative.failure(self.native)
+        if httpNative.requestExceeded(self.request) {
+            fail bodyProblem(self.request, "the part `{self.field}`", failure)
+        }
+        fail Problem.from(failure.removePrefix("body\t"))
     }
     size
 }
@@ -1439,6 +1631,7 @@ pub fn Upload.saveTo(self, path: String): Int ! Problem {
 /// The parts of a multipart body, as `Request.uploads()` gives them.
 pub type Uploads = {
     priv form: httpNative.Native
+    priv request: httpNative.Native
     priv done: Bool
 }
 
@@ -1450,13 +1643,13 @@ impl Iterator[Upload ! Problem] for Uploads {
         let failure = httpNative.failure(self.form)
         if not failure.isEmpty() {
             self.done = true
-            return some(err(Problem.badRequest(failure.removePrefix("body\t"))))
+            return some(err(bodyProblem(self.request, "the body", failure)))
         }
         let part = httpNative.formNext(self.form)
         let problem = httpNative.failure(part)
         if not problem.isEmpty() {
             self.done = true
-            return some(err(Problem.badRequest(problem.removePrefix("body\t"))))
+            return some(err(bodyProblem(self.request, "the body", problem)))
         }
         let described = httpNative.uploadHead(part)
         if described.isEmpty() {
@@ -1464,7 +1657,13 @@ impl Iterator[Upload ! Problem] for Uploads {
             return none
         }
         let parts = described.split("\t")
-        some(ok(Upload { native: part, field: parts[0], file: parts[1], kind: parts[2] }))
+        some(ok(Upload {
+            native: part
+            request: self.request
+            field: parts[0]
+            file: parts[1]
+            kind: parts[2]
+        }))
     }
 }
 
@@ -1475,7 +1674,8 @@ enum Payload {
     /// An embedded file: its path, its bytes and the digest of its `ETag`.
     Embedded(String, Array[Byte], String)
     Events(Receiver[Event])
-    Socket(fn(WebSocket): !HttpError)
+    /// Where the socket goes once it is upgraded, for the task that talks.
+    Socket(__sync.Mutex[Handoff])
 }
 
 /// What a handler answers.
@@ -1622,6 +1822,22 @@ pub fn Reply.cookie(
 /// The reply's status code.
 pub fn Reply.status(self): Int {
     self.code
+}
+
+/// The headers set so far, lowercase, with the values of a repeated one
+/// joined by `, `, as a middleware reads them.
+pub fn Reply.headers(self): Map[String, String] {
+    var out: Map[String, String] = [:]
+    var index = 0
+    for index + 1 < self.headerList.length() {
+        let (name, value) = (self.headerList[index].toLower(), self.headerList[index + 1])
+        out[name] = match out.get(name) {
+            some(before) => "{before}, {value}"
+            none => value
+        }
+        index += 2
+    }
+    out
 }
 
 /// A problem as `application/problem+json`.
@@ -1938,13 +2154,145 @@ fn savedJson(saved: Array[Saved]): Array[Byte] {
 }
 
 /// Answers WebSockets at a path: the handler talks to each until it
-/// returns.
-pub fn App.websocket(mut self, path: String, handler: fn(WebSocket): !HttpError) {
+/// returns, with the request that opened it, and inside the contexts the
+/// middleware set, as a route's handler is.
+pub fn App.websocket(mut self, path: String, handler: fn(Request, WebSocket): !HttpError) {
     self.route(
         "GET",
         path,
-        (request) { Reply { code: 101, headerList: [], payload: Payload.Socket(handler) } },
+        (request) {
+            // Started here, inside the middleware, it keeps their contexts,
+            // and talks once the connection is upgraded.
+            let handoff = __sync.Mutex(Handoff { socket: none, given: false })
+            spawn detached talk(request, handoff, handler)
+            Reply { code: 101, headerList: [], payload: Payload.Socket(handoff) }
+        },
     )
+}
+
+/// The socket of an upgrade, once the reply went out.
+type Handoff = {
+    socket: WebSocket?
+    given: Bool
+}
+
+fn talk(
+    request: Request,
+    handoff: __sync.Mutex[Handoff],
+    handler: fn(Request, WebSocket): !HttpError,
+) {
+    // A middleware that answered instead never upgrades: the wait ends.
+    let upgraded =
+        within __time.seconds(30) {
+            handoff.updateWhen((pending) { pending.given }, (pending) { pending.socket })
+        }
+    match upgraded {
+        ok(some(socket)) => {
+            _ = handler(request, socket)
+            _ = socket.close()
+        }
+        _ => {}
+    }
+}
+
+/// Compresses the replies a client takes compressed, with zstd or gzip as
+/// its `Accept-Encoding` prefers: text, JSON, JavaScript, XML and SVG of
+/// `minimum` bytes or more, and streams of those. A reply already encoded,
+/// a file, events and WebSockets go as they are. Add it before the
+/// middleware whose replies it compresses.
+pub fn App.compress(mut self, minimum: Int = 1024) {
+    self.use(
+        (request, next) {
+            compressed(next(request)?, request.header("accept-encoding").unwrapOr(""), minimum)
+        },
+    )
+}
+
+/// The encoding a client takes best of those this server writes: `zstd`,
+/// `gzip`, or none.
+fn encodingFor(accepted: String): String? {
+    var best: String? = none
+    var bestWeight = 0.0
+    for offer in accepted.split(",") {
+        let parts = offer.split(";")
+        let name = parts[0].trim().toLowerAscii()
+        let weight = parts
+            .slice(1, parts.length())
+            .unwrapOr([])
+            .map((p) { p.trim() })
+            .find((p) { p.startsWith("q=") })
+            .andThen((p) { Float.parse(p.removePrefix("q=")).ok() })
+            .unwrapOr(1.0)
+        // zstd before gzip when the client weighs them the same.
+        let known = name == "zstd" or name == "gzip"
+        if known and
+            weight > 0.0 and
+            (weight > bestWeight or (weight == bestWeight and name == "zstd")) {
+            best = some(name)
+            bestWeight = weight
+        }
+    }
+    best
+}
+
+fn compressible(contentType: String): Bool {
+    let kind = contentType.toLowerAscii()
+    kind.startsWith("text/") or
+        kind.contains("json") or
+        kind.contains("javascript") or
+        kind.contains("xml") or
+        kind.contains("svg")
+}
+
+fn compressed(reply: Reply, accepted: String, minimum: Int): Reply {
+    let headers = reply.headers()
+    let encoding = match encodingFor(accepted) {
+        some(found) => found
+        none => return reply
+    }
+    if headers.contains("content-encoding") or
+        not compressible(headers.get("content-type").unwrapOr("")) or
+        reply.code < 200 or
+        reply.code == 204 or
+        reply.code == 304 {
+        return reply
+    }
+    let payload = match reply.payload {
+        Payload.Data(bytes) if bytes.length() >= minimum => Payload.Data(
+            if encoding == "zstd" { __zstd.compress(bytes) } else { __gzip.compress(bytes) },
+        )
+        Payload.Stream(input) => {
+            let (writer, reader) = __io.pipe()
+            spawn detached pump(
+                input,
+                if encoding == "zstd" { __zstd.writer(writer) } else { __gzip.writer(writer) },
+            )
+            Payload.Stream(reader)
+        }
+        _ => return reply
+    }
+    let vary = match headers.get("vary") {
+        some(before) => "{before}, accept-encoding"
+        none => "accept-encoding"
+    }
+    var kept: Array[String] = []
+    var index = 0
+    for index + 1 < reply.headerList.length() {
+        let name = reply.headerList[index].toLower()
+        if name != "content-length" and name != "vary" {
+            kept.push(reply.headerList[index])
+            kept.push(reply.headerList[index + 1])
+        }
+        index += 2
+    }
+    kept.extend(["content-encoding", encoding, "vary", vary])
+    Reply { code: reply.code, headerList: kept, payload }
+}
+
+/// Copies a stream into a compressing one, and ends it.
+fn pump(input: __io.Reader, output: __io.Writer) {
+    _ = __io.copy(input, output)
+    _ = output.close()
 }
 
 /// Serves the OpenAPI document of the routes the compiler described, at
@@ -1960,15 +2308,19 @@ pub fn App.openApi(
 
 /// Serves until the task is cancelled or the server stops; `port` 0 takes
 /// any free port. With `socket`, it serves on that Unix socket instead,
-/// which it makes and removes when it stops.
+/// which it makes and removes when it stops. `limits` bounds what each
+/// client sends, `Limits.standard()` without it. A client that goes away
+/// before its reply cancels the task that answers it: the handler stops at
+/// its next wait and runs its `defer`s.
 pub fn App.listen(
     self,
     port: Int = 8080,
     host: String = "0.0.0.0",
     tls: Tls? = none,
     socket: String? = none,
+    limits: Limits? = none,
 ): !HttpError {
-    let listening = bound(host, port, tls, socket)?
+    let listening = bound(host, port, tls, socket, limits)?
     serve(listening, self.pipeline())
 }
 
@@ -1980,8 +2332,9 @@ pub fn App.start(
     host: String = "127.0.0.1",
     tls: Tls? = none,
     socket: String? = none,
+    limits: Limits? = none,
 ): Server ! HttpError {
-    let listening = bound(host, port, tls, socket)?
+    let listening = bound(host, port, tls, socket, limits)?
     let (finished, ended) = channel[Unit](1)
     spawn detached serveThenSignal(listening, self.pipeline(), finished)
     Server { native: listening, secure: tls.isSome(), ended }
@@ -1997,13 +2350,36 @@ pub fn App.client(self): Client {
         err(error) => panic("`App.client` needs a temporary directory for its socket: {error}")
     }
     let socket = "{directory}/app.socket"
-    let listening = httpNative.listenUnix(socket)
+    let standard = Limits.standard()
+    let listening = httpNative.listenUnix(
+        socket,
+        standard.body,
+        standard.head,
+        standard.headTimeout.milliseconds(),
+    )
     match failed(listening) {
         ok(_) => {}
         err(error) => panic("`App.client` could not serve the app: {error}")
     }
     spawn detached serve(listening, self.pipeline())
     Client.new(baseUrl: "http://app", socket: socket)
+}
+
+/// What a server allows each client, so that a large or slow one cannot
+/// exhaust it: the bytes of a request's body, more of which is `413`; the
+/// bytes of its head, its line and headers, more of which is `431`; and the
+/// time to send a head, or a TLS handshake, which also ends a connection
+/// kept open without a request. `Limits.standard() with { body: 100_000_000 }`
+/// changes one; `Request.limitBody` changes the body's for a route.
+pub type Limits = {
+    body: Int
+    head: Int
+    headTimeout: __time.Duration
+}
+
+/// 10 MiB of body, 64 KiB of head, and 30 seconds to send a head.
+pub fn Limits.standard(): Limits {
+    Limits { body: 10 * 1024 * 1024, head: 64 * 1024, headTimeout: __time.seconds(30) }
 }
 
 /// A server that `App.start` started.
@@ -2159,11 +2535,24 @@ fn tlsParts(tls: Tls?): (String, String, String, Int) {
     }
 }
 
-fn bound(host: String, port: Int, tls: Tls?, socket: String?): httpNative.Native ! HttpError {
+fn bound(host: String, port: Int, tls: Tls?, socket: String?, limits: Limits?): httpNative.Native !
+    HttpError {
     let (certificate, key, clients, minimum) = tlsParts(tls)
+    let allowed = limits.unwrapOr(Limits.standard())
+    let waited = allowed.headTimeout.milliseconds()
     let listening = match socket {
-        some(path) => httpNative.listenUnix(path)
-        none => httpNative.listen(host, port, certificate, key, clients, minimum)
+        some(path) => httpNative.listenUnix(path, allowed.body, allowed.head, waited)
+        none => httpNative.listen(
+            host,
+            port,
+            certificate,
+            key,
+            clients,
+            minimum,
+            allowed.body,
+            allowed.head,
+            waited,
+        )
     }
     failed(listening)?
     listening
@@ -2189,6 +2578,9 @@ fn serve(server: httpNative.Native, handler: fn(Request): Reply ! Problem) {
 }
 
 fn answer(incoming: httpNative.Native, handler: fn(Request): Reply ! Problem) {
+    // A client that goes away before the reply cancels this task: the
+    // handler stops at its next wait and runs its `defer`s.
+    httpNative.requestAnswering(incoming)
     let fields = httpNative.requestHead(incoming).split("\t")
     let request = Request {
         native: incoming
@@ -2269,12 +2661,15 @@ fn send(incoming: httpNative.Native, reply: Reply) {
             }
             _ = output.close()
         }
-        Payload.Socket(handler) => {
+        Payload.Socket(handoff) => {
             let socket = WebSocket { native: httpNative.acceptWebSocket(incoming), closed: false }
-            if httpNative.failure(socket.native).isEmpty() {
-                _ = handler(socket)
-                _ = socket.close()
-            }
+            let accepted = httpNative.failure(socket.native).isEmpty()
+            handoff.update(
+                (pending) {
+                    pending.socket = if accepted { some(socket) } else { none }
+                    pending.given = true
+                },
+            )
         }
     }
 }
