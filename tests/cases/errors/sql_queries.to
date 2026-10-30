@@ -1,0 +1,16 @@
+// A query is a string literal where a `sql.Query` is expected: a `String`
+// made elsewhere is not one, and a value in it is a parameter, which a
+// format does not change.
+
+import std.sql
+
+fn main(): !sql.SqlError {
+    let db = sql.open("sqlite::memory:")?
+    let text = "SELECT 1"
+    _ = db.query[Int](text)?
+    let id = 3
+    _ = db.query[Int]("SELECT {id:>4}")?
+}
+
+// expect-error: E1102 expected `sql.Query`, found `String`: a query is a string literal written where a `sql.Query` is expected, whose values are parameters; write the literal here, keep it as `let query: sql.Query = "..."`, or, for SQL made while the program runs, `sql.raw(text)`
+// expect-error: E1118 a value of a query is a parameter, which a format does not change: format it before, or drop the format

@@ -272,6 +272,9 @@ impl Wire for mio::net::UnixStream {
 struct Tcp<S: Wire> {
     socket: Registered<S>,
     unsent: Mutex<Unsent<S>>,
+    /// Whether `startTls` took the socket over: then letting go of it does
+    /// not end its writing, which TLS goes on with.
+    upgraded: Arc<std::sync::atomic::AtomicBool>,
 }
 
 struct Unsent<S: Wire> {
@@ -324,7 +327,9 @@ impl<S: Wire> Tcp<S> {
         let mut unsent = lock(&self.unsent);
         let _ = self.push(&mut unsent);
         if unsent.keep.is_some() && (unsent.bytes.is_empty() || unsent.failure.is_some()) {
-            let _ = self.socket.io().end();
+            if !self.upgraded.load(std::sync::atomic::Ordering::Acquire) {
+                let _ = self.socket.io().end();
+            }
             let keep = unsent.keep.take();
             drop(unsent);
             drop(keep);
@@ -488,6 +493,9 @@ impl<S: Wire> Host for TcpOut<S> {
 impl<S: Wire> Drop for TcpOut<S> {
     fn drop(&mut self) {
         let mut unsent = lock(&self.tcp.unsent);
+        if self.tcp.upgraded.load(std::sync::atomic::Ordering::Acquire) {
+            return;
+        }
         if unsent.bytes.is_empty() || unsent.failure.is_some() {
             let _ = self.tcp.socket.io().end();
         } else {
@@ -584,7 +592,7 @@ struct Connection {
     /// The socket of a plain TCP connection, which `startTls` takes over.
     socket: Option<std::os::fd::RawFd>,
     /// Whether `startTls` took it over, after which it is closed.
-    upgraded: std::sync::atomic::AtomicBool,
+    upgraded: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Connection {
@@ -621,7 +629,8 @@ fn unix(socket: Registered<mio::net::UnixStream>) -> Result<Connection, Failure>
 
 /// A connection over a socket the task reads and writes itself.
 fn link<S: Wire>(socket: Registered<S>, local: Endpoint, remote: Endpoint) -> Connection {
-    let tcp = Arc::new(Tcp { socket, unsent: Mutex::new(Unsent::default()) });
+    let upgraded = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let tcp = Arc::new(Tcp { socket, unsent: Mutex::new(Unsent::default()), upgraded: upgraded.clone() });
     let weak = Arc::downgrade(&tcp);
     tcp.socket.on_writable(Arc::new(move || {
         if let Some(tcp) = weak.upgrade() {
@@ -630,7 +639,7 @@ fn link<S: Wire>(socket: Registered<S>, local: Endpoint, remote: Endpoint) -> Co
     }));
     let reader = TcpIn { tcp: tcp.clone(), waiting: false, gave_up: None };
     let writer = TcpOut { tcp, waiting: false, gave_up: None };
-    Connection::new(Box::new(reader), Box::new(writer), local, remote)
+    Connection { upgraded, ..Connection::new(Box::new(reader), Box::new(writer), local, remote) }
 }
 
 /// A connection over TLS, and the pipes `secure` moves its bytes through

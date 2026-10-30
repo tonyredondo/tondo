@@ -50,6 +50,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("rules", include_str!("../std/rules.to")),
     ("validate", include_str!("../std/validate.to")),
     ("archive", include_str!("../std/archive.to")),
+    ("sql", include_str!("../std/sql.to")),
     ("gzip", include_str!("../std/gzip.to")),
     ("zstd", include_str!("../std/zstd.to")),
     ("xml", include_str!("../std/xml.to")),

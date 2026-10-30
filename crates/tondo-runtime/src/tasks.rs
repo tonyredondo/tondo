@@ -1095,6 +1095,15 @@ pub fn wait_foreign_calls() {
     }
 }
 
+/// Waits, up to a second, until every task is freed: a detached task that
+/// `main`'s end cancelled is done before its thread lets go of what it held.
+pub fn wait_tasks_freed() {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while live_tasks() > 0 && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
 /// Starts a runtime thread, counted while it runs.
 pub(crate) fn spawn_thread<T: Send + 'static>(
     stack: Option<usize>,

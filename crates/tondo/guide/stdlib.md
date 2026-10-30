@@ -29,6 +29,7 @@ std.diagnostics  the program's own counters, which `tondo counters` shows
 std.http       HTTP client and server, WebSockets (`tondo guide http`)
 std.mcp        Model Context Protocol servers from a value's methods
 std.template   text and HTML templates, compiled or loaded (`tondo guide templates`)
+std.sql        SQLite, PostgreSQL, MySQL: queries, rows, migrations (`tondo guide databases`)
 std.net        TCP, UDP and Unix sockets, TLS, names, IP addresses and networks
 std.url        URLs and relative links: parts, resolving, the query
 std.regex      regular expressions, with `(?i)` flags and replacing by a function
@@ -38,7 +39,7 @@ std.gzip       gzip, whole or as streams; std.zstd the same for Zstandard
 std.hash       MD5, SHA-1, SHA-2, HMAC, in parts; FNV, xxHash, MurmurHash3
 std.crypto     passwords, sealing with a key, signatures, PEM keys and certificates
 std.random     seeded and entropy generators
-std.uuid       UUID v4, v5, v7
+std.uuid       UUID v4, v5, v7, as text in every format
 std.format     a text builder, formats chosen at run time, numbers and plurals per language
 std.math       floating-point math and integers' gcd and lcm
 std.sync       Mutex, Atomic, shared collections, rate limits, retries (`tondo guide tasks`)

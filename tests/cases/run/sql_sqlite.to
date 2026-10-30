@@ -1,0 +1,116 @@
+// std.sql over SQLite: queries are literals whose values are parameters,
+// rows read into records, errors by kind, transactions with savepoints,
+// migrations from a tree of files, and `use` around each statement.
+
+import std.console
+import std.fs
+import std.math
+import std.sql
+
+pub type Prefs = {
+    theme: String
+    tags: Array[String]
+}
+
+pub type User = {
+    id: Int
+    name: String
+    email: String?
+    prefs: Prefs?
+    balance: math.Decimal?
+}
+
+fn count(db: sql.Database): Int ! sql.SqlError {
+    db.queryOne[Int]("SELECT count(*) FROM users")?
+}
+
+fn main(): !sql.SqlError {
+    var db = sql.open("sqlite::memory:")?
+    let migrations = fs.memory()
+    _ = migrations.writeText(
+        "001_users.sql",
+        "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE);\n",
+    )
+    _ = migrations.writeText("002_more.sql", "ALTER TABLE users ADD prefs TEXT;\nALTER TABLE users ADD balance TEXT;\n")
+    db.migrate(migrations)?
+    db.migrate(migrations)?
+    console.println("{db.query[String]("SELECT name FROM tondo_migrations ORDER BY name")?}")
+    _ = migrations.writeText("001_users.sql", "CREATE TABLE people (id INTEGER);\n")
+    match db.migrate(migrations) {
+        ok(_) => console.println("migrated")
+        err(error) => console.println("{error}")
+    }
+
+    db.use((statement, next) {
+        console.println("  {statement.system} {statement.operation} {statement.text} {statement.parameters}")
+        let outcome = next(statement)
+        outcome?
+    })
+
+    let name = "ada'; DROP TABLE users; --"
+    let balance: math.Decimal = 10.50
+    let done = db.execute("INSERT INTO users (name, email, balance) VALUES ({name}, {"ada@example.com"}, {balance})")?
+    console.println("{done.affected} {done.lastId}")
+    _ = db.execute(
+        "INSERT INTO users (name, prefs) VALUES ({"bo"}, {"{{\"theme\": \"dark\", \"tags\": [\"a\"]}}"})",
+    )?
+    for user in db.query[User]("SELECT * FROM users ORDER BY id")? {
+        console.println("{user.id} {user.name} {user.email} {user.prefs.map((p) { p.theme })} {user.balance}")
+    }
+    let ids = [1, 2, 9]
+    console.println("{db.query[String]("SELECT name FROM users WHERE id IN {ids} ORDER BY id")?}")
+    let recent: sql.Query = "id > {1}"
+    console.println("{db.query[String]("SELECT name FROM {sql.identifier("users")} WHERE {recent}")?}")
+    console.println("{db.queryOne[String?]("SELECT name FROM users WHERE id = {9}")?}")
+
+    match db.execute("INSERT INTO users (name, email) VALUES ({"cy"}, {"ada@example.com"})") {
+        ok(_) => console.println("inserted")
+        err(error) => console.println("{error.kind == sql.ErrorKind.Unique} {error.constraint}")
+    }
+    match db.queryOne[String]("SELECT name FROM users WHERE id = {9}") {
+        ok(_) => console.println("found")
+        err(error) => console.println("{error.kind == sql.ErrorKind.NoRows}")
+    }
+
+    let total = db.transaction((tx): Int ! sql.SqlError {
+        _ = tx.execute("INSERT INTO users (name) VALUES ({"cy"})")?
+        let inner = tx.transaction((nested): Unit ! sql.SqlError {
+            _ = nested.execute("INSERT INTO users (name) VALUES ({"dee"})")?
+            fail sql.SqlError.of(sql.ErrorKind.Other, "not this one")
+        })
+        console.println("{inner.isErr()}")
+        count(tx)?
+    })?
+    console.println("{total} {count(db)?}")
+    db.close()
+}
+
+
+// expect-stdout: [001_users.sql, 002_more.sql]
+// expect-stdout: the migration `001_users.sql` changed after it was applied: add a new one instead
+// expect-stdout:   sqlite execute INSERT INTO users (name, email, balance) VALUES (?, ?, ?) [ada'; DROP TABLE users; --, ada@example.com, 10.5]
+// expect-stdout: 1 some(1)
+// expect-stdout:   sqlite execute INSERT INTO users (name, prefs) VALUES (?, ?) [bo, {"theme": "dark", "tags": ["a"]}]
+// expect-stdout:   sqlite query SELECT * FROM users ORDER BY id []
+// expect-stdout: 1 ada'; DROP TABLE users; -- some(ada@example.com) none some(10.5)
+// expect-stdout: 2 bo none some(dark) none
+// expect-stdout:   sqlite query SELECT name FROM users WHERE id IN (?, ?, ?) ORDER BY id [1, 2, 9]
+// expect-stdout: [ada'; DROP TABLE users; --, bo]
+// expect-stdout:   sqlite query SELECT name FROM "users" WHERE id > ? [1]
+// expect-stdout: [bo]
+// expect-stdout:   sqlite query SELECT name FROM users WHERE id = ? [9]
+// expect-stdout: none
+// expect-stdout:   sqlite execute INSERT INTO users (name, email) VALUES (?, ?) [cy, ada@example.com]
+// expect-stdout: true some(users.email)
+// expect-stdout:   sqlite query SELECT name FROM users WHERE id = ? [9]
+// expect-stdout: true
+// expect-stdout:   sqlite begin BEGIN []
+// expect-stdout:   sqlite execute INSERT INTO users (name) VALUES (?) [cy]
+// expect-stdout:   sqlite begin SAVEPOINT tondo_1 []
+// expect-stdout:   sqlite execute INSERT INTO users (name) VALUES (?) [dee]
+// expect-stdout:   sqlite rollback ROLLBACK TO SAVEPOINT tondo_1 []
+// expect-stdout: true
+// expect-stdout:   sqlite query SELECT count(*) FROM users []
+// expect-stdout:   sqlite commit COMMIT []
+// expect-stdout:   sqlite query SELECT count(*) FROM users []
+// expect-stdout: 3 3

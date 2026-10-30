@@ -31,6 +31,14 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      # The servers the tests of std.sql speak to, which start while the
+      # tests build.
+      - if: matrix.target == 'x86_64-linux-gnu'
+        run: |
+          docker run -d -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=secret -e POSTGRES_DB=tondo postgres:18
+          docker run -d -p 127.0.0.1:3306:3306 -e MYSQL_ROOT_PASSWORD=secret -e MYSQL_DATABASE=tondo mysql:8.4
+          echo "TONDO_TEST_POSTGRES=postgres://postgres:secret@localhost:5432/tondo" >> "$GITHUB_ENV"
+          echo "TONDO_TEST_MYSQL=mysql://root:secret@localhost:3306/tondo" >> "$GITHUB_ENV"
       - run: cargo fmt --all -- --check
       - if: ${{ !matrix.light }}
         run: cargo clippy --workspace --all-targets -- -D warnings

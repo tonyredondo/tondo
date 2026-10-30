@@ -127,6 +127,11 @@ fn build_runtime(runtime: &Path, out_dir: &Path, target: &str) -> (PathBuf, Stri
     {
         command.env(format!("CC_{key}"), "cc").env(format!("CFLAGS_{key}"), "-U_FORTIFY_SOURCE -std=gnu11");
     }
+    // SQLite asks for the `*64` functions of large files, which musl does
+    // not have: its `off_t` is 64 bits already.
+    if target.contains("musl") {
+        command.env("LIBSQLITE3_FLAGS", "-DSQLITE_DISABLE_LFS");
+    }
     let output = command.output().expect("failed to run cargo for the Tondo runtime");
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !output.status.success() {

@@ -243,6 +243,16 @@ pub fn render(source: &str, private: bool) -> String {
         let open = text[start..].find('{').map_or(start, |o| start + o);
         (text[start..open].trim_end().to_string(), open as u32 + base)
     };
+    // An implementation for a type the module keeps to itself is its own too.
+    let hidden: Vec<&str> = module
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            ast::Item::Type(t) if !t.public => Some(t.name.name.as_str()),
+            ast::Item::Enum(e) if !e.public => Some(e.name.name.as_str()),
+            _ => None,
+        })
+        .collect();
     let mut out: Vec<String> = Vec::new();
     let mut previous = base;
     for item in &module.items {
@@ -253,7 +263,10 @@ pub fn render(source: &str, private: bool) -> String {
             ast::Item::Trait(t) => (t.public, t.span),
             ast::Item::Alias(a) => (a.public, a.span),
             ast::Item::Const(c) => (c.public, c.span),
-            ast::Item::Impl(i) => (true, i.span),
+            ast::Item::Impl(i) => {
+                let own = matches!(&i.target.kind, ast::TypeKind::Path { segments, .. } if segments.len() == 1 && hidden.contains(&segments[0].name.as_str()));
+                (!own, i.span)
+            }
             ast::Item::Derive(d) => (true, d.span),
             ast::Item::Test(t) => (false, t.span()),
         };

@@ -2,6 +2,8 @@
 // that display as `8-4-4-4-12` lowercase hexadecimal.
 
 import std.internal.codec as codecNative
+import std.reflect as __reflect
+import std.serialization as __serialization
 
 /// A UUID. Equal, ordered and usable as a key by its sixteen bytes, as
 /// unsigned numbers in network order.
@@ -132,6 +134,35 @@ impl Display for Uuid {
         let hex = self.hex
         let part = (from: Int, to: Int) { hex.slice(from, to).unwrapOr("") }
         "{part(0, 8)}-{part(8, 12)}-{part(12, 16)}-{part(16, 20)}-{part(20, 32)}"
+    }
+}
+
+/// As its text in every format, and from it or its sixteen bytes.
+impl __serialization.Encode for Uuid {
+    fn encode[S: __serialization.Sink](self, out: S) {
+        out.text("{self}")
+    }
+}
+
+impl __serialization.Decode for Uuid {
+    fn decode[S: __serialization.Source](input: S, first: __serialization.Event): Uuid !
+        __serialization.Error {
+        let read = match first {
+            __serialization.Event.Text(text) => Uuid.parse(text)
+            __serialization.Event.Untyped(text) => Uuid.parse(text.trim())
+            __serialization.Event.Bytes(bytes) => Uuid.fromBytes(bytes)
+            _ => fail input.mismatch(first, "a UUID")
+        }
+        match read {
+            ok(value) => value
+            err(error) => fail input.failure(__serialization.ErrorKind.Type, "{error}")
+        }
+    }
+}
+
+impl __reflect.Reflect for Uuid {
+    fn reflectShow(self, nested: Bool): String {
+        "{self}"
     }
 }
 

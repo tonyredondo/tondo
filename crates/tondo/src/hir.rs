@@ -1194,6 +1194,9 @@ pub const NATIVES: &[Native] = {
     const fn net(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "net", name, receiver: None, params, result, symbol }
     }
+    const fn sql(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
+        Native { module: "sql", name, receiver: None, params, result, symbol }
+    }
     const fn env(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "env", name, receiver: None, params, result, symbol }
     }
@@ -1304,6 +1307,10 @@ pub const NATIVES: &[Native] = {
         text("pluralRules", &[String], Strings, "tondo_rt_text_plural_rules"),
         // `std.internal.env`: what `std.env` writes in Tondo asks of the host.
         env("processors", &[], Int, "tondo_rt_env_processors"),
+        // `std.internal.sql`: SQLite, for `std.sql`.
+        sql("open", &[String], Object, "tondo_rt_sqlite_open"),
+        sql("failure", &[Object], String, "tondo_rt_sqlite_failure"),
+        sql("run", &[Object, String, Bytes, Bool], Bytes, "tondo_rt_sqlite_run"),
         env("target", &[], String, "tondo_rt_env_target"),
         codec("base64Encode", &[Bytes, Bool], String, "tondo_rt_base64_encode"),
         codec("base64Check", &[String, Bool], Int, "tondo_rt_base64_check"),

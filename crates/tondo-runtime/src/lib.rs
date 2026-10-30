@@ -55,6 +55,7 @@ mod shared;
 mod shown;
 mod signals;
 mod snapshot;
+mod sqlite;
 #[cfg(all(tondo_staticlib, target_os = "linux"))]
 mod start;
 mod symbols;
@@ -2693,6 +2694,7 @@ pub const LEAK_EXIT_CODE: i32 = 99;
 pub fn check_leaks() -> Option<usize> {
     std::env::var_os("TONDO_RT_CHECK_LEAKS")?;
     tasks::wait_foreign_calls();
+    tasks::wait_tasks_freed();
     // The contexts' initial values live as long as the program, and so do
     // the channels of signals.
     contexts::end();

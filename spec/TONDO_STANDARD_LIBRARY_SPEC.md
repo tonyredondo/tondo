@@ -1719,6 +1719,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.crypto` | Core | — | 0.1 | Secretos en tiempo constante, contraseñas, derivación de claves, sellado, firmas, y claves y certificados PEM |
 | `std.validate` | Core | — | 0.1 | Reglas de los campos de un tipo, que comprueban la lectura de cualquier formato, la línea de comandos y MCP |
 | `std.archive` | Hosted | — | 0.1 | zip, tar, tar.gz y tar.zst: leer, escribir y extraer |
+| `std.sql` | Capability-gated | `network` para PostgreSQL y MySQL | 0.1 | SQLite, PostgreSQL y MySQL: consultas literales con parámetros, filas en los tipos del programa, transacciones, migraciones, un pool y `use` alrededor de cada sentencia |
 | `std.http` | Capability-gated | `network` | 0.1 | Cliente y servidor HTTP/1.1 y HTTP/2 con TLS, cuerpos en streaming, multipart, archivos con rangos, Server-Sent Events y WebSockets |
 | `std.random` | Core + gated | `entropy` para sembrar desde el sistema | 0.1 | Generadores pseudoaleatorios sembrados, mezcla, elección y bytes de entropía |
 | `std.uuid` | Core + gated | `entropy` y/o `civil-clock` para generación | 0.1 | UUID, parsing, formatting y generadores explícitos por versión |
@@ -3953,7 +3954,9 @@ pub fn Uuid.compare(self, other: Uuid): Int
 
 - `Uuid` es `Copy`, `Equatable` y `Key`, implementa `Ordered` por sus bytes como
   números sin signo, en orden de red, y `Display` lo escribe en minúsculas con
-  guiones.
+  guiones. En todo formato de `std.serialization` es ese texto, y se lee de él
+  o de dieciséis bytes; un tipo con un campo `Uuid` deriva sus
+  implementaciones.
 - `v4` toma 122 bits de la entropía del sistema. `v5` es SHA-1 sobre los bytes
   del namespace seguidos del nombre: el mismo par da siempre el mismo UUID, que
   no es secreto. `v7` pone los milisegundos Unix UTC en los 48 bits altos y 74
@@ -5638,6 +5641,170 @@ pub fn Writer.finish(self): Unit ! ArchiveError
 - Un `Writer` escribe un archivo entrada a entrada en un stream, comprimido si
   el formato lo es; `finish` lo termina: el directorio central de un zip, o
   los dos bloques vacíos de un tar.
+### 14.37 `std.sql`
+
+`std.sql` habla con bases de datos SQL con una sola API. Una consulta es un
+literal de string escrito donde se espera un `sql.Query`: cada valor que
+interpola es un parámetro, nunca texto, así que no se puede inyectar. Las
+filas se leen en los tipos del programa.
+
+~~~tondo
+import std.sql
+
+pub type User = { id: Int, name: String, email: String? }
+
+fn main(): !sql.SqlError {
+    var db = sql.open("postgres://app:secret@db.example.com/app")?
+    db.use((statement, next) {
+        let outcome = next(statement)
+        outcome?
+    })
+    let ids = [1, 2, 3]
+    let users = db.query[User]("SELECT * FROM users WHERE id IN {ids}")?
+    db.transaction((tx): Unit ! sql.SqlError {
+        _ = tx.execute("UPDATE users SET name = {"Ada"} WHERE id = {1}")?
+    })?
+}
+~~~
+
+~~~tondo pseudocode
+pub enum ErrorKind { Connection, NoRows, Unique, ForeignKey, NotNull, Check,
+    Conflict, Syntax, Timeout, Decode, Other }
+pub type SqlError = { kind: ErrorKind, message: String, code: String?, constraint: String? }
+pub fn SqlError.of(kind: ErrorKind, message: String): SqlError
+pub enum Value { Null, Bool(Bool), Int(Int), Float(Float), Number(String), Text(String),
+    Bytes(Array[Byte]), DateTime(time.DateTime), List(Array[Value]) }
+pub type Query
+pub fn raw(text: String): Query
+pub fn identifier(name: String): Query
+pub fn join(parts: Array[Query], separator: String = ", "): Query
+pub fn array[T: serialization.Encode](values: Array[T]): Query
+
+pub enum Operation { Query, Execute, Begin, Commit, Rollback }
+pub type Statement = { text: String, parameters: Array[Value], operation: Operation,
+    system: String, database: String, host: String? }
+pub type Outcome = { columns: Array[String], rows: Array[Array[Value]], affected: Int, lastId: Int? }
+pub type Done = { affected: Int, lastId: Int? }
+pub type Connection = { run: fn(Statement): Outcome ! SqlError, close: fn() }
+pub type Driver = { system: String, placeholder: fn(Int): String,
+    identifier: fn(String): String, connect: fn(String): Connection ! SqlError,
+    place: fn(String): (String, String?) }
+
+pub type Database
+pub fn open(url: String, connections: Int = 10, driver: Driver? = none): Database ! SqlError
+pub fn Database.use(mut self,
+    middleware: fn(Statement, fn(Statement): Outcome ! SqlError): Outcome ! SqlError)
+pub fn Database.execute(self, query: Query): Done ! SqlError
+pub fn Database.query[T: serialization.Decode](self, query: Query): Array[T] ! SqlError
+pub fn Database.queryOne[T: serialization.Decode](self, query: Query): T ! SqlError
+pub fn Database.transaction[T: ~Copy](self, work: fn(Database): T ! SqlError): T ! SqlError
+pub fn Database.migrate(self, files: fs.FileSystem): Unit ! SqlError
+pub fn Database.close(self)
+~~~
+
+Consultas:
+
+- Un literal de string, con interpolaciones o sin ellas, donde se espera un
+  `sql.Query` se compila como consulta: su texto es SQL; un valor de tipo
+  `Query` que interpola se inserta como SQL; un `Array[Byte]` es un parámetro
+  de bytes; un array es la lista `(p1, p2, …)` de sus elementos, para `IN`, y
+  `(NULL)` si está vacío; cualquier otro valor es un parámetro, que debe
+  implementar `serialization.Encode` y codificarse como un escalar o una
+  lista de escalares (`E1105` si no). Un formato en una interpolación
+  (`{x:.2}`) es `E1118`: un parámetro no tiene formato.
+- Un `String` donde se espera un `Query` es `E1102`, cuyo mensaje dice que se
+  escriba el literal ahí, se guarde como `let q: sql.Query = "..."`, o se use
+  `sql.raw(text)` para SQL hecho en ejecución, que no tiene parámetros y
+  cuyo texto decide quien lo hizo.
+- `identifier` cita un nombre como lo cita la base de datos (`"x"`, o
+  `` `x` `` en MySQL). `join` une consultas con un separador. `array` pasa un
+  array como un solo parámetro, para las bases de datos con arrays:
+  `= ANY({sql.array(ids)})` en PostgreSQL; en MySQL y SQLite es un error.
+- El driver escribe los parámetros con sus marcas (`$1` en PostgreSQL, `?` en
+  SQLite y MySQL), en el orden en que aparecen.
+
+Filas:
+
+- `query[T]` lee cada fila en un `T`; `queryOne[T]` la primera: sin filas da
+  `none` si `T` es opcional, y `ErrorKind.NoRows` si no. Un record lee sus
+  campos de las columnas del mismo nombre sin distinguir mayúsculas ni `_`
+  (`created_at` es `createdAt`), ignora las demás, y aplica las reglas de
+  `std.validate` como cualquier lectura; una fila de una columna se lee como
+  ese valor, y un record o una lista de una columna de texto, como su JSON.
+- Las columnas se leen como texto sin tipo, que cada escalar lee: un entero
+  de SQLite es también un `Bool`; un `NUMERIC` o `DECIMAL` es un
+  `math.Decimal` exacto; los arrays de PostgreSQL son listas; los bytes leen
+  un `Array[Byte]`; las fechas con hora, un `time.DateTime` en UTC, y las
+  fechas sin hora, texto `AAAA-MM-DD`. Una fila que no es el tipo es
+  `ErrorKind.Decode`.
+
+Base de datos, pool y `use`:
+
+- `open` elige el driver por el esquema de la URL: `sqlite:ruta`,
+  `sqlite::memory:`, `postgres://` o `postgresql://`, `mysql://` o
+  `mariadb://`; otro necesita `driver:`. Abre una conexión enseguida, así que
+  una URL que no sirve falla ahí. Una base de datos en memoria de SQLite tiene
+  una conexión, porque cada conexión tendría la suya.
+- Un `Database` es un pool que comparten sus copias: hasta `connections`
+  tareas ejecutan a la vez, cada una en una conexión; las demás esperan. Una
+  conexión cuyo error es de `Connection` se cierra en vez de volver al pool.
+- `use` envuelve cada sentencia, como `App.use` envuelve cada petición: el
+  middleware recibe el `Statement` y `next`, que lo ejecuta; puede medirlo,
+  trazarlo, cambiarlo o rechazarlo, y termina con `outcome?`. El primero que
+  se añade es el más externo. `Statement` da el texto con las marcas del
+  driver, los parámetros, la operación, y el sistema (`sqlite`,
+  `postgresql`, `mysql`, como lo nombra OpenTelemetry), el nombre y el host de
+  la base de datos. Una copia de un `Database` con otro `use` comparte el
+  pool.
+
+Transacciones y migraciones:
+
+- `transaction` ejecuta `work` en una conexión con `BEGIN`, y hace `COMMIT` si
+  termina bien y `ROLLBACK` si falla o entra en pánico, y entonces el pánico
+  sigue. `work` recibe un `Database` que ejecuta en esa conexión, así que una
+  función que toma un `Database` trabaja dentro; una transacción dentro de
+  otra es un `SAVEPOINT`, que se libera o se deshace.
+- `migrate` aplica los archivos `.sql` de un árbol de `std.fs` (10.5) en el
+  orden de sus nombres, cada uno una vez, entero y en una transacción, y
+  guarda en la tabla `tondo_migrations` su nombre, un SHA-256 y cuándo; un
+  archivo aplicado que cambió es un error que pide uno nuevo. En MySQL una
+  sentencia de definición confirma la transacción, así que un archivo que
+  falla a medias deja hechas las anteriores.
+- Una sentencia sin parámetros que no es una consulta puede tener varias,
+  que se ejecutan en orden: el protocolo simple de PostgreSQL, `COM_QUERY`
+  con varias sentencias en MySQL y `execute_batch` en SQLite.
+
+Drivers:
+
+- SQLite está en el runtime y ejecuta en los hilos del host, con claves
+  ajenas activadas y una espera de cinco segundos a un bloqueo. Un programa
+  que no importa `std.sql` no lo enlaza.
+- PostgreSQL (protocolo 3) y MySQL (protocolo 4.1, también MariaDB) están
+  escritos en Tondo sobre `std.net`. Cada conexión prepara una sentencia la
+  primera vez que la ve y la guarda, hasta 512; los parámetros van en texto
+  salvo los bytes, y las columnas en binario para los tipos que el driver
+  lee. En PostgreSQL, una sentencia guardada cuya tabla cambió se prepara de
+  nuevo una vez, fuera de una transacción.
+- TLS: `sslmode` en PostgreSQL y `ssl-mode` en MySQL valen `disable`
+  (`disabled`), `prefer` (`preferred`, por defecto) o `require`
+  (`required`, y `verify-ca` y `verify-full`); `prefer` usa TLS cuando el
+  servidor lo ofrece, salvo con un servidor en esta máquina (`localhost` o
+  una dirección de loopback), al que no llega ninguna red. TLS siempre
+  verifica el certificado y el nombre del servidor, con las autoridades del
+  sistema y la de `sslrootcert` (`ssl-ca`); un certificado que no se
+  verifica es un error que dice cuál de los dos dar.
+- PostgreSQL se autentica con SCRAM-SHA-256, MD5 o contraseña; MySQL con
+  `caching_sha2_password`, que sin TLS sella la contraseña con RSA-OAEP y la
+  clave pública del servidor, `mysql_native_password` y
+  `mysql_clear_password`.
+- Los errores llevan su clase por el SQLSTATE de PostgreSQL, el número de
+  MySQL o el código extendido de SQLite, que `code` da, y `constraint` la
+  restricción o la columna que nombran.
+- Un paquete da otro driver como un `Driver`: `connect` abre una conexión a
+  una URL, `placeholder` escribe la marca del parámetro en una posición desde
+  1, `identifier` cita un nombre y `place` da el nombre y el host de la base
+  de datos de una URL.
+
 
 ## 15. Contrato exigido a cada módulo
 

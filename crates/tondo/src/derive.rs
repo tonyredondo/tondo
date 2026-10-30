@@ -73,6 +73,7 @@ impl Kind {
             (Kind::Reflect, "reflect") => name == "Value",
             (Kind::Reflect | Kind::Serialization, "template") => name == "Html",
             (Kind::Reflect | Kind::Serialization, "math") => matches!(name, "BigInt" | "Decimal"),
+            (Kind::Reflect | Kind::Serialization, "uuid") => name == "Uuid",
             _ => false,
         }
     }

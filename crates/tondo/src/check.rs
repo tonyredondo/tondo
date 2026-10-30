@@ -250,6 +250,8 @@ enum StdModule {
     /// `std.internal.env`: the host's side of what `std.env` writes in
     /// Tondo.
     InternalEnv,
+    /// `std.internal.sql`: SQLite, for `std.sql`.
+    InternalSql,
 }
 
 /// The types `std.process` declares when imported.
@@ -2928,6 +2930,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "time"] => StdModule::InternalTime,
             ["std", "internal", "fs"] => StdModule::InternalFs,
             ["std", "internal", "env"] => StdModule::InternalEnv,
+            ["std", "internal", "sql"] => StdModule::InternalSql,
             ["std", "internal", "context"] => StdModule::InternalContext,
             ["std", "internal", "channel"] => StdModule::InternalChannel,
             ["std", rest @ ..] => {
@@ -3036,6 +3039,7 @@ impl<'a> Checker<'a> {
                 | StdModule::InternalCbor
                 | StdModule::InternalNet
                 | StdModule::InternalFs
+                | StdModule::InternalSql
         ) {
             self.types.handle(Handle::Native, Ty::UNIT);
         }
@@ -3178,7 +3182,8 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalMsgpack
                     | StdModule::InternalCbor
                     | StdModule::InternalNet
-                    | StdModule::InternalFs,
+                    | StdModule::InternalFs
+                    | StdModule::InternalSql,
                 )),
                 "Native",
             ) => self.types.lookup(&TyKind::Handle(Handle::Native, Ty::UNIT)),
@@ -4957,6 +4962,15 @@ impl<'a> Checker<'a> {
 
     /// The first bound of the type parameter `param` that `actual` does not
     /// meet, as text for a diagnostic.
+    /// The first field of a record that misses a bound of `param`, which is
+    /// why the compiler did not implement it for the record.
+    fn lacking_field(&mut self, record: Ty, param: Ty, map: &HashMap<Ty, Ty>) -> Option<(String, Ty)> {
+        let TyKind::Adt(id) = self.types.kind(record) else { return None };
+        let AdtKind::Record(fields) = &self.types.adt(*id).kind else { return None };
+        let fields: Vec<(String, Ty)> = fields.iter().map(|f| (f.name.clone(), f.ty)).collect();
+        fields.into_iter().find(|&(_, ty)| self.bound_holds(param, ty, map, 0).is_some())
+    }
+
     fn bound_holds(&mut self, param: Ty, actual: Ty, map: &HashMap<Ty, Ty>, depth: usize) -> Option<String> {
         let def = self.types.param(param)?;
         let (equatable, key, copy, send, share) = (def.equatable, def.key, def.copy, def.send, def.share);
@@ -9542,6 +9556,9 @@ impl<'a> Checker<'a> {
                 _ if expected == Ty::CHAR && value.ty == Ty::STRING => {
                     "expected `Char`, found `String`: a `Char` literal is in single quotes, `'a'`".to_string()
                 }
+                _ if value.ty == Ty::STRING && self.query_type() == Some(expected) => {
+                    "expected `sql.Query`, found `String`: a query is a string literal written where a `sql.Query` is expected, whose values are parameters; write the literal here, keep it as `let query: sql.Query = \"...\"`, or, for SQL made while the program runs, `sql.raw(text)`".to_string()
+                }
                 _ => format!("expected {}, found {}", self.display(expected), self.display(value.ty)),
             };
             self.diags.error("E1102", value.span, message);
@@ -9696,7 +9713,12 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Int { value, suffix } => self.int_literal(false, *value, *suffix, expected, span),
             ast::ExprKind::Bool(b) => Self::mk(hir::ExprKind::Bool(*b), Ty::BOOL, span),
             ast::ExprKind::Unit => Self::mk(hir::ExprKind::Unit, Ty::UNIT, span),
-            ast::ExprKind::Str(segments) => self.string(cx, segments, span),
+            ast::ExprKind::Str(segments) => {
+                match expected.and_then(|ty| self.query_type().filter(|&query| query == ty)) {
+                    Some(query) => self.query_literal(cx, segments, query, span),
+                    None => self.string(cx, segments, span),
+                }
+            }
             ast::ExprKind::Path(segments) => self.path(cx, segments, expected, span),
             ast::ExprKind::Call { callee, args } => self.call(cx, callee, args, expected, span),
             ast::ExprKind::Unary(op, operand) => self.unary(cx, *op, operand, expected, span),
@@ -13136,6 +13158,95 @@ impl<'a> Checker<'a> {
         Self::mk(hir::ExprKind::Call(Callee::Fn(function), generics, args), Ty::STRING, span)
     }
 
+    /// `sql.Query`, when the program has `std.sql`.
+    fn query_type(&self) -> Option<Ty> {
+        match self.type_names.get("sql.Query") {
+            Some(&TypeName::Nominal(ty)) => Some(ty),
+            _ => None,
+        }
+    }
+
+    /// A string literal where a `sql.Query` is expected: its text is SQL,
+    /// each value it interpolates a parameter, a query spliced in, and an
+    /// array the list of its elements (standard library 14.37), so a value
+    /// never becomes SQL.
+    fn query_literal(&mut self, cx: &mut FnCx, segments: &[ast::StrSegment], query: Ty, span: Span) -> hir::Expr {
+        let function = |this: &Self, name: &str| match this.names.get(name) {
+            Some(&ModuleName::Fn(id)) => Some(id),
+            _ => None,
+        };
+        let (Some(made), Some(text), Some(nested), Some(bound)) = (
+            function(self, "sql.made"),
+            function(self, "sql.literalText"),
+            function(self, "sql.nested"),
+            function(self, "sql.bound"),
+        ) else {
+            return Self::error_expr(span);
+        };
+        let piece = self.signatures[text.0 as usize].result;
+        let encode = self.trait_names.get("serialization.Encode").copied();
+        let mut pieces = Vec::new();
+        for segment in segments {
+            match segment {
+                ast::StrSegment::Text(written) => {
+                    let literal = Self::mk(hir::ExprKind::Str(written.clone()), Ty::STRING, span);
+                    pieces.push(Self::mk(
+                        hir::ExprKind::Call(Callee::Fn(text), Vec::new(), vec![literal]),
+                        piece,
+                        span,
+                    ));
+                }
+                ast::StrSegment::Expr(e, format) => {
+                    if let Some(format) = format {
+                        let message = "a value of a query is a parameter, which a format does not change: format it before, or drop the format";
+                        self.diags.error("E1118", format.span, message);
+                    }
+                    let value = self.expr(cx, e, None);
+                    if value.ty == query {
+                        pieces.push(Self::mk(
+                            hir::ExprKind::Call(Callee::Fn(nested), Vec::new(), vec![value]),
+                            piece,
+                            span,
+                        ));
+                        continue;
+                    }
+                    // Bytes are one parameter, not a list of numbers.
+                    let bytes = self.types.intern(TyKind::Array(Ty::BYTE));
+                    let optional = self.types.intern(TyKind::Option(bytes));
+                    let binary = match value.ty {
+                        ty if ty == bytes => function(self, "sql.boundBytes"),
+                        ty if ty == optional => function(self, "sql.boundOptionalBytes"),
+                        _ => None,
+                    };
+                    if let Some(binary) = binary {
+                        pieces.push(Self::mk(
+                            hir::ExprKind::Call(Callee::Fn(binary), Vec::new(), vec![value]),
+                            piece,
+                            span,
+                        ));
+                        continue;
+                    }
+                    if !self.types.has_error(value.ty)
+                        && let Some(encode) = encode
+                        && !self.satisfies(value.ty, encode, &[])
+                    {
+                        let message = format!(
+                            "a value a query interpolates is a parameter, and {} is not one: a parameter is a number, a text, bytes, a time, an option or an array of them; interpolate a field, or its JSON as a text",
+                            self.display(value.ty)
+                        );
+                        self.diags.error("E1105", e.span, message);
+                        continue;
+                    }
+                    let ty = value.ty;
+                    pieces.push(Self::mk(hir::ExprKind::Call(Callee::Fn(bound), vec![ty], vec![value]), piece, span));
+                }
+            }
+        }
+        let array = self.types.intern(TyKind::Array(piece));
+        let list = Self::mk(hir::ExprKind::Array(pieces), array, span);
+        Self::mk(hir::ExprKind::Call(Callee::Fn(made), Vec::new(), vec![list]), query, span)
+    }
+
     fn string(&mut self, cx: &mut FnCx, segments: &[ast::StrSegment], span: Span) -> hir::Expr {
         if let [ast::StrSegment::Text(text)] = segments {
             return Self::mk(hir::ExprKind::Str(text.clone()), Ty::STRING, span);
@@ -13916,7 +14027,8 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalTime
                     | StdModule::InternalContext
                     | StdModule::InternalFs
-                    | StdModule::InternalEnv),
+                    | StdModule::InternalEnv
+                    | StdModule::InternalSql),
                 )),
             ) => {
                 // `built()`: what `env.build()` reports, read now and kept as
@@ -13977,6 +14089,7 @@ impl<'a> Checker<'a> {
                     StdModule::InternalContext => "context",
                     StdModule::InternalFs => "fs",
                     StdModule::InternalEnv => "env",
+                    StdModule::InternalSql => "sql",
                     _ => "reflect",
                 };
                 let found =
@@ -14498,16 +14611,22 @@ impl<'a> Checker<'a> {
                     missing.as_str(),
                     "`reflect.Reflect`" | "`serialization.Encode`" | "`serialization.Decode`"
                 );
+                let why = match automatic.then(|| self.lacking_field(actual, param, &inference.map)).flatten() {
+                    Some((field, ty)) => format!(
+                        "; the compiler implements it for records whose fields all implement it, and its field `{field}` is {}, which does not",
+                        self.display(ty)
+                    ),
+                    None if automatic => {
+                        "; the compiler implements it for records, enums and newtypes whose parts all implement it"
+                            .into()
+                    }
+                    None => String::new(),
+                };
                 let message = format!(
-                    "{} does not implement {missing}, which `{}` requires of `{}`{}",
+                    "{} does not implement {missing}, which `{}` requires of `{}`{why}",
                     self.display(actual),
                     signature.name,
                     self.types.display(param),
-                    if automatic {
-                        "; the compiler implements it for records, enums and newtypes whose parts all implement it"
-                    } else {
-                        ""
-                    }
                 );
                 self.diags.error("E1105", span, message);
                 return Self::error_expr(span);

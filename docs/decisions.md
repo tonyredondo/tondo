@@ -3297,3 +3297,32 @@ deflating, inflating and checking CRC-32. One API covers both, the format
 read from the first bytes or the name; extracting refuses an entry or a
 link that would leave its directory, as an archive made to attack does.
 
+
+## 2026-10-30 — Databases whose queries cannot be injected
+
+The twelfth lot. A query is a string literal where a `sql.Query` is
+expected, so the compiler, which sees each interpolation, makes every value
+a parameter and every `Query` a splice: the most natural way to write SQL is
+the safe one, and SQL made at run time has to say so with `sql.raw`. A
+`String` is not a query, and the error says how to keep a part of one. Rows
+read through `std.serialization`, so a record, a scalar, an option, a JSON
+column or an array reads as any format reads it, rules of `std.validate`
+included.
+
+`use` wraps each statement as `App.use` wraps a request, with what
+OpenTelemetry names (`system`, the text, the database, the host), so a
+tracer is a middleware and no driver knows about traces. A transaction
+hands `work` a `Database` pinned to its connection, so code that takes a
+`Database` works inside one without a second type, and a panic rolls back
+before it goes on.
+
+SQLite is the C library in the runtime, which a program without `std.sql`
+does not link. PostgreSQL and MySQL are written in Tondo over `std.net`,
+SCRAM, MD5, `caching_sha2_password` and RSA-OAEP included, so they gain
+from the compiler and need no crate; a connection prepares a statement once
+and keeps it, and asks PostgreSQL for the types of its parameters, as pgx
+does, rather than guessing them. TLS always verifies the server, unlike
+libpq's `prefer`; instead, `prefer` skips TLS for a server on the same
+machine, which no network reaches, and a certificate that does not verify
+says to give its authority or to disable TLS. Taking over a socket for
+`startTls` no longer ends its writing when the plain stream is freed.

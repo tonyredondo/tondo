@@ -258,3 +258,32 @@ fn greet() {
 
 greet()
 ```
+
+A line that starts with an operator continues the one before: a `-1` alone
+on a line subtracts. Write `(-1)`, or bind it first.
+
+```tondo error E1102
+import std.console
+
+fn fallback(): Int {
+    console.println("none found")
+    -1
+}
+
+fn main() {}
+```
+
+A query of `std.sql` is a string literal where a `sql.Query` is expected,
+whose values are parameters; a `String` built before is only text. Keep a
+part of a query as a `sql.Query`: `let wanted: sql.Query = "id > {min}"`.
+
+```tondo error E1102
+import std.sql
+
+fn names(db: sql.Database, min: Int): Array[String] ! sql.SqlError {
+    let text = "SELECT name FROM users WHERE id > {min}"
+    db.query[String](text)?
+}
+
+fn main() {}
+```

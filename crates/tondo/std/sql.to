@@ -1,0 +1,2627 @@
+// std.sql (standard library 14.37): databases through one API, whose
+// queries are literals with their values as parameters, so they cannot be
+// injected; rows read into the program's types; transactions, migrations,
+// a pool of connections, and `use` around each statement, as `App.use`
+// and `Client.use` do, for traces and metrics. The drivers of SQLite,
+// PostgreSQL and MySQL are std's; a package gives another.
+
+import std.crypto as __crypto
+import std.encoding as __encoding
+import std.fs as __fs
+import std.hash as __hash
+import std.internal.sql as sqlNative
+import std.json as __json
+import std.math as __math
+import std.net as __net
+import std.random as __random
+import std.serialization as __serialization
+import std.sync as __sync
+import std.time as __time
+import std.url as __url
+
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+/// What kind of failure a database met.
+pub enum ErrorKind {
+    /// It could not connect, or lost the connection.
+    Connection
+    /// `queryOne` found no row, for a type that is not optional.
+    NoRows
+    /// A unique key would repeat.
+    Unique
+    /// A foreign key names a row that does not exist, or is still named.
+    ForeignKey
+    /// A column that cannot be null would be.
+    NotNull
+    /// A check constraint would not hold.
+    Check
+    /// The transaction met another and has to be tried again.
+    Conflict
+    /// The SQL does not read.
+    Syntax
+    /// The statement took longer than allowed.
+    Timeout
+    /// A row could not be read into the type.
+    Decode
+    /// Anything else the database says.
+    Other
+}
+
+/// A failure of a database: its kind, its message, the database's code
+/// (PostgreSQL's SQLSTATE, MySQL's number, SQLite's extended code) and the
+/// constraint or column it names.
+pub type SqlError = {
+    kind: ErrorKind
+    message: String
+    code: String?
+    constraint: String?
+}
+
+impl Display for SqlError {
+    fn display(self): String {
+        self.message
+    }
+}
+
+/// An error of a kind and message.
+pub fn SqlError.of(kind: ErrorKind, message: String): SqlError {
+    SqlError { kind, message, code: none, constraint: none }
+}
+
+// ---------------------------------------------------------------------------
+// Values and queries
+// ---------------------------------------------------------------------------
+
+/// A value of a database: a parameter or a column of a row.
+pub enum Value {
+    Null
+    Bool(Bool)
+    Int(Int)
+    Float(Float)
+    /// An exact number, as its digits: a `math.Decimal`, a `NUMERIC`.
+    Number(String)
+    Text(String)
+    Bytes(Array[Byte])
+    DateTime(__time.DateTime)
+    /// An array as one parameter, which `sql.array` makes.
+    List(Array[Value])
+}
+
+impl Display for Value {
+    fn display(self): String {
+        match self {
+            Value.Null => "null"
+            Value.Bool(value) => "{value}"
+            Value.Int(value) => "{value}"
+            Value.Float(value) => "{value}"
+            Value.Number(digits) => digits
+            Value.Text(text) => text
+            Value.Bytes(bytes) => "{bytes.length()} bytes"
+            Value.DateTime(moment) => "{moment}"
+            Value.List(values) => "[{values.map((value) { "{value}" }).join(", ")}]"
+        }
+    }
+}
+
+/// A statement of SQL, written as a string literal where one is expected:
+/// each `{value}` it interpolates is a parameter, never text, so it cannot
+/// be injected; a `{query}` is spliced in, and an `{array}` is the list
+/// `($1, $2, …)` of its elements, for `IN`.
+pub type Query = {
+    priv pieces: Array[Piece]
+}
+
+enum Piece {
+    Text(String)
+    Name(String)
+    Bound(Value)
+    Listed(Array[Value])
+    Nested(Query)
+}
+
+/// SQL made while the program runs, as it is: it holds no parameters, and
+/// whatever made the text decides what it does. Values go in a literal.
+pub fn raw(text: String): Query {
+    Query { pieces: [Piece.Text(text)] }
+}
+
+/// A name of a table or a column, quoted as the database quotes names, for
+/// one chosen while the program runs: `"SELECT * FROM {sql.identifier(table)}"`.
+pub fn identifier(name: String): Query {
+    Query { pieces: [Piece.Name(name)] }
+}
+
+/// The queries one after another with `separator` between them:
+/// `sql.join(conditions, " AND ")`.
+pub fn join(parts: Array[Query], separator: String = ", "): Query {
+    var pieces: Array[Piece] = []
+    for (index, part) in parts.iter().enumerate() {
+        if index > 0 {
+            pieces.push(Piece.Text(separator))
+        }
+        pieces.push(Piece.Nested(part))
+    }
+    Query { pieces }
+}
+
+/// The array as one parameter, for a database with arrays:
+/// `"WHERE id = ANY({sql.array(ids)})"` in PostgreSQL.
+pub fn array[T: __serialization.Encode](values: Array[T]): Query {
+    let listed = match bound(values) {
+        Piece.Listed(found) => found
+        Piece.Bound(found) => [found]
+        _ => []
+    }
+    Query { pieces: [Piece.Bound(Value.List(listed))] }
+}
+
+/// The pieces of a literal, which the compiler writes.
+fn made(pieces: Array[Piece]): Query {
+    Query { pieces }
+}
+
+fn literalText(written: String): Piece {
+    Piece.Text(written)
+}
+
+fn nested(query: Query): Piece {
+    Piece.Nested(query)
+}
+
+/// A value interpolated in a literal: a parameter, or the list of an
+/// array's.
+fn bound[T: __serialization.Encode](value: T): Piece {
+    let sink = Capture { values: __sync.Mutex([]), listed: __sync.Mutex(false) }
+    value.encode(sink)
+    let values = sink.values.get()
+    if sink.listed.get() {
+        Piece.Listed(values)
+    } else {
+        Piece.Bound(values.get(0).unwrapOr(Value.Null))
+    }
+}
+
+/// Bytes interpolated in a literal: one parameter, not a list of numbers.
+fn boundBytes(bytes: Array[Byte]): Piece {
+    Piece.Bound(Value.Bytes(bytes))
+}
+
+fn boundOptionalBytes(bytes: Array[Byte]?): Piece {
+    match bytes {
+        some(found) => Piece.Bound(Value.Bytes(found))
+        none => Piece.Bound(Value.Null)
+    }
+}
+
+/// The values a value encodes to: one scalar, or a list's.
+type Capture = {
+    values: __sync.Mutex[Array[Value]]
+    listed: __sync.Mutex[Bool]
+}
+
+fn Capture.put(self, value: Value) {
+    self.values.update((values) { values.push(value) })
+}
+
+impl __serialization.Sink for Capture {
+    fn null(self) {
+        self.put(Value.Null)
+    }
+
+    fn bool(self, value: Bool) {
+        self.put(Value.Bool(value))
+    }
+
+    fn int(self, value: Int) {
+        self.put(Value.Int(value))
+    }
+
+    fn float(self, value: Float) {
+        self.put(Value.Float(value))
+    }
+
+    fn number(self, digits: String) {
+        self.put(Value.Number(digits))
+    }
+
+    fn text(self, value: String) {
+        self.put(Value.Text(value))
+    }
+
+    fn bytes(self, value: Array[Byte]) {
+        self.put(Value.Bytes(value))
+    }
+
+    fn dateTime(self, text: String) {
+        match __time.parseDateTime(text) {
+            ok(moment) => self.put(Value.DateTime(moment))
+            err(_) => self.put(Value.Text(text))
+        }
+    }
+
+    fn beginList(self, count: Int) {
+        self.listed.set(true)
+    }
+
+    fn endList(self) {}
+
+    fn beginMap(self, count: Int) {
+        panic(
+            "a record or a map is not a parameter of SQL: interpolate its fields, or its JSON as text",
+        )
+    }
+
+    fn key(self, name: String) {}
+
+    fn endMap(self) {}
+}
+
+/// The text of a query with the placeholders and the quoted names a driver
+/// writes, and its parameters in order.
+fn rendered(query: Query, driver: Driver): (String, Array[Value]) {
+    var out = ""
+    var parameters: Array[Value] = []
+    write(query, driver, var out, var parameters)
+    (out, parameters)
+}
+
+fn write(query: Query, driver: Driver, out: var String, parameters: var Array[Value]) {
+    let placeholder = driver.placeholder
+    for piece in query.pieces {
+        match piece {
+            Piece.Text(text) => out = "{out}{text}"
+            Piece.Name(name) => out = "{out}{(driver.identifier)(name)}"
+            Piece.Bound(value) => {
+                parameters.push(value)
+                out = "{out}{placeholder(parameters.length())}"
+            }
+            Piece.Listed(values) => {
+                if values.isEmpty() {
+                    out = "{out}(NULL)"
+                } else {
+                    var marks: Array[String] = []
+                    for value in values {
+                        parameters.push(value)
+                        marks.push(placeholder(parameters.length()))
+                    }
+                    out = "{out}({marks.join(", ")})"
+                }
+            }
+            Piece.Nested(inner) => write(inner, driver, var out, var parameters)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Statements, drivers and connections
+// ---------------------------------------------------------------------------
+
+/// What a statement does: reads, writes, or begins, commits or rolls back a
+/// transaction.
+pub enum Operation {
+    Query
+    Execute
+    Begin
+    Commit
+    Rollback
+}
+
+impl Display for Operation {
+    fn display(self): String {
+        match self {
+            Operation.Query => "query"
+            Operation.Execute => "execute"
+            Operation.Begin => "begin"
+            Operation.Commit => "commit"
+            Operation.Rollback => "rollback"
+        }
+    }
+}
+
+/// A statement as the driver runs it, which `use` sees and may change, as
+/// to add a comment with the trace's context: its text with the driver's
+/// placeholders, its parameters, what it does, and the database's system as
+/// OpenTelemetry names it (`postgresql`, `mysql`, `sqlite`), name and host.
+pub type Statement = {
+    text: String
+    parameters: Array[Value]
+    operation: Operation
+    system: String
+    database: String
+    host: String?
+}
+
+/// What a statement gave: the names of its columns and its rows, or the
+/// rows it changed and the id of the last one it added.
+pub type Outcome = {
+    columns: Array[String]
+    rows: Array[Array[Value]]
+    affected: Int
+    lastId: Int?
+}
+
+/// What `execute` did: how many rows it changed, and the id of the last one
+/// it added, where the database tells it.
+pub type Done = {
+    affected: Int
+    lastId: Int?
+}
+
+/// A connection a driver opened: what runs a statement on it, and what ends
+/// it.
+pub type Connection = {
+    run: fn(Statement): Outcome ! SqlError
+    close: fn()
+}
+
+/// What speaks to a kind of database, as a package gives one for another:
+/// `sql.open(url, driver: oracle.driver())`. `connect` opens a connection
+/// to a URL; `placeholder` writes the parameter at a position from 1, as
+/// `$1` or `?`; `identifier` quotes a name; `system` names the database for
+/// `use`.
+pub type Driver = {
+    system: String
+    placeholder: fn(Int): String
+    identifier: fn(String): String
+    connect: fn(String): Connection ! SqlError
+    /// The database's name and host in a URL, for `Statement`.
+    place: fn(String): (String, String?)
+}
+
+// ---------------------------------------------------------------------------
+// Databases
+// ---------------------------------------------------------------------------
+
+/// A database, through a pool of connections that its copies share: tasks
+/// run statements on it at once, each on a connection of its own.
+pub type Database = {
+    priv driver: Driver
+    priv url: String
+    priv name: String
+    priv host: String?
+    priv idle: __sync.Mutex[Array[Connection]]
+    priv permits: __sync.Semaphore
+    priv layers: Array[fn(Statement, fn(Statement): Outcome ! SqlError): Outcome ! SqlError]
+    /// The connection of a transaction, and how deep it is.
+    priv pinned: (Connection, Int)?
+}
+
+/// The database of a URL, with up to `connections` at once:
+/// `sqlite:app.db`, `sqlite::memory:`, `postgres://user:secret@host/name`
+/// or `mysql://user:secret@host/name`, or another for `driver`. One
+/// connection opens now, so a wrong URL fails here.
+pub fn open(url: String, connections: Int = 10, driver: Driver? = none): Database ! SqlError {
+    let chosen = match driver {
+        some(given) => given
+        none => driverOf(url)?
+    }
+    let (name, host) = (chosen.place)(url)
+    let first = (chosen.connect)(url)?
+    // A database in memory is one per connection: it has one.
+    let most = if url.contains(":memory:") { 1 } else if connections < 1 { 1 } else { connections }
+    Database {
+        driver: chosen
+        url
+        name
+        host
+        idle: __sync.Mutex([first])
+        permits: __sync.Semaphore(most)
+        layers: []
+        pinned: none
+    }
+}
+
+fn driverOf(url: String): Driver ! SqlError {
+    if url.startsWith("sqlite:") {
+        return sqlite()
+    }
+    if url.startsWith("postgres://") or url.startsWith("postgresql://") {
+        return postgres()
+    }
+    if url.startsWith("mysql://") or url.startsWith("mariadb://") {
+        return mysql()
+    }
+    fail SqlError.of(
+        ErrorKind.Connection,
+        "`{url}` names no database tondo speaks: write `sqlite:path`, or give `driver:`",
+    )
+}
+
+/// Wraps each statement, as `App.use` wraps each request: `middleware`
+/// gets the statement and `next`, which runs it, so it can time it, trace
+/// it, change it or refuse it. The first added is the outermost.
+pub fn Database.use(
+    mut self,
+    middleware: fn(Statement, fn(Statement): Outcome ! SqlError): Outcome ! SqlError,
+) {
+    self.layers.push(middleware)
+}
+
+/// Runs a statement that writes, and says what it changed.
+pub fn Database.execute(self, query: Query): Done ! SqlError {
+    let outcome = self.run(Operation.Execute, query)?
+    Done { affected: outcome.affected, lastId: outcome.lastId }
+}
+
+/// The rows of a statement, each read into a `T`: a record by the names of
+/// its columns, as `created_at` for `createdAt`; a value of the only
+/// column; or an option of them.
+pub fn Database.query[T: __serialization.Decode](self, query: Query): Array[T] ! SqlError {
+    let outcome = self.run(Operation.Query, query)?
+    var rows: Array[T] = []
+    for row in outcome.rows {
+        rows.push(rowAs[T](outcome.columns, row)?)
+    }
+    rows
+}
+
+/// The first row of a statement as a `T`; without rows, `none` for an
+/// optional `T`, and `NoRows` for another.
+pub fn Database.queryOne[T: __serialization.Decode](self, query: Query): T ! SqlError {
+    let outcome = self.run(Operation.Query, query)?
+    match outcome.rows.get(0) {
+        some(row) => rowAs[T](outcome.columns, row)?
+        none => match __serialization.Decode.decode[T](Row.of([], []), __serialization.Event.Null) {
+            ok(nothing) => nothing
+            err(_) => fail SqlError.of(ErrorKind.NoRows, "the query found no row")
+        }
+    }
+}
+
+/// Runs `work` in a transaction on one connection, with a `Database` that
+/// runs its statements there, so a function that takes a `Database` works
+/// in it too. It commits when `work` succeeds and rolls back when it fails
+/// or panics; one inside another is a savepoint.
+pub fn Database.transaction[T: ~Copy](self, work: fn(Database): T ! SqlError): T ! SqlError {
+    let database = self
+    let held: __sync.Permit? = match self.pinned {
+        some(_) => none
+        none => some(self.permits.acquire())
+    }
+    let (connection, depth) = match self.pinned {
+        some(pinned) => pinned
+        none => match self.take() {
+            ok(taken) => (taken, 0)
+            err(error) => {
+                match held {
+                    some(permit) => permit.release()
+                    none => {}
+                }
+                fail error
+            }
+        }
+    }
+    let inner = self with { pinned: some((connection, depth + 1)) }
+    let point = "tondo_{depth}"
+    let (begin, commit, rollback) = if depth == 0 {
+        ("BEGIN", "COMMIT", "ROLLBACK")
+    } else {
+        ("SAVEPOINT {point}", "RELEASE SAVEPOINT {point}", "ROLLBACK TO SAVEPOINT {point}")
+    }
+    let done = (outcome: !SqlError) {
+        if depth == 0 {
+            match outcome {
+                ok(_) => database.give(connection)
+                err(_) => (connection.close)()
+            }
+        }
+        match held {
+            some(permit) => permit.release()
+            none => {}
+        }
+    }
+    match inner.run(Operation.Begin, raw(begin)) {
+        ok(_) => {}
+        err(error) => {
+            done(err(error))
+            fail error
+        }
+    }
+    match recover { work(inner) } {
+        ok(ok(value)) => {
+            let committed = inner.run(Operation.Commit, raw(commit))
+            done(committed.map((_) { () }))
+            _ = committed?
+            value
+        }
+        ok(err(error)) => {
+            done(inner.run(Operation.Rollback, raw(rollback)).map((_) { () }))
+            fail error
+        }
+        err(stopped) => {
+            done(inner.run(Operation.Rollback, raw(rollback)).map((_) { () }))
+            stopped.resume()
+        }
+    }
+}
+
+/// Applies the `.sql` files of a tree in the order of their names, each once,
+/// whole and in a transaction, keeping which in the table `tondo_migrations`
+/// with a digest of each: a file applied before that changed is an error.
+pub fn Database.migrate(self, files: __fs.FileSystem): !SqlError {
+    let ledger: Query =
+        "CREATE TABLE IF NOT EXISTS tondo_migrations (name VARCHAR(255) PRIMARY KEY, digest VARCHAR(64) NOT NULL, applied VARCHAR(40) NOT NULL)"
+    _ = self.execute(ledger)?
+    let names = match files.glob("**/*.sql") {
+        ok(found) => found
+        err(error) => fail SqlError.of(ErrorKind.Other, "the migrations: {error}")
+    }
+    for name in names {
+        let text = match files.readText(name) {
+            ok(text) => text
+            err(error) => fail SqlError.of(ErrorKind.Other, "the migration `{name}`: {error}")
+        }
+        let digest = __hash.sha256(text.bytes()).hex()
+        match self.queryOne[String?]("SELECT digest FROM tondo_migrations WHERE name = {name}")? {
+            some(applied) if applied == digest => continue
+            some(_) => fail SqlError.of(
+                ErrorKind.Other,
+                "the migration `{name}` changed after it was applied: add a new one instead",
+            )
+            none => {}
+        }
+        let now = "{__time.utcNow()}"
+        self.transaction(
+            (db): !SqlError {
+                _ = db.execute(raw(text))?
+                let applied: Query =
+                    "INSERT INTO tondo_migrations (name, digest, applied) VALUES ({name}, {digest}, {now})"
+                _ = db.execute(applied)?
+            },
+        )?
+    }
+}
+
+/// Closes the connections the pool holds.
+pub fn Database.close(self) {
+    for connection in self.idle.update(
+        (idle) {
+            let all = idle
+            idle = []
+            all
+        },
+    ) {
+        (connection.close)()
+    }
+}
+
+fn Database.run(self, operation: Operation, query: Query): Outcome ! SqlError {
+    let (text, parameters) = rendered(query, self.driver)
+    let statement = Statement {
+        text
+        parameters
+        operation
+        system: self.driver.system
+        database: self.name
+        host: self.host
+    }
+    self.through(statement, 0)
+}
+
+fn Database.through(self, statement: Statement, layer: Int): Outcome ! SqlError {
+    if layer < self.layers.length() {
+        let database = self
+        let next = (inner: Statement): Outcome ! SqlError { database.through(inner, layer + 1)? }
+        let middleware = self.layers[layer]
+        return middleware(statement, next)?
+    }
+    match self.pinned {
+        some((connection, _)) => (connection.run)(statement)?
+        none => {
+            let permit = self.permits.acquire()
+            let connection = match self.take() {
+                ok(found) => found
+                err(error) => {
+                    permit.release()
+                    fail error
+                }
+            }
+            let outcome = (connection.run)(statement)
+            match outcome {
+                err(error) if error.kind == ErrorKind.Connection => (connection.close)()
+                _ => self.give(connection)
+            }
+            permit.release()
+            outcome?
+        }
+    }
+}
+
+/// An idle connection, or a new one.
+fn Database.take(self): Connection ! SqlError {
+    match self.idle.update((idle) { idle.pop() }) {
+        some(connection) => connection
+        none => (self.driver.connect)(self.url)?
+    }
+}
+
+fn Database.give(self, connection: Connection) {
+    self.idle.update((idle) { idle.push(connection) })
+}
+
+// ---------------------------------------------------------------------------
+// Rows
+// ---------------------------------------------------------------------------
+
+/// A row as a `T`: a record by its columns' names, or the value of its only
+/// column.
+fn rowAs[T: __serialization.Decode](columns: Array[String], row: Array[Value]): T ! SqlError {
+    let asRecord = __serialization.Decode.decode[T](
+        Row.of(columns, row),
+        __serialization.Event.BeginMap,
+    )
+    match asRecord {
+        ok(value) => return value
+        err(error) if error.kind == __serialization.ErrorKind.Type and row.length() == 1 => {}
+        err(error) => fail SqlError.of(
+            ErrorKind.Decode,
+            "a row is not a value of the type: {error}",
+        )
+    }
+    var events: Array[__serialization.Event] = []
+    valueEvents(row[0], var events)
+    let first = events.removeAt(0).unwrapOr(__serialization.Event.Null)
+    events.reverse()
+    match __serialization.Decode.decode[T](Row { events: __sync.Mutex(events) }, first) {
+        ok(value) => value
+        err(error) => fail SqlError.of(
+            ErrorKind.Decode,
+            "a row is not a value of the type: {error}",
+        )
+    }
+}
+
+/// The events of a row: its columns as the keys of a map, after the first
+/// `BeginMap`, and the events of a JSON column a record or a list reads.
+type Row = {
+    events: __sync.Mutex[Array[__serialization.Event]]
+}
+
+fn Row.of(columns: Array[String], row: Array[Value]): Row {
+    var events: Array[__serialization.Event] = []
+    for (index, name) in columns.iter().enumerate() {
+        events.push(__serialization.Event.Key(name))
+        valueEvents(row.get(index).unwrapOr(Value.Null), var events)
+    }
+    events.push(__serialization.Event.EndMap)
+    // Served from the end.
+    events.reverse()
+    Row { events: __sync.Mutex(events) }
+}
+
+/// A value as the events a decoder reads: scalars as untyped text, which
+/// every scalar type reads, so an integer of SQLite is a `Bool` too, and an
+/// array as a list.
+fn valueEvents(value: Value, out: var Array[__serialization.Event]) {
+    let event = match value {
+        Value.Null => __serialization.Event.Null
+        Value.Bool(flag) => __serialization.Event.Bool(flag)
+        Value.Int(number) => __serialization.Event.Untyped("{number}")
+        Value.Float(number) => __serialization.Event.Untyped("{number}")
+        Value.Number(digits) => __serialization.Event.Untyped(digits)
+        Value.Text(text) => __serialization.Event.Untyped(text)
+        Value.Bytes(bytes) => __serialization.Event.Bytes(bytes)
+        Value.DateTime(moment) => __serialization.Event.DateTime("{moment}")
+        Value.List(values) => {
+            out.push(__serialization.Event.BeginList)
+            for element in values {
+                valueEvents(element, var out)
+            }
+            __serialization.Event.EndList
+        }
+    }
+    out.push(event)
+}
+
+/// The events of a JSON value.
+fn jsonEvents(value: __json.Value, out: var Array[__serialization.Event]) {
+    match value {
+        __json.Value.Null => out.push(__serialization.Event.Null)
+        __json.Value.Bool(flag) => out.push(__serialization.Event.Bool(flag))
+        __json.Value.Number(number) => out.push(__serialization.Event.Number("{number}"))
+        __json.Value.Text(text) => out.push(__serialization.Event.Text(text))
+        __json.Value.Array(items) => {
+            out.push(__serialization.Event.BeginList)
+            for item in items {
+                jsonEvents(item, var out)
+            }
+            out.push(__serialization.Event.EndList)
+        }
+        __json.Value.Object(members) => {
+            out.push(__serialization.Event.BeginMap)
+            for (key, member) in members {
+                out.push(__serialization.Event.Key(key))
+                jsonEvents(member, var out)
+            }
+            out.push(__serialization.Event.EndMap)
+        }
+    }
+}
+
+/// A name as a column and a field compare: without case or `_`.
+fn folded(name: String): String {
+    name.replace("_", "").toLowerAscii()
+}
+
+impl __serialization.Source for Row {
+    fn next(self): __serialization.Event? ! __serialization.Error {
+        self.events.update((events) { events.pop() })
+    }
+
+    fn skip(self, first: __serialization.Event): !__serialization.Error {
+        var depth = match first {
+            __serialization.Event.BeginMap => 1
+            __serialization.Event.BeginList => 1
+            _ => 0
+        }
+        for depth > 0 {
+            match self.next()? {
+                some(__serialization.Event.BeginMap) => depth += 1
+                some(__serialization.Event.BeginList) => depth += 1
+                some(__serialization.Event.EndMap) => depth -= 1
+                some(__serialization.Event.EndList) => depth -= 1
+                some(_) => {}
+                none => depth = 0
+            }
+        }
+    }
+
+    fn failure(self, kind: __serialization.ErrorKind, message: String): __serialization.Error {
+        __serialization.Error { kind, message, path: "$", line: 0, column: 0, violations: [] }
+    }
+
+    /// The field a column is, by its name without case or `_`.
+    fn nextField(self, names: Array[String]): Int? ! __serialization.Error {
+        let wanted = names.map((name) { folded(name) })
+        for {
+            match self.next()? {
+                some(__serialization.Event.Key(key)) => {
+                    let column = folded(key)
+                    for (index, name) in wanted.iter().enumerate() {
+                        if name == column {
+                            return some(index)
+                        }
+                    }
+                    let first = self.value()?
+                    self.skip(first)?
+                }
+                _ => return none
+            }
+        }
+    }
+
+    /// A record or a map: the row itself, or a JSON column.
+    fn beginMap(self, first: __serialization.Event, name: String): !__serialization.Error {
+        match first {
+            __serialization.Event.BeginMap => {}
+            __serialization.Event.Untyped(text) => self.opened(text, first, "a record")?
+            _ => fail self.mismatch(first, name)
+        }
+    }
+
+    /// A list: an array, a JSON column, or bytes as an `Array[Byte]`.
+    fn beginList(self, first: __serialization.Event, name: String): !__serialization.Error {
+        match first {
+            __serialization.Event.BeginList => {}
+            __serialization.Event.Bytes(bytes) => {
+                var events = [__serialization.Event.EndList]
+                var index = bytes.length() - 1
+                for index >= 0 {
+                    events.push(__serialization.Event.Int(Int(bytes[index])))
+                    index -= 1
+                }
+                self.events.update((pending) { pending.extend(events) })
+            }
+            __serialization.Event.Untyped(text) => self.opened(text, first, "a list")?
+            _ => fail self.mismatch(first, name)
+        }
+    }
+}
+
+/// Reads a JSON column in place: its events after its first, which a
+/// record or a list began.
+fn Row.opened(self, text: String, first: __serialization.Event, expected: String): !__serialization.Error {
+    let parsed = match __json.parse(text) {
+        ok(value) => value
+        err(_) => fail __serialization.Source.mismatch(self, first, expected)
+    }
+    var events: Array[__serialization.Event] = []
+    jsonEvents(parsed, var events)
+    _ = events.removeAt(0)
+    events.reverse()
+    self.events.update((pending) { pending.extend(events) })
+}
+
+// ---------------------------------------------------------------------------
+// SQLite
+// ---------------------------------------------------------------------------
+
+/// SQLite, which the runtime holds: `sqlite:app.db`, `sqlite::memory:`.
+fn sqlite(): Driver {
+    Driver {
+        system: "sqlite"
+        placeholder: (_) { "?" }
+        identifier: (name) { "\"{name.replace("\"", "\"\"")}\"" }
+        connect: (url): Connection ! SqlError { connectSqlite(url)? }
+        place: (url) { (url.removePrefix("sqlite:"), none) }
+    }
+}
+
+fn connectSqlite(url: String): Connection ! SqlError {
+    let path = url.removePrefix("sqlite:").removePrefix("//")
+    let opened = sqlNative.open(path)
+    let why = sqlNative.failure(opened)
+    if not why.isEmpty() {
+        fail SqlError.of(ErrorKind.Connection, "the SQLite database `{path}`: {why}")
+    }
+    Connection {
+        run: (statement): Outcome ! SqlError { runSqlite(opened, statement)? }
+        close: () {}
+    }
+}
+
+fn runSqlite(opened: sqlNative.Native, statement: Statement): Outcome ! SqlError {
+    var encoded: Array[Byte] = []
+    for value in statement.parameters {
+        encoded.extend(encodedValue(value)?)
+    }
+    // Without parameters, a statement that writes may be several.
+    let batch = statement.parameters.isEmpty() and statement.operation != Operation.Query
+    let reply = sqlNative.run(opened, statement.text, encoded, batch)
+    var at = 1
+    if reply.get(0) != some(Byte(0u8)) {
+        let kind = kindOf(Int(reply.get(1).unwrapOr(Byte(10u8))))
+        at = 2
+        let message = readValue(reply, var at)
+        let code = readValue(reply, var at)
+        let constraint = readValue(reply, var at)
+        let text = (value: Value): String { if value == Value.Null { "" } else { "{value}" } }
+        fail SqlError {
+            kind
+            message: text(message)
+            code: if text(code).isEmpty() { none } else { some(text(code)) }
+            constraint: if text(constraint).isEmpty() { none } else { some(text(constraint)) }
+        }
+    }
+    let affected = unsigned(reply, at, 8)
+    let lastId = unsigned(reply, at + 8, 8)
+    at += 16
+    let count = unsigned(reply, at, 4)
+    at += 4
+    var columns: Array[String] = []
+    for _ in 0..count {
+        columns.push("{readValue(reply, var at)}")
+    }
+    let rowCount = unsigned(reply, at, 4)
+    at += 4
+    var rows: Array[Array[Value]] = []
+    for _ in 0..rowCount {
+        var row: Array[Value] = []
+        for _ in 0..count {
+            row.push(readValue(reply, var at))
+        }
+        rows.push(row)
+    }
+    let query = statement.operation == Operation.Query
+    Outcome {
+        columns
+        rows
+        affected: if query { 0 } else { affected }
+        lastId: if query or lastId == 0 { none } else { some(lastId) }
+    }
+}
+
+/// A parameter as SQLite's bytes: its tag and its value.
+fn encodedValue(value: Value): Array[Byte] ! SqlError {
+    match value {
+        Value.Null => [Byte(0u8)]
+        Value.Bool(flag) => [Byte(1u8)].concat(littleEndian(if flag { 1 } else { 0 }))
+        Value.Int(number) => [Byte(1u8)].concat(littleEndian(number))
+        Value.Float(number) => [Byte(2u8)].concat(littleEndian(Int.wrapping(number.bits())))
+        Value.Number(digits) => sized(3, digits.bytes())
+        Value.Text(text) => sized(3, text.bytes())
+        Value.Bytes(bytes) => sized(4, bytes)
+        Value.DateTime(moment) => sized(3, "{moment}".bytes())
+        Value.List(_) => fail SqlError.of(
+            ErrorKind.Other,
+            "SQLite has no arrays: interpolate the array, for `IN ({{ids}})`",
+        )
+    }
+}
+
+fn sized(tag: Int, bytes: Array[Byte]): Array[Byte] {
+    var length = bytes.length()
+    var head = [Byte(UInt8.wrapping(tag))]
+    for _ in 0..4 {
+        head.push(Byte(UInt8.wrapping(length & 0xff)))
+        length = length / 256
+    }
+    head.concat(bytes)
+}
+
+fn littleEndian(value: Int): Array[Byte] {
+    var out: Array[Byte] = []
+    var rest = UInt.wrapping(value)
+    for _ in 0..8 {
+        out.push(Byte(UInt8.wrapping(rest & 0xff)))
+        rest = rest >> 8
+    }
+    out
+}
+
+/// The unsigned little-endian number of `count` bytes at `at`, as an `Int`.
+fn unsigned(bytes: Array[Byte], at: Int, count: Int): Int {
+    var value: UInt = 0
+    var index = count - 1
+    for index >= 0 {
+        value = (value << 8) | UInt(bytes.get(at + index).unwrapOr(Byte(0u8)))
+        index -= 1
+    }
+    Int.wrapping(value)
+}
+
+/// The value encoded at `at`, which moves past it.
+fn readValue(bytes: Array[Byte], at: var Int): Value {
+    let tag = Int(bytes.get(at).unwrapOr(Byte(0u8)))
+    at += 1
+    match tag {
+        1 => {
+            at += 8
+            Value.Int(unsigned(bytes, at - 8, 8))
+        }
+        2 => {
+            at += 8
+            Value.Float(Float.fromBits(UInt.wrapping(unsigned(bytes, at - 8, 8))))
+        }
+        kind if kind == 3 or kind == 4 => {
+            let length = unsigned(bytes, at, 4)
+            let body = bytes.slice(at + 4, at + 4 + length).unwrapOr([])
+            at += 4 + length
+            if tag == 3 {
+                Value.Text(String.fromBytes(body).unwrapOr(""))
+            } else {
+                Value.Bytes(body)
+            }
+        }
+        _ => Value.Null
+    }
+}
+
+fn kindOf(code: Int): ErrorKind {
+    match code {
+        0 => ErrorKind.Connection
+        1 => ErrorKind.NoRows
+        2 => ErrorKind.Unique
+        3 => ErrorKind.ForeignKey
+        4 => ErrorKind.NotNull
+        5 => ErrorKind.Check
+        6 => ErrorKind.Conflict
+        7 => ErrorKind.Syntax
+        8 => ErrorKind.Timeout
+        9 => ErrorKind.Decode
+        _ => ErrorKind.Other
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The bytes of a connection
+// ---------------------------------------------------------------------------
+
+/// A connection to a server and the bytes read from it that no message
+/// took yet.
+type Wire = {
+    stream: __net.Stream
+    inbox: __sync.Mutex[Inbox]
+}
+
+type Inbox = {
+    bytes: Array[Byte]
+    at: Int
+}
+
+fn Wire.of(stream: __net.Stream): Wire {
+    Wire { stream, inbox: __sync.Mutex(Inbox { bytes: [], at: 0 }) }
+}
+
+/// The next `count` bytes, as soon as they arrive.
+fn Wire.take(self, count: Int): Array[Byte] ! SqlError {
+    for {
+        let taken = self.inbox.update(
+            (inbox): Array[Byte]? {
+                if inbox.bytes.length() - inbox.at < count {
+                    none
+                } else {
+                    let piece = inbox.bytes.slice(inbox.at, inbox.at + count).unwrapOr([])
+                    inbox.at += count
+                    some(piece)
+                }
+            },
+        )
+        match taken {
+            some(piece) => return piece
+            none => {}
+        }
+        let chunk = match self.stream.read() {
+            ok(some(bytes)) => bytes
+            ok(none) => fail lost("the server closed the connection")
+            err(error) => fail lost("{error}")
+        }
+        self.inbox.update(
+            (inbox) {
+                if inbox.at > 0 {
+                    inbox.bytes = inbox.bytes.slice(inbox.at, inbox.bytes.length()).unwrapOr([])
+                    inbox.at = 0
+                }
+                inbox.bytes.extend(chunk)
+            },
+        )
+    }
+}
+
+fn Wire.send(self, bytes: Array[Byte]): !SqlError {
+    match self.stream.writeBytes(bytes) {
+        ok(_) => {}
+        err(error) => fail lost("{error}")
+    }
+}
+
+fn Wire.close(self) {
+    _ = self.stream.close()
+}
+
+fn lost(why: String): SqlError {
+    SqlError.of(ErrorKind.Connection, why)
+}
+
+/// The integer of `count` bytes at `at`, the most significant first, with
+/// its sign: a length of -1 is a null.
+fn bigEndian(bytes: Array[Byte], at: Int, count: Int): Int {
+    var value: UInt = 0
+    for index in 0..count {
+        value = (value << 8) | UInt(bytes.get(at + index).unwrapOr(Byte(0u8)))
+    }
+    let spread = 64 - count * 8
+    Int.wrapping(value << spread) >> spread
+}
+
+/// `value` in `count` bytes, the most significant first.
+fn bigEndianBytes(value: Int, count: Int): Array[Byte] {
+    var out: Array[Byte] = []
+    var shift = (count - 1) * 8
+    for shift >= 0 {
+        out.push(Byte(UInt8.wrapping(value >> shift)))
+        shift -= 8
+    }
+    out
+}
+
+fn cstring(text: String): Array[Byte] {
+    text.bytes().concat([Byte(0u8)])
+}
+
+/// The text up to the next zero byte at `at`, which moves past it.
+fn cstringAt(bytes: Array[Byte], at: var Int): String {
+    var end = at
+    for end < bytes.length() and bytes[end] != Byte(0u8) {
+        end += 1
+    }
+    let found = String.fromBytes(bytes.slice(at, end).unwrapOr([])).unwrapOr("")
+    at = end + 1
+    found
+}
+
+fn cstringOf(bytes: Array[Byte]): String {
+    var at = 0
+    cstringAt(bytes, var at)
+}
+
+/// The settings a URL gives: `scheme://user:secret@host:port/name?options`.
+type Settings = {
+    host: String
+    port: Int
+    user: String
+    password: String
+    database: String
+    /// `disable`, `prefer` or `require`.
+    tls: String
+    trust: String?
+    options: __url.Url
+}
+
+fn settingsOf(url: String, port: Int): Settings ! SqlError {
+    let parsed = match __url.parse(url) {
+        ok(found) => found
+        err(error) => fail lost("the URL of the database: {error}")
+    }
+    let tls = match parsed
+        .param("sslmode")
+        .unwrapOr(parsed.param("ssl-mode").unwrapOr("prefer"))
+        .toLowerAscii() {
+        "disable" => "disable"
+        "disabled" => "disable"
+        "allow" => "prefer"
+        "prefer" => "prefer"
+        "preferred" => "prefer"
+        mode if mode == "require" or mode == "required" or mode.startsWith("verify") => "require"
+        other => fail lost("the TLS mode `{other}`: write `disable`, `prefer` or `require`")
+    }
+    Settings {
+        host: if parsed.host.isEmpty() { "localhost" } else { parsed.host }
+        port: parsed.port.unwrapOr(port)
+        user: parsed.user
+        password: parsed.password.unwrapOr("")
+        database: parsed.path.removePrefix("/")
+        tls
+        trust: parsed.param("sslrootcert").orElse(parsed.param("ssl-ca"))
+        options: parsed
+    }
+}
+
+/// The database's name and host in a URL.
+fn placeOf(url: String): (String, String?) {
+    match __url.parse(url) {
+        ok(parsed) => (parsed.path.removePrefix("/"), some(parsed.host))
+        err(_) => ("", none)
+    }
+}
+
+/// A plain connection to the server of the settings.
+fn reached(settings: Settings): __net.Stream ! SqlError {
+    match __net.connect(settings.host, settings.port, timeout: __time.seconds(10)) {
+        ok(stream) => stream
+        err(error) => fail lost("{settings.host}:{settings.port}: {error}")
+    }
+}
+
+/// Whether to ask for TLS: unless the URL says `disable`, and for a server
+/// on this machine, which no network reaches, only when it says `require`.
+fn tlsWanted(settings: Settings): Bool {
+    let local =
+        settings.host == "localhost" or
+            __net.ip(settings.host).map((ip) { ip.isLoopback() }).unwrapOr(false)
+    settings.tls == "require" or (settings.tls == "prefer" and not local)
+}
+
+/// The connection over TLS, always verified, against `sslrootcert` and the
+/// system's authorities, once the server agreed to it.
+fn upgraded(plain: __net.Stream, settings: Settings): __net.Stream ! SqlError {
+    match plain.startTls(settings.host, trust: settings.trust, timeout: __time.seconds(10)) {
+        ok(stream) => stream
+        err(__net.NetError.Tls(why)) => {
+            let reason = match why.splitOnce("; ") {
+                some((first, _)) => first
+                none => why
+            }
+            fail lost(
+                "TLS: {reason}: give the authority that signed the server's certificate as `sslrootcert=path` in the URL, or `sslmode=disable` for a server that no network reaches",
+            )
+        }
+        err(error) => fail lost("{error}")
+    }
+}
+
+fn unoffered(): SqlError {
+    lost("the server does not offer TLS, which the URL asks for with `sslmode=require`")
+}
+
+// ---------------------------------------------------------------------------
+// PostgreSQL
+// ---------------------------------------------------------------------------
+
+/// PostgreSQL, over its protocol: `postgres://user:secret@host/name`, with
+/// `sslmode` (`disable`, `prefer`, the default, or `require`) and
+/// `sslrootcert`. Its statements are prepared once per connection and kept.
+fn postgres(): Driver {
+    Driver {
+        system: "postgresql"
+        placeholder: (position) { "${position}" }
+        identifier: (name) { "\"{name.replace("\"", "\"\"")}\"" }
+        connect: (url): Connection ! SqlError { connectPostgres(url)? }
+        place: (url) { placeOf(url) }
+    }
+}
+
+/// A connection to PostgreSQL: its wire, its prepared statements by their
+/// text, and the state of its transaction, from the last `ReadyForQuery`.
+type Postgres = {
+    wire: Wire
+    prepared: __sync.Map[String, Prepared]
+    idle: __sync.Mutex[Bool]
+}
+
+/// A statement the server prepared: its name, the types of its parameters
+/// and its columns.
+type Prepared = {
+    name: String
+    parameters: Array[Int]
+    columns: Array[Column]
+}
+
+type Column = {
+    name: String
+    oid: Int
+}
+
+/// At most this many statements are kept per connection; others are
+/// prepared each time.
+const KEPT_STATEMENTS: Int = 512
+
+fn connectPostgres(url: String): Connection ! SqlError {
+    let settings = settingsOf(url, 5432)?
+    let plain = reached(settings)?
+    var stream = plain
+    if tlsWanted(settings) {
+        // SSLRequest, 1234 5679, which the server answers with `S` or `N`.
+        let asking = Wire.of(plain)
+        asking.send(bigEndianBytes(8, 4).concat(bigEndianBytes(80877103, 4)))?
+        if asking.take(1)? == [Byte(UInt8.wrapping('S'.code()))] {
+            stream = upgraded(plain, settings)?
+        } else if settings.tls == "require" {
+            fail unoffered()
+        }
+    }
+    let session = Postgres {
+        wire: Wire.of(stream)
+        prepared: __sync.Map.new[String, Prepared]()
+        idle: __sync.Mutex(true)
+    }
+    match session.start(settings) {
+        ok(_) => {}
+        err(error) => {
+            session.wire.close()
+            fail error
+        }
+    }
+    Connection {
+        run: (statement): Outcome ! SqlError { session.run(statement)? }
+        close: () {
+            _ = session.wire.send(framed('X', []))
+            session.wire.close()
+        }
+    }
+}
+
+/// A message: its kind, its length and its body.
+fn framed(kind: Char, body: Array[Byte]): Array[Byte] {
+    [Byte(UInt8.wrapping(kind.code()))].concat(bigEndianBytes(body.length() + 4, 4)).concat(body)
+}
+
+fn Postgres.next(self): (Char, Array[Byte]) ! SqlError {
+    let head = self.wire.take(5)?
+    let body = self.wire.take(bigEndian(head, 1, 4) - 4)?
+    (Char.from(Int(head[0])).unwrapOr(' '), body)
+}
+
+/// The startup and the authentication, by password, MD5 or SCRAM-SHA-256.
+fn Postgres.start(self, settings: Settings): !SqlError {
+    var startup = bigEndianBytes(196608, 4)
+    var named = [
+        ("user", settings.user),
+        ("database", settings.database),
+        ("client_encoding", "UTF8"),
+        ("DateStyle", "ISO"),
+    ]
+    match settings.options.param("application_name") {
+        some(application) => named.push(("application_name", application))
+        none => {}
+    }
+    for (name, value) in named {
+        if not value.isEmpty() {
+            startup.extend(cstring(name))
+            startup.extend(cstring(value))
+        }
+    }
+    startup.push(Byte(0u8))
+    self.wire.send(bigEndianBytes(startup.length() + 4, 4).concat(startup))?
+    var scram: Scram? = none
+    for {
+        let (kind, body) = self.next()?
+        match kind {
+            'R' => match bigEndian(body, 0, 4) {
+                0 => {}
+                3 => self.wire.send(framed('p', cstring(settings.password)))?
+                5 => {
+                    let inner = __hash.md5("{settings.password}{settings.user}".bytes()).hex()
+                    let salted = inner.bytes().concat(body.slice(4, 8).unwrapOr([]))
+                    self.wire.send(framed('p', cstring("md5{__hash.md5(salted).hex()}")))?
+                }
+                10 => {
+                    var at = 4
+                    var offered: Array[String] = []
+                    for at < body.length() - 1 {
+                        offered.push(cstringAt(body, var at))
+                    }
+                    if not offered.any((mechanism) { mechanism == "SCRAM-SHA-256" }) {
+                        fail lost(
+                            "the server asks for {offered.join(", ")}: tondo speaks SCRAM-SHA-256",
+                        )
+                    }
+                    let started = Scram.start()
+                    let first = "n,,{started.first}".bytes()
+                    let sent = cstring("SCRAM-SHA-256")
+                        .concat(bigEndianBytes(first.length(), 4))
+                        .concat(first)
+                    self.wire.send(framed('p', sent))?
+                    scram = some(started)
+                }
+                11 => {
+                    let started = match scram {
+                        some(found) => found
+                        none => fail lost(
+                            "the server continued an authentication that did not start",
+                        )
+                    }
+                    let challenge = String
+                        .fromBytes(body.slice(4, body.length()).unwrapOr([]))
+                        .unwrapOr("")
+                    let answered = started.answer(challenge, settings.password)?
+                    self.wire.send(framed('p', answered.final.bytes()))?
+                    scram = some(answered)
+                }
+                12 => {
+                    let proof = String
+                        .fromBytes(body.slice(4, body.length()).unwrapOr([]))
+                        .unwrapOr("")
+                    match scram {
+                        some(answered) if answered.verifies(proof) => {}
+                        _ => fail lost("the server did not prove that it knows the password")
+                    }
+                }
+                other => fail lost(
+                    "the server asks for an authentication tondo does not speak ({other})",
+                )
+            }
+            'E' => fail postgresError(body, connecting: true)
+            'Z' => return
+            _ => {}
+        }
+    }
+}
+
+/// SCRAM-SHA-256 (RFC 7677) as a client: the message it began with, and
+/// once the server answered, its final message and the signature the server
+/// has to show.
+type Scram = {
+    nonce: String
+    first: String
+    final: String
+    expected: String
+}
+
+fn Scram.start(): Scram {
+    let nonce = __encoding.base64Encode(__random.entropy(18))
+    Scram { nonce, first: "n=,r={nonce}", final: "", expected: "" }
+}
+
+fn Scram.answer(self, challenge: String, password: String): Scram ! SqlError {
+    var nonce = ""
+    var salt: Array[Byte] = []
+    var iterations = 0
+    for part in challenge.split(",") {
+        match part.splitOnce("=") {
+            some(("r", value)) => nonce = value
+            some(("s", value)) => salt = __encoding.base64Decode(value).unwrapOr([])
+            some(("i", value)) => iterations = Int.parse(value).unwrapOr(0)
+            _ => {}
+        }
+    }
+    if not nonce.startsWith(self.nonce) or salt.isEmpty() or iterations < 1 {
+        fail lost("the server's SCRAM challenge does not read")
+    }
+    let salted = __crypto.pbkdf2(password.bytes(), salt, iterations, 32)
+    let clientKey = __hash.hmacSha256(salted, "Client Key".bytes()).bytes()
+    let storedKey = __hash.sha256(clientKey).bytes()
+    let withoutProof = "c=biws,r={nonce}"
+    let signed = "{self.first},{challenge},{withoutProof}".bytes()
+    let signature = __hash.hmacSha256(storedKey, signed).bytes()
+    var proof: Array[Byte] = []
+    for (index, byte) in clientKey.iter().enumerate() {
+        proof.push(Byte(UInt8.wrapping(Int(byte) ^ Int(signature[index]))))
+    }
+    let serverKey = __hash.hmacSha256(salted, "Server Key".bytes()).bytes()
+    self with {
+        final: "{withoutProof},p={__encoding.base64Encode(proof)}"
+        expected: "v={__encoding.base64Encode(__hash.hmacSha256(serverKey, signed).bytes())}"
+    }
+}
+
+fn Scram.verifies(self, proof: String): Bool {
+    not self.expected.isEmpty() and __crypto.equalSecrets(proof.bytes(), self.expected.bytes())
+}
+
+fn Postgres.run(self, statement: Statement): Outcome ! SqlError {
+    // Without parameters, a statement that writes may be several, as a
+    // migration is: the simple protocol runs them.
+    if statement.parameters.isEmpty() and statement.operation != Operation.Query {
+        return self.simple(statement.text)?
+    }
+    let kept = self.prepared.get(statement.text)
+    let prepared = match kept {
+        some(found) => found
+        none => self.prepare(statement.text)?
+    }
+    match self.bound(prepared, statement) {
+        ok(outcome) => outcome
+        // A table changed under a kept statement: prepared again, once,
+        // outside a transaction, which the failure ended.
+        err(error) if kept.isSome() and error.code == some("0A000") and self.idle.get() => {
+            _ = self.prepared.remove(statement.text)
+            self.wire.send(
+                framed('C', [Byte(UInt8.wrapping('S'.code()))].concat(cstring(prepared.name))).concat(
+                    framed('S', []),
+                ),
+            )?
+            self.settle()?
+            self.bound(self.prepare(statement.text)?, statement)?
+        }
+        err(error) => fail error
+    }
+}
+
+/// Reads up to `ReadyForQuery`, keeping the state of the transaction it
+/// gives, and fails with the first error before it.
+fn Postgres.settle(self): !SqlError {
+    var failure: SqlError? = none
+    for {
+        let (kind, body) = self.next()?
+        match kind {
+            'E' => if failure.isNone() {
+                failure = some(postgresError(body, connecting: false))
+            }
+            'Z' => {
+                self.idle.set(body.get(0) == some(Byte(UInt8.wrapping('I'.code()))))
+                match failure {
+                    some(error) => fail error
+                    none => return
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn Postgres.simple(self, text: String): Outcome ! SqlError {
+    self.wire.send(framed('Q', cstring(text)))?
+    var affected = 0
+    var failure: SqlError? = none
+    for {
+        let (kind, body) = self.next()?
+        match kind {
+            'C' => affected += affectedBy(cstringOf(body))
+            'E' => if failure.isNone() {
+                failure = some(postgresError(body, connecting: false))
+            }
+            'Z' => {
+                self.idle.set(body.get(0) == some(Byte(UInt8.wrapping('I'.code()))))
+                match failure {
+                    some(error) => fail error
+                    none => return Outcome { columns: [], rows: [], affected, lastId: none }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The rows a command's tag counts: `INSERT 0 3`, `UPDATE 2`, `SELECT 5`.
+fn affectedBy(tag: String): Int {
+    match tag.split(" ").last() {
+        some(last) => Int.parse(last).unwrapOr(0)
+        none => 0
+    }
+}
+
+/// Prepares a statement and asks for its parameters' types and columns.
+fn Postgres.prepare(self, text: String): Prepared ! SqlError {
+    let count = self.prepared.length()
+    let name = if count < KEPT_STATEMENTS { "tondo_{count + 1}" } else { "" }
+    var out = framed('P', cstring(name).concat(cstring(text)).concat(bigEndianBytes(0, 2)))
+    out.extend(framed('D', [Byte(UInt8.wrapping('S'.code()))].concat(cstring(name))))
+    out.extend(framed('S', []))
+    self.wire.send(out)?
+    var parameters: Array[Int] = []
+    var columns: Array[Column] = []
+    var failure: SqlError? = none
+    for {
+        let (kind, body) = self.next()?
+        match kind {
+            't' => {
+                for index in 0..bigEndian(body, 0, 2) {
+                    parameters.push(bigEndian(body, 2 + index * 4, 4))
+                }
+            }
+            'T' => {
+                var at = 2
+                for _ in 0..bigEndian(body, 0, 2) {
+                    let column = cstringAt(body, var at)
+                    columns.push(Column { name: column, oid: bigEndian(body, at + 6, 4) })
+                    at += 18
+                }
+            }
+            'E' => if failure.isNone() {
+                failure = some(postgresError(body, connecting: false))
+            }
+            'Z' => {
+                self.idle.set(body.get(0) == some(Byte(UInt8.wrapping('I'.code()))))
+                match failure {
+                    some(error) => fail error
+                    none => {}
+                }
+                let prepared = Prepared { name, parameters, columns }
+                if not name.isEmpty() {
+                    _ = self.prepared.insert(text, prepared)
+                }
+                return prepared
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Runs a prepared statement with its parameters, as text but for bytes,
+/// and reads its rows, in binary for the types it knows.
+fn Postgres.bound(self, prepared: Prepared, statement: Statement): Outcome ! SqlError {
+    let values = statement.parameters
+    var body = cstring("").concat(cstring(prepared.name))
+    body.extend(bigEndianBytes(values.length(), 2))
+    for value in values {
+        let format = match value {
+            Value.Bytes(_) => 1
+            _ => 0
+        }
+        body.extend(bigEndianBytes(format, 2))
+    }
+    body.extend(bigEndianBytes(values.length(), 2))
+    for value in values {
+        match postgresParameter(value) {
+            some(bytes) => {
+                body.extend(bigEndianBytes(bytes.length(), 4))
+                body.extend(bytes)
+            }
+            none => body.extend(bigEndianBytes(-1, 4))
+        }
+    }
+    body.extend(bigEndianBytes(prepared.columns.length(), 2))
+    for column in prepared.columns {
+        body.extend(bigEndianBytes(if binaryOid(column.oid) { 1 } else { 0 }, 2))
+    }
+    var out = framed('B', body)
+    out.extend(framed('E', cstring("").concat(bigEndianBytes(0, 4))))
+    out.extend(framed('S', []))
+    self.wire.send(out)?
+    var rows: Array[Array[Value]] = []
+    var affected = 0
+    var failure: SqlError? = none
+    for {
+        let (kind, row) = self.next()?
+        match kind {
+            'D' => {
+                var cells: Array[Value] = []
+                var at = 2
+                for column in prepared.columns {
+                    let length = bigEndian(row, at, 4)
+                    at += 4
+                    if length < 0 {
+                        cells.push(Value.Null)
+                    } else {
+                        cells.push(
+                            postgresValue(column.oid, row.slice(at, at + length).unwrapOr([])),
+                        )
+                        at += length
+                    }
+                }
+                rows.push(cells)
+            }
+            'C' => affected = affectedBy(cstringOf(row))
+            'E' => if failure.isNone() {
+                failure = some(postgresError(row, connecting: false))
+            }
+            'Z' => {
+                self.idle.set(row.get(0) == some(Byte(UInt8.wrapping('I'.code()))))
+                match failure {
+                    some(error) => fail error
+                    none => {}
+                }
+                let query = statement.operation == Operation.Query
+                return Outcome {
+                    columns: prepared.columns.map((column) { column.name })
+                    rows
+                    affected: if query { 0 } else { affected }
+                    lastId: none
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// A parameter as PostgreSQL reads it: text the server converts to the
+/// parameter's type, or bytes; `none` is null.
+fn postgresParameter(value: Value): Array[Byte]? {
+    match value {
+        Value.Null => none
+        Value.Bytes(bytes) => some(bytes)
+        other => some(postgresText(other).bytes())
+    }
+}
+
+fn postgresText(value: Value): String {
+    match value {
+        Value.Null => "NULL"
+        Value.Bool(flag) => if flag { "true" } else { "false" }
+        Value.Float(number) => {
+            if number.isNaN() {
+                "NaN"
+            } else if number.isInfinite() {
+                if number > 0.0 { "Infinity" } else { "-Infinity" }
+            } else {
+                "{number}"
+            }
+        }
+        Value.Bytes(bytes) => "\\x{__encoding.hexEncode(bytes)}"
+        Value.List(values) => {
+            let elements = values.map(
+                (element) {
+                    match element {
+                        Value.Null => "NULL"
+                        Value.List(_) => postgresText(element)
+                        _ => {
+                            let text = postgresText(element)
+                                .replace("\\", "\\\\")
+                                .replace("\"", "\\\"")
+                            "\"{text}\""
+                        }
+                    }
+                },
+            )
+            "{{{elements.join(",")}}}"
+        }
+        other => "{other}"
+    }
+}
+
+/// The types whose values come in binary: what `postgresValue` reads.
+fn binaryOid(oid: Int): Bool {
+    match oid {
+        16 => true
+        17 => true
+        19 => true
+        20 => true
+        21 => true
+        23 => true
+        25 => true
+        26 => true
+        114 => true
+        700 => true
+        701 => true
+        1042 => true
+        1043 => true
+        1114 => true
+        1184 => true
+        2950 => true
+        3802 => true
+        _ => elementOid(oid).isSome()
+    }
+}
+
+/// The type of the elements of an array type whose values come in binary.
+fn elementOid(oid: Int): Int? {
+    match oid {
+        1000 => some(16)
+        1001 => some(17)
+        1003 => some(19)
+        1005 => some(21)
+        1007 => some(23)
+        1009 => some(25)
+        1014 => some(1042)
+        1015 => some(1043)
+        1016 => some(20)
+        1021 => some(700)
+        1022 => some(701)
+        1028 => some(26)
+        1115 => some(1114)
+        1185 => some(1184)
+        199 => some(114)
+        2951 => some(2950)
+        3807 => some(3802)
+        _ => none
+    }
+}
+
+/// The microseconds from the Unix epoch to PostgreSQL's, 2000-01-01.
+const POSTGRES_EPOCH: Int = 946684800000000
+
+/// A value of a column of type `oid`: in binary for the types
+/// `binaryOid` names, as text for the others, and `NUMERIC` as digits.
+fn postgresValue(oid: Int, bytes: Array[Byte]): Value {
+    match oid {
+        16 => Value.Bool(bytes.get(0) == some(Byte(1u8)))
+        17 => Value.Bytes(bytes)
+        20 => Value.Int(bigEndian(bytes, 0, 8))
+        21 => Value.Int(bigEndian(bytes, 0, 2))
+        23 => Value.Int(bigEndian(bytes, 0, 4))
+        26 => Value.Int(bigEndian(bytes, 0, 4) & 0xffffffff)
+        700 => {
+            let narrow: Float = Float32.fromBits(UInt32.wrapping(bigEndian(bytes, 0, 4)))
+            Value.Float(narrow)
+        }
+        701 => Value.Float(Float.fromBits(UInt.wrapping(bigEndian(bytes, 0, 8))))
+        1114 => timestampOf(bigEndian(bytes, 0, 8))
+        1184 => timestampOf(bigEndian(bytes, 0, 8))
+        1700 => Value.Number(String.fromBytes(bytes).unwrapOr(""))
+        2950 => {
+            let hex = __encoding.hexEncode(bytes)
+            let parts = [
+                hex.slice(0, 8),
+                hex.slice(8, 12),
+                hex.slice(12, 16),
+                hex.slice(16, 20),
+                hex.slice(20, 32),
+            ]
+            Value.Text(parts.map((part) { part.unwrapOr("") }).join("-"))
+        }
+        // jsonb in binary: a version, 1, and its text.
+        3802 => Value.Text(
+            String.fromBytes(bytes.slice(1, bytes.length()).unwrapOr([])).unwrapOr(""),
+        )
+        _ => match elementOid(oid) {
+            some(element) => {
+                let dimensions = bigEndian(bytes, 0, 4)
+                var sizes: Array[Int] = []
+                for index in 0..dimensions {
+                    sizes.push(bigEndian(bytes, 12 + index * 8, 4))
+                }
+                var at = 12 + dimensions * 8
+                if dimensions == 0 {
+                    Value.List([])
+                } else {
+                    arrayOf(bytes, var at, sizes, 0, element)
+                }
+            }
+            none => Value.Text(String.fromBytes(bytes).unwrapOr(""))
+        }
+    }
+}
+
+/// The values of a dimension of an array, from `at`.
+fn arrayOf(bytes: Array[Byte], at: var Int, sizes: Array[Int], dimension: Int, oid: Int): Value {
+    var found: Array[Value] = []
+    for _ in 0..sizes[dimension] {
+        if dimension + 1 < sizes.length() {
+            found.push(arrayOf(bytes, var at, sizes, dimension + 1, oid))
+        } else {
+            let length = bigEndian(bytes, at, 4)
+            at += 4
+            if length < 0 {
+                found.push(Value.Null)
+            } else {
+                found.push(postgresValue(oid, bytes.slice(at, at + length).unwrapOr([])))
+                at += length
+            }
+        }
+    }
+    Value.List(found)
+}
+
+/// A timestamp: microseconds from 2000-01-01, or infinite.
+fn timestampOf(micros: Int): Value {
+    if micros == Int.max {
+        return Value.Text("infinity")
+    }
+    if micros == Int.min {
+        return Value.Text("-infinity")
+    }
+    Value.DateTime(__time.utc(__time.microseconds(micros + POSTGRES_EPOCH)))
+}
+
+/// An `ErrorResponse` as a `SqlError`, by its SQLSTATE.
+fn postgresError(body: Array[Byte], connecting: Bool): SqlError {
+    var fields: Map[String, String] = [:]
+    var at = 0
+    for at < body.length() and body[at] != Byte(0u8) {
+        let field = Char.from(Int(body[at])).unwrapOr(' ')
+        at += 1
+        _ = fields.insert("{field}", cstringAt(body, var at))
+    }
+    let state = fields.get("C").unwrapOr("")
+    let kind = match state {
+        "23505" => ErrorKind.Unique
+        "23503" => ErrorKind.ForeignKey
+        "23502" => ErrorKind.NotNull
+        "23514" => ErrorKind.Check
+        "40001" => ErrorKind.Conflict
+        "40P01" => ErrorKind.Conflict
+        "57014" => ErrorKind.Timeout
+        "42601" => ErrorKind.Syntax
+        "42P01" => ErrorKind.Syntax
+        "42703" => ErrorKind.Syntax
+        "42883" => ErrorKind.Syntax
+        _ if connecting or state.startsWith("08") or state.startsWith("28") or state == "3D000" =>
+            ErrorKind.Connection
+        _ => ErrorKind.Other
+    }
+    let said = fields.get("M").unwrapOr("the server failed")
+    SqlError {
+        kind
+        message: match fields.get("D") {
+            some(detail) => "{said}: {detail}"
+            none => said
+        }
+        code: if state.isEmpty() { none } else { some(state) }
+        constraint: fields.get("n")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MySQL
+// ---------------------------------------------------------------------------
+
+/// MySQL, and MariaDB, over its protocol: `mysql://user:secret@host/name`,
+/// with `ssl-mode` (`disabled`, `preferred`, the default, or `required`)
+/// and `ssl-ca`. Its statements are prepared once per connection and kept,
+/// and run in the binary protocol.
+fn mysql(): Driver {
+    Driver {
+        system: "mysql"
+        placeholder: (_) { "?" }
+        identifier: (name) { "`{name.replace("`", "``")}`" }
+        connect: (url): Connection ! SqlError { connectMySql(url)? }
+        place: (url) { placeOf(url) }
+    }
+}
+
+/// A connection to MySQL: its wire, the sequence number of the next packet
+/// it sends, its prepared statements by their text, and whether results end
+/// with an OK packet rather than an EOF one.
+type MySql = {
+    wire: Wire
+    sequence: __sync.Mutex[Int]
+    kept: __sync.Map[String, Kept]
+    okEnds: Bool
+}
+
+/// A statement the server prepared: its id and how many parameters it has.
+type Kept = {
+    id: Int
+    parameters: Int
+}
+
+/// A column of a result: its name, its type, its flags and its character
+/// set, 63 for bytes.
+type Field = {
+    name: String
+    kind: Int
+    flags: Int
+    charset: Int
+}
+
+/// The capabilities a connection asks for: long passwords and flags, the
+/// protocol 4.1, transactions, statements by several, results of several,
+/// plugins of authentication with long answers, and results that end with
+/// an OK packet.
+const MYSQL_CAPABILITIES: Int = 0x1 |
+    0x4 |
+    0x200 |
+    0x2000 |
+    0x8000 |
+    0x10000 |
+    0x20000 |
+    0x40000 |
+    0x80000 |
+    0x200000 |
+    0x1000000
+
+const MYSQL_CONNECT_WITH_DB: Int = 0x8
+
+const MYSQL_SSL: Int = 0x800
+
+const MYSQL_DEPRECATE_EOF: Int = 0x1000000
+
+const MYSQL_MORE_RESULTS: Int = 0x8
+
+/// utf8mb4_general_ci, which MySQL and MariaDB both know.
+const MYSQL_CHARSET: Int = 45
+
+fn connectMySql(url: String): Connection ! SqlError {
+    let settings = settingsOf(url, 3306)?
+    let plain = reached(settings)?
+    let first = MySql {
+        wire: Wire.of(plain)
+        sequence: __sync.Mutex(0)
+        kept: __sync.Map.new[String, Kept]()
+        okEnds: false
+    }
+    let greeting = first.packet()?
+    if greeting.get(0) == some(Byte(255u8)) {
+        fail mysqlError(greeting, connecting: true)
+    }
+    // The greeting: its version, the connection's id, the first part of the
+    // nonce, the server's capabilities, and the rest of the nonce and the
+    // plugin it expects.
+    var at = 1
+    _ = cstringAt(greeting, var at)
+    at += 4
+    var nonce = greeting.slice(at, at + 8).unwrapOr([])
+    at += 9
+    var capabilities = unsigned(greeting, at, 2)
+    at += 2
+    var plugin = "mysql_native_password"
+    if at < greeting.length() {
+        capabilities = capabilities | (unsigned(greeting, at + 3, 2) << 16)
+        let length = Int(greeting[at + 5])
+        at += 16
+        let rest = (length - 8).max(13)
+        nonce.extend(greeting.slice(at, at + rest - 1).unwrapOr([]))
+        at += rest
+        plugin = cstringAt(greeting, var at)
+    }
+    var asked = MYSQL_CAPABILITIES & capabilities
+    if not settings.database.isEmpty() {
+        asked = asked | MYSQL_CONNECT_WITH_DB
+    }
+    var session = first with { okEnds: asked & MYSQL_DEPRECATE_EOF != 0 }
+    var secure = false
+    if tlsWanted(settings) {
+        if capabilities & MYSQL_SSL != 0 {
+            asked = asked | MYSQL_SSL
+            session.send(mysqlHeader(asked))?
+            let sequence = session.sequence.get()
+            session = session with {
+                wire: Wire.of(upgraded(plain, settings)?)
+                sequence: __sync.Mutex(sequence)
+            }
+            secure = true
+        } else if settings.tls == "require" {
+            fail unoffered()
+        }
+    }
+    var response = mysqlHeader(asked)
+    response.extend(cstring(settings.user))
+    let answer = mysqlAnswer(plugin, settings.password, nonce)
+    response.extend(lengthEncoded(answer.length()))
+    response.extend(answer)
+    if not settings.database.isEmpty() {
+        response.extend(cstring(settings.database))
+    }
+    response.extend(cstring(plugin))
+    session.send(response)?
+    match session.authenticate(settings.password, plugin, nonce, secure) {
+        ok(_) => {}
+        err(error) => {
+            session.wire.close()
+            fail error
+        }
+    }
+    Connection {
+        run: (statement): Outcome ! SqlError { session.run(statement)? }
+        close: () {
+            // COM_QUIT.
+            _ = session.command(1, [])
+            session.wire.close()
+        }
+    }
+}
+
+/// What starts the answer to the greeting, and is all of the request for
+/// TLS: the capabilities, the largest packet, the character set and 23
+/// zeros.
+fn mysqlHeader(capabilities: Int): Array[Byte] {
+    var out = littleEndianBytes(capabilities, 4)
+    out.extend(littleEndianBytes(16777215, 4))
+    out.push(Byte(UInt8.wrapping(MYSQL_CHARSET)))
+    out.extend([Byte(0u8)].repeat(23))
+    out
+}
+
+/// The password as a plugin proves it: scrambled with the nonce.
+fn mysqlAnswer(plugin: String, password: String, nonce: Array[Byte]): Array[Byte] {
+    if password.isEmpty() {
+        return []
+    }
+    match plugin {
+        "caching_sha2_password" => {
+            // SHA256(password) XOR SHA256(SHA256(SHA256(password)), nonce).
+            let once = __hash.sha256(password.bytes()).bytes()
+            let twice = __hash.sha256(once).bytes()
+            xored(once, __hash.sha256(twice.concat(nonce)).bytes())
+        }
+        "mysql_clear_password" => cstring(password)
+        _ => {
+            // SHA1(password) XOR SHA1(nonce, SHA1(SHA1(password))).
+            let once = __hash.sha1(password.bytes()).bytes()
+            let twice = __hash.sha1(once).bytes()
+            xored(once, __hash.sha1(nonce.concat(twice)).bytes())
+        }
+    }
+}
+
+fn xored(bytes: Array[Byte], mask: Array[Byte]): Array[Byte] {
+    var out: Array[Byte] = []
+    for (index, byte) in bytes.iter().enumerate() {
+        out.push(Byte(UInt8.wrapping(Int(byte) ^ Int(mask[index % mask.length()]))))
+    }
+    out
+}
+
+/// Ends the authentication: an OK; a switch to another plugin; or, for
+/// `caching_sha2_password` the first time, the password itself, over TLS,
+/// or sealed with the server's RSA key.
+fn MySql.authenticate(self, password: String, plugin: String, nonce: Array[Byte], secure: Bool): !SqlError {
+    var current = plugin
+    var scramble = nonce
+    for {
+        let packet = self.packet()?
+        match Int(packet.get(0).unwrapOr(Byte(255u8))) {
+            0 => return
+            255 => fail mysqlError(packet, connecting: true)
+            254 => {
+                var at = 1
+                current = cstringAt(packet, var at)
+                scramble = packet.slice(at, packet.length() - 1).unwrapOr([])
+                self.send(mysqlAnswer(current, password, scramble))?
+            }
+            1 if packet.get(1) == some(Byte(3u8)) => {}
+            1 if packet.get(1) == some(Byte(4u8)) => {
+                if secure {
+                    self.send(cstring(password))?
+                } else {
+                    // The server's public key, then the password sealed.
+                    self.send([Byte(2u8)])?
+                    let key = self.packet()?
+                    let pem = String.fromBytes(key.slice(1, key.length()).unwrapOr([])).unwrapOr("")
+                    self.send(rsaSealed(pem, xored(cstring(password), scramble))?)?
+                }
+            }
+            _ => fail lost(
+                "the server answered the authentication with a packet tondo does not read",
+            )
+        }
+    }
+}
+
+/// The next packet's payload, joined across packets of 16 MiB.
+fn MySql.packet(self): Array[Byte] ! SqlError {
+    var payload: Array[Byte] = []
+    for {
+        let head = self.wire.take(4)?
+        let length = unsigned(head, 0, 3)
+        self.sequence.set((Int(head[3]) + 1) % 256)
+        payload.extend(self.wire.take(length)?)
+        if length < 0xffffff {
+            return payload
+        }
+    }
+}
+
+/// Sends a payload as packets of at most 16 MiB, numbered from the
+/// sequence's next.
+fn MySql.send(self, payload: Array[Byte]): !SqlError {
+    var at = 0
+    var out: Array[Byte] = []
+    for {
+        let length = (payload.length() - at).min(0xffffff)
+        let sequence = self.sequence.update(
+            (next) {
+                let current = next
+                next = (next + 1) % 256
+                current
+            },
+        )
+        out.extend(littleEndianBytes(length, 3))
+        out.push(Byte(UInt8.wrapping(sequence)))
+        out.extend(payload.slice(at, at + length).unwrapOr([]))
+        at += length
+        if length < 0xffffff {
+            break
+        }
+    }
+    self.wire.send(out)
+}
+
+/// A command, which starts a new sequence.
+fn MySql.command(self, code: Int, body: Array[Byte]): !SqlError {
+    self.sequence.set(0)
+    self.send([Byte(UInt8.wrapping(code))].concat(body))
+}
+
+fn MySql.run(self, statement: Statement): Outcome ! SqlError {
+    // Without parameters, a statement that writes may be several, as a
+    // migration is: COM_QUERY runs them.
+    if statement.parameters.isEmpty() and statement.operation != Operation.Query {
+        self.command(3, statement.text.bytes())?
+        var outcome = Outcome { columns: [], rows: [], affected: 0, lastId: none }
+        for {
+            let (more, done) = self.result(none)?
+            outcome = outcome with {
+                affected: outcome.affected + done.affected
+                lastId: done.lastId.orElse(outcome.lastId)
+            }
+            if not more {
+                return outcome
+            }
+        }
+    }
+    let kept = match self.kept.get(statement.text) {
+        some(found) => found
+        none => self.prepare(statement.text)?
+    }
+    if kept.parameters != statement.parameters.length() {
+        fail SqlError.of(
+            ErrorKind.Other,
+            "the statement has {kept.parameters} parameters and the query gives {statement.parameters.length()}: a `?` written in its text is not one of its values",
+        )
+    }
+    let executed = self.execute(kept, statement)
+    if self.kept.get(statement.text).isNone() {
+        // COM_STMT_CLOSE, for one that is not kept; it has no answer.
+        _ = self.command(25, littleEndianBytes(kept.id, 4))
+    }
+    executed?
+}
+
+/// Prepares a statement, which the server answers with its id, its
+/// parameters and its columns.
+fn MySql.prepare(self, text: String): Kept ! SqlError {
+    self.command(22, text.bytes())?
+    let answer = self.packet()?
+    if answer.get(0) == some(Byte(255u8)) {
+        fail mysqlError(answer, connecting: false)
+    }
+    let kept = Kept { id: unsigned(answer, 1, 4), parameters: unsigned(answer, 7, 2) }
+    let columns = unsigned(answer, 5, 2)
+    for count in [kept.parameters, columns] {
+        if count > 0 {
+            for _ in 0..count {
+                _ = self.packet()?
+            }
+            if not self.okEnds {
+                _ = self.packet()?
+            }
+        }
+    }
+    if self.kept.length() < KEPT_STATEMENTS {
+        _ = self.kept.insert(text, kept)
+    }
+    kept
+}
+
+/// Runs a prepared statement with its parameters in binary.
+fn MySql.execute(self, kept: Kept, statement: Statement): Outcome ! SqlError {
+    var body = littleEndianBytes(kept.id, 4)
+    body.push(Byte(0u8))
+    body.extend(littleEndianBytes(1, 4))
+    let values = statement.parameters
+    if not values.isEmpty() {
+        var nulls = [Byte(0u8)].repeat((values.length() + 7) / 8)
+        var types: Array[Byte] = []
+        var data: Array[Byte] = []
+        for (index, value) in values.iter().enumerate() {
+            let (code, bytes) = mysqlParameter(value)?
+            types.push(Byte(UInt8.wrapping(code)))
+            types.push(Byte(0u8))
+            match bytes {
+                some(found) => data.extend(found)
+                none => nulls[index / 8] = Byte(
+                    UInt8.wrapping(Int(nulls[index / 8]) | (1 << (index % 8))),
+                )
+            }
+        }
+        body.extend(nulls)
+        body.push(Byte(1u8))
+        body.extend(types)
+        body.extend(data)
+    }
+    self.command(23, body)?
+    let (first, outcome) = self.result(some(statement.operation))?
+    var more = first
+    // The results after the first, as a procedure gives, are read and left.
+    for more {
+        let (after, _) = self.result(none)?
+        more = after
+    }
+    outcome
+}
+
+/// Reads a result: an OK, an error, or columns and rows, in binary when it
+/// answers a prepared statement, `binary` being what it does then. Gives
+/// whether more results follow.
+fn MySql.result(self, binary: Operation?): (Bool, Outcome) ! SqlError {
+    let first = self.packet()?
+    match Int(first.get(0).unwrapOr(Byte(255u8))) {
+        0 => {
+            var at = 1
+            let affected = lengthEncodedAt(first, var at)
+            let lastId = lengthEncodedAt(first, var at)
+            let status = unsigned(first, at, 2)
+            let reads = binary == some(Operation.Query)
+            return (
+                status & MYSQL_MORE_RESULTS != 0,
+                Outcome {
+                    columns: []
+                    rows: []
+                    affected: if reads { 0 } else { affected }
+                    lastId: if reads or lastId == 0 { none } else { some(lastId) }
+                },
+            )
+        }
+        255 => fail mysqlError(first, connecting: false)
+        _ => {}
+    }
+    var at = 0
+    let count = lengthEncodedAt(first, var at)
+    var fields: Array[Field] = []
+    for _ in 0..count {
+        fields.push(fieldOf(self.packet()?))
+    }
+    if not self.okEnds {
+        _ = self.packet()?
+    }
+    var rows: Array[Array[Value]] = []
+    for {
+        let packet = self.packet()?
+        if packet.get(0) == some(Byte(254u8)) and packet.length() < 0xffffff {
+            // The end: an OK, or an EOF with the warnings before the status.
+            var end = 1
+            if self.okEnds {
+                _ = lengthEncodedAt(packet, var end)
+                _ = lengthEncodedAt(packet, var end)
+            } else {
+                end += 2
+            }
+            let status = unsigned(packet, end, 2)
+            return (
+                status & MYSQL_MORE_RESULTS != 0,
+                Outcome {
+                    columns: fields.map((field) { field.name })
+                    rows
+                    affected: 0
+                    lastId: none
+                },
+            )
+        }
+        if packet.get(0) == some(Byte(255u8)) {
+            fail mysqlError(packet, connecting: false)
+        }
+        if binary.isSome() {
+            rows.push(binaryRow(packet, fields))
+        }
+    }
+}
+
+/// A column definition: its name and, after the lengths of its fixed
+/// fields, its character set, length, type and flags.
+fn fieldOf(packet: Array[Byte]): Field {
+    var at = 0
+    for _ in 0..4 {
+        let length = lengthEncodedAt(packet, var at)
+        at += length
+    }
+    let nameLength = lengthEncodedAt(packet, var at)
+    let name = String.fromBytes(packet.slice(at, at + nameLength).unwrapOr([])).unwrapOr("")
+    at += nameLength
+    let original = lengthEncodedAt(packet, var at)
+    at += original
+    _ = lengthEncodedAt(packet, var at)
+    Field {
+        name
+        charset: unsigned(packet, at, 2)
+        kind: Int(packet.get(at + 6).unwrapOr(Byte(0u8)))
+        flags: unsigned(packet, at + 7, 2)
+    }
+}
+
+/// A row of the binary protocol: a header, a bitmap of nulls from its third
+/// bit, and the values that are not null.
+fn binaryRow(packet: Array[Byte], fields: Array[Field]): Array[Value] {
+    var at = 1 + (fields.length() + 9) / 8
+    var row: Array[Value] = []
+    for (index, field) in fields.iter().enumerate() {
+        let bit = index + 2
+        if Int(packet[1 + bit / 8]) & (1 << (bit % 8)) != 0 {
+            row.push(Value.Null)
+        } else {
+            row.push(mysqlValue(field, packet, var at))
+        }
+    }
+    row
+}
+
+/// A value of the binary protocol, by its column's type.
+fn mysqlValue(field: Field, packet: Array[Byte], at: var Int): Value {
+    let unsignedColumn = field.flags & 0x20 != 0
+    match field.kind {
+        1 => Value.Int(integerAt(packet, var at, 1, unsignedColumn))
+        2 => Value.Int(integerAt(packet, var at, 2, unsignedColumn))
+        13 => Value.Int(integerAt(packet, var at, 2, unsignedColumn))
+        3 => Value.Int(integerAt(packet, var at, 4, unsignedColumn))
+        9 => Value.Int(integerAt(packet, var at, 4, unsignedColumn))
+        8 => {
+            let value = unsigned(packet, at, 8)
+            at += 8
+            if unsignedColumn and value < 0 {
+                Value.Number("{UInt.wrapping(value)}")
+            } else {
+                Value.Int(value)
+            }
+        }
+        4 => {
+            let narrow: Float = Float32.fromBits(UInt32.wrapping(unsigned(packet, at, 4)))
+            at += 4
+            Value.Float(narrow)
+        }
+        5 => {
+            let value = Float.fromBits(UInt.wrapping(unsigned(packet, at, 8)))
+            at += 8
+            Value.Float(value)
+        }
+        kind if kind == 7 or kind == 12 or kind == 10 => {
+            let length = Int(packet[at])
+            let start = at + 1
+            let part = (offset: Int, size: Int): Int { unsigned(packet, start + offset, size) }
+            let (year, month, day) = (part(0, 2), part(2, 1), part(3, 1))
+            let (hour, minute, second) = if length >= 7 {
+                (part(4, 1), part(5, 1), part(6, 1))
+            } else {
+                (0, 0, 0)
+            }
+            let micros = if length >= 11 { part(7, 4) } else { 0 }
+            at += 1 + length
+            if kind == 10 {
+                Value.Text("{year:04}-{month:02}-{day:02}")
+            } else if length == 0 {
+                Value.Text("0000-00-00 00:00:00")
+            } else {
+                Value.DateTime(
+                    __time.DateTime {
+                        year
+                        month
+                        day
+                        hour
+                        minute
+                        second
+                        nanosecond: micros * 1000
+                    },
+                )
+            }
+        }
+        11 => {
+            let length = Int(packet[at])
+            let start = at + 1
+            let part = (offset: Int, size: Int): Int { unsigned(packet, start + offset, size) }
+            let sign = if length > 0 and part(0, 1) == 1 { "-" } else { "" }
+            let hours = if length > 0 { part(1, 4) * 24 + part(5, 1) } else { 0 }
+            let (minutes, seconds) = if length > 0 { (part(6, 1), part(7, 1)) } else { (0, 0) }
+            let fraction = if length > 8 { ".{part(8, 4):06}" } else { "" }
+            at += 1 + length
+            Value.Text("{sign}{hours:02}:{minutes:02}:{seconds:02}{fraction}")
+        }
+        _ => {
+            let length = lengthEncodedAt(packet, var at)
+            let bytes = packet.slice(at, at + length).unwrapOr([])
+            at += length
+            match field.kind {
+                0 => Value.Number(String.fromBytes(bytes).unwrapOr(""))
+                246 => Value.Number(String.fromBytes(bytes).unwrapOr(""))
+                16 => Value.Bytes(bytes)
+                _ if field.charset == 63 and field.kind != 245 => Value.Bytes(bytes)
+                _ => Value.Text(String.fromBytes(bytes).unwrapOr(""))
+            }
+        }
+    }
+}
+
+/// The integer of `size` bytes at `at`, which moves past it.
+fn integerAt(packet: Array[Byte], at: var Int, size: Int, unsignedColumn: Bool): Int {
+    let value = if unsignedColumn {
+        unsigned(packet, at, size)
+    } else {
+        signedLittle(packet, at, size)
+    }
+    at += size
+    value
+}
+
+/// A parameter of the binary protocol: its type and its value, `none` for a
+/// null.
+fn mysqlParameter(value: Value): (Int, Array[Byte]?) ! SqlError {
+    match value {
+        Value.Null => (6, none)
+        Value.Bool(flag) => (1, some([Byte(if flag { 1u8 } else { 0u8 })]))
+        Value.Int(number) => (8, some(littleEndianBytes(number, 8)))
+        Value.Float(number) => (5, some(littleEndianBytes(Int.wrapping(number.bits()), 8)))
+        Value.Number(digits) => (246, some(lengthEncodedBytes(digits.bytes())))
+        Value.Text(text) => (254, some(lengthEncodedBytes(text.bytes())))
+        Value.Bytes(bytes) => (252, some(lengthEncodedBytes(bytes)))
+        Value.DateTime(moment) => {
+            var out = [Byte(11u8)]
+            out.extend(littleEndianBytes(moment.year, 2))
+            for part in [moment.month, moment.day, moment.hour, moment.minute, moment.second] {
+                out.push(Byte(UInt8.wrapping(part)))
+            }
+            out.extend(littleEndianBytes(moment.nanosecond / 1000, 4))
+            (12, some(out))
+        }
+        Value.List(_) => fail SqlError.of(
+            ErrorKind.Other,
+            "MySQL has no arrays: interpolate the array itself, as `IN {{ids}}`, for the list of its values",
+        )
+    }
+}
+
+/// An ERR packet as a `SqlError`, by its number, with the constraint or
+/// column its message names.
+fn mysqlError(packet: Array[Byte], connecting: Bool): SqlError {
+    let number = unsigned(packet, 1, 2)
+    let start = if packet.get(3) == some(Byte(UInt8.wrapping('#'.code()))) { 9 } else { 3 }
+    let said = String.fromBytes(packet.slice(start, packet.length()).unwrapOr([])).unwrapOr("")
+    let quoted = (after: String, close: String): String? {
+        match said.splitOnce(after) {
+            some((_, rest)) => rest.splitOnce(close).map((found) { found.0 })
+            none => none
+        }
+    }
+    let (kind, constraint) = match number {
+        1062 => (ErrorKind.Unique, quoted("for key '", "'"))
+        1451 => (ErrorKind.ForeignKey, quoted("CONSTRAINT `", "`"))
+        1452 => (ErrorKind.ForeignKey, quoted("CONSTRAINT `", "`"))
+        1048 => (ErrorKind.NotNull, quoted("Column '", "'"))
+        1364 => (ErrorKind.NotNull, quoted("Field '", "'"))
+        3819 => (ErrorKind.Check, quoted("constraint '", "'"))
+        1205 => (ErrorKind.Conflict, none)
+        1213 => (ErrorKind.Conflict, none)
+        1064 => (ErrorKind.Syntax, none)
+        1146 => (ErrorKind.Syntax, none)
+        1054 => (ErrorKind.Syntax, none)
+        1317 => (ErrorKind.Timeout, none)
+        3024 => (ErrorKind.Timeout, none)
+        _ if connecting or number == 1045 or number == 1049 or number == 2006 or number == 2013 => (
+            ErrorKind.Connection,
+            none,
+        )
+        _ => (ErrorKind.Other, none)
+    }
+    SqlError { kind, message: said, code: some("{number}"), constraint }
+}
+
+/// An integer of the protocol, in one byte below 251 or after a byte that
+/// says its size; `at` moves past it.
+fn lengthEncodedAt(bytes: Array[Byte], at: var Int): Int {
+    let first = Int(bytes.get(at).unwrapOr(Byte(0u8)))
+    at += 1
+    let size = match first {
+        252 => 2
+        253 => 3
+        254 => 8
+        _ => 0
+    }
+    if size == 0 {
+        return if first == 251 { 0 } else { first }
+    }
+    let value = unsigned(bytes, at, size)
+    at += size
+    value
+}
+
+fn lengthEncoded(value: Int): Array[Byte] {
+    if value < 251 {
+        [Byte(UInt8.wrapping(value))]
+    } else if value < 0x10000 {
+        [Byte(252u8)].concat(littleEndianBytes(value, 2))
+    } else if value < 0x1000000 {
+        [Byte(253u8)].concat(littleEndianBytes(value, 3))
+    } else {
+        [Byte(254u8)].concat(littleEndianBytes(value, 8))
+    }
+}
+
+fn lengthEncodedBytes(bytes: Array[Byte]): Array[Byte] {
+    lengthEncoded(bytes.length()).concat(bytes)
+}
+
+/// `value` in `count` bytes, the least significant first.
+fn littleEndianBytes(value: Int, count: Int): Array[Byte] {
+    littleEndian(value).slice(0, count).unwrapOr([])
+}
+
+/// The integer of `count` bytes at `at`, the least significant first, with
+/// its sign.
+fn signedLittle(bytes: Array[Byte], at: Int, count: Int): Int {
+    let spread = 64 - count * 8
+    (unsigned(bytes, at, count) << spread) >> spread
+}
+
+/// The bytes sealed with RSA-OAEP and SHA-1 for the public key of a PEM, as
+/// MySQL takes a password without TLS.
+fn rsaSealed(pem: String, message: Array[Byte]): Array[Byte] ! SqlError {
+    let body = pem.lines().filter((line) { not line.startsWith("-----") }).join("")
+    let der = __encoding.base64Decode(body).unwrapOr([])
+    // SubjectPublicKeyInfo: a sequence of the algorithm and a bit string
+    // that holds the sequence of the modulus and the exponent.
+    var at = 0
+    let unreadable = lost("the server's public key does not read")
+    if derEntered(der, var at, 0x30) < 0 {
+        fail unreadable
+    }
+    let algorithm = derEntered(der, var at, 0x30)
+    if algorithm < 0 {
+        fail unreadable
+    }
+    at += algorithm
+    if derEntered(der, var at, 0x03) < 0 {
+        fail unreadable
+    }
+    at += 1
+    if derEntered(der, var at, 0x30) < 0 {
+        fail unreadable
+    }
+    let modulusLength = derEntered(der, var at, 0x02)
+    let modulusBytes = der.slice(at, at + modulusLength).unwrapOr([])
+    at += modulusLength
+    let exponentLength = derEntered(der, var at, 0x02)
+    let exponentBytes = der.slice(at, at + exponentLength).unwrapOr([])
+    let (modulus, exponent) = match (bigIntOf(modulusBytes), bigIntOf(exponentBytes)) {
+        (some(n), some(e)) => (n, e)
+        _ => fail unreadable
+    }
+    // The modulus without the zero that keeps it positive.
+    var size = modulusBytes.length()
+    if modulusBytes.get(0) == some(Byte(0u8)) {
+        size -= 1
+    }
+    let hashLength = 20
+    if message.length() > size - 2 * hashLength - 2 {
+        fail lost("the password is too long for the server's key")
+    }
+    // EME-OAEP: the hash of the empty label, zeros, 1 and the message,
+    // masked with a seed that is masked in turn.
+    var block = __hash.sha1([]).bytes()
+    block.extend([Byte(0u8)].repeat(size - message.length() - 2 * hashLength - 2))
+    block.push(Byte(1u8))
+    block.extend(message)
+    let seed = __random.entropy(hashLength)
+    let maskedBlock = xored(block, generatedMask(seed, block.length()))
+    let maskedSeed = xored(seed, generatedMask(maskedBlock, hashLength))
+    let encoded = [Byte(0u8)].concat(maskedSeed).concat(maskedBlock)
+    let number = bigIntOf(encoded).unwrapOr(modulus)
+    var hex = number.modPow(exponent, modulus).toString(radix: 16)
+    hex = "{"0".repeat(size * 2 - hex.length())}{hex}"
+    __encoding.hexDecode(hex).unwrapOr([])
+}
+
+/// The unsigned number of big-endian bytes.
+fn bigIntOf(bytes: Array[Byte]): __math.BigInt? {
+    match __math.BigInt.parse("0{__encoding.hexEncode(bytes)}", radix: 16) {
+        ok(number) => some(number)
+        err(_) => none
+    }
+}
+
+/// MGF1 with SHA-1: the hashes of the seed and a counter, to `length`.
+fn generatedMask(seed: Array[Byte], length: Int): Array[Byte] {
+    var out: Array[Byte] = []
+    var counter = 0
+    for out.length() < length {
+        out.extend(__hash.sha1(seed.concat(bigEndianBytes(counter, 4))).bytes())
+        counter += 1
+    }
+    out.slice(0, length).unwrapOr([])
+}
+
+/// Enters a DER value of `tag` at `at`: moves past its tag and length and
+/// gives the length, or -1 for another tag.
+fn derEntered(der: Array[Byte], at: var Int, tag: Int): Int {
+    if der.get(at) != some(Byte(UInt8.wrapping(tag))) {
+        return -1
+    }
+    let first = Int(der.get(at + 1).unwrapOr(Byte(0u8)))
+    at += 2
+    if first < 128 {
+        return first
+    }
+    let count = first - 128
+    let length = bigEndian(der, at, count) & 0xffffffff
+    at += count
+    length
+}
