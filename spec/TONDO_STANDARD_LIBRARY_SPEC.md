@@ -1659,7 +1659,7 @@ actualizar esta especificación y el tracker antes de implementar.
 |---|---|---|---:|---|
 | Métodos de tipos intrínsecos | Core | — | 0.1 | Option, Result, String, Array, Map, Set, Range e Iterator |
 | `std.io` | Core | — | 0.1 | Protocolos de lectura/escritura, buffers, EOF, partial I/O y errores portables |
-| `std.math` | Core | — | 0.1 | Matemática escalar portable y semántica IEEE nombrada |
+| `std.math` | Core | — | 0.1 | Matemática escalar portable y semántica IEEE nombrada, enteros de cualquier tamaño y decimales exactos |
 | `std.format` | Core | — | 0.1 | Texto sobre `Display`, formatos elegidos en ejecución, y números y plurales de cada idioma |
 | `std.serialization` | Core | — | 0.1 | Protocolo común de encode/decode cuando exista un segundo formato (14.7) |
 | `std.reflect` | Core | — | 0.1 | Metadata de tipos retenida explícitamente, sin inspección dinámica de valores |
@@ -2725,7 +2725,7 @@ fast-math. Una operación fuera de su dominio es un error, nunca un `NaN`
 silencioso:
 
 ~~~tondo pseudocode
-pub enum MathError { Domain }
+pub enum MathError { Domain, NotANumber(String) }
 pub fn sqrt(value: Float): Float ! MathError
 pub fn ln(value: Float): Float ! MathError
 pub fn log10(value: Float): Float ! MathError
@@ -2749,6 +2749,47 @@ pub fn fma(a: Float, b: Float, c: Float): Float     // redondea una vez
 pub fn gcd[T: Integer](a: T, b: T): T
 pub fn lcm[T: Integer](a: T, b: T): T
 ~~~
+
+`BigInt` es un entero de cualquier tamaño, que nunca desborda, y `Decimal` un
+decimal exacto, también de cualquier tamaño, para dinero y medidas que un
+`Float` redondea. Los dos implementan `Number`, `Ordered`, `Display`,
+`Encode`, `Decode` y `Reflect`, están escritos en Tondo y no dependen de la
+plataforma:
+
+~~~tondo pseudocode
+pub type BigInt
+pub fn BigInt.parse(text: String, radix: Int = 10): BigInt ! MathError
+pub fn BigInt.toString(self, radix: Int = 10): String
+pub fn BigInt.toInt(self): Int?
+pub fn BigInt.abs(self): BigInt
+pub fn BigInt.remainder(self, divisor: BigInt): BigInt
+pub fn BigInt.pow(self, exponent: Int): BigInt
+pub fn BigInt.modPow(self, exponent: BigInt, modulus: BigInt): BigInt
+pub fn BigInt.gcd(self, other: BigInt): BigInt
+
+pub type Decimal
+pub enum Rounding { HalfEven, HalfUp, Down, Up, Floor, Ceiling }
+pub fn Decimal.parse(text: String): Decimal ! MathError
+pub fn Decimal.round(self, decimals: Int, mode: Rounding = Rounding.HalfEven): Decimal
+pub fn Decimal.divide(self, by: Decimal, decimals: Int, mode: Rounding = Rounding.HalfEven): Decimal
+pub fn Decimal.scale(self): Int
+pub fn Decimal.toFloat(self): Float
+~~~
+
+- `+`, `-`, `*` y `/` son los de `Number`. `/` de un `BigInt` trunca hacia
+  cero, como el de un `Int`, y `remainder` es el resto con el signo del
+  dividendo. Dividir por cero es un pánico.
+- `+`, `-` y `*` de un `Decimal` son exactos; `/` da 34 cifras
+  significativas, redondeadas la mitad al par, o menos si el cociente acaba
+  antes (`1 / 4` es `0.25`), y `divide` los decimales que se pidan con el
+  redondeo que se elija. Un `Decimal` no guarda ceros que sobran: `1.50` es
+  `1.5`, `==` compara valores, y un formato fija los decimales al
+  escribirlo: `"{price:.2}"`.
+- Donde se espera uno de los dos, un literal es exacto (18.10 del lenguaje):
+  `let n: math.BigInt = 340282366920938463463374607431768211456` y
+  `let price: math.Decimal = 19.99`.
+- Se escriben como números en JSON, YAML, TOML y los demás formatos, con
+  todos sus dígitos, y se leen de un número o de un texto.
 
 ### 14.6 Arquitectura común de serialización
 

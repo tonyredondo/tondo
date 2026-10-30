@@ -985,9 +985,11 @@ impl Formatter<'_> {
 
     fn expr_inner(&mut self, expr: &Expr) -> Doc {
         match &expr.kind {
-            ExprKind::Int { .. } | ExprKind::Float { .. } | ExprKind::Char(_) | ExprKind::Str(_) => {
-                text(self.source(expr.span).to_string())
-            }
+            ExprKind::Int { .. }
+            | ExprKind::Float { .. }
+            | ExprKind::BigInt(_)
+            | ExprKind::Char(_)
+            | ExprKind::Str(_) => text(self.source(expr.span).to_string()),
             ExprKind::Bool(value) => text(value.to_string()),
             ExprKind::Unit => text("()"),
             ExprKind::None => text("none"),

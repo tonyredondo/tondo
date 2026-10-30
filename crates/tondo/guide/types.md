@@ -228,3 +228,9 @@ fn hex[T: Integer](value: T): String {
 ```
 
 There is no generic unary minus: write `0 - x`.
+
+`math.BigInt` is an integer of any size and `math.Decimal` an exact decimal,
+for money: both are `Number`, and a literal where one is expected is exact,
+`let price: math.Decimal = 19.99`, so `price * 3` is `59.97`. `"{price:.2}"`
+fixes its decimals; `price.round(2)` and `price.divide(by, 4)` round half
+to even unless told otherwise.

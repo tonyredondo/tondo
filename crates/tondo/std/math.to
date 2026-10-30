@@ -1,20 +1,25 @@
 // std.math (standard library 14.1): scalar math with IEEE-754 semantics and
-// no fast-math. An operation outside its domain is an error, never a quiet
-// `NaN`.
+// no fast-math, and integers of any size and exact decimals written in
+// Tondo. An operation outside its domain is an error, never a quiet `NaN`.
 
 import std.internal.math as mathNative
+import std.reflect as __reflect
+import std.serialization as __serialization
 
 /// Why an operation has no result.
 pub enum MathError {
     /// The value is outside the operation's domain, such as the square root
     /// of a negative number.
     Domain
+    /// A text that is not a number of the type.
+    NotANumber(String)
 }
 
 impl Display for MathError {
     fn display(self): String {
         match self {
             MathError.Domain => "the value is outside the operation's domain"
+            MathError.NotANumber(text) => "`{text}` is not a number"
         }
     }
 }
@@ -162,4 +167,766 @@ pub fn lcm[T: Integer](a: T, b: T): T {
         return 0
     }
     magnitude(a / gcd(a, b) * b)
+}
+
+// ---------------------------------------------------------------------------
+// Integers of any size
+// ---------------------------------------------------------------------------
+
+/// An integer of any size, which never overflows: `+`, `-`, `*` and `/`
+/// (truncated toward zero) as for `Int`, and literals of any size where
+/// one is expected, `let n: math.BigInt = 340282366920938463463374607431768211456`.
+pub type BigInt = {
+    priv negative: Bool
+    /// Base 2³², the least significant first, without zeros at the top;
+    /// zero has none.
+    priv limbs: Array[UInt]
+}
+
+const LimbBase: UInt = 4294967296
+
+const LimbMask: UInt = 4294967295
+
+const LimbZero: UInt = 0
+
+/// The integer a text writes in `radix`, from 2 to 36, with an optional
+/// `-` or `+`: `BigInt.parse("ff", radix: 16)`.
+pub fn BigInt.parse(text: String, radix: Int = 10): BigInt ! MathError {
+    let digits = text.removePrefix("+")
+    let negative = digits.startsWith("-")
+    let body = digits.removePrefix("-")
+    if body.isEmpty() or radix < 2 or radix > 36 {
+        fail MathError.NotANumber(text)
+    }
+    // Several digits a step, as many as stay under 2³².
+    var (chunk, power) = (1, radix)
+    for power * radix < 4294967296 {
+        power = power * radix
+        chunk += 1
+    }
+    var limbs: Array[UInt] = []
+    var (value, count) = (0, 0)
+    for c in body.chars() {
+        let digit = if c.isDigit() {
+            c.code() - '0'.code()
+        } else if c.toLower() >= 'a' and c.toLower() <= 'z' {
+            c.toLower().code() - 'a'.code() + 10
+        } else {
+            radix
+        }
+        if digit >= radix {
+            fail MathError.NotANumber(text)
+        }
+        value = value * radix + digit
+        count += 1
+        if count == chunk {
+            limbs = multiplyAdd(limbs, UInt.wrapping(power), UInt.wrapping(value))
+            (value, count) = (0, 0)
+        }
+    }
+    if count > 0 {
+        var scale = 1
+        for _ in 0..count {
+            scale = scale * radix
+        }
+        limbs = multiplyAdd(limbs, UInt.wrapping(scale), UInt.wrapping(value))
+    }
+    made(negative, limbs)
+}
+
+/// The integer of a literal, which the compiler calls with its digits.
+fn bigIntOf(digits: String): BigInt {
+    match BigInt.parse(digits) {
+        ok(value) => value
+        err(_) => panic("`{digits}` is not an integer")
+    }
+}
+
+/// The value as an `Int`, or `none` when it does not fit.
+pub fn BigInt.toInt(self): Int? {
+    if self.limbs.length() > 2 {
+        return none
+    }
+    let absolute = self.limbs.get(0).unwrapOr(0) | (self.limbs.get(1).unwrapOr(0) << 32)
+    if not self.negative {
+        return if absolute <= 9223372036854775807 { some(Int.wrapping(absolute)) } else { none }
+    }
+    if absolute <= 9223372036854775807 {
+        some(0 - Int.wrapping(absolute))
+    } else if absolute == 9223372036854775808 {
+        some(Int.min)
+    } else {
+        none
+    }
+}
+
+/// The digits in `radix`, from 2 to 36, lowercase, with `-` when negative.
+pub fn BigInt.toString(self, radix: Int = 10): String {
+    if self.limbs.isEmpty() {
+        return "0"
+    }
+    let base = if radix < 2 or radix > 36 { 10 } else { radix }
+    var (chunk, power) = (1, base)
+    for power * base < 4294967296 {
+        power = power * base
+        chunk += 1
+    }
+    var rest = self.limbs
+    var pieces: Array[String] = []
+    for not rest.isEmpty() {
+        let (quotient, remainder) = divideSmall(rest, UInt.wrapping(power))
+        let piece = Int.wrapping(remainder).toString(radix: base)
+        pieces.push(if quotient.isEmpty() { piece } else { piece.padStart(chunk, "0") })
+        rest = quotient
+    }
+    var out = if self.negative { "-" } else { "" }
+    var at = pieces.length() - 1
+    for at >= 0 {
+        out = "{out}{pieces[at]}"
+        at -= 1
+    }
+    out
+}
+
+impl Display for BigInt {
+    fn display(self): String {
+        self.toString()
+    }
+}
+
+/// The value without its sign.
+pub fn BigInt.abs(self): BigInt {
+    BigInt { negative: false, limbs: self.limbs }
+}
+
+/// What is left of dividing by `divisor`, with the sign of `self`, as `%`
+/// of an `Int`.
+pub fn BigInt.remainder(self, divisor: BigInt): BigInt {
+    let (_, remainder) = divideMagnitude(self.limbs, nonZero(divisor).limbs)
+    made(self.negative, remainder)
+}
+
+/// The value raised to `exponent`, which is not negative.
+pub fn BigInt.pow(self, exponent: Int): BigInt {
+    if exponent < 0 {
+        panic("a `BigInt` is raised to a power that is not negative, not {exponent}")
+    }
+    var (result, square, rest) = (smallBig(1), self, exponent)
+    for rest > 0 {
+        if rest % 2 == 1 {
+            result = result * square
+        }
+        square = square * square
+        rest = rest / 2
+    }
+    result
+}
+
+/// The value raised to `exponent` modulo `modulus`, as RSA does, without the
+/// size of the power: `exponent` is not negative and `modulus` positive.
+pub fn BigInt.modPow(self, exponent: BigInt, modulus: BigInt): BigInt {
+    if exponent.negative or modulus.negative or modulus.limbs.isEmpty() {
+        panic("`modPow` takes an exponent that is not negative and a positive modulus")
+    }
+    var result = smallBig(1).remainder(modulus)
+    var base = self.remainder(modulus)
+    if base.negative {
+        base = base + modulus
+    }
+    for (index, limb) in exponent.limbs.iter().enumerate() {
+        var bits = limb
+        let count = if index == exponent.limbs.length() - 1 { 64 - limb.leadingZeros() } else { 32 }
+        for _ in 0..count {
+            if bits & 1 == 1 {
+                result = (result * base).remainder(modulus)
+            }
+            base = (base * base).remainder(modulus)
+            bits = bits >> 1
+        }
+    }
+    result
+}
+
+/// The greatest common divisor, never negative.
+pub fn BigInt.gcd(self, other: BigInt): BigInt {
+    var (a, b) = (self.limbs, other.limbs)
+    for not b.isEmpty() {
+        let (_, remainder) = divideMagnitude(a, b)
+        (a, b) = (b, remainder)
+    }
+    made(false, a)
+}
+
+impl Ordered for BigInt {
+    fn compare(self, other: BigInt): Int {
+        if self.negative != other.negative {
+            return if self.negative { -1 } else { 1 }
+        }
+        let order = compareMagnitude(self.limbs, other.limbs)
+        if self.negative { 0 - order } else { order }
+    }
+}
+
+impl Additive for BigInt {
+    fn zero(): BigInt {
+        BigInt { negative: false, limbs: [] }
+    }
+
+    fn plus(self, other: BigInt): BigInt {
+        if self.negative == other.negative {
+            return made(self.negative, addMagnitude(self.limbs, other.limbs))
+        }
+        if compareMagnitude(self.limbs, other.limbs) >= 0 {
+            made(self.negative, subtractMagnitude(self.limbs, other.limbs))
+        } else {
+            made(other.negative, subtractMagnitude(other.limbs, self.limbs))
+        }
+    }
+
+    fn minus(self, other: BigInt): BigInt {
+        self +
+            BigInt {
+                negative: not other.negative and not other.limbs.isEmpty()
+                limbs: other.limbs
+            }
+    }
+}
+
+impl Number for BigInt {
+    fn one(): BigInt {
+        BigInt { negative: false, limbs: [1] }
+    }
+
+    fn fromInt(value: Int): BigInt {
+        smallBig(value)
+    }
+
+    fn times(self, other: BigInt): BigInt {
+        made(self.negative != other.negative, multiplyMagnitude(self.limbs, other.limbs))
+    }
+
+    /// Truncated toward zero, as for `Int`.
+    fn dividedBy(self, other: BigInt): BigInt {
+        let (quotient, _) = divideMagnitude(self.limbs, nonZero(other).limbs)
+        made(self.negative != other.negative, quotient)
+    }
+}
+
+impl __serialization.Encode for BigInt {
+    fn encode[S: __serialization.Sink](self, out: S) {
+        out.number(self.toString())
+    }
+}
+
+impl __serialization.Decode for BigInt {
+    fn decode[S: __serialization.Source](input: S, first: __serialization.Event): BigInt !
+        __serialization.Error {
+        let text = match first {
+            __serialization.Event.Int(value) => return smallBig(value)
+            __serialization.Event.Number(text) => text
+            __serialization.Event.Text(text) => text
+            __serialization.Event.Untyped(text) => text.trim()
+            _ => fail input.mismatch(first, "an integer")
+        }
+        match BigInt.parse(text) {
+            ok(value) => value
+            err(_) => fail input.failure(
+                __serialization.ErrorKind.Type,
+                "`{text}` is not an integer",
+            )
+        }
+    }
+}
+
+impl __reflect.Reflect for BigInt {
+    fn reflectShow(self, nested: Bool): String {
+        self.toString()
+    }
+}
+
+/// The `BigInt` of an `Int`.
+fn smallBig(value: Int): BigInt {
+    let absolute = if value >= 0 {
+        UInt.wrapping(value)
+    } else {
+        UInt.wrapping(0 - (value + 1)) + 1
+    }
+    made(value < 0, [absolute & LimbMask, absolute >> 32])
+}
+
+fn nonZero(divisor: BigInt): BigInt {
+    if divisor.limbs.isEmpty() {
+        panic("division by zero")
+    }
+    divisor
+}
+
+/// A value of these limbs, without zeros at the top and never `-0`.
+fn made(negative: Bool, limbs: Array[UInt]): BigInt {
+    let trimmed = withoutTopZeros(limbs)
+    BigInt { negative: negative and not trimmed.isEmpty(), limbs: trimmed }
+}
+
+fn withoutTopZeros(limbs: Array[UInt]): Array[UInt] {
+    var kept = limbs
+    for not kept.isEmpty() and kept[kept.length() - 1] == 0 {
+        _ = kept.pop()
+    }
+    kept
+}
+
+fn compareMagnitude(a: Array[UInt], b: Array[UInt]): Int {
+    if a.length() != b.length() {
+        return if a.length() < b.length() { -1 } else { 1 }
+    }
+    var at = a.length() - 1
+    for at >= 0 {
+        if a[at] != b[at] {
+            return if a[at] < b[at] { -1 } else { 1 }
+        }
+        at -= 1
+    }
+    0
+}
+
+fn addMagnitude(a: Array[UInt], b: Array[UInt]): Array[UInt] {
+    var out: Array[UInt] = []
+    var carry: UInt = 0
+    let count = if a.length() > b.length() { a.length() } else { b.length() }
+    for at in 0..count {
+        let sum = a.get(at).unwrapOr(0) + b.get(at).unwrapOr(0) + carry
+        out.push(sum & LimbMask)
+        carry = sum >> 32
+    }
+    if carry > 0 {
+        out.push(carry)
+    }
+    out
+}
+
+/// `a - b`, with `a` at least `b`.
+fn subtractMagnitude(a: Array[UInt], b: Array[UInt]): Array[UInt] {
+    var out: Array[UInt] = []
+    var borrow: UInt = 0
+    for at in 0..a.length() {
+        let take = b.get(at).unwrapOr(0) + borrow
+        if a[at] >= take {
+            out.push(a[at] - take)
+            borrow = 0
+        } else {
+            out.push(a[at] + LimbBase - take)
+            borrow = 1
+        }
+    }
+    withoutTopZeros(out)
+}
+
+fn multiplyMagnitude(a: Array[UInt], b: Array[UInt]): Array[UInt] {
+    if a.isEmpty() or b.isEmpty() {
+        return []
+    }
+    var out: Array[UInt] = [LimbZero].repeat(a.length() + b.length())
+    for i in 0..a.length() {
+        let x = a[i]
+        if x == 0 {
+            continue
+        }
+        var carry: UInt = 0
+        for j in 0..b.length() {
+            let t = out[i + j] + x * b[j] + carry
+            out[i + j] = t & LimbMask
+            carry = t >> 32
+        }
+        var k = i + b.length()
+        for carry > 0 {
+            let t = out[k] + carry
+            out[k] = t & LimbMask
+            carry = t >> 32
+            k += 1
+        }
+    }
+    withoutTopZeros(out)
+}
+
+/// `a * factor + addend`, both below 2³².
+fn multiplyAdd(a: Array[UInt], factor: UInt, addend: UInt): Array[UInt] {
+    var out: Array[UInt] = []
+    var carry = addend
+    for limb in a {
+        let t = limb * factor + carry
+        out.push(t & LimbMask)
+        carry = t >> 32
+    }
+    if carry > 0 {
+        out.push(carry)
+    }
+    withoutTopZeros(out)
+}
+
+/// `a / divisor` and its remainder, the divisor below 2³² and not zero.
+fn divideSmall(a: Array[UInt], divisor: UInt): (Array[UInt], UInt) {
+    var out: Array[UInt] = [LimbZero].repeat(a.length())
+    var remainder: UInt = 0
+    var at = a.length() - 1
+    for at >= 0 {
+        let current = (remainder << 32) | a[at]
+        out[at] = current / divisor
+        remainder = current % divisor
+        at -= 1
+    }
+    (withoutTopZeros(out), remainder)
+}
+
+/// `a / b` and its remainder, `b` not zero, by Knuth's algorithm D.
+fn divideMagnitude(a: Array[UInt], b: Array[UInt]): (Array[UInt], Array[UInt]) {
+    if compareMagnitude(a, b) < 0 {
+        return ([], a)
+    }
+    if b.length() == 1 {
+        let (quotient, remainder) = divideSmall(a, b[0])
+        return (quotient, if remainder == 0 { [] } else { [remainder] })
+    }
+    // Normalized so that the divisor's top limb has its high bit set.
+    let shift = b[b.length() - 1].leadingZeros() - 32
+    let v = shiftLeft(b, shift)
+    var u = shiftLeft(a, shift)
+    if u.length() == a.length() {
+        u.push(0)
+    }
+    let n = v.length()
+    let m = u.length() - n - 1
+    var quotient: Array[UInt] = [LimbZero].repeat(m + 1)
+    let (top, next) = (v[n - 1], v[n - 2])
+    var j = m
+    for j >= 0 {
+        let numerator = (u[j + n] << 32) | u[j + n - 1]
+        var guess = numerator / top
+        var rest = numerator % top
+        for guess >= LimbBase or guess * next > ((rest << 32) | u[j + n - 2]) {
+            guess -= 1
+            rest += top
+            if rest >= LimbBase {
+                break
+            }
+        }
+        var carry: UInt = 0
+        var borrow: UInt = 0
+        for i in 0..n {
+            let product = guess * v[i] + carry
+            carry = product >> 32
+            let take = (product & LimbMask) + borrow
+            if u[i + j] >= take {
+                u[i + j] = u[i + j] - take
+                borrow = 0
+            } else {
+                u[i + j] = u[i + j] + LimbBase - take
+                borrow = 1
+            }
+        }
+        let take = carry + borrow
+        if u[j + n] >= take {
+            u[j + n] = u[j + n] - take
+            borrow = 0
+        } else {
+            u[j + n] = u[j + n] + LimbBase - take
+            borrow = 1
+        }
+        if borrow != 0 {
+            // The guess was one too many: add the divisor back.
+            guess -= 1
+            var back: UInt = 0
+            for i in 0..n {
+                let t = u[i + j] + v[i] + back
+                u[i + j] = t & LimbMask
+                back = t >> 32
+            }
+            u[j + n] = (u[j + n] + back) & LimbMask
+        }
+        quotient[j] = guess
+        j -= 1
+    }
+    let remainder = shiftRight(withoutTopZeros(u.slice(0, n).unwrapOr([])), shift)
+    (withoutTopZeros(quotient), remainder)
+}
+
+/// The limbs shifted left by `shift` bits, under 32, with the limb that
+/// overflows at the top.
+fn shiftLeft(a: Array[UInt], shift: Int): Array[UInt] {
+    if shift == 0 {
+        return a
+    }
+    var out: Array[UInt] = []
+    var carry: UInt = 0
+    for limb in a {
+        out.push(((limb << shift) & LimbMask) | carry)
+        carry = limb >> (32 - shift)
+    }
+    if carry > 0 {
+        out.push(carry)
+    }
+    out
+}
+
+fn shiftRight(a: Array[UInt], shift: Int): Array[UInt] {
+    if shift == 0 {
+        return a
+    }
+    var out: Array[UInt] = []
+    for at in 0..a.length() {
+        let high = a.get(at + 1).unwrapOr(0)
+        out.push((a[at] >> shift) | ((high << (32 - shift)) & LimbMask))
+    }
+    withoutTopZeros(out)
+}
+
+// ---------------------------------------------------------------------------
+// Exact decimals
+// ---------------------------------------------------------------------------
+
+/// A decimal number, exact, of any size: money, measures, what a `Float`
+/// rounds. `+`, `-` and `*` are exact; `/` gives 34 significant digits,
+/// rounded half to even, and `divide` as many decimals as asked. A literal
+/// where one is expected is exact: `let price: math.Decimal = 19.99`.
+pub type Decimal = {
+    /// The value is `coefficient` divided by 10 to `scale`, without zeros
+    /// to spare at the end.
+    priv coefficient: BigInt
+    priv places: Int
+}
+
+/// How a value is rounded to fewer decimals: half to even, as banks do;
+/// half away from zero; toward zero (`Down`) or away from it (`Up`); or
+/// toward minus or plus infinity (`Floor`, `Ceiling`).
+pub enum Rounding {
+    HalfEven
+    HalfUp
+    Down
+    Up
+    Floor
+    Ceiling
+}
+
+/// The decimal a text writes: `-12.50`, `1e-3`, `+7`.
+pub fn Decimal.parse(text: String): Decimal ! MathError {
+    let lower = text.toLowerAscii()
+    let (mantissa, exponent) = match lower.splitOnce("e") {
+        some((before, after)) => match Int.parse(after.removePrefix("+")) {
+            ok(power) => (before, power)
+            err(_) => fail MathError.NotANumber(text)
+        }
+        none => (lower, 0)
+    }
+    let (whole, fraction) = mantissa.splitOnce(".").unwrapOr((mantissa, ""))
+    let signless = whole.removePrefix("-").removePrefix("+")
+    if (signless.isEmpty() and fraction.isEmpty()) or not fraction.chars().all((c) { c.isDigit() }) {
+        fail MathError.NotANumber(text)
+    }
+    let digits = "{whole}{fraction}"
+    let coefficient = match BigInt.parse(if digits == "-" or digits == "+" { "0" } else { digits }) {
+        ok(value) => value
+        err(_) => fail MathError.NotANumber(text)
+    }
+    normalized(coefficient, fraction.length() - exponent)
+}
+
+/// The decimal of a literal, which the compiler calls with its text.
+fn decimalOf(text: String): Decimal {
+    match Decimal.parse(text) {
+        ok(value) => value
+        err(_) => panic("`{text}` is not a decimal")
+    }
+}
+
+/// The value rounded to `decimals` after the point.
+pub fn Decimal.round(self, decimals: Int, mode: Rounding = Rounding.HalfEven): Decimal {
+    if self.places <= decimals {
+        return self
+    }
+    let divisor = smallBig(10).pow(self.places - decimals)
+    normalized(roundedQuotient(self.coefficient, divisor, mode), decimals)
+}
+
+/// `self / by` rounded to `decimals` after the point.
+pub fn Decimal.divide(self, by: Decimal, decimals: Int, mode: Rounding = Rounding.HalfEven): Decimal {
+    if by.coefficient.limbs.isEmpty() {
+        panic("division by zero")
+    }
+    // self / by = (c1 / 10^s1) / (c2 / 10^s2) = c1 * 10^(s2 - s1 + d) / c2 / 10^d
+    let power = by.places - self.places + decimals
+    var numerator = self.coefficient
+    var denominator = by.coefficient
+    if power >= 0 {
+        numerator = numerator * smallBig(10).pow(power)
+    } else {
+        denominator = denominator * smallBig(10).pow(0 - power)
+    }
+    normalized(roundedQuotient(numerator, denominator, mode), decimals)
+}
+
+/// How many decimals the value has after the point.
+pub fn Decimal.scale(self): Int {
+    self.places
+}
+
+/// The nearest `Float`.
+pub fn Decimal.toFloat(self): Float {
+    Float.parse("{self}").unwrapOr(0.0)
+}
+
+/// The digits, with a point before the last `scale()`: `12.5`, `-0.03`.
+impl Display for Decimal {
+    fn display(self): String {
+        let digits = self.coefficient.abs().toString()
+        let sign = if self.coefficient.negative { "-" } else { "" }
+        if self.places == 0 {
+            return "{sign}{digits}"
+        }
+        let padded = digits.padStart(self.places + 1, "0")
+        let point = padded.length() - self.places
+        "{sign}{padded.slice(0, point).unwrapOr("0")}.{padded.slice(point, padded.length()).unwrapOr("")}"
+    }
+}
+
+impl Ordered for Decimal {
+    fn compare(self, other: Decimal): Int {
+        let (a, b) = aligned(self, other)
+        Ordered.compare(a, b)
+    }
+}
+
+impl Additive for Decimal {
+    fn zero(): Decimal {
+        Decimal { coefficient: BigInt { negative: false, limbs: [] }, places: 0 }
+    }
+
+    fn plus(self, other: Decimal): Decimal {
+        let (a, b) = aligned(self, other)
+        normalized(a + b, if self.places > other.places { self.places } else { other.places })
+    }
+
+    fn minus(self, other: Decimal): Decimal {
+        let (a, b) = aligned(self, other)
+        normalized(a - b, if self.places > other.places { self.places } else { other.places })
+    }
+}
+
+impl Number for Decimal {
+    fn one(): Decimal {
+        Decimal { coefficient: smallBig(1), places: 0 }
+    }
+
+    fn fromInt(value: Int): Decimal {
+        Decimal { coefficient: smallBig(value), places: 0 }
+    }
+
+    fn times(self, other: Decimal): Decimal {
+        normalized(self.coefficient * other.coefficient, self.places + other.places)
+    }
+
+    /// With 34 significant digits, rounded half to even, or fewer when the
+    /// quotient ends sooner.
+    fn dividedBy(self, other: Decimal): Decimal {
+        let digits = (value: Decimal): Int {
+            value.coefficient.abs().toString().length() - value.places
+        }
+        // The quotient has `whole` digits before the point, or one fewer.
+        let whole = digits(self) - digits(other) + 1
+        let quotient = self.divide(other, if whole > 35 { 0 } else { 35 - whole })
+        let significant = quotient.coefficient.abs().toString().length()
+        if significant > 34 and quotient.places > 0 {
+            let fewer = quotient.places - (significant - 34)
+            return quotient.round(if fewer < 0 { 0 } else { fewer })
+        }
+        quotient
+    }
+}
+
+impl __serialization.Encode for Decimal {
+    fn encode[S: __serialization.Sink](self, out: S) {
+        out.number("{self}")
+    }
+}
+
+impl __serialization.Decode for Decimal {
+    fn decode[S: __serialization.Source](input: S, first: __serialization.Event): Decimal !
+        __serialization.Error {
+        let text = match first {
+            __serialization.Event.Int(value) => return Decimal {
+                coefficient: smallBig(value)
+                places: 0
+            }
+            __serialization.Event.Float(value) => "{value}"
+            __serialization.Event.Number(text) => text
+            __serialization.Event.Text(text) => text
+            __serialization.Event.Untyped(text) => text.trim()
+            _ => fail input.mismatch(first, "a decimal")
+        }
+        match Decimal.parse(text) {
+            ok(value) => value
+            err(_) => fail input.failure(
+                __serialization.ErrorKind.Type,
+                "`{text}` is not a decimal",
+            )
+        }
+    }
+}
+
+impl __reflect.Reflect for Decimal {
+    fn reflectShow(self, nested: Bool): String {
+        "{self}"
+    }
+}
+
+/// A decimal without zeros to spare: `12.50` is `12.5`, and a negative
+/// scale is folded into the coefficient.
+fn normalized(coefficient: BigInt, scale: Int): Decimal {
+    var (value, places) = (coefficient, scale)
+    if places < 0 {
+        value = value * smallBig(10).pow(0 - places)
+        places = 0
+    }
+    for places > 0 and not value.limbs.isEmpty() {
+        let (quotient, remainder) = divideSmall(value.limbs, 10)
+        if remainder != 0 {
+            break
+        }
+        value = made(value.negative, quotient)
+        places -= 1
+    }
+    if value.limbs.isEmpty() {
+        places = 0
+    }
+    Decimal { coefficient: value, places: places }
+}
+
+/// The coefficients of two decimals at the same scale.
+fn aligned(a: Decimal, b: Decimal): (BigInt, BigInt) {
+    if a.places == b.places {
+        return (a.coefficient, b.coefficient)
+    }
+    if a.places < b.places {
+        return (a.coefficient * smallBig(10).pow(b.places - a.places), b.coefficient)
+    }
+    (a.coefficient, b.coefficient * smallBig(10).pow(a.places - b.places))
+}
+
+/// `numerator / denominator` rounded to an integer by `mode`.
+fn roundedQuotient(numerator: BigInt, denominator: BigInt, mode: Rounding): BigInt {
+    let negative = numerator.negative != denominator.negative
+    let (quotient, remainder) = divideMagnitude(numerator.limbs, denominator.limbs)
+    if remainder.isEmpty() {
+        return made(negative, quotient)
+    }
+    let half = compareMagnitude(addMagnitude(remainder, remainder), denominator.limbs)
+    let odd = quotient.get(0).unwrapOr(0) & 1 == 1
+    let up = match mode {
+        Rounding.HalfEven => half > 0 or (half == 0 and odd)
+        Rounding.HalfUp => half >= 0
+        Rounding.Down => false
+        Rounding.Up => true
+        Rounding.Floor => negative
+        Rounding.Ceiling => not negative
+    }
+    let absolute = if up { addMagnitude(quotient, [1]) } else { quotient }
+    made(negative, absolute)
 }

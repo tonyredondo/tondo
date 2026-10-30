@@ -1,0 +1,67 @@
+// std.math's `BigInt`, an integer of any size, and `Decimal`, an exact
+// decimal: operators, literals that are exact where one is expected,
+// parsing, rounding, formats and JSON.
+
+import std.console
+import std.json
+import std.math
+
+pub type Order = {
+    total: math.Decimal
+    id: math.BigInt
+}
+
+fn main(): !math.MathError {
+    let a = math.BigInt.parse("123456789012345678901234567890")?
+    let b: math.BigInt = -987654321098765432109876543210
+    console.println("{a + b} {a - b}")
+    console.println("{a * b}")
+    console.println("{b / a} {b.remainder(a)} {a.abs()} {b.abs()}")
+    let two: math.BigInt = 2
+    console.println("{two.pow(128)} {two.pow(64).toString(radix: 16)}")
+    let huge: math.BigInt = 340282366920938463463374607431768211456
+    console.println(
+        "{huge == two.pow(128)} {huge.toInt()} {a.gcd(b)} {math.BigInt.parse("ff", radix: 16)?.toInt()}",
+    )
+    let four: math.BigInt = 4
+    let modulus: math.BigInt = 497
+    let thirteen: math.BigInt = 13
+    console.println("{four.modPow(thirteen, modulus)} {Ordered.compare(a, b)}")
+
+    let price: math.Decimal = 19.99
+    let tax: math.Decimal = 0.21
+    console.println(
+        "{price * 3} {price * tax} {(price * tax).round(2)} {price + 0.01} {price - 20}",
+    )
+    let third: math.Decimal = 1
+    console.println("{third / 3} {price / 4} {price.divide(3, 4)} {price.scale()}")
+    let tie: math.Decimal = 2.675
+    console.println(
+        "{tie.round(2)} {tie.round(2, mode: math.Rounding.Down)} {tie.round(0, mode: math.Rounding.Ceiling)}",
+    )
+    let sum: math.Decimal = 0.1
+    console.println(
+        "{sum + 0.2 == 0.3} {math.Decimal.parse("1.50")?} {math.Decimal.parse("2e3")?} {math.Decimal.parse("x").isErr()}",
+    )
+    console.println("[{price:.1}] [{price:>8.3}] [{tie:+.2}] [{huge:>45}]")
+
+    let order = Order { total: price * 3, id: huge }
+    let written = json.encode(order)
+    console.println(written)
+    let read = json.decode[Order](written).expect("an order")
+    console.println("{read.total} {read.id == huge}")
+}
+
+// expect-stdout: -864197532086419753208641975320 1111111110111111111011111111100
+// expect-stdout: -121932631137021795226185032733622923332237463801111263526900
+// expect-stdout: -8 -9000000000900000000090 123456789012345678901234567890 987654321098765432109876543210
+// expect-stdout: 340282366920938463463374607431768211456 10000000000000000
+// expect-stdout: true none 9000000000900000000090 some(255)
+// expect-stdout: 445 1
+// expect-stdout: 59.97 4.1979 4.2 20 -0.01
+// expect-stdout: 0.3333333333333333333333333333333333 4.9975 6.6633 2
+// expect-stdout: 2.68 2.67 3
+// expect-stdout: true 1.5 2000 true
+// expect-stdout: [20.0] [  19.990] [+2.68] [      340282366920938463463374607431768211456]
+// expect-stdout: {"total":59.97,"id":340282366920938463463374607431768211456}
+// expect-stdout: 59.97 true

@@ -72,6 +72,7 @@ impl Kind {
             (Kind::Serialization, "time") => name == "DateTime",
             (Kind::Reflect, "reflect") => name == "Value",
             (Kind::Reflect | Kind::Serialization, "template") => name == "Html",
+            (Kind::Reflect | Kind::Serialization, "math") => matches!(name, "BigInt" | "Decimal"),
             _ => false,
         }
     }

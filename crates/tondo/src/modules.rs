@@ -958,6 +958,7 @@ impl Linker<'_> {
             }),
             ExprKind::Int { .. }
             | ExprKind::Float { .. }
+            | ExprKind::BigInt(_)
             | ExprKind::Bool(_)
             | ExprKind::Char(_)
             | ExprKind::Unit

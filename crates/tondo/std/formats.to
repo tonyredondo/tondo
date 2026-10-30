@@ -102,3 +102,128 @@ pub fn formatText(text: String, precision: Int, width: Int, fill: Char, align: C
         _ => "{cut}{filling.repeat(missing)}"
     }
 }
+
+/// A number written as digits: its sign, the digits before the point and
+/// those after it; or `NaN` and `inf`, written as they are.
+pub type Digits = {
+    negative: Bool
+    whole: String
+    fraction: String
+    special: String?
+}
+
+/// The digits of a number's `Display`, as `-12.5`, `1e21` or `NaN`.
+pub fn digitsOf(shown: String): Digits {
+    let negative = shown.startsWith("-")
+    var rest = shown.removePrefix("-")
+    if rest == "inf" or rest == "NaN" {
+        return Digits { negative: negative, whole: "", fraction: "", special: some(rest) }
+    }
+    var exponent = 0
+    match rest.splitOnce("e") {
+        some((mantissa, power)) => {
+            rest = mantissa
+            exponent = Int.parse(power).unwrapOr(0)
+        }
+        none => {}
+    }
+    let (whole, fraction) = rest.splitOnce(".").unwrapOr((rest, ""))
+    var all = "{whole}{fraction}"
+    var point = whole.length() + exponent
+    if point < 0 {
+        all = "{"0".repeat(0 - point)}{all}"
+        point = 0
+    }
+    if point > all.length() {
+        all = "{all}{"0".repeat(point - all.length())}"
+    }
+    Digits {
+        negative: negative
+        whole: all.slice(0, point).unwrapOr("")
+        fraction: all.slice(point, all.length()).unwrapOr("")
+        special: none
+    }
+}
+
+/// The digits with the point moved `places` to the right.
+pub fn shifted(parts: Digits, places: Int): Digits {
+    let moved = parts.fraction.padEnd(places, "0")
+    Digits {
+        negative: parts.negative
+        whole: "{parts.whole}{moved.slice(0, places).unwrapOr("")}"
+        fraction: moved.slice(places, moved.length()).unwrapOr("")
+        special: parts.special
+    }
+}
+
+/// The digits rounded to `decimals` after the point, half to even, and
+/// with zeros up to them.
+pub fn rounded(parts: Digits, decimals: Int?): Digits {
+    let wanted = match decimals {
+        some(count) if count < 0 => 0
+        some(count) => count
+        none => return parts
+    }
+    if parts.special.isSome() or parts.fraction.length() <= wanted {
+        return Digits {
+            negative: parts.negative
+            whole: parts.whole
+            fraction: parts.fraction.padEnd(wanted, "0")
+            special: parts.special
+        }
+    }
+    let dropped = parts.fraction
+        .slice(wanted, parts.fraction.length())
+        .unwrapOr("")
+        .chars()
+        .collect()
+    var kept = "{parts.whole}{parts.fraction.slice(0, wanted).unwrapOr("")}".chars().collect()
+    let beyond =
+        dropped.slice(1, dropped.length()).unwrapOr([]).filter((c) { c != '0' }).length() > 0
+    let last = kept.get(kept.length() - 1).unwrapOr('0')
+    let odd = (last.code() - '0'.code()) % 2 == 1
+    let up = dropped[0] > '5' or (dropped[0] == '5' and (beyond or odd))
+    if up {
+        var at = kept.length() - 1
+        var carry = true
+        for carry and at >= 0 {
+            if kept[at] == '9' {
+                kept[at] = '0'
+                at -= 1
+            } else {
+                kept[at] = Char.from(kept[at].code() + 1).unwrapOr('0')
+                carry = false
+            }
+        }
+        if carry {
+            kept.insert(0, '1')
+        }
+    }
+    let digits = kept.map((c) { "{c}" }).join("")
+    let point = digits.length() - wanted
+    Digits {
+        negative: parts.negative
+        whole: digits.slice(0, point).unwrapOr("")
+        fraction: digits.slice(point, digits.length()).unwrapOr("")
+        special: none
+    }
+}
+
+/// A number of a program's type, as a `Decimal`, from the digits of its
+/// `Display`: rounded half to even to `precision` decimals when it is not
+/// negative, then as `formatNumber` writes it.
+pub fn formatNumeric(
+    shown: String,
+    precision: Int,
+    plus: Bool,
+    zero: Bool,
+    width: Int,
+    fill: Char,
+    align: Char,
+): String {
+    let parts = rounded(digitsOf(shown), if precision >= 0 { some(precision) } else { none })
+    let whole = if parts.whole.isEmpty() { "0" } else { parts.whole }
+    let digits = if parts.fraction.isEmpty() { whole } else { "{whole}.{parts.fraction}" }
+    let negative = parts.negative and "{parts.whole}{parts.fraction}".chars().any((c) { c != '0' })
+    formatNumber(negative, "", digits, plus, zero, width, fill, align)
+}

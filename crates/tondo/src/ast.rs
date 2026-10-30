@@ -585,6 +585,8 @@ pub enum ExprKind {
         text: String,
         suffix: Option<&'static str>,
     },
+    /// A decimal integer wider than `u128`: its digits.
+    BigInt(String),
     Bool(bool),
     Char(char),
     Str(Vec<StrSegment>),

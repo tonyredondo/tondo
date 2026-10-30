@@ -20,6 +20,9 @@ pub enum Tok {
         text: String,
         suffix: Option<&'static str>,
     },
+    /// A decimal integer wider than `u128`, which only a `math.BigInt` or a
+    /// `math.Decimal` holds.
+    BigInt(String),
     Char(char),
     Str(Vec<StrPart>),
     LParen,
@@ -128,7 +131,7 @@ impl Tok {
         match self {
             Tok::Ident(name) => format!("identifier `{name}`"),
             Tok::Kw(kw) => format!("`{}`", kw.as_str()),
-            Tok::Int { .. } | Tok::Float { .. } => "number".into(),
+            Tok::Int { .. } | Tok::Float { .. } | Tok::BigInt(_) => "number".into(),
             Tok::Char(_) => "character literal".into(),
             Tok::Str(_) => "string literal".into(),
             Tok::Newline => "end of line".into(),
@@ -638,6 +641,7 @@ impl Lexer<'_> {
         }
         match u128::from_str_radix(&cleaned, radix) {
             Ok(value) => self.push(Tok::Int { value, suffix }, start),
+            Err(_) if radix == 10 && suffix.is_none() => self.push(Tok::BigInt(cleaned), start),
             Err(_) => {
                 let message = "integer literal is too large: a `UInt128` (`u128` suffix), the widest integer, holds up to 340282366920938463463374607431768211455";
                 self.error("E0003", start, self.pos, message);

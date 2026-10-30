@@ -234,15 +234,25 @@ fn refused(spec: String, what: String, takes: String): FormatError {
 /// without, it keeps all of its own.
 pub fn number[T: Number + Display](value: T, locale: String = "en", decimals: Int? = none): String {
     let symbols = symbolsOf(locale)
-    written(rounded(digitsOf("{value}"), decimals), symbols, patternOf(symbols.decimalPattern), "")
+    written(
+        __formats.rounded(__formats.digitsOf("{value}"), decimals),
+        symbols,
+        patternOf(symbols.decimalPattern),
+        "",
+    )
 }
 
 /// The fraction as a percent in the language of `locale`, rounded to
 /// `decimals`: `format.percent(0.256)` is `26%`, and `26 %` in Spanish.
 pub fn percent[T: Number + Display](value: T, locale: String = "en", decimals: Int = 0): String {
     let symbols = symbolsOf(locale)
-    let hundredfold = shifted(digitsOf("{value}"), 2)
-    written(rounded(hundredfold, some(decimals)), symbols, patternOf(symbols.percentPattern), "")
+    let hundredfold = __formats.shifted(__formats.digitsOf("{value}"), 2)
+    written(
+        __formats.rounded(hundredfold, some(decimals)),
+        symbols,
+        patternOf(symbols.percentPattern),
+        "",
+    )
 }
 
 /// The amount of the currency `code`, as `"EUR"`, in the language of
@@ -250,7 +260,10 @@ pub fn percent[T: Number + Display](value: T, locale: String = "en", decimals: I
 /// `format.currency(1234.5, "EUR", "es")` is `1234,50 €`.
 pub fn currency[T: Number + Display](amount: T, code: String, locale: String = "en"): String {
     let symbols = symbolsOf(locale)
-    let digits = rounded(digitsOf("{amount}"), some(textNative.currencyDigits(code)))
+    let digits = __formats.rounded(
+        __formats.digitsOf("{amount}"),
+        some(textNative.currencyDigits(code)),
+    )
     written(
         digits,
         symbols,
@@ -354,112 +367,6 @@ fn holds(words: Array[String], size: Int): Bool {
     inside == equal
 }
 
-/// A number written as digits: its sign, the digits before the point and
-/// those after it; or `NaN` and `inf`, written as they are.
-type Digits = {
-    negative: Bool
-    whole: String
-    fraction: String
-    special: String?
-}
-
-/// The digits of a number's `Display`, as `-12.5`, `1e21` or `NaN`.
-fn digitsOf(shown: String): Digits {
-    let negative = shown.startsWith("-")
-    var rest = shown.removePrefix("-")
-    if rest == "inf" or rest == "NaN" {
-        return Digits { negative: negative, whole: "", fraction: "", special: some(rest) }
-    }
-    var exponent = 0
-    match rest.splitOnce("e") {
-        some((mantissa, power)) => {
-            rest = mantissa
-            exponent = Int.parse(power).unwrapOr(0)
-        }
-        none => {}
-    }
-    let (whole, fraction) = rest.splitOnce(".").unwrapOr((rest, ""))
-    var all = "{whole}{fraction}"
-    var point = whole.length() + exponent
-    if point < 0 {
-        all = "{"0".repeat(0 - point)}{all}"
-        point = 0
-    }
-    if point > all.length() {
-        all = "{all}{"0".repeat(point - all.length())}"
-    }
-    Digits {
-        negative: negative
-        whole: all.slice(0, point).unwrapOr("")
-        fraction: all.slice(point, all.length()).unwrapOr("")
-        special: none
-    }
-}
-
-/// The digits with the point moved `places` to the right.
-fn shifted(parts: Digits, places: Int): Digits {
-    let moved = parts.fraction.padEnd(places, "0")
-    Digits {
-        negative: parts.negative
-        whole: "{parts.whole}{moved.slice(0, places).unwrapOr("")}"
-        fraction: moved.slice(places, moved.length()).unwrapOr("")
-        special: parts.special
-    }
-}
-
-/// The digits rounded to `decimals` after the point, half to even, and
-/// with zeros up to them.
-fn rounded(parts: Digits, decimals: Int?): Digits {
-    let wanted = match decimals {
-        some(count) if count < 0 => 0
-        some(count) => count
-        none => return parts
-    }
-    if parts.special.isSome() or parts.fraction.length() <= wanted {
-        return Digits {
-            negative: parts.negative
-            whole: parts.whole
-            fraction: parts.fraction.padEnd(wanted, "0")
-            special: parts.special
-        }
-    }
-    let dropped = parts.fraction
-        .slice(wanted, parts.fraction.length())
-        .unwrapOr("")
-        .chars()
-        .collect()
-    var kept = "{parts.whole}{parts.fraction.slice(0, wanted).unwrapOr("")}".chars().collect()
-    let beyond =
-        dropped.slice(1, dropped.length()).unwrapOr([]).filter((c) { c != '0' }).length() > 0
-    let last = kept.get(kept.length() - 1).unwrapOr('0')
-    let odd = (last.code() - '0'.code()) % 2 == 1
-    let up = dropped[0] > '5' or (dropped[0] == '5' and (beyond or odd))
-    if up {
-        var at = kept.length() - 1
-        var carry = true
-        for carry and at >= 0 {
-            if kept[at] == '9' {
-                kept[at] = '0'
-                at -= 1
-            } else {
-                kept[at] = Char.from(kept[at].code() + 1).unwrapOr('0')
-                carry = false
-            }
-        }
-        if carry {
-            kept.insert(0, '1')
-        }
-    }
-    let digits = kept.map((c) { "{c}" }).join("")
-    let point = digits.length() - wanted
-    Digits {
-        negative: parts.negative
-        whole: digits.slice(0, point).unwrapOr("")
-        fraction: digits.slice(point, digits.length()).unwrapOr("")
-        special: none
-    }
-}
-
 /// How a locale writes numbers, from the runtime's data.
 type Symbols = {
     digits: String
@@ -544,7 +451,7 @@ fn partsOf(text: String): (String, String, String) {
 
 /// The digits written with a locale's symbols and a pattern, `symbol`
 /// standing for the pattern's `¤`.
-fn written(parts: Digits, symbols: Symbols, pattern: Pattern, symbol: String): String {
+fn written(parts: __formats.Digits, symbols: Symbols, pattern: Pattern, symbol: String): String {
     var body = match parts.special {
         some("inf") => "∞"
         some(other) => other

@@ -7240,7 +7240,11 @@ pub trait Integer: Number + Ordered + Display   // Ordered: 14.5 de la librería
   entero es `Number.fromInt[T](literal)`; en un número del lenguaje, el literal mismo
   (5.7). En código genérico, `x * 2` con `x: T` y `T: Number` funciona para
   cualquier `T`, y el literal es un `Int`. Un literal float no llega así a un
-  `T`.
+  `T`. Donde se espera un `math.BigInt` o un `math.Decimal` (14.5 de la
+  biblioteca estándar), un literal es ese número exacto, de cualquier tamaño,
+  y para un `Decimal` también un literal float, que nunca pasa por un
+  `Float`: `let price: math.Decimal = 19.99`. Un literal entero más ancho que
+  `UInt128` solo vale ahí.
 - **Los números del lenguaje.** Todos los enteros y floats implementan
   `Additive` y `Number`, con los operadores comprobados de 18.2: `fromInt` es
   la conversión comprobada, un pánico `P0005` si el valor no cabe. Los enteros
@@ -7425,7 +7429,10 @@ formato es literal:
   `b`, binario, en un entero, con `0x`, `0o` o `0b` delante si lleva `#`; o
   `e` o `E`, notación científica, en un float.
 
-Un valor que no es un número se escribe con su `Display`, y solo admite
+Un número de un tipo del programa que implementa `Number`, como un
+`math.Decimal`, admite las opciones de un float salvo la notación científica,
+sobre los dígitos de su `Display`: `precisión` redondea la mitad al par. Un
+valor que no es un número se escribe con su `Display`, y solo admite
 relleno, alineación, ancho y precisión. Un formato que no se lee, o con una
 opción que el tipo del valor no admite, como `x` en un float o `.2` en un
 entero, es el error `E1118`, que dice lo que ese tipo admite.

@@ -9698,6 +9698,7 @@ impl<'a> Checker<'a> {
                 Self::mk(hir::ExprKind::Block(block), ty, span)
             }
             ast::ExprKind::Float { text, suffix } => self.float_literal(text, *suffix, false, expected, span),
+            ast::ExprKind::BigInt(digits) => self.big_literal(digits, expected, span),
             ast::ExprKind::Char(c) => Self::mk(hir::ExprKind::Char(*c), Ty::CHAR, span),
             ast::ExprKind::Field(base, name) => {
                 let base = self.expr(cx, base, None);
@@ -12691,6 +12692,13 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> hir::Expr {
+        if suffix.is_none()
+            && let Some(target) = expected
+            && let Some(exact) =
+                self.exact_literal(&format!("{}{magnitude}", if negative { "-" } else { "" }), target, span)
+        {
+            return exact;
+        }
         // A literal where a program's `Number` or a `T: Number` is expected is
         // `Number.fromInt[T](literal)` (18.10).
         if suffix.is_none()
@@ -12720,6 +12728,36 @@ impl<'a> Checker<'a> {
         }
         let value = if negative { (magnitude as i128).wrapping_neg() } else { magnitude as i128 };
         Self::mk(hir::ExprKind::Int(value), Ty::int(int), span)
+    }
+
+    /// A literal where a `math.BigInt` or a `math.Decimal` is expected: that
+    /// number, exact, from the literal's text (standard library 14.5).
+    fn exact_literal(&mut self, text: &str, target: Ty, span: Span) -> Option<hir::Expr> {
+        let named =
+            |this: &Self, name: &str| matches!(this.type_names.get(name), Some(&TypeName::Nominal(ty)) if ty == target);
+        let maker = if named(self, "math.BigInt") && !text.contains(['.', 'e', 'E']) {
+            "math.bigIntOf"
+        } else if named(self, "math.Decimal") {
+            "math.decimalOf"
+        } else {
+            return None;
+        };
+        let Some(&ModuleName::Fn(id)) = self.names.get(maker) else { return None };
+        let literal = Self::mk(hir::ExprKind::Str(text.to_string()), Ty::STRING, span);
+        Some(Self::mk(hir::ExprKind::Call(Callee::Fn(id), Vec::new(), vec![literal]), target, span))
+    }
+
+    /// An integer literal wider than `u128`, which only a `math.BigInt` or a
+    /// `math.Decimal` holds.
+    fn big_literal(&mut self, digits: &str, expected: Option<Ty>, span: Span) -> hir::Expr {
+        if let Some(target) = expected
+            && let Some(exact) = self.exact_literal(digits, target, span)
+        {
+            return exact;
+        }
+        let message = "integer literal is too large: a `UInt128` (`u128` suffix), the widest integer, holds up to 340282366920938463463374607431768211455, and a `math.BigInt` any integer";
+        self.diags.error("E0003", span, message);
+        Self::error_expr(span)
     }
 
     /// The integer or float type an unsuffixed literal takes from its
@@ -12752,6 +12790,12 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> hir::Expr {
+        if suffix.is_none()
+            && let Some(target) = expected
+            && let Some(exact) = self.exact_literal(&format!("{}{text}", if negative { "-" } else { "" }), target, span)
+        {
+            return exact;
+        }
         let ty = match suffix {
             Some("f32") => Ty::F32,
             Some(_) => Ty::F64,
@@ -12995,11 +13039,18 @@ impl<'a> Checker<'a> {
         let (ty, span) = (value.ty, value.span);
         let integer = matches!(self.types.kind(ty), TyKind::Int(_) | TyKind::Byte) || self.bound_by(ty, self.integer);
         let float = matches!(self.types.kind(ty), TyKind::Float(_));
+        // A program's number, as a `math.Decimal`, takes a float's options
+        // but scientific notation, on the digits of its `Display`.
+        let numeric = !integer
+            && !float
+            && ty != Ty::STRING
+            && !self.types.has_error(ty)
+            && self.number.is_some_and(|number| self.satisfies(ty, number, &[]));
         let base = format.spec.kind.filter(|k| "xXob".contains(*k));
         let scientific = format.spec.kind.filter(|k| "eE".contains(*k));
         let refused = [
-            (format.spec.plus && !integer && !float, "a sign".to_string()),
-            (format.spec.zero && !integer && !float, "`0`".into()),
+            (format.spec.plus && !integer && !float && !numeric, "a sign".to_string()),
+            (format.spec.zero && !integer && !float && !numeric, "`0`".into()),
             (format.spec.alternate && base.is_none() && integer, "`#` without `x`, `X`, `o` or `b`".into()),
             (format.spec.alternate && !integer, "`#`".into()),
             (
@@ -13051,6 +13102,14 @@ impl<'a> Checker<'a> {
             let (exponent, plus, zero) = (flag(scientific.is_some()), flag(format.spec.plus), flag(format.spec.zero));
             let args = vec![value, single, precision, exponent, flag(upper), plus, zero, width, fill, align('>')];
             ("formats.formatFloat", Vec::new(), args)
+        } else if numeric {
+            let shown = Self::mk(
+                hir::ExprKind::Interpolate(vec![hir::Segment::Value(self.displayed(value))]),
+                Ty::STRING,
+                span,
+            );
+            let (plus, zero) = (flag(format.spec.plus), flag(format.spec.zero));
+            ("formats.formatNumeric", Vec::new(), vec![shown, precision, plus, zero, width, fill, align('>')])
         } else {
             let text = match ty == Ty::STRING {
                 true => value,
@@ -14773,6 +14832,9 @@ impl<'a> Checker<'a> {
                 }
                 if let ast::ExprKind::Float { text, suffix } = &operand.kind {
                     return self.float_literal(text, *suffix, true, expected, span);
+                }
+                if let ast::ExprKind::BigInt(digits) = &operand.kind {
+                    return self.big_literal(&format!("-{digits}"), expected, span);
                 }
                 let value = self.expr(cx, operand, expected);
                 let negatable = match self.types.kind(value.ty) {

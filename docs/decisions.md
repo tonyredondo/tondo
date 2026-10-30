@@ -3265,3 +3265,18 @@ and all, without a port. `http.proxy` sends through a `Client`, whose hooks
 observe what it sends. A closure is accepted where an optional function is
 expected, which `sync.retry(work, when: ...)` needed.
 
+## 2026-10-30 — Integers of any size and exact decimals
+
+The first half of the eleventh lot. `BigInt` and `Decimal` are written in
+Tondo over limbs of 32 bits held in `UInt`s, with Knuth's algorithm D, so
+they gain from every optimization of the compiler and depend on no crate.
+A `Decimal` keeps no zeros to spare, because `==` is structural: `1.50` and
+`1.5` are one value, and a format fixes the decimals when it is written.
+`/` of a `Decimal` gives 34 significant digits, as decimal128 does, and
+`divide` what is asked.
+
+A literal where one is expected is exact: the compiler hands its text to
+the type, never through a `Float`, and a decimal literal wider than
+`UInt128` is accepted there alone. Comparison operators stay closed to the
+program's types, as 18.10 says; `Ordered.compare` orders these.
+

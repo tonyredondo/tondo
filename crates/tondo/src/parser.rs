@@ -2186,6 +2186,10 @@ impl Parser<'_> {
                 self.bump();
                 ExprKind::Float { text, suffix }
             }
+            Tok::BigInt(digits) => {
+                self.bump();
+                ExprKind::BigInt(digits)
+            }
             Tok::Char(c) => {
                 self.bump();
                 ExprKind::Char(c)
