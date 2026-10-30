@@ -6,6 +6,7 @@
 import std.fs as __fs
 import std.internal.fs as fsNative
 import std.path as __path
+import std.sync as __sync
 import std.time as __time
 
 /// An entry itself, without following links: its kind, size in bytes,
@@ -220,4 +221,443 @@ fn kind(index: Int): __fs.FileKind {
         2 => __fs.FileKind.Symlink
         _ => __fs.FileKind.Other
     }
+}
+
+// ---------------------------------------------------------------------------
+// Trees of files
+// ---------------------------------------------------------------------------
+
+/// A tree of files, with the operations of `std.fs` by the same names on
+/// paths relative to its top, written with `/`: a directory of the disk
+/// (`fs.disk`), files in memory (`fs.memory`), the files kept in the
+/// executable (`embed.files`), an archive's (`archive.Archive.files`), the
+/// part under a directory of another (`sub`), or several in layers
+/// (`fs.overlay`). Its copies share it: what one writes the others read.
+pub type FileSystem = {
+    priv tree: Tree
+}
+
+enum Tree {
+    Disk(String)
+    Memory(__sync.Mutex[Stored])
+    Kept(Array[String], Array[Array[Byte]], Array[String])
+    Layers(Array[FileSystem])
+    Under(Array[FileSystem], String)
+}
+
+/// A tree in memory: its files, when each was written, and its
+/// directories.
+type Stored = {
+    files: Map[String, Array[Byte]]
+    written: Map[String, __time.DateTime]
+    directories: Map[String, Bool]
+}
+
+/// The directory `root` of the disk as a tree.
+pub fn disk(root: String = "."): FileSystem {
+    FileSystem { tree: Tree.Disk(root) }
+}
+
+/// An empty tree in memory, whose files' directories exist with them.
+pub fn memory(): FileSystem {
+    FileSystem {
+        tree: Tree.Memory(__sync.Mutex(Stored { files: [:], written: [:], directories: [:] }))
+    }
+}
+
+/// Several trees as one, as a site's own files over its theme's: a path is
+/// read from the first layer that has it, written to the first, and a
+/// directory lists what all of them hold.
+pub fn overlay(layers: ...FileSystem): FileSystem {
+    FileSystem { tree: Tree.Layers(layers) }
+}
+
+/// The files kept in the executable, which `embed.files` gives: read only.
+fn embeddedTree(names: Array[String], contents: Array[Array[Byte]], tags: Array[String]): FileSystem {
+    FileSystem { tree: Tree.Kept(names, contents, tags) }
+}
+
+/// The tree under `directory` of this one.
+pub fn FileSystem.sub(self, directory: String): FileSystem {
+    match placed(directory) {
+        ok(at) if at.isEmpty() => self
+        ok(at) => FileSystem { tree: Tree.Under([self], at) }
+        err(_) => self
+    }
+}
+
+/// The directory of the disk this tree is, when it is one, for what hands
+/// paths to the system, as another program.
+pub fn FileSystem.directory(self): String? {
+    match self.tree {
+        Tree.Disk(root) => some(root)
+        Tree.Under(inner, prefix) => inner[0].directory().map((root) { __path.join(root, prefix) })
+        _ => none
+    }
+}
+
+/// The digest of a file kept in the executable, which `std.http` sends as
+/// its `ETag`; `none` for another tree's.
+pub fn FileSystem.tag(self, path: String): String? {
+    let at = placed(path).unwrapOr(path)
+    match self.tree {
+        Tree.Kept(names, _, tags) => indexOf(names, at).map((index) { tags[index] })
+        Tree.Layers(layers) => layers
+            .iter()
+            .find((layer) { layer.exists(at) })
+            .andThen((layer) { layer.tag(at) })
+        Tree.Under(inner, prefix) => inner[0].tag(__path.join(prefix, at))
+        _ => none
+    }
+}
+
+/// The contents of the file at `path`.
+pub fn FileSystem.readBytes(self, path: String): Array[Byte] ! __fs.FsError {
+    let at = placed(path)?
+    match self.tree {
+        Tree.Disk(root) => __fs.readBytes(below(root, at))?
+        Tree.Memory(stored) => match stored.update((s) { s.files.get(at) }) {
+            some(contents) => contents
+            none => fail missing(stored, at)
+        }
+        Tree.Kept(names, contents, _) => match indexOf(names, at) {
+            some(index) => contents[index]
+            none => fail if keptDirectory(names, at) {
+                __fs.FsError.IsADirectory
+            } else {
+                __fs.FsError.NotFound
+            }
+        }
+        Tree.Layers(layers) => {
+            for layer in layers {
+                match layer.readBytes(at) {
+                    ok(contents) => return contents
+                    err(__fs.FsError.NotFound) => {}
+                    err(error) => fail error
+                }
+            }
+            fail __fs.FsError.NotFound
+        }
+        Tree.Under(inner, prefix) => inner[0].readBytes(__path.join(prefix, at))?
+    }
+}
+
+/// The text of the UTF-8 file at `path`.
+pub fn FileSystem.readText(self, path: String): String ! __fs.FsError {
+    match String.fromBytes(self.readBytes(path)?) {
+        ok(text) => text
+        err(_) => fail __fs.FsError.InvalidData
+    }
+}
+
+/// Writes the file at `path`, replacing what it held.
+pub fn FileSystem.writeBytes(self, path: String, data: Array[Byte]): !__fs.FsError {
+    let at = placed(path)?
+    match self.tree {
+        Tree.Disk(root) => __fs.writeBytes(below(root, at), data)?
+        Tree.Memory(stored) => {
+            let now = __time.utcNow()
+            stored.update(
+                (s) {
+                    s.files[at] = data
+                    s.written[at] = now
+                    for directory in parents(at) {
+                        s.directories[directory] = true
+                    }
+                },
+            )
+        }
+        Tree.Kept(_, _, _) => fail __fs.FsError.PermissionDenied
+        Tree.Layers(layers) => match layers.get(0) {
+            some(first) => first.writeBytes(at, data)?
+            none => fail __fs.FsError.PermissionDenied
+        }
+        Tree.Under(inner, prefix) => inner[0].writeBytes(__path.join(prefix, at), data)?
+    }
+}
+
+/// Writes the text to the file at `path`.
+pub fn FileSystem.writeText(self, path: String, text: String): !__fs.FsError {
+    self.writeBytes(path, text.bytes())?
+}
+
+/// Whether there is a file or a directory at `path`.
+pub fn FileSystem.exists(self, path: String): Bool {
+    let at = match placed(path) {
+        ok(at) => at
+        err(_) => return false
+    }
+    match self.tree {
+        Tree.Disk(root) => __fs.exists(below(root, at))
+        Tree.Memory(stored) =>
+            at.isEmpty() or stored.update((s) { at in s.files or at in s.directories })
+        Tree.Kept(names, _, _) =>
+            at.isEmpty() or indexOf(names, at).isSome() or keptDirectory(names, at)
+        Tree.Layers(layers) => layers.iter().any((layer) { layer.exists(at) })
+        Tree.Under(inner, prefix) => inner[0].exists(__path.join(prefix, at))
+    }
+}
+
+/// The names of what is directly in the directory at `path`, sorted.
+pub fn FileSystem.list(self, path: String = ""): Array[String] ! __fs.FsError {
+    let at = placed(path)?
+    var names: Array[String] = match self.tree {
+        Tree.Disk(root) => __fs.list(below(root, at))?
+        Tree.Memory(stored) => {
+            let (files, directories) = stored.update(
+                (s) { (s.files.keys().collect(), s.directories.keys().collect()) },
+            )
+            if not at.isEmpty() and not (at in directories) {
+                fail missing(stored, at)
+            }
+            children(files.concat(directories), at)
+        }
+        Tree.Kept(kept, _, _) => {
+            if not at.isEmpty() and not keptDirectory(kept, at) {
+                fail if indexOf(kept, at).isSome() {
+                    __fs.FsError.NotADirectory
+                } else {
+                    __fs.FsError.NotFound
+                }
+            }
+            children(kept, at)
+        }
+        Tree.Layers(layers) => {
+            var joined: Array[String] = []
+            var found = false
+            for layer in layers {
+                match layer.list(at) {
+                    ok(more) => {
+                        joined.extend(more)
+                        found = true
+                    }
+                    err(__fs.FsError.NotFound) => {}
+                    err(error) => fail error
+                }
+            }
+            if not found {
+                fail __fs.FsError.NotFound
+            }
+            joined
+        }
+        Tree.Under(inner, prefix) => inner[0].list(__path.join(prefix, at))?
+    }
+    names.sort()
+    names.unique()
+}
+
+/// What the entry at `path` is.
+pub fn FileSystem.metadata(self, path: String): Metadata ! __fs.FsError {
+    let at = placed(path)?
+    let directory = (modified: __time.DateTime, readOnly: Bool): Metadata {
+        Metadata {
+            kind: __fs.FileKind.Directory
+            size: 0
+            readOnly
+            modified
+            permissions: if readOnly { 0o555 } else { 0o755 }
+        }
+    }
+    match self.tree {
+        Tree.Disk(root) => metadata(below(root, at))?
+        Tree.Memory(stored) => {
+            let (file, written, folder) = stored.update(
+                (s) { (s.files.get(at), s.written.get(at), at.isEmpty() or at in s.directories) },
+            )
+            match (file, written) {
+                (some(contents), some(when)) => Metadata {
+                    kind: __fs.FileKind.File
+                    size: contents.length()
+                    readOnly: false
+                    modified: when
+                    permissions: 0o644
+                }
+                _ if folder => directory(__time.utcNow(), false)
+                _ => fail __fs.FsError.NotFound
+            }
+        }
+        Tree.Kept(names, contents, _) => match indexOf(names, at) {
+            some(index) => Metadata {
+                kind: __fs.FileKind.File
+                size: contents[index].length()
+                readOnly: true
+                modified: __time.utc(__time.seconds(0))
+                permissions: 0o444
+            }
+            none if at.isEmpty() or keptDirectory(names, at) => directory(
+                __time.utc(__time.seconds(0)),
+                true,
+            )
+            none => fail __fs.FsError.NotFound
+        }
+        Tree.Layers(layers) => {
+            for layer in layers {
+                match layer.metadata(at) {
+                    ok(found) => return found
+                    err(__fs.FsError.NotFound) => {}
+                    err(error) => fail error
+                }
+            }
+            fail __fs.FsError.NotFound
+        }
+        Tree.Under(inner, prefix) => inner[0].metadata(__path.join(prefix, at))?
+    }
+}
+
+/// The tree under `root`, without `root`, its paths from the top: each
+/// directory before what it holds, and siblings sorted.
+pub fn FileSystem.walk(self, root: String = ""): Array[Entry] ! __fs.FsError {
+    let at = placed(root)?
+    var entries: Array[Entry] = []
+    for name in self.list(at)? {
+        let path = if at.isEmpty() { name } else { "{at}/{name}" }
+        let found = self.metadata(path)?.kind
+        entries.push(Entry { path, kind: found })
+        if found == __fs.FileKind.Directory {
+            entries.extend(self.walk(path)?)
+        }
+    }
+    entries
+}
+
+/// The paths that match a pattern of `path.matches`, as `**/*.md`, sorted.
+pub fn FileSystem.glob(self, pattern: String): Array[String] ! __fs.FsError {
+    var found: Array[String] = []
+    for entry in self.walk()? {
+        if __path.matches(pattern, entry.path) {
+            found.push(entry.path)
+        }
+    }
+    found
+}
+
+/// Makes the directory at `path` and those it is in.
+pub fn FileSystem.createDirectory(self, path: String): !__fs.FsError {
+    let at = placed(path)?
+    match self.tree {
+        Tree.Disk(root) => __fs.createDirectory(below(root, at))?
+        Tree.Memory(stored) => stored.update(
+            (s) {
+                for directory in parents("{at}/x") {
+                    s.directories[directory] = true
+                }
+            },
+        )
+        Tree.Kept(_, _, _) => fail __fs.FsError.PermissionDenied
+        Tree.Layers(layers) => match layers.get(0) {
+            some(first) => first.createDirectory(at)?
+            none => fail __fs.FsError.PermissionDenied
+        }
+        Tree.Under(inner, prefix) => inner[0].createDirectory(__path.join(prefix, at))?
+    }
+}
+
+/// Removes the file at `path`, or the directory, with what it holds when
+/// `recursive`.
+pub fn FileSystem.remove(self, path: String, recursive: Bool = false): !__fs.FsError {
+    let at = placed(path)?
+    match self.tree {
+        Tree.Disk(root) => __fs.remove(below(root, at), recursive: recursive)?
+        Tree.Memory(stored) => {
+            let prefix = "{at}/"
+            let outcome = stored.update(
+                (s) {
+                    if at in s.files {
+                        _ = s.files.remove(at)
+                        _ = s.written.remove(at)
+                        return 0
+                    }
+                    if not (at in s.directories) {
+                        return 1
+                    }
+                    let held =
+                        s.files.keys().any((name) { name.startsWith(prefix) }) or
+                            s.directories.keys().any((name) { name.startsWith(prefix) })
+                    if held and not recursive {
+                        return 2
+                    }
+                    for name in s.files.keys().filter((name) { name.startsWith(prefix) }).collect() {
+                        _ = s.files.remove(name)
+                        _ = s.written.remove(name)
+                    }
+                    for name in s.directories
+                        .keys()
+                        .filter((name) { name.startsWith(prefix) })
+                        .collect() {
+                        _ = s.directories.remove(name)
+                    }
+                    _ = s.directories.remove(at)
+                    0
+                },
+            )
+            match outcome {
+                1 => fail __fs.FsError.NotFound
+                2 => fail __fs.FsError.IsADirectory
+                _ => {}
+            }
+        }
+        Tree.Kept(_, _, _) => fail __fs.FsError.PermissionDenied
+        Tree.Layers(layers) => match layers.get(0) {
+            some(first) => first.remove(at, recursive: recursive)?
+            none => fail __fs.FsError.PermissionDenied
+        }
+        Tree.Under(inner, prefix) => inner[0].remove(__path.join(prefix, at), recursive: recursive)?
+    }
+}
+
+/// A path of a tree, from its top, without `.`, `..` or a leading `/`; one
+/// that would leave the tree is `InvalidName`.
+fn placed(path: String): String ! __fs.FsError {
+    let cleaned = __path.clean(path.removePrefix("/"))
+    if cleaned == "." {
+        return ""
+    }
+    if cleaned == ".." or cleaned.startsWith("../") or cleaned.startsWith("/") {
+        fail __fs.FsError.InvalidName
+    }
+    cleaned
+}
+
+fn below(root: String, at: String): String {
+    if at.isEmpty() { root } else { __path.join(root, at) }
+}
+
+fn missing(stored: __sync.Mutex[Stored], at: String): __fs.FsError {
+    if stored.update((s) { at in s.directories }) {
+        __fs.FsError.IsADirectory
+    } else {
+        __fs.FsError.NotFound
+    }
+}
+
+fn indexOf(names: Array[String], at: String): Int? {
+    names.iter().enumerate().find((pair) { pair.1 == at }).map((pair) { pair.0 })
+}
+
+fn keptDirectory(names: Array[String], at: String): Bool {
+    let prefix = "{at}/"
+    names.iter().any((name) { name.startsWith(prefix) })
+}
+
+/// The directories a file's path is in: `a` and `a/b` for `a/b/c`.
+fn parents(path: String): Array[String] {
+    var found: Array[String] = []
+    let parts = path.split("/")
+    for count in 1..parts.length() {
+        found.push(parts.slice(0, count).unwrapOr([]).join("/"))
+    }
+    found
+}
+
+/// The first component, after `at/`, of each path under `at`.
+fn children(paths: Array[String], at: String): Array[String] {
+    let prefix = if at.isEmpty() { "" } else { "{at}/" }
+    var found: Array[String] = []
+    for path in paths {
+        if path.startsWith(prefix) and path != at {
+            let rest = path.removePrefix(prefix)
+            found.push(rest.splitOnce("/").map((parts) { parts.0 }).unwrapOr(rest))
+        }
+    }
+    found
 }

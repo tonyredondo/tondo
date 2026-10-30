@@ -49,6 +49,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("pacing", include_str!("../std/pacing.to")),
     ("rules", include_str!("../std/rules.to")),
     ("validate", include_str!("../std/validate.to")),
+    ("archive", include_str!("../std/archive.to")),
     ("gzip", include_str!("../std/gzip.to")),
     ("zstd", include_str!("../std/zstd.to")),
     ("xml", include_str!("../std/xml.to")),

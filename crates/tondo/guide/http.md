@@ -57,6 +57,7 @@ fn main(): !http.HttpError {
 
 ```tondo
 import std.console
+import std.fs
 import std.http
 
 pub type NewUser = { name: String }
@@ -83,8 +84,8 @@ fn main(): !http.HttpError {
         reply
     })
 
-    app.files("/downloads", "public")         // GET with ranges: downloads resume
-    app.files("/browse", "public", listing: true)   // and a page of each folder
+    app.files("/downloads", fs.disk("public"))    // GET with ranges: downloads resume
+    app.files("/browse", fs.disk("public"), listing: true)   // and a page of each folder
     app.uploads("/downloads", "public")       // PUT (resumable) and multipart POST
     app.websocket("/chat", (socket) {
         for message in socket {
@@ -115,9 +116,9 @@ fn find(id: Int): User? {
 - `app.mount("/admin", adminApp)` adds another app's routes with its own
   middleware. `app.start()` serves in a task of its own and gives a `Server`
   with `url()` and `stop()`, for tests.
-- `app.embedded("/", Site)` serves the files of `const Site: embed.Files =
-  embed.files("public")`, kept in the executable, as `files` serves a
-  directory; a folder answers with its `index.html` (`tondo guide stdlib`).
+- `app.files("/", Site)` serves the files of `const Site: fs.FileSystem =
+  embed.files("public")`, kept in the executable, as it serves a directory
+  of the disk; a folder answers with its `index.html` (`tondo guide stdlib`).
 - `request.cookie("session")` reads a cookie and
   `reply.cookie("session", token, maxAge: time.hours(1))` sets one, `HttpOnly`
   and `SameSite=Lax` unless told otherwise; `http.Client.new(cookies: true)`

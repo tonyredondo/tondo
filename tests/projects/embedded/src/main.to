@@ -1,25 +1,30 @@
 // Files of the package, read when the program compiles (standard library
-// 14.27): a text, bytes, and a directory but its hidden files.
+// 14.27): a text, bytes, and a directory but its hidden files, as a tree of
+// std.fs that only reads.
 
+import embedded.web
 import std.console
 import std.embed
-import embedded.web
+import std.fs
 
 const Greeting: String = embed.text("greeting.txt")
 
-fn main() {
+fn main(): !fs.FsError {
     console.print(Greeting)
     console.println("{web.raw()}")
-    console.println("{web.Site.paths()}")
-    console.println("{web.Site.list("")} {web.Site.list("css")}")
-    console.println("{web.Site.text("index.html")} {web.Site.text("raw.bin")} {web.Site.read("missing")}")
-    console.println("{web.Site.read("/css/site.css").map((bytes) { bytes.length() })}")
+    console.println("{web.Site.walk()?.map((entry) { entry.path })}")
+    console.println("{web.Site.list()?} {web.Site.list("css")?}")
+    console.println(
+        "{web.Site.readText("index.html")?.trim()} {web.Site.readText("raw.bin").isErr()} {web.Site.exists("missing")}",
+    )
+    console.println(
+        "{web.Site.readBytes("/css/site.css")?.length()} {web.Site.writeText("new.txt", "x").isErr()}",
+    )
 }
 
 // expect-stdout: Hello from a file.
 // expect-stdout: [255, 0, 16]
-// expect-stdout: [css/site.css, index.html, raw.bin]
-// expect-stdout: [css/, index.html, raw.bin] [site.css]
-// expect-stdout: some(<h1>home</h1>
-// expect-stdout: ) none none
-// expect-stdout: some(19)
+// expect-stdout: [css, css/site.css, index.html, raw.bin]
+// expect-stdout: [css, index.html, raw.bin] [site.css]
+// expect-stdout: <h1>home</h1> true false
+// expect-stdout: 19 true

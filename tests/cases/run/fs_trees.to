@@ -1,0 +1,54 @@
+// A tree of std.fs: a directory of the disk, files in memory, the part
+// under a directory of another, or several in layers, with the operations
+// of std.fs on paths from its top.
+
+import std.console
+import std.fs
+
+fn main(): !fs.FsError {
+    let dir = fs.createTemporaryDirectory()?
+    fs.createDirectory("{dir}/theme/layouts")?
+    fs.writeText("{dir}/theme/layouts/post.html", "theme post")?
+    fs.writeText("{dir}/theme/style.css", "theme style")?
+    let theme = fs.disk("{dir}/theme")
+    console.println(
+        "{theme.list()?} {theme.glob("**/*.html")?} {theme.readText("layouts/post.html")?}",
+    )
+
+    let site = fs.memory()
+    site.writeText("layouts/post.html", "site post")?
+    site.writeText("content/hello.md", "# Hello")?
+    site.createDirectory("drafts/old")?
+    console.println("{site.walk()?.map((entry) { entry.path })}")
+    console.println(
+        "{site.exists("content")} {site.exists("nope")} {site.metadata("content/hello.md")?.size}",
+    )
+
+    let both = fs.overlay(site, theme)
+    console.println(
+        "{both.list()?} {both.readText("layouts/post.html")?} {both.readText("style.css")?}",
+    )
+    both.writeText("new.txt", "written")?
+    console.println("{site.readText("new.txt")?} {theme.exists("new.txt")}")
+
+    let content = site.sub("content")
+    console.println(
+        "{content.list()?} {content.readText("hello.md")?} {content.readText("../new.txt").isErr()}",
+    )
+    site.remove("content", recursive: true)?
+    console.println("{site.list()?} {theme.directory().isSome()} {site.directory()}")
+    match site.remove("drafts") {
+        ok(_) => console.println("removed")
+        err(error) => console.println("{error}")
+    }
+    fs.remove(dir, recursive: true)?
+}
+
+// expect-stdout: [layouts, style.css] [layouts/post.html] theme post
+// expect-stdout: [content, content/hello.md, drafts, drafts/old, layouts, layouts/post.html]
+// expect-stdout: true false 7
+// expect-stdout: [content, drafts, layouts, style.css] site post theme style
+// expect-stdout: written false
+// expect-stdout: [hello.md] # Hello true
+// expect-stdout: [drafts, layouts, new.txt] true none
+// expect-stdout: is a directory

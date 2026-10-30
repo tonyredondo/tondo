@@ -3280,3 +3280,20 @@ the type, never through a `Float`, and a decimal literal wider than
 `UInt128` is accepted there alone. Comparison operators stay closed to the
 program's types, as 18.10 says; `Ordered.compare` orders these.
 
+## 2026-10-30 — One type for a tree of files
+
+The second half of the eleventh lot. A directory of the disk, the files
+kept in the executable, files in memory, an archive's and layers of them
+are one type, `fs.FileSystem`, with the operations of `std.fs` by the same
+names, so what serves, loads or packs files takes any of them: a site is
+served from the disk while it is written and from the executable when it
+ships, a theme lies under a site's own files, and a test builds its tree in
+memory. `embed.files` gives one, which still is a constant; `App.embedded`,
+`Set.addGlob` and `Set.addEmbedded` went, as `App.files` and `Set.addFiles`
+take a tree. Without dynamic dispatch, the tree is an enum of its kinds.
+
+`std.archive` reads and writes zip and tar in Tondo, the runtime only
+deflating, inflating and checking CRC-32. One API covers both, the format
+read from the first bytes or the name; extracting refuses an entry or a
+link that would leave its directory, as an archive made to attack does.
+

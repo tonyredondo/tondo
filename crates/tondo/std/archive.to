@@ -1,0 +1,812 @@
+// std.archive (standard library 14.36): zip, tar, tar.gz and tar.zst behind
+// one API, read and written in Tondo; the runtime deflates, inflates and
+// checks CRC-32.
+
+import std.fs as __fs
+import std.gzip as __gzip
+import std.internal.codec as codecNative
+import std.io as __io
+import std.path as __path
+import std.sync as __sync
+import std.time as __time
+import std.zstd as __zstd
+
+/// A kind of archive.
+pub enum Format {
+    Zip
+    Tar
+    TarGzip
+    TarZstd
+}
+
+/// `zip`, `tar`, `tar.gz` or `tar.zst`.
+impl Display for Format {
+    fn display(self): String {
+        match self {
+            Format.Zip => "zip"
+            Format.Tar => "tar"
+            Format.TarGzip => "tar.gz"
+            Format.TarZstd => "tar.zst"
+        }
+    }
+}
+
+/// What an entry of an archive is.
+pub enum EntryKind {
+    File
+    Directory
+    Symlink
+}
+
+/// An entry of an archive: its path, with `/`, what it is, its size, when
+/// it changed, its Unix permissions, and the target of a link.
+pub type Entry = {
+    name: String
+    kind: EntryKind
+    size: Int
+    modified: __time.DateTime
+    permissions: Int
+    target: String?
+}
+
+/// Why an archive could not be read, written or extracted.
+pub type ArchiveError = {
+    message: String
+}
+
+impl Display for ArchiveError {
+    fn display(self): String {
+        self.message
+    }
+}
+
+fn problem(message: String): ArchiveError {
+    ArchiveError { message: message }
+}
+
+/// An archive read whole, its entries and their contents.
+pub type Archive = {
+    priv shape: Format
+    priv listed: Array[Entry]
+    priv bodies: Array[Array[Byte]]
+}
+
+/// The archive in the file at `path`, of the format its contents say.
+pub fn open(path: String): Archive ! ArchiveError {
+    match __fs.readBytes(path) {
+        ok(bytes) => read(bytes)?
+        err(error) => fail problem("{path}: {error}")
+    }
+}
+
+/// The archive these bytes are, of the format their first bytes say: zip,
+/// tar, or tar in gzip or Zstandard.
+pub fn read(bytes: Array[Byte]): Archive ! ArchiveError {
+    let starts = (signature: Array[Int]): Bool {
+        bytes.length() >= signature.length() and
+            (0..signature.length()).all((at) { Int(bytes[at]) == signature[at] })
+    }
+    if starts([0x50, 0x4b, 0x03, 0x04]) or starts([0x50, 0x4b, 0x05, 0x06]) {
+        return readZip(bytes)
+    }
+    if starts([0x1f, 0x8b]) {
+        return readTar(unpacked(__gzip.decompress(bytes))?, Format.TarGzip)
+    }
+    if starts([0x28, 0xb5, 0x2f, 0xfd]) {
+        return readTar(unpacked(__zstd.decompress(bytes))?, Format.TarZstd)
+    }
+    readTar(bytes, Format.Tar)
+}
+
+fn unpacked(result: Array[Byte] ! __io.IoError): Array[Byte] ! ArchiveError {
+    match result {
+        ok(bytes) => bytes
+        err(error) => fail problem("the archive is not compressed as its first bytes say: {error}")
+    }
+}
+
+/// Its format.
+pub fn Archive.format(self): Format {
+    self.shape
+}
+
+/// Its entries, in their order.
+pub fn Archive.entries(self): Array[Entry] {
+    self.listed
+}
+
+/// The contents of the file `name`.
+pub fn Archive.readBytes(self, name: String): Array[Byte] ! ArchiveError {
+    for (index, entry) in self.listed.iter().enumerate() {
+        if entry.name == name and entry.kind == EntryKind.File {
+            return self.bodies[index]
+        }
+    }
+    fail problem("the archive has no file `{name}`")
+}
+
+/// The text of the UTF-8 file `name`.
+pub fn Archive.readText(self, name: String): String ! ArchiveError {
+    match String.fromBytes(self.readBytes(name)?) {
+        ok(text) => text
+        err(_) => fail problem("`{name}` is not UTF-8 text")
+    }
+}
+
+/// Writes the entries under the directory `into`, with their permissions.
+/// An entry whose path, or a link whose target, would leave `into` stops
+/// it, as one that a crafted archive holds.
+pub fn Archive.extract(self, into: String): !ArchiveError {
+    let root = __path.clean(into)
+    for (index, entry) in self.listed.iter().enumerate() {
+        let target = inside(root, entry.name)?
+        let parent = __path.parent(target).unwrapOr(root)
+        failed(__fs.createDirectory(parent), parent)?
+        match entry.kind {
+            EntryKind.Directory => failed(__fs.createDirectory(target), target)?
+            EntryKind.File => {
+                failed(__fs.writeBytes(target, self.bodies[index]), target)?
+                if entry.permissions != 0 {
+                    failed(__fs.setPermissions(target, entry.permissions), target)?
+                }
+            }
+            EntryKind.Symlink => {
+                let pointed = entry.target.unwrapOr("")
+                if __path.isAbsolute(pointed) {
+                    fail problem(
+                        "the link `{entry.name}` points outside the archive, to `{pointed}`",
+                    )
+                }
+                _ = inside(root, __path.join(__path.parent(entry.name).unwrapOr(""), pointed))?
+                // A link of an earlier extraction gives way.
+                _ = __fs.remove(target)
+                failed(__fs.createSymlink(pointed, target), target)?
+            }
+        }
+    }
+}
+
+/// The path under `root` of an entry, or why it would leave it.
+fn inside(root: String, name: String): String ! ArchiveError {
+    let cleaned = __path.clean(name)
+    if __path.isAbsolute(name) or cleaned == ".." or cleaned.startsWith("../") {
+        fail problem("the entry `{name}` would be written outside where the archive is extracted")
+    }
+    __path.join(root, cleaned)
+}
+
+fn failed(result: !__fs.FsError, path: String): !ArchiveError {
+    match result {
+        ok(_) => {}
+        err(error) => fail problem("{path}: {error}")
+    }
+}
+
+/// The files of the archive as a tree of `std.fs`, in memory.
+pub fn Archive.files(self): __fs.FileSystem {
+    let tree = __fs.memory()
+    for (index, entry) in self.listed.iter().enumerate() {
+        match entry.kind {
+            EntryKind.Directory => _ = tree.createDirectory(entry.name)
+            EntryKind.File => _ = tree.writeBytes(entry.name, self.bodies[index])
+            EntryKind.Symlink => {}
+        }
+    }
+    tree
+}
+
+/// Writes the files of a tree to an archive at `path`, of the format its
+/// name says unless `format` says another: `archive.create("site.zip",
+/// fs.disk("public"))`.
+pub fn create(path: String, from: __fs.FileSystem, format: Format? = none): !ArchiveError {
+    let chosen = match format {
+        some(given) => given
+        none => formatOf(path)?
+    }
+    let buffer = __io.Buffer()
+    let out = writer(buffer.writer(), chosen)
+    let walked = match from.walk() {
+        ok(entries) => entries
+        err(error) => fail problem("{error}")
+    }
+    for entry in walked {
+        let found = match from.metadata(entry.path) {
+            ok(found) => found
+            err(error) => fail problem("{entry.path}: {error}")
+        }
+        if entry.kind == __fs.FileKind.Directory {
+            out.entry(
+                Entry {
+                    name: "{entry.path}/"
+                    kind: EntryKind.Directory
+                    size: 0
+                    modified: found.modified
+                    permissions: if found.permissions == 0 { 0o755 } else { found.permissions }
+                    target: none
+                },
+                [],
+            )?
+        } else if entry.kind == __fs.FileKind.File {
+            let data = match from.readBytes(entry.path) {
+                ok(data) => data
+                err(error) => fail problem("{entry.path}: {error}")
+            }
+            out.entry(
+                Entry {
+                    name: entry.path
+                    kind: EntryKind.File
+                    size: data.length()
+                    modified: found.modified
+                    permissions: if found.permissions == 0 { 0o644 } else { found.permissions }
+                    target: none
+                },
+                data,
+            )?
+        }
+    }
+    out.finish()?
+    match __fs.writeBytes(path, buffer.bytes()) {
+        ok(_) => {}
+        err(error) => fail problem("{path}: {error}")
+    }
+}
+
+/// The format a file's name says: `.zip`, `.tar`, `.tar.gz` or `.tgz`,
+/// `.tar.zst` or `.tzst`.
+fn formatOf(path: String): Format ! ArchiveError {
+    let name = path.toLowerAscii()
+    if name.endsWith(".zip") {
+        Format.Zip
+    } else if name.endsWith(".tar.gz") or name.endsWith(".tgz") {
+        Format.TarGzip
+    } else if name.endsWith(".tar.zst") or name.endsWith(".tzst") {
+        Format.TarZstd
+    } else if name.endsWith(".tar") {
+        Format.Tar
+    } else {
+        fail problem(
+            "`{path}` does not say its format: name it `.zip`, `.tar`, `.tar.gz` or `.tar.zst`, or give `format:`",
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Writing
+// ---------------------------------------------------------------------------
+
+/// Writes an archive to a stream entry by entry; `finish` ends it.
+pub type Writer = {
+    priv out: __io.Writer
+    priv format: Format
+    priv state: __sync.Mutex[Written]
+}
+
+type Written = {
+    /// The zip's central directory, written at the end.
+    directory: Array[Byte]
+    count: Int
+    offset: Int
+    finished: Bool
+}
+
+/// A writer of an archive of `format` to `out`.
+pub fn writer(out: __io.Writer, format: Format): Writer {
+    let stream = match format {
+        Format.TarGzip => __gzip.writer(out)
+        Format.TarZstd => __zstd.writer(out)
+        _ => out
+    }
+    Writer {
+        out: stream
+        format
+        state: __sync.Mutex(Written { directory: [], count: 0, offset: 0, finished: false })
+    }
+}
+
+/// Adds a file of these contents.
+pub fn Writer.add(self, name: String, data: Array[Byte], permissions: Int = 0o644): !ArchiveError {
+    let modified = __time.utcNow()
+    self.entry(
+        Entry {
+            name
+            kind: EntryKind.File
+            size: data.length()
+            modified
+            permissions
+            target: none
+        },
+        data,
+    )
+}
+
+/// Adds the file of the disk at `path` as `name`.
+pub fn Writer.addFile(self, name: String, path: String): !ArchiveError {
+    let data = match __fs.readBytes(path) {
+        ok(bytes) => bytes
+        err(error) => fail problem("{path}: {error}")
+    }
+    let (modified, permissions) = match __fs.metadata(path) {
+        ok(found) => (found.modified, found.permissions)
+        err(_) => (__time.utcNow(), 0o644)
+    }
+    self.entry(
+        Entry {
+            name
+            kind: EntryKind.File
+            size: data.length()
+            modified
+            permissions
+            target: none
+        },
+        data,
+    )
+}
+
+/// Adds a directory.
+pub fn Writer.addDirectory(self, name: String): !ArchiveError {
+    let folder = if name.endsWith("/") { name } else { "{name}/" }
+    self.entry(
+        Entry {
+            name: folder
+            kind: EntryKind.Directory
+            size: 0
+            modified: __time.utcNow()
+            permissions: 0o755
+            target: none
+        },
+        [],
+    )
+}
+
+/// Ends the archive: a zip's central directory, a tar's two empty blocks,
+/// and the end of the compression.
+pub fn Writer.finish(self): !ArchiveError {
+    let (directory, count, offset) = self.state.update(
+        (state) {
+            state.finished = true
+            (state.directory, state.count, state.offset)
+        },
+    )
+    let ending = match self.format {
+        Format.Zip => directory.concat(zipEnd(count, directory.length(), offset))
+        _ => [Byte(0u8)].repeat(1024)
+    }
+    written(self.out.writeBytes(ending))?
+    written(self.out.close())?
+}
+
+fn Writer.entry(self, entry: Entry, data: Array[Byte]): !ArchiveError {
+    let bytes = match self.format {
+        Format.Zip => {
+            let crc = codecNative.crc32(data)
+            let packed = codecNative.deflate(data, 6)
+            let stored = packed.length() >= data.length()
+            let body = if stored { data } else { packed }
+            self.state.update(
+                (state) {
+                    let local = zipHeader(entry, crc, body.length(), stored, state.offset, false)
+                    state.directory = state.directory.concat(
+                        zipHeader(entry, crc, body.length(), stored, state.offset, true),
+                    )
+                    state.count += 1
+                    let piece = local.concat(body)
+                    state.offset += piece.length()
+                    piece
+                },
+            )
+        }
+        _ => tarEntry(entry, data)
+    }
+    written(self.out.writeBytes(bytes))?
+}
+
+fn written(result: !__io.IoError): !ArchiveError {
+    match result {
+        ok(_) => {}
+        err(error) => fail problem("writing the archive: {error}")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bytes
+// ---------------------------------------------------------------------------
+
+/// The unsigned little-endian number of `count` bytes at `at`.
+fn little(bytes: Array[Byte], at: Int, count: Int): Int {
+    var value = 0
+    var index = count - 1
+    for index >= 0 {
+        value = value * 256 + Int(bytes.get(at + index).unwrapOr(Byte(0u8)))
+        index -= 1
+    }
+    value
+}
+
+/// `value` as `count` little-endian bytes.
+fn littleBytes(value: Int, count: Int): Array[Byte] {
+    var out: Array[Byte] = []
+    var rest = value
+    for _ in 0..count {
+        out.push(Byte(UInt8.wrapping(rest & 0xff)))
+        rest = rest / 256
+    }
+    out
+}
+
+fn textOf(bytes: Array[Byte], start: Int, end: Int): String {
+    let part = bytes.slice(start, end).unwrapOr([])
+    let length = part.iter().takeWhile((b) { b != Byte(0u8) }).count()
+    String.fromBytes(part.slice(0, length).unwrapOr([])).unwrapOr("")
+}
+
+// ---------------------------------------------------------------------------
+// tar (POSIX ustar, with PAX and GNU long names)
+// ---------------------------------------------------------------------------
+
+fn readTar(bytes: Array[Byte], format: Format): Archive ! ArchiveError {
+    if bytes.length() < 512 {
+        fail problem("the bytes are not an archive: zip, tar, tar.gz or tar.zst")
+    }
+    var entries: Array[Entry] = []
+    var contents: Array[Array[Byte]] = []
+    var at = 0
+    var longName: String? = none
+    var longTarget: String? = none
+    var extended: Map[String, String] = [:]
+    for at + 512 <= bytes.length() {
+        let header = bytes.slice(at, at + 512).unwrapOr([])
+        if header.iter().all((b) { b == Byte(0u8) }) {
+            break
+        }
+        // The checksum counts its own field as spaces.
+        let sum = header
+            .iter()
+            .enumerate()
+            .map((pair) { if pair.0 >= 148 and pair.0 < 156 { 32 } else { Int(pair.1) } })
+        if sum.reduce(0, (total, b) { total + b }) != octal(header, 148, 8) {
+            fail if entries.isEmpty() {
+                problem("the bytes are not an archive: zip, tar, tar.gz or tar.zst")
+            } else {
+                problem("the tar is damaged after `{entries[entries.length() - 1].name}`")
+            }
+        }
+        let size = match extended.get("size") {
+            some(text) => Int.parse(text).unwrapOr(0)
+            none => octal(header, 124, 12)
+        }
+        let kind = Int(header[156])
+        let data = bytes.slice(at + 512, at + 512 + size).unwrapOr([])
+        at += 512 + (size + 511) / 512 * 512
+        // A header of the next entry's long name or of its PAX records.
+        if kind == 0x4c {
+            longName = some(textOf(data, 0, data.length()))
+            continue
+        }
+        if kind == 0x4b {
+            longTarget = some(textOf(data, 0, data.length()))
+            continue
+        }
+        if kind == 0x78 {
+            extended = paxRecords(data)
+            continue
+        }
+        if kind == 0x67 {
+            continue
+        }
+        let prefix = textOf(header, 345, 500)
+        let short = textOf(header, 0, 100)
+        let named = if prefix.isEmpty() or textOf(header, 257, 262) != "ustar" {
+            short
+        } else {
+            "{prefix}/{short}"
+        }
+        let name = extended.get("path").orElse(longName).unwrapOr(named).removePrefix("./")
+        let target = extended.get("linkpath").orElse(longTarget).unwrapOr(textOf(header, 157, 257))
+        let seconds = match extended.get("mtime") {
+            some(text) => Int.parse(text.split(".")[0]).unwrapOr(0)
+            none => octal(header, 136, 12)
+        }
+        let entryKind = match kind {
+            0x35 => some(EntryKind.Directory)
+            0x32 => some(EntryKind.Symlink)
+            0x30 => some(EntryKind.File)
+            0 => some(EntryKind.File)
+            0x37 => some(EntryKind.File)
+            _ => none
+        }
+        (longName, longTarget, extended) = (none, none, [:])
+        // The entry of the top directory itself, as `./`.
+        if name.isEmpty() or name == "." {
+            continue
+        }
+        match entryKind {
+            some(found) => {
+                entries.push(
+                    Entry {
+                        name: name
+                        kind: found
+                        size: size
+                        modified: __time.utc(__time.seconds(seconds))
+                        permissions: octal(header, 100, 8) & 0o7777
+                        target: if found == EntryKind.Symlink { some(target) } else { none }
+                    },
+                )
+                contents.push(if found == EntryKind.File { data } else { [] })
+            }
+            none => {}
+        }
+    }
+    Archive { shape: format, listed: entries, bodies: contents }
+}
+
+/// A number of a tar header: octal text, or base 256 when its first byte
+/// has its high bit.
+fn octal(header: Array[Byte], at: Int, count: Int): Int {
+    if Int(header[at]) & 0x80 != 0 {
+        var value = Int(header[at]) & 0x7f
+        for index in at + 1..at + count {
+            value = value * 256 + Int(header[index])
+        }
+        return value
+    }
+    let text = textOf(header, at, at + count).trim()
+    var value = 0
+    for c in text.chars() {
+        if c >= '0' and c <= '7' {
+            value = value * 8 + c.code() - '0'.code()
+        }
+    }
+    value
+}
+
+/// PAX records: `length key=value\n`, one after another.
+fn paxRecords(data: Array[Byte]): Map[String, String] {
+    var records: Map[String, String] = [:]
+    for line in String.fromBytes(data).unwrapOr("").split("\n") {
+        match line.splitOnce(" ") {
+            some((_, record)) => match record.splitOnce("=") {
+                some((key, value)) => records[key] = value
+                none => {}
+            }
+            none => {}
+        }
+    }
+    records
+}
+
+/// An entry as tar writes it: a PAX header first when its path or target
+/// does not fit, then its header and its data padded to 512 bytes.
+fn tarEntry(entry: Entry, data: Array[Byte]): Array[Byte] {
+    var out: Array[Byte] = []
+    let target = entry.target.unwrapOr("")
+    if entry.name.byteLength() > 100 or target.byteLength() > 100 {
+        var records = paxRecord("path", entry.name)
+        if not target.isEmpty() {
+            records = records.concat(paxRecord("linkpath", target))
+        }
+        out = out.concat(tarHeader("PaxHeader", 0x78, records.length(), entry, ""))
+        out = out.concat(padded(records))
+    }
+    let kind = match entry.kind {
+        EntryKind.File => 0x30
+        EntryKind.Directory => 0x35
+        EntryKind.Symlink => 0x32
+    }
+    out = out.concat(tarHeader(entry.name, kind, data.length(), entry, target))
+    out.concat(padded(data))
+}
+
+fn paxRecord(key: String, value: String): Array[Byte] {
+    let body = " {key}={value}\n"
+    // The length counts its own digits.
+    var length = body.byteLength() + 1
+    for "{length}".byteLength() + body.byteLength() != length {
+        length += 1
+    }
+    "{length}{body}".bytes()
+}
+
+fn padded(data: Array[Byte]): Array[Byte] {
+    let missing = (512 - data.length() % 512) % 512
+    data.concat([Byte(0u8)].repeat(missing))
+}
+
+fn tarHeader(name: String, kind: Int, size: Int, entry: Entry, target: String): Array[Byte] {
+    let number = (value: Int, width: Int): Array[Byte] {
+        padField(value.toString(radix: 8).padStart(width - 1, "0"), width)
+    }
+    let before = padField(name, 100)
+        .concat(number(entry.permissions, 8))
+        .concat(number(0, 8))
+        .concat(number(0, 8))
+        .concat(number(size, 12))
+        .concat(number(entry.modified.sinceEpoch().seconds(), 12))
+    let after = [Byte(UInt8.wrapping(kind))]
+        .concat(padField(target, 100))
+        .concat(padField("ustar", 6))
+        .concat("00".bytes())
+        .concat([Byte(0u8)].repeat(247))
+    // The checksum counts its own field as spaces.
+    let sum = before
+        .concat("        ".bytes())
+        .concat(after)
+        .map((b) { Int(b) })
+        .reduce(0, (total, b) { total + b })
+    let checksum = padField(sum.toString(radix: 8).padStart(6, "0"), 7).concat(" ".bytes())
+    before.concat(checksum).concat(after)
+}
+
+/// A text in a field of `width` bytes, cut or filled with zeros.
+fn padField(text: String, width: Int): Array[Byte] {
+    let bytes = text.bytes()
+    if bytes.length() >= width {
+        return bytes.slice(0, width).unwrapOr([])
+    }
+    bytes.concat([Byte(0u8)].repeat(width - bytes.length()))
+}
+
+// ---------------------------------------------------------------------------
+// zip
+// ---------------------------------------------------------------------------
+
+fn readZip(bytes: Array[Byte]): Archive ! ArchiveError {
+    // The end of the central directory, its signature found from the end.
+    var end = bytes.length() - 22
+    for end >= 0 and little(bytes, end, 4) != 0x06054b50 {
+        end -= 1
+    }
+    if end < 0 {
+        fail problem("the zip has no central directory")
+    }
+    var count = little(bytes, end + 10, 2)
+    var at = little(bytes, end + 16, 4)
+    // ZIP64: its own end of the central directory, which a locator names.
+    if (count == 0xffff or at == 0xffffffff) and
+        end >= 20 and
+        little(bytes, end - 20, 4) == 0x07064b50 {
+        let record = little(bytes, end - 12, 8)
+        count = little(bytes, record + 32, 8)
+        at = little(bytes, record + 48, 8)
+    }
+    var entries: Array[Entry] = []
+    var contents: Array[Array[Byte]] = []
+    for _ in 0..count {
+        if little(bytes, at, 4) != 0x02014b50 {
+            fail problem("the zip's central directory is damaged")
+        }
+        let madeBy = little(bytes, at + 5, 1)
+        let method = little(bytes, at + 10, 2)
+        let (time, date) = (little(bytes, at + 12, 2), little(bytes, at + 14, 2))
+        let crc = little(bytes, at + 16, 4)
+        var packedSize = little(bytes, at + 20, 4)
+        var size = little(bytes, at + 24, 4)
+        let (nameLength, extraLength, commentLength) = (
+            little(bytes, at + 28, 2),
+            little(bytes, at + 30, 2),
+            little(bytes, at + 32, 2),
+        )
+        let attributes = little(bytes, at + 38, 4)
+        var local = little(bytes, at + 42, 4)
+        let name = textOf(bytes, at + 46, at + 46 + nameLength)
+        var modified = dosTime(date, time)
+        // Extra fields: ZIP64 sizes and offset, and Unix times.
+        var extra = at + 46 + nameLength
+        let extraEnd = extra + extraLength
+        for extra + 4 <= extraEnd {
+            let (tag, length) = (little(bytes, extra, 2), little(bytes, extra + 2, 2))
+            var field = extra + 4
+            if tag == 0x0001 {
+                if size == 0xffffffff {
+                    size = little(bytes, field, 8)
+                    field += 8
+                }
+                if packedSize == 0xffffffff {
+                    packedSize = little(bytes, field, 8)
+                    field += 8
+                }
+                if local == 0xffffffff {
+                    local = little(bytes, field, 8)
+                }
+            } else if tag == 0x5455 and length >= 5 and little(bytes, field, 1) & 1 == 1 {
+                modified = __time.utc(__time.seconds(little(bytes, field + 1, 4)))
+            }
+            extra += 4 + length
+        }
+        at = extraEnd + commentLength
+        let unix = attributes / 65536
+        let kind = if name.endsWith("/") {
+            EntryKind.Directory
+        } else if madeBy == 3 and unix & 0o170000 == 0o120000 {
+            EntryKind.Symlink
+        } else {
+            EntryKind.File
+        }
+        let start = local + 30 + little(bytes, local + 26, 2) + little(bytes, local + 28, 2)
+        let packed = bytes.slice(start, start + packedSize).unwrapOr([])
+        let data = match method {
+            0 => packed
+            8 => {
+                let inflated = codecNative.inflate(packed)
+                if codecNative.unpackFailed(inflated) {
+                    fail problem("`{name}` of the zip is damaged")
+                }
+                codecNative.unpacked(inflated)
+            }
+            _ => fail problem(
+                "`{name}` of the zip is compressed with method {method}: only stored and deflated entries are read",
+            )
+        }
+        if kind == EntryKind.File and codecNative.crc32(data) != crc {
+            fail problem("`{name}` of the zip is damaged: its CRC-32 does not match")
+        }
+        entries.push(
+            Entry {
+                name: name
+                kind: kind
+                size: size
+                modified: modified
+                permissions: if madeBy == 3 { unix & 0o7777 } else { 0 }
+                target: if kind == EntryKind.Symlink { String.fromBytes(data).ok() } else { none }
+            },
+        )
+        contents.push(if kind == EntryKind.File { data } else { [] })
+    }
+    Archive { shape: Format.Zip, listed: entries, bodies: contents }
+}
+
+/// The time of MS-DOS, which zip keeps, as UTC.
+fn dosTime(date: Int, time: Int): __time.DateTime {
+    __time.DateTime {
+        year: 1980 + date / 512
+        month: date / 32 % 16
+        day: date % 32
+        hour: time / 2048
+        minute: time / 32 % 64
+        second: time % 32 * 2
+        nanosecond: 0
+    }
+}
+
+/// A local header (`central` false) or a central directory's record.
+fn zipHeader(entry: Entry, crc: Int, packedSize: Int, stored: Bool, offset: Int, central: Bool): Array[
+    Byte,
+] {
+    let name = entry.name.bytes()
+    let m = entry.modified
+    let time = m.hour * 2048 + m.minute * 32 + m.second / 2
+    let date = (if m.year < 1980 { 0 } else { m.year - 1980 }) * 512 + m.month * 32 + m.day
+    let seconds = entry.modified.sinceEpoch().seconds()
+    let extra = littleBytes(0x5455, 2)
+        .concat(littleBytes(5, 2))
+        .concat([Byte(1u8)])
+        .concat(littleBytes(seconds, 4))
+    let method = if stored or entry.kind != EntryKind.File { 0 } else { 8 }
+    let unix = match entry.kind {
+        EntryKind.Directory => 0o040000 | entry.permissions
+        EntryKind.Symlink => 0o120000 | 0o777
+        EntryKind.File => 0o100000 | entry.permissions
+    }
+    var out: Array[Byte] = if central {
+        littleBytes(0x02014b50, 4).concat(littleBytes(0x0314, 2))
+    } else {
+        littleBytes(0x04034b50, 4)
+    }
+    out = out
+        .concat(littleBytes(20, 2))
+        .concat(littleBytes(0x0800, 2))
+        .concat(littleBytes(method, 2))
+    out = out.concat(littleBytes(time, 2)).concat(littleBytes(date, 2)).concat(littleBytes(crc, 4))
+    out = out.concat(littleBytes(packedSize, 4)).concat(littleBytes(entry.size, 4))
+    out = out.concat(littleBytes(name.length(), 2)).concat(littleBytes(extra.length(), 2))
+    if central {
+        out = out.concat(littleBytes(0, 2)).concat(littleBytes(0, 2)).concat(littleBytes(0, 2))
+        out = out.concat(littleBytes(unix * 65536, 4)).concat(littleBytes(offset, 4))
+    }
+    out.concat(name).concat(extra)
+}
+
+fn zipEnd(count: Int, size: Int, offset: Int): Array[Byte] {
+    var out = littleBytes(0x06054b50, 4).concat(littleBytes(0, 2)).concat(littleBytes(0, 2))
+    out = out.concat(littleBytes(count, 2)).concat(littleBytes(count, 2))
+    out.concat(littleBytes(size, 4)).concat(littleBytes(offset, 4)).concat(littleBytes(0, 2))
+}

@@ -688,6 +688,10 @@ fn std_alias(module: &str, member: &str) -> String {
     format!("; use `{module}.{function}`")
 }
 
+/// The variant of `Tree` in `std/files.to` that holds the files of
+/// `embed.files`: `Kept(names, contents, tags)`.
+const KEPT_TREE: u32 = 2;
+
 struct Checker<'a> {
     /// What an editor asks to know: each declaration and each name that
     /// refers to one.
@@ -2002,7 +2006,9 @@ impl<'a> Checker<'a> {
             let message = format!("line {line}, column {column} of the template: {}", error.message);
             self.diags.error("E1906", arg.value.span, message);
         }
-        if is(self, "addEmbedded")
+        // Every file is a template when no pattern chooses among them.
+        if is(self, "addFiles")
+            && args.len() == 1
             && let Some(arg) = args.first()
             && let ast::ExprKind::Call { callee, args: inner } = &arg.value.kind
             && let ast::ExprKind::Path(path) = &callee.kind
@@ -4009,12 +4015,18 @@ impl<'a> Checker<'a> {
                     .into_iter()
                     .map(|(_, contents)| Self::mk(hir::ExprKind::Bytes(contents.into()), bytes, span))
                     .collect();
-                let fields = vec![
+                // A tree of `std.fs` that only reads: `FileSystem { tree:
+                // Tree.Kept(names, contents, tags) }` (`std/files.to`).
+                let parts = vec![
                     (0, Self::mk(hir::ExprKind::Array(names), strings, span)),
                     (1, Self::mk(hir::ExprKind::Array(contents), arrays, span)),
                     (2, Self::mk(hir::ExprKind::Array(tags), strings, span)),
                 ];
-                Self::mk(hir::ExprKind::Record(fields), result, span)
+                let Some(tree) = self.record_fields(result, span).and_then(|fields| fields.first().map(|f| f.1)) else {
+                    return Self::error_expr(span);
+                };
+                let kept = Self::mk(hir::ExprKind::Variant(KEPT_TREE, parts), tree, span);
+                Self::mk(hir::ExprKind::Record(vec![(0, kept)]), result, span)
             }
         }
     }

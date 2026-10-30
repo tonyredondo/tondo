@@ -67,6 +67,30 @@ pub extern "C" fn tondo_rt_unpack(data: *mut ArrayHeader, zstd: u8) -> *mut Nati
     native::new(unpacked)
 }
 
+/// The data deflated without a header, as zip keeps it.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_deflate(data: *mut ArrayHeader, compression: i64) -> *mut ArrayHeader {
+    let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), level(compression));
+    let _ = encoder.write_all(&bytes(data));
+    byte_array(&encoder.finish().unwrap_or_default())
+}
+
+/// The data that `deflate` deflated, or nothing when it is not.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_inflate(data: *mut ArrayHeader) -> *mut NativeObject {
+    let mut out = Vec::new();
+    let inflated = flate2::read::DeflateDecoder::new(&bytes(data)[..]).read_to_end(&mut out).ok().map(|_| out);
+    native::new(inflated)
+}
+
+/// The CRC-32 of the data, as zip and gzip check it.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_crc32(data: *mut ArrayHeader) -> i64 {
+    let mut crc = flate2::Crc::new();
+    crc.update(&bytes(data));
+    crc.sum() as i64
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_unpacked(unpacked: *mut NativeObject) -> *mut ArrayHeader {
     byte_array(native::get::<Option<Vec<u8>>>(unpacked).and_then(Option::as_ref).map_or(&[][..], |d| &d[..]))

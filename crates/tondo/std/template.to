@@ -4,7 +4,6 @@
 // compiled with it into code; a `Set` loads templates while the program
 // runs, and writes them with the values its data has by reflection.
 
-import std.embed as __embed
 import std.formats as __formats
 import std.fs as __fs
 import std.internal.codec as codecNative
@@ -263,47 +262,27 @@ pub fn Set.addFile(mut self, path: String): !TemplateError {
     self.add(path, source)?
 }
 
-/// Adds the templates in the files a glob pattern matches, each named by
-/// its path from the directory where the pattern's wildcards start:
-/// `post.html` of `themes/simple/**/*.html`.
-pub fn Set.addGlob(mut self, pattern: String): !TemplateError {
-    let paths = match __fs.glob(pattern) {
+/// Adds the templates of a tree that a pattern of `path.matches` takes,
+/// each named by its path in the tree: `site.addFiles(fs.disk("themes/simple"),
+/// "**/*.html")`, or `site.addFiles(embed.files("templates"))`.
+pub fn Set.addFiles(mut self, files: __fs.FileSystem, pattern: String = "**"): !TemplateError {
+    let failed = (error: __fs.FsError, name: String): TemplateError {
+        TemplateError { message: "{error}", template: name, line: 0, column: 0 }
+    }
+    let paths = match files.glob(pattern) {
         ok(paths) => paths
-        err(error) => fail TemplateError {
-            message: "{error}"
-            template: pattern
-            line: 0
-            column: 0
-        }
+        err(error) => fail failed(error, pattern)
     }
-    var fixed: Array[String] = []
-    for part in pattern.split("/") {
-        if part.contains("*") or part.contains("?") or part.contains("[") or part.contains("{{") {
-            break
-        }
-        fixed.push(part)
-    }
-    let root = if fixed.isEmpty() { "" } else { "{fixed.join("/")}/" }
     for path in paths {
-        let source = match __fs.readText(path) {
-            ok(source) => source
-            err(error) => fail TemplateError {
-                message: "{error}"
-                template: path
-                line: 0
-                column: 0
-            }
+        if files
+            .metadata(path)
+            .map((found) { found.kind == __fs.FileKind.Directory })
+            .unwrapOr(false) {
+            continue
         }
-        self.add(path.removePrefix(root), source)?
-    }
-}
-
-/// Adds each text file of `files`, named by its path among them.
-pub fn Set.addEmbedded(mut self, files: __embed.Files): !TemplateError {
-    for path in files.paths() {
-        match files.text(path) {
-            some(source) => self.add(path, source)?
-            none => {}
+        match files.readText(path) {
+            ok(source) => self.add(path, source)?
+            err(error) => fail failed(error, path)
         }
     }
 }

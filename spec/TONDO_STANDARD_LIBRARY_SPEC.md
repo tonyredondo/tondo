@@ -1247,6 +1247,46 @@ pub fn File.reader(self): io.Reader
 - `FsError` no incluye paths ni contenido; `Host` reúne los fallos que el host
   no permite distinguir.
 
+Un `FileSystem` es un árbol de archivos con las operaciones de `std.fs`, de los
+mismos nombres, sobre paths relativos a su cima con `/`: un directorio del
+disco, archivos en memoria, los que el ejecutable lleva (`embed.files`, 14.27),
+los de un archivo comprimido (`archive.Archive.files`, 14.36), la parte bajo un
+directorio de otro, o varios en capas, como los archivos de un sitio sobre los
+de su tema:
+
+~~~tondo pseudocode
+pub type FileSystem
+pub fn disk(root: String = "."): FileSystem
+pub fn memory(): FileSystem
+pub fn overlay(layers: ...FileSystem): FileSystem
+pub fn FileSystem.sub(self, directory: String): FileSystem
+pub fn FileSystem.readText(self, path: String): String ! FsError
+pub fn FileSystem.readBytes(self, path: String): Array[Byte] ! FsError
+pub fn FileSystem.writeText(self, path: String, text: String): Unit ! FsError
+pub fn FileSystem.writeBytes(self, path: String, data: Array[Byte]): Unit ! FsError
+pub fn FileSystem.exists(self, path: String): Bool
+pub fn FileSystem.list(self, path: String = ""): Array[String] ! FsError
+pub fn FileSystem.metadata(self, path: String): Metadata ! FsError
+pub fn FileSystem.walk(self, root: String = ""): Array[Entry] ! FsError
+pub fn FileSystem.glob(self, pattern: String): Array[String] ! FsError
+pub fn FileSystem.createDirectory(self, path: String): Unit ! FsError
+pub fn FileSystem.remove(self, path: String, recursive: Bool = false): Unit ! FsError
+pub fn FileSystem.directory(self): String?
+pub fn FileSystem.tag(self, path: String): String?
+~~~
+
+- Sus copias lo comparten: lo que una escribe lo leen las demás. Un path que
+  saldría de la cima, `../x`, es `InvalidName`.
+- En memoria, los directorios de un archivo existen con él. Los archivos que el
+  ejecutable lleva solo se leen: escribir en ellos es `PermissionDenied`.
+- `overlay` lee un path de la primera capa que lo tiene, escribe en la
+  primera, y lista lo que tienen todas, sin repetir nombres.
+- `directory` es el directorio del disco que el árbol es, cuando lo es, para
+  lo que entrega paths al sistema; `tag`, un resumen del contenido de un
+  archivo que el ejecutable lleva, el `ETag` con que `std.http` lo sirve.
+- `App.files` (14.24), `template.Set.addFiles` (14.31), `archive.create`
+  (14.36) y las migraciones de `std.sql` toman un `FileSystem`.
+
 ### 10.6 Formato
 
 `Display` es el protocolo mínimo estático usado por interpolación. Los tipos
@@ -1678,6 +1718,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.hash` | Core | — | 0.1 | Digests MD5, SHA-1 y SHA-2, HMAC, por partes, y hashes no criptográficos |
 | `std.crypto` | Core | — | 0.1 | Secretos en tiempo constante, contraseñas, derivación de claves, sellado, firmas, y claves y certificados PEM |
 | `std.validate` | Core | — | 0.1 | Reglas de los campos de un tipo, que comprueban la lectura de cualquier formato, la línea de comandos y MCP |
+| `std.archive` | Hosted | — | 0.1 | zip, tar, tar.gz y tar.zst: leer, escribir y extraer |
 | `std.http` | Capability-gated | `network` | 0.1 | Cliente y servidor HTTP/1.1 y HTTP/2 con TLS, cuerpos en streaming, multipart, archivos con rangos, Server-Sent Events y WebSockets |
 | `std.random` | Core + gated | `entropy` para sembrar desde el sistema | 0.1 | Generadores pseudoaleatorios sembrados, mezcla, elección y bytes de entropía |
 | `std.uuid` | Core + gated | `entropy` y/o `civil-clock` para generación | 0.1 | UUID, parsing, formatting y generadores explícitos por versión |
@@ -1696,7 +1737,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.zstd` | Core | — | 0.1 | Zstandard (RFC 8878): bytes y streams comprimidos y descomprimidos |
 | `std.console` | Capability-gated | `console` | 0.1 | stdin, stdout, stderr, texto, bytes y flushing |
 | `std.env` | Hosted | — | 0.1 | Argumentos, entorno, directorio de trabajo, directorios del usuario y lo que se compiló |
-| `std.fs` | Hosted | — | 0.1 | Filesystem, metadata, permisos, enlaces, archivos, recorridos, glob, temporales y cambios vigilados |
+| `std.fs` | Hosted | — | 0.1 | Filesystem, metadata, permisos, enlaces, archivos, recorridos, glob, temporales, cambios vigilados y árboles de archivos |
 | `std.process` | Capability-gated | `process` | 0.1 | Planes, procesos, pipes, status, output y cancelación |
 | `std.net` | Capability-gated | `network` | 0.1 | Direcciones, DNS, sockets, streams, datagrams y frontera TLS |
 | `std.testing` | Test-only | ninguna implícita | 0.1 | Control sellado y helpers portables del runner |
@@ -4427,8 +4468,8 @@ app.use((request, next) {
     let reply = next(request)?
     reply.header("x-served-by", "tondo")
 })
-app.files("/downloads", "public")               // GET y HEAD con rangos
-app.embedded("/", Site)                         // los de un embed.Files (14.27)
+app.files("/downloads", fs.disk("public"))      // GET y HEAD con rangos
+app.files("/", Site)                            // los de embed.files (14.27)
 app.uploads("/downloads", "public")             // PUT reanudable y POST multipart
 app.listen(port: 8080)?
 ~~~
@@ -4504,8 +4545,7 @@ pub fn App.route(mut self, method: String, path: String, handler: fn(Request): R
 pub fn App.use(mut self, middleware: fn(Request, fn(Request): Reply ! Problem): Reply ! Problem)
 pub fn App.trustProxies(mut self, networks: ...net.Network)
 pub fn App.mount(mut self, prefix: String, other: App)
-pub fn App.files(mut self, prefix: String, directory: String, listing: Bool = false)
-pub fn App.embedded(mut self, prefix: String, files: embed.Files)
+pub fn App.files(mut self, prefix: String, files: fs.FileSystem, listing: Bool = false)
 pub fn App.uploads(mut self, prefix: String, directory: String)
 pub fn App.websocket(mut self, path: String, handler: fn(WebSocket): Unit ! HttpError)
 pub fn App.openApi(mut self, path: String = "/openapi.json", title: String = "API", version: String = "1.0")
@@ -4611,15 +4651,14 @@ pub alias TlsVersion = net.TlsVersion
   pedida, así que una descarga se reanuda, a `If-None-Match` y
   `If-Modified-Since` con `304`, y a un rango fuera del archivo con `416`;
   `If-Range` mantiene el rango solo si el archivo no cambió. `download` lo
-  envía como adjunto con ese nombre. `App.files` sirve así los archivos de una
-  carpeta, sin dejar salir de ella un path con `..` (`403`). Con `listing`, el
-  path de una carpeta responde con una página HTML de sus entradas, primero
+  envía como adjunto con ese nombre. `App.files` sirve así los archivos de un
+  árbol de `std.fs` (10.5), sin dejar salir de él un path con `..` (`403`):
+  los de un directorio del disco desde el disco, y los de otro árbol, como
+  `embed.files` (14.27), desde la memoria, con un `ETag` de su contenido,
+  `304`, rangos y `416`. El path de una carpeta responde con su `index.html`,
+  si lo tiene; con `listing`, con una página HTML de sus entradas, primero
   las carpetas, cada una con un enlace para abrirla y cada archivo con su
-  tamaño y un enlace para descargarlo; sin `listing`, es `404`.
-- `App.embedded` sirve igual los archivos de un `embed.Files` (14.27), desde la
-  memoria del programa: el content type de su extensión, un `ETag` de su
-  contenido, `304`, rangos y `416`. El path de una carpeta responde con su
-  `index.html`, si lo tiene, y si no es `404`.
+  tamaño y un enlace para descargarlo; y si no, es `404`.
 - `App.uploads` recibe archivos en una carpeta: `PUT` escribe el cuerpo en ese
   archivo, desde el byte que diga `Content-Range: bytes inicio-fin/total`, así
   que una subida se reanuda tras un `HEAD` que dice cuánto llegó; `POST` con un
@@ -4819,16 +4858,17 @@ buscarlos en el disco al ejecutar:
 
 ~~~tondo
 import std.embed
+import std.fs
 import std.http
 
 const Banner: String = embed.text("banner.txt")
 const Logo: Array[Byte] = embed.bytes("static/logo.png")
-const Site: embed.Files = embed.files("static")
+const Site: fs.FileSystem = embed.files("static")
 
 fn main(): !http.HttpError {
     var app = http.App.new()
     app.get("/banner", (request) { http.Reply.text(Banner) })
-    app.embedded("/", Site)
+    app.files("/", Site)
     app.listen(port: 8080)?
 }
 ~~~
@@ -4836,16 +4876,9 @@ fn main(): !http.HttpError {
 La superficie es:
 
 ~~~tondo pseudocode
-pub type Files
-
 pub fn text(path: String): String
 pub fn bytes(path: String): Array[Byte]
-pub fn files(path: String): Files
-pub fn Files.read(self, path: String): Array[Byte]?
-pub fn Files.text(self, path: String): String?
-pub fn Files.paths(self): Array[String]
-pub fn Files.list(self, directory: String): Array[String]
-pub fn Files.tag(self, path: String): String?
+pub fn files(path: String): fs.FileSystem
 ~~~
 
 - `text`, `bytes` y `files` se evalúan al compilar: su argumento es un
@@ -4863,12 +4896,9 @@ pub fn Files.tag(self, path: String): String?
   ruta que sale del paquete, un archivo que no es UTF-8 en `text` y un
   argumento que no es un literal son `E1904`; el error dice qué hay en ese
   directorio y qué escribir.
-- `Files.paths()` da las rutas de sus archivos, relativas al directorio
-  embebido, con `/` y en orden. `read` y `text` dan el contenido de una de
-  ellas, `none` si no está, y `text` también si no es UTF-8. `list` da lo que
-  hay directamente en una carpeta, `""` la de arriba, con `/` al final de las
-  subcarpetas. `tag` da un resumen del contenido de un archivo, el `ETag` con
-  que `std.http` lo sirve.
+- `files` da un `FileSystem` (10.5) que solo se lee, con los archivos bajo el
+  directorio embebido y sus paths relativos a él; `tag` da el resumen del
+  contenido de cada uno, el `ETag` con que `std.http` lo sirve.
 - Los archivos embebidos son entradas del build: `tondo run`, `tondo test` y
   `--watch` compilan de nuevo cuando cambian (6 y 7.10 del toolchain).
 - Un provider o un generador no embebe: lo que lee le llega como input (27.5
@@ -5104,7 +5134,7 @@ let page = template.html[Blog](embed.text("templates/blog.html"))
 let html = page.render(blog)
 
 var site = template.Set.html()
-site.addGlob("themes/simple/**/*.html")?
+site.addFiles(fs.disk("themes/simple"), "**/*.html")?
 site.functions(Helpers {})
 let out = site.render("post.html", post)?
 ~~~
@@ -5121,8 +5151,7 @@ pub fn Set.html(): Set
 pub fn Set.text(): Set
 pub fn Set.add(mut self, name: String, source: String): !TemplateError
 pub fn Set.addFile(mut self, path: String): !TemplateError
-pub fn Set.addGlob(mut self, pattern: String): !TemplateError
-pub fn Set.addEmbedded(mut self, files: embed.Files): !TemplateError
+pub fn Set.addFiles(mut self, files: fs.FileSystem, pattern: String = "**"): !TemplateError
 pub fn Set.functions[H: reflect.Reflect](mut self, helpers: H)
 pub fn Set.render[T: reflect.Reflect](self, name: String, data: T): String ! TemplateError
 pub fn Set.write[T: reflect.Reflect](self, name: String, data: T, out: io.Writer): !TemplateError
@@ -5183,8 +5212,10 @@ pub type TemplateError = { message: String, template: String, line: Int, column:
 **Cargadas**
 
 - Un `Set` guarda plantillas por nombre: `add` con el que se le da, `addFile`
-  con su ruta, `addGlob` con la ruta desde la carpeta donde empieza el patrón,
-  y `addEmbedded` con su ruta dentro de los archivos embebidos. Cada una se lee
+  con su ruta, y `addFiles` los archivos de un árbol de `std.fs` (10.5) que
+  toma un patrón de `path.matches`, con su ruta en el árbol: los de un
+  directorio con `fs.disk`, o los que el ejecutable lleva con `embed.files`.
+  Cada una se lee
   al añadirla, y una sintaxis mal escrita es un `TemplateError`; o `E1906` al
   compilar, si su texto se conoce entonces. `extends` e `include` nombran otras
   del mismo `Set`.
@@ -5550,6 +5581,63 @@ pub fn checkAs(value: reflect.Value, info: reflect.TypeInfo): !Invalid
   extensión de RFC 9457; `cli.parse` termina con 2 y las dice; una
   herramienta de `std.mcp` devuelve el error al modelo, que corrige su
   llamada.
+
+### 14.36 `std.archive`
+
+`std.archive` lee y escribe zip, tar, tar.gz y tar.zst con una sola API, en
+Tondo; el runtime comprime, descomprime y comprueba el CRC-32:
+
+~~~tondo
+import std.archive
+import std.fs
+
+archive.create("site.zip", fs.disk("public"))?
+let read = archive.open("release.tar.gz")?
+for entry in read.entries() {
+    console.println("{entry.name} {entry.size}")
+}
+read.extract("release")?
+~~~
+
+~~~tondo pseudocode
+pub enum Format { Zip, Tar, TarGzip, TarZstd }
+pub enum EntryKind { File, Directory, Symlink }
+pub type Entry = { name: String, kind: EntryKind, size: Int, modified: time.DateTime,
+    permissions: Int, target: String? }
+pub type ArchiveError = { message: String }
+pub type Archive
+pub fn open(path: String): Archive ! ArchiveError
+pub fn read(bytes: Array[Byte]): Archive ! ArchiveError
+pub fn Archive.format(self): Format
+pub fn Archive.entries(self): Array[Entry]
+pub fn Archive.readBytes(self, name: String): Array[Byte] ! ArchiveError
+pub fn Archive.readText(self, name: String): String ! ArchiveError
+pub fn Archive.extract(self, into: String): Unit ! ArchiveError
+pub fn Archive.files(self): fs.FileSystem
+pub fn create(path: String, from: fs.FileSystem, format: Format? = none): Unit ! ArchiveError
+pub type Writer
+pub fn writer(out: io.Writer, format: Format): Writer
+pub fn Writer.add(self, name: String, data: Array[Byte], permissions: Int = 0o644): Unit ! ArchiveError
+pub fn Writer.addFile(self, name: String, path: String): Unit ! ArchiveError
+pub fn Writer.addDirectory(self, name: String): Unit ! ArchiveError
+pub fn Writer.finish(self): Unit ! ArchiveError
+~~~
+
+- `open` y `read` reconocen el formato por sus primeros bytes, y `create` por
+  la extensión del nombre (`.zip`, `.tar`, `.tar.gz` o `.tgz`, `.tar.zst` o
+  `.tzst`) salvo que `format` diga otro.
+- Un zip guarda cada archivo deflactado, o tal cual si así ocupa menos, con su
+  hora en UTC y sus permisos de Unix; se leen también los de ZIP64 y los
+  métodos guardado y deflate, comprobando el CRC-32. Un tar es POSIX ustar,
+  con PAX para los nombres de más de 100 bytes, y se leen también los nombres
+  largos de GNU; cada cabecera se comprueba con su suma.
+- `extract` escribe las entradas bajo `into` con sus permisos y sus enlaces,
+  y se detiene ante una entrada cuyo path, o un enlace cuyo destino, saldría
+  de `into`, como la de un archivo hecho para ello.
+- `files` da las entradas como un árbol en memoria de `std.fs` (10.5).
+- Un `Writer` escribe un archivo entrada a entrada en un stream, comprimido si
+  el formato lo es; `finish` lo termina: el directorio central de un zip, o
+  los dos bloques vacíos de un tar.
 
 ## 15. Contrato exigido a cada módulo
 

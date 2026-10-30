@@ -1,0 +1,60 @@
+// std.archive writes and reads zip, tar, tar.gz and tar.zst from a tree of
+// std.fs, with long names, and extracts them, refusing an entry that would
+// leave the directory it is extracted to.
+
+import std.archive
+import std.console
+import std.fs
+import std.io
+
+fn main(): !(archive.ArchiveError | fs.FsError) {
+    let site = fs.memory()
+    site.writeText("index.html", "<h1>home</h1>")?
+    site.writeText("css/site.css", "body {{}}")?
+    site.writeText("{"x".repeat(120)}/long.txt", "long name")?
+    let dir = fs.createTemporaryDirectory()?
+    for name in ["site.zip", "site.tar", "site.tar.gz", "site.tar.zst"] {
+        let path = "{dir}/{name}"
+        archive.create(path, site)?
+        let read = archive.open(path)?
+        let files = read
+            .entries()
+            .filter((e) { e.kind == archive.EntryKind.File })
+            .map((e) { e.name.length() })
+        console.println("{name} {read.format()} {read.entries().length()} {files}")
+        console.println(
+            "  {read.readText("css/site.css")?} {read.files().readText("{"x".repeat(120)}/long.txt")?}",
+        )
+        read.extract("{dir}/out-{name}")?
+        console.println("  {fs.readText("{dir}/out-{name}/index.html")?}")
+    }
+
+    let buffer = io.Buffer()
+    let out = archive.writer(buffer.writer(), archive.Format.Tar)
+    out.add("../escape.txt", "away".bytes())?
+    out.finish()?
+    match archive.read(buffer.bytes())?.extract("{dir}/evil") {
+        ok(_) => console.println("extracted")
+        err(error) => console.println("{error}")
+    }
+    match archive.read("not an archive at all".bytes()) {
+        ok(read) => console.println("{read.entries().length()}")
+        err(error) => console.println("{error}")
+    }
+    fs.remove(dir, recursive: true)?
+}
+
+// expect-stdout: site.zip zip 5 [12, 10, 129]
+// expect-stdout:   body {} long name
+// expect-stdout:   <h1>home</h1>
+// expect-stdout: site.tar tar 5 [12, 10, 129]
+// expect-stdout:   body {} long name
+// expect-stdout:   <h1>home</h1>
+// expect-stdout: site.tar.gz tar.gz 5 [12, 10, 129]
+// expect-stdout:   body {} long name
+// expect-stdout:   <h1>home</h1>
+// expect-stdout: site.tar.zst tar.zst 5 [12, 10, 129]
+// expect-stdout:   body {} long name
+// expect-stdout:   <h1>home</h1>
+// expect-stdout: the entry `../escape.txt` would be written outside where the archive is extracted
+// expect-stdout: the bytes are not an archive: zip, tar, tar.gz or tar.zst

@@ -9,7 +9,8 @@ prelude`).
 std.console    print, println, eprintln, readLine, the streams
 std.cli        the command line read into types, with help; styles, tables, progress, questions
 std.io         Writer, Reader, Buffer, pipe, copy, multiWriter: streams of all kinds
-std.fs         read and write files, walk, glob, watch, metadata, links, temporaries
+std.fs         read and write files, walk, glob, watch, metadata, links, temporaries, trees
+std.archive    zip, tar, tar.gz and tar.zst: read, write, extract
 std.embed      files of the package kept in the executable, read when it compiles
 std.path       join, parent, fileName, extension, clean, relative, glob patterns
 std.env        args, environment, directories, processors, hostname, what was built
@@ -239,22 +240,23 @@ them in the executable, which then needs nothing next to it:
 
 ```text
 import std.embed
+import std.fs
 import std.http
 
 const Help: String = embed.text("help.txt")          // a UTF-8 file
 const Logo: Array[Byte] = embed.bytes("logo.png")    // any file
-const Site: embed.Files = embed.files("public")      // a directory, but hidden files
+const Site: fs.FileSystem = embed.files("public")    // a directory, but hidden files
 
 fn main(): !http.HttpError {
     var app = http.App.new()
-    app.embedded("/", Site)       // as app.files, from memory; "/" is index.html
+    app.files("/", Site)          // from memory; "/" is index.html
     app.listen(port: 8080)?
 }
 ```
 
 The path is a literal, relative to the file that writes it, inside the
-package. `Site.read("css/site.css")` and `Site.text(path)` give a file, or
-`none`; `Site.paths()` lists them. A changed file rebuilds `tondo run` and
+package. `Site` is a tree of `std.fs` that only reads:
+`Site.readText("css/site.css")`, `Site.list()`, `Site.walk()`. A changed file rebuilds `tondo run` and
 reloads `--watch`; `tondo graph` shows what each module embeds.
 
 ## The network
@@ -390,6 +392,14 @@ fn main(): !fs.FsError {
     }
 }
 ```
+
+A `fs.FileSystem` is a tree with the same operations on paths from its top:
+`fs.disk("site")`, `fs.memory()`, `embed.files("theme")`, an archive's,
+`tree.sub("content")`, or `fs.overlay(site, theme)`, which reads from the
+first layer that has a path. `app.files`, `set.addFiles` and
+`archive.create` take one. `archive.create("site.zip", fs.disk("public"))`
+and `archive.open(path)?.extract(into)` write and read zip and tar, which
+an archive whose paths would leave `into` cannot use.
 
 `path.matches(pattern, path)` is the glob of `fs.glob`: `*`, `?`, `[a-z]`,
 `{a,b}` and `**`. `fs.metadata` gives `modified` and `permissions`;

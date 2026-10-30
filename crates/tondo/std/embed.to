@@ -2,13 +2,7 @@
 // program compiles and kept in the executable, which does not read them
 // from the disk when it runs.
 
-/// The files under a directory of the package: `embed.files("static")`.
-pub type Files = {
-    priv names: Array[String]
-    priv contents: Array[Array[Byte]]
-    /// A digest of each file's contents, for the `ETag` of `std.http`.
-    priv tags: Array[String]
-}
+import std.fs as __fs
 
 /// The text of a UTF-8 file of the package, read when the program compiles,
 /// at a path relative to the file that writes it: `embed.text("page.html")`.
@@ -24,80 +18,9 @@ pub fn bytes(path: String): Array[Byte] {
 
 /// The files under a directory of the package, read when the program
 /// compiles, at a path relative to the file that writes it, but those whose
-/// name starts with `.`: `embed.files("static")`.
-pub fn files(path: String): Files {
-    Files { names: [], contents: [], tags: [] }
-}
-
-/// The contents of the file at `path`, as `paths()` names it, or `none`.
-pub fn Files.read(self, path: String): Array[Byte]? {
-    match self.find(path) {
-        some(at) => some(self.contents[at])
-        none => none
-    }
-}
-
-/// The text of the file at `path`, or `none` when it is not there or not
-/// UTF-8.
-pub fn Files.text(self, path: String): String? {
-    match self.read(path) {
-        some(contents) => String.fromBytes(contents).ok()
-        none => none
-    }
-}
-
-/// The paths of the files, relative to the embedded directory, with `/`,
-/// in order.
-pub fn Files.paths(self): Array[String] {
-    self.names
-}
-
-/// What is directly in the folder `directory`, `""` the top one: its files,
-/// and its folders with `/` at the end, in order.
-pub fn Files.list(self, directory: String): Array[String] {
-    let folder = directory.removePrefix("/").removeSuffix("/")
-    let prefix = if folder.isEmpty() { "" } else { "{folder}/" }
-    var found: Array[String] = []
-    for name in self.names {
-        if not name.startsWith(prefix) {
-            continue
-        }
-        let rest = name.removePrefix(prefix)
-        let entry = match rest.find("/") {
-            some(at) => rest.slice(0, at + 1).unwrapOr(rest)
-            none => rest
-        }
-        if found.isEmpty() or found[found.length() - 1] != entry {
-            found.push(entry)
-        }
-    }
-    found
-}
-
-/// The digest of the file at `path`, which `std.http` sends as its `ETag`.
-pub fn Files.tag(self, path: String): String? {
-    match self.find(path) {
-        some(at) => some(self.tags[at])
-        none => none
-    }
-}
-
-/// Where the file at `path` is among the names, which are in order.
-fn Files.find(self, path: String): Int? {
-    let wanted = path.removePrefix("/")
-    var low = 0
-    var high = self.names.length()
-    for low < high {
-        let middle = (low + high) / 2
-        let name = self.names[middle]
-        if name == wanted {
-            return some(middle)
-        }
-        if name < wanted {
-            low = middle + 1
-        } else {
-            high = middle
-        }
-    }
-    none
+/// name starts with `.`: a tree of `std.fs` that only reads, which
+/// `App.files` serves and `template.Set.addFiles` loads:
+/// `const Site: fs.FileSystem = embed.files("static")`.
+pub fn files(path: String): __fs.FileSystem {
+    __fs.memory()
 }

@@ -5,9 +5,9 @@
 
 import std.console as __console
 import std.crypto as __crypto
-import std.embed as __embed
 import std.encoding as __encoding
 import std.fs as __fs
+import std.hash as __hash
 import std.internal.http as httpNative
 import std.io as __io
 import std.json as __json
@@ -1752,70 +1752,58 @@ pub fn App.mount(mut self, prefix: String, other: App) {
     }
 }
 
-/// Serves the files under a directory at `{prefix}/...`: `GET` and `HEAD`,
-/// with ranges, so downloads resume. Paths cannot leave the directory.
-/// With `listing`, a directory's path answers with a page of its entries,
-/// to open them or download the files.
-pub fn App.files(mut self, prefix: String, directory: String, listing: Bool = false) {
+/// Serves the files of a tree at `{prefix}/...`: `GET` and `HEAD`, with
+/// ranges, so downloads resume, the content type of each file's extension
+/// and an `ETag`. A folder's path answers with its `index.html`, or, with
+/// `listing`, with a page of its entries, to open them or download the
+/// files. Paths cannot leave the tree. `fs.disk("public")` serves a
+/// directory, and `embed.files("public")` the files kept in the executable.
+pub fn App.files(mut self, prefix: String, files: __fs.FileSystem, listing: Bool = false) {
     let base = prefix.removeSuffix("/")
     self.route(
         "GET",
         "{base}/*path",
         (request) {
             let relative = request.param("path")
-            let path = inside(directory, relative)?
-            if listing and isDirectory(path) {
-                return listingPage(base, relative, path)
+            _ = inside("", relative)?
+            let at = relative.removePrefix("/").removeSuffix("/")
+            let folder = match files.metadata(at) {
+                ok(found) => found.kind == __fs.FileKind.Directory
+                err(_) => false
             }
-            Reply.file(path)
+            if folder and listing {
+                return listingPage(base, relative, files, at)?
+            }
+            if folder {
+                return served(files, if at.isEmpty() { "index.html" } else { "{at}/index.html" })?
+            }
+            served(files, at)?
         },
     )
 }
 
-/// Serves the files of an `embed.Files` at `{prefix}/...`, from the
-/// program's memory, as `files` serves a directory: `GET` and `HEAD`, with
-/// ranges, the content type of each file's extension and an `ETag` of its
-/// contents. A folder's path answers with its `index.html`, when it has one.
-pub fn App.embedded(mut self, prefix: String, files: __embed.Files) {
-    let base = prefix.removeSuffix("/")
-    self.route(
-        "GET",
-        "{base}/*path",
-        (request) {
-            let relative = request.param("path")
-            let index = if relative.isEmpty() or relative.endsWith("/") {
-                "{relative}index.html"
-            } else {
-                "{relative}/index.html"
-            }
-            for name in [relative, index] {
-                match files.read(name) {
-                    some(contents) => {
-                        let payload = Payload.Embedded(name, contents, files.tag(name).unwrapOr(""))
-                        return Reply { code: 200, headerList: [], payload }
-                    }
-                    none => {}
+/// A file of a tree: the disk's from its path, so the runtime sends it with
+/// ranges and its time, and another's from memory, with its digest.
+fn served(files: __fs.FileSystem, at: String): Reply ! Problem {
+    match files.directory() {
+        some(root) => Reply.file(inside(root, at)?)
+        none => match files.readBytes(at) {
+            ok(contents) => {
+                let tag = match files.tag(at) {
+                    some(tag) => tag
+                    none => __hash.sha256(contents).hex().slice(0, 16).unwrapOr("")
                 }
+                Reply { code: 200, headerList: [], payload: Payload.Embedded(at, contents, tag) }
             }
-            fail Problem.notFound()
-        },
-    )
-}
-
-fn isDirectory(path: String): Bool {
-    match __fs.metadata(path) {
-        ok(entry) => match entry.kind {
-            __fs.FileKind.Directory => true
-            _ => false
+            err(_) => fail Problem.notFound()
         }
-        err(_) => false
     }
 }
 
 /// The page of a directory's entries, folders first: a link to open each,
 /// and one to download each file.
-fn listingPage(base: String, relative: String, path: String): Reply ! Problem {
-    let names = match __fs.list(path) {
+fn listingPage(base: String, relative: String, tree: __fs.FileSystem, at: String): Reply ! Problem {
+    let names = match tree.list(at) {
         ok(names) => names
         err(_) => fail Problem.notFound()
     }
@@ -1831,10 +1819,12 @@ fn listingPage(base: String, relative: String, path: String): Reply ! Problem {
     for name in names {
         let href = "{here}/{__encoding.urlEncode(name)}"
         let shown = escaped(name)
-        if isDirectory("{path.removeSuffix("/")}/{name}") {
+        let child = if at.isEmpty() { name } else { "{at}/{name}" }
+        let found = tree.metadata(child)
+        if found.map((entry) { entry.kind == __fs.FileKind.Directory }).unwrapOr(false) {
             rows.push("<tr><td><a href=\"{href}\">{shown}/</a></td><td></td><td></td></tr>")
         } else {
-            let size = match __fs.metadata("{path.removeSuffix("/")}/{name}") {
+            let size = match found {
                 ok(entry) => sizeText(entry.size)
                 err(_) => ""
             }

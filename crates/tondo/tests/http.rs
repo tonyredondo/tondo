@@ -370,7 +370,7 @@ import std.http
 import std.io
 import std.time
 
-const Site: embed.Files = embed.files("site")
+const Site: fs.FileSystem = embed.files("site")
 
 pub type NewUser = { name: String, email: String }
 pub type User = { id: Int, name: String, email: String }
@@ -423,10 +423,10 @@ fn main(): !(http.HttpError | fs.FsError) {
     })
     admin.get("/stats", (request) { http.Reply.text("stats") })
     app.mount("/admin", admin)
-    app.files("/files", "data")
+    app.files("/files", fs.disk("data"))
     app.uploads("/files", "data")
-    app.files("/browse", "data", listing: true)
-    app.embedded("/site", Site)
+    app.files("/browse", fs.disk("data"), listing: true)
+    app.files("/site", Site)
 
     let server = app.start()?
     let client = http.Client.new(baseUrl: server.url())

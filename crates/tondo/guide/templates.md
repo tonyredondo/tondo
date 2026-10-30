@@ -76,9 +76,9 @@ fn main(): !template.TemplateError {
 }
 ```
 
-- `site.addFile(path)`, `site.addGlob("themes/simple/**/*.html")`, named by
-  their paths from where the wildcards start, and
-  `site.addEmbedded(embed.files("templates"))`.
+- `site.addFile(path)`, and `site.addFiles(fs.disk("themes/simple"),
+  "**/*.html")` or `site.addFiles(embed.files("templates"))`, named by their
+  paths in the tree.
 - A `Set` sees its data by reflection, with the names the code uses: fields
   and `pub` methods (`{{ self.summary() }}`), and these of the prelude:
   of `String` `length`, `isEmpty`, `contains`, `startsWith`, `endsWith`,
