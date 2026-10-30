@@ -38,6 +38,21 @@ pub struct Module {
     /// names and versions, which `env.build()` reports (standard library
     /// 14.3.6).
     pub built: Option<Built>,
+    /// What the files of the other systems declare (language 6.8), for an
+    /// error about a name that is only there.
+    pub elsewhere: Vec<Elsewhere>,
+}
+
+/// A declaration in a file of another system than the build's: its module
+/// and name, the file, the systems it is for, and its head, as a person
+/// writes it.
+#[derive(Clone, Debug)]
+pub struct Elsewhere {
+    pub module: String,
+    pub name: String,
+    pub file: String,
+    pub systems: String,
+    pub head: String,
 }
 
 /// What a program is built from: its package's name, version and

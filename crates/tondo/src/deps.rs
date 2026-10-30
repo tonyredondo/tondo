@@ -2,7 +2,7 @@
 //! and archives into the cache, and `tondo.lock`, which pins the exact
 //! commit or content of each fetched dependency.
 
-use crate::project::is_identifier;
+use crate::project::{System, is_identifier};
 use crate::toml::{self, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -30,6 +30,9 @@ pub struct Package {
     pub providers: Vec<(String, PathBuf)>,
     /// The generators it declares (`[generators.<name>]`).
     pub generators: Vec<Generator>,
+    /// The systems it runs on (`[package] systems`), all of them when it
+    /// names none (language 6.8).
+    pub systems: Vec<System>,
 }
 
 /// A generator (27.5 of the language): a program that writes modules of
@@ -89,6 +92,7 @@ struct Manifest {
     libraries: Vec<String>,
     providers: Vec<(String, PathBuf)>,
     generators: Vec<Generator>,
+    systems: Vec<System>,
 }
 
 /// Reads `tondo.toml` in `dir`; a missing file declares nothing.
@@ -102,6 +106,7 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
         libraries: Vec::new(),
         providers: Vec::new(),
         generators: Vec::new(),
+        systems: Vec::new(),
     };
     if !path.is_file() {
         return Ok(manifest);
@@ -117,6 +122,20 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
             }
             ("package", false) => {
                 for (key, value, line) in table.entries {
+                    if key == "systems" {
+                        let usage = "`systems = [\"linux\"]` names the systems the package runs on: `linux`, `macos`";
+                        let items = match &value {
+                            Value::Array(items) if !items.is_empty() => items,
+                            _ => return Err(at(line, usage.into())),
+                        };
+                        for item in items {
+                            let system = item.as_str().and_then(System::parse).ok_or_else(|| at(line, usage.into()))?;
+                            if !manifest.systems.contains(&system) {
+                                manifest.systems.push(system);
+                            }
+                        }
+                        continue;
+                    }
                     match (key.as_str(), value.as_str()) {
                         ("name", Some(name)) if is_identifier(name) => manifest.name = Some(name.to_string()),
                         ("name", _) => return Err(at(line, "the package name must be an identifier".into())),
@@ -389,6 +408,7 @@ impl Resolver<'_> {
             libraries: manifest.libraries,
             providers: manifest.providers,
             generators: manifest.generators,
+            systems: manifest.systems,
         });
         self.visiting.push(dir.clone());
         for (dependency, source) in manifest.dependencies {

@@ -26,6 +26,12 @@ impl Target {
         }
     }
 
+    /// The system it runs: Linux, the only one tondo builds for from
+    /// another machine.
+    pub fn system(self) -> crate::project::System {
+        crate::project::System::Linux
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             Target::X86_64 => "x86_64-linux",

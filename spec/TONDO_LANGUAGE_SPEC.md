@@ -1087,26 +1087,48 @@ mismo manifiesto, lockfile, fuentes, edición, target, perfil, capacidades,
 features y toolchain, la resolución produce el mismo grafo o el mismo error, sin
 consultar red durante la compilación.
 
-### 6.8 Source sets, targets y generación
+### 6.8 Archivos por sistema, targets y generación
 
-La selección por sistema operativo, arquitectura o capacidad de host ocurre en
-el manifiesto mediante **source sets** declarados, nunca mediante `#if`, imports
-condicionales ni constantes ambientales dentro de `.to`. Antes de lexear, el
-toolchain resuelve un conjunto concreto de archivos y asigna a cada uno un único
-path lógico conforme a 22.6.
+El código que solo existe en un sistema operativo va en archivos propios, que
+su nombre señala: `watch_linux.to` es de Linux, `watch_macos.to` de macOS y
+`signals_unix.to` de los dos. Dentro de un `.to` no hay `#if`, imports
+condicionales ni constantes ambientales: antes de lexear, el toolchain elige
+los archivos del sistema para el que compila y asigna a cada uno un único path
+lógico conforme a 22.6.
+
+~~~text
+src/watch/
+  watch.to          // común: llama a watchFiles(...)
+  watch_linux.to    // fn watchFiles(...) con inotify
+  watch_macos.to    // fn watchFiles(...) con FSEvents
+~~~
 
 Reglas:
 
-- Target, edición, features y source sets activos son entradas declaradas del
-  build y forman parte de su identidad.
-- Dos archivos activos no pueden producir el mismo path lógico. Los archivos de
-  varios source sets sí pueden contribuir al mismo módulo cuando sus paths
-  lógicos sean distintos y sus declaraciones ordinarias no colisionen.
+- Un archivo cuyo nombre termina en `_linux.to`, `_macos.to` o `_unix.to`
+  pertenece al paquete solo al compilar para Linux, para macOS o para
+  cualquiera de los dos; uno de test lleva el sistema antes de `_test`:
+  `watch_linux_test.to`. Los demás archivos son comunes y pertenecen al
+  paquete para todos los sistemas.
+- Un paquete admite Linux y macOS, o los sistemas que nombra `systems` en su
+  manifiesto. Compilar para otro es un error que dice cuáles admite.
+- Lo que el código común usa de un archivo de sistema debe existir para cada
+  sistema que el paquete admite, con la misma firma: en un archivo común o en
+  uno de cada sistema. Si falta para uno, el error nombra el sistema, el
+  archivo donde está para los otros y la firma que escribir.
+- `tondo check` y el language server comprueban el paquete para cada sistema
+  que admite: un error que solo ocurre en uno lleva su nombre (`on macOS:`).
+  `build`, `run` y `test` compilan los archivos del sistema de destino.
+- Para decidir al ejecutar, con código que compila en todos, `env.build()`
+  dice el target (biblioteca estándar 14.4).
+- Target, edición, features y sistema son entradas declaradas del build y
+  forman parte de su identidad.
+- Dos archivos activos no pueden producir el mismo path lógico.
 - Un import que no exista para el target resuelto produce `E1008`; el compilador
   no busca una variante alternativa implícita.
-- Una API pública puede variar entre targets solo si el target forma parte de la
-  identidad de su interfaz compilada. Un consumidor nunca enlaza accidentalmente
-  una interfaz producida para otro target.
+- Una API pública puede variar entre sistemas solo si el sistema forma parte de
+  la identidad de su interfaz compilada. Un consumidor nunca enlaza
+  accidentalmente una interfaz producida para otro.
 - Un generador declara entradas, salidas y configuración. Sus salidas son fuente
   Tondo ordinaria, reciben paths lógicos y pasan por el mismo lexer, formatter,
   typechecker y reglas de visibilidad.
@@ -7812,8 +7834,8 @@ requiere procesos se rechaza durante resolución o build para un target sin esa
 capacidad; no recibe un fallback tardío ni una emulación shell implícita.
 
 No existe compilación condicional dentro de un archivo `.to`. Un paquete aporta
-implementaciones distintas mediante los source sets declarados en 6.8. El target,
-perfil, capacidades, features y source sets seleccionados son entradas declaradas
+implementaciones distintas en archivos de cada sistema (6.8). El target,
+perfil, capacidades, features y sistema seleccionados son entradas declaradas
 del build y forman parte de la identidad de interfaces y artefactos compilados.
 Cambiarlos obliga a resolver y comprobar de nuevo el grafo.
 
@@ -8566,6 +8588,7 @@ oculten un diagnóstico independiente.
 | `E1805` | `invalid-shebang` | Shebang ausente de la primera línea o usado fuera de un script raíz. |
 | `E1806` | `missing-main` | Un target ejecutable hosted no contiene `main` válido ni script raíz. |
 | `E1807` | `library-without-functions` | Una librería para C (toolchain 7.7) no publica ninguna `pub extern fn` con cuerpo. |
+| `E1808` | `system-signature-mismatch` | Una declaración de un archivo de un sistema no es como la del mismo nombre para otro sistema (6.8). |
 | `E1901` | `nonconstant-expression` | Un `const` usa una operación no evaluable en compilación. |
 | `E1902` | `constant-cycle` | Dependencias entre constantes forman un ciclo. |
 | `E1903` | `constant-panic` | La evaluación constante produciría un pánico. |

@@ -6,7 +6,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { exec } from './cli';
-import { incompatible } from './report';
+import { incompatible, systemBadge, systemOfTarget } from './report';
 
 /** How to get `tondo`, which the extension needs. */
 export const INSTALL =
@@ -14,8 +14,17 @@ export const INSTALL =
 
 export function registerStatus(context: vscode.ExtensionContext, output: vscode.LogOutputChannel): void {
   const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
+  // A file of one system shows its system, never greyed out: tondo checks
+  // every system's files.
+  const systems: vscode.FileDecorationProvider = {
+    provideFileDecoration: (uri) => {
+      const found = systemBadge(uri.fsPath);
+      return found ? new vscode.FileDecoration(found.badge, found.tooltip) : undefined;
+    },
+  };
   context.subscriptions.push(
     item,
+    vscode.window.registerFileDecorationProvider(systems),
     vscode.commands.registerCommand('tondo.menu', menu),
     vscode.commands.registerCommand('tondo.newProject', newProject),
     vscode.commands.registerCommand('tondo.install', () => vscode.env.openExternal(vscode.Uri.parse(INSTALL))),
@@ -38,8 +47,10 @@ async function show(item: vscode.StatusBarItem): Promise<void> {
     const ran = await exec(['version', '--json'], os.tmpdir());
     const problem = incompatible(ran.stdout);
     const version = JSON.parse(ran.stdout || '{}') as { version?: string; target?: string };
-    item.text = problem ? '$(warning) Tondo' : `$(symbol-namespace) Tondo ${version.version ?? ''}`;
-    item.tooltip = problem ?? `tondo ${version.version} for ${version.target}: the Tondo menu`;
+    // The system programs run and are debugged for: this machine's.
+    const system = systemOfTarget(version.target ?? '');
+    item.text = problem ? '$(warning) Tondo' : `$(symbol-namespace) Tondo ${version.version ?? ''} · ${system}`;
+    item.tooltip = problem ?? `tondo ${version.version} for ${version.target}: programs run and are debugged for ${system}; the Tondo menu`;
     item.command = 'tondo.menu';
     void vscode.commands.executeCommand('setContext', 'tondo.installed', true);
   } catch (error) {

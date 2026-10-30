@@ -7,6 +7,10 @@ import * as vscode from 'vscode';
 import { exec } from './cli';
 import { examples, failures } from './report';
 
+/** What this machine runs, which the run profiles ask for: not the tests
+ *  of another system's files, which show without a run button. */
+export const RUNS_HERE = new vscode.TestTag('here');
+
 export class Documents {
   private readonly items = new Map<string, vscode.TestItem>();
   private readonly problems = vscode.languages.createDiagnosticCollection('tondo-docs');
@@ -31,11 +35,13 @@ export class Documents {
     }
     const folder = vscode.workspace.getWorkspaceFolder(file)?.uri.fsPath ?? path.dirname(file.fsPath);
     const document = this.items.get(id) ?? this.controller.createTestItem(id, path.relative(folder, file.fsPath), file);
+    document.tags = [RUNS_HERE];
     this.items.set(id, document);
     this.controller.items.add(document);
     document.children.replace(
       found.map(({ line, header }) => {
         const example = this.controller.createTestItem(`${id}#${line + 1}`, `line ${line + 1}: ${header}`, file);
+        example.tags = [RUNS_HERE];
         example.range = new vscode.Range(line, 0, line, 0);
         return example;
       }),

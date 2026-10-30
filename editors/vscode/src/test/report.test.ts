@@ -24,6 +24,8 @@ import {
   reloaded,
   rendered,
   kindMark,
+  systemBadge,
+  systemOfTarget,
   searchLine,
   running,
   served,
@@ -420,4 +422,16 @@ test('a call of testing.fuzz says what it searched and the input it failed with'
   assert.equal(kindMark({ fuzz: true }), '🔎 fuzz');
   assert.equal(kindMark({ bench: true }), '⏱ benchmark');
   assert.equal(kindMark({}), '');
+  assert.equal(kindMark({ bench: true, system: 'macOS' }), 'runs on macOS');
 });
+
+test('a file of a system has its badge, and a target its system', () => {
+  assert.deepEqual(systemBadge('/w/app/src/watch_linux.to'), { badge: 'L', tooltip: 'Linux only: tondo checks it, and builds it for Linux' });
+  assert.equal(systemBadge('/w/app/src/watch_macos_test.to')?.badge, 'M');
+  assert.equal(systemBadge('/w/app/src/signals_unix.to')?.badge, 'LM');
+  assert.equal(systemBadge('/w/app/src/linux.to'), undefined);
+  assert.equal(systemBadge('/w/app/src/main.to'), undefined);
+  assert.equal(systemOfTarget('aarch64-macos'), 'macOS');
+  assert.equal(systemOfTarget('x86_64-linux-gnu'), 'Linux');
+});
+

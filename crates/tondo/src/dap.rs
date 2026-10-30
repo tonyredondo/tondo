@@ -509,8 +509,19 @@ fn handle(
             }
             let mut set = Vec::new();
             let mut ids = Vec::new();
+            // A file of another system has no code in this program
+            // (language 6.8).
+            let host = crate::project::System::host();
+            let elsewhere = crate::project::systems_of(Path::new(&path)).filter(|systems| !systems.contains(&host));
             for wanted in arguments["breakpoints"].as_array().into_iter().flatten() {
                 let line = wanted["line"].as_u64().unwrap_or(0);
+                if let Some(systems) = elsewhere {
+                    let named: Vec<&str> = systems.iter().map(|s| s.shown()).collect();
+                    let message =
+                        format!("this file is for {}; the program runs on {}", named.join(" and "), host.shown());
+                    set.push(json!({ "verified": false, "line": line, "message": message }));
+                    continue;
+                }
                 let condition = wanted["condition"].as_str().map_or(String::new(), |c| format!(" if {c}"));
                 let hits = wanted["hitCondition"].as_str().map_or(String::new(), |h| format!(" hits {h}"));
                 let log = wanted["logMessage"].as_str().map_or(String::new(), |m| format!(" log {m}"));

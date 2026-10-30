@@ -84,7 +84,7 @@ pub fn graph(path: &Path) -> Result<Graph, String> {
             named.sort();
             named
         };
-        let (files, _) = crate::project::sources(&package.dir, &package.name)?;
+        let (files, _) = crate::project::sources(&package.dir, &package.name, Some(crate::driver::system()))?;
         for file in files {
             let name = file.module.join(".");
             match modules.iter_mut().find(|m| m.name == name) {

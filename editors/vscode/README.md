@@ -6,9 +6,9 @@ debugger, the tests, live builds, and the tools of `tondo mcp` for agents.
 It needs the `tondo` executable: `sh dist/install.sh` from Tondo's
 repository installs it, and this extension in the editors it finds. The
 extension finds `tondo` on `PATH`, in `~/.cargo/bin` or in `~/.local/bin`;
-the setting `tondo.path` names another. The status bar shows its version,
-or says that it is missing or older than the extension, and opens the
-Tondo menu. *Tondo: Get Started* walks through installing it, making a
+the setting `tondo.path` names another. The status bar shows its version
+and the system programs run and are debugged for, or says that it is
+missing or older than the extension, and opens the Tondo menu. *Tondo: Get Started* walks through installing it, making a
 project, running, debugging and testing it.
 
 ## What it does
@@ -26,6 +26,12 @@ project, running, debugging and testing it.
   over `main` or a script; and formatting, of a selection too, on save by
   default, when the imports a file lacks are added and those it does not use
   removed.
+- **Files of each system**: `watch_linux.to`, `watch_macos.to` and
+  `signals_unix.to` carry a badge with their system, never greyed out,
+  since tondo checks every system: an error of the other one shows as
+  `on macOS: ...`, its files are read as that system reads them, and go to
+  definition offers each system's declaration. Their breakpoints stay
+  unverified with the reason, and their tests show without a run button.
 - **Running and debugging**, from `tondo dap`: *Run* and *Debug* over
   `fn main`, in the editor's title bar, or with F5 on any Tondo file, which
   runs its project or the file alone as a script. Breakpoints with

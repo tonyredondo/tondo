@@ -639,7 +639,10 @@ no se exige ningún manifiesto JSON. Si existe `src/`, sus `.to` y los `.to` de
 `tests/` forman el conjunto de test. Sin `src/`, solo se aceptan un `main.to` o
 un `tondo.toml`; los `.to` del nivel raíz y, si existe, el árbol `tests/` forman
 el conjunto. Los comandos de producción excluyen en ambos layouts `*_test.to`
-y `tests/`; solo esta entrada de discovery los añade. Se ignoran symlinks,
+y `tests/`; solo esta entrada de discovery los añade. Un archivo de otro
+sistema que el del build, también de test (`watch_macos_test.to`), queda
+fuera (6.8 del lenguaje): sus tests no se ejecutan en esta máquina, y el
+editor los muestra sin ejecutarlos. Se ignoran symlinks,
 directorios ocultos, `target/` y `vendor/`. El nombre de paquete, target,
 perfil, capabilities y features salen de `tondo.toml` o de defaults cerrados.
 External dependencies require `tondo.lock`; without dependencies the lock
@@ -2288,7 +2291,10 @@ dependencias ni la stdlib. Cuenta tres cosas:
 
 Cada trabajador escribe sus cuentas al terminar y el runner las suma; una
 línea o un camino que nada ejecutó cuenta cero. Un trabajador terminado a la
-fuerza, por un timeout, pierde sus cuentas.
+fuerza, por un timeout, pierde sus cuentas. Los archivos de otro sistema que
+el del build (6.8 del lenguaje) no se compilan, así que no cuentan como
+código sin ejecutar: el resumen y los reportes los nombran aparte, como no
+compilados en este sistema.
 
 ### 10.4 Benchmarks
 

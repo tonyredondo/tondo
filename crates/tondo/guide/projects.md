@@ -33,6 +33,13 @@ fn main() {
   modules. Imports name the package first: `app.models`.
 - `import std.x` brings a standard module; there is nothing to install.
 - Modules cannot import each other in a cycle.
+- Code for one system goes in its own files, which their names mark:
+  `watch_linux.to`, `watch_macos.to`, and `signals_unix.to` for both, also
+  before `_test.to`. A build takes those of its system; common code calls
+  what each of them declares with the same signature, and `tondo check`
+  checks every system, so an error of macOS shows on Linux as `on macOS:`.
+  There is no `#if`: `env.build().target` tells a program where it runs.
+  `systems = ["linux"]` in `[package]` limits a package to some systems.
 
 ## tondo.toml
 

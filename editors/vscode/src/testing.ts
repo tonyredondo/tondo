@@ -9,7 +9,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { isProject } from './binary';
 import { Ran, exec, settings } from './cli';
-import { Documents } from './docs';
+import { Documents, RUNS_HERE } from './docs';
 import { ShowProfile } from './profiles';
 import { Covered, Listed, Outcome, Profiled, Served, benchLine, covered, kindMark, listed, searchLine, served, tagLine, testEvent } from './report';
 
@@ -82,6 +82,7 @@ export function registerTesting(
     let project = projects.get(dir);
     if (!project) {
       project = controller.createTestItem(`project:${dir}`, path.basename(dir), vscode.Uri.file(dir));
+      project.tags = [RUNS_HERE];
       projects.set(dir, project);
       projectOf.set(project, dir);
       controller.items.add(project);
@@ -127,7 +128,8 @@ export function registerTesting(
       const kept = before.get(node.id);
       const item = kept && kept.uri?.fsPath === uri?.fsPath ? kept : controller.createTestItem(node.id, node.name, uri);
       item.label = node.name;
-      item.tags = node.fuzz ? [fuzzing] : node.bench ? [benchmark] : [];
+      // A test of another system's file shows, and does not run here.
+      item.tags = node.system ? [] : [RUNS_HERE, ...(node.fuzz ? [fuzzing] : node.bench ? [benchmark] : [])];
       kinds.set(node.id, { ...node, file: node.file ? path.resolve(dir, node.file) : undefined });
       describe(item);
       if (node.line) {
@@ -415,8 +417,18 @@ export function registerTesting(
       // A benchmark run runs the benchmarks alone, and a fuzz run the
       // tests that fuzz.
       const has = (item: vscode.TestItem, tag: vscode.TestTag) => item.tags.some((t) => t.id === tag.id);
-      const started = items
-        .flatMap((item) => tests(item, []))
+      const all = items.flatMap((item) => tests(item, []));
+      // One of another system's file, asked for all the same, says why it
+      // does not run.
+      for (const item of all) {
+        const system = kinds.get(item.id)?.system;
+        if (system) {
+          testRun.skipped(item);
+          testRun.appendOutput(`${item.label} runs on ${system}: this machine does not build its file\r\n`, undefined, item);
+        }
+      }
+      const started = all
+        .filter((item) => !kinds.get(item.id)?.system)
         .filter((item) => (!benchmarking || has(item, benchmark)) && (!searching || has(item, fuzzing)));
       started.forEach((item) => testRun.enqueued(item));
       let reported = false;
@@ -542,10 +554,10 @@ export function registerTesting(
     });
   }
 
-  controller.createRunProfile('Run', vscode.TestRunProfileKind.Run, run, true, undefined, true);
+  controller.createRunProfile('Run', vscode.TestRunProfileKind.Run, run, true, RUNS_HERE, true);
   const measure = controller.createRunProfile('Benchmark', vscode.TestRunProfileKind.Run, run, false, benchmark);
   const fuzz = controller.createRunProfile('Fuzz', vscode.TestRunProfileKind.Run, run, false, fuzzing);
-  const profile = controller.createRunProfile('Profile', vscode.TestRunProfileKind.Run, run, false);
+  const profile = controller.createRunProfile('Profile', vscode.TestRunProfileKind.Run, run, false, RUNS_HERE);
   // The profile's run, beside each test's Run and Debug, and in their
   // menus, where VS Code offers only the default profiles.
   const included = (test?: vscode.TestItem, chosen?: vscode.TestItem[]) => (chosen?.length ? chosen : test ? [test] : undefined);
@@ -582,8 +594,8 @@ export function registerTesting(
       await run(new vscode.TestRunRequest([asked.test]), new vscode.CancellationTokenSource().token);
     }),
   );
-  controller.createRunProfile('Debug', vscode.TestRunProfileKind.Debug, (request) => debug(request), true);
-  const coverage = controller.createRunProfile('Coverage', vscode.TestRunProfileKind.Coverage, run, true);
+  controller.createRunProfile('Debug', vscode.TestRunProfileKind.Debug, (request) => debug(request), true, RUNS_HERE);
+  const coverage = controller.createRunProfile('Coverage', vscode.TestRunProfileKind.Coverage, run, true, RUNS_HERE);
   coverage.loadDetailedCoverage = async (_, file) => details.get(file) ?? [];
   // Projects found at once, so their tests show before the view opens.
   if ((vscode.workspace.workspaceFolders ?? []).some((folder) => isProject(folder.uri.fsPath))) {

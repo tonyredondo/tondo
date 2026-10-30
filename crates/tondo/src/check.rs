@@ -114,6 +114,7 @@ fn check_with<'a>(
         io_error: Ty::ERROR,
         env_error: None,
         built: None,
+        elsewhere: Vec::new(),
         process: None,
         externs: Vec::new(),
         c_string: Ty::ERROR,
@@ -866,6 +867,8 @@ struct Checker<'a> {
     env_error: Option<Ty>,
     /// What `env.build()` reports of the program (standard library 14.3.6).
     built: Option<ast::Built>,
+    /// What the files of the other systems declare (language 6.8).
+    elsewhere: Vec<ast::Elsewhere>,
     /// The types of `std.process`, once imported.
     process: Option<ProcessTypes>,
     /// The `extern fn` declarations (FFI).
@@ -1117,6 +1120,8 @@ impl<'a> Checker<'a> {
         self.prelude = module.module_paths.iter().position(|p| p == &["std", "prelude"]).map(|i| i as u32);
         self.module_paths = module.module_paths.clone();
         self.built = module.built.clone();
+        self.elsewhere = module.elsewhere.clone();
+        self.system_heads(module);
         self.datetime_module = module.module_paths.iter().position(|p| p == &["std", "datetime"]).map(|i| i as u32);
         self.pacing_module = module.module_paths.iter().position(|p| p == &["std", "pacing"]).map(|i| i as u32);
         for import in &module.imports {
@@ -2085,6 +2090,44 @@ impl<'a> Checker<'a> {
     /// The templates a `template.Set` adds whose text is known when the
     /// program compiles, a string or the files of `embed.files("...")`: one
     /// that does not read is `E1906` (standard library 14.31).
+    /// The declarations of a file of a system whose name a file of another
+    /// system declares too, with another head: one signature for all of
+    /// them, so that what common code calls is the same (language 6.8).
+    fn system_heads(&mut self, module: &ast::Module) {
+        let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+        for item in &module.items {
+            let (name, span, end) = match item {
+                ast::Item::Fn(f) if f.owner.is_none() => (&f.name, f.span, f.body.as_ref().map(|b| b.span.start)),
+                ast::Item::Const(c) => (&c.name, c.span, None),
+                ast::Item::Type(t) => (&t.name, t.span, None),
+                ast::Item::Enum(e) => (&e.name, e.span, None),
+                ast::Item::Alias(a) => (&a.name, a.span, None),
+                _ => continue,
+            };
+            let file = self.sources.file_of(span.start);
+            let Some(systems) = crate::project::systems_of(&file.path) else { continue };
+            let text = self.sources.slice(Span::new(span.start, end.unwrap_or(span.end).max(span.start)));
+            let head = text.lines().next().unwrap_or_default().trim().trim_end_matches('{').trim_end().to_string();
+            let Some(other) = self
+                .elsewhere
+                .iter()
+                .find(|e| e.module == file.module && e.name == name.name && flat(&e.head) != flat(&head))
+            else {
+                continue;
+            };
+            let here: Vec<&str> = systems.iter().map(|s| s.shown()).collect();
+            let message = format!(
+                "`{}` is `{head}` here, for {}, and `{}` in `{}`, for {}: give it one signature for every system, which common code calls",
+                name.name,
+                here.join(" and "),
+                other.head,
+                other.file,
+                other.systems
+            );
+            self.diags.error("E1808", name.span, message);
+        }
+    }
+
     /// A literal pattern of `Regex.compile`, which must be in the dialect
     /// the runtime compiles (standard library 14.16): checked here, so that
     /// its `?` cannot fail.
@@ -13857,6 +13900,17 @@ impl<'a> Checker<'a> {
             }
             _ if crate::api::standard_modules().contains(&format!("std.{name}")) => {
                 format!("`{name}` is a standard module: add `import std.{name}` at the top of the file")
+            }
+            _ if let Some(found) = self.elsewhere.iter().find(|e| e.name == name && e.module == here) => {
+                let system = crate::driver::system();
+                format!(
+                    "`{name}` is in `{}`, for {}: write it for {} too, in a file `*_{}.to` or a common one, as `{}`",
+                    found.file,
+                    found.systems,
+                    system.shown(),
+                    system.name(),
+                    found.head
+                )
             }
             _ if module.is_some() => {
                 format!(

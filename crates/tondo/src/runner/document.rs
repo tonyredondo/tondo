@@ -28,6 +28,9 @@ pub(super) struct Document<'a> {
     /// Each file's lines, functions and branches that ran, of those there
     /// are, and the total last.
     pub coverage: Option<Vec<super::coverage::Row>>,
+    /// The files of other systems, which this one does not build, and so
+    /// coverage does not count (language 6.8): what it says of them.
+    pub elsewhere: Option<String>,
 }
 
 impl Document<'_> {
@@ -126,6 +129,9 @@ pub(super) fn markdown(document: &Document) -> String {
         for (index, (file, [lines, functions, branches])) in coverage.iter().enumerate() {
             let name = if index == last { "**Total**".to_string() } else { format!("`{file}`") };
             out.push_str(&format!("| {name} | {} | {} | {} |\n", share(*lines), share(*functions), share(*branches)));
+        }
+        if let Some(elsewhere) = &document.elsewhere {
+            out.push_str(&format!("\n{elsewhere}\n"));
         }
     }
     out
@@ -244,6 +250,9 @@ pub(super) fn html(document: &Document) -> String {
             ));
         }
         out.push_str("</table>\n");
+        if let Some(elsewhere) = &document.elsewhere {
+            out.push_str(&format!("<p>{}</p>\n", escape(elsewhere)));
+        }
     }
     out.push_str("</body></html>\n");
     out

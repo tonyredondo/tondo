@@ -3460,3 +3460,28 @@ was computed.
 a script is already a local of its `main`, so it would mean two things, and
 `static` would be one more concept beside contexts.
 
+## 2026-10-31 — Files of each system
+
+Code that only exists on one system, as the C a library calls through
+`inotify` on Linux and FSEvents on macOS, goes in files that their names
+mark: `watch_linux.to`, `watch_macos.to`, and `signals_unix.to` for both,
+the way `_test.to` marks tests. The specification had kept conditionals
+out of the code and promised source sets declared in the manifest; a
+suffix keeps the first promise without the configuration, and is the
+convention a reader, an agent and Go already know.
+
+A program built for one system must still be right for the others, so
+`tondo check` and the language server check every system the package runs
+on and name the system of an error that only one has. What common code
+calls must exist for each with one signature: a name missing for a system
+says where the others declare it and what to write, and two heads that
+differ are an error on both. `systems` in `[package]` is for a package that
+only runs on some.
+
+In the editor those files are checked code, so they are never greyed out:
+a badge says their system, and a file of the other system is read as that
+system reads it. What does not run on this machine says so where it would:
+its breakpoints stay unverified with the reason, its tests show without a
+run button, and coverage names its files apart instead of counting them as
+code that never ran.
+

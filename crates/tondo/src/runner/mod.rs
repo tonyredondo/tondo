@@ -673,6 +673,20 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         None => None,
     };
     printer.regressions = regressions;
+    // The files of other systems, not built here, which coverage does not
+    // count as code that did not run (language 6.8).
+    let system = crate::driver::system();
+    let elsewhere = crate::project::sources(dir, "package", None)
+        .map(|(files, _)| {
+            files
+                .into_iter()
+                .filter(|file| !crate::project::belongs(&file.path, Some(system)))
+                .map(|file| format!("`{}`", file.path.strip_prefix(dir).unwrap_or(&file.path).display()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let elsewhere = (covered.is_some() && !elsewhere.is_empty())
+        .then(|| format!("Not built on {}, so not counted: {}.", system.shown(), elsewhere.join(", ")));
     if options.json {
         say!("{}", json::reported(&report, options));
     } else {
@@ -685,6 +699,9 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         }
         if let Some(covered) = covered.as_ref().filter(|_| options.coverage) {
             print!("{}", covered.summary());
+            if let Some(elsewhere) = &elsewhere {
+                say!("{elsewhere}");
+            }
         }
     }
     let document = || document::Document {
@@ -722,6 +739,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         max_regression: options.max_regression,
         regressions: &printer.regressions,
         coverage: covered.as_ref().map(coverage::Coverage::rows),
+        elsewhere: elsewhere.clone(),
     };
     for (kind, path) in &options.reports {
         let text = match (kind, &covered) {

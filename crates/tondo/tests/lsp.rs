@@ -845,3 +845,68 @@ fn checks_the_workspace_and_imports_modules() {
     assert_eq!(organize["edit"]["changes"][&uri][0]["newText"], "import app.shapes\n");
     editor.stop();
 }
+
+#[test]
+fn reads_the_files_of_each_system() {
+    // The other system than this machine's, whose file has an error.
+    let (here, other) = if cfg!(target_os = "macos") { ("macos", "linux") } else { ("linux", "macos") };
+    let shown = |system: &str| if system == "macos" { "macOS" } else { "Linux" };
+    let main = "import std.console\n\nfn main() {\n    console.println(describe())\n}\n";
+    let good = format!("fn describe(): String {{\n    \"{}\"\n}}\n", shown(here));
+    let bad = "fn describe(): String {\n    1\n}\n".to_string();
+    let test = |system: &str| format!("test describes{} {{\n    assert(describe().length() > 0)\n}}\n", shown(system));
+    let dir = project(
+        "lsp-systems",
+        &[
+            ("tondo.toml", "[package]\nname = \"app\"\n"),
+            ("src/main.to", main),
+            (&format!("src/describe_{here}.to"), &good),
+            (&format!("src/describe_{other}.to"), &bad),
+            (&format!("src/describe_{here}_test.to"), &test(here)),
+            (&format!("src/describe_{other}_test.to"), &test(other)),
+        ],
+    );
+    let mut editor = Editor::start_with(json!({ "tests": true }));
+    let uri = editor.open(&dir.join("src/main.to"));
+    // The other system's error, with its name.
+    let hover = editor.at("textDocument/hover", &uri, main, "describe()", "describe", json!({}));
+    let theirs = format!("file://{}", dir.join(format!("src/describe_{other}.to")).display());
+    let found = editor.diagnostics.iter().find(|(u, _)| *u == theirs).map(|(_, d)| d.clone()).expect("diagnostics");
+    assert_eq!(found[0]["message"], format!("on {}: expected `String`, found `Int`", shown(other)), "{found}");
+    // Where each system declares it.
+    let value = hover["contents"]["value"].as_str().unwrap();
+    let mut places = [(here, shown(here)), (other, shown(other))];
+    places.sort_by_key(|&(_, name)| name);
+    let expected: Vec<String> =
+        places.iter().map(|(system, name)| format!("for {name} in `src/describe_{system}.to`")).collect();
+    assert!(value.ends_with(&format!("One declaration {}.", expected.join(", "))), "{value}");
+    let definitions = editor.at("textDocument/definition", &uri, main, "describe()", "describe", json!({}));
+    let mut uris: Vec<&str> = definitions.as_array().unwrap().iter().map(|d| d["uri"].as_str().unwrap()).collect();
+    uris.sort();
+    let mut wanted = [format!("file://{}", dir.join(format!("src/describe_{here}.to")).display()), theirs.clone()];
+    wanted.sort();
+    assert_eq!(uris, wanted);
+    // The other system's file is read as that system reads it.
+    let opened = editor.open(&dir.join(format!("src/describe_{other}.to")));
+    let hover = editor.at("textDocument/hover", &opened, &bad, "fn describe", "describe", json!({}));
+    assert!(hover["contents"]["value"].as_str().unwrap().starts_with("```tondo\nfn describe(): String"), "{hover}");
+    // Its tests too, which this machine does not run, once it builds.
+    let fixed = format!("fn describe(): String {{\n    \"{}\"\n}}\n", shown(other));
+    editor.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": opened, "version": 2 }, "contentChanges": [{ "text": fixed }] }),
+    );
+    editor.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": opened } }));
+    let sent = editor.tests.last().cloned().expect("the project's tests");
+    let systems: Vec<(&str, &Value)> =
+        sent["tests"].as_array().unwrap().iter().map(|t| (t["name"].as_str().unwrap(), &t["system"])).collect();
+    let mut expected = vec![
+        (format!("describes{}", shown(here)), Value::Null),
+        (format!("describes{}", shown(other)), json!(shown(other))),
+    ];
+    expected.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut systems: Vec<(String, Value)> = systems.into_iter().map(|(n, s)| (n.to_string(), s.clone())).collect();
+    systems.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(systems, expected);
+    editor.stop();
+}

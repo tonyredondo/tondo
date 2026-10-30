@@ -517,6 +517,17 @@ fn debug_adapter_runs_a_test() {
     let path = dir.join("src/main_test.to");
     send("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [{ "line": 7 }] }));
     response(&mut output, "setBreakpoints", &mut events);
+    // A file of the other system has no code in the program.
+    let (here, other) = if cfg!(target_os = "macos") { ("macOS", "linux") } else { ("Linux", "macos") };
+    let elsewhere = dir.join(format!("src/only_{other}.to"));
+    std::fs::write(&elsewhere, "fn only() {}\n").unwrap();
+    send("setBreakpoints", json!({ "source": { "path": elsewhere }, "breakpoints": [{ "line": 1 }] }));
+    let set = response(&mut output, "setBreakpoints", &mut events);
+    let shown = if other == "macos" { "macOS" } else { "Linux" };
+    assert_eq!(
+        set["body"]["breakpoints"],
+        json!([{ "verified": false, "line": 1, "message": format!("this file is for {shown}; the program runs on {here}") }])
+    );
     send("configurationDone", json!({}));
     response(&mut output, "configurationDone", &mut events);
     let stopped = loop {

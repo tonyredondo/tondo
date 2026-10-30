@@ -44,9 +44,12 @@ app/
 Reglas de descubrimiento, deterministas:
 
 1. Si existe `src/`, el paquete son sus archivos `.to`, recursivamente,
-   excepto `*_test.to`.
+   excepto `*_test.to` y los de otro sistema que el del build: uno que
+   termina en `_linux.to`, `_macos.to` o `_unix.to` es del paquete solo al
+   compilar para Linux, para macOS o para cualquiera de los dos (6.8 del
+   lenguaje).
 2. Sin `src/`, el directorio debe contener `tondo.toml` o `main.to`, y el
-   paquete son los `.to` de ese nivel, excepto `*_test.to`.
+   paquete son los `.to` de ese nivel, con las mismas excepciones.
 3. Se ignoran symlinks, entradas ocultas y los directorios `target/` y
    `vendor/`.
 4. Todos los archivos de un directorio forman un módulo. Su path es el nombre
@@ -92,8 +95,11 @@ outputs = ["proto.user"]
 
 - `[package]` admite `name`, un identificador; `version`, un texto sin
   espacios, como `"1.2.0"`, que el programa da con `env.build()` (14.3.6 de
-  la librería estándar) y que es `"0.0.0"` sin él; y `edition`, cuyo único
-  valor es `"0.1"`, el que se usa por defecto. `tondo new` escribe
+  la librería estándar) y que es `"0.0.0"` sin él; `edition`, cuyo único
+  valor es `"0.1"`, el que se usa por defecto; y `systems`, los sistemas en
+  que corre el paquete, `["linux"]`, `["macos"]` o los dos, que son los que
+  admite sin ella (6.8 del lenguaje): compilarlo para otro es un error que
+  los nombra, y `check` lo comprueba solo para ellos. `tondo new` escribe
   `version = "0.1.0"`.
 - `[dependencies]` asocia a cada alias su fuente (sección 4).
 - `[dev-dependencies]` declara del mismo modo las dependencias que solo usan
@@ -512,7 +518,16 @@ nuevo y publica los diagnósticos de cada archivo, los mismos de `check`.
   `{"root": <uri>, "tests": [{"id", "parent", "name", "suite", "bench", "fuzz", "location"}]}`,
   con los ids de la lista de `tondo test --list` (15.4 de testing), el
   `parent` como id o `null`, `bench` si el test es un benchmark (10.4 de
-  testing) y `fuzz` si hace fuzzing (10.6 de testing).
+  testing) y `fuzz` si hace fuzzing (10.6 de testing). Los tests de los
+  archivos de otro sistema llevan además `system`, su nombre (`"macOS"`):
+  esta máquina no los ejecuta, y el editor los muestra sin ejecutarlos.
+- Un proyecto con archivos de un sistema (6.8 del lenguaje) se analiza para
+  cada sistema en que corre: los diagnósticos de los otros van con los de
+  esta máquina, los de solo uno con su nombre delante (`on macOS:`), como en
+  `check`. Un archivo de otro sistema se analiza como lo compila ese sistema,
+  con su hover, su autocompletado y su navegación. La definición de una
+  declaración de un archivo de sistema lleva a la de cada sistema, y su
+  hover dice en qué archivo está la de cada uno.
 
 Las posiciones cuentan bytes UTF-8 cuando el editor lo admite y unidades
 UTF-16 si no.
@@ -705,7 +720,9 @@ desplegables por partes (`variables`), un ámbito `Context` en cada marco con
 los contextos de la tarea, `evaluate` de una ruta, `setVariable`
 y la excepción de un pánico (el filtro `panic`, con `exceptionInfo`) son las
 órdenes de `tondo debug`; la salida del programa y los logpoints van a la
-consola del editor.
+consola del editor. Un breakpoint en un archivo de otro sistema (6.8 del
+lenguaje) queda sin verificar, con el motivo: el programa corre en el de
+esta máquina, que no compila ese archivo.
 
 ### 7.7 Librerías para C
 

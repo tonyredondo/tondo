@@ -21,6 +21,9 @@ export interface Listed {
   file?: string;
   line?: number;
   column?: number;
+  /** For a test of another system's file, that system, which this
+   *  machine does not run (language 6.8). */
+  system?: string;
 }
 
 /** What a call of `testing.fuzz` did: the inputs it ran, the one it
@@ -214,6 +217,7 @@ export interface Served {
     bench?: boolean;
     fuzz?: boolean;
     location?: { uri: string; range: { start: { line: number; character: number } } };
+    system?: string;
   }[];
 }
 
@@ -229,6 +233,7 @@ export function served(params: Served): { dir: string; nodes: Listed[] } {
     file: test.location ? fileURLToPath(test.location.uri) : undefined,
     line: test.location ? test.location.range.start.line + 1 : undefined,
     column: test.location ? test.location.range.start.character + 1 : undefined,
+    ...(test.system ? { system: test.system } : {}),
   }));
   return { dir: fileURLToPath(params.root), nodes };
 }
@@ -727,6 +732,32 @@ export function searchLine(name: string, search: Searched): string {
 
 /** What a test is, as the editor marks it: a benchmark, a fuzz test, or
  *  a plain test. */
-export function kindMark(node: { bench?: boolean; fuzz?: boolean }): string {
+export function kindMark(node: { bench?: boolean; fuzz?: boolean; system?: string }): string {
+  if (node.system) {
+    return `runs on ${node.system}`;
+  }
   return node.fuzz ? '🔎 fuzz' : node.bench ? '⏱ benchmark' : '';
+}
+
+/** The badge of a file of a system (language 6.8): `watch_linux.to`,
+ *  `watch_macos.to` or `signals_unix.to`, and the same before `_test.to`;
+ *  none for a common file. */
+export function systemBadge(file: string): { badge: string; tooltip: string } | undefined {
+  const found = /_(linux|macos|unix)(_test)?\.to$/.exec(file);
+  switch (found?.[1]) {
+    case 'linux':
+      return { badge: 'L', tooltip: 'Linux only: tondo checks it, and builds it for Linux' };
+    case 'macos':
+      return { badge: 'M', tooltip: 'macOS only: tondo checks it, and builds it for macOS' };
+    case 'unix':
+      return { badge: 'LM', tooltip: 'Linux and macOS: tondo checks it, and builds it for both' };
+    default:
+      return undefined;
+  }
+}
+
+/** The system a target of `tondo version` runs: `x86_64-linux-gnu` is
+ *  Linux and `aarch64-macos` macOS. */
+export function systemOfTarget(target: string): string {
+  return target.includes('macos') ? 'macOS' : 'Linux';
 }

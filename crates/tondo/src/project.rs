@@ -3,6 +3,67 @@
 
 use std::path::{Path, PathBuf};
 
+/// A system Tondo builds for (language 6.8).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub enum System {
+    Linux,
+    Macos,
+}
+
+impl System {
+    pub const ALL: [System; 2] = [System::Linux, System::Macos];
+
+    /// As a file's name and `tondo.toml` write it: `linux`, `macos`.
+    pub fn name(self) -> &'static str {
+        match self {
+            System::Linux => "linux",
+            System::Macos => "macos",
+        }
+    }
+
+    /// As a person reads it: `Linux`, `macOS`.
+    pub fn shown(self) -> &'static str {
+        match self {
+            System::Linux => "Linux",
+            System::Macos => "macOS",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<System> {
+        System::ALL.into_iter().find(|system| system.name() == name)
+    }
+
+    /// The system this `tondo` runs on.
+    pub fn host() -> System {
+        if cfg!(target_os = "macos") { System::Macos } else { System::Linux }
+    }
+}
+
+/// The systems a file is for, by its name: `watch_linux.to`,
+/// `watch_macos.to`, `signals_unix.to`, and the same before `_test.to`;
+/// none for a common file, which is for all.
+pub fn systems_of(path: &Path) -> Option<&'static [System]> {
+    let name = path.file_name()?.to_str()?.strip_suffix(".to")?;
+    let name = name.strip_suffix("_test").unwrap_or(name);
+    if name.ends_with("_linux") {
+        Some(&[System::Linux])
+    } else if name.ends_with("_macos") {
+        Some(&[System::Macos])
+    } else if name.ends_with("_unix") {
+        Some(&System::ALL)
+    } else {
+        None
+    }
+}
+
+/// Whether a file belongs to a build for `system`, `None` for every one.
+pub fn belongs(path: &Path, system: Option<System>) -> bool {
+    match (systems_of(path), system) {
+        (Some(systems), Some(system)) => systems.contains(&system),
+        _ => true,
+    }
+}
+
 pub struct ProjectFile {
     pub path: PathBuf,
     /// The package name, then the directories below the source root.
@@ -10,10 +71,11 @@ pub struct ProjectFile {
 }
 
 /// The sources of the package `name` in `dir`: the `.to` files under
-/// `src/` or, without it, those next to `tondo.toml` or `main.to`. Test
-/// files, hidden entries, symlinks, `target/` and `vendor/` are skipped.
-/// Also returns the index of the root file: `main.to`, or else the first.
-pub fn sources(dir: &Path, name: &str) -> Result<(Vec<ProjectFile>, usize), String> {
+/// `src/` or, without it, those next to `tondo.toml` or `main.to`, those
+/// of another system than `system` left out (all with `None`). Test files,
+/// hidden entries, symlinks, `target/` and `vendor/` are skipped. Also
+/// returns the index of the root file: `main.to`, or else the first.
+pub fn sources(dir: &Path, name: &str, system: Option<System>) -> Result<(Vec<ProjectFile>, usize), String> {
     let source = dir.join("src");
     let mut paths = Vec::new();
     let root_dir = if source.is_dir() {
@@ -25,6 +87,7 @@ pub fn sources(dir: &Path, name: &str) -> Result<(Vec<ProjectFile>, usize), Stri
     } else {
         return Err(format!("{} is not a Tondo project: add src/main.to or main.to", dir.display()));
     };
+    paths.retain(|path| belongs(path, system));
     paths.sort();
     if paths.is_empty() {
         return Err(format!("{} has no source files", root_dir.display()));
@@ -53,12 +116,17 @@ pub fn sources(dir: &Path, name: &str) -> Result<(Vec<ProjectFile>, usize), Stri
 /// The test files of the package `name` in `dir` (testing 5.2): the unit
 /// test companions (`*_test.to` beside the sources), with the module each
 /// joins, and the integration roots under `tests/`, each with its path
-/// there as a module path.
-pub fn test_sources(dir: &Path, name: &str) -> Result<(Vec<ProjectFile>, Vec<ProjectFile>), String> {
+/// there as a module path; those of another system than `system` left out.
+pub fn test_sources(
+    dir: &Path,
+    name: &str,
+    system: Option<System>,
+) -> Result<(Vec<ProjectFile>, Vec<ProjectFile>), String> {
     let source = dir.join("src");
     let (root_dir, recursive) = if source.is_dir() { (source, true) } else { (dir.to_path_buf(), false) };
     let mut paths = Vec::new();
     walk_tests(&root_dir, recursive, &mut paths)?;
+    paths.retain(|path| belongs(path, system));
     paths.sort();
     let mut companions = Vec::new();
     for path in paths {
@@ -73,6 +141,7 @@ pub fn test_sources(dir: &Path, name: &str) -> Result<(Vec<ProjectFile>, Vec<Pro
         walk(&tests, true, &mut paths)?;
         walk_tests(&tests, true, &mut paths)?;
     }
+    paths.retain(|path| belongs(path, system));
     paths.sort();
     let mut roots = Vec::new();
     for path in paths {

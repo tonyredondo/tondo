@@ -359,17 +359,36 @@ impl Server {
     fn prepare(&mut self, params: &Value) -> Option<()> {
         let path = uri_path(params["textDocument"]["uri"].as_str()?)?;
         let (root, _) = root_of(&path);
-        if self.dirty.remove(&root) || !self.analyses.contains_key(&root) {
+        if self.dirty.remove(&root) || !self.analyses.contains_key(&key_of(&path)) {
             self.analyze(&root);
         }
         Some(())
     }
 
     fn analyze(&mut self, root: &Path) {
-        let open = self.open.iter().map(|(path, document)| (path.clone(), document.text.clone())).collect();
-        let Some(analyzed) = self.analyzed(root, open) else { return };
+        let open: HashMap<PathBuf, String> =
+            self.open.iter().map(|(path, document)| (path.clone(), document.text.clone())).collect();
+        // A project with files of a system is read for each one it runs on,
+        // this machine's first: the errors of each go with the first's, and
+        // the files of another system are read with that system's analysis.
+        let host = crate::project::System::host();
+        let systems = driver::checked_systems(root).unwrap_or_else(|_| vec![host]);
+        let main = systems.first().copied().unwrap_or(host);
+        let Some(mut analyzed) = driver::for_system(main, || self.analyzed(root, open.clone())) else { return };
+        let mut others = Vec::new();
+        for &system in systems.iter().filter(|&&system| system != host) {
+            let Some(other) = driver::for_system(system, || self.analyzed(root, open.clone())) else { continue };
+            if system != main {
+                driver::merge_system(&mut analyzed.analysis, &other.analysis, system);
+            }
+            others.push((system, other));
+        }
+        analyzed.paths = self.paths(&analyzed.analysis);
         self.publish(root, &analyzed);
-        self.publish_tests(root, &analyzed);
+        self.publish_tests(root, &analyzed, &others);
+        for (system, other) in others {
+            self.analyses.insert(root.join(format!("#{}", system.name())), other);
+        }
         if let Some(previous) = self.analyses.insert(root.to_path_buf(), analyzed) {
             let earlier = self.earlier.entry(root.to_path_buf()).or_default();
             earlier.insert(0, previous);
@@ -381,8 +400,14 @@ impl Server {
     fn analyzed(&mut self, root: &Path, open: HashMap<PathBuf, String>) -> Option<Analyzed> {
         let mut analysis = driver::analyze_for_editor(root, root.is_dir(), open).ok()?;
         let tests = analysis.program.take().map(|program| program.tests).filter(|_| root.is_dir());
+        let paths = self.paths(&analysis);
+        Some(Analyzed { analysis, paths, tests })
+    }
+
+    /// The file on disk of each source of an analysis.
+    fn paths(&mut self, analysis: &Analysis) -> Vec<Option<PathBuf>> {
         let std = self.std_dir();
-        let paths = (0..analysis.sources.len())
+        (0..analysis.sources.len())
             .map(|index| {
                 let file = analysis.sources.file(index);
                 match file.logical.strip_prefix("<std>/") {
@@ -391,23 +416,34 @@ impl Server {
                     None => None,
                 }
             })
-            .collect();
-        Some(Analyzed { analysis, paths, tests })
+            .collect()
     }
 
     /// Sends a project's suites and tests when they change, as the editor
     /// asked: each with its id, its parent's, its name, where it is, and
     /// whether it is a benchmark.
-    fn publish_tests(&mut self, root: &Path, analyzed: &Analyzed) {
+    fn publish_tests(&mut self, root: &Path, analyzed: &Analyzed, others: &[(crate::project::System, Analyzed)]) {
         let Some(nodes) = analyzed.tests.as_ref().filter(|_| self.tests && !self.quiet) else { return };
         let mut tests = Vec::new();
-        for node in nodes.iter().skip(1) {
-            let Some(location) = self.location(analyzed, node.span) else { continue };
-            let parent = nodes.get(node.parent as usize).filter(|_| node.parent != 0).map(|p| p.id.clone());
-            let name = node.id.rsplit("::").next().unwrap_or(&node.id);
-            tests
-                .push(json!({ "id": node.id, "parent": parent, "name": name, "suite": node.suite, "bench": node.bench,
-                    "fuzz": node.fuzz, "location": location }));
+        let mut ids = HashSet::new();
+        // Those of another system's files go too, with the system, which
+        // this machine does not run (language 6.8).
+        let others = others.iter().filter_map(|(system, other)| Some((Some(*system), other, other.tests.as_ref()?)));
+        for (system, from, nodes) in std::iter::once((None, analyzed, nodes)).chain(others) {
+            for node in nodes.iter().skip(1) {
+                if !ids.insert(node.id.clone()) {
+                    continue;
+                }
+                let Some(location) = self.location(from, node.span) else { continue };
+                let parent = nodes.get(node.parent as usize).filter(|_| node.parent != 0).map(|p| p.id.clone());
+                let name = node.id.rsplit("::").next().unwrap_or(&node.id);
+                let mut test = json!({ "id": node.id, "parent": parent, "name": name, "suite": node.suite,
+                    "bench": node.bench, "fuzz": node.fuzz, "location": location });
+                if let Some(system) = system {
+                    test["system"] = json!(system.shown());
+                }
+                tests.push(test);
+            }
         }
         let tests = Value::Array(tests);
         if self.listed.get(root) != Some(&tests) {
@@ -544,7 +580,7 @@ impl Server {
     /// `prepare` made the analysis.
     fn at(&self, params: &Value) -> Option<(&Analyzed, usize, u32)> {
         let path = uri_path(params["textDocument"]["uri"].as_str()?)?;
-        let analyzed = self.analyses.get(&root_of(&path).0)?;
+        let analyzed = self.analyses.get(&key_of(&path))?;
         let index = analyzed.paths.iter().position(|p| p.as_deref() == Some(path.as_path()))?;
         let file = analyzed.analysis.sources.file(index);
         let offset = offset(&file.text, &params["position"], self.units)?;
@@ -638,6 +674,22 @@ impl Server {
                 None => "Here its value is the one it has where this function is called, or in the task that started this one.".to_string(),
             };
             value.push_str(&format!("\n\n{note}"));
+        }
+        // A declaration of a file of a system: where each system has it.
+        let places: Vec<String> = self
+            .for_systems(analyzed, def)
+            .into_iter()
+            .filter_map(|(other, found)| {
+                let there = other.analysis.sources.file_of(found.start);
+                let systems = crate::project::systems_of(&there.path)?;
+                let named: Vec<&str> = systems.iter().map(|s| s.shown()).collect();
+                Some(format!("for {} in `{}`", named.join(" and "), there.logical))
+            })
+            .collect();
+        if places.len() > 1 {
+            let mut places = places;
+            places.sort();
+            value.push_str(&format!("\n\nOne declaration {}.", places.join(", ")));
         }
         let file = sources.file_of(span.start);
         let range = {
@@ -915,7 +967,45 @@ impl Server {
         let (analyzed, def, _) = self.def_at(params)?;
         let def = &analyzed.analysis.index.as_ref()?.defs[def];
         let span = if def.kind == DefKind::Module { def.decl_span } else { def.name_span };
-        self.location(analyzed, span)
+        let here = self.location(analyzed, span)?;
+        // A declaration of a file of a system has one for each other
+        // system: all of them, as implementations (language 6.8).
+        let mut locations = vec![here];
+        for (other, found) in self.for_systems(analyzed, def) {
+            if let Some(location) = self.location(other, found)
+                && !locations.contains(&location)
+            {
+                locations.push(location);
+            }
+        }
+        Some(if locations.len() == 1 { locations.remove(0) } else { Value::Array(locations) })
+    }
+
+    /// For a declaration of a file of a system, those of its name in the
+    /// files of every system, its own included, each with its analysis.
+    fn for_systems<'s>(&'s self, analyzed: &'s Analyzed, def: &crate::index::Def) -> Vec<(&'s Analyzed, Span)> {
+        let file = analyzed.analysis.sources.file_of(def.name_span.start);
+        if crate::project::systems_of(&file.path).is_none() {
+            return Vec::new();
+        }
+        let (root, _) = root_of(&file.path);
+        let keys = std::iter::once(root.clone())
+            .chain(crate::project::System::ALL.map(|system| root.join(format!("#{}", system.name()))));
+        let mut found = Vec::new();
+        let mut seen = HashSet::new();
+        for other in keys.filter_map(|key| self.analyses.get(&key)) {
+            let Some(index) = other.analysis.index.as_ref() else { continue };
+            for candidate in index.defs.iter().filter(|d| d.name == def.name && d.kind == def.kind) {
+                let there = other.analysis.sources.file_of(candidate.name_span.start);
+                if there.module == file.module
+                    && crate::project::systems_of(&there.path).is_some()
+                    && seen.insert((there.path.clone(), candidate.name_span.start - there.base))
+                {
+                    found.push((other, candidate.name_span));
+                }
+            }
+        }
+        found
     }
 
     fn references(&mut self, params: &Value) -> Option<Value> {
@@ -1037,7 +1127,7 @@ impl Server {
     fn completion(&mut self, params: &Value) -> Option<Value> {
         self.prepare(params)?;
         let path = uri_path(params["textDocument"]["uri"].as_str()?)?;
-        let root = root_of(&path).0;
+        let root = key_of(&path);
         let (latest, file, offset) = self.at(params)?;
         let source = latest.analysis.sources.file(file);
         let text = source.text.clone();
@@ -1676,6 +1766,18 @@ const KEYWORDS: [&str; 29] = [
 
 /// The root a file is analyzed under: the project around it, or the file
 /// itself; and whether it is a project.
+/// The analysis a file is read with: its root's, or, for a file of another
+/// system than this machine's, its root's for that system, which this key
+/// names (language 6.8).
+fn key_of(path: &Path) -> PathBuf {
+    let (root, project) = root_of(path);
+    let host = crate::project::System::host();
+    match crate::project::systems_of(path) {
+        Some(systems) if project && !systems.contains(&host) => root.join(format!("#{}", systems[0].name())),
+        _ => root,
+    }
+}
+
 fn root_of(path: &Path) -> (PathBuf, bool) {
     let ancestors = || path.ancestors().skip(1);
     if let Some(dir) = ancestors().find(|dir| dir.join("tondo.toml").is_file()) {
@@ -2086,7 +2188,7 @@ impl Server {
         let item = &params["item"];
         self.prepare(&json!({ "textDocument": { "uri": item["uri"] } }))?;
         let path = uri_path(item["uri"].as_str()?)?;
-        Some((root_of(&path).0, item["data"]["def"].as_u64()? as usize))
+        Some((key_of(&path), item["data"]["def"].as_u64()? as usize))
     }
 
     fn prepare_hierarchy(&mut self, params: &Value, kinds: &[DefKind]) -> Option<Value> {

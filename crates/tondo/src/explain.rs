@@ -119,6 +119,11 @@ pub const CODES: &[(&str, &str, &str)] = &[
     ("E1805", "invalid-shebang", "A `#!` line that is not the first line, or not in a root script."),
     ("E1806", "missing-main", "A program to run has no valid `main` and no root script."),
     ("E1807", "library-without-functions", "A library for C publishes no `pub extern fn` with a body."),
+    (
+        "E1808",
+        "system-signature-mismatch",
+        "A declaration of a file of one system differs from the one of the same name for another system.",
+    ),
     ("E1901", "nonconstant-expression", "A `const` uses an operation that cannot run while compiling."),
     ("E1902", "constant-cycle", "Constants depend on each other in a cycle."),
     ("E1903", "constant-panic", "Evaluating a constant would panic."),

@@ -238,3 +238,67 @@ fn every_code_is_explained() {
     }
     assert!(missing.is_empty(), "codes without an explanation: {missing:?}");
 }
+
+/// A project with files of each system (language 6.8): this machine's are
+/// built, run and tested; `check` checks the other's too and names it; the
+/// other's files are not counted by coverage; `systems` limits a package.
+#[test]
+fn builds_the_files_of_its_system() {
+    let (here, other) = if cfg!(target_os = "macos") { ("macos", "linux") } else { ("linux", "macos") };
+    let shown = |system: &str| if system == "macos" { "macOS" } else { "Linux" };
+    let dir = scratch("systems");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"app\"\n").unwrap();
+    std::fs::write(dir.join("src/main.to"), "import std.console\n\nfn main() {\n    console.println(describe())\n}\n")
+        .unwrap();
+    let describe = |system: &str| format!("fn describe(): String {{\n    \"{}\"\n}}\n", shown(system));
+    std::fs::write(dir.join(format!("src/describe_{here}.to")), describe(here)).unwrap();
+    std::fs::write(
+        dir.join(format!("src/describe_{here}_test.to")),
+        format!("test describes{} {{\n    assert(describe() == \"{}\")\n}}\n", shown(here), shown(here)),
+    )
+    .unwrap();
+    std::fs::write(dir.join(format!("src/describe_{other}_test.to")), "test elsewhere {\n    assert(false)\n}\n")
+        .unwrap();
+    // Missing for the other system: where it is, and what to write.
+    let (_, err, code) = tondo(&dir, &["check"]);
+    assert_eq!(code, 1, "{err}");
+    let hint = format!(
+        "on {}: unknown name `describe`; `describe` is in `src/describe_{here}.to`, for {}: write it for {} too, in a file `*_{other}.to` or a common one, as `fn describe(): String`",
+        shown(other),
+        shown(here),
+        shown(other)
+    );
+    assert!(err.contains(&hint), "{err}");
+    // Another signature on the other system.
+    std::fs::write(dir.join(format!("src/describe_{other}.to")), "fn describe(): Int {\n    1\n}\n").unwrap();
+    let (_, err, code) = tondo(&dir, &["check"]);
+    assert_eq!(code, 1, "{err}");
+    let mismatch = format!(
+        "`describe` is `fn describe(): String` here, for {}, and `fn describe(): Int` in `src/describe_{other}.to`, for {}",
+        shown(here),
+        shown(other)
+    );
+    assert!(err.contains(&mismatch), "{err}");
+    // Both right: it checks, and runs and tests this machine's files.
+    std::fs::write(dir.join(format!("src/describe_{other}.to")), describe(other)).unwrap();
+    let (out, err, code) = tondo(&dir, &["check"]);
+    assert_eq!((out.as_str(), code), ("", 0), "{err}");
+    let (out, err, code) = tondo(&dir, &["run"]);
+    assert_eq!((out.as_str(), code), (format!("{}\n", shown(here)).as_str(), 0), "{err}");
+    let (out, err, code) = tondo(&dir, &["test", "--coverage"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("1 passed"), "{out}");
+    let note = format!("Not built on {}, so not counted: `src/describe_{other}.to`.", shown(here));
+    assert!(out.contains(&note), "{out}");
+    // A package of the other system only.
+    std::fs::write(dir.join("tondo.toml"), format!("[package]\nname = \"app\"\nsystems = [\"{other}\"]\n")).unwrap();
+    let (_, err, code) = tondo(&dir, &["run"]);
+    assert_ne!(code, 0);
+    let refused = format!(
+        "the package `app` runs on {}, as `systems` in its tondo.toml says: it is not built for {}",
+        shown(other),
+        shown(here)
+    );
+    assert!(err.contains(&refused), "{err}");
+}

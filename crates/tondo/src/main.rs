@@ -449,7 +449,11 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             "--static" => statically = true,
             "--debug" => debug = true,
             "--library" => library = true,
-            "--target" => target = Some(Target::parse(&value()?)?),
+            "--target" => {
+                let parsed = Target::parse(&value()?)?;
+                driver::set_system(parsed.system());
+                target = Some(parsed);
+            }
             "--deny-skips" => options.deny_skips = true,
             "--allow-flaky" => options.allow_flaky = true,
             // The report as JSON, as `--test-format json` gives it.
@@ -1623,7 +1627,7 @@ fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
         let packages = tondo::deps::resolve(&project, None)?;
         let mut modules: Vec<(String, Vec<PathBuf>, bool)> = Vec::new();
         for (index, package) in packages.iter().enumerate() {
-            let (files, _) = tondo::project::sources(&package.dir, &package.name)?;
+            let (files, _) = tondo::project::sources(&package.dir, &package.name, Some(tondo::driver::system()))?;
             for file in files {
                 let name = file.module.join(".");
                 match modules.iter_mut().find(|(n, _, _)| *n == name) {
@@ -1752,7 +1756,9 @@ fn link_options(args: &[OsString]) -> Result<(BuildOptions, Vec<OsString>), Stri
             let name = args
                 .next()
                 .ok_or_else(|| format!("--target needs a target: x86_64-linux or aarch64-linux\n{USAGE}"))?;
-            target = Some(Target::parse(&name.to_string_lossy())?);
+            let parsed = Target::parse(&name.to_string_lossy())?;
+            driver::set_system(parsed.system());
+            target = Some(parsed);
         } else if arg == "--static" && !statically {
             statically = true;
         } else if arg == "--debug" && !debug {
