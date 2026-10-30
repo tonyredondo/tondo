@@ -1719,6 +1719,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.crypto` | Core | — | 0.1 | Secretos en tiempo constante, contraseñas, derivación de claves, sellado, firmas, y claves y certificados PEM |
 | `std.validate` | Core | — | 0.1 | Reglas de los campos de un tipo, que comprueban la lectura de cualquier formato, la línea de comandos y MCP |
 | `std.archive` | Hosted | — | 0.1 | zip, tar, tar.gz y tar.zst: leer, escribir y extraer |
+| `std.image` | Hosted | — | 0.1 | PNG, JPEG, GIF y WebP: leer, cambiar el tamaño, recortar, girar, filtrar y escribir |
 | `std.sql` | Capability-gated | `network` para PostgreSQL y MySQL | 0.1 | SQLite, PostgreSQL y MySQL: consultas literales con parámetros, filas en los tipos del programa, transacciones, migraciones, un pool y `use` alrededor de cada sentencia |
 | `std.http` | Capability-gated | `network` | 0.1 | Cliente y servidor HTTP/1.1 y HTTP/2 con TLS, cuerpos en streaming, multipart, archivos con rangos, Server-Sent Events y WebSockets |
 | `std.random` | Core + gated | `entropy` para sembrar desde el sistema | 0.1 | Generadores pseudoaleatorios sembrados, mezcla, elección y bytes de entropía |
@@ -5805,6 +5806,79 @@ Drivers:
   una URL, `placeholder` escribe la marca del parámetro en una posición desde
   1, `identifier` cita un nombre y `place` da el nombre y el host de la base
   de datos de una URL.
+
+### 14.38 `std.image`
+
+`std.image` lee, cambia y escribe imágenes PNG, JPEG, GIF y WebP: los
+tamaños y recortes que un sitio hace de ellas, como miniaturas y portadas. El
+runtime decodifica, codifica y cambia los píxeles en los hilos del host; un
+programa que no importa el módulo no lo enlaza.
+
+~~~tondo
+import std.image
+
+fn main(): !image.ImageError {
+    let photo = image.open("photo.jpg")?
+    photo.fit(800, 600).save("photo-800.webp")?
+    photo.fill(200, 200, anchor: image.Anchor.Top).save("avatar.jpg", quality: 80)?
+}
+~~~
+
+~~~tondo pseudocode
+pub enum Format { Png, Jpeg, Gif, WebP }
+pub fn Format.of(path: String): Format?
+pub type ImageError = { message: String }
+pub type Info = { format: Format, width: Int, height: Int }
+pub type Color = { red: Int, green: Int, blue: Int, alpha: Int }
+pub fn Color.rgb(red: Int, green: Int, blue: Int): Color
+pub fn Color.hex(text: String): Color ! ImageError
+pub enum Filter { Nearest, Linear, CatmullRom, Lanczos }
+pub enum Anchor { Center, Top, Bottom, Left, Right, TopLeft, TopRight, BottomLeft, BottomRight }
+
+pub type Image
+pub fn read(bytes: Array[Byte]): Image ! ImageError
+pub fn open(path: String): Image ! ImageError
+pub fn info(bytes: Array[Byte]): Info ! ImageError
+pub fn blank(width: Int, height: Int, color: Color): Image
+pub fn Image.width(self): Int
+pub fn Image.height(self): Int
+pub fn Image.format(self): Format?
+pub fn Image.resize(self, width: Int? = none, height: Int? = none, filter: Filter = Filter.Lanczos): Image
+pub fn Image.fit(self, width: Int, height: Int, filter: Filter = Filter.Lanczos): Image
+pub fn Image.fill(self, width: Int, height: Int, anchor: Anchor = Anchor.Center,
+    filter: Filter = Filter.Lanczos): Image
+pub fn Image.crop(self, x: Int, y: Int, width: Int, height: Int): Image
+pub fn Image.rotate(self, degrees: Int): Image
+pub fn Image.flipHorizontal(self): Image
+pub fn Image.flipVertical(self): Image
+pub fn Image.grayscale(self): Image
+pub fn Image.blur(self, sigma: Float): Image
+pub fn Image.overlay(self, top: Image, x: Int, y: Int): Image
+pub fn Image.pixel(self, x: Int, y: Int): Color?
+pub fn Image.encode(self, format: Format, quality: Int = 85): Array[Byte] ! ImageError
+pub fn Image.save(self, path: String, quality: Int = 85): Unit ! ImageError
+~~~
+
+- Una `Image` no cambia: cada operación da otra, y sus copias comparten los
+  píxeles.
+- `read` reconoce el formato por los primeros bytes y gira la imagen como
+  dice su orientación EXIF, así que una foto sale derecha; de una animación
+  lee el primer cuadro. `info` da el formato y el tamaño, ya orientado, sin
+  decodificar los píxeles. `format` es el formato del que se leyó, y `none`
+  para una que hizo el programa.
+- `resize` con un lado calcula el otro conservando la proporción; con los
+  dos, estira. `fit` la reduce, si hace falta, para que quepa en el
+  rectángulo conservando la proporción, y nunca la agranda. `fill` la
+  escala para cubrir el rectángulo y recorta lo que sobra, conservando la
+  parte que dice `anchor`. `crop` recorta a lo que la imagen tiene. `Lanczos`
+  es el filtro por defecto; `Nearest` conserva los bordes del pixel art.
+- `rotate` gira en sentido horario un múltiplo de 90 grados, también
+  negativo; otro ángulo es un pánico. `overlay` dibuja otra imagen encima,
+  mezclada por su alfa. `pixel` da el color de un pixel, o `none` fuera de la
+  imagen.
+- `encode` escribe JPEG con una `quality` de 1 a 100 y sin alfa, y WebP sin
+  pérdida; `save` elige el formato por la extensión del path (`.png`, `.jpg`
+  o `.jpeg`, `.gif`, `.webp`) y otra es un error que las nombra.
 
 
 ## 15. Contrato exigido a cada módulo

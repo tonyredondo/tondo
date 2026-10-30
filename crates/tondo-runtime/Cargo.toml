@@ -20,6 +20,7 @@ flate2 = "1"
 futures-util = { version = "0.3.34", features = ["sink"] }
 hmac = "0.13.0"
 html-escape = "0.2"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 ipnet = "2.12"
 http-body-util = "0.1.5"
 httpdate = "1.0.3"

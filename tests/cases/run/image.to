@@ -1,0 +1,54 @@
+// std.image: images made, drawn on, written and read in each format,
+// resized, fitted, filled, cropped and turned; a photo comes up the way
+// its EXIF orientation says.
+
+import std.console
+import std.embed
+import std.image
+
+const Turned: Array[Byte] = embed.bytes("image_turned.jpg")
+
+fn main(): !image.ImageError {
+    let canvas = image.blank(400, 200, image.Color.rgb(255, 0, 0))
+    let badge = image.blank(50, 50, image.Color.hex("#0000ff")?)
+    let drawn = canvas.overlay(badge, 10, 10)
+    console.println(
+        "{drawn.width()}x{drawn.height()} {drawn.pixel(0, 0)} {drawn.pixel(20, 20)} {drawn.pixel(400, 0)} {drawn.format()}",
+    )
+    for format in [image.Format.Png, image.Format.Jpeg, image.Format.Gif, image.Format.WebP] {
+        let bytes = drawn.encode(format, quality: 90)?
+        let back = image.read(bytes)?
+        console.println(
+            "{format} {back.width()}x{back.height()} {back.format()} {image.info(bytes)?.format}",
+        )
+    }
+    let fitted = drawn.fit(100, 100)
+    let filled = drawn.fill(100, 100, anchor: image.Anchor.Left)
+    let wide = drawn.resize(width: 100)
+    console.println(
+        "{fitted.width()}x{fitted.height()} {filled.width()}x{filled.height()} {filled.pixel(15, 15)} {wide.height()}",
+    )
+    let turned = drawn.rotate(-90)
+    let cropped = drawn.crop(390, 190, 50, 50)
+    console.println(
+        "{turned.width()}x{turned.height()} {turned.pixel(20, 380)} {cropped.width()}x{cropped.height()} {drawn.grayscale().pixel(0, 0)}",
+    )
+    let photo = image.read(Turned)?
+    let top = photo.pixel(4, 1).unwrapOr(image.Color.rgb(0, 0, 0))
+    console.println(
+        "{image.info(Turned)?.width}x{image.info(Turned)?.height} {photo.width()}x{photo.height()} {top.blue > top.red}",
+    )
+    console.println(
+        "{image.read([Byte(1u8)]).isErr()} {image.Format.of("cover.JPEG")} {image.Color.hex("nope").isErr()}",
+    )
+}
+
+// expect-stdout: 400x200 some(#ff0000) some(#0000ff) none none
+// expect-stdout: png 400x200 some(png) png
+// expect-stdout: jpeg 400x200 some(jpeg) jpeg
+// expect-stdout: gif 400x200 some(gif) gif
+// expect-stdout: webp 400x200 some(webp) webp
+// expect-stdout: 100x50 100x100 some(#0000ff) 50
+// expect-stdout: 200x400 some(#0000ff) 10x10 some(#363636)
+// expect-stdout: 8x16 8x16 true
+// expect-stdout: true some(jpeg) true

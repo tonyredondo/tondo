@@ -1197,6 +1197,9 @@ pub const NATIVES: &[Native] = {
     const fn sql(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "sql", name, receiver: None, params, result, symbol }
     }
+    const fn image(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
+        Native { module: "image", name, receiver: None, params, result, symbol }
+    }
     const fn env(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "env", name, receiver: None, params, result, symbol }
     }
@@ -1311,6 +1314,17 @@ pub const NATIVES: &[Native] = {
         sql("open", &[String], Object, "tondo_rt_sqlite_open"),
         sql("failure", &[Object], String, "tondo_rt_sqlite_failure"),
         sql("run", &[Object, String, Bytes, Bool], Bytes, "tondo_rt_sqlite_run"),
+        // `std.internal.image`: images, for `std.image`.
+        image("read", &[Bytes], Object, "tondo_rt_image_read"),
+        image("failure", &[Object], String, "tondo_rt_image_failure"),
+        image("info", &[Bytes], Ints, "tondo_rt_image_info"),
+        image("size", &[Object], Ints, "tondo_rt_image_size"),
+        image("blank", &[Int, Int, Int], Object, "tondo_rt_image_blank"),
+        image("change", &[Object, Int, Int, Int, Int, Int], Object, "tondo_rt_image_change"),
+        image("blur", &[Object, Float], Object, "tondo_rt_image_blur"),
+        image("overlay", &[Object, Object, Int, Int], Object, "tondo_rt_image_overlay"),
+        image("pixel", &[Object, Int, Int], Int, "tondo_rt_image_pixel"),
+        image("encode", &[Object, Int, Int], Bytes, "tondo_rt_image_encode"),
         env("target", &[], String, "tondo_rt_env_target"),
         codec("base64Encode", &[Bytes, Bool], String, "tondo_rt_base64_encode"),
         codec("base64Check", &[String, Bool], Int, "tondo_rt_base64_check"),

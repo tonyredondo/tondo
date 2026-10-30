@@ -253,6 +253,8 @@ enum StdModule {
     InternalEnv,
     /// `std.internal.sql`: SQLite, for `std.sql`.
     InternalSql,
+    /// `std.internal.image`: decoding, encoding and pixels, for `std.image`.
+    InternalImage,
 }
 
 /// The types `std.process` declares when imported.
@@ -2980,6 +2982,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "fs"] => StdModule::InternalFs,
             ["std", "internal", "env"] => StdModule::InternalEnv,
             ["std", "internal", "sql"] => StdModule::InternalSql,
+            ["std", "internal", "image"] => StdModule::InternalImage,
             ["std", "internal", "context"] => StdModule::InternalContext,
             ["std", "internal", "channel"] => StdModule::InternalChannel,
             ["std", rest @ ..] => {
@@ -3089,10 +3092,11 @@ impl<'a> Checker<'a> {
                 | StdModule::InternalNet
                 | StdModule::InternalFs
                 | StdModule::InternalSql
+                | StdModule::InternalImage
         ) {
             self.types.handle(Handle::Native, Ty::UNIT);
         }
-        if matches!(module, StdModule::InternalFs | StdModule::InternalTime) {
+        if matches!(module, StdModule::InternalFs | StdModule::InternalTime | StdModule::InternalImage) {
             self.types.intern(TyKind::Array(Ty::INT));
             self.types.intern(TyKind::Array(Ty::STRING));
         }
@@ -3232,7 +3236,8 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalCbor
                     | StdModule::InternalNet
                     | StdModule::InternalFs
-                    | StdModule::InternalSql,
+                    | StdModule::InternalSql
+                    | StdModule::InternalImage,
                 )),
                 "Native",
             ) => self.types.lookup(&TyKind::Handle(Handle::Native, Ty::UNIT)),
@@ -14121,7 +14126,8 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalContext
                     | StdModule::InternalFs
                     | StdModule::InternalEnv
-                    | StdModule::InternalSql),
+                    | StdModule::InternalSql
+                    | StdModule::InternalImage),
                 )),
             ) => {
                 // `built()`: what `env.build()` reports, read now and kept as
@@ -14183,6 +14189,7 @@ impl<'a> Checker<'a> {
                     StdModule::InternalFs => "fs",
                     StdModule::InternalEnv => "env",
                     StdModule::InternalSql => "sql",
+                    StdModule::InternalImage => "image",
                     _ => "reflect",
                 };
                 let found =

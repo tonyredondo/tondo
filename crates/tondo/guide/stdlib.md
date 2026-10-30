@@ -11,6 +11,7 @@ std.cli        the command line read into types, with help; styles, tables, prog
 std.io         Writer, Reader, Buffer, pipe, copy, multiWriter: streams of all kinds
 std.fs         read and write files, walk, glob, watch, metadata, links, temporaries, trees
 std.archive    zip, tar, tar.gz and tar.zst: read, write, extract
+std.image      PNG, JPEG, GIF, WebP: resize, fit, fill, crop, rotate, write
 std.embed      files of the package kept in the executable, read when it compiles
 std.path       join, parent, fileName, extension, clean, relative, glob patterns
 std.env        args, environment, directories, processors, hostname, what was built
@@ -410,6 +411,25 @@ compress a stream of `std.io`, and `std.zstd` has the same functions. Their
 `close()` closes them and lets go of the stream under them, which closes with
 its last copy: a file the writer alone holds closes with it, and
 `console.stdout()` stays open.
+
+## Images
+
+```tondo
+import std.image
+
+fn main(): !image.ImageError {
+    let photo = image.open("photo.jpg")?              // turned as its EXIF says
+    photo.fit(800, 600).save("photo-800.webp")?       // fits inside, never grows
+    photo.fill(200, 200, anchor: image.Anchor.Top).save("avatar.jpg", quality: 80)?
+    let size = image.info(photo.encode(image.Format.Png)?)?
+    let wide = photo.resize(width: 1200)              // the height keeps the proportions
+}
+```
+
+An image never changes: each operation gives a new one. `crop`, `rotate`
+by multiples of 90, `flipHorizontal`, `grayscale`, `blur`, `overlay` for a
+watermark, and `pixel` for a color; `image.blank(w, h, image.Color.hex("#ffffff")?)`
+makes one. `save` picks the format by the extension.
 
 ## Dates in time zones
 

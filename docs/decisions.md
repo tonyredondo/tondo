@@ -3342,3 +3342,14 @@ A type that takes a name of the prelude is still an error, since every
 module sees those names, but the rest of the program is checked against
 it, so the error is the only one instead of one at each use and in each
 implementation derived for it.
+
+## 2026-10-30 — Images, as a site makes them
+
+The thirteenth lot. Decoding and encoding PNG, JPEG, GIF and WebP is the
+`image` crate's in the runtime, as a codec is the kind of large crate
+that belongs there, and only a program that imports `std.image` links it;
+what a site does with them, fitting, filling with an anchor, keeping
+proportions, is Tondo. An image never changes, so its copies share the
+pixels and each operation gives a new one, which the runtime makes on the
+host's threads. A photo comes up the way its EXIF orientation says, and
+`info` gives that size from the header alone, as a page's markup needs.

@@ -29,6 +29,7 @@ mod fs;
 mod fuzz;
 mod heap;
 mod http;
+mod image;
 mod io;
 mod json;
 mod labels;

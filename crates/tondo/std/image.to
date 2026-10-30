@@ -1,0 +1,373 @@
+// std.image (standard library 14.38): images read, changed and written,
+// PNG, JPEG, GIF and WebP, with the sizes and crops a site makes of them;
+// the runtime decodes, encodes and changes the pixels, on the host's
+// threads. An image never changes: each operation gives a new one.
+
+import std.fs as __fs
+import std.internal.image as imageNative
+
+/// A format of image.
+pub enum Format {
+    Png
+    Jpeg
+    Gif
+    WebP
+}
+
+/// `png`, `jpeg`, `gif` or `webp`.
+impl Display for Format {
+    fn display(self): String {
+        match self {
+            Format.Png => "png"
+            Format.Jpeg => "jpeg"
+            Format.Gif => "gif"
+            Format.WebP => "webp"
+        }
+    }
+}
+
+/// The format a path's extension names: `.png`, `.jpg` or `.jpeg`, `.gif`,
+/// `.webp`.
+pub fn Format.of(path: String): Format? {
+    let lower = path.toLowerAscii()
+    if lower.endsWith(".png") {
+        some(Format.Png)
+    } else if lower.endsWith(".jpg") or lower.endsWith(".jpeg") {
+        some(Format.Jpeg)
+    } else if lower.endsWith(".gif") {
+        some(Format.Gif)
+    } else if lower.endsWith(".webp") {
+        some(Format.WebP)
+    } else {
+        none
+    }
+}
+
+/// Why an image could not be read or written.
+pub type ImageError = {
+    message: String
+}
+
+impl Display for ImageError {
+    fn display(self): String {
+        self.message
+    }
+}
+
+/// What the header of an image says, read without its pixels.
+pub type Info = {
+    format: Format
+    width: Int
+    height: Int
+}
+
+/// A color: red, green, blue and alpha, each from 0 to 255.
+pub type Color = {
+    red: Int
+    green: Int
+    blue: Int
+    alpha: Int
+}
+
+/// An opaque color.
+pub fn Color.rgb(red: Int, green: Int, blue: Int): Color {
+    Color { red, green, blue, alpha: 255 }
+}
+
+/// The color of `#rrggbb` or `#rrggbbaa`, the `#` optional.
+pub fn Color.hex(text: String): Color ! ImageError {
+    let digits = text.removePrefix("#")
+    let value = match Int.parse(digits, radix: 16) {
+        ok(found) if digits.length() == 6 or digits.length() == 8 => found
+        _ => fail ImageError { message: "`{text}` is not a color: write `#rrggbb` or `#rrggbbaa`" }
+    }
+    let rgba = if digits.length() == 6 { (value << 8) | 255 } else { value }
+    colorOf(rgba)
+}
+
+/// `#rrggbb`, or `#rrggbbaa` when it is not opaque.
+impl Display for Color {
+    fn display(self): String {
+        let shown = "#{self.red:02x}{self.green:02x}{self.blue:02x}"
+        if self.alpha == 255 { shown } else { "{shown}{self.alpha:02x}" }
+    }
+}
+
+fn colorOf(rgba: Int): Color {
+    Color {
+        red: (rgba >> 24) & 255
+        green: (rgba >> 16) & 255
+        blue: (rgba >> 8) & 255
+        alpha: rgba & 255
+    }
+}
+
+fn packed(color: Color): Int {
+    let part = (value: Int): Int { value.clamp(0, 255) }
+    (part(color.red) << 24) |
+        (part(color.green) << 16) |
+        (part(color.blue) << 8) |
+        part(color.alpha)
+}
+
+/// How a resize samples the pixels: `Lanczos`, the sharpest, is the
+/// default; `Nearest` keeps hard edges, as pixel art wants.
+pub enum Filter {
+    Nearest
+    Linear
+    CatmullRom
+    Lanczos
+}
+
+/// The part of an image a crop to another shape keeps.
+pub enum Anchor {
+    Center
+    Top
+    Bottom
+    Left
+    Right
+    TopLeft
+    TopRight
+    BottomLeft
+    BottomRight
+}
+
+/// An image, whose pixels never change.
+pub type Image = {
+    priv native: imageNative.Native
+    priv columns: Int
+    priv rows: Int
+    priv source: Format?
+}
+
+fn made(native: imageNative.Native): Image {
+    let size = imageNative.size(native)
+    let source = match size[2] {
+        0 => some(Format.Png)
+        1 => some(Format.Jpeg)
+        2 => some(Format.Gif)
+        3 => some(Format.WebP)
+        _ => none
+    }
+    Image { native, columns: size[0], rows: size[1], source }
+}
+
+/// The image of the bytes of a PNG, JPEG, GIF or WebP, turned as its EXIF
+/// orientation says; the first frame of an animation.
+pub fn read(bytes: Array[Byte]): Image ! ImageError {
+    let native = imageNative.read(bytes)
+    let why = imageNative.failure(native)
+    if not why.isEmpty() {
+        fail ImageError { message: "the image does not read: {why}" }
+    }
+    made(native)
+}
+
+/// The image in the file at `path`.
+pub fn open(path: String): Image ! ImageError {
+    match __fs.readBytes(path) {
+        ok(bytes) => match read(bytes) {
+            ok(image) => image
+            err(error) => fail ImageError { message: "{path}: {error}" }
+        }
+        err(error) => fail ImageError { message: "{path}: {error}" }
+    }
+}
+
+/// The format and size of an image, from its header alone.
+pub fn info(bytes: Array[Byte]): Info ! ImageError {
+    let found = imageNative.info(bytes)
+    if found.length() != 3 {
+        fail ImageError {
+            message: "the bytes are not an image of a format tondo reads: PNG, JPEG, GIF or WebP"
+        }
+    }
+    let format = match found[0] {
+        0 => Format.Png
+        1 => Format.Jpeg
+        2 => Format.Gif
+        _ => Format.WebP
+    }
+    Info { format, width: found[1], height: found[2] }
+}
+
+/// An image of one color.
+pub fn blank(width: Int, height: Int, color: Color): Image {
+    made(imageNative.blank(width.max(0), height.max(0), packed(color)))
+}
+
+/// Its width in pixels.
+pub fn Image.width(self): Int {
+    self.columns
+}
+
+/// Its height in pixels.
+pub fn Image.height(self): Int {
+    self.rows
+}
+
+/// The format it was read from; `none` for one this program made.
+pub fn Image.format(self): Format? {
+    self.source
+}
+
+/// The image at another size: given one side, the other keeps the
+/// proportions; given both, it is stretched to them.
+pub fn Image.resize(self, width: Int? = none, height: Int? = none, filter: Filter = Filter.Lanczos): Image {
+    let (wide, high) = match (width, height) {
+        (some(w), some(h)) => (w, h)
+        (some(w), none) => (w, (self.rows * w + self.columns / 2) / self.columns.max(1))
+        (none, some(h)) => ((self.columns * h + self.rows / 2) / self.rows.max(1), h)
+        (none, none) => return self
+    }
+    scaled(self, wide.max(1), high.max(1), filter)
+}
+
+fn scaled(image: Image, width: Int, height: Int, filter: Filter): Image {
+    if width == image.columns and height == image.rows {
+        return image
+    }
+    let code = match filter {
+        Filter.Nearest => 0
+        Filter.Linear => 1
+        Filter.CatmullRom => 2
+        Filter.Lanczos => 3
+    }
+    made(imageNative.change(image.native, 0, width, height, code, 0))
+}
+
+/// The image made smaller, if it must be, to fit inside `width` by
+/// `height` with its proportions: a thumbnail. It never grows.
+pub fn Image.fit(self, width: Int, height: Int, filter: Filter = Filter.Lanczos): Image {
+    if self.columns <= width and self.rows <= height {
+        return self
+    }
+    // The side that limits it decides the scale.
+    if self.columns * height >= self.rows * width {
+        self.resize(width: width, filter: filter)
+    } else {
+        self.resize(height: height, filter: filter)
+    }
+}
+
+/// The image resized to cover `width` by `height` and cropped to it,
+/// keeping the part `anchor` says: a cover or an avatar.
+pub fn Image.fill(
+    self,
+    width: Int,
+    height: Int,
+    anchor: Anchor = Anchor.Center,
+    filter: Filter = Filter.Lanczos,
+): Image {
+    let (wide, high) = (width.max(1), height.max(1))
+    // The side that limits it covers the box; the other overflows.
+    let covered = if self.columns * high >= self.rows * wide {
+        self.resize(height: high, filter: filter)
+    } else {
+        self.resize(width: wide, filter: filter)
+    }
+    let (spareX, spareY) = (covered.columns - wide, covered.rows - high)
+    let (x, y) = match anchor {
+        Anchor.Center => (spareX / 2, spareY / 2)
+        Anchor.Top => (spareX / 2, 0)
+        Anchor.Bottom => (spareX / 2, spareY)
+        Anchor.Left => (0, spareY / 2)
+        Anchor.Right => (spareX, spareY / 2)
+        Anchor.TopLeft => (0, 0)
+        Anchor.TopRight => (spareX, 0)
+        Anchor.BottomLeft => (0, spareY)
+        Anchor.BottomRight => (spareX, spareY)
+    }
+    covered.crop(x, y, wide, high)
+}
+
+/// The part `width` by `height` at (`x`, `y`), from the top left, cut to
+/// what the image has.
+pub fn Image.crop(self, x: Int, y: Int, width: Int, height: Int): Image {
+    let left = x.clamp(0, self.columns)
+    let top = y.clamp(0, self.rows)
+    let wide = width.clamp(0, self.columns - left)
+    let high = height.clamp(0, self.rows - top)
+    if left == 0 and top == 0 and wide == self.columns and high == self.rows {
+        return self
+    }
+    made(imageNative.change(self.native, 1, left, top, wide, high))
+}
+
+/// The image turned clockwise by a multiple of 90 degrees, as `-90` or
+/// `270`.
+pub fn Image.rotate(self, degrees: Int): Image {
+    if degrees % 90 != 0 {
+        panic("an image turns by a multiple of 90 degrees, not {degrees}")
+    }
+    match ((degrees % 360) + 360) % 360 {
+        90 => made(imageNative.change(self.native, 2, 0, 0, 0, 0))
+        180 => made(imageNative.change(self.native, 3, 0, 0, 0, 0))
+        270 => made(imageNative.change(self.native, 4, 0, 0, 0, 0))
+        _ => self
+    }
+}
+
+/// The image mirrored left to right.
+pub fn Image.flipHorizontal(self): Image {
+    made(imageNative.change(self.native, 5, 0, 0, 0, 0))
+}
+
+/// The image mirrored top to bottom.
+pub fn Image.flipVertical(self): Image {
+    made(imageNative.change(self.native, 6, 0, 0, 0, 0))
+}
+
+/// The image in shades of gray.
+pub fn Image.grayscale(self): Image {
+    made(imageNative.change(self.native, 7, 0, 0, 0, 0))
+}
+
+/// The image blurred, by `sigma` pixels.
+pub fn Image.blur(self, sigma: Float): Image {
+    made(imageNative.blur(self.native, sigma))
+}
+
+/// `top` drawn over the image at (`x`, `y`), blended by its alpha: a
+/// watermark or a badge.
+pub fn Image.overlay(self, top: Image, x: Int, y: Int): Image {
+    made(imageNative.overlay(self.native, top.native, x, y))
+}
+
+/// The color of the pixel at (`x`, `y`), from the top left; `none`
+/// outside the image.
+pub fn Image.pixel(self, x: Int, y: Int): Color? {
+    let rgba = imageNative.pixel(self.native, x, y)
+    if rgba < 0 { none } else { some(colorOf(rgba)) }
+}
+
+/// The bytes of the image in a format; JPEG at a `quality` from 1 to 100,
+/// and WebP without loss.
+pub fn Image.encode(self, format: Format, quality: Int = 85): Array[Byte] ! ImageError {
+    let code = match format {
+        Format.Png => 0
+        Format.Jpeg => 1
+        Format.Gif => 2
+        Format.WebP => 3
+    }
+    let bytes = imageNative.encode(self.native, code, quality)
+    if bytes.isEmpty() {
+        fail ImageError { message: "the image could not be written as {format}" }
+    }
+    bytes
+}
+
+/// Writes the image to `path`, in the format its extension names.
+pub fn Image.save(self, path: String, quality: Int = 85): !ImageError {
+    let format = match Format.of(path) {
+        some(found) => found
+        none => fail ImageError {
+            message: "`{path}` names no format of image: end it in `.png`, `.jpg`, `.gif` or `.webp`"
+        }
+    }
+    let bytes = self.encode(format, quality)?
+    match __fs.writeBytes(path, bytes) {
+        ok(_) => {}
+        err(error) => fail ImageError { message: "{path}: {error}" }
+    }
+}
