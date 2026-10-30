@@ -442,6 +442,70 @@ pub fn Tls.pem(
     Tls { certificate, privateKey, clients, minimumVersion }
 }
 
+/// A server's TLS that shows `certificates`, which can change while it
+/// serves.
+pub fn Tls.from(
+    certificates: Certificates,
+    clients: String? = none,
+    minimumVersion: TlsVersion = TlsVersion.Tls12,
+): Tls {
+    Tls { certificate: certificates.name, privateKey: "", clients, minimumVersion }
+}
+
+/// Certificates a server shows that can change while it serves, so a
+/// renewed one goes in without a restart: `net.listen(host, 443, tls:
+/// net.Tls.from(certificates))`. Until one is set, handshakes fail.
+pub type Certificates = {
+    // The name a `Tls` gives it to the runtime in its certificate.
+    priv name: String
+}
+
+/// New certificates. `protocols` are the ones a client may ask for to be
+/// shown a certificate of its own, as an ACME validation asks for
+/// `acme-tls/1`, which servers that show these offer.
+pub fn Certificates.new(protocols: Array[String] = []): Certificates {
+    Certificates { name: netNative.certificates(protocols) }
+}
+
+/// The certificate chain and private key shown from now on, each the path
+/// of a PEM file or its text.
+pub fn Certificates.set(self, certificate: String, privateKey: String): !NetError {
+    let why = netNative.certificatesSet(self.name, "", "", certificate, privateKey)
+    if not why.isEmpty() {
+        fail NetError.Tls(why)
+    }
+}
+
+/// The certificate shown to a client that asks for `protocol` and the
+/// server `name`, instead of the others.
+pub fn Certificates.setForProtocol(
+    self,
+    protocol: String,
+    name: String,
+    certificate: String,
+    privateKey: String,
+): !NetError {
+    if certificate.isEmpty() {
+        fail NetError.Tls(
+            "a certificate for `{protocol}` has its PEM; `removeForProtocol` forgets one",
+        )
+    }
+    let why = netNative.certificatesSet(self.name, protocol, name, certificate, privateKey)
+    if not why.isEmpty() {
+        fail NetError.Tls(why)
+    }
+}
+
+/// Forgets the certificate for `protocol` and `name`.
+pub fn Certificates.removeForProtocol(self, protocol: String, name: String) {
+    _ = netNative.certificatesSet(self.name, protocol, name, "", "")
+}
+
+/// Whether a server shows them.
+pub fn Certificates.isServing(self): Bool {
+    netNative.certificatesServing(self.name)
+}
+
 fn versionCode(version: TlsVersion): Int {
     match version {
         TlsVersion.Tls12 => 12

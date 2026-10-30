@@ -1720,6 +1720,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.validate` | Core | — | 0.1 | Reglas de los campos de un tipo, que comprueban la lectura de cualquier formato, la línea de comandos y MCP |
 | `std.archive` | Hosted | — | 0.1 | zip, tar, tar.gz y tar.zst: leer, escribir y extraer |
 | `std.image` | Hosted | — | 0.1 | PNG, JPEG, GIF y WebP: leer, cambiar el tamaño, recortar, girar, filtrar y escribir |
+| `std.acme` | Capability-gated | `network` | 0.1 | Certificados de una autoridad ACME, como Let's Encrypt, que un servidor obtiene y renueva solo |
 | `std.sql` | Capability-gated | `network` para PostgreSQL y MySQL | 0.1 | SQLite, PostgreSQL y MySQL: consultas literales con parámetros, filas en los tipos del programa, transacciones, migraciones, un pool y `use` alrededor de cada sentencia |
 | `std.http` | Capability-gated | `network` | 0.1 | Cliente y servidor HTTP/1.1 y HTTP/2 con TLS, cuerpos en streaming, multipart, archivos con rangos, Server-Sent Events y WebSockets |
 | `std.random` | Core + gated | `entropy` para sembrar desde el sistema | 0.1 | Generadores pseudoaleatorios sembrados, mezcla, elección y bytes de entropía |
@@ -2527,6 +2528,15 @@ pub fn Tls.files(certificate: String, privateKey: String, clients: String? = non
     minimumVersion: TlsVersion = TlsVersion.Tls12): Tls
 pub fn Tls.pem(certificate: String, privateKey: String, clients: String? = none,
     minimumVersion: TlsVersion = TlsVersion.Tls12): Tls
+pub fn Tls.from(certificates: Certificates, clients: String? = none,
+    minimumVersion: TlsVersion = TlsVersion.Tls12): Tls
+pub type Certificates
+pub fn Certificates.new(protocols: Array[String] = []): Certificates
+pub fn Certificates.set(self, certificate: String, privateKey: String): Unit ! NetError
+pub fn Certificates.setForProtocol(self, protocol: String, name: String, certificate: String,
+    privateKey: String): Unit ! NetError
+pub fn Certificates.removeForProtocol(self, protocol: String, name: String)
+pub fn Certificates.isServing(self): Bool
 
 pub type Listener                             // Iterator[Stream]
 pub fn listen(host: String, port: Int, tls: Tls? = none): Listener ! NetError
@@ -2595,6 +2605,13 @@ pub fn Network.prefix(self): Int
   certificado, como hace TLS mutuo; y `minimumVersion`, la versión más baja
   que se acepta. Un error de un PEM dado como texto no lo repite. `identity`
   es el certificado que un cliente muestra al servidor que lo pide.
+- Unos `Certificates` cambian mientras un servidor los muestra: `Tls.from`
+  da el `Tls` de un servidor que muestra el último que `set` puso, así que
+  uno renovado entra sin reiniciar, y los handshakes fallan hasta el
+  primero. `protocols` son los protocolos de ALPN, como `acme-tls/1`, que
+  esos servidores ofrecen, y para los que `setForProtocol` guarda el
+  certificado que se muestra a un cliente que pide uno de ellos y el nombre
+  de servidor dado; `isServing` dice si un servidor ya los muestra.
 - `startTls` sigue la conexión sobre TLS como cliente de `host`, verificado
   como en `connectTls`, para los protocolos que empiezan en claro y piden TLS,
   como PostgreSQL, MySQL o SMTP. El `Stream` en claro queda cerrado, y lo que
@@ -5879,6 +5896,51 @@ pub fn Image.save(self, path: String, quality: Int = 85): Unit ! ImageError
 - `encode` escribe JPEG con una `quality` de 1 a 100 y sin alfa, y WebP sin
   pérdida; `save` elige el formato por la extensión del path (`.png`, `.jpg`
   o `.jpeg`, `.gif`, `.webp`) y otra es un error que las nombra.
+
+### 14.39 `std.acme`
+
+`std.acme` da a un servidor los certificados de una autoridad ACME (RFC
+8555), como Let's Encrypt, que obtiene y renueva solo mientras corre. La
+autoridad comprueba cada nombre con TLS-ALPN-01 (RFC 8737), que el propio
+servidor responde en su puerto, así que no hace falta nada más alcanzable.
+
+~~~tondo
+import std.acme
+import std.http
+
+fn main(): !http.HttpError {
+    var app = http.App.new()
+    app.get("/", (_) { http.Reply.text("hello") })
+    app.listen(port: 443, tls: acme.tls(["example.com", "www.example.com"], email: "me@example.com"))?
+}
+~~~
+
+~~~tondo pseudocode
+pub const LetsEncrypt: String
+pub const LetsEncryptStaging: String
+pub type AcmeError = { message: String }
+pub fn tls(domains: Array[String], email: String, directory: String = LetsEncrypt,
+    cache: String? = none, trust: String? = none): net.Tls
+~~~
+
+- `tls` da el `Tls` de unos `net.Certificates` (14.4.6) y deja una tarea
+  separada que los mantiene: muestra el certificado guardado mientras le
+  quedan más de 30 días; si no, espera a que un servidor los muestre, pide
+  uno para `domains`, el primero su sujeto, y lo guarda y lo muestra. Mira
+  de nuevo cada 12 horas. Un intento que falla se escribe en el log y se
+  repite, con esperas que doblan desde un minuto hasta seis horas; hasta el
+  primer certificado, los handshakes fallan. Una lista vacía de dominios es
+  un pánico.
+- La cuenta es una clave ECDSA P-256 guardada en `cache`, por defecto en el
+  directorio de caché del usuario, en una carpeta por el host de
+  `directory`, con los certificados y sus claves, que solo su dueño lee.
+  `email` es a quien la autoridad escribe sobre ellos. `trust` es la
+  autoridad del certificado del propio directorio, para uno de pruebas.
+- Las peticiones van firmadas con JWS y ES256, con el nonce que la autoridad
+  da, y uno que rechaza se cambia una vez. La petición del certificado
+  (PKCS #10) y el certificado de TLS-ALPN-01 se escriben en DER en Tondo;
+  este último se muestra solo a quien pide `acme-tls/1` para ese nombre, y
+  hasta que la comprobación termina.
 
 
 ## 15. Contrato exigido a cada módulo

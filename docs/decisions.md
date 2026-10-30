@@ -3353,3 +3353,22 @@ proportions, is Tondo. An image never changes, so its copies share the
 pixels and each operation gives a new one, which the runtime makes on the
 host's threads. A photo comes up the way its EXIF orientation says, and
 `info` gives that size from the header alone, as a page's markup needs.
+
+## 2026-10-30 — Certificates that a server obtains by itself
+
+The fourteenth lot. `acme.tls(["example.com"], email: ...)` is all a
+server writes to have Let's Encrypt's certificates, obtained and renewed
+while it runs. The authority checks each name with TLS-ALPN-01, which the
+server answers on its own port, so nothing besides it has to be reachable,
+as port 80 for HTTP-01 would be. The protocol is Tondo over `std.http`
+and `std.crypto`: JWS with ES256, and the certificate request and the
+check's certificate written in DER, so the runtime only had to learn to
+show certificates that change.
+
+That is `net.Certificates`: a server that shows them takes the last one
+set at each handshake, and a client that asks for a protocol it keeps a
+certificate for, as `acme-tls/1`, gets that one. A `Tls` names its
+certificates to the runtime in its `certificate`, so `Tls` and the
+natives of every listener stay as they were. ACME lives in a module of
+its own, `std.acme`, because `std.net` cannot use `std.http`, which is
+built on it.

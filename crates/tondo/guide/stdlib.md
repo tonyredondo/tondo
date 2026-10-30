@@ -32,6 +32,7 @@ std.mcp        Model Context Protocol servers from a value's methods
 std.template   text and HTML templates, compiled or loaded (`tondo guide templates`)
 std.sql        SQLite, PostgreSQL, MySQL: queries, rows, migrations (`tondo guide databases`)
 std.net        TCP, UDP and Unix sockets, TLS, names, IP addresses and networks
+std.acme       certificates of Let's Encrypt, obtained and renewed by a server itself
 std.url        URLs and relative links: parts, resolving, the query
 std.regex      regular expressions, with `(?i)` flags and replacing by a function
 std.text       Unicode normalization: NFC, NFD, NFKC, NFKD

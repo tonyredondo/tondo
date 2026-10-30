@@ -1,0 +1,561 @@
+// std.acme (standard library 14.39): the certificates of an ACME authority
+// (RFC 8555), as Let's Encrypt, which a server obtains and renews by itself
+// while it runs. The authority checks each name with TLS-ALPN-01 (RFC
+// 8737), which the server answers on its own port, so nothing else has to
+// be reachable.
+
+import std.crypto as __crypto
+import std.encoding as __encoding
+import std.env as __env
+import std.fs as __fs
+import std.hash as __hash
+import std.http as __http
+import std.json as __json
+import std.log as __log
+import std.net as __net
+import std.random as __random
+import std.sync as __sync
+import std.time as __time
+import std.url as __url
+
+/// Let's Encrypt's directory.
+pub const LetsEncrypt: String = "https://acme-v02.api.letsencrypt.org/directory"
+
+/// Let's Encrypt's directory for tests, whose certificates no browser
+/// trusts and whose limits are higher.
+pub const LetsEncryptStaging: String = "https://acme-staging-v02.api.letsencrypt.org/directory"
+
+/// The protocol of TLS-ALPN-01.
+const AlpnProtocol: String = "acme-tls/1"
+
+/// Why a certificate could not be obtained.
+pub type AcmeError = {
+    message: String
+}
+
+impl Display for AcmeError {
+    fn display(self): String {
+        self.message
+    }
+}
+
+/// A server's TLS whose certificate for `domains`, the first its subject,
+/// comes from the ACME authority of `directory` and renews itself 30 days
+/// before it expires: `app.listen(port: 443, tls: acme.tls(["example.com"],
+/// email: "me@example.com"))`. `email` is who the authority writes to about
+/// them; `cache` keeps the account and the certificates, by default under
+/// the user's cache directory; `trust` is the authority of the directory's
+/// own certificate, for a test server. Until the first certificate arrives
+/// handshakes fail; an attempt that fails is logged and tried again.
+pub fn tls(
+    domains: Array[String],
+    email: String,
+    directory: String = LetsEncrypt,
+    cache: String? = none,
+    trust: String? = none,
+): __net.Tls {
+    if domains.isEmpty() {
+        panic("acme.tls needs at least one domain")
+    }
+    let certificates = __net.Certificates.new(protocols: [AlpnProtocol])
+    let keeper = Keeper {
+        domains
+        email
+        directory
+        folder: folderOf(directory, cache)
+        trust
+        certificates
+    }
+    spawn detached keep(keeper)
+    __net.Tls.from(certificates)
+}
+
+/// Where the account and the certificates of a directory are kept.
+fn folderOf(directory: String, cache: String?): String {
+    let base = match cache {
+        some(given) => given
+        none => "{__env.cacheDirectory().unwrapOr(".")}/tondo/acme"
+    }
+    let host = match __url.parse(directory) {
+        ok(parsed) => parsed.host
+        err(_) => "directory"
+    }
+    "{base}/{host}"
+}
+
+/// What keeps the certificate of a server.
+type Keeper = {
+    domains: Array[String]
+    email: String
+    directory: String
+    folder: String
+    trust: String?
+    certificates: __net.Certificates
+}
+
+/// Shows the certificate, renews it when it has to, and tries again after
+/// a failure, longer each time up to six hours.
+fn keep(keeper: Keeper) {
+    let logger = __log.current()
+    var retry = __time.minutes(1)
+    for {
+        let wait = match keeper.renewed() {
+            ok(next) => {
+                retry = __time.minutes(1)
+                next
+            }
+            err(error) => {
+                logger.warn("acme: {error}", ["domains": keeper.domains.join(", ")])
+                let waited = retry
+                if retry.isLessThan(__time.hours(6)) {
+                    retry = retry.multiply(2)
+                }
+                waited
+            }
+        }
+        __time.sleep(wait)
+    }
+}
+
+/// Shows the kept certificate, or one obtained when it has 30 days left or
+/// less; gives how long until it looks again.
+fn Keeper.renewed(self): __time.Duration ! AcmeError {
+    let margin = __time.hours(24 * 30)
+    match self.kept() {
+        some((chain, key, until)) => {
+            self.show(chain, key)?
+            let left = until - __time.unixTime()
+            if margin.isLessThan(left) {
+                let next = left - margin
+                return if next.isLessThan(__time.hours(12)) { next } else { __time.hours(12) }
+            }
+        }
+        none => {}
+    }
+    // The server answers the authority's checks, so it has to be up.
+    for not self.certificates.isServing() {
+        __time.sleep(__time.milliseconds(100))
+    }
+    let (chain, key) = self.obtained()?
+    stored(self.folder, "{self.domains[0]}.pem", chain)?
+    stored(self.folder, "{self.domains[0]}.key", key)?
+    self.show(chain, key)?
+    __time.hours(12)
+}
+
+fn Keeper.show(self, chain: String, key: String): !AcmeError {
+    match self.certificates.set(chain, key) {
+        ok(_) => {}
+        err(error) => fail AcmeError { message: "the certificate does not load: {error}" }
+    }
+}
+
+/// The kept certificate for these domains and when it expires.
+fn Keeper.kept(self): (String, String, __time.Duration)? {
+    let chain = __fs.readText("{self.folder}/{self.domains[0]}.pem").unwrapOr("")
+    let key = __fs.readText("{self.folder}/{self.domains[0]}.key").unwrapOr("")
+    let first = match __crypto.certificates(chain) {
+        ok(found) => found.get(0)?
+        err(_) => return none
+    }
+    if key.isEmpty() or not self.domains.all((name) { first.names.any((held) { held == name }) }) {
+        return none
+    }
+    some((chain, key, first.validUntil.sinceEpoch()))
+}
+
+/// A file of the cache, which only its owner reads.
+fn stored(folder: String, name: String, text: String): !AcmeError {
+    let path = "{folder}/{name}"
+    let written = __fs.createDirectory(folder).andThen((_) { __fs.writeText(path, text) })
+    match written.andThen((_) { __fs.setPermissions(path, 0o600) }) {
+        ok(_) => {}
+        err(error) => fail AcmeError { message: "{path}: {error}" }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The protocol
+// ---------------------------------------------------------------------------
+
+/// An account at an authority: its client, the URLs of its directory, its
+/// key, the key as a JWK and its thumbprint, its URL once known, and the
+/// next nonce.
+type Session = {
+    client: __http.Client
+    urls: __json.Value
+    key: __crypto.PrivateKey
+    jwk: String
+    thumbprint: String
+    account: __sync.Mutex[String]
+    nonce: __sync.Mutex[String]
+}
+
+/// The account of the kept key, made or found.
+fn Keeper.session(self): Session ! AcmeError {
+    let client = __http.Client.new(trust: self.trust, timeout: some(__time.seconds(30)))
+    let urls = answer(sent(client.get(self.directory)))?
+    let path = "{self.folder}/account.key"
+    let key = match __fs.readText(path) {
+        ok(pem) => match __crypto.PrivateKey.fromPem(pem) {
+            ok(found) => found
+            err(error) => fail AcmeError { message: "{path}: {error}" }
+        }
+        err(_) => {
+            let made = __crypto.PrivateKey.generate(__crypto.Curve.P256)
+            stored(self.folder, "account.key", made.pem())?
+            made
+        }
+    }
+    // The point of the public key ends its SubjectPublicKeyInfo.
+    let spki = spkiOf(key)
+    let point = spki.slice(spki.length() - 64, spki.length()).unwrapOr([])
+    let x = base64url(point.slice(0, 32).unwrapOr([]))
+    let y = base64url(point.slice(32, 64).unwrapOr([]))
+    let jwk = "{{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"{x}\",\"y\":\"{y}\"}}"
+    let session = Session {
+        client
+        urls
+        key
+        jwk
+        thumbprint: base64url(__hash.sha256(jwk.bytes()).bytes())
+        account: __sync.Mutex("")
+        nonce: __sync.Mutex("")
+    }
+    let contact = __json.encode("mailto:{self.email}")
+    let created =
+        session.post(
+            member(urls, "newAccount"),
+            some("{{\"termsOfServiceAgreed\":true,\"contact\":[{contact}]}}"),
+        )?
+    match created.header("Location") {
+        some(url) => session.account.set(url)
+        none => fail AcmeError { message: "the authority gave no account" }
+    }
+    session
+}
+
+/// A request signed with the account's key (JWS, ES256): with a payload,
+/// or a `POST`-as-`GET` without one. A nonce the authority refuses is
+/// replaced once.
+fn Session.post(self, url: String, payload: String?): __http.Response ! AcmeError {
+    var attempt = 0
+    for {
+        let nonce = self.nonceNow()?
+        let account = self.account.get()
+        let signer = if account.isEmpty() {
+            "\"jwk\":{self.jwk}"
+        } else {
+            "\"kid\":{__json.encode(account)}"
+        }
+        let header =
+            "{{\"alg\":\"ES256\",{signer},\"nonce\":{__json.encode(nonce)},\"url\":{__json.encode(url)}}}"
+        let protected = base64url(header.bytes())
+        let content = match payload {
+            some(text) => base64url(text.bytes())
+            none => ""
+        }
+        let signature = base64url(self.key.sign("{protected}.{content}".bytes()))
+        let jws =
+            "{{\"protected\":\"{protected}\",\"payload\":\"{content}\",\"signature\":\"{signature}\"}}"
+        let body = __http.Body.text(jws, contentType: "application/jose+json")
+        let response = sent(self.client.post(url, body: some(body)))?
+        self.nonce.set(response.header("Replay-Nonce").unwrapOr(""))
+        if response.status() < 400 {
+            return response
+        }
+        let problem = answer(ok(response)).unwrapOr(__json.Value.Null)
+        if attempt == 0 and member(problem, "type").endsWith(":badNonce") {
+            attempt += 1
+            continue
+        }
+        let detail = problem
+            .field("detail")
+            .asText()
+            .unwrapOr("the authority answered {response.status()}")
+        fail AcmeError { message: "{url}: {detail}" }
+    }
+}
+
+fn Session.nonceNow(self): String ! AcmeError {
+    let kept = self.nonce.get()
+    if not kept.isEmpty() {
+        return kept
+    }
+    match sent(self.client.head(member(self.urls, "newNonce")))?.header("Replay-Nonce") {
+        some(fresh) => fresh
+        none => fail AcmeError { message: "the authority gave no nonce" }
+    }
+}
+
+/// A certificate for the domains: an order, each name checked, and the
+/// chain the authority issues for a request signed with a new key.
+fn Keeper.obtained(self): (String, String) ! AcmeError {
+    let session = self.session()?
+    let identifiers = self.domains.map(
+        (name) { "{{\"type\":\"dns\",\"value\":{__json.encode(name)}}}" },
+    )
+    let created =
+        session.post(
+            member(session.urls, "newOrder"),
+            some("{{\"identifiers\":[{identifiers.join(",")}]}}"),
+        )?
+    let orderUrl = created.header("Location").unwrapOr("")
+    let order = answer(ok(created))?
+    for authorization in order.field("authorizations").asArray().unwrapOr([]) {
+        self.authorized(session, authorization.asText().unwrapOr(""))?
+    }
+    let key = __crypto.PrivateKey.generate(__crypto.Curve.P256)
+    let request = certificateRequest(key, self.domains)
+    _ = session.post(member(order, "finalize"), some("{{\"csr\":\"{base64url(request)}\"}}"))?
+    var issued = order
+    for tries in 0..120 {
+        issued = answer(ok(session.post(orderUrl, none)?))?
+        if member(issued, "status") == "valid" or member(issued, "status") == "invalid" {
+            break
+        }
+        __time.sleep(__time.milliseconds(if tries < 10 { 200 } else { 1000 }))
+    }
+    let url = member(issued, "certificate")
+    if member(issued, "status") != "valid" or url.isEmpty() {
+        fail AcmeError {
+            message: "the order of {self.domains.join(", ")} ended {member(issued, "status")}"
+        }
+    }
+    let chain = match session.post(url, none)?.text() {
+        ok(text) => text
+        err(error) => fail AcmeError { message: "the certificate: {error}" }
+    }
+    (chain, key.pem())
+}
+
+/// Answers the authority's check of a name with TLS-ALPN-01: a certificate
+/// that holds the digest of the key authorization, shown to the client that
+/// asks for `acme-tls/1`, until the check ends.
+fn Keeper.authorized(self, session: Session, url: String): !AcmeError {
+    let found = answer(ok(session.post(url, none)?))?
+    let name = found.field("identifier").field("value").asText().unwrapOr("")
+    if member(found, "status") == "valid" {
+        return
+    }
+    let challenge = match alpnChallenge(found) {
+        some(offered) => offered
+        none => fail AcmeError { message: "the authority does not check {name} with TLS-ALPN-01" }
+    }
+    let authorization = "{member(challenge, "token")}.{session.thumbprint}"
+    let key = __crypto.PrivateKey.generate(__crypto.Curve.P256)
+    let proof = challengeCertificate(key, name, __hash.sha256(authorization.bytes()).bytes())
+    match self.certificates.setForProtocol(
+        AlpnProtocol,
+        name,
+        pemOf("CERTIFICATE", proof),
+        key.pem(),
+    ) {
+        ok(_) => {}
+        err(error) => fail AcmeError { message: "the check of {name}: {error}" }
+    }
+    defer self.certificates.removeForProtocol(AlpnProtocol, name)
+    _ = session.post(member(challenge, "url"), some("{{}}"))?
+    for tries in 0..120 {
+        let now = answer(ok(session.post(url, none)?))?
+        let status = member(now, "status")
+        if status == "valid" {
+            return
+        }
+        if status != "pending" {
+            let why = alpnChallenge(now).andThen(
+                (each) { each.field("error").field("detail").asText() },
+            )
+            fail AcmeError { message: "the check of {name} failed: {why.unwrapOr(status)}" }
+        }
+        __time.sleep(__time.milliseconds(if tries < 10 { 200 } else { 1000 }))
+    }
+    fail AcmeError { message: "the check of {name} did not end" }
+}
+
+fn sent(result: __http.Response ! __http.HttpError): __http.Response ! AcmeError {
+    match result {
+        ok(response) => response
+        err(error) => fail AcmeError { message: "{error}" }
+    }
+}
+
+/// The JSON an authority answered.
+fn answer(response: __http.Response ! AcmeError): __json.Value ! AcmeError {
+    let body = match response?.text() {
+        ok(found) => found
+        err(error) => fail AcmeError { message: "the authority's answer: {error}" }
+    }
+    match __json.parse(body) {
+        ok(value) => value
+        err(error) => fail AcmeError { message: "the authority's answer: {error}" }
+    }
+}
+
+/// The text of a member of an object, or an empty one.
+fn member(value: __json.Value, key: String): String {
+    value.field(key).asText().unwrapOr("")
+}
+
+/// The TLS-ALPN-01 challenge of an authorization.
+fn alpnChallenge(authorization: __json.Value): __json.Value? {
+    authorization
+        .field("challenges")
+        .asArray()
+        .unwrapOr([])
+        .find((each) { member(each, "type") == "tls-alpn-01" })
+}
+
+fn base64url(bytes: Array[Byte]): String {
+    __encoding.base64Encode(bytes, alphabet: __encoding.Base64Alphabet.Url)
+}
+
+// ---------------------------------------------------------------------------
+// Certificates in DER
+// ---------------------------------------------------------------------------
+
+const EcdsaWithSha256: String = "1.2.840.10045.4.3.2"
+
+/// A value of DER: its tag, its length and its content.
+fn tlv(tag: Int, content: Array[Byte]): Array[Byte] {
+    var out = [Byte(UInt8.wrapping(tag))]
+    let length = content.length()
+    if length < 128 {
+        out.push(Byte(UInt8.wrapping(length)))
+    } else {
+        var digits: Array[Byte] = []
+        var rest = length
+        for rest > 0 {
+            digits.push(Byte(UInt8.wrapping(rest & 255)))
+            rest = rest >> 8
+        }
+        digits.reverse()
+        out.push(Byte(UInt8.wrapping(128 + digits.length())))
+        out.extend(digits)
+    }
+    out.concat(content)
+}
+
+fn sequence(parts: Array[Array[Byte]]): Array[Byte] {
+    var content: Array[Byte] = []
+    for part in parts {
+        content.extend(part)
+    }
+    tlv(0x30, content)
+}
+
+fn oid(text: String): Array[Byte] {
+    let arcs = text.split(".").map((part) { Int.parse(part).unwrapOr(0) })
+    var content = [Byte(UInt8.wrapping(arcs[0] * 40 + arcs[1]))]
+    for arc in arcs.slice(2, arcs.length()).unwrapOr([]) {
+        var digits = [Byte(UInt8.wrapping(arc & 127))]
+        var rest = arc >> 7
+        for rest > 0 {
+            digits.push(Byte(UInt8.wrapping((rest & 127) | 128)))
+            rest = rest >> 7
+        }
+        digits.reverse()
+        content.extend(digits)
+    }
+    tlv(0x06, content)
+}
+
+/// An unsigned integer of big-endian bytes.
+fn integer(bytes: Array[Byte]): Array[Byte] {
+    var start = 0
+    for start < bytes.length() - 1 and bytes[start] == Byte(0u8) {
+        start += 1
+    }
+    let digits = bytes.slice(start, bytes.length()).unwrapOr([])
+    let positive = if Int(digits.get(0).unwrapOr(Byte(0u8))) >= 128 {
+        [Byte(0u8)].concat(digits)
+    } else {
+        digits
+    }
+    tlv(0x02, positive)
+}
+
+/// The name `CN=common`.
+fn distinguished(common: String): Array[Byte] {
+    sequence([tlv(0x31, sequence([oid("2.5.4.3"), tlv(0x0C, common.bytes())]))])
+}
+
+/// The extension of the names a certificate is for.
+fn alternativeNames(names: Array[String]): Array[Byte] {
+    sequence([oid("2.5.29.17"), tlv(0x04, sequence(names.map((each) { tlv(0x82, each.bytes()) })))])
+}
+
+/// The key's SubjectPublicKeyInfo.
+fn spkiOf(key: __crypto.PrivateKey): Array[Byte] {
+    let body = key
+        .publicKey()
+        .pem()
+        .lines()
+        .filter((line) { not line.startsWith("-----") })
+        .join("")
+    __encoding.base64Decode(body).unwrapOr([])
+}
+
+/// `data` signed with ECDSA and SHA-256, as X.509 writes it: the two
+/// integers of the signature in a sequence, in a bit string.
+fn signed(key: __crypto.PrivateKey, data: Array[Byte]): Array[Byte] {
+    let raw = key.sign(data)
+    let pair = sequence(
+        [integer(raw.slice(0, 32).unwrapOr([])), integer(raw.slice(32, 64).unwrapOr([]))],
+    )
+    tlv(0x03, [Byte(0u8)].concat(pair))
+}
+
+/// A certificate request (PKCS #10) for the names, the first its subject.
+fn certificateRequest(key: __crypto.PrivateKey, names: Array[String]): Array[Byte] {
+    let extensions = sequence(
+        [oid("1.2.840.113549.1.9.14"), tlv(0x31, sequence([alternativeNames(names)]))],
+    )
+    let info = sequence(
+        [tlv(0x02, [Byte(0u8)]), distinguished(names[0]), spkiOf(key), tlv(0xA0, extensions)],
+    )
+    sequence([info, sequence([oid(EcdsaWithSha256)]), signed(key, info)])
+}
+
+/// The certificate of TLS-ALPN-01 for `name`: self-signed, for a week,
+/// holding `digest` in the critical extension acmeIdentifier.
+fn challengeCertificate(key: __crypto.PrivateKey, name: String, digest: Array[Byte]): Array[Byte] {
+    let algorithm = sequence([oid(EcdsaWithSha256)])
+    var serial = __random.entropy(16)
+    serial[0] = Byte(UInt8.wrapping((Int(serial[0]) & 127) | 1))
+    let now = __time.unixTime()
+    let moment = (offset: __time.Duration) {
+        tlv(0x17, __time.utc(now + offset).format("%y%m%d%H%M%SZ").bytes())
+    }
+    let validity = sequence(
+        [moment(__time.hours(0) - __time.hours(24)), moment(__time.hours(24 * 7))],
+    )
+    let identifier = sequence(
+        [oid("1.3.6.1.5.5.7.1.31"), tlv(0x01, [Byte(255u8)]), tlv(0x04, tlv(0x04, digest))],
+    )
+    let tbs = sequence(
+        [
+            tlv(0xA0, tlv(0x02, [Byte(2u8)])),
+            integer(serial),
+            algorithm,
+            distinguished(name),
+            validity,
+            distinguished(name),
+            spkiOf(key),
+            tlv(0xA3, sequence([alternativeNames([name]), identifier])),
+        ],
+    )
+    sequence([tbs, algorithm, signed(key, tbs)])
+}
+
+/// The PEM of DER.
+fn pemOf(label: String, der: Array[Byte]): String {
+    let text = __encoding.base64Encode(der)
+    var lines: Array[String] = []
+    var at = 0
+    for at < text.length() {
+        lines.push(text.slice(at, (at + 64).min(text.length())).unwrapOr(""))
+        at += 64
+    }
+    "-----BEGIN {label}-----\n{lines.join("\n")}\n-----END {label}-----\n"
+}

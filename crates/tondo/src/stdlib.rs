@@ -52,6 +52,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("archive", include_str!("../std/archive.to")),
     ("sql", include_str!("../std/sql.to")),
     ("image", include_str!("../std/image.to")),
+    ("acme", include_str!("../std/acme.to")),
     ("gzip", include_str!("../std/gzip.to")),
     ("zstd", include_str!("../std/zstd.to")),
     ("xml", include_str!("../std/xml.to")),

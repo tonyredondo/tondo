@@ -144,3 +144,9 @@ fn find(id: Int): User? {
   variable. `clients: "ca.pem"` requires a certificate of each client, which
   `request.clientCertificate()` gives; a client shows its own with
   `http.Client.new(identity: http.Tls.files("me.pem", "me.key"))`.
+- Certificates of Let's Encrypt, obtained and renewed by the server itself:
+  `app.listen(port: 443, tls: acme.tls(["example.com"], email: "me@example.com"))`
+  with `import std.acme`; only port 443 has to be reachable. They are kept in
+  the user's cache directory, and `directory: acme.LetsEncryptStaging` tries
+  it without the real limits. `net.Certificates` change while a server shows
+  them, for certificates renewed some other way.

@@ -12,6 +12,7 @@ use bytes::{Buf, Bytes};
 use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt, Full, StreamBody};
 use hyper::body::{Frame, Incoming};
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
@@ -210,8 +211,7 @@ pub(crate) fn acceptor(
     minimum: i64,
     http: bool,
 ) -> Result<tokio_rustls::TlsAcceptor, String> {
-    let certs = certificates(cert, "the certificate")?;
-    let key = private_key(key)?;
+    let changing = store(cert);
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let builder = rustls::ServerConfig::builder_with_provider(provider.clone())
         .with_protocol_versions(versions(minimum))
@@ -229,11 +229,145 @@ pub(crate) fn acceptor(
             builder.with_client_cert_verifier(verifier)
         }
     };
-    let mut config = builder.with_single_cert(certs, key).map_err(|error| error.to_string())?;
+    let mut config = match &changing {
+        Some(store) => {
+            store.serving.store(true, std::sync::atomic::Ordering::Release);
+            builder.with_cert_resolver(Arc::new(Resolver(store.clone())))
+        }
+        None => builder
+            .with_single_cert(certificates(cert, "the certificate")?, private_key(key)?)
+            .map_err(|error| error.to_string())?,
+    };
     if http {
         config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
     }
+    // The protocols certificates are kept for, as `acme-tls/1`, last.
+    if let Some(store) = &changing {
+        for protocol in &store.offered {
+            if !config.alpn_protocols.contains(protocol) {
+                config.alpn_protocols.push(protocol.clone());
+            }
+        }
+    }
     Ok(tokio_rustls::TlsAcceptor::from(Arc::new(config)))
+}
+
+/// The certificates of `net.Certificates`, which change while a server
+/// shows them: the one it shows, and those kept for a protocol a client
+/// asks for and a name, as an ACME validation asks for `acme-tls/1`, which
+/// the server offers.
+pub(crate) struct Certificates {
+    current: Mutex<Option<Certified>>,
+    /// By protocol and server name.
+    protocols: Mutex<HashMap<(Vec<u8>, String), Certified>>,
+    offered: Vec<Vec<u8>>,
+    serving: std::sync::atomic::AtomicBool,
+}
+
+impl std::fmt::Debug for Certificates {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("Certificates")
+    }
+}
+
+type Certified = Arc<rustls::sign::CertifiedKey>;
+
+#[derive(Debug)]
+struct Resolver(Arc<Certificates>);
+
+impl rustls::server::ResolvesServerCert for Resolver {
+    fn resolve(&self, hello: rustls::server::ClientHello) -> Option<Arc<rustls::sign::CertifiedKey>> {
+        let name = hello.server_name().unwrap_or_default().to_ascii_lowercase();
+        if let Some(asked) = hello.alpn() {
+            let kept = lock(&self.0.protocols);
+            for protocol in asked {
+                if let Some(found) = kept.get(&(protocol.to_vec(), name.clone())) {
+                    return Some(found.clone());
+                }
+            }
+        }
+        lock(&self.0.current).clone()
+    }
+}
+
+fn certified(cert: &str, key: &str) -> Result<Arc<rustls::sign::CertifiedKey>, String> {
+    let chain = certificates(cert, "the certificate")?;
+    let signing = rustls::crypto::ring::sign::any_supported_type(&private_key(key)?)
+        .map_err(|error| format!("the private key: {error}"))?;
+    Ok(Arc::new(rustls::sign::CertifiedKey::new(chain, signing)))
+}
+
+/// Every store of certificates, which a `Tls` names in its certificate as
+/// `tondo:certificates:` and its number; they live as long as the program.
+static STORES: Mutex<Vec<Arc<Certificates>>> = Mutex::new(Vec::new());
+const STORE: &str = "tondo:certificates:";
+
+/// The store a certificate names, if it names one.
+fn store(name: &str) -> Option<Arc<Certificates>> {
+    let index: usize = name.strip_prefix(STORE)?.parse().ok()?;
+    lock(&STORES).get(index).cloned()
+}
+
+/// `net.Certificates.new(protocols)`: a new store, and its name.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_tls_certificates(protocols: *mut ArrayHeader) -> *mut Str {
+    let offered = strings(protocols).into_iter().map(String::into_bytes).collect();
+    let mut stores = lock(&STORES);
+    stores.push(Arc::new(Certificates {
+        current: Mutex::new(None),
+        protocols: Mutex::new(HashMap::new()),
+        offered,
+        serving: Default::default(),
+    }));
+    str_new(format!("{STORE}{}", stores.len() - 1).as_bytes())
+}
+
+/// The certificate a store shows from now on, or, with a `protocol`, the
+/// one it shows to a client that asks for it and for `name`; an empty
+/// certificate forgets that one. Gives why it could not, or nothing.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_tls_certificates_set(
+    named: *const Str,
+    protocol: *const Str,
+    name: *const Str,
+    cert: *const Str,
+    key: *const Str,
+) -> *mut Str {
+    let Some(store) = store(&text(named)) else { return str_new(b"") };
+    let (protocol, name, cert) = (text(protocol).into_bytes(), text(name).to_ascii_lowercase(), text(cert));
+    if protocol.is_empty() {
+        return match certified(&cert, &text(key)) {
+            Ok(found) => {
+                *lock(&store.current) = Some(found);
+                str_new(b"")
+            }
+            Err(why) => str_new(why.as_bytes()),
+        };
+    }
+    if cert.is_empty() {
+        lock(&store.protocols).remove(&(protocol, name));
+        return str_new(b"");
+    }
+    if !store.offered.contains(&protocol) {
+        let protocol = String::from_utf8_lossy(&protocol);
+        let why = format!(
+            "these certificates offer no `{protocol}`: make them with `Certificates.new(protocols: [\"{protocol}\"])`"
+        );
+        return str_new(why.as_bytes());
+    }
+    match certified(&cert, &text(key)) {
+        Ok(found) => {
+            lock(&store.protocols).insert((protocol, name), found);
+            str_new(b"")
+        }
+        Err(why) => str_new(why.as_bytes()),
+    }
+}
+
+/// Whether a server shows the store.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_tls_certificates_serving(named: *const Str) -> u8 {
+    store(&text(named)).is_some_and(|store| store.serving.load(std::sync::atomic::Ordering::Acquire)) as u8
 }
 
 /// Starts a server on `host:port`, `0` for any free port, over TLS when it
