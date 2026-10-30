@@ -132,33 +132,35 @@ fn roots() -> rustls::RootCertStore {
         .clone()
 }
 
-/// A client's TLS: the roots, and the certificates of a PEM file when one is
-/// named; ALPN offers HTTP/2 first.
-pub(crate) fn tls(trust: &str) -> Result<rustls::ClientConfig, String> {
-    use rustls_pki_types::CertificateDer;
-    use rustls_pki_types::pem::PemObject;
+/// A client's TLS: the roots and the authorities of `trust`, the
+/// certificate and key it shows when `cert` is not empty, each a PEM's text
+/// or file, and the lowest version it accepts; ALPN offers HTTP/2 first.
+pub(crate) fn tls(trust: &str, cert: &str, key: &str, minimum: i64) -> Result<rustls::ClientConfig, String> {
+    use super::server::{certificates, private_key, versions};
     let mut roots = roots();
     if !trust.is_empty() {
-        let certs = CertificateDer::pem_file_iter(trust)
-            .and_then(|certs| certs.collect::<Result<Vec<_>, _>>())
-            .map_err(|error| format!("the trusted certificates `{trust}`: {error}"))?;
-        for cert in certs {
-            roots.add(cert).map_err(|error| format!("the trusted certificates `{trust}`: {error}"))?;
+        for cert in certificates(trust, "the trusted certificates")? {
+            roots.add(cert).map_err(|error| format!("the trusted certificates: {error}"))?;
         }
     }
     let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let mut config = rustls::ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .expect("ring supports the default TLS versions")
-        .with_root_certificates(roots)
-        .with_no_client_auth();
+    let builder = rustls::ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(versions(minimum))
+        .map_err(|error| error.to_string())?
+        .with_root_certificates(roots);
+    let mut config = match cert.is_empty() {
+        true => builder.with_no_client_auth(),
+        false => builder
+            .with_client_auth_cert(certificates(cert, "the certificate")?, private_key(key)?)
+            .map_err(|error| error.to_string())?,
+    };
     config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
     Ok(config)
 }
 
 /// A client: its connections, reused by its requests, or why it has none.
 /// `redirects` is how many it follows; a connection waits `connect_ms`, or
-/// forever with 0; `trust` names a PEM file of more certificates to trust.
+/// forever with 0; `trust`, `cert`, `key` and `minimum` are its TLS's.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_http_client(
     connect_ms: i64,
@@ -166,8 +168,11 @@ pub unsafe extern "C" fn tondo_rt_http_client(
     trust: *const Str,
     socket: *const Str,
     cookies: u8,
+    cert: *const Str,
+    key: *const Str,
+    minimum: i64,
 ) -> *mut NativeObject {
-    let config = match tls(&text(trust)) {
+    let config = match tls(&text(trust), &text(cert), &text(key), minimum) {
         Ok(config) => config,
         Err(problem) => return native::new(Err::<reqwest::Client, String>(problem)),
     };
@@ -706,7 +711,7 @@ pub unsafe extern "C" fn tondo_rt_http_ws_connect(
         }
     }
     // The WebSocket handshake is HTTP/1.1.
-    let mut config = match tls("") {
+    let mut config = match tls("", "", "", 12) {
         Ok(config) => config,
         Err(problem) => return failed("connect", problem),
     };

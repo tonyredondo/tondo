@@ -4,6 +4,7 @@
 // transport.
 
 import std.console as __console
+import std.crypto as __crypto
 import std.embed as __embed
 import std.encoding as __encoding
 import std.fs as __fs
@@ -493,7 +494,9 @@ pub type ClientRequest = {
 /// before each relative URL and `headers` with each request, whose own
 /// headers win; `timeout` limits a request, its body included,
 /// `connectTimeout` its connection; it follows up to `redirects` redirects,
-/// and trusts the certificates of the PEM file `trust` too. With `socket`,
+/// and trusts the authorities of `trust` too, the path of a PEM file or its
+/// text; it shows the certificate of `identity` to a server that asks for
+/// one, as mutual TLS does. With `socket`,
 /// each request goes through that Unix socket instead of the network, and
 /// the URL gives only its path and `Host`. With `cookies`, it keeps the
 /// cookies responses set and sends them with the next requests, as a
@@ -507,17 +510,22 @@ pub fn Client.new(
     trust: String? = none,
     socket: String? = none,
     cookies: Bool = false,
+    identity: Tls? = none,
 ): Client {
     let connect = match connectTimeout {
         some(limit) => limit.milliseconds()
         none => 0
     }
+    let (certificate, key, _, minimum) = tlsParts(identity)
     let connection = httpNative.client(
         connect,
         redirects,
         trust.unwrapOr(""),
         socket.unwrapOr(""),
         cookies,
+        certificate,
+        key,
+        minimum,
     )
     Client { native: connection, base: baseUrl, defaults: headers, limit: timeout, hooks: [] }
 }
@@ -1097,6 +1105,16 @@ fn Request.forwarded(self, name: String): String? {
 /// The protocol: `HTTP/1.1` or `HTTP/2`.
 pub fn Request.version(self): String {
     self.protocol
+}
+
+/// The certificate the client showed, when the server requires one of
+/// its clients (`Tls.files(..., clients: "ca.pem")`): who it is.
+pub fn Request.clientCertificate(self): __crypto.Certificate? {
+    let der = httpNative.requestCertificate(self.native)
+    if der.isEmpty() {
+        return none
+    }
+    __crypto.Certificate.fromDer(der).ok()
 }
 
 /// The client's address and port.
@@ -1985,17 +2003,32 @@ pub fn Server.stop(self) {
     _ = self.ended.receive()
 }
 
-/// A server's certificate chain and private key: `net.Tls`.
+/// What a server shows and asks of TLS: `net.Tls`.
 pub alias Tls = __net.Tls
 
-fn bound(host: String, port: Int, tls: Tls?, socket: String?): httpNative.Native ! HttpError {
-    let (certificate, key) = match tls {
-        some(given) => (given.certificate, given.privateKey)
-        none => ("", "")
+/// A version of TLS: `net.TlsVersion`.
+pub alias TlsVersion = __net.TlsVersion
+
+/// What the runtime takes of a `Tls`: certificate, key, the clients'
+/// authorities and the lowest version; empty without one.
+fn tlsParts(tls: Tls?): (String, String, String, Int) {
+    match tls {
+        some(given) => {
+            let minimum = match given.minimumVersion {
+                __net.TlsVersion.Tls12 => 12
+                __net.TlsVersion.Tls13 => 13
+            }
+            (given.certificate, given.privateKey, given.clients.unwrapOr(""), minimum)
+        }
+        none => ("", "", "", 12)
     }
+}
+
+fn bound(host: String, port: Int, tls: Tls?, socket: String?): httpNative.Native ! HttpError {
+    let (certificate, key, clients, minimum) = tlsParts(tls)
     let listening = match socket {
         some(path) => httpNative.listenUnix(path)
-        none => httpNative.listen(host, port, certificate, key)
+        none => httpNative.listen(host, port, certificate, key, clients, minimum)
     }
     failed(listening)?
     listening

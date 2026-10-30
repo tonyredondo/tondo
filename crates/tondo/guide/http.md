@@ -132,4 +132,8 @@ fn find(id: Int): User? {
   `http.Client.new(baseUrl: "http://agent", socket: path)` sends through one.
 - Ctrl-C or `docker stop` cancel the program: `listen` stops accepting, the
   requests in flight run their `defer`s, and it ends with 130 or 143.
-- TLS: `app.listen(port: 443, tls: http.Tls.files("cert.pem", "key.pem"))`.
+- TLS: `app.listen(port: 443, tls: http.Tls.files("cert.pem", "key.pem"))`,
+  or `http.Tls.pem(certificate, key)` with the PEM text of an environment
+  variable. `clients: "ca.pem"` requires a certificate of each client, which
+  `request.clientCertificate()` gives; a client shows its own with
+  `http.Client.new(identity: http.Tls.files("me.pem", "me.key"))`.

@@ -240,7 +240,7 @@ pub type Stream = {
 /// A connection to `host`, a name or an IP address, trying each of its
 /// addresses until one answers.
 pub fn connect(host: String, port: Int, timeout: __time.Duration? = none): Stream ! NetError {
-    Stream { native: made(netNative.connect(host, port, millis(timeout), false, ""))? }
+    Stream { native: made(netNative.connect(host, port, millis(timeout), false, "", "", "", 12))? }
 }
 
 /// A connection to the Unix socket at `path`.
@@ -249,12 +249,61 @@ pub fn connectUnix(path: String, timeout: __time.Duration? = none): Stream ! Net
 }
 
 /// A connection over TLS, which verifies that the server's certificate is
-/// for `host` and comes from a root the system trusts, or one of the PEM
-/// file `trust`.
-pub fn connectTls(host: String, port: Int, trust: String? = none, timeout: __time.Duration? = none): Stream !
-    NetError {
-    let opened = netNative.connect(host, port, millis(timeout), true, trust.unwrapOr(""))
+/// for `host` and comes from a root the system trusts or an authority of
+/// `trust`, the path of a PEM file or its text. `identity` is the
+/// certificate and key it shows to a server that asks for one.
+pub fn connectTls(
+    host: String,
+    port: Int,
+    trust: String? = none,
+    identity: Tls? = none,
+    timeout: __time.Duration? = none,
+): Stream ! NetError {
+    let (certificate, key, minimum) = shownBy(identity)
+    let opened = netNative.connect(
+        host,
+        port,
+        millis(timeout),
+        true,
+        trust.unwrapOr(""),
+        certificate,
+        key,
+        minimum,
+    )
     Stream { native: made(opened)? }
+}
+
+/// The connection over TLS from here on, as a client of `host`, verified
+/// as `connectTls` verifies it: for protocols that start plain and ask for
+/// TLS, as PostgreSQL, MySQL and SMTP do. The plain stream is closed; what
+/// it held unread or unsent is lost, so TLS starts when the protocol says,
+/// with nothing in flight.
+pub fn Stream.startTls(
+    self,
+    host: String,
+    trust: String? = none,
+    identity: Tls? = none,
+    timeout: __time.Duration? = none,
+): Stream ! NetError {
+    let (certificate, key, minimum) = shownBy(identity)
+    let upgraded = netNative.startTls(
+        self.native,
+        host,
+        trust.unwrapOr(""),
+        certificate,
+        key,
+        minimum,
+        millis(timeout),
+    )
+    Stream { native: made(upgraded)? }
+}
+
+/// What a client shows: its certificate, its key and the lowest version.
+fn shownBy(identity: Tls?): (String, String, Int) {
+    match identity {
+        some(given) => (given.certificate, given.privateKey, versionCode(given.minimumVersion))
+        none => ("", "", 12)
+    }
 }
 
 /// How the last operation of a direction ended: true at the end of the
@@ -352,15 +401,66 @@ pub fn Stream.remoteAddress(self): Address {
     addressOf(self.native, 1)
 }
 
-/// A certificate chain and its private key, in PEM files, for a server.
+/// What TLS shows and asks: a certificate chain and its private key, each
+/// the path of a PEM file or its text; for a server, the authorities whose
+/// certificates it requires of its clients, as mutual TLS does; and the
+/// lowest version of TLS it accepts.
 pub type Tls = {
     certificate: String
     privateKey: String
+    clients: String?
+    minimumVersion: TlsVersion
 }
 
-/// A certificate chain and its private key, from PEM files.
-pub fn Tls.files(certificate: String, privateKey: String): Tls {
-    Tls { certificate, privateKey }
+/// A version of TLS.
+pub enum TlsVersion {
+    Tls12
+    Tls13
+}
+
+/// A certificate chain and its private key in PEM files; `clients` names
+/// one of the authorities of the clients a server requires certificates
+/// of.
+pub fn Tls.files(
+    certificate: String,
+    privateKey: String,
+    clients: String? = none,
+    minimumVersion: TlsVersion = TlsVersion.Tls12,
+): Tls {
+    Tls { certificate, privateKey, clients, minimumVersion }
+}
+
+/// A certificate chain and its private key as PEM text, as an environment
+/// variable or `embed.text` holds them; `clients` is the PEM of the
+/// authorities of the clients a server requires certificates of.
+pub fn Tls.pem(
+    certificate: String,
+    privateKey: String,
+    clients: String? = none,
+    minimumVersion: TlsVersion = TlsVersion.Tls12,
+): Tls {
+    Tls { certificate, privateKey, clients, minimumVersion }
+}
+
+fn versionCode(version: TlsVersion): Int {
+    match version {
+        TlsVersion.Tls12 => 12
+        TlsVersion.Tls13 => 13
+    }
+}
+
+/// What a server's TLS gives the runtime: certificate, key, the clients'
+/// authorities and the lowest version; empty without TLS.
+fn served(tls: Tls?): (String, String, String, Int) {
+    match tls {
+        some(given) => (
+            given.certificate,
+            given.privateKey,
+            given.clients.unwrapOr(""),
+            versionCode(given.minimumVersion),
+        )
+        none => ("", "", "", 12)
+    }
 }
 
 /// Accepts TCP connections. Iterating it gives each new connection until
@@ -374,11 +474,8 @@ pub type Listener = {
 /// `address()` tells. With `tls`, each connection does its handshake
 /// before its first read or write, whose error it is if it fails.
 pub fn listen(host: String, port: Int, tls: Tls? = none): Listener ! NetError {
-    let (certificate, key) = match tls {
-        some(given) => (given.certificate, given.privateKey)
-        none => ("", "")
-    }
-    Listener { native: made(netNative.listen(host, port, certificate, key))? }
+    let (certificate, key, clients, minimum) = served(tls)
+    Listener { native: made(netNative.listen(host, port, certificate, key, clients, minimum))? }
 }
 
 /// A listener on the Unix socket at `path`, which it makes, replacing one

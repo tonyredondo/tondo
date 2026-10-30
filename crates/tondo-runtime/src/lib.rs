@@ -19,6 +19,7 @@ mod clock;
 mod codec;
 mod compress;
 mod contexts;
+mod crypto;
 mod cycles;
 mod debugger;
 mod diagnostics;
@@ -1467,6 +1468,22 @@ pub unsafe extern "C" fn tondo_rt_array_eq(a: *mut ArrayHeader, b: *mut ArrayHea
             return 0;
         }
         (0..(*a).len).all(|k| eq(element(a, size, k), element(b, size, k)) != 0) as u8
+    }
+}
+
+/// `==` of two `Array[Byte]`, in a time that depends only on their lengths
+/// (standard library 14.34): a digest or a token compared with it tells
+/// nothing of where they differ.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_bytes_eq(a: *mut ArrayHeader, b: *mut ArrayHeader) -> u8 {
+    unsafe {
+        let length = (*a).len;
+        if length != (*b).len {
+            return 0;
+        }
+        let (a, b) = (element(a, 1, 0) as *const u8, element(b, 1, 0) as *const u8);
+        let difference = (0..length).fold(0u8, |acc, k| acc | (*a.add(k) ^ *b.add(k)));
+        std::hint::black_box(difference == 0) as u8
     }
 }
 

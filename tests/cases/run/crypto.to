@@ -1,0 +1,200 @@
+// std.crypto: secrets compared in constant time, passwords hashed and
+// those of other programs read, keys derived with the vectors of their
+// RFCs, data sealed, signatures, and the keys and certificates OpenSSL
+// writes.
+
+import std.console
+import std.crypto
+import std.encoding
+import std.hash
+
+fn hex(data: Array[Byte]): String {
+    encoding.hexEncode(data)
+}
+
+fn unhex(text: String): Array[Byte] {
+    encoding.hexDecode(text).unwrapOr([])
+}
+
+fn main(): !crypto.CryptoError {
+    console.println(
+        "{crypto.equalSecrets("abc".bytes(), "abc".bytes())} {crypto.equalSecrets("abc".bytes(), "abd".bytes())}",
+    )
+    console.println(
+        "{hash.sha256("x".bytes()) == hash.sha256("x".bytes())} {hash.sha256("x".bytes()) == hash.sha256("y".bytes())}",
+    )
+
+    // RFC 6070's PBKDF2 with SHA-256, and RFC 5869's first case of HKDF.
+    console.println(hex(crypto.pbkdf2("password".bytes(), "salt".bytes(), 4096)))
+    let secret = unhex("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b")
+    console.println(
+        hex(
+            crypto.hkdf(
+                secret,
+                unhex("000102030405060708090a0b0c"),
+                unhex("f0f1f2f3f4f5f6f7f8f9"),
+                42,
+            ),
+        ),
+    )
+
+    let stored = crypto.hashPassword("secret")
+    console.println(
+        "{stored.startsWith("$argon2id$")} {crypto.verifyPassword("secret", stored)} {crypto.verifyPassword("wrong", stored)}",
+    )
+    let others = [
+        "$pbkdf2-sha256$1000$c2FsdHNhbHQxMjM0NTY3OA$rCTtRmpCUY5thsk.GFPeesq03Ucv6DZWS5NlZ5UE4k8",
+        "$pbkdf2-sha256$i=1000,l=32$c2FsdHNhbHQxMjM0NTY3OA$rCTtRmpCUY5thsk+GFPeesq03Ucv6DZWS5NlZ5UE4k8",
+        "pbkdf2_sha256$1000$abcdefgh12345678$iSouByRJj4QG7OChB0ckhqA1aUfMMZWjqoYctyxOCXs=",
+    ]
+    for other in others {
+        console.println(
+            "{crypto.verifyPassword("secret", other)} {crypto.verifyPassword("wrong", other)}",
+        )
+    }
+    let bcrypt = "$2a$05$CCCCCCCCCCCCCCCCCCCCC.E5YPO9kmyuRGyh0XouQYb4YMJKvyOeW"
+    console.println(
+        "{crypto.verifyPassword("U*U", bcrypt)} {crypto.verifyPassword("U*V", bcrypt)} {crypto.verifyPassword("x", "plain")}",
+    )
+
+    for cipher in [crypto.Cipher.Aes256Gcm, crypto.Cipher.ChaCha20Poly1305] {
+        let key = crypto.SecretKey.generate(cipher)
+        let sealed = key.seal("hello".bytes(), context: "user 7".bytes())
+        let kept = crypto.SecretKey.fromBytes(key.bytes(), cipher)?
+        let opened = String.fromBytes(kept.open(sealed, context: "user 7".bytes())?).unwrapOr("")
+        console.println(
+            "{sealed.length()} {opened} {kept.open(sealed).isErr()} {crypto.SecretKey.generate().open(sealed).isErr()}",
+        )
+    }
+    match crypto.SecretKey.fromBytes([]) {
+        ok(_) => console.println("a key")
+        err(error) => console.println("{error}")
+    }
+
+    for curve in [crypto.Curve.Ed25519, crypto.Curve.P256, crypto.Curve.P384] {
+        let key = crypto.PrivateKey.generate(curve)
+        let signature = key.sign("data".bytes())
+        let public = crypto.PublicKey.fromPem(key.publicKey().pem())?
+        let again = crypto.PrivateKey.fromPem(key.pem())?
+        console.println(
+            "{key.kind()} {signature.length()} {public.verify("data".bytes(), signature)} {public.verify("other".bytes(), signature)} {again.publicKey().verify("data".bytes(), again.sign("data".bytes()))}",
+        )
+    }
+    let written = [
+        r"""
+-----BEGIN RSA PRIVATE KEY-----
+MIIEpAIBAAKCAQEAuCR7NxqXUnMiyPLlrHV/cMY4AuK+drzJkoxqGG0yHoYYpbDB
+qEeSeQKps7eY2bksub9xbCiZBReIPO7MXXDV5NoCx4TOUWMLCZLA9XmywYsOmIbO
+lwFpZZGC3zCkiIPWuwNFb/wVCcmUvQdHL9AvyAJ4qdrCuUKlyt0OfOmerpVTSSKh
+x1XeV6BfKr3ANyomPioQQXB3elaZ3Zix8wnp2yhCSaDPie9Vfd/tRmOBWnGYJkEp
+CrLGruGjBuSVf81BfPNX4NVA002j1TxtaZw5My69nI3BYPcwjWzLjQVbc+LZc0fE
+tukzXefgFyqy1tglig7H4QmNWiRPlIE8tkBrmwIDAQABAoIBADM14hZ3DLJfVsMv
+2fPWUXTZi2YyDOoUorJg3niglZmrjVs3BwR3syJ4PR2/54BVYTzfIvoDaFrkKn1X
+o/owkSut/avjIUW9F6q353XdPHta4tpEU1vnhpo6l3zemENm9ubXiA4WuvsX1oej
+aIbBjShAl7IVJqZDBLygMZFHn1vJrgdXFHInEbPRccgyqAwaM0opB7gHFx8195+l
+XDQI7P5Dg9sp9hpz8zbsEpHsYUtZ24AT0IK6RtjD3KNrTZwSwqKdhdC3aqoXCAyQ
+PWGtk1acldAaJuQlYygTLcagwL3GdfTool/ArXr33e5+ApZcuEqiZkLo8gSz1k2A
+SzwPQmECgYEA8XkVUO9PHPO3G26WFjal8knhqx0gjqX17H+ICS7mQyhnutE/0A86
+G2DOBZdp6Qcabe7VYHNvQ8otJYL5SmsYsjGSQA3wbqozAWtfau5J4DhZlqneahSW
+oJ7RREmJ6DM966oAZ3f+iMNeZQt+iMBs6DgE7O2vJedjQz1KxinHFJkCgYEAwzh0
+FBBpzxYqTXWx2AihptD3jHvHSIF94YLZ93zay3tR5vj8RXM06JtvxEKHDEOQmb3Z
+gGpj4QOfxFg8vq/oLrIbyOH2N+pvhpSPBx42U2o+2vpwUTnx8l+A5kXHQCVvP9Ku
+Yv/HnmODtY4+ZRMytbPfT9JppRYjPigYMqyTblMCgYEArUthceEcnMGHQmedzLlR
+ZM2C5+OSbu1JzX1E6po+5CmGL/tl2XJkGCvkDv04I+VWIVkKxxpw2myo88fIEpFD
+eva6Z7/ZMgJxcm5VXw89821dVhP4q5a09vajZmeEUiEcKhmqCpeCEzJqdwfFumym
+fA1f840san5hrWq6U/a9idkCgYAJmoVbV1NdNKHwHZIaJpKNOkpzRsOO9Y/TwDQo
+0KOSzwZAbo86e2hm6P6ekQdDuy8p4QUKJDG1qA/8ALs8RjsN0QU85KDQL2A9JqHC
+n+HcSKW+8AMGe+tDGR+mNFiQ90Z5xUt+40ZWrF6WV+EJ59/ewHKD4r3/uQ8Sx7Yp
+CARYsQKBgQCuu4E/9gVwSNQ5anY6igjyZwgAuA6jKm0P3JdlKjCvc3WqL+n6qc1S
+EMmDzxMUsyIjU90pS7cUGlGiocslZ4A8vbOmIWRvb2kMY6JokDwWMO59k7D3YJw1
+uvpVe5M5G9fdwAQqWmLVB1mXLQbGiRIumE/GjhjE3TznpY39BdLc4A==
+-----END RSA PRIVATE KEY-----
+""",
+        r"""
+-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEINa++94h6xNDCfknTWjAZKqZxj8HAlXUO7a03I3EwKnBoAoGCCqGSM49
+AwEHoUQDQgAECg++mINJfIn7bKV6txI5PyX4u3JDDHLpwSEi0ayv6G4ZsLGAhnzd
+undi/6BAMhSGYYXFUYGQyb43YvWhfT9U8w==
+-----END EC PRIVATE KEY-----
+""",
+        r"""
+-----BEGIN PRIVATE KEY-----
+MC4CAQAwBQYDK2VwBCIEILKG934vBOlLm+XByDEwQzG5otPHJUjkPglbV+Hx6+LL
+-----END PRIVATE KEY-----
+""",
+    ]
+    for text in written {
+        let key = crypto.PrivateKey.fromPem(text)?
+        console.println(
+            "{key.kind()} {key.publicKey().verify("data".bytes(), key.sign("data".bytes()))}",
+        )
+    }
+    // A signature OpenSSL made with the Ed25519 key.
+    let public =
+        crypto.PublicKey.fromPem(
+            r"""
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEADWl7o4GjnV+gLBetPjTEubktsxk4gXU9IifeA20QXy0=
+-----END PUBLIC KEY-----
+""",
+        )?
+    let signature = encoding
+        .base64Decode(
+            "+Xnlgs4YfhqKmlUOyvL6AqwOJWSH5dR7dJyYK1Olu3KBEakGLtvarGz8YN3QET5+xgq698c0vSiG0Nn5oO5WCQ==",
+        )
+        .unwrapOr([])
+    console.println(
+        "{public.kind()} {public.verify("data".bytes(), signature)} {public.pem().contains("MCowBQYDK2VwAyEA")}",
+    )
+
+    let chain = r"""
+-----BEGIN CERTIFICATE-----
+MIIB/DCCAaKgAwIBAgIUJrsbVOV0TO1roYzECZI/wS2s4xMwCgYIKoZIzj0EAwIw
+MjELMAkGA1UEBhMCVVMxDTALBgNVBAoMBEFjbWUxFDASBgNVBAMMC2V4YW1wbGUu
+Y29tMB4XDTI2MTAzMDA3MDI0MFoXDTI2MTEyOTA3MDI0MFowMjELMAkGA1UEBhMC
+VVMxDTALBgNVBAoMBEFjbWUxFDASBgNVBAMMC2V4YW1wbGUuY29tMFkwEwYHKoZI
+zj0CAQYIKoZIzj0DAQcDQgAECCQ5cUnaynmRy21fHJ3dcgbQvMSzJwI7jTToMf6n
+hdQUqSGqER1iTP6JXQ90HXZ94JA5L/CRWCExYOnkg2xpI6OBlTCBkjAdBgNVHQ4E
+FgQUugEBTMXlfKHduyntzt+q5khvJCkwHwYDVR0jBBgwFoAUugEBTMXlfKHduynt
+zt+q5khvJCkwDwYDVR0TAQH/BAUwAwEB/zA/BgNVHREEODA2ggtleGFtcGxlLmNv
+bYIPd3d3LmV4YW1wbGUuY29thwR/AAABhxAAAAAAAAAAAAAAAAAAAAABMAoGCCqG
+SM49BAMCA0gAMEUCIQCLeD545e6JY6MxJBoqOoKN6R53tlRX+ZI3AY7p/rnAVAIg
+U5n3h0U1OtPETFxbgfVc+NIhIGQvjCLiE2AxLFMVWOA=
+-----END CERTIFICATE-----
+"""
+    for certificate in crypto.certificates(chain)? {
+        console.println("{certificate.subject} | {certificate.issuer} | {certificate.names}")
+        console.println(
+            "{certificate.serialNumber} {certificate.validFrom} {certificate.validUntil} {certificate.der.length() > 0}",
+        )
+    }
+    console.println("{crypto.PublicKey.fromPem(chain)?.kind()}")
+    match crypto.PrivateKey.fromPem("no key here") {
+        ok(_) => console.println("a key")
+        err(error) => console.println("{error}")
+    }
+}
+
+// expect-stdout: true false
+// expect-stdout: true false
+// expect-stdout: c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a
+// expect-stdout: 3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865
+// expect-stdout: true true false
+// expect-stdout: true false
+// expect-stdout: true false
+// expect-stdout: true false
+// expect-stdout: true false false
+// expect-stdout: 33 hello true true
+// expect-stdout: 33 hello true true
+// expect-stdout: a secret key has 32 bytes, not 0
+// expect-stdout: Ed25519 64 true false true
+// expect-stdout: ECDSA P-256 64 true false true
+// expect-stdout: ECDSA P-384 96 true false true
+// expect-stdout: RSA true
+// expect-stdout: ECDSA P-256 true
+// expect-stdout: Ed25519 true
+// expect-stdout: Ed25519 true true
+// expect-stdout: CN=example.com,O=Acme,C=US | CN=example.com,O=Acme,C=US | [example.com, www.example.com, 127.0.0.1, ::1]
+// expect-stdout: 26bb1b54e5744ced6ba18cc409923fc12dace313 2026-10-30T07:02:40Z 2026-11-29T07:02:40Z true
+// expect-stdout: ECDSA P-256
+// expect-stdout: the PEM text has no private key: it starts with `-----BEGIN PRIVATE KEY-----`

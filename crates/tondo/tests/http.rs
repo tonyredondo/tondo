@@ -569,6 +569,61 @@ fn main(): !http.HttpError {
 }
 
 #[test]
+fn mutual_tls() {
+    use rcgen::{BasicConstraints, CertificateParams, CertifiedIssuer, DistinguishedName, DnType, IsCa, KeyPair};
+    let mut authority = CertificateParams::new(Vec::<String>::new()).unwrap();
+    authority.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    let authority = CertifiedIssuer::self_signed(authority, KeyPair::generate().unwrap()).unwrap();
+    let key = KeyPair::generate().unwrap();
+    let names = vec!["localhost".to_string(), "127.0.0.1".to_string()];
+    let certificate = CertificateParams::new(names).unwrap().signed_by(&key, &authority).unwrap();
+    let client_key = KeyPair::generate().unwrap();
+    let mut client = CertificateParams::new(Vec::<String>::new()).unwrap();
+    client.distinguished_name = DistinguishedName::new();
+    client.distinguished_name.push(DnType::CommonName, "ada");
+    let client = client.signed_by(&client_key, &authority).unwrap();
+    let program = r#"
+import std.console
+import std.fs
+import std.http
+
+fn main(): !(http.HttpError | fs.FsError) {
+    var app = http.App.new()
+    app.get("/", (request) {
+        match request.clientCertificate() {
+            some(certificate) => http.Reply.text("hello {certificate.subject}")
+            none => http.Reply.text("nobody")
+        }
+    })
+    let authority = fs.readText("authority.pem")?
+    let tls = http.Tls.pem(
+        fs.readText("server.pem")?,
+        fs.readText("server.key")?,
+        clients: authority,
+        minimumVersion: http.TlsVersion.Tls13,
+    )
+    let server = app.start(tls: tls)?
+    let identity = http.Tls.files("client.pem", "client.key")
+    let client = http.Client.new(trust: authority, identity: identity)
+    console.println(client.get(server.url())?.text()?)
+    // Without a certificate, the handshake fails.
+    console.println("{http.Client.new(trust: authority).get(server.url()).isErr()}")
+    server.stop()
+}
+"#;
+    let files = [
+        ("authority.pem", authority.pem()),
+        ("server.pem", certificate.pem()),
+        ("server.key", key.serialize_pem()),
+        ("client.pem", client.pem()),
+        ("client.key", client_key.serialize_pem()),
+    ];
+    let (stdout, stderr, success) = run("http-mtls", program, &files);
+    assert_eq!(stdout, "hello CN=ada\ntrue\n", "{stderr}");
+    assert!(success, "{stderr}");
+}
+
+#[test]
 fn typed_handlers_and_openapi() {
     let program = r##"import std.console
 import std.http

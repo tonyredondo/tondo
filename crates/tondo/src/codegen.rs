@@ -189,6 +189,7 @@ enum Rt {
     ArraySortedStrings,
     ArrayRepeat,
     ArrayEq,
+    BytesEq,
     ArrayContains,
     ArrayAssignSlice,
     ArrayCheckRegion,
@@ -465,6 +466,7 @@ impl Rt {
             Rt::ArraySortedStrings => ("tondo_rt_array_sorted_strings", &[I64], &[I64]),
             Rt::ArrayRepeat => ("tondo_rt_array_repeat", &[I64, I64, I64, I64, I64], &[I64]),
             Rt::ArrayEq => ("tondo_rt_array_eq", &[I64, I64, I64, I64], &[I8]),
+            Rt::BytesEq => ("tondo_rt_bytes_eq", &[I64, I64], &[I8]),
             Rt::ArrayContains => ("tondo_rt_array_contains", &[I64, I64, I64, I64], &[I8]),
             Rt::ArrayAssignSlice => {
                 ("tondo_rt_array_assign_slice", &[I64, I64, I8, I64, I8, I64, I64, I64, I64, I64, I64], &[])
@@ -3837,6 +3839,7 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
         match (a, b) {
             (Val::Scalar(a), Val::Scalar(b)) => match *self.cg.types().kind(self.cg.types().repr(ty)) {
                 TyKind::String => self.call_rt(Rt::StrEq, &[a, b]).unwrap(),
+                TyKind::Array(Ty::BYTE) => self.call_rt(Rt::BytesEq, &[a, b]).unwrap(),
                 TyKind::Array(element) | TyKind::Deque(element) => {
                     let size = self.element_size(element);
                     let eq = self.glue_address(Glue::Equal, element);

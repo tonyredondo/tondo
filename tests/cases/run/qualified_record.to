@@ -1,0 +1,11 @@
+// A record literal names a type of another module by its path: `time.DateTime { ... }`.
+
+import std.console
+import std.time
+
+fn main() {
+    let moment = time.DateTime { year: 4096, month: 1, day: 1, hour: 0, minute: 0, second: 0, nanosecond: 0 }
+    console.println("{moment}")
+}
+
+// expect-stdout: 4096-01-01T00:00:00Z

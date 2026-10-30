@@ -581,6 +581,10 @@ struct Connection {
     local: Endpoint,
     remote: Endpoint,
     failures: [Mutex<Failure>; 2],
+    /// The socket of a plain TCP connection, which `startTls` takes over.
+    socket: Option<std::os::fd::RawFd>,
+    /// Whether `startTls` took it over, after which it is closed.
+    upgraded: std::sync::atomic::AtomicBool,
 }
 
 impl Connection {
@@ -592,15 +596,21 @@ impl Connection {
             local,
             remote,
             failures: Default::default(),
+            socket: None,
+            upgraded: Default::default(),
         }
     }
 }
 
 /// A connection over a TCP socket.
 fn tcp(socket: Registered<mio::net::TcpStream>) -> Result<Connection, Failure> {
+    use std::os::fd::AsRawFd;
     let _ = socket.io().set_nodelay(true);
     let (local, remote) = (socket.io().local_addr()?, socket.io().peer_addr()?);
-    Ok(link(socket, local.into(), remote.into()))
+    let fd = socket.io().as_raw_fd();
+    let mut connection = link(socket, local.into(), remote.into());
+    connection.socket = Some(fd);
+    Ok(connection)
 }
 
 /// A connection over a Unix socket.
@@ -684,8 +694,43 @@ fn tokio_stream(stream: mio::net::TcpStream) -> std::io::Result<tokio::net::TcpS
     tokio::net::TcpStream::from_std(std::net::TcpStream::from(std::os::fd::OwnedFd::from(stream)))
 }
 
+/// What verifies a TLS connection to `host`: the roots, the authorities
+/// of `trust`, and the certificate and key it shows, as `http::tls` takes
+/// them.
+fn verifier(
+    host: &str,
+    trust: &str,
+    cert: &str,
+    key: &str,
+    minimum: i64,
+) -> Result<(tokio_rustls::TlsConnector, rustls_pki_types::ServerName<'static>), Failure> {
+    let mut config = super::http::tls(trust, cert, key, minimum).map_err(|problem| failure(TLS, problem))?;
+    config.alpn_protocols.clear();
+    let name = rustls_pki_types::ServerName::try_from(host.to_string())
+        .map_err(|_| failure(INVALID_ADDRESS, format!("`{host}` is not a name TLS can verify")))?;
+    Ok((tokio_rustls::TlsConnector::from(Arc::new(config)), name))
+}
+
+/// The handshake of a client over `stream`, and its connection.
+async fn handshake(
+    stream: tokio::net::TcpStream,
+    connector: tokio_rustls::TlsConnector,
+    name: rustls_pki_types::ServerName<'static>,
+) -> Result<Connection, Failure> {
+    let (connection, inbox, outbox) = tls(&stream)?;
+    let stream = connector.connect(name, stream).await.map_err(|error| {
+        let mut why = Failure::from(&error).detail;
+        if why.contains("UnknownIssuer") {
+            why.push_str("; if an authority of your own signed it, pass its PEM as `trust:`");
+        }
+        failure(TLS, why)
+    })?;
+    secure(stream.into(), inbox, outbox);
+    Ok(connection)
+}
+
 /// `connect` and `connectTls` (`tls` 1): a connection, or why there is
-/// none. `trust` names a PEM file of more certificates to trust.
+/// none; `trust`, `cert`, `key` and `minimum` are its TLS's.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_net_connect(
     host: *const Str,
@@ -693,36 +738,63 @@ pub unsafe extern "C" fn tondo_rt_net_connect(
     timeout_ms: i64,
     tls_on: u8,
     trust: *const Str,
+    cert: *const Str,
+    key: *const Str,
+    minimum: i64,
 ) -> *mut NativeObject {
-    let (host, trust) = (text(host), text(trust));
+    let host = text(host);
     let deadline = deadline(timeout_ms);
     let connected = port(port_number).and_then(|port| {
         let verify = match tls_on {
             0 => None,
-            _ => {
-                let mut config = super::http::tls(&trust).map_err(|problem| failure(TLS, problem))?;
-                config.alpn_protocols.clear();
-                let name = rustls_pki_types::ServerName::try_from(host.clone())
-                    .map_err(|_| failure(INVALID_ADDRESS, format!("`{host}` is not a name TLS can verify")))?;
-                Some((tokio_rustls::TlsConnector::from(Arc::new(config)), name))
-            }
+            _ => Some(verifier(&host, &text(trust), &text(cert), &text(key), minimum)?),
         };
         waited(within(deadline, async move {
             let Some((connector, name)) = verify else { return tcp(open(&host, port, connect).await?) };
-            let stream = open(&host, port, tokio::net::TcpStream::connect).await?;
-            let (connection, inbox, outbox) = tls(&stream)?;
-            let stream = connector.connect(name, stream).await.map_err(|error| {
-                let mut why = Failure::from(&error).detail;
-                if why.contains("UnknownIssuer") {
-                    why.push_str("; if an authority of your own signed it, pass its PEM file as `trust:`");
-                }
-                failure(TLS, why)
-            })?;
-            secure(stream.into(), inbox, outbox);
-            Ok(connection)
+            handshake(open(&host, port, tokio::net::TcpStream::connect).await?, connector, name).await
         }))
     });
     native::new(Net::from(connected.map(Net::Connection)))
+}
+
+/// `startTls`: the connection over TLS from here on, as a client of `host`;
+/// the plain one is closed. Bytes it held unread or unsent are lost, so it
+/// starts when the protocol says, with nothing in flight.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_net_start_tls(
+    object: *mut NativeObject,
+    host: *const Str,
+    trust: *const Str,
+    cert: *const Str,
+    key: *const Str,
+    minimum: i64,
+    timeout_ms: i64,
+) -> *mut NativeObject {
+    use std::os::fd::FromRawFd;
+    let Some(connection) = connection_of(object) else {
+        return native::new(Net::Failed(failure(CLOSED, "closed")));
+    };
+    let Some(fd) = connection.socket else {
+        return native::new(Net::Failed(failure(TLS, "only a plain TCP connection starts TLS")));
+    };
+    let host = text(host);
+    let upgraded = verifier(&host, &text(trust), &text(cert), &text(key), minimum).and_then(|(connector, name)| {
+        // The socket goes on under a descriptor of its own; the plain
+        // connection closes its own without ending the socket.
+        let duplicate = unsafe { libc::dup(fd) };
+        if duplicate < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        connection.upgraded.store(true, std::sync::atomic::Ordering::Release);
+        let socket = unsafe { std::net::TcpStream::from_raw_fd(duplicate) };
+        socket.set_nonblocking(true)?;
+        let stream = {
+            let _context = runtime().enter();
+            tokio::net::TcpStream::from_std(socket)?
+        };
+        waited(within(deadline(timeout_ms), handshake(stream, connector, name)))
+    });
+    native::new(Net::from(upgraded.map(Net::Connection)))
 }
 
 /// `connectUnix`: a connection to the Unix socket at `path`, or why there
@@ -804,7 +876,9 @@ fn note(connection: &Connection, writing: bool, outcome: Result<bool, Failure>) 
 
 fn connection_of<'a>(object: *mut NativeObject) -> Option<&'a Connection> {
     match native::get::<Net>(object) {
-        Some(Net::Connection(connection)) => Some(connection),
+        Some(Net::Connection(connection)) if !connection.upgraded.load(std::sync::atomic::Ordering::Acquire) => {
+            Some(connection)
+        }
         _ => None,
     }
 }
@@ -963,19 +1037,24 @@ fn bind(address: SocketAddr) -> std::io::Result<Registered<mio::net::TcpListener
 }
 
 /// `listen`: a listener on `host:port`, `0` for any free port, over TLS
-/// when `cert` and `key` name PEM files.
+/// when it has a certificate and a key, as `server::acceptor` takes them.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_net_listen(
     host: *const Str,
     port_number: i64,
     cert: *const Str,
     key: *const Str,
+    clients: *const Str,
+    minimum: i64,
 ) -> *mut NativeObject {
-    let (host, cert, key) = (text(host), text(cert), text(key));
+    let (host, cert, key, clients) = (text(host), text(cert), text(key), text(clients));
     let listening = port(port_number).and_then(|port| {
         let tls = match cert.is_empty() {
             true => None,
-            false => Some(super::server::acceptor(&cert, &key, false).map_err(|problem| failure(TLS, problem))?),
+            false => Some(
+                super::server::acceptor(&cert, &key, &clients, minimum, false)
+                    .map_err(|problem| failure(TLS, problem))?,
+            ),
         };
         let listener = waited(async move {
             let mut last = failure(NOT_FOUND, host.as_str());
@@ -1457,6 +1536,9 @@ impl From<Result<Net, Failure>> for Net {
 fn failure_of(object: *mut NativeObject, which: i64) -> Failure {
     match native::get::<Net>(object) {
         Some(Net::Failed(failure)) => failure.clone(),
+        Some(Net::Connection(connection)) if connection.upgraded.load(std::sync::atomic::Ordering::Acquire) => {
+            failure(CLOSED, "closed: `startTls` took it over")
+        }
         Some(Net::Connection(connection)) if which < 2 => lock(direction(connection, which == 1)).clone(),
         Some(Net::Socket(socket)) if which < 2 => lock(&socket.failure).clone(),
         Some(_) => Failure::default(),

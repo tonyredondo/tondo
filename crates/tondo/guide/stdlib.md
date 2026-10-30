@@ -35,6 +35,7 @@ std.text       Unicode normalization: NFC, NFD, NFKC, NFKD
 std.encoding   Base64, hexadecimal, URL text, HTML escaping
 std.gzip       gzip, whole or as streams; std.zstd the same for Zstandard
 std.hash       MD5, SHA-1, SHA-2, HMAC, in parts; FNV, xxHash, MurmurHash3
+std.crypto     passwords, sealing with a key, signatures, PEM keys and certificates
 std.random     seeded and entropy generators
 std.uuid       UUID v4, v5, v7
 std.format     a text builder, formats chosen at run time, numbers and plurals per language
@@ -298,9 +299,40 @@ fn main(): !net.NetError {
   plain `spawn` in the loop would wait for each before the next (`W1013`).
 - `connect` resolves the name and tries each address; `connectTls(host,
   port, trust: "ca.pem")` verifies the certificate, and `listen(host, port,
-  tls: net.Tls.files("cert.pem", "key.pem"))` serves TLS.
+  tls: net.Tls.files("cert.pem", "key.pem"))` serves TLS. A protocol that
+  starts plain and asks for TLS, as PostgreSQL's, goes on with
+  `stream.startTls(host)`.
 - Every call that waits takes its own `timeout:`; there is none otherwise.
   `reader()` and `writer()` give the connection as `std.io` streams.
+
+## Secrets, passwords and signatures
+
+```tondo
+import std.console
+import std.crypto
+
+fn main(): !crypto.CryptoError {
+    let stored = crypto.hashPassword("hunter2")             // Argon2id, to keep
+    console.println("{crypto.verifyPassword("hunter2", stored)}")
+
+    let key = crypto.SecretKey.generate()                    // AES-256-GCM
+    let sealed = key.seal("card 4242".bytes(), context: "user 7".bytes())
+    let opened = key.open(sealed, context: "user 7".bytes())?
+    console.println("{String.fromBytes(opened).unwrapOr("")}")
+
+    let signer = crypto.PrivateKey.generate()                // Ed25519
+    let signature = signer.sign("release 1.2".bytes())
+    console.println("{signer.publicKey().verify("release 1.2".bytes(), signature)}")
+}
+```
+
+- Nothing asks for a nonce, an IV or a mode: `seal` makes its nonce and
+  `open` finds any change. Keys have no `Display`, so none reaches a log.
+- `verifyPassword` also reads the bcrypt, PBKDF2 and Argon2 hashes other
+  programs stored. `==` on bytes and digests takes the same time wherever
+  they differ: comparing an HMAC with `==` is safe.
+- `PrivateKey.fromPem` and `PublicKey.fromPem` read what OpenSSL writes;
+  `crypto.certificates(pem)` reads certificates.
 
 ## Trees of files
 

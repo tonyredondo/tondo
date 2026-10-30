@@ -3223,3 +3223,24 @@ differ.
 characters to remove; Go's `Cut` is `splitOnce`, which gives an optional
 pair rather than a flag.
 
+## 2026-10-30 — Cryptography that does the safe thing by itself
+
+The ninth lot. Each operation of `std.crypto` makes what is easy to get
+wrong: `seal` draws its nonce and puts it before the data, so none is used
+twice; `hashPassword` picks Argon2id and OWASP's parameters; a key has no
+`Display`, so none is written to a log. `==` on `Array[Byte]`, and so on
+digests, now takes a time that depends only on the lengths, which costs
+nothing measurable and makes comparing an HMAC with `==` safe rather than a
+mistake to remember; strings keep their usual comparison.
+
+The primitives are ring's, which rustls already brings; PEM, DER, PKCS #8
+and X.509 are read and written in Tondo. `verifyPassword` reads the hashes
+of bcrypt, PBKDF2 (PHC, passlib, Django) and Argon2, so that a program
+ported from another keeps its users. `PrivateKey.generate` takes a curve,
+and RSA keys are only read, since ring does not make them.
+
+A `Tls` is built from files or from PEM text, explicitly, rather than by
+guessing which a string is; `trust`, a single argument of many functions,
+takes either. `startTls` lets a connection that started plain go on over
+TLS on a duplicate of its socket, which PostgreSQL and MySQL need.
+

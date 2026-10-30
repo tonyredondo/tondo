@@ -1,0 +1,737 @@
+// std.crypto (standard library 14.34): secrets compared in constant time,
+// passwords hashed for storage, keys derived from secrets and passwords,
+// data sealed with a secret key, signatures, and the keys and
+// certificates of PEM files. The primitives are ring's, in the runtime;
+// PEM, DER and X.509 are read and written here.
+
+import std.encoding as __encoding
+import std.internal.codec as codecNative
+import std.random as __random
+import std.time as __time
+
+/// Why a key, a PEM text, a certificate or sealed data could not be used.
+pub type CryptoError = {
+    message: String
+}
+
+impl Display for CryptoError {
+    fn display(self): String {
+        self.message
+    }
+}
+
+fn failure(message: String): CryptoError {
+    CryptoError { message: message }
+}
+
+// ---------------------------------------------------------------------------
+// Secrets and passwords
+// ---------------------------------------------------------------------------
+
+/// Whether two secrets are the same, in a time that depends only on their
+/// lengths, so that how long it takes tells nothing of where they differ.
+/// `==` on bytes, as on two `hash.Digest`s, takes such a time too.
+pub fn equalSecrets(a: Array[Byte], b: Array[Byte]): Bool {
+    if a.length() != b.length() {
+        return false
+    }
+    var difference = 0
+    for index in 0..a.length() {
+        difference = difference | (Int(a[index]) ^ Int(b[index]))
+    }
+    difference == 0
+}
+
+/// The password hashed to be stored, with Argon2id and a salt of its own,
+/// in PHC's format: `$argon2id$v=19$m=19456,t=2,p=1$...`.
+pub fn hashPassword(password: String): String {
+    codecNative.hashPassword(password)
+}
+
+/// Whether `password` is the one `hash` was made from. It reads the hashes
+/// of `hashPassword`, Argon2's of other programs, bcrypt's (`$2b$...`), and
+/// PBKDF2 with SHA-256 as PHC and passlib (`$pbkdf2-sha256$...`) and Django
+/// (`pbkdf2_sha256$...`) write it, so that the users of another program
+/// keep their passwords.
+pub fn verifyPassword(password: String, hash: String): Bool {
+    if hash.startsWith("$argon2") or hash.startsWith("$2") {
+        return codecNative.verifyPassword(password, hash)
+    }
+    let parts = hash.split("$")
+    if hash.startsWith("$pbkdf2-sha256$") and parts.length() == 5 {
+        let rounds = parts[2]
+        let iterations = match rounds.splitOnce("i=") {
+            some((_, rest)) => rest.split(",")[0]
+            none => rounds
+        }
+        return pbkdf2Matches(password, iterations, unpadded(parts[3]), unpadded(parts[4]))
+    }
+    if hash.startsWith("pbkdf2_sha256$") and parts.length() == 4 {
+        let expected = __encoding.base64Decode(parts[3]).unwrapOr([])
+        return pbkdf2Is(password, parts[1], parts[2].bytes(), expected)
+    }
+    false
+}
+
+/// PBKDF2 of PHC and passlib, whose salt and digest are Base64 without
+/// padding, passlib's with `.` for `+`.
+fn pbkdf2Matches(password: String, iterations: String, salt: String, digest: String): Bool {
+    let read = (text: String): Array[Byte] {
+        __encoding.base64Decode(text.replace(".", "+")).unwrapOr([])
+    }
+    pbkdf2Is(password, iterations, read(salt), read(digest))
+}
+
+fn pbkdf2Is(password: String, iterations: String, salt: Array[Byte], expected: Array[Byte]): Bool {
+    match Int.parse(iterations) {
+        ok(rounds) if rounds > 0 and not expected.isEmpty() => {
+            equalSecrets(pbkdf2(password.bytes(), salt, rounds, expected.length()), expected)
+        }
+        _ => false
+    }
+}
+
+/// Base64 with the `=` it left out.
+fn unpadded(text: String): String {
+    let missing = (4 - text.length() % 4) % 4
+    "{text}{"=".repeat(missing)}"
+}
+
+/// Keys of `length` bytes, at most 8160, derived from a secret with HKDF
+/// and SHA-256 (RFC 5869): one secret gives a key for each `info`.
+pub fn hkdf(secret: Array[Byte], salt: Array[Byte] = [], info: Array[Byte] = [], length: Int = 32): Array[
+    Byte,
+] {
+    codecNative.hkdf(secret, salt, info, length.clamp(0, 8160))
+}
+
+/// A key of `length` bytes derived from a password with PBKDF2 and
+/// HMAC-SHA-256, `iterations` times, at least once: the more, the slower to
+/// guess. `hashPassword` is the one to store passwords with.
+pub fn pbkdf2(password: Array[Byte], salt: Array[Byte], iterations: Int, length: Int = 32): Array[
+    Byte,
+] {
+    codecNative.pbkdf2(password, salt, iterations.max(1), length.max(0))
+}
+
+// ---------------------------------------------------------------------------
+// Sealing
+// ---------------------------------------------------------------------------
+
+/// An AEAD cipher: it encrypts and authenticates.
+pub enum Cipher {
+    Aes256Gcm
+    ChaCha20Poly1305
+}
+
+/// A secret key that seals data: encrypts it so that only its holder reads
+/// it, and so that any change is found when it opens.
+pub type SecretKey = {
+    priv cipher: Cipher
+    priv key: Array[Byte]
+}
+
+/// A new random key.
+pub fn SecretKey.generate(cipher: Cipher = Cipher.Aes256Gcm): SecretKey {
+    SecretKey { cipher: cipher, key: __random.entropy(32) }
+}
+
+/// The key of 32 bytes kept elsewhere, as `bytes()` gave them.
+pub fn SecretKey.fromBytes(bytes: Array[Byte], cipher: Cipher = Cipher.Aes256Gcm): SecretKey !
+    CryptoError {
+    if bytes.length() != 32 {
+        fail failure("a secret key has 32 bytes, not {bytes.length()}")
+    }
+    SecretKey { cipher: cipher, key: bytes }
+}
+
+/// The key's 32 bytes, to keep it.
+pub fn SecretKey.bytes(self): Array[Byte] {
+    self.key
+}
+
+/// The data sealed: a random nonce of 12 bytes, the data encrypted, and a
+/// tag of 16 that `open` checks. `context`, as an identifier the data
+/// belongs to, is not sealed with it but must be the same to open it.
+pub fn SecretKey.seal(self, data: Array[Byte], context: Array[Byte] = []): Array[Byte] {
+    let nonce = __random.entropy(12)
+    nonce.concat(codecNative.seal(cipherCode(self.cipher), self.key, nonce, data, context))
+}
+
+/// The data that `seal` sealed with this key and `context`.
+pub fn SecretKey.open(self, sealed: Array[Byte], context: Array[Byte] = []): Array[Byte] !
+    CryptoError {
+    let refused = failure(
+        "the data does not open: it was sealed with another key or context, or changed",
+    )
+    if sealed.length() < 28 {
+        fail refused
+    }
+    let nonce = sealed.slice(0, 12).unwrapOr([])
+    let rest = sealed.slice(12, sealed.length()).unwrapOr([])
+    let opened = codecNative.open(cipherCode(self.cipher), self.key, nonce, rest, context)
+    if opened.isEmpty() or opened[0] == Byte(UInt8.wrapping(0)) {
+        fail refused
+    }
+    opened.slice(1, opened.length()).unwrapOr([])
+}
+
+fn cipherCode(cipher: Cipher): Int {
+    match cipher {
+        Cipher.Aes256Gcm => 0
+        Cipher.ChaCha20Poly1305 => 1
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Signatures
+// ---------------------------------------------------------------------------
+
+/// A curve that `PrivateKey.generate` makes keys on.
+pub enum Curve {
+    Ed25519
+    P256
+    P384
+}
+
+/// What signs with a key: Ed25519, ECDSA on P-256 with SHA-256 or on
+/// P-384 with SHA-384, or RSA with PKCS #1 v1.5 and SHA-256.
+pub enum KeyKind {
+    Ed25519
+    EcdsaP256
+    EcdsaP384
+    Rsa
+}
+
+/// A private key, which signs.
+pub type PrivateKey = {
+    priv signs: KeyKind
+    priv pkcs8: Array[Byte]
+}
+
+/// A public key, which verifies what its private key signed.
+pub type PublicKey = {
+    priv signs: KeyKind
+    priv raw: Array[Byte]
+}
+
+/// A new random key on `curve`. RSA keys are not made here: they are read
+/// from PEM.
+pub fn PrivateKey.generate(curve: Curve = Curve.Ed25519): PrivateKey {
+    let kind = match curve {
+        Curve.Ed25519 => KeyKind.Ed25519
+        Curve.P256 => KeyKind.EcdsaP256
+        Curve.P384 => KeyKind.EcdsaP384
+    }
+    PrivateKey { signs: kind, pkcs8: codecNative.generateKey(kindCode(kind)) }
+}
+
+/// The key of a PEM text: PKCS #8 (`PRIVATE KEY`), or RSA's PKCS #1
+/// (`RSA PRIVATE KEY`) or SEC 1 (`EC PRIVATE KEY`), as OpenSSL writes them.
+/// An encrypted key is decrypted first: `openssl pkcs8 -in key.pem`.
+pub fn PrivateKey.fromPem(text: String): PrivateKey ! CryptoError {
+    let (label, der) =
+        pemBlock(
+            text,
+            ["PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY", "ENCRYPTED PRIVATE KEY"],
+            "private key",
+        )?
+    let pkcs8 = match label {
+        "PRIVATE KEY" => der
+        "RSA PRIVATE KEY" => privateKeyInfo(algorithm(OidRsa, some(tlv(0x05, []))), der)
+        "EC PRIVATE KEY" => {
+            let curve = ecCurve(der)?
+            privateKeyInfo(algorithm(OidEcPublicKey, some(tlv(0x06, oidBytes(curve)))), der)
+        }
+        _ => fail failure(
+            "the key is encrypted: decrypt it first, as `openssl pkcs8 -in key.pem -out plain.pem`",
+        )
+    }
+    let kind = privateKind(pkcs8)?
+    if codecNative.publicKey(kindCode(kind), pkcs8).isEmpty() {
+        fail failure("the {kind} key is not valid")
+    }
+    PrivateKey { signs: kind, pkcs8: pkcs8 }
+}
+
+/// The key in PEM, as PKCS #8.
+pub fn PrivateKey.pem(self): String {
+    pemOf("PRIVATE KEY", self.pkcs8)
+}
+
+/// What the key signs with.
+pub fn PrivateKey.kind(self): KeyKind {
+    self.signs
+}
+
+/// The public key that verifies what this key signs.
+pub fn PrivateKey.publicKey(self): PublicKey {
+    PublicKey { signs: self.signs, raw: codecNative.publicKey(kindCode(self.signs), self.pkcs8) }
+}
+
+/// The signature of the data: of 64 bytes with Ed25519; with ECDSA, its
+/// two numbers one after the other, of 64 or 96 bytes, as JWT and WebCrypto
+/// write them; with RSA, as long as its modulus.
+pub fn PrivateKey.sign(self, data: Array[Byte]): Array[Byte] {
+    codecNative.sign(kindCode(self.signs), self.pkcs8, data)
+}
+
+/// The key of a PEM text: `PUBLIC KEY`, as OpenSSL writes it, RSA's
+/// `RSA PUBLIC KEY`, or a `CERTIFICATE`, whose key it is.
+pub fn PublicKey.fromPem(text: String): PublicKey ! CryptoError {
+    let (label, der) =
+        pemBlock(text, ["PUBLIC KEY", "RSA PUBLIC KEY", "CERTIFICATE"], "public key")?
+    match label {
+        "RSA PUBLIC KEY" => PublicKey { signs: KeyKind.Rsa, raw: der }
+        "CERTIFICATE" => {
+            let tbs = children(der, children(der, element(der, 0)?)?[0])?
+            let shift = if tbs[0].tag == 0xa0 { 1 } else { 0 }
+            publicKeyOf(der, tbs[5 + shift])?
+        }
+        _ => publicKeyOf(der, element(der, 0)?)?
+    }
+}
+
+/// The key in PEM, as `PUBLIC KEY`.
+pub fn PublicKey.pem(self): String {
+    let (identifier, raw) = match self.signs {
+        KeyKind.Ed25519 => (algorithm(OidEd25519, none), self.raw)
+        KeyKind.EcdsaP256 => (
+            algorithm(OidEcPublicKey, some(tlv(0x06, oidBytes(OidP256)))),
+            self.raw,
+        )
+        KeyKind.EcdsaP384 => (
+            algorithm(OidEcPublicKey, some(tlv(0x06, oidBytes(OidP384)))),
+            self.raw,
+        )
+        KeyKind.Rsa => (algorithm(OidRsa, some(tlv(0x05, []))), self.raw)
+    }
+    let bits = tlv(0x03, [Byte(UInt8.wrapping(0))].concat(raw))
+    pemOf("PUBLIC KEY", tlv(0x30, identifier.concat(bits)))
+}
+
+/// What the key verifies.
+pub fn PublicKey.kind(self): KeyKind {
+    self.signs
+}
+
+/// Whether `signature` is this key's private key's of the data.
+pub fn PublicKey.verify(self, data: Array[Byte], signature: Array[Byte]): Bool {
+    codecNative.verify(kindCode(self.signs), self.raw, data, signature)
+}
+
+/// The kind and key of a SubjectPublicKeyInfo.
+fn publicKeyOf(der: Array[Byte], info: Element): PublicKey ! CryptoError {
+    let parts = children(der, info)?
+    if parts.length() != 2 or parts[1].tag != 0x03 {
+        fail broken()
+    }
+    let identifier = children(der, parts[0])?
+    let raw = slice(der, parts[1].start + 1, parts[1].end)
+    let kind = match oidOf(der, identifier[0]) {
+        o if o == OidEd25519 => KeyKind.Ed25519
+        o if o == OidRsa => KeyKind.Rsa
+        o if o == OidEcPublicKey and identifier.length() > 1 => {
+            match oidOf(der, identifier[1]) {
+                c if c == OidP256 => KeyKind.EcdsaP256
+                c if c == OidP384 => KeyKind.EcdsaP384
+                other => fail failure("the curve {other} is not read: keys are on P-256 or P-384")
+            }
+        }
+        other => fail failure(
+            "the key's algorithm {other} is not read: keys are Ed25519, ECDSA or RSA",
+        )
+    }
+    PublicKey { signs: kind, raw: raw }
+}
+
+/// The kind of a PKCS #8 key.
+fn privateKind(pkcs8: Array[Byte]): KeyKind ! CryptoError {
+    let parts = children(pkcs8, element(pkcs8, 0)?)?
+    if parts.length() < 3 {
+        fail broken()
+    }
+    let identifier = children(pkcs8, parts[1])?
+    match oidOf(pkcs8, identifier[0]) {
+        o if o == OidEd25519 => KeyKind.Ed25519
+        o if o == OidRsa => KeyKind.Rsa
+        o if o == OidEcPublicKey and identifier.length() > 1 => {
+            match oidOf(pkcs8, identifier[1]) {
+                c if c == OidP256 => KeyKind.EcdsaP256
+                c if c == OidP384 => KeyKind.EcdsaP384
+                other => fail failure("the curve {other} is not read: keys are on P-256 or P-384")
+            }
+        }
+        other => fail failure(
+            "the key's algorithm {other} is not read: keys are Ed25519, ECDSA or RSA",
+        )
+    }
+}
+
+/// The curve a SEC 1 key names in its parameters.
+fn ecCurve(der: Array[Byte]): String ! CryptoError {
+    for part in children(der, element(der, 0)?)? {
+        if part.tag == 0xa0 {
+            return oidOf(der, element(der, part.start)?)
+        }
+    }
+    fail failure(
+        "the EC key does not name its curve: write it as PKCS #8, `openssl pkcs8 -topk8 -nocrypt`",
+    )
+}
+
+fn privateKeyInfo(identifier: Array[Byte], key: Array[Byte]): Array[Byte] {
+    let version = tlv(0x02, [Byte(UInt8.wrapping(0))])
+    tlv(0x30, version.concat(identifier).concat(tlv(0x04, key)))
+}
+
+fn algorithm(oid: String, parameters: Array[Byte]?): Array[Byte] {
+    tlv(0x30, tlv(0x06, oidBytes(oid)).concat(parameters.unwrapOr([])))
+}
+
+fn kindCode(kind: KeyKind): Int {
+    match kind {
+        KeyKind.Ed25519 => 0
+        KeyKind.EcdsaP256 => 1
+        KeyKind.EcdsaP384 => 2
+        KeyKind.Rsa => 3
+    }
+}
+
+/// `Ed25519`, `ECDSA P-256`, `ECDSA P-384` or `RSA`.
+impl Display for KeyKind {
+    fn display(self): String {
+        match self {
+            KeyKind.Ed25519 => "Ed25519"
+            KeyKind.EcdsaP256 => "ECDSA P-256"
+            KeyKind.EcdsaP384 => "ECDSA P-384"
+            KeyKind.Rsa => "RSA"
+        }
+    }
+}
+
+const OidRsa: String = "1.2.840.113549.1.1.1"
+
+const OidEcPublicKey: String = "1.2.840.10045.2.1"
+
+const OidP256: String = "1.2.840.10045.3.1.7"
+
+const OidP384: String = "1.3.132.0.34"
+
+const OidEd25519: String = "1.3.101.112"
+
+// ---------------------------------------------------------------------------
+// Certificates
+// ---------------------------------------------------------------------------
+
+/// An X.509 certificate: whom it names and who signed it, the names it is
+/// for, its serial number in hexadecimal, when it is valid, and its DER.
+pub type Certificate = {
+    subject: String
+    issuer: String
+    names: Array[String]
+    serialNumber: String
+    validFrom: __time.DateTime
+    validUntil: __time.DateTime
+    der: Array[Byte]
+}
+
+/// The certificates of a PEM text, in its order, as a chain is written.
+pub fn certificates(pem: String): Array[Certificate] ! CryptoError {
+    var found: Array[Certificate] = []
+    for (label, der) in pemBlocks(pem)? {
+        if label == "CERTIFICATE" {
+            found.push(Certificate.fromDer(der)?)
+        }
+    }
+    found
+}
+
+/// A certificate of DER, as a TLS connection gives it.
+pub fn Certificate.fromDer(der: Array[Byte]): Certificate ! CryptoError {
+    let whole = children(der, element(der, 0)?)?
+    let tbs = children(der, whole[0])?
+    let shift = if tbs[0].tag == 0xa0 { 1 } else { 0 }
+    if tbs.length() < 6 + shift {
+        fail broken()
+    }
+    let validity = children(der, tbs[3 + shift])?
+    var names: Array[String] = []
+    for part in tbs.slice(6 + shift, tbs.length()).unwrapOr([]) {
+        if part.tag == 0xa3 {
+            names = alternativeNames(der, element(der, part.start)?)?
+        }
+    }
+    Certificate {
+        subject: nameOf(der, tbs[4 + shift])?
+        issuer: nameOf(der, tbs[2 + shift])?
+        names: names
+        serialNumber: __encoding.hexEncode(slice(der, tbs[shift].start, tbs[shift].end))
+        validFrom: timeOf(der, validity[0])?
+        validUntil: timeOf(der, validity[1])?
+        der: der
+    }
+}
+
+/// The DNS names and IP addresses of the extension of alternative names.
+fn alternativeNames(der: Array[Byte], extensions: Element): Array[String] ! CryptoError {
+    var names: Array[String] = []
+    for extension in children(der, extensions)? {
+        let parts = children(der, extension)?
+        if oidOf(der, parts[0]) != "2.5.29.17" {
+            continue
+        }
+        let value = parts[parts.length() - 1]
+        for name in children(der, element(der, value.start)?)? {
+            let bytes = slice(der, name.start, name.end)
+            if name.tag == 0x82 {
+                names.push(String.fromBytes(bytes).unwrapOr(""))
+            } else if name.tag == 0x87 {
+                names.push(ipText(bytes))
+            }
+        }
+    }
+    names
+}
+
+fn ipText(bytes: Array[Byte]): String {
+    if bytes.length() == 4 {
+        return bytes.map((b) { "{Int(b)}" }).join(".")
+    }
+    var groups: Array[Int] = []
+    var index = 0
+    for index + 1 < bytes.length() {
+        groups.push(Int(bytes[index]) * 256 + Int(bytes[index + 1]))
+        index += 2
+    }
+    // The longest run of zero groups, of two or more, is written `::`.
+    var (best, bestLength, run) = (-1, 1, 0)
+    for (at, group) in groups.iter().enumerate() {
+        run = if group == 0 { run + 1 } else { 0 }
+        if run > bestLength {
+            (best, bestLength) = (at - run + 1, run)
+        }
+    }
+    let hex = (part: Array[Int]): String { part.map((g) { g.toString(radix: 16) }).join(":") }
+    if best < 0 {
+        return hex(groups)
+    }
+    let before = groups.slice(0, best).unwrapOr([])
+    let after = groups.slice(best + bestLength, groups.length()).unwrapOr([])
+    "{hex(before)}::{hex(after)}"
+}
+
+/// A distinguished name as RFC 4514 writes it, the last part first:
+/// `CN=example.com,O=Acme,C=US`.
+fn nameOf(der: Array[Byte], name: Element): String ! CryptoError {
+    var parts: Array[String] = []
+    for set in children(der, name)? {
+        for pair in children(der, set)? {
+            let fields = children(der, pair)?
+            let value = String.fromBytes(slice(der, fields[1].start, fields[1].end)).unwrapOr("")
+            parts.insert(0, "{attributeName(oidOf(der, fields[0]))}={value}")
+        }
+    }
+    parts.join(",")
+}
+
+fn attributeName(oid: String): String {
+    match oid {
+        "2.5.4.3" => "CN"
+        "2.5.4.6" => "C"
+        "2.5.4.7" => "L"
+        "2.5.4.8" => "ST"
+        "2.5.4.10" => "O"
+        "2.5.4.11" => "OU"
+        "2.5.4.5" => "SERIALNUMBER"
+        "0.9.2342.19200300.100.1.25" => "DC"
+        "1.2.840.113549.1.9.1" => "emailAddress"
+        other => other
+    }
+}
+
+/// UTCTime or GeneralizedTime, in UTC.
+fn timeOf(der: Array[Byte], at: Element): __time.DateTime ! CryptoError {
+    let text = String.fromBytes(slice(der, at.start, at.end)).unwrapOr("")
+    let digits = text.removeSuffix("Z")
+    let full = if at.tag == 0x17 {
+        let year = Int.parse(digits.slice(0, 2).unwrapOr("")).unwrapOr(0)
+        "{if year < 50 { "20" } else { "19" }}{digits}"
+    } else {
+        digits
+    }
+    if full.length() < 14 {
+        fail failure("the certificate's time `{text}` is not read")
+    }
+    let number = (start: Int, end: Int): Int {
+        Int.parse(full.slice(start, end).unwrapOr("")).unwrapOr(0)
+    }
+    __time.DateTime {
+        year: number(0, 4)
+        month: number(4, 6)
+        day: number(6, 8)
+        hour: number(8, 10)
+        minute: number(10, 12)
+        second: number(12, 14)
+        nanosecond: 0
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PEM and DER
+// ---------------------------------------------------------------------------
+
+/// The first block of a PEM text whose label is one of `labels`.
+fn pemBlock(text: String, labels: Array[String], what: String): (String, Array[Byte]) ! CryptoError {
+    for (label, der) in pemBlocks(text)? {
+        if label in labels {
+            return (label, der)
+        }
+    }
+    fail failure("the PEM text has no {what}: it starts with `-----BEGIN {labels[0]}-----`")
+}
+
+/// Each block of a PEM text, its label and its bytes.
+fn pemBlocks(text: String): Array[(String, Array[Byte])] ! CryptoError {
+    var blocks: Array[(String, Array[Byte])] = []
+    var label: String? = none
+    var body = ""
+    for line in text.lines() {
+        let trimmed = line.trim()
+        if trimmed.startsWith("-----BEGIN ") and trimmed.endsWith("-----") {
+            label = some(trimmed.removePrefix("-----BEGIN ").removeSuffix("-----"))
+            body = ""
+        } else if trimmed.startsWith("-----END ") {
+            match label {
+                some(name) => match __encoding.base64Decode(body) {
+                    ok(der) => blocks.push((name, der))
+                    err(_) => fail failure("the `{name}` of the PEM text is not Base64")
+                }
+                none => {}
+            }
+            label = none
+        } else if label.isSome() and not trimmed.contains(":") {
+            body = "{body}{trimmed}"
+        }
+    }
+    blocks
+}
+
+fn pemOf(label: String, der: Array[Byte]): String {
+    let text = __encoding.base64Encode(der)
+    var lines: Array[String] = []
+    var at = 0
+    for at < text.length() {
+        lines.push(text.slice(at, (at + 64).min(text.length())).unwrapOr(""))
+        at += 64
+    }
+    "-----BEGIN {label}-----\n{lines.join("\n")}\n-----END {label}-----\n"
+}
+
+/// A value of DER: its tag, and where its content starts and ends.
+type Element = {
+    tag: Int
+    start: Int
+    end: Int
+}
+
+fn element(der: Array[Byte], at: Int): Element ! CryptoError {
+    if at + 2 > der.length() {
+        fail broken()
+    }
+    let tag = Int(der[at])
+    var length = Int(der[at + 1])
+    var start = at + 2
+    if length >= 0x80 {
+        let count = length - 0x80
+        if count < 1 or count > 4 or start + count > der.length() {
+            fail broken()
+        }
+        length = 0
+        for index in 0..count {
+            length = length * 256 + Int(der[start + index])
+        }
+        start += count
+    }
+    if start + length > der.length() {
+        fail broken()
+    }
+    Element { tag: tag, start: start, end: start + length }
+}
+
+fn children(der: Array[Byte], parent: Element): Array[Element] ! CryptoError {
+    var found: Array[Element] = []
+    var at = parent.start
+    for at < parent.end {
+        let child = element(der, at)?
+        found.push(child)
+        at = child.end
+    }
+    found
+}
+
+fn slice(der: Array[Byte], start: Int, end: Int): Array[Byte] {
+    der.slice(start, end).unwrapOr([])
+}
+
+fn broken(): CryptoError {
+    failure("the DER is not well formed")
+}
+
+/// An object identifier's dotted text.
+fn oidOf(der: Array[Byte], at: Element): String {
+    var parts: Array[String] = []
+    var value = 0
+    for index in at.start..at.end {
+        let byte = Int(der[index])
+        value = value * 128 + (byte & 0x7f)
+        if byte < 0x80 {
+            if parts.isEmpty() {
+                let first = if value < 80 { value / 40 } else { 2 }
+                parts.push("{first}")
+                parts.push("{value - first * 40}")
+            } else {
+                parts.push("{value}")
+            }
+            value = 0
+        }
+    }
+    parts.join(".")
+}
+
+/// An object identifier's DER content.
+fn oidBytes(oid: String): Array[Byte] {
+    let numbers = oid.split(".").map((part) { Int.parse(part).unwrapOr(0) })
+    var bytes: Array[Byte] = []
+    var values = [numbers[0] * 40 + numbers[1]]
+    values.extend(numbers.slice(2, numbers.length()).unwrapOr([]))
+    for value in values {
+        var groups = [Byte(UInt8.wrapping(value & 0x7f))]
+        var rest = value / 128
+        for rest > 0 {
+            groups.insert(0, Byte(UInt8.wrapping((rest & 0x7f) | 0x80)))
+            rest = rest / 128
+        }
+        bytes.extend(groups)
+    }
+    bytes
+}
+
+/// A value of DER from its tag and content.
+fn tlv(tag: Int, content: Array[Byte]): Array[Byte] {
+    let length = content.length()
+    var head = [Byte(UInt8.wrapping(tag))]
+    if length < 0x80 {
+        head.push(Byte(UInt8.wrapping(length)))
+    } else {
+        var digits: Array[Byte] = []
+        var rest = length
+        for rest > 0 {
+            digits.insert(0, Byte(UInt8.wrapping(rest & 0xff)))
+            rest = rest / 256
+        }
+        head.push(Byte(UInt8.wrapping(0x80 + digits.length())))
+        head.extend(digits)
+    }
+    head.concat(content)
+}

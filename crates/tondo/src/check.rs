@@ -9994,11 +9994,19 @@ impl<'a> Checker<'a> {
             self.report_missing(&fields, &seen, span);
             return Self::mk(hir::ExprKind::Variant(variant, values), ty, span);
         }
-        let [name] = path else {
-            return self.unsupported_expr(span, "qualified record literals");
-        };
-        self.index_refer(name, crate::index::Key::Type(name.name.clone()));
+        let name = path.last().expect("a path has a name");
         let ty = match self.type_names.get(&name.name) {
+            // A type of another module, as `time.DateTime { ... }`.
+            _ if path.len() > 1 => {
+                let explicit = ast::TypeExpr {
+                    kind: ast::TypeKind::Path { segments: path.to_vec(), args: type_args.to_vec() },
+                    span: name.span,
+                };
+                match self.resolve_type(&explicit) {
+                    Ty::ERROR => return Self::error_expr(span),
+                    ty => ty,
+                }
+            }
             Some(TypeName::Nominal(ty)) if type_args.is_empty() => *ty,
             Some(TypeName::Alias(index)) if type_args.is_empty() => {
                 let index = *index;
@@ -10026,6 +10034,9 @@ impl<'a> Checker<'a> {
                 return Self::error_expr(span);
             }
         };
+        if path.len() == 1 {
+            self.index_refer(name, crate::index::Key::Type(name.name.clone()));
+        }
         if self.types.c_layout(ty).is_some_and(|l| l.opaque) {
             let message =
                 format!("{} is opaque: only C makes one, and Tondo holds a `Pointer` to it", self.display(ty));

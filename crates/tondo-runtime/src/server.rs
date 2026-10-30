@@ -78,6 +78,8 @@ struct Request {
     authority: String,
     /// Whether it came over TLS.
     secure: bool,
+    /// The DER of the certificate the client showed, if it showed one.
+    client: Arc<Vec<u8>>,
     headers: Vec<String>,
     body: Mutex<Option<Incoming>>,
     reply: Mutex<Option<oneshot::Sender<hyper::Response<Body>>>>,
@@ -96,6 +98,7 @@ impl Request {
             remote: String::new(),
             authority: String::new(),
             secure: false,
+            client: Arc::default(),
             headers: Vec::new(),
             body: Mutex::new(None),
             reply: Mutex::new(None),
@@ -149,41 +152,105 @@ fn response(status: i64, headers: &[String], body: Body) -> hyper::Response<Body
     builder.body(body).unwrap_or_else(|error| plain(500, &format!("a header is not valid: {error}")))
 }
 
-/// The TLS of a server: its certificate chain and private key, in PEM;
-/// ALPN offers HTTP/2 first when `http`.
-pub(crate) fn acceptor(cert: &str, key: &str, http: bool) -> Result<tokio_rustls::TlsAcceptor, String> {
+/// The bytes of a PEM given as its text, which starts with `-----BEGIN`,
+/// or as the path of its file (standard library 14.4.6).
+pub(crate) fn pem(given: &str, what: &str) -> Result<Vec<u8>, String> {
+    if given.trim_start().starts_with("-----BEGIN") {
+        return Ok(given.as_bytes().to_vec());
+    }
+    std::fs::read(given).map_err(|error| format!("{what} `{given}`: {error}"))
+}
+
+/// What a PEM was given as, for an error: its path, but never its text.
+fn shown(given: &str) -> String {
+    match given.trim_start().starts_with("-----BEGIN") {
+        true => String::new(),
+        false => format!(" `{given}`"),
+    }
+}
+
+/// The versions of TLS from the lowest one allowed, 1.2 (12) or 1.3 (13).
+pub(crate) fn versions(minimum: i64) -> &'static [&'static rustls::SupportedProtocolVersion] {
+    static ONLY_13: [&rustls::SupportedProtocolVersion; 1] = [&rustls::version::TLS13];
+    match minimum {
+        13 => &ONLY_13,
+        _ => rustls::DEFAULT_VERSIONS,
+    }
+}
+
+/// The certificates of a PEM, given as its text or its file.
+pub(crate) fn certificates(given: &str, what: &str) -> Result<Vec<rustls_pki_types::CertificateDer<'static>>, String> {
+    use rustls_pki_types::CertificateDer;
     use rustls_pki_types::pem::PemObject;
-    use rustls_pki_types::{CertificateDer, PrivateKeyDer};
-    let certs = CertificateDer::pem_file_iter(cert)
-        .and_then(|certs| certs.collect::<Result<Vec<_>, _>>())
-        .map_err(|error| format!("the certificate `{cert}`: {error}"))?;
-    let key = PrivateKeyDer::from_pem_file(key).map_err(|error| format!("the private key `{key}`: {error}"))?;
+    let certs = CertificateDer::pem_slice_iter(&pem(given, what)?)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("{what}{}: {error}", shown(given)))?;
+    match certs.is_empty() {
+        true => Err(format!("{what}{} holds no `CERTIFICATE`", shown(given))),
+        false => Ok(certs),
+    }
+}
+
+/// The private key of a PEM, given as its text or its file.
+pub(crate) fn private_key(given: &str) -> Result<rustls_pki_types::PrivateKeyDer<'static>, String> {
+    use rustls_pki_types::PrivateKeyDer;
+    use rustls_pki_types::pem::PemObject;
+    let bytes = pem(given, "the private key")?;
+    PrivateKeyDer::from_pem_slice(&bytes).map_err(|error| format!("the private key{}: {error}", shown(given)))
+}
+
+/// The TLS of a server: its certificate chain and private key, the
+/// authorities whose client certificates it requires when `clients` is not
+/// empty, each a PEM's text or file, and the lowest version it accepts;
+/// ALPN offers HTTP/2 first when `http`.
+pub(crate) fn acceptor(
+    cert: &str,
+    key: &str,
+    clients: &str,
+    minimum: i64,
+    http: bool,
+) -> Result<tokio_rustls::TlsAcceptor, String> {
+    let certs = certificates(cert, "the certificate")?;
+    let key = private_key(key)?;
     let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let mut config = rustls::ServerConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .map_err(|error| error.to_string())?
-        .with_no_client_auth()
-        .with_single_cert(certs, key)
+    let builder = rustls::ServerConfig::builder_with_provider(provider.clone())
+        .with_protocol_versions(versions(minimum))
         .map_err(|error| error.to_string())?;
+    let builder = match clients.is_empty() {
+        true => builder.with_no_client_auth(),
+        false => {
+            let mut roots = rustls::RootCertStore::empty();
+            for authority in certificates(clients, "the authorities of the clients")? {
+                roots.add(authority).map_err(|error| format!("the authorities of the clients: {error}"))?;
+            }
+            let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider)
+                .build()
+                .map_err(|error| format!("the authorities of the clients: {error}"))?;
+            builder.with_client_cert_verifier(verifier)
+        }
+    };
+    let mut config = builder.with_single_cert(certs, key).map_err(|error| error.to_string())?;
     if http {
         config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
     }
     Ok(tokio_rustls::TlsAcceptor::from(Arc::new(config)))
 }
 
-/// Starts a server on `host:port`, `0` for any free port, over TLS when
-/// `cert` and `key` name PEM files.
+/// Starts a server on `host:port`, `0` for any free port, over TLS when it
+/// has a certificate and a key, as `acceptor` takes them.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_http_listen(
     host: *const Str,
     port: i64,
     cert: *const Str,
     key: *const Str,
+    clients: *const Str,
+    minimum: i64,
 ) -> *mut NativeObject {
-    let (cert, key) = (text(cert), text(key));
+    let (cert, key, clients) = (text(cert), text(key), text(clients));
     let tls = match cert.is_empty() {
         true => None,
-        false => match acceptor(&cert, &key, true) {
+        false => match acceptor(&cert, &key, &clients, minimum, true) {
             Ok(acceptor) => Some(acceptor),
             Err(problem) => return failed(problem),
         },
@@ -261,19 +328,23 @@ async fn accept(
             _ = stopped.changed() => return,
         };
         let (sender, tls) = (sender.clone(), tls.clone());
-        let secure = tls.is_some();
         tokio::spawn(async move {
-            let service =
-                hyper::service::service_fn(move |request| handle(request, sender.clone(), remote.clone(), secure));
+            let serve = |client: Option<Vec<u8>>| {
+                let (secure, client) = (tls.is_some(), Arc::new(client.unwrap_or_default()));
+                hyper::service::service_fn(move |request| {
+                    handle(request, sender.clone(), remote.clone(), secure, client.clone())
+                })
+            };
             let builder = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
-            match tls {
+            match tls.clone() {
                 Some(acceptor) => {
                     if let Ok(stream) = acceptor.accept(stream).await {
-                        let _ = builder.serve_connection_with_upgrades(TokioIo::new(stream), service).await;
+                        let shown = stream.get_ref().1.peer_certificates().and_then(|c| c.first()).map(|c| c.to_vec());
+                        let _ = builder.serve_connection_with_upgrades(TokioIo::new(stream), serve(shown)).await;
                     }
                 }
                 None => {
-                    let _ = builder.serve_connection_with_upgrades(TokioIo::new(stream), service).await;
+                    let _ = builder.serve_connection_with_upgrades(TokioIo::new(stream), serve(None)).await;
                 }
             }
         });
@@ -285,6 +356,7 @@ async fn handle(
     sender: mpsc::Sender<Request>,
     remote: String,
     secure: bool,
+    client: Arc<Vec<u8>>,
 ) -> Result<hyper::Response<Body>, Infallible> {
     super::diagnostics::HTTP_SERVER_REQUESTS.add(1);
     let _active = super::diagnostics::Open::new(&super::diagnostics::HTTP_SERVER_ACTIVE);
@@ -317,6 +389,7 @@ async fn handle(
         remote,
         authority,
         secure,
+        client,
         headers,
         body: Mutex::new(Some(body)),
         reply: Mutex::new(Some(reply)),
@@ -377,6 +450,12 @@ pub extern "C" fn tondo_rt_http_request_head(object: *mut NativeObject) -> *mut 
     let secure = r.secure as u8;
     let head = format!("{}\t{}\t{}\t{}\t{}\t{}\t{secure}", r.method, r.path, r.query, r.version, r.remote, r.authority);
     str_new(head.as_bytes())
+}
+
+/// The DER of the certificate the client showed, empty without one.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_request_certificate(object: *mut NativeObject) -> *mut ArrayHeader {
+    byte_array(&request(object).client)
 }
 
 #[unsafe(no_mangle)]

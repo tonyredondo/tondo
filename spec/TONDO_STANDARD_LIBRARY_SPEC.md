@@ -1676,6 +1676,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.regex` | Core | — | 0.1 | Expresiones regulares Unicode con complejidad y límites declarados |
 | `std.csv` | Core | — | 0.1 | CSV RFC 4180 materializado y en streaming |
 | `std.hash` | Core | — | 0.1 | Digests MD5, SHA-1 y SHA-2, HMAC, por partes, y hashes no criptográficos |
+| `std.crypto` | Core | — | 0.1 | Secretos en tiempo constante, contraseñas, derivación de claves, sellado, firmas, y claves y certificados PEM |
 | `std.http` | Capability-gated | `network` | 0.1 | Cliente y servidor HTTP/1.1 y HTTP/2 con TLS, cuerpos en streaming, multipart, archivos con rangos, Server-Sent Events y WebSockets |
 | `std.random` | Core + gated | `entropy` para sembrar desde el sistema | 0.1 | Generadores pseudoaleatorios sembrados, mezcla, elección y bytes de entropía |
 | `std.uuid` | Core + gated | `entropy` y/o `civil-clock` para generación | 0.1 | UUID, parsing, formatting y generadores explícitos por versión |
@@ -2443,7 +2444,9 @@ pub fn resolve(host: String, timeout: time.Duration? = none): Array[String] ! Ne
 
 pub type Stream
 pub fn connect(host: String, port: Int, timeout: time.Duration? = none): Stream ! NetError
-pub fn connectTls(host: String, port: Int, trust: String? = none,
+pub fn connectTls(host: String, port: Int, trust: String? = none, identity: Tls? = none,
+    timeout: time.Duration? = none): Stream ! NetError
+pub fn Stream.startTls(self, host: String, trust: String? = none, identity: Tls? = none,
     timeout: time.Duration? = none): Stream ! NetError
 pub fn Stream.read(self, max: Int = 65536, timeout: time.Duration? = none): Array[Byte]? ! NetError
 pub fn Stream.readLine(self, timeout: time.Duration? = none): String? ! NetError
@@ -2458,8 +2461,12 @@ pub fn Stream.writer(self): io.Writer
 pub fn Stream.localAddress(self): Address
 pub fn Stream.remoteAddress(self): Address
 
-pub type Tls = { certificate: String, privateKey: String }
-pub fn Tls.files(certificate: String, privateKey: String): Tls
+pub type Tls = { certificate: String, privateKey: String, clients: String?, minimumVersion: TlsVersion }
+pub enum TlsVersion { Tls12, Tls13 }
+pub fn Tls.files(certificate: String, privateKey: String, clients: String? = none,
+    minimumVersion: TlsVersion = TlsVersion.Tls12): Tls
+pub fn Tls.pem(certificate: String, privateKey: String, clients: String? = none,
+    minimumVersion: TlsVersion = TlsVersion.Tls12): Tls
 
 pub type Listener                             // Iterator[Stream]
 pub fn listen(host: String, port: Int, tls: Tls? = none): Listener ! NetError
@@ -2514,12 +2521,25 @@ pub fn Network.prefix(self): Int
   conexión sigue utilizable. Una tarea cancelada abandona la operación que
   espera.
 - TLS confía en los certificados raíz del sistema y, si el sistema no tiene
-  ninguno, en los de Mozilla; `trust` nombra un archivo PEM con más
-  certificados en los que confiar. `connectTls` verifica que el certificado es
-  para `host` antes de devolver la conexión. Un listener con `tls` acepta en
-  claro y cada conexión hace su handshake antes de su primera lectura o
-  escritura, cuyo error es si falla; así un cliente lento no retiene a los
-  demás. `http.Tls` es `net.Tls`.
+  ninguno, en los de Mozilla; `trust` añade autoridades en las que confiar,
+  como la ruta de un archivo PEM o como su texto, el que empieza con
+  `-----BEGIN`. `connectTls` verifica que el certificado es para `host` antes
+  de devolver la conexión. Un listener con `tls` acepta en claro y cada
+  conexión hace su handshake antes de su primera lectura o escritura, cuyo
+  error es si falla; así un cliente lento no retiene a los demás.
+  `http.Tls` es `net.Tls`.
+- Un `Tls` es lo que TLS muestra y pide: una cadena de certificados y su
+  clave privada, en archivos PEM con `Tls.files` o como texto PEM con
+  `Tls.pem`, como lo guardan una variable de entorno o `embed.text`; para un
+  servidor, `clients` son las autoridades de cuyos clientes exige
+  certificado, como hace TLS mutuo; y `minimumVersion`, la versión más baja
+  que se acepta. Un error de un PEM dado como texto no lo repite. `identity`
+  es el certificado que un cliente muestra al servidor que lo pide.
+- `startTls` sigue la conexión sobre TLS como cliente de `host`, verificado
+  como en `connectTls`, para los protocolos que empiezan en claro y piden TLS,
+  como PostgreSQL, MySQL o SMTP. El `Stream` en claro queda cerrado, y lo que
+  tenía sin leer o sin enviar se pierde: TLS empieza cuando el protocolo lo
+  dice, sin nada en vuelo.
 - Recorrer un `Listener` da cada conexión nueva hasta que se cierra,
   esperando más allá de los fallos al aceptar; `close` hace que las esperas
   de `accept` fallen con `Closed` y suelta el puerto. Un servidor atiende
@@ -4027,6 +4047,9 @@ pub fn xxhash64(data: Array[Byte], seed: UInt = 0): UInt
 pub fn murmur3(data: Array[Byte], seed: UInt32 = 0): UInt128
 ~~~
 
+- Dos `Digest` se comparan con `==` en un tiempo que no depende de dónde
+  difieren, como todo `Array[Byte]` (14.34): comparar un HMAC recibido con el
+  esperado es seguro.
 - `Display` de un `Digest` es su hexadecimal minúsculo:
   `hash.sha256(text.bytes())` se interpola directamente. MD5 y SHA-1 existen
   para los formatos y protocolos que los nombran, como UUIDv5, Git o un
@@ -4168,7 +4191,8 @@ pub enum HttpError {
 pub type Client
 pub fn Client.new(baseUrl: String = "", headers: Map[String, String] = [:],
     timeout: time.Duration? = none, connectTimeout: time.Duration? = none,
-    redirects: Int = 10, socket: String? = none, cookies: Bool = false): Client
+    redirects: Int = 10, trust: String? = none, socket: String? = none, cookies: Bool = false,
+    identity: Tls? = none): Client
 pub fn Client.get(self, url: String, query: Map[String, String] = [:],
     headers: Map[String, String] = [:], timeout: time.Duration? = none): Response ! HttpError
 pub fn Client.head(...)                       // como get
@@ -4308,8 +4332,10 @@ for message in socket {
     }
 }
 ~~~
-- `trust` nombra un archivo PEM con certificados en los que el cliente confía
-  además de los del sistema, como los de la CA de una empresa o de desarrollo.
+- `trust` da autoridades en las que el cliente confía además de las del
+  sistema, como la CA de una empresa o de desarrollo: la ruta de un archivo
+  PEM o su texto. `identity` es el certificado que muestra al servidor que lo
+  pide, como hace TLS mutuo (14.4.6).
 - Un provider o generador no puede importar `std.http` (`E2108`).
 
 #### 14.24.1 Servidores
@@ -4365,6 +4391,7 @@ pub fn Request.route(self): String?
 pub fn Request.version(self): String
 pub fn Request.remoteAddress(self): String
 pub fn Request.clientIp(self): String
+pub fn Request.clientCertificate(self): crypto.Certificate?
 pub fn Request.cookie(self, name: String): String?
 pub fn Request.cookies(self): Map[String, String]
 pub fn Request.param(self, name: String): String
@@ -4425,6 +4452,7 @@ pub fn Server.address(self): String
 pub fn Server.url(self): String
 pub fn Server.stop(self)
 pub alias Tls = net.Tls
+pub alias TlsVersion = net.TlsVersion
 ~~~
 
 - Una ruta es un método y un path cuyos segmentos `:nombre` son parámetros y
@@ -4468,6 +4496,9 @@ pub alias Tls = net.Tls
   `X-Forwarded-For` que no es de esas redes, o `X-Real-Ip`, como `ClientIP` de
   Gin. Sin `trustProxies` no se cree a ninguna cabecera, y es la dirección de
   la conexión.
+- `Request.clientCertificate()` es el certificado que mostró el cliente,
+  cuando el servidor lo exige con `clients` en su `Tls`: quién es, por su
+  sujeto o sus nombres (14.34).
 - `Request.cookie(name)` y `cookies()` leen las cookies que envía el cliente, y
   `Reply.cookie` añade una a la respuesta, con `Set-Cookie`: `maxAge` cero la
   borra, y sin `maxAge` dura lo que la sesión del navegador; `httpOnly` la
@@ -5288,6 +5319,91 @@ pub fn handler[T: reflect.Reflect](server: T, name: String = "", version: String
 - `handler` atiende el mismo protocolo en una ruta de `std.http`, un mensaje
   por `POST`, sin sesiones.
 - Habla las versiones del protocolo que `tondo mcp` (toolchain 7.9).
+
+### 14.34 `std.crypto`
+
+`std.crypto` compara secretos, guarda contraseñas, deriva claves, sella
+datos y firma, con las primitivas de ring; los PEM, el DER y los
+certificados X.509 se leen y escriben en Tondo. Ninguna operación pide un
+nonce, un IV o un modo: cada una hace lo seguro por sí misma.
+
+~~~tondo pseudocode
+pub type CryptoError = { message: String }
+
+pub fn equalSecrets(a: Array[Byte], b: Array[Byte]): Bool
+pub fn hashPassword(password: String): String
+pub fn verifyPassword(password: String, hash: String): Bool
+pub fn hkdf(secret: Array[Byte], salt: Array[Byte] = [], info: Array[Byte] = [], length: Int = 32): Array[Byte]
+pub fn pbkdf2(password: Array[Byte], salt: Array[Byte], iterations: Int, length: Int = 32): Array[Byte]
+
+pub enum Cipher { Aes256Gcm, ChaCha20Poly1305 }
+pub type SecretKey
+pub fn SecretKey.generate(cipher: Cipher = Cipher.Aes256Gcm): SecretKey
+pub fn SecretKey.fromBytes(bytes: Array[Byte], cipher: Cipher = Cipher.Aes256Gcm): SecretKey ! CryptoError
+pub fn SecretKey.bytes(self): Array[Byte]
+pub fn SecretKey.seal(self, data: Array[Byte], context: Array[Byte] = []): Array[Byte]
+pub fn SecretKey.open(self, sealed: Array[Byte], context: Array[Byte] = []): Array[Byte] ! CryptoError
+
+pub enum Curve { Ed25519, P256, P384 }
+pub enum KeyKind { Ed25519, EcdsaP256, EcdsaP384, Rsa }
+pub type PrivateKey
+pub type PublicKey
+pub fn PrivateKey.generate(curve: Curve = Curve.Ed25519): PrivateKey
+pub fn PrivateKey.fromPem(text: String): PrivateKey ! CryptoError
+pub fn PrivateKey.pem(self): String
+pub fn PrivateKey.kind(self): KeyKind
+pub fn PrivateKey.publicKey(self): PublicKey
+pub fn PrivateKey.sign(self, data: Array[Byte]): Array[Byte]
+pub fn PublicKey.fromPem(text: String): PublicKey ! CryptoError
+pub fn PublicKey.pem(self): String
+pub fn PublicKey.kind(self): KeyKind
+pub fn PublicKey.verify(self, data: Array[Byte], signature: Array[Byte]): Bool
+
+pub type Certificate = {
+    subject: String
+    issuer: String
+    names: Array[String]
+    serialNumber: String
+    validFrom: time.DateTime
+    validUntil: time.DateTime
+    der: Array[Byte]
+}
+pub fn certificates(pem: String): Array[Certificate] ! CryptoError
+pub fn Certificate.fromDer(der: Array[Byte]): Certificate ! CryptoError
+~~~
+
+- `equalSecrets` tarda un tiempo que solo depende de las longitudes, y no
+  dice con él dónde difieren dos secretos. `==` entre dos `Array[Byte]`, y
+  por tanto entre dos `hash.Digest`, tarda lo mismo: comparar un HMAC con
+  `==` es seguro.
+- `hashPassword` hace un hash para guardar con Argon2id, los parámetros de
+  OWASP y una sal propia, en el formato PHC (`$argon2id$v=19$...`).
+  `verifyPassword` lee esos, los de Argon2 de otros programas, los de bcrypt
+  (`$2b$...`) y los de PBKDF2 con SHA-256 como los escriben PHC, passlib
+  (`$pbkdf2-sha256$...`) y Django (`pbkdf2_sha256$...`), para que los
+  usuarios de otro programa conserven sus contraseñas.
+- `hkdf` es HKDF con SHA-256 (RFC 5869), hasta 8160 bytes; `pbkdf2`, PBKDF2
+  con HMAC-SHA-256.
+- Una `SecretKey` de 32 bytes sella datos con AES-256-GCM o
+  ChaCha20-Poly1305: `seal` pone delante un nonce aleatorio de 12 bytes y
+  detrás la etiqueta de 16; `open` comprueba que nada cambió. `context`, como
+  el identificador al que pertenecen los datos, no se cifra pero tiene que
+  ser el mismo para abrirlos. Una clave no tiene `Display`: no se escribe por
+  descuido en un log.
+- Las claves privadas firman con Ed25519, con ECDSA sobre P-256 y SHA-256 o
+  sobre P-384 y SHA-384, o con RSA, PKCS #1 v1.5 y SHA-256. `generate` hace
+  claves de las curvas; las de RSA se leen de PEM. `fromPem` lee PKCS #8
+  (`PRIVATE KEY`) y también `RSA PRIVATE KEY` y `EC PRIVATE KEY`, como los
+  escribe OpenSSL; una clave cifrada es un error que dice cómo descifrarla.
+  `pem` las escribe como PKCS #8.
+- Una firma ECDSA son sus dos números seguidos, de 64 o 96 bytes, como en JWT
+  y WebCrypto. `PublicKey.fromPem` lee `PUBLIC KEY`, `RSA PUBLIC KEY` y la
+  clave de un `CERTIFICATE`; `pem` la escribe como `PUBLIC KEY`.
+- `certificates` lee los certificados de un texto PEM en su orden, como se
+  escribe una cadena: el sujeto y el emisor como los escribe RFC 4514
+  (`CN=example.com,O=Acme`), los nombres DNS y las direcciones IP de su
+  extensión de nombres alternativos, el número de serie en hexadecimal, sus
+  fechas de validez y su DER. `Certificate.fromDer` lee uno de DER.
 
 ## 15. Contrato exigido a cada módulo
 

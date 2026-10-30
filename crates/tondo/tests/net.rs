@@ -91,3 +91,58 @@ fn main(): !net.NetError {
     assert_eq!(lines.iter().filter(|l| **l == "true").count(), 2, "{stdout}{stderr}");
     assert!(success, "{stderr}");
 }
+
+/// `Stream.startTls` against a server that starts plain and answers a
+/// `STARTTLS` line with TLS, as SMTP, PostgreSQL and MySQL do.
+#[test]
+fn starting_tls_on_a_plain_connection() {
+    use rcgen::{CertificateParams, KeyPair};
+    use std::io::{BufRead, BufReader, Write};
+    use std::sync::Arc;
+    let key = KeyPair::generate().unwrap();
+    let certificate = CertificateParams::new(vec!["localhost".to_string()]).unwrap().self_signed(&key).unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (der, key_der) = (certificate.der().clone(), key.serialize_der());
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut line = String::new();
+        BufReader::new(&mut stream).read_line(&mut line).unwrap();
+        assert_eq!(line, "STARTTLS\n");
+        stream.write_all(b"GO\n").unwrap();
+        let key = rustls_pki_types::PrivateKeyDer::Pkcs8(key_der.into());
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let config = rustls::ServerConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(vec![der], key)
+            .unwrap();
+        let connection = rustls::ServerConnection::new(Arc::new(config)).unwrap();
+        let mut tls = rustls::StreamOwned::new(connection, stream);
+        let mut line = String::new();
+        BufReader::new(&mut tls).read_line(&mut line).unwrap();
+        tls.write_all(format!("secure {line}").as_bytes()).unwrap();
+        tls.flush().unwrap();
+    });
+    let program = format!(
+        r#"
+import std.console
+import std.net
+
+fn main(): !net.NetError {{
+    let plain = net.connect("127.0.0.1", {port})?
+    plain.write("STARTTLS\n")?
+    console.println("{{plain.readLine()?}}")
+    let secure = plain.startTls("localhost", trust: "server.pem")?
+    secure.write("hello\n")?
+    console.println("{{secure.readLine()?}}")
+    console.println("{{plain.readLine().isErr()}}")
+}}
+"#
+    );
+    let (stdout, stderr, success) = run("net-starttls", &program, &[("server.pem", certificate.pem())]);
+    server.join().unwrap();
+    assert_eq!(stdout, "some(GO)\nsome(secure hello)\ntrue\n", "{stderr}");
+    assert!(success, "{stderr}");
+}
