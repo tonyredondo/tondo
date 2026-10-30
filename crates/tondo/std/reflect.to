@@ -1042,6 +1042,8 @@ pub type TypeDescription = {
     underlying: TypeInfo?
     /// The program's annotations of the type (language 27.13).
     annotations: Array[Value]
+    /// Its `///` documentation.
+    docs: String?
 }
 
 /// A description of a kind with nothing in it yet.
@@ -1055,6 +1057,7 @@ pub fn TypeDescription.of(kind: TypeKind): TypeDescription {
         elements: []
         underlying: none
         annotations: []
+        docs: none
     }
 }
 
@@ -1175,6 +1178,11 @@ pub fn TypeInfo.annotations(self): Array[Value] {
     self.describe().annotations
 }
 
+/// The type's `///` documentation.
+pub fn TypeInfo.docs(self): String? {
+    self.describe().docs
+}
+
 impl Display for TypeInfo {
     fn display(self): String {
         self.name
@@ -1241,6 +1249,7 @@ pub type VariantInfo = {
     priv parts: Array[TypeInfo]
     priv named: Array[FieldInfo]
     priv notes: Array[Value]
+    priv text: String?
 }
 
 /// A variant's description, as the code the compiler writes for a type
@@ -1259,6 +1268,7 @@ pub fn VariantInfo.of(
         parts: tupleElements
         named: fields
         notes: []
+        text: none
     }
 }
 
@@ -1266,6 +1276,17 @@ pub fn VariantInfo.of(
 /// compiler writes for a type gives them.
 pub fn VariantInfo.annotated(self, annotations: Array[Value]): VariantInfo {
     self with { notes: annotations }
+}
+
+/// The description with the variant's documentation, as the code the
+/// compiler writes makes it.
+pub fn VariantInfo.documented(self, docs: String?): VariantInfo {
+    self with { text: docs }
+}
+
+/// The variant's `///` documentation.
+pub fn VariantInfo.docs(self): String? {
+    self.text
 }
 
 /// The variant's annotation of type `A` (language 27.13), if it has it.
@@ -1309,18 +1330,30 @@ pub type MethodInfo = {
     priv mode: ParameterMode
     priv signature: FunctionInfo
     priv notes: Array[Value]
+    priv text: String?
 }
 
 /// A method's description, as the code the compiler writes for a type
 /// makes it.
 pub fn MethodInfo.of(name: String, receiver: ParameterMode, function: FunctionInfo): MethodInfo {
-    MethodInfo { methodName: name, mode: receiver, signature: function, notes: [] }
+    MethodInfo { methodName: name, mode: receiver, signature: function, notes: [], text: none }
 }
 
 /// The description with the method's annotations, as the code the
 /// compiler writes for a type gives them.
 pub fn MethodInfo.annotated(self, annotations: Array[Value]): MethodInfo {
     self with { notes: annotations }
+}
+
+/// The description with the method's documentation, as the code the
+/// compiler writes makes it.
+pub fn MethodInfo.documented(self, docs: String?): MethodInfo {
+    self with { text: docs }
+}
+
+/// The method's `///` documentation.
+pub fn MethodInfo.docs(self): String? {
+    self.text
 }
 
 /// The method's annotation of type `A` (language 27.13), if it has it.

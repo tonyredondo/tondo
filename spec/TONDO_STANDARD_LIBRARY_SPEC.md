@@ -1644,6 +1644,8 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.url` | Core | — | 0.1 | URLs y referencias relativas de RFC 3986: sus partes, su resolución y su query |
 | `std.xml` | Core | — | 0.1 | XML tipado sobre `std.serialization`, con atributos y texto por anotaciones, y un árbol dinámico |
 | `std.template` | Core | — | 0.1 | Plantillas de texto y HTML con expresiones de Tondo: compiladas y tipadas, o cargadas en ejecución, con escape por contexto |
+| `std.cli` | Core | — | 0.1 | La línea de comandos leída en los tipos del programa, con su ayuda, y estilos, tablas, progreso y preguntas en la terminal |
+| `std.mcp` | Core | — | 0.1 | Servidores del Model Context Protocol desde los métodos de un valor, por stdio o por HTTP |
 | `std.gzip` | Core | — | 0.1 | gzip (RFC 1952): bytes y streams comprimidos y descomprimidos |
 | `std.zstd` | Core | — | 0.1 | Zstandard (RFC 8878): bytes y streams comprimidos y descomprimidos |
 | `std.console` | Capability-gated | `console` | 0.1 | stdin, stdout, stderr, texto, bytes y flushing |
@@ -2863,7 +2865,9 @@ Valores:
   está vacía. `optional(name)` da el campo, o `none` si el valor no lo tiene.
 - `Display` escribe un escalar como su propio `Display` y un compuesto como
   `User { name: "Ada", age: 36 }`, `[1, 2]`, `["a": 1]` o `Set[1, 2]`, con los
-  strings entre comillas dentro de un compuesto y sin los campos `priv`.
+  strings entre comillas dentro de un compuesto y sin los campos `priv`. Un
+  record, enum o newtype con un `impl Display` en el archivo que lo declara se
+  escribe con su `Display`.
 - `ReflectError` dice qué ruta o método falló y su mensaje la corrección:
   "`User` has no field `nme`; its fields are `name`, `age` and `address`".
 
@@ -2971,7 +2975,9 @@ Los descriptores secundarios exponen consultas, sin campos públicos:
 - `FieldInfo`: `name(): String`, `typeInfo(): TypeInfo`, `ordinal(): Int`,
   `docs(): String?`. Los ordinales conservan la posición declarada aunque se
   omitan campos privados. La documentación son las líneas `///` justo antes del
-  campo, sin los marcadores.
+  campo, sin los marcadores y saltando las anotaciones del programa que haya
+  entre ellas y él. `TypeInfo.docs()`, `VariantInfo.docs()` y
+  `MethodInfo.docs()` dan igual la del tipo, la variante o el método.
 - `VariantInfo`: `name(): String`, `ordinal(): Int`,
   `payloadKind(): VariantPayloadKind` (`Unit | Tuple | Record`),
   `tupleElements(): Array[TypeInfo]` y `fields(): Array[FieldInfo]`.
@@ -5012,6 +5018,189 @@ pub type TemplateError = { message: String, template: String, line: Int, column:
   dentro de un comentario de HTML: `E1906` al compilar, `TemplateError` al
   cargar. Los comentarios de HTML de la plantilla no se escriben.
 - `text` y `Set.text()` no escapan nada.
+
+### 14.32 `std.cli`
+
+`std.cli` lee la línea de comandos en los tipos del programa y escribe en la
+terminal. Un record es un comando con sus opciones y argumentos, y un enum, un
+conjunto de subcomandos; la ayuda sale de la documentación `///` de los tipos,
+las variantes y los campos.
+
+~~~tondo pseudocode
+/// Builds and serves static sites.
+pub enum Site {
+    /// Builds the site.
+    Build(Build)
+    /// Serves the site and rebuilds it as files change.
+    Serve { port: Int? }
+    /// Prints the version.
+    Version
+}
+
+pub type Build = {
+    /// The site's directory.
+    @cli.Argument
+    source: String?
+    /// Where to write the site.
+    @cli.Option(short: "d", default: "public", env: "SITE_DESTINATION")
+    destination: String
+    /// Writes the drafts too.
+    drafts: Bool
+    /// Builds only these sections.
+    section: Array[String]
+}
+
+match cli.parse[Site]() {
+    Site.Build(build) => ...
+    Site.Serve { port } => ...
+    Site.Version => console.println("1.0")
+}
+~~~
+
+~~~tondo pseudocode
+pub annotation Argument = { default: String? = none }
+pub annotation Option = { short: String? = none, default: String? = none, env: String? = none, hidden: Bool = false }
+pub type CliError = { message: String, help: Bool }
+pub enum Shell { Bash, Zsh, Fish }
+
+pub fn parse[T: reflect.Reflect](): T
+pub fn parseArgs[T: reflect.Reflect](args: Array[String]): T ! CliError
+pub fn help[T: reflect.Reflect](): String
+pub fn completions[T: reflect.Reflect](shell: Shell): String
+
+pub fn isTerminal(): Bool
+pub fn width(): Int
+pub fn markup(text: String): String
+pub fn table[T: reflect.Reflect](rows: Array[T], columns: Array[String] = []): String
+pub type Progress
+pub fn progress(label: String, total: Int? = none): Progress
+pub fn Progress.advance(self, by: Int = 1)
+pub fn Progress.finish(self)
+pub fn ask(question: String, default: String = ""): String
+pub fn confirm(question: String, default: Bool = false): Bool
+pub fn choose(question: String, options: Array[String]): Int
+pub fn secret(question: String): String
+~~~
+
+**Comandos**
+
+- Cada campo de un record es una opción `--nombre`, en kebab-case (`dryRun` es
+  `--dry-run`). `@cli.Option` le da una letra (`-d`), un valor por defecto
+  escrito como en la línea de comandos y una variable de entorno que se lee si
+  falta; `hidden` la quita de la ayuda.
+- `@cli.Argument` hace del campo un argumento posicional, en el orden de los
+  campos: uno `T?` es opcional y va tras los obligatorios, uno `Array[T]` toma
+  los que quedan y va el último.
+- Un valor es un texto, un `Char`, un número, un `Bool` o un enum sin datos
+  (sus variantes en kebab-case), o `T?` y `Array[T]` de ellos. Un `Bool` es un
+  flag: `--drafts` lo pone a `true`, y también `--drafts=false`. Un `T?` que
+  falta es `none`, un `Array[T]` está vacío, y otro sin defecto es obligatorio.
+  Un `Array[T]` se repite: `--section a --section b`.
+- Un enum es un conjunto de subcomandos: cada variante, en kebab-case, es uno, y
+  su payload, un record o un único record entre paréntesis, da sus opciones;
+  una sin payload no las tiene. Un enum dentro de otro da subcomandos anidados,
+  y un argumento cuyo tipo es un enum elige un subcomando, con las opciones del
+  record que lo tiene para todos.
+- Se aceptan `--nombre=valor`, `-d valor`, `-dvalor`, flags juntos (`-ab`) y
+  `--` para terminar las opciones.
+- `-h` y `--help` dan la ayuda del comando al que se ha llegado: su
+  descripción, su uso, sus subcomandos, y sus opciones con su ayuda, su defecto
+  y su variable.
+- Un tipo que `std.cli` no lee es un pánico que dice los que lee.
+
+**Errores**
+
+- `parse` lee `env.args()`: con la ayuda pedida la escribe y sale con 0, y ante
+  un error escribe el error y el uso del comando en stderr y sale con 2.
+  `parseArgs` devuelve un `CliError`; con `help`, su `message` es la ayuda.
+- Un error dice qué falta o qué sobra y propone el nombre más cercano:
+  `unknown option --draft; did you mean --drafts?`.
+- `completions` escribe el script de autocompletado del programa para `bash`,
+  `zsh` o `fish`.
+
+**La terminal**
+
+- `isTerminal` dice si la salida de `console` es una terminal, y `width` da su
+  ancho, 80 si no lo es.
+- `markup` escribe un texto con estilos: `[estilo]texto[/]` aplica el estilo a
+  ese bloque y vuelve al de antes, y los bloques se anidan. Un estilo combina un
+  color (`red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, `black`,
+  `gray`, o `#rrggbb`), `on` y un color de fondo, y `bold`, `dim`, `italic`,
+  `underline` o `strikethrough`; `[[` y `]]` escriben corchetes. Con un string
+  interpolado, los valores se escriben como texto, sin leer en ellos estilos, y
+  un estilo que no existe en el literal es `E1907`. Los códigos se escriben
+  solo cuando la salida es una terminal y `NO_COLOR` no está definida, o con
+  `FORCE_COLOR`.
+- `table` escribe una tabla con borde, una columna por campo, o las que nombra
+  `columns` en su orden; la cabecera es el nombre del campo, y los números van a
+  la derecha.
+- `table`, `progress` y las preguntas escriben en la salida de `console`, y
+  leen de su entrada. `progress` dibuja una barra, o un spinner sin `total`, que
+  `advance` avanza y `finish` termina; fuera de una terminal solo escribe una
+  línea al terminar. `ask` da la respuesta, o el defecto si se deja vacía;
+  `confirm` lee `y` o `n`; `choose` numera las opciones y da el índice elegido;
+  `secret` lee sin eco cuando la entrada es una terminal. Fuera de una terminal
+  las preguntas se escriben igual y leen una línea, así que un script puede
+  contestarlas.
+
+### 14.33 `std.mcp`
+
+`std.mcp` sirve el Model Context Protocol desde los métodos de un valor: cada
+método `pub` es una herramienta, y uno con `@mcp.Resource` o `@mcp.Prompt`, un
+recurso o un prompt.
+
+~~~tondo pseudocode
+/// Looks up the weather.
+pub type Weather = { client: http.Client }
+
+pub type ForecastInput = {
+    /// The city, as `Madrid`.
+    city: String
+    /// How many days, from 1 to 7.
+    days: Int?
+}
+
+/// The forecast of a city for the next days.
+pub fn Weather.forecast(self, input: ForecastInput): Forecast ! WeatherError { ... }
+
+/// How to use the service.
+@mcp.Resource(uri: "weather://guide", mime: "text/markdown")
+pub fn Weather.guide(self): String { ... }
+
+mcp.serve(Weather { client: http.Client.new() })?
+~~~
+
+~~~tondo pseudocode
+pub annotation Resource = { uri: String, mime: String = "text/plain" }
+pub annotation Prompt = {}
+pub type McpError = { message: String }
+
+pub fn serve[T: reflect.Reflect](server: T, name: String = "", version: String = "0.1.0"): !McpError
+pub fn handler[T: reflect.Reflect](server: T, name: String = "", version: String = "0.1.0"): fn(http.Request): http.Reply ! http.Problem
+~~~
+
+- Una herramienta se llama como su método, y su `///` es su descripción. Si el
+  método recibe un solo record, sus campos son los argumentos de la
+  herramienta, con su `///` como descripción; si no, lo son sus parámetros. Un
+  argumento `T?` es opcional. El esquema JSON sale de los tipos: textos,
+  `Bool`, enteros, floats, `Array[T]`, `Map[String, V]`, records como objetos y
+  enums sin datos como `enum` de textos.
+- El resultado: un `String` es texto, `Unit` no da contenido, y otro valor se
+  da como JSON en el texto y en `structuredContent`, con su `outputSchema`. Un
+  `T ! E` que falla da `isError` con el `Display` del error, y un pánico,
+  `isError` con su mensaje; el servidor sigue.
+- Un recurso no tiene parámetros y devuelve un `String` o bytes; si su URI
+  nombra entre llaves parámetros `String`, como `r"docs://{name}"`, es una
+  plantilla de recursos. Un prompt toma parámetros `String` o `String?`, sus
+  argumentos, y devuelve un `String`, el mensaje del usuario.
+- `serve` habla JSON-RPC por stdin y stdout, un mensaje por línea, hasta que
+  stdin se cierra; mientras sirve, la salida de `console` va a stderr, porque
+  stdout es el protocolo. Atiende cada petición en una tarea propia. `name` es
+  por defecto el del ejecutable, y las instrucciones del servidor son el `///`
+  del tipo.
+- `handler` atiende el mismo protocolo en una ruta de `std.http`, un mensaje
+  por `POST`, sin sesiones.
+- Habla las versiones del protocolo que `tondo mcp` (toolchain 7.9).
 
 ## 15. Contrato exigido a cada módulo
 

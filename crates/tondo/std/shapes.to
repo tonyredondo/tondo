@@ -1,0 +1,197 @@
+// Values by reflection (standard library 14.8) that the program's types are
+// built from and written as, which `std.cli`, `std.mcp` and `std.template`
+// share.
+
+import std.json as __json
+import std.reflect as __reflect
+
+/// A value of no type of its own, which a type of the program converts
+/// from by reflection: a record from its members, an enum from its variant
+/// and its payload, a sequence from its items.
+pub type Shape = {
+    variant: String?
+    members: Map[String, __reflect.Value]
+    items: Array[__reflect.Value]
+}
+
+impl __reflect.Reflect for Shape {
+    fn reflectGet(self, name: String): __reflect.Value ! __reflect.ReflectError {
+        match self.members.get(name) {
+            some(value) => value
+            none => fail __reflect.ReflectError.noField(
+                "shape",
+                name,
+                self.members.keys().collect(),
+            )
+        }
+    }
+
+    fn reflectFields(self): Array[__reflect.Field]? {
+        var fields: Array[__reflect.Field] = []
+        for (name, value) in self.members {
+            fields.push(__reflect.Field { name, value })
+        }
+        some(fields)
+    }
+
+    fn reflectElements(self): Array[__reflect.Value]? {
+        some(self.items)
+    }
+
+    fn reflectEntries(self): Array[(__reflect.Value, __reflect.Value)]? {
+        var entries: Array[(__reflect.Value, __reflect.Value)] = []
+        for (name, value) in self.members {
+            entries.push((__reflect.valueOf(name), value))
+        }
+        some(entries)
+    }
+
+    fn reflectVariant(self): String? {
+        self.variant
+    }
+
+    fn reflectShow(self, nested: Bool): String {
+        "shape"
+    }
+}
+
+/// A record, or a map, of these members.
+pub fn record(members: Map[String, __reflect.Value]): __reflect.Value {
+    __reflect.valueOf(Shape { variant: none, members, items: [] })
+}
+
+/// A variant: its name, the members of a record payload, the items of a
+/// tuple's.
+pub fn variant(name: String, members: Map[String, __reflect.Value], items: Array[__reflect.Value]): __reflect.Value {
+    __reflect.valueOf(Shape { variant: some(name), members, items })
+}
+
+/// A sequence of these items.
+pub fn sequence(items: Array[__reflect.Value]): __reflect.Value {
+    __reflect.valueOf(Shape { variant: none, members: [:], items })
+}
+
+/// The value of a primitive type that a text writes, or why it does not.
+pub fn scalar(kind: __reflect.PrimitiveKind, written: String): __reflect.Value ! String {
+    let found: __reflect.Value? = match kind {
+        __reflect.PrimitiveKind.String => some(__reflect.valueOf(written))
+        __reflect.PrimitiveKind.Bool => match written {
+            "true" => some(__reflect.valueOf(true))
+            "false" => some(__reflect.valueOf(false))
+            _ => none
+        }
+        __reflect.PrimitiveKind.Char => match written.get(0) {
+            some(c) if written.length() == 1 => some(__reflect.valueOf(c))
+            _ => none
+        }
+        __reflect.PrimitiveKind.Int => Int.parse(written).ok().map((v) { __reflect.valueOf(v) })
+        __reflect.PrimitiveKind.Int8 => Int8.parse(written).ok().map((v) { __reflect.valueOf(v) })
+        __reflect.PrimitiveKind.Int16 => Int16.parse(written).ok().map((v) { __reflect.valueOf(v) })
+        __reflect.PrimitiveKind.Int32 => Int32.parse(written).ok().map((v) { __reflect.valueOf(v) })
+        __reflect.PrimitiveKind.Int128 => Int128
+            .parse(written)
+            .ok()
+            .map((v) { __reflect.valueOf(v) })
+        __reflect.PrimitiveKind.UInt => UInt.parse(written).ok().map((v) { __reflect.valueOf(v) })
+        __reflect.PrimitiveKind.UInt8 => UInt8.parse(written).ok().map((v) { __reflect.valueOf(v) })
+        __reflect.PrimitiveKind.UInt16 => UInt16
+            .parse(written)
+            .ok()
+            .map((v) { __reflect.valueOf(v) })
+        __reflect.PrimitiveKind.UInt32 => UInt32
+            .parse(written)
+            .ok()
+            .map((v) { __reflect.valueOf(v) })
+        __reflect.PrimitiveKind.UInt128 => UInt128
+            .parse(written)
+            .ok()
+            .map((v) { __reflect.valueOf(v) })
+        __reflect.PrimitiveKind.Float => Float.parse(written).ok().map((v) { __reflect.valueOf(v) })
+        __reflect.PrimitiveKind.Float32 => Float32
+            .parse(written)
+            .ok()
+            .map((v) { __reflect.valueOf(v) })
+        _ => none
+    }
+    match found {
+        some(value) => value
+        none => fail "`{written}` is not {primitive(kind)}"
+    }
+}
+
+/// What a primitive type is, for messages: "an integer".
+pub fn primitive(kind: __reflect.PrimitiveKind): String {
+    match kind {
+        __reflect.PrimitiveKind.String => "a text"
+        __reflect.PrimitiveKind.Bool => "`true` or `false`"
+        __reflect.PrimitiveKind.Char => "a character"
+        __reflect.PrimitiveKind.Float => "a number"
+        __reflect.PrimitiveKind.Float32 => "a number"
+        __reflect.PrimitiveKind.Byte => "a byte"
+        __reflect.PrimitiveKind.Unit => "nothing"
+        __reflect.PrimitiveKind.Never => "nothing"
+        _ => "an integer"
+    }
+}
+
+/// Whether a value's type is a number.
+pub fn numeric(value: __reflect.Value): Bool {
+    match value.typeInfo().kind() {
+        __reflect.TypeKind.Primitive(kind) =>
+            not (kind in
+                [
+                    __reflect.PrimitiveKind.String,
+                    __reflect.PrimitiveKind.Bool,
+                    __reflect.PrimitiveKind.Char,
+                    __reflect.PrimitiveKind.Unit,
+                    __reflect.PrimitiveKind.Never,
+                ])
+        _ => false
+    }
+}
+
+/// A value as JSON: records and maps as objects, sequences as arrays, a
+/// variant without payload as its name, an optional as its value or null.
+pub fn jsonOf(value: __reflect.Value): String {
+    let kind = value.typeName()
+    if kind == "String" {
+        return __json.encode(value.to[String]().unwrapOr(""))
+    }
+    if kind == "Bool" or numeric(value) {
+        return "{value}"
+    }
+    if kind.endsWith("?") {
+        return match value.elements().first() {
+            some(inner) => jsonOf(inner)
+            none => "null"
+        }
+    }
+    if kind.startsWith("Map[") {
+        let members = value
+            .entries()
+            .map((entry) { "{__json.encode("{entry.0}")}:{jsonOf(entry.1)}" })
+        return "{{{members.join(",")}}}"
+    }
+    if kind.startsWith("Array[") or kind.startsWith("Set[") or kind.startsWith("Deque[") {
+        return "[{value.elements().map(jsonOf).join(",")}]"
+    }
+    let fields = value.fields()
+    match value.variant() {
+        some(name) if fields.isEmpty() and value.elements().isEmpty() => return __json.encode(name)
+        some(name) if fields.isEmpty() => {
+            let items = value.elements()
+            let payload = if items.length() == 1 {
+                jsonOf(items[0])
+            } else {
+                "[{items.map(jsonOf).join(",")}]"
+            }
+            return "{{{__json.encode(name)}:{payload}}}"
+        }
+        _ => {}
+    }
+    if not fields.isEmpty() {
+        let members = fields.map((field) { "{__json.encode(field.name)}:{jsonOf(field.value)}" })
+        return "{{{members.join(",")}}}"
+    }
+    __json.encode("{value}")
+}

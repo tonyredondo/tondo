@@ -1,0 +1,1043 @@
+// std.cli (standard library 14.32): the command line read into the
+// program's types, as a record of options and arguments or an enum of
+// subcommands, with the help their documentation gives; and what a program
+// writes to a terminal: styles, tables, progress and questions.
+
+import std.console as __console
+import std.env as __env
+import std.internal.text as textNative
+import std.path as __path
+import std.process as __process
+import std.reflect as __reflect
+import std.shapes as __shapes
+import std.sync as __sync
+
+// ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
+
+/// Makes a field a positional argument, in the order of the fields.
+pub annotation Argument = {
+    /// The value when it is missing, written as on the command line.
+    default: String? = none
+}
+
+/// How a field is written as an option: its letter, its value when it is
+/// missing, written as on the command line, the variable of the
+/// environment read before it, and whether the help leaves it out.
+pub annotation Option = {
+    short: String? = none
+    default: String? = none
+    env: String? = none
+    hidden: Bool = false
+}
+
+impl __reflect.Reflect for Argument {
+    fn reflectShow(self, nested: Bool): String {
+        "cli.Argument"
+    }
+}
+
+impl __reflect.Reflect for Option {
+    fn reflectShow(self, nested: Bool): String {
+        "cli.Option"
+    }
+}
+
+/// Why a command line was not read, with the usage of its command, or the
+/// help that it asked for.
+pub type CliError = {
+    message: String
+    help: Bool
+}
+
+impl Display for CliError {
+    fn display(self): String {
+        self.message
+    }
+}
+
+/// A shell whose completion `completions` writes.
+pub enum Shell {
+    Bash
+    Zsh
+    Fish
+}
+
+/// The command line of the program read as a `T`: writes the help asked
+/// for and ends with 0, or writes the error and the usage to standard error
+/// and ends with 2.
+pub fn parse[T: __reflect.Reflect](): T {
+    match parseArgs[T](__env.args()) {
+        ok(value) => value
+        err(error) => {
+            if error.help {
+                __console.print(error.message)
+                _ = __console.flush()
+                __process.exit(0)
+            }
+            __console.eprintln(error.message)
+            __process.exit(2)
+        }
+    }
+}
+
+/// The arguments, without the program's name, read as a `T`.
+pub fn parseArgs[T: __reflect.Reflect](args: Array[String]): T ! CliError {
+    let info = __reflect.typeInfo[T]()
+    let read = valueOf(info, args, program())?
+    match read.to[T]() {
+        ok(value) => value
+        err(error) => panic("std.cli cannot make a `{info}` from the command line: {error}")
+    }
+}
+
+/// The help of the command `T`.
+pub fn help[T: __reflect.Reflect](): String {
+    helpOf(__reflect.typeInfo[T](), program())
+}
+
+/// The name the program is run as.
+fn program(): String {
+    let file = __path.fileName(__env.executable()).unwrapOr("program")
+    file.removeSuffix(".exe")
+}
+
+/// A name of the program's code as the command line writes it: `dryRun` is
+/// `dry-run`.
+fn kebab(name: String): String {
+    var written = ""
+    for c in name.chars() {
+        written = if c.isUpper() and not written.isEmpty() {
+            "{written}-{c.toLower()}"
+        } else {
+            "{written}{c.toLower()}"
+        }
+    }
+    written
+}
+
+/// An option or an argument of a command, from a field of its record.
+type Spec = {
+    field: String
+    name: String
+    docs: String
+    short: String?
+    default: String?
+    env: String?
+    hidden: Bool
+    positional: Bool
+    info: __reflect.TypeInfo
+}
+
+fn specsOf(fields: Array[__reflect.FieldInfo]): Array[Spec] {
+    fields.map(
+        (field) {
+            let argument = field.annotation[Argument]()
+            let option = field.annotation[Option]().unwrapOr(Option {})
+            Spec {
+                field: field.name()
+                name: kebab(field.name())
+                docs: field.docs().unwrapOr("")
+                short: option.short
+                default: match argument {
+                    some(found) => found.default
+                    none => option.default
+                }
+                env: option.env
+                hidden: option.hidden
+                positional: argument.isSome()
+                info: field.typeInfo()
+            }
+        },
+    )
+}
+
+/// What a value of a field is: a flag, one value, an optional one, many,
+/// or the subcommands of an enum.
+enum Arity {
+    Flag
+    One
+    Optional
+    Many
+    Commands
+}
+
+fn arityOf(spec: Spec): Arity {
+    match spec.info.kind() {
+        __reflect.TypeKind.Primitive(__reflect.PrimitiveKind.Bool) if not spec.positional =>
+            Arity.Flag
+        __reflect.TypeKind.Applied(__reflect.AppliedKind.Option) => Arity.Optional
+        __reflect.TypeKind.Applied(__reflect.AppliedKind.Array) => Arity.Many
+        __reflect.TypeKind.Enum if spec.positional and not choices(spec.info) => Arity.Commands
+        _ => Arity.One
+    }
+}
+
+/// The type of the values of a field: its own, or what its optional or
+/// array holds.
+fn element(spec: Spec): __reflect.TypeInfo {
+    match arityOf(spec) {
+        Arity.Optional => spec.info.genericArguments().first().unwrapOr(spec.info)
+        Arity.Many => spec.info.genericArguments().first().unwrapOr(spec.info)
+        _ => spec.info
+    }
+}
+
+/// Whether an enum is a choice of values: none of its variants has data.
+fn choices(info: __reflect.TypeInfo): Bool {
+    info.variants().all((variant) { variant.payloadKind() == __reflect.VariantPayloadKind.Unit })
+}
+
+fn usageError(path: String, problem: String, usage: String): CliError {
+    CliError { message: "error: {problem}\n\n{usage}\nFor more, try `{path} --help`.", help: false }
+}
+
+/// The value a command line writes of a record or an enum.
+fn valueOf(info: __reflect.TypeInfo, args: Array[String], path: String): __reflect.Value ! CliError {
+    match info.kind() {
+        __reflect.TypeKind.Enum => subcommand(info, args, path)?
+        __reflect.TypeKind.Record => __shapes.record(
+            members(info.fields(), info.docs(), args, path)?,
+        )
+        _ => panic("std.cli reads a command line into a record or an enum, and `{info}` is neither")
+    }
+}
+
+/// The subcommand the arguments start with, and what it reads of the rest.
+fn subcommand(info: __reflect.TypeInfo, args: Array[String], path: String): __reflect.Value !
+    CliError {
+    let usage = commandsUsage(info, path)
+    let first = match args.first() {
+        some(first) => first
+        none => fail usageError(path, "a command is missing", usage)
+    }
+    if first == "-h" or first == "--help" {
+        fail CliError { message: helpOf(info, path), help: true }
+    }
+    let variants = info.variants()
+    let names = variants.map((variant) { kebab(variant.name()) })
+    let chosen = match variants.find((variant) { kebab(variant.name()) == first }) {
+        some(chosen) => chosen
+        none => fail usageError(path, "unknown command `{first}`{suggested(first, names)}", usage)
+    }
+    let rest = args.drop(1)
+    let inner = "{path} {first}"
+    match chosen.payloadKind() {
+        __reflect.VariantPayloadKind.Unit => {
+            if rest == ["-h"] or rest == ["--help"] {
+                fail CliError { message: describe(chosen.docs(), "Usage: {inner}\n"), help: true }
+            }
+            if not rest.isEmpty() {
+                fail usageError(
+                    inner,
+                    "`{first}` takes nothing more, and found `{rest[0]}`",
+                    "Usage: {inner}\n",
+                )
+            }
+            __shapes.variant(chosen.name(), [:], [])
+        }
+        __reflect.VariantPayloadKind.Record => {
+            __shapes.variant(
+                chosen.name(),
+                members(chosen.fields(), chosen.docs(), rest, inner)?,
+                [],
+            )
+        }
+        __reflect.VariantPayloadKind.Tuple => {
+            let parts = chosen.tupleElements()
+            if parts.length() != 1 {
+                panic(
+                    "std.cli reads the payload of `{chosen.name()}` when it is one record or one enum",
+                )
+            }
+            let payload = match parts[0].kind() {
+                __reflect.TypeKind.Record => {
+                    let docs = parts[0].docs().orElse(chosen.docs())
+                    __shapes.record(members(parts[0].fields(), docs, rest, inner)?)
+                }
+                __reflect.TypeKind.Enum => subcommand(parts[0], rest, inner)?
+                _ => panic(
+                    "std.cli reads the payload of `{chosen.name()}` when it is one record or one enum",
+                )
+            }
+            __shapes.variant(chosen.name(), [:], [payload])
+        }
+    }
+}
+
+/// The members of a record that the arguments write.
+fn members(fields: Array[__reflect.FieldInfo], docs: String?, args: Array[String], path: String): Map[
+    String,
+    __reflect.Value,
+] !
+    CliError {
+    let specs = specsOf(fields)
+    let usage = recordUsage(specs, path)
+    let options = specs.filter((spec) { not spec.positional })
+    let arguments = specs.filter((spec) { spec.positional })
+    var written: Map[String, Array[String]] = [:]
+    var found: Map[String, __reflect.Value] = [:]
+    var position = 0
+    var index = 0
+    var plain = false
+    for index < args.length() {
+        let arg = args[index]
+        index += 1
+        if not plain and (arg == "-h" or arg == "--help") {
+            fail CliError { message: recordHelp(specs, docs, path), help: true }
+        }
+        if not plain and arg == "--" {
+            plain = true
+            continue
+        }
+        if not plain and arg.startsWith("--") {
+            let (name, inline) = match arg.find("=") {
+                some(at) => (arg.slice(2, at).unwrapOr(""), arg.slice(at + 1, arg.length()).ok())
+                none => (arg.removePrefix("--"), none)
+            }
+            let spec = match options.find((spec) { spec.name == name }) {
+                some(spec) => spec
+                none => {
+                    let known = options.map((spec) { "--{spec.name}" })
+                    fail usageError(
+                        path,
+                        "unknown option `--{name}`{suggested("--{name}", known)}",
+                        usage,
+                    )
+                }
+            }
+            let value = match (arityOf(spec), inline) {
+                (_, some(value)) => value
+                (Arity.Flag, none) => "true"
+                (_, none) => match args.get(index) {
+                    some(next) => {
+                        index += 1
+                        next
+                    }
+                    none => fail usageError(path, "`--{name}` needs a value", usage)
+                }
+            }
+            written[spec.field] = written.get(spec.field).unwrapOr([]).concat([value])
+            continue
+        }
+        if not plain and arg.startsWith("-") and arg.length() > 1 and not (arg[1].isDigit()) {
+            // Letters together, the last of which may take the rest as its value.
+            var at = 1
+            for at < arg.length() {
+                let letter = "{arg[at]}"
+                at += 1
+                let spec = match options.find((spec) { spec.short == some(letter) }) {
+                    some(spec) => spec
+                    none => fail usageError(path, "unknown option `-{letter}`", usage)
+                }
+                if arityOf(spec) == Arity.Flag {
+                    written[spec.field] = written.get(spec.field).unwrapOr([]).concat(["true"])
+                    continue
+                }
+                let value = if at < arg.length() {
+                    arg.slice(at, arg.length()).unwrapOr("")
+                } else {
+                    match args.get(index) {
+                        some(next) => {
+                            index += 1
+                            next
+                        }
+                        none => fail usageError(path, "`-{letter}` needs a value", usage)
+                    }
+                }
+                written[spec.field] = written.get(spec.field).unwrapOr([]).concat([value])
+                at = arg.length()
+            }
+            continue
+        }
+        // A positional argument; an enum's takes the rest as its command.
+        let spec = match arguments.get(position) {
+            some(spec) => spec
+            none => fail usageError(path, "unexpected argument `{arg}`", usage)
+        }
+        if arityOf(spec) == Arity.Commands {
+            found[spec.field] = subcommand(spec.info, args.drop(index - 1), path)?
+            index = args.length()
+            continue
+        }
+        written[spec.field] = written.get(spec.field).unwrapOr([]).concat([arg])
+        if arityOf(spec) != Arity.Many {
+            position += 1
+        }
+    }
+    for spec in specs {
+        if spec.field in found {
+            continue
+        }
+        var texts = written.get(spec.field).unwrapOr([])
+        if texts.isEmpty() {
+            match spec.env.map((name) { __env.get(name) }) {
+                some(some(value)) => texts = [value]
+                _ => {}
+            }
+        }
+        if texts.isEmpty() {
+            match spec.default {
+                some(value) => texts = [value]
+                none => {}
+            }
+        }
+        let shown = if spec.positional { "<{spec.name}>" } else { "--{spec.name}" }
+        match arityOf(spec) {
+            Arity.Flag => {
+                let value = texts.last().unwrapOr("false")
+                found[spec.field] = typed(spec.info, value, shown, path, usage)?
+            }
+            Arity.Optional => match texts.last() {
+                some(value) => found[spec.field] = typed(element(spec), value, shown, path, usage)?
+                none => {}
+            }
+            Arity.Many => {
+                var items: Array[__reflect.Value] = []
+                for value in texts {
+                    items.push(typed(element(spec), value, shown, path, usage)?)
+                }
+                found[spec.field] = __shapes.sequence(items)
+            }
+            Arity.Commands => fail usageError(path, "a command is missing", usage)
+            Arity.One => match texts.last() {
+                some(value) => found[spec.field] = typed(spec.info, value, shown, path, usage)?
+                none => fail usageError(path, "`{shown}` is missing", usage)
+            }
+        }
+    }
+    found
+}
+
+/// The value of a type that a text of the command line writes.
+fn typed(info: __reflect.TypeInfo, written: String, shown: String, path: String, usage: String): __reflect.Value !
+    CliError {
+    match info.kind() {
+        __reflect.TypeKind.Primitive(kind) => match __shapes.scalar(kind, written) {
+            ok(value) => value
+            err(problem) => fail usageError(path, "{shown}: {problem}", usage)
+        }
+        __reflect.TypeKind.Enum if choices(info) => {
+            let names = info.variants().map((variant) { kebab(variant.name()) })
+            match info.variants().find((variant) { kebab(variant.name()) == written }) {
+                some(variant) => __shapes.variant(variant.name(), [:], [])
+                none => fail usageError(
+                    path,
+                    "{shown}: `{written}` is not one of {names.join(", ")}",
+                    usage,
+                )
+            }
+        }
+        __reflect.TypeKind.Newtype => match info.underlying() {
+            some(inner) => typed(inner, written, shown, path, usage)?
+            none => panic("std.cli cannot read a `{info}`")
+        }
+        _ => panic(
+            "std.cli reads texts, characters, numbers, `Bool`s and enums without data, optional or in arrays, and not a `{info}`",
+        )
+    }
+}
+
+/// "; did you mean `x`?", for the name nearest to what was written.
+fn suggested(written: String, names: Array[String]): String {
+    var best = ""
+    var distance = written.length() / 2 + 2
+    for name in names {
+        let apart = edits(written, name)
+        if apart < distance {
+            best = name
+            distance = apart
+        }
+    }
+    if best.isEmpty() { "" } else { "; did you mean `{best}`?" }
+}
+
+/// How many characters to add, remove or change to make one text the other.
+fn edits(a: String, b: String): Int {
+    let left: Array[Char] = a.chars().collect()
+    let right: Array[Char] = b.chars().collect()
+    var previous: Array[Int] = []
+    for j in 0..=right.length() {
+        previous.push(j)
+    }
+    for i in 1..=left.length() {
+        var current = [i]
+        for j in 1..=right.length() {
+            let change = previous[j - 1] + if left[i - 1] == right[j - 1] { 0 } else { 1 }
+            current.push(change.min(previous[j] + 1).min(current[j - 1] + 1))
+        }
+        previous = current
+    }
+    previous[right.length()]
+}
+
+// ---------------------------------------------------------------------------
+// Help
+// ---------------------------------------------------------------------------
+
+fn helpOf(info: __reflect.TypeInfo, path: String): String {
+    match info.kind() {
+        __reflect.TypeKind.Enum => describe(info.docs(), commandsUsage(info, path))
+        _ => recordHelp(specsOf(info.fields()), info.docs(), path)
+    }
+}
+
+fn describe(docs: String?, usage: String): String {
+    match docs {
+        some(text) => "{text}\n\n{usage}"
+        none => usage
+    }
+}
+
+/// Rows of two columns, the first padded to the widest.
+fn lined(rows: Array[(String, String)]): String {
+    var wide = 0
+    for (left, _) in rows {
+        wide = wide.max(left.length())
+    }
+    var written = ""
+    for (left, right) in rows {
+        let line = if right.isEmpty() { "  {left}" } else { "  {left.padEnd(wide)}  {right}" }
+        written = "{written}{line}\n"
+    }
+    written
+}
+
+fn firstLine(docs: String?): String {
+    docs.unwrapOr("").lines().first().unwrapOr("")
+}
+
+fn commandsUsage(info: __reflect.TypeInfo, path: String): String {
+    let rows = info.variants().map((variant) { (kebab(variant.name()), firstLine(variant.docs())) })
+    "Usage: {path} <command>\n\nCommands:\n{lined(rows)}"
+}
+
+fn recordUsage(specs: Array[Spec], path: String): String {
+    var line = "Usage: {path}"
+    if specs.any((spec) { not spec.positional }) {
+        line = "{line} [options]"
+    }
+    for spec in specs.filter((spec) { spec.positional }) {
+        line = match arityOf(spec) {
+            Arity.Optional => "{line} [{spec.name}]"
+            Arity.Many => "{line} [{spec.name}...]"
+            Arity.Commands => "{line} <command>"
+            _ => "{line} <{spec.name}>"
+        }
+    }
+    "{line}\n"
+}
+
+fn recordHelp(specs: Array[Spec], docs: String?, path: String): String {
+    var written = describe(docs, recordUsage(specs, path))
+    let arguments = specs.filter((spec) { spec.positional })
+    if not arguments.isEmpty() {
+        written =
+            "{written}\nArguments:\n{lined(arguments.map((spec) { ("<{spec.name}>", details(spec)) }))}"
+        for spec in arguments {
+            if arityOf(spec) == Arity.Commands {
+                let rows = spec.info
+                    .variants()
+                    .map((variant) { (kebab(variant.name()), firstLine(variant.docs())) })
+                written = "{written}\nCommands:\n{lined(rows)}"
+            }
+        }
+    }
+    var rows: Array[(String, String)] = []
+    for spec in specs.filter((spec) { not spec.positional and not spec.hidden }) {
+        let letter = match spec.short {
+            some(short) => "-{short}, "
+            none => "    "
+        }
+        let value = match arityOf(spec) {
+            Arity.Flag => ""
+            Arity.Many => " <{spec.name}>..."
+            _ => " <{spec.name}>"
+        }
+        rows.push(("{letter}--{spec.name}{value}", details(spec)))
+    }
+    rows.push(("-h, --help", "Shows this help."))
+    "{written}\nOptions:\n{lined(rows)}"
+}
+
+/// A field's help: its documentation, its choices, default and variable.
+fn details(spec: Spec): String {
+    var written = firstLine(some(spec.docs))
+    let values = element(spec)
+    if values.kind() == __reflect.TypeKind.Enum and choices(values) {
+        written =
+            "{written} [{values.variants().map((variant) { kebab(variant.name()) }).join(", ")}]"
+    }
+    match spec.default {
+        some(value) => written = "{written} [default: {value}]"
+        none => {}
+    }
+    match spec.env {
+        some(name) => written = "{written} [env: {name}]"
+        none => {}
+    }
+    written.trim()
+}
+
+// ---------------------------------------------------------------------------
+// Completion
+// ---------------------------------------------------------------------------
+
+/// A command the completion knows: its words after the program, and what
+/// may follow them.
+type Completed = {
+    path: Array[String]
+    words: Array[String]
+}
+
+fn completedOf(info: __reflect.TypeInfo, path: Array[String]): Array[Completed] {
+    var found: Array[Completed] = []
+    match info.kind() {
+        __reflect.TypeKind.Enum => {
+            found.push(
+                Completed { path, words: info.variants().map((variant) { kebab(variant.name()) }) },
+            )
+            for variant in info.variants() {
+                let inner = path.concat([kebab(variant.name())])
+                match variant.payloadKind() {
+                    __reflect.VariantPayloadKind.Record => found.extend(
+                        fieldsCompleted(variant.fields(), inner),
+                    )
+                    __reflect.VariantPayloadKind.Tuple => {
+                        for part in variant.tupleElements() {
+                            found.extend(completedOf(part, inner))
+                        }
+                    }
+                    __reflect.VariantPayloadKind.Unit => found.push(
+                        Completed { path: inner, words: [] },
+                    )
+                }
+            }
+        }
+        __reflect.TypeKind.Record => found.extend(fieldsCompleted(info.fields(), path))
+        _ => {}
+    }
+    found
+}
+
+fn fieldsCompleted(fields: Array[__reflect.FieldInfo], path: Array[String]): Array[Completed] {
+    let specs = specsOf(fields)
+    var words: Array[String] = ["--help"]
+    var found: Array[Completed] = []
+    for spec in specs {
+        if not spec.positional and not spec.hidden {
+            words.push("--{spec.name}")
+        }
+        if arityOf(spec) == Arity.Commands {
+            found.extend(completedOf(spec.info, path))
+        }
+    }
+    found.insert(0, Completed { path, words })
+    found
+}
+
+/// The script that completes the program's command line in `shell`.
+pub fn completions[T: __reflect.Reflect](shell: Shell): String {
+    let name = program()
+    let commands = completedOf(__reflect.typeInfo[T](), [])
+    let function = "_{name.replace("-", "_")}"
+    match shell {
+        Shell.Fish => {
+            var script = ""
+            for command in commands {
+                let seen = match command.path.last() {
+                    some(last) => "__fish_seen_subcommand_from {last}"
+                    none => "__fish_use_subcommand"
+                }
+                for word in command.words {
+                    let item = if word.startsWith("--") {
+                        "-l {word.removePrefix("--")}"
+                    } else {
+                        "-a {word}"
+                    }
+                    script = "{script}complete -c {name} -f -n '{seen}' {item}\n"
+                }
+            }
+            script
+        }
+        _ => {
+            var cases = ""
+            for command in commands {
+                cases =
+                    "{cases}        \"{command.path.join(" ")}\") words=\"{command.words.join(" ")}\" ;;\n"
+            }
+            let bash =
+                "{function}() {{\n    local path=\"\" word\n    for word in \"${{COMP_WORDS[@]:1:COMP_CWORD-1}}\"; do\n        case \"$word\" in -*) ;; *) local next=\"${{path:+$path }}$word\"; {function}_known \"$next\" && path=\"$next\" ;; esac\n    done\n    local words\n    case \"$path\" in\n{cases}        *) words=\"\" ;;\n    esac\n    COMPREPLY=($(compgen -W \"$words\" -- \"${{COMP_WORDS[COMP_CWORD]}}\"))\n}}\n{function}_known() {{\n    case \"$1\" in\n{commands.map((c) { "        \"{c.path.join(" ")}\") return 0 ;;\n" }).join("")}    esac\n    return 1\n}}\ncomplete -F {function} {name}\n"
+            match shell {
+                Shell.Zsh => "#compdef {name}\nautoload -U +X bashcompinit && bashcompinit\n{bash}"
+                _ => bash
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The terminal
+// ---------------------------------------------------------------------------
+
+/// Whether the console's output is a terminal.
+pub fn isTerminal(): Bool {
+    textNative.terminal(0)
+}
+
+/// The columns of the terminal of the console's output, or 80 without one.
+pub fn width(): Int {
+    let found = if isTerminal() { textNative.terminalWidth() } else { 0 }
+    if found > 0 { found } else { 80 }
+}
+
+/// Whether styles write their codes: on a terminal without `NO_COLOR`, or
+/// with `FORCE_COLOR`.
+fn painting(): Bool {
+    match __env.get("FORCE_COLOR") {
+        some(value) if value != "" and value != "0" => return true
+        _ => {}
+    }
+    isTerminal() and __env.get("NO_COLOR").isNone() and __env.get("TERM") != some("dumb")
+}
+
+/// A text with styles: `[bold red]error[/]` writes `error` in bold red, and
+/// what follows as it was; blocks nest, and `[[` and `]]` write brackets.
+/// With an interpolated string, its values are written as they are.
+pub fn markup(text: String): String {
+    let paint = painting()
+    let chars: Array[Char] = text.chars().collect()
+    var written = ""
+    var styles: Array[String] = []
+    var at = 0
+    for at < chars.length() {
+        let c = chars[at]
+        let next = chars.get(at + 1)
+        if c == '[' and next == some('[') {
+            written = "{written}["
+            at += 2
+            continue
+        }
+        if c == ']' and next == some(']') {
+            written = "{written}]"
+            at += 2
+            continue
+        }
+        if c == '[' {
+            var close = at + 1
+            for close < chars.length() and chars[close] != ']' {
+                close += 1
+            }
+            let tag = if close < chars.length() {
+                text.slice(at + 1, close).unwrapOr("")
+            } else {
+                ""
+            }
+            if tag == "/" and not styles.isEmpty() {
+                _ = styles.pop()
+                if paint {
+                    written = "{written}\u{1b}[0m{styles.join("")}"
+                }
+                at = close + 1
+                continue
+            }
+            match codes(tag) {
+                some(code) if close < chars.length() => {
+                    styles.push(code)
+                    if paint {
+                        written = "{written}{code}"
+                    }
+                    at = close + 1
+                    continue
+                }
+                _ => {}
+            }
+        }
+        written = "{written}{c}"
+        at += 1
+    }
+    if paint and not styles.isEmpty() {
+        written = "{written}\u{1b}[0m"
+    }
+    written
+}
+
+/// A value inside a markup that a program interpolates: its brackets as
+/// they are.
+fn markupText(value: String): String {
+    value.replace("[", "[[").replace("]", "]]")
+}
+
+/// The codes of a style: colors, `on` a color, and decorations.
+fn codes(style: String): String? {
+    if style.trim().isEmpty() {
+        return none
+    }
+    var numbers: Array[String] = []
+    var background = false
+    for word in style.words() {
+        if word == "on" {
+            background = true
+            continue
+        }
+        let code = match word {
+            "bold" => "1"
+            "dim" => "2"
+            "italic" => "3"
+            "underline" => "4"
+            "strikethrough" => "9"
+            _ => match colorCode(word, background) {
+                some(color) => color
+                none => return none
+            }
+        }
+        background = false
+        numbers.push(code)
+    }
+    if background {
+        return none
+    }
+    some("\u{1b}[{numbers.join(";")}m")
+}
+
+/// The code of a color, of the text or of its `background`.
+fn colorCode(word: String, background: Bool): String? {
+    let base = if background { 40 } else { 30 }
+    let names = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"]
+    for index in 0..names.length() {
+        if names[index] == word {
+            return some("{base + index}")
+        }
+    }
+    if word == "gray" {
+        return some("{base + 60}")
+    }
+    if word.startsWith("#") and word.length() == 7 {
+        let digits = word.removePrefix("#")
+        let part = (from: Int) {
+            Int.parse(digits.slice(from, from + 2).unwrapOr(""), radix: 16).ok()
+        }
+        match (part(0), part(2), part(4)) {
+            (some(r), some(g), some(b)) => return some("{base + 8};2;{r};{g};{b}")
+            _ => {}
+        }
+    }
+    none
+}
+
+/// How many characters of a text show, without the codes of its styles.
+fn visible(text: String): Int {
+    var count = 0
+    var escaping = false
+    for c in text.chars() {
+        if escaping {
+            escaping = c != 'm'
+        } else if c == '\u{1b}' {
+            escaping = true
+        } else {
+            count += 1
+        }
+    }
+    count
+}
+
+/// A table of the records, a column a field, or those `columns` names in
+/// their order: the header the field's name, the numbers to the right.
+pub fn table[T: __reflect.Reflect](rows: Array[T], columns: Array[String] = []): String {
+    let info = __reflect.typeInfo[T]()
+    let fields = info.fields()
+    let names = if columns.isEmpty() { fields.map((field) { field.name() }) } else { columns }
+    for name in names {
+        if not fields.any((field) { field.name() == name }) {
+            panic(
+                "`{info}` has no field `{name}`: its fields are {fields.map((field) { field.name() }).join(", ")}",
+            )
+        }
+    }
+    var cells: Array[Array[String]] = []
+    var right: Array[Bool] = names.map((_) { false })
+    for row in rows {
+        let value = __reflect.valueOf(row)
+        var line: Array[String] = []
+        for index in 0..names.length() {
+            let found = value.get(names[index]).expect("a field of the record")
+            line.push(cellOf(found))
+            right[index] = right[index] or __shapes.numeric(found)
+        }
+        cells.push(line)
+    }
+    var widths = names.map((name) { name.length() })
+    for line in cells {
+        for index in 0..line.length() {
+            widths[index] = widths[index].max(visible(line[index]))
+        }
+    }
+    let rule = (left: String, middle: String, end: String) {
+        "{left}{widths.map((wide) { "─".repeat(wide + 2) }).join(middle)}{end}\n"
+    }
+    let row = (line: Array[String]) {
+        var written = "│"
+        for index in 0..line.length() {
+            let padding = " ".repeat(widths[index] - visible(line[index]))
+            written = if right[index] {
+                "{written} {padding}{line[index]} │"
+            } else {
+                "{written} {line[index]}{padding} │"
+            }
+        }
+        "{written}\n"
+    }
+    var written = rule("┌", "┬", "┐")
+    written = "{written}{row(names)}{rule("├", "┼", "┤")}"
+    for line in cells {
+        written = "{written}{row(line)}"
+    }
+    "{written}{rule("└", "┴", "┘")}"
+}
+
+fn cellOf(value: __reflect.Value): String {
+    if value.typeName().endsWith("?") {
+        return match value.elements().first() {
+            some(inner) => cellOf(inner)
+            none => ""
+        }
+    }
+    "{value}"
+}
+
+/// A bar of the progress of some work, or a spinner when it has no total,
+/// that the console's output shows on a terminal.
+pub type Progress = {
+    priv state: __sync.Mutex[Bar]
+}
+
+type Bar = {
+    label: String
+    total: Int?
+    done: Int
+    frame: Int
+    terminal: Bool
+    finished: Bool
+}
+
+/// A progress of the work `label` of `total` steps, drawn now.
+pub fn progress(label: String, total: Int? = none): Progress {
+    let bar = Bar { label, total, done: 0, frame: 0, terminal: isTerminal(), finished: false }
+    drawBar(bar)
+    Progress { state: __sync.Mutex(bar) }
+}
+
+/// Counts `by` more steps done.
+pub fn Progress.advance(self, by: Int = 1) {
+    self.state.update(
+        (bar) {
+            if not bar.finished {
+                bar.done += by
+                bar.frame += 1
+                drawBar(bar)
+            }
+        },
+    )
+}
+
+/// Ends the progress: a full bar on a terminal, or one line without one.
+pub fn Progress.finish(self) {
+    self.state.update(
+        (bar) {
+            if bar.finished {
+                return
+            }
+            bar.finished = true
+            if bar.terminal {
+                drawBar(bar)
+                __console.println("")
+            } else {
+                let count = match bar.total {
+                    some(total) => "{bar.done}/{total}"
+                    none => "{bar.done}"
+                }
+                __console.println("{bar.label}: {count}")
+            }
+            _ = __console.flush()
+        },
+    )
+}
+
+fn drawBar(bar: Bar) {
+    if not bar.terminal {
+        return
+    }
+    let line = match bar.total {
+        some(total) => {
+            let size = 30
+            let filled = if total > 0 { (bar.done.min(total) * size) / total } else { size }
+            "{bar.label} {"█".repeat(filled)}{"░".repeat(size - filled)} {bar.done}/{total}"
+        }
+        none => {
+            let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+            let mark = if bar.finished { "✓" } else { frames[bar.frame % frames.length()] }
+            "{mark} {bar.label} {bar.done}"
+        }
+    }
+    __console.print("\r{line}\u{1b}[K")
+    _ = __console.flush()
+}
+
+/// The answer to a question, or `default` when it is left empty.
+pub fn ask(question: String, default: String = ""): String {
+    let hint = if default.isEmpty() { "" } else { " [{default}]" }
+    match answer("{question}{hint}: ") {
+        some(text) if not text.isEmpty() => text
+        _ => default
+    }
+}
+
+/// `true` for `y` or `yes`, `false` for `n` or `no`, `default` when it is
+/// left empty.
+pub fn confirm(question: String, default: Bool = false): Bool {
+    let hint = if default { "[Y/n]" } else { "[y/N]" }
+    for {
+        match answer("{question} {hint}: ").map((text) { text.toLower() }) {
+            some(text) if text == "y" or text == "yes" => return true
+            some(text) if text == "n" or text == "no" => return false
+            some(text) if not text.isEmpty() => {}
+            _ => return default
+        }
+    }
+}
+
+/// The index of the option chosen by its number.
+pub fn choose(question: String, options: Array[String]): Int {
+    __console.println(question)
+    for index in 0..options.length() {
+        __console.println("  {index + 1}. {options[index]}")
+    }
+    for {
+        let text = match answer("Choose 1-{options.length()}: ") {
+            some(text) => text
+            none => return 0
+        }
+        match Int.parse(text) {
+            ok(number) if number >= 1 and number <= options.length() => return number - 1
+            _ => {}
+        }
+    }
+}
+
+/// An answer read without showing it, when the input is a terminal.
+pub fn secret(question: String): String {
+    let hidden = textNative.terminal(2) and textNative.terminalEcho(false)
+    let text = answer("{question}: ")
+    if hidden {
+        _ = textNative.terminalEcho(true)
+        __console.println("")
+    }
+    text.unwrapOr("")
+}
+
+fn answer(prompt: String): String? {
+    __console.print(prompt)
+    _ = __console.flush()
+    __console.readLine().map((text) { text.trim() })
+}

@@ -3168,3 +3168,32 @@ Rust, reads both kinds, for the compiler and for the runtime, which gives
 `std/template.to` the parts of a template to interpret; their escaping,
 their formats and the code of a `Set` are Tondo.
 
+## 2026-10-30 — Commands and MCP servers from the program's types
+
+The seventh lot. A command line is read into a type, as clap does with its
+derive, and not built with calls, as cobra does: the record is what the
+program uses, so it is the description too, typed, and its `///` the help,
+which cannot fall out of step with the code. An enum is the subcommands. Both
+are read by reflection, which now gives the documentation of types,
+variants and methods as it gave that of fields. A default is a text, as
+written on the command line, since an annotation cannot hold a value of each
+field's type.
+
+Styles are Spectre's markup, blocks that return to the style before, rather
+than functions that wrap a text, whose resets do not nest. Since the
+compiler sees which parts of an interpolated markup are the program's and
+which are values, it escapes the values and checks the styles, which spares
+Spectre's `Markup.Escape` and its errors at run time. Everything a terminal
+shows goes through `console`, as in Spectre, and only errors go to standard
+error; a bar or a question off a terminal writes nothing that a pipe would
+mind.
+
+An MCP server is a value whose `pub` methods are its tools, as the helpers of
+a `template.Set` are its functions: one idea for both. A tool with one record
+parameter takes the record's fields as its arguments, which is how their
+documentation reaches the schema a model reads. While `mcp.serve` serves,
+the console writes to standard error, since a `println` on the protocol's
+stream would break it. For the error of a tool to be its `Display`,
+reflection shows a value whose type implements `Display` in its file as it
+displays, which a `Set` writes too.
+

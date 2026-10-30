@@ -1,0 +1,77 @@
+// What std.cli writes to a terminal: styles in a markup, whose values are
+// text, codes only on a terminal or with `FORCE_COLOR`; tables of records;
+// progress, which off a terminal writes one line; and questions, answered
+// from the console's input.
+
+import std.cli
+import std.console
+import std.env
+import std.io
+
+pub type User = {
+    name: String
+    age: Int
+    email: String?
+}
+
+fn main() {
+    let message = "a [b] c"
+    console.println(cli.markup("[green]ok[/] value: [bold]{message}[/] [[literal]]"))
+    env.set("FORCE_COLOR", "1")
+    let styled = cli.markup(
+        "[bold red on yellow]warn[/] [#ff8800]{message}[/] [bold]a [italic]b[/] c[/] [gray on blue]g[/]",
+    )
+    console.println(styled.replace("\u{1b}", "^"))
+    let written = "[blue]plain[/] [unknown]x"
+    console.println(cli.markup(written).replace("\u{1b}", "^"))
+    env.remove("FORCE_COLOR")
+    console.println("{cli.isTerminal()} {cli.width()}")
+    let users = [
+        User { name: "Ada", age: 36, email: some("ada@example.com") },
+        User { name: "Grace", age: 120, email: none },
+    ]
+    console.print(cli.table(users))
+    console.print(cli.table(users, columns: ["age", "name"]))
+    let bar = cli.progress("Building", total: 3)
+    bar.advance()
+    bar.advance(by: 2)
+    bar.finish()
+    let spinner = cli.progress("Waiting")
+    spinner.advance()
+    spinner.finish()
+    console.setInput(io.reader("Ada\n\nmaybe\nY\n7\n2\nhunter2\n"))
+    console.println("<{cli.ask("Name")}>")
+    console.println("<{cli.ask("City", default: "Lima")}>")
+    console.println("<{cli.confirm("Go on?")}>")
+    console.println("<{cli.choose("Pick one", ["tea", "coffee"])}>")
+    console.println("<{cli.secret("Password")}>")
+    console.println("<{cli.confirm("Again?", default: true)}>")
+}
+
+// expect-stdout: ok value: a [b] c [literal]
+// expect-stdout: ^[1;31;43mwarn^[0m ^[38;2;255;136;0ma [b] c^[0m ^[1ma ^[3mb^[0m^[1m c^[0m ^[90;44mg^[0m
+// expect-stdout: ^[34mplain^[0m [unknown]x
+// expect-stdout: false 80
+// expect-stdout: ┌───────┬─────┬─────────────────┐
+// expect-stdout: │ name  │ age │ email           │
+// expect-stdout: ├───────┼─────┼─────────────────┤
+// expect-stdout: │ Ada   │  36 │ ada@example.com │
+// expect-stdout: │ Grace │ 120 │                 │
+// expect-stdout: └───────┴─────┴─────────────────┘
+// expect-stdout: ┌─────┬───────┐
+// expect-stdout: │ age │ name  │
+// expect-stdout: ├─────┼───────┤
+// expect-stdout: │  36 │ Ada   │
+// expect-stdout: │ 120 │ Grace │
+// expect-stdout: └─────┴───────┘
+// expect-stdout: Building: 3/3
+// expect-stdout: Waiting: 1
+// expect-stdout: Name: <Ada>
+// expect-stdout: City [Lima]: <Lima>
+// expect-stdout: Go on? [y/N]: Go on? [y/N]: <true>
+// expect-stdout: Pick one
+// expect-stdout:   1. tea
+// expect-stdout:   2. coffee
+// expect-stdout: Choose 1-2: Choose 1-2: <1>
+// expect-stdout: Password: <hunter2>
+// expect-stdout: Again? [Y/n]: <true>

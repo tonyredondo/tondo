@@ -13,6 +13,7 @@ import std.io as __io
 import std.json as __json
 import std.reflect as __reflect
 import std.serialization as __serialization
+import std.shapes as __shapes
 
 // ---------------------------------------------------------------------------
 // Compiled templates
@@ -1152,7 +1153,7 @@ fn Run.written(self, scope: Scope, value: __reflect.Value, format: Format?, plac
         return self.shown(scope, value, format, at)?
     }
     if place == 6 or place == 7 {
-        let written = scriptSafe(jsonOf(value))
+        let written = scriptSafe(__shapes.jsonOf(value))
         return if place == 7 { codecNative.htmlEscape(written) } else { written }
     }
     if place == 0 and kind.endsWith("template.Html") {
@@ -1244,38 +1245,6 @@ fn firstChar(written: String?, otherwise: Char): Char {
         some(c) => c.get(0).unwrapOr(otherwise)
         none => otherwise
     }
-}
-
-/// A value as JSON, for a script.
-fn jsonOf(value: __reflect.Value): String {
-    let kind = value.typeName()
-    if kind == "String" {
-        return __json.encode(value.to[String]().unwrapOr(""))
-    }
-    if kind == "Bool" or number(value).isSome() {
-        return "{value}"
-    }
-    if kind.endsWith("?") {
-        return match value.elements().first() {
-            some(inner) => jsonOf(inner)
-            none => "null"
-        }
-    }
-    if kind.startsWith("Map[") {
-        let members = value
-            .entries()
-            .map((entry) { "{__json.encode("{entry.0}")}:{jsonOf(entry.1)}" })
-        return "{{{members.join(",")}}}"
-    }
-    if kind.startsWith("Array[") or kind.startsWith("Set[") or kind.startsWith("Deque[") {
-        return "[{value.elements().map(jsonOf).join(",")}]"
-    }
-    let fields = value.fields()
-    if not fields.isEmpty() {
-        let members = fields.map((field) { "{__json.encode(field.name)}:{jsonOf(field.value)}" })
-        return "{{{members.join(",")}}}"
-    }
-    __json.encode("{value}")
 }
 
 // ---------------------------------------------------------------------------

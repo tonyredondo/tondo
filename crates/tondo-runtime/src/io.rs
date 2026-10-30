@@ -983,6 +983,40 @@ pub extern "C" fn tondo_rt_console_set(index: i64, stream: *mut StreamObject) {
     unsafe { tondo_rt_stream_release(previous) };
 }
 
+/// Whether the console stream at `index`, 0 the output and 2 the input, is
+/// still the process's own and a terminal.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_console_terminal(index: i64) -> u8 {
+    let replaced = console().as_ref().unwrap().1[index as usize];
+    (!replaced && unsafe { libc::isatty(index.clamp(0, 2) as i32) } == 1) as u8
+}
+
+/// The columns of the terminal of standard output, or 0 without one.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_console_width() -> i64 {
+    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+    match unsafe { libc::ioctl(1, libc::TIOCGWINSZ, &mut size) } {
+        0 => size.ws_col as i64,
+        _ => 0,
+    }
+}
+
+/// Turns the echo of the terminal of standard input on or off, and says
+/// whether it could.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_console_echo(on: u8) -> u8 {
+    let mut settings: libc::termios = unsafe { std::mem::zeroed() };
+    if unsafe { libc::tcgetattr(0, &mut settings) } != 0 {
+        return 0;
+    }
+    if on != 0 {
+        settings.c_lflag |= libc::ECHO;
+    } else {
+        settings.c_lflag &= !libc::ECHO;
+    }
+    (unsafe { libc::tcsetattr(0, libc::TCSANOW, &settings) } == 0) as u8
+}
+
 /// The console stream at `index` when the program replaced it, with one
 /// more reference: a child process that inherits it writes there.
 pub(crate) fn replaced_console(index: usize) -> Option<*mut StreamObject> {

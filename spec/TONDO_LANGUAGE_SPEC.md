@@ -8518,6 +8518,7 @@ oculten un diagnóstico independiente.
 | `E1904` | `invalid-embed` | `std.embed` recibe una ruta que no es un literal, sale del paquete o no existe, un directorio donde va un archivo o al revés, o un archivo que no es UTF-8 en `text`. |
 | `E1905` | `invalid-time-pattern` | Un patrón literal de `format` o de la lectura de fechas de `std.time` tiene una directiva que no existe, o uno para leer no lee una fecha entera; o un locale literal no tiene nombres (biblioteca estándar 14.3.5). |
 | `E1906` | `invalid-template` | Una plantilla de `std.template` no se lee, no tiene su texto al compilar, o una acción escribe donde el HTML no lo admite (biblioteca estándar 14.31). |
+| `E1907` | `invalid-markup` | El markup literal de `cli.markup` tiene un estilo que no existe, que no se cierra o que cierra otro que no está abierto, o que da un valor (biblioteca estándar 14.32). |
 
 #### Testing
 

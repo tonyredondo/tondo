@@ -1,0 +1,166 @@
+// std.mcp serves the methods of a value: each `pub` method a tool, whose
+// arguments are the fields of its one record, with their documentation as
+// their schema; a resource or a prompt as its annotation says. A failure
+// is the tool's error, written with its `Display`; while it serves, the
+// console's output goes to standard error. A route of std.http serves the
+// same.
+
+import std.console
+import std.http
+import std.io
+import std.json
+import std.mcp
+import std.net
+
+pub enum Units {
+    Metric
+    Imperial
+}
+
+pub type ForecastInput = {
+    /// The city, as `Madrid`.
+    city: String
+    /// How many days, from 1 to 7.
+    days: Int?
+    units: Units?
+}
+
+pub type Day = {
+    day: Int
+    high: Float
+}
+
+pub type Forecast = {
+    city: String
+    days: Array[Day]
+}
+
+pub enum WeatherError {
+    Unknown(String)
+}
+
+impl Display for WeatherError {
+    fn display(self): String {
+        match self {
+            WeatherError.Unknown(city) => "no forecast for {city}"
+        }
+    }
+}
+
+/// Looks up the weather.
+pub type Weather = {
+    base: Float
+}
+
+/// The forecast of a city for the next days.
+pub fn Weather.forecast(self, input: ForecastInput): Forecast ! WeatherError {
+    if input.city == "Atlantis" {
+        fail WeatherError.Unknown(input.city)
+    }
+    var days: Array[Day] = []
+    for day in 0..input.days.unwrapOr(2) {
+        days.push(Day { day, high: self.base + Float(day) })
+    }
+    Forecast { city: input.city, days }
+}
+
+/// Adds two numbers.
+pub fn Weather.add(self, a: Int, b: Int): Int {
+    a + b
+}
+
+/// Says hello.
+pub fn Weather.greet(self, name: String): String {
+    console.println("this goes to standard error")
+    "Hello, {name}!"
+}
+
+/// Breaks.
+pub fn Weather.broken(self): Int {
+    panic("out of order")
+}
+
+/// How to use the service.
+@mcp.Resource(uri: "weather://guide", mime: "text/markdown")
+pub fn Weather.guide(self): String {
+    "# Weather"
+}
+
+/// A city's page.
+@mcp.Resource(uri: r"weather://cities/{name}")
+pub fn Weather.city(self, name: String): String {
+    "City {name}"
+}
+
+/// Asks for a forecast.
+@mcp.Prompt
+pub fn Weather.ask(self, city: String, mood: String?): String {
+    "What is the weather in {city}? {mood.unwrapOr("")}"
+}
+
+fn main(): !(mcp.McpError | http.HttpError | net.NetError) {
+    let messages = [
+        r"""{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}""",
+        r"""{"jsonrpc":"2.0","method":"notifications/initialized"}""",
+        r"""{"jsonrpc":"2.0","id":2,"method":"tools/list"}""",
+        r"""{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"forecast","arguments":{"city":"Madrid","days":2,"units":"Metric"}}}""",
+        r"""{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"forecast","arguments":{"city":"Atlantis"}}}""",
+        r"""{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"add","arguments":{"a":2,"b":3}}}""",
+        r"""{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"greet","arguments":{"name":"Ada"}}}""",
+        r"""{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"add","arguments":{"a":"x"}}}""",
+        r"""{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"broken"}}""",
+        r"""{"jsonrpc":"2.0","id":9,"method":"resources/list"}""",
+        r"""{"jsonrpc":"2.0","id":10,"method":"resources/templates/list"}""",
+        r"""{"jsonrpc":"2.0","id":11,"method":"resources/read","params":{"uri":"weather://cities/Lima"}}""",
+        r"""{"jsonrpc":"2.0","id":12,"method":"prompts/get","params":{"name":"ask","arguments":{"city":"Oslo"}}}""",
+        r"""{"jsonrpc":"2.0","id":13,"method":"server/discover"}""",
+        r"""{"jsonrpc":"2.0","id":14,"method":"nope","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}""",
+        r"""{"jsonrpc":"2.0","id":15,"method":"ping","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"1999-01-01"}}}""",
+    ]
+    let output = console.stdout()
+    let protocol = io.Buffer()
+    console.setOutput(protocol.writer())
+    console.setInput(io.reader(messages.join("\n")))
+    mcp.serve(Weather { base: 20.0 }, name: "weather")?
+    console.setOutput(output)
+    // Each request is answered in a task of its own, so in any order.
+    var replies: Array[(Int, String)] = []
+    for line in protocol.text().unwrapOr("").lines() {
+        let reply = json.parse(line).unwrapOr(json.Value.Null)
+        replies.push((reply.field("id").asInt().unwrapOr(0), line))
+    }
+    for (_, line) in replies.sortedWith((a, b) { a.0 - b.0 }) {
+        console.println(line)
+    }
+
+    var app = http.App.new()
+    app.post("/mcp", mcp.handler(Weather { base: 10.0 }, name: "weather", version: "2.0.0"))
+    let server = app.start()?
+    let client = http.Client.new(baseUrl: server.url())
+    let call =
+        r"""{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"add","arguments":{"a":40,"b":2}}}"""
+    console.println(
+        client
+            .post("/mcp", body: some(http.Body.text(call, contentType: "application/json")))?
+            .text()?,
+    )
+    server.stop()
+}
+
+// expect-stdout: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{},"resources":{},"prompts":{}},"serverInfo":{"name":"weather","version":"0.1.0"},"instructions":"Looks up the weather."}}
+// expect-stdout: {"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"forecast","description":"The forecast of a city for the next days.","inputSchema":{"type":"object","properties":{"city":{"description":"The city, as `Madrid`.","type":"string"},"days":{"description":"How many days, from 1 to 7.","type":"integer"},"units":{"type":"string","enum":["Metric","Imperial"]}},"required":["city"]},"outputSchema":{"type":"object","properties":{"city":{"type":"string"},"days":{"type":"array","items":{"type":"object","properties":{"day":{"type":"integer"},"high":{"type":"number"}},"required":["day","high"]}}},"required":["city","days"]}},{"name":"add","description":"Adds two numbers.","inputSchema":{"type":"object","properties":{"a":{"type":"integer"},"b":{"type":"integer"}},"required":["a","b"]},"outputSchema":{"type":"object","properties":{"result":{"type":"integer"}},"required":["result"]}},{"name":"greet","description":"Says hello.","inputSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}},{"name":"broken","description":"Breaks.","inputSchema":{"type":"object","properties":{},"required":[]},"outputSchema":{"type":"object","properties":{"result":{"type":"integer"}},"required":["result"]}}]}}
+// expect-stdout: {"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"{\"city\":\"Madrid\",\"days\":[{\"day\":0,\"high\":20.0},{\"day\":1,\"high\":21.0}]}"}],"structuredContent":{"city":"Madrid","days":[{"day":0,"high":20.0},{"day":1,"high":21.0}]},"isError":false}}
+// expect-stdout: {"jsonrpc":"2.0","id":4,"result":{"content":[{"type":"text","text":"no forecast for Atlantis"}],"isError":true}}
+// expect-stdout: {"jsonrpc":"2.0","id":5,"result":{"content":[{"type":"text","text":"5"}],"structuredContent":{"result":5},"isError":false}}
+// expect-stdout: {"jsonrpc":"2.0","id":6,"result":{"content":[{"type":"text","text":"Hello, Ada!"}],"isError":false}}
+// expect-stdout: {"jsonrpc":"2.0","id":7,"error":{"code":-32602,"message":"the arguments of `add`: `a` is \"x\", and should be an integer"}}
+// expect-stdout: {"jsonrpc":"2.0","id":8,"result":{"content":[{"type":"text","text":"`broken` panicked: out of order"}],"isError":true}}
+// expect-stdout: {"jsonrpc":"2.0","id":9,"result":{"resources":[{"uri":"weather://guide","name":"guide","description":"How to use the service.","mimeType":"text/markdown"}]}}
+// expect-stdout: {"jsonrpc":"2.0","id":10,"result":{"resourceTemplates":[{"uriTemplate":"weather://cities/{name}","name":"city","description":"A city's page.","mimeType":"text/plain"}]}}
+// expect-stdout: {"jsonrpc":"2.0","id":11,"result":{"contents":[{"uri":"weather://cities/Lima","mimeType":"text/plain","text":"City Lima"}]}}
+// expect-stdout: {"jsonrpc":"2.0","id":12,"result":{"description":"Asks for a forecast.","messages":[{"role":"user","content":{"type":"text","text":"What is the weather in Oslo? "}}]}}
+// expect-stdout: {"jsonrpc":"2.0","id":13,"result":{"supportedVersions":["2026-07-28","2025-11-25","2025-06-18","2025-03-26","2024-11-05"],"capabilities":{"tools":{},"resources":{},"prompts":{}},"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"weather","version":"0.1.0"}},"instructions":"Looks up the weather.","resultType":"complete","ttlMs":3600000,"cacheScope":"public"}}
+// expect-stdout: {"jsonrpc":"2.0","id":14,"error":{"code":-32601,"message":"`nope` is not a method of this server"}}
+// expect-stdout: {"jsonrpc":"2.0","id":15,"error":{"code":-32022,"message":"Unsupported protocol version 1999-01-01: this server speaks 2026-07-28 and 2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05"}}
+// expect-stdout: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"42"}],"structuredContent":{"result":42},"isError":false}}
+// expect-stderr: this goes to standard error

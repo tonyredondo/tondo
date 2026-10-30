@@ -101,6 +101,8 @@ struct Method {
     /// the receiver (27.13).
     annotated: bool,
     annotated_params: Vec<bool>,
+    /// Its `///` documentation.
+    docs: Option<String>,
 }
 
 /// A variant as the generator matches it: the pattern that binds its
@@ -219,7 +221,8 @@ fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap
                 });
                 let Some(item) = item else { continue };
                 let noted = NOTED.iter().filter_map(|&format| Some((format, alias_of(file, format)?))).collect();
-                let generator = Generator { alias: &alias, noted, sources, declared: d };
+                let displayed = implemented("Display");
+                let generator = Generator { alias: &alias, noted, sources, declared: d, displayed };
                 for &name in kind.traits() {
                     if implemented(name) {
                         continue;
@@ -291,6 +294,7 @@ fn callable(
                     names: params.iter().map(|p| p.name.name.clone()).collect(),
                     annotated: !f.uses.is_empty(),
                     annotated_params: params.iter().map(|p| !p.uses.is_empty()).collect(),
+                    docs: docs(sources, f.name.span),
                 });
             }
         }
@@ -311,11 +315,20 @@ pub(crate) fn docs(sources: &SourceMap, span: crate::source::Span) -> Option<Str
     for line in lines.iter().rev() {
         match line.trim_start().strip_prefix("///") {
             Some(doc) => found.push(doc.strip_prefix(' ').unwrap_or(doc)),
+            // The program's annotations go between the documentation and
+            // what it documents.
+            None if line.trim_start().starts_with('@') => {}
             None => break,
         }
     }
     found.reverse();
     (!found.is_empty()).then(|| found.join("\n"))
+}
+
+/// `.documented(some("..."))` for the documentation of a variant or a
+/// method, nothing without it.
+fn documented(docs: Option<String>) -> String {
+    docs.map_or(String::new(), |docs| format!(".documented(some({}))", literal(&docs)))
 }
 
 /// A Tondo string literal with this text: escaped, and with its braces
@@ -462,6 +475,9 @@ struct Generator<'a> {
     alias: &'a str,
     /// The formats of `NOTED` the type's file imports, and their aliases.
     noted: Vec<(&'static str, String)>,
+    /// Whether the type's file implements `Display` for it, which
+    /// reflection shows it with.
+    displayed: bool,
     sources: &'a SourceMap,
     declared: &'a Declared,
 }
@@ -790,6 +806,14 @@ impl Generator<'_> {
             ast::Item::Enum(e) => out.push_str(&self.reflect_enum(e)),
             _ => {}
         }
+        // A type with a `Display` shows as it displays.
+        if self.displayed
+            && let Some(start) = out.find("    fn reflectShow(")
+            && let Some(length) = out[start..].find("\n    }\n\n")
+        {
+            let shown = "    fn reflectShow(self, __nested: Bool): String {\n        \"{self}\"\n    }\n\n";
+            out.replace_range(start..start + length + 8, shown);
+        }
         out.push_str(&self.reflect_methods(methods));
         out.push_str(&self.reflect_description(item, methods));
         out.push_str("}\n\n");
@@ -862,7 +886,8 @@ impl Generator<'_> {
                         };
                         let annotated = if v.uses.is_empty() { String::new() } else { notes(2, ordinal, 0, "") };
                         format!(
-                            "{r}.VariantInfo.of({name:?}, {ordinal}, {r}.VariantPayloadKind.{kind}, {elements}, {named}){annotated}"
+                            "{r}.VariantInfo.of({name:?}, {ordinal}, {r}.VariantPayloadKind.{kind}, {elements}, {named}){annotated}{}",
+                            documented(docs(self.sources, v.name.span))
                         )
                     })
                     .collect();
@@ -871,11 +896,14 @@ impl Generator<'_> {
             }
             _ => "Opaque",
         };
-        let annotated = match item {
-            ast::Item::Type(t) => !t.uses.is_empty(),
-            ast::Item::Enum(e) => !e.uses.is_empty(),
-            _ => false,
+        let (annotated, name) = match item {
+            ast::Item::Type(t) => (!t.uses.is_empty(), Some(t.name.span)),
+            ast::Item::Enum(e) => (!e.uses.is_empty(), Some(e.name.span)),
+            _ => (false, None),
         };
+        if let Some(docs) = name.and_then(|span| docs(self.sources, span)) {
+            parts.push(format!("docs: some({})", literal(&docs)));
+        }
         if annotated {
             parts.push(format!("annotations: {r}.annotationsOf[{target}](0, 0, 0, \"\")"));
         }
@@ -903,10 +931,11 @@ impl Generator<'_> {
                     .collect();
                 let annotated = if m.annotated { notes(4, 0, 0, &m.name) } else { String::new() };
                 format!(
-                    "{r}.MethodInfo.of({:?}, {r}.ParameterMode.{receiver}, {r}.FunctionInfo.of([{}], {}, false, false)){annotated}",
+                    "{r}.MethodInfo.of({:?}, {r}.ParameterMode.{receiver}, {r}.FunctionInfo.of([{}], {}, false, false)){annotated}{}",
                     m.name,
                     params.join(", "),
-                    info(&m.result)
+                    info(&m.result),
+                    documented(m.docs.clone())
                 )
             })
             .collect();

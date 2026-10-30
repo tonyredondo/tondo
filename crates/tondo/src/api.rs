@@ -30,7 +30,7 @@ const BUILTINS: &str = include_str!("../std/api/builtins.to");
 /// The standard modules written in Tondo that a program imports, without
 /// the ones only the toolchain uses.
 const HIDDEN: &[&str] =
-    &["datetime", "zoned", "timetext", "files", "paths", "streams", "texts", "formats", "fuzz", "panics"];
+    &["datetime", "zoned", "timetext", "files", "paths", "streams", "texts", "formats", "shapes", "fuzz", "panics"];
 
 /// The methods `std/api/builtins.to` gives `owner`, such as `String`, and
 /// the operations of the numbers (language 18.9).

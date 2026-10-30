@@ -1,0 +1,22 @@
+// `cli.parse` reads the program's arguments; without the command it needs,
+// it writes the error and the usage to standard error and ends with 2.
+
+import std.cli
+import std.console
+
+/// Greets.
+pub enum Tool {
+    /// Says hello.
+    Hello
+}
+
+fn main() {
+    match cli.parse[Tool]() {
+        Tool.Hello => console.println("hello")
+    }
+}
+
+// expect-exit: 2
+// expect-stderr: error: a command is missing
+// expect-stderr: Usage: cli_exit <command>
+// expect-stderr: For more, try `cli_exit --help`.

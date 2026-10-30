@@ -1,0 +1,50 @@
+// Reflection gives the `///` documentation of types, variants and methods,
+// as of fields, with the program's annotations between them; and shows a
+// value of a type with a `Display` as it displays.
+
+import std.console
+import std.reflect
+
+pub annotation Marker = {}
+
+/// A shape.
+pub enum Shape {
+    /// A round one.
+    Circle(Float)
+    Square
+}
+
+/// A tool box.
+pub type Tools = {
+    size: Int
+}
+
+/// Doubles a number.
+@Marker
+pub fn Tools.double(self, n: Int): Int {
+    n * 2
+}
+
+pub type Money = {
+    cents: Int
+}
+
+impl Display for Money {
+    fn display(self): String {
+        "${self.cents / 100}.{self.cents % 100}"
+    }
+}
+
+fn main() {
+    let shape = reflect.typeInfo[Shape]()
+    console.println("{shape.docs()} {shape.variants().map((v) { v.docs() })}")
+    let tools = reflect.typeInfo[Tools]()
+    console.println("{tools.docs()} {tools.methods().map((m) { m.docs() })}")
+    console.println(
+        "{reflect.typeInfo[Money]().docs()} {reflect.valueOf(Money { cents: 1250 })} {reflect.valueOf(Tools { size: 2 })}",
+    )
+}
+
+// expect-stdout: some(A shape.) [some(A round one.), none]
+// expect-stdout: some(A tool box.) [some(Doubles a number.)]
+// expect-stdout: none $12.50 Tools { size: 2 }

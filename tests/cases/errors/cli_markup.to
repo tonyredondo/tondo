@@ -1,0 +1,21 @@
+// The styles of a literal markup are checked when the program compiles;
+// its values are text, and give no style.
+
+import std.cli
+
+fn main() {
+    let color = "red"
+    _ = cli.markup("[gren]a[/]")
+    _ = cli.markup("[bold]a")
+    _ = cli.markup("a[/]")
+    _ = cli.markup("[{color}]a[/]")
+    _ = cli.markup("[bold on]a[/]")
+    _ = cli.markup("[bold")
+}
+
+// expect-error: E1907 `[gren]` is not a style: write colors (black, red, green, yellow, blue, magenta, cyan, white, gray, or `#rrggbb`), `on` and a color for the background, and bold, dim, italic, underline, strikethrough; `[[` writes a bracket
+// expect-error: E1907 `[bold]` is not closed: close it with `[/]`
+// expect-error: E1907 `[/]` closes no style: each closes the last `[style]` still open
+// expect-error: E1907 a style is written in the markup, not given by a value: write it as `[bold]`
+// expect-error: E1907 `[bold on]` is not a style
+// expect-error: E1907 `[` starts a style that does not end: close it with `]`, or write `[[` for a bracket

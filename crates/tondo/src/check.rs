@@ -1908,6 +1908,31 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Whether a function is `name` of the standard module `module`.
+    fn is_std_fn(&self, id: FnId, module: &str, name: &str) -> bool {
+        matches!(self.names.get(name), Some(&ModuleName::Fn(f)) if f == id)
+            && self.fn_scopes.get(id.0 as usize).is_some_and(|scope| {
+                self.module_paths
+                    .get(scope.module as usize)
+                    .is_some_and(|p| p.len() == 2 && p[0] == "std" && p[1] == module)
+            })
+    }
+
+    /// Writes each value of an interpolated markup through
+    /// `cli.markupText`, which keeps its brackets as text.
+    fn markup_values(&mut self, text: &mut hir::Expr) {
+        let Some(&ModuleName::Fn(escape)) = self.names.get("cli.markupText") else { return };
+        let hir::ExprKind::Interpolate(segments) = &mut text.kind else { return };
+        for segment in segments.iter_mut() {
+            let hir::Segment::Value(value) = segment else { continue };
+            let span = value.span;
+            let placeholder = Self::mk(hir::ExprKind::Str(String::new()), Ty::STRING, span);
+            let inner = std::mem::replace(value, placeholder);
+            let shown = Self::mk(hir::ExprKind::Interpolate(vec![hir::Segment::Value(inner)]), Ty::STRING, span);
+            *value = Self::mk(hir::ExprKind::Call(Callee::Fn(escape), Vec::new(), vec![shown]), Ty::STRING, span);
+        }
+    }
+
     /// The templates a `template.Set` adds whose text is known when the
     /// program compiles, a string or the files of `embed.files("...")`: one
     /// that does not read is `E1906` (standard library 14.31).
@@ -13958,6 +13983,13 @@ impl<'a> Checker<'a> {
             self.repeatable(id, span);
             self.check_time_literals(id, &signature, receiver.is_some() as usize, args);
             self.check_template_literals(id, args);
+            if self.is_std_fn(id, "cli", "cli.markup")
+                && let Some(arg) = args.first()
+                && let ast::ExprKind::Str(segments) = &arg.value.kind
+                && let Some(problem) = markup_problem(segments)
+            {
+                self.diags.error("E1907", arg.value.span, problem);
+            }
         }
         let signature = &signature;
         if signature.is_unsafe && !cx.unsafe_region {
@@ -14237,6 +14269,14 @@ impl<'a> Checker<'a> {
                 self.diags.error("E1105", span, message);
                 return Self::error_expr(span);
             }
+        }
+        // The values a literal markup interpolates are text, whatever
+        // brackets they hold (standard library 14.32).
+        if let Callee::Fn(id) = callee
+            && self.is_std_fn(id, "cli", "cli.markup")
+            && let Some(Some(text)) = values.first_mut()
+        {
+            self.markup_values(text);
         }
         if matches!(signature.name.as_str(), "reflect.get" | "reflect.set" | "reflect.call" | "reflect.callMut") {
             self.check_reflection(&signature.name, &type_args, args);
@@ -15166,4 +15206,73 @@ fn own_panic_code(code: &str) -> bool {
             let mut chars = segment.chars();
             chars.next().is_some_and(|c| c.is_ascii_lowercase()) && chars.all(|c| c.is_ascii_alphanumeric())
         })
+}
+
+/// What is wrong with the styles of a literal markup of `std.cli`, if
+/// anything (standard library 14.32): its values, interpolated, are text.
+fn markup_problem(segments: &[ast::StrSegment]) -> Option<String> {
+    const VALUE: char = '\u{0}';
+    let text: String = segments
+        .iter()
+        .map(|s| match s {
+            ast::StrSegment::Text(text) => text.clone(),
+            ast::StrSegment::Expr(..) => VALUE.to_string(),
+        })
+        .collect();
+    let colors = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white", "gray"];
+    let decorations = ["bold", "dim", "italic", "underline", "strikethrough"];
+    let color = |word: &str| {
+        colors.contains(&word)
+            || (word.len() == 7 && word.starts_with('#') && word[1..].chars().all(|c| c.is_ascii_hexdigit()))
+    };
+    let mut open: Vec<String> = Vec::new();
+    let mut rest = text.as_str();
+    while let Some(at) = rest.find(['[', ']']) {
+        let after = &rest[at + 1..];
+        if after.starts_with(&rest[at..at + 1]) {
+            rest = &after[1..];
+            continue;
+        }
+        if &rest[at..at + 1] == "]" {
+            rest = after;
+            continue;
+        }
+        let Some(close) = after.find(']') else {
+            return Some("`[` starts a style that does not end: close it with `]`, or write `[[` for a bracket".into());
+        };
+        let tag = &after[..close];
+        rest = &after[close + 1..];
+        if tag.contains(VALUE) {
+            return Some("a style is written in the markup, not given by a value: write it as `[bold]`".into());
+        }
+        if tag == "/" {
+            if open.pop().is_none() {
+                return Some("`[/]` closes no style: each closes the last `[style]` still open".into());
+            }
+            continue;
+        }
+        let words: Vec<&str> = tag.split_whitespace().collect();
+        let mut valid = !words.is_empty();
+        let mut background = false;
+        for word in &words {
+            valid &= match *word {
+                "on" if !background => {
+                    background = true;
+                    continue;
+                }
+                word if background => color(word),
+                word => color(word) || decorations.contains(&word),
+            };
+            background = false;
+        }
+        if !valid || background {
+            return Some(format!(
+                "`[{tag}]` is not a style: write colors ({}, or `#rrggbb`), `on` and a color for the background, and {}; `[[` writes a bracket",
+                colors.join(", "),
+                decorations.join(", ")
+            ));
+        }
+        open.push(tag.to_string());
+    }
+    open.pop().map(|tag| format!("`[{tag}]` is not closed: close it with `[/]`"))
 }

@@ -49,6 +49,9 @@ const SOURCES: &[(&str, &str)] = &[
     ("xml", include_str!("../std/xml.to")),
     ("template", include_str!("../std/template.to")),
     ("formats", include_str!("../std/formats.to")),
+    ("shapes", include_str!("../std/shapes.to")),
+    ("cli", include_str!("../std/cli.to")),
+    ("mcp", include_str!("../std/mcp.to")),
     ("fuzz", include_str!("../std/fuzz.to")),
 ];
 

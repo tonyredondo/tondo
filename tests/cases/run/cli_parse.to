@@ -1,0 +1,160 @@
+// std.cli reads a command line into the program's types: a record's fields
+// are its options and arguments, an enum's variants its subcommands, and
+// the documentation of each is the help; an error says what to write.
+
+import std.cli
+import std.console
+
+/// Builds and serves static sites.
+pub enum Site {
+    /// Builds the site.
+    Build(Build)
+    /// Serves the site and rebuilds it as files change.
+    Serve { port: Int? }
+    /// Prints the version.
+    Version
+}
+
+pub enum Format {
+    Html
+    JsonLines
+}
+
+/// Builds the site into a directory.
+pub type Build = {
+    /// The site's directory.
+    @cli.Argument
+    source: String?
+    /// Where to write the site.
+    @cli.Option(short: "d", default: "public", env: "SITE_DESTINATION")
+    destination: String
+    /// Writes the drafts too.
+    @cli.Option(short: "D")
+    drafts: Bool
+    /// Builds only these sections.
+    section: Array[String]
+    /// What to write.
+    format: Format?
+    @cli.Option(hidden: true)
+    trace: Bool
+}
+
+/// Copies files.
+pub type Transfer = {
+    /// Prints each file.
+    @cli.Option(short: "v")
+    verbose: Bool
+    @cli.Argument
+    from: String
+    @cli.Argument
+    to: Array[String]
+}
+
+fn show(args: Array[String]) {
+    match cli.parseArgs[Site](args) {
+        ok(Site.Build(build)) => {
+            let format = match build.format {
+                some(Format.Html) => "html"
+                some(Format.JsonLines) => "json-lines"
+                none => "none"
+            }
+            console.println(
+                "build {build.source} {build.destination} {build.drafts} {build.section} {format}",
+            )
+        }
+        ok(Site.Serve { port }) => console.println("serve {port}")
+        ok(Site.Version) => console.println("version")
+        err(error) => console.println("[{error.help}] {error}")
+    }
+}
+
+fn main() {
+    show(["build", "src", "-D", "--section", "a", "--section=b", "--format", "json-lines"])
+    show(["build", "-dout", "--drafts=false"])
+    show(["serve", "--port", "8080"])
+    show(["version"])
+    show(["buidl"])
+    show(["build", "--draft"])
+    show(["serve", "--port", "x"])
+    show(["build", "--format", "xml"])
+    show([])
+    show(["--help"])
+    show(["build", "--help"])
+    match cli.parseArgs[Transfer](["-v", "a.txt", "b/", "c/", "--", "-odd"]) {
+        ok(copy) => console.println("copy {copy.verbose} {copy.from} {copy.to}")
+        err(error) => console.println("{error}")
+    }
+    match cli.parseArgs[Transfer]([]) {
+        ok(_) => console.println("copied")
+        err(error) => console.println("{error}")
+    }
+}
+
+// expect-stdout: build some(src) public true [a, b] json-lines
+// expect-stdout: build none out false [] none
+// expect-stdout: serve some(8080)
+// expect-stdout: version
+// expect-stdout: [false] error: unknown command `buidl`; did you mean `build`?
+// expect-stdout: 
+// expect-stdout: Usage: cli_parse <command>
+// expect-stdout: 
+// expect-stdout: Commands:
+// expect-stdout:   build    Builds the site.
+// expect-stdout:   serve    Serves the site and rebuilds it as files change.
+// expect-stdout:   version  Prints the version.
+// expect-stdout: 
+// expect-stdout: For more, try `cli_parse --help`.
+// expect-stdout: [false] error: unknown option `--draft`; did you mean `--drafts`?
+// expect-stdout: 
+// expect-stdout: Usage: cli_parse build [options] [source]
+// expect-stdout: 
+// expect-stdout: For more, try `cli_parse build --help`.
+// expect-stdout: [false] error: --port: `x` is not an integer
+// expect-stdout: 
+// expect-stdout: Usage: cli_parse serve [options]
+// expect-stdout: 
+// expect-stdout: For more, try `cli_parse serve --help`.
+// expect-stdout: [false] error: --format: `xml` is not one of html, json-lines
+// expect-stdout: 
+// expect-stdout: Usage: cli_parse build [options] [source]
+// expect-stdout: 
+// expect-stdout: For more, try `cli_parse build --help`.
+// expect-stdout: [false] error: a command is missing
+// expect-stdout: 
+// expect-stdout: Usage: cli_parse <command>
+// expect-stdout: 
+// expect-stdout: Commands:
+// expect-stdout:   build    Builds the site.
+// expect-stdout:   serve    Serves the site and rebuilds it as files change.
+// expect-stdout:   version  Prints the version.
+// expect-stdout: 
+// expect-stdout: For more, try `cli_parse --help`.
+// expect-stdout: [true] Builds and serves static sites.
+// expect-stdout: 
+// expect-stdout: Usage: cli_parse <command>
+// expect-stdout: 
+// expect-stdout: Commands:
+// expect-stdout:   build    Builds the site.
+// expect-stdout:   serve    Serves the site and rebuilds it as files change.
+// expect-stdout:   version  Prints the version.
+// expect-stdout: 
+// expect-stdout: [true] Builds the site into a directory.
+// expect-stdout: 
+// expect-stdout: Usage: cli_parse build [options] [source]
+// expect-stdout: 
+// expect-stdout: Arguments:
+// expect-stdout:   <source>  The site's directory.
+// expect-stdout: 
+// expect-stdout: Options:
+// expect-stdout:   -d, --destination <destination>  Where to write the site. [default: public] [env: SITE_DESTINATION]
+// expect-stdout:   -D, --drafts                     Writes the drafts too.
+// expect-stdout:       --section <section>...       Builds only these sections.
+// expect-stdout:       --format <format>            What to write. [html, json-lines]
+// expect-stdout:   -h, --help                       Shows this help.
+// expect-stdout: 
+// expect-stdout: copy true a.txt [b/, c/, -odd]
+// expect-stdout: error: `<from>` is missing
+// expect-stdout: 
+// expect-stdout: Usage: cli_parse [options] <from> [to...]
+// expect-stdout: 
+// expect-stdout: For more, try `cli_parse --help`.

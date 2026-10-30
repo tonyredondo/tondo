@@ -1,0 +1,743 @@
+// std.mcp (standard library 14.33): the Model Context Protocol served from
+// the methods of a value: each `pub` method is a tool, or a resource or a
+// prompt as its annotations say; over standard input and output, or a
+// route of `std.http`. It speaks the versions `tondo mcp` speaks: each
+// request of 2026-07-28 names its version, and the `initialize` handshake
+// of 2025-11-25 and before.
+
+import std.console as __console
+import std.env as __env
+import std.http as __http
+import std.internal.codec as codecNative
+import std.io as __io
+import std.json as __json
+import std.path as __path
+import std.reflect as __reflect
+import std.shapes as __shapes
+import std.sync as __sync
+
+/// Makes a method without parameters, or with the `String` parameters its
+/// URI names in braces, a resource: `@mcp.Resource(uri: "docs://{name}")`.
+pub annotation Resource = {
+    uri: String
+    mime: String = "text/plain"
+}
+
+/// Makes a method a prompt: its `String` parameters are the prompt's
+/// arguments, and the text it returns the user's message.
+pub annotation Prompt = {}
+
+impl __reflect.Reflect for Resource {
+    fn reflectShow(self, nested: Bool): String {
+        "mcp.Resource"
+    }
+}
+
+impl __reflect.Reflect for Prompt {
+    fn reflectShow(self, nested: Bool): String {
+        "mcp.Prompt"
+    }
+}
+
+/// Why serving stopped: the protocol's stream failed.
+pub type McpError = {
+    message: String
+}
+
+impl Display for McpError {
+    fn display(self): String {
+        self.message
+    }
+}
+
+/// Serves the methods of `server` over standard input and output, a
+/// message a line, until the input ends; meanwhile the console's output
+/// goes to standard error, since standard output is the protocol's. Each
+/// request is answered in a task of its own.
+pub fn serve[T: __reflect.Reflect](server: T, name: String = "", version: String = "0.1.0"): !McpError {
+    let state = served(server, name, version)
+    let protocol = __console.stdout()
+    __console.setOutput(__console.stderr())
+    let out = __sync.Mutex(Output { writer: protocol, failure: none })
+    var group = Group.new[Unit]()
+    for {
+        let line = match __console.readLine() {
+            some(line) => line
+            none => break
+        }
+        if not line.trim().isEmpty() {
+            group.add(spawn answer(state, line, out))
+        }
+    }
+    _ = group.wait()
+    __console.setOutput(protocol)
+    match out.get().failure {
+        some(message) => fail McpError { message }
+        none => {}
+    }
+}
+
+/// Serves the methods of `server` on a route of `std.http`: a message a
+/// `POST`, answered with JSON, without sessions.
+pub fn handler[T: __reflect.Reflect](server: T, name: String = "", version: String = "0.1.0"): fn(
+    __http.Request,
+): __http.Reply ! __http.Problem {
+    let state = served(server, name, version)
+    (request) {
+        let text = request.text()?
+        match reply(state, text) {
+            some(written) => __http.Reply.json(__json.parse(written).unwrapOr(__json.Value.Null))
+            none => __http.Reply.text("", status: 202)
+        }
+    }
+}
+
+/// Where the replies go, and the first failure to write one.
+type Output = {
+    writer: __io.Writer
+    failure: String?
+}
+
+fn answer(state: Served, line: String, out: __sync.Mutex[Output]) {
+    match reply(state, line) {
+        some(text) => out.update(
+            (output) {
+                if output.failure.isNone() {
+                    match output.writer.writeLine(text) {
+                        ok(_) => {}
+                        err(problem) => output.failure = some("{problem}")
+                    }
+                    _ = output.writer.flush()
+                }
+            },
+        )
+        none => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The server
+// ---------------------------------------------------------------------------
+
+/// What a value serves: its tools, resources and prompts.
+type Served = {
+    target: __reflect.Value
+    name: String
+    version: String
+    instructions: String?
+    tools: Array[__reflect.MethodInfo]
+    resources: Array[__reflect.MethodInfo]
+    prompts: Array[__reflect.MethodInfo]
+}
+
+fn served[T: __reflect.Reflect](server: T, name: String, version: String): Served {
+    let info = __reflect.typeInfo[T]()
+    let methods = info.methods()
+    let program = __path.fileName(__env.executable()).unwrapOr("server").removeSuffix(".exe")
+    Served {
+        target: __reflect.valueOf(server)
+        name: if name.isEmpty() { program } else { name }
+        version
+        instructions: info.docs()
+        tools: methods.filter(
+            (method) {
+                method.annotation[Resource]().isNone() and method.annotation[Prompt]().isNone()
+            },
+        )
+        resources: methods.filter((method) { method.annotation[Resource]().isSome() })
+        prompts: methods.filter((method) { method.annotation[Prompt]().isSome() })
+    }
+}
+
+const Modern: String = "2026-07-28"
+
+fn legacy(): Array[String] {
+    ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
+}
+
+/// A request that failed: its code of JSON-RPC and why.
+type Failure = {
+    code: Int
+    message: String
+}
+
+fn quote(text: String): String {
+    __json.encode(text)
+}
+
+fn failure(id: String, code: Int, message: String): String {
+    "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"error\":{{\"code\":{code},\"message\":{quote(message)}}}}}"
+}
+
+/// The reply to a message, none to a notification or a response.
+fn reply(state: Served, line: String): String? {
+    let message = match __json.parse(line) {
+        ok(message) => message
+        err(problem) => return some(failure("null", -32700, "not JSON: {problem}"))
+    }
+    let id = match message.get("id") {
+        some(id) => __json.encode(id)
+        none => return none
+    }
+    let method = match message.field("method").asText() {
+        some(method) => method
+        none => return none
+    }
+    let params = message.field("params")
+    let modern = match params
+        .field("_meta")
+        .field("io.modelcontextprotocol/protocolVersion")
+        .asText() {
+        none => method == "server/discover"
+        some(version) if version == Modern => true
+        some(version) if version in legacy() => false
+        some(version) => return some(failure(
+            id,
+            -32022,
+            "Unsupported protocol version {version}: this server speaks {Modern} and {legacy().join(", ")}",
+        ))
+    }
+    match handle(state, method, params) {
+        ok(result) => {
+            let decorated = if modern { completed(result, method) } else { result }
+            some("{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{decorated}}}")
+        }
+        err(problem) => some(failure(id, problem.code, problem.message))
+    }
+}
+
+/// A result of 2026-07-28: complete, and the lists cached for an hour.
+fn completed(result: String, method: String): String {
+    var extra = "\"resultType\":\"complete\""
+    if method in
+        [
+            "server/discover",
+            "tools/list",
+            "resources/list",
+            "resources/templates/list",
+            "prompts/list",
+        ] {
+        extra = "{extra},\"ttlMs\":3600000,\"cacheScope\":\"public\""
+    }
+    if result == "{{}}" {
+        return "{{{extra}}}"
+    }
+    "{result.slice(0, result.length() - 1).unwrapOr("{{")},{extra}}}"
+}
+
+fn handle(state: Served, method: String, params: __json.Value): String ! Failure {
+    let info = "{{\"name\":{quote(state.name)},\"version\":{quote(state.version)}}}"
+    var capabilities = "\"tools\":{{}}"
+    if not state.resources.isEmpty() {
+        capabilities = "{capabilities},\"resources\":{{}}"
+    }
+    if not state.prompts.isEmpty() {
+        capabilities = "{capabilities},\"prompts\":{{}}"
+    }
+    let instructions = match state.instructions {
+        some(text) => ",\"instructions\":{quote(text)}"
+        none => ""
+    }
+    match method {
+        "initialize" => {
+            let asked = params.field("protocolVersion").asText().unwrapOr("")
+            let version = if asked in legacy() { asked } else { legacy()[0] }
+            "{{\"protocolVersion\":{quote(version)},\"capabilities\":{{{capabilities}}},\"serverInfo\":{info}{instructions}}}"
+        }
+        "ping" => "{{}}"
+        "server/discover" => {
+            let versions = [Modern].concat(legacy()).map(quote).join(",")
+            "{{\"supportedVersions\":[{versions}],\"capabilities\":{{{capabilities}}},\"_meta\":{{\"io.modelcontextprotocol/serverInfo\":{info}}}{instructions}}}"
+        }
+        "tools/list" => "{{\"tools\":[{state.tools.map(toolOf).join(",")}]}}"
+        "tools/call" => call(state, params)?
+        "resources/list" => {
+            let fixed = state.resources.filter((found) { not resourceOf(found).uri.contains("{{") })
+            "{{\"resources\":[{fixed.map((found) { resourceListed(found, "uri") }).join(",")}]}}"
+        }
+        "resources/templates/list" => {
+            let templated = state.resources.filter((found) { resourceOf(found).uri.contains("{{") })
+            "{{\"resourceTemplates\":[{templated.map((found) { resourceListed(found, "uriTemplate") }).join(",")}]}}"
+        }
+        "resources/read" => read(state, params.field("uri").asText().unwrapOr(""))?
+        "prompts/list" => "{{\"prompts\":[{state.prompts.map(promptOf).join(",")}]}}"
+        "prompts/get" => prompt(state, params)?
+        _ => fail Failure { code: -32601, message: "`{method}` is not a method of this server" }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tools
+// ---------------------------------------------------------------------------
+
+/// An argument of a tool or a prompt: its name, its type and its
+/// documentation.
+type Argument = {
+    name: String
+    info: __reflect.TypeInfo
+    docs: String?
+}
+
+/// The arguments of a method, and whether they are the fields of its one
+/// record parameter.
+fn argumentsOf(method: __reflect.MethodInfo): (Array[Argument], Bool) {
+    let params = method.function().parameters()
+    if params.length() == 1 and params[0].typeInfo().kind() == __reflect.TypeKind.Record {
+        let fields = params[0].typeInfo().fields()
+        return (
+            fields.map(
+                (field) {
+                    Argument { name: field.name(), info: field.typeInfo(), docs: field.docs() }
+                },
+            ),
+            true,
+        )
+    }
+    (
+        params.map((param) { Argument { name: param.name(), info: param.typeInfo(), docs: none } }),
+        false,
+    )
+}
+
+fn optional(info: __reflect.TypeInfo): Bool {
+    info.kind() == __reflect.TypeKind.Applied(__reflect.AppliedKind.Option)
+}
+
+fn toolOf(method: __reflect.MethodInfo): String {
+    let (arguments, _) = argumentsOf(method)
+    var written =
+        "{{\"name\":{quote(method.name())},\"description\":{quote(method.docs().unwrapOr(""))},\"inputSchema\":{objectSchema(arguments)}"
+    match outputOf(method) {
+        some(schema) => written = "{written},\"outputSchema\":{schema}"
+        none => {}
+    }
+    "{written}}}"
+}
+
+fn objectSchema(arguments: Array[Argument]): String {
+    let properties = arguments.map(
+        (argument) {
+            "{quote(argument.name)}:{described(schemaOf(argument.info, 0), argument.docs)}"
+        },
+    )
+    let required = arguments
+        .filter((argument) { not optional(argument.info) })
+        .map((argument) { quote(argument.name) })
+    "{{\"type\":\"object\",\"properties\":{{{properties.join(",")}}},\"required\":[{required.join(",")}]}}"
+}
+
+/// A schema with a description.
+fn described(schema: String, docs: String?): String {
+    match docs {
+        some(text) if schema.startsWith("{{\"") =>
+            "{{\"description\":{quote(text)},{schema.slice(1, schema.length()).unwrapOr("}}")}"
+        some(text) => "{{\"description\":{quote(text)}}}"
+        none => schema
+    }
+}
+
+/// The JSON Schema of a type, `depth` types in.
+fn schemaOf(info: __reflect.TypeInfo, depth: Int): String {
+    if depth > 8 {
+        return "{{}}"
+    }
+    let inner = (index: Int) {
+        info.genericArguments().get(index).map((t) { schemaOf(t, depth + 1) }).unwrapOr("{{}}")
+    }
+    match info.kind() {
+        __reflect.TypeKind.Primitive(kind) => match kind {
+            __reflect.PrimitiveKind.String => "{{\"type\":\"string\"}}"
+            __reflect.PrimitiveKind.Char => "{{\"type\":\"string\",\"maxLength\":1}}"
+            __reflect.PrimitiveKind.Bool => "{{\"type\":\"boolean\"}}"
+            __reflect.PrimitiveKind.Float => "{{\"type\":\"number\"}}"
+            __reflect.PrimitiveKind.Float32 => "{{\"type\":\"number\"}}"
+            __reflect.PrimitiveKind.Unit => "{{\"type\":\"object\"}}"
+            _ => "{{\"type\":\"integer\"}}"
+        }
+        __reflect.TypeKind.Applied(__reflect.AppliedKind.Option) => inner(0)
+        __reflect.TypeKind.Applied(__reflect.AppliedKind.Array) =>
+            "{{\"type\":\"array\",\"items\":{inner(0)}}}"
+        __reflect.TypeKind.Applied(__reflect.AppliedKind.Set) =>
+            "{{\"type\":\"array\",\"items\":{inner(0)}}}"
+        __reflect.TypeKind.Applied(__reflect.AppliedKind.Map) =>
+            "{{\"type\":\"object\",\"additionalProperties\":{inner(1)}}}"
+        __reflect.TypeKind.Record => {
+            let fields = info
+                .fields()
+                .map(
+                    (field) {
+                        Argument { name: field.name(), info: field.typeInfo(), docs: field.docs() }
+                    },
+                )
+            objectSchema(fields)
+        }
+        __reflect.TypeKind.Enum if info
+            .variants()
+            .all((v) { v.payloadKind() == __reflect.VariantPayloadKind.Unit }) => {
+            "{{\"type\":\"string\",\"enum\":[{info.variants().map((v) { quote(v.name()) }).join(",")}]}}"
+        }
+        __reflect.TypeKind.Newtype => match info.underlying() {
+            some(underlying) => schemaOf(underlying, depth + 1)
+            none => "{{}}"
+        }
+        _ => "{{}}"
+    }
+}
+
+/// The type a method gives when it does not fail.
+fn successOf(method: __reflect.MethodInfo): __reflect.TypeInfo {
+    let outcome = method.function().outcome()
+    match outcome.kind() {
+        __reflect.TypeKind.Applied(__reflect.AppliedKind.Result) => outcome
+            .genericArguments()
+            .first()
+            .unwrapOr(outcome)
+        _ => outcome
+    }
+}
+
+/// The schema of what a tool gives as data: none for a text or nothing,
+/// an object as it is, any other value as its `result`.
+fn outputOf(method: __reflect.MethodInfo): String? {
+    let success = successOf(method)
+    match success.kind() {
+        __reflect.TypeKind.Primitive(__reflect.PrimitiveKind.String) => none
+        __reflect.TypeKind.Primitive(__reflect.PrimitiveKind.Unit) => none
+        __reflect.TypeKind.Record => some(schemaOf(success, 0))
+        __reflect.TypeKind.Applied(__reflect.AppliedKind.Map) => some(schemaOf(success, 0))
+        _ =>
+            some("{{\"type\":\"object\",\"properties\":{{\"result\":{schemaOf(success, 0)}}},\"required\":[\"result\"]}}")
+    }
+}
+
+fn call(state: Served, params: __json.Value): String ! Failure {
+    let name = params.field("name").asText().unwrapOr("")
+    let method = match state.tools.find((method) { method.name() == name }) {
+        some(method) => method
+        none => fail Failure {
+            code: -32602
+            message: "unknown tool `{name}`: tools/list names them"
+        }
+    }
+    let given = params.field("arguments")
+    let args = match valuesOf(method, given) {
+        ok(args) => args
+        err(problem) => fail Failure {
+            code: -32602
+            message: "the arguments of `{name}`: {problem}"
+        }
+    }
+    match recover { state.target.call(name, ...args) } {
+        err(crash) => errorResult("`{name}` panicked: {crash.message}")
+        ok(err(problem)) => errorResult("{problem}")
+        ok(ok(value)) => {
+            let success = match (method.function().outcome().kind(), value.variant()) {
+                (__reflect.TypeKind.Applied(__reflect.AppliedKind.Result), some("err")) => {
+                    return errorResult("{value.elements().first().map((e) { "{e}" }).unwrapOr("")}")
+                }
+                (__reflect.TypeKind.Applied(__reflect.AppliedKind.Result), _) => value
+                    .elements()
+                    .first()
+                    .unwrapOr(value)
+                _ => value
+            }
+            resultOf(success)
+        }
+    }
+}
+
+fn errorResult(text: String): String {
+    "{{\"content\":[{{\"type\":\"text\",\"text\":{quote(text)}}}],\"isError\":true}}"
+}
+
+/// A tool's result: a text as it is, nothing as no content, any other
+/// value as its JSON, in the text and as data.
+fn resultOf(value: __reflect.Value): String {
+    let kind = value.typeName()
+    if kind == "String" {
+        return "{{\"content\":[{{\"type\":\"text\",\"text\":{quote(value.to[String]().unwrapOr(""))}}}],\"isError\":false}}"
+    }
+    if kind == "Unit" {
+        return "{{\"content\":[],\"isError\":false}}"
+    }
+    let json = __shapes.jsonOf(value)
+    let structured = if json.startsWith("{{") { json } else { "{{\"result\":{json}}}" }
+    "{{\"content\":[{{\"type\":\"text\",\"text\":{quote(json)}}}],\"structuredContent\":{structured},\"isError\":false}}"
+}
+
+/// The values of a method's parameters from a call's arguments.
+fn valuesOf(method: __reflect.MethodInfo, given: __json.Value): Array[__reflect.Value] ! String {
+    let (arguments, flattened) = argumentsOf(method)
+    if flattened {
+        let record = method.function().parameters()[0].typeInfo()
+        return [
+            fromJson(
+                record,
+                if given.isNull() { __json.Value.Object([:]) } else { given },
+                "arguments",
+            )?,
+        ]
+    }
+    var values: Array[__reflect.Value] = []
+    for argument in arguments {
+        values.push(fromJson(argument.info, given.field(argument.name), argument.name)?)
+    }
+    values
+}
+
+/// The value of a type that JSON writes, at `place` for messages.
+fn fromJson(info: __reflect.TypeInfo, json: __json.Value, place: String): __reflect.Value ! String {
+    let wrong = (expected: String) {
+        "`{place}` is {__json.encode(json)}, and should be {expected}"
+    }
+    match info.kind() {
+        __reflect.TypeKind.Primitive(kind) => {
+            let text = match kind {
+                __reflect.PrimitiveKind.String => json.asText()
+                __reflect.PrimitiveKind.Char => json.asText()
+                __reflect.PrimitiveKind.Bool => json.asBool().map((b) { "{b}" })
+                __reflect.PrimitiveKind.Float => json.asFloat().map((f) { "{f}" })
+                __reflect.PrimitiveKind.Float32 => json.asFloat().map((f) { "{f}" })
+                _ => json.asInt().map((n) { "{n}" })
+            }
+            match text {
+                some(written) => match __shapes.scalar(kind, written) {
+                    ok(value) => value
+                    err(problem) => fail "`{place}`: {problem}"
+                }
+                none if json.isNull() => fail "`{place}` is missing"
+                none => fail wrong(__shapes.primitive(kind))
+            }
+        }
+        __reflect.TypeKind.Applied(__reflect.AppliedKind.Option) => {
+            if json.isNull() {
+                return __shapes.variant("none", [:], [])
+            }
+            let inner = info.genericArguments().first().unwrapOr(info)
+            fromJson(inner, json, place)?
+        }
+        __reflect.TypeKind.Applied(kind) if kind == __reflect.AppliedKind.Array or
+            kind == __reflect.AppliedKind.Set => {
+            let items = match json.asArray() {
+                some(items) => items
+                none => fail wrong("an array")
+            }
+            let inner = info.genericArguments().first().unwrapOr(info)
+            var values: Array[__reflect.Value] = []
+            for index in 0..items.length() {
+                values.push(fromJson(inner, items[index], "{place}[{index}]")?)
+            }
+            __shapes.sequence(values)
+        }
+        __reflect.TypeKind.Applied(__reflect.AppliedKind.Map) => {
+            let members = match json.asObject() {
+                some(members) => members
+                none => fail wrong("an object")
+            }
+            let inner = info.genericArguments().get(1).unwrapOr(info)
+            var values: Map[String, __reflect.Value] = [:]
+            for (key, member) in members {
+                values[key] = fromJson(inner, member, "{place}.{key}")?
+            }
+            __shapes.record(values)
+        }
+        __reflect.TypeKind.Record => {
+            if json.asObject().isNone() {
+                fail wrong("an object")
+            }
+            __shapes.record(fieldsOf(info.fields(), json, place)?)
+        }
+        __reflect.TypeKind.Enum => {
+            match json.asText() {
+                some(name) => match info.variants().find((v) { v.name() == name }) {
+                    some(_) => return __shapes.variant(name, [:], [])
+                    none => {}
+                }
+                none => {}
+            }
+            for (name, payload) in json.asObject().unwrapOr([:]) {
+                match info.variants().find((v) { v.name() == name }) {
+                    some(variant) if variant.payloadKind() == __reflect.VariantPayloadKind.Record => {
+                        return __shapes.variant(
+                            name,
+                            fieldsOf(variant.fields(), payload, "{place}.{name}")?,
+                            [],
+                        )
+                    }
+                    some(variant) if variant.payloadKind() == __reflect.VariantPayloadKind.Tuple => {
+                        let parts = variant.tupleElements()
+                        let given = if parts.length() == 1 {
+                            [payload]
+                        } else {
+                            payload.asArray().unwrapOr([])
+                        }
+                        var items: Array[__reflect.Value] = []
+                        for index in 0..parts.length() {
+                            items.push(
+                                fromJson(
+                                    parts[index],
+                                    given.get(index).unwrapOr(__json.Value.Null),
+                                    "{place}.{name}",
+                                )?,
+                            )
+                        }
+                        return __shapes.variant(name, [:], items)
+                    }
+                    _ => {}
+                }
+            }
+            fail wrong("one of {info.variants().map((v) { v.name() }).join(", ")}")
+        }
+        __reflect.TypeKind.Newtype => match info.underlying() {
+            some(underlying) => fromJson(underlying, json, place)?
+            none => fail "`{place}`: a `{info}` is not read from JSON"
+        }
+        _ => fail "`{place}`: a `{info}` is not read from JSON"
+    }
+}
+
+fn fieldsOf(fields: Array[__reflect.FieldInfo], json: __json.Value, place: String): Map[
+    String,
+    __reflect.Value,
+] !
+    String {
+    var members: Map[String, __reflect.Value] = [:]
+    for field in fields {
+        let path = "{place}.{field.name()}"
+        match json.get(field.name()) {
+            some(value) => members[field.name()] = fromJson(field.typeInfo(), value, path)?
+            none if optional(field.typeInfo()) => {}
+            none => fail "`{path}` is missing"
+        }
+    }
+    members
+}
+
+// ---------------------------------------------------------------------------
+// Resources and prompts
+// ---------------------------------------------------------------------------
+
+fn resourceOf(method: __reflect.MethodInfo): Resource {
+    method.annotation[Resource]().unwrapOr(Resource { uri: "" })
+}
+
+fn resourceListed(method: __reflect.MethodInfo, key: String): String {
+    let resource = resourceOf(method)
+    "{{{quote(key)}:{quote(resource.uri)},\"name\":{quote(method.name())},\"description\":{quote(method.docs().unwrapOr(""))},\"mimeType\":{quote(resource.mime)}}}"
+}
+
+/// The parts of a URI that a template names in braces, if the URI is one
+/// of the template's.
+fn matched(template: String, uri: String): Map[String, String]? {
+    var found: Map[String, String] = [:]
+    var rest = template
+    var at = uri
+    for not rest.isEmpty() {
+        match rest.find("{{") {
+            none => return if at == rest { some(found) } else { none }
+            some(open) => {
+                let literal = rest.slice(0, open).unwrapOr("")
+                if not at.startsWith(literal) {
+                    return none
+                }
+                at = at.removePrefix(literal)
+                let close = rest.find("}}").unwrapOr(rest.length() - 1)
+                let name = rest.slice(open + 1, close).unwrapOr("")
+                rest = rest.slice(close + 1, rest.length()).unwrapOr("")
+                let next = match rest.find("{{") {
+                    some(brace) => rest.slice(0, brace).unwrapOr("")
+                    none => rest
+                }
+                let end = if next.isEmpty() { at.length() } else { at.find(next).unwrapOr(-1) }
+                if end < 0 {
+                    return none
+                }
+                found[name] = at.slice(0, end).unwrapOr("")
+                at = at.slice(end, at.length()).unwrapOr("")
+            }
+        }
+    }
+    if at.isEmpty() { some(found) } else { none }
+}
+
+fn read(state: Served, uri: String): String ! Failure {
+    for method in state.resources {
+        let resource = resourceOf(method)
+        let parts = match matched(resource.uri, uri) {
+            some(parts) => parts
+            none => continue
+        }
+        let args = method
+            .function()
+            .parameters()
+            .map((param) { __reflect.valueOf(parts.get(param.name()).unwrapOr("")) })
+        let value = match recover { state.target.call(method.name(), ...args) } {
+            ok(ok(value)) => value
+            ok(err(problem)) => fail Failure { code: -32603, message: "{problem}" }
+            err(crash) => fail Failure {
+                code: -32603
+                message: "`{method.name()}` panicked: {crash.message}"
+            }
+        }
+        let content = match (method.function().outcome().kind(), value.variant()) {
+            (__reflect.TypeKind.Applied(__reflect.AppliedKind.Result), some("err")) => {
+                fail Failure {
+                    code: -32603
+                    message: "{value.elements().first().map((e) { "{e}" }).unwrapOr("")}"
+                }
+            }
+            (__reflect.TypeKind.Applied(__reflect.AppliedKind.Result), _) => value
+                .elements()
+                .first()
+                .unwrapOr(value)
+            _ => value
+        }
+        let body = match content.to[Array[Byte]]() {
+            ok(bytes) if content.typeName() != "String" =>
+                "\"blob\":{quote(codecNative.base64Encode(bytes, false))}"
+            _ => "\"text\":{quote(content.to[String]().unwrapOr("{content}"))}"
+        }
+        return "{{\"contents\":[{{\"uri\":{quote(uri)},\"mimeType\":{quote(resource.mime)},{body}}}]}}"
+    }
+    fail Failure { code: -32002, message: "no resource `{uri}`: resources/list names them" }
+}
+
+fn promptOf(method: __reflect.MethodInfo): String {
+    let arguments = method
+        .function()
+        .parameters()
+        .map(
+            (param) {
+                "{{\"name\":{quote(param.name())},\"required\":{not optional(param.typeInfo())}}}"
+            },
+        )
+    "{{\"name\":{quote(method.name())},\"description\":{quote(method.docs().unwrapOr(""))},\"arguments\":[{arguments.join(",")}]}}"
+}
+
+fn prompt(state: Served, params: __json.Value): String ! Failure {
+    let name = params.field("name").asText().unwrapOr("")
+    let method = match state.prompts.find((method) { method.name() == name }) {
+        some(method) => method
+        none => fail Failure {
+            code: -32602
+            message: "unknown prompt `{name}`: prompts/list names them"
+        }
+    }
+    let given = params.field("arguments")
+    var args: Array[__reflect.Value] = []
+    for param in method.function().parameters() {
+        match fromJson(param.typeInfo(), given.field(param.name()), param.name()) {
+            ok(value) => args.push(value)
+            err(problem) => fail Failure {
+                code: -32602
+                message: "the arguments of `{name}`: {problem}"
+            }
+        }
+    }
+    let text = match recover { state.target.call(name, ...args) } {
+        ok(ok(value)) => "{value}"
+        ok(err(problem)) => fail Failure { code: -32603, message: "{problem}" }
+        err(crash) => fail Failure { code: -32603, message: "`{name}` panicked: {crash.message}" }
+    }
+    "{{\"description\":{quote(method.docs().unwrapOr(""))},\"messages\":[{{\"role\":\"user\",\"content\":{{\"type\":\"text\",\"text\":{quote(text)}}}}}]}}"
+}

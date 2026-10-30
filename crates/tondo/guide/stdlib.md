@@ -7,6 +7,7 @@ prelude`).
 
 ```text
 std.console    print, println, eprintln, readLine, the streams
+std.cli        the command line read into types, with help; styles, tables, progress, questions
 std.io         Writer, Reader, Buffer, pipe, copy, multiWriter: streams of all kinds
 std.fs         read and write files, walk, glob, watch, metadata, links, temporaries
 std.embed      files of the package kept in the executable, read when it compiles
@@ -25,6 +26,7 @@ std.csv        CSV rows and records, streaming and whole
 std.log        a logger with levels and fields, text or JSON lines
 std.diagnostics  the program's own counters, which `tondo counters` shows
 std.http       HTTP client and server, WebSockets (`tondo guide http`)
+std.mcp        Model Context Protocol servers from a value's methods
 std.template   text and HTML templates, compiled or loaded (`tondo guide templates`)
 std.net        TCP, UDP and Unix sockets, TLS, names, IP addresses and networks
 std.url        URLs and relative links: parts, resolving, the query
@@ -137,6 +139,91 @@ fn main(): !xml.XmlError {
     }
 }
 ```
+
+## Command lines and the terminal
+
+A record is a command: its fields are options, `--kebab-case`, and with
+`@cli.Argument` positional arguments; an enum is subcommands, one a
+variant. The `///` documentation is the help, which `-h` shows.
+
+```tondo
+import std.cli
+import std.console
+
+/// Builds and serves static sites.
+pub enum Site {
+    /// Builds the site.
+    Build(Build)
+    /// Serves the site.
+    Serve { port: Int? }
+}
+
+pub type Build = {
+    /// The site's directory.
+    @cli.Argument
+    source: String?
+    /// Where to write it.
+    @cli.Option(short: "d", default: "public")
+    destination: String
+    /// Writes the drafts too.
+    drafts: Bool
+}
+
+fn main() {
+    match cli.parse[Site]() {
+        Site.Build(build) => console.println(cli.markup("[green]✓[/] built into [bold]{build.destination}[/]"))
+        Site.Serve { port } => console.println("serving on {port.unwrapOr(8080)}")
+    }
+}
+```
+
+- `Bool` fields are flags, `T?` optional, `Array[T]` repeated, enums
+  without data a choice; `cli.parse` ends with 2 and the usage on a wrong
+  line, `cli.parseArgs(args)` gives the error instead.
+- `cli.markup("[bold red]x[/]")` styles a block and returns to the style
+  before; interpolated values are text, and a wrong style is a compile
+  error. No codes off a terminal or with `NO_COLOR`.
+- `cli.table(records)`, `cli.progress("Building", total: n)`,
+  `cli.ask`, `cli.confirm`, `cli.choose`, `cli.secret`,
+  `cli.completions[Site](cli.Shell.Bash)`.
+
+## MCP servers
+
+Each `pub` method of a value is a tool, its `///` the description; with one
+record parameter, the record's fields are the arguments, their `///` in the
+schema. `@mcp.Resource(uri: ...)` and `@mcp.Prompt` make resources and
+prompts.
+
+```tondo
+import std.mcp
+
+/// Small arithmetic.
+pub type Calculator = {}
+
+pub type Sum = {
+    /// The numbers to add.
+    numbers: Array[Int]
+}
+
+/// Adds numbers.
+pub fn Calculator.add(self, input: Sum): Int {
+    var total = 0
+    for number in input.numbers {
+        total += number
+    }
+    total
+}
+
+fn main(): !mcp.McpError {
+    mcp.serve(Calculator {})?
+}
+```
+
+- `mcp.serve` speaks over standard input and output; `console` goes to
+  standard error meanwhile. `mcp.handler(value)` serves the same on a route
+  of `std.http`.
+- A `T ! E` that fails is the tool's error, with its `Display`; a panic too,
+  and the server goes on.
 
 ## Files in the executable
 
