@@ -268,6 +268,9 @@ enum Rt {
     SpawnDetached,
     ContextRegister,
     ContextGet,
+    ContextField,
+    ContextComputed,
+    ContextShows,
     ContextSet,
     ContextRestore,
     JoinWaitTimeout,
@@ -551,6 +554,9 @@ impl Rt {
             Rt::UnwindPass => ("tondo_rt_unwind_pass", &[], &[]),
             Rt::ContextRegister => ("tondo_rt_context_register", &[I64, I64, I64, I64, I64, I64, I64], &[]),
             Rt::ContextGet => ("tondo_rt_context_get", &[I64], &[I64]),
+            Rt::ContextField => ("tondo_rt_context_field", &[I64, I64, I64], &[I64]),
+            Rt::ContextComputed => ("tondo_rt_context_computed", &[I64, I64, I64, I64], &[]),
+            Rt::ContextShows => ("tondo_rt_context_shows", &[I64, I64, I64, I64], &[]),
             Rt::ContextSet => ("tondo_rt_context_set", &[I64, I64, I64, I64], &[I64]),
             Rt::ContextRestore => ("tondo_rt_context_restore", &[I64], &[]),
             Rt::JoinWaitTimeout => ("tondo_rt_join_wait_timeout", &[I64, I64, I64], &[I8]),
@@ -880,7 +886,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         contexts: program
             .contexts
             .iter()
-            .map(|&fns| (fns, program.types.handle_result(bodies[fns.maker.0 as usize].result)))
+            .map(|fns| (fns.clone(), program.types.handle_result(bodies[fns.maker.0 as usize].result)))
             .collect(),
     };
     if coverage.is_some() {
@@ -3005,6 +3011,34 @@ impl Emit<'_, Codegen<'_>> {
             let name = self.string_ptr(&name);
             let index = self.fb.ins().iconst(types::I64, index as i64);
             self.call_rt(Rt::ContextRegister, &[index, maker, release, log, label, name, show]);
+            for (field, computes, named) in &fns.computed {
+                let computes = address(self, Some(*computes));
+                let field = self.fb.ins().iconst(types::I64, i64::from(*field));
+                let named = self.string_ptr(named);
+                self.call_rt(Rt::ContextComputed, &[index, field, computes, named]);
+            }
+            // The tools show its fields one by one, the computed ones from
+            // where they are, since the record holds zeros for them.
+            let fields = match self.cg.types().kind(record) {
+                TyKind::Adt(id) => match &self.cg.types().adt(*id).kind {
+                    AdtKind::Record(fields) => fields.iter().map(|f| f.name.clone()).collect(),
+                    _ => Vec::new(),
+                },
+                _ => Vec::new(),
+            };
+            let slots: Vec<Slot> = (0..fields.len()).map(|i| self.cg.slot(record, Proj::Field(i as u32))).collect();
+            if fns.computed.is_empty() || slots.iter().any(|slot| slot.boxed) {
+                continue;
+            }
+            for (name, slot) in fields.iter().zip(&slots) {
+                let offset = self.fb.ins().iconst(types::I64, i64::from(slot.offset));
+                let show = match self.cg.class(slot.ty) {
+                    Class::Zero => self.fb.ins().iconst(POINTER, 0),
+                    _ => self.glue_address(Glue::Show, slot.ty),
+                };
+                let name = self.string_ptr(name);
+                self.call_rt(Rt::ContextShows, &[index, offset, show, name]);
+            }
         }
     }
 }
@@ -7978,6 +8012,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Callee::Std(StdFn::ContextGet(index)) => {
                 let index = self.e.fb.ins().iconst(types::I64, i64::from(index));
                 self.e.call_rt(Rt::ContextGet, &[index])
+            }
+            Callee::Std(StdFn::ContextField(index, field)) => {
+                let index = self.e.fb.ins().iconst(types::I64, i64::from(index));
+                let field = self.e.fb.ins().iconst(types::I64, i64::from(field));
+                let location = self.location(self.span);
+                self.e.call_rt(Rt::ContextField, &[index, field, location])
             }
             Callee::Std(StdFn::ContextSet(index, fields)) => {
                 let index = self.e.fb.ins().iconst(types::I64, i64::from(index));

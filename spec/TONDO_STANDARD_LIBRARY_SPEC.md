@@ -3881,7 +3881,10 @@ flags y matching de bytes inválidos se rechazan con un error de compilación; n
 se reinterpretan silenciosamente.
 
 `Regex.compile` produce un valor inmutable y reutilizable, que se copia sin
-coste y puede compartirse entre tareas. `isMatch`, `isFullMatch`, `find`,
+coste y puede compartirse entre tareas. Un patrón literal, sin interpolación,
+se comprueba al compilar el programa con las mismas reglas: uno que no compila
+es `E1909`, con el tipo de error y el byte donde está, así que el `?` de
+`Regex.compile(r"\w+")?` no falla. `isMatch`, `isFullMatch`, `find`,
 `findAll`, `replace` y `replaceAll` son síncronos y acotados; ninguno suspende.
 `find` devuelve la primera coincidencia (`match` es una palabra reservada).
 `findAll` implementa de forma perezosa `Iterator[RegexMatch ! RegexError]`:

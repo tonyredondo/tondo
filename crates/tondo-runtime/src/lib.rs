@@ -51,6 +51,7 @@ mod profiling;
 mod recorder;
 mod reflect;
 mod regex;
+mod regex_dialect;
 mod server;
 mod shared;
 mod shown;
@@ -124,6 +125,9 @@ pub unsafe fn str_bytes<'a>(s: *const Str) -> &'a [u8] {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_retain(s: *const Str) {
+    if s.is_null() {
+        return;
+    }
     let rc = unsafe { &(*s).rc };
     if rc.load(Ordering::Relaxed) != IMMORTAL {
         rc.fetch_add(1, Ordering::Relaxed);
@@ -385,7 +389,9 @@ pub(crate) fn box_payload(b: *mut u8) -> *mut u8 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_box_retain(b: *mut BoxHeader) {
-    unsafe { (*b).rc.fetch_add(1, Ordering::Relaxed) };
+    if !b.is_null() {
+        unsafe { (*b).rc.fetch_add(1, Ordering::Relaxed) };
+    }
 }
 
 /// Releases a box; the last release releases the value's contents and frees it.
@@ -532,7 +538,9 @@ pub unsafe extern "C" fn tondo_rt_weak_new(r: *mut RefHeader) -> *mut RefHeader 
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_weak_retain(r: *mut RefHeader) {
-    unsafe { (*r).weak.fetch_add(1, Ordering::Relaxed) };
+    if !r.is_null() {
+        unsafe { (*r).weak.fetch_add(1, Ordering::Relaxed) };
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -618,6 +626,9 @@ pub extern "C" fn tondo_rt_fn_new(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_fn_retain(f: *mut FnObject) {
+    if f.is_null() {
+        return;
+    }
     let rc = unsafe { &(*f).rc };
     if rc.load(Ordering::Relaxed) != IMMORTAL {
         rc.fetch_add(1, Ordering::Relaxed);
@@ -727,7 +738,9 @@ pub extern "C" fn tondo_rt_array_new(size: usize, len: usize) -> *mut ArrayHeade
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_array_retain(a: *mut ArrayHeader) {
-    unsafe { (*a).rc.fetch_add(1, Ordering::Relaxed) };
+    if !a.is_null() {
+        unsafe { (*a).rc.fetch_add(1, Ordering::Relaxed) };
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -1631,7 +1644,9 @@ pub extern "C" fn tondo_rt_map_new(entry_size: usize, value_offset: usize) -> *m
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_map_retain(m: *mut MapObject) {
-    unsafe { (*m).rc.fetch_add(1, Ordering::Relaxed) };
+    if !m.is_null() {
+        unsafe { (*m).rc.fetch_add(1, Ordering::Relaxed) };
+    }
 }
 
 unsafe fn release_entries(m: &mut MapObject, glue: &MapGlue) {

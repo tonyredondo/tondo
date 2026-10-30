@@ -69,7 +69,10 @@ with statements cannot be imported.
 - What belongs to the work that runs, as the request or the trace, goes in
   a `context Request = { id: String = "" }`: any function reads
   `Request.id`, and `with Request { id: x }` changes it until the block
-  ends. Nothing passes it as a parameter.
+  ends. Nothing passes it as a parameter. What the whole program shares, as
+  a compiled pattern or a cache, is a field whose initial value is computed
+  once, when first read: `context Patterns = { words: Regex =
+  Regex.compile(r"\w+")? }`. There are no global variables.
 - Strings interpolate with `{expr}`, formatted as `{price:.2}`, `{id:08}`
   or `{name:<12}`; `{{` is a literal brace. `+` does not join strings.
 - Methods are declared outside the type: `fn User.greet(self): String`.

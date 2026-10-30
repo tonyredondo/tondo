@@ -3092,7 +3092,9 @@ pub unsafe extern "C" fn tondo_rt_join_cancel(join: *mut JoinObject) {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_handle_retain(handle: *mut u8) {
-    unsafe { (*(handle as *const AtomicUsize)).fetch_add(1, Ordering::Relaxed) };
+    if !handle.is_null() {
+        unsafe { (*(handle as *const AtomicUsize)).fetch_add(1, Ordering::Relaxed) };
+    }
 }
 
 /// Releases a `Join`: the last reference waits for a task nobody waited for

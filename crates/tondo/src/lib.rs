@@ -49,6 +49,10 @@ pub mod pprof;
 pub mod profile;
 pub mod project;
 pub mod prove;
+// Its kinds of error are the runtime's; the compiler reads only their names.
+#[allow(dead_code)]
+#[path = "../../tondo-runtime/src/regex_dialect.rs"]
+mod regex_dialect;
 pub mod runner;
 pub mod setup;
 pub mod source;

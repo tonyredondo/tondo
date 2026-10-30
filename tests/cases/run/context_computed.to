@@ -1,0 +1,85 @@
+// A context's initial value that is not a constant is computed once, when
+// the program first reads it, and every task then shares it. A `?` that
+// fails there panics at that read, and the next read tries again; a `with`
+// does not compute the fields it keeps; a value that reads itself panics,
+// and a cancelled computation is started again by the next read.
+
+import std.console
+import std.env
+import std.regex
+import std.sync
+import std.time
+
+context Counts = {
+    patterns: sync.Atomic[Int] = sync.Atomic(0)
+    started: sync.Mutex[Bool] = sync.Mutex(false)
+    first: sync.Atomic[Bool] = sync.Atomic(true)
+}
+
+fn compiled(): regex.Regex ! regex.RegexError {
+    _ = Counts.patterns.add(1)
+    regex.Regex.compile(env.get("WORD_PATTERN").unwrapOr("("))?
+}
+
+context Patterns = {
+    words: regex.Regex = compiled()?
+    digits: regex.Regex = regex.Regex.compile(r"^\d+$")?
+    seen: sync.Map[String, Int] = sync.Map([:])
+    limit: Int = 3
+    loop: Int = selfish()
+    slow: Int = slowly()
+}
+
+fn selfish(): Int {
+    Patterns.loop + 1
+}
+
+fn slowValue(): Int {
+    Patterns.slow
+}
+
+fn slowly(): Int {
+    if Counts.first.swap(false) {
+        Counts.started.update((started) { started = true })
+        time.sleep(time.hours(1))
+    }
+    42
+}
+
+fn main() {
+    match recover { Patterns.words.pattern() } {
+        ok(pattern) => console.println("words: {pattern}")
+        err(stopped) => console.println("{stopped.message}")
+    }
+    env.set("WORD_PATTERN", r"\w+")
+    with Patterns { limit: 5 }
+    console.println("limit {Patterns.limit}, computed {Counts.patterns.load()} times")
+    var group = Group.new[Bool]()
+    for text in ["12", "a1", "7"] {
+        group.add(spawn Patterns.digits.isMatch(text).unwrapOr(false))
+    }
+    console.println("{group.wait()}")
+    for _ in 0..3 {
+        _ = Patterns.seen.insert(Patterns.words.pattern(), Patterns.seen.get(Patterns.words.pattern()).unwrapOr(0) + 1)
+    }
+    console.println("{Patterns.seen.snapshot()}, computed {Counts.patterns.load()} times")
+    let other = regex.Regex.compile(r"x").unwrapOr(Patterns.words)
+    with Patterns { words: other }
+    console.println("with: {Patterns.words.pattern()}")
+    match recover { Patterns.loop } {
+        ok(value) => console.println("loop: {value}")
+        err(stopped) => console.println("{stopped.message}")
+    }
+    let job = spawn slowValue()
+    Counts.started.updateWhen((started) { started }, (_) {})
+    job.cancel()
+    console.println("slow: {Patterns.slow}")
+}
+
+// expect-stdout: the initial value of `Patterns.words` failed: regex.UnexpectedEnd at byte 0 (Compile)
+// expect-stdout: limit 5, computed 1 times
+// expect-stdout: [true, false, true]
+// expect-stdout: [\w+: 3], computed 2 times
+// expect-stdout: with: x
+// expect-stdout: the initial value of `Patterns.loop` reads itself while it is computed
+// expect-stdout: slow: 42

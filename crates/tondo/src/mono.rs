@@ -58,6 +58,11 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
             maker: mono.instance(fns.maker, Vec::new()),
             log: fns.log.map(|f| mono.instance(f, Vec::new())),
             label: fns.label.map(|f| mono.instance(f, Vec::new())),
+            computed: fns
+                .computed
+                .into_iter()
+                .map(|(field, f, named)| (field, mono.instance(f, Vec::new()), named))
+                .collect(),
         })
         .collect();
     while let Some((id, args, instance)) = mono.queue.pop_front() {

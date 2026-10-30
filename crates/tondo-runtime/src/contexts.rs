@@ -28,6 +28,91 @@ struct Entry {
     label: Option<Shown>,
     name: String,
     show: Option<Show>,
+    computed: Vec<Arc<Computed>>,
+    /// For a context with computed fields, each field's name, offset and
+    /// show, for the tools.
+    fields: Vec<(String, usize, Option<Show>)>,
+}
+
+/// A field whose initial value is computed (language 11.16): the function
+/// that computes it, in a `Ref` of a record that holds only it, its name,
+/// `Context.field`, and how far it got.
+struct Computed {
+    field: usize,
+    maker: Maker,
+    name: String,
+    state: Mutex<State>,
+}
+
+enum State {
+    Pending,
+    /// A task computes it; those that read it meanwhile wait.
+    Computing {
+        task: u64,
+        waiting: Vec<Arc<crate::tasks::Wait>>,
+    },
+    /// It lives as long as the program.
+    Done(*mut RefHeader),
+}
+
+// The `Ref` it holds is shared, and never changes.
+unsafe impl Send for State {}
+
+impl Computed {
+    /// The `Ref` that holds the value, if a task computed it.
+    fn done(&self) -> Option<*mut RefHeader> {
+        match *self.state.lock().unwrap_or_else(|e| e.into_inner()) {
+            State::Done(made) => Some(made),
+            _ => None,
+        }
+    }
+
+    /// The `Ref` that holds the value, which the first read computes while
+    /// the others wait; none if computing it failed, panicked or was
+    /// cancelled, which the next read tries again.
+    fn value(&self, location: *const Str) -> Option<*mut RefHeader> {
+        use crate::tasks::{CANCELLED, Wait, current_id, notify};
+        let me = current_id();
+        loop {
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            match &mut *state {
+                State::Done(made) => return Some(*made),
+                State::Computing { task, .. } if *task == me => {
+                    drop(state);
+                    let message = format!("the initial value of `{}` reads itself while it is computed", self.name);
+                    super::raise(8, &message, location);
+                    return None;
+                }
+                State::Computing { waiting, .. } => {
+                    let wait = Wait::new();
+                    waiting.push(wait.clone());
+                    drop(state);
+                    if wait.block_on_task() == CANCELLED {
+                        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+                        if let State::Computing { waiting, .. } = &mut *state {
+                            waiting.retain(|other| !Arc::ptr_eq(other, &wait));
+                        }
+                        return None;
+                    }
+                }
+                State::Pending => {
+                    *state = State::Computing { task: me, waiting: Vec::new() };
+                    drop(state);
+                    let made = unsafe { (self.maker)(std::ptr::null()) };
+                    let after = if made.is_null() { State::Pending } else { State::Done(made) };
+                    let before = std::mem::replace(&mut *self.state.lock().unwrap_or_else(|e| e.into_inner()), after);
+                    if let State::Computing { waiting, .. } = before {
+                        for wait in waiting {
+                            if wait.claim(0) {
+                                notify(wait.task);
+                            }
+                        }
+                    }
+                    return (!made.is_null()).then_some(made);
+                }
+            }
+        }
+    }
 }
 
 /// A `with` that changed fields of a context, for the tools (toolchain
@@ -50,6 +135,9 @@ static ROOT: AtomicPtr<Table> = AtomicPtr::new(std::ptr::null_mut());
 pub(crate) struct Table {
     count: AtomicUsize,
     slots: Vec<*mut RefHeader>,
+    /// The fields of each context a `with` set, a bit each: the others
+    /// that are computed are read where they are computed.
+    set: Vec<u64>,
     /// The fields marked `@label` its values give, for the task's labels.
     labels: Vec<(String, String)>,
     /// The last `with` that changed each context, none for an initial value.
@@ -94,7 +182,28 @@ pub unsafe extern "C" fn tondo_rt_context_register(
     if registered.len() <= index {
         registered.resize(index + 1, None);
     }
-    registered[index] = Some(Entry { maker, release, log, label, name, show });
+    registered[index] =
+        Some(Entry { maker, release, log, label, name, show, computed: Vec::new(), fields: Vec::new() });
+}
+
+/// A field of a context with computed fields, as the tools show it: its
+/// offset in the record, how it shows, and its name.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_context_shows(index: usize, offset: usize, show: Option<Show>, name: *const Str) {
+    let name = String::from_utf8_lossy(unsafe { super::str_bytes(name) }).into_owned();
+    let mut registered = REGISTERED.lock().unwrap_or_else(|e| e.into_inner());
+    let entry = registered[index].as_mut().expect("the context is registered first");
+    entry.fields.push((name, offset, show));
+}
+
+/// A field of the context at `index` whose initial value is computed, and
+/// the function that computes it, as the program starts.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_context_computed(index: usize, field: usize, maker: Maker, name: *const Str) {
+    let name = String::from_utf8_lossy(unsafe { super::str_bytes(name) }).into_owned();
+    let mut registered = REGISTERED.lock().unwrap_or_else(|e| e.into_inner());
+    let entry = registered[index].as_mut().expect("the context is registered first");
+    entry.computed.push(Arc::new(Computed { field, maker, name, state: Mutex::new(State::Pending) }));
 }
 
 /// A context of a task, as the tools show it.
@@ -121,6 +230,15 @@ pub(crate) unsafe fn described(task: *mut crate::tasks::Task) -> Vec<Described> 
     for (index, entry) in entries().iter().enumerate() {
         let Some(show) = entry.show else { continue };
         let slot = unsafe { (&(*table).slots)[index] };
+        if !entry.fields.is_empty() {
+            let set = unsafe { (&(*table).set)[index] };
+            let origin = unsafe { (&(*table).origins)[index].clone() };
+            out.push(Described {
+                name: entry.name.clone(),
+                fields: unsafe { fields(entry, slot, set, origin, task.id) },
+            });
+            continue;
+        }
         let mut builder = super::Builder::new(0);
         unsafe { show(&mut builder, super::ref_payload(slot as *mut u8)) };
         let text = builder.finish();
@@ -143,6 +261,40 @@ pub(crate) unsafe fn described(task: *mut crate::tasks::Task) -> Vec<Described> 
             })
             .collect();
         out.push(Described { name: entry.name.clone(), fields });
+    }
+    out
+}
+
+/// The fields of a context with computed fields, one by one: each from the
+/// task's record, or, for a computed one no `with` set, from where it was
+/// computed, if it was.
+unsafe fn fields(entry: &Entry, slot: *mut RefHeader, set: u64, origin: Option<Arc<Origin>>, task: u64) -> Vec<Field> {
+    let mut out = Vec::new();
+    for (at, (name, offset, show)) in entry.fields.iter().enumerate() {
+        let bit = 1u64 << at.min(63);
+        let holder = match entry.computed.iter().find(|c| c.field == at) {
+            Some(computed) if set & bit == 0 => computed.done(),
+            _ => Some(slot),
+        };
+        let value = match (holder, show) {
+            (None, _) => "(computed when first read)".to_string(),
+            (Some(_), None) => "()".to_string(),
+            (Some(holder), Some(show)) => {
+                let mut builder = super::Builder::new(0);
+                unsafe { show(&mut builder, (super::ref_payload(holder as *mut u8) as *const u8).add(*offset)) };
+                let text = builder.finish();
+                let value = String::from_utf8_lossy(unsafe { super::str_bytes(text) }).into_owned();
+                unsafe { super::tondo_rt_str_release(text) };
+                value
+            }
+        };
+        let mut node = origin.as_deref();
+        while let Some(found) = node.filter(|o| o.fields & bit == 0) {
+            node = found.previous.as_deref();
+        }
+        let set = node.map(|o| (o.at.clone(), o.task != task));
+        let parts = super::shown::parse(&value).parts.len();
+        out.push(Field { name: name.clone(), value, parts, set });
     }
     out
 }
@@ -207,7 +359,8 @@ fn root() -> *mut Table {
     }
     let slots = entries().iter().map(|entry| unsafe { (entry.maker)(std::ptr::null()) }).collect();
     let origins = vec![None; entries().len()];
-    let made = Box::into_raw(Box::new(Table { count: AtomicUsize::new(1), slots, labels: Vec::new(), origins }));
+    let set = vec![0; entries().len()];
+    let made = Box::into_raw(Box::new(Table { count: AtomicUsize::new(1), slots, set, labels: Vec::new(), origins }));
     match ROOT.compare_exchange(std::ptr::null_mut(), made, Ordering::AcqRel, Ordering::Acquire) {
         Ok(_) => made,
         Err(other) => {
@@ -246,6 +399,21 @@ pub extern "C" fn tondo_rt_context_get(index: usize) -> *mut RefHeader {
     unsafe { (&(*table).slots)[index] }
 }
 
+/// The `Ref` that holds `field` of a context where the task runs, a field
+/// whose initial value is computed: the task's, if a `with` set it, or the
+/// one its first read computes, at `location`. If computing it failed, the
+/// task's, whose zeros the code does not use: it unwinds.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_context_field(index: usize, field: usize, location: *const Str) -> *mut RefHeader {
+    let table = table(current().map(|held| &*held));
+    let slot = unsafe { (&(*table).slots)[index] };
+    if unsafe { (&(*table).set)[index] } & 1 << field.min(63) != 0 {
+        return slot;
+    }
+    let computed = entries()[index].computed.iter().find(|c| c.field == field);
+    computed.and_then(|c| c.value(location)).unwrap_or(slot)
+}
+
 /// A `with` at `at`, which changes `fields`, a bit each: the task's table
 /// becomes a new one with `value` for the context; the old one, which the
 /// block restores, is given back.
@@ -263,11 +431,13 @@ pub unsafe extern "C" fn tondo_rt_context_set(
     for &slot in &slots {
         unsafe { (*slot).rc.fetch_add(1, Ordering::Relaxed) };
     }
+    let mut set = unsafe { (*base).set.clone() };
+    set[index] |= fields;
     let mut origins = unsafe { (*base).origins.clone() };
     let at = String::from_utf8_lossy(unsafe { super::str_bytes(at) }).into_owned();
     let previous = origins[index].take();
     origins[index] = Some(Arc::new(Origin { at, fields, task: super::tasks::current_id(), previous }));
-    let made = Box::into_raw(Box::new(Table { count: AtomicUsize::new(1), slots, labels: Vec::new(), origins }));
+    let made = Box::into_raw(Box::new(Table { count: AtomicUsize::new(1), slots, set, labels: Vec::new(), origins }));
     let saved = std::mem::replace(&mut held.0, made);
     // Its labels, which the new values give.
     if labelled() {
@@ -355,6 +525,15 @@ pub(crate) fn end() {
     let root = ROOT.swap(std::ptr::null_mut(), Ordering::AcqRel);
     if !root.is_null() {
         unsafe { free(root) };
+    }
+    let Some(entries) = ENTRIES.get() else { return };
+    for entry in entries {
+        for computed in &entry.computed {
+            let mut state = computed.state.lock().unwrap_or_else(|e| e.into_inner());
+            if let State::Done(made) = std::mem::replace(&mut *state, State::Pending) {
+                unsafe { super::tondo_rt_ref_release(made, entry.release) };
+            }
+        }
     }
 }
 

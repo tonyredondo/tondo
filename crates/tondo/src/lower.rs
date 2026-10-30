@@ -35,13 +35,20 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 pub fn lower(program: &hir::Program, live: bool) -> Vec<Body> {
+    // The fields of each context whose initial values are computed, a bit
+    // each (11.16).
+    let computed: Vec<u64> = program
+        .contexts
+        .iter()
+        .map(|c| c.computed.iter().fold(0, |set, &(field, ..)| set | 1 << field.min(63)))
+        .collect();
     // Each function on its own, on every core.
     let lower_all = |waits: Option<&[bool]>, recovering: bool| -> Vec<Body> {
         let restart = |index: usize, f: &hir::Function| (live && !f.test).then_some(hir::FnId(index as u32));
         let indices: Vec<usize> = (0..program.functions.len()).collect();
         crate::parallel::map(&indices, 1, |&i| {
             let f = &program.functions[i];
-            lower_function(&program.types, f, waits, restart(i, f), recovering)
+            lower_function(&program.types, f, waits, restart(i, f), recovering, &computed)
         })
     };
     let plain = lower_all(None, false);
@@ -267,6 +274,8 @@ struct Again {
 struct Builder<'a> {
     types: &'a Types,
     function: &'a hir::Function,
+    /// The fields of each context whose initial values are computed.
+    computed: &'a [u64],
     locals: Vec<Ty>,
     names: Vec<Option<String>>,
     blocks: Vec<(Vec<Statement>, Option<Terminator>)>,
@@ -325,10 +334,12 @@ fn lower_function(
     waits: Option<&[bool]>,
     restart: Option<hir::FnId>,
     recovering: bool,
+    computed: &[u64],
 ) -> Body {
     let mut b = Builder {
         types,
         function,
+        computed,
         locals: Vec::new(),
         names: Vec::new(),
         blocks: Vec::new(),
@@ -2057,6 +2068,19 @@ impl Builder<'_> {
                     components[*index as usize] = self.expr(value);
                 }
                 self.aggregate(e.ty, components, e.span)
+            }
+            // A field whose initial value is computed, in the `Ref` that
+            // holds it where the code runs, which the first read computes:
+            // a wait (11.16).
+            hir::ExprKind::Field(base, index)
+                if let hir::ExprKind::ContextRead(context, reference) = base.kind
+                    && self.computed.get(context as usize).is_some_and(|set| set & 1 << (*index).min(63) != 0) =>
+            {
+                let held = self.new_local(reference);
+                let get = Rvalue::Call(hir::Callee::Std(hir::StdFn::ContextField(context, *index)), Vec::new());
+                self.push(Statement::Assign(Place::local(held), Box::new(get), e.span));
+                self.cancellation_point(e.span, true);
+                Operand::Copy(Place::local(held).deref().field(*index))
             }
             hir::ExprKind::Field(base, index) => match self.expr(base) {
                 Operand::Copy(place) => Operand::Copy(place.field(*index)),

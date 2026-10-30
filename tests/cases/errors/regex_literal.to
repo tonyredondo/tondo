@@ -1,0 +1,14 @@
+// A literal pattern of `Regex.compile` is checked when the program
+// compiles, so that its `?` cannot fail.
+
+import std.regex
+
+fn main(): !regex.RegexError {
+    let words = regex.Regex.compile(r"\w+")?
+    let open = regex.Regex.compile(r"(\w+")?
+    let back = regex.Regex.compile(pattern: r"(?<n>\d)\k<n>")?
+    _ = (words, open, back)
+}
+
+// expect-error: E1909 the pattern does not compile: regex.UnexpectedEnd at byte 0
+// expect-error: E1909 the pattern does not compile: regex.InvalidEscape at byte 8

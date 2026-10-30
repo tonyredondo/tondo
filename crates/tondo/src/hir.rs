@@ -37,12 +37,17 @@ pub struct Program {
 /// What the runtime calls of a context (11.16): the maker of its initial
 /// value in a `Ref`, and those that show its fields marked `@log` and
 /// `@label` that do not have their initial values, as names and texts
-/// after each a zero character.
-#[derive(Clone, Copy)]
+/// after each a zero character. A field whose initial value is computed
+/// has zeros there, and a function of its own that computes it, once, in
+/// a `Ref` of a record that holds only it.
+#[derive(Clone)]
 pub struct ContextFns {
     pub maker: FnId,
     pub log: Option<FnId>,
     pub label: Option<FnId>,
+    /// Each computed field: its index, the function and its name,
+    /// `Context.field`.
+    pub computed: Vec<(u32, FnId, String)>,
 }
 
 /// The code of the panic that `testing.skip` ends a test or suite with,
@@ -873,6 +878,10 @@ pub enum StdFn {
     ContextGet(u32),
     ContextSet(u32, u64),
     ContextRestore,
+    /// The `Ref` of a context's value that holds a field whose initial
+    /// value is computed: the task's, if a `with` set the field, or the
+    /// one the first read computes (11.16).
+    ContextField(u32, u32),
     /// A `recover` block starts, ends as code does (true when a task of it
     /// ended with a panic), ends another way, and stops the panic that
     /// unwinds to it (15.9).
@@ -1069,6 +1078,7 @@ impl StdFn {
         matches!(
             self,
             StdFn::TimeSleep
+                | StdFn::ContextField(..)
                 | StdFn::ClockSettle
                 | StdFn::ClockAdvance
                 | StdFn::ConsoleReadLine

@@ -1,13 +1,20 @@
-// A context's initial values are constants.
+// Computed initial values cannot read each other in a cycle, and a field
+// shown in logs has a constant initial value, the one it is compared with.
 
-fn now(): Int {
-    3
+import std.env
+
+context Pair = {
+    a: Int = Pair.b + 1
+    b: Int = Other.c * 2
+    @log
+    named: String = env.get("NAME").unwrapOr("x")
 }
 
-context Clock = {
-    started: Int = now()
+context Other = {
+    c: Int = Pair.a
 }
 
 fn main() {}
 
-// expect-error: E1616
+// expect-error: E1616 the initial value of `Pair.a` reads itself: `Pair.a` reads `Pair.b` reads `Other.c` reads `Pair.a`
+// expect-error: E1616 `@log` shows the field `named` of the context `Pair` when it is not its initial value, which must then be a constant

@@ -81,7 +81,7 @@ pub const CODES: &[(&str, &str, &str)] = &[
     (
         "E1616",
         "invalid-context-declaration",
-        "A field of a context has no constant initial value, is not `Send` or `Copy`, or has an annotation other than `@log` and `@label`, or one whose type has no `Display`.",
+        "A field of a context has no initial value, is not `Send` or `Copy`, has an annotation other than `@log` and `@label`, or one whose type has no `Display` or whose initial value is computed, or initial values read each other.",
     ),
     ("E1617", "invalid-context-change", "`with Name { ... }` names something that is not a context."),
     (
@@ -147,6 +147,7 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "invalid-validation-rule",
         "A rule of `std.validate` is on a field it does not apply to, its `min` is above its `max`, an integer has a fraction as its bound, or its pattern does not compile.",
     ),
+    ("E1909", "invalid-pattern", "The literal pattern of `Regex.compile` is not in the dialect of `std.regex`."),
     ("E2001", "test-node-outside-test-source", "A `suite` or `test` in a source that is not a test source."),
     ("E2002", "duplicate-test-node", "Two suites or tests have the same identity among their siblings."),
     (

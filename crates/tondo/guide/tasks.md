@@ -190,8 +190,12 @@ fn main() {
 - A task takes the context of the point where it is spawned. A value set
   at the start of `main` is the whole program's, as a tracer or a
   configuration: there are no mutable globals.
-- Initial values are constants; a value made as the program runs is a
-  `T? = none`, set with `with`. Fields are `Send` and `Copy`.
+- An initial value that is not a constant, as a compiled pattern, a pool
+  or a `sync.Map`, is computed once, when the program first reads it, and
+  every task then shares it: `words: Regex = Regex.compile(r"\w+")?`. This
+  is where a program's or a library's shared values go. A `?` that fails
+  there panics at that read, and the next one tries again. Fields are
+  `Send` and `Copy`.
 - A field marked `@log("request_id")` goes in every event of `std.log` and
   in a panic's report while it is set; one marked `@label` is a label of
   profiles. `log.Context` holds the logger that `log.info(...)` and the other

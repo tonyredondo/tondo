@@ -3913,17 +3913,52 @@ pub context Trace = {
 ~~~
 
 `context Nombre = { campos }` declara a la vez el tipo record `Nombre` y su
-contexto. Cada campo lleva un valor inicial constante (6.5), el que se lee
-antes de cualquier `with`; un valor que solo existe al ejecutar, como un tracer,
-se declara opcional y se pone en `main`. Los campos deben cumplir `Send`
+contexto. Cada campo lleva un valor inicial, el que se lee donde ningún `with`
+lo cambió. Un valor inicial constante (6.5) existe desde que el programa
+arranca. Otro se calcula una sola vez, la primera vez que el programa lee el
+campo sin que un `with` lo haya cambiado, y desde entonces lo leen todas las
+tareas: así un programa o una biblioteca tienen sus patrones, sus tablas o su
+estado compartido sin prepararlos en `main`.
+
+~~~tondo
+import std.regex
+import std.sync
+
+context Patterns = {
+    words: regex.Regex = regex.Regex.compile(r"\w+")?
+    seen: sync.Map[String, Int] = sync.Map([:])
+}
+
+fn wordCount(text: String): Int ! regex.RegexError {
+    Patterns.words.findAll(text)?.count()
+}
+~~~
+
+- Una tarea que lee el campo mientras otra lo calcula espera a que termine. Un
+  `with` del contexto no calcula los campos que no cambia.
+- `?` en el valor inicial lleva su fallo a la lectura que lo calculaba, como un
+  pánico (`P0008`) que nombra el campo y describe el error; la siguiente
+  lectura lo calcula de nuevo. Un patrón literal de `Regex.compile` se
+  comprueba al compilar (biblioteca estándar 14.16), así que ese `?` no falla.
+- Valores iniciales que se leen en ciclo producen `E1616` con el ciclo; uno que
+  llega a leerse a sí mismo a través de funciones, un pánico que lo dice.
+- Un campo con `@log` o `@label` lleva un valor inicial constante, el que se
+  compara para saber si cambió.
+
+Un valor que el programa decide al arrancar, como su tracer, se declara
+opcional y se pone con `with` al principio de `main`.
+
+Los campos deben cumplir `Send`
 (16.13), porque los contextos viajan con las tareas, y ser `Copy`, porque
 leerlos los copia. Un campo `priv` solo se lee
 y se cambia en el módulo que declara el contexto, como en un record (7.6). Un
 contexto no es genérico.
 
 **Leer.** `Trace.span` es el valor actual del campo `span`: en el módulo que lo
-declara, `Trace.span`; desde otro, `tracer.Trace.span`. Leer nunca falla y no
-busca nada por nombre. El nombre del tipo delante distingue a la vista un valor
+declara, `Trace.span`; desde otro, `tracer.Trace.span`. Leer no busca nada por
+nombre, y un campo de valor inicial constante nunca falla ni espera; uno de
+valor calculado espera la primera vez, como una llamada que espera (11.10). El
+nombre del tipo delante distingue a la vista un valor
 del contexto de un binding local.
 
 **Cambiar.** La sentencia `with` cambia campos del contexto con la forma con
@@ -4021,9 +4056,10 @@ pub context Request = {
 tarea y de dónde viene cada valor (7.4, 7.5 y 7.6 del toolchain).
 
 `context` solo es una palabra del lenguaje al principio de una declaración,
-seguido del nombre (5.5). Un campo sin valor inicial constante, que no cumple
-`Send` o `Copy`, o con una anotación que no es `@log` ni `@label` o cuyo tipo
-no tiene `Display`, produce `E1616`. Un `with` sobre algo que no es un contexto
+seguido del nombre (5.5). Un campo sin valor inicial, que no cumple `Send` o
+`Copy`, con una anotación que no es `@log` ni `@label`, o con una cuyo tipo no
+tiene `Display` o cuyo valor inicial se calcula, produce `E1616`, como los
+valores iniciales que se leen en ciclo. Un `with` sobre algo que no es un contexto
 produce `E1617`; sus campos se comprueban como los de la actualización de un
 record (9.3).
 
@@ -8508,7 +8544,7 @@ oculten un diagnóstico independiente.
 | `E1612` | `invalid-select-operand` | Un brazo de `select` no es `receive`, `send`, `wait`, `next` ni `sleep`. |
 | `E1613` | `invalid-select-shape` | `select` está vacío, repite `else`, lo sitúa antes de otro brazo o usa un binding refutable. |
 | `E1615` | `conflicting-select-ownership` | Dos brazos reservan el mismo dueño afín de formas incompatibles. |
-| `E1616` | `invalid-context-declaration` | Un campo de un contexto no tiene valor inicial constante, no cumple `Send` o `Copy`, o tiene una anotación que no es `@log` ni `@label`, o cuyo tipo no tiene `Display`. |
+| `E1616` | `invalid-context-declaration` | Un campo de un contexto no tiene valor inicial, no cumple `Send` o `Copy`, tiene una anotación que no es `@log` ni `@label`, o una cuyo tipo no tiene `Display` o cuyo valor inicial se calcula, o hay valores iniciales que se leen en ciclo. |
 | `E1617` | `invalid-context-change` | `with Nombre { ... }` nombra algo que no es un contexto. |
 | `E1618` | `invalid-annotation-declaration` | Una anotación declara un campo `priv`, de un tipo sin constantes o con un valor por defecto que no es constante (27.13). |
 | `E1619` | `invalid-annotation` | Una anotación que no existe o no es visible, repetida en un elemento, con un argumento que no es constante o que `meta` no puede leer, o una del lenguaje fuera de su sitio (27.13). |
@@ -8538,6 +8574,7 @@ oculten un diagnóstico independiente.
 | `E1906` | `invalid-template` | Una plantilla de `std.template` no se lee, no tiene su texto al compilar, o una acción escribe donde el HTML no lo admite (biblioteca estándar 14.31). |
 | `E1907` | `invalid-markup` | El markup literal de `cli.markup` tiene un estilo que no existe, que no se cierra o que cierra otro que no está abierto, o que da un valor (biblioteca estándar 14.32). |
 | `E1908` | `invalid-validation-rule` | Una regla de `std.validate` está en un campo al que no se aplica, su `min` supera a su `max`, un entero tiene una fracción como límite o su patrón no compila (biblioteca estándar 14.35). |
+| `E1909` | `invalid-pattern` | El patrón literal de `Regex.compile` no está en el dialecto de `std.regex` (biblioteca estándar 14.16). |
 
 #### Testing
 

@@ -87,6 +87,7 @@ fn check_with<'a>(
         public_fns: HashSet::new(),
         prelude: None,
         contexts: Vec::new(),
+        initial_reads: None,
         annotation_decls: HashMap::new(),
         annotation_defaults: HashMap::new(),
         annotation_values: Vec::new(),
@@ -538,6 +539,34 @@ const REF_UNCHANGED: &str = "the value of a `Ref` never changes: make a new `Ref
 
 /// Whether a value is the same at every evaluation and has no effects, as a
 /// default value must be.
+/// A field of a context whose initial value is computed (11.16): the
+/// function that computes it in a `Ref` of the context's record, the error
+/// its `?` may give, and its name, `Context.field`.
+struct Initial {
+    field: u32,
+    function: hir::Function,
+    error: Option<Ty>,
+    named: String,
+}
+
+/// What the checker makes of a context (11.16): its maker, those that show
+/// its fields for logs and labels, and its computed fields.
+struct ContextMade {
+    maker: hir::Function,
+    log: Option<hir::Function>,
+    label: Option<hir::Function>,
+    initials: Vec<Initial>,
+}
+
+/// A computed initial value, for the cycles among them: its context and
+/// field, where it is, its name and the fields it reads.
+struct Reading {
+    key: (u32, u32),
+    span: Span,
+    named: String,
+    reads: Vec<(u32, u32)>,
+}
+
 fn constant(value: &mut hir::Expr) -> bool {
     constant_parts(value).is_some_and(|parts| parts.into_iter().all(constant))
 }
@@ -804,6 +833,9 @@ struct Checker<'a> {
     /// record type and declaration; and the index of each such type.
     contexts: Vec<(Ty, &'a ast::TypeDecl)>,
     context_of: HashMap<Ty, u32>,
+    /// While the initial value of a context's field is checked, the fields
+    /// of contexts it reads, for the cycles among them (11.16).
+    initial_reads: Option<Vec<(u32, u32)>>,
     /// The annotations the program declares (27.13), by their types, and
     /// the values of their fields a use may leave out.
     annotation_decls: HashMap<Ty, &'a ast::TypeDecl>,
@@ -1258,14 +1290,27 @@ impl<'a> Checker<'a> {
         let makers = self.context_makers();
         functions.extend(std::mem::take(&mut self.closure_functions).into_iter().map(|f| f.expect("checked closure")));
         let mut contexts = Vec::new();
-        for (maker, log, label) in makers {
+        for ContextMade { maker, log, label, initials } in makers {
             let mut add = |function: hir::Function| {
                 functions.push(function);
                 FnId(functions.len() as u32 - 1)
             };
             let maker = add(maker);
             let (log, label) = (log.map(&mut add), label.map(&mut add));
-            contexts.push(hir::ContextFns { maker, log, label });
+            let mut computed = Vec::new();
+            for initial in initials {
+                let (field, reference, named) = (initial.field, initial.function.result, initial.named.clone());
+                let computes = add(initial.function);
+                let id = match initial.error {
+                    None => computes,
+                    Some(error) => {
+                        let TyKind::Result(reference, _) = *self.types.kind(reference) else { unreachable!() };
+                        add(self.initial_failing(computes, reference, error, &named))
+                    }
+                };
+                computed.push((field, id, named));
+            }
+            contexts.push(hir::ContextFns { maker, log, label, computed });
         }
 
         if module.c_library && self.c_functions.is_empty() {
@@ -2040,6 +2085,33 @@ impl<'a> Checker<'a> {
     /// The templates a `template.Set` adds whose text is known when the
     /// program compiles, a string or the files of `embed.files("...")`: one
     /// that does not read is `E1906` (standard library 14.31).
+    /// A literal pattern of `Regex.compile`, which must be in the dialect
+    /// the runtime compiles (standard library 14.16): checked here, so that
+    /// its `?` cannot fail.
+    fn check_regex_literal(&mut self, id: FnId, args: &[ast::Arg]) {
+        let Some(&TypeName::Nominal(regex)) = self.type_names.get("regex.Regex") else { return };
+        if self.methods.get(&(regex, "compile".to_string())) != Some(&id) {
+            return;
+        }
+        let named = args.iter().find(|a| a.name.as_ref().is_some_and(|n| n.name == "pattern"));
+        let Some(arg) = named.or_else(|| args.first().filter(|a| a.name.is_none())) else { return };
+        let ast::ExprKind::Str(segments) = &arg.value.kind else { return };
+        let Some(pattern) = segments
+            .iter()
+            .map(|s| match s {
+                ast::StrSegment::Text(text) => Some(text.as_str()),
+                ast::StrSegment::Expr(..) => None,
+            })
+            .collect::<Option<String>>()
+        else {
+            return;
+        };
+        if let Err((kind, offset)) = crate::regex_dialect::check(&pattern, false, 256, 256) {
+            let message = format!("the pattern does not compile: regex.{kind:?} at byte {offset}");
+            self.diags.error("E1909", arg.value.span, message);
+        }
+    }
+
     fn check_template_literals(&mut self, id: FnId, args: &[ast::Arg]) {
         let is = |this: &Self, name: &str| match this.type_names.get("template.Set") {
             Some(&TypeName::Nominal(ty)) => this.methods.get(&(ty, name.to_string())).is_some_and(|&m| m == id),
@@ -10383,18 +10455,22 @@ impl<'a> Checker<'a> {
 
     /// Each context's maker (11.16): the function that gives its initial
     /// value in a `Ref`, which the runtime calls when a task first reads the
-    /// context. The initial values are constants; the fields are `Send` and
-    /// `Copy`, since tasks share them and reading one copies it, and those
-    /// shown as text have `Display`.
-    fn context_makers(&mut self) -> Vec<(hir::Function, Option<hir::Function>, Option<hir::Function>)> {
+    /// context, with its constant initial values and zeros for the computed
+    /// ones, each of which a function of its own computes when it is first
+    /// read. The fields are `Send` and `Copy`, since tasks share them and
+    /// reading one copies it, and those shown as text have `Display`.
+    fn context_makers(&mut self) -> Vec<ContextMade> {
         let mut makers = Vec::new();
+        let mut reading = Vec::new();
         for (ty, decl) in self.contexts.clone() {
             let module = std::mem::replace(&mut self.module, decl.module);
             let ast::TypeBody::Record(declared) = &decl.body else { unreachable!("a context is a record") };
             let fields = self.record_fields(ty, decl.span).unwrap_or_default();
+            let types: Vec<Ty> = fields.iter().map(|&(_, ty)| ty).collect();
             let reference = self.types.handle(Handle::Ref, ty);
-            let mut cx = self.new_cx(reference);
+            let context = self.context_of[&ty];
             let mut values = Vec::new();
+            let mut initials = Vec::new();
             for (index, (field, (name, field_ty))) in declared.iter().zip(fields).enumerate() {
                 let what = format!("the field `{name}` of the context `{}`", decl.name.name);
                 if let Some(part) = self.not_send(field_ty) {
@@ -10423,15 +10499,53 @@ impl<'a> Checker<'a> {
                     }
                 }
                 let Some(default) = &field.default else { continue };
-                let value = self.expr(&mut cx, default, Some(field_ty));
+                // Its own function's, in case it is computed, where `?` may
+                // fail with what it propagates.
+                let mut own = self.new_cx(field_ty);
+                own.infer_error = true;
+                self.initial_reads = Some(Vec::new());
+                let value = self.expr(&mut own, default, Some(field_ty));
+                let reads = self.initial_reads.take().unwrap_or_default();
                 let mut value = self.coerce(value, field_ty);
-                if !self.types.has_error(value.ty) && !constant(&mut value) {
-                    let message = format!(
-                        "the initial value of {what} is a constant: build it from literals, constants, their operators and constructors; a value made as the program runs is a `{name}: T? = none`, set with `with` in `main`"
-                    );
-                    self.diags.error("E1616", default.span, message);
+                if self.types.has_error(value.ty) || (own.error.is_none() && constant(&mut value)) {
+                    values.push((index as u32, value));
+                    continue;
                 }
-                values.push((index as u32, value));
+                if let Some(annotation) = field.annotations.first() {
+                    let message = format!(
+                        "`@{}` shows {what} when it is not its initial value, which must then be a constant, and this one is computed: give it a constant, or leave out `@{}`",
+                        annotation.name.name, annotation.name.name
+                    );
+                    self.diags.error("E1616", annotation.span, message);
+                }
+                let zeroed = |ty: Ty| Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::Zeroed, Vec::new()), ty, decl.span);
+                values.push((index as u32, zeroed(field_ty)));
+                let mut alone = Some(value);
+                let parts = (0..types.len())
+                    .map(|i| (i as u32, if i == index { alone.take().expect("once") } else { zeroed(types[i]) }))
+                    .collect();
+                let record = Self::mk(hir::ExprKind::Record(parts), ty, default.span);
+                let made = Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::RefNew, vec![record]), reference, default.span);
+                let named = format!("{}.{name}", decl.name.name);
+                let mut function = hir::Function {
+                    name: format!("context {named}"),
+                    generics: Vec::new(),
+                    params: Vec::new(),
+                    loans: Vec::new(),
+                    fallible: own.error.is_some(),
+                    locals: own.locals,
+                    result: match own.error {
+                        Some(error) => self.types.intern(TyKind::Result(reference, error)),
+                        None => reference,
+                    },
+                    body: hir::Block { stmts: Vec::new(), tail: Some(Box::new(made)), ty: reference },
+                    moves: HashSet::new(),
+                    test: false,
+                    span: default.span,
+                };
+                self.ownership(&mut function, &own.params);
+                reading.push(Reading { key: (context, index as u32), span: default.span, named: named.clone(), reads });
+                initials.push(Initial { field: index as u32, function, error: own.error, named });
             }
             let record = Self::mk(hir::ExprKind::Record(values), ty, decl.span);
             let made = Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::RefNew, vec![record]), reference, decl.span);
@@ -10442,20 +10556,120 @@ impl<'a> Checker<'a> {
                 params: Vec::new(),
                 loans: Vec::new(),
                 fallible: false,
-                locals: cx.locals,
+                locals: Vec::new(),
                 result: reference,
                 body,
                 moves: HashSet::new(),
                 test: false,
                 span: Span::default(),
             };
-            self.ownership(&mut maker, &cx.params);
+            self.ownership(&mut maker, &[]);
             let log = self.context_shown(decl, "log");
             let label = self.context_shown(decl, "label");
             self.module = module;
-            makers.push((maker, log, label));
+            makers.push(ContextMade { maker, log, label, initials });
         }
+        self.initial_cycles(&reading);
         makers
+    }
+
+    /// Computed initial values that read each other, which no order can
+    /// compute: `E1616` with the cycle, once (11.16).
+    fn initial_cycles(&mut self, reading: &[Reading]) {
+        let at: HashMap<(u32, u32), usize> = reading.iter().enumerate().map(|(i, r)| (r.key, i)).collect();
+        let next = |i: usize| reading[i].reads.iter().filter_map(|key| at.get(key).copied()).collect::<Vec<_>>();
+        // 0 unseen, 1 on the path, 2 done.
+        let mut state = vec![0u8; reading.len()];
+        for start in 0..reading.len() {
+            if state[start] != 0 {
+                continue;
+            }
+            let mut path = vec![start];
+            let mut pending = vec![next(start)];
+            state[start] = 1;
+            while let Some(children) = pending.last_mut() {
+                let Some(child) = children.pop() else {
+                    state[path.pop().expect("as deep as pending")] = 2;
+                    pending.pop();
+                    continue;
+                };
+                match state[child] {
+                    0 => {
+                        state[child] = 1;
+                        path.push(child);
+                        pending.push(next(child));
+                    }
+                    1 => {
+                        let from = path.iter().position(|&i| i == child).expect("on the path");
+                        let cycle: Vec<String> =
+                            path[from..].iter().chain([&child]).map(|&i| format!("`{}`", reading[i].named)).collect();
+                        let message = format!(
+                            "the initial value of `{}` reads itself: {}; compute one of them from what the others are computed from",
+                            reading[child].named,
+                            cycle.join(" reads ")
+                        );
+                        self.diags.error("E1616", reading[child].span, message);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// The function that gives a computed initial value whose `?` may fail
+    /// (11.16): the record `computes` makes, or a panic that names the field
+    /// and describes the error.
+    fn initial_failing(&mut self, computes: FnId, reference: Ty, error: Ty, named: &str) -> hir::Function {
+        let span = Span::default();
+        let mut cx = self.new_cx(reference);
+        let (made, failure) = (self.hidden_local(&mut cx, reference), self.hidden_local(&mut cx, error));
+        let result = self.types.intern(TyKind::Result(reference, error));
+        let mk = |kind, ty| Self::mk(kind, ty, span);
+        let pattern = |variant, local, ty| hir::Pattern {
+            kind: hir::PatKind::Variant(variant, vec![hir::Pattern { kind: hir::PatKind::Binding(local), ty, span }]),
+            ty: result,
+            span,
+        };
+        let described = mk(
+            hir::ExprKind::Reflect(hir::ReflectOp::Describe, error, vec![mk(hir::ExprKind::Local(failure), error)]),
+            Ty::STRING,
+        );
+        let message = mk(
+            hir::ExprKind::Interpolate(vec![
+                hir::Segment::Text(format!("the initial value of `{named}` failed: ")),
+                hir::Segment::Value(described),
+            ]),
+            Ty::STRING,
+        );
+        let arms = vec![
+            hir::Arm {
+                pattern: pattern(OK, made, reference),
+                guard: None,
+                body: mk(hir::ExprKind::Local(made), reference),
+            },
+            hir::Arm {
+                pattern: pattern(ERR, failure, error),
+                guard: None,
+                body: mk(hir::ExprKind::Panic(Box::new(message), 8), Ty::NEVER),
+            },
+        ];
+        let call = mk(hir::ExprKind::Call(Callee::Fn(computes), Vec::new(), Vec::new()), result);
+        let value = mk(hir::ExprKind::Match(Box::new(call), arms), reference);
+        let mut function = hir::Function {
+            name: format!("context {named}"),
+            generics: Vec::new(),
+            params: Vec::new(),
+            loans: Vec::new(),
+            fallible: false,
+            locals: cx.locals,
+            result: reference,
+            body: hir::Block { stmts: Vec::new(), tail: Some(Box::new(value)), ty: reference },
+            moves: HashSet::new(),
+            test: false,
+            span,
+        };
+        self.ownership(&mut function, &cx.params);
+        function
     }
 
     /// The function that shows a context's fields marked `@log` or
@@ -13481,6 +13695,9 @@ impl<'a> Checker<'a> {
                 if let Some(index) = self.index.as_mut() {
                     index.contexts.push((field.span, set));
                 }
+                if let Some(reads) = self.initial_reads.as_mut() {
+                    reads.push((context, at as u32));
+                }
             }
             let mut value = Self::mk(hir::ExprKind::ContextRead(context, reference), ty, name.span);
             for segment in std::iter::once(field).chain(rest) {
@@ -14460,6 +14677,7 @@ impl<'a> Checker<'a> {
             self.repeatable(id, span);
             self.check_time_literals(id, &signature, receiver.is_some() as usize, args);
             self.check_template_literals(id, args);
+            self.check_regex_literal(id, args);
             if self.is_std_fn(id, "cli", "cli.markup")
                 && let Some(arg) = args.first()
                 && let ast::ExprKind::Str(segments) = &arg.value.kind

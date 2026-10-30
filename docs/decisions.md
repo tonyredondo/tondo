@@ -3435,3 +3435,28 @@ take one from a queue only to drop it.
 The runtime counts the `defer`s a task runs. In them, the check after a
 wait unwinds only when that wait ended at once, so the functions a `defer`
 calls go on after the lock they took.
+
+## 2026-10-30 — Values the whole program shares, in contexts
+
+Porting ddtest showed 116 regular expressions compiled once at the level of
+a Go package. Tondo had no place for them: a `const` is evaluated when the
+program compiles and cannot hold a compiled pattern, a pool or a `std.sync`
+value, and a context field had to be `T? = none`, set with `with` in
+`main`, so every read handled the `none` and a library could not own its
+patterns.
+
+Rather than a new kind of global, a context field's initial value may now
+be computed: once, the first time the program reads it, and from then on
+every task shares it. It is lazy, so importing still runs nothing and the
+order of files never matters; it is a context, so a test replaces it with
+`with` for a block. A `?` there panics at the read that computed it, and
+the next read tries again; a literal pattern of `Regex.compile` is checked
+when the program compiles, so that `?` does not fail. A `with` copies the
+other fields without computing them: the table of contexts knows which
+fields a `with` set, and a computed one it did not set is read from where it
+was computed.
+
+`static` and a top-level `let` were the alternatives. A `let` at the top of
+a script is already a local of its `main`, so it would mean two things, and
+`static` would be one more concept beside contexts.
+

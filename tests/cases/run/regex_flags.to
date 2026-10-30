@@ -12,7 +12,10 @@ fn main(): !regex.RegexError {
     console.println(words.replaceWith("hello big world", (m) { "{m.text.length()}$" })?)
     let dots = regex.Regex.compile("(?s)a.b")?
     console.println("{dots.isMatch("a\nb")?} {regex.Regex.escape("1+1=2?")}")
-    match regex.Regex.compile("(?x)a b") {
+    // A literal pattern outside the dialect is `E1909`; one made as the
+    // program runs fails then.
+    let verbose = "(?x)a b"
+    match regex.Regex.compile(verbose) {
         ok(_) => console.println("compiled")
         err(error) => console.println("{error}")
     }
