@@ -593,8 +593,12 @@ fn main(): !http.HttpError {
         stream.read_to_end(&mut answer).unwrap();
         String::from_utf8_lossy(&answer).into_owned()
     };
-    let large = format!("GET /slow HTTP/1.1\r\nhost: here\r\nx-large: {}\r\n\r\n", "a".repeat(20_000));
-    let refused = answer(large.as_bytes());
+    // A head as long as the limit, unfinished: the server reads all of it,
+    // so it closes after its answer without the reset that unread bytes
+    // cause, which on macOS discards the answer before the client reads it.
+    let mut large = b"GET /slow HTTP/1.1\r\nhost: here\r\nx-large: ".to_vec();
+    large.resize(8192, b'a');
+    let refused = answer(&large);
     assert!(refused.starts_with("HTTP/1.1 431 "), "{refused}");
     // A head that never ends: the server closes after `headTimeout`.
     assert_eq!(answer(b"GET /slow HTTP/1.1\r\nhost: here\r\n"), "");
