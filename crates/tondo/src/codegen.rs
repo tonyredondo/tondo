@@ -4478,12 +4478,13 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     debug.line.is_some() && !self.body.points.iter().any(|p| p.continues.0 as usize == index);
             }
             let returns = matches!(block.terminator, Terminator::Return(_));
+            let last_resume = block.stmts.iter().rposition(resumes);
             let mut quiet = false;
             for (at, stmt) in block.stmts.iter().enumerate() {
                 self.count_ways(index, at);
                 // The panic goes to the caller from the last `UnwindResume`
                 // of a block that returns.
-                self.returns = returns && !block.stmts[at + 1..].iter().any(resumes);
+                self.returns = returns && last_resume.is_none_or(|last| last <= at);
                 // A statement a check for a panic follows: its panics
                 // unwind to where the check goes (15.9). The check asks
                 // nothing after one whose panics all went there.

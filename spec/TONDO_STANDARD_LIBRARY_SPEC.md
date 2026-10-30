@@ -2641,7 +2641,8 @@ pub trait Ordered { fn compare(self, other: Self): Int }
 
 `Ordered` está implementado para todos los números, `Byte`, `Char`, `String` y
 `Bool`; el `compare` de los floats pone `NaN` después de cualquier otro valor y
-lo iguala a sí mismo. Un programa puede implementar `Ordered` para sus tipos.
+lo iguala a sí mismo. Un programa puede implementar `Ordered` para sus tipos,
+que entonces tienen `<`, `<=`, `>` y `>=` (17.8 del lenguaje).
 
 Los números no tienen métodos del prelude: sus operaciones (`parse`,
 `toString`, `abs`, `pow`, las variantes de desbordamiento, los bits, los bytes,

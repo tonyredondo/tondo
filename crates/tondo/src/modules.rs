@@ -215,7 +215,7 @@ pub fn link(mut modules: Vec<ModuleSource>, root: usize, packages: &[PackageInfo
                 paths: &paths,
                 used: HashSet::new(),
                 outer: &outer,
-                visible: Vec::new(),
+                visible: Visible::default(),
                 templates: file.templates.iter().cloned().collect(),
                 diags,
             };
@@ -391,6 +391,39 @@ fn confusable<'a>(
     ))
 }
 
+/// The bindings visible where the linker is, by their skeleton, and the
+/// skeletons in the order they came into view, so that a scope lets go of
+/// its own and finding the alike takes no search.
+#[derive(Default)]
+struct Visible {
+    order: Vec<String>,
+    by_skeleton: HashMap<String, Vec<(String, String)>>,
+}
+
+impl Visible {
+    fn len(&self) -> usize {
+        self.order.len()
+    }
+
+    fn push(&mut self, skeleton: String, name: String) {
+        self.order.push(skeleton.clone());
+        self.by_skeleton.entry(skeleton.clone()).or_default().push((skeleton, name));
+    }
+
+    fn truncate(&mut self, len: usize) {
+        while self.order.len() > len {
+            let skeleton = self.order.pop().unwrap_or_default();
+            if let Some(alike) = self.by_skeleton.get_mut(&skeleton) {
+                alike.pop();
+            }
+        }
+    }
+
+    fn alike(&self, skeleton: &str) -> impl Iterator<Item = &(String, String)> {
+        self.by_skeleton.get(skeleton).into_iter().flatten()
+    }
+}
+
 /// Warns of each name of `names` that looks the same as an earlier one.
 fn confusables(names: &[&Ident], diags: &mut Diagnostics) {
     // The names seen, by their skeleton.
@@ -475,7 +508,7 @@ struct Linker<'a> {
     /// linker is, with their skeletons.
     /// The names of the module, by their skeleton.
     outer: &'a HashMap<String, Vec<(String, String)>>,
-    visible: Vec<(String, String)>,
+    visible: Visible,
     /// The code of the file's compiled templates, by where their text is.
     templates: HashMap<u32, Expr>,
     diags: &'a mut Diagnostics,
@@ -496,11 +529,11 @@ impl Linker<'_> {
         self.convention(name, Case::Camel);
         if name.name != "_" {
             let skeleton = skeleton(&name.name);
-            let seen = self.outer.get(&skeleton).into_iter().flatten().chain(&self.visible);
+            let seen = self.outer.get(&skeleton).into_iter().flatten().chain(self.visible.alike(&skeleton));
             if let Some(warning) = confusable(seen, &skeleton, name) {
                 self.diags.warning("W1005", name.span, warning);
             }
-            self.visible.push((skeleton, name.name.clone()));
+            self.visible.push(skeleton, name.name.clone());
         }
         if self.prefixes[self.module].is_none() || name.name == "self" {
             return;

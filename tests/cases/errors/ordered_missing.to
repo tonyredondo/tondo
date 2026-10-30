@@ -1,0 +1,16 @@
+// A type that does not implement `Ordered` has no `<`: the error says how
+// to implement it. `Bool` has none either.
+
+pub type Point = {
+    x: Int
+}
+
+fn main() {
+    let a = Point { x: 1 }
+    let b = Point { x: 2 }
+    _ = a < b
+    _ = true < false
+}
+
+// expect-error: E1102 operator `<` cannot be applied to `Point`: implement `Ordered` for it, `impl Ordered for Point { fn compare(self, other: Point): Int { ... } }`, and the operators compare by it
+// expect-error: E1102 operator `<` cannot be applied to `Bool`

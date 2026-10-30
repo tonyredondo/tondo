@@ -175,7 +175,7 @@ fn largest[T: Ordered](items: Array[T]): T? {
     var best: T? = none
     for item in items {
         best = match best {
-            some(current) if current.compare(item) >= 0 => some(current)
+            some(current) if current >= item => some(current)
             _ => some(item)
         }
     }
@@ -204,7 +204,8 @@ needs an `impl Display` too, and a bound `S: Shape` gives `Display`'s methods
 as well.
 
 The prelude's traits: `Display`, `Ordered` (`compare`), `Iterator[T]`
-(`next`), and the arithmetic. `Copy`, `Equatable`, `Key`, `Send` and `Share`
+(`next`), and the arithmetic. A type that implements `Ordered`, and a
+`T: Ordered`, gets `<`, `<=`, `>` and `>=`, which compare by it. `Copy`, `Equatable`, `Key`, `Send` and `Share`
 are capabilities the compiler works out: a type has them when its parts do.
 
 ## Arithmetic on your types and generic numbers
@@ -231,6 +232,7 @@ There is no generic unary minus: write `0 - x`.
 
 `math.BigInt` is an integer of any size and `math.Decimal` an exact decimal,
 for money: both are `Number`, and a literal where one is expected is exact,
-`let price: math.Decimal = 19.99`, so `price * 3` is `59.97`. `"{price:.2}"`
+`let price: math.Decimal = 19.99`, so `price * 3` is `59.97` and `price < 20`
+holds. `"{price:.2}"`
 fixes its decimals; `price.round(2)` and `price.divide(by, 4)` round half
 to even unless told otherwise.

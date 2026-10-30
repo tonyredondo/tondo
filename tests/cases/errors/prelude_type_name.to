@@ -1,0 +1,16 @@
+// A type cannot take a name of the prelude, which every module sees; the
+// program is still checked against it, so its uses and the implementations
+// derived for it give no errors of their own.
+
+import std.json
+
+pub type Copy = {
+    text: String
+}
+
+fn main() {
+    let ad = Copy { text: "Buy now" }
+    _ = json.encode(ad)
+}
+
+// expect-error: E1005 `Copy` is a type of the prelude, which every module sees, and cannot be redeclared: give this type another name

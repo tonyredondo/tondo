@@ -3326,3 +3326,19 @@ libpq's `prefer`; instead, `prefer` skips TLS for a server on the same
 machine, which no network reaches, and a certificate that does not verify
 says to give its authority or to disable TLS. Taking over a socket for
 `startTls` no longer ends its writing when the plain stream is freed.
+
+## 2026-10-30 — Comparison operators by `Ordered`
+
+A type that implements `Ordered`, and a `T: Ordered`, gets `<`, `<=`, `>`
+and `>=`, which are `Ordered.compare(a, b)` against zero: a price is
+`price < limit`, not `Ordered.compare(price, limit) < 0`, and generic code
+reads as concrete code does. Arithmetic stays with `Additive` and
+`Number`, and equality stays structural; `Bool` keeps no order operators
+although it implements `Ordered`. A type without it gets an error that
+writes the `impl`, and a failed `assert` shows both values, not the result
+of `compare`.
+
+A type that takes a name of the prelude is still an error, since every
+module sees those names, but the rest of the program is checked against
+it, so the error is the only one instead of one at each use and in each
+implementation derived for it.

@@ -6844,9 +6844,13 @@ Las comparaciones relacionales se definen para:
 - Floats del mismo tipo.
 - `Char`.
 - `String` mediante orden lexicográfico por valores escalares Unicode.
-- Los operadores relacionales no se aplican directamente a newtypes. El programa
-  compara explícitamente su `value` o invoca un método/trait de orden nombrado; ese
-  método no sobrecarga el operador.
+- Un tipo declarado en Tondo —record, enum o newtype, del programa o de la
+  biblioteca estándar, como `math.Decimal`— que implementa `Ordered` (14.5 de
+  la biblioteca estándar), y un parámetro `T: Ordered`: `a < b` es
+  `Ordered.compare(a, b) < 0`, y así `<=`, `>` y `>=`, con los dos operandos
+  del mismo tipo. Un tipo que no lo implementa no tiene estos operadores, y el
+  error dice cómo implementarlo; `Bool` tampoco los tiene, aunque implemente
+  `Ordered`.
 
 No se encadenan comparaciones:
 
@@ -7235,7 +7239,8 @@ pub trait Integer: Number + Ordered + Display   // Ordered: 14.5 de la librería
   `a * b` es `a.times(b)` y `a / b` es `a.dividedBy(b)`. Los dos operandos son
   del mismo tipo, y las asignaciones compuestas `+=`, `-=`, `*=` y `/=` siguen.
   Así no se obtiene ningún otro operador: ni `%`, ni los de bits, ni el `-`
-  unario, que se escribe `0 - x`, ni las comparaciones.
+  unario, que se escribe `0 - x`; las comparaciones vienen de `Ordered`
+  (17.8).
 - **Literales.** Donde se espera un tipo que implementa `Number`, un literal
   entero es `Number.fromInt[T](literal)`; en un número del lenguaje, el literal mismo
   (5.7). En código genérico, `x * 2` con `x: T` y `T: Number` funciona para

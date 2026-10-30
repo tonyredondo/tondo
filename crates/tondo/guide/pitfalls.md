@@ -287,3 +287,12 @@ fn names(db: sql.Database, min: Int): Array[String] ! sql.SqlError {
 
 fn main() {}
 ```
+
+A type cannot take a name of the prelude: `Copy`, `Key`, `Range`,
+`Command`, `Group`, `Display` and the rest. Name it after what it holds.
+
+```tondo error E1005
+pub type Key = { id: String }
+
+fn main() {}
+```

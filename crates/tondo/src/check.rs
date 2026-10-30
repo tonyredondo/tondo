@@ -75,6 +75,7 @@ fn check_with<'a>(
         additive: None,
         number: None,
         integer: None,
+        ordered: None,
         instant: None,
         datetime: None,
         time_error: None,
@@ -772,6 +773,8 @@ struct Checker<'a> {
     additive: Option<TraitId>,
     number: Option<TraitId>,
     integer: Option<TraitId>,
+    /// The prelude's `Ordered`, which the relational operators use (17.8).
+    ordered: Option<TraitId>,
     /// `time.Instant`: nanoseconds of the monotonic clock.
     instant: Option<Ty>,
     /// `time.DateTime`: seven `Int` fields, from the year down.
@@ -859,6 +862,52 @@ struct ConstEntry<'a> {
     resolving: bool,
 }
 
+/// The bindings of a function's open blocks, innermost last, and each
+/// name's, so that finding one takes no search however many there are.
+struct Scopes {
+    blocks: Vec<Vec<(String, LocalId)>>,
+    by_name: HashMap<String, Vec<LocalId>>,
+}
+
+impl Scopes {
+    /// With the function's own block open.
+    fn opened() -> Scopes {
+        Scopes { blocks: vec![Vec::new()], by_name: HashMap::new() }
+    }
+
+    fn open(&mut self) {
+        self.blocks.push(Vec::new());
+    }
+
+    /// Ends the innermost block: its bindings go out of view.
+    fn close(&mut self) {
+        for (name, _) in self.blocks.pop().unwrap_or_default() {
+            if let Some(ids) = self.by_name.get_mut(&name) {
+                ids.pop();
+                if ids.is_empty() {
+                    self.by_name.remove(&name);
+                }
+            }
+        }
+    }
+
+    fn bind(&mut self, name: String, id: LocalId) {
+        self.by_name.entry(name.clone()).or_default().push(id);
+        if let Some(block) = self.blocks.last_mut() {
+            block.push((name, id));
+        }
+    }
+
+    /// The innermost binding of `name`.
+    fn find(&self, name: &str) -> Option<LocalId> {
+        self.by_name.get(name).and_then(|ids| ids.last().copied())
+    }
+
+    fn names(&self) -> impl Iterator<Item = &str> {
+        self.blocks.iter().flatten().map(|(name, _)| name.as_str())
+    }
+}
+
 /// Per-function checking state.
 struct FnCx {
     locals: Vec<hir::Local>,
@@ -871,7 +920,7 @@ struct FnCx {
     /// widen, and whether the function is public.
     result_span: Option<(Span, bool)>,
     mutable: Vec<bool>,
-    scopes: Vec<Vec<(String, LocalId)>>,
+    scopes: Scopes,
     /// Success type that `return` produces.
     result: Ty,
     /// Error type of a fallible function (`T ! E`), or of a script whose
@@ -3260,8 +3309,14 @@ impl<'a> Checker<'a> {
 
     fn declare_type_name(&mut self, name: &ast::Ident, value: TypeName) {
         if PRELUDE_TYPES.contains(&name.name.as_str()) {
-            let message = format!("`{}` is a prelude type and cannot be redeclared", name.name);
+            let message = format!(
+                "`{}` is a type of the prelude, which every module sees, and cannot be redeclared: give this type another name",
+                name.name
+            );
             self.diags.error("E1005", name.span, message);
+            // The rest of the program checks against it, rather than
+            // failing at each use.
+            self.type_names.insert(name.name.clone(), value);
         } else if self.type_names.insert(name.name.clone(), value).is_some() {
             let message = format!("type `{}` is declared more than once", name.name);
             self.diags.error("E1002", name.span, message);
@@ -4383,6 +4438,7 @@ impl<'a> Checker<'a> {
         self.additive = self.trait_names.get("Additive").copied();
         self.number = self.trait_names.get("Number").copied();
         self.integer = self.trait_names.get("Integer").copied();
+        self.ordered = self.trait_names.get("Ordered").copied();
         for (index, decl) in traits.iter().enumerate() {
             let id = TraitId(index as u32 + PRELUDE_TRAITS);
             self.index_trait(id.0, decl);
@@ -4472,6 +4528,17 @@ impl<'a> Checker<'a> {
         }
         let index = self.traits[trait_id.0 as usize].methods.iter().position(|m| m.name == name)?;
         Some((trait_id, index as u32))
+    }
+
+    /// `Ordered.compare` for a type the relational operators reach through
+    /// it (17.8): one of the program's, or a parameter bound by `Ordered`.
+    fn ordering(&mut self, ty: Ty) -> Option<(TraitId, u32)> {
+        let ordered = self.ordered?;
+        if *self.types.kind(ty) == TyKind::Bool || !self.satisfies(ty, ordered, &[]) {
+            return None;
+        }
+        let index = self.traits[ordered.0 as usize].methods.iter().position(|m| m.name == "compare")?;
+        Some((ordered, index as u32))
     }
 
     /// Whether a type parameter or opaque result is bound by `trait_id`,
@@ -5729,7 +5796,7 @@ impl<'a> Checker<'a> {
             local_defs: HashMap::new(),
             result_span: None,
             mutable: Vec::new(),
-            scopes: vec![Vec::new()],
+            scopes: Scopes::opened(),
             result: success,
             error,
             infer_error: false,
@@ -6046,7 +6113,7 @@ impl<'a> Checker<'a> {
     }
 
     fn lookup(&self, cx: &FnCx, name: &str) -> Option<LocalId> {
-        cx.scopes.iter().rev().flat_map(|s| s.iter().rev()).find(|(n, _)| n == name).map(|&(_, id)| id)
+        cx.scopes.find(name)
     }
 
     /// Whether `name` is a binding of an enclosing function, which a
@@ -8007,7 +8074,7 @@ impl<'a> Checker<'a> {
         cx.mutable.push(mutable);
         cx.params.push(None);
         if !discard {
-            cx.scopes.last_mut().unwrap().push((name.name.clone(), id));
+            cx.scopes.bind(name.name.clone(), id);
             cx.named.push(id);
         }
         id
@@ -8039,7 +8106,7 @@ impl<'a> Checker<'a> {
 
     fn block(&mut self, cx: &mut FnCx, b: &ast::Block, expected: Option<Ty>) -> hir::Block {
         let body = std::mem::take(&mut cx.body);
-        cx.scopes.push(Vec::new());
+        cx.scopes.open();
         let withs = cx.withs.len();
         let outer = std::mem::replace(&mut cx.diverged, false);
         let stmts = self.statements(cx, &b.stmts);
@@ -8086,7 +8153,7 @@ impl<'a> Checker<'a> {
             },
         };
         cx.diverged = outer;
-        cx.scopes.pop();
+        cx.scopes.close();
         cx.withs.truncate(withs);
         hir::Block { stmts, tail, ty }
     }
@@ -9055,7 +9122,7 @@ impl<'a> Checker<'a> {
                     if let Some(exclusive) = loan_kind(pattern) {
                         return self.borrowed_for(cx, pattern, source, element, body, exclusive);
                     }
-                    cx.scopes.push(Vec::new());
+                    cx.scopes.open();
                     let context = PatternContext { in_match: false, mutable: false, loans: Loans::None };
                     let pattern = self.pattern(cx, pattern, element, context);
                     if let Some(missing) = crate::exhaust::refutation(&self.types, element, &pattern) {
@@ -9065,7 +9132,7 @@ impl<'a> Checker<'a> {
                     cx.loops.push(false);
                     let body = self.block(cx, body, Some(Ty::UNIT));
                     cx.loops.pop();
-                    cx.scopes.pop();
+                    cx.scopes.close();
                     return Some(hir::Stmt::ForEach { pattern, source, body });
                 };
                 let (start, end) = self.operands(cx, start, end, None, false);
@@ -9075,7 +9142,7 @@ impl<'a> Checker<'a> {
                     return Some(self.for_cursor(cx, pattern, range, Ty::CHAR, body));
                 }
                 self.require_int(&start);
-                cx.scopes.push(Vec::new());
+                cx.scopes.open();
                 let local = match &pattern.kind {
                     ast::PatternKind::Binding(binding) => self.declare(cx, binding, start.ty, false),
                     ast::PatternKind::Wildcard => self.hidden_local(cx, start.ty),
@@ -9092,7 +9159,7 @@ impl<'a> Checker<'a> {
                 cx.loops.push(false);
                 let body = self.block(cx, body, Some(Ty::UNIT));
                 cx.loops.pop();
-                cx.scopes.pop();
+                cx.scopes.close();
                 Some(hir::Stmt::ForRange { local, start, end, inclusive: *op == BinOp::RangeInclusive, body })
             }
         }
@@ -9162,7 +9229,7 @@ impl<'a> Checker<'a> {
         let place = hir::Place { local: place.local, path };
         let read = self.place_read(cx, &place, span);
 
-        cx.scopes.push(Vec::new());
+        cx.scopes.open();
         let context = PatternContext { in_match: false, mutable: false, loans: Loans::Any };
         let pattern = self.pattern(cx, pattern, element, context);
         if let Some(missing) = crate::exhaust::refutation(&self.types, element, &pattern) {
@@ -9176,7 +9243,7 @@ impl<'a> Checker<'a> {
         let mut body = self.block(cx, body, Some(Ty::UNIT));
         cx.loops.pop();
         cx.lent.pop();
-        cx.scopes.pop();
+        cx.scopes.close();
         if !exclusive {
             stmts.push(hir::Stmt::ForEach { pattern, source: read, body });
             return Some(hir::Stmt::Expr(Self::mk(
@@ -10548,7 +10615,7 @@ impl<'a> Checker<'a> {
         let mut result = expected;
         let mut out = Vec::new();
         for arm in arms {
-            cx.scopes.push(Vec::new());
+            cx.scopes.open();
             let outer = std::mem::replace(&mut cx.diverged, false);
             let pattern = self.pattern(
                 cx,
@@ -10562,7 +10629,7 @@ impl<'a> Checker<'a> {
             });
             let body = self.arm_body(cx, &arm.body, &mut result);
             cx.diverged = outer;
-            cx.scopes.pop();
+            cx.scopes.close();
             out.push(hir::Arm { pattern, guard, body });
         }
         let checked: Vec<(&hir::Pattern, bool)> = out.iter().map(|a| (&a.pattern, a.guard.is_some())).collect();
@@ -10618,7 +10685,7 @@ impl<'a> Checker<'a> {
         let mut taken: Vec<LocalId> = Vec::new();
         for (index, arm) in arms.iter().enumerate() {
             let outer = std::mem::replace(&mut cx.diverged, false);
-            cx.scopes.push(Vec::new());
+            cx.scopes.open();
             match &arm.operation {
                 None => {
                     if otherwise.is_some() {
@@ -10677,7 +10744,7 @@ impl<'a> Checker<'a> {
                     out.push(hir::SelectArm { operation, pattern, body });
                 }
             }
-            cx.scopes.pop();
+            cx.scopes.close();
             cx.diverged = outer;
         }
         if out.is_empty() {
@@ -12452,7 +12519,7 @@ impl<'a> Checker<'a> {
     ) -> hir::Stmt {
         let span = source.span;
         let option = next.ty;
-        cx.scopes.push(Vec::new());
+        cx.scopes.open();
         let context = PatternContext { in_match: false, mutable: false, loans: Loans::None };
         let pattern = self.pattern(cx, pattern, element, context);
         if let Some(missing) = crate::exhaust::refutation(&self.types, element, &pattern) {
@@ -12462,7 +12529,7 @@ impl<'a> Checker<'a> {
         cx.loops.push(false);
         let body = self.block(cx, body, Some(Ty::UNIT));
         cx.loops.pop();
-        cx.scopes.pop();
+        cx.scopes.close();
         let pattern_span = pattern.span;
         let some = hir::Pattern { kind: hir::PatKind::Variant(SOME, vec![pattern]), ty: option, span: pattern_span };
         let none = hir::Pattern { kind: hir::PatKind::Variant(NONE, Vec::new()), ty: option, span: pattern_span };
@@ -12854,12 +12921,31 @@ impl<'a> Checker<'a> {
             return (Vec::new(), condition, None);
         };
         let comparison = matches!(op, BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge);
+        // `a < b` of an `Ordered` type is `compare(a, b) < 0`: its sides are
+        // the call's.
+        let ordered = match (&left.kind, &right.kind) {
+            (hir::ExprKind::Call(Callee::Trait(t, _), _, args), hir::ExprKind::Int(0))
+                if Some(*t) == self.ordered && args.len() == 2 =>
+            {
+                Some((args[0].ty, args[1].ty))
+            }
+            _ => None,
+        };
+        let (left_ty, right_ty) = ordered.unwrap_or((left.ty, right.ty));
         let shown = |this: &mut Self, ty: Ty| !this.types.has_error(ty) && this.satisfies(ty, DISPLAY, &[]);
-        if !comparison || !shown(self, left.ty) || !shown(self, right.ty) {
+        if !comparison || !shown(self, left_ty) || !shown(self, right_ty) {
             return (Vec::new(), condition, None);
         }
         let hir::ExprKind::Binary(op, left, right) = condition.kind else { unreachable!() };
         let (span, ty) = (condition.span, condition.ty);
+        let (zero, call) = (*right, *left);
+        let (left, right, rebuild) = match (ordered, call.kind) {
+            (Some(_), hir::ExprKind::Call(callee, generics, args)) => {
+                let [a, b] = <[hir::Expr; 2]>::try_from(args).ok().expect("two arguments");
+                (Box::new(a), Box::new(b), Some((callee, generics, call.ty, call.span)))
+            }
+            (_, kind) => (Box::new(Self::mk(kind, call.ty, call.span)), Box::new(zero.clone()), None),
+        };
         let mut sides = Vec::new();
         let mut reads = Vec::new();
         let mut segments = Vec::new();
@@ -12881,6 +12967,13 @@ impl<'a> Checker<'a> {
             }
         }
         let [left, right] = <[hir::Expr; 2]>::try_from(reads).ok().expect("two sides");
+        let (left, right) = match rebuild {
+            Some((callee, generics, call_ty, call_span)) => {
+                let call = Self::mk(hir::ExprKind::Call(callee, generics, vec![left, right]), call_ty, call_span);
+                (call, zero)
+            }
+            None => (left, right),
+        };
         let condition = Self::mk(hir::ExprKind::Binary(op, Box::new(left), Box::new(right)), ty, span);
         let detail = Self::mk(hir::ExprKind::Interpolate(segments), Ty::STRING, span);
         (sides, condition, Some(Box::new(detail)))
@@ -13571,7 +13664,7 @@ impl<'a> Checker<'a> {
                 let mut names: Vec<&str> = self.names.keys().map(String::as_str).collect();
                 let mut scope = Some(cx);
                 while let Some(found) = scope {
-                    names.extend(found.scopes.iter().flatten().map(|(n, _)| n.as_str()));
+                    names.extend(found.scopes.names());
                     scope = found.parent.as_deref();
                 }
                 match closest(name, names) {
@@ -15337,7 +15430,27 @@ impl<'a> Checker<'a> {
                         | TyKind::Never
                 ) || self.bound_by(left.ty, self.integer);
                 if !ordered {
-                    operator_error(self, left.ty);
+                    // `a < b` is `Ordered.compare(a, b) < 0`.
+                    if let Some((trait_id, index)) = self.ordering(left.ty) {
+                        let ty = left.ty;
+                        let right = self.coerce(right, ty);
+                        let call = hir::ExprKind::Call(Callee::Trait(trait_id, index), vec![ty], vec![left, right]);
+                        let zero = Self::mk(hir::ExprKind::Int(0), Ty::INT, span);
+                        let compared =
+                            hir::ExprKind::Binary(op, Box::new(Self::mk(call, Ty::INT, span)), Box::new(zero));
+                        return Self::mk(compared, Ty::BOOL, span);
+                    }
+                    if matches!(self.types.kind(left.ty), TyKind::Adt(_)) {
+                        let name = self.types.display(left.ty);
+                        let message = format!(
+                            "operator `{}` cannot be applied to {}: implement `Ordered` for it, `impl Ordered for {name} {{ fn compare(self, other: {name}): Int {{ ... }} }}`, and the operators compare by it",
+                            op.as_str(),
+                            self.display(left.ty),
+                        );
+                        self.diags.error("E1102", span, message);
+                    } else {
+                        operator_error(self, left.ty);
+                    }
                 }
                 self.nan_comparison(&left, &right, span);
                 (left, right, Ty::BOOL)

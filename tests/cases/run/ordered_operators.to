@@ -1,0 +1,46 @@
+// A type that implements `Ordered`, and a `T: Ordered`, has `<`, `<=`, `>`
+// and `>=`, which compare by it; a failed assertion shows both values.
+
+import std.console
+import std.math
+
+pub type Version = {
+    major: Int
+    minor: Int
+}
+
+impl Ordered for Version {
+    fn compare(self, other: Version): Int {
+        if self.major != other.major {
+            self.major.compare(other.major)
+        } else {
+            self.minor.compare(other.minor)
+        }
+    }
+}
+
+impl Display for Version {
+    fn display(self): String {
+        "{self.major}.{self.minor}"
+    }
+}
+
+fn largest[T: Ordered](a: T, b: T): T {
+    if a >= b { a } else { b }
+}
+
+fn main() {
+    let old = Version { major: 1, minor: 4 }
+    let new = Version { major: 1, minor: 10 }
+    console.println("{old < new} {old <= old} {old > new} {new >= old} {largest(old, new)}")
+    let price: math.Decimal = 19.99
+    let big: math.BigInt = 123456789012345678901234567890
+    console.println("{price < 20} {largest(price, 5)} {big > 0} {largest("a", "b")}")
+    assert(new < old)
+}
+
+// expect-stdout: true true false true 1.10
+// expect-stdout: true 19.99 true b
+// expect-panic: P0007
+// expect-stderr:   left:  1.10
+// expect-stderr:   right: 1.4
