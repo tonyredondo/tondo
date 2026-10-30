@@ -1,0 +1,105 @@
+// The parts of std.sync (standard library 14.4.4) written in Tondo, which
+// a program that imports std.sync links with: a rate limiter and retries
+// with backoff, which pace work in time.
+
+import std.random as __random
+import std.sync as __sync
+import std.time as __time
+
+/// Lets work happen at a steady rate, `rate` times each `per`, and up to
+/// `burst` at once after a quiet while, as a token bucket does. Its copies
+/// share it, so the tasks of a server share one.
+pub type RateLimiter = {
+    priv due: __sync.Mutex[Int]
+    priv start: __time.Instant
+    priv interval: Int
+    priv burst: Int
+}
+
+/// A limiter of `rate` each `per`, one second by default, with bursts of
+/// `burst`, or of `rate` without it.
+pub fn RateLimiter(rate: Int, per: __time.Duration = __time.seconds(1), burst: Int? = none): RateLimiter {
+    let positive = if rate < 1 { 1 } else { rate }
+    let spaced = per.nanoseconds() / positive
+    RateLimiter {
+        due: __sync.Mutex(0)
+        start: __time.now()
+        interval: if spaced < 1 { 1 } else { spaced }
+        burst: match burst {
+            some(count) if count >= 1 => count
+            _ => positive
+        }
+    }
+}
+
+/// Whether one more may happen now, taking its place when so.
+pub fn RateLimiter.allow(self): Bool {
+    let now = self.start.elapsed().nanoseconds()
+    let (interval, room) = (self.interval, (self.burst - 1) * self.interval)
+    self.due.update(
+        (due) {
+            let next = if due > now { due } else { now }
+            if next - now > room {
+                return false
+            }
+            due = next + interval
+            true
+        },
+    )
+}
+
+/// Waits until one more may happen, and takes its place; a task cancelled
+/// while it waits stops waiting.
+pub fn RateLimiter.wait(self) {
+    let now = self.start.elapsed().nanoseconds()
+    let (interval, room) = (self.interval, (self.burst - 1) * self.interval)
+    let delay = self.due.update(
+        (due) {
+            let next = if due > now { due } else { now }
+            due = next + interval
+            next - room - now
+        },
+    )
+    if delay > 0 {
+        __time.sleep(__time.nanoseconds(delay))
+    }
+}
+
+/// The work again until it succeeds, `attempts` times at most. Between
+/// two, it waits a random part of a delay that doubles from `delay` up to
+/// `maxDelay`, so that many clients do not try again together. Only the
+/// errors `when` accepts are tried again; the last error is the result. A
+/// task cancelled while it waits stops.
+pub fn retry[T: ~Copy, E: ~Copy](
+    work: fn(): T ! E,
+    attempts: Int = 3,
+    delay: __time.Duration = __time.milliseconds(100),
+    maxDelay: __time.Duration = __time.seconds(10),
+    when: (fn(ref E): Bool)? = none,
+): T ! E {
+    var random = __random.Random.new()
+    var ceiling = delay.nanoseconds()
+    var attempt = 1
+    for {
+        let failure = match work() {
+            ok(value) => return value
+            err(failure) => failure
+        }
+        let again = match when {
+            some(accepts) => accepts(ref failure)
+            none => true
+        }
+        if attempt >= attempts or not again {
+            fail failure
+        }
+        if ceiling > 0 {
+            __time.sleep(__time.nanoseconds(random.int(0..=ceiling)))
+        }
+        ceiling = if ceiling * 2 > maxDelay.nanoseconds() {
+            maxDelay.nanoseconds()
+        } else {
+            ceiling * 2
+        }
+        attempt += 1
+    }
+}

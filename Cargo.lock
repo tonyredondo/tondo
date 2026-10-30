@@ -2398,6 +2398,7 @@ dependencies = [
  "libc",
  "object",
  "rcgen",
+ "regex-syntax",
  "rustc-demangle",
  "rustls",
  "rustls-pki-types",

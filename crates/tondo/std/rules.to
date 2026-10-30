@@ -1,0 +1,64 @@
+// The rules of std.validate (standard library 14.35), which the code the
+// compiler writes for `Decode` and `validate.check` apply to a value.
+
+import std.internal.regex as regexNative
+import std.serialization as __serialization
+
+/// The violations among the rules' outcomes.
+pub fn found(outcomes: Array[__serialization.Violation?]): Array[__serialization.Violation] {
+    var violations: Array[__serialization.Violation] = []
+    for outcome in outcomes {
+        match outcome {
+            some(violation) => violations.push(violation)
+            none => {}
+        }
+    }
+    violations
+}
+
+/// `@validate.Length` of `count` characters or elements.
+pub fn length(path: String, count: Int, min: Int, max: Int?, unit: String): __serialization.Violation? {
+    let units = (bound: Int): String { if bound == 1 { unit } else { "{unit}s" } }
+    if count < min {
+        return some(broken(path, "must have at least {min} {units(min)}"))
+    }
+    match max {
+        some(most) if count > most => some(broken(path, "must have at most {most} {units(most)}"))
+        _ => none
+    }
+}
+
+/// `@validate.Min`.
+pub fn atLeast[T: Ordered + Display](path: String, value: T, bound: T): __serialization.Violation? {
+    if value.compare(bound) < 0 { some(broken(path, "must be at least {bound}")) } else { none }
+}
+
+/// `@validate.Max`.
+pub fn atMost[T: Ordered + Display](path: String, value: T, bound: T): __serialization.Violation? {
+    if value.compare(bound) > 0 { some(broken(path, "must be at most {bound}")) } else { none }
+}
+
+/// `@validate.Matches`: all of the text matches the pattern.
+pub fn matching(path: String, text: String, pattern: String): __serialization.Violation? {
+    if regexNative.wholeMatch(pattern, text) == 1 {
+        none
+    } else {
+        some(broken(path, "must match `{pattern}`"))
+    }
+}
+
+/// `@validate.Email`: an address as a form of HTML accepts one.
+pub fn email(path: String, text: String): __serialization.Violation? {
+    if regexNative.wholeMatch(EmailPattern, text) == 1 {
+        none
+    } else {
+        some(broken(path, "must be an email address"))
+    }
+}
+
+/// The valid addresses of the WHATWG's HTML.
+const EmailPattern: String = r"[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*"
+
+fn broken(path: String, message: String): __serialization.Violation {
+    __serialization.Violation { path: path, message: message }
+}

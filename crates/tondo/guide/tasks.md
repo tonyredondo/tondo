@@ -112,6 +112,11 @@ fn record(stats: sync.Mutex[Stats], counter: sync.Atomic[Int]) {
 }
 ```
 
+`sync.RateLimiter(100, per: time.seconds(1))` paces work: `allow()` says
+whether one more may go now, `wait()` waits for its turn, and its copies
+share it. `sync.retry(work, attempts: 5, when: (e) { e.isTransient() })`
+tries failing work again, waiting a random, doubling delay between tries.
+
 ## Pools and actors
 
 `std.executor` bounds work: a pool runs at most `workers` jobs at a time

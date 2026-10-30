@@ -1,0 +1,29 @@
+// The rules of std.validate are checked against their fields when the
+// program compiles: each on a type it applies to, with bounds that allow a
+// value and a pattern that compiles.
+
+import std.validate
+
+pub type Wrong = {
+    @validate.Length(min: 3)
+    age: Int
+    @validate.Min(1)
+    name: String
+    @validate.Min(1.5)
+    count: Int
+    @validate.Email
+    flags: Array[String]
+    @validate.Length(min: 5, max: 2)
+    title: String
+    @validate.Matches(r"[a-z")
+    slug: String
+}
+
+fn main() {}
+
+// expect-error: E1908 `@validate.Length` counts the characters of a `String` or the elements of an `Array`, a `Map` or a `Set`, not `Int`
+// expect-error: E1908 `@validate.Min` bounds a number, not `String`
+// expect-error: E1908 the bound of `Int` is an integer, and `1.5` is not: write `@validate.Min(1)`
+// expect-error: E1908 `@validate.Email` checks a `String`, not `Array[String]`
+// expect-error: E1908 `@validate.Length(min: 5, max: 2)` allows no length: its `min` is above its `max`
+// expect-error: E1908 the pattern of `@validate.Matches` does not compile: unclosed character class

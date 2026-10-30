@@ -161,6 +161,7 @@ pub fn encode[T: serialization.Encode](value: T): String ! TomlError {
             path: tomlnative.failure(out.native, 1)
             line: 0
             column: 0
+            violations: []
         }
     }
     tomlnative.finish(out.native)
@@ -238,6 +239,7 @@ fn Reader.error(self, kind: serialization.ErrorKind): TomlError {
         path: tomlnative.where(self.native, 1)
         line: Int.parse(tomlnative.where(self.native, 2)).unwrapOr(0)
         column: Int.parse(tomlnative.where(self.native, 3)).unwrapOr(0)
+        violations: []
     }
 }
 

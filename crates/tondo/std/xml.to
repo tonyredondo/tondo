@@ -784,6 +784,7 @@ fn Reading.failure(self, kind: serialization.ErrorKind, message: String): serial
         path: if path.isEmpty() { "/{self.root.name}" } else { path }
         line: place.line
         column: place.column
+        violations: []
     }
 }
 

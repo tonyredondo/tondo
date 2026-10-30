@@ -244,6 +244,7 @@ fn Reader.error(self, kind: serialization.ErrorKind): CborError {
         path: cbornative.where(self.native, 1)
         line: 0
         column: 0
+        violations: []
     }
 }
 

@@ -505,3 +505,24 @@ fn ints(values: &[i64]) -> *mut ArrayHeader {
     }
     array
 }
+
+/// Whether all of `text` matches `pattern`, 1 or 0, or -1 when the pattern
+/// does not compile: the rule `@validate.Matches` (standard library 14.35),
+/// whose patterns the runtime compiles once and keeps.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_regex_whole_match(pattern: *const Str, text: *const Str) -> i64 {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    static KEPT: OnceLock<Mutex<HashMap<String, Option<regex::Regex>>>> = OnceLock::new();
+    let pattern = utf8(pattern);
+    let mut kept = KEPT.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
+    if kept.len() >= 1024 {
+        kept.clear();
+    }
+    let compiled =
+        kept.entry(pattern.to_string()).or_insert_with(|| regex::Regex::new(&format!("^(?:{pattern})$")).ok());
+    match compiled {
+        Some(regex) => regex.is_match(utf8(text)) as i64,
+        None => -1,
+    }
+}

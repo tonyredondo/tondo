@@ -1,9 +1,9 @@
 // std.mcp serves the methods of a value: each `pub` method a tool, whose
 // arguments are the fields of its one record, with their documentation as
 // their schema; a resource or a prompt as its annotation says. A failure
-// is the tool's error, written with its `Display`; while it serves, the
-// console's output goes to standard error. A route of std.http serves the
-// same.
+// is the tool's error, written with its `Display`, as are arguments that
+// break the rules of their type; while it serves, the console's output
+// goes to standard error. A route of std.http serves the same.
 
 import std.console
 import std.http
@@ -11,6 +11,7 @@ import std.io
 import std.json
 import std.mcp
 import std.net
+import std.validate
 
 pub enum Units {
     Metric
@@ -21,6 +22,8 @@ pub type ForecastInput = {
     /// The city, as `Madrid`.
     city: String
     /// How many days, from 1 to 7.
+    @validate.Min(1)
+    @validate.Max(7)
     days: Int?
     units: Units?
 }
@@ -116,6 +119,7 @@ fn main(): !(mcp.McpError | http.HttpError | net.NetError) {
         r"""{"jsonrpc":"2.0","id":13,"method":"server/discover"}""",
         r"""{"jsonrpc":"2.0","id":14,"method":"nope","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}""",
         r"""{"jsonrpc":"2.0","id":15,"method":"ping","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"1999-01-01"}}}""",
+        r"""{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"forecast","arguments":{"city":"Madrid","days":9}}}""",
     ]
     let output = console.stdout()
     let protocol = io.Buffer()
@@ -162,5 +166,6 @@ fn main(): !(mcp.McpError | http.HttpError | net.NetError) {
 // expect-stdout: {"jsonrpc":"2.0","id":13,"result":{"supportedVersions":["2026-07-28","2025-11-25","2025-06-18","2025-03-26","2024-11-05"],"capabilities":{"tools":{},"resources":{},"prompts":{}},"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"weather","version":"0.1.0"}},"instructions":"Looks up the weather.","resultType":"complete","ttlMs":3600000,"cacheScope":"public"}}
 // expect-stdout: {"jsonrpc":"2.0","id":14,"error":{"code":-32601,"message":"`nope` is not a method of this server"}}
 // expect-stdout: {"jsonrpc":"2.0","id":15,"error":{"code":-32022,"message":"Unsupported protocol version 1999-01-01: this server speaks 2026-07-28 and 2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05"}}
+// expect-stdout: {"jsonrpc":"2.0","id":16,"result":{"content":[{"type":"text","text":"the arguments of `forecast` break their rules: days: must be at most 7"}],"isError":true}}
 // expect-stdout: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"42"}],"structuredContent":{"result":42},"isError":false}}
 // expect-stderr: this goes to standard error

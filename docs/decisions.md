@@ -3244,3 +3244,24 @@ guessing which a string is; `trust`, a single argument of many functions,
 takes either. `startTls` lets a connection that started plain go on over
 TLS on a duplicate of its socket, which PostgreSQL and MySQL need.
 
+## 2026-10-30 — Rules on the type, checked wherever a value comes in
+
+The tenth lot. Rules are annotations on the fields of a type, as with Gin's
+binding tags, but they belong to the type, not to one way of reading it:
+the `Decode` the compiler writes checks them, so a value read from JSON,
+YAML, a form, the command line or an MCP tool's arguments never breaks
+them, and a program cannot forget a call. What is required is the type,
+`T` or `T?`, and a closed set of values is an enum, so there is no
+`required` or `oneOf`. The compiler checks each rule against its field,
+which a tag in a string cannot have. A failure lists every violation: an
+API answers `422` with all of them, a model corrects its call at once.
+`Range` is a type of the prelude, so the bounds are `Min` and `Max`; an
+integer literal is accepted for a `Float` field of an annotation, so that
+`@validate.Min(18)` reads as written.
+
+`App.client()` serves the app on a Unix socket of its own instead of
+building requests in memory, so a test exercises the same server, streams
+and all, without a port. `http.proxy` sends through a `Client`, whose hooks
+observe what it sends. A closure is accepted where an optional function is
+expected, which `sync.retry(work, when: ...)` needed.
+

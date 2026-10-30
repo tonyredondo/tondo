@@ -100,6 +100,12 @@ fn find(id: Int): User? {
 }
 ```
 
+- Tests send requests with `app.client()`, a `Client` the app answers in
+  the same process, with no port: `app.client().get("/users/1")?`.
+- `request.json[T]()` answers `422` when the body breaks the rules of `T`
+  (`@validate.Min(18)`, `tondo api std.validate`), with each in `errors`.
+- `app.route("GET", "/api/*rest", http.proxy("http://backend:8080", strip:
+  "/api"))` passes requests on to another server and its responses back.
 - Routes use `:name` and `*rest` segments (`{name}` would interpolate).
 - A handler fails with `http.Problem` (`Problem.notFound()`,
   `Problem.badRequest(message)`), sent as `application/problem+json`; other

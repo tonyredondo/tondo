@@ -46,6 +46,9 @@ const SOURCES: &[(&str, &str)] = &[
     ("paths", include_str!("../std/paths.to")),
     ("texts", include_str!("../std/texts.to")),
     ("environment", include_str!("../std/environment.to")),
+    ("pacing", include_str!("../std/pacing.to")),
+    ("rules", include_str!("../std/rules.to")),
+    ("validate", include_str!("../std/validate.to")),
     ("gzip", include_str!("../std/gzip.to")),
     ("zstd", include_str!("../std/zstd.to")),
     ("xml", include_str!("../std/xml.to")),
@@ -67,6 +70,7 @@ pub(crate) const COMPANIONS: &[(&str, &[&str])] = &[
     ("io", &["streams"]),
     ("text", &["texts"]),
     ("env", &["environment"]),
+    ("sync", &["pacing"]),
 ];
 
 /// The module a companion completes: `time` for `datetime`.

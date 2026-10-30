@@ -15,6 +15,7 @@ import std.path as __path
 import std.reflect as __reflect
 import std.shapes as __shapes
 import std.sync as __sync
+import std.validate as __validate
 
 /// Makes a method without parameters, or with the `String` parameters its
 /// URI names in braces, a resource: `@mcp.Resource(uri: "docs://{name}")`.
@@ -425,6 +426,21 @@ fn call(state: Served, params: __json.Value): String ! Failure {
         err(problem) => fail Failure {
             code: -32602
             message: "the arguments of `{name}`: {problem}"
+        }
+    }
+    // An argument that breaks the rules of its type goes back to the model,
+    // which corrects its call.
+    let parameters = method.function().parameters()
+    for (index, arg) in args.iter().enumerate() {
+        let info = parameters
+            .get(index)
+            .map((parameter) { parameter.typeInfo() })
+            .unwrapOr(arg.typeInfo())
+        match __validate.checkAs(arg, info) {
+            ok(_) => {}
+            err(invalid) => return errorResult(
+                "the arguments of `{name}` break their rules: {invalid}",
+            )
         }
     }
     match recover { state.target.call(name, ...args) } {

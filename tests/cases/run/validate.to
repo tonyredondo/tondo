@@ -1,0 +1,103 @@
+// The rules of std.validate, written on the fields of a type: the code the
+// compiler writes for `Decode` checks them as it reads, `validate.check`
+// checks a value made in the program, and `cli` checks the command line.
+
+import std.cli
+import std.console
+import std.json
+import std.validate
+
+pub type Address = {
+    @validate.Length(min: 2)
+    city: String
+}
+
+/// Signs up.
+pub type Signup = {
+    /// Who.
+    @validate.Length(min: 3, max: 8)
+    name: String
+    /// Where to write.
+    @validate.Email
+    email: String
+    /// How old.
+    @validate.Min(18)
+    @validate.Max(130)
+    age: Int
+    /// The address of the page.
+    @validate.Matches(r"[a-z0-9-]+")
+    slug: String?
+    /// The score.
+    @validate.Min(1)
+    score: Float
+    /// What it is about.
+    @validate.Length(min: 1)
+    tags: Array[String]
+    /// Where.
+    address: Address
+}
+
+/// Greets someone.
+pub type Greet = {
+    /// Who.
+    @validate.Length(min: 2)
+    name: String
+    /// How many times.
+    @validate.Min(1)
+    @validate.Max(3)
+    times: Int
+}
+
+fn main() {
+    let good =
+        r"""{"name": "ada", "email": "ada@example.com", "age": 36, "slug": "ada-l", "score": 1.5, "tags": ["x"], "address": {"city": "London"}}"""
+    console.println("{json.decode[Signup](good).isOk()}")
+    let bad =
+        r"""{"name": "al", "email": "nope", "age": 12, "slug": "Bad Slug", "score": 0.5, "tags": [], "address": {"city": "London"}}"""
+    match json.decode[Signup](bad) {
+        ok(_) => console.println("read")
+        err(error) => {
+            console.println("{error.kind} at {error.path}")
+            for violation in error.violations {
+                console.println("  {violation}")
+            }
+        }
+    }
+    let nested =
+        r"""{"name": "ada", "email": "a@b", "age": 20, "score": 2.0, "tags": ["x"], "address": {"city": "L"}}"""
+    match json.decode[Signup](nested) {
+        ok(_) => console.println("read")
+        err(error) => console.println("{error.violations} at {error.path}")
+    }
+
+    let made = Signup {
+        name: "bo"
+        email: "bo@example.com"
+        age: 200
+        slug: none
+        score: 2.0
+        tags: ["y"]
+        address: Address { city: "X" }
+    }
+    match validate.check(made) {
+        ok(_) => console.println("valid")
+        err(invalid) => console.println("{invalid}")
+    }
+
+    match cli.parseArgs[Greet](["--name", "a", "--times", "9"]) {
+        ok(_) => console.println("parsed")
+        err(error) => console.println(error.message.lines()[0])
+    }
+}
+
+// expect-stdout: true
+// expect-stdout: Invalid at $
+// expect-stdout:   name: must have at least 3 characters
+// expect-stdout:   email: must be an email address
+// expect-stdout:   age: must be at least 18
+// expect-stdout:   slug: must match `[a-z0-9-]+`
+// expect-stdout:   score: must be at least 1.0
+// expect-stdout:   tags: must have at least 1 element
+// expect-stdout: [city: must have at least 2 characters] at $.address
+// expect-stdout: name: must have at least 3 characters; age: must be at most 130; address.city: must have at least 2 characters
+// expect-stdout: error: `--name` must have at least 2 characters; `--times` must be at most 3

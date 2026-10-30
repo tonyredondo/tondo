@@ -3450,6 +3450,9 @@ let operation: fn(Int): Int = (value) {
 }
 ~~~
 
+Donde se espera una función opcional, `(fn(...): R)?`, un cierre es esa
+función, que pasa como `some`: `retry(work, when: (error) { error == Busy })`.
+
 Sin firma esperada, cada parámetro declara su tipo. El retorno puede inferirse
 desde el cuerpo o escribirse después de `:`. No se utiliza una flecha para
 separar parámetros y retorno.
@@ -8519,6 +8522,7 @@ oculten un diagnóstico independiente.
 | `E1905` | `invalid-time-pattern` | Un patrón literal de `format` o de la lectura de fechas de `std.time` tiene una directiva que no existe, o uno para leer no lee una fecha entera; o un locale literal no tiene nombres (biblioteca estándar 14.3.5). |
 | `E1906` | `invalid-template` | Una plantilla de `std.template` no se lee, no tiene su texto al compilar, o una acción escribe donde el HTML no lo admite (biblioteca estándar 14.31). |
 | `E1907` | `invalid-markup` | El markup literal de `cli.markup` tiene un estilo que no existe, que no se cierra o que cierra otro que no está abierto, o que da un valor (biblioteca estándar 14.32). |
+| `E1908` | `invalid-validation-rule` | Una regla de `std.validate` está en un campo al que no se aplica, su `min` supera a su `max`, un entero tiene una fracción como límite o su patrón no compila (biblioteca estándar 14.35). |
 
 #### Testing
 
@@ -11440,7 +11444,8 @@ pub fn showUser(id: Int, @binding.Source(query: "verbose") verbose: Bool = false
   opcional toma su valor por defecto, y una opción recibe el valor sin
   `some(...)`. Sin argumentos se escribe sin paréntesis, `@Required`. Cada
   argumento es una constante (6.5): un literal, una `const`, una variante, un
-  array de constantes o `none`. Un campo que no existe, uno obligatorio que
+  array de constantes o `none`; un literal entero vale donde el campo es un
+  número de coma flotante, `@validate.Min(18)`. Un campo que no existe, uno obligatorio que
   falta o uno de otro tipo son errores de una llamada (`E1102`), que dicen qué
   escribir; un argumento que no es constante es `E1619`.
 - **Dónde.** Delante de la declaración de un tipo o de un enum, de una

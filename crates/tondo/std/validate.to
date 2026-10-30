@@ -1,0 +1,208 @@
+// std.validate (standard library 14.35): the rules of a type, written on
+// its fields, which no value read from outside breaks: the code the
+// compiler writes for `Decode` checks them, and `check` checks a value the
+// program makes. The rules themselves are in `std/rules.to`.
+
+import std.reflect as __reflect
+import std.rules as __rules
+import std.serialization as __serialization
+
+/// How many characters a `String` has, or elements an `Array`, a `Map` or a
+/// `Set`: from `min` to `max`.
+pub annotation Length = {
+    min: Int = 0
+    max: Int? = none
+}
+
+/// The smallest a number may be, in the type of its field:
+/// `@validate.Min(18)` of an `Int`, `@validate.Min(0.5)` of a `Float`.
+pub annotation Min = {
+    value: Float
+}
+
+/// The largest a number may be, in the type of its field.
+pub annotation Max = {
+    value: Float
+}
+
+/// A pattern of `std.regex` that all of the text matches.
+pub annotation Matches = {
+    pattern: String
+}
+
+/// An email address, as a form of HTML accepts one.
+pub annotation Email = {}
+
+impl __reflect.Reflect for Length {
+    fn reflectShow(self, nested: Bool): String {
+        "validate.Length"
+    }
+}
+
+impl __reflect.Reflect for Min {
+    fn reflectShow(self, nested: Bool): String {
+        "validate.Min"
+    }
+}
+
+impl __reflect.Reflect for Max {
+    fn reflectShow(self, nested: Bool): String {
+        "validate.Max"
+    }
+}
+
+impl __reflect.Reflect for Matches {
+    fn reflectShow(self, nested: Bool): String {
+        "validate.Matches"
+    }
+}
+
+impl __reflect.Reflect for Email {
+    fn reflectShow(self, nested: Bool): String {
+        "validate.Email"
+    }
+}
+
+/// A rule a value breaks: the path of its field and what the rule asks.
+pub alias Violation = __serialization.Violation
+
+/// The rules a value breaks.
+pub type Invalid = {
+    violations: Array[Violation]
+}
+
+/// Each violation, `path: message`, after one another.
+impl Display for Invalid {
+    fn display(self): String {
+        self.violations.map((violation) { "{violation}" }).join("; ")
+    }
+}
+
+/// Whether a value the program made keeps the rules of its type, and those
+/// of the types of its fields, as one read from outside does.
+pub fn check[T: __reflect.Reflect](value: T): !Invalid {
+    checkAs(__reflect.valueOf(value), __reflect.typeOf(value))?
+}
+
+/// Whether a value of reflection keeps the rules of the type that `info`
+/// describes, for code that reads values by reflection before it makes
+/// them, as `std.mcp` does with the arguments of a tool.
+pub fn checkAs(value: __reflect.Value, info: __reflect.TypeInfo): !Invalid {
+    let found = violationsOf(value, info, "")
+    if not found.isEmpty() {
+        fail Invalid { violations: found }
+    }
+}
+
+/// The violations of a value of the type `info` and of what it holds,
+/// under the path `at`.
+fn violationsOf(value: __reflect.Value, info: __reflect.TypeInfo, at: String): Array[Violation] {
+    var found: Array[Violation] = []
+    let inner = (index: Int): __reflect.TypeInfo {
+        info.genericArguments().get(index).unwrapOr(info)
+    }
+    match info.kind() {
+        __reflect.TypeKind.Record => {
+            for described in info.fields() {
+                let field = match value.get(described.name()) {
+                    ok(field) => field
+                    err(_) => continue
+                }
+                let path = if at.isEmpty() { described.name() } else { "{at}.{described.name()}" }
+                found.extend(rulesOf(described, field, path))
+                found.extend(violationsOf(field, described.typeInfo(), path))
+            }
+        }
+        __reflect.TypeKind.Enum => {
+            for payload in value.elements() {
+                found.extend(violationsOf(payload, payload.typeInfo(), at))
+            }
+        }
+        __reflect.TypeKind.Applied(__reflect.AppliedKind.Option) => {
+            if isOption(value) {
+                for held in value.elements() {
+                    found.extend(violationsOf(held, inner(0), at))
+                }
+            } else {
+                found.extend(violationsOf(value, inner(0), at))
+            }
+        }
+        __reflect.TypeKind.Applied(__reflect.AppliedKind.Array) => {
+            for (index, element) in value.elements().iter().enumerate() {
+                found.extend(violationsOf(element, inner(0), "{at}[{index}]"))
+            }
+        }
+        __reflect.TypeKind.Applied(__reflect.AppliedKind.Map) => {
+            for (key, element) in value.entries() {
+                found.extend(violationsOf(element, inner(1), "{at}[{key}]"))
+            }
+        }
+        _ => {}
+    }
+    found
+}
+
+/// Whether a value is an option, rather than what one holds.
+fn isOption(value: __reflect.Value): Bool {
+    value.typeInfo().kind() == __reflect.TypeKind.Applied(__reflect.AppliedKind.Option)
+}
+
+/// What the rules of a field say of its value: of what it holds, when it is
+/// an option.
+fn rulesOf(field: __reflect.FieldInfo, written: __reflect.Value, path: String): Array[Violation] {
+    var value = written
+    if isOption(written) {
+        match written.elements().get(0) {
+            some(inner) => value = inner
+            none => return []
+        }
+    }
+    let text = value.to[String]().unwrapOr("{value}")
+    let count = match value.typeInfo().kind() {
+        __reflect.TypeKind.Applied(__reflect.AppliedKind.Map) => value.entries().length()
+        __reflect.TypeKind.Applied(_) => value.elements().length()
+        _ => text.length()
+    }
+    let number = Float.parse("{value}").unwrapOr(0.0)
+    let integer = not "{value}".contains(".")
+    let shown = (bound: Float): String {
+        if integer { "{bound}".removeSuffix(".0") } else { "{bound}" }
+    }
+    var outcomes: Array[Violation?] = []
+    match field.annotation[Length]() {
+        some(rule) => {
+            let unit = if value.typeName() == "String" { "character" } else { "element" }
+            outcomes.push(__rules.length(path, count, rule.min, rule.max, unit))
+        }
+        none => {}
+    }
+    match field.annotation[Min]() {
+        some(rule) => outcomes.push(
+            __rules.atLeast(path, number, rule.value).map((_) { least(path, shown(rule.value)) }),
+        )
+        none => {}
+    }
+    match field.annotation[Max]() {
+        some(rule) => outcomes.push(
+            __rules.atMost(path, number, rule.value).map((_) { most(path, shown(rule.value)) }),
+        )
+        none => {}
+    }
+    match field.annotation[Matches]() {
+        some(rule) => outcomes.push(__rules.matching(path, text, rule.pattern))
+        none => {}
+    }
+    match field.annotation[Email]() {
+        some(_) => outcomes.push(__rules.email(path, text))
+        none => {}
+    }
+    __rules.found(outcomes)
+}
+
+fn least(path: String, bound: String): Violation {
+    Violation { path: path, message: "must be at least {bound}" }
+}
+
+fn most(path: String, bound: String): Violation {
+    Violation { path: path, message: "must be at most {bound}" }
+}

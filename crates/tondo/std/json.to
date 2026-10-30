@@ -350,6 +350,7 @@ fn Reader.error(self, kind: ErrorKind): JsonError {
         path: self.native.where(1)
         line: jsonnative.parseInt(self.native.where(2))
         column: jsonnative.parseInt(self.native.where(3))
+        violations: []
     }
 }
 
@@ -667,7 +668,14 @@ pub fn encodeTo[T: serialization.Encode](
 }
 
 fn streamError(message: String): JsonError {
-    JsonError { kind: ErrorKind.Io, message: message, path: "$", line: 0, column: 0 }
+    JsonError {
+        kind: ErrorKind.Io
+        message: message
+        path: "$"
+        line: 0
+        column: 0
+        violations: []
+    }
 }
 
 /// JSON text kept as it is, validated: a member whose content another part

@@ -966,6 +966,9 @@ fn failed(sent: httpNative.Native): !HttpError {
 pub type Problem = {
     status: Int
     message: String
+    /// The rules of its type a value breaks, which a `422` lists in
+    /// `errors`.
+    violations: Array[__serialization.Violation]
 }
 
 impl Display for Problem {
@@ -977,37 +980,44 @@ impl Display for Problem {
 /// A problem with an HTTP status and a message, which the server sends as
 /// `application/problem+json`.
 pub fn Problem.new(status: Int, message: String): Problem {
-    Problem { status, message }
+    Problem { status, message, violations: [] }
 }
 
 /// A `400 Bad Request` problem.
 pub fn Problem.badRequest(message: String): Problem {
-    Problem { status: 400, message }
+    Problem { status: 400, message, violations: [] }
 }
 
 /// A `401 Unauthorized` problem.
 pub fn Problem.unauthorized(message: String = "authentication is required"): Problem {
-    Problem { status: 401, message }
+    Problem { status: 401, message, violations: [] }
 }
 
 /// A `403 Forbidden` problem.
 pub fn Problem.forbidden(message: String = "this is not allowed"): Problem {
-    Problem { status: 403, message }
+    Problem { status: 403, message, violations: [] }
 }
 
 /// A `404 Not Found` problem.
 pub fn Problem.notFound(message: String = "not found"): Problem {
-    Problem { status: 404, message }
+    Problem { status: 404, message, violations: [] }
+}
+
+/// A `422 Unprocessable Content` problem: a value that breaks the rules of
+/// its type, each violation in the `errors` of the reply.
+pub fn Problem.invalid(violations: Array[__serialization.Violation]): Problem {
+    let shown = violations.map((violation) { "{violation}" }).join("; ")
+    Problem { status: 422, message: "the value breaks the rules of its type: {shown}", violations }
 }
 
 /// A `409 Conflict` problem.
 pub fn Problem.conflict(message: String): Problem {
-    Problem { status: 409, message }
+    Problem { status: 409, message, violations: [] }
 }
 
 /// A failure of the server's own, for `result.mapErr(http.Problem.from)?`.
 pub fn Problem.from[E: Display](error: E): Problem {
-    Problem { status: 500, message: "{error}" }
+    Problem { status: 500, message: "{error}", violations: [] }
 }
 
 /// A request a server received.
@@ -1329,6 +1339,9 @@ pub fn Request.text(self): String ! Problem {
 pub fn Request.json[T: __serialization.Decode](self): T ! Problem {
     match __json.decodeFrom[T](self.body()) {
         ok(value) => value
+        err(error) if error.kind == __serialization.ErrorKind.Invalid => {
+            fail Problem.invalid(error.violations)
+        }
         err(error) => fail Problem.badRequest("the body is not the JSON expected: {error}")
     }
 }
@@ -1619,7 +1632,16 @@ fn problemReply(problem: Problem): Reply {
     } else {
         problem.message
     }
-    let body = "{{\"status\":{problem.status},\"detail\":{__json.encode(detail)}}}"
+    var errors = ""
+    if not problem.violations.isEmpty() {
+        let each = problem.violations.map(
+            (violation) {
+                "{{\"path\":{__json.encode(violation.path)},\"message\":{__json.encode(violation.message)}}}"
+            },
+        )
+        errors = ",\"errors\":[{each.join(",")}]"
+    }
+    let body = "{{\"status\":{problem.status},\"detail\":{__json.encode(detail)}{errors}}}"
     Reply {
         code: problem.status
         headerList: ["content-type", "application/problem+json"]
@@ -1973,6 +1995,25 @@ pub fn App.start(
     Server { native: listening, secure: tls.isSome(), ended }
 }
 
+/// A client whose requests this app answers in this process: the app
+/// serves on a Unix socket of its own, with no port, and the client sends
+/// there. A test makes its requests with it as it would to a server:
+/// `app.client().get("/users/1")?.json[User]()?`.
+pub fn App.client(self): Client {
+    let directory = match __fs.createTemporaryDirectory() {
+        ok(made) => made
+        err(error) => panic("`App.client` needs a temporary directory for its socket: {error}")
+    }
+    let socket = "{directory}/app.socket"
+    let listening = httpNative.listenUnix(socket)
+    match failed(listening) {
+        ok(_) => {}
+        err(error) => panic("`App.client` could not serve the app: {error}")
+    }
+    spawn detached serve(listening, self.pipeline())
+    Client.new(baseUrl: "http://app", socket: socket)
+}
+
 /// A server that `App.start` started.
 pub type Server = {
     priv native: httpNative.Native
@@ -2001,6 +2042,108 @@ pub fn Server.url(self): String {
 pub fn Server.stop(self) {
     httpNative.serverStop(self.native)
     _ = self.ended.receive()
+}
+
+/// The media type a file's name says, as `text/css` for `site.css`, which
+/// `App.files` sends; `application/octet-stream` when it says none.
+pub fn mediaType(path: String): String {
+    httpNative.mediaType(path)
+}
+
+/// A handler that sends each request on to `target`, as a reverse proxy
+/// does, and its response back: the method, the path and query, the headers
+/// and the body, each body streamed as it arrives. The path loses `strip`
+/// first; `X-Forwarded-For`, `X-Forwarded-Host` and `X-Forwarded-Proto` tell
+/// the target who asked; and a target that does not answer is `502`.
+/// `client` sends the requests, with its hooks, so what a proxy sends is
+/// observed as any other request: `app.route("*", "/api/*", http.proxy(
+/// "http://backend:8080", strip: "/api"))`.
+pub fn proxy(target: String, strip: String = "", client: Client? = none): fn(Request): Reply !
+    Problem {
+    let sender = client.unwrapOr(Client.new(redirects: 0))
+    let base = target.removeSuffix("/")
+    (request): Reply ! Problem {
+        var path = request.path().removePrefix(strip)
+        if not path.startsWith("/") {
+            path = "/{path}"
+        }
+        let query = if request.rawQuery().isEmpty() { "" } else { "?{request.rawQuery()}" }
+        var headers: Map[String, String] = [:]
+        for (name, value) in request.headers() {
+            if not (name in HopByHop) and name != "content-type" and name != "content-length" {
+                headers[name] = value
+            }
+        }
+        let peer = peerIp(request.remoteAddress())
+        if not peer.isEmpty() {
+            headers["x-forwarded-for"] = match request.header("x-forwarded-for") {
+                some(before) => "{before}, {peer}"
+                none => peer
+            }
+        }
+        headers["x-forwarded-host"] = request.host()
+        headers["x-forwarded-proto"] = request.scheme()
+        let length = request.header("content-length").andThen((text) { Int.parse(text).ok() })
+        let contentType = request.header("content-type").unwrapOr("application/octet-stream")
+        let body: Body? = if request.method() == "GET" or request.method() == "HEAD" {
+            none
+        } else {
+            some(Body.stream(request.body(), length: length, contentType: contentType))
+        }
+        let answered = sender.request(
+            request.method(),
+            "{base}{path}{query}",
+            body: body,
+            headers: headers,
+        )
+        let response = match answered {
+            ok(response) => response
+            err(HttpError.Status(response)) => response
+            err(error) => fail Problem.new(502, "the proxy's target {base} did not answer: {error}")
+        }
+        var reply = Reply.stream(
+            response.body(),
+            contentType: response.header("content-type").unwrapOr("application/octet-stream"),
+            status: response.status(),
+        )
+        for (name, value) in response.headers() {
+            if name in HopByHop or name == "content-type" or name == "content-length" {
+                continue
+            }
+            if name == "set-cookie" {
+                for cookie in response.headerValues(name) {
+                    reply = reply.header(name, cookie)
+                }
+            } else {
+                reply = reply.header(name, value)
+            }
+        }
+        reply
+    }
+}
+
+/// The headers of one connection, which a proxy does not pass on.
+const HopByHop: Array[String] = [
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+    "host",
+]
+
+/// The IP address of `address:port` or `[address]:port`.
+fn peerIp(address: String): String {
+    if address.startsWith("[") {
+        return address.removePrefix("[").splitOnce("]").map((parts) { parts.0 }).unwrapOr("")
+    }
+    match address.findLast(":") {
+        some(at) => address.slice(0, at).unwrapOr("")
+        none => address
+    }
 }
 
 /// What a server shows and asks of TLS: `net.Tls`.

@@ -142,6 +142,11 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "invalid-markup",
         "A literal markup of `cli.markup` has a style that does not exist, is not closed or closes none, or comes from a value.",
     ),
+    (
+        "E1908",
+        "invalid-validation-rule",
+        "A rule of `std.validate` is on a field it does not apply to, its `min` is above its `max`, an integer has a fraction as its bound, or its pattern does not compile.",
+    ),
     ("E2001", "test-node-outside-test-source", "A `suite` or `test` in a source that is not a test source."),
     ("E2002", "duplicate-test-node", "Two suites or tests have the same identity among their siblings."),
     (

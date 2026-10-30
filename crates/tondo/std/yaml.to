@@ -262,6 +262,7 @@ fn Reader.error(self, kind: serialization.ErrorKind): YamlError {
         path: yamlnative.where(self.native, 1)
         line: Int.parse(yamlnative.where(self.native, 2)).unwrapOr(0)
         column: Int.parse(yamlnative.where(self.native, 3)).unwrapOr(0)
+        violations: []
     }
 }
 

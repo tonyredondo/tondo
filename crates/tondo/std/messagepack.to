@@ -244,6 +244,7 @@ fn Reader.error(self, kind: serialization.ErrorKind): MessagePackError {
         path: packnative.where(self.native, 1)
         line: 0
         column: 0
+        violations: []
     }
 }
 
@@ -340,6 +341,7 @@ pub fn Writer.flush(self): !MessagePackError {
             path: "$"
             line: 0
             column: 0
+            violations: []
         }
     }
 }

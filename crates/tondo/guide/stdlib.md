@@ -40,7 +40,8 @@ std.random     seeded and entropy generators
 std.uuid       UUID v4, v5, v7
 std.format     a text builder, formats chosen at run time, numbers and plurals per language
 std.math       floating-point math and integers' gcd and lcm
-std.sync       Mutex, Atomic, shared collections (`tondo guide tasks`)
+std.sync       Mutex, Atomic, shared collections, rate limits, retries (`tondo guide tasks`)
+std.validate   rules on the fields of a type, which reading checks: lengths, bounds, patterns
 std.executor   pools that bound work, actors with a mailbox (`tondo guide tasks`)
 std.reflect    values by name at run time (`tondo guide meta`)
 std.ffi        C types and memory (`tondo guide ffi`)
@@ -304,6 +305,37 @@ fn main(): !net.NetError {
   `stream.startTls(host)`.
 - Every call that waits takes its own `timeout:`; there is none otherwise.
   `reader()` and `writer()` give the connection as `std.io` streams.
+
+## Rules of a type
+
+```tondo
+import std.console
+import std.json
+import std.validate
+
+pub type Signup = {
+    @validate.Length(min: 3, max: 20)
+    name: String
+    @validate.Email
+    email: String
+    @validate.Min(18)
+    age: Int
+}
+
+fn main() {
+    match json.decode[Signup](r"""{"name": "al", "email": "x", "age": 12}""") {
+        ok(signup) => console.println("welcome {signup.name}")
+        err(error) => console.println("{error.violations}")
+    }
+}
+```
+
+- Reading checks the rules, from any format, a form, the command line or the
+  arguments of an MCP tool: no value read from outside breaks them, and
+  `request.json[T]()` answers `422` with each. `validate.check(value)`
+  checks a value the program made.
+- Whether a field is required is its type, `T` or `T?`, and a closed set of
+  values is an enum; a rule on a field it does not fit is `E1908`.
 
 ## Secrets, passwords and signatures
 

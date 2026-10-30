@@ -38,6 +38,8 @@ const HIDDEN: &[&str] = &[
     "streams",
     "texts",
     "environment",
+    "pacing",
+    "rules",
     "formats",
     "shapes",
     "fuzz",

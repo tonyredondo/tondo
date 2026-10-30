@@ -1660,6 +1660,7 @@ impl<'a> Checker<'a> {
             StdModule::Io => "io",
             StdModule::Text => "text",
             StdModule::Env => "env",
+            StdModule::Sync => "sync",
             _ => return &[],
         })
     }
@@ -3790,7 +3791,25 @@ impl<'a> Checker<'a> {
                         ast::Ident { name: field.name.name.clone(), span: arg.span }
                     }
                 };
-                inits.push(ast::FieldInit { name, value: Some(arg.value.clone()) });
+                // An integer literal is a float where a field is one, as
+                // `@validate.Min(18)` (27.13).
+                let mut written = arg.value.clone();
+                let float = fields.iter().find(|f| f.name.name == name.name).is_some_and(|f| {
+                    let ty = match &f.ty.kind {
+                        ast::TypeKind::Optional(inner) => inner.as_ref(),
+                        _ => &f.ty,
+                    };
+                    matches!(&ty.kind, ast::TypeKind::Path { segments, .. }
+                        if segments.len() == 1 && matches!(segments[0].name.as_str(), "Float" | "Float64" | "Float32"))
+                });
+                let literal = match &mut written.kind {
+                    ast::ExprKind::Unary(ast::UnaryOp::Neg, inner) => inner.as_mut(),
+                    _ => &mut written,
+                };
+                if float && let ast::ExprKind::Int { value, suffix: None } = literal.kind {
+                    literal.kind = ast::ExprKind::Float { text: format!("{value}.0"), suffix: None };
+                }
+                inits.push(ast::FieldInit { name, value: Some(written) });
             }
             let mut value = self.record_literal(&mut cx, &annotation.path, &[], &inits, Some(ty), annotation.span);
             if !self.types.has_error(value.ty) && !constant(&mut value) {
@@ -3799,10 +3818,102 @@ impl<'a> Checker<'a> {
                 );
                 self.diags.error("E1619", annotation.span, message);
             }
+            if self.module_paths.get(decl.module as usize).is_some_and(|p| p == &["std", "validate"])
+                && let Some(field) = self.annotated_field(annotated)
+            {
+                self.check_rule(&decl.name.name, annotation, field);
+            }
             values.push(value);
         }
         self.module = outer;
         self.annotation_values.push((annotated, values));
+    }
+
+    /// The type of the field an annotation is on, if it is on a field.
+    fn annotated_field(&mut self, annotated: Annotated) -> Option<Ty> {
+        let fields = match annotated {
+            Annotated::Field(ty, index) => (ty, None, index),
+            Annotated::VariantField(ty, variant, index) => (ty, Some(variant), index),
+            _ => return None,
+        };
+        match fields {
+            (ty, None, index) => {
+                self.record_fields(ty, Span::default()).and_then(|f| f.get(index as usize).map(|f| f.1))
+            }
+            (ty, Some(variant), index) => match self.payload(ty, variant) {
+                Payload::Record(fields) => fields.get(index as usize).map(|f| f.ty),
+                _ => None,
+            },
+        }
+    }
+
+    /// A rule of `std.validate` on a field it does not go with: on a type
+    /// it does not apply to, with a `min` above its `max`, a fraction as the
+    /// bound of an integer, or a pattern that does not compile (standard
+    /// library 14.35).
+    fn check_rule(&mut self, rule: &str, annotation: &ast::AnnotationUse, field: Ty) {
+        let rule = rule.rsplit('.').next().unwrap_or(rule);
+        let inner = match *self.types.kind(field) {
+            TyKind::Option(inner) => inner,
+            _ => field,
+        };
+        let text = inner == Ty::STRING;
+        let counted = text || matches!(self.types.kind(inner), TyKind::Array(_) | TyKind::Map(..) | TyKind::Set(_));
+        let integer = self.types.as_int(inner).is_some() || inner == Ty::BYTE;
+        let float = matches!(self.types.kind(inner), TyKind::Float(_));
+        let number = integer || float || self.number.is_some_and(|n| self.satisfies(inner, n, &[]));
+        let argument = |name: &str, position: usize| {
+            let named = annotation.args.iter().find(|a| a.name.as_ref().is_some_and(|n| n.name == name));
+            named.or_else(|| annotation.args.iter().filter(|a| a.name.is_none()).nth(position))
+        };
+        let integer_of = |arg: Option<&ast::Arg>| match arg.map(|a| &a.value.kind) {
+            Some(ast::ExprKind::Int { value, .. }) => Some(*value),
+            _ => None,
+        };
+        let shown = self.display(field);
+        let problem = match rule {
+            "Length" if !counted => Some(format!(
+                "`@validate.Length` counts the characters of a `String` or the elements of an `Array`, a `Map` or a `Set`, not {shown}: bound a number with `@validate.Min` and `@validate.Max`"
+            )),
+            "Length" => match (integer_of(argument("min", 0)), integer_of(argument("max", 1))) {
+                (Some(min), Some(max)) if min > max => Some(format!(
+                    "`@validate.Length(min: {min}, max: {max})` allows no length: its `min` is above its `max`"
+                )),
+                _ => None,
+            },
+            "Min" | "Max" if !number => Some(format!(
+                "`@validate.{rule}` bounds a number, not {shown}: count a text or a collection with `@validate.Length(min: ..., max: ...)`"
+            )),
+            "Min" | "Max" if integer => match argument("value", 0).map(|a| self.sources.slice(a.value.span)) {
+                Some(bound) if bound.contains(['.', 'e', 'E']) => Some(format!(
+                    "the bound of {shown} is an integer, and `{bound}` is not: write `@validate.{rule}({})`",
+                    bound.split(['.', 'e', 'E']).next().unwrap_or("0")
+                )),
+                _ => None,
+            },
+            "Matches" | "Email" if !text => Some(format!("`@validate.{rule}` checks a `String`, not {shown}")),
+            "Matches" => match argument("pattern", 0).map(|a| &a.value.kind) {
+                Some(ast::ExprKind::Str(segments)) => {
+                    let pattern: String = segments
+                        .iter()
+                        .map(|s| match s {
+                            ast::StrSegment::Text(text) => text.as_str(),
+                            ast::StrSegment::Expr(..) => "",
+                        })
+                        .collect();
+                    regex_syntax::Parser::new().parse(&pattern).err().map(|error| {
+                        let text = error.to_string();
+                        let why = text.lines().last().unwrap_or_default().trim_start_matches("error: ").to_string();
+                        format!("the pattern of `@validate.Matches` does not compile: {why}")
+                    })
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(problem) = problem {
+            self.diags.error("E1908", annotation.span, problem);
+        }
     }
 
     /// `reflect.annotationsOf[T](place, index, part, method)`, which the
@@ -6008,6 +6119,12 @@ impl<'a> Checker<'a> {
     /// bindings it captures; its body is a function whose first parameter
     /// is the closure, generic over the enclosing type parameters.
     fn closure(&mut self, cx: &mut FnCx, closure: &ast::Closure, expected: Option<Ty>, span: Span) -> hir::Expr {
+        // Where an optional function is expected, a closure is that
+        // function, which the coercion of its value makes `some`.
+        let expected = match expected.map(|ty| self.types.kind(ty)) {
+            Some(&TyKind::Option(inner)) if matches!(self.types.kind(inner), TyKind::Fn(..)) => Some(inner),
+            _ => expected,
+        };
         let parts = (&closure.params[..], closure.result.as_ref(), &closure.body);
         self.closure_parts(cx, parts, expected, false, closure.is_unsafe, span)
     }
@@ -9350,7 +9467,8 @@ impl<'a> Checker<'a> {
                 || self.types.members(inner).is_some_and(|m| m.contains(&value.ty))
                 || self.converts(value.ty, inner)
                 || matches!(self.types.kind(inner), TyKind::CFn(..))
-                    && matches!(self.types.kind(value.ty), TyKind::Fn(..) | TyKind::Adt(_)))
+                    && matches!(self.types.kind(value.ty), TyKind::Fn(..) | TyKind::Adt(_))
+                || matches!(self.types.kind(inner), TyKind::Fn(..)) && self.types.closure(value.ty).is_some())
         {
             let span = value.span;
             let value = self.coerce(value, inner);

@@ -11,6 +11,7 @@ import std.process as __process
 import std.reflect as __reflect
 import std.shapes as __shapes
 import std.sync as __sync
+import std.validate as __validate
 
 // ---------------------------------------------------------------------------
 // Commands
@@ -86,9 +87,25 @@ pub fn parse[T: __reflect.Reflect](): T {
 pub fn parseArgs[T: __reflect.Reflect](args: Array[String]): T ! CliError {
     let info = __reflect.typeInfo[T]()
     let read = valueOf(info, args, program())?
-    match read.to[T]() {
+    let value = match read.to[T]() {
         ok(value) => value
         err(error) => panic("std.cli cannot make a `{info}` from the command line: {error}")
+    }
+    // The rules of `std.validate` on the options and arguments.
+    match __validate.check(value) {
+        ok(_) => value
+        err(invalid) => {
+            let broken = invalid.violations.map(
+                (violation) {
+                    let field = violation.path.split(".").get(-1).unwrapOr(violation.path)
+                    "`--{kebab(field)}` {violation.message}"
+                },
+            )
+            fail CliError {
+                message: "error: {broken.join("; ")}\n\nFor more, try `{program()} --help`."
+                help: false
+            }
+        }
     }
 }
 

@@ -1677,6 +1677,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.csv` | Core | — | 0.1 | CSV RFC 4180 materializado y en streaming |
 | `std.hash` | Core | — | 0.1 | Digests MD5, SHA-1 y SHA-2, HMAC, por partes, y hashes no criptográficos |
 | `std.crypto` | Core | — | 0.1 | Secretos en tiempo constante, contraseñas, derivación de claves, sellado, firmas, y claves y certificados PEM |
+| `std.validate` | Core | — | 0.1 | Reglas de los campos de un tipo, que comprueban la lectura de cualquier formato, la línea de comandos y MCP |
 | `std.http` | Capability-gated | `network` | 0.1 | Cliente y servidor HTTP/1.1 y HTTP/2 con TLS, cuerpos en streaming, multipart, archivos con rangos, Server-Sent Events y WebSockets |
 | `std.random` | Core + gated | `entropy` para sembrar desde el sistema | 0.1 | Generadores pseudoaleatorios sembrados, mezcla, elección y bytes de entropía |
 | `std.uuid` | Core + gated | `entropy` y/o `civil-clock` para generación | 0.1 | UUID, parsing, formatting y generadores explícitos por versión |
@@ -2203,6 +2204,12 @@ pub enum sync.CompareExchange[T] {
     Exchanged(T)
     Mismatch(T)
 }
+
+pub fn sync.RateLimiter(rate: Int, per: time.Duration = time.seconds(1), burst: Int? = none): sync.RateLimiter
+pub fn sync.RateLimiter.allow(self): Bool
+pub fn sync.RateLimiter.wait(self)
+pub fn sync.retry[T, E](work: fn(): T ! E, attempts: Int = 3, delay: time.Duration = time.milliseconds(100),
+    maxDelay: time.Duration = time.seconds(10), when: (fn(ref E): Bool)? = none): T ! E
 ~~~
 
 ~~~tondo
@@ -2235,6 +2242,16 @@ let id = requests.add(1)
   no es `Copy`: el permiso vuelve con `release()` o al
   abandonarse el `Permit`, también al moverlo a una tarea que termina, de modo
   que `spawn fetch(url, limit.acquire())` limita la concurrencia.
+- `RateLimiter` deja que el trabajo ocurra a un ritmo constante, `rate` veces
+  cada `per`, y hasta `burst` de golpe tras un rato tranquilo, como un token
+  bucket. `allow` dice si una más puede ocurrir ya y toma su sitio; `wait`
+  espera a que pueda, y una tarea cancelada deja de esperar. Sus copias lo
+  comparten: las tareas de un servidor comparten uno.
+- `retry` repite el trabajo hasta que tiene éxito, `attempts` veces como
+  mucho. Entre dos intentos espera una parte aleatoria de un retraso que se
+  duplica desde `delay` hasta `maxDelay`, para que muchos clientes no
+  reintenten a la vez; solo reintenta los errores que acepta `when`, y el
+  último error es el resultado.
 - `Once` inicializa su valor una sola vez. Mientras una tarea ejecuta `init`,
   las demás esperan; si `init` falla, se cancela o produce pánico, el `Once`
   sigue vacío y la siguiente llamada lo reintenta.
@@ -2774,9 +2791,11 @@ pub enum Event {
     Key(String)
     EndMap
 }
-pub enum ErrorKind { Syntax, Type, Missing, Unknown, Range, Io, Unsupported }
+pub enum ErrorKind { Syntax, Type, Missing, Unknown, Range, Io, Unsupported, Invalid }
 pub enum UnknownFields { Ignore, Reject }
-pub type Error = { kind: ErrorKind, message: String, path: String, line: Int, column: Int }
+pub type Error = { kind: ErrorKind, message: String, path: String, line: Int, column: Int,
+    violations: Array[Violation] }
+pub type Violation = { path: String, message: String }
 pub type Note = { format: String, name: String, value: String }
 
 pub trait Source {
@@ -2794,6 +2813,7 @@ pub trait Source {
     fn beginList(self, first: Event, name: String): Unit ! Error
     fn endList(self): Unit ! Error
     fn required[T](self, value: T?, field: String): T ! Error
+    fn invalid(self, violations: Array[Violation]): Error
     fn mismatch(self, first: Event, expected: String): Error
 }
 
@@ -2831,6 +2851,10 @@ pub trait Decode {
   para cada record, enum y newtype del programa cuyas partes los implementan,
   cuando el programa trae `std.serialization` directamente o por un formato. Una
   implementación escrita en el programa sustituye a la automática.
+- El `Decode` que escribe el compilador comprueba las reglas de
+  `std.validate` de los campos al leer un record (14.35): si el valor rompe
+  alguna, falla con `Invalid` y una `Violation` por cada regla rota, con el
+  nombre de su campo y lo que pide, de `invalid`.
 - Un record es un mapa con sus campos en orden de declaración; `@name("texto")`
   cambia la clave de un campo y `@ignore` lo omite, y debe ser opcional. `none`
   es `Null`; un formato sin null (`omitsNone`) omite el campo, y un campo
@@ -4371,7 +4395,8 @@ app.listen(port: 8080)?
 La superficie es:
 
 ~~~tondo pseudocode
-pub type Problem = { status: Int, message: String }
+pub type Problem = { status: Int, message: String, violations: Array[serialization.Violation] }
+pub fn Problem.invalid(violations: Array[serialization.Violation]): Problem   // 422
 pub fn Problem.new(status: Int, message: String): Problem
 pub fn Problem.badRequest(message: String): Problem
 pub fn Problem.unauthorized(message: String = "authentication is required"): Problem
@@ -4447,6 +4472,9 @@ pub fn App.listen(self, port: Int = 8080, host: String = "0.0.0.0", tls: Tls? = 
     socket: String? = none): Unit ! HttpError
 pub fn App.start(self, port: Int = 0, host: String = "127.0.0.1", tls: Tls? = none,
     socket: String? = none): Server ! HttpError
+pub fn App.client(self): Client
+pub fn mediaType(path: String): String
+pub fn proxy(target: String, strip: String = "", client: Client? = none): fn(Request): Reply ! Problem
 pub type Server
 pub fn Server.address(self): String
 pub fn Server.url(self): String
@@ -4455,6 +4483,23 @@ pub alias Tls = net.Tls
 pub alias TlsVersion = net.TlsVersion
 ~~~
 
+- `App.client()` es un `Client` cuyas peticiones atiende la app en el mismo
+  proceso: la app sirve en un socket Unix propio, sin puerto, y el cliente
+  envía ahí. Una prueba pide con él lo mismo que a un servidor:
+  `app.client().get("/users/1")?.json[User]()?`.
+- `proxy(target)` es un handler que reenvía cada petición a `target`, como un
+  proxy inverso, y devuelve su respuesta: el método, el path y la query, las
+  cabeceras y el cuerpo, cada cuerpo en streaming. El path pierde antes
+  `strip`; `X-Forwarded-For`, `X-Forwarded-Host` y `X-Forwarded-Proto` dicen
+  quién pidió; las cabeceras de una conexión no pasan; un destino que no
+  responde es `502`. `client` envía las peticiones con sus hooks (`use`), así
+  que lo que un proxy envía se observa como cualquier petición.
+- `mediaType` es el tipo de medio que dice el nombre de un archivo, el que
+  envía `App.files`: `text/css` para `site.css`, y
+  `application/octet-stream` si no dice ninguno.
+- `Request.json[T]()` responde `422` a un cuerpo cuyo valor rompe las reglas
+  de su tipo (14.35), con cada violación en `errors`, una extensión de RFC
+  9457: `{"path": "age", "message": "must be at least 18"}`.
 - Una ruta es un método y un path cuyos segmentos `:nombre` son parámetros y
   cuyo último puede ser `*nombre`, el resto del path. Entre las rutas que
   encajan gana la de más segmentos fijos, así que `/users/me` gana a
@@ -5225,6 +5270,9 @@ pub fn secret(question: String): String
   descripción, su uso, sus subcomandos, y sus opciones con su ayuda, su defecto
   y su variable.
 - Un tipo que `std.cli` no lee es un pánico que dice los que lee.
+- Las reglas de `std.validate` de los campos se comprueban al leer: una que
+  se rompe es un error que nombra la opción, `` `--age` must be at least 18``
+  (14.35).
 
 **Errores**
 
@@ -5302,7 +5350,9 @@ pub fn handler[T: reflect.Reflect](server: T, name: String = "", version: String
   herramienta, con su `///` como descripción; si no, lo son sus parámetros. Un
   argumento `T?` es opcional. El esquema JSON sale de los tipos: textos,
   `Bool`, enteros, floats, `Array[T]`, `Map[String, V]`, records como objetos y
-  enums sin datos como `enum` de textos.
+  enums sin datos como `enum` de textos. Unos argumentos que rompen las reglas
+  de `std.validate` de sus tipos dan un resultado de error que las dice, para
+  que el modelo corrija su llamada (14.35).
 - El resultado: un `String` es texto, `Unit` no da contenido, y otro valor se
   da como JSON en el texto y en `structuredContent`, con su `outputSchema`. Un
   `T ! E` que falla da `isError` con el `Display` del error, y un pánico,
@@ -5404,6 +5454,61 @@ pub fn Certificate.fromDer(der: Array[Byte]): Certificate ! CryptoError
   (`CN=example.com,O=Acme`), los nombres DNS y las direcciones IP de su
   extensión de nombres alternativos, el número de serie en hexadecimal, sus
   fechas de validez y su DER. `Certificate.fromDer` lee uno de DER.
+
+### 14.35 `std.validate`
+
+Las reglas de un valor se escriben en su tipo, como anotaciones de sus
+campos, y ningún valor leído de fuera las rompe: el `Decode` derivado las
+comprueba al leer, sea de JSON, YAML, TOML, MessagePack, CBOR, XML, un
+formulario, la línea de comandos o los argumentos de una herramienta MCP.
+Lo obligatorio lo dice el tipo, `T` o `T?`, y un conjunto cerrado de valores
+es un enum: no hay `required` ni `oneOf`.
+
+~~~tondo pseudocode
+pub type Signup = {
+    @validate.Length(min: 3, max: 20)
+    name: String
+    @validate.Email
+    email: String
+    @validate.Min(18)
+    @validate.Max(130)
+    age: Int
+    @validate.Matches(r"[a-z0-9-]+")
+    slug: String?
+}
+~~~
+
+~~~tondo pseudocode
+pub annotation Length = { min: Int = 0, max: Int? = none }
+pub annotation Min = { value: Float }
+pub annotation Max = { value: Float }
+pub annotation Matches = { pattern: String }
+pub annotation Email = {}
+pub alias Violation = serialization.Violation      // { path: String, message: String }
+pub type Invalid = { violations: Array[Violation] }
+pub fn check[T: reflect.Reflect](value: T): !Invalid
+pub fn checkAs(value: reflect.Value, info: reflect.TypeInfo): !Invalid
+~~~
+
+- `Length` cuenta los caracteres de un `String` y los elementos de un
+  `Array`, `Map` o `Set`. `Min` y `Max` acotan un número; sus límites se
+  escriben en el tipo del campo, `Min(18)` en un `Int` y `Max(0.5)` en un
+  `Float`. `Matches` exige que todo el texto cumpla el patrón de `std.regex`;
+  `Email`, que sea una dirección como las que acepta un formulario de HTML.
+  En un campo opcional, la regla vale cuando hay valor.
+- El compilador rechaza una regla en un tipo al que no se aplica, un `min`
+  mayor que su `max`, un límite con decimales en un entero y un patrón que no
+  compila (`E1908`).
+- El `Decode` derivado lee el valor y, si rompe reglas, falla con
+  `ErrorKind.Invalid` y una `Violation` por cada una, con el camino del campo
+  y lo que pide: `age: must be at least 18`. `check` comprueba un valor hecho
+  en el programa, y también los de sus campos; `checkAs`, un valor de
+  reflexión como del tipo que describe `info`, para el código que lee valores
+  por reflexión antes de hacerlos, como `std.mcp`.
+- `Request.json[T]()` responde `422` con cada violación en `errors`, como
+  extensión de RFC 9457; `cli.parse` termina con 2 y las dice; una
+  herramienta de `std.mcp` devuelve el error al modelo, que corrige su
+  llamada.
 
 ## 15. Contrato exigido a cada módulo
 

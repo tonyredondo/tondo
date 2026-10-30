@@ -222,7 +222,8 @@ fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap
                 let Some(item) = item else { continue };
                 let noted = NOTED.iter().filter_map(|&format| Some((format, alias_of(file, format)?))).collect();
                 let displayed = implemented("Display");
-                let generator = Generator { alias: &alias, noted, sources, declared: d, displayed };
+                let validate = alias_of(file, "validate");
+                let generator = Generator { alias: &alias, noted, sources, declared: d, displayed, validate };
                 for &name in kind.traits() {
                     if implemented(name) {
                         continue;
@@ -237,12 +238,21 @@ fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap
             if text.is_empty() {
                 continue;
             }
+            let span = file.imports.first().map_or(crate::source::Span::new(0, 0), |i| i.span);
+            let ident = |name: &str| ast::Ident { name: name.into(), span };
             if alias_of(file, module_name).is_none() {
-                let span = file.imports.first().map_or(crate::source::Span::new(0, 0), |i| i.span);
-                let ident = |name: &str| ast::Ident { name: name.into(), span };
                 file.imports.push(ast::Import {
                     path: vec![ident("std"), ident(module_name)],
                     alias: Some(ident(&fallback)),
+                    span,
+                    line: span,
+                });
+            }
+            // The rules the code checks, from a module of their own.
+            if text.contains("__rules.") && alias_of(file, "rules").is_none() {
+                file.imports.push(ast::Import {
+                    path: vec![ident("std"), ident("rules")],
+                    alias: Some(ident("__rules")),
                     span,
                     line: span,
                 });
@@ -478,6 +488,9 @@ struct Generator<'a> {
     /// Whether the type's file implements `Display` for it, which
     /// reflection shows it with.
     displayed: bool,
+    /// The alias of `std.validate` in the type's file, whose rules `Decode`
+    /// checks (standard library 14.35).
+    validate: Option<String>,
     sources: &'a SourceMap,
     declared: &'a Declared,
 }
@@ -681,6 +694,70 @@ impl Generator<'_> {
         out
     }
 
+    /// The checks of the rules of `std.validate` on the fields of a record,
+    /// one element of an array each, for `__rules.found`; the checker says
+    /// which rules do not go with their field (`E1908`), and those are left
+    /// out here.
+    fn rules(&self, fields: &[ast::FieldDecl], indent: &str) -> String {
+        let Some(validate) = &self.validate else { return String::new() };
+        let mut out = String::new();
+        for field in fields {
+            let written = self.text(&field.ty);
+            let optional = written.ends_with('?');
+            let inner = written.trim_end_matches('?').trim_start_matches('(').trim_end_matches(')').trim().to_string();
+            let path = wire(field);
+            let value = if optional { "__v".to_string() } else { format!("__value.{}", field.name.name) };
+            let text = matches!(inner.as_str(), "String");
+            let counted = text || ["Array[", "Map[", "Set["].iter().any(|p| inner.starts_with(p));
+            let integer = crate::types::IntTy::from_name(&inner).is_some() || inner == "Byte";
+            let float = matches!(inner.as_str(), "Float" | "Float32" | "Float64");
+            for rule in &field.uses {
+                let [module, name] = &rule.path[..] else { continue };
+                if module.name != *validate {
+                    continue;
+                }
+                let argument = |field: &str, position: usize| {
+                    let named = rule.args.iter().find(|a| a.name.as_ref().is_some_and(|n| n.name == field));
+                    named.or_else(|| rule.args.iter().filter(|a| a.name.is_none()).nth(position))
+                };
+                let source = |arg: &ast::Arg| self.sources.slice(arg.value.span).to_string();
+                let check = match name.name.as_str() {
+                    "Length" if counted => {
+                        let min = argument("min", 0).map_or("0".to_string(), source);
+                        let max = argument("max", 1).map_or("none".to_string(), |a| format!("some({})", source(a)));
+                        let unit = if text { "character" } else { "element" };
+                        format!("__rules.length({path:?}, {value}.length(), {min}, {max}, {unit:?})")
+                    }
+                    "Min" | "Max" if integer || float || !(text || counted || inner == "Bool") => {
+                        let Some(bound) = argument("value", 0).map(source) else { continue };
+                        let fractional = bound.contains(['.', 'e', 'E']);
+                        if integer && fractional {
+                            continue;
+                        }
+                        let bound = if float && !fractional { format!("{bound}.0") } else { bound };
+                        let which = if name.name == "Min" { "atLeast" } else { "atMost" };
+                        format!("__rules.{which}({path:?}, {value}, {bound})")
+                    }
+                    "Matches" if text => {
+                        let Some(pattern) = argument("pattern", 0).map(source) else { continue };
+                        format!("__rules.matching({path:?}, {value}, {pattern})")
+                    }
+                    "Email" if text => format!("__rules.email({path:?}, {value})"),
+                    _ => continue,
+                };
+                let check = match optional {
+                    true => format!(
+                        "match __value.{} {{\n{indent}    some(__v) => {check}\n{indent}    none => none\n{indent}}}",
+                        field.name.name
+                    ),
+                    false => check,
+                };
+                out.push_str(&format!("{indent}{check},\n"));
+            }
+        }
+        out
+    }
+
     fn decode(&self, item: &ast::Item) -> String {
         let s = self.alias;
         let mut out = self.header("Decode");
@@ -694,7 +771,21 @@ impl Generator<'_> {
                 ast::TypeBody::Record(fields) => {
                     out.push_str(&format!("        input.beginMap(first, {name:?})?\n"));
                     out.push_str(&self.read_fields(fields, "        "));
-                    out.push_str(&format!("        {name} {{\n{}        }}\n", self.fields(fields, "            ")));
+                    let checks = self.rules(fields, "            ");
+                    if checks.is_empty() {
+                        out.push_str(&format!(
+                            "        {name} {{\n{}        }}\n",
+                            self.fields(fields, "            ")
+                        ));
+                    } else {
+                        out.push_str(&format!(
+                            "        let __value = {name} {{\n{}        }}\n",
+                            self.fields(fields, "            ")
+                        ));
+                        out.push_str(&format!("        let __violations = __rules.found([\n{checks}        ])\n"));
+                        out.push_str("        if not __violations.isEmpty() {\n            fail input.invalid(__violations)\n        }\n");
+                        out.push_str("        __value\n");
+                    }
                 }
                 ast::TypeBody::Newtype(inner) => {
                     out.push_str(&format!("        {name}({s}.Decode.decode[{}](input, first)?)\n", self.text(inner)));

@@ -265,6 +265,12 @@ pub unsafe extern "C" fn tondo_rt_http_listen(
     started(Listening::Tcp(listener), tls, address, None)
 }
 
+/// The media type a file's name says, or `application/octet-stream`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_http_media_type(path: *const Str) -> *mut Str {
+    str_new(mime_guess::from_path(text(path)).first_or_octet_stream().as_ref().as_bytes())
+}
+
 /// Starts a server on the Unix socket at `path`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_http_listen_unix(path: *const Str) -> *mut NativeObject {
