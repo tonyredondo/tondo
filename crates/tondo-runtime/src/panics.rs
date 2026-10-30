@@ -524,6 +524,32 @@ unsafe extern "C" fn resume_returning(frame: *mut usize) {
     }
 }
 
+/// Where code with no cleanups of its own between two frames, as the thunk
+/// of a function used as a value, returns when its callee unwinds: on to
+/// its caller's way, as `tondo_rt_unwind_return` does, the panic untouched.
+#[cfg(target_arch = "x86_64")]
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_unwind_pass() {
+    std::arch::naked_asm!("mov rdi, rbp", "jmp {pass}", pass = sym pass_returning)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_unwind_pass() {
+    std::arch::naked_asm!("mov x0, x29", "b {pass}", pass = sym pass_returning)
+}
+
+unsafe extern "C" fn pass_returning(frame: *mut usize) {
+    if task().is_some_and(|task| task.unwinding.is_some()) {
+        let returns = unsafe { frame.add(1) };
+        if let Some(handler) = crate::trace::handler(unsafe { *returns }) {
+            unsafe { *returns = handler };
+        }
+    }
+}
+
 /// Drops a panic that a cleanup suppressed, already reported.
 fn settle(task: &mut crate::tasks::Task) {
     if !task.paused.is_empty() && task.unwinding.take().is_some() {

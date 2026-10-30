@@ -1,0 +1,41 @@
+// A panic unwinds through a function used as a value to the `recover`
+// around it: the thunk that calls the function passes the panic on, as
+// reflection's calls of methods need, in every kind of build.
+
+import std.console
+import std.reflect
+
+pub type Tools = {
+    base: Int
+}
+
+pub fn Tools.broken(self): Int {
+    panic("out of order")
+}
+
+fn twice(f: fn(Int): Int, n: Int): Int {
+    f(f(n))
+}
+
+fn failing(n: Int): Int {
+    if n > 1 {
+        panic("too big: {n}")
+    }
+    n + 1
+}
+
+fn main() {
+    let target = reflect.valueOf(Tools { base: 1 })
+    match recover { target.call("broken") } {
+        ok(ok(value)) => console.println("{value}")
+        ok(err(problem)) => console.println("{problem}")
+        err(caught) => console.println("caught {caught.message}")
+    }
+    match recover { twice(failing, 1) } {
+        ok(value) => console.println("{value}")
+        err(caught) => console.println("caught {caught.message}")
+    }
+}
+
+// expect-stdout: caught out of order
+// expect-stdout: caught too big: 2

@@ -201,6 +201,7 @@ enum Rt {
     SbArray,
     MapNew,
     MapRetain,
+    UnwindPass,
     MapRelease,
     MapFind,
     MapInsert,
@@ -541,6 +542,7 @@ impl Rt {
             Rt::UnwindHold => ("tondo_rt_unwind_hold", &[], &[]),
             Rt::UnwindResume => ("tondo_rt_unwind_resume", &[], &[]),
             Rt::UnwindReturn => ("tondo_rt_unwind_return", &[], &[]),
+            Rt::UnwindPass => ("tondo_rt_unwind_pass", &[], &[]),
             Rt::ContextRegister => ("tondo_rt_context_register", &[I64, I64, I64, I64, I64, I64, I64], &[]),
             Rt::ContextGet => ("tondo_rt_context_get", &[I64], &[I64]),
             Rt::ContextSet => ("tondo_rt_context_set", &[I64, I64, I64, I64], &[I64]),
@@ -957,14 +959,15 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         context.func.signature = cg.module.declarations().get_function_decl(thunk).signature.clone();
         context.func.name = UserFuncName::user(3, thunk.as_u32());
         define_thunk(&mut cg, &bodies[target.0 as usize], target, &mut context.func, &mut builder_context);
-        job(thunk, &mut context, None, Vec::new(), Vec::new());
+        // In the table of the trace, without lines, for its handler.
+        job(thunk, &mut context, Some(""), Vec::new(), Vec::new());
         cg.module.clear_context(&mut context);
     }
     while let Some((target, forward)) = cg.pending_forwarders.pop() {
         context.func.signature = cg.module.declarations().get_function_decl(forward).signature.clone();
         context.func.name = UserFuncName::user(6, forward.as_u32());
         define_forwarder(&mut cg, target, &mut context.func, &mut builder_context);
-        job(forward, &mut context, None, Vec::new(), Vec::new());
+        job(forward, &mut context, Some(""), Vec::new(), Vec::new());
         cg.module.clear_context(&mut context);
     }
     while let Some(callback) = cg.pending_callbacks.pop() {
@@ -4070,12 +4073,56 @@ fn define_forwarder(cg: &mut Codegen, target: FnId, func: &mut ir::Function, fbc
     fb.append_block_params_for_function_params(entry);
     fb.switch_to_block(entry);
     let params = fb.block_params(entry).to_vec();
-    let call = call_body(cg, &mut fb, target, &params);
-    let results = fb.inst_results(call).to_vec();
+    let results = call_passing(cg, &mut fb, target, &params);
     fb.ins().return_(&results);
     fb.seal_all_blocks();
     let config = cg.module.isa().frontend_config();
     fb.finalize(config);
+}
+
+/// A call that code with no cleanups of its own makes for another, as a
+/// thunk does: a `try_call`, whose handler passes a panic the callee unwinds
+/// on to the caller's way (15.9), with zeros for the results.
+fn call_passing(cg: &mut Codegen, fb: &mut FunctionBuilder, target: FnId, args: &[ir::Value]) -> Vec<ir::Value> {
+    use cranelift_codegen::ir::{BlockArg, BlockCall, ExceptionTableData, ExceptionTableItem};
+    if cg.live() || cg.takes_osr(target) || cg.slot_of(target).is_some() {
+        let call = call_body(cg, fb, target, args);
+        return fb.inst_results(call).to_vec();
+    }
+    let func = cg.function(target);
+    let callee = cg.declare_func_in_func(func, fb.func);
+    let signature = fb.func.dfg.ext_funcs[callee].signature;
+    let returns: Vec<ir::Type> = fb.func.dfg.signatures[signature].returns.iter().map(|r| r.value_type).collect();
+    let (next, handler) = (fb.create_block(), fb.create_block());
+    for &ty in &returns {
+        fb.append_block_param(next, ty);
+    }
+    let pool = &mut fb.func.dfg.value_lists;
+    let normal = BlockCall::new(next, (0..returns.len() as u32).map(BlockArg::TryCallRet), pool);
+    let caught = BlockCall::new(handler, [], pool);
+    let table = ExceptionTableData::new(signature, normal, [ExceptionTableItem::Default(caught)]);
+    let table = fb.func.dfg.exception_tables.push(table);
+    fb.ins().try_call(callee, args, table);
+    fb.switch_to_block(handler);
+    fb.set_cold_block(handler);
+    let pass = cg.runtime(Rt::UnwindPass);
+    let pass = cg.declare_func_in_func(pass, fb.func);
+    fb.ins().call(pass, &[]);
+    let zeros: Vec<ir::Value> = returns
+        .iter()
+        .map(|&ty| match ty {
+            types::F32 => fb.ins().f32const(0.0),
+            types::F64 => fb.ins().f64const(0.0),
+            types::I128 => {
+                let half = fb.ins().iconst(types::I64, 0);
+                fb.ins().iconcat(half, half)
+            }
+            ty => fb.ins().iconst(ty, 0),
+        })
+        .collect();
+    fb.ins().return_(&zeros);
+    fb.switch_to_block(next);
+    fb.block_params(next).to_vec()
 }
 
 /// What the runtime calls to convert a value a frame brings to the new code
@@ -4165,8 +4212,7 @@ fn define_thunk(
     // Drop the captures' address, which follows the result slot if any.
     let env = usize::from(cg.class(body.result) == Class::Memory);
     params.remove(env);
-    let call = call_body(cg, &mut fb, target, &params);
-    let results = fb.inst_results(call).to_vec();
+    let results = call_passing(cg, &mut fb, target, &params);
     fb.ins().return_(&results);
     fb.seal_all_blocks();
     let config = cg.module.isa().frontend_config();
