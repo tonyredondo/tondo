@@ -67,6 +67,7 @@ dependencias y solo puede importar `std`.
 ~~~toml
 [package]
 name = "app"
+version = "1.2.0"
 edition = "0.1"
 
 [dependencies]
@@ -89,8 +90,11 @@ inputs = ["proto/user.proto"]
 outputs = ["proto.user"]
 ~~~
 
-- `[package]` admite `name`, un identificador, y `edition`, cuyo único valor
-  es `"0.1"`, el que se usa por defecto.
+- `[package]` admite `name`, un identificador; `version`, un texto sin
+  espacios, como `"1.2.0"`, que el programa da con `env.build()` (14.3.6 de
+  la librería estándar) y que es `"0.0.0"` sin él; y `edition`, cuyo único
+  valor es `"0.1"`, el que se usa por defecto. `tondo new` escribe
+  `version = "0.1.0"`.
 - `[dependencies]` asocia a cada alias su fuente (sección 4).
 - `[dev-dependencies]` declara del mismo modo las dependencias que solo usan
   las pruebas del proyecto (5.5 de la especificación de testing): los

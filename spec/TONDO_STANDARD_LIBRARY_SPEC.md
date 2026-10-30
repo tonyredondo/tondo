@@ -61,9 +61,6 @@ Esta revisión no fija todavía:
 
 - Las declaraciones completas de cada módulo.
 - El conjunto exacto de variantes y payloads de cada error.
-- Las variantes culturales o dependientes de locale de `std.format`; el
-  formatting estático sobre `Display`, sus builders y sus límites están fijados
-  en `docs/contracts/stdlib-core.md`.
 - Los métodos concretos de strings, colecciones e iteradores.
 - Las declaraciones exhaustivas de consola, filesystem, procesos, concurrencia,
   codecs adicionales, regex, UUID y logging.
@@ -1296,6 +1293,53 @@ pub fn Builder.text(self): String
 El builder guarda las piezas y las une una sola vez, en `text()` o al mostrarlo
 con su `Display`, que es ese mismo texto.
 
+Un formato que el programa elige mientras corre, como el de una plantilla o
+una configuración, se aplica con `apply`, que toma lo que una interpolación
+lleva después de sus dos puntos (19.6 del lenguaje):
+
+~~~tondo pseudocode
+pub type FormatError = { message: String }
+pub fn apply[T: Display](value: T, spec: String): String ! FormatError
+~~~
+
+`format.apply(price, ">10.2")` es `"{price:>10.2}"`. Como en la
+interpolación, el tipo del valor, que el compilador conoce, decide qué
+opciones admite: un entero las de un entero, un float las de un float y
+cualquier otro valor las de su texto. Un formato que no se lee, o que no va
+con el tipo, es un `FormatError` que dice lo que se puede escribir.
+
+Los números, los porcentajes, las cantidades de dinero y las formas plurales
+se escriben como los escribe cada idioma, con los datos de CLDR que tondo
+lleva consigo; nunca con los del sistema, que musl y los contenedores no
+tienen. `locale` es una etiqueta BCP 47, como `"es"` o `"de-CH"`; sin datos
+para ella se usan los de su idioma, y sin ellos los del inglés:
+
+~~~tondo pseudocode
+pub fn number[T: Number + Display](value: T, locale: String = "en", decimals: Int? = none): String
+pub fn percent[T: Number + Display](value: T, locale: String = "en", decimals: Int = 0): String
+pub fn currency[T: Number + Display](amount: T, code: String, locale: String = "en"): String
+pub enum Plural { Zero, One, Two, Few, Many, Other }
+pub fn plural(count: Int, locale: String = "en"): Plural
+~~~
+
+- `number` escribe el número con los dígitos del idioma, sus separadores de
+  grupos y de decimales y su signo menos: `1,234.5` en inglés, `1.234,5` en
+  alemán, `12,34,567` en hindi. Agrupa solo cuando hay los dígitos que el
+  idioma pide (`1234` en español, `12.345`). Con `decimals` redondea a esos
+  decimales, la mitad al par, y completa con ceros; sin ellos escribe los que
+  el valor tiene en su `Display`, sin notación científica.
+- `percent` escribe la fracción como porcentaje: `percent(0.256)` es `26%`, y
+  `26 %` en español.
+- `currency` escribe la cantidad de la moneda `code` (ISO 4217, como `"EUR"`)
+  con el símbolo que el idioma usa para ella y los decimales que la moneda
+  tiene, redondeados la mitad al par: `currency(1234.5, "EUR", "es")` es
+  `1234,50 €`, y `currency(1234.5, "JPY", "ja")` es `￥1,234`. Un símbolo de
+  letras queda separado de los dígitos: `CHF 9.99`.
+- `plural` da la forma plural de CLDR que toma una cantidad entera: en inglés
+  `1` es `One` y `2` es `Other`; en ruso `2` es `Few` y `5` es `Many`. Su
+  `Display` es la palabra de CLDR, `one` o `few`, que puede nombrar los
+  mensajes de cada forma.
+
 ---
 
 ## 11. Determinismo, orden y coste
@@ -1616,7 +1660,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | Métodos de tipos intrínsecos | Core | — | 0.1 | Option, Result, String, Array, Map, Set, Range e Iterator |
 | `std.io` | Core | — | 0.1 | Protocolos de lectura/escritura, buffers, EOF, partial I/O y errores portables |
 | `std.math` | Core | — | 0.1 | Matemática escalar portable y semántica IEEE nombrada |
-| `std.format` | Core | — | 0.1 | Formatting explícito sobre `Display`, sin reflection |
+| `std.format` | Core | — | 0.1 | Texto sobre `Display`, formatos elegidos en ejecución, y números y plurales de cada idioma |
 | `std.serialization` | Core | — | 0.1 | Protocolo común de encode/decode cuando exista un segundo formato (14.7) |
 | `std.reflect` | Core | — | 0.1 | Metadata de tipos retenida explícitamente, sin inspección dinámica de valores |
 | `std.meta` | Build-only | — | 0.1 | Modelo semántico inmutable, requests y emisión para providers/generators |
@@ -1649,7 +1693,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.gzip` | Core | — | 0.1 | gzip (RFC 1952): bytes y streams comprimidos y descomprimidos |
 | `std.zstd` | Core | — | 0.1 | Zstandard (RFC 8878): bytes y streams comprimidos y descomprimidos |
 | `std.console` | Capability-gated | `console` | 0.1 | stdin, stdout, stderr, texto, bytes y flushing |
-| `std.env` | Hosted | — | 0.1 | Argumentos, entorno y directorio de trabajo |
+| `std.env` | Hosted | — | 0.1 | Argumentos, entorno, directorio de trabajo, directorios del usuario y lo que se compiló |
 | `std.fs` | Hosted | — | 0.1 | Filesystem, metadata, permisos, enlaces, archivos, recorridos, glob, temporales y cambios vigilados |
 | `std.process` | Capability-gated | `process` | 0.1 | Planes, procesos, pipes, status, output y cancelación |
 | `std.net` | Capability-gated | `network` | 0.1 | Direcciones, DNS, sockets, streams, datagrams y frontera TLS |
@@ -2040,11 +2084,43 @@ pub fn syncNative()
 pub fn hostname(): String
 pub fn processId(): Int
 pub fn executable(): String
+pub fn processors(): Int
+pub fn homeDirectory(): String?
+pub fn configDirectory(): String?
+pub fn cacheDirectory(): String?
+
+pub type Build = {
+    name: String
+    version: String
+    commit: String?
+    modified: Bool
+    target: String
+    compiler: String
+    dependencies: Array[Dependency]
+}
+pub type Dependency = { name: String, version: String }
+pub fn build(): Build
 ~~~
 
 - `hostname` es el nombre de la máquina, como lo da el sistema; `processId`, el
   identificador del proceso del programa; y `executable`, el path absoluto de
   su ejecutable, con los enlaces simbólicos resueltos.
+- `processors` es cuántos procesadores puede usar el programa a la vez, con
+  su afinidad y la cuota de su cgroup: al menos 1.
+- `homeDirectory` es `$HOME`. `configDirectory` es donde los programas
+  guardan la configuración del usuario: `$XDG_CONFIG_HOME` si es absoluto, o
+  `~/.config`, en Linux, y `~/Library/Application Support` en macOS.
+  `cacheDirectory` es donde guardan lo que pueden volver a hacer:
+  `$XDG_CACHE_HOME` o `~/.cache` en Linux, y `~/Library/Caches` en macOS. Son
+  `none` sin `$HOME`.
+- `build` dice de qué se compiló el programa, leído al compilarlo: el nombre
+  de su paquete, o el de su archivo sin `.to`; su `version` de `tondo.toml`,
+  o `0.0.0`; el commit del repositorio git que lo contiene, si lo hay, y si
+  sus archivos versionados tenían cambios sin confirmar; el target, como
+  tondo lo nombra (`x86_64-linux-gnu`, `aarch64-macos`); el compilador
+  (`tondo 0.1.0`); y el nombre y la versión de cada paquete del que depende,
+  sin los que solo usan sus pruebas. No lleva la hora de la compilación, que
+  la haría irreproducible (13).
 
 - `args` devuelve los argumentos sin el nombre del programa, en orden. Los
   bytes que no son UTF-8 se sustituyen por `U+FFFD`, también en `get` y `vars`.
@@ -2497,14 +2573,17 @@ del lenguaje, iguales en todos los anchos (18.9 del lenguaje), y los traits
 `String`:
 
 ~~~tondo pseudocode
-fn split(self, separator: String): Array[String]   // los caracteres con ""
+fn split(self, separator: String, limit: Int? = none): Array[String]   // los caracteres con ""
+fn splitOnce(self, separator: String): (String, String)?
+fn equalsIgnoringCase(self, other: String): Bool
+fn trim(self, characters: String? = none): String
 fn lines(self): Array[String]                       // sin \n ni \r\n
 fn words(self): Array[String]                       // entre espacios Unicode
 fn repeat(self, count: Int): String
 fn padStart(self, width: Int, fill: String = " "): String
 fn padEnd(self, width: Int, fill: String = " "): String
-fn trimStart(self): String
-fn trimEnd(self): String
+fn trimStart(self, characters: String? = none): String
+fn trimEnd(self, characters: String? = none): String
 fn removePrefix(self, prefix: String): String
 fn removeSuffix(self, suffix: String): String
 fn findLast(self, needle: String): Int?
@@ -2514,6 +2593,14 @@ fn toUpper(self): String
 fn compare(self, other: String): Int
 fn chars(self): CharIterator                        // Iterator[Char], perezoso
 ~~~
+
+Con `limit`, `split` da a lo sumo esas piezas, la última con el resto del
+texto: `"a=b=c".split("=", limit: 2)` es `["a", "b=c"]`. `splitOnce` da el
+texto antes del primer separador y el que sigue, o `none` si no lo tiene.
+`equalsIgnoringCase` compara los textos tras llevar ambos a una sola forma de
+mayúsculas y minúsculas de Unicode: `"Straße"` y `"STRASSE"` son iguales.
+`trim`, `trimStart` y `trimEnd` quitan el espacio en blanco de Unicode, o con
+`characters` los escalares de ese texto: `"--a-b--".trim("-")` es `"a-b"`.
 
 `Char`: `isDigit`, `isLetter`, `isWhitespace`, `isUpper`, `isLower` e
 `isAlphanumeric` (`Bool`); `toUpper` y `toLower`, que cambian el escalar cuando

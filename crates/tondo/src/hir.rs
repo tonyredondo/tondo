@@ -689,7 +689,6 @@ pub enum StrOp {
     /// `find(needle)`: `Int?`
     Find,
     Replace,
-    Trim,
     LowerAscii,
     UpperAscii,
     /// The checked `slice(start, end)`: `String ! text.TextError`
@@ -1195,6 +1194,9 @@ pub const NATIVES: &[Native] = {
     const fn net(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "net", name, receiver: None, params, result, symbol }
     }
+    const fn env(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
+        Native { module: "env", name, receiver: None, params, result, symbol }
+    }
     const fn fuzz(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "fuzz", name, receiver: None, params, result, symbol }
     }
@@ -1269,8 +1271,7 @@ pub const NATIVES: &[Native] = {
         text("lines", &[String], Strings, "tondo_rt_text_lines"),
         text("words", &[String], Strings, "tondo_rt_text_words"),
         text("repeat", &[String, Int], String, "tondo_rt_text_repeat"),
-        text("trimStart", &[String], String, "tondo_rt_text_trim_start"),
-        text("trimEnd", &[String], String, "tondo_rt_text_trim_end"),
+        text("trim", &[String, String, Bool, Int], String, "tondo_rt_text_trim"),
         text("findLast", &[String, String], Int, "tondo_rt_text_find_last"),
         text("count", &[String, String], Int, "tondo_rt_text_count"),
         text("lower", &[String], String, "tondo_rt_text_lower"),
@@ -1296,6 +1297,13 @@ pub const NATIVES: &[Native] = {
         text("terminal", &[Int], Bool, "tondo_rt_console_terminal"),
         text("terminalWidth", &[], Int, "tondo_rt_console_width"),
         text("terminalEcho", &[Bool], Bool, "tondo_rt_console_echo"),
+        text("numberSymbols", &[String], Strings, "tondo_rt_text_number_symbols"),
+        text("currencySymbol", &[String, String], String, "tondo_rt_text_currency_symbol"),
+        text("currencyDigits", &[String], Int, "tondo_rt_text_currency_digits"),
+        text("pluralRules", &[String], Strings, "tondo_rt_text_plural_rules"),
+        // `std.internal.env`: what `std.env` writes in Tondo asks of the host.
+        env("processors", &[], Int, "tondo_rt_env_processors"),
+        env("target", &[], String, "tondo_rt_env_target"),
         codec("base64Encode", &[Bytes, Bool], String, "tondo_rt_base64_encode"),
         codec("base64Check", &[String, Bool], Int, "tondo_rt_base64_check"),
         codec("base64Decode", &[String, Bool], Bytes, "tondo_rt_base64_decode"),

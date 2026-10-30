@@ -5777,9 +5777,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         let test = self.e.fb.ins().iconst(types::I32, test);
                         Val::Scalar(self.e.call_rt(Rt::StrTest, &[values[0], values[1], test]).unwrap())
                     }
-                    StrOp::Trim | StrOp::LowerAscii | StrOp::UpperAscii => {
+                    StrOp::LowerAscii | StrOp::UpperAscii => {
                         let transform = match op {
-                            StrOp::Trim => 0,
                             StrOp::LowerAscii => 1,
                             _ => 2,
                         };

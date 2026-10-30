@@ -1,0 +1,28 @@
+// std.env gives the user's directories from $HOME and the XDG variables,
+// the processors the program may use, and what it was built from.
+
+import std.console
+import std.env
+
+fn main() {
+    env.set("HOME", "/home/ada")
+    console.println(
+        "{env.homeDirectory()} {env.configDirectory().isSome()} {env.cacheDirectory().isSome()}",
+    )
+    env.remove("HOME")
+    env.remove("XDG_CONFIG_HOME")
+    env.remove("XDG_CACHE_HOME")
+    console.println("{env.homeDirectory()} {env.configDirectory()} {env.cacheDirectory()}")
+    console.println("{env.processors() >= 1}")
+    let build = env.build()
+    console.println(
+        "{build.name} {build.version} {build.compiler.startsWith("tondo ")} {build.dependencies.length()}",
+    )
+    console.println("{build.target.contains("-")}")
+}
+
+// expect-stdout: some(/home/ada) true true
+// expect-stdout: none none none
+// expect-stdout: true
+// expect-stdout: env_directories 0.0.0 true 0
+// expect-stdout: true

@@ -154,7 +154,10 @@ fn manages_projects() {
     let (_, stderr, status) = tondo(&dir, &["add", "figures", "--path", "../shapes", "--project", "hello"]);
     assert_eq!(status, 0, "{stderr}");
     let manifest = std::fs::read_to_string(dir.join("hello/tondo.toml")).unwrap();
-    assert_eq!(manifest, "[package]\nname = \"hello\"\n\n[dependencies]\nfigures = { path = \"../shapes\" }\n");
+    assert_eq!(
+        manifest,
+        "[package]\nname = \"hello\"\nversion = \"0.1.0\"\n\n[dependencies]\nfigures = { path = \"../shapes\" }\n"
+    );
     let (_, stderr, status) = tondo(&dir, &["add", "figures", "--path", "../shapes", "--project", "hello"]);
     assert_eq!(status, 3);
     assert!(stderr.contains("depends on `figures` already"), "{stderr}");

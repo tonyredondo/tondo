@@ -1,5 +1,6 @@
 [package]
 name = "drawing"
+version = "2.1.0"
 
 [dependencies]
 geo = { path = "libs/shapes" }

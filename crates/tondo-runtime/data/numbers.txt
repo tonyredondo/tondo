@@ -1,0 +1,764 @@
+# CLDR 49.0.0, cldr-numbers-full and cldr-core. Copyright © 1991-2026 Unicode, Inc. Unicode License v3: https://www.unicode.org/license.txt
+fractions	ADP=0|AFN=0|ALL=0|BHD=3|BIF=0|BYR=0|CLF=4|CLP=0|COP=0|DJF=0|ESP=0|GNF=0|HUF=0|IDR=0|IQD=0|IRR=0|ISK=0|ITL=0|JOD=3|JPY=0|KMF=0|KPW=0|KRW=0|KWD=3|LAK=0|LBP=0|LUF=0|LYD=3|MGA=0|MGF=0|MMK=0|MRO=0|OMR=3|PYG=0|RWF=0|SLL=0|SOS=0|STD=0|SYP=0|TMM=0|TND=3|TRL=0|UGX=0|UYI=0|UYW=4|VND=0|VUV=0|XAF=0|XOF=0|XPF=0|YER=0|ZMK=0|ZWD=0|
+plurals	af	one=n = 1|
+plurals	ak	one=n = 0..1|
+plurals	am	one=i = 0 or n = 1|
+plurals	an	one=n = 1|
+plurals	ar	zero=n = 0|one=n = 1|two=n = 2|few=n % 100 = 3..10|many=n % 100 = 11..99|
+plurals	ars	zero=n = 0|one=n = 1|two=n = 2|few=n % 100 = 3..10|many=n % 100 = 11..99|
+plurals	as	one=i = 0 or n = 1|
+plurals	asa	one=n = 1|
+plurals	ast	one=i = 1 and v = 0|
+plurals	az	one=n = 1|
+plurals	bal	one=n = 1|
+plurals	be	one=n % 10 = 1 and n % 100 != 11|few=n % 10 = 2..4 and n % 100 != 12..14|many=n % 10 = 0 or n % 10 = 5..9 or n % 100 = 11..14|
+plurals	bem	one=n = 1|
+plurals	bez	one=n = 1|
+plurals	bg	one=n = 1|
+plurals	bho	one=n = 0..1|
+plurals	blo	zero=n = 0|one=n = 1|
+plurals	bm	
+plurals	bn	one=i = 0 or n = 1|
+plurals	bo	
+plurals	br	one=n % 10 = 1 and n % 100 != 11,71,91|two=n % 10 = 2 and n % 100 != 12,72,92|few=n % 10 = 3..4,9 and n % 100 != 10..19,70..79,90..99|many=n != 0 and n % 1000000 = 0|
+plurals	brx	one=n = 1|
+plurals	bs	one=v = 0 and i % 10 = 1 and i % 100 != 11 or f % 10 = 1 and f % 100 != 11|few=v = 0 and i % 10 = 2..4 and i % 100 != 12..14 or f % 10 = 2..4 and f % 100 != 12..14|
+plurals	ca	one=i = 1 and v = 0|many=e = 0 and i != 0 and i % 1000000 = 0 and v = 0 or e != 0..5|
+plurals	ce	one=n = 1|
+plurals	ceb	one=v = 0 and i = 1,2,3 or v = 0 and i % 10 != 4,6,9 or v != 0 and f % 10 != 4,6,9|
+plurals	cgg	one=n = 1|
+plurals	chr	one=n = 1|
+plurals	ckb	one=n = 1|
+plurals	cs	one=i = 1 and v = 0|few=i = 2..4 and v = 0|many=v != 0|
+plurals	csw	one=n = 0..1|
+plurals	cv	zero=n = 0|one=n = 1|
+plurals	cy	zero=n = 0|one=n = 1|two=n = 2|few=n = 3|many=n = 6|
+plurals	da	one=n = 1 or t != 0 and i = 0,1|
+plurals	de	one=i = 1 and v = 0|
+plurals	doi	one=i = 0 or n = 1|
+plurals	dsb	one=v = 0 and i % 100 = 1 or f % 100 = 1|two=v = 0 and i % 100 = 2 or f % 100 = 2|few=v = 0 and i % 100 = 3..4 or f % 100 = 3..4|
+plurals	dv	one=n = 1|
+plurals	dz	
+plurals	ee	one=n = 1|
+plurals	el	one=n = 1|
+plurals	en	one=i = 1 and v = 0|
+plurals	eo	one=n = 1|
+plurals	es	one=n = 1|many=e = 0 and i != 0 and i % 1000000 = 0 and v = 0 or e != 0..5|
+plurals	et	one=i = 1 and v = 0|
+plurals	eu	one=n = 1|
+plurals	fa	one=i = 0 or n = 1|
+plurals	ff	one=i = 0,1|
+plurals	fi	one=i = 1 and v = 0|
+plurals	fil	one=v = 0 and i = 1,2,3 or v = 0 and i % 10 != 4,6,9 or v != 0 and f % 10 != 4,6,9|
+plurals	fo	one=n = 1|
+plurals	fr	one=i = 0..1|many=e = 0 and i != 0 and i % 1000000 = 0 and v = 0 or e != 0..5|
+plurals	fur	one=n = 1|
+plurals	fy	one=i = 1 and v = 0|
+plurals	ga	one=n = 1|two=n = 2|few=n = 3..6|many=n = 7..10|
+plurals	gd	one=n = 1,11|two=n = 2,12|few=n = 3..10,13..19|
+plurals	gl	one=i = 1 and v = 0|many=e = 0 and i != 0 and i % 1000000 = 0 and v = 0 or e != 0..5|
+plurals	gsw	one=n = 1|
+plurals	gu	one=i = 0 or n = 1|
+plurals	guw	one=n = 0..1|
+plurals	gv	one=v = 0 and i % 10 = 1|two=v = 0 and i % 10 = 2|few=v = 0 and i % 100 = 0,20,40,60,80|many=v != 0|
+plurals	ha	one=n = 1|
+plurals	haw	one=n = 1|
+plurals	he	one=i = 1 and v = 0 or i = 0 and v != 0|two=i = 2 and v = 0|
+plurals	hi	one=i = 0 or n = 1|
+plurals	hnj	
+plurals	hr	one=v = 0 and i % 10 = 1 and i % 100 != 11 or f % 10 = 1 and f % 100 != 11|few=v = 0 and i % 10 = 2..4 and i % 100 != 12..14 or f % 10 = 2..4 and f % 100 != 12..14|
+plurals	hsb	one=v = 0 and i % 100 = 1 or f % 100 = 1|two=v = 0 and i % 100 = 2 or f % 100 = 2|few=v = 0 and i % 100 = 3..4 or f % 100 = 3..4|
+plurals	hu	one=n = 1|
+plurals	hy	one=i = 0,1|
+plurals	ia	one=i = 1 and v = 0|
+plurals	id	
+plurals	ie	one=i = 1 and v = 0|
+plurals	ig	
+plurals	ii	
+plurals	io	one=i = 1 and v = 0|
+plurals	is	one=t = 0 and i % 10 = 1 and i % 100 != 11 or t % 10 = 1 and t % 100 != 11|
+plurals	it	one=i = 1 and v = 0|many=e = 0 and i != 0 and i % 1000000 = 0 and v = 0 or e != 0..5|
+plurals	iu	one=n = 1|two=n = 2|
+plurals	ja	
+plurals	jbo	
+plurals	jgo	one=n = 1|
+plurals	jmc	one=n = 1|
+plurals	jv	
+plurals	jw	
+plurals	ka	one=n = 1|
+plurals	kab	one=i = 0,1|
+plurals	kaj	one=n = 1|
+plurals	kcg	one=n = 1|
+plurals	kde	
+plurals	kea	
+plurals	kk	one=n = 1|
+plurals	kkj	one=n = 1|
+plurals	kl	one=n = 1|
+plurals	km	
+plurals	kn	one=i = 0 or n = 1|
+plurals	ko	
+plurals	kok	one=i = 0 or n = 1|
+plurals	kok-Latn	one=i = 0 or n = 1|
+plurals	ks	one=n = 1|
+plurals	ksb	one=n = 1|
+plurals	ksh	zero=n = 0|one=n = 1|
+plurals	ku	one=n = 1|
+plurals	kw	zero=n = 0|one=n = 1|two=n % 100 = 2,22,42,62,82 or n % 1000 = 0 and n % 100000 = 1000..20000,40000,60000,80000 or n != 0 and n % 1000000 = 100000|few=n % 100 = 3,23,43,63,83|many=n != 1 and n % 100 = 1,21,41,61,81|
+plurals	ky	one=n = 1|
+plurals	lag	zero=n = 0|one=i = 0,1 and n != 0|
+plurals	lb	one=n = 1|
+plurals	lg	one=n = 1|
+plurals	lij	one=i = 1 and v = 0|
+plurals	lkt	
+plurals	lld	one=i = 1 and v = 0|many=e = 0 and i != 0 and i % 1000000 = 0 and v = 0 or e != 0..5|
+plurals	ln	one=n = 0..1|
+plurals	lo	
+plurals	lt	one=n % 10 = 1 and n % 100 != 11..19|few=n % 10 = 2..9 and n % 100 != 11..19|many=f != 0|
+plurals	lv	zero=n % 10 = 0 or n % 100 = 11..19 or v = 2 and f % 100 = 11..19|one=n % 10 = 1 and n % 100 != 11 or v = 2 and f % 10 = 1 and f % 100 != 11 or v != 2 and f % 10 = 1|
+plurals	mas	one=n = 1|
+plurals	mg	one=n = 0..1|
+plurals	mgo	one=n = 1|
+plurals	mk	one=v = 0 and i % 10 = 1 and i % 100 != 11 or f % 10 = 1 and f % 100 != 11|
+plurals	ml	one=n = 1|
+plurals	mn	one=n = 1|
+plurals	mo	one=i = 1 and v = 0|few=v != 0 or n = 0 or n != 1 and n % 100 = 1..19|
+plurals	mr	one=n = 1|
+plurals	ms	
+plurals	mt	one=n = 1|two=n = 2|few=n = 0 or n % 100 = 3..10|many=n % 100 = 11..19|
+plurals	my	
+plurals	nah	one=n = 1|
+plurals	naq	one=n = 1|two=n = 2|
+plurals	nb	one=n = 1|
+plurals	nd	one=n = 1|
+plurals	ne	one=n = 1|
+plurals	nl	one=i = 1 and v = 0|
+plurals	nn	one=n = 1|
+plurals	nnh	one=n = 1|
+plurals	no	one=n = 1|
+plurals	nqo	
+plurals	nr	one=n = 1|
+plurals	nso	one=n = 0..1|
+plurals	ny	one=n = 1|
+plurals	nyn	one=n = 1|
+plurals	om	one=n = 1|
+plurals	or	one=n = 1|
+plurals	os	one=n = 1|
+plurals	osa	
+plurals	pa	one=n = 0..1|
+plurals	pap	one=n = 1|
+plurals	pcm	one=i = 0 or n = 1|
+plurals	pl	one=i = 1 and v = 0|few=v = 0 and i % 10 = 2..4 and i % 100 != 12..14|many=v = 0 and i != 1 and i % 10 = 0..1 or v = 0 and i % 10 = 5..9 or v = 0 and i % 100 = 12..14|
+plurals	prg	zero=n % 10 = 0 or n % 100 = 11..19 or v = 2 and f % 100 = 11..19|one=n % 10 = 1 and n % 100 != 11 or v = 2 and f % 10 = 1 and f % 100 != 11 or v != 2 and f % 10 = 1|
+plurals	ps	one=n = 1|
+plurals	pt	one=i = 0..1|many=e = 0 and i != 0 and i % 1000000 = 0 and v = 0 or e != 0..5|
+plurals	pt-PT	one=i = 1 and v = 0|many=e = 0 and i != 0 and i % 1000000 = 0 and v = 0 or e != 0..5|
+plurals	rm	one=n = 1|
+plurals	ro	one=i = 1 and v = 0|few=v != 0 or n = 0 or n != 1 and n % 100 = 1..19|
+plurals	rof	one=n = 1|
+plurals	ru	one=v = 0 and i % 10 = 1 and i % 100 != 11|few=v = 0 and i % 10 = 2..4 and i % 100 != 12..14|many=v = 0 and i % 10 = 0 or v = 0 and i % 10 = 5..9 or v = 0 and i % 100 = 11..14|
+plurals	rwk	one=n = 1|
+plurals	sah	
+plurals	saq	one=n = 1|
+plurals	sat	one=n = 1|two=n = 2|
+plurals	sc	one=i = 1 and v = 0|
+plurals	scn	one=i = 1 and v = 0|many=e = 0 and i != 0 and i % 1000000 = 0 and v = 0 or e != 0..5|
+plurals	sd	one=n = 1|
+plurals	sdh	one=n = 1|
+plurals	se	one=n = 1|two=n = 2|
+plurals	seh	one=n = 1|
+plurals	ses	
+plurals	sg	
+plurals	sgs	one=n % 10 = 1 and n % 100 != 11|two=n = 2|few=n != 2 and n % 10 = 2..9 and n % 100 != 11..19|many=f != 0|
+plurals	sh	one=v = 0 and i % 10 = 1 and i % 100 != 11 or f % 10 = 1 and f % 100 != 11|few=v = 0 and i % 10 = 2..4 and i % 100 != 12..14 or f % 10 = 2..4 and f % 100 != 12..14|
+plurals	shi	one=i = 0 or n = 1|few=n = 2..10|
+plurals	si	one=n = 0,1 or i = 0 and f = 1|
+plurals	sk	one=i = 1 and v = 0|few=i = 2..4 and v = 0|many=v != 0|
+plurals	sl	one=v = 0 and i % 100 = 1|two=v = 0 and i % 100 = 2|few=v = 0 and i % 100 = 3..4 or v != 0|
+plurals	sma	one=n = 1|two=n = 2|
+plurals	smi	one=n = 1|two=n = 2|
+plurals	smj	one=n = 1|two=n = 2|
+plurals	smn	one=n = 1|two=n = 2|
+plurals	sms	one=n = 1|two=n = 2|
+plurals	sn	one=n = 1|
+plurals	so	one=n = 1|
+plurals	sq	one=n = 1|
+plurals	sr	one=v = 0 and i % 10 = 1 and i % 100 != 11 or f % 10 = 1 and f % 100 != 11|few=v = 0 and i % 10 = 2..4 and i % 100 != 12..14 or f % 10 = 2..4 and f % 100 != 12..14|
+plurals	ss	one=n = 1|
+plurals	ssy	one=n = 1|
+plurals	st	one=n = 1|
+plurals	su	
+plurals	sv	one=i = 1 and v = 0|
+plurals	sw	one=i = 1 and v = 0|
+plurals	syr	one=n = 1|
+plurals	ta	one=n = 1|
+plurals	te	one=n = 1|
+plurals	teo	one=n = 1|
+plurals	tg	one=i = 0 or n = 1|
+plurals	th	
+plurals	ti	one=n = 0..1|
+plurals	tig	one=n = 1|
+plurals	tk	one=n = 1|
+plurals	tl	one=v = 0 and i = 1,2,3 or v = 0 and i % 10 != 4,6,9 or v != 0 and f % 10 != 4,6,9|
+plurals	tn	one=n = 1|
+plurals	to	
+plurals	tpi	
+plurals	tr	one=n = 1|
+plurals	ts	one=n = 1|
+plurals	tzm	one=n = 0..1 or n = 11..99|
+plurals	ug	one=n = 1|
+plurals	uk	one=v = 0 and i % 10 = 1 and i % 100 != 11|few=v = 0 and i % 10 = 2..4 and i % 100 != 12..14|many=v = 0 and i % 10 = 0 or v = 0 and i % 10 = 5..9 or v = 0 and i % 100 = 11..14|
+plurals	und	
+plurals	ur	one=i = 1 and v = 0|
+plurals	uz	one=n = 1|
+plurals	ve	one=n = 1|
+plurals	vec	one=i = 1 and v = 0|many=e = 0 and i != 0 and i % 1000000 = 0 and v = 0 or e != 0..5|
+plurals	vi	one=i = 0 or n = 1|
+plurals	vo	one=n = 1|
+plurals	vun	one=n = 1|
+plurals	wa	one=n = 0..1|
+plurals	wae	one=n = 1|
+plurals	wo	
+plurals	xh	one=n = 1|
+plurals	xog	one=n = 1|
+plurals	yi	one=i = 1 and v = 0|
+plurals	yo	
+plurals	yue	
+plurals	zh	
+plurals	zu	one=i = 0 or n = 1|
+en	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ady	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+af	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|NZD=NZ$|THB=฿|TWD=NT$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|ZAR=R|
+af-NA	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	NAD=$|
+agq	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ak	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|GHS=GH₵|HKD=HK$|ILS=₪|INR=₹|IQD=Irak dinaa|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=AAS|XPF=CFPF|XXX=¤|
+am	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=AU$|BRL=R$|CAD=CA$|CNY=CN¥|ETB=ብር|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ar	0123456789|.|,|‎-|‎+|‎%‎|1|#,##0.###|#,##0%|‏#,##0.00 ¤;‏-#,##0.00 ¤|	AED=د.إ.‏|AUD=AU$|BHD=د.ب.‏|BRL=R$|CAD=CA$|CNY=CN¥|DZD=د.ج.‏|EGP=ج.م.‏|EUR=€|GBP=UK£|HKD=HK$|ILS=₪|INR=₹|IQD=د.ع.‏|IRR=ر.إ.|JOD=د.أ.‏|JPY=JP¥|KRW=₩|KWD=د.ك.‏|LBP=ل.ل.‏|LYD=د.ل.‏|MAD=د.م.‏|MRU=أ.م.|MXN=MX$|NZD=NZ$|OMR=ر.ع.‏|QAR=ر.ق.‏|SAR=ر.س.‏|SDD=د.س.‏|SDG=ج.س.|SYP=ل.س.‏|THB=฿|TND=د.ت.‏|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|YER=ر.ي.‏|
+ar-BH	٠١٢٣٤٥٦٧٨٩|٫|٬|؜-|؜+|٪؜|1|#,##0.###|#,##0%|‏#,##0.00 ¤|	
+ar-DJ	٠١٢٣٤٥٦٧٨٩|٫|٬|؜-|؜+|٪؜|1|#,##0.###|#,##0%|‏#,##0.00 ¤|	DJF=Fdj|
+ar-DZ	0123456789|,|.|‎-|‎+|‎%‎|1|#,##0.###|#,##0%|‏#,##0.00 ¤;‏-#,##0.00 ¤|	
+ar-EG	٠١٢٣٤٥٦٧٨٩|٫|٬|؜-|؜+|٪؜|1|#,##0.###|#,##0%|‏#,##0.00 ¤|	
+ar-ER	٠١٢٣٤٥٦٧٨٩|٫|٬|؜-|؜+|٪؜|1|#,##0.###|#,##0%|‏#,##0.00 ¤|	ERN=Nfk|
+ar-IL	٠١٢٣٤٥٦٧٨٩|٫|٬|؜-|؜+|٪؜|1|#,##0.###|#,##0%|‏#,##0.00 ¤|	
+ar-IQ	٠١٢٣٤٥٦٧٨٩|٫|٬|؜-|؜+|٪؜|1|#,##0.###|#,##0%|‏#,##0.00 ¤|	
+ar-JO	٠١٢٣٤٥٦٧٨٩|٫|٬|؜-|؜+|٪؜|1|#,##0.###|#,##0%|‏#,##0.00 ¤|	
+ar-KM	٠١٢٣٤٥٦٧٨٩|٫|٬|؜-|؜+|٪؜|1|#,##0.###|#,##0%|‏#,##0.00 ¤|	KMF=CF|
+ar-KW	٠١٢٣٤٥٦٧٨٩|٫|٬|؜-|؜+|٪؜|1|#,##0.###|#,##0%|‏#,##0.00 ¤|	
+ar-LB	٠١٢٣٤٥٦٧٨٩|٫|٬|؜-|؜+|٪؜|1|#,##0.###|#,##0%|‏#,##0.00 ¤|	SDG=SDG|
+ar-LY	0123456789|,|.|‎-|‎+|‎%‎|1|#,##0.###|#,##0%|‏#,##0.00 ¤;‏-#,##0.00 ¤|	
+ar-MA	0123456789|,|.|‎-|‎+|‎%‎|1|#,##0.###|#,##0%|‏#,##0.00 ¤;‏-#,##0.00 ¤|	
+ar-MR	٠١٢٣٤٥٦٧٨٩|٫|٬|؜-|؜+|٪؜|1|#,##0.###|#,##0%|‏#,##0.00 ¤|	
+ar-OM	٠١٢٣٤٥٦٧٨٩|٫|٬|؜-|؜+|٪؜|1|#,##0.###|#,##0%|‏#,##0.00 ¤|	
+ar-PS	٠١٢٣٤٥٦٧٨٩|٫|٬|؜-|؜+|٪؜|1|#,##0.###|#,##0%|‏#,##0.00 ¤|	
+ar-QA	٠١٢٣٤٥٦٧٨٩|٫|٬|؜-|؜+|٪؜|1|#,##0.###|#,##0%|‏#,##0.00 ¤|	
+ar-SA	٠١٢٣٤٥٦٧٨٩|٫|٬|؜-|؜+|٪؜|1|#,##0.###|#,##0%|‏#,##0.00 ¤|	
+ar-SD	٠١٢٣٤٥٦٧٨٩|٫|٬|؜-|؜+|٪؜|1|#,##0.###|#,##0%|‏#,##0.00 ¤|	
+ar-SO	٠١٢٣٤٥٦٧٨٩|٫|٬|؜-|؜+|٪؜|1|#,##0.###|#,##0%|‏#,##0.00 ¤|	SOS=S|
+ar-SS	٠١٢٣٤٥٦٧٨٩|٫|٬|؜-|؜+|٪؜|1|#,##0.###|#,##0%|‏#,##0.00 ¤|	GBP=GB£|SSP=£|
+ar-SY	٠١٢٣٤٥٦٧٨٩|٫|٬|؜-|؜+|٪؜|1|#,##0.###|#,##0%|‏#,##0.00 ¤|	
+ar-TD	٠١٢٣٤٥٦٧٨٩|٫|٬|؜-|؜+|٪؜|1|#,##0.###|#,##0%|‏#,##0.00 ¤|	
+ar-TN	0123456789|,|.|‎-|‎+|‎%‎|1|#,##0.###|#,##0%|‏#,##0.00 ¤;‏-#,##0.00 ¤|	
+ar-YE	٠١٢٣٤٥٦٧٨٩|٫|٬|؜-|؜+|٪؜|1|#,##0.###|#,##0%|‏#,##0.00 ¤|	
+as	০১২৩৪৫৬৭৮৯|.|,|-|+|%|1|#,##,##0.###|#,##,##0%|¤ #,##,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+asa	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|TZS=TSh|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ast	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|
+az	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|AZN=₼|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+az-Cyrl	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	PHP=₱|
+ba	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|RUR=р.|TWD=NT$|USD=$|VND=₫|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+bal-Latn	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AFN=AWGA|ALL=ALBL|AMD=ARMD|ANG=NLAG|AOA=ANGK|ARS=ARJP|AUD=A$|AWG=ARBF|AZN=AZRM|BAM=BHBM|BBD=BRBD|BDT=BGDT|BGN=BLGL|BIF=BRDF|BMD=BRMD|BND=BRND|BOB=BLWB|BRL=R$|BSD=BHMD|BTN=BTNN|BWP=BTSP|BYN=BLRR|BZD=BLZD|CAD=KN$|CDF=KNGF|CHF=SWZF|CNH=CNYÁ|CNY=CHNY|COP=KLBP|CRC=KRK|CUC=KBKP|CUP=CBAP|CVE=KWRE|CZK=CHKK|DJF=DJBF|DKK=DNMK|DOP=DOMP|DZD=ALJD|EGP=MSRP|ERN=ERTN|ETB=ETPB|EUR=€|GBP=BRTP|GEL=JRJL|GHS=GNAS|GIP=GBRP|GMD=GMBD|GNF=GWNF|GTQ=GTMK|HKD=HGKD|HNL=HNDL|HRK=KRSK|HTG=HTNG|HUF=HGRF|IDR=ENDR|ILS=₪|INR=HNDR|IRR=ERNR|ISK=ISLK|JMD=JMKD|JPY=¥|KES=KINS|KGS=KGSS|KHR=KMBR|KMF=KMRF|KPW=SHKW|KRW=ZBKW|KYD=KMID|KZT=KZKT|LAK=LTKK|LBP=LBNP|LKR=SRLR|LRD=LBRD|LSL=LSTL|LYD=LBYD|MAD=MRKD|MDL=MLDL|MGA=MLGA|MKD=MKDD|MMK=MNMK|MNT=MNGT|MOP=MKNP|MRU=MRTU|MUR=MURR|MVR=MLDR|MWK=MLWK|MXN=MKS$|MYR=MLRG|MZN=MZBM|NAD=NMBD|NGN=NJRN|NIO=NKGC|NOK=NRWK|NPR=NPLR|NZD=NZ$|PAB=PNMB|PEN=PRSL|PHP=PLPP|PKR=PKRS|PLN=PLNZ|PYG=PRGG|RON=RMNL|RSD=SRBD|RUB=RUSR|RWF=RWDF|SCR=SCLR|SDG=SDNP|SEK=SWDK|SGD=SGPD|SHP=SHLP|SLE=SLNL|SLL=SRLL|SOS=SÓMS|SRD=SRND|SSP=ZRSP|STN=STPD|SYP=SURP|SZL=SWZL|THB=TÁIB|TND=TNSD|TRY=TRKL|TTD=TDTD|TWD=NTWD|TZS=TNZS|UAH=YKNH|UGX=YUGS|USD=$|UYU=YRGP|UZS=OZBS|VES=WNZB|VND=WTND|XAF=DARF|XCD=RKB$|XCG=Cg.|XOF=RACF|XPF=CFPF|XXX=¤|ZAR=ZAPR|ZMW=ZMBK|
+bas	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+be	0123456789|,| |-|+|%|2|#,##0.###|#,##0 %|#,##0.00 ¤|	AUD=A$|BYN=Br|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|RUB=₽|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+bem	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|ZMW=K|
+bez	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|#,##0.00¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|TZS=TSh|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+bg	0123456789|,| |-|+|%|2|#,##0.###|#,##0%|#,##0.00 ¤|	BGN=лв.|EUR=€|USD=щ.д.|XAF=FCFA|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+bgc	०१२३४५६७८९|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+bho	०१२३४५६७८९|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+blo	0123456789|,| |-|+|%|1|#,##0.###|% #,#0;% -#,#0|¤ #,##0.00;¤ -#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+bm	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+bn	০১২৩৪৫৬৭৮৯|.|,|-|+|%|1|#,##,##0.###|#,##0%|#,##,##0.00¤|	AUD=A$|BDT=৳|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+bn-IN	0123456789|.|,|-|+|%|1|#,##,##0.###|#,##,##0%|¤#,##,##0.00|	USD=$|
+bo	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+bo-IN	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	CNY=CN¥|
+br	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	AUD=$A|CAD=$CA|EUR=€|GBP=£ RU|HKD=$ HK|INR=₹|MXN=MX$|NZD=$ ZN|USD=$ SU|XAF=FCFA|XCG=Cg.|XOF=F CFA|XPF=CFPF|
+brx	0123456789|.|,|-|+|%|1|#,##,##0.###|#,##,##0%|¤ #,##,##0.00|	AED=ए.इ.दि|ALL=अल|AMD=ए.एम.दि|ANG=ए.एन.जि|AOA=ए.अ.ए|ARS=ए.आर.एस|AUD=A$|AWG=ए.दब्ल्यु.जि|AZN=ए.जेत.एन|BAM=बि.ए.एम|BBD=बि.बि.दि|BGN=बि.जि.एन|BHD=बि.ऐत्स.दि|BIF=बि.आइ.एफ|BMD=बि.एम.डि|BOB=बि.अ.बि|BRL=R$|BSD=बि.एस.दि|BWP=बि.दब्ल्यु.पि|BYN=बि.वाई.एन|BZD=बि.जेद.डि|CAD=सि.ए $|CDF=सि.दि.एफ|CHF=सि.ऐत्स.एफ|CLP=सि.एल.पि|CNH=सि.एन.ऐत्स|CNY=सिएन¥|COP=सि.अ.पि|CRC=सि.आर.सि|CUC=सि.इउ.सि|CUP=सि.इउ.पि|CVE=सि.भि.इ|CZK=सि.जेद.के|DJF=दि.जे.एफ|DKK=दि.के.के|DOP=डि.अ.पि|DZD=दि.जेत.दि|EGP=ई.जि.पि|ERN=इ.आर.एन|ETB=इ.ति.बि|EUR=€|FKP=एफ.के.पि|GBP=£|GEL=जि.इ.एल|GHS=जि.ऐत्स.एस|GIP=जि.आइ.पि|GMD=जि.एम.दि|GNF=जि.एन.एफ|GTQ=जि.ति.किउ|GYD=जि.वाई.दि|HKD=ऐत्स.के$|HNL=ऐत्स.एन.एल|HRK=ऐत्स.आर.के|HTG=ऐत्स.ति.जि|HUF=ऐत्स.इउ.एफ|ILS=₪|INR=₹|IQD=आइ.किउ.दि|ISK=आई.एस.के|JMD=जे.एम.दि|JOD=जे.अ.दि|JPY=JP¥|KES=के.इ.एस|KGS=के.जि.एस|KMF=के.एम.एफ|KPW=के.पि.दब्ल्यु|KRW=₩|KWD=के.दब्ल्यु.दि|KYD=के.वाई.दि|KZT=के.जेत.ति|LBP=एल.बि.पि|LRD=एल.आर.दि|LSL=एल.एस.एल|LYD=एल.वाई.दि|MAD=एम.ए.दि|MDL=एम.डि.एल|MGA=एम.जि.ए|MKD=एम.के.दि|MNT=एम.एन.ति|MOP=एम.अ.पि|MRU=एम.आर.इउ|MUR=एम.इउ.आर|MWK=एम.दब्ल्यु.के|MXN=एम.एक्स $|MZN=एम.जेत.एन|NAD=एन.ए.दि|NGN=एन.जि.एन|NIO=एन.आई.अ|NOK=एन.अ.के|NZD=NZ$|OMR=अ.एम.आर|PAB=पि.ए.बि|PEN=पि.इ.एन|PHP=₱|PLN=पि.एल.एन|PYG=पि.आई.जि|QAR=किउ.ए.आर|RON=आर.अ.एन|RSD=आर.एस.दि|RUB=रूब|SAR=एस.ए.आर|SCR=एस.सि.आर|SDG=एस.दि.जि|SEK=एस.इ.के|SHP=एस.ऐत्स.पि|SLE=एस.एल.इ|SLL=एस.एल.एल|SOS=एस.अ.एस|SRD=एस.आर.डि|SSP=एस.एस.पि|STN=एस.ति.एन|SYP=एस.वाई.पि|SZL=एस.जेत.एल|TJS=ति.जे.एस|TMT=ति.एम.ति|TND=ति.एन.दि|TRY=ति.आर.वाई|TTD=ति.ति.डि|TWD=एन.ति$|TZS=ति.जेत.एस|UAH=इउ.ए.ऐत्स|UGX=इउ.जि.एक्स|USD=$|UYU=इउ.वाई.इउ|UZS=इउ.जेत.एस|VES=भि.इ.एस|VND=₫|XAF=FCFA|XCD=इ.सि $|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|YER=वाई.इ.आर|ZAR=जेत.ए.आर|
+bs	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	BAM=KM|EUR=€|HRK=kn|INR=₹|JPY=¥|KRW=₩|RSD=din.|THB=฿|TWD=NT$|VND=₫|XAF=FCFA|XCG=Cg.|XOF=F CFA|XXX=¤|
+bs-Cyrl	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BAM=КМ|BRL=R$|CAD=CA$|CNY=CN¥|CZK=Кч|GBP=£|HKD=HK$|ILS=₪|MXN=MX$|NZD=NZ$|PHP=₱|PLN=зл|RSD=дин.|TRY=Тл|USD=US$|XCD=EC$|XPF=CFPF|
+bua	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ca	0123456789|,|.|-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	AUD=AU$|ESP=₧|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|NZD=NZ$|THB=฿|TWD=NT$|VND=₫|XAF=FCFA|XOF=F CFA|XPF=CFPF|
+ca-FR	0123456789|,|.|-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	FRF=F|
+ccp	𑄶𑄷𑄸𑄹𑄺𑄻𑄼𑄽𑄾𑄿|.|,|-|+|%|1|#,##,##0.###|#,##0%|#,##,##0.00¤|	AUD=A$|BDT=৳|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ce	0123456789|.|,|-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|RUB=₽|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ceb	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US $|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+cgg	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|UGX=USh|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+chr	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ckb	٠١٢٣٤٥٦٧٨٩|٫|٬|‏-|‏+|٪|1|#,##0.###|#,##0 %|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|IQD=د.ع.‏|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+cop	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+cs	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	AUD=AU$|BRL=R$|CAD=CA$|CNY=CN¥|CSK=Kčs|CZK=Kč|EUR=€|GBP=£|HKD=HK$|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|TWD=NT$|USD=US$|XAF=FCFA|XCD=EC$|XCG=Cg.|XEU=ECU|XOF=F CFA|XPF=CFPF|
+csw	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+cv	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|RUB=₽|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+cy	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|
+da	0123456789|,|.|-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	AUD=AU$|BRL=R$|CNY=CN¥|DKK=kr.|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+dav	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KES=Ksh|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+de	0123456789|,|.|-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	ATS=öS|AUD=AU$|BGM=BGK|BGO=BGJ|BRL=R$|CAD=CA$|CNY=CN¥|DEM=DM|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|
+de-AT	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|¤ #,##0.00|	
+de-CH	0123456789|.|'|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00;¤-#,##0.00|	EUR=EUR|
+de-LI	0123456789|.|'|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	EUR=EUR|
+de-LU	0123456789|,|.|-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	LUF=F|
+dje	0123456789|.| |-|+|%|1|#,##0.###|#,##0%|#,##0.00¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+doi	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+dsb	0123456789|,|.|-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|PLN=zł|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+dua	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+dyo	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+dz	༠༡༢༣༤༥༦༧༨༩|.|,|-|+|%|1|#,##,##0.###|#,##,##0 %|¤#,##,##0.00|	AUD=AU$|BRL=R$|BTN=Nu.|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|INR=₹|JPY=JP¥|KRW=KR₩|MXN=MX$|NZD=NZ$|PHP=₱|THB=TH฿|TWD=NT$|USD=US$|VND=₫|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ebu	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KES=Ksh|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ee	0123456789|.|,|-|+|%|3|#,##0.###|#,##0%|¤#,##0.00|	AUD=AU$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|GHS=GH₵|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|THB=฿|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+el	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|GRD=Δρχ|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+en-001	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|
+en-150	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	JPY=JP¥|USD=US$|
+en-AG	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|XCD=$|
+en-AI	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|XCD=$|
+en-AT	0123456789|,|.|-|+|%|1|#,##0.###|#,##0 %|¤ #,##0.00|	JPY=JP¥|USD=US$|
+en-AU	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=$|BRL=BRL|CAD=CAD|CNY=CNY|EUR=EUR|GBP=GBP|HKD=HKD|ILS=ILS|INR=INR|JPY=JPY|KRW=KRW|MXN=MXN|NZD=NZD|PHP=PHP|SCR=Rs|TWD=TWD|USD=USD|VND=VND|XAF=XAF|XCD=XCD|XOF=XOF|XPF=CFP|
+en-BB	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	BBD=$|JPY=JP¥|USD=US$|
+en-BE	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	JPY=JP¥|USD=US$|
+en-BI	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	BIF=FBu|
+en-BM	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	BMD=$|JPY=JP¥|USD=US$|
+en-BS	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	BSD=$|JPY=JP¥|USD=US$|
+en-BW	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	BWP=P|JPY=JP¥|USD=US$|
+en-BZ	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	BZD=$|JPY=JP¥|USD=US$|
+en-CA	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	CAD=$|JPY=JP¥|USD=US$|XCG=Cg|
+en-CC	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=$|JPY=JP¥|USD=US$|
+en-CH	0123456789|.|'|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00;¤-#,##0.00|	JPY=JP¥|USD=US$|
+en-CK	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|NZD=$|USD=US$|
+en-CM	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|
+en-CX	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=$|JPY=JP¥|USD=US$|
+en-CY	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|
+en-CZ	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	JPY=JP¥|USD=US$|
+en-DE	0123456789|,|.|-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	JPY=JP¥|USD=US$|
+en-DG	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|
+en-DK	0123456789|,|.|-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	DKK=kr.|JPY=JP¥|USD=US$|
+en-DM	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|XCD=$|
+en-EE	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	JPY=JP¥|USD=US$|
+en-ER	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	ERN=Nfk|JPY=JP¥|USD=US$|
+en-ES	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	JPY=JP¥|USD=US$|
+en-FI	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	JPY=JP¥|USD=US$|
+en-FJ	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	FJD=$|JPY=JP¥|USD=US$|
+en-FK	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	FKP=£|GBP=GB£|JPY=JP¥|USD=US$|
+en-FM	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|
+en-FR	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	JPY=JP¥|USD=US$|
+en-GB	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|
+en-GD	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|XCD=$|
+en-GE	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	GEL=₾|JPY=JP¥|USD=US$|
+en-GG	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|
+en-GH	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	GHS=GH₵|JPY=JP¥|USD=US$|
+en-GI	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	GBP=GB£|GIP=£|JPY=JP¥|USD=US$|
+en-GM	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	GMD=D|JPY=JP¥|USD=US$|
+en-GS	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|
+en-GY	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	GYD=$|JPY=JP¥|USD=US$|
+en-HK	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|
+en-HU	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	JPY=JP¥|USD=US$|
+en-ID	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	IDR=Rp|JPY=JP¥|USD=US$|
+en-IE	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|
+en-IL	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|
+en-IM	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|
+en-IN	0123456789|.|,|-|+|%|1|#,##,##0.###|#,##,##0%|¤#,##,##0.00|	JPY=JP¥|
+en-IO	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|
+en-IT	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	JPY=JP¥|USD=US$|
+en-JE	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|
+en-JM	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JMD=$|JPY=JP¥|USD=US$|
+en-KE	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|KES=Ksh|USD=US$|
+en-KI	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=$|JPY=JP¥|USD=US$|
+en-KN	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|XCD=$|
+en-KY	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|KYD=$|USD=US$|
+en-LC	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|XCD=$|
+en-LR	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|LRD=$|USD=US$|
+en-LS	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|ZAR=R|
+en-LT	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	JPY=JP¥|USD=US$|
+en-LV	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	JPY=JP¥|USD=US$|
+en-MG	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|MGA=Ar|USD=US$|
+en-MO	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|MOP=MOP$|USD=US$|
+en-MS	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|XCD=$|
+en-MT	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	GBP=GB£|JPY=JP¥|USD=US$|
+en-MU	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|MUR=Rs|USD=US$|
+en-MV	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	JPY=JP¥|MVR=Rf|USD=US$|
+en-MW	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|MWK=MK|USD=US$|
+en-MY	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|MYR=RM|USD=US$|
+en-NA	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|NAD=$|USD=US$|
+en-NF	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=$|JPY=JP¥|USD=US$|
+en-NG	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|NGN=₦|USD=US$|
+en-NL	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00;¤ -#,##0.00|	JPY=JP¥|USD=US$|
+en-NO	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	JPY=JP¥|NOK=kr|USD=US$|
+en-NR	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=$|JPY=JP¥|USD=US$|
+en-NU	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|NZD=$|USD=US$|
+en-NZ	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|NZD=$|USD=US$|
+en-PG	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|PGK=K|USD=US$|
+en-PK	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|PKR=Rs|USD=US$|
+en-PL	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	JPY=JP¥|USD=US$|
+en-PN	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|NZD=$|USD=US$|
+en-PT	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	JPY=JP¥|USD=US$|
+en-PW	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|
+en-RO	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	JPY=JP¥|USD=US$|
+en-RW	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|RWF=RF|USD=US$|
+en-SB	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|SBD=$|USD=US$|
+en-SC	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|SCR=SR|USD=US$|
+en-SD	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|
+en-SE	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	JPY=JP¥|SEK=kr|USD=US$|
+en-SG	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|SGD=$|USD=US$|
+en-SH	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	GBP=GB£|JPY=JP¥|SHP=£|USD=US$|
+en-SI	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	JPY=JP¥|USD=US$|
+en-SK	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	JPY=JP¥|USD=US$|
+en-SL	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|SLE=Le|USD=US$|
+en-SS	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	GBP=GB£|JPY=JP¥|SSP=£|USD=US$|
+en-SX	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	ANG=NAf.|JPY=JP¥|USD=US$|
+en-SZ	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|SZL=E|USD=US$|
+en-TC	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|
+en-TK	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|NZD=$|USD=US$|
+en-TO	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|TOP=T$|USD=US$|
+en-TT	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|TTD=$|USD=US$|
+en-TV	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=$|JPY=JP¥|USD=US$|
+en-TZ	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|TZS=TSh|USD=US$|
+en-UA	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	JPY=JP¥|USD=US$|
+en-UG	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|UGX=USh|USD=US$|
+en-VC	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|XCD=$|
+en-VG	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|
+en-VU	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|VUV=VT|
+en-WS	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|WST=WS$|
+en-ZA	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|ZAR=R|
+en-ZM	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|ZMW=K|
+en-ZW	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	JPY=JP¥|USD=US$|
+eo	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	EUR=€|XXX=¤|
+es	0123456789|,|.|-|+|%|2|#,##0.###|#,##0 %|#,##0.00 ¤|	ESP=₧|EUR=€|THB=฿|USD=US$|VND=₫|XCG=Cg.|XPF=CFPF|XXX=¤|
+es-419	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	EUR=EUR|THB=THB|USD=USD|VND=VND|
+es-AR	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	ARS=$|EUR=EUR|THB=THB|VND=VND|
+es-BO	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	BOB=Bs|EUR=EUR|THB=THB|USD=USD|VND=VND|
+es-BR	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	BRL=R$|EUR=EUR|THB=THB|USD=USD|VND=VND|
+es-BZ	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	BZD=$|EUR=EUR|THB=THB|USD=USD|VND=VND|
+es-CL	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00;¤-#,##0.00|	CLP=$|EUR=EUR|THB=THB|VND=VND|
+es-CO	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	COP=$|EUR=EUR|THB=THB|VND=VND|
+es-CR	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	CRC=₡|EUR=EUR|THB=THB|USD=USD|VND=VND|
+es-CU	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	CUP=$|EUR=EUR|THB=THB|VND=VND|
+es-DO	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	DOP=RD$|EUR=EUR|THB=THB|VND=VND|
+es-EC	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00;¤-#,##0.00|	EUR=EUR|THB=THB|USD=$|VND=VND|
+es-GQ	0123456789|,|.|-|+|%|2|#,##0.###|#,##0 %|¤#,##0.00|	XAF=FCFA|
+es-GT	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	EUR=EUR|GTQ=Q|THB=THB|USD=USD|VND=VND|
+es-HN	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	EUR=EUR|HNL=L|THB=THB|USD=USD|VND=VND|
+es-MX	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	EUR=EUR|MRO=MRU|MRU=UM|MXN=$|THB=THB|USD=USD|VND=VND|
+es-NI	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	EUR=EUR|NIO=C$|THB=THB|USD=USD|VND=VND|
+es-PA	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	EUR=EUR|PAB=B/.|THB=THB|USD=USD|VND=VND|
+es-PE	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	EUR=EUR|PEN=S/|THB=THB|USD=USD|VND=VND|
+es-PH	0123456789|,|.|-|+|%|2|#,##0.###|#,##0 %|#,##0.00 ¤|	PHP=₱|
+es-PR	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	EUR=EUR|THB=THB|USD=$|VND=VND|
+es-PY	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00;¤ -#,##0.00|	EUR=EUR|PYG=Gs.|THB=THB|USD=USD|VND=VND|
+es-SV	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	EUR=EUR|THB=THB|USD=$|VND=VND|
+es-US	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	EUR=EUR|JPY=¥|THB=THB|USD=$|VND=VND|
+es-UY	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	EUR=EUR|THB=THB|UYU=$|UYW=UP|VND=VND|
+es-VE	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00;¤-#,##0.00|	EUR=EUR|THB=THB|USD=USD|VEF=Bs.|VES=Bs.S|VND=VND|
+et	0123456789|,| |−|+|%|2|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=AU$|BRL=R$|CAD=CA$|CNY=CN¥|EEK=kr|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+eu	0123456789|,|.|−|+|%|1|#,##0.###|% #,##0|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|ESP=₧|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ewo	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+fa	۰۱۲۳۴۵۶۷۸۹|٫|٬|‎−|‎+|٪|1|#,##0.###|#,##0%|‎¤#,##0.00|	AFN=؋|AUD=A$|BRL=R$|CAD=$CA|CNY=¥CN|EUR=€|GBP=£|HKD=$HK|ILS=₪|INR=₹|IRR=ریال|JPY=¥|KRW=₩|MXN=$MX|NZD=$NZ|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=$EC|XOF=فرانک CFA|XPF=CFPF|XXX=¤|
+fa-AF	۰۱۲۳۴۵۶۷۸۹|٫|٬|‎−|‎+|٪|1|#,##0.###|#,##0%|¤ #,##0.00|	
+ff	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ff-Adlm	𞥐𞥑𞥒𞥓𞥔𞥕𞥖𞥗𞥘𞥙|.|⹁|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AFA=𞤀𞤊𞤀|GNF=FG|NGN=𞤐𞤐𞤘|PGK=𞤑𞤆𞤘|PHP=𞤆𞤆𞤖|XAF=𞤊𞤅𞤊𞤀|XOF=𞤅𞤊𞤀|
+ff-Adlm-BF	𞥐𞥑𞥒𞥓𞥔𞥕𞥖𞥗𞥘𞥙|.|⹁|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AFA=𞤀𞤊𞤀|NGN=𞤐𞤐𞤘|PGK=𞤑𞤆𞤘|PHP=𞤆𞤆𞤖|XAF=𞤊𞤅𞤊𞤀|XOF=𞤅𞤊𞤀|
+ff-Adlm-CM	𞥐𞥑𞥒𞥓𞥔𞥕𞥖𞥗𞥘𞥙|.|⹁|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AFA=𞤀𞤊𞤀|NGN=𞤐𞤐𞤘|PGK=𞤑𞤆𞤘|PHP=𞤆𞤆𞤖|XAF=𞤊𞤅𞤊𞤀|XOF=𞤅𞤊𞤀|
+ff-Adlm-GH	𞥐𞥑𞥒𞥓𞥔𞥕𞥖𞥗𞥘𞥙|.|⹁|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AFA=𞤀𞤊𞤀|GHS=GH₵|NGN=𞤐𞤐𞤘|PGK=𞤑𞤆𞤘|PHP=𞤆𞤆𞤖|XAF=𞤊𞤅𞤊𞤀|XOF=𞤅𞤊𞤀|
+ff-Adlm-GM	𞥐𞥑𞥒𞥓𞥔𞥕𞥖𞥗𞥘𞥙|.|⹁|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AFA=𞤀𞤊𞤀|GMD=D|NGN=𞤐𞤐𞤘|PGK=𞤑𞤆𞤘|PHP=𞤆𞤆𞤖|XAF=𞤊𞤅𞤊𞤀|XOF=𞤅𞤊𞤀|
+ff-Adlm-GW	𞥐𞥑𞥒𞥓𞥔𞥕𞥖𞥗𞥘𞥙|.|⹁|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AFA=𞤀𞤊𞤀|NGN=𞤐𞤐𞤘|PGK=𞤑𞤆𞤘|PHP=𞤆𞤆𞤖|XAF=𞤊𞤅𞤊𞤀|XOF=𞤅𞤊𞤀|
+ff-Adlm-LR	𞥐𞥑𞥒𞥓𞥔𞥕𞥖𞥗𞥘𞥙|.|⹁|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AFA=𞤀𞤊𞤀|LRD=$|NGN=𞤐𞤐𞤘|PGK=𞤑𞤆𞤘|PHP=𞤆𞤆𞤖|XAF=𞤊𞤅𞤊𞤀|XOF=𞤅𞤊𞤀|
+ff-Adlm-MR	𞥐𞥑𞥒𞥓𞥔𞥕𞥖𞥗𞥘𞥙|.|⹁|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AFA=𞤀𞤊𞤀|MRU=UM|NGN=𞤐𞤐𞤘|PGK=𞤑𞤆𞤘|PHP=𞤆𞤆𞤖|XAF=𞤊𞤅𞤊𞤀|XOF=𞤅𞤊𞤀|
+ff-Adlm-NE	𞥐𞥑𞥒𞥓𞥔𞥕𞥖𞥗𞥘𞥙|.|⹁|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AFA=𞤀𞤊𞤀|NGN=𞤐𞤐𞤘|PGK=𞤑𞤆𞤘|PHP=𞤆𞤆𞤖|XAF=𞤊𞤅𞤊𞤀|XOF=𞤅𞤊𞤀|
+ff-Adlm-NG	𞥐𞥑𞥒𞥓𞥔𞥕𞥖𞥗𞥘𞥙|.|⹁|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AFA=𞤀𞤊𞤀|NGN=₦|PGK=𞤑𞤆𞤘|PHP=𞤆𞤆𞤖|XAF=𞤊𞤅𞤊𞤀|XOF=𞤅𞤊𞤀|
+ff-Adlm-SL	𞥐𞥑𞥒𞥓𞥔𞥕𞥖𞥗𞥘𞥙|.|⹁|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AFA=𞤀𞤊𞤀|NGN=𞤐𞤐𞤘|PGK=𞤑𞤆𞤘|PHP=𞤆𞤆𞤖|SLE=Le|XAF=𞤊𞤅𞤊𞤀|XOF=𞤅𞤊𞤀|
+ff-Adlm-SN	𞥐𞥑𞥒𞥓𞥔𞥕𞥖𞥗𞥘𞥙|.|⹁|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AFA=𞤀𞤊𞤀|NGN=𞤐𞤐𞤘|PGK=𞤑𞤆𞤘|PHP=𞤆𞤆𞤖|XAF=𞤊𞤅𞤊𞤀|XOF=𞤅𞤊𞤀|
+ff-Latn-GH	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	GHS=GH₵|
+ff-Latn-GM	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	GMD=D|
+ff-Latn-GN	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	GNF=FG|
+ff-Latn-LR	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	LRD=$|
+ff-Latn-MR	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	MRU=UM|
+ff-Latn-NG	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	NGN=₦|
+ff-Latn-SL	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	SLE=Le|
+fi	0123456789|,| |−|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	EUR=€|FIM=mk|GBP=£|JPY=¥|USD=$|XAF=FCFA|XCG=Cg.|XOF=F CFA|
+fil	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+fo	0123456789|,|.|−|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|DKK=kr|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+fo-DK	0123456789|,|.|−|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	DKK=kr.|
+fr	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	ARS=$AR|AUD=$AU|BEF=FB|BMD=$BM|BND=$BN|BRL=R$|BZD=$BZ|CAD=$CA|CLP=$CL|COP=$CO|CYP=£CY|EUR=€|FJD=$FJ|FKP=£FK|FRF=F|GBP=£GB|GIP=£GI|IEP=£IE|ILP=£IL|ILS=₪|INR=₹|ITL=₤IT|KRW=₩|LBP=£LB|MTP=£MT|MXN=$MX|NAD=$NA|NZD=$NZ|RHD=$RH|SBD=$SB|SGD=$SG|SRD=$SR|TTD=$TT|USD=$US|UYU=$UY|VND=₫|WST=$WS|XAF=FCFA|XCG=Cg.|XOF=F CFA|XPF=FCFP|XXX=¤|
+fr-BI	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	BIF=FBu|
+fr-CA	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	ARS=ARS|AUD=$ AU|BMD=BMD|BND=BND|BZD=BZD|CAD=$|CLP=CLP|CNY=CN¥|COP=COP|FJD=FJD|FKP=FKP|GBP=£|GIP=GIP|HKD=$ HK|ILS=ILS|INR=INR|JPY=¥|KRW=KRW|LBP=LBP|MXN=MXN|NAD=NAD|NZD=$ NZ|SBD=SBD|SGD=$ SG|SRD=SRD|TTD=TTD|USD=$ US|UYU=UYU|VND=VND|WST=WST|XAF=XAF|XOF=XOF|XPF=XPF|
+fr-CD	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	CDF=FC|
+fr-CH	0123456789|,|'|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	
+fr-DJ	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	DJF=Fdj|
+fr-DZ	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	DZD=DA|
+fr-GN	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	GNF=FG|
+fr-HT	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	HTG=G|
+fr-KM	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	KMF=CF|
+fr-LU	0123456789|,|.|-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	FRF=FRF|LUF=F|
+fr-MA	0123456789|,|.|-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	
+fr-MG	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	MGA=Ar|
+fr-MR	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	MRU=UM|
+fr-MU	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	MUR=Rs|
+fr-RW	0123456789|.|,|-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	RWF=RF|
+fr-SC	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	SCR=SR|
+fr-SY	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	SYP=LS|
+fr-TN	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	TND=DT|
+fr-VU	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	VUV=VT|
+fur	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+fy	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00;¤ #,##0.00-|	AUD=AU$|BRL=R$|CAD=C$|CNY=CN¥|EUR=€|FJD=FJ$|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|SBD=SI$|THB=฿|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XXX=¤|
+ga	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|
+gaa	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+gd	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|
+gl	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|ESP=₧|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=$MX|NZD=NZ$|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCG=ƒ|XOF=F CFA|XPF=CFPF|XXX=¤|
+gsw	0123456789|.|'|−|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	ATS=öS|AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+gu	0123456789|.|,|-|+|%|1|#,##,##0.###|#,##,##0%|¤#,##,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+guz	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KES=Ksh|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+gv	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ha	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NGN=₦|NZD=NZ$|PHP=₱|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ha-GH	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	GHS=GH₵|
+haw	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+he	0123456789|.|,|‎-|‎+|%|1|#,##0.###|#,##0%|‏#,##0.00 ‏¤;‏-#,##0.00 ‏¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=‎CN¥‎|EUR=€|GBP=£|HKD=HK$|ILP=ל״י|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+hi	0123456789|.|,|-|+|%|1|#,##,##0.###|#,##,##0%|¤#,##,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+hi-Latn	0123456789|.|,|-|+|%|1|#,##,##0.###|#,##,##0%|¤#,##,##0.00|	PHP=₱|THB=THB|
+hr	0123456789|,|.|−|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	EUR=€|HRK=kn|XAF=FCFA|XCG=Cg.|XOF=F CFA|
+hr-BA	0123456789|,|.|−|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	BAM=KM|
+hsb	0123456789|,|.|-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|PLN=zł|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+hu	0123456789|,| |-|+|%|2|#,##0.###|#,##0%|#,##0.00 ¤|	HUF=Ft|JPY=¥|XAF=FCFA|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+hy	0123456789|,| |-|+|%|2|#,##0.###|#,##0%|#,##0.00 ¤|	AMD=֏|AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ia	0123456789|,|.|-|+|%|2|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NLG=ƒ|NZD=NZ$|PHP=₱|RUB=₽|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+id	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=AU$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|IDR=Rp|ILS=₪|INR=Rs|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|
+ie	0123456789|,| |-|+|%|2|#,##0.###|#,##0%|¤ #,##0.00;¤ -#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ig	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NGN=₦|NZD=NZ$|PHP=₱|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ii	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+is	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	CNY=CN¥|HKD=HK$|ILS=₪|ISK=kr.|JPY=JP¥|XAF=FCFA|XCD=EC$|XOF=F CFA|XPF=CFPF|XXX=¤|
+it	0123456789|,|.|-|+|%|2|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|ILS=₪|NZD=NZ$|PHP=₱|THB=฿|XAF=FCFA|XCD=EC$|XCG=Cf|XOF=F CFA|XPF=CFPF|XXX=¤|
+it-CH	0123456789|.|'|-|+|%|2|#,##0.###|#,##0%|¤ #,##0.00;¤-#,##0.00|	
+ja	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=元|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=￥|KRW=₩|MXN=MX$|NZD=NZ$|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg|XOF=F CFA|XPF=CFPF|
+jgo	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+jmc	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|TZS=TSh|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+jv	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|IDR=Rp|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ka	0123456789|,| |-|+|%|2|#,##0.###|#,##0%|#,##0.00 ¤|	BRL=R$|CAD=CA$|EUR=€|GBP=£|GEL=₾|MXN=MX$|TWD=NT$|USD=US$|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+kab	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|DZD=DA|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+kam	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KES=Ksh|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+kbd	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+kde	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|TZS=TSh|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+kea	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=AU$|BRL=R$|CAD=CA$|CNY=CN¥|CVE=​|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|THB=฿|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+kek	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	ANG=GAN|AUD=A$|AWG=GAW|BBD=DBB|BMD=DBM|BRL=R$|BSD=DBS|BZD=DBZ|CAD=$CA|CNY=CN¥|CUP=PCU|DOP=PDO|EUR=€|GBP=£|HKD=HK$|HNL=LHN|HTG=GHT|ILS=₪|INR=₹|JMD=DJM|JPY=JP¥|KRW=₩|KYD=DKY|MXN=$MX|NIO=CNI|NZD=NZ$|PAB=BPA|PHP=₱|TTD=DTT|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=$EC|XCG=gC.|XOF=F CFA|XPF=CFPF|XXX=¤|
+kgp	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=AU$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|FJD=FJC|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PTE=Vẽj.|THB=฿|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=CFA|XPF=CFPF|XXX=¤|ZMK=SMK|
+khq	0123456789|.| |-|+|%|1|#,##0.###|#,##0%|#,##0.00¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ki	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KES=Ksh|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+kk	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|KZT=₸|LSL=ЛСЛ|MXN=MX$|NZD=NZ$|RUB=₽|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+kk-Arab	0123456789|.| |-|+|%|1|#,##0.###|#,##0%|#,##0.00¤|	PHP=₱|USD=US$|
+kkj	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+kl	0123456789|,|.|-|+|%|1|#,##0.###|#,##0 %|¤#,##0.00;¤-#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|DKK=kr.|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+kln	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KES=Ksh|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+km	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|#,##0.00¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KHR=៛|KRW=₩|LSL=ឡូទី|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+kn	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ko	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=AU$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+kok	0123456789|.|,|-|+|%|1|#,##,##0.###|#,##0%|¤#,##,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|RON=रॉन|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+kok-Latn	0123456789|.|,|-|+|%|1|#,##,##0.###|#,##0%|¤#,##,##0.00|	PHP=₱|
+ks	۰۱۲۳۴۵۶۷۸۹|٫|٬|‎-‎|‎+‎|٪|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ks-Deva	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	JPY=JP¥|
+ksb	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|#,##0.00¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|TZS=TSh|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ksf	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ksh	0123456789|,| |−|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ku	0123456789|,|.|-|+|%|1|#,##0.###|%#,##0|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TRY=₺|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+kw	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+kxv	0123456789|.|,|-|+|%|1|#,##,##0.###|#,##0%|¤#,##,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ky	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	CNY=CN¥|EUR=€|JPY=JP¥|KGS=сом|THB=฿|VND=₫|XAF=FCFA|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+lag	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|TZS=TSh|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+lb	0123456789|,|.|-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	ATS=öS|AUD=AU$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+lg	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|#,##0.00¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|UGX=USh|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+lij	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+lkt	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+lld	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+lmo	0123456789|,|'|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ln	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CDF=FC|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ln-AO	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AOA=Kz|
+lo	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00;¤-#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|LAK=₭|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+lrc	۰۱۲۳۴۵۶۷۸۹|٫|٬|‎-‎|‎+‎|٪|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|IQD=د.ع.‏|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+lt	0123456789|,| |−|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	EUR=€|XCG=Cg.|XXX=¤|
+lu	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00¤|	AUD=A$|BRL=R$|CAD=CA$|CDF=FC|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+luo	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|#,##0.00¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KES=Ksh|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+luy	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00;¤- #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KES=Ksh|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+lv	0123456789|,| |-|+|%|2|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=AU$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|LVL=Ls|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+mai	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+mas	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KES=Ksh|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+mas-TZ	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	TZS=TSh|
+mer	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KES=Ksh|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+mfe	0123456789|.| |-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MUR=Rs|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+mg	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MGA=Ar|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+mgh	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|MZN=MTn|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+mgo	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+mi	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+mk	0123456789|,|.|-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	BRL=R$|CAD=CA$|EUR=€|MKD=ден.|MXN=MX$|USD=US$|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ml	0123456789|.|,|-|+|%|1|#,##,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+mn	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MNT=₮|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+mni	০১২৩৪৫৬৭৮৯|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+mr	०१२३४५६७८९|.|,|-|+|%|1|#,##,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ms	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MYR=RM|NZD=NZ$|TWD=NT$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ms-BN	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	BND=$|
+ms-ID	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	IDR=Rp|
+ms-SG	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	SGD=$|
+mt	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+mua	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+my	၀၁၂၃၄၅၆၇၈၉|.|,|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	ANG=NAf|AUD=A$|AWG=Afl|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|HTG=G|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MMK=K|MXN=MX$|NZD=NZ$|PAB=B/.|PHP=₱|THB=฿|TTD=TT$|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+mzn	۰۱۲۳۴۵۶۷۸۹|٫|٬|‎-‎|‎+‎|٪|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+naq	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NAD=$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+nb	0123456789|,| |−|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	EUR=€|GBP=£|NOK=kr|XCG=Cg.|XOF=F CFA|
+nd	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+nds	0123456789|,|.|-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ne	०१२३४५६७८९|.|,|-|+|%|1|#,##,##0.###|#,##,##0%|¤ #,##,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NPR=नेरू|NZD=NZ$|THB=฿|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+nl	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00;¤ -#,##0.00|	AUD=AU$|BRL=R$|CAD=C$|CNY=CN¥|EUR=€|FJD=FJ$|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|SBD=SI$|THB=฿|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|ZWG=ZiG|
+nl-AW	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00;¤ -#,##0.00|	AWG=Afl.|
+nl-BQ	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00;¤ -#,##0.00|	USD=$|
+nl-CW	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00;¤ -#,##0.00|	ANG=NAf.|
+nl-SR	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00;¤ -#,##0.00|	SRD=$|
+nl-SX	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00;¤ -#,##0.00|	ANG=NAf.|
+nmg	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+nn	0123456789|,| |−|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	EUR=€|NOK=kr|XCG=Cg.|XOF=F CFA|
+nnh	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+no	0123456789|,| |−|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	EUR=€|GBP=£|NOK=kr|XCG=Cg.|XOF=F CFA|
+nqo	߀߁߂߃߄߅߆߇߈߉|.|،|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AED=ߊߐߘ|AFN=ߊߝߊ|ALL=ߊߟߟ|AMD=ߊߡߘ|ANG=ߊ߲ߕߝ|AOA=ߊ߲ߜ߭ߎ|AON=ߊߜ߭ߞ|AOR=ߊߜ߭ߝ|ARS=ߊߖ߭ߔ|AUD=$ߐ|AWG=ߊߥߖ߭|AZN=ߊߖߣ|BAM=ߓߍߡ|BBD=ߓߓߘ|BDT=ߓߘߕ|BGN=ߓߜ߭ߟ|BHD=ߓߤߘ|BIF=ߓߙߝ|BMD=ߓߡߘ|BND=ߓߣߘ|BOB=ߓߏߓ|BRL=R$|BSD=ߓߛߘ|BTN=ߓߕߒ|BWP=ߓߥߔ|BYN=ߓߌߙ|CAD=CA$|CDF=ߞߝ|CHF=ߛߥߝ|CLP=ߛߟߔ|CNH=ߛߦߤ|CNY=ߛߣߦ|COP=ߞߐߔ|CRC=ߞߙߞ|CUC=ߞߎ߳ߞ|CUP=ߞߎ߳ߔ|CVE=ߍߛߞ|CZK=ߗߞߞ|DJF=ߖߓߝ|DKK=ߘߞߞ|DOP=ߘߏߔ|DZD=ߊߟߘ|EGP=ߡߛߔ|ERN=ߋߙߝ|ETB=ߋߗߓ|EUR=€|FJD=$ ߝߖ|FKP=ߝߞߔ|GBP=£|GEL=ߖ߭ߐߟ|GHS=ߜ߭ߛߘ|GIP=ߖ߭ߓߔ£|GMD=ߜ߭ߓߘ|GNF=߿|GNS=ߖߛ߾|GQE=ߕߖߋ|GTQ=ߜ߭ߕߞ|GWE=ߖߓߍ|GWP=ߖߓߔ|GYD=ߜ߭ߎ߳ߘ|HKD=ߤߞߘ|HNL=ߤߘߟ|HRK=ߞߛߞ|HTG=ߤߕߜ߭|HUF=ߤߜ߭ߝ|IDR=ߍ߲ߘߙ|ILS=₪|INR=₹|IQD=ߌߞߘ|IRR=ߌߙߙ|ISK=ߌߛߞ|JMD=ߖߡߘ|JOD=ߖߐߘ|JPY=ߗ߭ߔߦ|KES=ߞߋߛ|KGS=ߞߜ߭ߛ|KHR=ߞߓߙ|KMF=ߞߡߝ|KPW=ߞߞߥ|KRW=₩|KWD=ߞߥߘ|KYD=ߞߌߘ|KZT=ߞߗ߭ߕ|LAK=ߟߊߞ|LBP=ߟߓ£|LKR=ߟߞߙ|LRD=ߟ߾|LSL=ߟߛߟ|LYD=ߟߓߘ|MAD=ߡߘߤ|MAF=ߡߙߝ|MDL=ߡߘߟ|MGA=ߡߘߙ|MGF=ߡߘߝ|MKD=ߡߞߘ|MLF=ߡߝ|MMK=ߡߡߞ|MNT=ߡߣߕ|MOP=ߡߏߔ|MRO=ߡߙߏ|MRU=ߡߎߜ߭|MUR=ߡߙߔ|MVR=ߡߝ߭ߙ|MWK=ߡߟߞ|MXN=ߡߞ$|MYR=ߡߦߙ|MZE=ߡߖ߭ߋ|MZM=ߡߖߡ|MZN=ߡߖ߭ߡ|NAD=ߣߡߘ|NGN=ߖߣ|NIO=ߣߌߏ|NOK=ߣߐߞ|NPR=ߣߔߙ|NZD=$ߣߖ߭|OMR=ߏߡߙ|PAB=ߔߊߓ|PEN=ߔߋߛ|PGK=ߔߖߞ|PHP=₱|PKR=ߔߞߙ|PLN=ߔߟߗ߭|PYG=ߔߙߜ߭|QAR=ߞߊߙ|RHD=ߖ߭ߓߘ|RON=ߙߎߟ|RSD=ߙߛߘ|RUB=ߌߎߙ|RWF=ߙߥߝ|SAR=ߛߊߙ|SBD=ߛߓߘ|SCR=ߛߛߥ|SDD=ߛߘߘ|SDG=ߛߘߜ߭|SDP=ߛߘߔ|SEK=ߛߥߞ|SGD=ߛߜ߭ߘ|SHP=ߛߤߔ|SLE=ߛߙߔ|SLL=ߛߟߟ|SOS=ߛߡߛ|SRD=ߛߎߘ|SSP=ߛߛߔ|STD=ߛߕߘ|STN=ߛߔߘ|SYP=ߛߌߔ|SZL=ߛߖ߭ߟ|THB=ߕߘߓ|TJS=ߕߖߛ|TMT=ߕߡߕ|TND=ߕߣߘ|TOP=ߕߏߔ|TRY=ߕߎߟ|TTD=ߕߕߘ|TWD=ߕߥߘ|TZS=ߕߖ߭ߛ|UAH=ߌߞߤ|UGS=ߎߜ߭ߥ|UGX=ߎߜ߭ߛ|USD=ߊߞߘ$|UYU=ߎ߳ߔ|UZS=ߎߗ߭ߛ|VES=ߝ߭ߋߓ|VND=₫|VUV=ߝ߭ߕߝ߭|WST=$ߥߛ|XAF=ߝߛߝ|XCD=ߛߟߘ|XCG=Cg.|XOF=߾|XPF=߾ ߝߛߝ|XXX=¤|YER=ߦߡߙ|ZAR=ߥߝߙ|ZMK=ߖ߭ߓߞ|ZMW=ߖ߭ߓߥ|ZRN=ߖ߭ߙ|ZRZ=ߖ߭ߙߖ߭|ZWD=ߖ߭ߥߘ|ZWL=ߖ߭ߥߟ|ZWR=ߖ߭ߥߙ|
+nso	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|ZAR=R|
+nus	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=GB£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|SSP=£|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+nyn	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|UGX=USh|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+oc	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+om	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|ETB=Br|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+om-KE	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	KES=Ksh|
+or	0123456789|.|,|-|+|%|1|#,##,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=NZ$|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+os	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|GEL=₾|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+os-RU	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	GEL=GEL|RUB=₽|
+pa	0123456789|.|,|-|+|%|1|#,##,##0.###|#,##,##0%|¤#,##,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|
+pa-Arab	۰۱۲۳۴۵۶۷۸۹|٫|٬|‎-‎|‎+‎|٪|1|#,##0.###|#,##0%|¤ #,##0.00|	PHP=₱|PKR=ر|XXX=¤|
+pcm	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=KA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NGN=₦|NZD=NZ$|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+pl	0123456789|,| |-|+|%|2|#,##0.###|#,##0%|#,##0.00 ¤|	BRL=R$|EUR=€|PLN=zł|XAF=FCFA|XCD=EC$|XOF=F CFA|XPF=CFPF|XXX=¤|
+pms	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+prg	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ps	۰۱۲۳۴۵۶۷۸۹|٫|٬|‎-‎|‎+‎|٪|1|#,##0.###|#,##0%|¤ #,##0.00|	AFN=؋|AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ps-PK	۰۱۲۳۴۵۶۷۸۹|٫|٬|‎-‎|‎+‎|٪|1|#,##0.###|#,##0%|¤ #,##0.00|	PKR=Rs|
+pt	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=AU$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PTE=Esc.|THB=฿|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+pt-AO	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AOA=Kz|PTE=​|
+pt-CH	0123456789|,| |-|+|%|2|#,##0.###|#,##0%|#,##0.00 ¤|	PTE=​|
+pt-CV	0123456789|,| |-|+|%|2|#,##0.###|#,##0%|#,##0.00 ¤|	CVE=​|PTE=PTE|
+pt-GQ	0123456789|,| |-|+|%|2|#,##0.###|#,##0%|#,##0.00 ¤|	PTE=​|
+pt-GW	0123456789|,| |-|+|%|2|#,##0.###|#,##0%|#,##0.00 ¤|	PTE=​|
+pt-LU	0123456789|,| |-|+|%|2|#,##0.###|#,##0%|#,##0.00 ¤|	LUF=F|PTE=​|
+pt-MO	0123456789|,| |-|+|%|2|#,##0.###|#,##0%|#,##0.00 ¤|	MOP=MOP$|PTE=​|
+pt-MZ	0123456789|,| |-|+|%|2|#,##0.###|#,##0%|#,##0.00 ¤|	MZN=MTn|PTE=​|
+pt-PT	0123456789|,| |-|+|%|2|#,##0.###|#,##0%|#,##0.00 ¤|	PTE=​|
+pt-ST	0123456789|,| |-|+|%|2|#,##0.###|#,##0%|#,##0.00 ¤|	PTE=​|STN=Db|
+pt-TL	0123456789|,| |-|+|%|2|#,##0.###|#,##0%|#,##0.00 ¤|	PTE=​|
+qu	0123456789|.|,|-|+|%|1|#,##0.###|#,##0 %|¤ #,##0.00|	AUD=A$|BBD=BBG|BMD=DBM|BRL=R$|BZD=DBZ|CAD=$CA|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PEN=S/|TWD=NT$|USD=$US|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+qu-BO	0123456789|,|.|-|+|%|1|#,##0.###|#,##0 %|¤ #,##0.00|	BOB=Bs|PEN=PEN|
+qu-EC	0123456789|.|,|-|+|%|1|#,##0.###|#,##0 %|¤ #,##0.00|	PEN=PEN|USD=$|
+quc	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|GTQ=Q|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+raj	०१२३४५६७८९|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+rm	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+rn	0123456789|,|.|-|+|%|1|#,##0.###|#,##0 %|#,##0.00¤|	AUD=A$|BIF=FBu|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ro	0123456789|,|.|-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	XAF=FCFA|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ro-MD	0123456789|,|.|-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	MDL=L|
+rof	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|TZS=TSh|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ru	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=NZ$|RUB=₽|RUR=р.|THB=฿|TMT=ТМТ|TWD=NT$|UAH=₴|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg|XOF=F CFA|XPF=CFPF|XXX=XXXX|
+ru-BY	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	BYN=Br|RUR=RUR|
+ru-KG	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	KGS=сом|
+ru-KZ	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	KZT=₸|
+ru-MD	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	MDL=L|
+ru-UA	0123456789|,| |-|+|%|2|#,##0.###|#,##0 %|#,##0.00 ¤|	
+rw	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|RWF=RF|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+rwk	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|#,##0.00¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|TZS=TSh|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+sa	०१२३४५६७८९|.|,|-|+|%|1|#,##,##0.###|#,##,##0%|¤#,##,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+sah	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|RUB=₽|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+saq	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KES=Ksh|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+sat	᱐᱑᱒᱓᱔᱕᱖᱗᱘᱙|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+sbp	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|#,##0.00¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|TZS=TSh|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+sc	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XDR=DIP|XOF=F CFA|XPF=CFPF|XXX=¤|
+scn	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+sd	٠١٢٣٤٥٦٧٨٩|.|٬|؜-|؜+|٪؜|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PKR=Rs|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+sd-Deva	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	JPY=¥|PHP=₱|USD=$|
+se	0123456789|,| |−|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|DKK=Dkr|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NOK=kr|NZD=NZ$|PHP=₱|SEK=Skr|THB=฿|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+se-SE	0123456789|,| |−|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	NOK=Nkr|SEK=kr|
+seh	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|MZN=MTn|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ses	0123456789|.| |-|+|%|1|#,##0.###|#,##0%|#,##0.00¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+sg	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00;¤-#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+shi	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+shn	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+si	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|LKR=රු.|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=සිෆ්එ|XPF=CFPF|XXX=¤|
+sk	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	EUR=€|ILS=NIS|MXN=MX$|XAF=FCFA|XCD=EC$|XCG=Cg|XOF=F CFA|XPF=CFPF|
+sl	0123456789|,|.|−|+|%|2|#,##0.###|#,##0 %|#,##0.00 ¤|	CNY=CN¥|EUR=€|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|USD=$|VND=₫|XAF=FCFA|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+smn	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+sn	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+so	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BBD=DBB|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|SOS=S|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+so-DJ	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	DJF=Fdj|
+so-ET	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	ETB=Br|
+so-KE	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	KES=Ksh|
+sq	0123456789|,| |-|+|%|2|#,##0.###|#,##0%|#,##0.00 ¤|	ALL=Lekë|AUD=A$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=ANG|XOF=F CFA|XPF=CFPF|XXX=¤|
+sq-MK	0123456789|,| |-|+|%|2|#,##0.###|#,##0%|#,##0.00 ¤|	MKD=den|
+sr	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	BAM=КМ|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|MXN=MX$|TWD=NT$|USD=US$|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+sr-Latn	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	BAM=KM|
+sr-Latn-BA	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	BAM=KM|
+sr-Latn-ME	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	BAM=KM|
+sr-Latn-XK	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	BAM=KM|
+st	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|ZAR=R|
+st-LS	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	LSL=M|
+su	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|IDR=Rp|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+suz-Sunu	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+sv	0123456789|,| |−|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	BBD=Bds$|BMD=BM$|BRL=BR$|BSD=BS$|BZD=BZ$|CAD=CA$|DKK=Dkr|DOP=RD$|EEK=Ekr|EGP=EG£|EUR=€|IEP=IE£|ILS=₪|ISK=Ikr|JMD=JM$|MXN=MX$|NOK=Nkr|SEK=kr|USD=US$|XAF=FCFA|XCD=EC$|XOF=F CFA|XPF=CFPF|XXX=¤|
+sw	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KES=Ksh|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|TZS=TSh|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+sw-CD	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	CDF=FC|
+sw-KE	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	USD=$|
+sw-UG	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	UGX=USh|
+syr	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|SYP=ل.س.‏|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+szl	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|PLN=zł|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ta	0123456789|.|,|-|+|%|1|#,##,##0.###|#,##,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ta-LK	0123456789|.|,|-|+|%|1|#,##,##0.###|#,##,##0%|¤ #,##0.00|	LKR=Rs.|
+ta-MY	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	MYR=RM|SGD=S$|
+ta-SG	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	MYR=RM|SGD=$|USD=US$|
+te	0123456789|.|,|-|+|%|1|#,##,##0.###|#,##0%|¤#,##,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+teo	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|UGX=USh|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+teo-KE	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	KES=Ksh|
+tg	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TJS=сом.|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+th	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=AU$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|
+ti	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|ETB=Br|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ti-ER	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	ERN=Nfk|
+tk	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Kg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+tn	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|ZAR=R|
+tn-BW	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	BWP=P|
+to	0123456789|.| |-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=AUD$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZD$|PHP=₱|TOP=T$|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+tok	0123456789|,| |-|+|%|1|#,#0.###|#,##0%|¤#,#0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+tr	0123456789|,|.|-|+|%|1|#,##0.###|%#,##0|¤#,##0.00|	AUD=AU$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TRY=₺|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+tt	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|RUB=₽|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+twq	0123456789|.| |-|+|%|1|#,##0.###|#,##0%|#,##0.00¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+tyv	0123456789|.| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+tzm	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ug	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=￥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+uk	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	JPY=¥|UAH=₴|UAK=крб.|XAF=FCFA|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+und	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ur	0123456789|.|,|‎-|‎+|٪|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PKR=Rs|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+ur-IN	۰۱۲۳۴۵۶۷۸۹|٫|٬|‎-‎|‎+‎|٪|1|#,##0.###|#,##0%|¤#,##0.00|	PKR=PKR|
+uz	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|TWD=NT$|USD=US$|UZS=soʻm|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+uz-Arab	۰۱۲۳۴۵۶۷۸۹|٫|٬|‎-‎|‎+‎|٪|1|#,##0.###|#,##0%|¤ #,##0.00|	AFN=؋|PHP=₱|
+uz-Cyrl	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	PHP=₱|THB=฿|UZS=сўм|
+vai	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|LRD=$|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+vec	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	XCG=Cf|XXX=¤|
+vi	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=AU$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|
+vmw	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+vun	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|TZS=TSh|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+wae	0123456789|,|'|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+wo	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EGP=EGPP|EUR=€|GBP=£|GHS=GHS.|GIP=GIIP|GTQ=GT Q|HKD=HK$|HRK=HRKS|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MDL=Vote MDL|MXN=MX$|NGN=NGN.|NZD=NZ$|PHP=₱|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+xh	0123456789|.| |-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNH=I-CNH|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=ICg.|XOF=F CFA|XPF=CFPF|XXX=¤|ZAR=R|ZWG=IZWG|
+xnr	0123456789|.|,|-|+|%|1|#,##,##0.###|#,##,##0%|¤#,##,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+xog	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|UGX=USh|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+yav	0123456789|,| |-|+|%|1|#,##0.###|#,##0%|#,##0.00 ¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+yi	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+yo	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NGN=₦|NZD=NZ$|PHP=₱|RUB=₽|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+yrl	0123456789|,|.|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=AU$|BOB=BUB|BRL=R$|CAD=CA$|CNY=CN¥|COP=$|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PTE=Esc.|SCR=SCRu|THB=฿|TWD=NT$|USD=US$|VES=Bs.S|VND=₫|XAF=FCF|XCD=EC$|XCG=Cg.|XOF=CFA|XPF=CFP|XXX=¤|
+yue	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=AU$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=¥|KRW=￦|MXN=MX$|NZD=NZ$|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|
+za	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤ #,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+zgh	0123456789|,| |-|+|%|1|#,##0.###|#,##0 %|#,##0.00¤|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|PHP=₱|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|
+zh	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=AU$|BRL=R$|CAD=CA$|CNY=¥|EUR=€|GBP=£|HKD=HK$|ILR=ILS|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|TWD=NT$|USD=US$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|
+zh-Hans-HK	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	CNY=CN¥|
+zh-Hans-MO	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	CNY=CN¥|MOP=MOP$|
+zh-Hans-SG	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	CNY=CN¥|SGD=$|
+zh-Hant	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	CNY=CN¥|JPY=¥|KRW=￦|TWD=$|
+zh-Hant-HK	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	CNY=CN¥|JPY=¥|
+zh-Hant-MO	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	CNY=CN¥|JPY=¥|MOP=MOP$|
+zh-Hant-MY	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	CNY=CN¥|JPY=¥|KRW=￦|TWD=$|
+zu	0123456789|.|,|-|+|%|1|#,##0.###|#,##0%|¤#,##0.00|	AUD=A$|BRL=R$|CAD=CA$|CNY=CN¥|EUR=€|GBP=£|HKD=HK$|ILS=₪|INR=₹|JPY=JP¥|KRW=₩|MXN=MX$|NZD=NZ$|THB=฿|TWD=NT$|USD=$|VND=₫|XAF=FCFA|XCD=EC$|XCG=Cg.|XOF=F CFA|XPF=CFPF|XXX=¤|ZAR=R|

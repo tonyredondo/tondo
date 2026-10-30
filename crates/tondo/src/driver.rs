@@ -181,9 +181,26 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
     let mut libraries: Vec<String> = Vec::new();
     // The dependencies, whose warnings their authors see, not this program's.
     let mut dependencies: Vec<String> = Vec::new();
+    // A file alone is a program of its name, at version 0.0.0.
+    let mut built = ast::Built {
+        name: path.file_stem().unwrap_or_default().to_string_lossy().into_owned(),
+        version: "0.0.0".into(),
+        dir: path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf(),
+        dependencies: Vec::new(),
+    };
     let module = if path.is_dir() {
         let packages = deps::resolve(path, None)?;
         dependencies = packages[1..].iter().map(|p| p.name.clone()).collect();
+        built = ast::Built {
+            name: packages[0].name.clone(),
+            version: packages[0].version.clone(),
+            dir: path.to_path_buf(),
+            dependencies: packages[1..]
+                .iter()
+                .filter(|p| !p.tests_only)
+                .map(|p| (p.name.clone(), p.version.clone()))
+                .collect(),
+        };
         for library in packages.iter().flat_map(|p| &p.libraries) {
             if !libraries.contains(library) {
                 libraries.push(library.clone());
@@ -327,6 +344,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
         }
     };
     let mut module = module;
+    module.built = Some(built);
     module.library |= root != Root::Program;
     module.c_library = root == Root::CLibrary;
     if editor {
@@ -506,15 +524,24 @@ pub fn inputs(path: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(inputs)
 }
 
-/// Adds the files the sources among `inputs` embed (standard library 14.27).
+/// Adds the files the sources among `inputs` embed (standard library
+/// 14.27), and those of the repository whose commit `env.build()` reports
+/// (14.3.6).
 fn embedded(inputs: &mut Vec<PathBuf>) {
     let mut found = Vec::new();
+    let mut reports = None;
     for input in inputs.iter().filter(|p| p.extension().is_some_and(|e| e == "to")) {
         if let Ok(text) = std::fs::read_to_string(input) {
             let embedded = crate::embed::inputs(input, &text);
             found.extend(crate::templates::inputs(input, &embedded));
             found.extend(embedded);
+            if text.contains("build()") {
+                reports = input.parent().map(Path::to_path_buf);
+            }
         }
+    }
+    if let Some(dir) = reports {
+        found.extend(crate::built::inputs(&dir));
     }
     inputs.extend(found);
 }

@@ -34,6 +34,20 @@ pub struct Module {
     /// text starts, which the linker puts in its place (standard library
     /// 14.31).
     pub templates: Vec<(u32, Expr)>,
+    /// The program's name, version and directory and its dependencies'
+    /// names and versions, which `env.build()` reports (standard library
+    /// 14.3.6).
+    pub built: Option<Built>,
+}
+
+/// What a program is built from: its package's name, version and
+/// directory, and the name and version of each package it uses.
+#[derive(Clone, Debug, Default)]
+pub struct Built {
+    pub name: String,
+    pub version: String,
+    pub dir: std::path::PathBuf,
+    pub dependencies: Vec<(String, String)>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

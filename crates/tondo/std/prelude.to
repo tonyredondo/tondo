@@ -175,8 +175,36 @@ impl Ordered for Float {
 // ---------------------------------------------------------------------------
 
 /// The pieces between each `separator`; the characters when it is empty.
-pub fn String.split(self, separator: String): Array[String] {
-    textNative.split(self, separator)
+/// With a `limit`, at most that many, the last with the rest of the text:
+/// `"a=b=c".split("=", limit: 2)` is `["a", "b=c"]`.
+pub fn String.split(self, separator: String, limit: Int? = none): Array[String] {
+    let pieces = textNative.split(self, separator)
+    let most = match limit {
+        some(most) if most < 1 => 1
+        some(most) => most
+        none => return pieces
+    }
+    if pieces.length() <= most {
+        return pieces
+    }
+    var kept = pieces.slice(0, most - 1).unwrapOr([])
+    kept.push(pieces.slice(most - 1, pieces.length()).unwrapOr([]).join(separator))
+    kept
+}
+
+/// The text before the first `separator` and the text after it, or `none`
+/// when it has none: `"key=a=b".splitOnce("=")` is `some(("key", "a=b"))`.
+pub fn String.splitOnce(self, separator: String): (String, String)? {
+    let at = self.find(separator)?
+    let before = self.slice(0, at).unwrapOr("")
+    let after = self.slice(at + separator.length(), self.length()).unwrapOr("")
+    some((before, after))
+}
+
+/// Whether the texts are the same but for case, by Unicode's rules:
+/// `"Straße".equalsIgnoringCase("STRASSE")` is `true`.
+pub fn String.equalsIgnoringCase(self, other: String): Bool {
+    self == other or self.toUpper().toLower() == other.toUpper().toLower()
 }
 
 /// The lines, without their `\n` or `\r\n`.
@@ -217,14 +245,29 @@ fn padding(length: Int, width: Int, fill: String): String {
     }
 }
 
-/// The text without the whitespace at its start.
-pub fn String.trimStart(self): String {
-    textNative.trimStart(self)
+/// The text without the whitespace at its start and end, or without the
+/// characters of `characters` there: `"--a-b--".trim("-")` is `"a-b"`.
+pub fn String.trim(self, characters: String? = none): String {
+    trimmed(self, characters, 0)
 }
 
-/// The text without the whitespace at its end.
-pub fn String.trimEnd(self): String {
-    textNative.trimEnd(self)
+/// The text without the whitespace at its start, or without the
+/// characters of `characters` there.
+pub fn String.trimStart(self, characters: String? = none): String {
+    trimmed(self, characters, 1)
+}
+
+/// The text without the whitespace at its end, or without the characters
+/// of `characters` there.
+pub fn String.trimEnd(self, characters: String? = none): String {
+    trimmed(self, characters, 2)
+}
+
+fn trimmed(text: String, characters: String?, ends: Int): String {
+    match characters {
+        some(set) => textNative.trim(text, set, false, ends)
+        none => textNative.trim(text, "", true, ends)
+    }
 }
 
 /// The text without `prefix` at its start, if it has it.

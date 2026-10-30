@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 /// The files of a new project, its name in them.
 fn files(name: &str) -> Vec<(&'static str, String)> {
     vec![
-        ("tondo.toml", format!("[package]\nname = \"{name}\"\n")),
+        ("tondo.toml", format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n")),
         (
             "src/main.to",
             "import std.console\n\nfn main() {\n    console.println(greeting(\"world\"))\n}\n\n/// What the program says to someone.\nfn greeting(name: String): String {\n    \"Hello, {name}!\"\n}\n"

@@ -1,0 +1,32 @@
+// The prelude's `split` takes a limit, `splitOnce` cuts at the first
+// separator, `equalsIgnoringCase` compares by Unicode's case rules, and
+// `trim`, `trimStart` and `trimEnd` take the characters to remove.
+
+import std.console
+
+fn main() {
+    console.println(
+        "{"a=b=c".split("=", limit: 2)} {"a=b=c".split("=", limit: 0)} {"a=b".split("=", limit: 5)}",
+    )
+    console.println("{"abc".split("", limit: 2)} {"a,b".split(",")}")
+    console.println("{"key=a=b".splitOnce("=")} {"plain".splitOnce("=")} {"x::y".splitOnce("::")}")
+    match "host:8080".splitOnce(":") {
+        some((host, port)) => console.println("{host} {port}")
+        none => console.println("no port")
+    }
+    console.println(
+        "{"Straße".equalsIgnoringCase("STRASSE")} {"Go".equalsIgnoringCase("gO")} {"a".equalsIgnoringCase("b")}",
+    )
+    console.println(
+        "[{"  x  ".trim()}] [{"--a-b--".trim("-")}] [{"xyhiyx".trimStart("xy")}] [{"xyhiyx".trimEnd("xy")}]",
+    )
+    console.println("[{" y ".trimStart()}] [{" y ".trimEnd()}] [{"abc".trim("")}]")
+}
+
+// expect-stdout: [a, b=c] [a=b=c] [a, b]
+// expect-stdout: [a, bc] [a, b]
+// expect-stdout: some((key, a=b)) none some((x, y))
+// expect-stdout: host 8080
+// expect-stdout: true true false
+// expect-stdout: [x] [a-b] [hiyx] [xyhi]
+// expect-stdout: [y ] [ y] [abc]

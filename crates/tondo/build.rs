@@ -12,8 +12,9 @@ use std::process::Command;
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let runtime = manifest.join("../tondo-runtime");
-    println!("cargo:rerun-if-changed={}", runtime.join("src").display());
-    println!("cargo:rerun-if-changed={}", runtime.join("Cargo.toml").display());
+    for part in ["src", "data", "build.rs", "Cargo.toml"] {
+        println!("cargo:rerun-if-changed={}", runtime.join(part).display());
+    }
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
@@ -69,14 +70,14 @@ fn main() {
     // every target: a target's runtime that another `tondo` packed works
     // with this one when they agree (toolchain 7.8).
     let mut files = Vec::new();
-    let mut pending = vec![runtime.join("src")];
+    let mut pending = vec![runtime.join("src"), runtime.join("data")];
     while let Some(dir) = pending.pop() {
         for entry in std::fs::read_dir(&dir).unwrap().flatten() {
             let path = entry.path();
             if path.is_dir() { pending.push(path) } else { files.push(path) }
         }
     }
-    files.push(runtime.join("Cargo.toml"));
+    files.extend([runtime.join("build.rs"), runtime.join("Cargo.toml")]);
     files.sort();
     let mut identity = fnv(0xcbf2_9ce4_8422_2325, env::var("CARGO_PKG_VERSION").unwrap().as_bytes());
     for file in files {

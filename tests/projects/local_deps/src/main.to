@@ -1,10 +1,16 @@
-import std.console
 import geo
 import geo.area
+import std.console
+import std.env
 
 fn main() {
     let rect = geo.Rect { width: 3, height: 4 }
     console.println("{area.of(rect)}")
+    // `env.build()` reports the versions of tondo.toml.
+    let build = env.build()
+    let used = build.dependencies.map((d) { "{d.name} {d.version}" })
+    console.println("{build.name} {build.version} {used}")
 }
 
 // expect-stdout: 12
+// expect-stdout: drawing 2.1.0 [shapes 0.3.0]

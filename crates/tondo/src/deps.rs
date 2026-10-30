@@ -12,6 +12,8 @@ pub struct Package {
     /// The package name: the first segment of its module paths, unique in
     /// the graph.
     pub name: String,
+    /// Its `[package] version`, or `0.0.0`.
+    pub version: String,
     pub dir: PathBuf,
     /// Its dependencies by alias, as indices into the graph.
     pub dependencies: Vec<(String, usize)>,
@@ -81,6 +83,7 @@ impl Source {
 
 struct Manifest {
     name: Option<String>,
+    version: Option<String>,
     dependencies: Vec<(String, Source)>,
     dev_dependencies: Vec<(String, Source)>,
     libraries: Vec<String>,
@@ -93,6 +96,7 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
     let path = dir.join("tondo.toml");
     let mut manifest = Manifest {
         name: None,
+        version: None,
         dependencies: Vec::new(),
         dev_dependencies: Vec::new(),
         libraries: Vec::new(),
@@ -116,6 +120,14 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
                     match (key.as_str(), value.as_str()) {
                         ("name", Some(name)) if is_identifier(name) => manifest.name = Some(name.to_string()),
                         ("name", _) => return Err(at(line, "the package name must be an identifier".into())),
+                        ("version", Some(version))
+                            if !version.is_empty() && !version.chars().any(|c| c.is_whitespace() || c.is_control()) =>
+                        {
+                            manifest.version = Some(version.to_string())
+                        }
+                        ("version", _) => {
+                            return Err(at(line, "the version is a string without spaces, as \"1.2.0\"".into()));
+                        }
                         ("edition", Some("0.1")) => {}
                         ("edition", _) => return Err(at(line, "the only edition is \"0.1\"".into())),
                         _ => return Err(at(line, format!("unknown key `{key}` in `[package]`"))),
@@ -369,6 +381,7 @@ impl Resolver<'_> {
         let index = self.packages.len();
         self.packages.push(Package {
             name: name.clone(),
+            version: manifest.version.unwrap_or_else(|| "0.0.0".into()),
             dir: dir.clone(),
             dependencies: Vec::new(),
             dev_dependencies: Vec::new(),

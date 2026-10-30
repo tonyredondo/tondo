@@ -3197,3 +3197,29 @@ stream would break it. For the error of a tool to be its `Display`,
 reflection shows a value whose type implements `Display` in its file as it
 displays, which a `Set` writes too.
 
+## 2026-10-30 — Numbers for people, and what a program was built from
+
+The eighth lot. Numbers, percents, money and plural forms follow CLDR, the
+data the dates already carry, and never the system's: musl and containers
+have none, and a program should write the same text on every machine. The
+data is a table the runtime keeps compressed; the patterns, the rounding
+and the plural rules are read and applied in Tondo. A number's digits come
+from its `Display`, so an integer, a float and the decimal types to come
+are written alike, and a float is rounded as people read it, from its
+shortest digits: `2.675` is `2.68`.
+
+`format.apply` takes a format chosen while the program runs, the same that
+an interpolation takes after its colon, and, as there, the value's type
+decides which options it may have: the compiler calls the version for
+integers or floats, so a generic `T: Display` is all it asks.
+
+`env.build()` is read when the program compiles, as `embed` reads files:
+the name and the new `version` of `tondo.toml`, the git commit and whether
+tracked files changed, the dependencies, and, from the runtime, the target.
+It has no time of the build, which would make two builds of the same code
+differ.
+
+`trim` moved from the compiler's intrinsics to the prelude, to take the
+characters to remove; Go's `Cut` is `splitOnce`, which gives an optional
+pair rather than a flag.
+

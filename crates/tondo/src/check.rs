@@ -110,6 +110,7 @@ fn check_with<'a>(
         text_error: Ty::ERROR,
         io_error: Ty::ERROR,
         env_error: None,
+        built: None,
         process: None,
         externs: Vec::new(),
         c_string: Ty::ERROR,
@@ -246,6 +247,9 @@ enum StdModule {
     /// `std.internal.fs`: the runtime's side of `std.path` and `std.fs`
     /// written in Tondo.
     InternalFs,
+    /// `std.internal.env`: the host's side of what `std.env` writes in
+    /// Tondo.
+    InternalEnv,
 }
 
 /// The types `std.process` declares when imported.
@@ -813,6 +817,8 @@ struct Checker<'a> {
     io_error: Ty,
     /// `std.env.EnvError`, once `std.env` is imported.
     env_error: Option<Ty>,
+    /// What `env.build()` reports of the program (standard library 14.3.6).
+    built: Option<ast::Built>,
     /// The types of `std.process`, once imported.
     process: Option<ProcessTypes>,
     /// The `extern fn` declarations (FFI).
@@ -1017,6 +1023,7 @@ impl<'a> Checker<'a> {
     fn program(&mut self, module: &'a ast::Module) -> Option<hir::Program> {
         self.prelude = module.module_paths.iter().position(|p| p == &["std", "prelude"]).map(|i| i as u32);
         self.module_paths = module.module_paths.clone();
+        self.built = module.built.clone();
         self.datetime_module = module.module_paths.iter().position(|p| p == &["std", "datetime"]).map(|i| i as u32);
         for import in &module.imports {
             self.import(import);
@@ -1652,6 +1659,7 @@ impl<'a> Checker<'a> {
             StdModule::Path => "path",
             StdModule::Io => "io",
             StdModule::Text => "text",
+            StdModule::Env => "env",
             _ => return &[],
         })
     }
@@ -1916,6 +1924,39 @@ impl<'a> Checker<'a> {
                     .get(scope.module as usize)
                     .is_some_and(|p| p.len() == 2 && p[0] == "std" && p[1] == module)
             })
+    }
+
+    /// The function of `std.format` that applies a format to a value of
+    /// `ty` as an integer or a float, as `formatted` does.
+    fn typed_apply(&mut self, ty: Ty) -> Option<FnId> {
+        let integer = matches!(self.types.kind(ty), TyKind::Int(_) | TyKind::Byte) || self.bound_by(ty, self.integer);
+        let name = match self.types.kind(ty) {
+            _ if integer => "format.applyInteger",
+            TyKind::Float(_) => "format.applyFloat",
+            _ => return None,
+        };
+        match self.names.get(name) {
+            Some(&ModuleName::Fn(id)) => Some(id),
+            _ => None,
+        }
+    }
+
+    /// `format.apply(value, spec)` of an integer or a float.
+    fn apply_typed(&mut self, id: FnId, value: hir::Expr, spec: hir::Expr, result: Ty, span: Span) -> hir::Expr {
+        let (ty, at) = (value.ty, value.span);
+        let (type_args, args) = match self.types.kind(ty) {
+            TyKind::Byte => (vec![Ty::INT], vec![Self::mk(hir::ExprKind::Convert(Box::new(value)), Ty::INT, at), spec]),
+            TyKind::Float(_) => {
+                let single = Self::mk(hir::ExprKind::Bool(ty == Ty::F32), Ty::BOOL, at);
+                let value = match ty == Ty::F32 {
+                    true => Self::mk(hir::ExprKind::Convert(Box::new(value)), Ty::F64, at),
+                    false => value,
+                };
+                (Vec::new(), vec![value, single, spec])
+            }
+            _ => (vec![ty], vec![value, spec]),
+        };
+        Self::mk(hir::ExprKind::Call(Callee::Fn(id), type_args, args), result, span)
     }
 
     /// Writes each value of an interpolated markup through
@@ -2879,6 +2920,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "panic"] => StdModule::InternalPanic,
             ["std", "internal", "time"] => StdModule::InternalTime,
             ["std", "internal", "fs"] => StdModule::InternalFs,
+            ["std", "internal", "env"] => StdModule::InternalEnv,
             ["std", "internal", "context"] => StdModule::InternalContext,
             ["std", "internal", "channel"] => StdModule::InternalChannel,
             ["std", rest @ ..] => {
@@ -11848,7 +11890,6 @@ impl<'a> Checker<'a> {
             "endsWith" => (S::EndsWith, vec![Ty::STRING], Ty::BOOL),
             "find" => (S::Find, vec![Ty::STRING], int_option),
             "replace" => (S::Replace, vec![Ty::STRING, Ty::STRING], Ty::STRING),
-            "trim" => (S::Trim, vec![], Ty::STRING),
             "toLowerAscii" => (S::LowerAscii, vec![], Ty::STRING),
             "toUpperAscii" => (S::UpperAscii, vec![], Ty::STRING),
             "slice" => (S::SliceChecked, vec![Ty::INT, Ty::INT], checked),
@@ -12453,13 +12494,22 @@ impl<'a> Checker<'a> {
             (TyKind::String, "toFloat" | "toDouble" | "parseFloat") => "use `Float.parse(text)`",
             (TyKind::String, "toLowerCase" | "lower" | "to_lowercase" | "downcase" | "lowercased") => "use `toLower()`",
             (TyKind::String, "toUpperCase" | "upper" | "to_uppercase" | "upcase" | "uppercased") => "use `toUpper()`",
-            (TyKind::String, "strip" | "trimmed") => "use `trim()`, `trimStart()` or `trimEnd()`",
+            (TyKind::String, "strip" | "trimmed" | "trimSpace") => "use `trim()`, `trimStart()` or `trimEnd()`",
+            (TyKind::String, "trimChars" | "trimMatches" | "trim_matches" | "trimFunc") => {
+                "use `trim(characters)`, `trimStart(characters)` or `trimEnd(characters)`"
+            }
+            (TyKind::String, "cut" | "partition" | "split_once" | "splitAt") => {
+                "use `splitOnce(separator)`, which gives `(String, String)?`"
+            }
+            (TyKind::String, "splitN" | "splitn") => "use `split(separator, limit: count)`",
             (TyKind::String, "indexOf" | "index" | "firstIndex") => "use `find(text)`, which gives `Int?`",
             (TyKind::String, "includes" | "has") => "use `contains(text)`",
             (TyKind::String, "starts_with" | "hasPrefix") => "use `startsWith(prefix)`",
             (TyKind::String, "ends_with" | "hasSuffix") => "use `endsWith(suffix)`",
             (TyKind::String, "format") => "interpolate the values: `\"{first} and {second}\"`",
-            (TyKind::String, "equalsIgnoreCase") => "compare `a.toLower() == b.toLower()`",
+            (TyKind::String, "equalsIgnoreCase" | "equalFold" | "eq_ignore_ascii_case" | "caseInsensitiveEquals") => {
+                "use `equalsIgnoringCase(other)`"
+            }
             (_, "toString" | "to_string" | "str" | "toStr" | "description") => "interpolate it: `\"{value}\"`",
             (_, "equals" | "eq" | "isEqual") => "compare with `==`",
             (_, "clone" | "copy" | "dup" | "deepCopy") => "values are copied on assignment: `let copy = value`",
@@ -13665,9 +13715,16 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalPanic
                     | StdModule::InternalTime
                     | StdModule::InternalContext
-                    | StdModule::InternalFs),
+                    | StdModule::InternalFs
+                    | StdModule::InternalEnv),
                 )),
             ) => {
+                // `built()`: what `env.build()` reports, read now and kept as
+                // a constant (standard library 14.3.6).
+                if module == StdModule::InternalEnv && *member == "built" {
+                    let described = self.built.as_ref().map(crate::built::describe).unwrap_or_default();
+                    return Self::mk(hir::ExprKind::Str(described), Ty::STRING, span);
+                }
                 // `joined(values, separator)`: the elements' `Display`, with
                 // the separator between, into one text, as `Array.join`.
                 if module == StdModule::InternalText && *member == "joined" {
@@ -13719,6 +13776,7 @@ impl<'a> Checker<'a> {
                     StdModule::InternalTime => "time",
                     StdModule::InternalContext => "context",
                     StdModule::InternalFs => "fs",
+                    StdModule::InternalEnv => "env",
                     _ => "reflect",
                 };
                 let found =
@@ -14302,6 +14360,17 @@ impl<'a> Checker<'a> {
         {
             let result = self.types.subst(signature.result, &inference.map);
             return self.compiled_template(cx, args, result, span);
+        }
+        // `format.apply` writes an integer or a float as one, as an
+        // interpolation does (standard library 10.6).
+        if let Callee::Fn(id) = callee
+            && self.is_std_fn(id, "format", "format.apply")
+            && let &[Some(value), Some(spec)] = slots.as_slice()
+            && let Some(typed) = self.typed_apply(type_args[0])
+        {
+            let (value, spec) = (values[value].take().unwrap(), values[spec].take().unwrap());
+            let result = self.types.subst(signature.result, &inference.map);
+            return self.apply_typed(typed, value, spec, result, span);
         }
         let result = self.types.subst(signature.result, &inference.map);
         let mut ordered: Vec<(Option<usize>, hir::Expr)> = Vec::new();

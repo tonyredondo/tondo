@@ -3,6 +3,7 @@
 pub mod api;
 pub mod ast;
 pub mod bind;
+pub mod built;
 pub mod check;
 pub mod cli;
 pub mod codegen;

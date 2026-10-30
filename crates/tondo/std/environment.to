@@ -1,0 +1,86 @@
+// The parts of std.env (standard library 14.3.6) written in Tondo, which a
+// program that imports std.env links with: the user's directories, the
+// processors and what the program was built from.
+
+import std.env as __env
+import std.internal.env as envNative
+
+/// What a program was built from, which `env.build()` gives.
+pub type Build = {
+    /// The package's name, or the file's without `.to`.
+    name: String
+    /// The `version` of `tondo.toml`'s `[package]`, or `0.0.0`.
+    version: String
+    /// The commit of the git repository the package was in.
+    commit: String?
+    /// Whether tracked files had changes that were not committed.
+    modified: Bool
+    /// The target, as tondo names it: `x86_64-linux-gnu`, `aarch64-macos`.
+    target: String
+    /// The compiler that built it: `tondo 0.1.0`.
+    compiler: String
+    /// The packages it uses, without those only its tests use.
+    dependencies: Array[Dependency]
+}
+
+/// A package a program uses: its name and the `version` of its
+/// `tondo.toml`, or `0.0.0`.
+pub type Dependency = {
+    name: String
+    version: String
+}
+
+/// The user's home directory, `$HOME`; `none` when it is not set.
+pub fn homeDirectory(): String? {
+    __env.get("HOME").filter((home) { not home.isEmpty() })
+}
+
+/// Where programs keep the user's settings: `$XDG_CONFIG_HOME` or
+/// `~/.config` on Linux, `~/Library/Application Support` on macOS.
+pub fn configDirectory(): String? {
+    userDirectory("XDG_CONFIG_HOME", ".config", "Library/Application Support")
+}
+
+/// Where programs keep for the user what they can make again:
+/// `$XDG_CACHE_HOME` or `~/.cache` on Linux, `~/Library/Caches` on macOS.
+pub fn cacheDirectory(): String? {
+    userDirectory("XDG_CACHE_HOME", ".cache", "Library/Caches")
+}
+
+fn userDirectory(variable: String, linux: String, macos: String): String? {
+    if envNative.target().endsWith("macos") {
+        return homeDirectory().map((home) { "{home}/{macos}" })
+    }
+    match __env.get(variable) {
+        some(set) if set.startsWith("/") => some(set)
+        _ => homeDirectory().map((home) { "{home}/{linux}" })
+    }
+}
+
+/// How many processors the program may run on at once, as its affinity
+/// and its cgroup's quota allow: at least 1.
+pub fn processors(): Int {
+    envNative.processors()
+}
+
+/// What the program was built from, read when it compiled.
+pub fn build(): Build {
+    let lines = envNative.built().lines()
+    let line = (index: Int): String { lines.get(index).unwrapOr("") }
+    var dependencies: Array[Dependency] = []
+    for written in lines.slice(5, lines.length()).unwrapOr([]) {
+        match written.splitOnce("\t") {
+            some((name, version)) => dependencies.push(Dependency { name: name, version: version })
+            none => {}
+        }
+    }
+    Build {
+        name: line(0)
+        version: line(1)
+        commit: if line(2).isEmpty() { none } else { some(line(2)) }
+        modified: line(3) == "true"
+        target: envNative.target()
+        compiler: line(4)
+        dependencies: dependencies
+    }
+}

@@ -1,5 +1,10 @@
 // std.format (standard library 10.6): text built piece by piece, each with
-// its `Display`.
+// its `Display`; values written with a format the program chooses while it
+// runs; and numbers, percents, amounts and plural forms as each language
+// writes them, from the CLDR data that tondo carries.
+
+import std.formats as __formats
+import std.internal.text as textNative
 
 /// Text built piece by piece: `add` appends a value's `Display`, in place
 /// when nothing else holds the text.
@@ -36,4 +41,583 @@ impl Display for Builder {
     fn display(self): String {
         self.text()
     }
+}
+
+// ---------------------------------------------------------------------------
+// Formats chosen while the program runs
+// ---------------------------------------------------------------------------
+
+/// Why `apply` could not write a value: its format does not read, or does
+/// not go with the value's type.
+pub type FormatError = {
+    message: String
+}
+
+impl Display for FormatError {
+    fn display(self): String {
+        self.message
+    }
+}
+
+/// The value written with a format the program chooses while it runs, the
+/// one an interpolation takes after its colon: `format.apply(price,
+/// ">10.2")` is `"{price:>10.2}"`. As there, the value's type decides which
+/// options the format may have.
+pub fn apply[T: Display](value: T, spec: String): String ! FormatError {
+    let format = specOf(spec)?
+    if format.plus or format.zero or format.alternate or format.kind.isSome() {
+        fail refused(spec, "a text", "`[[fill]align][width][.precision]`")
+    }
+    __formats.formatText(
+        "{value}",
+        format.precision,
+        format.width,
+        format.fill,
+        format.align.unwrapOr('<'),
+    )
+}
+
+/// `apply` of an integer, which the compiler calls instead.
+fn applyInteger[T: Integer](value: T, spec: String): String ! FormatError {
+    let format = specOf(spec)?
+    let radix = match format.kind {
+        some('x') => 16
+        some('X') => 16
+        some('o') => 8
+        some('b') => 2
+        some(_) => 0
+        none => 10
+    }
+    if radix == 0 or format.precision >= 0 or (format.alternate and radix == 10) {
+        fail refused(spec, "an integer", "`[[fill]align][+][#][0][width][x|X|o|b]`")
+    }
+    __formats.formatInteger(
+        value,
+        radix,
+        format.kind == some('X'),
+        format.alternate,
+        format.plus,
+        format.zero,
+        format.width,
+        format.fill,
+        format.align.unwrapOr('>'),
+    )
+}
+
+/// `apply` of a float, which the compiler calls instead.
+fn applyFloat(value: Float, single: Bool, spec: String): String ! FormatError {
+    let format = specOf(spec)?
+    let exponent = format.kind == some('e') or format.kind == some('E')
+    if format.alternate or (format.kind.isSome() and not exponent) {
+        fail refused(spec, "a float", "`[[fill]align][+][0][width][.precision][e|E]`")
+    }
+    __formats.formatFloat(
+        value,
+        single,
+        format.precision,
+        exponent,
+        format.kind == some('E'),
+        format.plus,
+        format.zero,
+        format.width,
+        format.fill,
+        format.align.unwrapOr('>'),
+    )
+}
+
+/// The options of a format; `precision` is -1 without one.
+type Spec = {
+    fill: Char
+    align: Char?
+    plus: Bool
+    alternate: Bool
+    zero: Bool
+    width: Int
+    precision: Int
+    kind: Char?
+}
+
+/// Reads `[[fill]align][+][#][0][width][.precision][type]`, as the
+/// compiler reads the format of an interpolation.
+fn specOf(text: String): Spec ! FormatError {
+    let chars = text.chars().collect()
+    let aligns = (at: Int): Bool {
+        match chars.get(at) {
+            some(c) => c == '<' or c == '>' or c == '^'
+            none => false
+        }
+    }
+    var format = Spec {
+        fill: ' '
+        align: none
+        plus: false
+        alternate: false
+        zero: false
+        width: 0
+        precision: -1
+        kind: none
+    }
+    var at = 0
+    if aligns(1) {
+        format.fill = chars[0]
+        format.align = chars.get(1)
+        at = 2
+    } else if aligns(0) {
+        format.align = chars.get(0)
+        at = 1
+    }
+    if chars.get(at) == some('+') {
+        format.plus = true
+        at += 1
+    }
+    if chars.get(at) == some('#') {
+        format.alternate = true
+        at += 1
+    }
+    if chars.get(at) == some('0') {
+        format.zero = true
+        at += 1
+    }
+    let (width, afterWidth) = digitsAt(chars, at)
+    format.width = width.unwrapOr(0)
+    at = afterWidth
+    if chars.get(at) == some('.') {
+        let (precision, afterPrecision) = digitsAt(chars, at + 1)
+        match precision {
+            some(digits) => format.precision = digits
+            none => fail notFormat(text)
+        }
+        at = afterPrecision
+    }
+    match chars.get(at) {
+        some(kind) if kind in ['x', 'X', 'o', 'b', 'e', 'E'] => {
+            format.kind = some(kind)
+            at += 1
+        }
+        _ => {}
+    }
+    if at != chars.length() or text.isEmpty() {
+        fail notFormat(text)
+    }
+    format
+}
+
+/// The number the digits from `at` write, up to nine, and where they end.
+fn digitsAt(chars: Array[Char], start: Int): (Int?, Int) {
+    var at = start
+    var value = 0
+    for at < chars.length() and at - start < 9 and chars[at].isDigit() {
+        value = value * 10 + chars[at].code() - '0'.code()
+        at += 1
+    }
+    if at == start { (none, at) } else { (some(value), at) }
+}
+
+fn notFormat(text: String): FormatError {
+    FormatError {
+        message: "`{text}` is not a format: write `[[fill]align][sign][#][0][width][.precision][type]`, as `>8`, `08`, `.2` or `#x`"
+    }
+}
+
+fn refused(spec: String, what: String, takes: String): FormatError {
+    FormatError { message: "the format `{spec}` does not go with {what}: write {takes}" }
+}
+
+// ---------------------------------------------------------------------------
+// Numbers in each language
+// ---------------------------------------------------------------------------
+
+/// The number as the language of `locale` writes it, a BCP 47 tag such as
+/// `"es"` or `"de-CH"`: with its digits, its separators of groups and of
+/// decimals and its minus sign, as `1,234.5` in English and `1.234,5` in
+/// German. With `decimals` it is rounded to that many, half to even;
+/// without, it keeps all of its own.
+pub fn number[T: Number + Display](value: T, locale: String = "en", decimals: Int? = none): String {
+    let symbols = symbolsOf(locale)
+    written(rounded(digitsOf("{value}"), decimals), symbols, patternOf(symbols.decimalPattern), "")
+}
+
+/// The fraction as a percent in the language of `locale`, rounded to
+/// `decimals`: `format.percent(0.256)` is `26%`, and `26 %` in Spanish.
+pub fn percent[T: Number + Display](value: T, locale: String = "en", decimals: Int = 0): String {
+    let symbols = symbolsOf(locale)
+    let hundredfold = shifted(digitsOf("{value}"), 2)
+    written(rounded(hundredfold, some(decimals)), symbols, patternOf(symbols.percentPattern), "")
+}
+
+/// The amount of the currency `code`, as `"EUR"`, in the language of
+/// `locale`, with its symbol there and the decimals the currency has:
+/// `format.currency(1234.5, "EUR", "es")` is `1234,50 €`.
+pub fn currency[T: Number + Display](amount: T, code: String, locale: String = "en"): String {
+    let symbols = symbolsOf(locale)
+    let digits = rounded(digitsOf("{amount}"), some(textNative.currencyDigits(code)))
+    written(
+        digits,
+        symbols,
+        patternOf(symbols.currencyPattern),
+        textNative.currencySymbol(locale, code),
+    )
+}
+
+/// A plural form of CLDR: the form of a word that a count takes in a
+/// language.
+pub enum Plural {
+    Zero
+    One
+    Two
+    Few
+    Many
+    Other
+}
+
+/// The form's keyword in CLDR, as `one` or `few`, which can name the
+/// messages of each form: `"cart.{format.plural(count, locale)}"`.
+impl Display for Plural {
+    fn display(self): String {
+        match self {
+            Plural.Zero => "zero"
+            Plural.One => "one"
+            Plural.Two => "two"
+            Plural.Few => "few"
+            Plural.Many => "many"
+            Plural.Other => "other"
+        }
+    }
+}
+
+/// The plural form a count takes in the language of `locale`: in English
+/// `1` takes `One` and `2` `Other`; in Russian `2` takes `Few` and `5`
+/// `Many`.
+pub fn plural(count: Int, locale: String = "en"): Plural {
+    let rules = textNative.pluralRules(locale)
+    var index = 0
+    for index + 1 < rules.length() {
+        if meets(rules[index + 1], count) {
+            return match rules[index] {
+                "zero" => Plural.Zero
+                "one" => Plural.One
+                "two" => Plural.Two
+                "few" => Plural.Few
+                "many" => Plural.Many
+                _ => Plural.Other
+            }
+        }
+        index += 2
+    }
+    Plural.Other
+}
+
+/// Whether a count meets a condition of CLDR's plural rules, as
+/// `i % 10 = 2..4 and i % 100 != 12..14`. Of an integer, `n` and `i` are
+/// its size, and the operands of its decimals and exponent are 0.
+fn meets(condition: String, count: Int): Bool {
+    let size = if count < 0 { 0 - count } else { count }
+    for alternative in condition.split(" or ") {
+        var all = true
+        for relation in alternative.split(" and ") {
+            if not holds(relation.words(), size) {
+                all = false
+            }
+        }
+        if all {
+            return true
+        }
+    }
+    false
+}
+
+fn holds(words: Array[String], size: Int): Bool {
+    let operand = words.get(0).unwrapOr("")
+    var value = if operand == "n" or operand == "i" { size } else { 0 }
+    var at = 1
+    if words.get(1) == some("%") {
+        let modulus = Int.parse(words.get(2).unwrapOr("1")).unwrapOr(1)
+        value = value % modulus
+        at = 3
+    }
+    let equal = words.get(at) == some("=")
+    var inside = false
+    for range in words.get(at + 1).unwrapOr("").split(",") {
+        match range.splitOnce("..") {
+            some((low, high)) => {
+                if value >= Int.parse(low).unwrapOr(0) and value <= Int.parse(high).unwrapOr(0) {
+                    inside = true
+                }
+            }
+            none => {
+                if value == Int.parse(range).unwrapOr(-1) {
+                    inside = true
+                }
+            }
+        }
+    }
+    inside == equal
+}
+
+/// A number written as digits: its sign, the digits before the point and
+/// those after it; or `NaN` and `inf`, written as they are.
+type Digits = {
+    negative: Bool
+    whole: String
+    fraction: String
+    special: String?
+}
+
+/// The digits of a number's `Display`, as `-12.5`, `1e21` or `NaN`.
+fn digitsOf(shown: String): Digits {
+    let negative = shown.startsWith("-")
+    var rest = shown.removePrefix("-")
+    if rest == "inf" or rest == "NaN" {
+        return Digits { negative: negative, whole: "", fraction: "", special: some(rest) }
+    }
+    var exponent = 0
+    match rest.splitOnce("e") {
+        some((mantissa, power)) => {
+            rest = mantissa
+            exponent = Int.parse(power).unwrapOr(0)
+        }
+        none => {}
+    }
+    let (whole, fraction) = rest.splitOnce(".").unwrapOr((rest, ""))
+    var all = "{whole}{fraction}"
+    var point = whole.length() + exponent
+    if point < 0 {
+        all = "{"0".repeat(0 - point)}{all}"
+        point = 0
+    }
+    if point > all.length() {
+        all = "{all}{"0".repeat(point - all.length())}"
+    }
+    Digits {
+        negative: negative
+        whole: all.slice(0, point).unwrapOr("")
+        fraction: all.slice(point, all.length()).unwrapOr("")
+        special: none
+    }
+}
+
+/// The digits with the point moved `places` to the right.
+fn shifted(parts: Digits, places: Int): Digits {
+    let moved = parts.fraction.padEnd(places, "0")
+    Digits {
+        negative: parts.negative
+        whole: "{parts.whole}{moved.slice(0, places).unwrapOr("")}"
+        fraction: moved.slice(places, moved.length()).unwrapOr("")
+        special: parts.special
+    }
+}
+
+/// The digits rounded to `decimals` after the point, half to even, and
+/// with zeros up to them.
+fn rounded(parts: Digits, decimals: Int?): Digits {
+    let wanted = match decimals {
+        some(count) if count < 0 => 0
+        some(count) => count
+        none => return parts
+    }
+    if parts.special.isSome() or parts.fraction.length() <= wanted {
+        return Digits {
+            negative: parts.negative
+            whole: parts.whole
+            fraction: parts.fraction.padEnd(wanted, "0")
+            special: parts.special
+        }
+    }
+    let dropped = parts.fraction
+        .slice(wanted, parts.fraction.length())
+        .unwrapOr("")
+        .chars()
+        .collect()
+    var kept = "{parts.whole}{parts.fraction.slice(0, wanted).unwrapOr("")}".chars().collect()
+    let beyond =
+        dropped.slice(1, dropped.length()).unwrapOr([]).filter((c) { c != '0' }).length() > 0
+    let last = kept.get(kept.length() - 1).unwrapOr('0')
+    let odd = (last.code() - '0'.code()) % 2 == 1
+    let up = dropped[0] > '5' or (dropped[0] == '5' and (beyond or odd))
+    if up {
+        var at = kept.length() - 1
+        var carry = true
+        for carry and at >= 0 {
+            if kept[at] == '9' {
+                kept[at] = '0'
+                at -= 1
+            } else {
+                kept[at] = Char.from(kept[at].code() + 1).unwrapOr('0')
+                carry = false
+            }
+        }
+        if carry {
+            kept.insert(0, '1')
+        }
+    }
+    let digits = kept.map((c) { "{c}" }).join("")
+    let point = digits.length() - wanted
+    Digits {
+        negative: parts.negative
+        whole: digits.slice(0, point).unwrapOr("")
+        fraction: digits.slice(point, digits.length()).unwrapOr("")
+        special: none
+    }
+}
+
+/// How a locale writes numbers, from the runtime's data.
+type Symbols = {
+    digits: String
+    decimal: String
+    group: String
+    minus: String
+    percent: String
+    minimumGrouping: Int
+    decimalPattern: String
+    percentPattern: String
+    currencyPattern: String
+}
+
+fn symbolsOf(locale: String): Symbols {
+    let found = textNative.numberSymbols(locale)
+    let at = (index: Int): String { found.get(index).unwrapOr("") }
+    Symbols {
+        digits: at(0)
+        decimal: at(1)
+        group: at(2)
+        minus: at(3)
+        percent: at(5)
+        minimumGrouping: Int.parse(at(6)).unwrapOr(1)
+        decimalPattern: at(7)
+        percentPattern: at(8)
+        currencyPattern: at(9)
+    }
+}
+
+/// A pattern of CLDR, as `#,##0.00 ¤`: what is written before and after a
+/// number, positive and negative, and the sizes of its groups of digits.
+type Pattern = {
+    prefix: String
+    suffix: String
+    negative: (String, String)?
+    primary: Int
+    secondary: Int
+}
+
+fn patternOf(text: String): Pattern {
+    let (positive, negative) = match text.splitOnce(";") {
+        some((positive, negative)) => (positive, some(affixesOf(negative)))
+        none => (text, none)
+    }
+    let (prefix, digits, suffix) = partsOf(positive)
+    let whole = digits.splitOnce(".").map((parts) { parts.0 }).unwrapOr(digits)
+    let groups = whole.split(",")
+    let count = groups.length()
+    let primary = if count > 1 { groups[count - 1].length() } else { 0 }
+    let secondary = if count > 2 { groups[count - 2].length() } else { primary }
+    Pattern {
+        prefix: prefix
+        suffix: suffix
+        negative: negative
+        primary: primary
+        secondary: secondary
+    }
+}
+
+fn affixesOf(text: String): (String, String) {
+    let (prefix, _, suffix) = partsOf(text)
+    (prefix, suffix)
+}
+
+/// What comes before a pattern's digits, the digits, and what comes after.
+fn partsOf(text: String): (String, String, String) {
+    let chars = text.chars().collect()
+    let isDigit = (c: Char): Bool { c == '#' or c == '0' or c == ',' or c == '.' }
+    var first = 0
+    for first < chars.length() and not isDigit(chars[first]) {
+        first += 1
+    }
+    var last = chars.length()
+    for last > first and not isDigit(chars[last - 1]) {
+        last -= 1
+    }
+    let part = (start: Int, end: Int): String {
+        chars.slice(start, end).unwrapOr([]).map((c) { "{c}" }).join("")
+    }
+    (part(0, first), part(first, last), part(last, chars.length()))
+}
+
+/// The digits written with a locale's symbols and a pattern, `symbol`
+/// standing for the pattern's `¤`.
+fn written(parts: Digits, symbols: Symbols, pattern: Pattern, symbol: String): String {
+    var body = match parts.special {
+        some("inf") => "∞"
+        some(other) => other
+        none => localDigits(grouped(parts.whole, pattern, symbols), symbols)
+    }
+    if parts.special.isNone() and not parts.fraction.isEmpty() {
+        body = "{body}{symbols.decimal}{localDigits(parts.fraction, symbols)}"
+    }
+    let zero =
+        parts.special.isNone() and "{parts.whole}{parts.fraction}".chars().all((c) { c == '0' })
+    var prefix = pattern.prefix
+    var suffix = pattern.suffix
+    if parts.negative and not zero {
+        match pattern.negative {
+            some((before, after)) => {
+                prefix = before.replace("-", symbols.minus)
+                suffix = after.replace("-", symbols.minus)
+            }
+            none => prefix = "{symbols.minus}{pattern.prefix}"
+        }
+    }
+    // A symbol of letters is kept apart from the digits it touches.
+    let lettered = (found: Char?): Bool { found.map((c) { c.isLetter() }).unwrapOr(false) }
+    let before = if prefix.endsWith("¤") and
+        lettered(symbol.chars().collect().get(symbol.length() - 1)) {
+        "{symbol}\u{a0}"
+    } else {
+        symbol
+    }
+    let after = if suffix.startsWith("¤") and lettered(symbol.get(0)) {
+        "\u{a0}{symbol}"
+    } else {
+        symbol
+    }
+    let start = prefix.replace("%", symbols.percent).replace("¤", before)
+    let end = suffix.replace("%", symbols.percent).replace("¤", after)
+    "{start}{body}{end}"
+}
+
+/// The whole digits with the locale's separator between their groups,
+/// when there are enough of them.
+fn grouped(whole: String, pattern: Pattern, symbols: Symbols): String {
+    let significant = whole.trimStart("0")
+    let digits = if significant.isEmpty() { "0" } else { significant }
+    let length = digits.length()
+    if pattern.primary == 0 or length < pattern.primary + symbols.minimumGrouping {
+        return digits
+    }
+    var groups: Array[String] = []
+    var end = length
+    var size = pattern.primary
+    for end > size {
+        groups.insert(0, digits.slice(end - size, end).unwrapOr(""))
+        end -= size
+        size = pattern.secondary
+    }
+    groups.insert(0, digits.slice(0, end).unwrapOr(""))
+    groups.join(symbols.group)
+}
+
+/// The text with the locale's digits for `0` to `9`.
+fn localDigits(text: String, symbols: Symbols): String {
+    if symbols.digits == "0123456789" {
+        return text
+    }
+    let local = symbols.digits.chars().collect()
+    text
+        .chars()
+        .map(
+            (c) {
+                if c.isDigit() { "{local.get(c.code() - '0'.code()).unwrapOr(c)}" } else { "{c}" }
+            },
+        )
+        .collect()
+        .join("")
 }

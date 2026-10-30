@@ -12,7 +12,7 @@ std.io         Writer, Reader, Buffer, pipe, copy, multiWriter: streams of all k
 std.fs         read and write files, walk, glob, watch, metadata, links, temporaries
 std.embed      files of the package kept in the executable, read when it compiles
 std.path       join, parent, fileName, extension, clean, relative, glob patterns
-std.env        args, environment, current directory, hostname, process id
+std.env        args, environment, directories, processors, hostname, what was built
 std.process    run programs and pipelines, capture output, signals
 std.time       Duration, sleep, now, dates, time zones, strftime formats
 std.json       encode and decode any type, navigate dynamic JSON
@@ -37,7 +37,7 @@ std.gzip       gzip, whole or as streams; std.zstd the same for Zstandard
 std.hash       MD5, SHA-1, SHA-2, HMAC, in parts; FNV, xxHash, MurmurHash3
 std.random     seeded and entropy generators
 std.uuid       UUID v4, v5, v7
-std.format     a text builder
+std.format     a text builder, formats chosen at run time, numbers and plurals per language
 std.math       floating-point math and integers' gcd and lcm
 std.sync       Mutex, Atomic, shared collections (`tondo guide tasks`)
 std.executor   pools that bound work, actors with a mailbox (`tondo guide tasks`)
@@ -75,6 +75,11 @@ every wait ends, the tasks run their `defer`s, and it ends with 130 or 143;
 a second one ends it at once. `process.signals(process.Signal.Hangup)` gives
 a channel of the signals named instead, which no longer end the program, and
 `child.signal(process.Signal.Terminate)` sends one to a process it started.
+
+`env.configDirectory()` and `env.cacheDirectory()` are where a program keeps
+the user's settings and what it can make again, and `env.build()` what it
+was built from, for a `--version`: the `version` of `tondo.toml`, the git
+commit, the target and the packages it uses.
 
 Any record or enum encodes as JSON when its fields do; `json.Value` handles
 JSON of unknown shape. The same types read and write every format:

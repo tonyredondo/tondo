@@ -1,0 +1,72 @@
+// std.format writes numbers, percents, amounts and plural forms as each
+// language does, from the CLDR data tondo carries, and applies formats a
+// program chooses while it runs, as an interpolation would.
+
+import std.console
+import std.format
+
+fn shown(written: String ! format.FormatError): String {
+    match written {
+        ok(text) => text
+        err(error) => "{error}"
+    }
+}
+
+fn main() {
+    console.println(
+        "{format.number(1234567.891)} {format.number(1234567.891, "de")} {format.number(-1234.5, "en")}",
+    )
+    console.println(
+        "{format.number(1234, "es")} {format.number(12345, "es")} {format.number(12345678, "hi")}",
+    )
+    console.println(
+        "{format.number(2.675, decimals: 2)} {format.number(2.665, decimals: 2)} {format.number(7, decimals: 2)}",
+    )
+    console.println(
+        "{format.number(999.995, decimals: 2)} {format.number(1e21)} {format.number(0.000015)} {format.number(-0.001, decimals: 1)}",
+    )
+    console.println("{format.number(1234.5, "fa")} {format.number(1234.5, "xx-YY")}")
+    console.println(
+        "{format.percent(0.256)} {format.percent(0.256, "es")} {format.percent(0.12345, "de", decimals: 1)}",
+    )
+    console.println(
+        "{format.currency(1234.5, "EUR", "es")} {format.currency(1234.5, "USD")} {format.currency(-5, "USD")}",
+    )
+    console.println(
+        "{format.currency(1234.5, "JPY", "ja")} {format.currency(9.99, "CHF")} {format.currency(1234.5, "CHF", "de-CH")}",
+    )
+    console.println("{format.plural(1)} {format.plural(2)} {format.plural(0)}")
+    console.println(
+        "{format.plural(2, "ru")} {format.plural(5, "ru")} {format.plural(21, "ru")} {format.plural(12, "ru")}",
+    )
+    console.println(
+        "{format.plural(0, "ar")} {format.plural(3, "ar")} {format.plural(1000000, "fr")} {format.plural(1, "ja")}",
+    )
+    let spec = "#x"
+    console.println(
+        "{shown(format.apply(255, spec))} {shown(format.apply(3.14159, ".2"))} [{shown(format.apply("hi", "^6"))}]",
+    )
+    console.println(
+        "{shown(format.apply(7, "05"))} {shown(format.apply(1500.0, "e"))} {shown(format.apply(Byte(10u8), "b"))}",
+    )
+    console.println(shown(format.apply(3, ".2")))
+    console.println(shown(format.apply("x", "+")))
+    console.println(shown(format.apply(1, "zz")))
+}
+
+// expect-stdout: 1,234,567.891 1.234.567,891 -1,234.5
+// expect-stdout: 1234 12.345 1,23,45,678
+// expect-stdout: 2.68 2.66 7.00
+// expect-stdout: 1,000.00 1,000,000,000,000,000,000,000 0.000015 0.0
+// expect-stdout: ۱٬۲۳۴٫۵ 1,234.5
+// expect-stdout: 26% 26 % 12,3 %
+// expect-stdout: 1234,50 € $1,234.50 -$5.00
+// expect-stdout: ￥1,234 CHF 9.99 CHF 1'234.50
+// expect-stdout: one other other
+// expect-stdout: few many one many
+// expect-stdout: zero few many other
+// expect-stdout: 0xff 3.14 [  hi  ]
+// expect-stdout: 00007 1.5e3 1010
+// expect-stdout: the format `.2` does not go with an integer: write `[[fill]align][+][#][0][width][x|X|o|b]`
+// expect-stdout: the format `+` does not go with a text: write `[[fill]align][width][.precision]`
+// expect-stdout: `zz` is not a format: write `[[fill]align][sign][#][0][width][.precision][type]`, as `>8`, `08`, `.2` or `#x`

@@ -20,6 +20,8 @@ fn main() {
     console.println("{name.length()} {name.toUpper()} {name.get(0)} {name.slice(1, 3)}")
     console.println("{"a,b,c".split(",")} {"  x ".trim()} {"abc".contains("b")} {"abc".replace("b", "B")}")
     console.println("{"42".startsWith("4")} {Int.parse("42")} {Float.parse("2.5")} {"x".repeat(3)}")
+    console.println("{"k=a=b".splitOnce("=")} {"a=b=c".split("=", limit: 2)} {"--x--".trim("-")}")
+    console.println("{"Straße".equalsIgnoringCase("STRASSE")}")
     let joined = ["a", "b"].join("-")
     let padded = "7".padStart(3, "0")
     console.println("{joined} {padded} {"héllo".chars().count()} {"hé".bytes()}")
@@ -35,9 +37,14 @@ fn main() {
   `.2` is two decimals of a float, `08` fills a number with zeros, `x`, `o`
   and `b` write an integer in hexadecimal, octal or binary (`#x` with
   `0x`), and `e` a float in scientific notation. There is no `f` or `d`:
-  `{price:.2}`, not `{price:.2f}`. The format is literal.
+  `{price:.2}`, not `{price:.2f}`. A format chosen while the program runs
+  goes through `format.apply(value, spec)`, which gives `String ! FormatError`.
 - `text[i]` is the character at `i` and panics out of range; `text.get(i)`
   gives a `Char?`, and `slice(start, end)` a `String ! TextError`.
 - `String.fromBytes(bytes)` checks UTF-8; `text.bytes()` gives them.
 - `std.format.Builder` builds long text piece by piece; `std.regex` matches
   patterns; `std.encoding` turns bytes into Base64, hexadecimal or URL text.
+- Numbers for people go through `std.format`, which knows how each language
+  writes them: `format.number(1234.5, "de")` is `1.234,5`,
+  `format.currency(9.5, "EUR", "es")` is `9,50 €`, `format.percent(0.25)` is
+  `25%`, and `format.plural(count, locale)` picks the message for a count.

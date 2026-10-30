@@ -157,6 +157,25 @@ pub extern "C" fn tondo_rt_env_executable() -> *mut Str {
     path.map_or_else(|_| str_new(b""), |path| text(path.as_os_str().as_bytes()))
 }
 
+/// `env.processors()`: the processors the program may run on, as its
+/// affinity and its cgroup's quota allow.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_env_processors() -> i64 {
+    std::thread::available_parallelism().map_or(1, |count| count.get() as i64)
+}
+
+/// The target the program was built for, as tondo names it:
+/// `x86_64-linux-gnu`, `aarch64-linux-musl`, `aarch64-macos`.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_env_target() -> *mut Str {
+    let system = match (cfg!(target_os = "macos"), cfg!(target_env = "musl")) {
+        (true, _) => "macos",
+        (false, true) => "linux-musl",
+        (false, false) => "linux-gnu",
+    };
+    text(format!("{}-{system}", std::env::consts::ARCH).as_bytes())
+}
+
 /// `env.setCurrentDirectory(path)`: 0, or 1 plus the `EnvError` variant.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_env_set_current_directory(path: *const Str) -> i64 {

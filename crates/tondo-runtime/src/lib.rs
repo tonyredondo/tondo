@@ -32,6 +32,7 @@ mod io;
 mod json;
 mod labels;
 mod live;
+mod locales;
 mod math;
 mod memory;
 mod meta;
@@ -271,12 +272,11 @@ pub unsafe extern "C" fn tondo_rt_str_replace(s: *const Str, old: *const Str, ne
     str_new(replaced.as_bytes())
 }
 
-/// `trim` (0), `toLowerAscii` (1) or `toUpperAscii` (2).
+/// `toLowerAscii` (1) or `toUpperAscii` (2).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_transform(s: *const Str, transform: u32) -> *mut Str {
     let text = unsafe { str_text(s) };
     match transform {
-        0 => str_new(text.trim().as_bytes()),
         1 => str_new(text.to_ascii_lowercase().as_bytes()),
         _ => str_new(text.to_ascii_uppercase().as_bytes()),
     }

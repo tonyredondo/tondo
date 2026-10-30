@@ -34,9 +34,6 @@ pub fn String.find(self, needle: String): Int?
 /// The text with every `from` replaced by `to`.
 pub fn String.replace(self, from: String, to: String): String
 
-/// The text without the whitespace at either end.
-pub fn String.trim(self): String
-
 /// The text with its ASCII letters in lowercase; other characters stay.
 pub fn String.toLowerAscii(self): String
 

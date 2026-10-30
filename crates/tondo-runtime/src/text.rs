@@ -90,14 +90,24 @@ pub unsafe extern "C" fn tondo_rt_text_repeat(s: *const Str, count: i64) -> *mut
     str_new(text(s).repeat(count.max(0) as usize).as_bytes())
 }
 
+/// The text without whitespace, or without the scalars of `characters`
+/// when `whitespace` is 0, at both ends (`ends` 0), at its start (1) or at
+/// its end (2).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_text_trim_start(s: *const Str) -> *mut Str {
-    str_new(text(s).trim_start().as_bytes())
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_text_trim_end(s: *const Str) -> *mut Str {
-    str_new(text(s).trim_end().as_bytes())
+pub unsafe extern "C" fn tondo_rt_text_trim(
+    s: *const Str,
+    characters: *const Str,
+    whitespace: u8,
+    ends: i64,
+) -> *mut Str {
+    let (s, characters) = (text(s), text(characters));
+    let trimmed = |c: char| if whitespace != 0 { c.is_whitespace() } else { characters.contains(c) };
+    let kept = match ends {
+        1 => s.trim_start_matches(trimmed),
+        2 => s.trim_end_matches(trimmed),
+        _ => s.trim_matches(trimmed),
+    };
+    str_new(kept.as_bytes())
 }
 
 /// The scalar index of the last `needle`, or `-1`.
