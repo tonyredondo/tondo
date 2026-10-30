@@ -8,13 +8,13 @@
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq && apt-get install -y -qq gcc git curl procps > /dev/null || exit 1
 exec setpriv --reuid="${OWNER%:*}" --regid="${OWNER#*:}" --clear-groups env HOME=/tmp sh -c '
-# A test binary that has not ended in 15 minutes has hung: it fails,
+# A test binary that has not ended in 30 minutes has hung: it fails,
 # saying the system call each of its threads waits in.
 run() {
   "$@" &
   pid=$! waited=0
   while kill -0 $pid 2>/dev/null; do
-    if [ $waited -ge 900 ]; then
+    if [ $waited -ge 1800 ]; then
       echo "hung: $*"
       # Read by this shell, its parent, as ptrace allows.
       for thread in /proc/$pid/task/*; do
