@@ -74,6 +74,8 @@ impl Kind {
             (Kind::Reflect | Kind::Serialization, "template") => name == "Html",
             (Kind::Reflect | Kind::Serialization, "math") => matches!(name, "BigInt" | "Decimal"),
             (Kind::Reflect | Kind::Serialization, "uuid") => name == "Uuid",
+            (Kind::Reflect, "sync") => matches!(name, "Mutex" | "RwLock" | "Atomic" | "Map" | "Semaphore"),
+            (Kind::Reflect, "sql") => matches!(name, "Database" | "SqlError"),
             _ => false,
         }
     }
@@ -445,7 +447,9 @@ impl Context<'_> {
                         let Some(import) = import else { return false };
                         let path: Vec<&str> = import.path.iter().map(|i| i.name.as_str()).collect();
                         if let ["std", standard] = path.as_slice() {
-                            return args.is_empty() && self.kind.standard(standard, name);
+                            // Reflection carries what `std.sync` shares as it is.
+                            let opaque = self.kind == Kind::Reflect && *standard == "sync";
+                            return (args.is_empty() || opaque) && self.kind.standard(standard, name);
                         }
                         match self.paths.iter().position(|p| p.iter().map(String::as_str).eq(path.iter().copied())) {
                             Some(target) => declared(target, name) && each(args),

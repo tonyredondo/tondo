@@ -93,6 +93,7 @@ fn check_with<'a>(
         context_of: HashMap::new(),
         module_paths: Vec::new(),
         datetime_module: None,
+        pacing_module: None,
         unrepeatable: HashMap::new(),
         interpolating: false,
         script_bindings: Vec::new(),
@@ -815,6 +816,9 @@ struct Checker<'a> {
     /// The module `std.datetime`, the part of `std.time` written in Tondo,
     /// which owns the types of `std.time` as their module would.
     datetime_module: Option<u32>,
+    /// `std.pacing`, the companion of `std.sync`, which implements traits
+    /// for its shared values.
+    pacing_module: Option<u32>,
     intrinsic_owners: HashMap<String, Ty>,
     /// The module of each user trait.
     trait_modules: HashMap<TraitId, u32>,
@@ -1082,6 +1086,7 @@ impl<'a> Checker<'a> {
         self.module_paths = module.module_paths.clone();
         self.built = module.built.clone();
         self.datetime_module = module.module_paths.iter().position(|p| p == &["std", "datetime"]).map(|i| i as u32);
+        self.pacing_module = module.module_paths.iter().position(|p| p == &["std", "pacing"]).map(|i| i as u32);
         for import in &module.imports {
             self.import(import);
         }
@@ -4664,7 +4669,8 @@ impl<'a> Checker<'a> {
         let local_trait = self.trait_modules.get(&trait_id) == Some(&decl.module);
         let local_target = self.owner(target).is_some_and(|o| o.module == decl.module)
             || (self.datetime_module == Some(decl.module)
-                && [self.datetime, self.duration, self.instant].contains(&Some(target)));
+                && [self.datetime, self.duration, self.instant].contains(&Some(target)))
+            || (self.pacing_module == Some(decl.module) && matches!(self.types.kind(target), TyKind::Handle(..)));
         if !local_trait && !local_target {
             let message = format!(
                 "`impl {trait_name} for {target_name}` implements a trait for a type, neither of which this module declares; implement it in the module of one of them, or wrap the type in a newtype, such as `type Name = {target_name}`"

@@ -40,8 +40,8 @@ impl Display for AcmeError {
 }
 
 /// A server's TLS whose certificate for `domains`, the first its subject,
-/// comes from the ACME authority of `directory` and renews itself 30 days
-/// before it expires: `app.listen(port: 443, tls: acme.tls(["example.com"],
+/// comes from the ACME authority of `directory` and renews itself when a
+/// third of its life is left: `app.listen(port: 443, tls: acme.tls(["example.com"],
 /// email: "me@example.com"))`. `email` is who the authority writes to about
 /// them; `cache` keeps the account and the certificates, by default under
 /// the user's cache directory; `trust` is the authority of the directory's
@@ -117,13 +117,14 @@ fn keep(keeper: Keeper) {
     }
 }
 
-/// Shows the kept certificate, or one obtained when it has 30 days left or
-/// less; gives how long until it looks again.
+/// Shows the kept certificate, or one obtained when a third of its life or
+/// less is left, as 30 days of 90 or 2 of a short-lived one's 6; gives how
+/// long until it looks again.
 fn Keeper.renewed(self): __time.Duration ! AcmeError {
-    let margin = __time.hours(24 * 30)
     match self.kept() {
-        some((chain, key, until)) => {
+        some((chain, key, from, until)) => {
             self.show(chain, key)?
+            let margin = __time.nanoseconds((until - from).nanoseconds() / 3)
             let left = until - __time.unixTime()
             if margin.isLessThan(left) {
                 let next = left - margin
@@ -150,8 +151,8 @@ fn Keeper.show(self, chain: String, key: String): !AcmeError {
     }
 }
 
-/// The kept certificate for these domains and when it expires.
-fn Keeper.kept(self): (String, String, __time.Duration)? {
+/// The kept certificate for these domains, and when it started and expires.
+fn Keeper.kept(self): (String, String, __time.Duration, __time.Duration)? {
     let chain = __fs.readText("{self.folder}/{self.domains[0]}.pem").unwrapOr("")
     let key = __fs.readText("{self.folder}/{self.domains[0]}.key").unwrapOr("")
     let first = match __crypto.certificates(chain) {
@@ -161,7 +162,7 @@ fn Keeper.kept(self): (String, String, __time.Duration)? {
     if key.isEmpty() or not self.domains.all((name) { first.names.any((held) { held == name }) }) {
         return none
     }
-    some((chain, key, first.validUntil.sinceEpoch()))
+    some((chain, key, first.validFrom.sinceEpoch(), first.validUntil.sinceEpoch()))
 }
 
 /// A file of the cache, which only its owner reads.
@@ -237,7 +238,7 @@ fn Keeper.session(self): Session ! AcmeError {
 
 /// A request signed with the account's key (JWS, ES256): with a payload,
 /// or a `POST`-as-`GET` without one. A nonce the authority refuses is
-/// replaced once.
+/// replaced, up to four times.
 fn Session.post(self, url: String, payload: String?): __http.Response ! AcmeError {
     var attempt = 0
     for {
@@ -259,13 +260,20 @@ fn Session.post(self, url: String, payload: String?): __http.Response ! AcmeErro
         let jws =
             "{{\"protected\":\"{protected}\",\"payload\":\"{content}\",\"signature\":\"{signature}\"}}"
         let body = __http.Body.text(jws, contentType: "application/jose+json")
-        let response = sent(self.client.post(url, body: some(body)))?
+        // An answer of 400 or more is read too: it says why.
+        let response = match self.client.post(url, body: some(body)) {
+            ok(found) => found
+            err(__http.HttpError.Status(found)) => found
+            err(error) => fail AcmeError { message: "{error}" }
+        }
         self.nonce.set(response.header("Replay-Nonce").unwrapOr(""))
         if response.status() < 400 {
             return response
         }
         let problem = answer(ok(response)).unwrapOr(__json.Value.Null)
-        if attempt == 0 and member(problem, "type").endsWith(":badNonce") {
+        // A nonce the authority refuses is replaced: a test authority
+        // refuses some on purpose.
+        if attempt < 4 and member(problem, "type").endsWith(":badNonce") {
             attempt += 1
             continue
         }

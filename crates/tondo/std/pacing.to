@@ -3,6 +3,7 @@
 // with backoff, which pace work in time.
 
 import std.random as __random
+import std.reflect as __reflect
 import std.sync as __sync
 import std.time as __time
 
@@ -101,5 +102,39 @@ pub fn retry[T: ~Copy, E: ~Copy](
             ceiling * 2
         }
         attempt += 1
+    }
+}
+
+// What a value holds to share with other tasks, which reflection carries
+// as it is and does not look into: a root that `std.mcp` or `std.graphql`
+// serves holds its state in them.
+
+impl[T] __reflect.Reflect for __sync.Mutex[T] {
+    fn reflectShow(self, nested: Bool): String {
+        "Mutex"
+    }
+}
+
+impl[T] __reflect.Reflect for __sync.RwLock[T] {
+    fn reflectShow(self, nested: Bool): String {
+        "RwLock"
+    }
+}
+
+impl[T] __reflect.Reflect for __sync.Atomic[T] {
+    fn reflectShow(self, nested: Bool): String {
+        "Atomic"
+    }
+}
+
+impl[K: Key, V] __reflect.Reflect for __sync.Map[K, V] {
+    fn reflectShow(self, nested: Bool): String {
+        "sync.Map"
+    }
+}
+
+impl __reflect.Reflect for __sync.Semaphore {
+    fn reflectShow(self, nested: Bool): String {
+        "Semaphore"
     }
 }

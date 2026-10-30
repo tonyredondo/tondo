@@ -3372,3 +3372,18 @@ certificates to the runtime in its `certificate`, so `Tls` and the
 natives of every listener stay as they were. ACME lives in a module of
 its own, `std.acme`, because `std.net` cannot use `std.http`, which is
 built on it.
+
+## 2026-10-30 — GraphQL from the program's types
+
+The fifteenth lot. As `std.mcp` serves a value's methods as tools,
+`std.graphql` serves them as fields: the schema is the types the program
+already has, their fields, their `pub` methods with parameters as
+arguments, their docs as descriptions, so there is no schema language to
+keep in step with code. Queries are parsed and run in Tondo over
+reflection; introspection describes the schema to the tools of GraphQL,
+and GraphiQL is a `GET` away. Server first: a typed client, subscriptions
+and batching of fields come when a program needs them.
+
+A root holds its state, as a database or a `std.sync` value, which
+reflection now carries without looking inside, so such a record can be a
+root of `std.graphql` or `std.mcp`; the schema leaves those fields out.

@@ -1,0 +1,1366 @@
+// std.graphql (standard library 14.40): GraphQL servers made from the
+// program's types: the fields and `pub` methods of the query's type, and
+// of each type they give, are the schema's fields, and a method's
+// parameters its arguments; the mutation's methods are its mutations.
+// Queries are parsed and run in Tondo over reflection, introspection
+// included, so the tools of GraphQL read the schema.
+
+import std.http as __http
+import std.json as __json
+import std.reflect as __reflect
+import std.shapes as __shapes
+import std.sync as __sync
+
+// ---------------------------------------------------------------------------
+// The schema
+// ---------------------------------------------------------------------------
+
+/// A GraphQL schema made from the types of its roots.
+pub type Schema = {
+    priv query: __reflect.Value
+    priv mutations: __reflect.Value?
+    priv types: Array[Named]
+}
+
+/// A named type of the schema: an object, an input, an enum or a scalar,
+/// with the Tondo type it comes from.
+type Named = {
+    name: String
+    kind: Kind
+    docs: String?
+    fields: Array[Member]
+    values: Array[String]
+    origin: String
+}
+
+enum Kind {
+    Object
+    Input
+    Enum
+    Scalar
+}
+
+/// A field of an object or an input, or an argument: its name, its docs,
+/// its type as GraphQL writes it (`[User!]!`), its arguments, and whether
+/// a method gives it.
+type Member = {
+    name: String
+    docs: String?
+    reference: String
+    arguments: Array[Member]
+    method: Bool
+}
+
+/// The schema of `query`, whose fields and methods answer queries.
+pub fn schema[Q: __reflect.Reflect](query: Q): Schema {
+    var types: Array[Named] = []
+    _ = described(__reflect.typeInfo[Q](), false, var types, "Query")
+    Schema { query: __reflect.valueOf(query), mutations: none, types }
+}
+
+/// The schema with the methods of `root` as its mutations.
+pub fn Schema.mutation[M: __reflect.Reflect](self, root: M): Schema {
+    var types = self.types
+    _ = described(__reflect.typeInfo[M](), false, var types, "Mutation")
+    self with { mutations: some(__reflect.valueOf(root)), types: types }
+}
+
+/// The GraphQL type of a Tondo type, registering the named types it
+/// needs; `root` names a root's object.
+fn described(info: __reflect.TypeInfo, input: Bool, types: var Array[Named], root: String = ""): String {
+    let optional = info.kind() == __reflect.TypeKind.Applied(__reflect.AppliedKind.Option)
+    let inner = if optional { info.genericArguments().first().unwrapOr(info) } else { info }
+    let base = match inner.kind() {
+        __reflect.TypeKind.Primitive(kind) => match kind {
+            __reflect.PrimitiveKind.String => "String"
+            __reflect.PrimitiveKind.Char => "String"
+            __reflect.PrimitiveKind.Bool => "Boolean"
+            __reflect.PrimitiveKind.Float => "Float"
+            __reflect.PrimitiveKind.Float32 => "Float"
+            __reflect.PrimitiveKind.Unit => "Boolean"
+            _ => "Int"
+        }
+        __reflect.TypeKind.Applied(kind) if kind == __reflect.AppliedKind.Array or
+            kind == __reflect.AppliedKind.Set => {
+            "[{described(inner.genericArguments().first().unwrapOr(inner), input, var types)}]"
+        }
+        __reflect.TypeKind.Applied(__reflect.AppliedKind.Result) => {
+            return described(inner.genericArguments().first().unwrapOr(inner), input, var types)
+        }
+        __reflect.TypeKind.Newtype => match inner.underlying() {
+            some(underlying) => return described(underlying, input, var types)
+            none => scalar("JSON", inner, var types)
+        }
+        __reflect.TypeKind.Enum if inner
+            .variants()
+            .all((v) { v.payloadKind() == __reflect.VariantPayloadKind.Unit }) => {
+            let name = nameOf(inner, "")
+            if not types.any((t) { t.name == name }) {
+                types.push(
+                    Named {
+                        name
+                        kind: Kind.Enum
+                        docs: inner.docs()
+                        fields: []
+                        values: inner.variants().map((v) { v.name() })
+                        origin: inner.qualifiedName()
+                    },
+                )
+            }
+            name
+        }
+        __reflect.TypeKind.Record => match standardScalar(inner) {
+            some(name) => scalar(name, inner, var types)
+            none => objectOf(inner, input, var types, root)
+        }
+        _ => scalar("JSON", inner, var types)
+    }
+    if optional { base } else { "{base}!" }
+}
+
+/// The scalars of std types: their text.
+fn standardScalar(info: __reflect.TypeInfo): String? {
+    match info.qualifiedName() {
+        "time.DateTime" => some("DateTime")
+        "math.Decimal" => some("Decimal")
+        "math.BigInt" => some("BigInt")
+        "uuid.Uuid" => some("ID")
+        _ => none
+    }
+}
+
+fn scalar(name: String, info: __reflect.TypeInfo, types: var Array[Named]): String {
+    let builtIn = name == "ID"
+    if not builtIn and not types.any((t) { t.name == name }) {
+        types.push(
+            Named {
+                name
+                kind: Kind.Scalar
+                docs: none
+                fields: []
+                values: []
+                origin: info.qualifiedName()
+            },
+        )
+    }
+    name
+}
+
+/// The GraphQL name of a Tondo type: its own, without its module; an
+/// input that shares it with an output ends in `Input`.
+fn nameOf(info: __reflect.TypeInfo, suffix: String): String {
+    let qualified = info.qualifiedName()
+    let bare = qualified.split(".").last().unwrapOr(qualified)
+    let plain = bare.split("[").first().unwrapOr(bare)
+    "{plain}{suffix}"
+}
+
+/// An object or an input of a record: its fields, and for an object its
+/// `pub` methods, which take arguments.
+fn objectOf(info: __reflect.TypeInfo, input: Bool, types: var Array[Named], root: String): String {
+    let origin = info.qualifiedName()
+    let kind = if input { Kind.Input } else { Kind.Object }
+    match types.find((t) { t.origin == origin and t.kind == kind }) {
+        some(found) => return found.name
+        none => {}
+    }
+    let clash = types.any((t) { t.origin == origin })
+    let name = if not root.isEmpty() {
+        root
+    } else if input and clash {
+        nameOf(info, "Input")
+    } else {
+        nameOf(info, "")
+    }
+    // Registered first, so a type that holds itself ends.
+    types.push(Named { name, kind, docs: info.docs(), fields: [], values: [], origin })
+    var fields: Array[Member] = []
+    // What reflection only carries, as a database, is no field.
+    for field in info.fields().filter((f) { f.typeInfo().kind() != __reflect.TypeKind.Opaque }) {
+        fields.push(
+            Member {
+                name: field.name()
+                docs: field.docs()
+                reference: described(field.typeInfo(), input, var types)
+                arguments: []
+                method: false
+            },
+        )
+    }
+    if not input {
+        for method in info.methods() {
+            // A method that changes its value is not a field.
+            let reads =
+                method.receiver() == __reflect.ParameterMode.Ref or
+                    method.receiver() == __reflect.ParameterMode.Value
+            if reads {
+                var arguments: Array[Member] = []
+                for parameter in method.function().parameters() {
+                    arguments.push(
+                        Member {
+                            name: parameter.name()
+                            docs: none
+                            reference: described(parameter.typeInfo(), true, var types)
+                            arguments: []
+                            method: false
+                        },
+                    )
+                }
+                fields.push(
+                    Member {
+                        name: method.name()
+                        docs: method.docs()
+                        reference: described(method.function().outcome(), false, var types)
+                        arguments
+                        method: true
+                    },
+                )
+            }
+        }
+    }
+    let index = types.findIndex((t) { t.name == name and t.kind == kind }).unwrapOr(0)
+    types[index] = types[index] with { fields: fields }
+    name
+}
+
+fn Schema.named(self, name: String): Named? {
+    self.types.find((t) { t.name == name and t.kind != Kind.Input })
+}
+
+/// The schema in the language of GraphQL's schemas.
+pub fn Schema.sdl(self): String {
+    var blocks: Array[String] = []
+    for named in self.types {
+        let head = match named.docs {
+            some(text) => "{quoted(text)}\n"
+            none => ""
+        }
+        let body = match named.kind {
+            Kind.Scalar => "scalar {named.name}"
+            Kind.Enum => "enum {named.name} {{\n{named.values.map((v) { "  {v}" }).join("\n")}\n}}"
+            _ => {
+                let word = if named.kind == Kind.Input { "input" } else { "type" }
+                let lines = named.fields.map(
+                    (member) {
+                        let docs = match member.docs {
+                            some(text) => "  {quoted(text)}\n"
+                            none => ""
+                        }
+                        let arguments = if member.arguments.isEmpty() {
+                            ""
+                        } else {
+                            "({member.arguments.map((a) { "{a.name}: {a.reference}" }).join(", ")})"
+                        }
+                        "{docs}  {member.name}{arguments}: {member.reference}"
+                    },
+                )
+                "{word} {named.name} {{\n{lines.join("\n")}\n}}"
+            }
+        }
+        blocks.push("{head}{body}")
+    }
+    "{blocks.join("\n\n")}\n"
+}
+
+fn quoted(text: String): String {
+    if text.contains("\n") { "\"\"\"\n{text}\n\"\"\"" } else { __json.encode(text) }
+}
+
+// ---------------------------------------------------------------------------
+// Documents
+// ---------------------------------------------------------------------------
+
+/// A value written in a document: a variable, a constant, a list or an
+/// object of them.
+enum Literal {
+    Variable(String)
+    Constant(__json.Value)
+    Listed(Array[Literal])
+    Members(Array[(String, Literal)])
+}
+
+type Directive = {
+    name: String
+    arguments: Array[(String, Literal)]
+}
+
+/// A field selected: its alias as its label, its name, arguments, directives, selections
+/// and where it is written.
+type Field = {
+    label: String?
+    name: String
+    arguments: Array[(String, Literal)]
+    directives: Array[Directive]
+    selections: Array[Selection]
+    line: Int
+    column: Int
+}
+
+enum Selection {
+    Picked(Field)
+    Spread(String, Array[Directive])
+    Inline(String?, Array[Directive], Array[Selection])
+}
+
+type Operation = {
+    kind: String
+    name: String?
+    variables: Array[(String, String, __json.Value?)]
+    selections: Array[Selection]
+}
+
+type Fragment = {
+    on: String
+    selections: Array[Selection]
+}
+
+type Document = {
+    operations: Array[Operation]
+    fragments: Map[String, Fragment]
+}
+
+/// A token: its kind (`name`, `int`, `float`, `string`, or the punctuator
+/// itself), its text and where it starts.
+type Token = {
+    kind: String
+    text: String
+    line: Int
+    column: Int
+}
+
+/// Why a document does not read, and where.
+type Unreadable = {
+    message: String
+    line: Int
+    column: Int
+}
+
+fn tokens(source: String): Array[Token] ! Unreadable {
+    let chars = source.chars().collect()
+    var found: Array[Token] = []
+    var at = 0
+    var line = 1
+    var start = 0
+    for at < chars.length() {
+        let c = chars[at]
+        let column = at - start + 1
+        if c == '\n' {
+            line += 1
+            at += 1
+            start = at
+        } else if c == ' ' or c == '\t' or c == '\r' or c == ',' or c == '\u{feff}' {
+            at += 1
+        } else if c == '#' {
+            for at < chars.length() and chars[at] != '\n' {
+                at += 1
+            }
+        } else if "!$&()[]{{}}:=@|".contains("{c}") {
+            found.push(Token { kind: "{c}", text: "{c}", line, column })
+            at += 1
+        } else if c == '.' {
+            if at + 2 < chars.length() and chars[at + 1] == '.' and chars[at + 2] == '.' {
+                found.push(Token { kind: "...", text: "...", line, column })
+                at += 3
+            } else {
+                fail Unreadable { message: "a lone `.`: a spread is `...`", line, column }
+            }
+        } else if c == '"' {
+            let block = at + 2 < chars.length() and chars[at + 1] == '"' and chars[at + 2] == '"'
+            var text = ""
+            if block {
+                at += 3
+                for at < chars.length() and
+                    not (chars[at] == '"' and
+                        at + 2 < chars.length() and
+                        chars[at + 1] == '"' and
+                        chars[at + 2] == '"') {
+                    if chars[at] == '\n' {
+                        line += 1
+                        start = at + 1
+                    }
+                    text = "{text}{chars[at]}"
+                    at += 1
+                }
+                at += 3
+                text = blockText(text)
+            } else {
+                at += 1
+                for at < chars.length() and chars[at] != '"' {
+                    if chars[at] == '\n' {
+                        fail Unreadable {
+                            message: "a string ends at the end of its line"
+                            line
+                            column
+                        }
+                    }
+                    if chars[at] == '\\' and at + 1 < chars.length() {
+                        at += 1
+                        let escaped = chars[at]
+                        let decoded = match escaped {
+                            'n' => "\n"
+                            't' => "\t"
+                            'r' => "\r"
+                            'b' => "\u{8}"
+                            'f' => "\u{c}"
+                            'u' => {
+                                let digits = chars
+                                    .slice(at + 1, (at + 5).min(chars.length()))
+                                    .unwrapOr([])
+                                    .map((d) { "{d}" })
+                                    .join("")
+                                at += 4
+                                match Int.parse(digits, radix: 16) {
+                                    ok(code) => "{Char.from(code).unwrapOr('?')}"
+                                    err(_) => fail Unreadable {
+                                        message: "`\\u{digits}` is no character"
+                                        line
+                                        column
+                                    }
+                                }
+                            }
+                            other => "{other}"
+                        }
+                        text = "{text}{decoded}"
+                    } else {
+                        text = "{text}{chars[at]}"
+                    }
+                    at += 1
+                }
+                if at >= chars.length() {
+                    fail Unreadable { message: "a string has no closing `\"`", line, column }
+                }
+                at += 1
+            }
+            found.push(Token { kind: "string", text, line, column })
+        } else if c == '-' or c.isDigit() {
+            var text = "{c}"
+            at += 1
+            var float = false
+            for at < chars.length() and
+                (chars[at].isDigit() or
+                    chars[at] == '.' or
+                    chars[at] == 'e' or
+                    chars[at] == 'E' or
+                    ((chars[at] == '-' or chars[at] == '+') and
+                        (chars[at - 1] == 'e' or chars[at - 1] == 'E'))) {
+                if not chars[at].isDigit() {
+                    float = true
+                }
+                text = "{text}{chars[at]}"
+                at += 1
+            }
+            found.push(Token { kind: if float { "float" } else { "int" }, text, line, column })
+        } else if c == '_' or c.isLetter() {
+            var text = ""
+            for at < chars.length() and (chars[at] == '_' or chars[at].isAlphanumeric()) {
+                text = "{text}{chars[at]}"
+                at += 1
+            }
+            found.push(Token { kind: "name", text, line, column })
+        } else {
+            fail Unreadable { message: "`{c}` is not part of GraphQL", line, column }
+        }
+    }
+    found.push(Token { kind: "end", text: "", line, column: at - start + 1 })
+    found
+}
+
+/// A block string without its common indentation and blank edge lines.
+fn blockText(raw: String): String {
+    let lines = raw.split("\n")
+    var common = -1
+    for (index, each) in lines.iter().enumerate() {
+        if index > 0 and not each.trim().isEmpty() {
+            let indent = each.length() - each.trimStart().length()
+            if common < 0 or indent < common {
+                common = indent
+            }
+        }
+    }
+    var kept: Array[String] = []
+    for (index, each) in lines.iter().enumerate() {
+        kept.push(
+            if index > 0 and common > 0 {
+                each.slice(common.min(each.length()), each.length()).unwrapOr("")
+            } else {
+                each
+            },
+        )
+    }
+    for not kept.isEmpty() and kept[0].trim().isEmpty() {
+        _ = kept.removeAt(0)
+    }
+    for not kept.isEmpty() and kept[kept.length() - 1].trim().isEmpty() {
+        _ = kept.pop()
+    }
+    kept.join("\n")
+}
+
+/// Reads a document over its tokens.
+type Reader = {
+    tokens: Array[Token]
+    at: __sync.Mutex[Int]
+}
+
+fn Reader.peek(self): Token {
+    self.tokens[self.at.get().min(self.tokens.length() - 1)]
+}
+
+fn Reader.take(self): Token {
+    let token = self.peek()
+    self.at.update(
+        (at) {
+            at += 1
+        },
+    )
+    token
+}
+
+fn Reader.is(self, kind: String): Bool {
+    self.peek().kind == kind
+}
+
+fn Reader.expect(self, kind: String): Token ! Unreadable {
+    let token = self.take()
+    if token.kind != kind {
+        let shown = if token.kind == "end" { "the end" } else { "`{token.text}`" }
+        fail Unreadable {
+            message: "expected `{kind}`, found {shown}"
+            line: token.line
+            column: token.column
+        }
+    }
+    token
+}
+
+fn Reader.name(self): String ! Unreadable {
+    self.expect("name")?.text
+}
+
+fn parsed(source: String): Document ! Unreadable {
+    let reader = Reader { tokens: tokens(source)?, at: __sync.Mutex(0) }
+    var operations: Array[Operation] = []
+    var fragments: Map[String, Fragment] = [:]
+    for not reader.is("end") {
+        if reader.is("{{") {
+            operations.push(
+                Operation {
+                    kind: "query"
+                    name: none
+                    variables: []
+                    selections: reader.selections()?
+                },
+            )
+            continue
+        }
+        let word = reader.peek()
+        match word.text {
+            "fragment" => {
+                _ = reader.take()
+                let name = reader.name()?
+                let on = reader.take()
+                if on.text != "on" {
+                    fail Unreadable {
+                        message: "a fragment says what it is on: `fragment {name} on Type`"
+                        line: on.line
+                        column: on.column
+                    }
+                }
+                let target = reader.name()?
+                _ = reader.directives()?
+                fragments[name] = Fragment { on: target, selections: reader.selections()? }
+            }
+            kind if kind == "query" or kind == "mutation" or kind == "subscription" => {
+                _ = reader.take()
+                let name = if reader.is("name") { some(reader.name()?) } else { none }
+                var variables: Array[(String, String, __json.Value?)] = []
+                if reader.is("(") {
+                    _ = reader.take()
+                    for not reader.is(")") {
+                        _ = reader.expect("$")?
+                        let variable = reader.name()?
+                        _ = reader.expect(":")?
+                        let written = reader.typeReference()?
+                        var default: __json.Value? = none
+                        if reader.is("=") {
+                            _ = reader.take()
+                            default = some(constant(reader.literal()?))
+                        }
+                        variables.push((variable, written, default))
+                    }
+                    _ = reader.take()
+                }
+                _ = reader.directives()?
+                operations.push(
+                    Operation { kind, name, variables, selections: reader.selections()? },
+                )
+            }
+            _ => fail Unreadable {
+                message: "expected an operation or a fragment, found `{word.text}`"
+                line: word.line
+                column: word.column
+            }
+        }
+    }
+    Document { operations, fragments }
+}
+
+fn Reader.typeReference(self): String ! Unreadable {
+    var written = if self.is("[") {
+        _ = self.take()
+        let inner = self.typeReference()?
+        _ = self.expect("]")?
+        "[{inner}]"
+    } else {
+        self.name()?
+    }
+    if self.is("!") {
+        _ = self.take()
+        written = "{written}!"
+    }
+    written
+}
+
+fn Reader.selections(self): Array[Selection] ! Unreadable {
+    _ = self.expect("{{")?
+    var found: Array[Selection] = []
+    for not self.is("}}") {
+        if self.is("end") {
+            let token = self.peek()
+            fail Unreadable {
+                message: "a selection has no closing `}}`"
+                line: token.line
+                column: token.column
+            }
+        }
+        if self.is("...") {
+            _ = self.take()
+            if self.is("name") and self.peek().text != "on" {
+                let name = self.name()?
+                found.push(Selection.Spread(name, self.directives()?))
+            } else {
+                var condition: String? = none
+                if self.is("name") {
+                    _ = self.take()
+                    condition = some(self.name()?)
+                }
+                let directives = self.directives()?
+                found.push(Selection.Inline(condition, directives, self.selections()?))
+            }
+            continue
+        }
+        let first = self.expect("name")?
+        var label: String? = none
+        var name = first.text
+        if self.is(":") {
+            _ = self.take()
+            label = some(name)
+            name = self.name()?
+        }
+        let arguments = self.arguments()?
+        let directives = self.directives()?
+        let selections = if self.is("{{") { self.selections()? } else { [] }
+        found.push(
+            Selection.Picked(
+                Field {
+                    label
+                    name
+                    arguments
+                    directives
+                    selections
+                    line: first.line
+                    column: first.column
+                },
+            ),
+        )
+    }
+    _ = self.take()
+    found
+}
+
+fn Reader.arguments(self): Array[(String, Literal)] ! Unreadable {
+    var found: Array[(String, Literal)] = []
+    if self.is("(") {
+        _ = self.take()
+        for not self.is(")") {
+            let name = self.name()?
+            _ = self.expect(":")?
+            found.push((name, self.literal()?))
+        }
+        _ = self.take()
+    }
+    found
+}
+
+fn Reader.directives(self): Array[Directive] ! Unreadable {
+    var found: Array[Directive] = []
+    for self.is("@") {
+        _ = self.take()
+        let name = self.name()?
+        found.push(Directive { name, arguments: self.arguments()? })
+    }
+    found
+}
+
+fn Reader.literal(self): Literal ! Unreadable {
+    let token = self.take()
+    match token.kind {
+        "$" => Literal.Variable(self.name()?)
+        "int" => Literal.Constant(__json.parse(token.text).unwrapOr(__json.Value.Null))
+        "float" => Literal.Constant(__json.parse(token.text).unwrapOr(__json.Value.Null))
+        "string" => Literal.Constant(__json.Value.Text(token.text))
+        "name" => match token.text {
+            "true" => Literal.Constant(__json.Value.Bool(true))
+            "false" => Literal.Constant(__json.Value.Bool(false))
+            "null" => Literal.Constant(__json.Value.Null)
+            enumerated => Literal.Constant(__json.Value.Text(enumerated))
+        }
+        "[" => {
+            var items: Array[Literal] = []
+            for not self.is("]") {
+                items.push(self.literal()?)
+            }
+            _ = self.take()
+            Literal.Listed(items)
+        }
+        "{{" => {
+            var members: Array[(String, Literal)] = []
+            for not self.is("}}") {
+                let name = self.name()?
+                _ = self.expect(":")?
+                members.push((name, self.literal()?))
+            }
+            _ = self.take()
+            Literal.Members(members)
+        }
+        _ => fail Unreadable {
+            message: "expected a value, found `{token.text}`"
+            line: token.line
+            column: token.column
+        }
+    }
+}
+
+/// A literal without variables as JSON.
+fn constant(literal: Literal): __json.Value {
+    valueOf(literal, [:])
+}
+
+/// A literal as JSON, its variables replaced.
+fn valueOf(literal: Literal, variables: Map[String, __json.Value]): __json.Value {
+    match literal {
+        Literal.Variable(name) => variables.get(name).unwrapOr(__json.Value.Null)
+        Literal.Constant(value) => value
+        Literal.Listed(items) => __json.Value.Array(items.map((item) { valueOf(item, variables) }))
+        Literal.Members(members) => {
+            var object: Map[String, __json.Value] = [:]
+            for (name, member) in members {
+                object[name] = valueOf(member, variables)
+            }
+            __json.Value.Object(object)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Execution
+// ---------------------------------------------------------------------------
+
+/// What a query is run on: a value of the program, or the schema's own
+/// description, which introspection reads.
+enum Node {
+    Data(__reflect.Value)
+    Meta(__json.Value)
+}
+
+/// A query being run: the schema, the document's fragments, the variables,
+/// and the errors met.
+type Run = {
+    schema: Schema
+    fragments: Map[String, Fragment]
+    variables: Map[String, __json.Value]
+    errors: __sync.Mutex[Array[String]]
+}
+
+/// Runs a document: the operation named `operation`, or its only one, with
+/// `variables`; gives `{"data": ..., "errors": [...]}` as GraphQL does.
+pub fn Schema.execute(
+    self,
+    document: String,
+    variables: Map[String, __json.Value] = [:],
+    operation: String? = none,
+): __json.Value {
+    let text = self.executed(document, variables, operation)
+    __json.parse(text).unwrapOr(__json.Value.Null)
+}
+
+fn Schema.executed(self, document: String, variables: Map[String, __json.Value], operation: String?): String {
+    let read = match parsed(document) {
+        ok(found) => found
+        err(problem) => return failedWith(problem.message, problem.line, problem.column)
+    }
+    let chosen = match operation {
+        some(name) => read.operations.find((each) { each.name == some(name) })
+        none if read.operations.length() == 1 => read.operations.first()
+        none => none
+    }
+    let picked = match chosen {
+        some(found) => found
+        none if operation.isSome() => return failedWith(
+            "the document has no operation `{operation.unwrapOr("")}`",
+            1,
+            1,
+        )
+        none => return failedWith(
+            "the document has {read.operations.length()} operations: name the one to run",
+            1,
+            1,
+        )
+    }
+    var given = variables
+    for (name, written, default) in picked.variables {
+        if not given.contains(name) or given.get(name) == some(__json.Value.Null) {
+            match default {
+                some(value) => given[name] = value
+                none if written.endsWith("!") => return failedWith(
+                    "the variable `${name}` of type `{written}` is not given",
+                    1,
+                    1,
+                )
+                none => {}
+            }
+        }
+    }
+    let run = Run {
+        schema: self
+        fragments: read.fragments
+        variables: given
+        errors: __sync.Mutex([])
+    }
+    let (root, rootType) = match picked.kind {
+        "query" => (Node.Data(self.query), "Query")
+        "mutation" => match self.mutations {
+            some(value) => (Node.Data(value), "Mutation")
+            none => return failedWith("the schema has no mutations", 1, 1)
+        }
+        _ => return failedWith("this schema answers queries and mutations, not subscriptions", 1, 1)
+    }
+    let data = run.selected(root, rootType, picked.selections, "")
+    let errors = run.errors.get()
+    let shown = data.unwrapOr("null")
+    if errors.isEmpty() {
+        "{{\"data\":{shown}}}"
+    } else {
+        "{{\"data\":{shown},\"errors\":[{errors.join(",")}]}}"
+    }
+}
+
+fn failedWith(message: String, line: Int, column: Int): String {
+    "{{\"errors\":[{{\"message\":{__json.encode(message)},\"locations\":[{{\"line\":{line},\"column\":{column}}}]}}]}}"
+}
+
+fn Run.failed(self, message: String, field: Field, path: String) {
+    let error =
+        "{{\"message\":{__json.encode(message)},\"locations\":[{{\"line\":{field.line},\"column\":{field.column}}}],\"path\":[{path}]}}"
+    self.errors.update((all) { all.push(error) })
+}
+
+/// Whether `@skip` and `@include` keep a selection.
+fn Run.kept(self, directives: Array[Directive]): Bool {
+    let variables = self.variables
+    for directive in directives {
+        let condition = directive.arguments
+            .find((a) { a.0 == "if" })
+            .map((a) { valueOf(a.1, variables) })
+        let truth = condition.andThen((value) { value.asBool() }).unwrapOr(false)
+        if directive.name == "skip" and truth {
+            return false
+        }
+        if directive.name == "include" and not truth {
+            return false
+        }
+    }
+    true
+}
+
+/// The fields a selection set picks on a type, fragments spread.
+fn Run.collected(self, typeName: String, selections: Array[Selection], into: var Array[Field]) {
+    for selection in selections {
+        match selection {
+            Selection.Picked(field) => {
+                if self.kept(field.directives) {
+                    into.push(field)
+                }
+            }
+            Selection.Spread(name, directives) => {
+                match self.fragments.get(name) {
+                    some(fragment) if self.kept(directives) and fragment.on == typeName => {
+                        self.collected(typeName, fragment.selections, var into)
+                    }
+                    _ => {}
+                }
+            }
+            Selection.Inline(condition, directives, inner) => {
+                if self.kept(directives) and condition.map((on) { on == typeName }).unwrapOr(true) {
+                    self.collected(typeName, inner, var into)
+                }
+            }
+        }
+    }
+}
+
+/// An object's selected fields as JSON; none when a field that cannot be
+/// null is.
+fn Run.selected(self, node: Node, typeName: String, selections: Array[Selection], path: String): String? {
+    var fields: Array[Field] = []
+    self.collected(typeName, selections, var fields)
+    var written: Array[String] = []
+    var keys: Array[String] = []
+    for field in fields {
+        let key = field.label.unwrapOr(field.name)
+        if keys.any((seen) { seen == key }) {
+            continue
+        }
+        keys.push(key)
+        let at = if path.isEmpty() { __json.encode(key) } else { "{path},{__json.encode(key)}" }
+        let value = self.resolved(node, typeName, field, at)?
+        written.push("{__json.encode(key)}:{value}")
+    }
+    some("{{{written.join(",")}}}")
+}
+
+/// A field's value as JSON; none when it is null and cannot be.
+fn Run.resolved(self, node: Node, typeName: String, field: Field, path: String): String? {
+    if field.name == "__typename" {
+        return some(__json.encode(typeName))
+    }
+    if typeName == "Query" and (field.name == "__schema" or field.name == "__type") {
+        let meta = introspection(self.schema)
+        let answer = if field.name == "__schema" {
+            meta
+        } else {
+            let variables = self.variables
+            let wanted = field.arguments
+                .find((a) { a.0 == "name" })
+                .map((a) { valueOf(a.1, variables) })
+            let name = wanted.andThen((v) { v.asText() }).unwrapOr("")
+            meta
+                .field("types")
+                .asArray()
+                .unwrapOr([])
+                .find((t) { t.field("name").asText() == some(name) })
+                .unwrapOr(__json.Value.Null)
+        }
+        return self.completed(
+            Node.Meta(answer),
+            if field.name == "__schema" { "__Schema" } else { "__Type" },
+            field,
+            path,
+        )
+    }
+    match node {
+        Node.Meta(value) => {
+            let member = value.field(field.name)
+            self.completed(Node.Meta(member), metaType(typeName, field.name), field, path)
+        }
+        Node.Data(value) => {
+            let member = match self.schema
+                .named(typeName)
+                .andThen((named) { named.fields.find((m) { m.name == field.name }) }) {
+                some(found) => found
+                none => {
+                    let known = self.schema
+                        .named(typeName)
+                        .map((named) { named.fields.map((m) { m.name }) })
+                        .unwrapOr([])
+                    let listed = if known.isEmpty() { "none" } else { known.join(", ") }
+                    self.failed(
+                        "`{typeName}` has no field `{field.name}`; its fields: {listed}",
+                        field,
+                        path,
+                    )
+                    return none
+                }
+            }
+            let got = if member.method {
+                self.called(value, member, field, path)
+            } else {
+                match value.get(member.name) {
+                    ok(found) => some(found)
+                    err(problem) => {
+                        self.failed("{problem}", field, path)
+                        none
+                    }
+                }
+            }
+            match got {
+                some(found) => self.value(found, member.reference, field, path)
+                none => if member.reference.endsWith("!") { none } else { some("null") }
+            }
+        }
+    }
+}
+
+/// Calls the method of a field with its arguments; none when it failed.
+fn Run.called(self, target: __reflect.Value, member: Member, field: Field, path: String): __reflect.Value? {
+    let info = target.typeInfo()
+    let method = info.methods().find((m) { m.name() == member.name })?
+    var args: Array[__reflect.Value] = []
+    let variables = self.variables
+    for parameter in method.function().parameters() {
+        let given = field.arguments
+            .find((a) { a.0 == parameter.name() })
+            .map((a) { valueOf(a.1, variables) })
+        match __shapes.fromJson(
+            parameter.typeInfo(),
+            given.unwrapOr(__json.Value.Null),
+            parameter.name(),
+        ) {
+            ok(value) => args.push(value)
+            err(problem) => {
+                self.failed("the argument {problem}", field, path)
+                return none
+            }
+        }
+    }
+    let outcome = match recover { target.call(member.name, ...args) } {
+        ok(ok(value)) => value
+        ok(err(problem)) => {
+            self.failed("{problem}", field, path)
+            return none
+        }
+        err(crash) => {
+            self.failed("`{member.name}` panicked: {crash.message}", field, path)
+            return none
+        }
+    }
+    let result =
+        method.function().outcome().kind() ==
+            __reflect.TypeKind.Applied(__reflect.AppliedKind.Result)
+    if result {
+        let inner = outcome.elements().first().unwrapOr(outcome)
+        if outcome.variant() == some("err") {
+            self.failed("{inner}", field, path)
+            return none
+        }
+        return some(inner)
+    }
+    some(outcome)
+}
+
+/// A value of a field's type as JSON; none when it is null and cannot be.
+fn Run.value(self, value: __reflect.Value, reference: String, field: Field, path: String): String? {
+    let required = reference.endsWith("!")
+    let inner = if required {
+        reference.slice(0, reference.length() - 1).unwrapOr(reference)
+    } else {
+        reference
+    }
+    // An option of the program holds the value or nothing.
+    if value.typeName().endsWith("?") {
+        return match value.elements().first() {
+            some(held) => self.value(held, inner, field, path)
+            none => if required { none } else { some("null") }
+        }
+    }
+    let written = if inner.startsWith("[") {
+        let element = inner.slice(1, inner.length() - 1).unwrapOr(inner)
+        var items: Array[String] = []
+        for (index, item) in value.elements().iter().enumerate() {
+            match self.value(item, element, field, "{path},{index}") {
+                some(text) => items.push(text)
+                none => return if required { none } else { some("null") }
+            }
+        }
+        some("[{items.join(",")}]")
+    } else {
+        match self.schema.named(inner) {
+            some(named) if named.kind == Kind.Object => {
+                if field.selections.isEmpty() {
+                    self.failed(
+                        "`{field.name}` is a `{inner}`: select its fields, as `{field.name} {{ ... }}`",
+                        field,
+                        path,
+                    )
+                    none
+                } else {
+                    self.selected(Node.Data(value), inner, field.selections, path)
+                }
+            }
+            some(named) if named.kind == Kind.Enum =>
+                some(__json.encode(value.variant().unwrapOr("{value}")))
+            some(_) if inner == "JSON" => some(__shapes.jsonOf(value))
+            some(_) => some(__json.encode("{value}"))
+            none if inner == "ID" => some(__json.encode("{value}"))
+            none => some(__shapes.jsonOf(value))
+        }
+    }
+    match written {
+        some(text) => some(text)
+        none => if required { none } else { some("null") }
+    }
+}
+
+/// The value of a field of the schema's description as JSON.
+fn Run.completed(self, node: Node, typeName: String, field: Field, path: String): String? {
+    match node {
+        Node.Meta(value) => {
+            if value.isNull() {
+                return some("null")
+            }
+            match value.asArray() {
+                some(items) => {
+                    var written: Array[String] = []
+                    for (index, item) in items.iter().enumerate() {
+                        written.push(
+                            self
+                                .completed(Node.Meta(item), typeName, field, "{path},{index}")
+                                .unwrapOr("null"),
+                        )
+                    }
+                    some("[{written.join(",")}]")
+                }
+                none => match value.asObject() {
+                    some(_) if not field.selections.isEmpty() => self.selected(
+                        node,
+                        typeName,
+                        field.selections,
+                        path,
+                    )
+                    _ => some(__json.encode(value))
+                }
+            }
+        }
+        Node.Data(_) => some("null")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Introspection
+// ---------------------------------------------------------------------------
+
+/// The type of a field of the introspection's types.
+fn metaType(typeName: String, field: String): String {
+    match (typeName, field) {
+        ("__Schema", "types") => "__Type"
+        ("__Schema", "queryType") => "__Type"
+        ("__Schema", "mutationType") => "__Type"
+        ("__Schema", "subscriptionType") => "__Type"
+        ("__Schema", "directives") => "__Directive"
+        ("__Type", "fields") => "__Field"
+        ("__Type", "inputFields") => "__InputValue"
+        ("__Type", "interfaces") => "__Type"
+        ("__Type", "possibleTypes") => "__Type"
+        ("__Type", "enumValues") => "__EnumValue"
+        ("__Type", "ofType") => "__Type"
+        ("__Field", "args") => "__InputValue"
+        ("__Field", "type") => "__Type"
+        ("__InputValue", "type") => "__Type"
+        ("__Directive", "args") => "__InputValue"
+        _ => "String"
+    }
+}
+
+/// The schema as introspection describes it.
+fn introspection(of: Schema): __json.Value {
+    let kinds = of.types.map((named) { (named.name, kindName(named.kind)) })
+    var types = of.types.map((named) { typeDescription(named, kinds) })
+    for name in ["String", "Int", "Float", "Boolean", "ID"] {
+        types.push(jsonObject(["kind": jsonText("SCALAR"), "name": jsonText(name)]))
+    }
+    let root = (name: String) { jsonObject(["kind": jsonText("OBJECT"), "name": jsonText(name)]) }
+    let condition = inputValue("if", "Boolean!", none, kinds)
+    let directive = (name: String) {
+        jsonObject(
+            [
+                "name": jsonText(name),
+                "locations": __json.Value.Array(
+                    [jsonText("FIELD"), jsonText("FRAGMENT_SPREAD"), jsonText("INLINE_FRAGMENT")],
+                ),
+                "args": __json.Value.Array([condition]),
+                "isRepeatable": __json.Value.Bool(false),
+            ],
+        )
+    }
+    jsonObject(
+        [
+            "queryType": root("Query"),
+            "mutationType": if of.mutations.isSome() { root("Mutation") } else { __json.Value.Null },
+            "subscriptionType": __json.Value.Null,
+            "types": __json.Value.Array(types),
+            "directives": __json.Value.Array([directive("skip"), directive("include")]),
+        ],
+    )
+}
+
+fn jsonText(value: String): __json.Value {
+    __json.Value.Text(value)
+}
+
+fn jsonObject(members: Map[String, __json.Value]): __json.Value {
+    __json.Value.Object(members)
+}
+
+fn kindName(kind: Kind): String {
+    match kind {
+        Kind.Object => "OBJECT"
+        Kind.Input => "INPUT_OBJECT"
+        Kind.Enum => "ENUM"
+        Kind.Scalar => "SCALAR"
+    }
+}
+
+fn typeDescription(named: Named, kinds: Array[(String, String)]): __json.Value {
+    let kind = kindName(named.kind)
+    let fields = named.fields.map(
+        (member) {
+            jsonObject(
+                [
+                    "name": jsonText(member.name),
+                    "description": member.docs.map((d) { jsonText(d) }).unwrapOr(__json.Value.Null),
+                    "args": __json.Value.Array(
+                        member.arguments.map((a) { inputValue(a.name, a.reference, a.docs, kinds) }),
+                    ),
+                    "type": typeReference(member.reference, kinds),
+                    "isDeprecated": __json.Value.Bool(false),
+                    "deprecationReason": __json.Value.Null,
+                ],
+            )
+        },
+    )
+    jsonObject(
+        [
+            "kind": jsonText(kind),
+            "name": jsonText(named.name),
+            "description": named.docs.map((d) { jsonText(d) }).unwrapOr(__json.Value.Null),
+            "fields": if named.kind == Kind.Object {
+                __json.Value.Array(fields)
+            } else {
+                __json.Value.Null
+            },
+            "inputFields": if named.kind == Kind.Input {
+                __json.Value.Array(
+                    named.fields.map((m) { inputValue(m.name, m.reference, m.docs, kinds) }),
+                )
+            } else {
+                __json.Value.Null
+            },
+            "interfaces": if named.kind == Kind.Object {
+                __json.Value.Array([])
+            } else {
+                __json.Value.Null
+            },
+            "possibleTypes": __json.Value.Null,
+            "enumValues": if named.kind == Kind.Enum {
+                __json.Value.Array(
+                    named.values.map(
+                        (v) {
+                            jsonObject(
+                                [
+                                    "name": jsonText(v),
+                                    "description": __json.Value.Null,
+                                    "isDeprecated": __json.Value.Bool(false),
+                                    "deprecationReason": __json.Value.Null,
+                                ],
+                            )
+                        },
+                    ),
+                )
+            } else {
+                __json.Value.Null
+            },
+        ],
+    )
+}
+
+fn inputValue(name: String, reference: String, docs: String?, kinds: Array[(String, String)]): __json.Value {
+    jsonObject(
+        [
+            "name": jsonText(name),
+            "description": docs.map((d) { jsonText(d) }).unwrapOr(__json.Value.Null),
+            "type": typeReference(reference, kinds),
+            "defaultValue": __json.Value.Null,
+        ],
+    )
+}
+
+/// A type reference as introspection writes it: `NON_NULL` and `LIST`
+/// around a named type.
+fn typeReference(reference: String, kinds: Array[(String, String)]): __json.Value {
+    if reference.endsWith("!") {
+        return jsonObject(
+            [
+                "kind": jsonText("NON_NULL"),
+                "name": __json.Value.Null,
+                "ofType": typeReference(
+                    reference.slice(0, reference.length() - 1).unwrapOr(""),
+                    kinds,
+                ),
+            ],
+        )
+    }
+    if reference.startsWith("[") {
+        return jsonObject(
+            [
+                "kind": jsonText("LIST"),
+                "name": __json.Value.Null,
+                "ofType": typeReference(
+                    reference.slice(1, reference.length() - 1).unwrapOr(""),
+                    kinds,
+                ),
+            ],
+        )
+    }
+    let kind = kinds.find((pair) { pair.0 == reference }).map((pair) { pair.1 }).unwrapOr("SCALAR")
+    jsonObject(["kind": jsonText(kind), "name": jsonText(reference), "ofType": __json.Value.Null])
+}
+
+// ---------------------------------------------------------------------------
+// HTTP
+// ---------------------------------------------------------------------------
+
+/// Serves the schema on a route of `std.http`: a `POST` of JSON with
+/// `query`, `variables` and `operationName`, or a `GET` with them in the
+/// query string; a `GET` from a browser without a query gets GraphiQL.
+pub fn Schema.handler(self): fn(__http.Request): __http.Reply ! __http.Problem {
+    let served = self
+    (request) {
+        let (document, variables, operation) = if request.method() == "GET" {
+            let query = request.query("query").unwrapOr("")
+            if query.isEmpty() and request.header("Accept").unwrapOr("").contains("text/html") {
+                return __http.Reply.html(graphiql(request.path()))
+            }
+            let given = __json
+                .parse(request.query("variables").unwrapOr("{{}}"))
+                .unwrapOr(__json.Value.Null)
+            (query, given, request.query("operationName"))
+        } else {
+            let body = __json.parse(request.text()?).unwrapOr(__json.Value.Null)
+            (
+                body.field("query").asText().unwrapOr(""),
+                body.field("variables"),
+                body.field("operationName").asText(),
+            )
+        }
+        let text = served.executed(document, variables.asObject().unwrapOr([:]), operation)
+        __http.Reply.json(__json.parse(text).unwrapOr(__json.Value.Null))
+    }
+}
+
+/// GraphiQL, from its CDN, on `path`.
+fn graphiql(path: String): String {
+    let endpoint = __json.encode(path)
+    r"""<!doctype html>
+<html><head><title>GraphiQL</title>
+<link rel="stylesheet" href="https://unpkg.com/graphiql@3/graphiql.min.css">
+</head><body style="margin:0">
+<div id="graphiql" style="height:100vh"></div>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/graphiql@3/graphiql.min.js"></script>
+<script>
+ReactDOM.createRoot(document.getElementById('graphiql')).render(
+  React.createElement(GraphiQL, { fetcher: GraphiQL.createFetcher({ url: ENDPOINT }) }));
+</script>
+</body></html>""".replace("ENDPOINT", endpoint)
+}

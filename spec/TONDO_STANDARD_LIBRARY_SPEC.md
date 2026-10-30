@@ -1721,6 +1721,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.archive` | Hosted | — | 0.1 | zip, tar, tar.gz y tar.zst: leer, escribir y extraer |
 | `std.image` | Hosted | — | 0.1 | PNG, JPEG, GIF y WebP: leer, cambiar el tamaño, recortar, girar, filtrar y escribir |
 | `std.acme` | Capability-gated | `network` | 0.1 | Certificados de una autoridad ACME, como Let's Encrypt, que un servidor obtiene y renueva solo |
+| `std.graphql` | Core | — | 0.1 | Servidores de GraphQL hechos de los tipos del programa, con introspección |
 | `std.sql` | Capability-gated | `network` para PostgreSQL y MySQL | 0.1 | SQLite, PostgreSQL y MySQL: consultas literales con parámetros, filas en los tipos del programa, transacciones, migraciones, un pool y `use` alrededor de cada sentencia |
 | `std.http` | Capability-gated | `network` | 0.1 | Cliente y servidor HTTP/1.1 y HTTP/2 con TLS, cuerpos en streaming, multipart, archivos con rangos, Server-Sent Events y WebSockets |
 | `std.random` | Core + gated | `entropy` para sembrar desde el sistema | 0.1 | Generadores pseudoaleatorios sembrados, mezcla, elección y bytes de entropía |
@@ -3103,6 +3104,12 @@ Valores:
   escribe con su `Display`.
 - `ReflectError` dice qué ruta o método falló y su mensaje la corrección:
   "`User` has no field `nme`; its fields are `name`, `age` and `address`".
+- Lo que un valor guarda para compartir, `sync.Mutex`, `RwLock`, `Atomic`,
+  `Map` y `Semaphore`, y un `sql.Database`, implementan `Reflect` como
+  opacos: la reflexión los lleva tal cual y no mira dentro, así que el record
+  que los tiene, como la raíz que sirven `std.mcp` y `std.graphql`, también
+  lo implementa. `sql.SqlError` se muestra como su mensaje, así que un método
+  que falla con él también se llama por nombre.
 
 Descripción de tipos:
 
@@ -5925,7 +5932,8 @@ pub fn tls(domains: Array[String], email: String, directory: String = LetsEncryp
 
 - `tls` da el `Tls` de unos `net.Certificates` (14.4.6) y deja una tarea
   separada que los mantiene: muestra el certificado guardado mientras le
-  quedan más de 30 días; si no, espera a que un servidor los muestre, pide
+  queda más de un tercio de su vida, 30 días de 90 o 2 de los 6 de uno
+  corto; si no, espera a que un servidor los muestre, pide
   uno para `domains`, el primero su sujeto, y lo guarda y lo muestra. Mira
   de nuevo cada 12 horas. Un intento que falla se escribe en el log y se
   repite, con esperas que doblan desde un minuto hasta seis horas; hasta el
@@ -5937,10 +5945,81 @@ pub fn tls(domains: Array[String], email: String, directory: String = LetsEncryp
   `email` es a quien la autoridad escribe sobre ellos. `trust` es la
   autoridad del certificado del propio directorio, para uno de pruebas.
 - Las peticiones van firmadas con JWS y ES256, con el nonce que la autoridad
-  da, y uno que rechaza se cambia una vez. La petición del certificado
+  da, y uno que rechaza se cambia, hasta cuatro veces. La petición del certificado
   (PKCS #10) y el certificado de TLS-ALPN-01 se escriben en DER en Tondo;
   este último se muestra solo a quien pide `acme-tls/1` para ese nombre, y
   hasta que la comprobación termina.
+
+### 14.40 `std.graphql`
+
+`std.graphql` hace un servidor de GraphQL de los tipos del programa: los
+campos y los métodos `pub` del tipo de la consulta, y de cada tipo que dan,
+son los campos del esquema, y los parámetros de un método sus argumentos;
+los métodos de la mutación son las mutaciones. Las consultas se leen y se
+ejecutan en Tondo por reflexión (14.8), con introspección, así que las
+herramientas de GraphQL leen el esquema.
+
+~~~tondo
+import std.graphql
+import std.http
+
+/// A book of the library.
+pub type Book = { id: Int, title: String }
+
+/// What the API answers.
+pub type Library = { books: Array[Book] }
+
+/// The books whose title has the text.
+pub fn Library.matching(self, text: String): Array[Book] {
+    self.books.filter((book) { book.title.contains(text) })
+}
+
+fn main(): !http.HttpError {
+    let schema = graphql.schema(Library { books: [Book { id: 1, title: "Dune" }] })
+    var app = http.App.new()
+    app.post("/graphql", schema.handler())
+    app.get("/graphql", schema.handler())
+    app.listen(port: 8080)?
+}
+~~~
+
+~~~tondo pseudocode
+pub type Schema
+pub fn schema[Q: reflect.Reflect](query: Q): Schema
+pub fn Schema.mutation[M: reflect.Reflect](self, root: M): Schema
+pub fn Schema.sdl(self): String
+pub fn Schema.execute(self, document: String, variables: Map[String, json.Value] = [:],
+    operation: String? = none): json.Value
+pub fn Schema.handler(self): fn(http.Request): http.Reply ! http.Problem
+~~~
+
+- Los tipos raíz se llaman `Query` y `Mutation`. Un record es un tipo objeto
+  con su nombre sin el módulo; sus campos que la reflexión no lleva por
+  opacos no son del esquema, y sus métodos que leen su valor (`self`) son
+  campos con argumentos. Un record que es parámetro es un tipo de entrada,
+  que termina en `Input` cuando su nombre es también el de una salida. Un
+  enum sin payloads es un enum; un opcional admite null y lo demás no; un
+  `Array` o un `Set` es una lista; un `T ! E` es su `T`. `Int` es `Int`,
+  aunque Tondo lo tenga de 64 bits, `Float` es `Float`, `String` y `Char`
+  son `String`, `Bool` es `Boolean`; `time.DateTime`, `math.Decimal` y
+  `math.BigInt` son escalares con su texto, y `uuid.Uuid` es `ID`. Otro tipo
+  es el escalar `JSON`. Los `///` son las descripciones.
+- Un argumento es opcional si su tipo lo es: el valor por defecto de un
+  parámetro no se ve. Un valor de entrada se lee como lee `std.mcp` sus
+  argumentos, y uno que no encaja es un error del campo.
+- `execute` ejecuta la operación nombrada, o la única del documento, con
+  sus variables, y da `{"data": ..., "errors": [...]}`: un error del método
+  o de un argumento deja el campo en null y escribe su mensaje, sus
+  `locations` y su `path`; si el campo no admite null, el null sube al
+  primero que lo admite. Un documento que no se lee, una operación que no
+  está o una variable obligatoria que falta dan solo `errors`. Hay
+  fragmentos, fragmentos en línea, alias, `@skip`, `@include`, variables con
+  valores por defecto y `__typename`; no hay suscripciones.
+- La introspección (`__schema`, `__type`) describe el esquema, y `sdl` lo
+  escribe en el lenguaje de los esquemas de GraphQL.
+- `handler` responde un `POST` de JSON con `query`, `variables` y
+  `operationName`, o un `GET` con ellos en la query string; un `GET` de un
+  navegador sin consulta recibe GraphiQL.
 
 
 ## 15. Contrato exigido a cada módulo

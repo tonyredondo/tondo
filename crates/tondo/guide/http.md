@@ -150,3 +150,47 @@ fn find(id: Int): User? {
   the user's cache directory, and `directory: acme.LetsEncryptStaging` tries
   it without the real limits. `net.Certificates` change while a server shows
   them, for certificates renewed some other way.
+
+## GraphQL
+
+`std.graphql` makes a GraphQL server of your types: the fields and `pub`
+methods of the query's type, and of each type they give, are the schema's
+fields; a method's parameters are its arguments, and `///` its description.
+
+```tondo
+import std.graphql
+import std.http
+import std.sql
+
+pub type Book = { id: Int, title: String }
+
+/// What the API answers.
+pub type Library = { db: sql.Database }
+
+/// The books whose title has the text.
+pub fn Library.books(self, matching: String?): Array[Book] ! sql.SqlError {
+    let pattern = "%{matching.unwrapOr("")}%"
+    self.db.query[Book]("SELECT id, title FROM books WHERE title LIKE {pattern}")?
+}
+
+fn main(): !http.HttpError {
+    let db = match sql.open("sqlite:books.db") {
+        ok(opened) => opened
+        err(error) => panic("{error}")
+    }
+    let schema = graphql.schema(Library { db })
+    var app = http.App.new()
+    app.post("/graphql", schema.handler())
+    app.get("/graphql", schema.handler())       // GraphiQL in a browser
+    app.listen(port: 8080)?
+}
+```
+
+- `.mutation(root)` adds the methods of another value as mutations;
+  `schema.sdl()` writes the schema; `schema.execute(document, variables)`
+  runs a query in the program, as a test does. Write documents as raw
+  strings, `r"{ books { title } }"`: their braces are not interpolation.
+- An optional parameter is an optional argument; a default value is not
+  seen. A method's error leaves its field null with the error's message
+  and path. A `sql.Database` or a `sync.Mutex` in a root is carried, not
+  shown.

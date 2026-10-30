@@ -14,6 +14,7 @@ import std.json as __json
 import std.math as __math
 import std.net as __net
 import std.random as __random
+import std.reflect as __reflect
 import std.serialization as __serialization
 import std.sync as __sync
 import std.time as __time
@@ -61,6 +62,14 @@ pub type SqlError = {
 
 impl Display for SqlError {
     fn display(self): String {
+        self.message
+    }
+}
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for SqlError {
+    fn reflectShow(self, inner: Bool): String {
         self.message
     }
 }
@@ -427,6 +436,14 @@ fn driverOf(url: String): Driver ! SqlError {
         ErrorKind.Connection,
         "`{url}` names no database tondo speaks: write `sqlite:path`, or give `driver:`",
     )
+}
+
+/// A database, which reflection carries as it is: a root of `std.mcp` or
+/// `std.graphql` holds one.
+impl __reflect.Reflect for Database {
+    fn reflectShow(self, inner: Bool): String {
+        "sql.Database({self.driver.system})"
+    }
 }
 
 /// Wraps each statement, as `App.use` wraps each request: `middleware`

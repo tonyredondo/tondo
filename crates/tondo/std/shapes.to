@@ -195,3 +195,133 @@ pub fn jsonOf(value: __reflect.Value): String {
     }
     __json.encode("{value}")
 }
+
+/// The value of a type that JSON writes, at `place` for messages.
+pub fn fromJson(info: __reflect.TypeInfo, json: __json.Value, place: String): __reflect.Value !
+    String {
+    let wrong = (expected: String) {
+        "`{place}` is {__json.encode(json)}, and should be {expected}"
+    }
+    match info.kind() {
+        __reflect.TypeKind.Primitive(kind) => {
+            let text = match kind {
+                __reflect.PrimitiveKind.String => json.asText()
+                __reflect.PrimitiveKind.Char => json.asText()
+                __reflect.PrimitiveKind.Bool => json.asBool().map((b) { "{b}" })
+                __reflect.PrimitiveKind.Float => json.asFloat().map((f) { "{f}" })
+                __reflect.PrimitiveKind.Float32 => json.asFloat().map((f) { "{f}" })
+                _ => json.asInt().map((n) { "{n}" })
+            }
+            match text {
+                some(written) => match scalar(kind, written) {
+                    ok(value) => value
+                    err(problem) => fail "`{place}`: {problem}"
+                }
+                none if json.isNull() => fail "`{place}` is missing"
+                none => fail wrong(primitive(kind))
+            }
+        }
+        __reflect.TypeKind.Applied(__reflect.AppliedKind.Option) => {
+            if json.isNull() {
+                return variant("none", [:], [])
+            }
+            let inner = info.genericArguments().first().unwrapOr(info)
+            fromJson(inner, json, place)?
+        }
+        __reflect.TypeKind.Applied(kind) if kind == __reflect.AppliedKind.Array or
+            kind == __reflect.AppliedKind.Set => {
+            let items = match json.asArray() {
+                some(items) => items
+                none => fail wrong("an array")
+            }
+            let inner = info.genericArguments().first().unwrapOr(info)
+            var values: Array[__reflect.Value] = []
+            for index in 0..items.length() {
+                values.push(fromJson(inner, items[index], "{place}[{index}]")?)
+            }
+            sequence(values)
+        }
+        __reflect.TypeKind.Applied(__reflect.AppliedKind.Map) => {
+            let members = match json.asObject() {
+                some(members) => members
+                none => fail wrong("an object")
+            }
+            let inner = info.genericArguments().get(1).unwrapOr(info)
+            var values: Map[String, __reflect.Value] = [:]
+            for (key, member) in members {
+                values[key] = fromJson(inner, member, "{place}.{key}")?
+            }
+            record(values)
+        }
+        __reflect.TypeKind.Record => {
+            if json.asObject().isNone() {
+                fail wrong("an object")
+            }
+            record(fieldsOf(info.fields(), json, place)?)
+        }
+        __reflect.TypeKind.Enum => {
+            match json.asText() {
+                some(name) => match info.variants().find((v) { v.name() == name }) {
+                    some(_) => return variant(name, [:], [])
+                    none => {}
+                }
+                none => {}
+            }
+            for (name, payload) in json.asObject().unwrapOr([:]) {
+                match info.variants().find((v) { v.name() == name }) {
+                    some(found) if found.payloadKind() == __reflect.VariantPayloadKind.Record => {
+                        return variant(
+                            name,
+                            fieldsOf(found.fields(), payload, "{place}.{name}")?,
+                            [],
+                        )
+                    }
+                    some(found) if found.payloadKind() == __reflect.VariantPayloadKind.Tuple => {
+                        let parts = found.tupleElements()
+                        let given = if parts.length() == 1 {
+                            [payload]
+                        } else {
+                            payload.asArray().unwrapOr([])
+                        }
+                        var items: Array[__reflect.Value] = []
+                        for index in 0..parts.length() {
+                            items.push(
+                                fromJson(
+                                    parts[index],
+                                    given.get(index).unwrapOr(__json.Value.Null),
+                                    "{place}.{name}",
+                                )?,
+                            )
+                        }
+                        return variant(name, [:], items)
+                    }
+                    _ => {}
+                }
+            }
+            fail wrong("one of {info.variants().map((v) { v.name() }).join(", ")}")
+        }
+        __reflect.TypeKind.Newtype => match info.underlying() {
+            some(underlying) => fromJson(underlying, json, place)?
+            none => fail "`{place}`: a `{info}` is not read from JSON"
+        }
+        _ => fail "`{place}`: a `{info}` is not read from JSON"
+    }
+}
+
+fn fieldsOf(fields: Array[__reflect.FieldInfo], json: __json.Value, place: String): Map[
+    String,
+    __reflect.Value,
+] !
+    String {
+    var members: Map[String, __reflect.Value] = [:]
+    for field in fields {
+        let path = "{place}.{field.name()}"
+        match json.get(field.name()) {
+            some(value) => members[field.name()] = fromJson(field.typeInfo(), value, path)?
+            none if field.typeInfo().kind() ==
+                __reflect.TypeKind.Applied(__reflect.AppliedKind.Option) => {}
+            none => fail "`{path}` is missing"
+        }
+    }
+    members
+}

@@ -29,6 +29,7 @@ std.log        a logger with levels and fields, text or JSON lines
 std.diagnostics  the program's own counters, which `tondo counters` shows
 std.http       HTTP client and server, WebSockets (`tondo guide http`)
 std.mcp        Model Context Protocol servers from a value's methods
+std.graphql    GraphQL servers from your types, with introspection (`tondo guide http`)
 std.template   text and HTML templates, compiled or loaded (`tondo guide templates`)
 std.sql        SQLite, PostgreSQL, MySQL: queries, rows, migrations (`tondo guide databases`)
 std.net        TCP, UDP and Unix sockets, TLS, names, IP addresses and networks
