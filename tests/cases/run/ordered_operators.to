@@ -1,8 +1,10 @@
 // A type that implements `Ordered`, and a `T: Ordered`, has `<`, `<=`, `>`
-// and `>=`, which compare by it; a failed assertion shows both values.
+// and `>=`, which compare by it, as the numbers of std.math and the times
+// of std.time do; a failed assertion shows both values.
 
 import std.console
 import std.math
+import std.time
 
 pub type Version = {
     major: Int
@@ -36,11 +38,17 @@ fn main() {
     let price: math.Decimal = 19.99
     let big: math.BigInt = 123456789012345678901234567890
     console.println("{price < 20} {largest(price, 5)} {big > 0} {largest("a", "b")}")
+    let epoch = time.utc(time.seconds(0))
+    let later = time.utc(time.hours(25))
+    console.println(
+        "{time.seconds(1) < time.minutes(1)} {epoch < later} {largest(epoch, later)} {later.inZone(time.utcZone()) > epoch.inZone(time.utcZone())}",
+    )
     assert(new < old)
 }
 
 // expect-stdout: true true false true 1.10
 // expect-stdout: true 19.99 true b
+// expect-stdout: true true 1970-01-02T01:00:00Z true
 // expect-panic: P0007
 // expect-stderr:   left:  1.10
 // expect-stderr:   right: 1.4

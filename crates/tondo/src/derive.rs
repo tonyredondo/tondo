@@ -146,6 +146,9 @@ fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap
                 let (name, generics) = match item {
                     // C structs cross to C, not to other formats or reflection.
                     ast::Item::Type(t) if t.foreign => continue,
+                    // A prelude name is an error of its own (E1005).
+                    ast::Item::Type(t) if crate::check::PRELUDE_TYPES.contains(&t.name.name.as_str()) => continue,
+                    ast::Item::Enum(e) if crate::check::PRELUDE_TYPES.contains(&e.name.name.as_str()) => continue,
                     ast::Item::Type(t) => (&t.name.name, &t.generics),
                     ast::Item::Enum(e) => (&e.name.name, &e.generics),
                     _ => continue,

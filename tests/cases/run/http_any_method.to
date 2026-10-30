@@ -1,0 +1,24 @@
+// A route of method `*` takes every method, and one of the request's own
+// method goes before it.
+
+import std.console
+import std.http
+
+fn main(): !http.HttpError {
+    var app = http.App.new()
+    app.route(
+        "*",
+        "/things/:id",
+        (request) { http.Reply.text("any {request.method()} {request.param("id")}") },
+    )
+    app.get("/things/:id", (request) { http.Reply.text("get {request.param("id")}") })
+    let client = app.client()
+    for method in ["GET", "POST", "DELETE"] {
+        let reply = client.request(method, "/things/7")?
+        console.println("{reply.status()} {reply.text()?}")
+    }
+}
+
+// expect-stdout: 200 get 7
+// expect-stdout: 200 any POST 7
+// expect-stdout: 200 any DELETE 7

@@ -1705,7 +1705,8 @@ pub fn App.delete(mut self, path: String, handler: fn(Request): Reply ! Problem)
     self.route("DELETE", path, handler)
 }
 
-/// A route of any method; `operation` is its OpenAPI operation object and
+/// A route of a method, or of any with `"*"`; `operation` is its OpenAPI
+/// operation object and
 /// `schemas` the JSON Schemas it refers to by name. The compiler writes both
 /// for a route with a literal path.
 pub fn App.route(
@@ -1717,7 +1718,8 @@ pub fn App.route(
     schemas: Map[String, String] = [:],
 ) {
     self.routes.push(Route { method: method.toUpper(), pattern: segments(path), handler })
-    if not operation.isEmpty() {
+    // OpenAPI describes each method: a route of any is not described.
+    if not operation.isEmpty() and method != "*" {
         self.operations.push((method.toLower(), path, operation))
     }
     for (name, schema) in schemas {
@@ -2333,9 +2335,13 @@ fn choose(routes: Array[Route], request: Request): Request {
     var allowed: Array[String] = []
     for route in routes {
         match matching(route.pattern, path) {
-            some((params, score)) => {
-                if route.method == request.verb or
-                    (route.method == "GET" and request.verb == "HEAD") {
+            some((params, matched)) => {
+                let exact =
+                    route.method == request.verb or
+                        (route.method == "GET" and request.verb == "HEAD")
+                if exact or route.method == "*" {
+                    // A route of the request's own method goes before one of any.
+                    let score = matched * 2 + (if exact { 1 } else { 0 })
                     if score > bestScore {
                         best = some(route)
                         bestScore = score

@@ -84,6 +84,41 @@ fn sinceEpoch(date: __time.DateTime): __time.Duration {
     __time.nanoseconds(seconds * 1000000000 + date.nanosecond)
 }
 
+/// Shorter first.
+impl Ordered for __time.Duration {
+    fn compare(self, other: __time.Duration): Int {
+        self.nanoseconds().compare(other.nanoseconds())
+    }
+}
+
+/// Earlier first.
+impl Ordered for __time.Instant {
+    fn compare(self, other: __time.Instant): Int {
+        self.since(other).nanoseconds().compare(0)
+    }
+}
+
+/// Earlier first, field by field from the year, so any year compares.
+impl Ordered for __time.DateTime {
+    fn compare(self, other: __time.DateTime): Int {
+        let pairs = [
+            (self.year, other.year),
+            (self.month, other.month),
+            (self.day, other.day),
+            (self.hour, other.hour),
+            (self.minute, other.minute),
+            (self.second, other.second),
+            (self.nanosecond, other.nanosecond),
+        ]
+        for (mine, theirs) in pairs {
+            if mine != theirs {
+                return mine.compare(theirs)
+            }
+        }
+        0
+    }
+}
+
 /// A date and time, as RFC 3339 writes it in UTC.
 impl serialization.Encode for __time.DateTime {
     fn encode[S: serialization.Sink](self, out: S) {
@@ -271,6 +306,13 @@ pub fn ZonedDateTime.format(self, pattern: String, locale: String = "en"): Strin
 
 /// RFC 3339 with its offset: `2026-10-29T13:05:00+01:00`, or `Z` when the
 /// offset is zero; the fraction only when it is not zero.
+/// Earlier first, as the instants they name, whatever their zones.
+impl Ordered for ZonedDateTime {
+    fn compare(self, other: ZonedDateTime): Int {
+        Ordered.compare(self.utc(), other.utc())
+    }
+}
+
 impl Display for ZonedDateTime {
     fn display(self): String {
         var fraction = ""

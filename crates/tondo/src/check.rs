@@ -15453,7 +15453,9 @@ impl<'a> Checker<'a> {
                             hir::ExprKind::Binary(op, Box::new(Self::mk(call, Ty::INT, span)), Box::new(zero));
                         return Self::mk(compared, Ty::BOOL, span);
                     }
-                    if matches!(self.types.kind(left.ty), TyKind::Adt(_)) {
+                    // Only the module that declares a type implements it there.
+                    let local = self.owner(left.ty).is_some_and(|owner| owner.module == self.module);
+                    if local && matches!(self.types.kind(left.ty), TyKind::Adt(_)) {
                         let name = self.types.display(left.ty);
                         let message = format!(
                             "operator `{}` cannot be applied to {}: implement `Ordered` for it, `impl Ordered for {name} {{ fn compare(self, other: {name}): Int {{ ... }} }}`, and the operators compare by it",

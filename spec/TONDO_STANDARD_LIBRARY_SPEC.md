@@ -1865,6 +1865,10 @@ pub fn parseDuration(text: String): Duration ! TimeError
 - Los constructores multiplican por un factor exacto; las lecturas dividen y
   truncan hacia cero. Un resultado que no cabe produce el pánico `P0005`, como
   la aritmética de `Int`.
+- `Duration`, `Instant`, `DateTime` y `ZonedDateTime` implementan `Ordered`,
+  así que se comparan con `<`, `<=`, `>` y `>=` (17.8 del lenguaje): la más
+  corta, y lo anterior, primero; dos `ZonedDateTime` por el instante que
+  nombran, en cualquier zona.
 - `Display` usa la forma de Go: `1h2m3.5s`, `1.5s`, `250ms`, `1.5µs`, `42ns`,
   `0s`, con `-` delante de una duración negativa.
 - `parseDuration` lee esa forma, como `ParseDuration` de Go: un signo opcional y
@@ -4613,9 +4617,10 @@ pub alias TlsVersion = net.TlsVersion
 - Una ruta es un método y un path cuyos segmentos `:nombre` son parámetros y
   cuyo último puede ser `*nombre`, el resto del path. Entre las rutas que
   encajan gana la de más segmentos fijos, así que `/users/me` gana a
-  `/users/:id`; `HEAD` usa la ruta `GET`. Un path sin ruta es `404`, y uno con
-  rutas de otros métodos, `405` con `Allow`. Los parámetros llegan
-  decodificados.
+  `/users/:id`; `HEAD` usa la ruta `GET`. Una ruta de método `"*"` toma
+  cualquiera, y una del método de la petición le gana. Un path sin ruta es
+  `404`, y uno con rutas de otros métodos, `405` con `Allow`. Los parámetros
+  llegan decodificados.
 - `Request.route()` es la plantilla de la ruta que atiende la petición, como se
   registró y con el prefijo de `mount`: `/users/:id` para `GET /users/42`;
   `none` si ninguna la atiende. El servidor elige la ruta antes de llamar al
