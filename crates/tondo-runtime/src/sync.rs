@@ -2,7 +2,7 @@
 //! park tasks instead of blocking threads, semaphores and barriers.
 
 use super::cycles::{self, Kind, Taken, Visit, Visitor};
-use super::tasks::{CANCELLED, Task, Wait, cancelled, current, lock, notify, unlock};
+use super::tasks::{CANCELLED, Task, Wait, current, lock, notify, stops, unlock};
 use super::{Glue, LIVE_OBJECTS, Str};
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -180,11 +180,11 @@ fn held() -> &'static mut Vec<(usize, bool, *const Str)> {
 
 /// Takes the lock to read (`mode` 0), to change (1), or to change if it is
 /// free (2). Returns the guard, or 0 when `try` finds it taken or the task
-/// is cancelled or unwinds. Taking it again from the task that holds it,
+/// is cancelled (in a `defer`, only when it would wait) or unwinds. Taking it again from the task that holds it,
 /// in a way that would wait forever, panics with `P0014`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sync_lock(object: *mut SyncObject, mode: u8, location: *const Str) -> usize {
-    if cancelled() {
+    if stops() {
         return 0;
     }
     let exclusive = mode != SHARED;
@@ -488,7 +488,7 @@ pub unsafe extern "C" fn tondo_rt_semaphore_acquire(
     semaphore: *mut SemaphoreObject,
     try_only: u8,
 ) -> *mut PermitObject {
-    if cancelled() {
+    if stops() {
         return std::ptr::null_mut();
     }
     unsafe {
@@ -597,7 +597,7 @@ pub unsafe extern "C" fn tondo_rt_barrier_new(parties: i64, location: *const Str
 /// releases the others; 0 for them, and for a cancelled task.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_barrier_wait(barrier: *mut BarrierObject) -> u8 {
-    if cancelled() {
+    if stops() {
         return 0;
     }
     unsafe {

@@ -268,6 +268,12 @@ pub(crate) struct Task {
     /// Set by `cancel` (11.15): the task's waits end at once, and compiled
     /// code unwinds after them.
     cancelled: AtomicBool,
+    /// The `defer`s it runs, nested: in them a cancelled task still does
+    /// what needs no wait (11.15).
+    deferring: u32,
+    /// In those `defer`s, a wait ended at once because the task is
+    /// cancelled: the code unwinds to the `defer` that runs.
+    cut: bool,
     /// Set by a live build's reload: the wait ends, and the statement it is
     /// in starts again (toolchain 7.10).
     pub(crate) again: AtomicBool,
@@ -2191,6 +2197,8 @@ fn new_task(
         cleanups: Vec::new(),
         state: AtomicU8::new(RUNNING),
         cancelled: AtomicBool::new(false),
+        deferring: 0,
+        cut: false,
         again: AtomicBool::new(false),
         waiting: std::ptr::null(),
         waiting_lock: AtomicBool::new(false),
@@ -2403,19 +2411,26 @@ impl Wait {
         }
         lock(&task.waiting_lock);
         let stopped = task.cancelled.load(Ordering::Acquire) || task.alarm.load(Ordering::Acquire) || task.expired;
-        if stopped && self.claim(CANCELLED) {
+        let fired = if stopped && self.claim(CANCELLED) {
             unlock(&task.waiting_lock);
-            return CANCELLED;
-        }
-        task.waiting = self;
-        unlock(&task.waiting_lock);
-        let fired = self.block_fully();
-        lock(&task.waiting_lock);
-        task.waiting = std::ptr::null();
-        unlock(&task.waiting_lock);
-        if fired == DEADLINE {
-            expire(task);
-            return CANCELLED;
+            CANCELLED
+        } else {
+            task.waiting = self;
+            unlock(&task.waiting_lock);
+            let fired = self.block_fully();
+            lock(&task.waiting_lock);
+            task.waiting = std::ptr::null();
+            unlock(&task.waiting_lock);
+            if fired == DEADLINE {
+                expire(task);
+                CANCELLED
+            } else {
+                fired
+            }
+        };
+        // In a `defer`, the code that waited unwinds to it.
+        if fired == CANCELLED && task.deferring > 0 {
+            task.cut = true;
         }
         fired
     }
@@ -2577,6 +2592,40 @@ pub(crate) fn cancelled() -> bool {
         }
 }
 
+/// Whether an operation that may wait ends at once without being done: in
+/// a cancelled task, but not in its `defer`s, which do what needs no wait,
+/// and whose waits `Wait::block` ends at once (11.15).
+pub(crate) fn stops() -> bool {
+    cancelled() && unsafe { current().as_ref() }.is_some_and(|task| task.deferring == 0)
+}
+
+/// A `defer` starts to run.
+pub(crate) fn defer_starts() {
+    if let Some(task) = unsafe { current().as_mut() } {
+        task.deferring += 1;
+        task.cut = false;
+    }
+}
+
+/// The `defer` ended, however it did: the code that ran it goes on.
+pub(crate) fn defer_ends() {
+    if let Some(task) = unsafe { current().as_mut() } {
+        task.deferring = task.deferring.saturating_sub(1);
+        task.cut = false;
+    }
+}
+
+/// A function that unwinds because its task is cancelled returns: inside
+/// a `defer`, its caller unwinds too, up to the `defer`.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_cancel_return() {
+    if let Some(task) = unsafe { current().as_mut() }
+        && task.deferring > 0
+    {
+        task.cut = true;
+    }
+}
+
 /// Checked by compiled code after every call that may wait: a cancelled
 /// task unwinds from there. While exploring orders, the task gives way
 /// there too.
@@ -2587,7 +2636,8 @@ pub extern "C" fn tondo_rt_cancelled() -> u8 {
         give_way();
     }
     let Some(task) = (unsafe { current().as_ref() }) else { return 0 };
-    if task.cancelled.load(Ordering::Acquire) {
+    // In a `defer`, only after a wait that ended at once.
+    if task.cancelled.load(Ordering::Acquire) && (task.deferring == 0 || task.cut) {
         return 1;
     }
     // A panic unwinds to a `recover` (language 15.9).
@@ -2716,7 +2766,14 @@ pub(crate) fn unlock(flag: &AtomicBool) {
 /// `time.sleep(delay)` in nanoseconds; no wait when it is not positive.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_sleep(nanos: i64) {
-    if nanos <= 0 || cancelled() {
+    if nanos <= 0 {
+        return;
+    }
+    if cancelled() {
+        // A sleep always waits: in a `defer` too, it ends at once.
+        if let Some(task) = unsafe { current().as_mut() } {
+            task.cut |= task.deferring > 0;
+        }
         return;
     }
     let wait = Wait::new();
@@ -2995,7 +3052,7 @@ unsafe fn take(join: *mut JoinObject, out: *mut u8) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_join_wait(join: *mut JoinObject, out: *mut u8) {
     unsafe {
-        if !cancelled() && finish(join, false) {
+        if !stops() && finish(join, false) {
             if let Some(panic) = (*join).panic.take() {
                 // The task's panic goes on here (language 15.9).
                 std::ptr::write_bytes(out, 0, (*join).size);
@@ -3247,11 +3304,11 @@ pub unsafe extern "C" fn tondo_rt_group_next(group: *mut GroupObject, out: *mut 
         let g = &mut *group;
         lock(&g.lock);
         loop {
-            if let Some(found) = group_try_next(g, out).filter(|_| !cancelled()) {
+            if let Some(found) = group_try_next(g, out).filter(|_| !stops()) {
                 unlock(&g.lock);
                 return found as u8;
             }
-            if cancelled() || !group_block(g) {
+            if stops() || !group_block(g) {
                 unlock(&g.lock);
                 return 0;
             }
@@ -3269,7 +3326,7 @@ pub unsafe extern "C" fn tondo_rt_group_settle(group: *mut GroupObject) -> i64 {
         let g = &mut *group;
         lock(&g.lock);
         loop {
-            if cancelled() {
+            if stops() {
                 unlock(&g.lock);
                 return -2;
             }
@@ -3593,7 +3650,7 @@ unsafe fn try_receive(c: &mut ChannelObject, out: *mut u8) -> Option<(bool, Opti
 pub unsafe extern "C" fn tondo_rt_channel_send(sender: *mut SenderObject, value: *mut u8, location: *const Str) {
     unsafe {
         let c = &mut *(*sender).channel;
-        if cancelled() {
+        if stops() {
             drop_unsent(c, value);
             return;
         }
@@ -3647,7 +3704,7 @@ pub unsafe extern "C" fn tondo_rt_channel_offer(sender: *mut SenderObject, value
     const SHUT: i64 = 2;
     unsafe {
         let c = &mut *(*sender).channel;
-        if cancelled() {
+        if stops() {
             drop_unsent(c, value);
             return SHUT;
         }
@@ -3722,12 +3779,12 @@ unsafe fn drop_unsent(c: &ChannelObject, value: *mut u8) {
 
 /// `receiver.receive()`: moves the next value into `out` and returns 1, or
 /// returns 0 once the channel is closed and empty, or if the task is
-/// cancelled.
+/// cancelled (in a `defer`, only when it would wait).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_channel_receive(channel: *mut ChannelObject, out: *mut u8) -> u8 {
     unsafe {
         let c = &mut *channel;
-        if cancelled() {
+        if stops() {
             return 0;
         }
         lock(&c.lock);
@@ -3924,7 +3981,7 @@ pub unsafe extern "C" fn tondo_rt_select(cases: *mut Case, count: usize, blockin
 }
 
 unsafe fn select(cases: &mut [Case], blocking: bool, location: *const Str) -> i64 {
-    if cancelled() {
+    if stops() {
         return -2;
     }
     unsafe {

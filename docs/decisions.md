@@ -3416,3 +3416,22 @@ value when the field is one. No field needs a tag, as Gin's binding does.
 return; zstd wins a tie because it is faster for the same size. A
 WebSocket's handler gets its request and runs inside its route, so the
 contexts the middleware sets, as the user or the trace, reach it.
+
+## 2026-10-30 — What the `defer`s of a cancelled task still do
+
+Since a client that leaves cancels its handler, cancellation is common in
+servers, and it showed a gap: in a cancelled task every operation that may
+wait ended at once, even one that would not have waited. A `defer` that
+took one from a counter under a `Mutex`, or sent a last value to a channel
+with room, did nothing, and said nothing. A `defer` is there to leave the
+state right, so in the `defer`s of a cancelled task, and in what they
+call, what needs no wait is done; a wait they need ends at once, and ends
+that `defer`, as before.
+
+Outside the `defer`s nothing changes: a cancelled task stops at its next
+wait without doing it, so a worker cancelled between two jobs does not
+take one from a queue only to drop it.
+
+The runtime counts the `defer`s a task runs. In them, the check after a
+wait unwinds only when that wait ended at once, so the functions a `defer`
+calls go on after the lock they took.

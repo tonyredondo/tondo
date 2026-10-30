@@ -131,6 +131,8 @@ fn may_panic(statement: &Statement) -> bool {
                             | hir::StdFn::RecoverCatch
                             | hir::StdFn::UnwindHold
                             | hir::StdFn::UnwindResume
+                            | hir::StdFn::DeferEnd
+                            | hir::StdFn::CancelReturn
                     ),
                     _ => true,
                 }
@@ -1030,6 +1032,7 @@ impl Builder<'_> {
                 self.in_frame(|b| {
                     b.expr(&call);
                 });
+                self.std_call(hir::StdFn::DeferEnd, Span::default());
                 self.cleaning -= 1;
             }
         }
@@ -1084,6 +1087,7 @@ impl Builder<'_> {
         };
         self.cleaning += 1;
         self.cleanup_to(0, 0);
+        self.std_call(hir::StdFn::CancelReturn, span);
         self.cleaning -= 1;
         self.terminate(Terminator::Return(result));
         self.switch_to(next);

@@ -2435,6 +2435,13 @@ pub extern "C" fn tondo_rt_defer_pop() {
     // A `defer` that ran before this one and panicked while a panic
     // unwinds was reported as suppressed, and is done (language 15.7).
     panics::defer_runs();
+    tasks::defer_starts();
+}
+
+/// After a `defer` ran.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_defer_end() {
+    tasks::defer_ends();
 }
 
 fn run_cleanups() {

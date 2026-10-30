@@ -883,6 +883,9 @@ pub enum StdFn {
     /// The cleanups of a frame a panic unwinds start and end (15.9).
     UnwindHold,
     UnwindResume,
+    /// A `defer` ran; a function a cancellation unwinds returns (11.15).
+    DeferEnd,
+    CancelReturn,
     /// `testing.attach(name, mediaType, data)` and
     /// `testing.snapshot(name, actual)` (testing 9.7).
     TestAttach,

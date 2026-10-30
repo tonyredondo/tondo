@@ -35,6 +35,10 @@ fn main() {
   server does for each connection, and a `Group` waits for many at once.
 - With `Group[T ! E]`, `wait()` gives `Array[T] ! E`: the first error cancels
   the others.
+- `job.cancel()` stops a task at its next wait and runs its `defer`s, which
+  still do what needs no wait, as taking a free lock or sending to a channel
+  with room, so shared state stays right. A wait a `defer` needs ends at
+  once, and ends that `defer`.
 - A panic in a task ends the program, unless the task was started in a
   `recover { ... }`, without `detached`: its panic stops that block, which
   cancels its other tasks (see `tondo guide errors`).

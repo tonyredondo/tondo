@@ -1,0 +1,54 @@
+// In a `defer` of a cancelled task, what can be done without waiting is
+// done: a free lock is taken, a channel with room takes a value, and so in
+// the functions the `defer` calls. A wait it would need ends at once, and
+// ends that `defer`; the next one runs.
+
+import std.console
+import std.sync
+
+fn settle(count: sync.Mutex[Int]) {
+    count.update((n) { n -= 1 })
+    count.update((n) { n *= 10 })
+}
+
+fn worker(
+    ready: Sender[Bool],
+    idle: Receiver[Int],
+    count: sync.Mutex[Int],
+    room: Sender[String],
+    full: Sender[String],
+) {
+    defer {
+        room.send("last defer")
+    }
+    defer {
+        full.send("would wait")
+        count.update((n) { n += 1000 })
+    }
+    defer {
+        settle(count)
+    }
+    count.update((n) { n += 1 })
+    ready.send(true)
+    _ = idle.receive()
+}
+
+fn main() {
+    let count = sync.Mutex(5)
+    let (ready, started) = channel[Bool](1)
+    let (hold, idle) = channel[Int](1)
+    let (room, notes) = channel[String](4)
+    let (full, stuck) = channel[String](1)
+    full.send("first")
+    let job = spawn worker(ready, idle, count, room, full)
+    _ = started.receive()
+    job.cancel()
+    console.println("count: {count.get()}")
+    console.println("notes: {notes.receive()}")
+    console.println("stuck: {stuck.receive()} {stuck.receive()}")
+    hold.close()
+}
+
+// expect-stdout: count: 50
+// expect-stdout: notes: some(last defer)
+// expect-stdout: stuck: some(first) none

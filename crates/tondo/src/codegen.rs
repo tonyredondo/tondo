@@ -260,6 +260,8 @@ enum Rt {
     UnwindHold,
     UnwindResume,
     UnwindReturn,
+    DeferEnd,
+    CancelReturn,
     WithinEnter,
     WithinLeave,
     WithinCatch,
@@ -544,6 +546,8 @@ impl Rt {
             Rt::UnwindHold => ("tondo_rt_unwind_hold", &[], &[]),
             Rt::UnwindResume => ("tondo_rt_unwind_resume", &[], &[]),
             Rt::UnwindReturn => ("tondo_rt_unwind_return", &[], &[]),
+            Rt::DeferEnd => ("tondo_rt_defer_end", &[], &[]),
+            Rt::CancelReturn => ("tondo_rt_cancel_return", &[], &[]),
             Rt::UnwindPass => ("tondo_rt_unwind_pass", &[], &[]),
             Rt::ContextRegister => ("tondo_rt_context_register", &[I64, I64, I64, I64, I64, I64, I64], &[]),
             Rt::ContextGet => ("tondo_rt_context_get", &[I64], &[I64]),
@@ -7998,6 +8002,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             // through its frame's return address (15.9).
             Callee::Std(StdFn::UnwindResume) if self.returns => self.e.call_rt(Rt::UnwindReturn, &[]),
             Callee::Std(StdFn::UnwindResume) => self.e.call_rt(Rt::UnwindResume, &[]),
+            Callee::Std(StdFn::DeferEnd) => self.e.call_rt(Rt::DeferEnd, &[]),
+            Callee::Std(StdFn::CancelReturn) => self.e.call_rt(Rt::CancelReturn, &[]),
             Callee::Std(StdFn::ClockBegin) => {
                 values.push(self.location(self.span));
                 self.e.call_rt(Rt::ClockBegin, &values)
