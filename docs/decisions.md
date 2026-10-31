@@ -3760,3 +3760,14 @@ after the fields' rules and reports them together, and `check` too, since
 reflection carries them. The annotations stay for the rules a field says by
 itself, which the compiler checks fit its type.
 
+## 2026-10-31 — Time between the bytes of a body and of a reply
+
+A client that sends a head and then a body slower than it promised held a
+handler for as long as it liked: a probe waited 24 seconds, and a server
+has a handler per such client. A body now has `bodyTimeout` between its
+bytes, after which it is a 408, and a client `replyTimeout` to take more of
+its reply, after which its connection closes and its handler is cancelled
+as for a client gone. Both count from the last byte rather than in total,
+as Go's `ReadTimeout` does not, so a large upload over a slow link ends
+while a stalled one does not hold the server.
+

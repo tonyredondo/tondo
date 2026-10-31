@@ -1625,6 +1625,12 @@ pub fn Request.limitBody(self, bytes: Int): Request {
 /// The problem of a body, or a part of one, that could not be read: `413`
 /// past its limit, else `400`.
 fn bodyProblem(request: httpNative.Native, what: String, failure: String): Problem {
+    if httpNative.requestStalled(request) {
+        return Problem.new(
+            408,
+            "{what} stopped arriving for longer than this server waits, `Limits.bodyTimeout`",
+        )
+    }
     if httpNative.requestExceeded(request) {
         return Problem.new(
             413,
@@ -2603,6 +2609,8 @@ pub fn App.client(self): Client {
         standard.body,
         standard.head,
         standard.headTimeout.milliseconds(),
+        standard.bodyTimeout.milliseconds(),
+        standard.replyTimeout.milliseconds(),
     )
     match failed(listening) {
         ok(_) => {}
@@ -2614,19 +2622,31 @@ pub fn App.client(self): Client {
 
 /// What a server allows each client, so that a large or slow one cannot
 /// exhaust it: the bytes of a request's body, more of which is `413`; the
-/// bytes of its head, its line and headers, more of which is `431`; and the
+/// bytes of its head, its line and headers, more of which is `431`; the
 /// time to send a head, or a TLS handshake, which also ends a connection
-/// kept open without a request. `Limits.standard() with { body: 100_000_000 }`
-/// changes one; `Request.limitBody` changes the body's for a route.
+/// kept open without a request; the longest a body may stop arriving,
+/// after which it is `408`; and the longest a client may stop taking a
+/// reply, after which the connection closes and the handler is cancelled.
+/// `Limits.standard() with { body: 100_000_000 }` changes one;
+/// `Request.limitBody` changes the body's for a route.
 pub type Limits = {
     body: Int
     head: Int
     headTimeout: __time.Duration
+    bodyTimeout: __time.Duration
+    replyTimeout: __time.Duration
 }
 
-/// 10 MiB of body, 64 KiB of head, and 30 seconds to send a head.
+/// 10 MiB of body, 64 KiB of head, 30 seconds to send a head, and 30
+/// seconds that a body may stop arriving or a reply stop being taken.
 pub fn Limits.standard(): Limits {
-    Limits { body: 10 * 1024 * 1024, head: 64 * 1024, headTimeout: __time.seconds(30) }
+    Limits {
+        body: 10 * 1024 * 1024
+        head: 64 * 1024
+        headTimeout: __time.seconds(30)
+        bodyTimeout: __time.seconds(30)
+        replyTimeout: __time.seconds(30)
+    }
 }
 
 /// A server that `App.start` started.
@@ -2786,9 +2806,20 @@ fn bound(host: String, port: Int, tls: Tls?, socket: String?, limits: Limits?): 
     HttpError {
     let (certificate, key, clients, minimum) = tlsParts(tls)
     let allowed = limits.unwrapOr(Limits.standard())
-    let waited = allowed.headTimeout.milliseconds()
+    let (heads, bodies, replies) = (
+        allowed.headTimeout.milliseconds(),
+        allowed.bodyTimeout.milliseconds(),
+        allowed.replyTimeout.milliseconds(),
+    )
     let listening = match socket {
-        some(path) => httpNative.listenUnix(path, allowed.body, allowed.head, waited)
+        some(path) => httpNative.listenUnix(
+            path,
+            allowed.body,
+            allowed.head,
+            heads,
+            bodies,
+            replies,
+        )
         none => httpNative.listen(
             host,
             port,
@@ -2798,7 +2829,9 @@ fn bound(host: String, port: Int, tls: Tls?, socket: String?, limits: Limits?): 
             minimum,
             allowed.body,
             allowed.head,
-            waited,
+            heads,
+            bodies,
+            replies,
         )
     }
     failed(listening)?

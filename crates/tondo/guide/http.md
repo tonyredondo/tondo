@@ -124,7 +124,9 @@ fn find(id: Int): User? {
 - A parameter takes a whole segment, `/files/:file`; a route added twice
   is a panic, and `/foo/` is `/foo`.
 - Each client is limited: by default a body over 10 MiB is 413, a head over
-  64 KiB is 431, and a head has 30 seconds to arrive.
+  64 KiB is 431, a head has 30 seconds to arrive, a body that stops arriving
+  for 30 seconds is 408, and a client that takes none of its reply for 30
+  seconds loses the connection.
   `app.listen(limits: http.Limits.standard() with { body: 100_000_000 })`
   changes them, and `request.limitBody(bytes)` the body's for one route,
   before it is read.

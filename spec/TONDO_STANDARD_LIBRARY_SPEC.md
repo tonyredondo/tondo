@@ -4818,7 +4818,7 @@ pub fn App.listen(self, port: Int = 8080, host: String = "0.0.0.0", tls: Tls? = 
     socket: String? = none, limits: Limits? = none): Unit ! HttpError
 pub fn App.start(self, port: Int = 0, host: String = "127.0.0.1", tls: Tls? = none,
     socket: String? = none, limits: Limits? = none): Server ! HttpError
-pub type Limits = { body: Int, head: Int, headTimeout: time.Duration }
+pub type Limits = { body: Int, head: Int, headTimeout: time.Duration, bodyTimeout: time.Duration, replyTimeout: time.Duration }
 pub fn Limits.standard(): Limits                            // 10 MiB, 64 KiB, 30 s
 pub fn App.client(self): Client
 pub fn mediaType(path: String): String
@@ -4992,8 +4992,13 @@ pub alias TlsVersion = net.TlsVersion
   (la línea de la petición y sus cabeceras) de más de `head` bytes, `431`; y
   una conexión que tarda más de `headTimeout` en enviar una cabecera o en
   terminar el handshake de TLS se cierra, también la que sigue abierta sin
-  pedir nada. `Request.limitBody(bytes)` cambia el límite del cuerpo para una
-  petición, antes de leerlo, como hace una ruta de subidas.
+  pedir nada. Un cuerpo del que no llega nada en `bodyTimeout` es `408`; un
+  cliente que no toma nada de su respuesta en `replyTimeout` pierde la
+  conexión, y su handler se cancela como si se hubiera ido. Los dos cuentan
+  desde el último byte, no en total, así que una subida grande y lenta
+  termina; `Limits.standard()` da 30 segundos a cada uno.
+  `Request.limitBody(bytes)` cambia el límite del cuerpo para una petición,
+  antes de leerlo, como hace una ruta de subidas.
 - Un cliente que se va antes de su respuesta cancela la tarea que la atiende
   (11.15 del lenguaje): el handler se detiene en su siguiente espera y ejecuta
   sus `defer`, así que el trabajo de una petición abandonada no sigue.

@@ -66,23 +66,165 @@ impl Listening {
 }
 
 /// What a server allows each client (`http.Limits`): the bytes of a
-/// request's body and of its head, and the time to send a head, which also
-/// ends a connection kept open without a request.
+/// request's body and of its head, the time to send a head, which also
+/// ends a connection kept open without a request, and the longest a body
+/// may stop arriving, and a client stop taking a reply.
 #[derive(Clone, Copy)]
 struct Limits {
     body: usize,
     head: usize,
     head_timeout: std::time::Duration,
+    body_timeout: std::time::Duration,
+    reply_timeout: std::time::Duration,
 }
 
 impl Limits {
-    fn of(body: i64, head: i64, head_timeout_ms: i64) -> Limits {
+    fn of(body: i64, head: i64, timeouts: [i64; 3]) -> Limits {
+        let millis = |ms: i64| std::time::Duration::from_millis(ms.max(1) as u64);
         Limits {
             body: body.max(0) as usize,
             // hyper reads a head in a buffer of at least 8 KiB.
             head: head.max(8192) as usize,
-            head_timeout: std::time::Duration::from_millis(head_timeout_ms.max(1) as u64),
+            head_timeout: millis(timeouts[0]),
+            body_timeout: millis(timeouts[1]),
+            reply_timeout: millis(timeouts[2]),
         }
+    }
+}
+
+/// A request's body that fails when none of it arrives for `idle`
+/// (`http.Limits.bodyTimeout`), and marks `stalled`.
+struct Idle {
+    inner: Incoming,
+    idle: std::time::Duration,
+    sleep: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
+    stalled: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl hyper::body::Body for Idle {
+    type Data = Bytes;
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, Self::Error>>> {
+        use std::future::Future;
+        use std::task::Poll;
+        let this = &mut *self;
+        match std::pin::Pin::new(&mut this.inner).poll_frame(cx) {
+            Poll::Ready(frame) => {
+                this.sleep = None;
+                Poll::Ready(frame.map(|frame| frame.map_err(Into::into)))
+            }
+            Poll::Pending => {
+                let idle = this.idle;
+                let sleep = this.sleep.get_or_insert_with(|| Box::pin(tokio::time::sleep(idle)));
+                match sleep.as_mut().poll(cx) {
+                    Poll::Ready(()) => {
+                        this.sleep = None;
+                        this.stalled.store(true, std::sync::atomic::Ordering::Release);
+                        let message = format!("the body stopped arriving for {} seconds", idle.as_secs());
+                        Poll::Ready(Some(Err(message.into())))
+                    }
+                    Poll::Pending => Poll::Pending,
+                }
+            }
+        }
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        self.inner.size_hint()
+    }
+}
+
+/// A connection whose writes fail when the client takes none of the reply
+/// for `idle` (`http.Limits.replyTimeout`): hyper then closes it, and the
+/// handler's task is cancelled as for a client gone.
+struct Unhurried<S> {
+    inner: S,
+    idle: std::time::Duration,
+    sleep: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
+}
+
+impl<S> Unhurried<S> {
+    fn waited<T>(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+        polled: std::task::Poll<std::io::Result<T>>,
+    ) -> std::task::Poll<std::io::Result<T>> {
+        use std::future::Future;
+        use std::task::Poll;
+        match polled {
+            Poll::Ready(done) => {
+                self.sleep = None;
+                Poll::Ready(done)
+            }
+            Poll::Pending => {
+                let idle = self.idle;
+                let sleep = self.sleep.get_or_insert_with(|| Box::pin(tokio::time::sleep(idle)));
+                match sleep.as_mut().poll(cx) {
+                    Poll::Ready(()) => {
+                        self.sleep = None;
+                        Poll::Ready(Err(std::io::ErrorKind::TimedOut.into()))
+                    }
+                    Poll::Pending => Poll::Pending,
+                }
+            }
+        }
+    }
+}
+
+impl<S: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for Unhurried<S> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl<S: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for Unhurried<S> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        let polled = std::pin::Pin::new(&mut self.inner).poll_write(cx, buf);
+        self.waited(cx, polled)
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let polled = std::pin::Pin::new(&mut self.inner).poll_flush(cx);
+        self.waited(cx, polled)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+
+    fn poll_write_vectored(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        let polled = std::pin::Pin::new(&mut self.inner).poll_write_vectored(cx, bufs);
+        self.waited(cx, polled)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
     }
 }
 
@@ -152,6 +294,9 @@ struct Request {
     /// it reads it, and whether a reading went past them.
     limit: std::sync::atomic::AtomicUsize,
     exceeded: Arc<std::sync::atomic::AtomicBool>,
+    /// The longest its body may stop arriving, and whether it did.
+    body_timeout: std::time::Duration,
+    stalled: Arc<std::sync::atomic::AtomicBool>,
     reply: Mutex<Option<oneshot::Sender<hyper::Response<Body>>>>,
     upgrade: Mutex<Option<hyper::upgrade::OnUpgrade>>,
     answering: Arc<Answering>,
@@ -175,17 +320,22 @@ impl Request {
             taken: Default::default(),
             limit: Default::default(),
             exceeded: Arc::default(),
+            body_timeout: std::time::Duration::MAX,
+            stalled: Arc::default(),
             reply: Mutex::new(None),
             upgrade: Mutex::new(None),
             answering: Arc::default(),
         }
     }
 
-    /// The body, once, held to its limit.
-    fn take_body(&self) -> Option<http_body_util::Limited<Incoming>> {
+    /// The body, once, held to its limit and its time.
+    fn take_body(&self) -> Option<http_body_util::Limited<Idle>> {
         let limit = self.limit.load(std::sync::atomic::Ordering::Acquire);
         self.taken.store(true, std::sync::atomic::Ordering::Release);
-        lock(&self.body).take().map(|body| http_body_util::Limited::new(body, limit))
+        lock(&self.body).take().map(|body| {
+            let idle = Idle { inner: body, idle: self.body_timeout, sleep: None, stalled: self.stalled.clone() };
+            http_body_util::Limited::new(idle, limit)
+        })
     }
 
     /// Records a failure to read the body: past its limit, or another.
@@ -472,8 +622,10 @@ pub unsafe extern "C" fn tondo_rt_http_listen(
     body: i64,
     head: i64,
     head_timeout_ms: i64,
+    body_timeout_ms: i64,
+    reply_timeout_ms: i64,
 ) -> *mut NativeObject {
-    let limits = Limits::of(body, head, head_timeout_ms);
+    let limits = Limits::of(body, head, [head_timeout_ms, body_timeout_ms, reply_timeout_ms]);
     let (cert, key, clients) = (text(cert), text(key), text(clients));
     let tls = match cert.is_empty() {
         true => None,
@@ -505,8 +657,10 @@ pub unsafe extern "C" fn tondo_rt_http_listen_unix(
     body: i64,
     head: i64,
     head_timeout_ms: i64,
+    body_timeout_ms: i64,
+    reply_timeout_ms: i64,
 ) -> *mut NativeObject {
-    let (path, limits) = (text(path), Limits::of(body, head, head_timeout_ms));
+    let (path, limits) = (text(path), Limits::of(body, head, [head_timeout_ms, body_timeout_ms, reply_timeout_ms]));
     if let Err(problem) = super::net::make_room(&path, false) {
         return failed(problem.to_string());
     }
@@ -584,10 +738,12 @@ async fn accept(
                     let shaken = tokio::time::timeout(limits.head_timeout, acceptor.accept(stream)).await;
                     if let Ok(Ok(stream)) = shaken {
                         let shown = stream.get_ref().1.peer_certificates().and_then(|c| c.first()).map(|c| c.to_vec());
+                        let stream = Unhurried { inner: stream, idle: limits.reply_timeout, sleep: None };
                         let _ = builder.serve_connection_with_upgrades(TokioIo::new(stream), serve(shown)).await;
                     }
                 }
                 None => {
+                    let stream = Unhurried { inner: stream, idle: limits.reply_timeout, sleep: None };
                     let _ = builder.serve_connection_with_upgrades(TokioIo::new(stream), serve(None)).await;
                 }
             }
@@ -640,6 +796,8 @@ async fn handle(
         taken: Default::default(),
         limit: std::sync::atomic::AtomicUsize::new(limits.body),
         exceeded: Arc::default(),
+        body_timeout: limits.body_timeout,
+        stalled: Arc::default(),
         reply: Mutex::new(Some(reply)),
         upgrade: Mutex::new(upgrade),
         answering: Arc::default(),
@@ -716,7 +874,7 @@ pub extern "C" fn tondo_rt_http_request_headers(object: *mut NativeObject) -> *m
 
 /// A request's body as the host of a stream.
 struct RequestBody {
-    body: Option<http_body_util::Limited<Incoming>>,
+    body: Option<http_body_util::Limited<Idle>>,
     chunk: Bytes,
     exceeded: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -764,6 +922,12 @@ pub extern "C" fn tondo_rt_http_request_limit(object: *mut NativeObject, bytes: 
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_request_exceeded(object: *mut NativeObject) -> u8 {
     request(object).exceeded.load(std::sync::atomic::Ordering::Acquire) as u8
+}
+
+/// Whether the body stopped arriving for longer than the server allows.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_request_stalled(object: *mut NativeObject) -> u8 {
+    request(object).stalled.load(std::sync::atomic::Ordering::Acquire) as u8
 }
 
 /// The body as a stream of `std.io`; an empty one once taken.
