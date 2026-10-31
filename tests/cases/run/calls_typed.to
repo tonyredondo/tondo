@@ -1,0 +1,55 @@
+// A method's own type arguments follow any value, the result of a call or
+// a tuple's part too; a method of a generic intrinsic type, as `groupBy`
+// of `Array[T]`, takes only its own; an empty `std.sync` collection takes
+// its types from where it goes; and `spawn` runs a method the compiler
+// implements in place, as a lock's `get`.
+
+import std.console
+import std.json
+import std.sync
+import std.time
+
+pub type Box = {
+    n: Int
+}
+
+pub fn Box.get[T](self, fallback: T): T {
+    fallback
+}
+
+pub type Stamp = {
+    at: time.ZonedDateTime
+}
+
+fn made(): Box {
+    Box { n: 1 }
+}
+
+fn later(): Int {
+    42
+}
+
+fn main(): !(json.JsonError | time.TimeError) {
+    let pair = (made(), 2)
+    let groups = [1, 2, 3, 4].groupBy[Int]((n) { n % 2 })
+    console.println(
+        "{made().get[Int](2)} {pair.0.get[String]("x")} {groups[0]} {[1, 2].map[String]((n) { "{n}" })}",
+    )
+    let counts: sync.Map[String, Int] = sync.Map.new()
+    _ = counts.insert("a", 1)
+    let queue: sync.Queue[Int] = sync.Queue.new()
+    console.println("{counts.get("a")} {queue.length()}")
+    let lock = sync.Mutex(7)
+    let once: sync.Once[Int] = sync.Once.new[Int]()
+    let first = spawn lock.get()
+    let second = spawn once.getOrInit(later)
+    console.println("{first.wait()} {second.wait()}")
+    let stamp = Stamp { at: time.zone("Europe/Madrid")?.at(2026, 10, 31, hour: 9)? }
+    let text = json.encode(stamp)
+    console.println("{text} {json.decode[Stamp](text)?.at}")
+}
+
+// expect-stdout: 2 x some([2, 4]) [1, 2]
+// expect-stdout: some(1) 0
+// expect-stdout: 7 42
+// expect-stdout: {"at":"2026-10-31T09:00:00+01:00"} 2026-10-31T09:00:00+01:00

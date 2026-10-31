@@ -6111,6 +6111,8 @@ impl<'a> Checker<'a> {
     /// inferred from the `?` and `fail` in its statements.
     fn script_main(&mut self, statements: &[ast::Stmt]) -> hir::Function {
         self.naming = "main".into();
+        // The statements are the root module's, as its functions are.
+        self.module = 0;
         let mut cx = self.new_cx(Ty::UNIT);
         cx.infer_error = true;
         self.scripting = true;
@@ -6731,8 +6733,37 @@ impl<'a> Checker<'a> {
             self.diags.error("E1609", arg.span, message);
             return Self::error_expr(span);
         }
-        let call = self.expr(cx, call, None);
-        self.spawn_call(call, span)
+        let before = self.error_count();
+        let checked = self.expr(cx, call, None);
+        // A method the compiler implements in place, as `lock.get()`, is no
+        // call it can hand to a task: a closure around it is, made here and
+        // called in the task, as the receiver and arguments are given now.
+        fn spawnable(expr: &hir::Expr) -> bool {
+            match &expr.kind {
+                hir::ExprKind::Call(..) | hir::ExprKind::CallValue(..) | hir::ExprKind::Error => true,
+                hir::ExprKind::Block(block) => block.tail.as_deref().is_some_and(spawnable),
+                _ => false,
+            }
+        }
+        let in_place = !spawnable(&checked);
+        if in_place
+            && self.error_count() == before
+            && let ast::ExprKind::Call { callee, .. } = &call.kind
+            && matches!(callee.kind, ast::ExprKind::Field(..) | ast::ExprKind::Path(_))
+        {
+            let body = ast::Block { stmts: Vec::new(), tail: Some(Box::new(call.clone())), span: call.span };
+            let closure = ast::Closure { is_unsafe: false, params: Vec::new(), result: None, body };
+            let wrapped = ast::Expr { kind: ast::ExprKind::Closure(Box::new(closure)), span: call.span };
+            let closure = self.expr(cx, &wrapped, None);
+            if self.types.closure_calls(closure.ty).is_some_and(|(mutates, _)| mutates) {
+                let message = "a task cannot borrow: this call changes its receiver in place; make the task return the new value instead";
+                self.diags.error("E1609", call.span, message);
+                return Self::error_expr(span);
+            }
+            let called = Self::mk(hir::ExprKind::CallValue(Box::new(closure), Vec::new()), checked.ty, call.span);
+            return self.spawn_call(called, span);
+        }
+        self.spawn_call(checked, span)
     }
 
     fn spawn_call(&mut self, call: hir::Expr, span: Span) -> hir::Expr {
@@ -7356,6 +7387,60 @@ impl<'a> Checker<'a> {
         };
         let ty = self.types.handle(Handle::Weak, value);
         Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::WeakNew, vec![reference]), ty, span)
+    }
+
+    /// `sync.Map.new[K, V]()` and the other empty shared collections of
+    /// `std.sync`, of these types.
+    fn sync_empty(&mut self, kind: &ast::Ident, types: Vec<Ty>, args: &[ast::Arg], span: Span) -> hir::Expr {
+        if !args.is_empty() {
+            return self.arity_error(span, 0, args.len());
+        }
+        let ty = self.sync_type(kind, &types, span);
+        let state = match self.types.kind(ty) {
+            TyKind::Handle(_, state) => *state,
+            _ => return Self::error_expr(span),
+        };
+        let empty = match *self.types.kind(state) {
+            TyKind::Array(_) | TyKind::Deque(_) => hir::ExprKind::ArrayOp(hir::ArrayOp::New, Vec::new()),
+            TyKind::Map(..) | TyKind::Set(_) => hir::ExprKind::MapOp(hir::MapOp::New, Vec::new()),
+            TyKind::Option(_) => hir::ExprKind::Variant(NONE, Vec::new()),
+            _ => {
+                let message = format!("`sync.{0}` takes its initial value: `sync.{0}(value)`", kind.name);
+                self.diags.error("E1102", span, message);
+                return Self::error_expr(span);
+            }
+        };
+        let empty = Self::mk(empty, state, span);
+        Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::SyncNew, vec![empty]), ty, span)
+    }
+
+    /// `sync.Map.new()` without type arguments: those of the type it is
+    /// given to.
+    fn sync_empty_expected(
+        &mut self,
+        kind: &ast::Ident,
+        args: &[ast::Arg],
+        expected: Option<Ty>,
+        span: Span,
+    ) -> hir::Expr {
+        let state = expected.and_then(|e| match self.types.kind(e) {
+            TyKind::Handle(_, state) => Some(*state),
+            _ => None,
+        });
+        let types = match state.map(|state| self.types.kind(state).clone()) {
+            Some(TyKind::Map(key, value)) => vec![key, value],
+            Some(TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) | TyKind::Option(t)) => vec![t],
+            _ => {
+                let example = if kind.name == "Map" { "[String, Int]" } else { "[Int]" };
+                let message = format!(
+                    "`sync.{0}.new` needs the types it holds: `sync.{0}.new{example}()`, or give the binding its type",
+                    kind.name
+                );
+                self.diags.error("E1101", span, message);
+                return Self::error_expr(span);
+            }
+        };
+        self.sync_empty(kind, types, args, span)
     }
 
     /// `sync.Mutex(value)` and the other `std.sync` constructors: a new
@@ -11920,9 +12005,15 @@ impl<'a> Checker<'a> {
         self.index_refer(method, crate::index::Key::Fn(id.0));
         self.check_method_visible(id, method.span);
         let signature = self.signatures[id.0 as usize].clone();
+        // The owner's own parameters come first: a generic type's, or an
+        // intrinsic one's, as `T` of `Array[T]`.
         let owner = match self.types.instance_of(key) {
             Some((template, _)) => self.types.template(template).params.len(),
-            None => 0,
+            None => match self.types.kind(value.ty) {
+                TyKind::Array(_) | TyKind::Deque(_) | TyKind::Set(_) | TyKind::Option(_) => 1,
+                TyKind::Map(..) | TyKind::Result(..) => 2,
+                _ => 0,
+            },
         };
         let own = &signature.generics[owner.min(signature.generics.len())..];
         if own.len() != types.len() {
@@ -12132,31 +12223,12 @@ impl<'a> Checker<'a> {
                 if *op == "unbox" { (hir::ReflectOp::Unbox, ty) } else { (hir::ReflectOp::Is, Ty::BOOL) };
             return Self::mk(hir::ExprKind::Reflect(op, ty, vec![value]), result, span);
         }
-        if let [module, kind, "new"] = names.as_slice()
+        if let [module, _, "new"] = names.as_slice()
             && self.lookup(cx, module).is_none()
             && let Some(ModuleName::Module(StdModule::Sync)) = self.names.get(*module)
         {
-            if !args.is_empty() {
-                return self.arity_error(span, 0, args.len());
-            }
             let types: Vec<Ty> = type_args.iter().map(|t| self.resolve_type(t)).collect();
-            let ty = self.sync_type(&segments[1], &types, span);
-            let state = match self.types.kind(ty) {
-                TyKind::Handle(_, state) => *state,
-                _ => return Self::error_expr(span),
-            };
-            let empty = match *self.types.kind(state) {
-                TyKind::Array(_) | TyKind::Deque(_) => hir::ExprKind::ArrayOp(hir::ArrayOp::New, Vec::new()),
-                TyKind::Map(..) | TyKind::Set(_) => hir::ExprKind::MapOp(hir::MapOp::New, Vec::new()),
-                TyKind::Option(_) => hir::ExprKind::Variant(NONE, Vec::new()),
-                _ => {
-                    let message = format!("`sync.{kind}` takes its initial value: `sync.{kind}(value)`");
-                    self.diags.error("E1102", span, message);
-                    return Self::error_expr(span);
-                }
-            };
-            let empty = Self::mk(empty, state, span);
-            return Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::SyncNew, vec![empty]), ty, span);
+            return self.sync_empty(&segments[1], types, args, span);
         }
         if let ["Group", "new"] = names.as_slice() {
             let [result] = type_args else {
@@ -13760,11 +13832,16 @@ impl<'a> Checker<'a> {
                             ));
                         } else if let TyKind::Handle(Handle::Ref, _) = self.types.kind(value.ty) {
                             message.push_str(": an identity has no text; show what it identifies with `.value`");
-                        } else if matches!(self.types.kind(value.ty), TyKind::Adt(_)) {
+                        } else if matches!(self.types.kind(value.ty), TyKind::Adt(_))
+                            && self.owner(value.ty).is_some_and(|o| o.module == self.module)
+                        {
                             let name = self.types.display(value.ty);
                             message.push_str(&format!(
                                 ": add `impl Display for {name} {{ fn display(self): String {{ ... }} }}`"
                             ));
+                        } else if matches!(self.types.kind(value.ty), TyKind::Adt(_)) {
+                            // Another module's: only that module may implement it.
+                            message.push_str(": another module declares it, so write what to show of it, its fields or a `match` on it");
                         }
                         self.diags.error("E1105", value.span, message);
                         out.push(hir::Segment::Value(value));
@@ -14701,6 +14778,9 @@ impl<'a> Checker<'a> {
                 self.call_signature(cx, target, None, args, span)
             }
             ([_, member], Some(ModuleName::Module(StdModule::Sync))) => self.sync_new(cx, member, args, expected, span),
+            ([_, _, "new"], Some(ModuleName::Module(StdModule::Sync))) => {
+                self.sync_empty_expected(&segments[1], args, expected, span)
+            }
             ([_, member], Some(ModuleName::Module(StdModule::Fs))) => {
                 let fs = self.fs.expect("declared with the module");
                 let failing = |this: &mut Self, ty: Ty| this.types.intern(TyKind::Result(ty, fs.error));
@@ -15149,11 +15229,22 @@ impl<'a> Checker<'a> {
             let trait_args: Vec<Ty> = def.params.iter().map(|p| inference.map[p]).collect();
             if !self.satisfies(self_ty, trait_id, &trait_args) {
                 let trait_name = self.traits[trait_id.0 as usize].name.clone();
-                let message = format!(
-                    "{} does not implement `{trait_name}`: add `impl {trait_name} for {}`",
-                    self.display(self_ty),
-                    self.types.display(self_ty)
-                );
+                // Only the module of the trait or of the type may implement it.
+                let own = self.owner(self_ty).is_some_and(|o| o.module == self.module)
+                    || self.trait_modules.get(&trait_id) == Some(&self.module);
+                let message = if own {
+                    format!(
+                        "{} does not implement `{trait_name}`: add `impl {trait_name} for {}`",
+                        self.display(self_ty),
+                        self.types.display(self_ty)
+                    )
+                } else {
+                    format!(
+                        "{} does not implement `{trait_name}`, and only its module or the trait's can implement it: wrap it in a newtype of this module, `type Name = {}`, and implement it for that",
+                        self.display(self_ty),
+                        self.types.display(self_ty)
+                    )
+                };
                 self.diags.error("E1105", span, message);
                 return Self::error_expr(span);
             }

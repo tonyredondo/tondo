@@ -1,7 +1,7 @@
 // A merge key `<<` brings the keys of an anchored map that the map lacks;
 // a `yaml.Document` keeps its text: `find` says where a value is and its
 // comment, and `set` changes a value or adds one and leaves the rest of
-// the text as it was.
+// the text as it was, a block scalar too, in the first of its documents.
 
 import std.console
 import std.io
@@ -63,6 +63,12 @@ fn edited(): !(yaml.YamlError | io.IoError) {
     let out = io.Buffer()
     doc.writeTo(out.writer())?
     console.println("{out.text()? == doc.text()}")
+    // A block scalar is replaced whole, and what follows it stays.
+    var steps = yaml.load("step:\n  run: |\n    npm test\n  env:\n    A: b\n---\nnext: 2\n")?
+    steps.set("step.run", "npm test\nnpm run report\n")?
+    console.print(steps.text())
+    steps.set("step.run", "make")?
+    console.print(steps.text())
 }
 
 fn main() {
@@ -104,3 +110,17 @@ fn main() {
 // expect-stdout:     name: web
 // expect-stdout: the list has 3 items, and `set` adds only the next one, `jobs.build.steps[3]` at $.jobs.build.steps[5]
 // expect-stdout: true
+// expect-stdout: step:
+// expect-stdout:   run: |
+// expect-stdout:     npm test
+// expect-stdout:     npm run report
+// expect-stdout:   env:
+// expect-stdout:     A: b
+// expect-stdout: ---
+// expect-stdout: next: 2
+// expect-stdout: step:
+// expect-stdout:   run: make
+// expect-stdout:   env:
+// expect-stdout:     A: b
+// expect-stdout: ---
+// expect-stdout: next: 2

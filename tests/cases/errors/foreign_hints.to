@@ -1,0 +1,16 @@
+// What an error tells to write can be written: a type another module
+// declares cannot be given a trait here, and an empty shared collection
+// needs its types from somewhere.
+
+import std.console
+import std.fs
+import std.sync
+
+fn main() {
+    let kind = fs.FileKind.File
+    console.println("{kind}")
+    let counts = sync.Map.new()
+}
+
+// expect-error: E1105 `fs.FileKind` does not implement `Display`: another module declares it, so write what to show of it, its fields or a `match` on it
+// expect-error: E1101 `sync.Map.new` needs the types it holds: `sync.Map.new[String, Int]()`, or give the binding its type

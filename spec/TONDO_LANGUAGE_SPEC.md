@@ -3739,7 +3739,10 @@ fn compare(left: Url, right: Url): (Page, Page) ! HttpError {
 
 Las tareas se ejecutan de forma concurrente y, con varios núcleos, en paralelo.
 El programa no puede depender de en qué thread del sistema corre una tarea. Tras
-`spawn` debe aparecer una llamada; cualquier otra forma produce `E1611`. Los
+`spawn` debe aparecer una llamada; cualquier otra forma produce `E1611`. Una
+llamada de un método que el compilador implementa en el sitio, como
+`lock.get()` de un `sync.Mutex`, también vale: su receptor y sus argumentos se
+evalúan ahora y la llamada se hace en la tarea. Los
 argumentos se pasan por valor: un argumento o receptor prestado con `ref`, `mut`
 o `var` produce `E1609`, porque la tarea podría sobrevivir al préstamo. Todo
 valor que entra en la tarea, incluidas las capturas de un cierre, debe cumplir

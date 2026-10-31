@@ -1496,6 +1496,8 @@ pub const NATIVES: &[Native] = {
         http("respondBytes", &[Object, Strings, String, Bytes, String], Unit, "tondo_rt_http_respond_bytes"),
         http("saveBody", &[Object, String, Int], Int, "tondo_rt_http_save_body"),
         http("requestForm", &[Object], Object, "tondo_rt_http_request_form"),
+        http("requestFormOf", &[Object, Bytes], Object, "tondo_rt_http_request_form_of"),
+        http("requestTaken", &[Object], Bool, "tondo_rt_http_request_taken"),
         http("formNext", &[Object], Object, "tondo_rt_http_form_next"),
         http("uploadHead", &[Object], String, "tondo_rt_http_upload_head"),
         http("uploadRead", &[Object], Bytes, "tondo_rt_http_upload_read"),

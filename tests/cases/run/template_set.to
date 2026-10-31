@@ -121,7 +121,7 @@ fn main(): !template.TemplateError {
 // expect-stdout: broken:1:4: unknown name `titel`: it is no binding, nor a field of the data, `Shop`, whose fields are `title`, `items`, `counts`, `banner`
 // expect-stdout: broken:1:7: `if` takes a `Bool`, and this is `String`: ask `not value.isEmpty()`
 // expect-stdout: broken:1:9: 9 is out of the 3 values of `Array[Item]`
-// expect-stdout: broken:1:4: there is no function `nope`: a set's functions are the `pub` methods of the values given to `Set.functions`, and it has none
+// expect-stdout: broken:1:4: there is no function `nope`: a set's functions are the `pub` methods of the values given to `Set.functions` whose parameters and result reflection carries, as types that implement `reflect.Reflect`, and it has none
 // expect-stdout: broken:1:4: a template writes no optional: open it with `{{ with name = value }}`
 // expect-stdout: broken:1:10: `%` takes numbers, and these are `String` and `Int`
 // expect-stdout: a:1:1: there is no template `b`: the set has `a`

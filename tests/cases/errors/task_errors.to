@@ -36,7 +36,7 @@ fn main() {
 // expect-error: E1611 `spawn` takes a call, such as `spawn fetch(url)`
 // expect-error: E1609 a task cannot borrow: remove `mut` to move or copy the value into the task
 // expect-error: E1609 a task cannot borrow: this call lends a place with `mut` or `var`
-// expect-error: E1611 `spawn` takes a call of a function, method or closure
+// expect-error: E1609 a task cannot borrow: this call changes its receiver in place
 // expect-error: E1401 `job` was moved before this use, since its type `Join[Int]` is not `Copy`; use it before passing it on
 // expect-error: E1411 `add` changes `group`, which is not declared with `var`
 // expect-error: E1101 `Group.new` needs its element type: `Group.new[T](...)`

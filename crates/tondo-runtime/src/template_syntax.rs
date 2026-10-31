@@ -164,11 +164,18 @@ pub enum Included {
 }
 
 /// A template read: the one it extends, if any, and where it names it, and
-/// its parts.
+/// its parts. A name with values in it, `"{section}/baseof.html"`, is
+/// computed as a loaded template writes; `quoted` is where it is written.
 #[derive(Clone, Debug)]
 pub struct Template {
     pub extends: Option<(String, usize)>,
+    pub quoted: Option<Range<usize>>,
     pub nodes: Vec<Node>,
+}
+
+/// Whether a name in quotes has values in it, to compute as it writes.
+pub fn computed(name: &str) -> bool {
+    name.replace("{{", "").contains('{')
 }
 
 /// Why a template or an expression does not read, and where, in bytes.
@@ -192,7 +199,8 @@ pub fn parse(source: &str, html: bool) -> Result<Template, Error> {
     }
     standalone(source, &mut pieces);
     let pieces = trimmed(merged(pieces));
-    let mut reader = Reader { source, pieces: pieces.into_iter(), loops: 0, depth: 0, extends: None, seen: false };
+    let mut reader =
+        Reader { source, pieces: pieces.into_iter(), loops: 0, depth: 0, extends: None, quoted: None, seen: false };
     let (mut nodes, stop) = reader.nodes()?;
     match stop {
         Stop::Eof => {}
@@ -217,7 +225,7 @@ pub fn parse(source: &str, html: bool) -> Result<Template, Error> {
             return error(source.len(), "the template ends inside a tag or a comment of HTML: close it");
         }
     }
-    Ok(Template { extends: reader.extends, nodes })
+    Ok(Template { extends: reader.extends, quoted: reader.quoted, nodes })
 }
 
 /// Reads a template as a `template.Set` loads it, with each of its
@@ -465,6 +473,7 @@ struct Reader<'a> {
     /// How many blocks of any kind hold it.
     depth: usize,
     extends: Option<(String, usize)>,
+    quoted: Option<Range<usize>>,
     /// Whether something but space came already, which `extends` must not
     /// follow.
     seen: bool,
@@ -526,7 +535,8 @@ impl Reader<'_> {
                     nodes.push(Node::Block { at, name, body });
                 }
                 "extends" => {
-                    let (name, more) = self.named(rest, "extends")?;
+                    let (name, more) = self.named(rest.clone(), "extends")?;
+                    self.quoted = Some(rest.start..rest.start + name.len() + 2);
                     if more.is_some() || self.seen || self.depth > 0 {
                         return error(at, "`extends` is the first action of a template, and alone");
                     }
@@ -634,7 +644,7 @@ impl Reader<'_> {
         let (name, more) = if self.source[rest.clone()].starts_with('"') {
             let (name, more) = self.named(rest.clone(), "include")?;
             // A name with values in it is computed as the template writes.
-            let computed = name.replace("{{", "").contains('{');
+            let computed = computed(&name);
             let quoted = rest.start..rest.start + name.len() + 2;
             (if computed { Included::Computed(quoted) } else { Included::Named(name) }, more)
         } else {

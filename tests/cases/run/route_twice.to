@@ -1,0 +1,14 @@
+// A route added twice for a method and a path would never answer the
+// second time: a panic says so, as for a path with its trailing `/`.
+
+import std.http
+
+fn main() {
+    var app = http.App.new()
+    app.get("/foo", () { "A" })
+    let path = "/foo/"
+    app.route("GET", path, (_) { http.Reply.text("B") })
+}
+
+// expect-panic: P0008
+// expect-stderr: panic[P0008]: explicit-panic: the route `GET /foo` is added twice, and only the first would answer: remove one; a path answers with its trailing `/` or without it

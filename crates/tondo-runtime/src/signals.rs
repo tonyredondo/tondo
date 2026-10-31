@@ -60,7 +60,7 @@ pub(crate) fn start() {
                     _ => return,
                 }
                 let signal = byte as i32;
-                if ROUTED.load(Ordering::SeqCst) & (1 << signal) != 0 {
+                if routed(signal) {
                     deliver(signal);
                 } else if ending {
                     unsafe { libc::_exit(128 + signal) };
@@ -75,6 +75,24 @@ pub(crate) fn start() {
             catch(libc::SIGTERM);
         }
     });
+}
+
+/// Whether a channel still takes the signal: those whose receivers the
+/// program let go are let go first, and a signal only they took cancels
+/// the program again.
+fn routed(signal: i32) -> bool {
+    let mut subscribers = lock();
+    subscribers.retain(|subscriber| {
+        let heard = unsafe { !super::tasks::unheard(subscriber.sender) };
+        if !heard {
+            unsafe { tondo_rt_sender_release(subscriber.sender) };
+        }
+        heard
+    });
+    let mask = subscribers.iter().fold(0, |mask, subscriber| mask | subscriber.wanted);
+    ROUTED.store(mask, Ordering::SeqCst);
+    LISTENING.store(!subscribers.is_empty(), Ordering::SeqCst);
+    mask & (1 << signal) != 0
 }
 
 /// Sends the signal to each channel that takes it.

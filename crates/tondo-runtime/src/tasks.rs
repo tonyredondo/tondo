@@ -3760,6 +3760,14 @@ pub unsafe extern "C" fn tondo_rt_channel_offer(sender: *mut SenderObject, value
 /// Sends a value without waiting, from outside any task, as a signal is
 /// (`signals`): not when the channel is closed or full, or when the last
 /// value it holds is the same, which this one joins.
+/// Whether no `Receiver` of a sender's channel is left to take its values.
+pub(crate) unsafe fn unheard(sender: *mut SenderObject) -> bool {
+    unsafe {
+        let c = &*(*sender).channel;
+        c.rc.load(Ordering::Acquire) <= c.senders
+    }
+}
+
 pub(crate) unsafe fn offer_new(sender: *mut SenderObject, value: *mut u8) {
     unsafe {
         let c = &mut *(*sender).channel;

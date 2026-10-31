@@ -193,6 +193,27 @@ impl Checker<'_> {
         let segments: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
         let route_params: Vec<&str> =
             segments.iter().filter_map(|p| p.strip_prefix(':').or_else(|| p.strip_prefix('*'))).collect();
+        // A parameter takes a whole segment and is named like a binding.
+        let named = |name: &str| {
+            name.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')
+                && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+        };
+        if let Some(wrong) = segments
+            .iter()
+            .find(|p| p.strip_prefix(':').or_else(|| p.strip_prefix('*')).is_some_and(|name| !named(name)))
+        {
+            let message = format!(
+                "the segment `{wrong}` of the route `{path}`: a parameter takes a whole segment and is named like a binding, as `:file`; split the parts of one in the handler"
+            );
+            self.diags.error("E1102", args[0].value.span, message);
+            return Self::error_expr(span);
+        }
+        if let Some(rest) = segments.iter().rev().skip(1).find(|p| p.starts_with('*')) {
+            let message =
+                format!("`{rest}` takes the rest of the path, so it is the last segment of the route `{path}`");
+            self.diags.error("E1102", args[0].value.span, message);
+            return Self::error_expr(span);
+        }
         let (Some(request), Some(reply), Some(problem)) =
             (self.http_type("Request"), self.http_type("Reply"), self.http_type("Problem"))
         else {

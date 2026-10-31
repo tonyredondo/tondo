@@ -111,6 +111,14 @@ impl Display for TemplateError {
     }
 }
 
+/// A function of a `Set` may fail with one, to stop the writing where it
+/// is called.
+impl __reflect.Reflect for TemplateError {
+    fn reflectShow(self, nested: Bool): String {
+        "{self}"
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Escaping
 // ---------------------------------------------------------------------------
@@ -250,7 +258,13 @@ pub fn Set.add(mut self, name: String, source: String): !TemplateError {
         some(message) => fail located(name, source, parsed.at, message)
         none => {}
     }
-    self.templates[name] = Loaded { name, source, extends: parsed.extends, nodes: parsed.nodes }
+    self.templates[name] = Loaded {
+        name
+        source
+        extends: parsed.extends
+        computed: parsed.computed
+        nodes: parsed.nodes
+    }
 }
 
 /// Adds the template in the file at `path`, named by its path.
@@ -309,17 +323,20 @@ pub fn Set.write[T: __reflect.Reflect](self, name: String, data: T, out: __io.Wr
     }
 }
 
-/// A template read: its name, its source, the one it extends and its parts.
+/// A template read: its name, its source, the one it extends, named or
+/// computed, and its parts.
 type Loaded = {
     name: String
     source: String
     extends: String?
+    computed: Code?
     nodes: Array[Node]
 }
 
 /// What the runtime reads of a template's source.
 type Parsed = {
     extends: String?
+    computed: Code?
     nodes: Array[Node]
     error: String?
     at: Int
@@ -480,9 +497,22 @@ fn Run.template(mut self, name: String, data: __reflect.Value, depth: Int, from:
     var blocks: Map[String, Defined] = [:]
     var steps = 0
     for {
-        let base = match current.extends {
-            some(base) => base
-            none => break
+        let base = match (current.extends, current.computed) {
+            (some(base), _) => base
+            (none, some(code)) => {
+                // Computed with the data, as the template's own values are.
+                let named = Scope { template: current, data, bindings: [[:]], blocks: [:], depth }
+                let value = self.evaluate(named, code)?
+                match value.to[String]() {
+                    ok(written) => written
+                    err(_) => fail self.error(
+                        named,
+                        code.at.first().unwrapOr(0),
+                        "an `extends` names a template with a `String`, not with `{value.typeName()}`",
+                    )
+                }
+            }
+            (none, none) => break
         }
         for node in current.nodes {
             match node {
@@ -837,6 +867,13 @@ fn Run.field(self, scope: Scope, target: __reflect.Value, name: String, at: Int)
 fn Run.index(self, scope: Scope, target: __reflect.Value, key: __reflect.Value, at: Int): __reflect.Value !
     TemplateError {
     let kind = target.typeName()
+    // A value of JSON, YAML or TOML reads its keys and items as fields.
+    if kind in ["json.Value", "yaml.Value", "toml.Value"] {
+        return match target.get("{key}") {
+            ok(value) => value
+            err(error) => fail self.error(scope, at, "{error}")
+        }
+    }
     if kind.startsWith("Map[") {
         for (found, value) in target.entries() {
             if same(found, key) {
@@ -1099,7 +1136,7 @@ fn Run.call(self, scope: Scope, name: String, args: Array[__reflect.Value], at: 
     fail self.error(
         scope,
         at,
-        "there is no function `{name}`: a set's functions are the `pub` methods of the values given to `Set.functions`, and {functions}",
+        "there is no function `{name}`: a set's functions are the `pub` methods of the values given to `Set.functions` whose parameters and result reflection carries, as types that implement `reflect.Reflect`, and {functions}",
     )
 }
 
@@ -1357,6 +1394,10 @@ fn firstChar(written: String?, otherwise: Char): Char {
 fn parsedOf(value: __json.Value): Parsed {
     Parsed {
         extends: value.field("extends").asText()
+        computed: match value.field("computed").isNull() {
+            true => none
+            false => some(codeOf(value.field("computed")))
+        }
         nodes: nodesOf(value.field("nodes"))
         error: value.field("error").asText()
         at: value.field("at").asInt().unwrapOr(0)

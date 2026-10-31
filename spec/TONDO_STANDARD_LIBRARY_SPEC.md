@@ -2499,7 +2499,8 @@ pub fn sync.Queue.snapshot(self): Deque[T]
 
 Se construyen con los literales calificados de 5.11 de la especificación del
 lenguaje (`sync.Map["one": 1]`), vacías con `sync.Queue.new[Job]()` o
-`sync.Map.new[String, Int]()`, o a partir de una colección de valor con
+`sync.Map.new[String, Int]()`, sin tipos si los da a donde va
+(`let jobs: sync.Queue[Job] = sync.Queue.new()`), o a partir de una colección de valor con
 `sync.Array(values)`, `sync.Map(entries)`, `sync.Set(keys)`, `sync.Stack(values)`
 o `sync.Queue(values)`. Las operaciones usan los nombres de las colecciones de
 valor (10.2.3): `sync.Array` tiene longitud fija y no cambia de tamaño;
@@ -4743,6 +4744,7 @@ pub fn Request.formAs[T: serialization.Decode](self): T ! Problem
 pub fn Request.uploads(self): Uploads                       // Iterator[Upload ! Problem]
 pub fn Request.body(self): io.Reader
 pub fn Request.saveTo(self, path: String): Int ! Problem
+pub fn Request.withBody(self, body: Array[Byte]): Request
 pub type Upload                                             // name, fileName, contentType
 pub fn Upload.text(self): String ! Problem
 pub fn Upload.bytes(self): Array[Byte] ! Problem
@@ -4822,7 +4824,12 @@ pub alias TlsVersion = net.TlsVersion
   reglas de su tipo, `422` como en `json`. `headerValues` da cada valor de una
   cabecera repetida, en orden.
 - Una ruta es un método y un path cuyos segmentos `:nombre` son parámetros y
-  cuyo último puede ser `*nombre`, el resto del path. Entre las rutas que
+  cuyo último puede ser `*nombre`, el resto del path. Un parámetro ocupa su
+  segmento entero y se nombra como un binding: `/files/:name.:ext` es un error
+  de compilación en un path literal, y un pánico al añadirlo si se calcula; un
+  `:` dentro de un segmento, como `/items:batch`, es texto. Añadir otra vez una
+  ruta del mismo método y path, que no respondería nunca, es un pánico; `/foo/`
+  es el mismo path que `/foo`. Entre las rutas que
   encajan gana la de más segmentos fijos, así que `/users/me` gana a
   `/users/:id`; `HEAD` usa la ruta `GET`. Una ruta de método `"*"` toma
   cualquiera, y una del método de la petición le gana. Un path sin ruta es
@@ -4884,6 +4891,13 @@ pub alias TlsVersion = net.TlsVersion
   atendiendo las demás. Los pánicos que no se recuperan (15.9) terminan el
   programa igual que en cualquier otro sitio. `Request.text` lee el
   `charset` como `Response.text`.
+- El cuerpo de una petición se lee una vez, según llega, con `bytes`, `text`,
+  `json`, `form`, `formAs`, `uploads`, `body` o `saveTo`; leerlo otra vez es
+  un pánico que dice cómo pasarlo: un middleware que lo lee lo da con
+  `next(request.withBody(bytes))`, y el handler lo lee de nuevo de esos
+  bytes, también por partes. `form` y `formAs` leen un formulario
+  URL-encoded: un cuerpo `multipart/...` responde `415` y se lee por partes
+  con `uploads`.
 - El middleware rodea las rutas de su app y la respuesta a los paths sin ruta;
   el primero añadido es el exterior. `mount` añade las rutas de otra app bajo
   un prefijo, con el middleware de esa app solo alrededor de ellas.
@@ -5451,7 +5465,9 @@ pub type TemplateError = { message: String, template: String, line: Int, column:
 - `{{ block "nombre" }} … {{ end }}`: una parte con nombre y su contenido por
   defecto. `{{ extends "base.html" }}`, como primera acción, hace de la
   plantilla la de `base.html` con los bloques que ella define; fuera de ellos
-  solo puede haber espacio.
+  solo puede haber espacio. En un `Set`, el nombre puede llevar valores,
+  `{{ extends "{section}/baseof.html" }}`, que se calculan con el dato al
+  escribir; en una plantilla compilada es `E1906`.
 - `{{ include "card.html" expresión }}` escribe otra plantilla con ese dato;
   sin él, con `self`. `{{ include "card.html" title: t, size: 3 }}` le da
   valores por nombre, que lee como nombres: `{{ title }}`; ve solo esos, y
@@ -5527,7 +5543,9 @@ pub type TemplateError = { message: String, template: String, line: Int, column:
 - Una plantilla cargada no conoce los tipos del programa: `Card { ... }` es
   un `TemplateError` que dice que nombre los valores o construya el record
   en una función. Un array o un mapa de tipos mezclados también lo es.
-- Los métodos `pub` de los valores que se dan con `functions` son funciones:
+- Los métodos `pub` de los valores que se dan con `functions` cuyos parámetros
+  y resultado implementan `Reflect` son funciones (`TemplateError` lo
+  implementa, para una que falla con él):
   `{{ slug(title) }}` llama a `helpers.slug(title)`, como `reflect.call`,
   con sus valores por defecto y sus argumentos variádicos. Una que da `T ! E`
   escribe su valor, y su fallo es el `TemplateError`, con el texto del error.
@@ -6867,7 +6885,8 @@ Señales:
 - `signals(...)` entrega en un canal las señales pedidas que llegan, en vez de
   su efecto: ya no cancelan ni terminan el programa, que decide qué hacer,
   como recargar su configuración con `Hangup`. Las que el canal no ha leído
-  se juntan: dos iguales seguidas son una.
+  se juntan: dos iguales seguidas son una. Cuando el programa suelta el
+  `Receiver`, las señales que solo él recibía vuelven a su efecto.
 - `Process.signal` envía una señal a los procesos de un hijo; `cancel` sigue
   siendo la forma de terminarlo y esperarlo. `signal(pid, sent)` la envía a
   un proceso que el programa no arrancó: `NotFound` si no existe y

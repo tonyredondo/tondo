@@ -1,0 +1,57 @@
+// A request's body is read once, as it arrives: a middleware that reads it
+// gives it on with `withBody`, and the handler reads it again as text,
+// JSON or parts; reading a body read already is a panic that says so,
+// which the server answers with 500. A multipart body is read by its
+// parts: `form()` of one is 415.
+
+import std.console
+import std.http
+
+fn main(): !http.HttpError {
+    var app = http.App.new()
+    app.use(
+        (request, next) {
+            if request.path().startsWith("/given") {
+                let bytes = request.bytes()?
+                return next(request.withBody(bytes))?
+            }
+            if request.path() == "/twice" {
+                _ = request.text()?
+            }
+            next(request)?
+        },
+    )
+    app.post("/given", (request) { http.Reply.text("[{request.text()?}]") })
+    app.post("/given/json", (request) { http.Reply.text("{request.json[Map[String, Int]]()?}") })
+    app.post(
+        "/given/parts",
+        (request) {
+            var names: Array[String] = []
+            for part in request.uploads() {
+                let upload = part?
+                names.push("{upload.name()}={upload.text()?}")
+            }
+            http.Reply.text("{names}")
+        },
+    )
+    app.post("/twice", (request) { http.Reply.text("[{request.text()?}]") })
+    app.post("/form", (request) { http.Reply.text("{request.form()?}") })
+    let client = app.client()
+    console.println(client.post("/given", body: http.Body.text("hello"))?.text()?)
+    console.println(client.post("/given/json", body: http.Body.text("{{\"a\": 1}}"))?.text()?)
+    let parts = http.Body.multipart([http.Part.field("a", "1"), http.Part.field("b", "two")])
+    console.println(client.post("/given/parts", body: parts)?.text()?)
+    for path in ["/twice", "/form"] {
+        match client.post(path, body: http.Body.multipart([http.Part.field("a", "1")])) {
+            ok(response) => console.println("{response.status()}")
+            err(error) => console.println("{error}")
+        }
+    }
+}
+
+// expect-stdout: [hello]
+// expect-stdout: [a: 1]
+// expect-stdout: [a=1, b=two]
+// expect-stdout: POST http://app/twice answered 500 Internal Server Error
+// expect-stdout: POST http://app/form answered 415 Unsupported Media Type
+// expect-stderr: panic[P0008]: explicit-panic: the body of this request was read already: a middleware that reads it gives it on with `next(request.withBody(bytes))`

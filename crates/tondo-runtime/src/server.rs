@@ -146,6 +146,8 @@ struct Request {
     client: Arc<Vec<u8>>,
     headers: Vec<String>,
     body: Mutex<Option<Incoming>>,
+    /// Whether the body was taken to be read, which happens once.
+    taken: std::sync::atomic::AtomicBool,
     /// The bytes its body may have, which the program may change before
     /// it reads it, and whether a reading went past them.
     limit: std::sync::atomic::AtomicUsize,
@@ -170,6 +172,7 @@ impl Request {
             client: Arc::default(),
             headers: Vec::new(),
             body: Mutex::new(None),
+            taken: Default::default(),
             limit: Default::default(),
             exceeded: Arc::default(),
             reply: Mutex::new(None),
@@ -181,6 +184,7 @@ impl Request {
     /// The body, once, held to its limit.
     fn take_body(&self) -> Option<http_body_util::Limited<Incoming>> {
         let limit = self.limit.load(std::sync::atomic::Ordering::Acquire);
+        self.taken.store(true, std::sync::atomic::Ordering::Release);
         lock(&self.body).take().map(|body| http_body_util::Limited::new(body, limit))
     }
 
@@ -633,6 +637,7 @@ async fn handle(
         client,
         headers,
         body: Mutex::new(Some(body)),
+        taken: Default::default(),
         limit: std::sync::atomic::AtomicUsize::new(limits.body),
         exceeded: Arc::default(),
         reply: Mutex::new(Some(reply)),
@@ -1055,6 +1060,34 @@ struct Upload {
     file_name: String,
     content_type: String,
     field: Mutex<Option<multer::Field<'static>>>,
+}
+
+/// Whether the body was taken to be read already.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_request_taken(object: *mut NativeObject) -> u8 {
+    request(object).taken.load(std::sync::atomic::Ordering::Acquire) as u8
+}
+
+/// The parts of a `multipart/form-data` body that a middleware read and
+/// gave on, from its bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_http_request_form_of(
+    object: *mut NativeObject,
+    data: *mut ArrayHeader,
+) -> *mut NativeObject {
+    let r = request(object);
+    let data = Bytes::from(bytes_of(data));
+    match r.header("content-type").map(multer::parse_boundary) {
+        Some(Ok(boundary)) => {
+            let stream = futures_util::stream::once(async move { Ok::<Bytes, std::convert::Infallible>(data) });
+            let reader = multer::Multipart::new(stream, boundary);
+            native::new(Form { failure: Mutex::new(None), reader: Some(Arc::new(tokio::sync::Mutex::new(reader))) })
+        }
+        _ => native::new(Form {
+            failure: Mutex::new(Some(("body", "it is not multipart/form-data".into()))),
+            reader: None,
+        }),
+    }
 }
 
 /// The parts of a `multipart/form-data` body, read as they arrive.

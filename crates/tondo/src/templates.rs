@@ -259,6 +259,11 @@ impl Translator<'_> {
         let mut chain = vec![(loaded, self.read(loaded)?)];
         while let Some((name, at)) = chain.last().and_then(|(_, t)| t.extends.clone()) {
             let (from, _) = *chain.last()?;
+            if syntax::computed(&name) {
+                let message = "a compiled template reads the template it extends when it compiles, so it needs its name then: write one in quotes with no values in it, or load the templates into a `template.Set`, which computes the name as it writes";
+                self.diags.error("E1906", self.span(from, &(at..at)), message);
+                return None;
+            }
             let base = self.named(from, &name, at)?;
             if chain.iter().any(|(l, _)| l.file == base.file) {
                 self.diags.error("E1906", self.span(from, &(at..at)), "these templates extend each other in a circle");

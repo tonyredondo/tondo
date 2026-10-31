@@ -1043,6 +1043,8 @@ pub type Request = {
     priv allowed: Array[String]
     /// The networks of the proxies the app trusts (`App.trustProxies`).
     priv trusted: Array[__net.Network]
+    /// The body a middleware that read it gave on (`withBody`).
+    priv given: Array[Byte]?
 }
 
 /// The method: `GET`, `POST`.
@@ -1256,7 +1258,19 @@ pub fn Request.queryAs[T: __serialization.Decode](self): T ! Problem {
 /// The fields of a URL-encoded form body read into a `T`, as `queryAs`
 /// reads the query.
 pub fn Request.formAs[T: __serialization.Decode](self): T ! Problem {
-    readInto[T](pairsOf(self.text()?), "the form")?
+    readInto[T](pairsOf(self.formText()?), "the form")?
+}
+
+/// The text of a URL-encoded form; a multipart one is read by its parts.
+fn Request.formText(self): String ! Problem {
+    let kind = self.header("content-type").unwrapOr("").toLower()
+    if kind.startsWith("multipart/") {
+        fail Problem.new(
+            415,
+            "the body is {kind.split(";")[0]}, which is read by its parts with `request.uploads()`, not as a URL-encoded form",
+        )
+    }
+    self.text()?
 }
 
 /// The names and values of a query string or a URL-encoded form, decoded,
@@ -1490,9 +1504,31 @@ fn bodyProblem(request: httpNative.Native, what: String, failure: String): Probl
     Problem.badRequest("{what}: {failure.removePrefix("body\t")}")
 }
 
+/// The request with `body` for its body: what a middleware that read the
+/// body gives on, as `next(request.withBody(bytes))`, for the handler to
+/// read again.
+pub fn Request.withBody(self, body: Array[Byte]): Request {
+    self with { given: some(body) }
+}
+
+/// A body is read once, as it arrives: after that, a panic that says how to
+/// give it on.
+fn Request.unread(self) {
+    if httpNative.requestTaken(self.native) {
+        panic(
+            "the body of this request was read already: a middleware that reads it gives it on with `next(request.withBody(bytes))`",
+        )
+    }
+}
+
 /// The whole body; one that cannot be read is a `400` problem, and one
 /// larger than its limit `413`.
 pub fn Request.bytes(self): Array[Byte] ! Problem {
+    match self.given {
+        some(bytes) => return bytes
+        none => {}
+    }
+    self.unread()
     let bytes = httpNative.requestRead(self.native)
     let failure = httpNative.failure(self.native)
     if not failure.isEmpty() {
@@ -1538,7 +1574,7 @@ pub fn Request.json[T: __serialization.Decode](self): T ! Problem {
 /// The fields of a URL-encoded form body.
 pub fn Request.form(self): Map[String, String] ! Problem {
     var fields: Map[String, String] = [:]
-    for (name, value) in pairsOf(self.text()?) {
+    for (name, value) in pairsOf(self.formText()?) {
         fields[name] = value
     }
     fields
@@ -1546,16 +1582,42 @@ pub fn Request.form(self): Map[String, String] ! Problem {
 
 /// The parts of a `multipart/form-data` body, in order, as they arrive.
 pub fn Request.uploads(self): Uploads {
-    Uploads { form: httpNative.requestForm(self.native), request: self.native, done: false }
+    let form = match self.given {
+        some(bytes) => httpNative.requestFormOf(self.native, bytes)
+        none => {
+            self.unread()
+            httpNative.requestForm(self.native)
+        }
+    }
+    Uploads { form, request: self.native, done: false }
 }
 
 /// The body as a stream, read as the program asks for it.
 pub fn Request.body(self): __io.Reader {
-    httpNative.requestBody(self.native)
+    match self.given {
+        some(bytes) => {
+            let buffer = __io.Buffer()
+            _ = buffer.writer().writeBytes(bytes)
+            buffer.reader()
+        }
+        none => {
+            self.unread()
+            httpNative.requestBody(self.native)
+        }
+    }
 }
 
 /// Writes the body to a file as it arrives; how many bytes.
 pub fn Request.saveTo(self, path: String): Int ! Problem {
+    match self.given {
+        some(bytes) => {
+            match __fs.writeBytes(path, bytes) {
+                ok(_) => return bytes.length()
+                err(error) => fail Problem.from("{error}")
+            }
+        }
+        none => self.unread()
+    }
     let size = httpNative.saveBody(self.native, path, 0)
     if size < 0 {
         let failure = httpNative.failure(self.native)
@@ -1933,7 +1995,15 @@ pub fn App.route(
     operation: String = "",
     schemas: Map[String, String] = [:],
 ) {
-    self.routes.push(Route { method: method.toUpper(), pattern: segments(path), handler })
+    let verb = method.toUpper()
+    let pattern = routeSegments(path)
+    match self.routes.find((route) { route.method == verb and route.pattern == pattern }) {
+        some(_) => panic(
+            "the route `{verb} /{pattern.join("/")}` is added twice, and only the first would answer: remove one; a path answers with its trailing `/` or without it",
+        )
+        none => {}
+    }
+    self.routes.push(Route { method: verb, pattern, handler })
     // OpenAPI describes each method: a route of any is not described.
     if not operation.isEmpty() and method != "*" {
         self.operations.push((method.toLower(), path, operation))
@@ -2596,6 +2666,7 @@ fn answer(incoming: httpNative.Native, handler: fn(Request): Reply ! Problem) {
         chosen: none
         allowed: []
         trusted: []
+        given: none
     }
     // A handler that panics answers `500`, and the server goes on
     // (14.24.1); the report says which request it was.
@@ -2807,6 +2878,30 @@ fn matching(pattern: Array[String], path: Array[String]): (Map[String, String], 
 
 fn segments(path: String): Array[String] {
     path.split("/").filter((segment) { not segment.isEmpty() })
+}
+
+/// The segments of a route's path: a parameter, `:name`, or the rest of
+/// it, a last `*name`, takes a whole segment and is named like a binding.
+fn routeSegments(path: String): Array[String] {
+    let parts = segments(path)
+    for (index, part) in parts.enumerate() {
+        if not (part.startsWith(":") or part.startsWith("*")) {
+            continue
+        }
+        let name = part.slice(1, part.length()).unwrapOr("")
+        let named = name.chars().all((c) { c.isLetter() or c.isDigit() or c == '_' })
+        if name.isEmpty() or not named or name.chars().collect()[0].isDigit() {
+            panic(
+                "the segment `{part}` of the route `{path}`: a parameter takes a whole segment and is named like a binding, as `:file`; split the parts of one in the handler",
+            )
+        }
+        if part.startsWith("*") and index != parts.length() - 1 {
+            panic(
+                "`{part}` takes the rest of the path, so it is the last segment of the route `{path}`",
+            )
+        }
+    }
+    parts
 }
 
 /// A path inside a directory, or `403` for one that would leave it.

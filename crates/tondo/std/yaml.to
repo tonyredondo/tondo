@@ -492,9 +492,11 @@ pub type Node = {
     comment: String?
 }
 
-/// The document of YAML text, which must hold one.
+/// The first document of YAML text, which `set` changes; the documents
+/// after it stay as they are.
 pub fn load(text: String): Document ! YamlError {
-    let root = parse(text)?
+    // The first document, which the outline is of; the rest stay as text.
+    let root = parseAll(text)?.first().unwrapOr(Value.Null)
     let outlined = yamlnative.outline(text)
     let failure = yamlnative.outlineError(outlined)
     if not failure.isEmpty() {

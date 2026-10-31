@@ -837,6 +837,16 @@ fn outline(source: &str) -> Result<Vec<Outlined>, String> {
                 }
             }
             Parsed::Scalar(..) | Parsed::Alias(_) => {
+                // A block scalar starts at its `|` or `>` and ends with its
+                // last line, not the line breaks after it.
+                let block = matches!(event, Parsed::Scalar(_, ScalarStyle::Literal | ScalarStyle::Folded, ..));
+                let (start, end) = if block {
+                    let indicator = source[..start].rfind(['|', '>']).unwrap_or(start);
+                    let last = source[indicator..end].trim_end_matches(['\n', '\r', ' ', '\t']).len();
+                    (indicator, indicator + last)
+                } else {
+                    (start, end)
+                };
                 let (path, after_key, indent) = place(&open, &nodes, start);
                 let (line, column) = (span.start.line(), span.start.col() + 1);
                 nodes.push(Outlined { path, kind: 0, start, end, line, column, after_key, indent });

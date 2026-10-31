@@ -1,0 +1,14 @@
+// A parameter of a route takes a whole segment and is named like a
+// binding, and the rest of the path is its last segment.
+
+import std.http
+
+fn main() {
+    var app = http.App.new()
+    app.get("/files/:name.:ext", () { "x" })
+    app.get("/a/*rest/b", () { "y" })
+    app.get("/v1/items:batch", () { "a colon inside a segment is text" })
+}
+
+// expect-error: E1102 the segment `:name.:ext` of the route `/files/:name.:ext`: a parameter takes a whole segment and is named like a binding, as `:file`; split the parts of one in the handler
+// expect-error: E1102 `*rest` takes the rest of the path, so it is the last segment of the route `/a/*rest/b`

@@ -97,8 +97,8 @@ fn main(): !template.TemplateError {
   variadic arguments; one that gives `T ! E` writes its value, and its
   failure is the template's error. A parameter `reflect.Value` takes any
   value.
-- `{{ include "summary/{kind}.html" self }}` computes the name as it
-  writes. A `Set` does not know the program's types, so `Card { ... }` is
+- `{{ include "summary/{kind}.html" self }}` and
+  `{{ extends "{section}/baseof.html" }}` compute the name as they write. A `Set` does not know the program's types, so `Card { ... }` is
   not written in it: name the values, or build the `Card` in a function.
 - A `json.Value`, `yaml.Value` or `toml.Value` reads as what it holds:
   `{{ data.title }}` is a `String`, `{{ data.count + 1 }}` an `Int`, and

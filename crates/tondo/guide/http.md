@@ -109,7 +109,11 @@ fn find(id: Int): User? {
   `request.formAs[T]()` a form: `page_size` fills `pageSize`, and a name
   that repeats fills a list. A field that may be missing is optional, as
   `tags: Array[String]?`; a missing or unreadable one is a 400 that names
-  the parameter.
+  the parameter. A multipart body is read by its parts, `request.uploads()`.
+- A body is read once, as it arrives: a middleware that reads it gives it
+  on with `next(request.withBody(bytes))`, and the handler reads it again.
+- A parameter takes a whole segment, `/files/:file`; a route added twice
+  is a panic, and `/foo/` is `/foo`.
 - Each client is limited: by default a body over 10 MiB is 413, a head over
   64 KiB is 431, and a head has 30 seconds to arrive.
   `app.listen(limits: http.Limits.standard() with { body: 100_000_000 })`

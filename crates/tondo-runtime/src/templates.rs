@@ -16,12 +16,27 @@ pub unsafe extern "C" fn tondo_rt_template_parse(source: *const Str, html: u8) -
     let read = syntax::parse(&source, html != 0).and_then(|template| {
         let mut nodes = String::new();
         list(&mut nodes, &source, &template.nodes)?;
-        Ok((template.extends.map(|(name, _)| name), nodes))
+        // A name with values in it is computed as it writes.
+        let mut computed = String::new();
+        let extends = match (template.extends, template.quoted) {
+            (Some((name, _)), Some(quoted)) if syntax::computed(&name) => {
+                code(&mut computed, &source, &quoted)?;
+                None
+            }
+            (extends, _) => extends.map(|(name, _)| name),
+        };
+        if computed.is_empty() {
+            computed.push_str("null");
+        }
+        Ok((extends, computed, nodes))
     });
     match read {
-        Ok((extends, nodes)) => {
+        Ok((extends, computed, nodes)) => {
             let extends = extends.map_or("null".to_string(), |name| quote(&name));
-            let _ = write!(out, "{{\"extends\":{extends},\"nodes\":{nodes},\"error\":null,\"at\":0}}");
+            let _ = write!(
+                out,
+                "{{\"extends\":{extends},\"computed\":{computed},\"nodes\":{nodes},\"error\":null,\"at\":0}}"
+            );
         }
         Err(error) => {
             let message = quote(&error.message);

@@ -3619,3 +3619,14 @@ over what was sampled and goes on. Each profile says how often it samples,
 `every`, with today's rates as the defaults, since Datadog samples the
 processor each 10 ms and a busy server may want fewer samples of memory.
 
+## 2026-10-31 — A body read once, given on by hand
+
+The third review found a middleware that read a request's body leaving
+the handler an empty one, with no error. Keeping every body read in memory
+for whoever reads it next would hold whole uploads and streams; instead a
+body is still read once, reading it again is a panic that says how to give
+it on, and `request.withBody(bytes)` gives a middleware's bytes to the
+handler, which reads them as text, JSON or parts, as Gin's middleware puts
+the body back. A route added twice or a parameter that is not a whole
+segment were silently accepted and never answered: now they are errors, at
+compile time for a literal path.

@@ -1,0 +1,20 @@
+// A program that lets go of the channel of `process.signals` takes its
+// signals back: `SIGTERM` cancels it again, and it ends with 143.
+
+import std.console
+import std.env
+import std.process
+import std.time
+
+fn main() {
+    {
+        let _incoming = process.signals(process.Signal.Terminate)
+    }
+    _ = process.signal(env.processId(), process.Signal.Terminate)
+    // Cancelled while it waits; a program that kept ignoring the signal
+    // would print after it.
+    time.sleep(time.seconds(30))
+    console.println("still running after SIGTERM")
+}
+
+// expect-exit: 143

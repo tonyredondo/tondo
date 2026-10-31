@@ -1,7 +1,8 @@
 // A loaded template calls its functions as Tondo does, with defaults and
 // variadic arguments, and writes what a failing one gives as its error;
 // it writes literals and strings with values in them, includes a template
-// by a computed name or with values by name, and reads the values of
+// by a computed name or with values by name, extends a computed name, and
+// reads the values of
 // JSON, YAML and TOML as what they hold, and a URL by its parts.
 
 import std.console
@@ -28,6 +29,10 @@ pub fn Helpers.half(self, n: Int): Int ! String {
         fail "{n} is odd"
     }
     n / 2
+}
+
+pub fn Helpers.checked(self, n: Int): Int ! template.TemplateError {
+    n * 2
 }
 
 pub fn Helpers.kinds(self, values: ...reflect.Value): String {
@@ -86,6 +91,12 @@ fn main(): !(template.TemplateError |
             "{{{{ data.count + 1 }}}} {{{{ data.name.toUpper() }}}} {{{{ for item in data.items }}}}({{{{ item }}}}){{{{ end }}}} {{{{ config.server.port }}}} {{{{ settings.owner.name }}}} {{{{ data }}}}",
         ),
         ("link", "{{{{ link }}}} {{{{ link.host }}}} {{{{ link.path }}}}"),
+        ("keys", "{{{{ data[\"name\"] }}}} {{{{ data.items[2] }}}} {{{{ checked(21) }}}}"),
+        ("layouts/post.html", "<main>{{{{ block \"main\" }}}}{{{{ end }}}}</main>"),
+        (
+            "extended",
+            "{{{{ extends \"layouts/{{kind}}.html\" }}}}{{{{ block \"main\" }}}}{{{{ title }}}}{{{{ end }}}}",
+        ),
     ]
     for (name, source) in sources {
         set.add(name, source)?
@@ -121,6 +132,8 @@ fn main(): !(template.TemplateError |
         "mixed",
         "values",
         "link",
+        "keys",
+        "extended",
     ] {
         show(set, name, page)
     }
@@ -137,3 +150,5 @@ fn main(): !(template.TemplateError |
 // expect-stdout: mixed: mixed:1:24: a map's values have one type, and these are `String` and `Int`: to pass several values, name them: `include "card.html" title: ..., size: ...`
 // expect-stdout: values: 42 ADA (1)(2.5)(x) 8080 Ada {&#34;count&#34;:41,&#34;name&#34;:&#34;ada&#34;,&#34;items&#34;:[1,2.5,&#34;x&#34;]}
 // expect-stdout: link: https://example.com:8080/docs/a%20b?q=1 example.com /docs/a b
+// expect-stdout: keys: ada x 42
+// expect-stdout: extended: <main>Tea &amp; cake</main>

@@ -1948,10 +1948,9 @@ impl Parser<'_> {
                     expr = Expr { kind: ExprKind::Set(items), span };
                 }
                 Tok::LBracket => {
-                    // Type arguments follow a path, or a raw operation on any
-                    // value: `call().cast[Byte]()`.
-                    let raw = matches!(&expr.kind, ExprKind::Field(_, m) if matches!(m.name.as_str(), "cast" | "toPointer" | "toFunction"));
-                    if (matches!(expr.kind, ExprKind::Path(_)) || raw)
+                    // Type arguments follow a path, or a method of any value:
+                    // `call().cast[Byte]()`, `response.json[User]()`.
+                    if matches!(expr.kind, ExprKind::Path(_) | ExprKind::Field(..))
                         && let Some(args) = self.try_generic_arguments()
                     {
                         let span = expr.span.to(self.prev_span());

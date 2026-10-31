@@ -1,0 +1,13 @@
+// A script's statements are its module's, as its functions are, so they
+// build its records and read their `priv` fields.
+import std.console
+
+pub type Account = {
+    name: String
+    priv secret: String
+}
+
+let account = Account { name: "ada", secret: "tea" }
+console.println("{account.name} {account.secret}")
+
+// expect-stdout: ada tea
