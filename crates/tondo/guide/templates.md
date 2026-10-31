@@ -37,7 +37,9 @@ fn main() {
 - A condition is a `Bool`, as in code: `{{ if not posts.isEmpty() }}`. An
   optional opens with `{{ with x = optional }}`; an empty `for` writes its
   `{{ else }}`. `{{ let n = posts.length() }}`, `{{ break }}`, `{{ continue }}`.
-- `{{ price:.2 }}` writes with a format, as interpolation does.
+- `{{ price:.2 }}` writes with a format, as interpolation does, and strings
+  interpolate: `{{ "{count} posts" }}`. Literals are Tondo's: `[1, 2]`,
+  `["small": 320]`, `'c'`, each with one type.
 - A line that holds only blocks (`if`, `for`, `end`, `let`...) vanishes,
   with its line break; `{{-` and `-}}` trim the space around an action. A
   file's last line break is not written.
@@ -46,7 +48,9 @@ fn main() {
 - In files: `template.html[Page](embed.text("templates/page.html"))`. The
   page starts with `{{ extends "base.html" }}` and redefines the base's
   `{{ block "content" }}...{{ end }}`; `{{ include "card.html" post }}`
-  writes another with that data. They are read next to it when compiling.
+  writes another with that data, and `{{ include "card.html" title: title,
+  size: 3 }}` with values by name, which it reads as `{{ title }}`. They
+  are read next to it when compiling, so their names are known then.
 - A compiled template calls the functions and modules its file sees:
   `{{ slug(post.title) }}`, `{{ markdown.render(body) }}`.
 - HTML templates escape each value for where it goes: text, attributes,
@@ -89,7 +93,17 @@ fn main(): !template.TemplateError {
   of `Map` `length`, `isEmpty`, `contains`, `get`, `keys`, `values`,
   `entries`; of optionals `isSome`, `isNone`, `unwrapOr`.
 - Its functions are the `pub` methods of the values given to
-  `site.functions(...)`.
+  `site.functions(...)`, called as Tondo calls them, with defaults and
+  variadic arguments; one that gives `T ! E` writes its value, and its
+  failure is the template's error. A parameter `reflect.Value` takes any
+  value.
+- `{{ include "summary/{kind}.html" self }}` computes the name as it
+  writes. A `Set` does not know the program's types, so `Card { ... }` is
+  not written in it: name the values, or build the `Card` in a function.
+- A `json.Value`, `yaml.Value` or `toml.Value` reads as what it holds:
+  `{{ data.title }}` is a `String`, `{{ data.count + 1 }}` an `Int`, and
+  `{{ for item in data.items }}` goes over its items. A `url.Url` reads its
+  parts, `{{ link.host }}`.
 - Its errors, `template:line:column: message`, come when it writes; a
   template whose text is a literal or embedded is read when compiling too.
 
@@ -104,6 +118,10 @@ fn main(): !template.TemplateError {
 {{ printf "%.2f" .Price }}             {{ price:.2 }}
 {{ .Title | upper }}                   {{ title.toUpper() }}
 {{ template "card" . }}                {{ include "card" self }}
+{{ partial "card" (dict "t" .T "n" 3) }}
+                                       {{ include "card" t: t, n: 3 }}
+{{ slice "a" "b" }}  {{ dict "k" 1 }}  {{ ["a", "b"] }}  {{ ["k": 1] }}
+{{ printf "%s/%s" .A .B }}             {{ "{a}/{b}" }}
 {{ define "main" }} / {{ block "main" . }}
                                        {{ extends "base" }} / {{ block "main" }}
 {{/* note */}}                         {{// note }}

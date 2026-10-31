@@ -1,6 +1,7 @@
 // Templates: compiled with the program from files it embeds, extending a
-// layout and including another, checked against their data; and loaded
-// into a `Set` while it runs, which sees the data by reflection.
+// layout and including others, with a datum or values by name, checked
+// against their data; and loaded into a `Set` while it runs, which sees
+// the data by reflection.
 
 import std.console
 import std.embed
@@ -80,6 +81,7 @@ fn main(): !template.TemplateError {
 // expect-stdout:       <p>   42 views · a, b · tea-&amp;-&#34;cake&#34;</p>
 // expect-stdout:       <p>by Ada</p>
 // expect-stdout:       <div title="Tea &amp; &#34;Cake&#34;" data-id=tea&#32;cake onclick="open(42)">Tea &amp; &#34;Cake&#34; (42)</div>
+// expect-stdout:       <span title="Tea &amp; &#34;Cake&#34;">0043 views</span>
 // expect-stdout:     <script>let count = 2; let first = {"title":"Tea \u0026 \"Cake\"","slug":"tea cake","views":42,"tags":["a","b"],"draft":false,"author":"Ada"}; let name = "\u003cNotes\u003e"</script>
 // expect-stdout:     <a href="about:invalid" style="color: invalid"><b>bold</b></a>
 // expect-stdout:   </body>

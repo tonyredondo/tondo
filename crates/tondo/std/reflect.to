@@ -434,9 +434,25 @@ pub fn ReflectError.wrongType(expected: String, value: Value): ReflectError {
     ReflectError { kind: ReflectErrorKind.WrongType, path: "", message }
 }
 
-/// A call with a number of arguments the method does not take.
-pub fn ReflectError.arguments(typeName: String, method: String, expected: Int, found: Int): ReflectError {
-    let message = "`{typeName}.{method}` takes {expected} argument(s), found {found}"
+/// A call with a number of arguments the method does not take: `expected`,
+/// and up to `optional` more that have defaults, or any more with
+/// `variadic`.
+pub fn ReflectError.arguments(
+    typeName: String,
+    method: String,
+    expected: Int,
+    found: Int,
+    optional: Int = 0,
+    variadic: Bool = false,
+): ReflectError {
+    let takes = if variadic {
+        "at least {expected}"
+    } else if optional > 0 {
+        "{expected} to {expected + optional}"
+    } else {
+        "{expected}"
+    }
+    let message = "`{typeName}.{method}` takes {takes} argument(s), found {found}"
     ReflectError { kind: ReflectErrorKind.WrongArguments, path: method, message }
 }
 

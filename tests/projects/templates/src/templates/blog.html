@@ -10,6 +10,7 @@
       <p>{{ post.views:>5 }} views · {{ post.tags.join(", ") }} · {{ slug(post.title) }}</p>
       {{ with author = post.author }}<p>by {{ author }}</p>{{ end }}
       {{ include "card.html" post }}
+      {{ include "badge.html" label: post.title, views: post.views + 1 }}
       {{ end }}
     {{ else }}
     <p>No posts yet.</p>

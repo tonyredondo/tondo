@@ -4,6 +4,8 @@
 
 import std.internal.codec as tomlcodec
 import std.internal.toml as tomlnative
+// Templates and reflection read a value by its keys.
+import std.reflect as __reflect
 import std.serialization
 
 // ---------------------------------------------------------------------------
@@ -115,6 +117,74 @@ impl Display for Value {
                 let line = encode(Value.Table(["v": self])).unwrapOr("v = ")
                 line.removePrefix("v = ").trimEnd()
             }
+        }
+    }
+}
+
+/// In reflection and templates, a value reads as what it holds: a text as
+/// a `String`, a number as an `Int` or a `Float`, a boolean as a `Bool`,
+/// and an array or a map by its items and keys, each read the same way. It
+/// shows as its text, or as TOML for the rest.
+impl __reflect.Reflect for Value {
+    fn reflectShow(self, nested: Bool): String {
+        match self {
+            Value.Text(text) if not nested => text
+            _ => "{self}"
+        }
+    }
+
+    fn reflectGet(self, name: String): __reflect.Value ! __reflect.ReflectError {
+        match self {
+            Value.Table(members) => match members.get(name) {
+                some(found) => reflected(found)
+                none => fail __reflect.ReflectError.noField(
+                    "toml.Value",
+                    name,
+                    members.keys().collect(),
+                )
+            }
+            Value.Array(items) => match Int.parse(name).ok().andThen((index) { items.get(index) }) {
+                some(found) => reflected(found)
+                none => fail __reflect.ReflectError.noField("toml.Value", name, [])
+            }
+            _ => fail __reflect.ReflectError.noField("toml.Value", name, [])
+        }
+    }
+
+    fn reflectElements(self): Array[__reflect.Value]? {
+        match self {
+            Value.Array(items) => some(items.map(reflected))
+            _ => none
+        }
+    }
+
+    fn reflectEntries(self): Array[(__reflect.Value, __reflect.Value)]? {
+        match self {
+            Value.Table(members) =>
+                some(members
+                    .entries()
+                    .map((pair) { (__reflect.valueOf(pair.0), reflected(pair.1)) })
+                    .collect())
+            _ => none
+        }
+    }
+}
+
+/// A value as reflection reads it: what it holds.
+fn reflected(value: Value): __reflect.Value {
+    match value {
+        Value.Int(integer) => __reflect.valueOf(integer)
+        Value.Float(real) => __reflect.valueOf(real)
+        Value.DateTime(text) => __reflect.valueOf(text)
+        Value.Text(text) => __reflect.valueOf(text)
+        Value.Bool(flag) => __reflect.valueOf(flag)
+        Value.Array(items) => __reflect.valueOf(items.map(reflected))
+        Value.Table(members) => {
+            var read: Map[String, __reflect.Value] = [:]
+            for (key, member) in members {
+                read[key] = reflected(member)
+            }
+            __reflect.valueOf(read)
         }
     }
 }

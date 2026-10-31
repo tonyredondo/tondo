@@ -334,9 +334,15 @@ enum Node {
     With { name: String, value: Code, body: Array[Node], otherwise: Array[Node]? }
     Let { name: String, value: Code }
     Block { name: String, body: Array[Node] }
-    Include { name: String, data: Code?, at: Int }
+    /// Another template, named or computed, with its datum or values by name.
+    Include { name: String, computed: Code?, data: Code?, named: Array[NamedValue], at: Int }
     Break
     Continue
+}
+
+type NamedValue = {
+    name: String
+    value: Code
 }
 
 type Branch = {
@@ -356,6 +362,13 @@ enum Op {
     Float(Float)
     Text(String)
     Bool(Bool)
+    Char(Char)
+    Array(Int)
+    Map(Int)
+    /// A value's text, as a template writes it, and texts one after another:
+    /// a string with values in it.
+    Shown(Format?)
+    Join(Int)
     Name(String)
     Field(String)
     Index
@@ -588,12 +601,33 @@ fn Run.node(mut self, scope: mut Scope, node: Node): Flow ! TemplateError {
                 none => return self.block(mut scope, body)?
             }
         }
-        Node.Include { name, data, at } => {
+        Node.Include { name, computed, data, named, at } => {
+            let included = match computed {
+                some(code) => {
+                    let value = self.evaluate(scope, code)?
+                    match value.to[String]() {
+                        ok(written) => written
+                        err(_) => fail self.error(
+                            scope,
+                            at,
+                            "an `include` names a template with a `String`, not with `{value.typeName()}`",
+                        )
+                    }
+                }
+                none => name
+            }
             let found = match data {
                 some(code) => self.evaluate(scope, code)?
+                none if not named.isEmpty() => {
+                    var values: Map[String, __reflect.Value] = [:]
+                    for each in named {
+                        values[each.name] = self.evaluate(scope, each.value)?
+                    }
+                    __reflect.valueOf(values)
+                }
                 none => scope.data
             }
-            self.template(name, found, scope.depth + 1, some(scope))?
+            self.template(included, found, scope.depth + 1, some(scope))?
         }
         Node.Break => return Flow.Break
         Node.Continue => return Flow.Continue
@@ -616,6 +650,55 @@ fn Run.evaluate(self, scope: Scope, code: Code): __reflect.Value ! TemplateError
             Op.Float(value) => stack.push(__reflect.valueOf(value))
             Op.Text(value) => stack.push(__reflect.valueOf(value))
             Op.Bool(value) => stack.push(__reflect.valueOf(value))
+            Op.Char(value) => stack.push(__reflect.valueOf(value))
+            Op.Array(count) => {
+                let items = taken(var stack, count)
+                _ = self.oneType(scope, items, at, "an array's items")?
+                stack.push(__reflect.valueOf(items))
+            }
+            Op.Map(count) => {
+                let pairs = taken(var stack, count * 2)
+                let keys = pairs
+                    .enumerate()
+                    .filter((pair) { pair.0 % 2 == 0 })
+                    .map((pair) { pair.1 })
+                let values = pairs
+                    .enumerate()
+                    .filter((pair) { pair.0 % 2 == 1 })
+                    .map((pair) { pair.1 })
+                _ = self.oneType(scope, values, at, "a map's values")?
+                stack.push(
+                    match self.oneType(scope, keys, at, "a map's keys")? {
+                        "Int" => {
+                            var map: Map[Int, __reflect.Value] = [:]
+                            for (key, value) in keys.zip(values) {
+                                map[key.to[Int]().unwrapOr(0)] = value
+                            }
+                            __reflect.valueOf(map)
+                        }
+                        kind if kind == "String" or kind.isEmpty() => {
+                            var map: Map[String, __reflect.Value] = [:]
+                            for (key, value) in keys.zip(values) {
+                                map[key.to[String]().unwrapOr("")] = value
+                            }
+                            __reflect.valueOf(map)
+                        }
+                        other => fail self.error(
+                            scope,
+                            at,
+                            "a map of a loaded template has `String` or `Int` keys, not `{other}`",
+                        )
+                    },
+                )
+            }
+            Op.Shown(format) => {
+                let value = popped(var stack)
+                stack.push(__reflect.valueOf(self.shown(scope, value, format, at)?))
+            }
+            Op.Join(count) => {
+                let texts = taken(var stack, count).map((piece) { "{piece}" })
+                stack.push(__reflect.valueOf(texts.join("")))
+            }
             Op.Name(name) => stack.push(self.named(scope, name, at)?)
             Op.Field(name) => {
                 let target = popped(var stack)
@@ -678,6 +761,28 @@ fn Run.evaluate(self, scope: Scope, code: Code): __reflect.Value ! TemplateError
         index += 1
     }
     popped(var stack)
+}
+
+/// The type all the values have, as the language asks of an array's items
+/// and a map's keys and values; `""` for none.
+fn Run.oneType(self, scope: Scope, values: Array[__reflect.Value], at: Int, what: String): String !
+    TemplateError {
+    let first = values.first().map((value) { value.typeName() }).unwrapOr("")
+    match values.find((value) { value.typeName() != first }) {
+        some(other) => {
+            let hint = if what == "a map's values" {
+                ": to pass several values, name them: `include \"card.html\" title: ..., size: ...`"
+            } else {
+                ""
+            }
+            fail self.error(
+                scope,
+                at,
+                "{what} have one type, and these are `{first}` and `{other.typeName()}`{hint}",
+            )
+        }
+        none => first
+    }
 }
 
 fn popped(stack: var Array[__reflect.Value]): __reflect.Value {
@@ -843,8 +948,10 @@ fn Run.rounds(self, scope: Scope, names: Array[String], items: Code): Array[Arra
     let source = self.evaluate(scope, items)?
     let at = items.at.first().unwrapOr(0)
     let kind = source.typeName()
+    // A value of JSON, YAML or TOML goes over what it holds.
+    let dynamic = kind in ["json.Value", "yaml.Value", "toml.Value"]
     var rounds: Array[Array[__reflect.Value]] = []
-    if kind.startsWith("Map[") {
+    if kind.startsWith("Map[") or (dynamic and not source.entries().isEmpty()) {
         if names.length() != 2 {
             fail self.error(
                 scope,
@@ -857,7 +964,10 @@ fn Run.rounds(self, scope: Scope, names: Array[String], items: Code): Array[Arra
         }
         return rounds
     }
-    if not (kind.startsWith("Array[") or kind.startsWith("Set[") or kind.startsWith("Deque[")) {
+    if not (kind.startsWith("Array[") or
+        kind.startsWith("Set[") or
+        kind.startsWith("Deque[") or
+        dynamic) {
         fail self.error(
             scope,
             at,
@@ -976,7 +1086,7 @@ fn Run.call(self, scope: Scope, name: String, args: Array[__reflect.Value], at: 
         let methods = helper.typeInfo().methods().map((method) { method.name() })
         if name in methods {
             return match helper.call(name, ...args) {
-                ok(value) => value
+                ok(value) => self.outcome(scope, value, at)?
                 err(error) => fail self.error(scope, at, "{error}")
             }
         }
@@ -991,6 +1101,18 @@ fn Run.call(self, scope: Scope, name: String, args: Array[__reflect.Value], at: 
         at,
         "there is no function `{name}`: a set's functions are the `pub` methods of the values given to `Set.functions`, and {functions}",
     )
+}
+
+/// What a call gives: the value of a `T ! E` that succeeds, and the error
+/// of one that fails as the template's.
+fn Run.outcome(self, scope: Scope, value: __reflect.Value, at: Int): __reflect.Value ! TemplateError {
+    match value.typeInfo().kind() {
+        __reflect.TypeKind.Applied(__reflect.AppliedKind.Result) => match value.variant() {
+            some("err") => fail self.error(scope, at, "{value.elements()[0]}")
+            _ => value.elements()[0]
+        }
+        _ => value
+    }
 }
 
 /// A method: of the prelude for a text, an array, a map or an optional,
@@ -1014,7 +1136,7 @@ fn Run.method(
         optionMethod(target.elements().first(), name, args)
     } else {
         return match target.call(name, ...args) {
-            ok(value) => value
+            ok(value) => self.outcome(scope, value, at)?
             err(error) => fail self.error(scope, at, "{error}")
         }
     }
@@ -1300,11 +1422,26 @@ fn nodeOf(value: __json.Value): Node {
         "Let" => Node.Let { name: named("name"), value: codeOf(field("value")) }
         "Block" => Node.Block { name: named("name"), body: nodesOf(field("body")) }
         "Include" => Node.Include {
-            name: named("name")
+            name: field("name").asText().unwrapOr("")
+            computed: match field("name").asText() {
+                some(_) => none
+                none => some(codeOf(field("name")))
+            }
             data: match field("data").isNull() {
                 true => none
                 false => some(codeOf(field("data")))
             }
+            named: field("named")
+                .asArray()
+                .unwrapOr([])
+                .map(
+                    (each) {
+                        NamedValue {
+                            name: each.field("name").asText().unwrapOr("")
+                            value: codeOf(each.field("value"))
+                        }
+                    },
+                )
             at: field("at").asInt().unwrapOr(0)
         }
         "Break" => Node.Break
@@ -1328,6 +1465,11 @@ fn opOf(value: __json.Value): Op {
         "Float" => Op.Float(payload.asFloat().unwrapOr(0.0))
         "Text" => Op.Text(payload.asText().unwrapOr(""))
         "Bool" => Op.Bool(payload.asBool().unwrapOr(false))
+        "Char" => Op.Char(payload.asText().unwrapOr(" ").chars().collect().first().unwrapOr(' '))
+        "Array" => Op.Array(payload.asInt().unwrapOr(0))
+        "Map" => Op.Map(payload.asInt().unwrapOr(0))
+        "Shown" => Op.Shown(formatOf(payload))
+        "Join" => Op.Join(payload.asInt().unwrapOr(0))
         "Name" => Op.Name(payload.asText().unwrapOr(""))
         "Field" => Op.Field(payload.asText().unwrapOr(""))
         "Index" => Op.Index

@@ -110,13 +110,24 @@ fn node(out: &mut String, source: &str, node: &Node) -> Result<(), syntax::Error
             list(out, source, body)?;
             out.push_str("}}");
         }
-        Node::Include { at, name, data } => {
-            let _ = write!(out, "{{\"Include\":{{\"name\":{},\"data\":", quote(name));
+        Node::Include { at, name, data, named } => {
+            out.push_str("{\"Include\":{\"name\":");
+            match name {
+                syntax::Included::Named(name) => out.push_str(&quote(name)),
+                syntax::Included::Computed(range) => code(out, source, range)?,
+            }
+            out.push_str(",\"data\":");
             match data {
                 Some(range) => code(out, source, range)?,
                 None => out.push_str("null"),
             }
-            let _ = write!(out, ",\"at\":{at}}}}}");
+            out.push_str(",\"named\":[");
+            for (index, (key, value)) in named.iter().enumerate() {
+                let _ = write!(out, "{}{{\"name\":{},\"value\":", if index > 0 { "," } else { "" }, quote(key));
+                code(out, source, value)?;
+                out.push('}');
+            }
+            let _ = write!(out, "],\"at\":{at}}}}}");
         }
         Node::Break => out.push_str("\"Break\""),
         Node::Continue => out.push_str("\"Continue\""),
@@ -164,6 +175,19 @@ fn code(out: &mut String, source: &str, range: &Range<usize>) -> Result<(), synt
             Op::Float(value) => write!(out, "{{\"Float\":{value:?}}}"),
             Op::Text(text) => write!(out, "{{\"Text\":{}}}", quote(text)),
             Op::Bool(value) => write!(out, "{{\"Bool\":{value}}}"),
+            Op::Char(value) => write!(out, "{{\"Char\":{}}}", quote(&value.to_string())),
+            Op::Array(count) => write!(out, "{{\"Array\":{count}}}"),
+            Op::Shown(format) => {
+                out.push_str("{\"Shown\":");
+                match format {
+                    Some(format) => spec(out, format),
+                    None => out.push_str("null"),
+                }
+                out.push('}');
+                Ok(())
+            }
+            Op::Join(count) => write!(out, "{{\"Join\":{count}}}"),
+            Op::Map(count) => write!(out, "{{\"Map\":{count}}}"),
             Op::Name(name) => write!(out, "{{\"Name\":{}}}", quote(name)),
             Op::Field(name) => write!(out, "{{\"Field\":{}}}", quote(name)),
             Op::Index => write!(out, "\"Index\""),

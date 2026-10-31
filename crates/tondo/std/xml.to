@@ -6,6 +6,8 @@
 
 import std.internal.codec as codecNative
 import std.internal.text as textNative
+// Reflection reads the annotations of a program's types.
+import std.reflect as __reflect
 import std.serialization
 import std.sync as __sync
 
@@ -24,6 +26,24 @@ pub annotation Attribute = {}
 
 /// Makes a field the text of the element of its record.
 pub annotation Text = {}
+
+impl __reflect.Reflect for Name {
+    fn reflectShow(self, nested: Bool): String {
+        "xml.Name(\"{self.value}\")"
+    }
+}
+
+impl __reflect.Reflect for Attribute {
+    fn reflectShow(self, nested: Bool): String {
+        "xml.Attribute"
+    }
+}
+
+impl __reflect.Reflect for Text {
+    fn reflectShow(self, nested: Bool): String {
+        "xml.Text"
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Trees

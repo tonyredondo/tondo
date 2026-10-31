@@ -428,15 +428,25 @@ impl Translator<'_> {
                 let block = self.block(from, &body, blocks, span)?;
                 Some(vec![Stmt { kind: StmtKind::Expr(block_expr(block)), span }])
             }
-            Node::Include { at, name, data } => {
+            Node::Include { at, name, data, named } => {
                 let span = place(*at);
+                let syntax::Included::Named(name) = name else {
+                    let message = "a compiled template reads the templates it includes when it compiles, so it needs their names then: write one in quotes with no values in it, or load the templates into a `template.Set`, which computes the name as it writes";
+                    self.diags.error("E1906", span, message);
+                    return None;
+                };
                 let included = self.named(loaded, name, *at)?;
                 let data = match data {
                     Some(range) => Some(Box::new(self.expression(loaded, range)?)),
                     None => None,
                 };
+                let mut values = Vec::new();
+                for (key, range) in named {
+                    let name = Ident { name: key.clone(), span: self.span(loaded, range) };
+                    values.push((name, self.expression(loaded, range)?));
+                }
                 let body = Box::new(self.template(included, span)?);
-                let include = Expr { kind: ExprKind::TemplateInclude { data, body }, span };
+                let include = Expr { kind: ExprKind::TemplateInclude { data, named: values, body }, span };
                 Some(vec![append(StrSegment::Expr(include, None), span)])
             }
             Node::Break => Some(vec![Stmt { kind: StmtKind::Break, span: place(0) }]),

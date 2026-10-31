@@ -3,6 +3,8 @@
 // query of a form.
 
 import std.encoding as __encoding
+// Templates and reflection read a URL by its parts.
+import std.reflect as __reflect
 
 /// A URL, `https://ada@example.com:8443/docs/a?q=1#intro`, or a relative
 /// reference, `../a.png`. `Display` writes it back, encoding what the path
@@ -308,6 +310,32 @@ impl Display for Url {
             out.push("#{encoded(self.fragment, ":@/?")}")
         }
         out.join("")
+    }
+}
+
+/// In reflection and templates, a URL shows as its text and reads its
+/// parts by name: `{{ link.host }}`.
+impl __reflect.Reflect for Url {
+    fn reflectShow(self, nested: Bool): String {
+        if nested { "\"{self}\"" } else { "{self}" }
+    }
+
+    fn reflectGet(self, name: String): __reflect.Value ! __reflect.ReflectError {
+        match name {
+            "scheme" => __reflect.valueOf(self.scheme)
+            "user" => __reflect.valueOf(self.user)
+            "password" => __reflect.valueOf(self.password)
+            "host" => __reflect.valueOf(self.host)
+            "port" => __reflect.valueOf(self.port)
+            "path" => __reflect.valueOf(self.path)
+            "query" => __reflect.valueOf(self.query)
+            "fragment" => __reflect.valueOf(self.fragment)
+            _ => fail __reflect.ReflectError.noField(
+                "url.Url",
+                name,
+                ["scheme", "user", "password", "host", "port", "path", "query", "fragment"],
+            )
+        }
     }
 }
 

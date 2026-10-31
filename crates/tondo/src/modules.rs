@@ -971,9 +971,12 @@ impl Linker<'_> {
             }
             ExprKind::Template(block) => self.block(block),
             ExprKind::TemplateWrite { value, .. } => self.expr(value),
-            ExprKind::TemplateInclude { data, body } => {
+            ExprKind::TemplateInclude { data, named, body } => {
                 if let Some(data) = data {
                     self.expr(data);
+                }
+                for (_, value) in named {
+                    self.expr(value);
                 }
                 self.block(body);
             }

@@ -1,0 +1,139 @@
+// A loaded template calls its functions as Tondo does, with defaults and
+// variadic arguments, and writes what a failing one gives as its error;
+// it writes literals and strings with values in them, includes a template
+// by a computed name or with values by name, and reads the values of
+// JSON, YAML and TOML as what they hold, and a URL by its parts.
+
+import std.console
+import std.json
+import std.reflect
+import std.template
+import std.toml
+import std.url
+import std.xml
+import std.yaml
+
+pub type Helpers = {}
+
+pub fn Helpers.repeated(self, text: String, times: Int = 2): String {
+    text.repeat(times)
+}
+
+pub fn Helpers.joined(self, first: String, rest: ...String): String {
+    [first].concat(rest).join("+")
+}
+
+pub fn Helpers.half(self, n: Int): Int ! String {
+    if n % 2 == 1 {
+        fail "{n} is odd"
+    }
+    n / 2
+}
+
+pub fn Helpers.kinds(self, values: ...reflect.Value): String {
+    values.map((value) { value.typeName() }).join(" ")
+}
+
+// A type annotated for XML is still read by reflection.
+@xml.Name("page")
+pub type Page = {
+    title: String
+    kind: String
+    price: Float
+    link: url.Url
+    data: json.Value
+    config: yaml.Value
+    settings: toml.Value
+}
+
+fn show(set: template.Set, name: String, page: Page) {
+    match set.render(name, page) {
+        ok(written) => console.println("{name}: {written}")
+        err(error) => console.println("{name}: {error}")
+    }
+}
+
+fn main(): !(template.TemplateError |
+    url.UrlError |
+    json.JsonError |
+    yaml.YamlError |
+    toml.TomlError) {
+    var set = template.Set.html()
+    let sources = [
+        ("summary/post.html", "<p>{{{{ title }}}}</p>"),
+        ("card.html", "[{{{{ label }}}} {{{{ size }}}}]"),
+        (
+            "calls",
+            "{{{{ repeated(\"ab\") }}}} {{{{ repeated(\"ab\", 3) }}}} {{{{ joined(\"a\") }}}} {{{{ joined(\"a\", \"b\", \"c\") }}}} {{{{ half(8) }}}} {{{{ kinds(title, 1, 2.5) }}}}",
+        ),
+        ("odd", "{{{{ half(3) }}}}"),
+        ("many", "{{{{ repeated(\"a\", 1, 2) }}}}"),
+        (
+            "literals",
+            "{{{{ [1, 2, 3].length() }}}} {{{{ [\"s\": 320, \"l\": 1024][\"l\"] }}}} {{{{ 'c' }}}} {{{{ for word in [\"x\", \"y\"] }}}}{{{{ word }}}}{{{{ end }}}}",
+        ),
+        (
+            "strings",
+            "{{{{ \"{{title}}: {{price:.2}} {{{{braces}}}}\" }}}} <a href=\"{{{{ \"/kinds/{{kind}} page\" }}}}\">",
+        ),
+        (
+            "includes",
+            "{{{{ include \"summary/{{kind}}.html\" self }}}} {{{{ include \"card.html\" label: title, size: 3 }}}}",
+        ),
+        ("mixed", "{{{{ include \"card.html\" [\"label\": title, \"size\": 3] }}}}"),
+        (
+            "values",
+            "{{{{ data.count + 1 }}}} {{{{ data.name.toUpper() }}}} {{{{ for item in data.items }}}}({{{{ item }}}}){{{{ end }}}} {{{{ config.server.port }}}} {{{{ settings.owner.name }}}} {{{{ data }}}}",
+        ),
+        ("link", "{{{{ link }}}} {{{{ link.host }}}} {{{{ link.path }}}}"),
+    ]
+    for (name, source) in sources {
+        set.add(name, source)?
+    }
+    for name in ["typed", "brace"] {
+        let source = if name == "typed" {
+            "{{{{ include \"card.html\" Card {{ label: title }} }}}}"
+        } else {
+            "{{{{ \"{{title\" }}}}"
+        }
+        match set.add(name, source) {
+            ok(_) => console.println("{name}: added")
+            err(error) => console.println("{name}: {error}")
+        }
+    }
+    set.functions(Helpers {})
+    let page = Page {
+        title: "Tea & cake"
+        kind: "post"
+        price: 3.14159
+        link: url.parse("https://example.com:8080/docs/a b?q=1")?
+        data: json.parse("{{\"count\": 41, \"name\": \"ada\", \"items\": [1, 2.5, \"x\"]}}")?
+        config: yaml.parse("server:\n  port: 8080\n")?
+        settings: toml.parse("[owner]\nname = \"Ada\"\n")?
+    }
+    for name in [
+        "calls",
+        "odd",
+        "many",
+        "literals",
+        "strings",
+        "includes",
+        "mixed",
+        "values",
+        "link",
+    ] {
+        show(set, name, page)
+    }
+}
+
+// expect-stdout: typed: typed:1:24: a loaded template does not know the program's types: name the values, `include "card.html" title: ..., size: ...`, or build the `Card` in a function of `Set.functions`
+// expect-stdout: brace: brace:1:5: this `{` of the string does not end: close it with `}`, or write `{{` for a brace
+// expect-stdout: calls: abab ababab a a+b+c 4 String Int Float
+// expect-stdout: odd: odd:1:4: 3 is odd
+// expect-stdout: many: many:1:4: `Helpers.repeated` takes 1 to 2 argument(s), found 3
+// expect-stdout: literals: 3 1024 c xy
+// expect-stdout: strings: Tea &amp; cake: 3.14 {braces} <a href="/kinds/post%20page">
+// expect-stdout: includes: <p>Tea &amp; cake</p> [Tea &amp; cake 3]
+// expect-stdout: mixed: mixed:1:24: a map's values have one type, and these are `String` and `Int`: to pass several values, name them: `include "card.html" title: ..., size: ...`
+// expect-stdout: values: 42 ADA (1)(2.5)(x) 8080 Ada {&#34;count&#34;:41,&#34;name&#34;:&#34;ada&#34;,&#34;items&#34;:[1,2.5,&#34;x&#34;]}
+// expect-stdout: link: https://example.com:8080/docs/a%20b?q=1 example.com /docs/a b

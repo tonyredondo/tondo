@@ -10093,7 +10093,9 @@ impl<'a> Checker<'a> {
             ast::ExprKind::TemplateWrite { value, format, place } => {
                 self.template_write(cx, value, format.as_ref(), *place, span)
             }
-            ast::ExprKind::TemplateInclude { data, body } => self.template_include(cx, data.as_deref(), body, span),
+            ast::ExprKind::TemplateInclude { data, named, body } => {
+                self.template_include(cx, data.as_deref(), named, body, span)
+            }
             ast::ExprKind::Unsafe(block) => {
                 self.meta_denied(span, "`unsafe`");
                 let outer = std::mem::replace(&mut cx.unsafe_region, true);
@@ -13417,17 +13419,37 @@ impl<'a> Checker<'a> {
         })
     }
 
-    /// Another template a compiled one writes, with its data or the same
-    /// `self`: a closure of its own, called here.
+    /// Another template a compiled one writes, with its data, with values
+    /// by name, or with the same `self`: a closure of its own, called here.
+    /// Values by name are a record of their own, which the included
+    /// template reads by those names.
     fn template_include(
         &mut self,
         cx: &mut FnCx,
         data: Option<&ast::Expr>,
+        named: &[(ast::Ident, ast::Expr)],
         body: &ast::Block,
         span: Span,
     ) -> hir::Expr {
         let data = match data {
             Some(data) => self.expr(cx, data, None),
+            None if !named.is_empty() => {
+                let values: Vec<hir::Expr> = named.iter().map(|(_, value)| self.expr(cx, value, None)).collect();
+                if values.iter().any(|value| value.ty == Ty::ERROR) {
+                    return Self::error_expr(span);
+                }
+                let fields: Vec<Field> = named
+                    .iter()
+                    .zip(&values)
+                    .map(|((name, _), value)| Field { name: name.name.clone(), ty: value.ty, private: false })
+                    .collect();
+                let shown: Vec<String> =
+                    fields.iter().map(|f| format!("{}: {}", f.name, self.types.display(f.ty))).collect();
+                let (id, ty) = self.types.declare_adt(format!("{{ {} }}", shown.join(", ")));
+                self.types.define_adt(id, AdtKind::Record(fields));
+                let values = values.into_iter().enumerate().map(|(index, value)| (index as u32, value)).collect();
+                Self::mk(hir::ExprKind::Record(values), ty, span)
+            }
             None => self.path(cx, &[ast::Ident { name: "self".into(), span }], None, span),
         };
         let closure = self.template_closure(cx, body, data.ty, span);

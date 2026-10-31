@@ -3107,7 +3107,7 @@ pub type ReflectError = { kind: ReflectErrorKind, path: String, message: String 
 pub fn ReflectError.noField(typeName: String, name: String, fields: Array[String]): ReflectError
 pub fn ReflectError.noMethod(typeName: String, name: String, methods: Array[String]): ReflectError
 pub fn ReflectError.wrongType(expected: String, value: Value): ReflectError
-pub fn ReflectError.arguments(typeName: String, method: String, expected: Int, found: Int): ReflectError
+pub fn ReflectError.arguments(typeName: String, method: String, expected: Int, found: Int, optional: Int = 0, variadic: Bool = false): ReflectError
 pub fn ReflectError.privateFields(typeName: String, value: Value): ReflectError
 pub fn ReflectError.needsMut(typeName: String, method: String): ReflectError
 ~~~
@@ -3134,8 +3134,11 @@ Valores:
 - `call` y `callMut` buscan un método `pub` por nombre, comprueban el número de
   argumentos y convierten cada uno al tipo de su parámetro, y dan su resultado
   completo como `R`: para un método `T ! E`, `R` es `T ! E`. Se llaman los
-  métodos que reciben `self` o `mut self` y parámetros por valor. `call` solo
-  llama métodos con `self`; uno con `mut self` necesita `callMut`.
+  métodos que reciben `self` o `mut self` y parámetros por valor. Los
+  parámetros con valor por defecto del final pueden faltar, uno variádico
+  toma los argumentos que sobran, y uno `Value` recibe el argumento tal
+  cual. `call` solo llama métodos con `self`; uno con `mut self` necesita
+  `callMut`.
 - `fields()` da los campos visibles de un record o del payload record de la
   variante activa; `elements()` los de un `Array`, `Deque`, `Set` o payload de
   tupla; `entries()` los pares de un `Map`; `variant()` el nombre de la variante
@@ -3154,6 +3157,17 @@ Valores:
   que los tiene, como la raíz que sirven `std.mcp` y `std.graphql`, también
   lo implementa. `sql.SqlError` se muestra como su mensaje, así que un método
   que falla con él también se llama por nombre.
+- `json.Value`, `yaml.Value` y `toml.Value` implementan `Reflect` como lo
+  que tienen: un texto se lee como `String`, un número como `Int` o `Float`
+  y un booleano como `Bool`, y un array o un mapa da sus elementos y sus
+  claves, cada uno igual; se muestran como su texto. `url.Url` se muestra
+  como su texto y da sus partes por nombre. Las anotaciones de `std.xml`
+  lo implementan, como las de los demás módulos.
+- El compilador implementa `Reflect` para los tipos del programa cuando este
+  trae `std.reflect`, directamente o por un módulo que lo pide de los tipos
+  del programa, como `std.template` o `std.cli`. Un módulo que lo importa
+  solo para implementarlo en sus propios tipos, como `std.json` o
+  `std.uuid`, no lo trae.
 
 Descripción de tipos:
 
@@ -5327,7 +5341,11 @@ pub type TemplateError = { message: String, template: String, line: Int, column:
   plantilla la de `base.html` con los bloques que ella define; fuera de ellos
   solo puede haber espacio.
 - `{{ include "card.html" expresión }}` escribe otra plantilla con ese dato;
-  sin él, con `self`.
+  sin él, con `self`. `{{ include "card.html" title: t, size: 3 }}` le da
+  valores por nombre, que lee como nombres: `{{ title }}`; ve solo esos, y
+  `self` es el conjunto de ellos. Un `include` lleva un dato o nombres, no
+  ambos. El nombre puede calcularse, con un string con valores o un nombre:
+  `{{ include "summary/{kind}.html" self }}`.
 - `{{// comentario }}` no escribe nada.
 - `{{-` quita el espacio en blanco de antes, y `-}}` el de después. Una línea
   que solo tiene acciones que no escriben (`if`, `else`, `end`, `for`, `with`,
@@ -5337,7 +5355,10 @@ pub type TemplateError = { message: String, template: String, line: Int, column:
 
 **Expresiones**
 
-- Son de Tondo: literales sin interpolación, nombres, campos (`post.title`),
+- Son de Tondo: literales, también de arrays (`[a, b]`), mapas
+  (`["k": v]`, `[:]`) y caracteres, con un tipo para los elementos, las
+  claves y los valores, como en el lenguaje; strings con valores dentro,
+  `"{title} ({count:>3})"`, que se escriben como las acciones; nombres, campos (`post.title`),
   índices (`tags[0]`, `counts["a"]`), llamadas, métodos, `not`, aritmética,
   comparaciones, `in`, `and`, `or` y rangos.
 - Un nombre es una variable de `let`, `for` o `with`; si no, un campo del dato
@@ -5354,6 +5375,10 @@ pub type TemplateError = { message: String, template: String, line: Int, column:
   plantilla.
 - Sus expresiones ven lo que ve el archivo que la compila: sus funciones, los
   módulos que importa y cualquier método, con la visibilidad de ese módulo.
+- `include` con valores por nombre los da como un record propio, con un campo
+  por nombre del tipo de su valor, y la plantilla incluida se compila para
+  él. Un nombre que se calcula es `E1906`: una plantilla compilada lee al
+  compilar las que incluye.
 - `extends` e `include` leen, al compilar, otras plantillas junto a la suya:
   en la carpeta del archivo de `embed.text`, o en la del archivo de Tondo para
   un literal. Una plantilla incluida se compila para el tipo del dato que
@@ -5381,8 +5406,19 @@ pub type TemplateError = { message: String, template: String, line: Int, column:
   - `Map`: `length`, `isEmpty`, `contains`, `get`, `keys`, `values`,
     `entries`.
   - Opcionales: `isSome`, `isNone`, `unwrapOr`.
+- Un `json.Value`, `yaml.Value` o `toml.Value` se lee como lo que tiene: un
+  texto es un `String`, un número un `Int` o un `Float`, un booleano un
+  `Bool`, y un array o un mapa se recorre con `for` y se lee por sus
+  índices y claves, cada parte igual; se escribe como su texto, o como su
+  formato el resto. Un `url.Url` se escribe como su texto y da sus partes
+  por nombre: `{{ link.host }}`.
+- Una plantilla cargada no conoce los tipos del programa: `Card { ... }` es
+  un `TemplateError` que dice que nombre los valores o construya el record
+  en una función. Un array o un mapa de tipos mezclados también lo es.
 - Los métodos `pub` de los valores que se dan con `functions` son funciones:
-  `{{ slug(title) }}` llama a `helpers.slug(title)`.
+  `{{ slug(title) }}` llama a `helpers.slug(title)`, como `reflect.call`,
+  con sus valores por defecto y sus argumentos variádicos. Una que da `T ! E`
+  escribe su valor, y su fallo es el `TemplateError`, con el texto del error.
 - Un campo, un método o una función que no existe, una condición que no es un
   `Bool`, un índice fuera de rango o el fallo de una función es un
   `TemplateError` al escribir, con la plantilla, la línea y la columna; `write`

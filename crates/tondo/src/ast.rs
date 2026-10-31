@@ -586,10 +586,11 @@ pub enum ExprKind {
         format: Option<Format>,
         place: Option<u8>,
     },
-    /// Another template that a compiled one writes, with its data, or with
-    /// the same `self` without it.
+    /// Another template that a compiled one writes, with its data, with
+    /// values by name, or with the same `self` without either.
     TemplateInclude {
         data: Option<Box<Expr>>,
+        named: Vec<(Ident, Expr)>,
         body: Box<Block>,
     },
     Int {

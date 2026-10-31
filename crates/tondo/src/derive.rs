@@ -71,6 +71,8 @@ impl Kind {
             (Kind::Serialization, "serialization") => name == "Bytes",
             (Kind::Serialization, "time") => name == "DateTime",
             (Kind::Reflect, "reflect") => name == "Value",
+            (Kind::Reflect, "json" | "yaml" | "toml") => name == "Value",
+            (Kind::Reflect, "url") => name == "Url",
             (Kind::Reflect | Kind::Serialization, "template") => name == "Html",
             (Kind::Reflect | Kind::Serialization, "math") => matches!(name, "BigInt" | "Decimal"),
             (Kind::Reflect | Kind::Serialization, "uuid") => name == "Uuid",
@@ -102,6 +104,12 @@ struct Method {
     result: String,
     /// The names of its parameters after the receiver.
     names: Vec<String>,
+    /// How many arguments a call must give: those before the defaults.
+    required: usize,
+    /// Whether its last parameter takes the arguments left, `name: ...T`.
+    variadic: bool,
+    /// Which parameters are `reflect.Value`, which take an argument as it is.
+    values: Vec<bool>,
     /// Whether the program annotates it, and each of its parameters after
     /// the receiver (27.13).
     annotated: bool,
@@ -298,18 +306,30 @@ fn callable(
                 (None, ast::Mode::Mut) => true,
                 _ => continue,
             };
-            let plain = params
-                .iter()
-                .all(|p| p.mode == ast::Mode::Value && !p.variadic && p.ty.as_ref().is_some_and(|t| allowed(file, t)));
+            let plain =
+                params.iter().all(|p| p.mode == ast::Mode::Value && p.ty.as_ref().is_some_and(|t| allowed(file, t)));
             let result = f.result.as_ref().is_none_or(|r| allowed(file, r));
             if plain && result {
                 let text = |ty: &ast::TypeExpr| sources.slice(ty.span).to_string();
+                let variadic = params.last().is_some_and(|p| p.variadic);
+                let fixed = &params[..params.len() - usize::from(variadic)];
+                let reflected = alias_of(file, "reflect");
+                let value = |ty: &ast::TypeExpr| match &ty.kind {
+                    ast::TypeKind::Path { segments, args } => {
+                        args.is_empty()
+                            && matches!(segments.as_slice(), [m, v] if Some(&m.name) == reflected.as_ref() && v.name == "Value")
+                    }
+                    _ => false,
+                };
                 found.push(Method {
                     name: f.name.name.clone(),
                     mutating,
                     params: params.iter().filter_map(|p| p.ty.as_ref()).map(text).collect(),
                     result: f.result.as_ref().map_or_else(|| "Unit".to_string(), text),
                     names: params.iter().map(|p| p.name.name.clone()).collect(),
+                    required: fixed.iter().rposition(|p| p.default.is_none()).map_or(0, |i| i + 1),
+                    variadic,
+                    values: params.iter().map(|p| p.ty.as_ref().is_some_and(value)).collect(),
                     annotated: !f.uses.is_empty(),
                     annotated_params: params.iter().map(|p| !p.uses.is_empty()).collect(),
                     docs: docs(sources, f.name.span),
@@ -1033,19 +1053,22 @@ impl Generator<'_> {
                     .map(|(i, ty)| {
                         // Its index among all the parameters counts the receiver.
                         let annotated = if m.annotated_params[i] { notes(5, i + 1, 0, &m.name) } else { String::new() };
+                        // A variadic parameter holds an array of what it takes.
+                        let held = if m.variadic && i + 1 == m.params.len() { format!("Array[{ty}]") } else { ty.clone() };
                         format!(
                             "{r}.ParameterInfo.of({i}, {}, {r}.ParameterMode.Value, {:?}){annotated}",
-                            info(ty),
+                            info(&held),
                             m.names[i]
                         )
                     })
                     .collect();
                 let annotated = if m.annotated { notes(4, 0, 0, &m.name) } else { String::new() };
                 format!(
-                    "{r}.MethodInfo.of({:?}, {r}.ParameterMode.{receiver}, {r}.FunctionInfo.of([{}], {}, false, false)){annotated}{}",
+                    "{r}.MethodInfo.of({:?}, {r}.ParameterMode.{receiver}, {r}.FunctionInfo.of([{}], {}, {}, false)){annotated}{}",
                     m.name,
                     params.join(", "),
                     info(&m.result),
+                    m.variadic,
                     documented(m.docs.clone())
                 )
             })
@@ -1294,11 +1317,38 @@ impl Generator<'_> {
                     out.push_str(&format!("            {m:?} => fail {r}.ReflectError.needsMut({name:?}, __method)\n"));
                     continue;
                 }
-                let count = method.params.len();
-                let args: Vec<String> = (0..count).map(|i| format!("__args[{i}].to()?")).collect();
+                // A call gives the arguments up to those with defaults, and
+                // any more for a variadic parameter.
+                let fixed = method.params.len() - usize::from(method.variadic);
+                let arg =
+                    |i: usize| if method.values[i] { format!("__args[{i}]") } else { format!("__args[{i}].to()?") };
+                out.push_str(&format!("            {m:?} => match __args.length() {{\n"));
+                let last = if method.variadic { fixed } else { fixed + 1 };
+                for count in method.required..last {
+                    let args: Vec<String> = (0..count).map(arg).collect();
+                    out.push_str(&format!("                {count} => {r}.valueOf(self.{m}({}))\n", args.join(", ")));
+                }
+                if method.variadic {
+                    let mut args: Vec<String> = (0..fixed).map(arg).collect();
+                    args.push("...__rest".into());
+                    let rest = if method.values[fixed] {
+                        format!("let __rest = __args.drop({fixed})")
+                    } else {
+                        format!(
+                            "var __rest: Array[{}] = []\n                    for __arg in __args.drop({fixed}) {{\n                        __rest.push(__arg.to()?)\n                    }}",
+                            method.params[fixed]
+                        )
+                    };
+                    out.push_str(&format!(
+                        "                __count if __count >= {fixed} => {{\n                    {rest}\n                    {r}.valueOf(self.{m}({}))\n                }}\n",
+                        args.join(", ")
+                    ));
+                }
                 out.push_str(&format!(
-                    "            {m:?} => {{\n                if __args.length() != {count} {{\n                    fail {r}.ReflectError.arguments({name:?}, __method, {count}, __args.length())\n                }}\n                {r}.valueOf(self.{m}({}))\n            }}\n",
-                    args.join(", ")
+                    "                __count => fail {r}.ReflectError.arguments({name:?}, __method, {}, __count, optional: {}, variadic: {})\n            }}\n",
+                    method.required,
+                    fixed - method.required,
+                    method.variadic
                 ));
             }
             out.push_str(&format!(

@@ -122,6 +122,10 @@ pub(crate) fn source(path: &[ast::Ident]) -> Option<(&'static str, &'static str)
     }
 }
 
+/// The standard modules that import `std.reflect` only to implement it for
+/// their own types: they do not ask it of the program's.
+const OWN_REFLECTION: [&str; 9] = ["datetime", "json", "math", "pacing", "toml", "url", "uuid", "xml", "yaml"];
+
 /// Whether the standard module `name` is `target` or imports it, directly
 /// or through another standard module.
 pub(crate) fn brings(name: &str, target: &str) -> bool {
@@ -139,6 +143,9 @@ pub(crate) fn brings(name: &str, target: &str) -> bool {
         for line in text.lines() {
             let Some(path) = line.strip_prefix("import std.") else { continue };
             let module = path.split([' ', '.']).next().unwrap_or_default();
+            if module == "reflect" && OWN_REFLECTION.contains(&next) {
+                continue;
+            }
             pending.push(SOURCES.iter().find(|(n, _)| *n == module).map_or(module, |(n, _)| n));
         }
     }

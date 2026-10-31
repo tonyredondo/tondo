@@ -3535,3 +3535,37 @@ not read, as written. `env` became a list because a renamed variable has to
 keep its old name working for a while, as `DATADOG_API_KEY` beside
 `DD_API_KEY`; the first that is set wins, and the help names them all.
 
+## 2026-10-31 — Templates that build sites
+
+Lot eighteen starts with what Hugo's templates do that ours could not.
+A partial takes several values in Hugo through `dict`, a map of any
+values; Tondo's maps hold one type, and a loaded template that allowed
+mixed maps would stop compiling when moved into the program. `include`
+takes values by name instead, as a call does: compiled, they are a record
+of their own, typed; loaded, a map the included template reads by name.
+Its literals follow the language's rules in both modes, and a loaded
+template that writes `Card { ... }` is told to name the values or build
+the record in a function, since it cannot know the program's types.
+
+A computed name is a string with values in it, as everywhere in Tondo,
+which has no `+` for strings: `{{ include "summary/{kind}.html" self }}`.
+A compiled template cannot compute it, since it reads what it includes
+when it compiles.
+
+The functions of a `Set` are called as `reflect.call` calls them, and that
+call now takes what a call in code takes: defaults, variadic arguments,
+and any value for a parameter `reflect.Value`. A function that fails is
+the template's error, as the spec already said.
+
+The values of JSON, YAML and TOML read as what they hold rather than as
+enums with methods: `{{ data.count + 1 }}` instead of reaching into
+`Number`, because data files are what a site's templates read most, and
+Hugo reads them that way.
+
+Giving those values `Reflect` meant importing `std.reflect` into the
+formats, and a program that brings `std.reflect` gets the trait derived
+for all its types, which every program that read JSON would then pay for
+in compile time. A module that imports it only for its own types no
+longer brings it; `std.uuid`, `std.math` and the parts of `std.time` and
+`std.sync` had done so already without need.
+

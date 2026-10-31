@@ -144,13 +144,23 @@ pub enum Node {
         name: String,
         body: Vec<Node>,
     },
+    /// Another template, with its datum or the values it is given by name.
     Include {
         at: usize,
-        name: String,
+        name: Included,
         data: Option<Range<usize>>,
+        named: Vec<(String, Range<usize>)>,
     },
     Break,
     Continue,
+}
+
+/// The template an `include` writes: one named in quotes, or one whose name
+/// an expression computes, which only a loaded template can.
+#[derive(Clone, Debug)]
+pub enum Included {
+    Named(String),
+    Computed(Range<usize>),
 }
 
 /// A template read: the one it extends, if any, and where it names it, and
@@ -240,9 +250,12 @@ pub fn load(source: &str, html: bool) -> Result<Template, Error> {
                     walk(source, otherwise.as_deref().unwrap_or_default())?;
                 }
                 Node::Block { body, .. } => walk(source, body)?,
-                Node::Include { data, .. } => {
-                    if let Some(data) = data {
-                        expression(source, data.clone())?;
+                Node::Include { name, data, named, .. } => {
+                    if let Included::Computed(name) = name {
+                        expression(source, name.clone())?;
+                    }
+                    for value in data.iter().chain(named.iter().map(|(_, value)| value)) {
+                        expression(source, value.clone())?;
                     }
                 }
             }
@@ -519,10 +532,7 @@ impl Reader<'_> {
                     }
                     self.extends = Some((name, at));
                 }
-                "include" => {
-                    let (name, data) = self.named(rest, "include")?;
-                    nodes.push(Node::Include { at, name, data });
-                }
+                "include" => nodes.push(self.include(rest, at)?),
                 "break" | "continue" => {
                     alone(first)?;
                     if self.loops == 0 {
@@ -617,6 +627,52 @@ impl Reader<'_> {
         }
     }
 
+    /// `include "card.html"`, with a datum, `include "card.html" post`, or
+    /// values by name, `include "card.html" title: title, size: 3`; the
+    /// name may be a name or an expression in parentheses, `include (kind)`.
+    fn include(&self, rest: Range<usize>, at: usize) -> Result<Node, Error> {
+        let (name, more) = if self.source[rest.clone()].starts_with('"') {
+            let (name, more) = self.named(rest.clone(), "include")?;
+            // A name with values in it is computed as the template writes.
+            let computed = name.replace("{{", "").contains('{');
+            let quoted = rest.start..rest.start + name.len() + 2;
+            (if computed { Included::Computed(quoted) } else { Included::Named(name) }, more)
+        } else {
+            let end = operand(self.source, rest.clone());
+            if end == rest.start {
+                return error(rest.start, "`include` takes a name in quotes: write `{{ include \"card.html\" post }}`");
+            }
+            let more = self.source[end..rest.end].trim_start();
+            (Included::Computed(rest.start..end), (!more.is_empty()).then(|| rest.end - more.len()..rest.end))
+        };
+        let Some(more) = more else { return Ok(Node::Include { at, name, data: None, named: Vec::new() }) };
+        // Values by name start with `name:`.
+        let text = &self.source[more.clone()];
+        let first = text.find(|c: char| !(c.is_alphanumeric() || c == '_')).unwrap_or(text.len());
+        if first == 0 || !text[first..].trim_start().starts_with(':') {
+            return Ok(Node::Include { at, name, data: Some(more), named: Vec::new() });
+        }
+        let mut named = Vec::new();
+        for part in parts(self.source, more) {
+            match split(self.source, part.clone(), Split::Colon) {
+                Some((key, value)) if is_name(&self.source[key.clone()]) && !value.is_empty() => {
+                    let key = self.source[key].to_string();
+                    if named.iter().any(|(seen, _)| *seen == key) {
+                        return error(part.start, format!("`{key}` is given twice"));
+                    }
+                    named.push((key, value));
+                }
+                _ => {
+                    return error(
+                        part.start,
+                        "an `include` takes one value, or values by name: write `{{ include \"card.html\" title: title, size: 3 }}`",
+                    );
+                }
+            }
+        }
+        Ok(Node::Include { at, name, data: None, named })
+    }
+
     /// The quoted name of a block or a template, and what follows it.
     fn named(&self, rest: Range<usize>, what: &str) -> Result<(String, Option<Range<usize>>), Error> {
         let text = &self.source[rest.clone()];
@@ -657,6 +713,73 @@ fn write(source: &str, content: Range<usize>) -> Result<Node, Error> {
         }
         None => Ok(Node::Write { value: content, format: None, place: Place::Text }),
     }
+}
+
+/// Where the operand that starts a range ends: a name with its fields,
+/// calls and indices, or an expression in parentheses.
+fn operand(source: &str, range: Range<usize>) -> usize {
+    let bytes = source.as_bytes();
+    let mut at = range.start;
+    let mut depth = 0usize;
+    let mut quote = None;
+    while at < range.end {
+        let byte = bytes[at];
+        match quote {
+            Some(_) if byte == b'\\' => at += 1,
+            Some(open) if byte == open => quote = None,
+            Some(_) => {}
+            None => match byte {
+                b'"' | b'\'' if depth > 0 => quote = Some(byte),
+                b'(' | b'[' => depth += 1,
+                b')' | b']' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0
+                        && byte == b')'
+                        && at + 1 < range.end
+                        && bytes[at + 1] != b'.'
+                        && bytes[at + 1] != b'['
+                    {
+                        return at + 1;
+                    }
+                }
+                _ if depth > 0 => {}
+                b'.' | b'_' => {}
+                _ if byte.is_ascii_alphanumeric() || byte >= 0x80 => {}
+                _ => return at,
+            },
+        }
+        at += 1;
+    }
+    at
+}
+
+/// The parts of a range between the commas outside brackets and strings.
+fn parts(source: &str, range: Range<usize>) -> Vec<Range<usize>> {
+    let bytes = source.as_bytes();
+    let (mut depth, mut quote, mut start) = (0usize, None, range.start);
+    let mut found = Vec::new();
+    let mut at = range.start;
+    while at < range.end {
+        let byte = bytes[at];
+        match quote {
+            Some(_) if byte == b'\\' => at += 1,
+            Some(open) if byte == open => quote = None,
+            Some(_) => {}
+            None => match byte {
+                b'"' | b'\'' => quote = Some(byte),
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+                b',' if depth == 0 => {
+                    found.push(sides(source, start..at, at, at).0);
+                    start = at + 1;
+                }
+                _ => {}
+            },
+        }
+        at += 1;
+    }
+    found.push(sides(source, start..range.end, range.end, range.end).0);
+    found
 }
 
 fn is_name(text: &str) -> bool {
@@ -1027,10 +1150,18 @@ pub enum Op {
     Float(f64),
     Text(String),
     Bool(bool),
+    Char(char),
+    /// An array of this many items, and a map of this many keys and values.
+    Array(usize),
+    Map(usize),
     /// A variable, a field of the data, or the data itself as `self`.
     Name(String),
     Field(String),
     Index,
+    /// The value's text as a template writes it, with its format.
+    Shown(Option<Spec>),
+    /// The texts of this many values, one after the other.
+    Join(usize),
     /// A function, by its name, with its count of arguments.
     Call(String, usize),
     Method(String, usize),
@@ -1055,7 +1186,7 @@ pub struct Code {
 /// The code of the expression in `range` of a template.
 pub fn expression(source: &str, range: Range<usize>) -> Result<Code, Error> {
     let tokens = tokens(source, range.clone())?;
-    let mut parser = Expression { tokens, next: 0, code: Code::default(), end: range.end };
+    let mut parser = Expression { source, tokens, next: 0, code: Code::default(), end: range.end };
     parser.or()?;
     if let Some((_, at)) = parser.tokens.get(parser.next) {
         return error(*at, "expected the end of the expression");
@@ -1079,12 +1210,22 @@ enum Token {
     Int(i64),
     Float(f64),
     Text(String),
+    /// A string with values in it: its texts, and the ranges of its values
+    /// and their formats.
+    Interpolated(Vec<Part>),
+    Char(char),
     Name(String),
     Symbol(&'static str),
 }
 
-const SYMBOLS: [&str; 20] =
-    ["..=", "..", "==", "!=", "<=", ">=", "<", ">", "+", "-", "*", "/", "%", ".", ",", "(", ")", "[", "]", "!"];
+#[derive(Clone, Debug, PartialEq)]
+enum Part {
+    Text(String),
+    Value(Range<usize>, Option<Range<usize>>),
+}
+
+const SYMBOLS: [&str; 21] =
+    ["..=", "..", "==", "!=", "<=", ">=", "<", ">", "+", "-", "*", "/", "%", ".", ",", "(", ")", "[", "]", "!", ":"];
 
 fn tokens(source: &str, range: Range<usize>) -> Result<Vec<(Token, usize)>, Error> {
     let mut out = Vec::new();
@@ -1117,13 +1258,38 @@ fn tokens(source: &str, range: Range<usize>) -> Result<Vec<(Token, usize)>, Erro
         }
         if c == '"' {
             let mut text = String::new();
+            let mut parts = Vec::new();
             let mut chars = rest[1..].char_indices();
             let mut end = None;
             while let Some((offset, c)) = chars.next() {
+                let here = at + 1 + offset;
                 match c {
                     '"' => {
                         end = Some(offset + 2);
                         break;
+                    }
+                    // `{{` and `}}` are braces, as in any string of Tondo.
+                    '{' | '}' if rest[1 + offset + 1..].starts_with(c) => {
+                        text.push(c);
+                        chars.next();
+                    }
+                    '}' => return error(here, "a `}` alone in a string is written `}}`"),
+                    '{' => {
+                        let Some(close) = interpolation_end(source, here + 1, range.end) else {
+                            return error(
+                                here,
+                                "this `{` of the string does not end: close it with `}`, or write `{{` for a brace",
+                            );
+                        };
+                        if !text.is_empty() {
+                            parts.push(Part::Text(std::mem::take(&mut text)));
+                        }
+                        let inner = here + 1..close;
+                        parts.push(match split(source, inner.clone(), Split::Colon) {
+                            Some((value, format)) => Part::Value(value, Some(format)),
+                            None => Part::Value(sides(source, inner.clone(), inner.end, inner.end).0, None),
+                        });
+                        while chars.next().is_some_and(|(o, _)| at + 1 + o < close) {}
                     }
                     '\\' => match chars.next().map(|(_, c)| c) {
                         Some('n') => text.push('\n'),
@@ -1136,13 +1302,48 @@ fn tokens(source: &str, range: Range<usize>) -> Result<Vec<(Token, usize)>, Erro
                 }
             }
             let Some(end) = end else { return error(at, "the string does not end: close it with `\"`") };
-            out.push((Token::Text(text), at));
+            if parts.is_empty() {
+                out.push((Token::Text(text), at));
+            } else {
+                if !text.is_empty() {
+                    parts.push(Part::Text(text));
+                }
+                out.push((Token::Interpolated(parts), at));
+            }
             at += end;
+            continue;
+        }
+        if c == '\'' {
+            let mut chars = rest[1..].chars();
+            let value = match chars.next() {
+                Some('\\') => match chars.next() {
+                    Some('n') => Some('\n'),
+                    Some('t') => Some('\t'),
+                    Some('r') => Some('\r'),
+                    Some(c @ ('"' | '\\' | '\'')) => Some(c),
+                    _ => None,
+                },
+                other => other,
+            };
+            let Some(value) = value.filter(|_| chars.next() == Some('\'')) else {
+                return error(at, "a character is one, in single quotes: write `'a'` or `'\\n'`");
+            };
+            out.push((Token::Char(value), at));
+            at += rest.len() - chars.as_str().len();
             continue;
         }
         if c.is_alphabetic() || c == '_' {
             let length = rest.find(|c: char| !(c.is_alphanumeric() || c == '_')).unwrap_or(rest.len());
-            out.push((Token::Name(rest[..length].to_string()), at));
+            let name = &rest[..length];
+            if name.starts_with(char::is_uppercase) && rest[length..].trim_start().starts_with('{') {
+                return error(
+                    at,
+                    format!(
+                        "a loaded template does not know the program's types: name the values, `include \"card.html\" title: ..., size: ...`, or build the `{name}` in a function of `Set.functions`"
+                    ),
+                );
+            }
+            out.push((Token::Name(name.to_string()), at));
             at += length;
             continue;
         }
@@ -1155,14 +1356,40 @@ fn tokens(source: &str, range: Range<usize>) -> Result<Vec<(Token, usize)>, Erro
     Ok(out)
 }
 
-struct Expression {
+/// Where the `}` that closes an interpolation starting at `from` is: the
+/// first outside brackets and strings.
+fn interpolation_end(source: &str, from: usize, end: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let (mut depth, mut quote) = (0usize, None);
+    let mut at = from;
+    while at < end {
+        let byte = bytes[at];
+        match quote {
+            Some(_) if byte == b'\\' => at += 1,
+            Some(open) if byte == open => quote = None,
+            Some(_) => {}
+            None => match byte {
+                b'"' | b'\'' => quote = Some(byte),
+                b'(' | b'[' | b'{' => depth += 1,
+                b'}' if depth == 0 => return Some(at),
+                b')' | b']' | b'}' => depth -= 1,
+                _ => {}
+            },
+        }
+        at += 1;
+    }
+    None
+}
+
+struct Expression<'s> {
+    source: &'s str,
     tokens: Vec<(Token, usize)>,
     next: usize,
     code: Code,
     end: usize,
 }
 
-impl Expression {
+impl Expression<'_> {
     fn peek(&self) -> Option<&Token> {
         self.tokens.get(self.next).map(|(token, _)| token)
     }
@@ -1327,6 +1554,45 @@ impl Expression {
         }
     }
 
+    /// An array, `[a, b]`, or a map, `["a": 1]` and `[:]`, after its `[`.
+    fn collection(&mut self, at: usize) -> Result<(), Error> {
+        if self.eat(":") {
+            if !self.eat("]") {
+                return error(self.at(), "an empty map is `[:]`");
+            }
+            self.emit(Op::Map(0), at);
+            return Ok(());
+        }
+        let (mut count, mut map) = (0, None);
+        while !self.eat("]") {
+            if count > 0 && !self.eat(",") {
+                return error(self.at(), "expected `,` or `]`");
+            }
+            // A comma may end the items.
+            if self.eat("]") {
+                break;
+            }
+            self.or()?;
+            let keyed = self.eat(":");
+            match map {
+                None => map = Some(keyed),
+                Some(was) if was != keyed => {
+                    return error(
+                        self.at(),
+                        "a map has a key for each value, and an array none: `[\"a\": 1]` or `[1, 2]`",
+                    );
+                }
+                _ => {}
+            }
+            if keyed {
+                self.or()?;
+            }
+            count += 1;
+        }
+        self.emit(if map == Some(true) { Op::Map(count) } else { Op::Array(count) }, at);
+        Ok(())
+    }
+
     /// The arguments after `(`, up to `)`, and how many.
     fn arguments(&mut self) -> Result<usize, Error> {
         let mut count = 0;
@@ -1353,6 +1619,37 @@ impl Expression {
             Token::Int(value) => self.emit(Op::Int(value), at),
             Token::Float(value) => self.emit(Op::Float(value), at),
             Token::Text(text) => self.emit(Op::Text(text), at),
+            Token::Interpolated(parts) => {
+                let count = parts.len();
+                for part in parts {
+                    match part {
+                        Part::Text(text) => self.emit(Op::Text(text), at),
+                        Part::Value(value, format) => {
+                            if value.is_empty() {
+                                return error(
+                                    at,
+                                    "a `{}` of a string holds a value: write `{name}`, or `{{}}` for braces",
+                                );
+                            }
+                            let inner = expression(self.source, value.clone())?;
+                            self.code.ops.extend(inner.ops);
+                            self.code.at.extend(inner.at);
+                            let format = match format {
+                                Some(range) => match spec(&self.source[range.clone()]) {
+                                    Ok(spec) => Some(spec),
+                                    Err(message) => return error(range.start, message),
+                                },
+                                None => None,
+                            };
+                            self.emit(Op::Shown(format), value.start);
+                        }
+                    }
+                }
+                if count > 1 {
+                    self.emit(Op::Join(count), at);
+                }
+            }
+            Token::Char(value) => self.emit(Op::Char(value), at),
             Token::Name(name) if name == "true" || name == "false" => self.emit(Op::Bool(name == "true"), at),
             Token::Name(name) if matches!(name.as_str(), "and" | "or" | "not" | "in") => {
                 return error(at, format!("expected a value before `{name}`"));
@@ -1371,6 +1668,7 @@ impl Expression {
                     return error(self.at(), "expected `)`");
                 }
             }
+            Token::Symbol("[") => self.collection(at)?,
             Token::Symbol(symbol) => return error(at, format!("expected a value, found `{symbol}`")),
         }
         Ok(())
