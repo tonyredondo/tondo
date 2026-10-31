@@ -193,8 +193,8 @@ pub extern "C" fn tondo_rt_image_pixel(object: *mut NativeObject, x: i64, y: i64
     }
 }
 
-/// The image in a format, JPEG at a quality from 1 to 100; empty when it
-/// cannot be written.
+/// The image in a format, JPEG and WebP at a quality from 1 to 100, WebP
+/// without loss at 100; empty when it cannot be written.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_image_encode(object: *mut NativeObject, format: i64, quality: i64) -> *mut ArrayHeader {
     let written = with(object, move |image| {
@@ -205,12 +205,30 @@ pub extern "C" fn tondo_rt_image_encode(object: *mut NativeObject, format: i64, 
                 DynamicImage::ImageRgb8(image.to_rgb8()).write_with_encoder(encoder)
             }
             2 => DynamicImage::ImageRgba8(image.to_rgba8()).write_to(&mut out, ImageFormat::Gif),
+            3 if quality < 100 => return lossy_webp(image, quality).unwrap_or_default(),
             3 => DynamicImage::ImageRgba8(image.to_rgba8()).write_to(&mut out, ImageFormat::WebP),
             _ => image.write_to(&mut out, ImageFormat::Png),
         };
         done.map(|()| out.into_inner()).unwrap_or_default()
     });
     byte_array(&written.unwrap_or_default())
+}
+
+/// WebP with loss at a quality from 1 to 99, with libwebp.
+fn lossy_webp(image: &DynamicImage, quality: i64) -> Option<Vec<u8>> {
+    let rgba = image.to_rgba8();
+    let (width, height) = (i32::try_from(rgba.width()).ok()?, i32::try_from(rgba.height()).ok()?);
+    let mut output: *mut u8 = std::ptr::null_mut();
+    let quality = quality.clamp(1, 99) as f32;
+    // SAFETY: the pixels are `width * height` of four bytes, row by row.
+    let size = unsafe { libwebp_sys::WebPEncodeRGBA(rgba.as_ptr(), width, height, width * 4, quality, &mut output) };
+    if size == 0 || output.is_null() {
+        return None;
+    }
+    // SAFETY: libwebp wrote `size` bytes at `output`, which it lets go of.
+    let bytes = unsafe { std::slice::from_raw_parts(output, size) }.to_vec();
+    unsafe { libwebp_sys::WebPFree(output.cast()) };
+    Some(bytes)
 }
 
 /// `pixels`: the red, green, blue and alpha bytes of each pixel, row by row

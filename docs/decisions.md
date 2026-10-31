@@ -3874,3 +3874,14 @@ template in the text of another; in a `Set` it joins the set by its name,
 as Go's does, and a compiled template finds it in the templates being
 written before it looks for a file. The syntax is the same in both kinds,
 since the parser is shared.
+
+## 2026-11-01 — Lossy WebP with libwebp
+
+Hugo writes WebP with loss, at a quality, and `std.image` wrote it only
+without, as the `image` crate does, so a site's photos came out several
+times larger than Hugo's. Lossy WebP needs Google's encoder, and no Rust
+one is close to it, so the runtime builds libwebp's C with `cc`, as it
+builds SQLite, through `libwebp-sys`; only programs that import
+`std.image` link it. `encode` and `save` take the `quality` of JPEG for WebP too,
+85 unless given, and `quality: 100` keeps it without loss, so WebP is
+lossy by default, as in Hugo.

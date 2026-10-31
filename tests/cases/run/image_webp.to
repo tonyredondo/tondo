@@ -1,0 +1,38 @@
+// WebP is written with loss at a quality, smaller the lower it is, and
+// without loss at `quality: 100`.
+
+import std.console
+import std.image
+
+fn main(): !image.ImageError {
+    // A gradient, which lossy compression makes much smaller.
+    var pixels: Array[Byte] = []
+    for y in 0..256 {
+        for x in 0..256 {
+            pixels.push(Byte(x).unwrapOr(Byte(0u8)))
+            pixels.push(Byte(y).unwrapOr(Byte(0u8)))
+            pixels.push(Byte((x + y) / 2).unwrapOr(Byte(0u8)))
+            pixels.push(Byte(255u8))
+        }
+    }
+    let picture = image.fromPixels(256, 256, pixels)?
+    let lossy = picture.encode(image.Format.WebP)?
+    let small = picture.encode(image.Format.WebP, quality: 20)?
+    let lossless = picture.encode(image.Format.WebP, quality: 100)?
+    console.println("{lossy.length() < lossless.length()} {small.length() < lossy.length()}")
+    let read = image.read(lossy)?
+    console.println("{read.width()}x{read.height()} {read.format()}")
+    // Without loss, every pixel comes back.
+    console.println("{image.read(lossless)?.pixel(100, 50) == picture.pixel(100, 50)}")
+    match read.pixel(100, 50) {
+        some(color) => console.println(
+            "{(color.red - 100).abs() < 8} {(color.green - 50).abs() < 8}",
+        )
+        none => console.println("none")
+    }
+}
+
+// expect-stdout: true true
+// expect-stdout: 256x256 some(webp)
+// expect-stdout: true
+// expect-stdout: true true

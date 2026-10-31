@@ -6363,8 +6363,8 @@ pub fn Image.save(self, path: String, quality: Int = 85): Unit ! ImageError
   el que más primero, cada uno lo bastante distinto de los otros: para un
   fondo o un hueco mientras carga. Los píxeles casi transparentes no
   cuentan.
-- `encode` escribe JPEG con una `quality` de 1 a 100 y sin alfa, y WebP sin
-  pérdida; `save` elige el formato por la extensión del path (`.png`, `.jpg`
+- `encode` escribe JPEG con una `quality` de 1 a 100 y sin alfa, y WebP con
+  pérdida a esa `quality`, con alfa, o sin pérdida con `quality: 100`; `save` elige el formato por la extensión del path (`.png`, `.jpg`
   o `.jpeg`, `.gif`, `.webp`) y otra es un error que las nombra.
 
 ### 14.39 `std.acme`

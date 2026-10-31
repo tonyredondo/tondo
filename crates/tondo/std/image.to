@@ -414,8 +414,8 @@ pub fn Image.pixel(self, x: Int, y: Int): Color? {
     if rgba < 0 { none } else { some(colorOf(rgba)) }
 }
 
-/// The bytes of the image in a format; JPEG at a `quality` from 1 to 100,
-/// and WebP without loss.
+/// The bytes of the image in a format; JPEG and WebP at a `quality` from 1
+/// to 100, WebP with loss below 100 and without at 100.
 pub fn Image.encode(self, format: Format, quality: Int = 85): Array[Byte] ! ImageError {
     let code = match format {
         Format.Png => 0
