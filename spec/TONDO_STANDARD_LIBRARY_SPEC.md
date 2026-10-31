@@ -3089,11 +3089,26 @@ pub trait Decode {
 ~~~
 
 - `Encode` y `Decode` están implementados para todos los números, `Byte` (un
-  entero de 0 a 255), `Bool`, `String`, `T?`, `Array[T]`, `Map[String, V]` y `time.DateTime` (texto RFC 3339
-  en UTC, o el `DateTime` del formato), y el compilador los implementa
-  para cada record, enum y newtype del programa cuyas partes los implementan,
-  cuando el programa trae `std.serialization` directamente o por un formato. Una
-  implementación escrita en el programa sustituye a la automática.
+  entero de 0 a 255), `Bool`, `String`, `T?`, `Array[T]`, `Map[String, V]`,
+  las tuplas de hasta ocho elementos y `time.DateTime` (texto RFC 3339 en UTC,
+  o el `DateTime` del formato), y el compilador los implementa para cada
+  record, enum y newtype del programa cuyas partes los implementan, y para cada
+  unión estructural cuyos miembros los implementan, cuando el programa trae
+  `std.serialization` directamente o por un formato. Una implementación escrita
+  en el programa sustituye a la automática.
+- Una tupla es una lista de sus elementos, en orden; al leerla, una lista de
+  otra longitud falla con `Type`.
+- Una unión (9.5 del lenguaje) se escribe como el miembro que tiene, sin
+  etiqueta: `Map[String, Int | String | Array[String]]` es un objeto JSON con
+  valores de esos tipos. Al leerla, se prueba cada miembro sobre el valor y se
+  queda el primero que lo lee, en este orden, que no depende del de la unión:
+  los demás miembros, por el orden de sus nombres; los floats, que leen también
+  enteros; `String`; y el `Value` de un formato o de `std.reflect`, que lee
+  cualquier valor. Así `Int | Float` lee `3` como `Int` y `3.5` como `Float`,
+  y `Status | String` lee como `String` un texto que no es una variante. Si
+  ningún miembro lo lee, falla con el error del que llegó más cerca —uno que
+  leyó la forma del valor y no su contenido, como un campo que falta— o, si no
+  hay ninguno, con `Type` y los miembros que esperaba.
 - El `Decode` que escribe el compilador comprueba las reglas de
   `std.validate` de los campos al leer un record (14.35): si el valor rompe
   alguna, falla con `Invalid` y una `Violation` por cada regla rota, con el

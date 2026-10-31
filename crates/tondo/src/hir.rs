@@ -1424,6 +1424,8 @@ pub const NATIVES: &[Native] = {
         codec("hasherFinish", &[Object], Bytes, "tondo_rt_hasher_finish"),
         codec("entropy", &[Int], Bytes, "tondo_rt_entropy"),
         codec("unixMillis", &[], Int, "tondo_rt_unix_millis"),
+        codec("counter", &[], Object, "tondo_rt_counter"),
+        codec("counterNext", &[Object], Int, "tondo_rt_counter_next"),
         codec("csvCheck", &[String, Char], Int, "tondo_rt_csv_check"),
         codec("csvFields", &[String, Char], Strings, "tondo_rt_csv_fields"),
         codec("mix", &[Int, Int], Int, "tondo_rt_random_mix"),

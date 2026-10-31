@@ -3644,3 +3644,19 @@ written, as the specification's records promise. A record whose `priv`
 fields all have defaults is built outside its module with the rest, which
 keeps state a module owns, such as a URL's raw path, out of the hands of
 those who build it.
+
+## 2026-10-31 — Unions as the member they hold
+
+Gin's handlers answer `gin.H`, a map of mixed values, and Hugo's and
+ddtest's files hold values that are a string in one place and a list in
+another: Tondo had to declare an enum, with a tag no format writes, or
+reach for `json.Value`. A union is now written as the member it holds, as
+every one of those formats does, and read as the first member that reads
+the value. The language says `A | B` is `B | A`, so the order cannot be the
+one written: members that read fewer values go first, floats after
+integers, `String` after what reads text, as dates and enums, and a
+format's `Value` last, which settles `Int | Float` and `Status | String` as
+a reader expects. A tuple is a list, as JSON and YAML write pairs. The
+compiler writes each union's code where its members are known, since a
+union is no type an implementation in Tondo could name.
+

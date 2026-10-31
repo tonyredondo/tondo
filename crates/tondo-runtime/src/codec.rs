@@ -261,6 +261,20 @@ pub(crate) fn entropy(count: usize) -> Vec<u8> {
     out
 }
 
+/// A counter that its copies share, from 0: where a union's members read
+/// a value's events again (standard library 14.6).
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_counter() -> *mut NativeObject {
+    native::new(std::sync::atomic::AtomicI64::new(0))
+}
+
+/// The counter's value, which it then passes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_counter_next(object: *mut NativeObject) -> i64 {
+    native::get::<std::sync::atomic::AtomicI64>(object)
+        .map_or(0, |counter| counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+}
+
 /// Milliseconds since the Unix epoch, for UUIDv7.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_unix_millis() -> i64 {

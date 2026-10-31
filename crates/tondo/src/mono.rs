@@ -6,10 +6,11 @@
 use crate::ast::BinOp;
 use crate::diag::Diagnostics;
 use crate::hir::{
-    Block, Callee, Expr, ExprKind, FnId, Function, ImplInfo, PatKind, Pattern, Place, PlaceStep, Program, Segment,
-    Stmt, TraitId, TraitInfo,
+    Arm, Block, Callee, Expr, ExprKind, FnId, Function, ImplInfo, Local, LocalId, PatKind, Pattern, Place, PlaceStep,
+    Program, Segment, Stmt, TraitId, TraitInfo,
 };
-use crate::types::{CursorKind, Ty, TyKind, Types};
+use crate::source::Span;
+use crate::types::{CursorKind, SOME, Ty, TyKind, Types};
 use std::collections::{HashMap, VecDeque};
 
 /// Instantiation depth beyond which a generic function is considered to
@@ -36,6 +37,8 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
         display: HashMap::new(),
         runaway: None,
         conversions: Vec::new(),
+        unions: HashMap::new(),
+        made: Vec::new(),
     };
     // A failing `main` shows its error with `Display` (20.10).
     if let Some(main) = main
@@ -65,12 +68,19 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
                 .collect(),
         })
         .collect();
-    while let Some((id, args, instance)) = mono.queue.pop_front() {
-        let generic = &functions[id.0 as usize];
-        let map: HashMap<Ty, Ty> = generic.generics.iter().copied().zip(args).collect();
-        let mut function = generic.clone();
-        mono.function(&mut function, &map);
-        mono.out[instance.0 as usize] = Some(function);
+    loop {
+        if let Some((id, args, instance)) = mono.queue.pop_front() {
+            let generic = &functions[id.0 as usize];
+            let map: HashMap<Ty, Ty> = generic.generics.iter().copied().zip(args).collect();
+            let mut function = generic.clone();
+            mono.function(&mut function, &map);
+            mono.out[instance.0 as usize] = Some(function);
+        } else if let Some((mut function, instance)) = mono.made.pop() {
+            mono.function(&mut function, &HashMap::new());
+            mono.out[instance.0 as usize] = Some(function);
+        } else {
+            break;
+        }
     }
     if let Some(name) = mono.runaway.take().or_else(|| mono.types.runaway.take()) {
         let message = format!("`{name}` is instantiated with ever larger type arguments and never terminates");
@@ -112,6 +122,8 @@ enum Resolved {
     /// A method of the arithmetic of a number or a duration, which the
     /// compiler computes (18.10).
     Arithmetic,
+    /// A function the compiler wrote for this type, already concrete.
+    Made(FnId),
 }
 
 struct Mono<'a> {
@@ -128,6 +140,11 @@ struct Mono<'a> {
     /// The calls of `reflect.convert`, from and to which type, checked once
     /// every instance is known.
     conversions: Vec<(crate::source::Span, Ty, Ty)>,
+    /// The `Encode` or `Decode` written for a union, by trait, union and
+    /// the format's type.
+    unions: HashMap<(TraitId, Ty, Vec<Ty>), FnId>,
+    /// The functions written here whose calls are still to resolve.
+    made: Vec<(Function, FnId)>,
 }
 
 impl Mono<'_> {
@@ -395,6 +412,7 @@ impl Mono<'_> {
                             let name = self.traits[trait_id.0 as usize].methods[method as usize].clone();
                             e.kind = self.arithmetic(&name, std::mem::take(args), e.ty);
                         }
+                        Resolved::Made(instance) => *callee = Callee::Fn(instance),
                     },
                     Callee::Std(_) | Callee::Extern(_) => {}
                 }
@@ -484,6 +502,14 @@ impl Mono<'_> {
         if self.traits[trait_id.0 as usize].arithmetic && intrinsic {
             return Resolved::Arithmetic;
         }
+        // A union is no `Array[T]` nor any other target an implementation
+        // could match: the compiler writes its own.
+        if let TyKind::Union(members) = self.types.kind(self_ty).clone() {
+            let name = self.traits[trait_id.0 as usize].name.clone();
+            if name == "serialization.Encode" || name == "serialization.Decode" {
+                return Resolved::Made(self.union_codec(trait_id, self_ty, &members, own));
+            }
+        }
         for implementation in self.impls.iter().filter(|i| i.trait_id == trait_id) {
             let mut map = HashMap::new();
             let matched = self.types.matches(implementation.target, self_ty, &implementation.generics, &mut map)
@@ -514,6 +540,201 @@ impl Mono<'_> {
             return Resolved::Display;
         }
         panic!("no implementation of trait {} for {}", trait_id.0, self.types.display(self_ty));
+    }
+
+    /// A union's `Encode`, which writes the member it holds, or its
+    /// `Decode`, which reads the first member that reads the value, in the
+    /// order the union writes them (standard library 14.6), for the format
+    /// of type `own[0]`.
+    fn union_codec(&mut self, trait_id: TraitId, union: Ty, members: &[Ty], own: &[Ty]) -> FnId {
+        let key = (trait_id, union, own.to_vec());
+        if let Some(&made) = self.unions.get(&key) {
+            return made;
+        }
+        let instance = FnId(self.out.len() as u32);
+        self.out.push(None);
+        self.unions.insert(key, instance);
+        let format = own[0];
+        let span = Span::default();
+        let mk = |kind: ExprKind, ty: Ty| Expr { kind, ty, span };
+        let mut locals: Vec<Local> = Vec::new();
+        let mut local = |name: &str, ty: Ty| {
+            locals.push(Local { name: name.into(), ty, span });
+            LocalId(locals.len() as u32 - 1)
+        };
+        let shown = self.types.display(union);
+        let function = if self.traits[trait_id.0 as usize].name == "serialization.Encode" {
+            // `match self { member => member.encode(out) }`
+            let (value, out) = (local("self", union), local("out", format));
+            let arms = members
+                .iter()
+                .enumerate()
+                .map(|(index, &member)| {
+                    let held = local("member", member);
+                    let args = vec![mk(ExprKind::Local(held), member), mk(ExprKind::Local(out), format)];
+                    Arm {
+                        pattern: Pattern {
+                            kind: PatKind::Variant(
+                                index as u32,
+                                vec![Pattern { kind: PatKind::Binding(held), ty: member, span }],
+                            ),
+                            ty: union,
+                            span,
+                        },
+                        guard: None,
+                        body: mk(ExprKind::Call(Callee::Trait(trait_id, 0), vec![member, format], args), Ty::UNIT),
+                    }
+                })
+                .collect();
+            let tail = mk(ExprKind::Match(Box::new(mk(ExprKind::Local(value), union)), arms), Ty::UNIT);
+            Function {
+                name: format!("Encode for {shown}"),
+                generics: Vec::new(),
+                params: vec![value, out],
+                loans: vec![false, false],
+                locals,
+                result: Ty::UNIT,
+                fallible: false,
+                body: Block { stmts: Vec::new(), tail: Some(Box::new(tail)), ty: Ty::UNIT },
+                moves: Default::default(),
+                test: false,
+                span,
+            }
+        } else {
+            // `let attempt = unionAttempt(input, first)?`, then for each member
+            // `let (read, attempt) = unionMember[T](input, attempt)` and
+            // `match read { some(value) => return value }`, and at the end
+            // `fail unionFailure(input, attempt, "...")`.
+            let helper = |name: &str| {
+                let full = format!("serialization.{name}");
+                FnId(self.functions.iter().position(|f| f.name == full).expect("a helper of std.serialization") as u32)
+            };
+            let (attempt_fn, member_fn, failure_fn) =
+                (helper("unionAttempt"), helper("unionMember"), helper("unionFailure"));
+            let result_of = |this: &mut Self, id: FnId, types: Vec<Ty>| {
+                let f = &this.functions[id.0 as usize];
+                let map: HashMap<Ty, Ty> = f.generics.iter().copied().zip(types).collect();
+                this.ty(f.result, &map)
+            };
+            let attempt_result = result_of(self, attempt_fn, vec![format]);
+            let TyKind::Result(attempt_ty, error) = *self.types.kind(attempt_result) else {
+                unreachable!("`unionAttempt` can fail")
+            };
+            let event = self.functions[attempt_fn.0 as usize].locals[1].ty;
+            let (input, first) = (local("input", format), local("first", event));
+            let mut attempt = local("attempt", attempt_ty);
+            // The members that read the fewest values first: floats, which
+            // read integers too, `String`, and a format's `Value`, which
+            // reads anything, last; the others by their names, as the union
+            // orders them.
+            let mut tried: Vec<(usize, Ty)> = members.iter().copied().enumerate().collect();
+            tried.sort_by_key(|&(index, member)| {
+                let rank = match self.types.kind(member) {
+                    TyKind::Float(_) => 1,
+                    TyKind::String => 2,
+                    _ if matches!(
+                        self.types.display(member).as_str(),
+                        "json.Value"
+                            | "yaml.Value"
+                            | "toml.Value"
+                            | "messagepack.Value"
+                            | "cbor.Value"
+                            | "reflect.Value"
+                    ) =>
+                    {
+                        3
+                    }
+                    _ => 0,
+                };
+                (rank, index)
+            });
+            let call = mk(
+                ExprKind::Call(
+                    Callee::Fn(attempt_fn),
+                    vec![format],
+                    vec![mk(ExprKind::Local(input), format), mk(ExprKind::Local(first), event)],
+                ),
+                attempt_result,
+            );
+            let mut stmts = vec![Stmt::Let(attempt, mk(ExprKind::Try(Box::new(call)), attempt_ty))];
+            for (index, member) in tried {
+                let pair = result_of(self, member_fn, vec![member, format]);
+                let TyKind::Tuple(items) = self.types.kind(pair).clone() else { unreachable!("a pair") };
+                let (read, next) = (local("read", items[0]), local("attempt", attempt_ty));
+                let call = mk(
+                    ExprKind::Call(
+                        Callee::Fn(member_fn),
+                        vec![member, format],
+                        vec![mk(ExprKind::Local(input), format), mk(ExprKind::Local(attempt), attempt_ty)],
+                    ),
+                    pair,
+                );
+                let binding = |local: LocalId, ty: Ty| Pattern { kind: PatKind::Binding(local), ty, span };
+                let pattern = Pattern {
+                    kind: PatKind::Fields(vec![binding(read, items[0]), binding(next, attempt_ty)]),
+                    ty: pair,
+                    span,
+                };
+                stmts.push(Stmt::Destructure(pattern, call));
+                let value = local("value", member);
+                let found = mk(ExprKind::Variant(index as u32, vec![(0, mk(ExprKind::Local(value), member))]), union);
+                let returned = Block { stmts: vec![Stmt::Return(Some(found))], tail: None, ty: Ty::NEVER };
+                let arms = vec![
+                    Arm {
+                        pattern: Pattern {
+                            kind: PatKind::Variant(SOME, vec![binding(value, member)]),
+                            ty: items[0],
+                            span,
+                        },
+                        guard: None,
+                        body: mk(ExprKind::Block(returned), Ty::NEVER),
+                    },
+                    Arm {
+                        pattern: Pattern { kind: PatKind::Wildcard, ty: items[0], span },
+                        guard: None,
+                        body: mk(ExprKind::Unit, Ty::UNIT),
+                    },
+                ];
+                stmts.push(Stmt::Expr(mk(
+                    ExprKind::Match(Box::new(mk(ExprKind::Local(read), items[0])), arms),
+                    Ty::UNIT,
+                )));
+                attempt = next;
+            }
+            let names: Vec<String> = members.iter().map(|&m| format!("`{}`", self.types.display(m))).collect();
+            let expected = match names.split_last() {
+                Some((last, rest)) if !rest.is_empty() => format!("{} or {last}", rest.join(", ")),
+                _ => names.join(""),
+            };
+            let failure = mk(
+                ExprKind::Call(
+                    Callee::Fn(failure_fn),
+                    vec![format],
+                    vec![
+                        mk(ExprKind::Local(input), format),
+                        mk(ExprKind::Local(attempt), attempt_ty),
+                        mk(ExprKind::Str(expected), Ty::STRING),
+                    ],
+                ),
+                error,
+            );
+            stmts.push(Stmt::Fail(failure));
+            Function {
+                name: format!("Decode for {shown}"),
+                generics: Vec::new(),
+                params: vec![input, first],
+                loans: vec![false, false],
+                locals,
+                result: self.types.intern(TyKind::Result(union, error)),
+                fallible: true,
+                body: Block { stmts, tail: None, ty: Ty::NEVER },
+                moves: Default::default(),
+                test: false,
+                span,
+            }
+        };
+        self.made.push((function, instance));
+        instance
     }
 
     /// A method of `Additive` or `Number` of a number or a duration, as the

@@ -448,6 +448,10 @@ impl Context<'_> {
         let each = |types: &[ast::TypeExpr]| types.iter().all(|t| self.allowed(t, declared));
         match &ty.kind {
             ast::TypeKind::Optional(inner) => self.allowed(inner, declared),
+            // A tuple is a list, and a union the member it holds (14.6).
+            ast::TypeKind::Tuple(items) | ast::TypeKind::Union(items) if self.kind == Kind::Serialization => {
+                each(items)
+            }
             ast::TypeKind::Result { ok, err } if self.kind == Kind::Reflect => {
                 ok.as_ref().is_none_or(|ok| self.allowed(ok, declared)) && self.allowed(err, declared)
             }
@@ -494,6 +498,11 @@ impl Context<'_> {
 /// The name a field has in every format, `@name` or its own.
 fn wire(field: &ast::FieldDecl) -> String {
     named(&field.annotations).unwrap_or_else(|| field.name.name.clone())
+}
+
+/// Whether a field's type is an option, as `T?`; not a union with one.
+fn optional(ty: &ast::TypeExpr) -> bool {
+    matches!(ty.kind, ast::TypeKind::Optional(_))
 }
 
 /// The name of a variant outside the program: its `@name`, or its own.
@@ -651,7 +660,7 @@ impl Generator<'_> {
     ) -> String {
         let s = self.alias;
         let written: Vec<&ast::FieldDecl> = fields.iter().filter(|f| !ignored(f)).collect();
-        let optional = |f: &ast::FieldDecl| self.text(&f.ty).ends_with('?');
+        let optional = |f: &ast::FieldDecl| optional(&f.ty);
         let mut out = format!("{indent}out.record({name:?}, {})\n", self.notes(uses));
         // A `none` asks the format whether it leaves the member out; a
         // value asks nothing.
@@ -700,7 +709,10 @@ impl Generator<'_> {
         let read: Vec<&ast::FieldDecl> = fields.iter().filter(|f| !ignored(f)).collect();
         for field in &read {
             let ty = self.text(&field.ty);
-            let local = if ty.ends_with('?') { format!("({ty})?") } else { format!("{ty}?") };
+            // `A | B?` would be a union with an option: the parentheses keep
+            // the whole type.
+            let whole = matches!(field.ty.kind, ast::TypeKind::Optional(_) | ast::TypeKind::Union(_));
+            let local = if whole { format!("({ty})?") } else { format!("{ty}?") };
             out.push_str(&format!("{indent}var __field_{}: {local} = none\n", field.name.name));
         }
         let names: Vec<String> = read.iter().map(|field| format!("{:?}", wire(field))).collect();
@@ -732,7 +744,7 @@ impl Generator<'_> {
             let default = field.default.as_ref().map(|default| self.sources.slice(default.span).to_string());
             let value = if ignored(field) {
                 default.unwrap_or_else(|| "none".to_string())
-            } else if default.is_some() || self.text(&field.ty).ends_with('?') {
+            } else if default.is_some() || optional(&field.ty) {
                 let default = default.unwrap_or_else(|| "none".to_string());
                 format!(
                     "match __field_{name} {{\n{indent}    some(__value) => __value\n{indent}    none => {default}\n{indent}}}"
@@ -754,7 +766,7 @@ impl Generator<'_> {
         let mut out = String::new();
         for field in fields {
             let written = self.text(&field.ty);
-            let optional = written.ends_with('?');
+            let optional = optional(&field.ty);
             let inner = written.trim_end_matches('?').trim_start_matches('(').trim_end_matches(')').trim().to_string();
             let path = wire(field);
             let value = if optional { "__v".to_string() } else { format!("__value.{}", field.name.name) };

@@ -5255,6 +5255,15 @@ impl<'a> Checker<'a> {
                 return true;
             }
         }
+        // A union is written as the member it holds, and read as the first
+        // member that reads the value: the compiler writes both (standard
+        // library 14.6).
+        if let TyKind::Union(members) = self.types.kind(ty)
+            && matches!(self.traits[trait_id.0 as usize].name.as_str(), "serialization.Encode" | "serialization.Decode")
+        {
+            let members = members.clone();
+            return members.into_iter().all(|member| self.satisfies_depth(member, trait_id, args, depth + 1));
+        }
         let candidates: Vec<usize> = (0..self.impls.len()).filter(|&i| self.impls[i].trait_id == trait_id).collect();
         for index in candidates {
             let (target, trait_args, generics) =

@@ -1893,7 +1893,7 @@ Desestructuración:
 let (x, y) = point
 ~~~
 
-Las tuplas son estructurales. Dos tuplas son del mismo tipo si tienen la misma longitud y tipos de elementos idénticos en cada posición.
+Las tuplas son estructurales. Dos tuplas son del mismo tipo si tienen la misma longitud y tipos de elementos idénticos en cada posición. Las librerías de serialización escriben una tupla como una lista de sus elementos (14.6 de la librería estándar).
 
 Las tuplas se recomiendan para:
 
@@ -2118,6 +2118,7 @@ Reglas:
 - El tag del miembro forma parte del valor.
 - Después de expandir aliases, cada miembro debe ser un tipo nominal o intrínseco expresable como `type_path`. Tuplas, funciones y otros tipos estructurales anónimos se envuelven en un newtype antes de formar parte de una unión.
 - Un parámetro de tipo desnudo no puede ser miembro, porque 0.1 no tiene un constraint que garantice un discriminador canónico para todas sus instanciaciones. Un `Either[A, B]` genérico se declara como enum nominal.
+- Las librerías de serialización escriben una unión como el miembro que tiene, sin etiqueta, y la leen como el primer miembro que lee el valor, en un orden que la librería estándar fija (14.6).
 - En contexto genérico, se normaliza cada path y se aplica la misma unificación
   sintáctica de primer orden que a las cabeceras de `impl` en 12.6. Si cualquier
   par unifica al sustituir parámetros ligados, la unión se rechaza y se utiliza

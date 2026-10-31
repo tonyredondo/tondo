@@ -1,0 +1,74 @@
+// A tuple is a list of its elements, and a union is the member it holds,
+// with no tag; reading a union takes the first member that reads the value,
+// floats, `String` and a format's `Value` last.
+import std.console
+import std.json
+import std.yaml
+
+enum Status {
+    @name("in_progress")
+    InProgress
+    Done
+}
+
+type Point = {
+    x: Int
+    y: Int
+}
+
+type Reply = {
+    data: Map[String, Int | String | Array[String]]
+    span: (Int, String)
+    at: Point | String
+}
+
+fn main(): !json.JsonError {
+    let reply = Reply {
+        data: ["count": 3, "name": "ada", "tags": ["a", "b"]]
+        span: (7, "seven")
+        at: Point { x: 1, y: 2 }
+    }
+    let text = json.encode(reply)
+    console.println(text)
+    let back = json.decode[Reply](text)?
+    console.println("{back.data} {back.span} {json.encode(back.at)}")
+    console.println("{yaml.decode[Reply](yaml.encode(reply)).expect("yaml") == reply}")
+    for number in ["3", "3.5"] {
+        match json.decode[Int | Float](number)? {
+            Int(whole) => console.println("Int {whole}")
+            Float(real) => console.println("Float {real}")
+        }
+    }
+    for word in ["\"in_progress\"", "\"other\""] {
+        match json.decode[Status | String](word)? {
+            Status(status) => console.println("Status {status == Status.InProgress}")
+            String(other) => console.println("String {other}")
+        }
+    }
+    let mixed = json.decode[Map[String, Int | json.Value]](r"""{"a": 1, "b": [true]}""")?
+    console.println(json.encode(mixed))
+    // The nearest member's failure, or the members it expected.
+    for wrong in ["true", r"""{"x": 1}""", "[1, \"x\", 3]"] {
+        match json.decode[Point | String](wrong) {
+            ok(_) => console.println("read")
+            err(error) => console.println("{error}")
+        }
+    }
+    match json.decode[(Int, String)]("[1, \"x\", 3]") {
+        ok(_) => console.println("read")
+        err(error) => console.println("{error}")
+    }
+}
+
+// expect-stdout: {"data":{"count":3,"name":"ada","tags":["a","b"]},"span":[7,"seven"],"at":{"x":1,"y":2}}
+// expect-stdout: [count: 3, name: ada, tags: [a, b]] (7, seven) {"x":1,"y":2}
+// expect-stdout: true
+// expect-stdout: Int 3
+// expect-stdout: Float 3.5
+// expect-stdout: Status true
+// expect-stdout: String other
+// expect-stdout: {"a":1,"b":[true]}
+// expect-stdout: expected `Point` or `String`, found a boolean at $ (line 1, column 5)
+// expect-stdout: missing field `y` at $ (line 1, column 9)
+// expect-stdout: expected `Point` or `String`, found an array at $ (line 1, column 12)
+// expect-stdout: expected the end of an array at $[2] (line 1, column 11)

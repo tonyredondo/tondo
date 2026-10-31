@@ -128,6 +128,13 @@ optional, and `@omitNone` leaves it out when it is `none`, where JSON and YAML
 would write `null`; on a type, `@omitNone` does it for all its optional
 fields. Reading gives a missing field its default, or `none` when it is
 optional. `@name("in_progress")` on an enum's variant names it the same way.
+
+A tuple is a list, and a union is the member it holds, with no tag, so
+`Map[String, Int | String | Array[String]]` is a JSON object of mixed
+values. Reading a union takes the first member that reads the value: the
+other members by their names, then floats, then `String`, then a format's
+`Value`. `Int | Float` reads `3` as an `Int`, and `Status | String` reads as
+a `String` a text that is no variant.
 `json.encode(value, htmlSafe: true)` escapes `<`, `>` and `&`, for JSON put
 inside a `<script>`.
 
