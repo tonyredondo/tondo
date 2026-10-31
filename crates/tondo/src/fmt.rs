@@ -583,7 +583,11 @@ impl Formatter<'_> {
     }
 
     fn variant(&mut self, variant: &VariantDecl) -> Doc {
-        let name = concat(vec![self.uses(&variant.uses, false), text(variant.name.name.clone())]);
+        let name = concat(vec![
+            annotations(&variant.annotations),
+            self.uses(&variant.uses, false),
+            text(variant.name.name.clone()),
+        ]);
         match &variant.payload {
             VariantPayload::Unit => name,
             VariantPayload::Tuple(types) => {

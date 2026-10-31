@@ -123,10 +123,11 @@ fn main(): !toml.TomlError {
 TOML has no null: a `none` field is left out when written.
 
 A field's annotations hold in every format. `@name("user_id")` gives it
-another key, `@ignore` leaves it out, and it must be optional, and
-`@omitNone` leaves it out when it is `none`, where JSON and YAML would write
-`null`; on a type, `@omitNone` does it for all its optional fields. Reading
-gives `none` for a field that is missing, with or without them.
+another key, `@ignore` leaves it out, and it must have a default or be
+optional, and `@omitNone` leaves it out when it is `none`, where JSON and YAML
+would write `null`; on a type, `@omitNone` does it for all its optional
+fields. Reading gives a missing field its default, or `none` when it is
+optional. `@name("in_progress")` on an enum's variant names it the same way.
 `json.encode(value, htmlSafe: true)` escapes `<`, `>` and `&`, for JSON put
 inside a `<script>`.
 

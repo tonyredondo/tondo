@@ -3004,10 +3004,10 @@ Cada formato ofrece dos rutas:
 - **Dinámica:** un árbol explícito (`json.Value`) para documentos cuyo schema no
   se conoce al compilar.
 
-Las anotaciones de campo `@name("wire")` e `@ignore` (9.2 del lenguaje) eligen
-el nombre de un campo fuera del programa u omiten un campo opcional o con
-valor por defecto, en todos los formatos. Un formato ofrece además lectura y escritura por eventos, que
-comparten parser y emisor con las demás rutas.
+`@name("wire")` en un campo o una variante e `@ignore` en un campo (9.2 y 9.4
+del lenguaje) eligen el nombre fuera del programa u omiten un campo opcional o
+con valor por defecto, en todos los formatos. Un formato ofrece además lectura
+y escritura por eventos, que comparten parser y emisor con las demás rutas.
 
 ### 14.7 `std.serialization`
 
@@ -3120,7 +3120,9 @@ pub trait Decode {
   eventos.
 - Un newtype es su valor. Una variante sin payload es su nombre como texto; una
   con payload es un mapa de una sola clave, el nombre, cuyo valor es el payload,
-  una lista si tiene varios componentes o un mapa si tiene campos.
+  una lista si tiene varios componentes o un mapa si tiene campos. El nombre es
+  el de su `@name("texto")` si lo lleva (9.4 del lenguaje), y al leer solo vale
+  ese.
 - Un entero que cabe en `Int` se escribe con `int`, y otro, como un `UInt`
   grande o uno de 128 bits, con `number` y sus dígitos: ningún entero pasa por
   un float. Un `Float32` finito se escribe con `number` y sus dígitos más

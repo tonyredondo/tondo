@@ -207,6 +207,8 @@ pub struct EnumDecl {
 
 #[derive(Clone, Debug)]
 pub struct VariantDecl {
+    /// `@name("text")`, its name outside the program.
+    pub annotations: Vec<Annotation>,
     /// The program's annotations before it (27.13).
     pub uses: Vec<AnnotationUse>,
     pub name: Ident,

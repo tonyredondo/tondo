@@ -5,6 +5,8 @@
 enum Shape {
     @ignore
     Circle
+    @name
+    Square
 }
 
 fn show(@ignore value: Int) {}
@@ -13,4 +15,5 @@ fn main() {}
 
 // expect-error: E1619 the language's annotation `@name` does not go on an enum
 // expect-error: E1619 the language's annotation `@ignore` does not go on a variant
+// expect-error: E1102 `@name` takes the name the variant has outside: `@name("in_progress")`
 // expect-error: E1619 the language's annotation `@ignore` does not go on a parameter

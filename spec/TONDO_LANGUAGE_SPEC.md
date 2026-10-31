@@ -2085,6 +2085,20 @@ enum HttpResult {
 
 Una variante y su payload forman un único valor. El tag discriminante siempre está disponible para `match`, pero su representación binaria concreta no forma parte del contrato salvo en tipos diseñados para FFI.
 
+Una variante puede llevar `@name("text")`, el nombre que tiene fuera del
+programa, como un campo de un record (9.2): las librerías de serialización lo
+escriben y lo leen en lugar del suyo.
+
+~~~tondo
+enum Status {
+    @name("in_progress")
+    InProgress
+    Done
+}
+~~~
+
+`@name` sin texto es `E1102`; otra anotación en minúscula, `E1619`.
+
 ### 9.5 Uniones estructurales
 
 `A | B` representa una unión cerrada anónima:

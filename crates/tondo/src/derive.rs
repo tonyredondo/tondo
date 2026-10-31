@@ -493,15 +493,20 @@ impl Context<'_> {
 
 /// The name a field has in every format, `@name` or its own.
 fn wire(field: &ast::FieldDecl) -> String {
-    field
-        .annotations
-        .iter()
-        .find(|a| a.name.name == "name")
-        .and_then(|a| match &a.argument {
-            Some(ast::AnnotationArg::Text(text)) => Some(text.clone()),
-            _ => None,
-        })
-        .unwrap_or_else(|| field.name.name.clone())
+    named(&field.annotations).unwrap_or_else(|| field.name.name.clone())
+}
+
+/// The name of a variant outside the program: its `@name`, or its own.
+fn variant_wire(variant: &ast::VariantDecl) -> String {
+    named(&variant.annotations).unwrap_or_else(|| variant.name.name.clone())
+}
+
+/// The text of `@name("text")` among some annotations.
+fn named(annotations: &[ast::Annotation]) -> Option<String> {
+    annotations.iter().find(|a| a.name.name == "name").and_then(|a| match &a.argument {
+        Some(ast::AnnotationArg::Text(text)) => Some(text.clone()),
+        _ => None,
+    })
 }
 
 fn ignored(field: &ast::FieldDecl) -> bool {
@@ -595,7 +600,7 @@ impl Generator<'_> {
                 out.push_str("        match self {\n");
                 for variant in &e.variants {
                     let path = format!("{}.{}", e.name.name, variant.name.name);
-                    let key = format!("{:?}", variant.name.name);
+                    let key = format!("{:?}", variant_wire(variant));
                     match &variant.payload {
                         ast::VariantPayload::Unit => out.push_str(&format!("            {path} => out.text({key})\n")),
                         ast::VariantPayload::Tuple(types) => {
@@ -850,7 +855,8 @@ impl Generator<'_> {
                     if let ast::VariantPayload::Unit = variant.payload {
                         out.push_str(&format!(
                             "                {:?} => {name}.{}\n",
-                            variant.name.name, variant.name.name
+                            variant_wire(variant),
+                            variant.name.name
                         ));
                     }
                 }
@@ -872,7 +878,7 @@ impl Generator<'_> {
                 );
                 for variant in &e.variants {
                     let path = format!("{name}.{}", variant.name.name);
-                    let key = format!("{:?}", variant.name.name);
+                    let key = format!("{:?}", variant_wire(variant));
                     match &variant.payload {
                         ast::VariantPayload::Unit => {}
                         ast::VariantPayload::Tuple(types) if types.len() == 1 => {

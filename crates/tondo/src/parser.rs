@@ -804,8 +804,18 @@ impl Parser<'_> {
             if self.eat(&Tok::RBrace) {
                 break;
             }
-            let (annotations, uses) = self.annotations()?;
-            self.misplaced(&annotations, "a variant");
+            let (mut annotations, uses) = self.annotations()?;
+            // `@name("text")` names a variant outside the program, as a
+            // field's does.
+            let (named, other): (Vec<Annotation>, Vec<Annotation>) =
+                annotations.drain(..).partition(|a| a.name.name == "name");
+            self.misplaced(&other, "a variant");
+            for annotation in &named {
+                if !matches!(annotation.argument, Some(AnnotationArg::Text(_))) {
+                    let message = "`@name` takes the name the variant has outside: `@name(\"in_progress\")`";
+                    self.diags.error("E1102", annotation.span, message);
+                }
+            }
             let name = self.ident()?;
             let payload = match self.tok() {
                 Tok::LParen => {
@@ -823,7 +833,7 @@ impl Parser<'_> {
                 Tok::LBrace => VariantPayload::Record(self.record_body(Defaults::Never)?),
                 _ => VariantPayload::Unit,
             };
-            variants.push(VariantDecl { uses, name, payload });
+            variants.push(VariantDecl { annotations: named, uses, name, payload });
             self.field_separator()?;
         }
         let span = start.to(self.prev_span());

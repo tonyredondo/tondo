@@ -1,3 +1,5 @@
+// `@name` gives a field or a variant its name outside the program, which
+// is the only one reading takes; `@ignore` leaves a field out.
 import std.console
 import std.json
 
@@ -8,15 +10,39 @@ type Account = {
     displayName: String
     @ignore
     cache: String?
+    status: Status
+}
+
+enum Status {
+    @name("in_progress")
+    InProgress
+    Failed(String)
+    @name("moved_to")
+    Moved { place: String }
 }
 
 fn main(): !json.JsonError {
-    let account = Account { userId: 7, displayName: "Ana", cache: "local" }
+    let account = Account {
+        userId: 7
+        displayName: "Ana"
+        cache: "local"
+        status: Status.InProgress
+    }
     let text = json.encode(account)
     console.println(text)
-    let back: Account = json.decode(r"""{"user_id": 8, "display-name": "Bo", "cache": "ignored"}""")?
-    console.println("{back.userId} {back.displayName} {back.cache}")
+    let back: Account =
+        json.decode(
+            r"""{"user_id": 8, "display-name": "Bo", "cache": "ignored", "status": {"moved_to": {"place": "x"}}}""",
+        )?
+    console.println("{back.userId} {back.displayName} {back.cache} {json.encode(back.status)}")
+    console.println(json.encode([Status.Failed("no"), Status.InProgress]))
+    match json.decode[Status]("\"InProgress\"") {
+        ok(_) => console.println("read")
+        err(error) => console.println("{error}")
+    }
 }
 
-// expect-stdout: {"user_id":7,"display-name":"Ana"}
-// expect-stdout: 8 Bo none
+// expect-stdout: {"user_id":7,"display-name":"Ana","status":"in_progress"}
+// expect-stdout: 8 Bo none {"moved_to":{"place":"x"}}
+// expect-stdout: [{"Failed":"no"},"in_progress"]
+// expect-stdout: unknown variant `InProgress` of `Status` at $ (line 1, column 13)
