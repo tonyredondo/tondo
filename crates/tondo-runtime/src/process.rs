@@ -7,7 +7,7 @@ use super::{ArrayHeader, LIVE_OBJECTS, Str, element, str_bytes, tondo_rt_array_n
 use std::ffi::{OsStr, OsString};
 use std::io::{ErrorKind, Read, Write};
 use std::os::fd::{AsFd, OwnedFd};
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::PathBuf;
 use std::process::{Child, Stdio};
@@ -708,6 +708,28 @@ pub unsafe extern "C" fn tondo_rt_process_signal(process: *mut ProcessObject, ta
     for &pid in &running.pids {
         unsafe { libc::kill(pid as i32, signal) };
     }
+}
+
+/// `process.which(name)`: the file a shell runs for `name`, with the
+/// program's `PATH`; empty for none.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_process_which(name: *const Str) -> *mut Str {
+    let name = os(name);
+    let runnable = |path: &std::path::Path| {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path).is_ok_and(|found| found.is_file() && found.permissions().mode() & 0o111 != 0)
+    };
+    let found = if name.as_bytes().contains(&b'/') {
+        Some(PathBuf::from(&name)).filter(|path| runnable(path))
+    } else {
+        let environment = super::env::environment();
+        let path = environment.iter().find(|(key, _)| key == "PATH").map(|(_, value)| value.clone());
+        path.unwrap_or_default().as_bytes().split(|&b| b == b':').find_map(|directory| {
+            let directory = if directory.is_empty() { OsStr::new(".") } else { OsStr::from_bytes(directory) };
+            Some(std::path::Path::new(directory).join(&name)).filter(|path| runnable(path))
+        })
+    };
+    super::str_new(found.map_or(Vec::new(), |path| path.into_os_string().into_vec()).as_slice())
 }
 
 /// `process.signal(pid, signal)`, to a process the program did not start:

@@ -2,8 +2,6 @@
 // a program that imports std.process links with: finding a program, and
 // signals to a process it did not start.
 
-import std.env as __env
-import std.fs as __fs
 import std.internal.process as processNative
 import std.process as __process
 
@@ -11,28 +9,8 @@ import std.process as __process
 /// or else the first file of that name in the directories of `PATH` that
 /// may be run; `none` without one.
 pub fn which(name: String): String? {
-    if name.contains("/") {
-        return if runnable(name) { some(name) } else { none }
-    }
-    for directory in __env.get("PATH").unwrapOr("").split(":") {
-        let candidate = if directory.isEmpty() { "./{name}" } else { "{directory}/{name}" }
-        if runnable(candidate) {
-            return some(candidate)
-        }
-    }
-    none
-}
-
-/// Whether a file may be run, followed through its links.
-fn runnable(path: String): Bool {
-    let real = match __fs.realPath(path) {
-        ok(real) => real
-        err(_) => return false
-    }
-    match __fs.metadata(real) {
-        ok(found) => found.kind == __fs.FileKind.File and found.permissions & 0o111 != 0
-        err(_) => false
-    }
+    let found = processNative.which(name)
+    if found.isEmpty() { none } else { some(found) }
 }
 
 /// Sends a signal to the process `pid`, one the program did not start:

@@ -1341,6 +1341,7 @@ pub const NATIVES: &[Native] = {
         // `std.internal.process`: what `std.process` writes in Tondo asks
         // of the host.
         process("kill", &[Int, Int], Int, "tondo_rt_process_kill"),
+        process("which", &[String], String, "tondo_rt_process_which"),
         // `std.internal.sql`: SQLite, for `std.sql`.
         sql("open", &[String], Object, "tondo_rt_sqlite_open"),
         sql("failure", &[Object], String, "tondo_rt_sqlite_failure"),
