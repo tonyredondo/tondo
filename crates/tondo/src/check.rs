@@ -7256,6 +7256,17 @@ impl<'a> Checker<'a> {
             (Handle::Command, "stderr") => (P::Configure(6), vec![types.output], ty),
             (_, "mergeStderr") if plan => (P::Configure(7), vec![], ty),
             (_, "group") if plan => (P::Configure(8), vec![], ty),
+            (_, "grace") if plan => {
+                let Some(duration) = self.duration else {
+                    let message =
+                        "`grace` takes a `time.Duration`: `import std.time`, and write `grace(time.seconds(10))`";
+                    self.diags.error("E1001", method.span, message);
+                    return Self::error_expr(span);
+                };
+                (P::Configure(9), vec![duration], ty)
+            }
+            (Handle::Command, "invokedAs") => (P::Configure(10), vec![s], ty),
+            (Handle::Command, "exec") => (P::Exec, vec![], self.types.intern(TyKind::Result(Ty::NEVER, types.error))),
             (_, "run") if plan => (P::Run, vec![], failing(self, types.status)),
             (_, "status") if plan => (P::Status, vec![], failing(self, types.status)),
             (_, "output") if plan => (P::Output, vec![], failing(self, types.result)),
@@ -14917,6 +14928,7 @@ impl<'a> Checker<'a> {
                     "hostname" => (E::Hostname, vec![], s),
                     "processId" => (E::ProcessId, vec![], Ty::INT),
                     "executable" => (E::Executable, vec![], s),
+                    "invokedAs" => (E::InvokedAs, vec![], s),
                     _ => {
                         let message = format!("module `env` has no function `{member}`{}", std_alias("env", member));
                         self.diags.error("E1001", segments[1].span, message);

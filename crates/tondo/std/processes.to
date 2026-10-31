@@ -32,3 +32,93 @@ pub fn signal(pid: Int, sent: __process.Signal): !__process.ProcessError {
         _ => fail __process.ProcessError.PermissionDenied
     }
 }
+
+/// The words of a command line as a POSIX shell splits them, with its
+/// quotes and backslashes, but expanding nothing: `go test -run 'A B'` is
+/// `["go", "test", "-run", "A B"]`. `none` when a quote is not closed or
+/// the text ends in a lone backslash.
+pub fn splitWords(text: String): Array[String]? {
+    var words: Array[String] = []
+    var word: Array[String] = []
+    // Whether a word started, which an empty quote does too.
+    var started = false
+    var quote: Char? = none
+    var escaped = false
+    for character in text.chars() {
+        if escaped {
+            escaped = false
+            // A backslash and a newline join two lines.
+            if character != '\n' {
+                if quote == some('"') and not "$`\"\\".contains("{character}") {
+                    word.push("\\")
+                }
+                word.push("{character}")
+                started = true
+            }
+            continue
+        }
+        match quote {
+            some('\'') => {
+                if character == '\'' {
+                    quote = none
+                } else {
+                    word.push("{character}")
+                }
+            }
+            some(_) => {
+                if character == '"' {
+                    quote = none
+                } else if character == '\\' {
+                    escaped = true
+                } else {
+                    word.push("{character}")
+                }
+            }
+            none => {
+                if character == ' ' or character == '\t' or character == '\n' {
+                    if started {
+                        words.push(word.join(""))
+                        word = []
+                        started = false
+                    }
+                } else if character == '\'' or character == '"' {
+                    quote = some(character)
+                    started = true
+                } else if character == '\\' {
+                    escaped = true
+                } else {
+                    word.push("{character}")
+                    started = true
+                }
+            }
+        }
+    }
+    if quote.isSome() or escaped {
+        return none
+    }
+    if started {
+        words.push(word.join(""))
+    }
+    words
+}
+
+/// The words as one command line a POSIX shell splits back into them: a
+/// word with any character but letters, digits and `_@%+=:,./-` goes in
+/// single quotes.
+pub fn quoted(words: Array[String]): String {
+    words.map((word) { quotedWord(word) }).join(" ")
+}
+
+fn quotedWord(word: String): String {
+    let safe = (c: Char): Bool {
+        (c >= 'a' and c <= 'z') or
+            (c >= 'A' and c <= 'Z') or
+            (c >= '0' and c <= '9') or
+            "_@%+=:,./-".contains("{c}")
+    }
+    let plain = not word.isEmpty() and word.chars().all(safe)
+    if plain {
+        return word
+    }
+    "'{word.replace("'", "'\\''")}'"
+}

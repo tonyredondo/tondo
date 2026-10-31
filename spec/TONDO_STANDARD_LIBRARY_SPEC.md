@@ -2258,6 +2258,7 @@ pub fn syncNative()
 pub fn hostname(): String
 pub fn processId(): Int
 pub fn executable(): String
+pub fn invokedAs(): String
 pub fn processors(physical: Bool = false): Int
 pub fn user(): User
 pub fn system(): System
@@ -2281,8 +2282,10 @@ pub type System = { name: String, release: String, machine: String }
 ~~~
 
 - `hostname` es el nombre de la máquina, como lo da el sistema; `processId`, el
-  identificador del proceso del programa; y `executable`, el path absoluto de
-  su ejecutable, con los enlaces simbólicos resueltos.
+  identificador del proceso del programa; `executable`, el path absoluto de
+  su ejecutable, con los enlaces simbólicos resueltos; e `invokedAs`, el nombre
+  con que se le ejecutó, su `argv[0]` tal cual: `go` para un enlace llamado
+  `go`, que un programa con varios nombres usa para saber cuál hace.
 - `processors` es cuántos procesadores puede usar el programa a la vez, con
   su afinidad y la cuota de su cgroup: al menos 1. Con `physical: true`, los
   núcleos de la máquina, cada uno una vez aunque ejecute varios hilos.
@@ -6867,10 +6870,14 @@ pub fn Command.stdout(self, output: Output): Command
 pub fn Command.stderr(self, output: Output): Command
 pub fn Command.mergeStderr(self): Command
 pub fn Command.group(self): Command
+pub fn Command.grace(self, grace: time.Duration): Command
+pub fn Command.invokedAs(self, name: String): Command
+pub fn Command.exec(self): Never ! ProcessError
 pub fn Pipeline.stdin(self, input: Input): Pipeline
 pub fn Pipeline.stdout(self, output: Output): Pipeline
 pub fn Pipeline.mergeStderr(self): Pipeline
 pub fn Pipeline.group(self): Pipeline
+pub fn Pipeline.grace(self, grace: time.Duration): Pipeline
 
 // En Command y en Pipeline:
 pub fn run(self): ExitStatus ! ProcessError
@@ -6895,6 +6902,8 @@ pub enum Signal { Interrupt, Terminate, Hangup, User1, User2, Quit, Kill }
 pub fn signals(wanted: ...Signal): Receiver[Signal]
 pub fn signal(pid: Int, sent: Signal): Unit ! ProcessError
 pub fn which(name: String): String?
+pub fn splitWords(text: String): Array[String]?
+pub fn quoted(words: Array[String]): String
 ~~~
 
 Planes:
@@ -6978,9 +6987,28 @@ Señales:
   etapas, y lo que lanzaron sigue. El Ctrl-C de la terminal llega entonces
   solo al programa, que decide con `signals`, así que un programa interactivo
   arranca sin `group()`.
+- `grace(time)` da un margen para terminar: `cancel()`, y la cancelación de la
+  tarea que espera al proceso, envían `Terminate` y solo pasado el margen
+  `Kill` a lo que sigue, como `docker stop`; sin él, `Kill` al instante.
+  Cuando el proceso termina, la salida que captura y que algún descendiente
+  mantiene abierta se espera también como mucho ese margen.
+- `invokedAs(name)` da al programa del comando ese `argv[0]` en lugar de su
+  path, como lo ve `env.invokedAs()`.
+- `exec()` hace del programa el del comando, con su entorno, su directorio y
+  las redirecciones que no lo necesitan, a archivos o a nada: el programa no
+  sigue. Solo vuelve si no puede, con su `ProcessError`; una tubería o una
+  captura, que nadie leería, es `InvalidData`. Antes entrega la salida
+  pendiente de la consola.
 - `which(name)` da el archivo que un shell ejecutaría para `name`: el propio
   `name` si tiene un `/`, o el primero con ese nombre, que se pueda ejecutar,
   en los directorios de `PATH`; `none` si no hay ninguno.
+- `splitWords(text)` parte una línea de comandos como un shell POSIX, con sus
+  comillas simples y dobles y sus barras, sin expandir nada: ni variables ni
+  patrones. `go test -run 'A B'` da `["go", "test", "-run", "A B"]`; una
+  comilla sin cerrar, o una barra al final, da `none`. `quoted(words)` escribe
+  palabras en una línea que un shell parte otra vez en ellas: cada una que
+  tiene algo más que letras y dígitos ASCII y `_@%+=:,./-` va entre comillas
+  simples.
 
 ### 19.3 `std.ffi`
 

@@ -1,0 +1,59 @@
+// A command with `grace` is cancelled with SIGTERM first, and SIGKILL only
+// after it, so it finishes; without it, SIGKILL at once. `grace` also
+// bounds how long output a descendant keeps open is waited for.
+// `invokedAs` gives a child its `argv[0]`, which `env.invokedAs()` reads,
+// and `exec` turns the program into another, or fails.
+import std.console
+import std.env
+import std.process
+import std.time
+
+fn main(): !process.ProcessError {
+    match env.get("PROBE_ROLE") {
+        some("name") => {
+            console.println("invoked as {env.invokedAs()}")
+            return
+        }
+        some("exec") => {
+            match process.command("/nonexistent/program").exec() {
+                err(error) => console.println("exec failed: {error}")
+            }
+            _ = process.command("sh", "-c", "echo replaced by sh").exec()
+            console.println("not reached")
+            return
+        }
+        _ => {}
+    }
+    let me = env.executable()
+    let named = process.command(me).env("PROBE_ROLE", "name").invokedAs("custom-name").output()?
+    console.print(named.text()?)
+    let replaced = process.command(me).env("PROBE_ROLE", "exec").output()?
+    console.print(replaced.text()?)
+    // Ready once its trap is set.
+    let script = "trap 'echo got term; exit 3' TERM; echo ready; while true; do sleep 0.02; done"
+    let graceful =
+        process
+            .command("sh", "-c", script)
+            .stdout(process.Output.Pipe)
+            .grace(time.seconds(5))
+            .start()?
+    let said = graceful.stdout()
+    console.println(said.readLine().unwrapOr(none).unwrapOr(""))
+    console.println("graceful: {graceful.cancel()?.code}")
+    console.println(said.readLine().unwrapOr(none).unwrapOr(""))
+    let abrupt = process.command("sh", "-c", script).stdout(process.Output.Null).start()?
+    console.println("abrupt: {abrupt.cancel()?.code}")
+    // A descendant keeps the output open; grace bounds the wait for it.
+    let held =
+        process.command("sh", "-c", "sleep 2 & echo done").grace(time.milliseconds(200)).output()?
+    console.print(held.text()?)
+}
+
+// expect-stdout: invoked as custom-name
+// expect-stdout: exec failed: not found
+// expect-stdout: replaced by sh
+// expect-stdout: ready
+// expect-stdout: graceful: 3
+// expect-stdout: got term
+// expect-stdout: abrupt: 137
+// expect-stdout: done

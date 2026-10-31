@@ -85,7 +85,13 @@ a channel of the signals named instead, which no longer end the program, and
 `process.signal(pid, signal)` to any other. A command started with
 `.group()` has a process group of its own, so `cancel()` also ends what it
 started, as the tests `go test` runs; the terminal's Ctrl-C then reaches
-only the program. `process.which("git")` finds a program as a shell does.
+only the program. `.grace(time.seconds(10))` cancels with `Terminate` first
+and `Kill` only after it, and bounds the wait for output a descendant keeps
+open. `process.which("git")` finds a program as a shell does,
+`process.splitWords(line)` and `process.quoted(words)` split and write
+command lines as a shell does, `.invokedAs("go")` gives a child its
+`argv[0]`, which `env.invokedAs()` reads, and `command.exec()` becomes
+another program.
 
 `env.user()` and `env.system()` say who and where the program runs, and
 `env.processors(physical: true)` counts the machine's cores.

@@ -1,0 +1,28 @@
+// `splitWords` splits a command line as a POSIX shell does, with its quotes
+// and backslashes and expanding nothing; `quoted` writes words a shell
+// splits back into them.
+import std.console
+import std.process
+
+fn main() {
+    let lines = [
+        "go test -run 'A B'",
+        "  a\\ b \"c \\\"d\\\" e\" ''  f\\\ng",
+        "unclosed 'quote",
+        "x\\",
+    ]
+    for text in lines {
+        console.println("{process.splitWords(text)}")
+    }
+    let words = ["go", "test", "-run", "A B", "it's", "", "a.b/c=d"]
+    let line = process.quoted(words)
+    console.println(line)
+    console.println("{process.splitWords(line) == some(words)}")
+}
+
+// expect-stdout: some([go, test, -run, A B])
+// expect-stdout: some([a b, c "d" e, , fg])
+// expect-stdout: none
+// expect-stdout: none
+// expect-stdout: go test -run 'A B' 'it'\''s' '' a.b/c=d
+// expect-stdout: true

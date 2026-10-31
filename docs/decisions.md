@@ -3783,3 +3783,16 @@ its deadline: the library that needs time says how much, in its own
 still bounds it, so a flush that hangs does not keep the process from
 ending.
 
+## 2026-10-31 — Stopping a child gently, and programs with many names
+
+ddtest runs `go test` and must stop it as `docker stop` would, with
+`SIGTERM` and time to write its reports, and `cancel` sent `SIGKILL` at
+once. `grace` on a command gives it that time, for `cancel` and for the
+cancellation of the task that waits for it, so the structured way of
+stopping work stays the one way; the same time bounds the wait for output
+a descendant keeps open, Go's `WaitDelay`, since both answer how long a
+process may take to let go. ddtest's go shim also decides what it does by
+the name it was run by and then becomes the real `go`: `env.invokedAs()`,
+`invokedAs` and `exec` give it both, and `splitWords` and `quoted` read and
+write the command lines it passes on, as a shell would, expanding nothing.
+

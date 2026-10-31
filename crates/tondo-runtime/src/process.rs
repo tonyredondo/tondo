@@ -11,7 +11,7 @@ use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::PathBuf;
 use std::process::{Child, Stdio};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 
@@ -20,6 +20,7 @@ unsafe extern "C" {
 }
 
 const SIGKILL: i32 = 9;
+const SIGTERM: i32 = 15;
 const SIGPIPE: i32 = 13;
 
 /// A stream of `std.io` a plan or a process holds a reference to.
@@ -76,6 +77,11 @@ struct Stage {
     /// `group()`: the stages run in a process group of their own, which
     /// signals and `cancel` reach as a whole.
     group: bool,
+    /// `grace(time)`: how long a cancelled process has between `SIGTERM`
+    /// and `SIGKILL`, and its descendants to finish the output it captures.
+    grace: Option<std::time::Duration>,
+    /// `invokedAs(name)`: the program's `argv[0]`.
+    invoked: Option<OsString>,
 }
 
 /// A `Command` (one stage) or a `Pipeline`.
@@ -106,6 +112,8 @@ fn stage(program: OsString, arguments: Vec<OsString>) -> Stage {
         stderr: None,
         merge: false,
         group: false,
+        grace: None,
+        invoked: None,
     }
 }
 
@@ -133,8 +141,8 @@ pub unsafe extern "C" fn tondo_rt_process_pipe(left: *mut PlanObject, right: *mu
 /// A copy of the plan changed by one setting: 0 `directory(a)`, 1
 /// `env(a, b)`, 2 `removeEnv(a)`, 3 `clearEnv()`, 4 `stdin`, 5 `stdout` and
 /// 6 `stderr` (with the tag of the `Input` or `Output` and its payload), 7
-/// `mergeStderr()` and 8 `group()`. `stdin` is the first stage's, `stdout`
-/// the last's.
+/// `mergeStderr()`, 8 `group()`, 9 `grace(nanoseconds)` and 10
+/// `invokedAs(name)`. `stdin` is the first stage's, `stdout` the last's.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_process_configure(
     plan_object: *mut PlanObject,
@@ -157,7 +165,12 @@ pub unsafe extern "C" fn tondo_rt_process_configure(
         5 => stages[last].stdout = Some(unsafe { output(a as i64, b) }),
         6 => stages[last].stderr = Some(unsafe { output(a as i64, b) }),
         7 => stages.iter_mut().for_each(|s| s.merge = true),
-        _ => stages.iter_mut().for_each(|s| s.group = true),
+        8 => stages.iter_mut().for_each(|s| s.group = true),
+        9 => {
+            let grace = std::time::Duration::from_nanos((a as i64).max(0) as u64);
+            stages.iter_mut().for_each(|s| s.grace = Some(grace));
+        }
+        _ => stages[0].invoked = Some(text(a)),
     }
     plan(stages)
 }
@@ -239,6 +252,10 @@ struct Running {
     captured: Arc<Mutex<Captured>>,
     statuses: Option<Vec<(i64, bool)>>,
     detached: bool,
+    /// The plan's `grace`, and whether every stage was waited for, after
+    /// which a late `SIGKILL` reaches nothing.
+    grace: Option<std::time::Duration>,
+    reaped: Arc<AtomicBool>,
 }
 
 /// Where a child's output goes.
@@ -378,6 +395,8 @@ fn spawn(plan: &PlanObject, defaults: Defaults) -> std::io::Result<Running> {
         captured: Arc::new(Mutex::new(Captured { stderr: vec![Vec::new(); stages.len()], ..Captured::default() })),
         statuses: None,
         detached: false,
+        grace: stages.iter().find_map(|stage| stage.grace),
+        reaped: Arc::default(),
     };
     // Output written so far reaches the terminal before the children's.
     super::flush_stdout();
@@ -388,6 +407,9 @@ fn spawn(plan: &PlanObject, defaults: Defaults) -> std::io::Result<Running> {
             let last = index + 1 == stages.len();
             let mut command = std::process::Command::new(&stage.program);
             command.args(&stage.arguments).env_clear();
+            if let Some(invoked) = &stage.invoked {
+                command.arg0(invoked);
+            }
             // The first stage leads the group, and the others join it.
             if stage.group {
                 command.process_group(running.group.map_or(0, |group| group as i32));
@@ -487,6 +509,28 @@ pub(crate) fn running() -> usize {
     LIVE.lock().unwrap_or_else(|e| e.into_inner()).len()
 }
 
+/// Ends the processes: at once, or with `grace`, `SIGTERM` first and then
+/// `SIGKILL` to what has not been waited for when it passes, as `docker
+/// stop` does.
+fn stop_all(pids: &[u32], group: Option<u32>, grace: Option<std::time::Duration>, reaped: &Arc<AtomicBool>) {
+    let Some(grace) = grace else { return kill_all(pids, group) };
+    match group {
+        Some(group) => unsafe {
+            kill(-(group as i32), SIGTERM);
+        },
+        None => pids.iter().for_each(|&pid| unsafe {
+            kill(pid as i32, SIGTERM);
+        }),
+    }
+    let (pids, reaped) = (pids.to_vec(), reaped.clone());
+    super::tasks::spawn_thread(None, move || {
+        std::thread::sleep(grace);
+        if !reaped.load(Ordering::Acquire) {
+            kill_all(&pids, group);
+        }
+    });
+}
+
 /// Ends the processes, and every process of their group when they have
 /// one of their own: what they started too.
 fn kill_all(pids: &[u32], group: Option<u32>) {
@@ -526,8 +570,24 @@ fn finish(running: &mut Running) -> Vec<(i64, bool)> {
             Err(_) => (1, false),
         })
         .collect();
+    running.reaped.store(true, Ordering::Release);
+    // With `grace`, descendants that keep the captured output open get
+    // that long to finish it.
+    let until = running.grace.map(|grace| std::time::Instant::now() + grace);
     for worker in running.workers.drain(..) {
-        let _ = worker.join();
+        match until {
+            Some(until) => {
+                while !worker.is_finished() && std::time::Instant::now() < until {
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+                if worker.is_finished() {
+                    let _ = worker.join();
+                }
+            }
+            None => {
+                let _ = worker.join();
+            }
+        }
     }
     LIVE.lock().unwrap_or_else(|e| e.into_inner()).retain(|(pid, _)| !running.pids.contains(pid));
     running.statuses = Some(statuses.clone());
@@ -609,8 +669,8 @@ pub unsafe extern "C" fn tondo_rt_process_run(plan: *mut PlanObject, quiet: u8, 
         Ok(running) => running,
         Err(error) => return error_status(&error),
     };
-    let (pids, group) = (running.pids.clone(), running.group);
-    let statuses = host_cancellable(move || finish(&mut running), || kill_all(&pids, group));
+    let (pids, group, grace, reaped) = (running.pids.clone(), running.group, running.grace, running.reaped.clone());
+    let statuses = host_cancellable(move || finish(&mut running), || stop_all(&pids, group, grace, &reaped));
     let (code, success) = overall(&statuses);
     unsafe { std::ptr::copy_nonoverlapping([code, success as i64].as_ptr(), out, 2) };
     0
@@ -631,11 +691,11 @@ pub unsafe extern "C" fn tondo_rt_process_output(
         Ok(running) => running,
         Err(error) => return error_status(&error),
     };
-    let (pids, group) = (running.pids.clone(), running.group);
+    let (pids, group, grace, reaped) = (running.pids.clone(), running.group, running.grace, running.reaped.clone());
     let out = out as usize;
     let (_, success) = host_cancellable(
         move || unsafe { write_output(&mut running, layout, out as *mut i64) },
-        || kill_all(&pids, group),
+        || stop_all(&pids, group, grace, &reaped),
     );
     if check != 0 && !success { FAILED } else { 0 }
 }
@@ -754,16 +814,16 @@ fn settle<R: Send + 'static>(
     cancel: bool,
     then: impl FnOnce(&mut Running) -> R + Send + 'static,
 ) -> R {
-    let (pids, group) = {
+    let (pids, group, grace, reaped) = {
         let running = Process(process);
         let running = running.running();
-        (running.pids.clone(), running.group)
+        (running.pids.clone(), running.group, running.grace, running.reaped.clone())
     };
     if cancel {
-        kill_all(&pids, group);
+        stop_all(&pids, group, grace, &reaped);
     }
     let shared = Process(process);
-    host_cancellable(move || then(&mut shared.running()), || kill_all(&pids, group))
+    host_cancellable(move || then(&mut shared.running()), move || stop_all(&pids, group, grace, &reaped))
 }
 
 /// `wait()` and `cancel()` (`cancel` 1): the overall status into `out`.
@@ -808,6 +868,8 @@ pub unsafe extern "C" fn tondo_rt_process_detach(process: *mut ProcessObject) {
         captured: running.captured.clone(),
         statuses: None,
         detached: true,
+        grace: running.grace,
+        reaped: running.reaped.clone(),
     };
     LIVE.lock().unwrap_or_else(|e| e.into_inner()).retain(|(pid, _)| !gone.pids.contains(pid));
     super::tasks::spawn_thread(None, move || {
@@ -857,6 +919,66 @@ pub unsafe extern "C" fn tondo_rt_process_text(bytes: *mut ArrayHeader, out: *mu
 }
 
 /// `process.exit(code)`: delivers the console's output and ends the program.
+/// `exec()`: the program becomes the command's, with its environment,
+/// directory and redirections to files; it returns only when it cannot,
+/// with a `ProcessError` status.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_process_exec(plan: *mut PlanObject, _out: *mut i64) -> i64 {
+    let Some(stage) = plan_ref(plan).stages.first() else { return HOST };
+    let mut command = std::process::Command::new(&stage.program);
+    command.args(&stage.arguments).env_clear();
+    if let Some(invoked) = &stage.invoked {
+        command.arg0(invoked);
+    }
+    if stage.group {
+        command.process_group(0);
+    }
+    if !stage.clear_env {
+        command.envs(super::env::environment().iter().map(|(k, v)| (k, v)));
+    }
+    for (name, value) in &stage.env {
+        match value {
+            Some(value) => command.env(name, value),
+            None => command.env_remove(name),
+        };
+    }
+    if let Some(directory) = &stage.directory {
+        command.current_dir(directory);
+    }
+    // Only what outlives this program: the terminal, nothing, or a file.
+    let file = |path: &PathBuf, append: bool| {
+        std::fs::OpenOptions::new().create(true).write(true).append(append).truncate(!append).open(path)
+    };
+    let opened = (|| {
+        match &stage.stdin {
+            None | Some(Input::Inherit) => {}
+            Some(Input::Null) => _ = command.stdin(Stdio::null()),
+            Some(Input::File(path)) => _ = command.stdin(Stdio::from(std::fs::File::open(path)?)),
+            Some(_) => return Err(std::io::Error::from(ErrorKind::InvalidData)),
+        }
+        for (output, standard) in [(&stage.stdout, 1), (&stage.stderr, 2)] {
+            let stdio = match output {
+                None | Some(Output::Inherit) => continue,
+                Some(Output::Null) => Stdio::null(),
+                Some(Output::File(path)) => Stdio::from(file(path, false)?),
+                Some(Output::Append(path)) => Stdio::from(file(path, true)?),
+                Some(_) => return Err(std::io::Error::from(ErrorKind::InvalidData)),
+            };
+            if standard == 1 {
+                command.stdout(stdio);
+            } else {
+                command.stderr(stdio);
+            }
+        }
+        Ok(())
+    })();
+    if let Err(error) = opened {
+        return error_status(&error);
+    }
+    let _ = super::finish_stdout();
+    error_status(&command.exec())
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_process_exit(code: i64) -> ! {
     let _ = super::finish_stdout();

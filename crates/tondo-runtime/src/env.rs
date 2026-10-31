@@ -157,6 +157,14 @@ pub extern "C" fn tondo_rt_env_executable() -> *mut Str {
     path.map_or_else(|_| str_new(b""), |path| text(path.as_os_str().as_bytes()))
 }
 
+/// `env.invokedAs()`: the name the program was run by, `argv[0]`, as
+/// given: a link's own name, not its target's.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_env_invoked_as() -> *mut Str {
+    let invoked = std::env::args_os().next().unwrap_or_default();
+    text(invoked.as_bytes())
+}
+
 /// `env.processors()`: the processors the program may run on, as its
 /// affinity and its cgroup's quota allow.
 #[unsafe(no_mangle)]

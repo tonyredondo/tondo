@@ -665,6 +665,7 @@ impl Rt {
                 EnvFn::SyncNative => ("tondo_rt_env_sync_native", &[], &[]),
                 EnvFn::Hostname => ("tondo_rt_env_hostname", &[], &[I64]),
                 EnvFn::ProcessId => ("tondo_rt_env_process_id", &[], &[I64]),
+                EnvFn::InvokedAs => ("tondo_rt_env_invoked_as", &[], &[I64]),
                 EnvFn::Executable => ("tondo_rt_env_executable", &[], &[I64]),
             },
             Rt::Process(function) => match function {
@@ -676,6 +677,7 @@ impl Rt {
                 ProcessFn::Run | ProcessFn::Status => ("tondo_rt_process_run", &[I64, I8, I64], &[I64]),
                 ProcessFn::Output | ProcessFn::Check => ("tondo_rt_process_output", &[I64, I8, I64, I64, I64], &[I64]),
                 ProcessFn::Start => ("tondo_rt_process_start", &[I64, I64], &[I64]),
+                ProcessFn::Exec => ("tondo_rt_process_exec", &[I64, I64], &[I64]),
                 ProcessFn::Text => ("tondo_rt_process_text", &[I64, I64], &[I64]),
                 ProcessFn::Stream(_) => ("tondo_rt_process_stream", &[I64, I64], &[I64]),
                 ProcessFn::Id => ("tondo_rt_process_id", &[I64], &[I64]),
@@ -7102,7 +7104,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let setting_value = self.e.fb.ins().iconst(types::I64, setting as i64);
                 let zero = self.e.fb.ins().iconst(types::I64, 0);
                 let (a, b) = match setting {
-                    0 | 2 => (values[1], zero),
+                    0 | 2 | 9 | 10 => (values[1], zero),
                     1 => (values[1], values[2]),
                     3 | 7 | 8 => (zero, zero),
                     // An `Input` or `Output`: its tag and the pointer its
@@ -7164,7 +7166,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let success = self.e.fb.ins().iconst(types::I64, success as i64);
                 values.extend([size, success]);
             }
-            ProcessFn::Start => {}
+            ProcessFn::Start | ProcessFn::Exec => {}
             ProcessFn::Exit | ProcessFn::Detach | ProcessFn::Signal => unreachable!("they return nothing"),
         }
         self.process_result(rt, values, place);
@@ -7214,6 +7216,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.init_component(base, &slot, Val::Memory(value));
         self.e.fb.ins().jump(done, &[]);
         self.e.fb.switch_to_block(good);
+        // `exec` comes back only when it fails.
+        if success == Ty::NEVER {
+            self.e.fb.ins().trap(TrapCode::user(1).unwrap());
+            self.e.fb.switch_to_block(done);
+            return;
+        }
         let ok = match self.e.cg.types().components(success).map(|c| c.len()) {
             Some(count) => self.record_from_words(success, &words[0..count]),
             None => Val::Scalar(words[0]),

@@ -1040,6 +1040,8 @@ pub enum ProcessFn {
     /// `process.signals(...)` and `Process.signal(signal)` (19.2).
     Signals,
     Signal,
+    /// `Command.exec()`: the program becomes the command's.
+    Exec,
 }
 
 /// The operations of `std.env`.
@@ -1055,6 +1057,8 @@ pub enum EnvFn {
     SetCurrentDirectory,
     SyncNative,
     Hostname,
+    /// `env.invokedAs()`: the program's `argv[0]`, as given.
+    InvokedAs,
     ProcessId,
     Executable,
 }

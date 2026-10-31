@@ -122,6 +122,20 @@ pub fn Command.mergeStderr(self): Command
 /// which decides, with `signals`.
 pub fn Command.group(self): Command
 
+/// The command with time to finish: `cancel`, and cancelling the task that
+/// waits for it, send `Terminate` and `Kill` only after `grace`, as
+/// `docker stop` does; once it ends, output a descendant keeps open is
+/// waited for at most as long.
+pub fn Command.grace(self, grace: time.Duration): Command
+
+/// The command with `name` as its program's `argv[0]`, which
+/// `env.invokedAs()` reads there.
+pub fn Command.invokedAs(self, name: String): Command
+
+/// The program becomes the command's, with its environment, directory and
+/// redirections to files; it returns only when it cannot.
+pub fn Command.exec(self): Never ! ProcessError
+
 /// The pipeline's first stage reading its standard input from `input`.
 pub fn Pipeline.stdin(self, input: Input): Pipeline
 
@@ -135,6 +149,9 @@ pub fn Pipeline.mergeStderr(self): Pipeline
 /// The pipeline started in a process group of its own, as
 /// `Command.group` starts a command.
 pub fn Pipeline.group(self): Pipeline
+
+/// The pipeline with time to finish, as `Command.grace` gives a command.
+pub fn Pipeline.grace(self, grace: time.Duration): Pipeline
 
 /// On a Command or a Pipeline: with the program's streams, waits.
 pub fn run(self): ExitStatus ! ProcessError
