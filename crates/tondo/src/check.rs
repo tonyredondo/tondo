@@ -11629,11 +11629,20 @@ impl<'a> Checker<'a> {
         let span = p.span;
         let explicit = match &p.kind {
             ast::PatternKind::Member { ty: member, inner } => Some((self.resolve_type(member), &**inner)),
-            ast::PatternKind::Constructor { path, args } if path.len() == 1 => {
-                let name = &path[0].name;
-                match self.type_named(name) {
+            // `Int(n)`, or a type of a module, `time.DateTime(at)`; not a
+            // variant, `Shape.Circle(r)`.
+            ast::PatternKind::Constructor { path, args } if path.len() <= 2 => {
+                let member = match path.as_slice() {
+                    [name] => self.type_named(&name.name),
+                    [module, name] if !self.type_names.contains_key(&module.name) => {
+                        self.module_type(&module.name, &name.name)
+                    }
+                    _ => None,
+                };
+                match member {
                     Some(member) => {
                         let [inner] = args.as_slice() else {
+                            let name = Self::path_text(path);
                             return Some(self.pattern_error(span, format!("`{name}(...)` takes one pattern")));
                         };
                         Some((member, inner))

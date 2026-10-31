@@ -1,4 +1,5 @@
 import std.console
+import std.time
 
 type IoError = { path: String }
 type DecodeError = { line: Int }
@@ -64,6 +65,14 @@ fn fallback(): Int ! (IoError | DecodeError | String) {
     fail "no fallback"
 }
 
+/// A type of another module is a member by its path.
+fn when(value: time.Duration | String): String {
+    match value {
+        time.Duration(span) => "after {span}"
+        String(text) => text
+    }
+}
+
 fn main() {
     let a: Int | String = 42
     let b: String | Int = "hi"
@@ -89,6 +98,7 @@ fn main() {
             console.println(text)
         }
     }
+    console.println("{when(time.seconds(2))} {when("now")}")
 }
 
 // expect-stdout: number 42 text hi negative -1 true false
@@ -101,3 +111,4 @@ fn main() {
 // expect-stdout: number 1 text changed
 // expect-stdout: ok 4 io <empty> decode 7 other no fallback
 // expect-stdout: retry io <empty>
+// expect-stdout: after 2s now
